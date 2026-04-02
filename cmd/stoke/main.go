@@ -225,11 +225,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		result, err := orchestrator.Run(ctx)
 		elapsed := time.Since(taskStart).Seconds()
 
+		// Determine attempt number from prior history
+		priorAttempts, _ := store.LoadAttempts(task.ID)
+		attemptNum := len(priorAttempts) + 1
+
 		if err != nil {
 			ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
 			attempt := session.Attempt{
 				TaskID:  task.ID,
-				Number:  1,
+				Number:  attemptNum,
 				Success: false,
 				Error:   err.Error(),
 				CostUSD: result.TotalCostUSD,
@@ -249,13 +253,13 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
 		}
 
-		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, 1)
+		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, attemptNum)
 		if ts != nil {
 			fmt.Println(ts.ClaimedVsVerified())
 		}
 		store.SaveAttempt(session.Attempt{
 			TaskID:   task.ID,
-			Number:   1,
+			Number:   attemptNum,
 			Success:  true,
 			CostUSD:  result.TotalCostUSD,
 			Duration: time.Duration(elapsed * float64(time.Second)),
@@ -656,15 +660,17 @@ func buildCmd(args []string) {
 				result, err := orchestrator.Run(ctx)
 				elapsed := time.Since(taskStart).Seconds()
 				ts := interactivePlanState.Get(task.ID)
+				priorAttempts, _ := store.LoadAttempts(task.ID)
+				attemptNum := len(priorAttempts) + 1
 				if err != nil {
-					tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, 1, err.Error(), ts.ClaimedVsVerified())
-					store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: 1, Success: false, Error: err.Error(), CostUSD: result.TotalCostUSD})
+					tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, attemptNum, err.Error(), ts.ClaimedVsVerified())
+					store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: attemptNum, Success: false, Error: err.Error(), CostUSD: result.TotalCostUSD})
 					markTask(p, task.ID, plan.StatusFailed)
 					store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 					return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
 				}
-				tui.SendTaskComplete(program, task.ID, true, result.TotalCostUSD, elapsed, 1, "", ts.ClaimedVsVerified())
-				store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: 1, Success: true, CostUSD: result.TotalCostUSD})
+				tui.SendTaskComplete(program, task.ID, true, result.TotalCostUSD, elapsed, attemptNum, "", ts.ClaimedVsVerified())
+				store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: attemptNum, Success: true, CostUSD: result.TotalCostUSD})
 				markTask(p, task.ID, plan.StatusDone)
 				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 				return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}

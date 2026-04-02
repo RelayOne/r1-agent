@@ -48,6 +48,8 @@ type State struct {
 
 // SaveState writes session state for crash recovery.
 func (s *Store) SaveState(state *State) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state.SavedAt = time.Now()
 	return s.writeJSON("session.json", state)
 }

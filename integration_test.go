@@ -19,6 +19,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/scheduler"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/workflow"
 	"github.com/ericmacdougall/stoke/internal/worktree"
@@ -688,6 +689,197 @@ func TestMCPEnabledPhaseNoRestrictions(t *testing.T) {
 	}
 	if strings.Contains(joined, "mcp__*") {
 		t.Error("MCP-enabled should not block mcp tools")
+	}
+}
+
+// ===========================================================================
+// Gitignored file invariants (GPT review blocker #1)
+// verified tree == merged tree: if ignored files exist, task must fail
+// ===========================================================================
+
+func TestIgnoredNewFiles_TrackedPlusIgnored(t *testing.T) {
+	repo := setupGitRepo(t)
+	mgr := worktree.NewManager(repo)
+	ctx := context.Background()
+
+	// Add a .gitignore
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0644)
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-m", "add gitignore")
+
+	h, err := mgr.Prepare(ctx, "ignored-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Cleanup(ctx, h)
+
+	// Agent creates a tracked file and an ignored file
+	os.WriteFile(filepath.Join(h.Path, "app.txt"), []byte("tracked\n"), 0644)
+	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("ignored secret\n"), 0644)
+
+	// ModifiedFiles should return the tracked file but NOT the ignored one
+	modified, err := worktree.ModifiedFiles(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasTracked := false
+	for _, f := range modified {
+		if f == "app.txt" {
+			hasTracked = true
+		}
+		if f == "secret.local" {
+			t.Error("ModifiedFiles should NOT include gitignored files")
+		}
+	}
+	if !hasTracked {
+		t.Error("ModifiedFiles should include tracked file app.txt")
+	}
+
+	// IgnoredNewFiles should detect the ignored file
+	ignored := worktree.IgnoredNewFiles(ctx, h)
+	if len(ignored) == 0 {
+		t.Fatal("IgnoredNewFiles should detect secret.local")
+	}
+	found := false
+	for _, f := range ignored {
+		if f == "secret.local" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("IgnoredNewFiles should include secret.local, got %v", ignored)
+	}
+
+	// CommitVerifiedTree should NOT include the ignored file
+	err = worktree.CommitVerifiedTree(ctx, h, []string{"app.txt"}, "add tracked only")
+	if err != nil {
+		t.Fatalf("CommitVerifiedTree: %v", err)
+	}
+
+	// Verify the commit tree does NOT contain the ignored file
+	lsCmd := exec.CommandContext(ctx, "git", "ls-tree", "-r", "--name-only", "HEAD")
+	lsCmd.Dir = h.Path
+	lsOut, _ := lsCmd.Output()
+	if strings.Contains(string(lsOut), "secret.local") {
+		t.Error("committed tree should NOT contain gitignored file secret.local")
+	}
+}
+
+func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
+	repo := setupGitRepo(t)
+	mgr := worktree.NewManager(repo)
+	ctx := context.Background()
+
+	// Add a .gitignore
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0644)
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+	}
+	git("add", "-A")
+	git("commit", "-m", "add gitignore")
+
+	h, err := mgr.Prepare(ctx, "ignored-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Cleanup(ctx, h)
+
+	// Agent creates ONLY an ignored file
+	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("secret\n"), 0644)
+
+	// ModifiedFiles returns empty (only untracked, but ignored by gitignore)
+	modified, err := worktree.ModifiedFiles(ctx, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modified) > 0 {
+		t.Errorf("ModifiedFiles should be empty for ignored-only case, got %v", modified)
+	}
+
+	// IgnoredNewFiles should still detect it
+	ignored := worktree.IgnoredNewFiles(ctx, h)
+	if len(ignored) == 0 {
+		t.Fatal("IgnoredNewFiles should detect secret.local even when no tracked changes")
+	}
+
+	// CommitVerifiedTree should return ErrNothingToCommit
+	err = worktree.CommitVerifiedTree(ctx, h, []string{}, "nothing")
+	if err != worktree.ErrNothingToCommit {
+		t.Errorf("expected ErrNothingToCommit, got: %v", err)
+	}
+}
+
+func TestAllGatesPass_RejectsWarnings(t *testing.T) {
+	// Evidence with all gates passing but with warnings should NOT pass
+	ev := taskstate.Evidence{
+		BuildPass:      true,
+		TestPass:       true,
+		LintPass:       true,
+		ScopeClean:     true,
+		ProtectedClean: true,
+		ReviewPass:     true,
+		Warnings:       []string{"gitignored files present"},
+	}
+	if ev.AllGatesPass() {
+		t.Error("AllGatesPass should return false when warnings are present")
+	}
+
+	// Same evidence without warnings should pass
+	ev.Warnings = nil
+	if !ev.AllGatesPass() {
+		t.Error("AllGatesPass should return true with no warnings and all gates passing")
+	}
+}
+
+func TestPlanCycleDetectionSelfLoop(t *testing.T) {
+	p := &plan.Plan{
+		ID: "test-self-loop",
+		Tasks: []plan.Task{
+			{ID: "A", Description: "task A", Dependencies: []string{"A"}},
+		},
+	}
+	errs := p.Validate()
+	hasCycle := false
+	for _, e := range errs {
+		if strings.Contains(e, "cycle") || strings.Contains(e, "self-loop") {
+			hasCycle = true
+		}
+	}
+	if !hasCycle {
+		t.Errorf("Validate should detect self-loop, got errors: %v", errs)
+	}
+}
+
+func TestPlanCycleDetectionMutual(t *testing.T) {
+	p := &plan.Plan{
+		ID: "test-mutual-cycle",
+		Tasks: []plan.Task{
+			{ID: "A", Description: "task A", Dependencies: []string{"B"}},
+			{ID: "B", Description: "task B", Dependencies: []string{"A"}},
+		},
+	}
+	errs := p.Validate()
+	hasCycle := false
+	for _, e := range errs {
+		if strings.Contains(e, "cycle") {
+			hasCycle = true
+		}
+	}
+	if !hasCycle {
+		t.Errorf("Validate should detect mutual dependency cycle, got errors: %v", errs)
 	}
 }
 
