@@ -121,9 +121,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	kept, _ := plan.FilterByROI(p.Tasks, roiClass)
 	p.Tasks = kept
 
-	// Session store
+	// Session store — auto-upgrade to SQLite for parallel builds (JSON is not concurrency-safe)
 	var store session.SessionStore
-	if cfg.UseSQLite {
+	if cfg.UseSQLite || cfg.Workers > 1 {
 		sqlStore, err := session.NewSQLStore(absRepo)
 		if err != nil {
 			return nil, fmt.Errorf("sqlite store: %w", err)
@@ -1666,7 +1666,7 @@ func shipCmd(args []string) {
 			TestCommand:     *testC,
 			LintCommand:     *lintC,
 			ROIFilter:       "skip", // no ROI filtering in ship mode
-			UseSQLite:       false,
+			UseSQLite:       true,  // ship mode always uses SQLite for concurrency safety
 			Timeout:         *timeout,
 		}
 
