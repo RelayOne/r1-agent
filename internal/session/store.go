@@ -32,8 +32,8 @@ type Store struct {
 // New creates a session store.
 func New(projectRoot string) *Store {
 	root := filepath.Join(projectRoot, ".stoke")
-	os.MkdirAll(root, 0700)
-	os.MkdirAll(filepath.Join(root, "history"), 0700)
+	_ = os.MkdirAll(root, 0700)
+	_ = os.MkdirAll(filepath.Join(root, "history"), 0700)
 	return &Store{root: root}
 }
 
@@ -166,7 +166,9 @@ func (s *Store) writeJSON(relPath string, v interface{}) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil { return fmt.Errorf("marshal: %w", err) }
 	fullPath := filepath.Join(s.root, relPath)
-	os.MkdirAll(filepath.Dir(fullPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		return fmt.Errorf("create dir: %w", err)
+	}
 	tmp := fullPath + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil { return err }
 	return os.Rename(tmp, fullPath)

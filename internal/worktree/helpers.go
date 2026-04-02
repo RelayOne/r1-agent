@@ -129,7 +129,10 @@ func DiffSummary(ctx context.Context, handle Handle) string {
 	// Untracked files (new files the agent created but didn't stage)
 	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--exclude-standard")
 	lsCmd.Dir = handle.Path
-	lsOut, _ := lsCmd.Output()
+	lsOut, err := lsCmd.Output()
+	if err != nil {
+		lsOut = nil
+	}
 	untracked := strings.TrimSpace(string(lsOut))
 	if untracked != "" {
 		lines := strings.Split(untracked, "\n")
@@ -341,7 +344,10 @@ func CommitVerifiedTree(ctx context.Context, handle Handle, validatedFiles []str
 	}
 	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-tree", "-r", "--name-only", handle.BaseCommit)
 	lsCmd.Dir = handle.Path
-	lsOut, _ := lsCmd.Output()
+	lsOut, err := lsCmd.Output()
+	if err != nil {
+		return fmt.Errorf("ls-tree base: %w", err)
+	}
 	for _, line := range strings.Split(strings.TrimSpace(string(lsOut)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || validSet[line] {
@@ -413,7 +419,9 @@ func HashFiles(root string, files []string) map[string]string {
 func TreeSHA(ctx context.Context, handle Handle) (string, error) {
 	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A")
 	addCmd.Dir = handle.Path
-	addCmd.CombinedOutput()
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git add -A: %w: %s", err, out)
+	}
 
 	cmd := exec.CommandContext(ctx, handle.GitBinary, "write-tree")
 	cmd.Dir = handle.Path

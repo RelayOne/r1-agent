@@ -55,7 +55,10 @@ func New() *SessionReporter {
 func (r *SessionReporter) doReq(method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
-		b, _ := json.Marshal(body)
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request body: %w", err)
+		}
 		bodyReader = bytes.NewReader(b)
 	}
 	req, err := http.NewRequest(method, r.endpoint+path, bodyReader)
@@ -90,7 +93,9 @@ func (r *SessionReporter) RegisterSession(planID string) (string, error) {
 		SessionID string `json:"session_id"`
 		URL       string `json:"url"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode session response: %w", err)
+	}
 	r.sessionID = result.SessionID
 	return result.URL, nil
 }

@@ -12,7 +12,10 @@ import (
 
 // StorePath returns ~/.stoke/pools
 func StorePath() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "/tmp"
+	}
 	return filepath.Join(home, ".stoke", "pools")
 }
 
@@ -55,7 +58,9 @@ func LoadManifest() (*Manifest, error) {
 
 // Save writes the manifest to disk.
 func (m *Manifest) Save() error {
-	os.MkdirAll(filepath.Dir(ManifestPath()), 0755)
+	if err := os.MkdirAll(filepath.Dir(ManifestPath()), 0755); err != nil {
+		return fmt.Errorf("create pools dir: %w", err)
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -121,7 +126,9 @@ func AddClaude(claudeBin, label string) (string, error) {
 
 	poolID := manifest.NextID("claude")
 	configDir := filepath.Join(StorePath(), poolID)
-	os.MkdirAll(configDir, 0700)
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return "", fmt.Errorf("create pool dir: %w", err)
+	}
 
 	fmt.Printf("  Pool: %s\n", poolID)
 	fmt.Printf("  Credentials dir: %s\n", configDir)
@@ -166,7 +173,9 @@ func AddClaude(claudeBin, label string) (string, error) {
 		copyCredentials(configDir, existing.ConfigDir)
 		os.RemoveAll(configDir) // remove temp dir
 		existing.LastUsed = time.Now()
-		manifest.Save()
+		if err := manifest.Save(); err != nil {
+			return "", fmt.Errorf("save manifest: %w", err)
+		}
 
 		fmt.Printf("  Refreshed: %s\n", existing.ID)
 		return existing.ID, nil
@@ -282,7 +291,9 @@ func AddCodex(codexBin, label string) (string, error) {
 
 	poolID := manifest.NextID("codex")
 	configDir := filepath.Join(StorePath(), poolID)
-	os.MkdirAll(configDir, 0700)
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return "", fmt.Errorf("create pool dir: %w", err)
+	}
 
 	fmt.Printf("  Pool: %s\n", poolID)
 	fmt.Printf("  Credentials dir: %s\n", configDir)
@@ -327,7 +338,9 @@ func AddCodex(codexBin, label string) (string, error) {
 		copyCredentials(configDir, existing.ConfigDir)
 		os.RemoveAll(configDir)
 		existing.LastUsed = time.Now()
-		manifest.Save()
+		if err := manifest.Save(); err != nil {
+			return "", fmt.Errorf("save manifest: %w", err)
+		}
 		fmt.Printf("  Refreshed: %s\n", existing.ID)
 		return existing.ID, nil
 	}
@@ -381,7 +394,9 @@ func readCodexAccountID(configDir string) string {
 }
 
 func copyCredentials(src, dst string) {
-	os.MkdirAll(dst, 0700)
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		return
+	}
 	entries, _ := os.ReadDir(src)
 	for _, e := range entries {
 		if e.IsDir() {
@@ -391,13 +406,9 @@ func copyCredentials(src, dst string) {
 		if err != nil {
 			continue
 		}
-		os.WriteFile(filepath.Join(dst, e.Name()), data, 0600)
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0600); err != nil {
+			continue
+		}
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

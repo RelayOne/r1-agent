@@ -22,7 +22,9 @@ type SQLStore struct {
 // NewSQLStore opens (or creates) a SQLite database at .stoke/session.db.
 func NewSQLStore(projectRoot string) (*SQLStore, error) {
 	root := filepath.Join(projectRoot, ".stoke")
-	os.MkdirAll(root, 0700)
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return nil, fmt.Errorf("create session dir: %w", err)
+	}
 	dbPath := filepath.Join(root, "session.db")
 
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")

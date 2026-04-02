@@ -91,9 +91,14 @@ func (b *EmberBackend) Spawn(ctx context.Context, opts SpawnOpts) (Worker, error
 		client:   b.httpClient,
 	}
 
-	// Poll until running (max 60s)
+	// Poll until running (max 60s), respecting context cancellation
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled while waiting for worker: %w", ctx.Err())
+		default:
+		}
 		state, err := w.getState(ctx)
 		if err != nil {
 			return nil, err
@@ -104,7 +109,11 @@ func (b *EmberBackend) Spawn(ctx context.Context, opts SpawnOpts) (Worker, error
 		if state == "error" || state == "destroyed" {
 			return nil, fmt.Errorf("worker failed to start: state=%s", state)
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("context cancelled while waiting for worker: %w", ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 	return nil, fmt.Errorf("worker did not start within 60s")
 }
@@ -117,7 +126,7 @@ type flareWorker struct {
 	client   *http.Client
 }
 
-func (w *flareWorker) ID() string       { return w.id }
+func (w *flareWorker) ID() string        { return w.id }
 func (w *flareWorker) Hostname() string  { return w.hostname }
 func (w *flareWorker) Stdout() io.Reader { return strings.NewReader("") }
 
@@ -147,7 +156,9 @@ func (w *flareWorker) getState(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	var result struct{ State string `json:"state"` }
+	var result struct {
+		State string `json:"state"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode worker state: %w", err)
 	}
@@ -193,8 +204,12 @@ func (w *flareWorker) Upload(ctx context.Context, localPath, remotePath string) 
 	if _, err := io.Copy(part, file); err != nil {
 		return fmt.Errorf("copy file to upload: %w", err)
 	}
-	mw.WriteField("path", remotePath)
-	mw.Close()
+	if err := mw.WriteField("path", remotePath); err != nil {
+		return fmt.Errorf("write multipart field: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return fmt.Errorf("close multipart writer: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", w.endpoint+"/v1/workers/"+w.id+"/upload", &buf)
 	if err != nil {

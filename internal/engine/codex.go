@@ -129,6 +129,10 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 			onEvent(stream.Event{Type: raw.Type, Raw: []byte(line)})
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		result.IsError = true
+		result.Subtype = "scanner_error"
+	}
 
 	// Wait for process
 	waitDone := make(chan error, 1)

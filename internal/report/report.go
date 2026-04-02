@@ -65,7 +65,9 @@ type ReviewReport struct {
 // Save writes the report as JSON to the .stoke directory.
 func (r *BuildReport) Save(projectRoot string) error {
 	dir := filepath.Join(projectRoot, ".stoke", "reports")
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create reports dir: %w", err)
+	}
 	filename := fmt.Sprintf("build-%s-%s.json", r.PlanID, r.StartedAt.Format("20060102-150405"))
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil { return err }
@@ -76,7 +78,9 @@ func (r *BuildReport) Save(projectRoot string) error {
 // SaveLatest writes the report as latest.json for easy CI access.
 func (r *BuildReport) SaveLatest(projectRoot string) error {
 	dir := filepath.Join(projectRoot, ".stoke", "reports")
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create reports dir: %w", err)
+	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil { return err }
 	return os.WriteFile(filepath.Join(dir, "latest.json"), data, 0644)

@@ -112,11 +112,16 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// ROI filter
 	var roiClass plan.ROIClass
 	switch cfg.ROIFilter {
-	case "high":   roiClass = plan.ROIHigh
-	case "medium": roiClass = plan.ROIMedium
-	case "low":    roiClass = plan.ROILow
-	case "skip":   roiClass = plan.ROISkip
-	default:       roiClass = plan.ROIMedium
+	case "high":
+		roiClass = plan.ROIHigh
+	case "medium":
+		roiClass = plan.ROIMedium
+	case "low":
+		roiClass = plan.ROILow
+	case "skip":
+		roiClass = plan.ROISkip
+	default:
+		roiClass = plan.ROIMedium
 	}
 	kept, _ := plan.FilterByROI(p.Tasks, roiClass)
 	p.Tasks = kept
@@ -151,7 +156,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 	// Create harness-owned plan state
 	taskIDs := make([]string, len(p.Tasks))
-	for i, t := range p.Tasks { taskIDs[i] = t.ID }
+	for i, t := range p.Tasks {
+		taskIDs[i] = t.ID
+	}
 	planState := taskstate.NewPlanState(taskIDs)
 
 	sched := scheduler.New(cfg.Workers)
@@ -178,18 +185,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			TaskType:         task.Type,
 			TaskVerification: task.Verification,
 			AllowedFiles:     task.Files,
-			DryRun:          false,
-			AuthMode:        app.AuthMode(cfg.AuthMode),
-			ClaudeBinary:    cfg.ClaudeBinary,
-			CodexBinary:     cfg.CodexBinary,
-			ClaudeConfigDir: cfg.ClaudeConfigDir,
-			CodexHome:       cfg.CodexHome,
-			Pools:           pools,
-			Worktrees:       sharedWorktrees,
-			State:           ts,
-			BuildCommand:    cfg.BuildCommand,
-			TestCommand:     cfg.TestCommand,
-			LintCommand:     cfg.LintCommand,
+			DryRun:           false,
+			AuthMode:         app.AuthMode(cfg.AuthMode),
+			ClaudeBinary:     cfg.ClaudeBinary,
+			CodexBinary:      cfg.CodexBinary,
+			ClaudeConfigDir:  cfg.ClaudeConfigDir,
+			CodexHome:        cfg.CodexHome,
+			Pools:            pools,
+			Worktrees:        sharedWorktrees,
+			State:            ts,
+			BuildCommand:     cfg.BuildCommand,
+			TestCommand:      cfg.TestCommand,
+			LintCommand:      cfg.LintCommand,
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
 				if ev.Type == "assistant" {
@@ -232,11 +239,11 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		if err != nil {
 			ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
 			attempt := session.Attempt{
-				TaskID:  task.ID,
-				Number:  attemptNum,
-				Success: false,
-				Error:   err.Error(),
-				CostUSD: result.TotalCostUSD,
+				TaskID:   task.ID,
+				Number:   attemptNum,
+				Success:  false,
+				Error:    err.Error(),
+				CostUSD:  result.TotalCostUSD,
 				Duration: time.Duration(elapsed * float64(time.Second)),
 			}
 			if analysis := verify.AnalyzeOutcomes(result.Verification); analysis != nil {
@@ -289,7 +296,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		} else {
 			tr.Status = "failed"
 			buildReport.TasksFailed++
-			if r.Error != nil { tr.Error = r.Error.Error() }
+			if r.Error != nil {
+				tr.Error = r.Error.Error()
+			}
 		}
 		buildReport.TotalCost += r.CostUSD
 		buildReport.Tasks = append(buildReport.Tasks, tr)
@@ -402,9 +411,15 @@ func runCmd(args []string) {
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
-	if *buildC == "" { *buildC = detected.Build }
-	if *testC == "" { *testC = detected.Test }
-	if *lintC == "" { *lintC = detected.Lint }
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
 
 	// Create TUI runner for live progress
 	ui := tui.NewRunner()
@@ -527,8 +542,12 @@ func buildCmd(args []string) {
 		snap := discovered.Snapshot()
 		claudeCount, codexCount := 0, 0
 		for _, p := range snap {
-			if p.Provider == subscriptions.ProviderClaude { claudeCount++ }
-			if p.Provider == subscriptions.ProviderCodex { codexCount++ }
+			if p.Provider == subscriptions.ProviderClaude {
+				claudeCount++
+			}
+			if p.Provider == subscriptions.ProviderCodex {
+				codexCount++
+			}
 		}
 		fmt.Printf("  pools:   %d Claude + %d Codex (auto-discovered from ~/.stoke/pools/)\n", claudeCount, codexCount)
 	}
@@ -536,9 +555,15 @@ func buildCmd(args []string) {
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
-	if *buildC == "" { *buildC = detected.Build }
-	if *testC == "" { *testC = detected.Test }
-	if *lintC == "" { *lintC = detected.Lint }
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
 
 	// Load plan
 	var p *plan.Plan
@@ -573,11 +598,16 @@ func buildCmd(args []string) {
 	// ROI filter: remove low-value tasks before execution
 	var roiClass plan.ROIClass
 	switch *roiFilter {
-	case "high":   roiClass = plan.ROIHigh
-	case "medium": roiClass = plan.ROIMedium
-	case "low":    roiClass = plan.ROILow
-	case "skip":   roiClass = plan.ROISkip
-	default:       roiClass = plan.ROIMedium
+	case "high":
+		roiClass = plan.ROIHigh
+	case "medium":
+		roiClass = plan.ROIMedium
+	case "low":
+		roiClass = plan.ROILow
+	case "skip":
+		roiClass = plan.ROISkip
+	default:
+		roiClass = plan.ROIMedium
 	}
 	kept, filtered := plan.FilterByROI(p.Tasks, roiClass)
 	if len(filtered) > 0 {
@@ -630,7 +660,9 @@ func buildCmd(args []string) {
 
 		// Create harness-owned plan state for interactive mode too
 		interactiveTaskIDs := make([]string, len(p.Tasks))
-		for i, t := range p.Tasks { interactiveTaskIDs[i] = t.ID }
+		for i, t := range p.Tasks {
+			interactiveTaskIDs[i] = t.ID
+		}
 		interactivePlanState := taskstate.NewPlanState(interactiveTaskIDs)
 
 		go func() {
@@ -959,7 +991,10 @@ func scanCmd(args []string) {
 				output["security_surface"] = secMap
 			}
 		}
-		data, _ := json.MarshalIndent(output, "", "  ")
+		data, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			fatal("marshal JSON output: %v", err)
+		}
 		fmt.Println(string(data))
 		if result.HasBlocking() {
 			os.Exit(1)
@@ -971,13 +1006,19 @@ func scanCmd(args []string) {
 	for _, f := range result.Findings {
 		icon := "●"
 		switch f.Severity {
-		case "critical": icon = "✗"
-		case "high":     icon = "!"
-		case "medium":   icon = "~"
-		case "low":      icon = "○"
+		case "critical":
+			icon = "✗"
+		case "high":
+			icon = "!"
+		case "medium":
+			icon = "~"
+		case "low":
+			icon = "○"
 		}
 		fmt.Printf("  %s [%s] %s:%d -- %s\n", icon, f.Severity, f.File, f.Line, f.Message)
-		if f.Fix != "" { fmt.Printf("           Fix: %s\n", f.Fix) }
+		if f.Fix != "" {
+			fmt.Printf("           Fix: %s\n", f.Fix)
+		}
 	}
 
 	// Security surface mapping
@@ -1022,9 +1063,13 @@ func auditCmd(args []string) {
 	if *personas != "" {
 		ids := strings.Split(*personas, ",")
 		idSet := map[string]bool{}
-		for _, id := range ids { idSet[strings.TrimSpace(id)] = true }
+		for _, id := range ids {
+			idSet[strings.TrimSpace(id)] = true
+		}
 		for _, p := range allPersonas {
-			if idSet[p.ID] { selected = append(selected, p) }
+			if idSet[p.ID] {
+				selected = append(selected, p)
+			}
 		}
 	} else {
 		selected = audit.SelectPersonas(allPersonas, securityMap, scanResult)
@@ -1032,7 +1077,9 @@ func auditCmd(args []string) {
 
 	fmt.Printf("  Personas: ")
 	names := make([]string, len(selected))
-	for i, p := range selected { names[i] = p.Name }
+	for i, p := range selected {
+		names[i] = p.Name
+	}
 	fmt.Println(strings.Join(names, ", "))
 	fmt.Println()
 
@@ -1048,13 +1095,19 @@ func auditCmd(args []string) {
 		if *dryRun {
 			fmt.Printf("--- %s ---\n", p.Name)
 			fmt.Println(prompt[:min(len(prompt), 500)])
-			if len(prompt) > 500 { fmt.Println("...") }
+			if len(prompt) > 500 {
+				fmt.Println("...")
+			}
 			fmt.Println()
 			continue
 		}
 
 		if *jsonOut {
-			data, _ := json.MarshalIndent(req, "", "  ")
+			data, err := json.MarshalIndent(req, "", "  ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  marshal error: %v\n", err)
+				continue
+			}
 			fmt.Println(string(data))
 			continue
 		}
@@ -1063,7 +1116,10 @@ func auditCmd(args []string) {
 		claudeBin := "claude"
 		runner := engine.NewClaudeRunner(claudeBin)
 		auditRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", "audit-"+p.ID)
-		os.MkdirAll(auditRuntimeDir, 0o755)
+		if err := os.MkdirAll(auditRuntimeDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "  create runtime dir: %v\n", err)
+			continue
+		}
 		spec := engine.RunSpec{
 			Prompt:      prompt,
 			WorktreeDir: absRepo,
@@ -1098,7 +1154,9 @@ func auditCmd(args []string) {
 }
 
 func min(a, b int) int {
-	if a < b { return a }
+	if a < b {
+		return a
+	}
 	return b
 }
 
@@ -1381,9 +1439,15 @@ func repairCmd(args []string) {
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
-	if *buildC == "" { *buildC = detected.Build }
-	if *testC == "" { *testC = detected.Test }
-	if *lintC == "" { *lintC = detected.Lint }
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
 
 	fmt.Printf("⚡ STOKE repair\n")
 	fmt.Printf("  repo: %s\n", absRepo)
@@ -1453,7 +1517,9 @@ func repairCmd(args []string) {
 
 	// Save repair plan
 	repairPlanPath := filepath.Join(absRepo, ".stoke", "repair-plan.json")
-	os.MkdirAll(filepath.Dir(repairPlanPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(repairPlanPath), 0755); err != nil {
+		fatal("create dir: %v", err)
+	}
 	planData, err := json.MarshalIndent(repairPlan, "", "  ")
 	if err != nil {
 		fatal("marshal repair plan: %v", err)
@@ -1496,12 +1562,24 @@ func repairCmd(args []string) {
 		"--claude-bin", *claudeBin,
 		"--codex-bin", *codexBin,
 	}
-	if *policy != "" { buildArgs = append(buildArgs, "--policy", *policy) }
-	if *claudeConfigDir != "" { buildArgs = append(buildArgs, "--claude-config-dir", *claudeConfigDir) }
-	if *codexHome != "" { buildArgs = append(buildArgs, "--codex-home", *codexHome) }
-	if *buildC != "" { buildArgs = append(buildArgs, "--build-cmd", *buildC) }
-	if *testC != "" { buildArgs = append(buildArgs, "--test-cmd", *testC) }
-	if *lintC != "" { buildArgs = append(buildArgs, "--lint-cmd", *lintC) }
+	if *policy != "" {
+		buildArgs = append(buildArgs, "--policy", *policy)
+	}
+	if *claudeConfigDir != "" {
+		buildArgs = append(buildArgs, "--claude-config-dir", *claudeConfigDir)
+	}
+	if *codexHome != "" {
+		buildArgs = append(buildArgs, "--codex-home", *codexHome)
+	}
+	if *buildC != "" {
+		buildArgs = append(buildArgs, "--build-cmd", *buildC)
+	}
+	if *testC != "" {
+		buildArgs = append(buildArgs, "--test-cmd", *testC)
+	}
+	if *lintC != "" {
+		buildArgs = append(buildArgs, "--lint-cmd", *lintC)
+	}
 	_ = timeout // timeout is handled by buildCmd internally
 
 	buildCmd(buildArgs)
@@ -1525,7 +1603,9 @@ func repairCmd(args []string) {
 	// Phase 5: Report
 	fmt.Println("\nPhase 5: Repair report")
 	reportPath := filepath.Join(absRepo, ".stoke", "reports", "repair-report.json")
-	os.MkdirAll(filepath.Dir(reportPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0755); err != nil {
+		fatal("create reports dir: %v", err)
+	}
 	repairReport := map[string]interface{}{
 		"timestamp":        time.Now().Format(time.RFC3339),
 		"before_findings":  len(findings),
@@ -1581,9 +1661,15 @@ func shipCmd(args []string) {
 	}
 
 	detected := config.DetectCommands(absRepo)
-	if *buildC == "" { *buildC = detected.Build }
-	if *testC == "" { *testC = detected.Test }
-	if *lintC == "" { *lintC = detected.Lint }
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
 
 	fmt.Printf("⚡ STOKE ship\n")
 	fmt.Printf("  repo:       %s\n", absRepo)
@@ -1622,7 +1708,9 @@ func shipCmd(args []string) {
 			"--repo", absRepo,
 			"--claude-bin", *claudeBin,
 		}
-		if *claudeConfigDir != "" { planArgs = append(planArgs, "--claude-config-dir", *claudeConfigDir) }
+		if *claudeConfigDir != "" {
+			planArgs = append(planArgs, "--claude-config-dir", *claudeConfigDir)
+		}
 		planCmd(planArgs)
 		currentPlanPath = filepath.Join(absRepo, "stoke-plan.json")
 		if !fileExists(currentPlanPath) {
@@ -1640,7 +1728,7 @@ func shipCmd(args []string) {
 
 		// Step 1: Build (using runBuild directly to get proper success/failure result)
 		fmt.Printf("Step 1: Building from %s\n", filepath.Base(currentPlanPath))
-		
+
 		// Build pool directories from CLI flags
 		var claudePoolDirs, codexPoolDirs []string
 		if *claudeConfigDir != "" {
@@ -1666,7 +1754,7 @@ func shipCmd(args []string) {
 			TestCommand:     *testC,
 			LintCommand:     *lintC,
 			ROIFilter:       "skip", // no ROI filtering in ship mode
-			UseSQLite:       true,  // ship mode always uses SQLite for concurrency safety
+			UseSQLite:       true,   // ship mode always uses SQLite for concurrency safety
 			Timeout:         *timeout,
 		}
 
@@ -1720,7 +1808,9 @@ func shipCmd(args []string) {
 		// Use Codex as reviewer (opposite family from Claude builder)
 		reviewRunner := engine.NewCodexRunner(*codexBin)
 		shipRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", fmt.Sprintf("ship-review-round-%d", round))
-		os.MkdirAll(shipRuntimeDir, 0o755)
+		if err := os.MkdirAll(shipRuntimeDir, 0o755); err != nil {
+			fatal("create runtime dir: %v", err)
+		}
 		reviewSpec := engine.RunSpec{
 			Prompt:        reviewPrompt,
 			WorktreeDir:   absRepo,
@@ -1761,7 +1851,9 @@ func shipCmd(args []string) {
 			fmt.Println("  Falling back to Claude reviewer...")
 			fallbackRunner := engine.NewClaudeRunner(*claudeBin)
 			fbRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", fmt.Sprintf("ship-review-round-%d-fallback", round))
-			os.MkdirAll(fbRuntimeDir, 0o755)
+			if err := os.MkdirAll(fbRuntimeDir, 0o755); err != nil {
+				fatal("create runtime dir: %v", err)
+			}
 			fallbackSpec := engine.RunSpec{
 				Prompt:        reviewPrompt,
 				WorktreeDir:   absRepo,
@@ -1786,7 +1878,9 @@ func shipCmd(args []string) {
 				}
 			}
 			reviewResult, reviewErr = fallbackRunner.Run(ctx, fallbackSpec, func(ev stream.Event) {
-				if ev.DeltaText != "" { fmt.Print(ev.DeltaText) }
+				if ev.DeltaText != "" {
+					fmt.Print(ev.DeltaText)
+				}
 			})
 			totalCost += reviewResult.CostUSD
 			if reviewErr != nil {
@@ -1869,7 +1963,9 @@ func shipCmd(args []string) {
 		}
 
 		fixPlanPath := filepath.Join(absRepo, ".stoke", fmt.Sprintf("fix-plan-round-%d.json", round+1))
-		os.MkdirAll(filepath.Dir(fixPlanPath), 0755)
+		if err := os.MkdirAll(filepath.Dir(fixPlanPath), 0755); err != nil {
+			fatal("create dir: %v", err)
+		}
 		fixData, err := json.MarshalIndent(fixPlan, "", "  ")
 		if err != nil {
 			fatal("marshal fix plan: %v", err)
@@ -2172,7 +2268,9 @@ func gitHead(dir string) string {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return strings.TrimSpace(string(out))
 }
 
@@ -2203,7 +2301,9 @@ func launchREPL() {
 		Usage: "/build [plan-file]",
 		Run: func(args string) {
 			planPath := "stoke-plan.json"
-			if args != "" { planPath = args }
+			if args != "" {
+				planPath = args
+			}
 			buildCmd([]string{"--plan", planPath, "--repo", absRepo})
 		},
 	})
@@ -2220,8 +2320,12 @@ func launchREPL() {
 		Usage: "/repair [--security] [--dry-run]",
 		Run: func(args string) {
 			repairArgs := []string{"--repo", absRepo}
-			if strings.Contains(args, "--security") { repairArgs = append(repairArgs, "--security") }
-			if strings.Contains(args, "--dry-run") { repairArgs = append(repairArgs, "--dry-run") }
+			if strings.Contains(args, "--security") {
+				repairArgs = append(repairArgs, "--security")
+			}
+			if strings.Contains(args, "--dry-run") {
+				repairArgs = append(repairArgs, "--dry-run")
+			}
 			repairCmd(repairArgs)
 		},
 	})
@@ -2231,8 +2335,12 @@ func launchREPL() {
 		Usage: "/scan [--security] [--json]",
 		Run: func(args string) {
 			scanArgs := []string{"--repo", absRepo}
-			if strings.Contains(args, "--security") { scanArgs = append(scanArgs, "--security") }
-			if strings.Contains(args, "--json") { scanArgs = append(scanArgs, "--json") }
+			if strings.Contains(args, "--security") {
+				scanArgs = append(scanArgs, "--security")
+			}
+			if strings.Contains(args, "--json") {
+				scanArgs = append(scanArgs, "--json")
+			}
 			scanCmd(scanArgs)
 		},
 	})
@@ -2242,7 +2350,9 @@ func launchREPL() {
 		Usage: "/audit [--dry-run]",
 		Run: func(args string) {
 			auditArgs := []string{"--repo", absRepo}
-			if strings.Contains(args, "--dry-run") { auditArgs = append(auditArgs, "--dry-run") }
+			if strings.Contains(args, "--dry-run") {
+				auditArgs = append(auditArgs, "--dry-run")
+			}
 			auditCmd(auditArgs)
 		},
 	})
@@ -2329,7 +2439,7 @@ func launchREPL() {
 
 	r.Register(repl.Command{
 		Name: "help", Description: "Show available commands",
-		Run:  func(args string) {}, // handled by REPL itself
+		Run: func(args string) {}, // handled by REPL itself
 	})
 
 	// Free text -> dispatch through the run pipeline
@@ -2360,7 +2470,9 @@ func checkResume(store session.SessionStore, p *plan.Plan) {
 	}
 	done := 0
 	for _, t := range prev.Tasks {
-		if t.Status == plan.StatusDone { done++ }
+		if t.Status == plan.StatusDone {
+			done++
+		}
 	}
 	if done >= len(prev.Tasks) {
 		return
@@ -2388,19 +2500,19 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		TaskType:         task.Type,
 		TaskVerification: task.Verification,
 		AllowedFiles:     task.Files,
-		DryRun:          false,
-		AuthMode:        app.AuthMode(authMode),
-		ClaudeBinary:    claudeBin,
-		CodexBinary:     codexBin,
-		ClaudeConfigDir: claudeConfigDir,
-		CodexHome:       codexHome,
-		Pools:           pools,
-		Worktrees:       worktrees,
-		State:           state,
-		BuildCommand:    buildCmd,
-		TestCommand:     testCmd,
-		LintCommand:     lintCmd,
-		OnEvent:         onEvent,
+		DryRun:           false,
+		AuthMode:         app.AuthMode(authMode),
+		ClaudeBinary:     claudeBin,
+		CodexBinary:      codexBin,
+		ClaudeConfigDir:  claudeConfigDir,
+		CodexHome:        codexHome,
+		Pools:            pools,
+		Worktrees:        worktrees,
+		State:            state,
+		BuildCommand:     buildCmd,
+		TestCommand:      testCmd,
+		LintCommand:      lintCmd,
+		OnEvent:          onEvent,
 	}
 }
 
@@ -2422,18 +2534,26 @@ func readOAuthToken(configDir string) string {
 
 func bar(pct float64, w int) string {
 	n := int(pct / 100 * float64(w))
-	if n > w { n = w }
-	if n < 0 { n = 0 }
+	if n > w {
+		n = w
+	}
+	if n < 0 {
+		n = 0
+	}
 	return strings.Repeat("█", n) + strings.Repeat("░", w-n)
 }
 
 func trunc(s string, n int) string {
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n-3] + "..."
 }
 
 func orNone(s string) string {
-	if s == "" { return "(none)" }
+	if s == "" {
+		return "(none)"
+	}
 	return s
 }
 

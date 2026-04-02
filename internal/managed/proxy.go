@@ -39,12 +39,12 @@ type Message struct {
 }
 
 type UsageEvent struct {
-	TaskID       string  `json:"task_id"`
-	Model        string  `json:"model"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	CostUSD      float64 `json:"cost_usd"`
-	MarkupUSD    float64 `json:"markup_usd"`
+	TaskID       string    `json:"task_id"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	CostUSD      float64   `json:"cost_usd"`
+	MarkupUSD    float64   `json:"markup_usd"`
 	Timestamp    time.Time `json:"timestamp"`
 }
 
@@ -183,7 +183,9 @@ func (p *Proxy) ChatSync(model string, messages []Message) (string, UsageEvent, 
 
 	var result struct {
 		Choices []struct {
-			Message struct{ Content string `json:"content"` } `json:"message"`
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int     `json:"prompt_tokens"`
@@ -203,9 +205,9 @@ func (p *Proxy) ChatSync(model string, messages []Message) (string, UsageEvent, 
 	usage := UsageEvent{
 		Model: model, InputTokens: result.Usage.PromptTokens,
 		OutputTokens: result.Usage.CompletionTokens,
-		CostUSD: result.Usage.TotalCost,
-		MarkupUSD: result.Usage.TotalCost * p.config.Markup,
-		Timestamp: time.Now(),
+		CostUSD:      result.Usage.TotalCost,
+		MarkupUSD:    result.Usage.TotalCost * p.config.Markup,
+		Timestamp:    time.Now(),
 	}
 	p.mu.Lock()
 	p.usage = append(p.usage, usage)

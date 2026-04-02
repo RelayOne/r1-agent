@@ -103,7 +103,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	var handle worktree.Handle
 	if e.DryRun {
 		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-dryrun-"+name)
-		os.MkdirAll(runtimeDir, 0o755)
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			return Result{}, fmt.Errorf("create runtime dir: %w", err)
+		}
 		handle = worktree.Handle{
 			Name:       name,
 			Branch:     "stoke/" + name,
