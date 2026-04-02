@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,7 @@ type UsageEvent struct {
 type Proxy struct {
 	config Config
 	client *http.Client
+	mu     sync.Mutex
 	usage  []UsageEvent
 }
 
@@ -69,11 +71,14 @@ func (p *Proxy) Chat(model string, messages []Message) (string, UsageEvent, erro
 		return "", UsageEvent{}, fmt.Errorf("managed AI not enabled (set EMBER_API_KEY)")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"model":    model,
 		"messages": messages,
 		"stream":   true,
 	})
+	if err != nil {
+		return "", UsageEvent{}, fmt.Errorf("marshal chat request: %w", err)
+	}
 
 	req, err := http.NewRequest("POST", p.config.APIEndpoint+"/v1/ai/chat", bytes.NewReader(body))
 	if err != nil {
@@ -137,7 +142,9 @@ func (p *Proxy) Chat(model string, messages []Message) (string, UsageEvent, erro
 		}
 	}
 
+	p.mu.Lock()
 	p.usage = append(p.usage, usage)
+	p.mu.Unlock()
 	return fullText.String(), usage, nil
 }
 
@@ -147,11 +154,14 @@ func (p *Proxy) ChatSync(model string, messages []Message) (string, UsageEvent, 
 		return "", UsageEvent{}, fmt.Errorf("managed AI not enabled")
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"model":    model,
 		"messages": messages,
 		"stream":   false,
 	})
+	if err != nil {
+		return "", UsageEvent{}, fmt.Errorf("marshal chat request: %w", err)
+	}
 
 	req, err := http.NewRequest("POST", p.config.APIEndpoint+"/v1/ai/chat", bytes.NewReader(body))
 	if err != nil {
@@ -181,7 +191,9 @@ func (p *Proxy) ChatSync(model string, messages []Message) (string, UsageEvent, 
 			TotalCost        float64 `json:"total_cost"`
 		} `json:"usage"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", UsageEvent{}, fmt.Errorf("decode chat response: %w", err)
+	}
 
 	text := ""
 	if len(result.Choices) > 0 {
@@ -195,12 +207,16 @@ func (p *Proxy) ChatSync(model string, messages []Message) (string, UsageEvent, 
 		MarkupUSD: result.Usage.TotalCost * p.config.Markup,
 		Timestamp: time.Now(),
 	}
+	p.mu.Lock()
 	p.usage = append(p.usage, usage)
+	p.mu.Unlock()
 	return text, usage, nil
 }
 
 // TotalCost returns cumulative cost and markup for this session.
 func (p *Proxy) TotalCost() (cost, markup float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for _, u := range p.usage {
 		cost += u.CostUSD
 		markup += u.MarkupUSD
@@ -210,6 +226,8 @@ func (p *Proxy) TotalCost() (cost, markup float64) {
 
 // FlushUsage returns all usage events and clears the buffer.
 func (p *Proxy) FlushUsage() []UsageEvent {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	events := p.usage
 	p.usage = nil
 	return events

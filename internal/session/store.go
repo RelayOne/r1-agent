@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"stoke/internal/plan"
@@ -25,13 +26,14 @@ type SessionStore interface {
 // Store persists session state as JSON files under .stoke/.
 type Store struct {
 	root string
+	mu   sync.Mutex
 }
 
 // New creates a session store.
 func New(projectRoot string) *Store {
 	root := filepath.Join(projectRoot, ".stoke")
-	os.MkdirAll(root, 0755)
-	os.MkdirAll(filepath.Join(root, "history"), 0755)
+	os.MkdirAll(root, 0700)
+	os.MkdirAll(filepath.Join(root, "history"), 0700)
 	return &Store{root: root}
 }
 
@@ -108,6 +110,8 @@ type Attempt struct {
 }
 
 func (s *Store) SaveAttempt(a Attempt) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	path := filepath.Join("history", a.TaskID+".json")
 	var attempts []Attempt
 	s.readJSON(path, &attempts)

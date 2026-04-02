@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ func (b *EmberBackend) Spawn(ctx context.Context, opts SpawnOpts) (Worker, error
 		opts.Size = b.defaultSize
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	body, err := json.Marshal(map[string]any{
 		"name":     fmt.Sprintf("stoke-%s", opts.TaskID),
 		"size":     opts.Size,
 		"repo_url": opts.RepoURL,
@@ -51,6 +52,9 @@ func (b *EmberBackend) Spawn(ctx context.Context, opts SpawnOpts) (Worker, error
 			"auto_destroy":      opts.AutoDestroy,
 		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal spawn request: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", b.endpoint+"/v1/workers", bytes.NewReader(body))
 	if err != nil {
@@ -120,7 +124,10 @@ func (w *flareWorker) Stdout() io.Reader { return strings.NewReader("") }
 func (w *flareWorker) doReq(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var bodyReader io.Reader
 	if body != nil {
-		b, _ := json.Marshal(body)
+		b, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request body: %w", err)
+		}
 		bodyReader = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, w.endpoint+path, bodyReader)
@@ -141,7 +148,9 @@ func (w *flareWorker) getState(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 	var result struct{ State string `json:"state"` }
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode worker state: %w", err)
+	}
 	return result.State, nil
 }
 
@@ -159,7 +168,9 @@ func (w *flareWorker) Exec(ctx context.Context, cmd string, args ...string) (Exe
 		Stderr   string `json:"stderr"`
 		Duration int64  `json:"duration_ms"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ExecResult{}, fmt.Errorf("decode exec result: %w", err)
+	}
 	return ExecResult{
 		ExitCode: result.ExitCode, Stdout: result.Stdout,
 		Stderr: result.Stderr, Duration: result.Duration,
@@ -179,7 +190,9 @@ func (w *flareWorker) Upload(ctx context.Context, localPath, remotePath string) 
 	if err != nil {
 		return err
 	}
-	io.Copy(part, file)
+	if _, err := io.Copy(part, file); err != nil {
+		return fmt.Errorf("copy file to upload: %w", err)
+	}
 	mw.WriteField("path", remotePath)
 	mw.Close()
 
@@ -203,7 +216,7 @@ func (w *flareWorker) Upload(ctx context.Context, localPath, remotePath string) 
 }
 
 func (w *flareWorker) Download(ctx context.Context, remotePath, localPath string) error {
-	resp, err := w.doReq(ctx, "GET", fmt.Sprintf("/v1/workers/%s/download?path=%s", w.id, remotePath), nil)
+	resp, err := w.doReq(ctx, "GET", fmt.Sprintf("/v1/workers/%s/download?path=%s", w.id, url.QueryEscape(remotePath)), nil)
 	if err != nil {
 		return err
 	}

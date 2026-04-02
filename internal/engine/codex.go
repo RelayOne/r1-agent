@@ -115,7 +115,9 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 				OutputTokens      int `json:"output_tokens"`
 			} `json:"usage,omitempty"`
 		}
-		json.Unmarshal([]byte(line), &raw)
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
 
 		if raw.Usage != nil {
 			result.Tokens.Input += raw.Usage.InputTokens
@@ -167,6 +169,11 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		killProcessGroup(cmd)
 		result.IsError = true
 		result.Subtype = "timeout_after_result"
+		// Drain stderrDone to prevent goroutine leak
+		select {
+		case <-stderrDone:
+		default:
+		}
 	}
 
 	return result, nil

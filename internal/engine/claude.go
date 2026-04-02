@@ -61,9 +61,14 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 	hooksConf := hooks.HooksConfig(runtimeDir)
 	if len(hooksConf) > 0 {
 		var merged map[string]interface{}
-		json.Unmarshal(raw, &merged)
+		if err := json.Unmarshal(raw, &merged); err != nil {
+			return PreparedCommand{}, fmt.Errorf("unmarshal settings for hooks merge: %w", err)
+		}
 		for k, v := range hooksConf { merged[k] = v }
-		raw, _ = json.MarshalIndent(merged, "", "  ")
+		raw, err = json.MarshalIndent(merged, "", "  ")
+		if err != nil {
+			return PreparedCommand{}, fmt.Errorf("marshal merged settings: %w", err)
+		}
 	}
 
 	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {

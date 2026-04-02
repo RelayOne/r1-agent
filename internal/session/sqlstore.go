@@ -22,7 +22,7 @@ type SQLStore struct {
 // NewSQLStore opens (or creates) a SQLite database at .stoke/session.db.
 func NewSQLStore(projectRoot string) (*SQLStore, error) {
 	root := filepath.Join(projectRoot, ".stoke")
-	os.MkdirAll(root, 0755)
+	os.MkdirAll(root, 0700)
 	dbPath := filepath.Join(root, "session.db")
 
 	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
@@ -80,8 +80,11 @@ func (s *SQLStore) Close() error { return s.db.Close() }
 
 func (s *SQLStore) SaveState(state *State) error {
 	state.SavedAt = time.Now()
-	tasksJSON, _ := json.Marshal(state.Tasks)
-	_, err := s.db.Exec(`
+	tasksJSON, err := json.Marshal(state.Tasks)
+	if err != nil {
+		return fmt.Errorf("marshal tasks: %w", err)
+	}
+	_, err = s.db.Exec(`
 		INSERT OR REPLACE INTO session_state (id, plan_id, tasks_json, total_cost, started_at, saved_at)
 		VALUES (1, ?, ?, ?, ?, ?)`,
 		state.PlanID, string(tasksJSON), state.TotalCostUSD,
@@ -100,9 +103,17 @@ func (s *SQLStore) LoadState() (*State, error) {
 		return nil, err
 	}
 	var tasks []plan.Task
-	json.Unmarshal([]byte(tasksJSON), &tasks)
-	started, _ := time.Parse(time.RFC3339, startedStr)
-	saved, _ := time.Parse(time.RFC3339, savedStr)
+	if err := json.Unmarshal([]byte(tasksJSON), &tasks); err != nil {
+		return nil, fmt.Errorf("unmarshal tasks: %w", err)
+	}
+	started, err := time.Parse(time.RFC3339, startedStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse started_at: %w", err)
+	}
+	saved, err := time.Parse(time.RFC3339, savedStr)
+	if err != nil {
+		return nil, fmt.Errorf("parse saved_at: %w", err)
+	}
 	return &State{PlanID: planID, Tasks: tasks, TotalCostUSD: cost, StartedAt: started, SavedAt: saved}, nil
 }
 
@@ -146,10 +157,15 @@ func (s *SQLStore) LoadAttempts(taskID string) ([]Attempt, error) {
 		var a Attempt
 		var successInt int
 		var durNs int64
-		rows.Scan(&a.TaskID, &a.Number, &successInt, &a.CostUSD, &durNs, &a.Error, &a.FailClass, &a.FailSummary, &a.RootCause, &a.DiffSummary, &a.LearnedFix)
+		if err := rows.Scan(&a.TaskID, &a.Number, &successInt, &a.CostUSD, &durNs, &a.Error, &a.FailClass, &a.FailSummary, &a.RootCause, &a.DiffSummary, &a.LearnedFix); err != nil {
+			return nil, fmt.Errorf("scan attempt: %w", err)
+		}
 		a.Success = successInt != 0
 		a.Duration = time.Duration(durNs)
 		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate attempts: %w", err)
 	}
 	return out, nil
 }
@@ -157,14 +173,17 @@ func (s *SQLStore) LoadAttempts(taskID string) ([]Attempt, error) {
 // --- Learned patterns ---
 
 func (s *SQLStore) addPattern(issue, fix string) {
-	_, err := s.db.Exec("INSERT INTO patterns (issue, fix) VALUES (?, ?) ON CONFLICT(issue) DO UPDATE SET occurrences=occurrences+1, fix=?", issue, fix, fix)
-	_ = err
+	s.db.Exec("INSERT INTO patterns (issue, fix) VALUES (?, ?) ON CONFLICT(issue) DO UPDATE SET occurrences=occurrences+1, fix=?", issue, fix, fix)
 }
 
 func (s *SQLStore) SaveLearning(l *Learning) error {
-	s.db.Exec("DELETE FROM patterns")
+	if _, err := s.db.Exec("DELETE FROM patterns"); err != nil {
+		return fmt.Errorf("delete patterns: %w", err)
+	}
 	for _, p := range l.Patterns {
-		s.db.Exec("INSERT INTO patterns (issue, fix, occurrences) VALUES (?, ?, ?)", p.Issue, p.Fix, p.Occurrences)
+		if _, err := s.db.Exec("INSERT INTO patterns (issue, fix, occurrences) VALUES (?, ?, ?)", p.Issue, p.Fix, p.Occurrences); err != nil {
+			return fmt.Errorf("insert pattern: %w", err)
+		}
 	}
 	return nil
 }
@@ -178,8 +197,13 @@ func (s *SQLStore) LoadLearning() (*Learning, error) {
 	l := &Learning{}
 	for rows.Next() {
 		var p Pattern
-		rows.Scan(&p.Issue, &p.Fix, &p.Occurrences)
+		if err := rows.Scan(&p.Issue, &p.Fix, &p.Occurrences); err != nil {
+			return nil, fmt.Errorf("scan pattern: %w", err)
+		}
 		l.Patterns = append(l.Patterns, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate patterns: %w", err)
 	}
 	return l, nil
 }
