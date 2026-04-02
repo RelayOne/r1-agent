@@ -14,7 +14,9 @@ type ValidationError struct {
 
 func (e ValidationError) Error() string {
 	prefix := "warning"
-	if e.Fatal { prefix = "error" }
+	if e.Fatal {
+		prefix = "error"
+	}
 	return fmt.Sprintf("[%s] %s: %s", prefix, e.Field, e.Message)
 }
 

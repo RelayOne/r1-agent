@@ -35,7 +35,7 @@ func TestCodexPrepareUsesWorkspaceWriteForExecute(t *testing.T) {
 	prepared, err := runner.Prepare(RunSpec{
 		Prompt:      "implement feature",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
 		Phase:       PhaseSpec{Name: "execute"},
 	})
@@ -83,7 +83,7 @@ func TestCodexPrepareOutputsLastMessage(t *testing.T) {
 	prepared, err := runner.Prepare(RunSpec{
 		Prompt:      "test",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
 		Phase:       PhaseSpec{Name: "execute"},
 	})

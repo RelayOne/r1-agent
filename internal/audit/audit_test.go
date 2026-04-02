@@ -15,16 +15,24 @@ func TestDefaultPersonas(t *testing.T) {
 	ids := map[string]bool{}
 	for _, p := range personas {
 		ids[p.ID] = true
-		if p.Name == "" { t.Errorf("persona %s has no name", p.ID) }
-		if p.Focus == "" { t.Errorf("persona %s has no focus", p.ID) }
+		if p.Name == "" {
+			t.Errorf("persona %s has no name", p.ID)
+		}
+		if p.Focus == "" {
+			t.Errorf("persona %s has no focus", p.ID)
+		}
 	}
 	// Core 5 must always be present
 	for _, required := range []string{"security", "performance", "reliability", "maintainability", "ops"} {
-		if !ids[required] { t.Errorf("missing core persona: %s", required) }
+		if !ids[required] {
+			t.Errorf("missing core persona: %s", required)
+		}
 	}
 	// Specialized must be present
 	for _, required := range []string{"api-design", "concurrency", "testing", "privacy", "compliance"} {
-		if !ids[required] { t.Errorf("missing specialized persona: %s", required) }
+		if !ids[required] {
+			t.Errorf("missing specialized persona: %s", required)
+		}
 	}
 }
 
@@ -90,7 +98,9 @@ func TestSelectPersonasWithSecurity(t *testing.T) {
 	selected := SelectPersonas(all, secMap, nil)
 	found := false
 	for _, p := range selected {
-		if p.ID == "security" { found = true }
+		if p.ID == "security" {
+			found = true
+		}
 	}
 	if !found {
 		t.Error("security persona should be selected when auth surface exists")
@@ -105,9 +115,13 @@ func TestSelectPersonasMinimum(t *testing.T) {
 		t.Errorf("should return 5 core personas when no context, got %d", len(selected))
 	}
 	ids := map[string]bool{}
-	for _, p := range selected { ids[p.ID] = true }
+	for _, p := range selected {
+		ids[p.ID] = true
+	}
 	for _, core := range []string{"security", "performance", "reliability", "maintainability", "ops"} {
-		if !ids[core] { t.Errorf("missing core persona: %s", core) }
+		if !ids[core] {
+			t.Errorf("missing core persona: %s", core)
+		}
 	}
 }
 

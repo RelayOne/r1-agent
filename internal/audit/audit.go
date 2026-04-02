@@ -9,28 +9,28 @@ import (
 
 // Persona represents an expert perspective for code review.
 type Persona struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Focus       string `json:"focus"`
-	Prompt      string `json:"-"` // generated review prompt
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Focus  string `json:"focus"`
+	Prompt string `json:"-"` // generated review prompt
 }
 
 // ReviewRequest is what gets sent to an AI model for review.
 type ReviewRequest struct {
-	Persona     Persona  `json:"persona"`
-	Files       []string `json:"files"`
-	DiffSummary string   `json:"diff_summary"`
+	Persona     Persona           `json:"persona"`
+	Files       []string          `json:"files"`
+	DiffSummary string            `json:"diff_summary"`
 	ScanResult  *scan.ScanResult  `json:"scan_result,omitempty"`
 	SecurityMap *scan.SecurityMap `json:"security_map,omitempty"`
 }
 
 // ReviewFinding is one issue from a persona review.
 type ReviewFinding struct {
-	PersonaID string `json:"persona_id"`
-	Severity  string `json:"severity"` // critical, high, medium, low
-	File      string `json:"file,omitempty"`
-	Line      int    `json:"line,omitempty"`
-	Issue     string `json:"issue"`
+	PersonaID  string `json:"persona_id"`
+	Severity   string `json:"severity"` // critical, high, medium, low
+	File       string `json:"file,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Issue      string `json:"issue"`
 	Suggestion string `json:"suggestion,omitempty"`
 }
 
@@ -177,7 +177,9 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 		var core []Persona
 		coreIDs := map[string]bool{"security": true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
 		for _, p := range allPersonas {
-			if coreIDs[p.ID] { core = append(core, p) }
+			if coreIDs[p.ID] {
+				core = append(core, p)
+			}
 		}
 		return core
 	}
@@ -207,20 +209,28 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 			selected["security"] = true
 		}
 		for _, f := range scanResult.Findings {
-			if f.Rule == "no-todo-fixme" { selected["dx"] = true }
-			if f.Rule == "no-test-only" { selected["testing"] = true }
+			if f.Rule == "no-todo-fixme" {
+				selected["dx"] = true
+			}
+			if f.Rule == "no-test-only" {
+				selected["testing"] = true
+			}
 		}
 	}
 
 	var out []Persona
 	for _, p := range allPersonas {
-		if selected[p.ID] { out = append(out, p) }
+		if selected[p.ID] {
+			out = append(out, p)
+		}
 	}
 	if len(out) < 3 {
 		// Minimum useful set
 		coreIDs := map[string]bool{"security": true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
 		for _, p := range allPersonas {
-			if coreIDs[p.ID] && !selected[p.ID] { out = append(out, p) }
+			if coreIDs[p.ID] && !selected[p.ID] {
+				out = append(out, p)
+			}
 		}
 	}
 	return out

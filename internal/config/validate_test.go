@@ -18,7 +18,9 @@ func TestValidatePolicyMissingPhase(t *testing.T) {
 	errs := ValidatePolicy(p)
 	fatalCount := 0
 	for _, e := range errs {
-		if e.Fatal { fatalCount++ }
+		if e.Fatal {
+			fatalCount++
+		}
 	}
 	if fatalCount < 2 {
 		t.Errorf("missing execute+verify should produce 2 fatal errors, got %d", fatalCount)
@@ -34,7 +36,9 @@ func TestValidatePolicyPlanWithWrite(t *testing.T) {
 	errs := ValidatePolicy(p)
 	found := false
 	for _, e := range errs {
-		if e.Field == "phases.plan.builtin_tools" { found = true }
+		if e.Field == "phases.plan.builtin_tools" {
+			found = true
+		}
 	}
 	if !found {
 		t.Error("plan with Edit tool should generate warning")

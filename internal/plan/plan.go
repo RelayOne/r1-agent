@@ -61,9 +61,13 @@ func Load(projectRoot string) (*Plan, error) {
 // LoadFile reads a plan from a specific path.
 func LoadFile(path string) (*Plan, error) {
 	data, err := os.ReadFile(path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var p Plan
-	if err := json.Unmarshal(data, &p); err != nil { return nil, err }
+	if err := json.Unmarshal(data, &p); err != nil {
+		return nil, err
+	}
 	p.CreatedAt = time.Now()
 	return &p, nil
 }
@@ -71,7 +75,9 @@ func LoadFile(path string) (*Plan, error) {
 // Save writes a plan to disk as JSON.
 func Save(projectRoot string, p *Plan) error {
 	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(projectRoot, "stoke-plan.json"), data, 0644)
 }
 
@@ -132,16 +138,22 @@ func detectCycle(tasks []Task) string {
 	}
 
 	white, gray := map[string]bool{}, map[string]bool{}
-	for _, t := range tasks { white[t.ID] = true }
+	for _, t := range tasks {
+		white[t.ID] = true
+	}
 
 	var dfs func(string) string
 	dfs = func(id string) string {
 		delete(white, id)
 		gray[id] = true
 		for _, dep := range adj[id] {
-			if gray[dep] { return id + " -> " + dep }
+			if gray[dep] {
+				return id + " -> " + dep
+			}
 			if white[dep] {
-				if cycle := dfs(dep); cycle != "" { return cycle }
+				if cycle := dfs(dep); cycle != "" {
+					return cycle
+				}
 			}
 		}
 		delete(gray, id)
@@ -149,7 +161,9 @@ func detectCycle(tasks []Task) string {
 	}
 
 	for id := range white {
-		if cycle := dfs(id); cycle != "" { return cycle }
+		if cycle := dfs(id); cycle != "" {
+			return cycle
+		}
 	}
 	return ""
 }

@@ -14,20 +14,32 @@ func TestInstallCreatesHookFiles(t *testing.T) {
 	for _, name := range []string{"pre-tool-use.sh", "post-tool-use.sh"} {
 		path := filepath.Join(dir, "hooks", name)
 		info, err := os.Stat(path)
-		if err != nil { t.Fatalf("hook %s missing: %v", name, err) }
-		if info.Mode()&0111 == 0 { t.Errorf("hook %s not executable", name) }
+		if err != nil {
+			t.Fatalf("hook %s missing: %v", name, err)
+		}
+		if info.Mode()&0111 == 0 {
+			t.Errorf("hook %s not executable", name)
+		}
 	}
 }
 
 func TestHooksConfig(t *testing.T) {
 	cfg := HooksConfig("/tmp/runtime")
 	hooks, ok := cfg["hooks"].(map[string]interface{})
-	if !ok { t.Fatal("no hooks key") }
+	if !ok {
+		t.Fatal("no hooks key")
+	}
 	pre, ok := hooks["PreToolUse"]
-	if !ok { t.Fatal("no PreToolUse") }
+	if !ok {
+		t.Fatal("no PreToolUse")
+	}
 	arr, ok := pre.([]map[string]interface{})
-	if !ok || len(arr) == 0 { t.Fatal("PreToolUse should have entries") }
-	if arr[0]["type"] != "command" { t.Error("hook type should be command") }
+	if !ok || len(arr) == 0 {
+		t.Fatal("PreToolUse should have entries")
+	}
+	if arr[0]["type"] != "command" {
+		t.Error("hook type should be command")
+	}
 }
 
 func TestCleanup(t *testing.T) {
@@ -35,5 +47,7 @@ func TestCleanup(t *testing.T) {
 	Install(dir)
 	Cleanup(dir)
 	_, err := os.Stat(filepath.Join(dir, "hooks"))
-	if !os.IsNotExist(err) { t.Error("hooks dir should be removed") }
+	if !os.IsNotExist(err) {
+		t.Error("hooks dir should be removed")
+	}
 }

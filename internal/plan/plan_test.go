@@ -78,7 +78,9 @@ func TestValidateDuplicateID(t *testing.T) {
 	errs := p.Validate()
 	found := false
 	for _, e := range errs {
-		if contains(e, "duplicate") { found = true }
+		if contains(e, "duplicate") {
+			found = true
+		}
 	}
 	if !found {
 		t.Errorf("expected duplicate ID error: %v", errs)
@@ -93,7 +95,9 @@ func TestValidateMissingDep(t *testing.T) {
 	errs := p.Validate()
 	found := false
 	for _, e := range errs {
-		if contains(e, "unknown task GHOST") { found = true }
+		if contains(e, "unknown task GHOST") {
+			found = true
+		}
 	}
 	if !found {
 		t.Errorf("expected missing dep error: %v", errs)
@@ -111,7 +115,9 @@ func TestValidateCycle(t *testing.T) {
 	errs := p.Validate()
 	found := false
 	for _, e := range errs {
-		if contains(e, "cycle") { found = true }
+		if contains(e, "cycle") {
+			found = true
+		}
 	}
 	if !found {
 		t.Errorf("expected cycle error: %v", errs)
@@ -132,7 +138,9 @@ func contains(s, sub string) bool {
 
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub { return true }
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
 	}
 	return false
 }

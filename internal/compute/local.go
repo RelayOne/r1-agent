@@ -35,11 +35,11 @@ type localWorker struct {
 	taskID   string
 }
 
-func (w *localWorker) ID() string       { return w.id }
-func (w *localWorker) Hostname() string  { return "localhost" }
-func (w *localWorker) Stdout() io.Reader { return &bytes.Buffer{} }
-func (w *localWorker) Stop(_ context.Context) error    { return nil }
-func (w *localWorker) Destroy(_ context.Context) error { return nil }
+func (w *localWorker) ID() string                                    { return w.id }
+func (w *localWorker) Hostname() string                              { return "localhost" }
+func (w *localWorker) Stdout() io.Reader                             { return &bytes.Buffer{} }
+func (w *localWorker) Stop(_ context.Context) error                  { return nil }
+func (w *localWorker) Destroy(_ context.Context) error               { return nil }
 func (w *localWorker) Upload(_ context.Context, _, _ string) error   { return nil }
 func (w *localWorker) Download(_ context.Context, _, _ string) error { return nil }
 

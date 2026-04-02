@@ -45,7 +45,7 @@ func TestClaudePrepareMCPDisabledBlocksMCPTools(t *testing.T) {
 	prepared, err := runner.Prepare(RunSpec{
 		Prompt:      "test",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
 		Phase: PhaseSpec{
 			Name:         "plan",
@@ -77,7 +77,7 @@ func TestClaudePrepareMCPEnabledNoBlock(t *testing.T) {
 	prepared, err := runner.Prepare(RunSpec{
 		Prompt:      "test",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
 		Phase: PhaseSpec{
 			Name:         "execute",
@@ -107,7 +107,7 @@ func TestClaudePrepareWritesSettingsJSON(t *testing.T) {
 	_, err := runner.Prepare(RunSpec{
 		Prompt:      "test",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode1,
 		Phase: PhaseSpec{
 			Name:         "execute",
@@ -199,7 +199,7 @@ func TestClaudePrepareMode2PassesEnv(t *testing.T) {
 	prepared, err := runner.Prepare(RunSpec{
 		Prompt:      "test",
 		WorktreeDir: dir,
-		RuntimeDir:    filepath.Join(dir, "runtime"),
+		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
 		Phase: PhaseSpec{
 			Name:         "plan",

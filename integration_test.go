@@ -92,7 +92,9 @@ func TestWorktreeCreateMergeCleanup(t *testing.T) {
 	}
 	found := false
 	for _, f := range files {
-		if f == "new.go" { found = true }
+		if f == "new.go" {
+			found = true
+		}
 	}
 	if !found {
 		t.Errorf("new.go not in ModifiedFiles: %v", files)
@@ -287,12 +289,12 @@ func TestSchedulerResume(t *testing.T) {
 
 func TestApiKeyHelperIsJSONNull(t *testing.T) {
 	settings := config.BuildClaudeSettings(config.ClaudeSettingsOptions{
-		Mode:              "mode1",
-		Phase:             config.PhasePolicy{BuiltinTools: []string{"Read"}},
-		SandboxEnabled:    true,
+		Mode:                  "mode1",
+		Phase:                 config.PhasePolicy{BuiltinTools: []string{"Read"}},
+		SandboxEnabled:        true,
 		SandboxAllowedDomains: []string{"github.com"},
-		SandboxAllowWrite: []string{"/tmp"},
-		SandboxAllowRead:  []string{"/tmp"},
+		SandboxAllowWrite:     []string{"/tmp"},
+		SandboxAllowRead:      []string{"/tmp"},
 	})
 	raw, _ := config.MarshalClaudeSettings(settings)
 	var parsed map[string]interface{}
@@ -514,7 +516,9 @@ func TestSessionSaveLoadResume(t *testing.T) {
 	}
 	done := 0
 	for _, task := range loaded.Tasks {
-		if task.Status == plan.StatusDone { done++ }
+		if task.Status == plan.StatusDone {
+			done++
+		}
 	}
 	if done != 2 {
 		t.Errorf("done=%d, want 2", done)
@@ -910,7 +914,9 @@ func setupGitRepo(t *testing.T) string {
 
 func indexOf(s []string, val string) int {
 	for i, v := range s {
-		if v == val { return i }
+		if v == val {
+			return i
+		}
 	}
 	return -1
 }

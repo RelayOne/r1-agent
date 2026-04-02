@@ -64,7 +64,9 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 		if err := json.Unmarshal(raw, &merged); err != nil {
 			return PreparedCommand{}, fmt.Errorf("unmarshal settings for hooks merge: %w", err)
 		}
-		for k, v := range hooksConf { merged[k] = v }
+		for k, v := range hooksConf {
+			merged[k] = v
+		}
 		raw, err = json.MarshalIndent(merged, "", "  ")
 		if err != nil {
 			return PreparedCommand{}, fmt.Errorf("marshal merged settings: %w", err)

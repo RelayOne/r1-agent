@@ -16,10 +16,10 @@ const (
 
 // Budget controls context window utilization.
 type Budget struct {
-	MaxTokens       int     // total context window (e.g. 200000)
-	TargetUtil      float64 // target utilization (spec says <40%)
-	GentleThreshold float64 // truncate long outputs (50%)
-	ModerateThresh  float64 // compress file reads (65%)
+	MaxTokens        int     // total context window (e.g. 200000)
+	TargetUtil       float64 // target utilization (spec says <40%)
+	GentleThreshold  float64 // truncate long outputs (50%)
+	ModerateThresh   float64 // compress file reads (65%)
 	AggressiveThresh float64 // summarize everything (80%)
 }
 
@@ -39,8 +39,8 @@ type ContextBlock struct {
 	Label    string
 	Content  string
 	Tier     Tier
-	Priority int    // higher = keep longer during compaction
-	Tokens   int    // estimated tokens (chars / 4)
+	Priority int // higher = keep longer during compaction
+	Tokens   int // estimated tokens (chars / 4)
 }
 
 // Manager assembles and compacts context for each phase.
@@ -65,13 +65,17 @@ func (m *Manager) Add(block ContextBlock) {
 // TotalTokens returns the estimated total token count.
 func (m *Manager) TotalTokens() int {
 	total := 0
-	for _, b := range m.blocks { total += b.Tokens }
+	for _, b := range m.blocks {
+		total += b.Tokens
+	}
 	return total
 }
 
 // Utilization returns current utilization as a fraction.
 func (m *Manager) Utilization() float64 {
-	if m.budget.MaxTokens == 0 { return 0 }
+	if m.budget.MaxTokens == 0 {
+		return 0
+	}
 	return float64(m.TotalTokens()) / float64(m.budget.MaxTokens)
 }
 
@@ -145,7 +149,9 @@ func (m *Manager) Reset() {
 
 func truncateLines(s string, maxLines int) string {
 	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines { return s }
+	if len(lines) <= maxLines {
+		return s
+	}
 	head := strings.Join(lines[:maxLines/2], "\n")
 	tail := strings.Join(lines[len(lines)-maxLines/4:], "\n")
 	return head + fmt.Sprintf("\n\n... (%d lines truncated) ...\n\n", len(lines)-maxLines*3/4) + tail
@@ -194,17 +200,29 @@ func CheckReminders(reminders []Reminder, state ReminderState) []string {
 	for _, r := range reminders {
 		switch r.Trigger {
 		case TriggerContextAbove60Pct:
-			if state.ContextUtil > 0.60 { fired = append(fired, r.Message) }
+			if state.ContextUtil > 0.60 {
+				fired = append(fired, r.Message)
+			}
 		case TriggerErrorRepeated3x:
-			if state.SameErrorCount >= 3 { fired = append(fired, r.Message) }
+			if state.SameErrorCount >= 3 {
+				fired = append(fired, r.Message)
+			}
 		case TriggerTaskRunning20Min:
-			if state.TaskMinutes >= 20 { fired = append(fired, r.Message) }
+			if state.TaskMinutes >= 20 {
+				fired = append(fired, r.Message)
+			}
 		case TriggerFileWriteToTest:
-			if state.WritingTestFile { fired = append(fired, r.Message) }
+			if state.WritingTestFile {
+				fired = append(fired, r.Message)
+			}
 		case TriggerPolicyViolationSeen:
-			if state.PolicyViolation { fired = append(fired, r.Message) }
+			if state.PolicyViolation {
+				fired = append(fired, r.Message)
+			}
 		case TriggerScopeViolationSeen:
-			if state.ScopeViolation { fired = append(fired, r.Message) }
+			if state.ScopeViolation {
+				fired = append(fired, r.Message)
+			}
 		}
 	}
 	return fired

@@ -81,9 +81,15 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 	buildCmd, testCmd, lintCmd := o.cfg.BuildCommand, o.cfg.TestCommand, o.cfg.LintCommand
 	if buildCmd == "" || testCmd == "" || lintCmd == "" {
 		detected := config.DetectCommands(o.cfg.RepoRoot)
-		if buildCmd == "" { buildCmd = detected.Build }
-		if testCmd == "" { testCmd = detected.Test }
-		if lintCmd == "" { lintCmd = detected.Lint }
+		if buildCmd == "" {
+			buildCmd = detected.Build
+		}
+		if testCmd == "" {
+			testCmd = detected.Test
+		}
+		if lintCmd == "" {
+			lintCmd = detected.Lint
+		}
 	}
 
 	verifier := verify.NewPipeline(buildCmd, testCmd, lintCmd)
@@ -121,19 +127,19 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		TaskType:         taskType,
 		TaskVerification: o.cfg.TaskVerification,
 		WorktreeName:     o.cfg.WorktreeName,
-		AllowedFiles:    o.cfg.AllowedFiles,
-		AuthMode:        engine.AuthMode(o.cfg.AuthMode),
-		Policy:          o.policy,
-		DryRun:          o.cfg.DryRun,
-		Pools:           pools,
-		Worktrees:       worktrees,
-		Runners:         runners,
-		Verifier:        verifier,
-		ClaudeConfigDir: o.cfg.ClaudeConfigDir,
-		CodexHome:       o.cfg.CodexHome,
-		OnEvent:         o.cfg.OnEvent,
-		State:           o.cfg.State,
-		PlanOnly:        o.cfg.PlanOnly,
+		AllowedFiles:     o.cfg.AllowedFiles,
+		AuthMode:         engine.AuthMode(o.cfg.AuthMode),
+		Policy:           o.policy,
+		DryRun:           o.cfg.DryRun,
+		Pools:            pools,
+		Worktrees:        worktrees,
+		Runners:          runners,
+		Verifier:         verifier,
+		ClaudeConfigDir:  o.cfg.ClaudeConfigDir,
+		CodexHome:        o.cfg.CodexHome,
+		OnEvent:          o.cfg.OnEvent,
+		State:            o.cfg.State,
+		PlanOnly:         o.cfg.PlanOnly,
 	}
 	return wf.Run(ctx)
 }

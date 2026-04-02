@@ -219,10 +219,10 @@ func parseTestErrors(output string) []Detail {
 // --- Lint error parsers ---
 
 var (
-	eslintRe  = regexp.MustCompile(`(?m)^\s*(\d+):(\d+)\s+(error|warning)\s+(.+?)\s+(\S+)$`)
-	golintRe  = regexp.MustCompile(`(?m)^(.+):(\d+):\d+:\s+(.+)\s+\((.+)\)$`)
-	ruffRe    = regexp.MustCompile(`(?m)^(.+):(\d+):\d+:\s+(\w+)\s+(.+)$`)
-	clippyRe  = regexp.MustCompile(`(?m)warning:\s+(.+)\n\s*-->\s+(.+):(\d+):\d+`)
+	eslintRe = regexp.MustCompile(`(?m)^\s*(\d+):(\d+)\s+(error|warning)\s+(.+?)\s+(\S+)$`)
+	golintRe = regexp.MustCompile(`(?m)^(.+):(\d+):\d+:\s+(.+)\s+\((.+)\)$`)
+	ruffRe   = regexp.MustCompile(`(?m)^(.+):(\d+):\d+:\s+(\w+)\s+(.+)$`)
+	clippyRe = regexp.MustCompile(`(?m)warning:\s+(.+)\n\s*-->\s+(.+):(\d+):\d+`)
 )
 
 func parseLintErrors(output string) []Detail {
@@ -326,7 +326,7 @@ func inferMissing(class Class) []string {
 type Action int
 
 const (
-	Retry    Action = iota
+	Retry Action = iota
 	Escalate
 )
 
