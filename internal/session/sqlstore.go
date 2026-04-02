@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 // SQLStore is a SQLite-backed session store for crash recovery and learning.

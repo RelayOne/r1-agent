@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 // TaskResult is the outcome of one task execution.

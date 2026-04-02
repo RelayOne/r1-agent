@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 // SessionStore is the interface for session persistence.

@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 type AuthMode string

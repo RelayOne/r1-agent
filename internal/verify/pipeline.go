@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/failure"
 )
 
 // Outcome is the result of one verification step.

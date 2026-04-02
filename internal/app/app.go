@@ -6,14 +6,14 @@ import (
 	"os/exec"
 	"strings"
 
-	"stoke/internal/config"
-	"stoke/internal/engine"
-	"stoke/internal/model"
-	"stoke/internal/subscriptions"
-	"stoke/internal/taskstate"
-	"stoke/internal/verify"
-	"stoke/internal/workflow"
-	"stoke/internal/worktree"
+	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/workflow"
+	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
 type AuthMode string

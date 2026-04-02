@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 func TestSaveLoadState(t *testing.T) {

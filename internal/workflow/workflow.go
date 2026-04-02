@@ -10,17 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"stoke/internal/config"
-	"stoke/internal/engine"
-	"stoke/internal/failure"
-	"stoke/internal/hooks"
-	"stoke/internal/model"
-	stokeprompts "stoke/internal/prompts"
-	"stoke/internal/scan"
-	"stoke/internal/subscriptions"
-	"stoke/internal/taskstate"
-	"stoke/internal/verify"
-	"stoke/internal/worktree"
+	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/model"
+	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
 type WorktreeManager interface {
@@ -331,10 +331,17 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 
 			// Detect gitignored files created by the agent. These are invisible
 			// to git add -A and won't be in the merged commit, but build/test
-			// may depend on them. Log warning so the user knows verification != merge.
+			// may depend on them. FAIL CLOSED: if the verified environment
+			// includes files that can't ship, the verification is invalid.
 			if ignored := worktree.IgnoredNewFiles(ctx, handle); len(ignored) > 0 {
 				evidence.Warnings = append(evidence.Warnings,
 					fmt.Sprintf("agent created %d gitignored file(s) not in merge: %v", len(ignored), ignored))
+				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
+				e.Worktrees.Cleanup(ctx, handle)
+				_ = e.advanceState(taskstate.Failed, fmt.Sprintf(
+					"verified environment diverges from merge artifact: %d gitignored file(s) would be lost: %v",
+					len(ignored), ignored))
+				return result, fmt.Errorf("gitignored files in verified tree (verified != merged): %v", ignored)
 			}
 
 			protectedViolations := verify.CheckProtectedFiles(modifiedFiles, e.Policy.Files.Protected)

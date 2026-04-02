@@ -33,6 +33,7 @@ type TaskReport struct {
 	CostUSD      float64        `json:"cost_usd"`
 	DurationSec  float64        `json:"duration_sec"`
 	Error        string         `json:"error,omitempty"`
+	Warnings     []string       `json:"warnings,omitempty"`
 	Failure      *FailureReport `json:"failure,omitempty"`
 	Review       *ReviewReport  `json:"review,omitempty"`
 	FilesChanged []string       `json:"files_changed,omitempty"`

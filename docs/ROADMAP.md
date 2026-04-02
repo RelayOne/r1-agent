@@ -17,7 +17,7 @@ parallel agent coordination via git worktrees, and structured quality gates.
 - 66 Go files, ~14K lines, 206 tests
 - Zero data races (verified with -race)
 - Single-account and multi-pool modes both work
-- Apache 2.0 license
+- MIT license
 
 ## Ember Integration (planned)
 

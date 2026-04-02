@@ -1,1 +1,6 @@
 /stoke
+.stoke/
+*.tmp
+*.log
+coverage.out
+dist/

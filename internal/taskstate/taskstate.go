@@ -79,10 +79,12 @@ type Evidence struct {
 	Warnings       []string `json:"warnings,omitempty"` // non-fatal issues (e.g. gitignored files)
 }
 
-// AllGatesPass returns true only if every verification gate passed.
+// AllGatesPass returns true only if every verification gate passed
+// and no warnings are present (warnings indicate verified != merged divergence).
 func (e Evidence) AllGatesPass() bool {
 	return e.BuildPass && e.TestPass && e.LintPass &&
-		e.ScopeClean && e.ProtectedClean && e.ReviewPass
+		e.ScopeClean && e.ProtectedClean && e.ReviewPass &&
+		len(e.Warnings) == 0
 }
 
 // FailedGates returns human-readable list of which gates failed.
@@ -94,6 +96,7 @@ func (e Evidence) FailedGates() []string {
 	if !e.ScopeClean     { failed = append(failed, "scope") }
 	if !e.ProtectedClean { failed = append(failed, "protected-files") }
 	if !e.ReviewPass     { failed = append(failed, "cross-model-review") }
+	if len(e.Warnings) > 0 { failed = append(failed, fmt.Sprintf("warnings(%d)", len(e.Warnings))) }
 	return failed
 }
 

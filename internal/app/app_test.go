@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
 )
 
 func TestNewWithDefaultPolicy(t *testing.T) {

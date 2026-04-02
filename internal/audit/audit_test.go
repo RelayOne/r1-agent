@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/scan"
 )
 
 func TestDefaultPersonas(t *testing.T) {

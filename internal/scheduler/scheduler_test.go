@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 func TestGRPWOrdering(t *testing.T) {

@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"stoke/internal/config"
-	"stoke/internal/engine"
-	"stoke/internal/failure"
-	"stoke/internal/model"
-	"stoke/internal/subscriptions"
-	"stoke/internal/verify"
-	"stoke/internal/worktree"
+	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
 func TestDryRunWorkflowBuildsCommands(t *testing.T) {

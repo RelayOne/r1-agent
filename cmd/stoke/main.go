@@ -13,26 +13,26 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"stoke/internal/app"
-	"stoke/internal/audit"
-	"stoke/internal/config"
-	stokeCtx "stoke/internal/context"
-	"stoke/internal/engine"
-	"stoke/internal/hooks"
-	"stoke/internal/model"
-	"stoke/internal/plan"
-	"stoke/internal/pools"
-	"stoke/internal/repl"
-	"stoke/internal/report"
-	scanpkg "stoke/internal/scan"
-	"stoke/internal/scheduler"
-	"stoke/internal/session"
-	"stoke/internal/stream"
-	"stoke/internal/subscriptions"
-	"stoke/internal/taskstate"
-	"stoke/internal/tui"
-	"stoke/internal/verify"
-	"stoke/internal/worktree"
+	"github.com/ericmacdougall/stoke/internal/app"
+	"github.com/ericmacdougall/stoke/internal/audit"
+	"github.com/ericmacdougall/stoke/internal/config"
+	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
+	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/pools"
+	"github.com/ericmacdougall/stoke/internal/repl"
+	"github.com/ericmacdougall/stoke/internal/report"
+	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/scheduler"
+	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/tui"
+	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
 const version = "1.0.0"
@@ -1056,9 +1056,12 @@ func auditCmd(args []string) {
 		// Execute the review via Claude Code headless
 		claudeBin := "claude"
 		runner := engine.NewClaudeRunner(claudeBin)
+		auditRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", "audit-"+p.ID)
+		os.MkdirAll(auditRuntimeDir, 0o755)
 		spec := engine.RunSpec{
 			Prompt:      prompt,
 			WorktreeDir: absRepo,
+			RuntimeDir:  auditRuntimeDir,
 			Mode:        engine.AuthModeMode1,
 			Phase: engine.PhaseSpec{
 				Name:         "audit-" + p.ID,
@@ -1679,18 +1682,22 @@ func shipCmd(args []string) {
 		fmt.Printf("  Build complete: %d/%d tasks succeeded\n\n", buildReport.TasksDone, buildReport.TasksTotal)
 
 		// Check plan-level ship blockers and cross-phase verification.
-		// These are set by the planner and must be satisfied before shipping.
+		// These are set by the planner and MUST be satisfied before shipping.
+		var shipBlockers []string
+		var crossPhaseChecks []string
 		if planObj, planErr := plan.LoadFile(currentPlanPath); planErr == nil {
-			if len(planObj.ShipBlockers) > 0 {
-				fmt.Printf("  ⚠ Ship blockers from plan:\n")
-				for _, b := range planObj.ShipBlockers {
+			shipBlockers = planObj.ShipBlockers
+			crossPhaseChecks = planObj.CrossPhaseVerification
+			if len(shipBlockers) > 0 {
+				fmt.Printf("  Ship blockers from plan (will be verified by reviewer):\n")
+				for _, b := range shipBlockers {
 					fmt.Printf("    - %s\n", b)
 				}
 			}
-			if len(planObj.CrossPhaseVerification) > 0 {
-				fmt.Printf("  Cross-phase verification checklist:\n")
-				for _, v := range planObj.CrossPhaseVerification {
-					fmt.Printf("    ☐ %s\n", v)
+			if len(crossPhaseChecks) > 0 {
+				fmt.Printf("  Cross-phase verification (will be verified by reviewer):\n")
+				for _, v := range crossPhaseChecks {
+					fmt.Printf("    - %s\n", v)
 				}
 				fmt.Println()
 			}
@@ -1699,14 +1706,19 @@ func shipCmd(args []string) {
 		// Step 2: Comprehensive review (opposite-family model, direct runner call)
 		// NOT using PlanOnly workflow -- that runs a plan prompt on Claude.
 		// This calls the reviewer engine directly with the review prompt.
+		// ShipBlockers and CrossPhaseVerification are injected into the review prompt
+		// so the reviewer must explicitly verify each one.
 		fmt.Println("Step 2: Comprehensive review (opposite-family)")
-		reviewPrompt := buildShipReviewPrompt(*task, round)
+		reviewPrompt := buildShipReviewPrompt(*task, round, shipBlockers, crossPhaseChecks)
 
 		// Use Codex as reviewer (opposite family from Claude builder)
 		reviewRunner := engine.NewCodexRunner(*codexBin)
+		shipRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", fmt.Sprintf("ship-review-round-%d", round))
+		os.MkdirAll(shipRuntimeDir, 0o755)
 		reviewSpec := engine.RunSpec{
 			Prompt:        reviewPrompt,
 			WorktreeDir:   absRepo,
+			RuntimeDir:    shipRuntimeDir,
 			Mode:          engine.AuthMode(*authMode),
 			PoolConfigDir: *codexHome, // default: CLI flag for Codex config
 			Phase: engine.PhaseSpec{
@@ -1742,9 +1754,12 @@ func shipCmd(args []string) {
 			// Fallback: try Claude as reviewer
 			fmt.Println("  Falling back to Claude reviewer...")
 			fallbackRunner := engine.NewClaudeRunner(*claudeBin)
+			fbRuntimeDir := filepath.Join(absRepo, ".stoke", "runtime", fmt.Sprintf("ship-review-round-%d-fallback", round))
+			os.MkdirAll(fbRuntimeDir, 0o755)
 			fallbackSpec := engine.RunSpec{
 				Prompt:        reviewPrompt,
 				WorktreeDir:   absRepo,
+				RuntimeDir:    fbRuntimeDir,
 				Mode:          engine.AuthMode(*authMode),
 				PoolConfigDir: *claudeConfigDir, // default: CLI flag for Claude config (NOT leaked from Codex)
 				Phase: engine.PhaseSpec{
@@ -1840,9 +1855,11 @@ func shipCmd(args []string) {
 		}
 
 		fixPlan := &plan.Plan{
-			ID:          fmt.Sprintf("fix-round-%d", round+1),
-			Description: fmt.Sprintf("Round %d fixes: %d blocking issues from review", round+1, len(fixTasks)),
-			Tasks:       fixTasks,
+			ID:                     fmt.Sprintf("fix-round-%d", round+1),
+			Description:            fmt.Sprintf("Round %d fixes: %d blocking issues from review", round+1, len(fixTasks)),
+			Tasks:                  fixTasks,
+			ShipBlockers:           shipBlockers,
+			CrossPhaseVerification: crossPhaseChecks,
 		}
 
 		fixPlanPath := filepath.Join(absRepo, ".stoke", fmt.Sprintf("fix-plan-round-%d.json", round+1))
@@ -1874,15 +1891,33 @@ func shipCmd(args []string) {
 }
 
 // buildShipReviewPrompt creates the comprehensive review prompt.
-// This is the exact prompt that replaces Eric copy-pasting between Claude and Codex.
-func buildShipReviewPrompt(task string, round int) string {
+// ShipBlockers and CrossPhaseVerification are injected as mandatory check items
+// that the reviewer must explicitly verify. They are treated as quoted data, not
+// raw instructions, to prevent planner output from acting as prompt injection.
+func buildShipReviewPrompt(task string, round int, shipBlockers, crossPhaseChecks []string) string {
 	roundContext := ""
 	if round > 1 {
 		roundContext = fmt.Sprintf("\nThis is review round %d. Previous rounds found blocking issues that were fixed. Check if the fixes are correct AND look for any new issues introduced by the fixes.\n", round)
 	}
 
+	blockerSection := ""
+	if len(shipBlockers) > 0 {
+		blockerSection = "\n## MANDATORY SHIP BLOCKERS (from plan)\nThe planner identified these as MUST-BE-TRUE before shipping. You MUST verify each one.\nIf ANY blocker is not satisfied, set \"ship\": false and include it in blocking_fixes.\n"
+		for i, b := range shipBlockers {
+			blockerSection += fmt.Sprintf("  %d. [BLOCKER] %q\n", i+1, b)
+		}
+	}
+
+	crossPhaseSection := ""
+	if len(crossPhaseChecks) > 0 {
+		crossPhaseSection = "\n## CROSS-PHASE VERIFICATION (from plan)\nThese integration checks span multiple tasks. Verify each one holds true.\nIf ANY check fails, include it in blocking_fixes.\n"
+		for i, c := range crossPhaseChecks {
+			crossPhaseSection += fmt.Sprintf("  %d. [CROSS-PHASE] %q\n", i+1, c)
+		}
+	}
+
 	return fmt.Sprintf(`You are a senior staff engineer doing a comprehensive pre-ship review.
-%s
+%s%s%s
 Review this codebase for the following vectors. For each vector, evaluate the CURRENT state of the code.
 
 Task that was implemented: %s
@@ -1956,7 +1991,7 @@ Rules:
 - Notes are for improvements that are nice-to-have but not blocking.
 - Be specific: file paths, line numbers, exact descriptions.
 - If this is round 2+, verify previous fixes are actually correct.
-`, roundContext, task)
+`, roundContext, blockerSection, crossPhaseSection, task)
 }
 
 // shipVerdict is the parsed output of the comprehensive review.

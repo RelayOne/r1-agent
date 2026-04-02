@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 type CodexRunner struct {

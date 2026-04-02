@@ -1,4 +1,4 @@
-module stoke
+module github.com/ericmacdougall/stoke
 
 go 1.23.2
 

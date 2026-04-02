@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 // Mode controls what the TUI displays.

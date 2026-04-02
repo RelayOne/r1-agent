@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 func TestTaskStartComplete(t *testing.T) {

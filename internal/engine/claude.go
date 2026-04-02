@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"stoke/internal/config"
-	"stoke/internal/hooks"
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 type ClaudeRunner struct {

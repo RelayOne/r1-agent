@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
 // Runner prints structured text updates. Zero external dependencies.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/scan"
 )
 
 // Persona represents an expert perspective for code review.
