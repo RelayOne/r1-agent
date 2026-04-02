@@ -1,0 +1,51 @@
+phases:
+  plan:
+    builtin_tools: [Read, Glob, Grep]
+    denied_rules: []
+    allowed_rules: [Read, Glob, Grep]
+    mcp_enabled: false
+
+  execute:
+    builtin_tools: [Read, Edit, Write, Bash, Glob, Grep]
+    denied_rules:
+      - "Bash(rm -rf *)"
+      - "Bash(git push *)"
+      - "Bash(git reset --hard *)"
+      - "Bash(git rebase *)"
+      - "Bash(sudo *)"
+      - "Bash(curl *)"
+      - "Bash(wget *)"
+    allowed_rules:
+      - "Read"
+      - "Edit"
+      - "Bash(npm test:*)"
+      - "Bash(npm run lint:*)"
+      - "Bash(npm run build:*)"
+      - "Bash(cat *)"
+      - "Bash(grep *)"
+      - "Bash(git status)"
+      - "Bash(git diff *)"
+    mcp_enabled: true
+
+  verify:
+    builtin_tools: [Read, Glob, Grep, Bash]
+    denied_rules:
+      - "Edit"
+      - "Write"
+      - "Bash(rm *)"
+      - "Bash(git *)"
+    allowed_rules:
+      - "Read"
+      - "Bash(npm test:*)"
+      - "Bash(npm run lint:*)"
+    mcp_enabled: false
+
+files:
+  protected: [".claude/", ".forge/", "CLAUDE.md", ".env*", "forge.policy.yaml"]
+
+verification:
+  build: required
+  tests: required
+  lint: required
+  cross_model_review: required
+  scope_check: required

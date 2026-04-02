@@ -1,0 +1,2485 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"stoke/internal/app"
+	"stoke/internal/audit"
+	"stoke/internal/config"
+	stokeCtx "stoke/internal/context"
+	"stoke/internal/engine"
+	"stoke/internal/hooks"
+	"stoke/internal/model"
+	"stoke/internal/plan"
+	"stoke/internal/pools"
+	"stoke/internal/repl"
+	"stoke/internal/report"
+	scanpkg "stoke/internal/scan"
+	"stoke/internal/scheduler"
+	"stoke/internal/session"
+	"stoke/internal/stream"
+	"stoke/internal/subscriptions"
+	"stoke/internal/taskstate"
+	"stoke/internal/tui"
+	"stoke/internal/verify"
+	"stoke/internal/worktree"
+)
+
+const version = "1.0.0"
+
+// BuildConfig holds all parameters for a build run.
+// Used by both buildCmd (CLI) and shipCmd (programmatic).
+type BuildConfig struct {
+	RepoRoot        string
+	PlanPath        string // if empty, auto-detect
+	PolicyPath      string
+	Workers         int
+	AuthMode        string
+	ClaudeBinary    string
+	CodexBinary     string
+	ClaudeConfigDir string
+	CodexHome       string
+	ClaudePoolDirs  []string
+	CodexPoolDirs   []string
+	BuildCommand    string
+	TestCommand     string
+	LintCommand     string
+	ROIFilter       string // high, medium, low, skip
+	UseSQLite       bool
+	Timeout         time.Duration
+}
+
+// runBuild executes a build plan and returns the result.
+// This is the core build logic, called by both buildCmd and shipCmd.
+// Returns the build report and any fatal error.
+func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
+	absRepo := cfg.RepoRoot
+
+	// Build pool configurations
+	var poolConfigs []subscriptions.Pool
+	for i, dir := range cfg.ClaudePoolDirs {
+		poolConfigs = append(poolConfigs, subscriptions.Pool{
+			ID:        fmt.Sprintf("claude-%d", i+1),
+			Provider:  subscriptions.ProviderClaude,
+			ConfigDir: dir,
+		})
+	}
+	for i, dir := range cfg.CodexPoolDirs {
+		poolConfigs = append(poolConfigs, subscriptions.Pool{
+			ID:        fmt.Sprintf("codex-%d", i+1),
+			Provider:  subscriptions.ProviderCodex,
+			ConfigDir: dir,
+		})
+	}
+	// Build pool manager: explicit → discovered → nil (app.New creates defaults)
+	var pools *subscriptions.Manager
+	if len(poolConfigs) > 0 {
+		pools = subscriptions.NewManager(poolConfigs)
+	} else if discovered := autoDiscoverPools(); discovered != nil {
+		pools = discovered
+	}
+	// If pools is nil, app.New will create default single Claude + Codex pool
+
+	// Load plan
+	var p *plan.Plan
+	var err error
+	if cfg.PlanPath != "" {
+		p, err = plan.LoadFile(cfg.PlanPath)
+	} else {
+		p, err = plan.Load(absRepo)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load plan: %w", err)
+	}
+
+	// Route tasks by type
+	for i := range p.Tasks {
+		if p.Tasks[i].Type == "" {
+			p.Tasks[i].Type = string(model.InferTaskType(p.Tasks[i].Description))
+		}
+	}
+
+	// ROI filter
+	var roiClass plan.ROIClass
+	switch cfg.ROIFilter {
+	case "high":   roiClass = plan.ROIHigh
+	case "medium": roiClass = plan.ROIMedium
+	case "low":    roiClass = plan.ROILow
+	case "skip":   roiClass = plan.ROISkip
+	default:       roiClass = plan.ROIMedium
+	}
+	kept, _ := plan.FilterByROI(p.Tasks, roiClass)
+	p.Tasks = kept
+
+	// Session store
+	var store session.SessionStore
+	if cfg.UseSQLite {
+		sqlStore, err := session.NewSQLStore(absRepo)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite store: %w", err)
+		}
+		store = sqlStore
+	} else {
+		store = session.New(absRepo)
+	}
+
+	// TUI runner
+	ui := tui.NewRunner()
+
+	// Context manager
+	ctxMgr := stokeCtx.NewManager(stokeCtx.DefaultBudget())
+
+	checkResume(store, p)
+	store.SaveState(&session.State{
+		PlanID:    p.ID,
+		Tasks:     p.Tasks,
+		StartedAt: time.Now(),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	defer cancel()
+
+	// Create harness-owned plan state
+	taskIDs := make([]string, len(p.Tasks))
+	for i, t := range p.Tasks { taskIDs[i] = t.ID }
+	planState := taskstate.NewPlanState(taskIDs)
+
+	sched := scheduler.New(cfg.Workers)
+	startTime := time.Now()
+
+	// Create ONE shared worktree manager for the entire build session.
+	// The merge mutex MUST be shared across all parallel tasks to prevent
+	// concurrent ref mutations that corrupt the repository.
+	sharedWorktrees := worktree.NewManager(absRepo)
+
+	results, err := sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+		if task.Status == plan.StatusDone {
+			return scheduler.TaskResult{TaskID: task.ID, Success: true}
+		}
+
+		ui.TaskStart(task.ID, task.Description, "pool-1")
+		taskStart := time.Now()
+		ts := planState.Get(task.ID)
+
+		appCfg := app.RunConfig{
+			RepoRoot:         absRepo,
+			PolicyPath:       cfg.PolicyPath,
+			Task:             task.Description,
+			TaskType:         task.Type,
+			TaskVerification: task.Verification,
+			AllowedFiles:     task.Files,
+			DryRun:          false,
+			AuthMode:        app.AuthMode(cfg.AuthMode),
+			ClaudeBinary:    cfg.ClaudeBinary,
+			CodexBinary:     cfg.CodexBinary,
+			ClaudeConfigDir: cfg.ClaudeConfigDir,
+			CodexHome:       cfg.CodexHome,
+			Pools:           pools,
+			Worktrees:       sharedWorktrees,
+			State:           ts,
+			BuildCommand:    cfg.BuildCommand,
+			TestCommand:     cfg.TestCommand,
+			LintCommand:     cfg.LintCommand,
+			OnEvent: func(ev stream.Event) {
+				ui.Event(task.ID, ev)
+				if ev.Type == "assistant" {
+					ctxMgr.Add(stokeCtx.ContextBlock{
+						Label: "tool_output", Content: ev.DeltaText,
+						Tier: stokeCtx.TierActive, Priority: 2,
+					})
+				}
+				rState := stokeCtx.ReminderState{ContextUtil: ctxMgr.Utilization()}
+				if ev.Type == "assistant" {
+					for _, tu := range ev.ToolUses {
+						if tu.Name == "Write" || tu.Name == "Edit" {
+							if fp, ok := tu.Input["file_path"].(string); ok && strings.Contains(fp, "test") {
+								rState.WritingTestFile = true
+							}
+						}
+					}
+				}
+				for _, reminder := range stokeCtx.CheckReminders(stokeCtx.DefaultReminders(), rState) {
+					fmt.Printf("  \u26a0 %s\n", reminder)
+				}
+			},
+		}
+
+		orchestrator, err := app.New(appCfg)
+		if err != nil {
+			ui.TaskComplete(task.ID, false, 0, 0, 1)
+			markTask(p, task.ID, plan.StatusFailed)
+			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+			return scheduler.TaskResult{TaskID: task.ID, Error: err}
+		}
+
+		result, err := orchestrator.Run(ctx)
+		elapsed := time.Since(taskStart).Seconds()
+
+		if err != nil {
+			ui.TaskComplete(task.ID, false, elapsed, result.TotalCostUSD, 1)
+			attempt := session.Attempt{
+				TaskID:  task.ID,
+				Number:  1,
+				Success: false,
+				Error:   err.Error(),
+				CostUSD: result.TotalCostUSD,
+				Duration: time.Duration(elapsed * float64(time.Second)),
+			}
+			if analysis := verify.AnalyzeOutcomes(result.Verification); analysis != nil {
+				attempt.FailClass = string(analysis.Class)
+				attempt.FailSummary = analysis.Summary
+				attempt.RootCause = analysis.RootCause
+			}
+			store.SaveAttempt(attempt)
+			if ts != nil {
+				fmt.Println(ts.ClaimedVsVerified())
+			}
+			markTask(p, task.ID, plan.StatusFailed)
+			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+		}
+
+		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, 1)
+		if ts != nil {
+			fmt.Println(ts.ClaimedVsVerified())
+		}
+		store.SaveAttempt(session.Attempt{
+			TaskID:   task.ID,
+			Number:   1,
+			Success:  true,
+			CostUSD:  result.TotalCostUSD,
+			Duration: time.Duration(elapsed * float64(time.Second)),
+		})
+		markTask(p, task.ID, plan.StatusDone)
+		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("scheduler: %w", err)
+	}
+
+	// Generate report
+	buildReport := &report.BuildReport{
+		Version:     version,
+		PlanID:      p.ID,
+		StartedAt:   startTime,
+		CompletedAt: time.Now(),
+		TasksTotal:  len(p.Tasks),
+	}
+	for _, r := range results {
+		tr := report.TaskReport{ID: r.TaskID, CostUSD: r.CostUSD}
+		if r.Success {
+			tr.Status = "done"
+			buildReport.TasksDone++
+		} else {
+			tr.Status = "failed"
+			buildReport.TasksFailed++
+			if r.Error != nil { tr.Error = r.Error.Error() }
+		}
+		buildReport.TotalCost += r.CostUSD
+		buildReport.Tasks = append(buildReport.Tasks, tr)
+	}
+	buildReport.Success = buildReport.TasksFailed == 0
+	buildReport.DurationSec = time.Since(startTime).Seconds()
+
+	buildReport.Save(absRepo)
+	buildReport.SaveLatest(absRepo)
+	store.ClearState()
+
+	// Show summary
+	ui.Summary(len(p.Tasks))
+	fmt.Printf("  Report: .stoke/reports/latest.json\n")
+	summary := planState.Summary()
+	fmt.Printf("\n  Plan state (harness-verified):\n")
+	for _, phase := range []taskstate.Phase{taskstate.Committed, taskstate.Failed, taskstate.Blocked, taskstate.UserSkipped, taskstate.Pending} {
+		if count, ok := summary[phase]; ok && count > 0 {
+			fmt.Printf("    %s: %d\n", phase, count)
+		}
+	}
+
+	return buildReport, nil
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		// No args: launch the interactive REPL
+		launchREPL()
+		return
+	}
+
+	switch os.Args[1] {
+	case "run":
+		runCmd(os.Args[2:])
+	case "build":
+		buildCmd(os.Args[2:])
+	case "plan":
+		planCmd(os.Args[2:])
+	case "scan":
+		scanCmd(os.Args[2:])
+	case "audit":
+		auditCmd(os.Args[2:])
+	case "status":
+		statusCmd(os.Args[2:])
+	case "pool":
+		poolCmd(os.Args[2:])
+	case "print-default-policy":
+		fmt.Print(app.DefaultPolicyYAML())
+	case "doctor":
+		doctorCmd(os.Args[2:])
+	case "yolo":
+		yoloCmd(os.Args[2:])
+	case "scope":
+		scopeCmd(os.Args[2:])
+	case "repair":
+		repairCmd(os.Args[2:])
+	case "ship":
+		shipCmd(os.Args[2:])
+	case "add-claude":
+		addClaudeCmd(os.Args[2:])
+	case "add-codex":
+		addCodexCmd(os.Args[2:])
+	case "pools":
+		poolsCmd(os.Args[2:])
+	case "remove-pool":
+		removePoolCmd(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println(version)
+	case "help", "--help", "-h":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
+		usage()
+		os.Exit(2)
+	}
+}
+
+// --- run: single task through PLAN -> EXECUTE -> VERIFY ---
+
+func runCmd(args []string) {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	task := fs.String("task", "", "Task prompt")
+	taskType := fs.String("task-type", "", "Task type override")
+	wtName := fs.String("worktree-name", "", "Explicit worktree name")
+	dryRun := fs.Bool("dry-run", false, "Print commands without executing")
+	authMode := fs.String("mode", "mode1", "Auth mode: mode1 or mode2")
+	claudeBin := fs.String("claude-bin", "claude", "Claude Code binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex CLI binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "CODEX_HOME")
+	buildC := fs.String("build-cmd", "", "Build command")
+	testC := fs.String("test-cmd", "", "Test command")
+	lintC := fs.String("lint-cmd", "", "Lint command")
+	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
+	fs.Parse(args)
+
+	if strings.TrimSpace(*task) == "" {
+		fmt.Fprintln(os.Stderr, "--task is required")
+		fs.Usage()
+		os.Exit(2)
+	}
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Auto-detect commands
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" { *buildC = detected.Build }
+	if *testC == "" { *testC = detected.Test }
+	if *lintC == "" { *lintC = detected.Lint }
+
+	// Create TUI runner for live progress
+	ui := tui.NewRunner()
+
+	// Create harness-owned task state (anti-deception: model cannot mark status)
+	ts := taskstate.NewTaskState("run-task")
+
+	cfg := app.RunConfig{
+		RepoRoot:        absRepo,
+		PolicyPath:      *policy,
+		Task:            *task,
+		TaskType:        *taskType,
+		WorktreeName:    *wtName,
+		DryRun:          *dryRun,
+		AuthMode:        app.AuthMode(*authMode),
+		ClaudeBinary:    *claudeBin,
+		CodexBinary:     *codexBin,
+		ClaudeConfigDir: *claudeConfigDir,
+		CodexHome:       *codexHome,
+		State:           ts,
+		BuildCommand:    *buildC,
+		TestCommand:     *testC,
+		LintCommand:     *lintC,
+		OnEvent: func(ev stream.Event) {
+			ui.Event("task", ev)
+		},
+	}
+
+	orchestrator, err := app.New(cfg)
+	if err != nil {
+		fatal("stoke init: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	ui.TaskStart("task", *task, "default")
+	startTime := time.Now()
+
+	result, err := orchestrator.Run(ctx)
+	elapsed := time.Since(startTime).Seconds()
+
+	if err != nil {
+		ui.TaskComplete("task", false, elapsed, result.TotalCostUSD, 1)
+		fmt.Println(ts.ClaimedVsVerified())
+		fatal("stoke run: %v", err)
+	}
+
+	ui.TaskComplete("task", true, elapsed, result.TotalCostUSD, 1)
+	fmt.Println(ts.ClaimedVsVerified())
+	fmt.Print(result.Render())
+}
+
+// --- build: multi-task plan with parallel agents ---
+
+func buildCmd(args []string) {
+	fs := flag.NewFlagSet("build", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	planFile := fs.String("plan", "", "Plan file (default: auto-detect)")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	dryRun := fs.Bool("dry-run", false, "Show plan without executing")
+	workers := fs.Int("workers", 4, "Max parallel agents")
+	authMode := fs.String("mode", "mode1", "Auth mode")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "Single CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "Single CODEX_HOME")
+	claudePoolsFlag := fs.String("claude-pools", "", "Comma-separated Claude pool dirs")
+	codexPoolsFlag := fs.String("codex-pools", "", "Comma-separated Codex pool dirs")
+	buildC := fs.String("build-cmd", "", "Build command")
+	testC := fs.String("test-cmd", "", "Test command")
+	lintC := fs.String("lint-cmd", "", "Lint command")
+	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip (default: medium)")
+	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
+	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
+	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Build pool configurations from flags
+	var claudePoolDirs, codexPoolDirs []string
+	if *claudePoolsFlag != "" {
+		claudePoolDirs = splitPools(*claudePoolsFlag)
+	} else if *claudeConfigDir != "" {
+		claudePoolDirs = []string{*claudeConfigDir}
+	}
+	if *codexPoolsFlag != "" {
+		codexPoolDirs = splitPools(*codexPoolsFlag)
+	} else if *codexHome != "" {
+		codexPoolDirs = []string{*codexHome}
+	}
+
+	// Build subscription pool configs
+	var poolConfigs []subscriptions.Pool
+	for i, dir := range claudePoolDirs {
+		poolConfigs = append(poolConfigs, subscriptions.Pool{
+			ID:        fmt.Sprintf("claude-%d", i+1),
+			Provider:  subscriptions.ProviderClaude,
+			ConfigDir: dir,
+		})
+	}
+	for i, dir := range codexPoolDirs {
+		poolConfigs = append(poolConfigs, subscriptions.Pool{
+			ID:        fmt.Sprintf("codex-%d", i+1),
+			Provider:  subscriptions.ProviderCodex,
+			ConfigDir: dir,
+		})
+	}
+	// Build pool manager: explicit flags → auto-discovered → nil (let app.New create defaults)
+	var pools *subscriptions.Manager
+	if len(poolConfigs) > 0 {
+		pools = subscriptions.NewManager(poolConfigs)
+		fmt.Printf("  pools:   %d Claude + %d Codex\n", len(claudePoolDirs), len(codexPoolDirs))
+	} else if discovered := autoDiscoverPools(); discovered != nil {
+		pools = discovered
+		snap := discovered.Snapshot()
+		claudeCount, codexCount := 0, 0
+		for _, p := range snap {
+			if p.Provider == subscriptions.ProviderClaude { claudeCount++ }
+			if p.Provider == subscriptions.ProviderCodex { codexCount++ }
+		}
+		fmt.Printf("  pools:   %d Claude + %d Codex (auto-discovered from ~/.stoke/pools/)\n", claudeCount, codexCount)
+	}
+	// If pools is nil here, app.New will create default single Claude + Codex pool
+
+	// Auto-detect commands
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" { *buildC = detected.Build }
+	if *testC == "" { *testC = detected.Test }
+	if *lintC == "" { *lintC = detected.Lint }
+
+	// Load plan
+	var p *plan.Plan
+	if *planFile != "" {
+		p, err = plan.LoadFile(*planFile)
+	} else {
+		p, err = plan.Load(absRepo)
+	}
+	if err != nil {
+		fatal("load plan: %v", err)
+	}
+
+	// Validate plan structure
+	if planErrs := p.Validate(); len(planErrs) > 0 {
+		for _, e := range planErrs {
+			fmt.Fprintf(os.Stderr, "  plan warning: %s\n", e)
+		}
+	}
+
+	// Validate commands
+	for _, w := range config.ValidateCommands(*buildC, *testC, *lintC) {
+		fmt.Fprintf(os.Stderr, "  %s\n", w)
+	}
+
+	// Route tasks by type
+	for i := range p.Tasks {
+		if p.Tasks[i].Type == "" {
+			p.Tasks[i].Type = string(model.InferTaskType(p.Tasks[i].Description))
+		}
+	}
+
+	// ROI filter: remove low-value tasks before execution
+	var roiClass plan.ROIClass
+	switch *roiFilter {
+	case "high":   roiClass = plan.ROIHigh
+	case "medium": roiClass = plan.ROIMedium
+	case "low":    roiClass = plan.ROILow
+	case "skip":   roiClass = plan.ROISkip
+	default:       roiClass = plan.ROIMedium
+	}
+	kept, filtered := plan.FilterByROI(p.Tasks, roiClass)
+	if len(filtered) > 0 {
+		fmt.Printf("  ROI filter removed %d task(s):\n", len(filtered))
+		for _, f := range filtered {
+			fmt.Printf("    - %s (%s: %s)\n", f.Task.ID, f.ROI.Class, f.ROI.Reason)
+		}
+		p.Tasks = kept
+		fmt.Println()
+	}
+
+	fmt.Printf("⚡ STOKE build %s\n", version)
+	fmt.Printf("  plan:    %s (%d tasks)\n", p.ID, len(p.Tasks))
+	fmt.Printf("  workers: %d\n", *workers)
+	fmt.Printf("  build:   %s\n", orNone(*buildC))
+	fmt.Printf("  test:    %s\n", orNone(*testC))
+	fmt.Printf("  lint:    %s\n\n", orNone(*lintC))
+
+	if *dryRun {
+		fmt.Println("DRY RUN:")
+		for _, t := range p.Tasks {
+			deps := ""
+			if len(t.Dependencies) > 0 {
+				deps = " (after " + strings.Join(t.Dependencies, ", ") + ")"
+			}
+			fmt.Printf("  %s [%s]: %s%s\n", t.ID, t.Type, trunc(t.Description, 55), deps)
+			if len(t.Files) > 0 {
+				fmt.Printf("    files: %s\n", strings.Join(t.Files, ", "))
+			}
+		}
+		return
+	}
+
+	if *interactive {
+		// Session store (for interactive mode)
+		var store session.SessionStore
+		if *useSQLite {
+			sqlStore, err := session.NewSQLStore(absRepo)
+			if err != nil {
+				fatal("sqlite store: %v", err)
+			}
+			store = sqlStore
+		} else {
+			store = session.New(absRepo)
+		}
+
+		// Launch interactive Bubble Tea TUI
+		model := tui.NewInteractiveModel(p.ID, len(p.Tasks))
+		program := tea.NewProgram(model)
+
+		// Create harness-owned plan state for interactive mode too
+		interactiveTaskIDs := make([]string, len(p.Tasks))
+		for i, t := range p.Tasks { interactiveTaskIDs[i] = t.ID }
+		interactivePlanState := taskstate.NewPlanState(interactiveTaskIDs)
+
+		go func() {
+			checkResume(store, p)
+			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+
+			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			defer cancel()
+
+			sched := scheduler.New(*workers)
+			interactiveWorktrees := worktree.NewManager(absRepo)
+			sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+				if task.Status == plan.StatusDone {
+					return scheduler.TaskResult{TaskID: task.ID, Success: true}
+				}
+				tui.SendTaskStart(program, task.ID, task.Description, "pool-1")
+				taskStart := time.Now()
+				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), func(ev stream.Event) {
+					tui.SendTaskEvent(program, task.ID, ev)
+				})
+				orchestrator, err := app.New(cfg)
+				if err != nil {
+					ts := interactivePlanState.Get(task.ID)
+					tui.SendTaskComplete(program, task.ID, false, 0, 0, 1, err.Error(), ts.ClaimedVsVerified())
+					return scheduler.TaskResult{TaskID: task.ID, Error: err}
+				}
+				result, err := orchestrator.Run(ctx)
+				elapsed := time.Since(taskStart).Seconds()
+				ts := interactivePlanState.Get(task.ID)
+				if err != nil {
+					tui.SendTaskComplete(program, task.ID, false, result.TotalCostUSD, elapsed, 1, err.Error(), ts.ClaimedVsVerified())
+					store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: 1, Success: false, Error: err.Error(), CostUSD: result.TotalCostUSD})
+					markTask(p, task.ID, plan.StatusFailed)
+					store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+					return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+				}
+				tui.SendTaskComplete(program, task.ID, true, result.TotalCostUSD, elapsed, 1, "", ts.ClaimedVsVerified())
+				store.SaveAttempt(session.Attempt{TaskID: task.ID, Number: 1, Success: true, CostUSD: result.TotalCostUSD})
+				markTask(p, task.ID, plan.StatusDone)
+				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
+				return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
+			})
+			// Update pool utilization in TUI
+			tui.SendPoolUpdate(program, []tui.PoolInfo{
+				{ID: "aggregate", Label: "all pools", Utilization: 0},
+			})
+			tui.SendDone(program)
+		}()
+
+		if _, err := program.Run(); err != nil {
+			fatal("tui: %v", err)
+		}
+		store.ClearState()
+		return
+	}
+
+	// --- Headless mode (default) ---
+	// Use the extracted runBuild function which returns a proper result
+	buildCfg := BuildConfig{
+		RepoRoot:        absRepo,
+		PlanPath:        *planFile,
+		PolicyPath:      *policy,
+		Workers:         *workers,
+		AuthMode:        *authMode,
+		ClaudeBinary:    *claudeBin,
+		CodexBinary:     *codexBin,
+		ClaudeConfigDir: *claudeConfigDir,
+		CodexHome:       *codexHome,
+		ClaudePoolDirs:  claudePoolDirs,
+		CodexPoolDirs:   codexPoolDirs,
+		BuildCommand:    *buildC,
+		TestCommand:     *testC,
+		LintCommand:     *lintC,
+		ROIFilter:       *roiFilter,
+		UseSQLite:       *useSQLite,
+		Timeout:         *timeout,
+	}
+
+	buildReport, err := runBuild(buildCfg)
+	if err != nil {
+		fatal("build: %v", err)
+	}
+
+	// Exit with error if any tasks failed (important for ship integration)
+	if !buildReport.Success {
+		fmt.Printf("\n  Build completed with %d failed task(s)\n", buildReport.TasksFailed)
+		os.Exit(1)
+	}
+}
+
+// --- plan: generate a plan file from codebase analysis ---
+
+func planCmd(args []string) {
+	fs := flag.NewFlagSet("plan", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	output := fs.String("output", "stoke-plan.json", "Output file")
+	task := fs.String("task", "", "High-level task description")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	dryRun := fs.Bool("dry-run", false, "Show prompt without executing")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	taskPrompt := *task
+	if taskPrompt == "" {
+		taskPrompt = "Analyze this codebase and identify tasks that need to be done"
+	}
+
+	prompt := fmt.Sprintf(`You are a planning agent. Read this codebase and produce a structured task plan.
+
+High-level goal: %s
+
+Output ONLY valid JSON in this format:
+{
+  "id": "plan-YYYYMMDD",
+  "description": "Brief description",
+  "tasks": [
+    {"id": "TASK-1", "description": "Specific task", "files": ["src/file.ts"], "dependencies": [], "type": "refactor"}
+  ]
+}
+
+Rules:
+- Each task completable in one agent session (< 20 tool turns)
+- List file dependencies between tasks
+- Predict which files each task will modify
+- Types: refactor, typesafety, docs, security, architecture, devops, concurrency, review
+- Be specific: file paths, function names, expected behavior`, taskPrompt)
+
+	if *dryRun {
+		fmt.Println("PLAN PROMPT:")
+		fmt.Println(prompt)
+		return
+	}
+
+	fmt.Printf("⚡ STOKE plan\n  Launching Claude in read-only mode...\n\n")
+
+	// Use app.RunConfig with plan-like settings
+	// Create harness-owned task state for plan generation
+	ts := taskstate.NewTaskState("plan")
+
+	cfg := app.RunConfig{
+		RepoRoot:        absRepo,
+		Task:            prompt,
+		TaskType:        "plan",
+		DryRun:          false,
+		PlanOnly:        true, // structurally read-only: no execute, no verify, no commit, no merge
+		AuthMode:        "mode1",
+		ClaudeBinary:    *claudeBin,
+		ClaudeConfigDir: *claudeConfigDir,
+		State:           ts,
+		OnEvent: func(ev stream.Event) {
+			if ev.DeltaText != "" {
+				fmt.Print(ev.DeltaText)
+			}
+		},
+	}
+
+	orchestrator, err := app.New(cfg)
+	if err != nil {
+		fatal("init: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	result, err := orchestrator.Run(ctx)
+	if err != nil {
+		fatal("plan: %v", err)
+	}
+
+	fmt.Printf("\n\nCost: $%.4f\n", result.TotalCostUSD)
+
+	// Extract JSON from plan output (structurally read-only: no execute ran)
+	planText := result.PlanOutput
+	if planText == "" {
+		// Fallback to rendered output
+		planText = result.Render()
+	}
+	if idx := strings.Index(planText, "{"); idx >= 0 {
+		if end := strings.LastIndex(planText, "}"); end > idx {
+			jsonStr := planText[idx : end+1]
+			if json.Valid([]byte(jsonStr)) {
+				// Resolve output path relative to repo root (not cwd)
+				// This ensures ship/build can find the plan when run from different directories
+				outputPath := *output
+				if !filepath.IsAbs(outputPath) {
+					outputPath = filepath.Join(absRepo, outputPath)
+				}
+				os.WriteFile(outputPath, []byte(jsonStr), 0644)
+				fmt.Printf("Plan saved to %s\n", outputPath)
+				return
+			}
+		}
+	}
+	fmt.Println("Could not extract plan JSON from output. Run manually and save.")
+}
+
+// --- status: show session dashboard ---
+
+func statusCmd(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Auto-detect store: if session.db exists and --sqlite not explicitly set, use SQLite
+	var store session.SessionStore
+	sqlitePath := filepath.Join(absRepo, ".stoke", "session.db")
+	if *useSQLite || fileExists(sqlitePath) {
+		sqlStore, err := session.NewSQLStore(absRepo)
+		if err != nil {
+			fatal("sqlite store: %v", err)
+		}
+		store = sqlStore
+	} else {
+		store = session.New(absRepo)
+	}
+	state, err := store.LoadState()
+	if err != nil {
+		fatal("load state: %v", err)
+	}
+	if state == nil {
+		fmt.Println("No active session.")
+
+		// Show learning if available
+		learning, _ := store.LoadLearning()
+		if learning != nil && len(learning.Patterns) > 0 {
+			fmt.Println("\nLearned patterns from previous sessions:")
+			for _, p := range learning.Patterns {
+				fmt.Printf("  ● %s -> %s (%d occurrences)\n", p.Issue, p.Fix, p.Occurrences)
+			}
+		}
+		return
+	}
+
+	done, failed, pending := 0, 0, 0
+	for _, t := range state.Tasks {
+		switch t.Status {
+		case plan.StatusDone:
+			done++
+		case plan.StatusFailed:
+			failed++
+		default:
+			pending++
+		}
+	}
+
+	elapsed := time.Since(state.StartedAt).Round(time.Second)
+	fmt.Printf("⚡ STOKE status\n\n")
+	fmt.Printf("  Plan:    %s\n", state.PlanID)
+	fmt.Printf("  Tasks:   %d done, %d failed, %d pending (of %d)\n", done, failed, pending, len(state.Tasks))
+	fmt.Printf("  Cost:    $%.2f\n", state.TotalCostUSD)
+	fmt.Printf("  Elapsed: %s\n", elapsed)
+	fmt.Printf("  Saved:   %s\n\n", state.SavedAt.Format(time.RFC3339))
+
+	for _, t := range state.Tasks {
+		icon := "○"
+		switch t.Status {
+		case plan.StatusDone:
+			icon = "✓"
+		case plan.StatusFailed:
+			icon = "✗"
+		case plan.StatusActive:
+			icon = "▸"
+		}
+		fmt.Printf("  %s %s: %s\n", icon, t.ID, trunc(t.Description, 60))
+	}
+
+	learning, _ := store.LoadLearning()
+	if learning != nil && len(learning.Patterns) > 0 {
+		fmt.Println("\n  Learned patterns:")
+		for _, p := range learning.Patterns {
+			fmt.Printf("    ● %s -> %s\n", trunc(p.Issue, 30), trunc(p.Fix, 30))
+		}
+	}
+
+	// Show latest build report if available
+	if latest, err := report.LoadLatest(absRepo); err == nil {
+		fmt.Printf("\n  Last report: %s (%d/%d done, $%.2f)\n",
+			latest.PlanID, latest.TasksDone, latest.TasksTotal, latest.TotalCost)
+	}
+}
+
+// --- scan: deterministic code scan + security surface mapping ---
+
+func scanCmd(args []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root")
+	securityFlag := fs.Bool("security", false, "Include security surface mapping")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	if !*jsonOut {
+		fmt.Printf("⚡ STOKE scan\n\n")
+	}
+
+	// Run deterministic code scan
+	result, err := scanpkg.ScanFiles(absRepo, scanpkg.DefaultRules(), nil)
+	if err != nil {
+		fatal("scan: %v", err)
+	}
+
+	if *jsonOut {
+		output := map[string]interface{}{"scan": result}
+		if *securityFlag {
+			secMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
+			if secMap != nil {
+				output["security_surface"] = secMap
+			}
+		}
+		data, _ := json.MarshalIndent(output, "", "  ")
+		fmt.Println(string(data))
+		if result.HasBlocking() {
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Printf("  %s\n\n", result.Summary())
+	for _, f := range result.Findings {
+		icon := "●"
+		switch f.Severity {
+		case "critical": icon = "✗"
+		case "high":     icon = "!"
+		case "medium":   icon = "~"
+		case "low":      icon = "○"
+		}
+		fmt.Printf("  %s [%s] %s:%d -- %s\n", icon, f.Severity, f.File, f.Line, f.Message)
+		if f.Fix != "" { fmt.Printf("           Fix: %s\n", f.Fix) }
+	}
+
+	// Security surface mapping
+	if *securityFlag {
+		secMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
+		if secMap != nil && len(secMap.Surfaces) > 0 {
+			fmt.Printf("\n  Security surface (%d files):\n", secMap.FilesScanned)
+			fmt.Printf("  %s\n", strings.Replace(secMap.Summary(), "\n", "\n  ", -1))
+		}
+	}
+
+	if result.HasBlocking() {
+		fmt.Println("\n  BLOCKING: critical/high issues must be resolved before merge")
+		os.Exit(1)
+	}
+}
+
+// --- audit: multi-perspective code review ---
+
+func auditCmd(args []string) {
+	fs := flag.NewFlagSet("audit", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root")
+	personas := fs.String("personas", "", "Comma-separated persona IDs (default: auto-select)")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	dryRun := fs.Bool("dry-run", false, "Show prompts without executing")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	fmt.Printf("⚡ STOKE audit\n\n")
+
+	// Run scan first to inform persona selection
+	scanResult, _ := scanpkg.ScanFiles(absRepo, scanpkg.DefaultRules(), nil)
+	securityMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
+
+	// Select personas
+	allPersonas := audit.DefaultPersonas()
+	var selected []audit.Persona
+	if *personas != "" {
+		ids := strings.Split(*personas, ",")
+		idSet := map[string]bool{}
+		for _, id := range ids { idSet[strings.TrimSpace(id)] = true }
+		for _, p := range allPersonas {
+			if idSet[p.ID] { selected = append(selected, p) }
+		}
+	} else {
+		selected = audit.SelectPersonas(allPersonas, securityMap, scanResult)
+	}
+
+	fmt.Printf("  Personas: ")
+	names := make([]string, len(selected))
+	for i, p := range selected { names[i] = p.Name }
+	fmt.Println(strings.Join(names, ", "))
+	fmt.Println()
+
+	// Build and execute review requests
+	for _, p := range selected {
+		req := audit.ReviewRequest{
+			Persona:     p,
+			ScanResult:  scanResult,
+			SecurityMap: securityMap,
+		}
+		prompt := audit.BuildPrompt(p, req)
+
+		if *dryRun {
+			fmt.Printf("--- %s ---\n", p.Name)
+			fmt.Println(prompt[:min(len(prompt), 500)])
+			if len(prompt) > 500 { fmt.Println("...") }
+			fmt.Println()
+			continue
+		}
+
+		if *jsonOut {
+			data, _ := json.MarshalIndent(req, "", "  ")
+			fmt.Println(string(data))
+			continue
+		}
+
+		// Execute the review via Claude Code headless
+		claudeBin := "claude"
+		runner := engine.NewClaudeRunner(claudeBin)
+		spec := engine.RunSpec{
+			Prompt:      prompt,
+			WorktreeDir: absRepo,
+			Mode:        engine.AuthModeMode1,
+			Phase: engine.PhaseSpec{
+				Name:         "audit-" + p.ID,
+				BuiltinTools: []string{"Read", "Glob", "Grep"},
+				MCPEnabled:   false,
+				MaxTurns:     5,
+			},
+		}
+
+		fmt.Printf("  Running %s...", p.Name)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		result, err := runner.Run(ctx, spec, nil)
+		cancel()
+
+		if err != nil {
+			fmt.Printf(" error: %v\n", err)
+			continue
+		}
+		fmt.Printf(" done ($%.4f)\n", result.CostUSD)
+		if result.ResultText != "" {
+			fmt.Printf("    %s\n\n", strings.Replace(result.ResultText, "\n", "\n    ", -1))
+		}
+	}
+
+	if *dryRun {
+		return
+	}
+}
+
+func min(a, b int) int {
+	if a < b { return a }
+	return b
+}
+
+// --- pool: subscription utilization ---
+
+func poolCmd(args []string) {
+	fs := flag.NewFlagSet("pool", flag.ExitOnError)
+	claudeConfigDir := fs.String("claude-config-dir", "", "Single CLAUDE_CONFIG_DIR")
+	claudePoolsFlag := fs.String("claude-pools", "", "Comma-separated Claude pool dirs")
+	fs.Parse(args)
+
+	// Collect pool dirs
+	var poolDirs []string
+	if *claudePoolsFlag != "" {
+		poolDirs = splitPools(*claudePoolsFlag)
+	} else if *claudeConfigDir != "" {
+		poolDirs = []string{*claudeConfigDir}
+	} else if env := os.Getenv("CLAUDE_CONFIG_DIR"); env != "" {
+		poolDirs = []string{env}
+	}
+
+	if len(poolDirs) == 0 {
+		fmt.Println("No pool dirs. Pass --claude-config-dir, --claude-pools, or set CLAUDE_CONFIG_DIR.")
+		return
+	}
+
+	fmt.Printf("⚡ STOKE pool (%d pool(s))\n\n", len(poolDirs))
+
+	for i, dir := range poolDirs {
+		token := readOAuthToken(dir)
+		if token == "" {
+			fmt.Printf("  pool %d (%s): no OAuth token\n\n", i+1, dir)
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		data, err := subscriptions.PollClaudeUsage(ctx, token)
+		cancel()
+		if err != nil {
+			fmt.Printf("  pool %d (%s): poll error: %v\n\n", i+1, dir, err)
+			continue
+		}
+
+		if len(poolDirs) > 1 {
+			fmt.Printf("  --- pool %d (%s) ---\n", i+1, filepath.Base(dir))
+		}
+		printWindow("5-hour", data.FiveHour)
+		printWindow("7-day", data.SevenDay)
+		if data.SevenDayOpus.Utilization > 0 || data.SevenDayOpus.ResetsAt != nil {
+			printWindow("7-day (Opus)", data.SevenDayOpus)
+		}
+		fmt.Println()
+	}
+}
+
+func printWindow(label string, w subscriptions.UsageWindow) {
+	reset := ""
+	if w.ResetsAt != nil {
+		reset = fmt.Sprintf("  resets in %s", time.Until(*w.ResetsAt).Round(time.Minute))
+	}
+	fmt.Printf("  %-15s %s %.0f%%%s\n", label+":", bar(w.Utilization, 20), w.Utilization, reset)
+}
+
+// --- doctor ---
+
+func doctorCmd(args []string) {
+	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	fs.Parse(args)
+	fmt.Print(app.Doctor(*claudeBin, *codexBin))
+}
+
+// --- yolo: interactive Claude Code with full Stoke guards ---
+
+func yoloCmd(args []string) {
+	fs := flag.NewFlagSet("yolo", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	fmt.Printf("⚡ STOKE yolo\n")
+	fmt.Printf("  repo: %s\n", absRepo)
+	fmt.Printf("  mode: full access with Stoke guards\n\n")
+
+	// Install hooks and generate settings
+	fmt.Print("  Installing hooks... ")
+	if err := hooks.InstallInRepo(absRepo); err != nil {
+		fatal("install hooks: %v", err)
+	}
+	fmt.Println("done")
+
+	fmt.Print("  Generating settings... ")
+	settingsPath, err := hooks.GenerateSettings(absRepo, "yolo", "")
+	if err != nil {
+		fatal("generate settings: %v", err)
+	}
+	fmt.Println("done")
+
+	fmt.Print("  Writing CLAUDE.md... ")
+	if err := hooks.GenerateCLAUDEmd(absRepo, "yolo", ""); err != nil {
+		fatal("write CLAUDE.md: %v", err)
+	}
+	fmt.Println("done")
+
+	// Capture git state before
+	beforeHash := gitHead(absRepo)
+
+	// Build claude command: interactive mode (no -p), with settings
+	claudeArgs := []string{"--settings", settingsPath}
+	if *claudeConfigDir != "" {
+		// Mode 1: use specified config dir for subscription auth
+		os.Setenv("CLAUDE_CONFIG_DIR", *claudeConfigDir)
+	}
+
+	fmt.Printf("\n  Launching Claude Code (interactive, guarded)...\n")
+	fmt.Printf("  Guards: git stash/push/rebase blocked, protected files locked, nested sessions blocked\n")
+	fmt.Printf("  Press Ctrl+C or /exit to end session\n\n")
+
+	// Launch interactive claude (stdin/stdout/stderr attached to terminal)
+	cmd := exec.Command(*claudeBin, claudeArgs...)
+	cmd.Dir = absRepo
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Build safe env (Mode 1: full auth scrubbing -- same policy as headless)
+	configDir := *claudeConfigDir
+	if configDir == "" {
+		configDir = os.Getenv("CLAUDE_CONFIG_DIR")
+	}
+	cmd.Env = engine.SafeEnvForClaudeMode1(configDir)
+
+	if runErr := cmd.Run(); runErr != nil {
+		// Non-zero exit is normal for interactive sessions (user pressed Ctrl+C)
+		fmt.Printf("\n  Session ended.\n")
+	}
+
+	// Show what changed
+	afterHash := gitHead(absRepo)
+	if beforeHash != afterHash {
+		fmt.Printf("\n  Changes made during session:\n")
+		diffCmd := exec.Command("git", "log", "--oneline", beforeHash+".."+afterHash)
+		diffCmd.Dir = absRepo
+		diffCmd.Stdout = os.Stdout
+		diffCmd.Run()
+	} else {
+		fmt.Printf("\n  No commits made during session.\n")
+	}
+
+	// Show modified files
+	statusCmd := exec.Command("git", "status", "--short")
+	statusCmd.Dir = absRepo
+	statusOut, _ := statusCmd.Output()
+	if len(strings.TrimSpace(string(statusOut))) > 0 {
+		fmt.Printf("\n  Uncommitted changes:\n%s\n", string(statusOut))
+	}
+
+	// Cleanup CLAUDE.md (leave hooks for future sessions)
+	os.Remove(filepath.Join(absRepo, "CLAUDE.md"))
+}
+
+// --- scope: interactive read-only Claude Code for planning ---
+
+func scopeCmd(args []string) {
+	fs := flag.NewFlagSet("scope", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	output := fs.String("output", "stoke-plan.json", "Output plan file")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	fmt.Printf("⚡ STOKE scope\n")
+	fmt.Printf("  repo: %s\n", absRepo)
+	fmt.Printf("  mode: read-only (no writes allowed)\n")
+	fmt.Printf("  output: %s\n\n", *output)
+
+	// Install hooks and generate read-only settings
+	if err := hooks.InstallInRepo(absRepo); err != nil {
+		fatal("install hooks: %v", err)
+	}
+	settingsPath, err := hooks.GenerateSettings(absRepo, "scope", *output)
+	if err != nil {
+		fatal("generate settings: %v", err)
+	}
+	if err := hooks.GenerateCLAUDEmd(absRepo, "scope", *output); err != nil {
+		fatal("write CLAUDE.md: %v", err)
+	}
+
+	// Generate empty MCP config for isolation (same as headless planning)
+	emptyMCPPath := filepath.Join(absRepo, ".stoke", "generated", "empty-mcp-scope.json")
+	if err := os.WriteFile(emptyMCPPath, []byte("{}"), 0644); err != nil {
+		fatal("write empty MCP config: %v", err)
+	}
+
+	// MCP isolation: strict empty config + deny mcp__* tools
+	// This matches the headless planning path's isolation level
+	claudeArgs := []string{
+		"--settings", settingsPath,
+		"--strict-mcp-config",
+		"--mcp-config", emptyMCPPath,
+		"--disallowedTools", "mcp__*",
+	}
+	if *claudeConfigDir != "" {
+		os.Setenv("CLAUDE_CONFIG_DIR", *claudeConfigDir)
+	}
+
+	fmt.Printf("  Launching Claude Code (scope mode)...\n")
+	fmt.Printf("  Read any file. Write only to: %s\n", *output)
+	fmt.Printf("  MCP: disabled (isolated like headless planning)\n")
+	fmt.Printf("  Ask Claude to save the plan when ready.\n")
+	fmt.Printf("  Press Ctrl+C or /exit to end session\n\n")
+
+	cmd := exec.Command(*claudeBin, claudeArgs...)
+	cmd.Dir = absRepo
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	// Mode 1 env (full auth scrubbing -- same policy as headless)
+	scopeConfigDir := *claudeConfigDir
+	if scopeConfigDir == "" {
+		scopeConfigDir = os.Getenv("CLAUDE_CONFIG_DIR")
+	}
+	cmd.Env = engine.SafeEnvForClaudeMode1(scopeConfigDir)
+
+	cmd.Run()
+
+	// Check if plan file was created during the session
+	planPath := filepath.Join(absRepo, *output)
+	if fileExists(planPath) {
+		data, _ := os.ReadFile(planPath)
+		if json.Valid(data) {
+			fmt.Printf("\n  Plan saved: %s (%d bytes)\n", *output, len(data))
+			fmt.Printf("  Next: stoke build --plan %s\n", *output)
+		}
+	} else {
+		fmt.Printf("\n  No plan file found at %s\n", *output)
+		fmt.Printf("  Tip: ask Claude to write the plan to %s during the session\n", *output)
+	}
+
+	os.Remove(filepath.Join(absRepo, "CLAUDE.md"))
+}
+
+// --- repair: orchestrated scan -> triage -> fix -> verify ---
+
+func repairCmd(args []string) {
+	fs := flag.NewFlagSet("repair", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "CODEX_HOME")
+	buildC := fs.String("build-cmd", "", "Build command")
+	testC := fs.String("test-cmd", "", "Test command")
+	lintC := fs.String("lint-cmd", "", "Lint command")
+	securityFlag := fs.Bool("security", false, "Include security surface mapping")
+	workers := fs.Int("workers", 2, "Max parallel agents")
+	dryRun := fs.Bool("dry-run", false, "Show repair plan without executing")
+	authMode := fs.String("mode", "mode1", "Auth mode")
+	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Auto-detect commands
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" { *buildC = detected.Build }
+	if *testC == "" { *testC = detected.Test }
+	if *lintC == "" { *lintC = detected.Lint }
+
+	fmt.Printf("⚡ STOKE repair\n")
+	fmt.Printf("  repo: %s\n", absRepo)
+	fmt.Printf("  build: %s\n", orNone(*buildC))
+	fmt.Printf("  test:  %s\n", orNone(*testC))
+	fmt.Printf("  lint:  %s\n\n", orNone(*lintC))
+
+	// Phase 1: Scan
+	fmt.Println("Phase 1: Deterministic scan")
+	scanResult, scanErr := scanpkg.ScanFiles(absRepo, scanpkg.DefaultRules(), nil)
+	if scanErr != nil {
+		fatal("scan: %v", scanErr)
+	}
+
+	// Security surface mapping
+	var secMap *scanpkg.SecurityMap
+	if *securityFlag {
+		fmt.Println("  + Security surface mapping")
+		secMap, _ = scanpkg.MapSecuritySurface(absRepo, nil)
+	}
+
+	findings := scanResult.Findings
+	fmt.Printf("  Found %d findings across %d files\n", len(findings), scanResult.FilesScanned)
+
+	if len(findings) == 0 {
+		fmt.Println("  No findings. Codebase is clean.")
+		return
+	}
+
+	// Phase 2: Convert findings to fix tasks
+	fmt.Println("\nPhase 2: Generating repair plan")
+
+	// Group findings by file for efficient fixing
+	byFile := map[string][]scanpkg.Finding{}
+	for _, f := range findings {
+		byFile[f.File] = append(byFile[f.File], f)
+	}
+
+	var tasks []plan.Task
+	taskNum := 1
+	for file, fileFindings := range byFile {
+		// Group by severity
+		var descriptions []string
+		for _, f := range fileFindings {
+			descriptions = append(descriptions, fmt.Sprintf("[%s] %s (line %d): %s", f.Severity, f.Rule, f.Line, f.Message))
+		}
+
+		taskDesc := fmt.Sprintf("Fix %d finding(s) in %s:\n%s", len(fileFindings), file, strings.Join(descriptions, "\n"))
+		if len(taskDesc) > 500 {
+			taskDesc = taskDesc[:500] + "..."
+		}
+
+		tasks = append(tasks, plan.Task{
+			ID:          fmt.Sprintf("REPAIR-%d", taskNum),
+			Description: taskDesc,
+			Files:       []string{file},
+			Type:        "repair",
+		})
+		taskNum++
+	}
+
+	repairPlan := &plan.Plan{
+		ID:          fmt.Sprintf("repair-%s", time.Now().Format("20060102-150405")),
+		Description: fmt.Sprintf("Auto-generated repair plan: %d tasks from %d scan findings", len(tasks), len(findings)),
+		Tasks:       tasks,
+	}
+
+	// Save repair plan
+	repairPlanPath := filepath.Join(absRepo, ".stoke", "repair-plan.json")
+	os.MkdirAll(filepath.Dir(repairPlanPath), 0755)
+	planData, _ := json.MarshalIndent(repairPlan, "", "  ")
+	os.WriteFile(repairPlanPath, planData, 0644)
+
+	fmt.Printf("  Generated %d repair tasks\n", len(tasks))
+	for _, t := range tasks {
+		icon := "○"
+		switch {
+		case strings.Contains(t.Description, "[critical]"):
+			icon = "✗"
+		case strings.Contains(t.Description, "[high]"):
+			icon = "!"
+		}
+		fmt.Printf("  %s %s: %s\n", icon, t.ID, trunc(t.Description, 60))
+	}
+
+	if *dryRun {
+		fmt.Printf("\n  Repair plan: %s\n", repairPlanPath)
+		fmt.Println("  Run without --dry-run to execute repairs.")
+
+		if secMap != nil {
+			fmt.Printf("\n  Security surface: %d surfaces across %d files\n", len(secMap.Surfaces), secMap.FilesScanned)
+		}
+		return
+	}
+
+	// Phase 3: Execute repairs through the anti-deception build pipeline
+	fmt.Println("\nPhase 3: Executing repairs")
+
+	// Use the standard build pipeline -- reuses ALL anti-deception enforcement
+	buildArgs := []string{
+		"--plan", repairPlanPath,
+		"--repo", absRepo,
+		"--workers", fmt.Sprintf("%d", *workers),
+		"--mode", *authMode,
+		"--claude-bin", *claudeBin,
+		"--codex-bin", *codexBin,
+	}
+	if *policy != "" { buildArgs = append(buildArgs, "--policy", *policy) }
+	if *claudeConfigDir != "" { buildArgs = append(buildArgs, "--claude-config-dir", *claudeConfigDir) }
+	if *codexHome != "" { buildArgs = append(buildArgs, "--codex-home", *codexHome) }
+	if *buildC != "" { buildArgs = append(buildArgs, "--build-cmd", *buildC) }
+	if *testC != "" { buildArgs = append(buildArgs, "--test-cmd", *testC) }
+	if *lintC != "" { buildArgs = append(buildArgs, "--lint-cmd", *lintC) }
+	_ = timeout // timeout is handled by buildCmd internally
+
+	buildCmd(buildArgs)
+
+	// Phase 4: Re-scan
+	fmt.Println("\nPhase 4: Re-scanning to verify repairs")
+	rescanResult, _ := scanpkg.ScanFiles(absRepo, scanpkg.DefaultRules(), nil)
+	remaining := len(rescanResult.Findings)
+
+	fmt.Printf("\n  Before: %d findings\n", len(findings))
+	fmt.Printf("  After:  %d findings\n", remaining)
+	fmt.Printf("  Fixed:  %d\n", len(findings)-remaining)
+
+	if remaining > 0 {
+		fmt.Printf("\n  Remaining findings:\n")
+		for _, f := range rescanResult.Findings {
+			fmt.Printf("    [%s] %s:%d %s\n", f.Severity, f.File, f.Line, f.Message)
+		}
+	}
+
+	// Phase 5: Report
+	fmt.Println("\nPhase 5: Repair report")
+	reportPath := filepath.Join(absRepo, ".stoke", "reports", "repair-report.json")
+	os.MkdirAll(filepath.Dir(reportPath), 0755)
+	repairReport := map[string]interface{}{
+		"timestamp":        time.Now().Format(time.RFC3339),
+		"before_findings":  len(findings),
+		"after_findings":   remaining,
+		"tasks_generated":  len(tasks),
+		"plan_id":          repairPlan.ID,
+		"security_scanned": *securityFlag,
+	}
+	reportData, _ := json.MarshalIndent(repairReport, "", "  ")
+	os.WriteFile(reportPath, reportData, 0644)
+	fmt.Printf("  Report: %s\n", reportPath)
+}
+
+// --- ship: the convergence loop (replaces you) ---
+// Build -> Review -> Fix -> Review -> Fix -> ... until reviewer says ship it.
+// Uses Claude Code (Opus) as the builder, Codex as the reviewer.
+// Each round: execute tasks, comprehensive multi-vector review, parse blocking fixes, repeat.
+
+func shipCmd(args []string) {
+	fs := flag.NewFlagSet("ship", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	task := fs.String("task", "", "What to build")
+	planFile := fs.String("plan", "", "Existing plan file (skip plan generation)")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "CODEX_HOME")
+	buildC := fs.String("build-cmd", "", "Build command")
+	testC := fs.String("test-cmd", "", "Test command")
+	lintC := fs.String("lint-cmd", "", "Lint command")
+	maxRounds := fs.Int("max-rounds", 5, "Maximum build-review-fix rounds")
+	workers := fs.Int("workers", 2, "Max parallel agents")
+	authMode := fs.String("mode", "mode1", "Auth mode")
+	timeout := fs.Duration("timeout", 120*time.Minute, "Total timeout")
+	dryRun := fs.Bool("dry-run", false, "Show what would happen")
+	fs.Parse(args)
+
+	if *task == "" && *planFile == "" {
+		fmt.Fprintln(os.Stderr, "--task or --plan required")
+		fs.Usage()
+		os.Exit(2)
+	}
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" { *buildC = detected.Build }
+	if *testC == "" { *testC = detected.Test }
+	if *lintC == "" { *lintC = detected.Lint }
+
+	fmt.Printf("⚡ STOKE ship\n")
+	fmt.Printf("  repo:       %s\n", absRepo)
+	fmt.Printf("  task:       %s\n", orNone(*task))
+	fmt.Printf("  max rounds: %d\n", *maxRounds)
+	fmt.Printf("  workers:    %d\n", *workers)
+	fmt.Printf("  build:      %s\n", orNone(*buildC))
+	fmt.Printf("  test:       %s\n", orNone(*testC))
+	fmt.Printf("  lint:       %s\n\n", orNone(*lintC))
+
+	if *dryRun {
+		fmt.Println("DRY RUN: would execute the following loop:")
+		fmt.Println("  1. Plan (or use existing plan)")
+		fmt.Println("  2. Build all tasks (parallel, anti-deception enforced)")
+		fmt.Println("  3. Comprehensive review: code, arch, security, scaling, tests, UX, docs")
+		fmt.Println("  4. If blocking fixes found -> generate fix tasks -> go to 2")
+		fmt.Println("  5. Repeat until reviewer says ship or max rounds hit")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	startTime := time.Now()
+	var currentPlanPath string
+	var totalCost float64
+
+	// Round 0: Generate or load plan
+	if *planFile != "" {
+		currentPlanPath = *planFile
+		fmt.Printf("Using existing plan: %s\n\n", currentPlanPath)
+	} else {
+		fmt.Println("Round 0: Generating plan")
+		planArgs := []string{
+			"--task", *task,
+			"--repo", absRepo,
+			"--claude-bin", *claudeBin,
+		}
+		if *claudeConfigDir != "" { planArgs = append(planArgs, "--claude-config-dir", *claudeConfigDir) }
+		planCmd(planArgs)
+		currentPlanPath = filepath.Join(absRepo, "stoke-plan.json")
+		if !fileExists(currentPlanPath) {
+			fatal("plan generation failed: no stoke-plan.json")
+		}
+		fmt.Println()
+	}
+
+	// The convergence loop
+	shipped := false
+	shipBlockedReason := "loop did not complete"
+
+	for round := 1; round <= *maxRounds; round++ {
+		fmt.Printf("═══ Round %d/%d ═══\n\n", round, *maxRounds)
+
+		// Step 1: Build (using runBuild directly to get proper success/failure result)
+		fmt.Printf("Step 1: Building from %s\n", filepath.Base(currentPlanPath))
+		
+		// Build pool directories from CLI flags
+		var claudePoolDirs, codexPoolDirs []string
+		if *claudeConfigDir != "" {
+			claudePoolDirs = []string{*claudeConfigDir}
+		}
+		if *codexHome != "" {
+			codexPoolDirs = []string{*codexHome}
+		}
+
+		buildCfg := BuildConfig{
+			RepoRoot:        absRepo,
+			PlanPath:        currentPlanPath,
+			PolicyPath:      *policy,
+			Workers:         *workers,
+			AuthMode:        *authMode,
+			ClaudeBinary:    *claudeBin,
+			CodexBinary:     *codexBin,
+			ClaudeConfigDir: *claudeConfigDir,
+			CodexHome:       *codexHome,
+			ClaudePoolDirs:  claudePoolDirs,
+			CodexPoolDirs:   codexPoolDirs,
+			BuildCommand:    *buildC,
+			TestCommand:     *testC,
+			LintCommand:     *lintC,
+			ROIFilter:       "skip", // no ROI filtering in ship mode
+			UseSQLite:       false,
+			Timeout:         *timeout,
+		}
+
+		buildReport, buildErr := runBuild(buildCfg)
+		if buildErr != nil {
+			shipBlockedReason = fmt.Sprintf("build step failed: %v", buildErr)
+			break
+		}
+		totalCost += buildReport.TotalCost
+
+		// CRITICAL: Gate on build success before proceeding to review
+		// This prevents false-progress where failed builds get reviewed
+		if !buildReport.Success {
+			shipBlockedReason = fmt.Sprintf("build round %d failed: %d task(s) failed", round, buildReport.TasksFailed)
+			fmt.Printf("\n  Build incomplete: %d/%d tasks failed\n", buildReport.TasksFailed, buildReport.TasksTotal)
+			fmt.Println("  Cannot proceed to review with failed tasks.")
+			break
+		}
+		fmt.Printf("  Build complete: %d/%d tasks succeeded\n\n", buildReport.TasksDone, buildReport.TasksTotal)
+
+		// Check plan-level ship blockers and cross-phase verification.
+		// These are set by the planner and must be satisfied before shipping.
+		if planObj, planErr := plan.LoadFile(currentPlanPath); planErr == nil {
+			if len(planObj.ShipBlockers) > 0 {
+				fmt.Printf("  ⚠ Ship blockers from plan:\n")
+				for _, b := range planObj.ShipBlockers {
+					fmt.Printf("    - %s\n", b)
+				}
+			}
+			if len(planObj.CrossPhaseVerification) > 0 {
+				fmt.Printf("  Cross-phase verification checklist:\n")
+				for _, v := range planObj.CrossPhaseVerification {
+					fmt.Printf("    ☐ %s\n", v)
+				}
+				fmt.Println()
+			}
+		}
+
+		// Step 2: Comprehensive review (opposite-family model, direct runner call)
+		// NOT using PlanOnly workflow -- that runs a plan prompt on Claude.
+		// This calls the reviewer engine directly with the review prompt.
+		fmt.Println("Step 2: Comprehensive review (opposite-family)")
+		reviewPrompt := buildShipReviewPrompt(*task, round)
+
+		// Use Codex as reviewer (opposite family from Claude builder)
+		reviewRunner := engine.NewCodexRunner(*codexBin)
+		reviewSpec := engine.RunSpec{
+			Prompt:        reviewPrompt,
+			WorktreeDir:   absRepo,
+			Mode:          engine.AuthMode(*authMode),
+			PoolConfigDir: *codexHome, // default: CLI flag for Codex config
+			Phase: engine.PhaseSpec{
+				Name:         fmt.Sprintf("ship-review-round-%d", round),
+				BuiltinTools: []string{"Read", "Glob", "Grep"},
+				MCPEnabled:   false,
+				MaxTurns:     10,
+				Sandbox:      true,
+				ReadOnly:     true,
+			},
+		}
+
+		// Override with discovered pool if available (pool > CLI flag)
+		if discoveredPools := autoDiscoverPools(); discoveredPools != nil {
+			pool, acqErr := discoveredPools.Acquire(subscriptions.ProviderCodex, fmt.Sprintf("ship-review-%d", round))
+			if acqErr == nil {
+				reviewSpec.PoolConfigDir = pool.ConfigDir
+				defer discoveredPools.Release(pool.ID, false)
+			}
+		}
+
+		fmt.Printf("  Reviewer: codex (read-only, %d max turns)\n", reviewSpec.Phase.MaxTurns)
+		reviewResult, reviewErr := reviewRunner.Run(ctx, reviewSpec, func(ev stream.Event) {
+			if ev.DeltaText != "" {
+				fmt.Print(ev.DeltaText)
+			}
+		})
+		totalCost += reviewResult.CostUSD
+		fmt.Printf("\n  Review cost: $%.4f\n", reviewResult.CostUSD)
+
+		if reviewErr != nil {
+			fmt.Printf("  Review failed: %v\n", reviewErr)
+			// Fallback: try Claude as reviewer
+			fmt.Println("  Falling back to Claude reviewer...")
+			fallbackRunner := engine.NewClaudeRunner(*claudeBin)
+			fallbackSpec := engine.RunSpec{
+				Prompt:        reviewPrompt,
+				WorktreeDir:   absRepo,
+				Mode:          engine.AuthMode(*authMode),
+				PoolConfigDir: *claudeConfigDir, // default: CLI flag for Claude config (NOT leaked from Codex)
+				Phase: engine.PhaseSpec{
+					Name:         fmt.Sprintf("ship-review-round-%d-fallback", round),
+					BuiltinTools: []string{"Read", "Glob", "Grep"},
+					MCPEnabled:   false,
+					MaxTurns:     10,
+					Sandbox:      true,
+					ReadOnly:     true,
+				},
+			}
+			// Override with discovered pool if available
+			if discoveredPools := autoDiscoverPools(); discoveredPools != nil {
+				pool, acqErr := discoveredPools.Acquire(subscriptions.ProviderClaude, fmt.Sprintf("ship-review-%d-fb", round))
+				if acqErr == nil {
+					fallbackSpec.PoolConfigDir = pool.ConfigDir
+					defer discoveredPools.Release(pool.ID, false)
+				}
+			}
+			reviewResult, reviewErr = fallbackRunner.Run(ctx, fallbackSpec, func(ev stream.Event) {
+				if ev.DeltaText != "" { fmt.Print(ev.DeltaText) }
+			})
+			totalCost += reviewResult.CostUSD
+			if reviewErr != nil {
+				fmt.Printf("  Both reviewers failed: %v\n", reviewErr)
+				shipBlockedReason = fmt.Sprintf("both reviewers failed: %v", reviewErr)
+				break
+			}
+		}
+
+		reviewOutput := reviewResult.ResultText
+
+		// Step 3: Parse review verdict (fail-closed: malformed = not shipping)
+		fmt.Println("\nStep 3: Parsing review verdict")
+		verdict, parseErr := parseShipVerdict(reviewOutput)
+		if parseErr != nil {
+			fmt.Printf("\n✗ Review output is not valid JSON. NOT shipping.\n")
+			fmt.Printf("  Parse error: %v\n", parseErr)
+			fmt.Printf("  Raw output (first 500 chars): %s\n", trunc(reviewOutput, 500))
+			shipBlockedReason = fmt.Sprintf("review returned invalid JSON (round %d): %v", round, parseErr)
+			if round == *maxRounds {
+				fmt.Println("  Max rounds reached. Review never produced valid JSON.")
+			} else {
+				fmt.Println("  Will retry review in next round.")
+			}
+			continue
+		}
+
+		if verdict.Ship && len(verdict.BlockingFixes) == 0 {
+			fmt.Printf("\n✓ REVIEWER APPROVED (round %d)\n", round)
+			fmt.Printf("  Verdict: %s\n", verdict.Summary)
+			if len(verdict.Notes) > 0 {
+				fmt.Println("  Notes:")
+				for _, n := range verdict.Notes {
+					fmt.Printf("    - %s\n", n)
+				}
+			}
+			shipped = true
+			shipBlockedReason = ""
+			break
+		}
+
+		if len(verdict.BlockingFixes) == 0 && !verdict.Ship {
+			// Reviewer said don't ship but gave no fixes -- treat as blocker
+			fmt.Printf("\n✗ Reviewer said no but provided no fixes.\n")
+			fmt.Printf("  Summary: %s\n", verdict.Summary)
+			shipBlockedReason = "reviewer rejected: " + verdict.Summary
+			break
+		}
+
+		fmt.Printf("\n✗ Round %d: %d blocking fixes required\n", round, len(verdict.BlockingFixes))
+		for i, fix := range verdict.BlockingFixes {
+			fmt.Printf("  %d. [%s] %s\n", i+1, fix.Category, trunc(fix.Description, 70))
+		}
+
+		if round == *maxRounds {
+			fmt.Printf("\n⚠ Max rounds (%d) reached. %d blocking fixes remain.\n", *maxRounds, len(verdict.BlockingFixes))
+			fmt.Println("  Run again or fix manually.")
+			shipBlockedReason = fmt.Sprintf("max rounds (%d) reached with %d blocking fixes", *maxRounds, len(verdict.BlockingFixes))
+			break
+		}
+
+		// Step 4: Generate fix plan from review findings
+		fmt.Printf("\nStep 4: Generating fix plan for round %d\n", round+1)
+		var fixTasks []plan.Task
+		for i, fix := range verdict.BlockingFixes {
+			fixTasks = append(fixTasks, plan.Task{
+				ID:          fmt.Sprintf("FIX-R%d-%d", round, i+1),
+				Description: fmt.Sprintf("[%s] %s", fix.Category, fix.Description),
+				Files:       fix.Files,
+				Type:        "fix",
+			})
+		}
+
+		fixPlan := &plan.Plan{
+			ID:          fmt.Sprintf("fix-round-%d", round+1),
+			Description: fmt.Sprintf("Round %d fixes: %d blocking issues from review", round+1, len(fixTasks)),
+			Tasks:       fixTasks,
+		}
+
+		fixPlanPath := filepath.Join(absRepo, ".stoke", fmt.Sprintf("fix-plan-round-%d.json", round+1))
+		os.MkdirAll(filepath.Dir(fixPlanPath), 0755)
+		fixData, _ := json.MarshalIndent(fixPlan, "", "  ")
+		os.WriteFile(fixPlanPath, fixData, 0644)
+		currentPlanPath = fixPlanPath
+		fmt.Printf("  Fix plan: %s (%d tasks)\n\n", fixPlanPath, len(fixTasks))
+	}
+
+	elapsed := time.Since(startTime)
+	if shipped {
+		fmt.Printf("\n═══ Ship approved ═══\n")
+		fmt.Printf("  Duration: %s\n", elapsed.Round(time.Second))
+		fmt.Printf("  Total cost: $%.4f\n", totalCost)
+		return
+	}
+
+	fmt.Printf("\n═══ Ship blocked ═══\n")
+	fmt.Printf("  Reason: %s\n", shipBlockedReason)
+	fmt.Printf("  Duration: %s\n", elapsed.Round(time.Second))
+	fmt.Printf("  Total cost: $%.4f\n", totalCost)
+	os.Exit(1)
+}
+
+// buildShipReviewPrompt creates the comprehensive review prompt.
+// This is the exact prompt that replaces Eric copy-pasting between Claude and Codex.
+func buildShipReviewPrompt(task string, round int) string {
+	roundContext := ""
+	if round > 1 {
+		roundContext = fmt.Sprintf("\nThis is review round %d. Previous rounds found blocking issues that were fixed. Check if the fixes are correct AND look for any new issues introduced by the fixes.\n", round)
+	}
+
+	return fmt.Sprintf(`You are a senior staff engineer doing a comprehensive pre-ship review.
+%s
+Review this codebase for the following vectors. For each vector, evaluate the CURRENT state of the code.
+
+Task that was implemented: %s
+
+Return ONLY valid JSON:
+{
+  "ship": true/false,
+  "summary": "one-line verdict",
+  "blocking_fixes": [
+    {
+      "category": "code|architecture|security|scaling|tests|ux|docs",
+      "severity": "critical|high",
+      "description": "what is wrong and how to fix it",
+      "files": ["path/to/file.ts"]
+    }
+  ],
+  "notes": ["non-blocking observations"]
+}
+
+Review vectors:
+
+1. CODE QUALITY
+   - No placeholder code (TODO, FIXME, NotImplementedError)
+   - No type bypasses (@ts-ignore, as any, eslint-disable)
+   - No empty catch blocks
+   - No hardcoded secrets
+   - Error handling is real (not swallowed)
+   - No dead code or unused imports
+
+2. ARCHITECTURE
+   - Changes are coherent with existing patterns
+   - No circular dependencies introduced
+   - Separation of concerns maintained
+   - No tight coupling to implementation details
+
+3. SECURITY
+   - Input validation on all entry points
+   - No SQL injection (raw queries with interpolation)
+   - No XSS (unsanitized output)
+   - Auth/authz checks on protected routes
+   - Secrets not in source code
+
+4. SCALING
+   - No N+1 query patterns
+   - No unbounded loops or memory allocations
+   - Connection pooling where needed
+   - Pagination on list endpoints
+
+5. TEST COVERAGE
+   - New functionality has tests
+   - Tests assert real behavior (not tautological)
+   - Edge cases covered
+   - No test.todo or .skip
+   - Error paths tested
+
+6. UX (if applicable)
+   - Loading states handled
+   - Error states shown to user
+   - Form validation present
+   - Accessibility basics (labels, aria)
+
+7. DOCS
+   - README reflects current state
+   - API changes documented
+   - Breaking changes called out
+   - Setup/install instructions work
+
+Rules:
+- "ship": true means ZERO blocking fixes. Only set this if genuinely ready.
+- Only include blocking_fixes for issues that would cause bugs, security holes, or user-facing failures.
+- Notes are for improvements that are nice-to-have but not blocking.
+- Be specific: file paths, line numbers, exact descriptions.
+- If this is round 2+, verify previous fixes are actually correct.
+`, roundContext, task)
+}
+
+// shipVerdict is the parsed output of the comprehensive review.
+type shipVerdict struct {
+	Ship          bool
+	Summary       string
+	BlockingFixes []shipFix
+	Notes         []string
+}
+
+type shipFix struct {
+	Category    string   `json:"category"`
+	Severity    string   `json:"severity"`
+	Description string   `json:"description"`
+	Files       []string `json:"files"`
+}
+
+func parseShipVerdict(raw string) (shipVerdict, error) {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	s = strings.TrimSpace(s)
+
+	var parsed struct {
+		Ship          bool      `json:"ship"`
+		Summary       string    `json:"summary"`
+		BlockingFixes []shipFix `json:"blocking_fixes"`
+		Notes         []string  `json:"notes"`
+	}
+
+	err := json.Unmarshal([]byte(s), &parsed)
+	if err != nil {
+		// Try to find JSON in the output
+		if idx := strings.Index(s, "{"); idx >= 0 {
+			if end := strings.LastIndex(s, "}"); end > idx {
+				err = json.Unmarshal([]byte(s[idx:end+1]), &parsed)
+			}
+		}
+	}
+
+	if err != nil {
+		return shipVerdict{}, fmt.Errorf("invalid review JSON: %w", err)
+	}
+
+	return shipVerdict{
+		Ship:          parsed.Ship,
+		Summary:       parsed.Summary,
+		BlockingFixes: parsed.BlockingFixes,
+		Notes:         parsed.Notes,
+	}, nil
+}
+
+// --- add-claude: register a Claude subscription pool ---
+
+func addClaudeCmd(args []string) {
+	fs := flag.NewFlagSet("add-claude", flag.ExitOnError)
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	label := fs.String("label", "", "Pool label (e.g. 'Work account', 'Personal')")
+	fs.Parse(args)
+
+	fmt.Println("⚡ STOKE add-claude")
+	fmt.Println()
+
+	poolID, err := pools.AddClaude(*claudeBin, *label)
+	if err != nil {
+		fatal("add-claude: %v", err)
+	}
+
+	fmt.Printf("\n  Pool %s ready.\n", poolID)
+	fmt.Println("  Stoke will automatically use all registered pools for parallel execution.")
+}
+
+// --- add-codex: register a Codex subscription pool ---
+
+func addCodexCmd(args []string) {
+	fs := flag.NewFlagSet("add-codex", flag.ExitOnError)
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	label := fs.String("label", "", "Pool label (e.g. 'Work OpenAI', 'Personal')")
+	fs.Parse(args)
+
+	fmt.Println("⚡ STOKE add-codex")
+	fmt.Println()
+
+	poolID, err := pools.AddCodex(*codexBin, *label)
+	if err != nil {
+		fatal("add-codex: %v", err)
+	}
+
+	fmt.Printf("\n  Pool %s ready.\n", poolID)
+	fmt.Println("  Stoke will automatically use all registered pools for parallel execution.")
+}
+
+// --- pools: list registered pools ---
+
+func poolsCmd(args []string) {
+	manifest, err := pools.LoadManifest()
+	if err != nil {
+		fatal("load pools: %v", err)
+	}
+
+	if len(manifest.Pools) == 0 {
+		fmt.Println("No pools registered.")
+		fmt.Println("  Add one: stoke add-claude")
+		return
+	}
+
+	fmt.Printf("⚡ STOKE pools (%d registered)\n\n", len(manifest.Pools))
+	for _, p := range manifest.Pools {
+		status := "ready"
+		token := readOAuthToken(p.ConfigDir)
+		if token == "" {
+			status = "no token (re-login needed)"
+		}
+
+		fmt.Printf("  %-12s %-20s %s\n", p.ID, p.Label, status)
+		fmt.Printf("  %-12s dir: %s\n", "", p.ConfigDir)
+		if !p.LastUsed.IsZero() {
+			fmt.Printf("  %-12s last used: %s\n", "", p.LastUsed.Format("2006-01-02 15:04"))
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("  Claude pools: %d\n", len(manifest.ClaudeDirs()))
+	fmt.Printf("  Codex pools:  %d\n", len(manifest.CodexDirs()))
+}
+
+// --- remove-pool: unregister a pool ---
+
+func removePoolCmd(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: stoke remove-pool <pool-id>")
+		os.Exit(2)
+	}
+
+	poolID := args[0]
+	fmt.Printf("Removing pool %s... ", poolID)
+
+	if err := pools.RemovePool(poolID); err != nil {
+		fatal("%v", err)
+	}
+	fmt.Println("done.")
+}
+
+// autoDiscoverPools loads pool dirs from the manifest for use in build/ship.
+func autoDiscoverPools() *subscriptions.Manager {
+	manifest, err := pools.LoadManifest()
+	if err != nil || len(manifest.Pools) == 0 {
+		return nil
+	}
+
+	var poolConfigs []subscriptions.Pool
+	for _, p := range manifest.Pools {
+		provider := subscriptions.ProviderClaude
+		if p.Provider == "codex" {
+			provider = subscriptions.ProviderCodex
+		}
+		poolConfigs = append(poolConfigs, subscriptions.Pool{
+			ID:        p.ID,
+			Provider:  provider,
+			ConfigDir: p.ConfigDir,
+		})
+	}
+
+	if len(poolConfigs) == 0 {
+		return nil
+	}
+	return subscriptions.NewManager(poolConfigs)
+}
+
+func gitHead(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil { return "" }
+	return strings.TrimSpace(string(out))
+}
+
+// --- helpers ---
+
+// launchREPL starts the Stoke interactive shell.
+// Slash commands dispatch to orchestrated workflows.
+// Free text goes through claude -p as a single task.
+func launchREPL() {
+	absRepo, _ := filepath.Abs(".")
+	r := repl.New(absRepo)
+
+	// Register all slash commands
+	r.Register(repl.Command{
+		Name: "ship", Description: "Build -> review -> fix -> ... until ship-ready",
+		Usage: "/ship Add JWT auth and rate limiting",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /ship <what to build>")
+				return
+			}
+			shipCmd([]string{"--task", args, "--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "build", Description: "Execute plan with parallel agents",
+		Usage: "/build [plan-file]",
+		Run: func(args string) {
+			planPath := "stoke-plan.json"
+			if args != "" { planPath = args }
+			buildCmd([]string{"--plan", planPath, "--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "scope", Description: "Interactive read-only session for planning",
+		Run: func(args string) {
+			scopeCmd([]string{"--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "repair", Description: "Scan -> fix -> verify cycle",
+		Usage: "/repair [--security] [--dry-run]",
+		Run: func(args string) {
+			repairArgs := []string{"--repo", absRepo}
+			if strings.Contains(args, "--security") { repairArgs = append(repairArgs, "--security") }
+			if strings.Contains(args, "--dry-run") { repairArgs = append(repairArgs, "--dry-run") }
+			repairCmd(repairArgs)
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "scan", Description: "Deterministic code scan",
+		Usage: "/scan [--security] [--json]",
+		Run: func(args string) {
+			scanArgs := []string{"--repo", absRepo}
+			if strings.Contains(args, "--security") { scanArgs = append(scanArgs, "--security") }
+			if strings.Contains(args, "--json") { scanArgs = append(scanArgs, "--json") }
+			scanCmd(scanArgs)
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "audit", Description: "Multi-persona AI review",
+		Usage: "/audit [--dry-run]",
+		Run: func(args string) {
+			auditArgs := []string{"--repo", absRepo}
+			if strings.Contains(args, "--dry-run") { auditArgs = append(auditArgs, "--dry-run") }
+			auditCmd(auditArgs)
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "plan", Description: "Generate task plan (headless)",
+		Usage: "/plan <goal>",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /plan <what to plan>")
+				return
+			}
+			planCmd([]string{"--task", args, "--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "run", Description: "Execute single task through full pipeline",
+		Usage: "/run <task description>",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /run <task description>")
+				return
+			}
+			runCmd([]string{"--task", args, "--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "yolo", Description: "Launch Claude Code with full Stoke guards",
+		Run: func(args string) {
+			yoloCmd([]string{"--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "status", Description: "Show session dashboard",
+		Run: func(args string) {
+			statusCmd([]string{"--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "pool", Description: "Show subscription utilization",
+		Run: func(args string) {
+			poolCmd([]string{})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "add-claude", Description: "Add a Claude Max subscription to the pool",
+		Usage: "/add-claude [label]",
+		Run: func(args string) {
+			addClaudeCmd([]string{"--label", args})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "add-codex", Description: "Add a Codex/OpenAI subscription to the pool",
+		Usage: "/add-codex [label]",
+		Run: func(args string) {
+			addCodexCmd([]string{"--label", args})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "pools", Description: "List all registered subscription pools",
+		Run: func(args string) {
+			poolsCmd([]string{})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "remove-pool", Description: "Remove a pool by ID",
+		Usage: "/remove-pool <pool-id>",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /remove-pool <pool-id>")
+				return
+			}
+			removePoolCmd([]string{args})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "help", Description: "Show available commands",
+		Run:  func(args string) {}, // handled by REPL itself
+	})
+
+	// Free text -> dispatch through the run pipeline
+	r.OnChat = func(input string) {
+		fmt.Println()
+		runCmd([]string{"--task", input, "--repo", absRepo})
+		fmt.Println()
+	}
+
+	r.Run()
+}
+
+// markTask updates a task's status in the plan (for session persistence).
+func markTask(p *plan.Plan, taskID string, status plan.Status) {
+	for i := range p.Tasks {
+		if p.Tasks[i].ID == taskID {
+			p.Tasks[i].Status = status
+			return
+		}
+	}
+}
+
+// checkResume loads prior session state and marks completed tasks in the plan.
+func checkResume(store session.SessionStore, p *plan.Plan) {
+	prev, _ := store.LoadState()
+	if prev == nil {
+		return
+	}
+	done := 0
+	for _, t := range prev.Tasks {
+		if t.Status == plan.StatusDone { done++ }
+	}
+	if done >= len(prev.Tasks) {
+		return
+	}
+	fmt.Printf("  Resuming: %d/%d done\n\n", done, len(prev.Tasks))
+	completed := map[string]bool{}
+	for _, t := range prev.Tasks {
+		if t.Status == plan.StatusDone {
+			completed[t.ID] = true
+		}
+	}
+	for i := range p.Tasks {
+		if completed[p.Tasks[i].ID] {
+			p.Tasks[i].Status = plan.StatusDone
+		}
+	}
+}
+
+// buildRunConfig creates an app.RunConfig for a task with the given flags.
+func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, onEvent func(stream.Event)) app.RunConfig {
+	return app.RunConfig{
+		RepoRoot:         absRepo,
+		PolicyPath:       policyPath,
+		Task:             task.Description,
+		TaskType:         task.Type,
+		TaskVerification: task.Verification,
+		AllowedFiles:     task.Files,
+		DryRun:          false,
+		AuthMode:        app.AuthMode(authMode),
+		ClaudeBinary:    claudeBin,
+		CodexBinary:     codexBin,
+		ClaudeConfigDir: claudeConfigDir,
+		CodexHome:       codexHome,
+		Pools:           pools,
+		Worktrees:       worktrees,
+		State:           state,
+		BuildCommand:    buildCmd,
+		TestCommand:     testCmd,
+		LintCommand:     lintCmd,
+		OnEvent:         onEvent,
+	}
+}
+
+func readOAuthToken(configDir string) string {
+	data, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
+	if err != nil {
+		return ""
+	}
+	var creds struct {
+		ClaudeAiOauth struct {
+			AccessToken string `json:"accessToken"`
+		} `json:"claudeAiOauth"`
+	}
+	if json.Unmarshal(data, &creds) != nil {
+		return ""
+	}
+	return creds.ClaudeAiOauth.AccessToken
+}
+
+func bar(pct float64, w int) string {
+	n := int(pct / 100 * float64(w))
+	if n > w { n = w }
+	if n < 0 { n = 0 }
+	return strings.Repeat("█", n) + strings.Repeat("░", w-n)
+}
+
+func trunc(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n-3] + "..."
+}
+
+func orNone(s string) string {
+	if s == "" { return "(none)" }
+	return s
+}
+
+func fatal(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func splitPools(s string) []string {
+	var dirs []string
+	for _, d := range strings.Split(s, ",") {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+func usage() {
+	fmt.Printf(`stoke %s — AI coding orchestrator
+
+USAGE:
+  stoke <command> [flags]
+
+COMMANDS:
+  run       Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
+  build     Execute multi-task plan with parallel agents
+  plan      Generate a task plan from codebase analysis (headless)
+  scope     Interactive scoping session with research loop (read-only)
+  yolo      Launch Claude Code interactively with full Stoke guards
+  repair    Scan -> auto-generate fix plan -> build -> re-verify
+  ship      Build -> review -> fix -> review -> ... until ship-ready
+  scan      Deterministic code scan (secrets, eval, TODO, debug output)
+  audit     Multi-perspective review (security, perf, reliability, ops)
+  status    Show session dashboard (progress, cost, learning)
+  pool      Show subscription pool utilization
+  add-claude Add a Claude Max subscription to the pool
+  add-codex  Add a Codex/OpenAI subscription to the pool
+  pools     List all registered subscription pools
+  remove-pool Remove a pool by ID
+  doctor    Check tool dependencies
+  version   Print version
+
+RUN FLAGS:
+  --task <prompt>      Task description (required)
+  --task-type <type>   Override inferred type
+  --repo <path>        Repository root (default: .)
+  --dry-run            Show commands without executing
+  --build-cmd <cmd>    Build command (auto-detected)
+  --test-cmd <cmd>     Test command (auto-detected)
+  --lint-cmd <cmd>     Lint command (auto-detected)
+
+BUILD FLAGS:
+  --plan <path>        Plan file (default: stoke-plan.json)
+  --workers <n>        Max parallel agents (default: 4)
+  --claude-pools <dirs> Comma-separated Claude pool dirs (multi-pool)
+  --codex-pools <dirs>  Comma-separated Codex pool dirs (multi-pool)
+  --roi <level>        ROI filter: high, medium, low, skip (default: medium)
+  --sqlite             Use SQLite session store instead of JSON
+  --interactive        Launch interactive Bubble Tea TUI
+  --dry-run            Show plan without executing
+
+PLAN FLAGS:
+  --task <goal>        High-level goal description
+  --output <path>      Output file (default: stoke-plan.json)
+  --dry-run            Show prompt without executing
+
+SCAN FLAGS:
+  --security           Include security surface mapping
+  --json               Output as JSON
+
+AUDIT FLAGS:
+  --personas <ids>     Comma-separated persona IDs (default: auto-select)
+  --dry-run            Show prompts without executing
+  --json               Output as JSON
+
+SHIP FLAGS:
+  --task <goal>        What to build (or --plan <path>)
+  --max-rounds <n>     Maximum build-review-fix rounds (default: 5)
+  --workers <n>        Max parallel agents (default: 2)
+  --dry-run            Show what would happen
+
+REPAIR FLAGS:
+  --security           Include security surface mapping
+  --workers <n>        Max parallel agents (default: 2)
+  --dry-run            Show repair plan without executing
+
+QUICKSTART:
+  stoke ship --task "Add JWT auth and rate limiting"
+  stoke yolo --repo .
+  stoke scope --repo .
+  stoke repair --repo . --dry-run
+  stoke run --task "Add rate limiting" --dry-run
+  stoke plan --task "Add JWT auth"
+  stoke build --plan stoke-plan.json --workers 4
+  stoke scan --security
+  stoke audit --dry-run
+  stoke pool --claude-config-dir ~/.claude
+
+`, version)
+}

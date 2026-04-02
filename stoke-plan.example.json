@@ -1,0 +1,55 @@
+{
+  "id": "plan-auth-example",
+  "description": "Add JWT authentication with rate limiting",
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "description": "Create src/types/auth.ts with User, Session, JWTPayload interfaces and AuthConfig type",
+      "files": ["src/types/auth.ts"],
+      "dependencies": [],
+      "type": "typesafety"
+    },
+    {
+      "id": "TASK-2",
+      "description": "Implement JWT middleware in src/middleware/auth.ts - extract token, verify, attach user to Request",
+      "files": ["src/middleware/auth.ts", "src/types/express.d.ts"],
+      "dependencies": ["TASK-1"],
+      "type": "security"
+    },
+    {
+      "id": "TASK-3",
+      "description": "Add sliding-window rate limiting in src/middleware/rateLimit.ts, wire to /api/* routes",
+      "files": ["src/middleware/rateLimit.ts", "src/routes/index.ts"],
+      "dependencies": [],
+      "type": "architecture"
+    },
+    {
+      "id": "TASK-4",
+      "description": "Write auth middleware tests: valid token, expired token 401, missing token 401, bad signature 403",
+      "files": ["tests/middleware/auth.test.ts"],
+      "dependencies": ["TASK-2"],
+      "type": "refactor"
+    },
+    {
+      "id": "TASK-5",
+      "description": "Write rate limit tests: under-limit passes, at-limit 429, window reset, per-IP isolation",
+      "files": ["tests/middleware/rateLimit.test.ts"],
+      "dependencies": ["TASK-3"],
+      "type": "refactor"
+    },
+    {
+      "id": "TASK-6",
+      "description": "Add /auth/login and /auth/refresh endpoints in src/routes/auth.ts",
+      "files": ["src/routes/auth.ts"],
+      "dependencies": ["TASK-2"],
+      "type": "security"
+    },
+    {
+      "id": "TASK-7",
+      "description": "Update docs/api.md with authentication section, rate limit headers, error responses",
+      "files": ["docs/api.md"],
+      "dependencies": ["TASK-6", "TASK-3"],
+      "type": "docs"
+    }
+  ]
+}
