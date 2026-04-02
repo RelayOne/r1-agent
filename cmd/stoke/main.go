@@ -819,7 +819,9 @@ Rules:
 				if !filepath.IsAbs(outputPath) {
 					outputPath = filepath.Join(absRepo, outputPath)
 				}
-				os.WriteFile(outputPath, []byte(jsonStr), 0644)
+				if err := os.WriteFile(outputPath, []byte(jsonStr), 0644); err != nil {
+					fatal("write plan: %v", err)
+				}
 				fmt.Printf("Plan saved to %s\n", outputPath)
 				return
 			}
@@ -1443,8 +1445,13 @@ func repairCmd(args []string) {
 	// Save repair plan
 	repairPlanPath := filepath.Join(absRepo, ".stoke", "repair-plan.json")
 	os.MkdirAll(filepath.Dir(repairPlanPath), 0755)
-	planData, _ := json.MarshalIndent(repairPlan, "", "  ")
-	os.WriteFile(repairPlanPath, planData, 0644)
+	planData, err := json.MarshalIndent(repairPlan, "", "  ")
+	if err != nil {
+		fatal("marshal repair plan: %v", err)
+	}
+	if err := os.WriteFile(repairPlanPath, planData, 0644); err != nil {
+		fatal("write repair plan: %v", err)
+	}
 
 	fmt.Printf("  Generated %d repair tasks\n", len(tasks))
 	for _, t := range tasks {
@@ -1518,8 +1525,13 @@ func repairCmd(args []string) {
 		"plan_id":          repairPlan.ID,
 		"security_scanned": *securityFlag,
 	}
-	reportData, _ := json.MarshalIndent(repairReport, "", "  ")
-	os.WriteFile(reportPath, reportData, 0644)
+	reportData, err := json.MarshalIndent(repairReport, "", "  ")
+	if err != nil {
+		fatal("marshal report: %v", err)
+	}
+	if err := os.WriteFile(reportPath, reportData, 0644); err != nil {
+		fatal("write report: %v", err)
+	}
 	fmt.Printf("  Report: %s\n", reportPath)
 }
 
@@ -1835,8 +1847,13 @@ func shipCmd(args []string) {
 
 		fixPlanPath := filepath.Join(absRepo, ".stoke", fmt.Sprintf("fix-plan-round-%d.json", round+1))
 		os.MkdirAll(filepath.Dir(fixPlanPath), 0755)
-		fixData, _ := json.MarshalIndent(fixPlan, "", "  ")
-		os.WriteFile(fixPlanPath, fixData, 0644)
+		fixData, err := json.MarshalIndent(fixPlan, "", "  ")
+		if err != nil {
+			fatal("marshal fix plan: %v", err)
+		}
+		if err := os.WriteFile(fixPlanPath, fixData, 0644); err != nil {
+			fatal("write fix plan: %v", err)
+		}
 		currentPlanPath = fixPlanPath
 		fmt.Printf("  Fix plan: %s (%d tasks)\n\n", fixPlanPath, len(fixTasks))
 	}

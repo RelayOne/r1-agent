@@ -280,7 +280,18 @@ func stripComment(line string) string {
 	inQuote := false
 	var quote rune
 	var out strings.Builder
+	escaped := false
 	for _, r := range line {
+		if escaped {
+			out.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && inQuote {
+			escaped = true
+			out.WriteRune(r)
+			continue
+		}
 		if (r == '\'' || r == '"') && (!inQuote || r == quote) {
 			if inQuote && r == quote {
 				inQuote = false

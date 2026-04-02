@@ -57,7 +57,8 @@ var validTransitions = map[Phase][]Phase{
 	Reviewed:    {Committed},                            // the ONLY path to committed
 	Failed:      {HumanNeeded},                          // escalate to operator
 	HumanNeeded: {UserSkipped, Claimed, Blocked},        // operator decides: skip, retry, or block
-	// Committed, UserSkipped, Blocked are terminal
+	Blocked:     {HumanNeeded, Pending},               // operator can escalate or unblock
+	// Committed, UserSkipped are terminal
 }
 
 // Evidence is the artifact proof for an attempt. Every attempt MUST have evidence.

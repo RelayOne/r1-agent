@@ -289,7 +289,11 @@ func installScopeWriteGuard(repoRoot, allowedFile string) {
 	hookDir := filepath.Join(repoRoot, ".stoke", "hooks")
 	absAllowed := filepath.Join(repoRoot, allowedFile)
 
-	guard := fmt.Sprintf(`#!/bin/bash
+	// Escape single quotes for safe bash embedding (replace ' with '\'' )
+	escAbs := strings.ReplaceAll(absAllowed, "'", "'\\''")
+	escFile := strings.ReplaceAll(allowedFile, "'", "'\\''")
+
+	guard := `#!/bin/bash
 # Stoke scope guard: only allows writes to the plan output file.
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -298,17 +302,18 @@ if [ -z "$TOOL_NAME" ]; then TOOL_NAME="$1"; fi
 if [ "$TOOL_NAME" = "Write" ]; then
     FILE_PATH=$(echo "$INPUT" | grep -o '"file_path":"[^"]*"' | head -1 | cut -d'"' -f4)
     REAL_PATH=$(realpath "$FILE_PATH" 2>/dev/null || echo "$FILE_PATH")
-    ALLOWED="%s"
-    if [ "$REAL_PATH" = "$ALLOWED" ] || [ "$FILE_PATH" = "%s" ]; then
+    ALLOWED='` + escAbs + `'
+    ALLOWED_REL='` + escFile + `'
+    if [ "$REAL_PATH" = "$ALLOWED" ] || [ "$FILE_PATH" = "$ALLOWED_REL" ]; then
         echo '{"decision":"allow"}'
         exit 0
     fi
-    echo '{"decision":"block","reason":"Scope mode: writes only allowed to %s"}'
+    echo '{"decision":"block","reason":"Scope mode: writes only allowed to '"$ALLOWED_REL"'"}'
     exit 0
 fi
 
 echo '{"decision":"allow"}'
-`, absAllowed, allowedFile, allowedFile)
+`
 
 	safeWrite(filepath.Join(hookDir, "pre-tool-use.sh"), []byte(guard), 0755)
 }

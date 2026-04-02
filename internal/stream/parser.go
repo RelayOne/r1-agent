@@ -82,6 +82,11 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 
 		resultSeen := false
 		var postResult *time.Timer
+		defer func() {
+			if postResult != nil {
+				postResult.Stop()
+			}
+		}()
 
 		lines := make(chan string, 16)
 		scanDone := make(chan error, 1)

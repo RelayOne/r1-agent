@@ -104,8 +104,11 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "d":
+			m.mu.Lock()
 			m.mode = ModeDashboard
+			m.mu.Unlock()
 		case "f":
+			m.mu.Lock()
 			m.mode = ModeFocus
 			if m.focusTask == "" {
 				for _, t := range m.tasks {
@@ -115,18 +118,28 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+			m.mu.Unlock()
 		case "enter":
+			m.mu.Lock()
 			if m.mode == ModeDashboard && m.cursor < len(m.tasks) {
 				m.detailTask = m.tasks[m.cursor].ID
 				m.mode = ModeDetail
 			}
+			m.mu.Unlock()
 		case "esc":
+			m.mu.Lock()
 			m.mode = ModeDashboard
+			m.mu.Unlock()
 		case "up", "k":
+			m.mu.Lock()
 			if m.cursor > 0 { m.cursor-- }
+			m.mu.Unlock()
 		case "down", "j":
+			m.mu.Lock()
 			if m.cursor < len(m.tasks)-1 { m.cursor++ }
+			m.mu.Unlock()
 		case "tab":
+			m.mu.Lock()
 			// Cycle focus to next active task
 			for i, t := range m.tasks {
 				if t.Status == "active" && t.ID != m.focusTask {
@@ -135,6 +148,7 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			m.mu.Unlock()
 		}
 
 	case tea.WindowSizeMsg:
@@ -182,7 +196,9 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mu.Unlock()
 
 	case poolUpdateMsg:
+		m.mu.Lock()
 		m.pools = msg.pools
+		m.mu.Unlock()
 
 	case tickMsg:
 		return m, tickCmd()

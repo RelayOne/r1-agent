@@ -118,6 +118,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		}
 		// Install enforcer hooks in the worktree (§9 Layer 9)
 		if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+			e.Worktrees.Cleanup(ctx, handle)
 			return Result{}, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
 		}
 	}
@@ -186,6 +187,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				return result, fmt.Errorf("prepare retry worktree: %w", prepErr)
 			}
 			if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
 			}
 			result.WorktreePath = handle.Path
@@ -270,6 +272,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 						return result, fmt.Errorf("prepare rotation worktree: %w", prepErr)
 					}
 					if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+						e.Worktrees.Cleanup(ctx, handle)
 						return result, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
 					}
 					result.WorktreePath = handle.Path

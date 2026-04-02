@@ -30,8 +30,9 @@ type Scheduler struct {
 	fileLocks map[string]string // file -> writing task ID
 	lockMu    sync.Mutex
 
-	completed map[string]bool // task finished (success or failure)
-	failed    map[string]bool // task failed -- dependents must NOT dispatch
+	stateMu   sync.Mutex        // protects completed, failed, running maps
+	completed map[string]bool   // task finished (success or failure)
+	failed    map[string]bool   // task failed -- dependents must NOT dispatch
 	running   map[string]bool
 }
 
@@ -65,6 +66,18 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 		}
 	}
 
+	// recordResult updates state maps under stateMu
+	recordResult := func(r TaskResult) {
+		s.stateMu.Lock()
+		s.releaseFiles(r.TaskID, tasks)
+		delete(s.running, r.TaskID)
+		s.completed[r.TaskID] = true
+		if !r.Success {
+			s.failed[r.TaskID] = true
+		}
+		s.stateMu.Unlock()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,20 +94,19 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				wg.Done()
 				active--
 				allResults = append(allResults, r)
-				s.releaseFiles(r.TaskID, tasks)
-				delete(s.running, r.TaskID)
-				s.completed[r.TaskID] = true
-				if !r.Success {
-					s.failed[r.TaskID] = true
-				}
+				recordResult(r)
 			default:
 				drained = false
 			}
 		}
 
-		if len(s.completed) == len(tasks) { break }
+		s.stateMu.Lock()
+		allDone := len(s.completed) == len(tasks)
+		s.stateMu.Unlock()
+		if allDone { break }
 
 		// Find dispatchable tasks
+		s.stateMu.Lock()
 		for _, t := range tasks {
 			if s.completed[t.ID] || s.running[t.ID] { continue }
 			if active >= s.maxWorkers { break }
@@ -108,9 +120,11 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				results <- execFn(ctx, task)
 			}(t)
 		}
+		s.stateMu.Unlock()
 
 		// If nothing is running and nothing dispatchable, check why
 		if active == 0 {
+			s.stateMu.Lock()
 			remaining := len(tasks) - len(s.completed)
 			if remaining > 0 {
 				// Check if remaining tasks are blocked by failed dependencies
@@ -130,27 +144,27 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 						}
 					}
 				}
+				s.stateMu.Unlock()
 				if blockedByFailure > 0 {
 					// Re-check: there may be more cascading blocks
 					continue
 				}
 				return allResults, fmt.Errorf("deadlock: %d tasks undispatchable (no failed deps, possible cycle)", remaining)
 			}
+			s.stateMu.Unlock()
 			break
 		}
 
 		// Wait for at least one result before trying again
-		if len(s.findDispatchable(tasks)) == 0 && active > 0 {
+		s.stateMu.Lock()
+		dispatchable := s.findDispatchable(tasks)
+		s.stateMu.Unlock()
+		if len(dispatchable) == 0 && active > 0 {
 			r := <-results
 			wg.Done()
 			active--
 			allResults = append(allResults, r)
-			s.releaseFiles(r.TaskID, tasks)
-			delete(s.running, r.TaskID)
-			s.completed[r.TaskID] = true
-			if !r.Success {
-				s.failed[r.TaskID] = true
-			}
+			recordResult(r)
 		}
 	}
 

@@ -122,6 +122,12 @@ func (p *Plan) Validate() []string {
 func detectCycle(tasks []Task) string {
 	adj := map[string][]string{}
 	for _, t := range tasks {
+		// Check for self-loops
+		for _, dep := range t.Dependencies {
+			if dep == t.ID {
+				return t.ID + " -> " + t.ID + " (self-loop)"
+			}
+		}
 		adj[t.ID] = t.Dependencies
 	}
 
@@ -133,7 +139,7 @@ func detectCycle(tasks []Task) string {
 		delete(white, id)
 		gray[id] = true
 		for _, dep := range adj[id] {
-			if gray[dep] { return dep + " -> " + id }
+			if gray[dep] { return id + " -> " + dep }
 			if white[dep] {
 				if cycle := dfs(dep); cycle != "" { return cycle }
 			}
