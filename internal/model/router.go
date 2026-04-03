@@ -2,6 +2,7 @@ package model
 
 import "strings"
 
+// TaskType classifies a task for benchmark-backed model routing (e.g., plan, refactor, security).
 type TaskType string
 
 const (

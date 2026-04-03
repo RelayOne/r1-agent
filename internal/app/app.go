@@ -16,6 +16,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
+// AuthMode specifies whether the orchestrator uses subscription credentials (mode1) or user-provided API keys (mode2).
 type AuthMode string
 
 const (
@@ -23,6 +24,7 @@ const (
 	AuthModeMode2 AuthMode = "mode2"
 )
 
+// RunConfig holds all parameters needed to execute a single task through the workflow engine.
 type RunConfig struct {
 	RepoRoot         string
 	PolicyPath       string
@@ -47,11 +49,13 @@ type RunConfig struct {
 	OnEvent          engine.OnEventFunc
 }
 
+// Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
 type Orchestrator struct {
 	cfg    RunConfig
 	policy config.Policy
 }
 
+// New creates an Orchestrator from the given config, loading and validating the policy file.
 func New(cfg RunConfig) (*Orchestrator, error) {
 	if cfg.State == nil {
 		return nil, fmt.Errorf("task state is required (anti-deception: no legacy mode)")
@@ -72,10 +76,12 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	return &Orchestrator{cfg: cfg, policy: policy}, nil
 }
 
+// DefaultPolicyYAML returns the default Stoke policy as a YAML string.
 func DefaultPolicyYAML() string {
 	return config.DefaultPolicyYAML()
 }
 
+// Run executes the full workflow: auto-detects build commands, sets up worktrees, and runs plan/execute/verify phases.
 func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 	// Auto-detect commands if not specified
 	buildCmd, testCmd, lintCmd := o.cfg.BuildCommand, o.cfg.TestCommand, o.cfg.LintCommand
@@ -144,6 +150,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 	return wf.Run(ctx)
 }
 
+// Doctor checks whether the claude and codex binaries are available on PATH and returns a diagnostic report.
 func Doctor(claudeBin, codexBin string) string {
 	var b strings.Builder
 	check := func(label, bin string) {

@@ -25,19 +25,27 @@ func TestInstallCreatesHookFiles(t *testing.T) {
 
 func TestHooksConfig(t *testing.T) {
 	cfg := HooksConfig("/tmp/runtime")
-	hooks, ok := cfg["hooks"].(map[string]interface{})
+	hooksRaw, ok := cfg["hooks"]
 	if !ok {
 		t.Fatal("no hooks key")
+	}
+	hooks, ok := hooksRaw.(map[string]interface{})
+	if !ok {
+		t.Fatalf("hooks is %T, expected map[string]interface{}", hooksRaw)
 	}
 	pre, ok := hooks["PreToolUse"]
 	if !ok {
 		t.Fatal("no PreToolUse")
 	}
-	arr, ok := pre.([]map[string]interface{})
+	arr, ok := pre.([]interface{})
 	if !ok || len(arr) == 0 {
-		t.Fatal("PreToolUse should have entries")
+		t.Fatalf("PreToolUse should have entries, got %T", pre)
 	}
-	if arr[0]["type"] != "command" {
+	first, ok := arr[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first entry should be map, got %T", arr[0])
+	}
+	if first["type"] != "command" {
 		t.Error("hook type should be command")
 	}
 }

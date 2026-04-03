@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,20 +72,24 @@ func (s *Store) ClearState() error {
 
 // --- Learned patterns ---
 
+// Pattern records a single failure-to-fix pattern learned across task attempts.
 type Pattern struct {
 	Issue       string `json:"issue"`
 	Fix         string `json:"fix"`
 	Occurrences int    `json:"occurrences"`
 }
 
+// Learning holds the accumulated cross-task failure patterns used for retry intelligence.
 type Learning struct {
 	Patterns []Pattern `json:"patterns"`
 }
 
+// SaveLearning persists the learned patterns to learning.json.
 func (s *Store) SaveLearning(l *Learning) error {
 	return s.writeJSON("learning.json", l)
 }
 
+// LoadLearning reads the learned patterns from learning.json, returning an empty Learning if none exists.
 func (s *Store) LoadLearning() (*Learning, error) {
 	var l Learning
 	if err := s.readJSON("learning.json", &l); err != nil {
@@ -111,6 +116,14 @@ type Attempt struct {
 	LearnedFix  string        `json:"learned_fix,omitempty"`
 }
 
+// NextAttemptNumber loads prior attempts and returns the next attempt number.
+// This ensures idempotent, monotonic numbering even across crashes.
+func NextAttemptNumber(store SessionStore, taskID string) int {
+	prior, _ := store.LoadAttempts(taskID)
+	return len(prior) + 1
+}
+
+// SaveAttempt persists an attempt record and triggers cross-task learning.
 func (s *Store) SaveAttempt(a Attempt) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,20 +175,44 @@ func (s *Store) addLearnedPattern(issue, fix string) {
 
 // --- JSON helpers ---
 
-func (s *Store) writeJSON(relPath string, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil { return fmt.Errorf("marshal: %w", err) }
+// safePath validates that relPath stays within the store root.
+func (s *Store) safePath(relPath string) (string, error) {
 	fullPath := filepath.Join(s.root, relPath)
+	absRoot, _ := filepath.Abs(s.root)
+	absFull, _ := filepath.Abs(fullPath)
+	if !strings.HasPrefix(absFull, absRoot+string(filepath.Separator)) && absFull != absRoot {
+		return "", fmt.Errorf("path traversal rejected: %q escapes session root", relPath)
+	}
+	return fullPath, nil
+}
+
+func (s *Store) writeJSON(relPath string, v interface{}) error {
+	fullPath, err := s.safePath(relPath)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
 	tmp := fullPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil { return err }
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
 	return os.Rename(tmp, fullPath)
 }
 
 func (s *Store) readJSON(relPath string, v interface{}) error {
-	data, err := os.ReadFile(filepath.Join(s.root, relPath))
-	if err != nil { return err }
+	fullPath, err := s.safePath(relPath)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return err
+	}
 	return json.Unmarshal(data, v)
 }

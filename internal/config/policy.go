@@ -9,12 +9,14 @@ import (
 	"strings"
 )
 
+// Policy defines the security and tool restrictions for each workflow phase.
 type Policy struct {
 	Phases       map[string]PhasePolicy `json:"phases"`
 	Files        FilesPolicy            `json:"files"`
 	Verification VerificationPolicy     `json:"verification"`
 }
 
+// PhasePolicy specifies the builtin tools, allow/deny rules, and MCP access for a single workflow phase.
 type PhasePolicy struct {
 	BuiltinTools []string `json:"builtin_tools"`
 	DeniedRules  []string `json:"denied_rules"`
@@ -22,10 +24,12 @@ type PhasePolicy struct {
 	MCPEnabled   bool     `json:"mcp_enabled"`
 }
 
+// FilesPolicy lists file patterns that agents are not allowed to modify.
 type FilesPolicy struct {
 	Protected []string `json:"protected"`
 }
 
+// VerificationPolicy controls which verification steps (build, test, lint, review, scope) are required.
 type VerificationPolicy struct {
 	Build            bool `json:"build"`
 	Tests            bool `json:"tests"`
@@ -34,6 +38,7 @@ type VerificationPolicy struct {
 	ScopeCheck       bool `json:"scope_check"`
 }
 
+// DefaultPolicy returns the built-in policy with plan/execute/verify phases and standard protections.
 func DefaultPolicy() Policy {
 	return Policy{
 		Phases: map[string]PhasePolicy{
@@ -61,6 +66,7 @@ func DefaultPolicy() Policy {
 	}
 }
 
+// DefaultPolicyYAML returns the default policy serialized as a YAML string for use as a starter template.
 func DefaultPolicyYAML() string {
 	return `phases:
   plan:
@@ -116,6 +122,7 @@ verification:
 `
 }
 
+// LoadPolicy reads a policy from the given path (JSON or YAML), returning DefaultPolicy if path is empty.
 func LoadPolicy(path string) (Policy, error) {
 	if strings.TrimSpace(path) == "" {
 		return DefaultPolicy(), nil

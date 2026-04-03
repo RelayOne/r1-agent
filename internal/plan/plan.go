@@ -30,6 +30,7 @@ type Task struct {
 	Commit       string   `json:"commit,omitempty"`
 }
 
+// Status represents the lifecycle state of a task (pending, active, verifying, done, failed, or blocked).
 type Status int
 
 const (

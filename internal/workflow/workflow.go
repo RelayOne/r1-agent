@@ -23,12 +23,14 @@ import (
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
+// WorktreeManager abstracts git worktree operations for creating, merging, and cleaning up isolated workspaces.
 type WorktreeManager interface {
 	Prepare(ctx context.Context, explicitName string) (worktree.Handle, error)
 	Merge(ctx context.Context, handle worktree.Handle, message string) error
 	Cleanup(ctx context.Context, handle worktree.Handle) error
 }
 
+// Engine drives the plan/execute/verify workflow loop for a single task, including retries and merge.
 type Engine struct {
 	RepoRoot         string
 	Task             string
@@ -50,6 +52,7 @@ type Engine struct {
 	PlanOnly         bool
 }
 
+// Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
 type Result struct {
 	WorktreePath string
 	Branch       string
@@ -61,12 +64,14 @@ type Result struct {
 	TotalCostUSD float64
 }
 
+// StepResult records the phase name, engine used, and prepared command for one workflow step.
 type StepResult struct {
 	Phase   string
 	Engine  string
 	Command engine.PreparedCommand
 }
 
+// Render formats the workflow result as a human-readable summary string.
 func (r Result) Render() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Stoke workflow result\n")
@@ -98,6 +103,7 @@ func (r Result) Render() string {
 	return b.String()
 }
 
+// Run executes the full workflow: creates a worktree, runs plan/execute/verify phases with retries, and merges on success.
 func (e Engine) Run(ctx context.Context) (Result, error) {
 	name := firstNonEmpty(e.WorktreeName, string(e.TaskType)+"-"+slugFromTask(e.Task))
 	var handle worktree.Handle

@@ -15,10 +15,12 @@ import (
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// CodexRunner executes tasks via the Codex CLI with process group isolation and stderr rate-limit detection.
 type CodexRunner struct {
 	Binary string
 }
 
+// NewCodexRunner creates a CodexRunner using the given binary path, defaulting to "codex" if empty.
 func NewCodexRunner(binary string) *CodexRunner {
 	if strings.TrimSpace(binary) == "" {
 		binary = "codex"
@@ -26,14 +28,12 @@ func NewCodexRunner(binary string) *CodexRunner {
 	return &CodexRunner{Binary: binary}
 }
 
+// Prepare builds the CLI command and environment for a Codex invocation without executing it.
 func (r *CodexRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
-	if strings.TrimSpace(spec.WorktreeDir) == "" {
-		return PreparedCommand{}, fmt.Errorf("missing worktree dir")
+	if err := spec.Validate(); err != nil {
+		return PreparedCommand{}, err
 	}
 	runtimeDir := spec.RuntimeDir
-	if runtimeDir == "" {
-		return PreparedCommand{}, fmt.Errorf("missing runtime dir")
-	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return PreparedCommand{}, err
 	}

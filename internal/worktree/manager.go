@@ -1,3 +1,4 @@
+// Package worktree manages git worktree lifecycle: creation, merge-tree validation, serialized merges, and cleanup.
 package worktree
 
 import (
@@ -11,6 +12,7 @@ import (
 	"sync"
 )
 
+// Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.
 type Manager struct {
 	RepoRoot     string
 	GitBinary    string
@@ -18,6 +20,7 @@ type Manager struct {
 	mergeMu      sync.Mutex // serializes merges to main (parallel execution ok, parallel mutation of refs is not)
 }
 
+// Handle holds the paths, branch name, and base commit for a single git worktree created by the Manager.
 type Handle struct {
 	Name       string
 	Branch     string
@@ -28,10 +31,12 @@ type Handle struct {
 	GitBinary  string
 }
 
+// NewManager creates a Manager rooted at the given repository path with default worktree base under .stoke/worktrees.
 func NewManager(repoRoot string) *Manager {
 	return &Manager{RepoRoot: repoRoot, GitBinary: "git", WorktreeBase: filepath.Join(repoRoot, ".stoke", "worktrees")}
 }
 
+// Prepare creates a new git worktree and branch for a task, capturing the base commit for later diffing.
 func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, error) {
 	name := slug(explicitName)
 	if name == "" {
@@ -83,6 +88,7 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	}, nil
 }
 
+// Cleanup removes a worktree, its branch, runtime directory, and snapshot refs.
 func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	var errs []string
 
@@ -126,6 +132,7 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	return nil
 }
 
+// Merge validates the worktree branch with merge-tree, then merges it into the target branch under a serializing mutex.
 func (m *Manager) Merge(ctx context.Context, handle Handle, message string) error {
 	// Serialize all merges -- parallel task execution is fine,
 	// parallel mutation of main refs causes corruption.

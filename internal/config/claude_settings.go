@@ -2,6 +2,7 @@ package config
 
 import "encoding/json"
 
+// ClaudeSettings represents the per-worktree settings.json written for Claude Code, controlling permissions and sandbox.
 type ClaudeSettings struct {
 	APIKeyHelper                 *string            `json:"apiKeyHelper"` // pointer: nil marshals to JSON null
 	DisableBypassPermissionsMode string             `json:"disableBypassPermissionsMode,omitempty"`
@@ -9,11 +10,13 @@ type ClaudeSettings struct {
 	Sandbox                      *SandboxSettings   `json:"sandbox,omitempty"`
 }
 
+// PermissionSettings defines the tool allow/deny rules for a Claude Code session.
 type PermissionSettings struct {
 	Allow []string `json:"allow,omitempty"`
 	Deny  []string `json:"deny,omitempty"`
 }
 
+// SandboxSettings controls the fail-closed sandbox configuration for Claude Code execution.
 type SandboxSettings struct {
 	Enabled                  bool              `json:"enabled"`
 	FailIfUnavailable        bool              `json:"failIfUnavailable,omitempty"`
@@ -23,6 +26,7 @@ type SandboxSettings struct {
 	Network                  SandboxNetwork    `json:"network,omitempty"`
 }
 
+// SandboxFilesystem defines filesystem read/write restrictions for the sandbox.
 type SandboxFilesystem struct {
 	AllowWrite []string `json:"allowWrite,omitempty"`
 	DenyWrite  []string `json:"denyWrite,omitempty"`
@@ -30,10 +34,12 @@ type SandboxFilesystem struct {
 	AllowRead  []string `json:"allowRead,omitempty"`
 }
 
+// SandboxNetwork defines allowed network domains for the sandbox.
 type SandboxNetwork struct {
 	AllowedDomains []string `json:"allowedDomains,omitempty"`
 }
 
+// ClaudeSettingsOptions holds the inputs needed to construct a ClaudeSettings value for a specific phase and mode.
 type ClaudeSettingsOptions struct {
 	Mode                  string
 	Phase                 PhasePolicy
@@ -43,6 +49,7 @@ type ClaudeSettingsOptions struct {
 	SandboxAllowRead      []string
 }
 
+// BuildClaudeSettings constructs a ClaudeSettings from the given options, applying sandbox and permission rules.
 func BuildClaudeSettings(opts ClaudeSettingsOptions) ClaudeSettings {
 	settings := ClaudeSettings{
 		DisableBypassPermissionsMode: "disable",
@@ -75,6 +82,7 @@ func BuildClaudeSettings(opts ClaudeSettingsOptions) ClaudeSettings {
 	return settings
 }
 
+// MarshalClaudeSettings serializes the settings to indented JSON suitable for writing to settings.json.
 func MarshalClaudeSettings(settings ClaudeSettings) ([]byte, error) {
 	return json.MarshalIndent(settings, "", "  ")
 }

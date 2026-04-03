@@ -1,3 +1,4 @@
+// Package managed provides a proxy client for the Ember managed AI endpoint, handling streaming chat and usage metering.
 package managed
 
 import (
@@ -13,6 +14,7 @@ import (
 	"time"
 )
 
+// Config holds connection settings and pricing markup for the Ember managed AI endpoint.
 type Config struct {
 	Enabled     bool
 	APIEndpoint string
@@ -33,11 +35,13 @@ func LoadConfig() Config {
 	return Config{Enabled: true, APIEndpoint: endpoint, APIKey: key, Markup: 0.20}
 }
 
+// Message represents a single chat message with a role (system, user, assistant) and text content.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
+// UsageEvent records token counts, cost, and markup for a single managed AI completion request.
 type UsageEvent struct {
 	TaskID       string    `json:"task_id"`
 	Model        string    `json:"model"`
@@ -48,6 +52,7 @@ type UsageEvent struct {
 	Timestamp    time.Time `json:"timestamp"`
 }
 
+// Proxy routes AI chat requests through the Ember endpoint and accumulates usage events for billing.
 type Proxy struct {
 	config Config
 	client *http.Client

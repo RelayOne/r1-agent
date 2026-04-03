@@ -156,6 +156,10 @@ func (w *flareWorker) getState(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get state: HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	var result struct {
 		State string `json:"state"`
 	}
@@ -173,6 +177,10 @@ func (w *flareWorker) Exec(ctx context.Context, cmd string, args ...string) (Exe
 		return ExecResult{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return ExecResult{}, fmt.Errorf("exec: HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	var result struct {
 		ExitCode int    `json:"exit_code"`
 		Stdout   string `json:"stdout"`

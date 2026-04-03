@@ -236,6 +236,15 @@ func RemovePool(poolID string) error {
 	return nil
 }
 
+// claudeCredentials is the typed structure of Claude Code's .credentials.json.
+type claudeCredentials struct {
+	ClaudeAiOauth struct {
+		Email       string `json:"email"`
+		AccountID   string `json:"accountId"`
+		AccessToken string `json:"accessToken"`
+	} `json:"claudeAiOauth"`
+}
+
 // readAccountID extracts an account identifier from credentials.
 func readAccountID(configDir string) string {
 	data, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
@@ -243,24 +252,19 @@ func readAccountID(configDir string) string {
 		return ""
 	}
 
-	// Try to extract email or account ID from the credential structure
-	var creds map[string]interface{}
+	var creds claudeCredentials
 	if json.Unmarshal(data, &creds) != nil {
 		return ""
 	}
 
-	// Look for account identifiers in common locations
-	if oauth, ok := creds["claudeAiOauth"].(map[string]interface{}); ok {
-		if email, ok := oauth["email"].(string); ok && email != "" {
-			return email
-		}
-		if id, ok := oauth["accountId"].(string); ok && id != "" {
-			return id
-		}
-		// Fallback: use first 16 chars of access token as dedup key
-		if token, ok := oauth["accessToken"].(string); ok && token != "" {
-			return "tok-" + token[:min(16, len(token))]
-		}
+	if creds.ClaudeAiOauth.Email != "" {
+		return creds.ClaudeAiOauth.Email
+	}
+	if creds.ClaudeAiOauth.AccountID != "" {
+		return creds.ClaudeAiOauth.AccountID
+	}
+	if token := creds.ClaudeAiOauth.AccessToken; token != "" {
+		return "tok-" + token[:min(16, len(token))]
 	}
 
 	return ""
@@ -368,26 +372,45 @@ func AddCodex(codexBin, label string) (string, error) {
 	return poolID, nil
 }
 
+// codexCredentials is the typed union of known Codex credential formats.
+type codexCredentials struct {
+	Email       string `json:"email"`
+	AccountID   string `json:"accountId"`
+	AccountID2  string `json:"account_id"`
+	UserID      string `json:"user_id"`
+	AccessToken string `json:"accessToken"`
+	AccessTok2  string `json:"access_token"`
+	APIKey      string `json:"api_key"`
+	Token       string `json:"token"`
+}
+
+// firstNonEmpty returns the first non-empty string from the list.
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func readCodexAccountID(configDir string) string {
-	// Try common Codex credential locations
 	for _, name := range []string{".codex-credentials.json", "credentials.json", "auth.json"} {
 		data, err := os.ReadFile(filepath.Join(configDir, name))
-		if err != nil { continue }
-
-		var creds map[string]interface{}
-		if json.Unmarshal(data, &creds) != nil { continue }
-
-		// Look for email or account ID
-		for _, key := range []string{"email", "accountId", "account_id", "user_id"} {
-			if v, ok := creds[key].(string); ok && v != "" {
-				return v
-			}
+		if err != nil {
+			continue
 		}
-		// Fallback: use first 16 chars of any token found
-		for _, key := range []string{"accessToken", "access_token", "api_key", "token"} {
-			if v, ok := creds[key].(string); ok && len(v) > 16 {
-				return "codex-tok-" + v[:16]
-			}
+
+		var creds codexCredentials
+		if json.Unmarshal(data, &creds) != nil {
+			continue
+		}
+
+		if id := firstNonEmptyStr(creds.Email, creds.AccountID, creds.AccountID2, creds.UserID); id != "" {
+			return id
+		}
+		if token := firstNonEmptyStr(creds.AccessToken, creds.AccessTok2, creds.APIKey, creds.Token); len(token) > 16 {
+			return "codex-tok-" + token[:16]
 		}
 	}
 	return ""

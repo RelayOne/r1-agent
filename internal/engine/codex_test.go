@@ -15,7 +15,7 @@ func TestCodexPrepareUsesReadOnlyForVerify(t *testing.T) {
 		RuntimeDir:    filepath.Join(dir, "runtime"),
 		Mode:          AuthModeMode1,
 		PoolConfigDir: dir,
-		Phase:         PhaseSpec{Name: "verify", ReadOnly: true},
+		Phase:         PhaseSpec{Name: "verify", ReadOnly: true, MaxTurns: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestCodexPrepareUsesWorkspaceWriteForExecute(t *testing.T) {
 		WorktreeDir: dir,
 		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
-		Phase:       PhaseSpec{Name: "execute"},
+		Phase:       PhaseSpec{Name: "execute", MaxTurns: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestCodexPrepareMode1IsolatesCredentials(t *testing.T) {
 		RuntimeDir:    filepath.Join(dir, "runtime"),
 		Mode:          AuthModeMode1,
 		PoolConfigDir: "/pool/codex-1",
-		Phase:         PhaseSpec{Name: "execute"},
+		Phase:         PhaseSpec{Name: "execute", MaxTurns: 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestCodexPrepareOutputsLastMessage(t *testing.T) {
 		WorktreeDir: dir,
 		RuntimeDir:  filepath.Join(dir, "runtime"),
 		Mode:        AuthModeMode2,
-		Phase:       PhaseSpec{Name: "execute"},
+		Phase:       PhaseSpec{Name: "execute", MaxTurns: 10},
 	})
 	if err != nil {
 		t.Fatal(err)

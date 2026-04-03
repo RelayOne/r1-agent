@@ -984,12 +984,14 @@ func scanCmd(args []string) {
 	}
 
 	if *jsonOut {
-		output := map[string]interface{}{"scan": result}
+		type scanOutput struct {
+			Scan            *scanpkg.ScanResult  `json:"scan"`
+			SecuritySurface *scanpkg.SecurityMap  `json:"security_surface,omitempty"`
+		}
+		output := scanOutput{Scan: result}
 		if *securityFlag {
 			secMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
-			if secMap != nil {
-				output["security_surface"] = secMap
-			}
+			output.SecuritySurface = secMap
 		}
 		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
@@ -1606,13 +1608,21 @@ func repairCmd(args []string) {
 	if err := os.MkdirAll(filepath.Dir(reportPath), 0755); err != nil {
 		fatal("create reports dir: %v", err)
 	}
-	repairReport := map[string]interface{}{
-		"timestamp":        time.Now().Format(time.RFC3339),
-		"before_findings":  len(findings),
-		"after_findings":   remaining,
-		"tasks_generated":  len(tasks),
-		"plan_id":          repairPlan.ID,
-		"security_scanned": *securityFlag,
+	type repairReportData struct {
+		Timestamp       string `json:"timestamp"`
+		BeforeFindings  int    `json:"before_findings"`
+		AfterFindings   int    `json:"after_findings"`
+		TasksGenerated  int    `json:"tasks_generated"`
+		PlanID          string `json:"plan_id"`
+		SecurityScanned bool   `json:"security_scanned"`
+	}
+	repairReport := repairReportData{
+		Timestamp:       time.Now().Format(time.RFC3339),
+		BeforeFindings:  len(findings),
+		AfterFindings:   remaining,
+		TasksGenerated:  len(tasks),
+		PlanID:          repairPlan.ID,
+		SecurityScanned: *securityFlag,
 	}
 	reportData, err := json.MarshalIndent(repairReport, "", "  ")
 	if err != nil {
