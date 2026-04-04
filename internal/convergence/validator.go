@@ -351,6 +351,7 @@ func DefaultRules() []Rule {
 		scaffoldingRule(),
 		emptyFuncRule(),
 		commentedOutCodeRule(),
+		unwiredCodeRule(),
 
 		// Gate 3: Engineering standards
 		panicRule(),
@@ -864,6 +865,32 @@ func isStyleFile(path string) bool {
 func isHTMLTemplateFile(path string) bool {
 	return strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".htm") ||
 		strings.HasSuffix(path, ".vue") || strings.HasSuffix(path, ".svelte")
+}
+
+// unwiredCodeRule flags patterns indicating code that exists but is likely
+// not wired into the system: unused assignments, interface-only declarations,
+// and "wire this up later" markers.
+func unwiredCodeRule() Rule {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(wire this|hook this up|connect later|integrate later|plug in later|call this from)`),
+		regexp.MustCompile(`(?i)(not yet (called|used|wired|connected|invoked))`),
+		regexp.MustCompile(`(?i)(unused|UNUSED|dead code|DEAD CODE)`),
+	}
+	return Rule{
+		ID: "no-unwired-code", Name: "No unwired or dead code markers", Category: CatConsistency,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Code exists but is not wired — dead code that looks complete is worse than missing code",
+		Check: func(file string, content []byte) []Finding {
+			var findings []Finding
+			for _, re := range patterns {
+				findings = append(findings, regexCheck(re, file, content, "no-unwired-code",
+					CatConsistency, SevBlocking,
+					"Code exists but is marked as unwired/unused — wire it or delete it",
+					"Trace the call chain from entry point → function. If nothing calls this, either wire it or remove it.")...)
+			}
+			return findings
+		},
+	}
 }
 
 // --- Gate 6: UX Quality ---

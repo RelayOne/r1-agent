@@ -348,6 +348,16 @@ Models will find reasons to say "done" — architecture decisions, pre-existing 
 not done. The question is not "is this acceptable?" The question is "is there ANYTHING
 else that could be done to make this better?" If yes, it's incomplete.
 
+### CRITICAL: "Exists" is not "Works"
+The most dangerous failure mode is declaring something done because the CODE exists
+without verifying it's WIRED, INVOKED, and TESTED end-to-end. Specifically check:
+- New types/functions declared → are they actually called from the integration layer?
+- New config fields added → does any code read them and change behavior?
+- New rules/checks added → are they registered in the default set AND run during validation?
+- New parameters accepted → do callers actually pass meaningful values?
+- New conditional logic → do tests exercise BOTH the true AND false branches?
+Dead code that looks complete is WORSE than missing code because it creates false confidence.
+
 ### Output Format
 Return JSON:
 ` + "```json" + `
@@ -448,7 +458,11 @@ Models will generate sophisticated-sounding reasons to mark work as "done":
 - "This is out of scope" → Nothing is out of scope for quality.
 - "This would be too much effort" → Effort is not a valid excuse.
 - "This is a minor issue" → There are no minor issues. Fix everything.
+- "The code exists" → Is it WIRED? Is it CALLED? Does any test prove it runs?
+- "I added the function" → Who invokes it? Trace the call chain from entry point to function.
+- "The rules are defined" → Are they registered? Enabled? Exercised in tests?
 
+Dead code that looks complete is the most dangerous form of incompleteness.
 If you catch yourself making ANY of these rationalizations, flag the item as incomplete.
 
 ### Output Format

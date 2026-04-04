@@ -838,9 +838,9 @@ func temporary() {}
 
 func TestDefaultRuleCount(t *testing.T) {
 	rules := DefaultRules()
-	// 17 backend rules + 11 frontend/UX rules = 28
-	if len(rules) != 28 {
-		t.Errorf("expected 28 default rules, got %d", len(rules))
+	// 17 backend rules + 1 unwired-code rule + 11 frontend/UX rules = 29
+	if len(rules) != 29 {
+		t.Errorf("expected 29 default rules, got %d", len(rules))
 		for _, r := range rules {
 			t.Logf("  %s: %s", r.ID, r.Name)
 		}
@@ -860,6 +860,39 @@ func TestNoMinorOrInfoSeverityInDefaults(t *testing.T) {
 		if r.Severity == SevMinor {
 			t.Errorf("rule %q has minor severity — should be at least major", r.ID)
 		}
+	}
+}
+
+// --- Unwired Code ---
+
+func TestUnwiredCodeRule(t *testing.T) {
+	v := NewValidator()
+
+	// "wire this up later" — should flag
+	files := []FileInput{{
+		Path:    "service.go",
+		Content: []byte("// wire this up from the HTTP handler\nfunc handleRequest() {}\n"),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "no-unwired-code")
+	if len(findings) == 0 {
+		t.Error("should flag 'wire this up' comments")
+	}
+
+	// "not yet called" — should flag
+	files[0].Content = []byte("// Not yet called from main()\nfunc process() {}\n")
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "no-unwired-code")
+	if len(findings) == 0 {
+		t.Error("should flag 'not yet called' comments")
+	}
+
+	// Clean code — should not flag
+	files[0].Content = []byte("package main\n\nfunc process() error { return nil }\n")
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "no-unwired-code")
+	if len(findings) != 0 {
+		t.Error("should not flag clean code")
 	}
 }
 
