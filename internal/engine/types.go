@@ -12,8 +12,14 @@ import (
 type AuthMode string
 
 const (
-	AuthModeMode1 AuthMode = "mode1"
-	AuthModeMode2 AuthMode = "mode2"
+	// AuthModeSubscription uses the subscription pool's credentials.
+	AuthModeSubscription AuthMode = "mode1"
+	// AuthModeAPIKey uses the caller's own API key.
+	AuthModeAPIKey AuthMode = "mode2"
+
+	// Aliases for backward compatibility.
+	AuthModeMode1 = AuthModeSubscription
+	AuthModeMode2 = AuthModeAPIKey
 )
 
 // PhaseSpec describes the configuration for a single workflow phase (plan, execute, or verify).
@@ -26,7 +32,8 @@ type PhaseSpec struct {
 	MaxTurns     int
 	Prompt       string
 	Sandbox      bool
-	ReadOnly     bool // if true, runner uses read-only sandbox and review profile
+	ReadOnly          bool   // if true, runner uses read-only sandbox and review profile
+	CompletionPromise string // statement agent must include in output to prove task completion; empty means no promise required
 }
 
 // PreparedCommand holds the fully resolved binary, arguments, environment, and working directory for an engine invocation.
