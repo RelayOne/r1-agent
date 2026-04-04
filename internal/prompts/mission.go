@@ -516,45 +516,88 @@ func BuildMissionDiscoveryPrompt(ctx MissionContext) string {
 		fmt.Fprintf(&b, "%s\n", ctx.CriteriaBlock)
 	}
 
-	b.WriteString(`## Discovery Protocol
+	b.WriteString(`## Your Tools
+
+You have MCP tools for querying the codebase. USE THEM — do not guess.
+
+- **search_symbols**: Find functions, types, classes by name or pattern.
+  Use this to verify that expected implementations exist.
+- **get_dependencies**: For a file, get what it imports and what imports it.
+  Use this for consumer/producer mapping.
+- **search_content**: Semantic content search across the codebase. Finds files
+  whose content relates to a natural language query. Use this to discover
+  relevant code you haven't found yet.
+- **get_file_symbols**: List all exported symbols in a file. Use this to check
+  what a file actually exposes vs what consumers expect.
+- **impact_analysis**: Get the transitive closure of dependents for a file.
+  Use this to find every consumer that could be affected.
+
+You can also read any file directly. When you find something interesting,
+READ THE ACTUAL CODE — don't stop at finding the file name.
+
+## Discovery Protocol
 
 You must build a COMPLETE MAP of how this mission relates to the codebase.
 Do NOT rely on keyword matching or surface-level analysis.
-Instead, trace actual code paths and reason about intent.
+Trace actual code paths. Read actual files. Verify actual wiring.
+
+**Your default assumption: nothing works until you prove it does.**
 
 ### Round 1: Intent Decomposition
 Break the intent into concrete technical requirements. For each:
 - What data flows need to exist?
 - What APIs, endpoints, or interfaces are involved?
-- What surfaces (mobile, web, desktop, API, MCP) need to expose this?
+- What surfaces need to expose this? Check ALL of: mobile, web, desktop, API, MCP, CLI
 - What permissions, auth, and security boundaries apply?
+- What does the user's actual journey look like end to end?
 
 ### Round 2: Consumer/Producer Mapping
-For each requirement:
-- What PRODUCES the data/functionality? (sources, APIs, services)
-- What CONSUMES it? (UI components, API clients, other services)
+For each requirement, use get_dependencies and impact_analysis to trace:
+- What PRODUCES the data/functionality? (sources, APIs, services, databases)
+- What CONSUMES it? (UI components, API clients, other services, tests)
 - What do consumers EXPECT vs what producers PROVIDE?
-- Are there contract mismatches (type, format, auth, error handling)?
+  → Check type signatures, error types, response shapes, auth tokens
+- Are there contract mismatches? Use get_file_symbols on both sides to compare.
+- In monorepos: trace across package boundaries. A function exported from
+  package A means nothing if packages B, C, D don't import and call it.
 
 ### Round 3: Reachability Analysis
 For each piece of functionality:
-- Can users actually REACH this through the UI/API?
+- Can users actually REACH this through the UI/API/CLI?
 - Is there a complete path from entry point to implementation?
+  → Use get_dependencies to trace the chain. Read each layer.
 - Are all intermediate layers wired (routes, handlers, middleware, components)?
 - Does the navigation/routing expose this to users?
+- Are there dead code paths — exported symbols that nothing calls?
+  → Use impact_analysis to check.
 
 ### Round 4: Cross-Surface Verification
-If the app has multiple surfaces:
-- Does each surface expose the expected functionality?
-- Are the experiences consistent across surfaces?
-- Do mobile, web, and desktop all handle edge cases?
-- Are all API contracts implemented by all consumers?
+Map every surface. For EACH one present in the codebase:
+- **API**: Are endpoints registered? Do handlers exist? Auth middleware applied?
+- **Web**: Are routes added? Do React/Vue/Svelte components render the UI?
+- **Mobile**: Does the mobile client call the new APIs? Handle new data shapes?
+- **Desktop**: Does the Electron/Tauri/native app expose this functionality?
+- **CLI**: Are commands registered in the dispatcher? Do they call the right code?
+- **MCP**: Are tool definitions complete? Do they marshal/unmarshal correctly?
+
+Don't assume a surface doesn't exist — search_content for framework indicators
+(express, gin, next, react-native, electron, cobra, etc.) to detect surfaces.
 
 ### Round 5: Quality Verification
-- Are permissions and security patterns correct and consistent?
+- Are permissions and security patterns correct and consistent across all surfaces?
 - Are scalability patterns appropriate (pagination, caching, rate limiting)?
-- Are error states handled on all surfaces?
-- Are best practices followed (not just "it works")?
+- Are error states handled on ALL surfaces — not just the happy path?
+- Are best practices followed (not just "it works but is fragile")?
+- Do tests actually test the right thing, or are they tautological?
+
+### Anti-Rationalization Rules
+- "The code exists" does NOT mean "it's wired up and reachable."
+- "There's a test" does NOT mean "it tests the right behavior."
+- "It works on web" does NOT mean "it works on mobile/desktop/CLI/API."
+- "The function is exported" does NOT mean "anything calls it."
+- Do NOT rationalize. Do NOT make excuses. Do NOT say "out of scope."
+- If it touches the codebase, it's in scope.
+- Do NOT assume completion. PROVE it with file:line evidence or flag the gap.
 
 ### Output Format
 For each file you discover as relevant, output:
@@ -597,54 +640,98 @@ func BuildMissionValidateDiscoveryPrompt(ctx MissionContext) string {
 		fmt.Fprintf(&b, "## Previously Found Gaps\n%s\n\n", ctx.GapsBlock)
 	}
 
-	b.WriteString(`## Validation Discovery Protocol
+	b.WriteString(`## Your Tools
 
-Your job is to DISPROVE that this mission is complete. You have access to read
-any file in the repository. Use it. Do not guess — look at the actual code.
+You have MCP tools for querying the codebase. USE THEM AGGRESSIVELY.
+
+- **search_symbols**: Find functions, types, classes by name or pattern.
+- **get_dependencies**: For a file, get imports and dependents (consumers).
+- **search_content**: Semantic search — find files related to a concept.
+- **get_file_symbols**: List all exported symbols in a file.
+- **impact_analysis**: Transitive closure of everything that depends on a file.
+
+You can also read any file directly. DO NOT guess what code does — read it.
+
+## Validation Discovery Protocol
+
+**Your job is to DISPROVE that this mission is complete.**
 
 ### Default assumption: THE WORK IS NOT DONE.
 
-### Trace every claim with evidence
+You are not here to rubber-stamp. You are here to break things. Every claim
+of completion must be verified with file:line evidence. If you cannot find
+the evidence, it's a gap.
+
+### Phase 1: Trace every criterion with evidence
 
 For each acceptance criterion:
-1. Find the code that implements it (give file:line)
-2. Find the test that verifies it (give file:line)
-3. Trace the call chain from entry point to implementation
-4. Check that consumers actually use the new code
-5. Verify error handling on the path
+1. Use search_symbols and search_content to find the implementing code
+2. READ the actual implementation (file:line). Does it fully satisfy the criterion?
+3. Use search_content to find the test. READ the test — does it test the RIGHT behavior?
+   A test that exists but asserts nothing useful is worse than no test.
+4. Use get_dependencies to trace the call chain from entry point to implementation.
+   Every link must exist. A broken chain = unreachable code.
+5. Use impact_analysis on the implementation file. Do consumers actually call it?
+6. Check error handling on the entire path — not just the happy path.
 
-### Cross-surface validation
+### Phase 2: Cross-surface validation
 
-Map every surface that should expose this functionality:
-- API: Are endpoints registered? Do they call the right handlers?
-- Web: Are routes added? Do components render the new UI?
-- Mobile: Is the functionality accessible from the mobile surface?
-- CLI: Are commands registered? Do they dispatch correctly?
-- MCP: Are tool definitions complete? Do they work?
+Use search_content to detect which surfaces exist in this codebase:
+- Express/Gin/FastAPI/etc → API surface
+- React/Vue/Svelte/Angular/etc → Web surface
+- React Native/Flutter/Swift/Kotlin → Mobile surface
+- Electron/Tauri/native → Desktop surface
+- Cobra/urfave/argparse/clap → CLI surface
+- MCP/JSON-RPC tool definitions → MCP surface
 
-For EACH surface, trace the path from user action to implementation.
+For EACH detected surface, trace the path from user action to implementation:
+- **API**: Endpoint registered → middleware applied → handler calls implementation → response shaped correctly
+- **Web**: Route exists → component renders → calls API correctly → handles loading/error states
+- **Mobile**: Screen/view exists → navigation wired → API client updated → handles offline/error
+- **Desktop**: Menu/window exists → IPC wired → calls backend correctly → handles platform differences
+- **CLI**: Command registered in dispatcher → flags parsed → calls implementation → output formatted
+- **MCP**: Tool defined → parameters validated → handler calls implementation → response marshaled
+
 "The code exists" is NOT "the user can reach it."
+"It works on one surface" is NOT "it works on all surfaces."
 
-### Consumer/Producer contract verification
+### Phase 3: Consumer/Producer contract verification
 
-For every new API, type, interface, or data structure:
-1. List all consumers
-2. For each consumer, verify it uses the correct:
-   - Type signatures
-   - Error handling
-   - Auth/permission model
-   - Data format and validation
-3. Flag any consumer that assumes a different contract
+For every new or modified API, type, interface, or data structure:
+1. Use impact_analysis to list ALL consumers
+2. For EACH consumer, use get_file_symbols to verify it uses the correct:
+   - Type signatures (not stale types from before the change)
+   - Error handling (not swallowing errors or assuming success)
+   - Auth/permission model (not bypassing or using wrong scopes)
+   - Data format and validation (not assuming old shapes)
+3. Flag any consumer that assumes a different contract than what the producer provides
+
+### Phase 4: Anti-rationalization sweep
+
+Go back through everything you've validated and try to BREAK your own conclusions:
+- "I said this criterion is met" → re-read the code. Is it FULLY met or just partially?
+- "I said this test covers it" → does the test actually assert the right thing?
+- "I said all surfaces have it" → did I actually check each one, or did I assume?
+- "I said consumers are updated" → did I check EVERY consumer, or just the obvious ones?
 
 ### What to report
 
 For each gap found, output a line:
-GAP: <specific, actionable description with file paths>
-GAP:MAJOR: <important but non-blocking issue>
+GAP: <specific, actionable description — include file:line where the problem is>
+GAP:MAJOR: <important but non-blocking issue — include file:line>
 
-Report NOTHING if the work is genuinely complete.
-Do NOT rationalize. Do NOT make excuses. Do NOT say "out of scope."
-If it touches the codebase, it's in scope.
+If a previously reported gap has been FIXED, output:
+FIXED: <gap description — include file:line showing the fix>
+
+Report NOTHING if the work is genuinely, provably complete.
+
+### Anti-Rationalization Rules
+- Do NOT rationalize. Do NOT make excuses. Do NOT say "out of scope."
+- Do NOT trust function names — read the body. "handleAuth" might be empty.
+- Do NOT trust test names — read the assertions. "TestAuth" might assert nothing.
+- Do NOT assume a surface doesn't need this — check whether the surface exists first.
+- Do NOT count "the code is there" as done — trace reachability from user action.
+- If it touches the codebase, it's in scope. Period.
 `)
 
 	return b.String()

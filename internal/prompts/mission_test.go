@@ -357,7 +357,7 @@ func TestBuildMissionValidateDiscoveryPrompt(t *testing.T) {
 		"THE WORK IS NOT DONE",
 		"Cross-surface validation",
 		"Consumer/Producer contract verification",
-		"Trace every claim with evidence",
+		"Trace every criterion with evidence",
 	} {
 		if !strings.Contains(prompt, section) {
 			t.Errorf("validate discovery prompt should contain %q", section)
@@ -385,5 +385,70 @@ func TestBuildMissionValidateDiscoveryPromptNoGaps(t *testing.T) {
 	// Should NOT include gaps section when empty
 	if strings.Contains(prompt, "Previously Found Gaps") {
 		t.Error("validate discovery prompt should not show gaps section when no gaps exist")
+	}
+}
+
+func TestDiscoveryPromptsIncludeMCPTools(t *testing.T) {
+	ctx := testContext()
+
+	mcpTools := []string{
+		"search_symbols",
+		"get_dependencies",
+		"search_content",
+		"get_file_symbols",
+		"impact_analysis",
+	}
+
+	discovery := BuildMissionDiscoveryPrompt(ctx)
+	for _, tool := range mcpTools {
+		if !strings.Contains(discovery, tool) {
+			t.Errorf("discovery prompt should reference MCP tool %q", tool)
+		}
+	}
+
+	validate := BuildMissionValidateDiscoveryPrompt(ctx)
+	for _, tool := range mcpTools {
+		if !strings.Contains(validate, tool) {
+			t.Errorf("validate discovery prompt should reference MCP tool %q", tool)
+		}
+	}
+}
+
+func TestDiscoveryPromptsAntiRationalization(t *testing.T) {
+	ctx := testContext()
+
+	discovery := BuildMissionDiscoveryPrompt(ctx)
+	validate := BuildMissionValidateDiscoveryPrompt(ctx)
+
+	for _, phrase := range []string{
+		"Do NOT rationalize",
+		"out of scope",
+	} {
+		if !strings.Contains(discovery, phrase) {
+			t.Errorf("discovery prompt should contain anti-rationalization phrase %q", phrase)
+		}
+		if !strings.Contains(validate, phrase) {
+			t.Errorf("validate prompt should contain anti-rationalization phrase %q", phrase)
+		}
+	}
+}
+
+func TestDiscoveryPromptsAllSurfaces(t *testing.T) {
+	ctx := testContext()
+
+	// Prompts use bold markdown: **API**:
+	surfaces := []string{"API", "Web", "Mobile", "Desktop", "CLI", "MCP"}
+
+	discovery := BuildMissionDiscoveryPrompt(ctx)
+	validate := BuildMissionValidateDiscoveryPrompt(ctx)
+
+	for _, surface := range surfaces {
+		bold := "**" + surface + "**:"
+		if !strings.Contains(discovery, bold) {
+			t.Errorf("discovery prompt should reference %s surface (looking for %q)", surface, bold)
+		}
+		if !strings.Contains(validate, bold) {
+			t.Errorf("validate prompt should reference %s surface (looking for %q)", surface, bold)
+		}
 	}
 }
