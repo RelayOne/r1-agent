@@ -485,8 +485,8 @@ func ValidateToken(token string) error {
 
 	report := v.ValidateWithCriteria("m-1", files, criteria)
 	// "JWT tokens" criteria should be partially matched (jwt, token, login all appear)
-	// "Rate limiting" criteria should be flagged as unaddressed
-	criteriaFindings := filterByRule(report.Findings, "criterion-check")
+	// "Rate limiting" criteria should be flagged as unaddressed via semantic analysis
+	criteriaFindings := filterByRule(report.Findings, "criteria-semantic")
 	if len(criteriaFindings) == 0 {
 		t.Error("should flag at least the rate limiting criterion as unimplemented")
 	}
@@ -494,7 +494,8 @@ func ValidateToken(token string) error {
 	// Check that rate limiting criterion is specifically flagged
 	found := false
 	for _, f := range criteriaFindings {
-		if strings.Contains(f.Description, "Rate limiting") {
+		desc := strings.ToLower(f.Description)
+		if strings.Contains(desc, "rate") || strings.Contains(desc, "limiting") || strings.Contains(desc, "429") {
 			found = true
 		}
 	}

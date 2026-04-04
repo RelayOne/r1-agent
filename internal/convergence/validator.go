@@ -196,7 +196,63 @@ func (v *Validator) Validate(missionID string, files []FileInput) *Report {
 	}
 	wg.Wait()
 
-	// Calculate score: start at 1.0, deduct per finding by severity
+	// Phase 2: Semantic cross-file analysis (symbol reachability, type wiring)
+	// This catches gaps that no single-file regex can detect.
+	semFindings := SemanticAnalysis(files, nil)
+	findings = append(findings, semFindings...)
+
+	return buildReport(missionID, findings, len(enabledRules), start)
+}
+
+// ValidateWithCriteria additionally checks that acceptance criteria are addressed.
+// It uses semantic analysis (symbol extraction, concept mapping, cross-file
+// reference checking) rather than naive keyword matching to verify criteria.
+func (v *Validator) ValidateWithCriteria(missionID string, files []FileInput, criteria []string) *Report {
+	start := time.Now()
+	v.mu.RLock()
+	rules := make([]Rule, len(v.rules))
+	copy(rules, v.rules)
+	v.mu.RUnlock()
+
+	var enabledRules []Rule
+	for _, r := range rules {
+		if r.Enabled {
+			enabledRules = append(enabledRules, r)
+		}
+	}
+
+	// Phase 1: Run regex rules per-file
+	var mu sync.Mutex
+	var findings []Finding
+	var wg sync.WaitGroup
+
+	for _, file := range files {
+		for _, rule := range enabledRules {
+			wg.Add(1)
+			go func(f FileInput, r Rule) {
+				defer wg.Done()
+				results := r.Check(f.Path, f.Content)
+				if len(results) > 0 {
+					mu.Lock()
+					findings = append(findings, results...)
+					mu.Unlock()
+				}
+			}(file, rule)
+		}
+	}
+	wg.Wait()
+
+	// Phase 2: Semantic cross-file analysis WITH criteria mapping
+	// This replaces the old naive keyword-matching approach with real
+	// symbol reachability, type wiring, and concept mapping.
+	semFindings := SemanticAnalysis(files, criteria)
+	findings = append(findings, semFindings...)
+
+	return buildReport(missionID, findings, len(enabledRules), start)
+}
+
+// buildReport calculates score and produces a Report from findings.
+func buildReport(missionID string, findings []Finding, rulesApplied int, start time.Time) *Report {
 	score := 1.0
 	for _, f := range findings {
 		switch f.Severity {
@@ -219,73 +275,11 @@ func (v *Validator) Validate(missionID string, files []FileInput) *Report {
 		Timestamp:    time.Now(),
 		Findings:     findings,
 		Score:        score,
-		RulesApplied: len(enabledRules),
+		RulesApplied: rulesApplied,
 		Duration:     time.Since(start),
 	}
-
-	// Converged = no blocking findings
 	report.IsConverged = report.BlockingCount() == 0
 	report.Summary = buildSummary(report)
-
-	return report
-}
-
-// ValidateWithCriteria additionally checks that acceptance criteria are addressed.
-// It takes the criteria descriptions and checks whether files contain evidence
-// of implementation for each criterion.
-func (v *Validator) ValidateWithCriteria(missionID string, files []FileInput, criteria []string) *Report {
-	report := v.Validate(missionID, files)
-
-	// Check each criterion against file contents
-	allContent := &strings.Builder{}
-	for _, f := range files {
-		allContent.Write(f.Content)
-		allContent.WriteByte('\n')
-	}
-	contentStr := strings.ToLower(allContent.String())
-
-	for i, criterion := range criteria {
-		// Extract keywords from criterion for basic matching
-		keywords := extractKeywords(criterion)
-		matchCount := 0
-		for _, kw := range keywords {
-			if strings.Contains(contentStr, strings.ToLower(kw)) {
-				matchCount++
-			}
-		}
-		// If less than half the keywords appear in any file, flag it
-		if len(keywords) > 0 && matchCount < (len(keywords)+1)/2 {
-			report.Findings = append(report.Findings, Finding{
-				RuleID:      "criterion-check",
-				Category:    CatCompleteness,
-				Severity:    SevBlocking,
-				Description: fmt.Sprintf("Acceptance criterion %d may not be implemented: %q", i+1, criterion),
-				Suggestion:  "Verify this criterion is addressed in the code and tests",
-			})
-		}
-	}
-
-	// Recalculate after criteria check
-	score := 1.0
-	for _, f := range report.Findings {
-		switch f.Severity {
-		case SevBlocking:
-			score -= 0.15
-		case SevMajor:
-			score -= 0.08
-		case SevMinor:
-			score -= 0.03
-		case SevInfo:
-			score -= 0.01
-		}
-	}
-	if score < 0 {
-		score = 0
-	}
-	report.Score = score
-	report.IsConverged = report.BlockingCount() == 0
-	report.Summary = buildSummary(report)
-
 	return report
 }
 
