@@ -39,10 +39,21 @@ import (
 	"github.com/ericmacdougall/stoke/internal/research"
 )
 
+// defaultConsensusModels is used when Config.ConsensusModels is empty.
+var defaultConsensusModels = []string{"claude", "codex"}
+
 // Config configures the mission orchestrator.
 type Config struct {
 	// StoreDir is the directory for all persistent data (missions, research, etc.).
 	StoreDir string `json:"store_dir"`
+
+	// RepoRoot is the git repository root for file scanning and validation.
+	// If empty, file-based research and validation are skipped.
+	RepoRoot string `json:"repo_root"`
+
+	// ConsensusModels lists the model names used for completion consensus.
+	// Default: ["claude", "codex"].
+	ConsensusModels []string `json:"consensus_models"`
 
 	// RequiredConsensus is the number of models needed for completion consensus.
 	// Default: 2.
@@ -51,6 +62,15 @@ type Config struct {
 	// MaxConvergenceLoops limits convergence loop iterations.
 	// Default: 5.
 	MaxConvergenceLoops int `json:"max_convergence_loops"`
+
+	// ExecuteFn is the optional callback for the execute handler.
+	// It bridges mission execution to the workflow engine.
+	// If nil, the execute handler records tasks but does not run them.
+	ExecuteFn func(ctx context.Context, m *mission.Mission, taskDesc string) (filesChanged []string, err error) `json:"-"`
+
+	// ConsensusModelFn is the optional callback for gathering model verdicts.
+	// If nil, consensus is auto-approved.
+	ConsensusModelFn func(ctx context.Context, missionID, model string) (verdict, reasoning string, gapsFound []string, err error) `json:"-"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -78,6 +98,9 @@ func New(config Config) (*Orchestrator, error) {
 	}
 	if config.MaxConvergenceLoops <= 0 {
 		config.MaxConvergenceLoops = 5
+	}
+	if len(config.ConsensusModels) == 0 {
+		config.ConsensusModels = defaultConsensusModels
 	}
 
 	missionDir := filepath.Join(config.StoreDir, "missions")
@@ -295,9 +318,29 @@ func (o *Orchestrator) BuildAgentContext(missionID string, config mission.Contex
 
 // --- Runner ---
 
-// NewRunner creates a mission runner wired to this orchestrator's stores.
+// NewRunner creates a fully-wired mission runner with all phase handlers
+// registered. The handlers are configured using the orchestrator's stores,
+// validator, and config callbacks.
 func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
-	return mission.NewRunner(o.store, config)
+	runner := mission.NewRunner(o.store, config)
+
+	deps := mission.HandlerDeps{
+		Store:            o.store,
+		Validator:        o.validator,
+		RepoRoot:         o.config.RepoRoot,
+		Metrics:          mission.NewMetrics(),
+		ExecuteFn:        o.config.ExecuteFn,
+		ConsensusModelFn: o.config.ConsensusModelFn,
+	}
+
+	runner.RegisterHandler(mission.PhaseCreated, mission.NewResearchHandler(deps))
+	runner.RegisterHandler(mission.PhaseResearching, mission.NewPlanHandler(deps))
+	runner.RegisterHandler(mission.PhasePlanning, mission.NewExecuteHandler(deps))
+	runner.RegisterHandler(mission.PhaseExecuting, mission.NewExecuteHandler(deps))
+	runner.RegisterHandler(mission.PhaseValidating, mission.NewValidateHandler(deps))
+	runner.RegisterHandler(mission.PhaseConverged, mission.NewConsensusHandler(deps, o.config.ConsensusModels))
+
+	return runner
 }
 
 // RunMission creates a runner with default config and drives a mission to completion.

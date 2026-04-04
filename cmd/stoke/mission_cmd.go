@@ -59,15 +59,18 @@ Flags vary by subcommand. Use "stoke mission <subcommand> --help" for details.
 }
 
 func getOrchestrator(storeDir string) (*orchestrate.Orchestrator, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
 	if storeDir == "" {
-		// Default: .stoke/missions in current directory
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
+		// Default: .stoke/data in current directory
 		storeDir = filepath.Join(cwd, ".stoke", "data")
 	}
-	return orchestrate.New(orchestrate.Config{StoreDir: storeDir})
+	return orchestrate.New(orchestrate.Config{
+		StoreDir: storeDir,
+		RepoRoot: cwd,
+	})
 }
 
 // --- create ---
