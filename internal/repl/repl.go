@@ -21,6 +21,8 @@ type REPL struct {
 	RepoRoot string
 	Commands map[string]Command
 	OnChat   func(input string) // handler for free-text chat (dispatches to claude -p)
+	Reader   *bufio.Scanner     // input source; defaults to os.Stdin
+	Writer   *strings.Builder   // output sink; defaults to os.Stdout via fmt
 }
 
 // New creates a REPL with the standard slash commands registered.
@@ -37,23 +39,37 @@ func (r *REPL) Register(cmd Command) {
 	r.Commands[cmd.Name] = cmd
 }
 
+// printf writes to the REPL's output (Writer if set, else stdout).
+func (r *REPL) printf(format string, args ...interface{}) {
+	if r.Writer != nil {
+		fmt.Fprintf(r.Writer, format, args...)
+	} else {
+		fmt.Printf(format, args...)
+	}
+}
+
+// println writes a line to the REPL's output.
+func (r *REPL) println(s string) {
+	r.printf("%s\n", s)
+}
+
 // Run starts the interactive loop.
 func (r *REPL) Run() {
 	absRepo, _ := filepath.Abs(r.RepoRoot)
 	repoName := filepath.Base(absRepo)
 
-	fmt.Println("⚡ STOKE")
-	fmt.Printf("  repo: %s\n", absRepo)
-	fmt.Println()
-	fmt.Println("  Type naturally to chat. Stoke dispatches to Claude Code behind the scenes.")
-	fmt.Println("  Slash commands trigger orchestrated workflows:")
-	fmt.Println()
+	r.println("⚡ STOKE")
+	r.printf("  repo: %s\n", absRepo)
+	r.println("")
+	r.println("  Type naturally to chat. Stoke dispatches to Claude Code behind the scenes.")
+	r.println("  Slash commands trigger orchestrated workflows:")
+	r.println("")
 
 	// Print available commands
 	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "yolo", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
 	for _, name := range order {
 		if cmd, ok := r.Commands[name]; ok {
-			fmt.Printf("    /%-10s %s\n", cmd.Name, cmd.Description)
+			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)
 		}
 	}
 	// Print any commands not in the ordered list
@@ -63,14 +79,17 @@ func (r *REPL) Run() {
 			if o == name { found = true; break }
 		}
 		if !found {
-			fmt.Printf("    /%-10s %s\n", cmd.Name, cmd.Description)
+			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)
 		}
 	}
-	fmt.Println()
+	r.println("")
 
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := r.Reader
+	if scanner == nil {
+		scanner = bufio.NewScanner(os.Stdin)
+	}
 	for {
-		fmt.Printf("\033[1;36m%s>\033[0m ", repoName)
+		r.printf("\033[1;36m%s>\033[0m ", repoName)
 
 		if !scanner.Scan() {
 			break
@@ -91,28 +110,28 @@ func (r *REPL) Run() {
 			}
 
 			if cmdName == "quit" || cmdName == "exit" || cmdName == "q" {
-				fmt.Println("  Bye.")
+				r.println("  Bye.")
 				return
 			}
 
 			if cmdName == "help" || cmdName == "?" {
-				fmt.Println()
+				r.println("")
 				for _, name := range order {
 					if cmd, ok := r.Commands[name]; ok {
-						fmt.Printf("  /%-10s %s\n", cmd.Name, cmd.Description)
+						r.printf("  /%-10s %s\n", cmd.Name, cmd.Description)
 						if cmd.Usage != "" {
-							fmt.Printf("  %-12s %s\n", "", cmd.Usage)
+							r.printf("  %-12s %s\n", "", cmd.Usage)
 						}
 					}
 				}
-				fmt.Println("  /quit       Exit Stoke")
-				fmt.Println()
+				r.println("  /quit       Exit Stoke")
+				r.println("")
 				continue
 			}
 
 			cmd, ok := r.Commands[cmdName]
 			if !ok {
-				fmt.Printf("  Unknown command: /%s (try /help)\n", cmdName)
+				r.printf("  Unknown command: /%s (try /help)\n", cmdName)
 				continue
 			}
 
@@ -124,7 +143,7 @@ func (r *REPL) Run() {
 		if r.OnChat != nil {
 			r.OnChat(line)
 		} else {
-			fmt.Println("  (chat not configured -- use slash commands)")
+			r.println("  (chat not configured -- use slash commands)")
 		}
 	}
 }

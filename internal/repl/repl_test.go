@@ -1,6 +1,8 @@
 package repl
 
 import (
+	"bufio"
+	"strings"
 	"testing"
 )
 
@@ -85,5 +87,212 @@ func TestRegister_Overwrite(t *testing.T) {
 	}
 	if r.Commands["test"].Description != "v2" {
 		t.Errorf("Description = %q, want %q (overwrite)", r.Commands["test"].Description, "v2")
+	}
+}
+
+// --- Run() loop tests using injectable Reader/Writer ---
+
+// newTestREPL creates a REPL with injected input and captured output.
+func newTestREPL(input string) (*REPL, *strings.Builder) {
+	r := New("/tmp/test-repo")
+	r.Reader = bufio.NewScanner(strings.NewReader(input))
+	out := &strings.Builder{}
+	r.Writer = out
+	return r, out
+}
+
+func TestRunQuit(t *testing.T) {
+	r, out := newTestREPL("/quit\n")
+	r.Run()
+	if !strings.Contains(out.String(), "Bye.") {
+		t.Error("expected Bye. in output")
+	}
+}
+
+func TestRunExitAlias(t *testing.T) {
+	r, out := newTestREPL("/exit\n")
+	r.Run()
+	if !strings.Contains(out.String(), "Bye.") {
+		t.Error("/exit should trigger quit")
+	}
+}
+
+func TestRunQAlias(t *testing.T) {
+	r, out := newTestREPL("/q\n")
+	r.Run()
+	if !strings.Contains(out.String(), "Bye.") {
+		t.Error("/q should trigger quit")
+	}
+}
+
+func TestRunBanner(t *testing.T) {
+	r, out := newTestREPL("/quit\n")
+	r.Run()
+	s := out.String()
+	if !strings.Contains(s, "STOKE") {
+		t.Error("banner should contain STOKE")
+	}
+	if !strings.Contains(s, "test-repo") {
+		t.Error("banner should contain repo path")
+	}
+}
+
+func TestRunCommandDispatch(t *testing.T) {
+	var gotArgs string
+	r, _ := newTestREPL("/build src/main.go\n/quit\n")
+	r.Register(Command{
+		Name:        "build",
+		Description: "Build the project",
+		Run:         func(args string) { gotArgs = args },
+	})
+	r.Run()
+	if gotArgs != "src/main.go" {
+		t.Errorf("command args = %q, want %q", gotArgs, "src/main.go")
+	}
+}
+
+func TestRunCommandNoArgs(t *testing.T) {
+	var gotArgs string
+	r, _ := newTestREPL("/scan\n/quit\n")
+	r.Register(Command{
+		Name: "scan",
+		Run:  func(args string) { gotArgs = args },
+	})
+	r.Run()
+	if gotArgs != "" {
+		t.Errorf("command args = %q, want empty", gotArgs)
+	}
+}
+
+func TestRunCommandCaseInsensitive(t *testing.T) {
+	called := false
+	r, _ := newTestREPL("/BUILD\n/quit\n")
+	r.Register(Command{
+		Name: "build",
+		Run:  func(string) { called = true },
+	})
+	r.Run()
+	if !called {
+		t.Error("/BUILD should dispatch to build (case insensitive)")
+	}
+}
+
+func TestRunUnknownCommand(t *testing.T) {
+	r, out := newTestREPL("/foobar\n/quit\n")
+	r.Run()
+	if !strings.Contains(out.String(), "Unknown command: /foobar") {
+		t.Error("expected unknown command message")
+	}
+}
+
+func TestRunHelp(t *testing.T) {
+	r, out := newTestREPL("/help\n/quit\n")
+	r.Register(Command{
+		Name:        "build",
+		Description: "Build it",
+		Usage:       "/build [target]",
+		Run:         func(string) {},
+	})
+	r.Run()
+	s := out.String()
+	if !strings.Contains(s, "build") {
+		t.Error("help should list build command")
+	}
+	if !strings.Contains(s, "/quit") {
+		t.Error("help should mention /quit")
+	}
+}
+
+func TestRunHelpQuestionMark(t *testing.T) {
+	r, out := newTestREPL("/?\n/quit\n")
+	r.Run()
+	if !strings.Contains(out.String(), "/quit") {
+		t.Error("/? should show help")
+	}
+}
+
+func TestRunFreeTextChat(t *testing.T) {
+	var chatInput string
+	r, _ := newTestREPL("hello world\n/quit\n")
+	r.OnChat = func(input string) { chatInput = input }
+	r.Run()
+	if chatInput != "hello world" {
+		t.Errorf("OnChat got %q, want %q", chatInput, "hello world")
+	}
+}
+
+func TestRunFreeTextNoChatHandler(t *testing.T) {
+	r, out := newTestREPL("hello\n/quit\n")
+	r.Run()
+	if !strings.Contains(out.String(), "chat not configured") {
+		t.Error("should warn when chat not configured")
+	}
+}
+
+func TestRunEmptyLines(t *testing.T) {
+	called := 0
+	r, _ := newTestREPL("\n\n\n/build\n/quit\n")
+	r.Register(Command{
+		Name: "build",
+		Run:  func(string) { called++ },
+	})
+	r.Run()
+	if called != 1 {
+		t.Errorf("build called %d times, want 1 (empty lines should be skipped)", called)
+	}
+}
+
+func TestRunMultipleCommands(t *testing.T) {
+	var order []string
+	r, _ := newTestREPL("/a\n/b\n/c\n/quit\n")
+	for _, name := range []string{"a", "b", "c"} {
+		n := name
+		r.Register(Command{Name: n, Run: func(string) { order = append(order, n) }})
+	}
+	r.Run()
+	if len(order) != 3 || order[0] != "a" || order[1] != "b" || order[2] != "c" {
+		t.Errorf("order = %v, want [a b c]", order)
+	}
+}
+
+func TestRunEOFExits(t *testing.T) {
+	// No /quit — just EOF
+	r, out := newTestREPL("hello\n")
+	r.OnChat = func(string) {}
+	r.Run()
+	// Should exit cleanly without "Bye."
+	if strings.Contains(out.String(), "Bye.") {
+		t.Error("EOF exit should not print Bye")
+	}
+}
+
+func TestRunBannerShowsRegisteredCommands(t *testing.T) {
+	r, out := newTestREPL("/quit\n")
+	r.Register(Command{Name: "ship", Description: "Ship it", Run: func(string) {}})
+	r.Register(Command{Name: "build", Description: "Build it", Run: func(string) {}})
+	r.Run()
+	s := out.String()
+	if !strings.Contains(s, "ship") || !strings.Contains(s, "build") {
+		t.Error("banner should show registered commands")
+	}
+}
+
+func TestPrintf(t *testing.T) {
+	r := New("/tmp/repo")
+	out := &strings.Builder{}
+	r.Writer = out
+	r.printf("hello %s %d", "world", 42)
+	if out.String() != "hello world 42" {
+		t.Errorf("printf output = %q", out.String())
+	}
+}
+
+func TestPrintln(t *testing.T) {
+	r := New("/tmp/repo")
+	out := &strings.Builder{}
+	r.Writer = out
+	r.println("test line")
+	if out.String() != "test line\n" {
+		t.Errorf("println output = %q", out.String())
 	}
 }
