@@ -66,7 +66,7 @@ func (r *REPL) Run() {
 	r.println("")
 
 	// Print available commands
-	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "yolo", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
+	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
 	for _, name := range order {
 		if cmd, ok := r.Commands[name]; ok {
 			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)

@@ -39,6 +39,7 @@ func RegisterMissionAPI(s *Server, orch *orchestrate.Orchestrator) {
 	s.mux.HandleFunc("/api/missions/advance", s.authWrap(api.handleAdvanceMission))
 	s.mux.HandleFunc("/api/missions/convergence", s.authWrap(api.handleConvergence))
 	s.mux.HandleFunc("/api/missions/convergence/run", s.authWrap(api.handleRunConvergence))
+	s.mux.HandleFunc("/api/missions/findings", s.authWrap(api.handleFindings))
 	s.mux.HandleFunc("/api/missions/context", s.authWrap(api.handleBuildContext))
 	s.mux.HandleFunc("/api/missions/handoff", s.authWrap(api.handleRecordHandoff))
 	s.mux.HandleFunc("/api/missions/consensus", s.authWrap(api.handleRecordConsensus))
@@ -214,6 +215,56 @@ func (a *MissionAPI) handleRunConvergence(w http.ResponseWriter, r *http.Request
 	}))
 
 	writeJSON(w, report)
+}
+
+// --- Get Findings (Gaps) ---
+
+func (a *MissionAPI) handleFindings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing id parameter")
+		return
+	}
+
+	includeResolved := r.URL.Query().Get("all") == "true"
+	severity := r.URL.Query().Get("severity")
+	category := r.URL.Query().Get("category")
+
+	var gaps []mission.Gap
+	var err error
+	if includeResolved {
+		gaps, err = a.orch.AllGaps(id)
+	} else {
+		gaps, err = a.orch.OpenGaps(id)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Apply filters
+	var filtered []mission.Gap
+	for _, g := range gaps {
+		if severity != "" && g.Severity != severity {
+			continue
+		}
+		if category != "" && g.Category != category {
+			continue
+		}
+		filtered = append(filtered, g)
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"mission_id": id,
+		"findings":   filtered,
+		"count":      len(filtered),
+		"total":      len(gaps),
+	})
 }
 
 // --- Build Agent Context ---

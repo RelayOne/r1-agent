@@ -2401,6 +2401,21 @@ func launchREPL() {
 	})
 
 	r.Register(repl.Command{
+		Name: "findings", Description: "Show convergence findings for a mission",
+		Usage: "/findings <mission-id> [--severity blocking] [--all] [--json]",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /findings <mission-id> [--severity blocking] [--category test] [--all] [--json]")
+				return
+			}
+			parts := strings.Fields(args)
+			cmdArgs := []string{"--id", parts[0]}
+			cmdArgs = append(cmdArgs, parts[1:]...)
+			missionFindingsCmd(cmdArgs)
+		},
+	})
+
+	r.Register(repl.Command{
 		Name: "status", Description: "Show session dashboard",
 		Run: func(args string) {
 			statusCmd([]string{"--repo", absRepo})

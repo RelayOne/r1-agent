@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/mission"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 )
@@ -272,6 +273,122 @@ func TestAPIRecordConsensus(t *testing.T) {
 	result := decodeJSON(t, w)
 	if result["has_consensus"] != false {
 		t.Error("should not have consensus with 1 vote")
+	}
+}
+
+// --- Findings ---
+
+func TestAPIFindingsEmpty(t *testing.T) {
+	srv, orch := newTestMissionAPI(t)
+	m, _ := orch.CreateMission("Test", "test", nil)
+
+	w := doReq(t, srv.Handler(), "GET", "/api/missions/findings?id="+m.ID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d\nBody: %s", w.Code, w.Body.String())
+	}
+
+	result := decodeJSON(t, w)
+	count := result["count"].(float64)
+	if count != 0 {
+		t.Errorf("count = %v, want 0 (no findings yet)", count)
+	}
+}
+
+func TestAPIFindingsMissingID(t *testing.T) {
+	srv, _ := newTestMissionAPI(t)
+	w := doReq(t, srv.Handler(), "GET", "/api/missions/findings", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestAPIFindingsWrongMethod(t *testing.T) {
+	srv, _ := newTestMissionAPI(t)
+	w := doReq(t, srv.Handler(), "POST", "/api/missions/findings", nil)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestAPIFindingsAfterConvergenceRun(t *testing.T) {
+	srv, orch := newTestMissionAPI(t)
+	m, _ := orch.CreateMission("Test", "test", []string{"Feature works"})
+
+	// Run convergence directly via orchestrator (avoids base64 encoding issues)
+	report, err := orch.RunConvergence(m.ID, []convergence.FileInput{
+		{Path: "main.go", Content: []byte("// TODO: implement this\nfunc main() {}")},
+	})
+	if err != nil {
+		t.Fatalf("RunConvergence: %v", err)
+	}
+	t.Logf("convergence: converged=%v, findings=%d", report.IsConverged, len(report.Findings))
+
+	// Now check findings endpoint
+	w := doReq(t, srv.Handler(), "GET", "/api/missions/findings?id="+m.ID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	result := decodeJSON(t, w)
+	count := result["count"].(float64)
+	// The convergence run should have stored gaps from its findings
+	if len(report.Findings) > 0 && count == 0 {
+		t.Error("convergence produced findings but findings endpoint returned none")
+	}
+	if len(report.Findings) > 0 {
+		t.Logf("findings endpoint returned %v findings", count)
+	}
+}
+
+func TestAPIFindingsFilterSeverity(t *testing.T) {
+	srv, orch := newTestMissionAPI(t)
+	m, _ := orch.CreateMission("Test", "test", []string{"Feature works"})
+
+	// Run convergence to populate gaps
+	orch.RunConvergence(m.ID, []convergence.FileInput{
+		{Path: "main.go", Content: []byte("// TODO: implement\nfunc main() {}")},
+	})
+
+	// Filter by blocking severity only
+	w := doReq(t, srv.Handler(), "GET", "/api/missions/findings?id="+m.ID+"&severity=blocking", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	result := decodeJSON(t, w)
+	findings := result["findings"]
+	if findings != nil {
+		for _, f := range findings.([]interface{}) {
+			finding := f.(map[string]interface{})
+			if finding["severity"] != "blocking" {
+				t.Errorf("found non-blocking finding when filtering: %v", finding["severity"])
+			}
+		}
+	}
+}
+
+func TestAPIFindingsFilterCategory(t *testing.T) {
+	srv, orch := newTestMissionAPI(t)
+	m, _ := orch.CreateMission("Test", "test", []string{"Feature works"})
+
+	orch.RunConvergence(m.ID, []convergence.FileInput{
+		{Path: "main.go", Content: []byte("// TODO: implement\nfunc main() {}")},
+	})
+
+	w := doReq(t, srv.Handler(), "GET", "/api/missions/findings?id="+m.ID+"&category=test", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	result := decodeJSON(t, w)
+	findings := result["findings"]
+	if findings != nil {
+		for _, f := range findings.([]interface{}) {
+			finding := f.(map[string]interface{})
+			if finding["category"] != "test" {
+				t.Errorf("found non-test finding when filtering: %v", finding["category"])
+			}
+		}
 	}
 }
 

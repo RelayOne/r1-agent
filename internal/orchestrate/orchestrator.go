@@ -478,6 +478,18 @@ func (o *Orchestrator) HasConsensus(missionID string) (bool, error) {
 	return o.store.HasConsensus(missionID, o.config.RequiredConsensus)
 }
 
+// --- Gaps ---
+
+// OpenGaps returns unresolved gaps for a mission, ordered by severity.
+func (o *Orchestrator) OpenGaps(missionID string) ([]mission.Gap, error) {
+	return o.store.OpenGaps(missionID)
+}
+
+// AllGaps returns all gaps (open and resolved) for a mission.
+func (o *Orchestrator) AllGaps(missionID string) ([]mission.Gap, error) {
+	return o.store.AllGaps(missionID)
+}
+
 // --- Internal Adapters ---
 
 // contextAdapter bridges the Orchestrator to mission.ContextSource so the

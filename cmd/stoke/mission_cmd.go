@@ -32,6 +32,8 @@ func missionCmd(args []string) {
 		missionAdvanceCmd(args[1:])
 	case "run":
 		missionRunCmd(args[1:])
+	case "findings":
+		missionFindingsCmd(args[1:])
 	case "context":
 		missionContextCmd(args[1:])
 	case "help", "--help", "-h":
@@ -50,6 +52,7 @@ Subcommands:
   create    Create a new mission from user intent
   list      List missions, optionally filtered by phase
   status    Show convergence status for a mission
+  findings  Show convergence findings/gaps for a mission
   advance   Manually advance a mission to the next phase
   run       Drive a mission through the convergence loop to completion
   context   Build enriched agent context for a mission
@@ -360,6 +363,143 @@ func missionContextCmd(args []string) {
 	}
 
 	fmt.Print(ctx)
+}
+
+// --- findings ---
+
+func missionFindingsCmd(args []string) {
+	fs := flag.NewFlagSet("mission findings", flag.ExitOnError)
+	id := fs.String("id", "", "Mission ID (required)")
+	severity := fs.String("severity", "", "Filter by severity: blocking, major, minor, info")
+	category := fs.String("category", "", "Filter by category: completeness, test, code, security, docs, consistency, ux")
+	all := fs.Bool("all", false, "Include resolved findings")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	storeDir := fs.String("store", "", "Mission store directory")
+	fs.Parse(args)
+
+	if *id == "" {
+		fmt.Fprintln(os.Stderr, "Error: --id is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	orch, err := getOrchestrator(*storeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer orch.Close()
+
+	m, err := orch.GetMission(*id)
+	if err != nil || m == nil {
+		fmt.Fprintf(os.Stderr, "Error: mission %q not found\n", *id)
+		os.Exit(1)
+	}
+
+	var gaps []mission.Gap
+	if *all {
+		gaps, err = orch.AllGaps(*id)
+	} else {
+		gaps, err = orch.OpenGaps(*id)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Apply filters
+	var filtered []mission.Gap
+	for _, g := range gaps {
+		if *severity != "" && g.Severity != *severity {
+			continue
+		}
+		if *category != "" && g.Category != *category {
+			continue
+		}
+		filtered = append(filtered, g)
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"mission_id": m.ID,
+			"findings":   filtered,
+			"count":      len(filtered),
+			"total":      len(gaps),
+		})
+		return
+	}
+
+	fmt.Printf("Mission: %s (%s)\n", m.Title, m.ID)
+	label := "Open findings"
+	if *all {
+		label = "All findings"
+	}
+	fmt.Printf("%s: %d", label, len(filtered))
+	if len(filtered) != len(gaps) {
+		fmt.Printf(" (of %d total)", len(gaps))
+	}
+	fmt.Println()
+	fmt.Println()
+
+	if len(filtered) == 0 {
+		fmt.Println("  No findings.")
+		return
+	}
+
+	// Group by severity for display
+	sevOrder := []string{"blocking", "major", "minor", "info"}
+	grouped := map[string][]mission.Gap{}
+	for _, g := range filtered {
+		grouped[g.Severity] = append(grouped[g.Severity], g)
+	}
+
+	for _, sev := range sevOrder {
+		items := grouped[sev]
+		if len(items) == 0 {
+			continue
+		}
+
+		icon := severityIcon(sev)
+		fmt.Printf("%s %s (%d)\n", icon, strings.ToUpper(sev), len(items))
+		for _, g := range items {
+			loc := ""
+			if g.File != "" {
+				loc = g.File
+				if g.Line > 0 {
+					loc = fmt.Sprintf("%s:%d", g.File, g.Line)
+				}
+			}
+			fmt.Printf("  [%s] %s", g.Category, g.Description)
+			if loc != "" {
+				fmt.Printf(" (%s)", loc)
+			}
+			if g.Resolved {
+				fmt.Print(" [RESOLVED]")
+			}
+			fmt.Println()
+			if g.Suggestion != "" {
+				fmt.Printf("         -> %s\n", g.Suggestion)
+			}
+		}
+		fmt.Println()
+	}
+}
+
+func severityIcon(sev string) string {
+	switch sev {
+	case "blocking":
+		return "!!!"
+	case "major":
+		return " !!"
+	case "minor":
+		return "  !"
+	case "info":
+		return "  ."
+	default:
+		return "  ?"
+	}
 }
 
 func truncateField(s string, max int) string {
