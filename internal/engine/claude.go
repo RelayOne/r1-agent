@@ -100,6 +100,10 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 		}
 		args = append(args, "--strict-mcp-config", "--mcp-config", emptyMCPPath)
 		notes = append(notes, "MCP disabled via strict empty config + mcp__* deny")
+	} else if spec.MCPConfigPath != "" {
+		// MCP enabled with a custom config (e.g., codebase analysis tools for discovery)
+		args = append(args, "--mcp-config", spec.MCPConfigPath)
+		notes = append(notes, "MCP enabled with custom config: "+spec.MCPConfigPath)
 	}
 
 	env := safeEnvMode2(nil)

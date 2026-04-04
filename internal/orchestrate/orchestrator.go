@@ -80,6 +80,19 @@ type Config struct {
 	// Receives the mission ID, model name, and the full adversarial consensus prompt.
 	// If nil, consensus is auto-approved.
 	ConsensusModelFn func(ctx context.Context, missionID, model, prompt string) (verdict, reasoning string, gapsFound []string, err error) `json:"-"`
+
+	// DiscoveryFn is the optional callback for agentic discovery in the research phase.
+	// Unlike static search, this drives a multi-turn model loop that traces code paths,
+	// maps consumer/producer relationships, and verifies cross-surface reachability.
+	// If nil, the research handler falls back to deterministic multi-signal search.
+	DiscoveryFn func(ctx context.Context, m *mission.Mission, prompt string) (findings string, err error) `json:"-"`
+
+	// ValidateDiscoveryFn is the optional callback for agentic validation (Layer 4).
+	// Drives a multi-turn model loop that traces code flow, checks consumer contracts,
+	// verifies permissions/security/scalability, and reasons about intent satisfaction
+	// across all surfaces (mobile, web, desktop, API, MCP, CLI).
+	// If nil, only Layers 1-3 run during validation.
+	ValidateDiscoveryFn func(ctx context.Context, m *mission.Mission, prompt string) (findings string, err error) `json:"-"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -410,9 +423,11 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		ProjectInfo:      o.projectInfo,
 		Metrics:          mission.NewMetrics(),
 		VerifyCommands:   o.verifyCmds,
-		ExecuteFn:        o.config.ExecuteFn,
-		ValidateFn:       o.config.ValidateFn,
-		ConsensusModelFn: o.config.ConsensusModelFn,
+		ExecuteFn:           o.config.ExecuteFn,
+		ValidateFn:          o.config.ValidateFn,
+		ConsensusModelFn:    o.config.ConsensusModelFn,
+		DiscoveryFn:         o.config.DiscoveryFn,
+		ValidateDiscoveryFn: o.config.ValidateDiscoveryFn,
 	}
 
 	// Load baseline for this mission if available

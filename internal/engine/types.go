@@ -82,6 +82,12 @@ type RunSpec struct {
 	SandboxAllowRead  []string
 	SandboxAllowWrite []string
 
+	// MCPConfigPath is an optional path to an MCP server configuration file.
+	// When set, the engine passes this to --mcp-config so the model gets
+	// access to custom MCP tools (e.g., codebase analysis tools for
+	// agentic discovery loops).
+	MCPConfigPath string
+
 	// Pool API fields (for APIRunner / GeminiRunner direct API access)
 	PoolAPIKey string
 	PoolBaseURL string
