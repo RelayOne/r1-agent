@@ -302,3 +302,88 @@ func TestConsensusPromptMentionsUXForFrontend(t *testing.T) {
 		t.Error("frontend consensus prompt should challenge on responsiveness and screen readers")
 	}
 }
+
+// --- Agentic Discovery Prompts ---
+
+func TestBuildMissionDiscoveryPrompt(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionDiscoveryPrompt(ctx)
+
+	// Should contain mission info
+	if !strings.Contains(prompt, ctx.Title) {
+		t.Error("discovery prompt should contain mission title")
+	}
+	if !strings.Contains(prompt, ctx.Intent) {
+		t.Error("discovery prompt should contain mission intent")
+	}
+	// Should contain discovery protocol sections
+	for _, section := range []string{
+		"Consumer/Producer Mapping",
+		"Reachability Analysis",
+		"Cross-Surface Verification",
+		"Quality Verification",
+	} {
+		if !strings.Contains(prompt, section) {
+			t.Errorf("discovery prompt should contain %q section", section)
+		}
+	}
+	// Should instruct on output format
+	if !strings.Contains(prompt, "FILE:") {
+		t.Error("discovery prompt should explain FILE: output format")
+	}
+	if !strings.Contains(prompt, "GAP:") {
+		t.Error("discovery prompt should explain GAP: output format")
+	}
+}
+
+func TestBuildMissionDiscoveryPromptIncludesResearch(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionDiscoveryPrompt(ctx)
+	if !strings.Contains(prompt, "Prior Research") {
+		t.Error("discovery prompt should include prior research when available")
+	}
+}
+
+func TestBuildMissionValidateDiscoveryPrompt(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionValidateDiscoveryPrompt(ctx)
+
+	// Should contain mission info
+	if !strings.Contains(prompt, ctx.Title) {
+		t.Error("validate discovery prompt should contain mission title")
+	}
+	// Should contain validation discovery protocol
+	for _, section := range []string{
+		"THE WORK IS NOT DONE",
+		"Cross-surface validation",
+		"Consumer/Producer contract verification",
+		"Trace every claim with evidence",
+	} {
+		if !strings.Contains(prompt, section) {
+			t.Errorf("validate discovery prompt should contain %q", section)
+		}
+	}
+	// Should reference gaps
+	if !strings.Contains(prompt, "Previously Found Gaps") {
+		t.Error("validate discovery prompt should show prior gaps")
+	}
+	// Should explain surfaces
+	for _, surface := range []string{"API", "Web", "CLI", "MCP"} {
+		if !strings.Contains(prompt, surface) {
+			t.Errorf("validate discovery prompt should mention %s surface", surface)
+		}
+	}
+}
+
+func TestBuildMissionValidateDiscoveryPromptNoGaps(t *testing.T) {
+	ctx := MissionContext{
+		MissionID: "m-2",
+		Title:     "Feature",
+		Intent:    "Test",
+	}
+	prompt := BuildMissionValidateDiscoveryPrompt(ctx)
+	// Should NOT include gaps section when empty
+	if strings.Contains(prompt, "Previously Found Gaps") {
+		t.Error("validate discovery prompt should not show gaps section when no gaps exist")
+	}
+}

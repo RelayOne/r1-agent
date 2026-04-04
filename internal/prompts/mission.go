@@ -497,3 +497,155 @@ Return JSON:
 
 	return b.String()
 }
+
+// BuildMissionDiscoveryPrompt generates the prompt for agentic discovery.
+// This drives a multi-turn loop where the model iteratively maps the codebase
+// against the mission intent, identifying consumers, producers, and gaps.
+func BuildMissionDiscoveryPrompt(ctx MissionContext) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are a discovery agent performing deep codebase analysis for mission "%s".
+
+## Mission
+**Title:** %s
+**Intent:** %s
+
+`, ctx.MissionID, ctx.Title, ctx.Intent)
+
+	if ctx.CriteriaBlock != "" {
+		fmt.Fprintf(&b, "%s\n", ctx.CriteriaBlock)
+	}
+
+	b.WriteString(`## Discovery Protocol
+
+You must build a COMPLETE MAP of how this mission relates to the codebase.
+Do NOT rely on keyword matching or surface-level analysis.
+Instead, trace actual code paths and reason about intent.
+
+### Round 1: Intent Decomposition
+Break the intent into concrete technical requirements. For each:
+- What data flows need to exist?
+- What APIs, endpoints, or interfaces are involved?
+- What surfaces (mobile, web, desktop, API, MCP) need to expose this?
+- What permissions, auth, and security boundaries apply?
+
+### Round 2: Consumer/Producer Mapping
+For each requirement:
+- What PRODUCES the data/functionality? (sources, APIs, services)
+- What CONSUMES it? (UI components, API clients, other services)
+- What do consumers EXPECT vs what producers PROVIDE?
+- Are there contract mismatches (type, format, auth, error handling)?
+
+### Round 3: Reachability Analysis
+For each piece of functionality:
+- Can users actually REACH this through the UI/API?
+- Is there a complete path from entry point to implementation?
+- Are all intermediate layers wired (routes, handlers, middleware, components)?
+- Does the navigation/routing expose this to users?
+
+### Round 4: Cross-Surface Verification
+If the app has multiple surfaces:
+- Does each surface expose the expected functionality?
+- Are the experiences consistent across surfaces?
+- Do mobile, web, and desktop all handle edge cases?
+- Are all API contracts implemented by all consumers?
+
+### Round 5: Quality Verification
+- Are permissions and security patterns correct and consistent?
+- Are scalability patterns appropriate (pagination, caching, rate limiting)?
+- Are error states handled on all surfaces?
+- Are best practices followed (not just "it works")?
+
+### Output Format
+For each file you discover as relevant, output:
+FILE: <path>
+
+For each gap you discover, output:
+GAP: <description of what's missing or broken>
+GAP:MAJOR: <description of non-blocking but important issue>
+
+Be thorough. A gap you miss here becomes a bug in production.
+`)
+
+	if ctx.ResearchBlock != "" {
+		fmt.Fprintf(&b, "\n## Prior Research\n%s\n", ctx.ResearchBlock)
+	}
+
+	return b.String()
+}
+
+// BuildMissionValidateDiscoveryPrompt generates the prompt for multi-turn
+// agentic validation. Unlike single-shot validation, this drives an iterative
+// loop where the model traces code flow, checks contracts, and verifies
+// reachability before declaring findings.
+func BuildMissionValidateDiscoveryPrompt(ctx MissionContext) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are a validation discovery agent for mission "%s".
+
+## Mission
+**Title:** %s
+**Intent:** %s
+
+`, ctx.MissionID, ctx.Title, ctx.Intent)
+
+	if ctx.CriteriaBlock != "" {
+		fmt.Fprintf(&b, "%s\n", ctx.CriteriaBlock)
+	}
+
+	if ctx.GapsBlock != "" {
+		fmt.Fprintf(&b, "## Previously Found Gaps\n%s\n\n", ctx.GapsBlock)
+	}
+
+	b.WriteString(`## Validation Discovery Protocol
+
+Your job is to DISPROVE that this mission is complete. You have access to read
+any file in the repository. Use it. Do not guess — look at the actual code.
+
+### Default assumption: THE WORK IS NOT DONE.
+
+### Trace every claim with evidence
+
+For each acceptance criterion:
+1. Find the code that implements it (give file:line)
+2. Find the test that verifies it (give file:line)
+3. Trace the call chain from entry point to implementation
+4. Check that consumers actually use the new code
+5. Verify error handling on the path
+
+### Cross-surface validation
+
+Map every surface that should expose this functionality:
+- API: Are endpoints registered? Do they call the right handlers?
+- Web: Are routes added? Do components render the new UI?
+- Mobile: Is the functionality accessible from the mobile surface?
+- CLI: Are commands registered? Do they dispatch correctly?
+- MCP: Are tool definitions complete? Do they work?
+
+For EACH surface, trace the path from user action to implementation.
+"The code exists" is NOT "the user can reach it."
+
+### Consumer/Producer contract verification
+
+For every new API, type, interface, or data structure:
+1. List all consumers
+2. For each consumer, verify it uses the correct:
+   - Type signatures
+   - Error handling
+   - Auth/permission model
+   - Data format and validation
+3. Flag any consumer that assumes a different contract
+
+### What to report
+
+For each gap found, output a line:
+GAP: <specific, actionable description with file paths>
+GAP:MAJOR: <important but non-blocking issue>
+
+Report NOTHING if the work is genuinely complete.
+Do NOT rationalize. Do NOT make excuses. Do NOT say "out of scope."
+If it touches the codebase, it's in scope.
+`)
+
+	return b.String()
+}

@@ -102,6 +102,36 @@ type HandlerDeps struct {
 	// TFIDFIndex is an optional pre-built TF-IDF search index.
 	// If nil, the research handler builds one on-demand.
 	TFIDFIndex *tfidf.Index
+
+	// DiscoveryFn runs an agentic discovery loop: the model iteratively
+	// queries the codebase to map what exists, what's missing, what
+	// consumes/produces, and whether users can reach functionality.
+	//
+	// Unlike static analysis, discovery is adversarial and multi-turn:
+	// the model reads code, asks questions, searches for answers, and
+	// loops until it has mapped the full intent surface.
+	//
+	// Returns structured discovery findings: what was found, what's
+	// missing, consumer/producer mapping, reachability assessment.
+	//
+	// If nil, only deterministic search signals are used.
+	DiscoveryFn func(ctx context.Context, m *Mission, prompt string) (findings string, err error)
+
+	// ValidateDiscoveryFn runs an agentic validation loop: the model
+	// reads the code changes against the intent and criteria, traces
+	// call paths, verifies consumer contracts, and checks reachability
+	// across all surfaces (mobile, web, desktop, API, MCP).
+	//
+	// Unlike single-shot validation, this is a multi-turn loop where
+	// the model can:
+	//   - Read specific files to trace code flow
+	//   - Check if new APIs are consumed by all expected surfaces
+	//   - Verify permissions, security, scalability patterns
+	//   - Confirm users can actually reach the new functionality
+	//
+	// Returns structured JSON findings with gaps.
+	// If nil, falls back to the single-shot ValidateFn.
+	ValidateDiscoveryFn func(ctx context.Context, m *Mission, prompt string) (findings string, err error)
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -213,6 +243,33 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 		relevantFiles := make(map[string]float64) // file -> relevance score
 		var artifacts = map[string]string{"prompt": researchPrompt}
 
+		// Primary path: Agentic discovery loop (model-driven, multi-turn)
+		// The model iteratively queries the codebase to build a complete
+		// map of what exists, what's missing, consumers, producers, and
+		// reachability. This is fundamentally better than any static
+		// analysis because the model reasons about intent, not patterns.
+		if deps.DiscoveryFn != nil {
+			discoveryPrompt := prompts.BuildMissionDiscoveryPrompt(mc)
+			discoveryResult, err := deps.DiscoveryFn(ctx, m, discoveryPrompt)
+			if err == nil && discoveryResult != "" {
+				artifacts["discovery"] = discoveryResult
+				// Parse discovered files from the result
+				// The model returns structured findings including relevant files
+				for _, line := range strings.Split(discoveryResult, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "FILE:") {
+						path := strings.TrimSpace(strings.TrimPrefix(line, "FILE:"))
+						if path != "" {
+							relevantFiles[path] += 2.0 // High weight for model-discovered files
+						}
+					}
+				}
+			}
+		}
+
+		// Fallback: Deterministic multi-signal search
+		// Used when DiscoveryFn is not configured, or to supplement
+		// model discovery with additional signals.
 		if deps.RepoRoot != "" {
 			exts := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java",
 				".css", ".scss", ".html", ".vue", ".svelte", ".yaml", ".yml", ".json"}
@@ -613,7 +670,7 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				report.Score, len(report.Findings), report.BlockingCount()))
 		}
 
-		// --- Layer 3: Adversarial LLM validation ---
+		// --- Layer 3: Single-shot adversarial LLM validation ---
 		if deps.ValidateFn != nil {
 			mc := buildMissionContext(deps, m)
 			validatePrompt := prompts.BuildMissionValidatePrompt(mc)
@@ -622,7 +679,6 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			if err != nil {
 				summaryParts = append(summaryParts, fmt.Sprintf("adversarial: error (%v)", err))
 			} else if findings != "" {
-				// Store the raw LLM findings as a gap for the convergence loop to act on
 				gapID := fmt.Sprintf("llm-val-%s-%d", m.ID, time.Now().UnixNano())
 				deps.Store.AddGap(&Gap{
 					ID:          gapID,
@@ -637,6 +693,61 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				summaryParts = append(summaryParts, "adversarial: findings reported")
 			} else {
 				summaryParts = append(summaryParts, "adversarial: no findings")
+			}
+		}
+
+		// --- Layer 4: Agentic multi-turn discovery validation ---
+		// This is the highest-quality validation: the model iteratively
+		// traces code paths, checks consumer/producer contracts, verifies
+		// cross-surface reachability, and reasons about intent satisfaction.
+		//
+		// Unlike Layer 3 (single-shot), this runs a multi-turn loop where
+		// the model can read files, search symbols, check dependencies,
+		// and build a complete picture before declaring findings.
+		if deps.ValidateDiscoveryFn != nil {
+			mc := buildMissionContext(deps, m)
+			discoveryPrompt := prompts.BuildMissionValidateDiscoveryPrompt(mc)
+
+			findings, err := deps.ValidateDiscoveryFn(ctx, m, discoveryPrompt)
+			if err != nil {
+				summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: error (%v)", err))
+			} else if findings != "" {
+				// Parse structured findings from the model's discovery
+				for i, line := range strings.Split(findings, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					// The model returns GAP: lines for each discovered gap
+					if strings.HasPrefix(line, "GAP:") {
+						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
+						if gapDesc == "" {
+							continue
+						}
+						sev := "blocking"
+						category := "discovery-validation"
+						if strings.HasPrefix(line, "GAP:MAJOR:") {
+							sev = "major"
+							gapDesc = strings.TrimSpace(strings.TrimPrefix(line, "GAP:MAJOR:"))
+						}
+						gapID := fmt.Sprintf("disc-val-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
+						deps.Store.AddGap(&Gap{
+							ID:          gapID,
+							MissionID:   m.ID,
+							Category:    category,
+							Severity:    sev,
+							Description: truncateOutput(gapDesc, 1000),
+							Suggestion:  "Address the gap found by multi-turn discovery validation",
+						})
+						allGapCount++
+						if sev == "blocking" {
+							blockingCount++
+						}
+					}
+				}
+				summaryParts = append(summaryParts, "discovery-validation: gaps found")
+			} else {
+				summaryParts = append(summaryParts, "discovery-validation: clean")
 			}
 		}
 
