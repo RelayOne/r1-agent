@@ -415,11 +415,14 @@ func topN(scores map[string]float64, n int) []string {
 
 // countSignals returns how many search signals are available.
 func countSignals(deps HandlerDeps) int {
+	if deps.DiscoveryFn != nil {
+		return 1 // agentic discovery (which has access to all tools internally)
+	}
 	count := 0
 	if deps.RepoRoot != "" {
-		count++ // TF-IDF always available with RepoRoot
-		count++ // Symbol index always available
-		count++ // Dep graph always available
+		count++ // TF-IDF
+		count++ // Symbol index
+		count++ // Dep graph
 	}
 	return count
 }
