@@ -137,19 +137,19 @@ func TestBuildMissionValidatePrompt(t *testing.T) {
 	prompt := BuildMissionValidatePrompt(ctx)
 
 	checks := []string{
-		"validation agent",          // role
-		"Adversarial Validation",    // task header
-		"NOT here to confirm",       // adversarial framing
-		"Unsatisfied criteria",      // check 1
-		"Missing tests",             // check 2
-		"Stubs and TODOs",          // check 3
-		"Security issues",           // check 4
-		"Tautological tests",        // check 6
-		"verdict",                   // output format
-		"criteria_status",           // output format
-		"gaps",                      // output format
-		"Do NOT modify",             // read-only rule
-		"Previously Identified Gaps", // gaps block
+		"validation agent",              // role
+		"Adversarial Validation",        // task header
+		"NOT here to confirm",           // adversarial framing
+		"User intent is fully satisfied", // gate 1
+		"ENTIRE system",                 // gate 2 - whole system, not just changes
+		"No TODOs",                      // gate 3 - engineering standards
+		"Pre-existing failures",         // gate 2 - pre-existing are your problem
+		"Do not rationalize",            // anti-excuse framing
+		"verdict",                       // output format
+		"criteria_status",               // output format
+		"gaps",                          // output format
+		"Do NOT modify",                 // read-only rule
+		"Previously Identified Gaps",    // gaps block
 	}
 	for _, check := range checks {
 		if !strings.Contains(prompt, check) {
@@ -166,14 +166,16 @@ func TestBuildMissionConsensusPrompt(t *testing.T) {
 	prompt := BuildMissionConsensusPrompt(ctx, validationReport)
 
 	checks := []string{
-		"independent reviewer",             // role
-		"Independent Consensus Review",     // task header
+		"independent adversarial reviewer", // role
+		"DISPROVE Completeness",            // adversarial task header
 		"Validation Report",                // report section
 		`"verdict": "complete"`,            // included report
 		"agree_with_validator",             // output format
-		"additional_gaps",                  // output format
+		"missed_by_validator",              // output format
 		"Do NOT modify",                    // read-only rule
 		"rubber-stamp",                     // independence instruction
+		"Anti-rationalization",             // anti-excuse protocol
+		"Is this REALLY completely done",   // challenge question
 	}
 	for _, check := range checks {
 		if !strings.Contains(prompt, check) {

@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/baseline"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/handoff"
 	"github.com/ericmacdougall/stoke/internal/mission"
@@ -84,6 +85,13 @@ type Orchestrator struct {
 	validator *convergence.Validator
 	chain     *handoff.Chain
 
+	// baselines maps mission ID → pre-work baseline snapshot.
+	// Captured at mission creation so we can classify failures later.
+	baselines map[string]*baseline.Snapshot
+
+	// verifyCmds are the auto-detected or configured build/test/lint commands.
+	verifyCmds *baseline.Commands
+
 	config Config
 }
 
@@ -126,13 +134,26 @@ func New(config Config) (*Orchestrator, error) {
 	chain := handoff.NewChain(mStore)
 	validator := convergence.NewValidator()
 
+	// Auto-detect build/test/lint commands from the repo
+	var verifyCmds *baseline.Commands
+	if config.RepoRoot != "" {
+		cmds := baseline.AutoDetect(config.RepoRoot)
+		if cmds.Build != "" || cmds.Test != "" || cmds.Lint != "" {
+			verifyCmds = &cmds
+			log.Printf("[orchestrator] detected verification commands: build=%q test=%q lint=%q",
+				cmds.Build, cmds.Test, cmds.Lint)
+		}
+	}
+
 	log.Printf("[orchestrator] initialized at %s", config.StoreDir)
 	return &Orchestrator{
-		store:     mStore,
-		research:  rStore,
-		validator: validator,
-		chain:     chain,
-		config:    config,
+		store:      mStore,
+		research:   rStore,
+		validator:  validator,
+		chain:      chain,
+		baselines:  make(map[string]*baseline.Snapshot),
+		verifyCmds: verifyCmds,
+		config:     config,
 	}, nil
 }
 
@@ -202,6 +223,31 @@ func (o *Orchestrator) CreateMission(title, intent string, criteria []string) (*
 
 	if err := o.store.Create(m); err != nil {
 		return nil, fmt.Errorf("create mission: %w", err)
+	}
+
+	// Capture baseline: snapshot the current build/test/lint state BEFORE any work.
+	// If tests are already red, that becomes a gap the mission must fix.
+	if o.verifyCmds != nil && o.config.RepoRoot != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		snap, err := baseline.Capture(ctx, o.config.RepoRoot, *o.verifyCmds)
+		if err != nil {
+			log.Printf("[orchestrator] baseline capture failed for %s: %v (continuing without baseline)", id, err)
+		} else {
+			o.mu.Lock()
+			o.baselines[id] = snap
+			o.mu.Unlock()
+			if !snap.AllPass {
+				log.Printf("[orchestrator] WARNING: baseline has pre-existing failures for %s: %s", id, snap.FailureSummary())
+			} else {
+				log.Printf("[orchestrator] baseline captured for %s: all %d checks pass", id, len(snap.Results))
+			}
+			// Persist baseline to disk for crash recovery
+			baselinePath := filepath.Join(o.config.StoreDir, "baselines", id+".json")
+			if saveErr := snap.Save(baselinePath); saveErr != nil {
+				log.Printf("[orchestrator] failed to save baseline for %s: %v", id, saveErr)
+			}
+		}
 	}
 
 	log.Printf("[orchestrator] created mission %s: %s (%d criteria)", id, title, len(criteria))
@@ -322,6 +368,12 @@ func (o *Orchestrator) BuildAgentContext(missionID string, config mission.Contex
 // registered. The handlers are configured using the orchestrator's stores,
 // validator, and config callbacks.
 func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
+	return o.NewRunnerForMission(config, "")
+}
+
+// NewRunnerForMission creates a fully-wired runner with the baseline
+// for a specific mission loaded. If missionID is empty, no baseline is used.
+func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionID string) *mission.Runner {
 	runner := mission.NewRunner(o.store, config)
 
 	deps := mission.HandlerDeps{
@@ -329,8 +381,28 @@ func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
 		Validator:        o.validator,
 		RepoRoot:         o.config.RepoRoot,
 		Metrics:          mission.NewMetrics(),
+		VerifyCommands:   o.verifyCmds,
 		ExecuteFn:        o.config.ExecuteFn,
 		ConsensusModelFn: o.config.ConsensusModelFn,
+	}
+
+	// Load baseline for this mission if available
+	if missionID != "" {
+		o.mu.RLock()
+		snap := o.baselines[missionID]
+		o.mu.RUnlock()
+
+		if snap == nil {
+			// Try loading from disk (crash recovery)
+			baselinePath := filepath.Join(o.config.StoreDir, "baselines", missionID+".json")
+			if loaded, err := baseline.Load(baselinePath); err == nil {
+				snap = loaded
+				o.mu.Lock()
+				o.baselines[missionID] = snap
+				o.mu.Unlock()
+			}
+		}
+		deps.Baseline = snap
 	}
 
 	runner.RegisterHandler(mission.PhaseCreated, mission.NewResearchHandler(deps))
@@ -343,9 +415,19 @@ func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
 	return runner
 }
 
+// GetBaseline returns the pre-mission baseline snapshot for a mission.
+// Returns nil if no baseline was captured.
+func (o *Orchestrator) GetBaseline(missionID string) *baseline.Snapshot {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.baselines[missionID]
+}
+
 // RunMission creates a runner with default config and drives a mission to completion.
+// The runner includes the mission's baseline snapshot so the validate handler
+// can classify failures as pre-existing vs. introduced. Both are blocking.
 func (o *Orchestrator) RunMission(ctx context.Context, missionID string) (*mission.RunSummary, error) {
-	runner := o.NewRunner(mission.DefaultRunnerConfig())
+	runner := o.NewRunnerForMission(mission.DefaultRunnerConfig(), missionID)
 	return runner.Run(ctx, missionID)
 }
 

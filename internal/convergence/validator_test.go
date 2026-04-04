@@ -26,9 +26,29 @@ func TestDefaultRulesAllEnabled(t *testing.T) {
 
 func TestValidateCleanCode(t *testing.T) {
 	v := NewValidator()
+	// Genuinely clean code: structured logging, proper error handling, no stubs/TODOs
 	files := []FileInput{{
-		Path:    "main.go",
-		Content: []byte("package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"),
+		Path: "server.go",
+		Content: []byte(`package server
+
+import "log"
+
+// Server handles HTTP requests.
+type Server struct {
+	addr string
+}
+
+// NewServer creates a server bound to the given address.
+func NewServer(addr string) *Server {
+	return &Server{addr: addr}
+}
+
+// Start begins listening for requests.
+func (s *Server) Start() error {
+	log.Printf("starting server on %s", s.addr)
+	return nil
+}
+`),
 	}}
 
 	report := v.Validate("test-mission", files)
@@ -41,10 +61,10 @@ func TestValidateCleanCode(t *testing.T) {
 	if report.Duration == 0 {
 		t.Error("should record duration")
 	}
-	// fmt.Println is flagged by debug-log rule, but only as minor
 	for _, f := range report.Findings {
 		if f.Severity == SevBlocking {
-			t.Errorf("clean code should have no blocking findings: %s", f.Description)
+			t.Errorf("clean code should have no blocking findings: rule=%s file=%s line=%d desc=%s evidence=%q",
+				f.RuleID, f.File, f.Line, f.Description, f.Evidence)
 		}
 	}
 }
@@ -236,7 +256,7 @@ func TestTypeBypassDetection(t *testing.T) {
 func TestLargeFileDetection(t *testing.T) {
 	v := NewValidator()
 	var large strings.Builder
-	for i := 0; i < 600; i++ {
+	for i := 0; i < 650; i++ {
 		large.WriteString(fmt.Sprintf("line %d\n", i))
 	}
 	files := []FileInput{{Path: "huge.go", Content: []byte(large.String())}}
@@ -563,6 +583,283 @@ func TestCleanSummary(t *testing.T) {
 	}})
 	if !strings.Contains(report.Summary, "converged") {
 		t.Errorf("clean summary should say converged: %q", report.Summary)
+	}
+}
+
+// --- Scaffolding Detection ---
+
+func TestScaffoldingDetection(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "scaffold.go",
+		Content: []byte(`package scaffold
+
+// This is a boilerplate implementation
+func Setup() {}
+
+// Wire this up to the database later
+func Connect() {}
+
+// Feature coming soon
+func Future() {}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	scaffoldFindings := filterByRule(report.Findings, "no-scaffolding")
+	if len(scaffoldFindings) < 3 {
+		t.Errorf("should detect scaffolding markers, got %d", len(scaffoldFindings))
+		for _, f := range scaffoldFindings {
+			t.Logf("  line %d: %s", f.Line, f.Evidence)
+		}
+	}
+	for _, f := range scaffoldFindings {
+		if f.Severity != SevBlocking {
+			t.Errorf("scaffolding should be blocking, got %s", f.Severity)
+		}
+	}
+}
+
+func TestScaffoldingCleanCodeNotFlagged(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "clean.go",
+		Content: []byte(`package clean
+
+// Handler processes incoming HTTP requests.
+func Handler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(200)
+}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	scaffoldFindings := filterByRule(report.Findings, "no-scaffolding")
+	if len(scaffoldFindings) > 0 {
+		for _, f := range scaffoldFindings {
+			t.Errorf("clean code should not be flagged as scaffolding: line %d %q", f.Line, f.Evidence)
+		}
+	}
+}
+
+// --- Commented-Out Code Detection ---
+
+func TestCommentedOutCodeDetection(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "dead.go",
+		Content: []byte(`package dead
+
+func Active() error {
+	return nil
+}
+
+// func OldFunction() {
+// 	return nil
+// }
+// func AnotherOldFunction() {
+// 	return nil
+// }
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	commented := filterByRule(report.Findings, "no-commented-code")
+	if len(commented) != 1 {
+		t.Errorf("should detect commented-out code block, got %d", len(commented))
+	}
+}
+
+func TestCommentedOutCodeShortBlockNotFlagged(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "short.go",
+		Content: []byte(`package short
+
+// func old() {
+// This is just a 2-line comment, not a block
+func Active() {}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	commented := filterByRule(report.Findings, "no-commented-code")
+	if len(commented) > 0 {
+		t.Error("2 commented lines should not trigger the rule (threshold is 3)")
+	}
+}
+
+// --- Command Injection Detection ---
+
+func TestCommandInjectionDetection(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "unsafe.go",
+		Content: []byte(`package unsafe
+
+import "os/exec"
+
+func RunUserCommand(userInput string) {
+	exec.Command("bash", "-c", "echo " + userInput)
+}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	cmdInj := filterByRule(report.Findings, "no-command-injection")
+	if len(cmdInj) == 0 {
+		t.Error("should detect command injection vector")
+	}
+}
+
+func TestCommandInjectionSafeNotFlagged(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "safe.go",
+		Content: []byte(`package safe
+
+import "os/exec"
+
+func RunSafe() {
+	exec.Command("git", "status")
+}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	cmdInj := filterByRule(report.Findings, "no-command-injection")
+	if len(cmdInj) > 0 {
+		t.Error("safe exec.Command should not be flagged")
+	}
+}
+
+// --- Path Traversal Detection ---
+
+func TestPathTraversalDetection(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "handler.go",
+		Content: []byte(`package handler
+
+import "os"
+
+func ReadFile(name string) {
+	os.ReadFile("/data/" + name)
+}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	pathFindings := filterByRule(report.Findings, "no-path-traversal")
+	if len(pathFindings) == 0 {
+		t.Error("should detect path traversal vector")
+	}
+}
+
+// --- TODO Severity Upgrade ---
+
+func TestTodoIsBlocking(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path:    "work.go",
+		Content: []byte("package work\n// TODO: implement\n"),
+	}}
+
+	report := v.Validate("m-1", files)
+	todoFindings := filterByRule(report.Findings, "no-todo")
+	if len(todoFindings) == 0 {
+		t.Fatal("should find TODO")
+	}
+	if todoFindings[0].Severity != SevBlocking {
+		t.Errorf("TODO severity = %s, want blocking", todoFindings[0].Severity)
+	}
+}
+
+// --- Panic Is Blocking ---
+
+func TestPanicIsBlocking(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path:    "crasher.go",
+		Content: []byte("package crasher\nfunc bad() { panic(\"oops\") }\n"),
+	}}
+
+	report := v.Validate("m-1", files)
+	panicFindings := filterByRule(report.Findings, "no-panic")
+	if len(panicFindings) == 0 {
+		t.Fatal("should find panic")
+	}
+	if panicFindings[0].Severity != SevBlocking {
+		t.Errorf("panic severity = %s, want blocking", panicFindings[0].Severity)
+	}
+}
+
+// --- Debug Logs Are Blocking ---
+
+func TestDebugLogsAreBlocking(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path:    "debug.go",
+		Content: []byte("package debug\nimport \"fmt\"\nfunc f() { fmt.Println(\"debug\") }\n"),
+	}}
+
+	report := v.Validate("m-1", files)
+	debugFindings := filterByRule(report.Findings, "no-debug-logs")
+	if len(debugFindings) == 0 {
+		t.Fatal("should find debug log")
+	}
+	if debugFindings[0].Severity != SevBlocking {
+		t.Errorf("debug log severity = %s, want blocking", debugFindings[0].Severity)
+	}
+}
+
+// --- WIP/TEMP Detection ---
+
+func TestWIPandTEMPDetection(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path: "wip.go",
+		Content: []byte(`package wip
+// WIP: half done
+func halfDone() {}
+// TEMP: remove this
+func temporary() {}
+`),
+	}}
+
+	report := v.Validate("m-1", files)
+	todoFindings := filterByRule(report.Findings, "no-todo")
+	if len(todoFindings) < 2 {
+		t.Errorf("should detect WIP and TEMP markers, got %d", len(todoFindings))
+	}
+}
+
+// --- Rule Count ---
+
+func TestDefaultRuleCount(t *testing.T) {
+	rules := DefaultRules()
+	// We have 17 rules in 3 categories
+	if len(rules) != 17 {
+		t.Errorf("expected 17 default rules, got %d", len(rules))
+		for _, r := range rules {
+			t.Logf("  %s: %s", r.ID, r.Name)
+		}
+	}
+}
+
+// --- All Findings Are Blocking or Major ---
+
+func TestNoMinorOrInfoSeverityInDefaults(t *testing.T) {
+	// The convergence philosophy: everything that fires must be fixed.
+	// Most rules should be blocking; large-file is major.
+	rules := DefaultRules()
+	for _, r := range rules {
+		if r.Severity == SevInfo {
+			t.Errorf("rule %q has info severity — should be at least major", r.ID)
+		}
+		if r.Severity == SevMinor {
+			t.Errorf("rule %q has minor severity — should be at least major", r.ID)
+		}
 	}
 }
 

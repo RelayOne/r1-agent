@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/baseline"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 )
 
@@ -40,6 +41,17 @@ type HandlerDeps struct {
 
 	// Metrics tracks operational statistics.
 	Metrics *Metrics
+
+	// VerifyCommands holds the build/test/lint commands to run during validation.
+	// If nil, the validate handler runs static analysis only.
+	// When set, the handler runs actual verification commands and treats
+	// any failure — pre-existing or introduced — as a blocking gap.
+	VerifyCommands *baseline.Commands
+
+	// Baseline is the pre-mission snapshot of build/test/lint state.
+	// If set, the validate handler compares against it to classify
+	// failures as pre-existing vs. introduced. Both are blocking.
+	Baseline *baseline.Snapshot
 
 	// ExecuteFn is called by the execute handler to run a task through
 	// the workflow engine. It receives the mission and task description,
@@ -181,76 +193,154 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 }
 
 // NewValidateHandler creates a handler for the Validating phase.
-// It runs the convergence validator against modified files and maps
-// findings to mission gaps.
+//
+// Validation has two layers:
+//
+//  1. Live verification: Runs actual build/test/lint commands against the repo.
+//     ANY failure is a blocking gap — pre-existing or introduced. The harness
+//     does not distinguish between "was already broken" and "we broke it."
+//     If the test suite is red, the work is not done.
+//
+//  2. Static analysis: Runs the convergence rule engine against source files
+//     for code quality, security, and completeness checks.
+//
+// Both layers produce gaps that must be resolved before convergence.
 func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
 
-		if deps.Validator == nil || deps.RepoRoot == "" {
+		if deps.RepoRoot == "" {
 			return &PhaseResult{
 				Phase:   PhaseValidating,
-				Summary: "Validation skipped (no validator or repo)",
+				Summary: "Validation skipped (no repo root)",
 			}, nil
 		}
 
-		// Collect files to validate — all .go, .ts, .py, etc. in repo
-		var files []convergence.FileInput
-		filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
+		var allGapCount int
+		var blockingCount int
+		var summaryParts []string
+
+		// --- Layer 1: Live verification (build/test/lint) ---
+		// This is the critical layer. If the test suite fails, nothing else matters.
+		if deps.VerifyCommands != nil {
+			snap, err := baseline.Verify(ctx, deps.RepoRoot, *deps.VerifyCommands)
+			if err != nil {
+				return nil, fmt.Errorf("live verification: %w", err)
 			}
-			rel, _ := filepath.Rel(deps.RepoRoot, path)
-			if strings.HasPrefix(rel, ".") || strings.Contains(rel, "vendor/") ||
-				strings.Contains(rel, "node_modules/") {
-				return nil
-			}
-			ext := filepath.Ext(path)
-			if ext == ".go" || ext == ".ts" || ext == ".js" || ext == ".py" || ext == ".rs" {
-				content, err := os.ReadFile(path)
-				if err == nil {
-					files = append(files, convergence.FileInput{Path: rel, Content: content})
+
+			for _, failure := range snap.Failures() {
+				gapID := fmt.Sprintf("verify-%s-%s-%d", m.ID, failure.Name, time.Now().UnixNano())
+
+				// Classify: pre-existing or introduced
+				category := "verification"
+				description := fmt.Sprintf("%s failed (exit %d): %s",
+					failure.Name, failure.ExitCode, truncateOutput(failure.Output, 500))
+				suggestion := fmt.Sprintf("Fix the %s failure. Run: %s", failure.Name, failure.Command)
+
+				if deps.Baseline != nil {
+					diff := baseline.Compare(deps.Baseline, snap)
+					for _, pe := range diff.PreExisting {
+						if pe.Name == failure.Name {
+							category = "pre-existing-failure"
+							description = fmt.Sprintf("PRE-EXISTING %s failure (was broken before mission started, must still be fixed): %s",
+								failure.Name, truncateOutput(failure.Output, 500))
+							suggestion = fmt.Sprintf("This %s failure existed before the mission. Fix it — the harness requires a green suite, not just 'no regressions'.",
+								failure.Name)
+							break
+						}
+					}
+				}
+
+				deps.Store.AddGap(&Gap{
+					ID:          gapID,
+					MissionID:   m.ID,
+					Category:    category,
+					Severity:    "blocking",
+					Description: description,
+					Suggestion:  suggestion,
+				})
+				allGapCount++
+				blockingCount++
+
+				if deps.Metrics != nil {
+					deps.Metrics.RecordGapFound(true)
 				}
 			}
-			return nil
-		})
 
-		// Run validation with criteria
-		var criteriaDescs []string
-		for _, c := range m.Criteria {
-			if !c.Satisfied {
-				criteriaDescs = append(criteriaDescs, c.Description)
+			if snap.AllPass {
+				summaryParts = append(summaryParts, fmt.Sprintf("verification: %d commands all pass", len(snap.Results)))
+			} else {
+				summaryParts = append(summaryParts, fmt.Sprintf("verification: %d/%d FAILED",
+					len(snap.Failures()), len(snap.Results)))
 			}
 		}
 
-		var report *convergence.Report
-		if len(criteriaDescs) > 0 {
-			report = deps.Validator.ValidateWithCriteria(m.ID, files, criteriaDescs)
-		} else {
-			report = deps.Validator.Validate(m.ID, files)
-		}
-
-		// Map findings to gaps
-		for i, f := range report.Findings {
-			gapID := fmt.Sprintf("val-%s-%d-%d", m.ID, time.Now().Unix(), i)
-			deps.Store.AddGap(&Gap{
-				ID:          gapID,
-				MissionID:   m.ID,
-				Category:    string(f.Category),
-				Severity:    string(f.Severity),
-				Description: f.Description,
-				File:        f.File,
-				Line:        f.Line,
-				Suggestion:  f.Suggestion,
+		// --- Layer 2: Static analysis (convergence rules) ---
+		if deps.Validator != nil {
+			var files []convergence.FileInput
+			filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				rel, _ := filepath.Rel(deps.RepoRoot, path)
+				if strings.HasPrefix(rel, ".") || strings.Contains(rel, "vendor/") ||
+					strings.Contains(rel, "node_modules/") {
+					return nil
+				}
+				ext := filepath.Ext(path)
+				if ext == ".go" || ext == ".ts" || ext == ".js" || ext == ".py" || ext == ".rs" {
+					content, err := os.ReadFile(path)
+					if err == nil {
+						files = append(files, convergence.FileInput{Path: rel, Content: content})
+					}
+				}
+				return nil
 			})
 
-			if deps.Metrics != nil {
-				deps.Metrics.RecordGapFound(f.Severity == convergence.SevBlocking)
+			var criteriaDescs []string
+			for _, c := range m.Criteria {
+				if !c.Satisfied {
+					criteriaDescs = append(criteriaDescs, c.Description)
+				}
 			}
+
+			var report *convergence.Report
+			if len(criteriaDescs) > 0 {
+				report = deps.Validator.ValidateWithCriteria(m.ID, files, criteriaDescs)
+			} else {
+				report = deps.Validator.Validate(m.ID, files)
+			}
+
+			for i, f := range report.Findings {
+				gapID := fmt.Sprintf("val-%s-%d-%d", m.ID, time.Now().Unix(), i)
+				deps.Store.AddGap(&Gap{
+					ID:          gapID,
+					MissionID:   m.ID,
+					Category:    string(f.Category),
+					Severity:    string(f.Severity),
+					Description: f.Description,
+					File:        f.File,
+					Line:        f.Line,
+					Suggestion:  f.Suggestion,
+				})
+				allGapCount++
+				if f.Severity == convergence.SevBlocking {
+					blockingCount++
+				}
+
+				if deps.Metrics != nil {
+					deps.Metrics.RecordGapFound(f.Severity == convergence.SevBlocking)
+				}
+			}
+
+			summaryParts = append(summaryParts, fmt.Sprintf("static: score=%.2f, %d findings (%d blocking)",
+				report.Score, len(report.Findings), report.BlockingCount()))
 		}
 
-		summary := fmt.Sprintf("Validated %d files: score=%.2f, %d findings (%d blocking)",
-			len(files), report.Score, len(report.Findings), report.BlockingCount())
+		summary := strings.Join(summaryParts, " | ")
+		if len(summaryParts) == 0 {
+			summary = "Validation skipped (no commands or validator configured)"
+		}
 
 		if deps.Metrics != nil {
 			deps.Metrics.RecordPhaseTransition("validating", time.Since(start))
@@ -260,13 +350,22 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			Phase:   PhaseValidating,
 			Summary: summary,
 			Artifacts: map[string]string{
-				"score":    fmt.Sprintf("%.2f", report.Score),
-				"findings": fmt.Sprintf("%d", len(report.Findings)),
+				"total_gaps":    fmt.Sprintf("%d", allGapCount),
+				"blocking_gaps": fmt.Sprintf("%d", blockingCount),
 			},
 			Duration: time.Since(start),
 			Agent:    "validate-handler",
 		}, nil
 	}
+}
+
+// truncateOutput returns the last N bytes of output for gap descriptions.
+func truncateOutput(output string, maxLen int) string {
+	output = strings.TrimSpace(output)
+	if len(output) <= maxLen {
+		return output
+	}
+	return "..." + output[len(output)-maxLen:]
 }
 
 // NewConsensusHandler creates a handler for the Converged phase.

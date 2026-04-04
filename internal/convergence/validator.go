@@ -323,33 +323,62 @@ func extractKeywords(text string) []string {
 
 // --- Default Rules ---
 
-// DefaultRules returns the built-in rule set covering all quality dimensions.
+// DefaultRules returns the built-in rule set.
+//
+// Design principle: if any of these fire, the work is not done.
+// The five convergence gates are:
+//
+//  1. User intent is fully satisfied (criteria check, not a static rule)
+//  2. Everything works — build/test/lint pass (baseline package, not a static rule)
+//  3. Engineering standards, security, optimization are exhaustive
+//  4. Everything was researched and confirmed accurate
+//  5. Everything started is finished — no scaffolding, no partial work
+//
+// Static rules enforce gates 3 and 5. Gates 1, 2, and 4 are enforced by
+// the baseline package and the mission store respectively.
+//
+// Severity mapping:
+//   - Anything that means "this isn't done" → blocking
+//   - Anything that means "this works but could be better" → major (still must fix)
+//   - Informational only → minor (rare; most things are blocking)
 func DefaultRules() []Rule {
 	return []Rule{
+		// Gate 5: Everything started is finished
 		todoRule(),
 		stubRule(),
+		scaffoldingRule(),
+		emptyFuncRule(),
+		commentedOutCodeRule(),
+
+		// Gate 3: Engineering standards
 		panicRule(),
-		hardcodedSecretRule(),
-		emptyTestRule(),
-		tautologicalTestRule(),
+		missingErrorHandleRule(),
 		typeBypassRule(),
 		largeFileRule(),
-		missingErrorHandleRule(),
 		debugLogRule(),
+
+		// Gate 3: Security
+		hardcodedSecretRule(),
 		sqlInjectionRule(),
+		commandInjectionRule(),
+		pathTraversalRule(),
+
+		// Gate 3: Test quality
+		emptyTestRule(),
+		tautologicalTestRule(),
 		missingTestFileRule(),
 	}
 }
 
 func todoRule() Rule {
-	re := regexp.MustCompile(`(?i)\b(TODO|FIXME|HACK|XXX|STUB)\b`)
+	re := regexp.MustCompile(`(?i)\b(TODO|FIXME|HACK|XXX|STUB|TEMP|TEMPORARY|WIP)\b`)
 	return Rule{
 		ID: "no-todo", Name: "No TODO/FIXME markers", Category: CatConsistency,
-		Severity: SevMajor, Enabled: true,
-		Description: "Code contains TODO/FIXME markers indicating incomplete work",
+		Severity: SevBlocking, Enabled: true,
+		Description: "Code contains markers indicating incomplete work — the work is not done",
 		Check: func(file string, content []byte) []Finding {
-			return regexCheck(re, file, content, "no-todo", CatConsistency, SevMajor,
-				"Contains TODO/FIXME marker — incomplete work", "Complete or remove the TODO")
+			return regexCheck(re, file, content, "no-todo", CatConsistency, SevBlocking,
+				"Contains TODO/FIXME/HACK/WIP marker — work is incomplete", "Finish the work, then remove the marker")
 		},
 	}
 }
@@ -370,15 +399,15 @@ func stubRule() Rule {
 func panicRule() Rule {
 	re := regexp.MustCompile(`\bpanic\(`)
 	return Rule{
-		ID: "no-panic", Name: "No panic calls", Category: CatCodeQuality,
-		Severity: SevMajor, Enabled: true,
-		Description: "Code uses panic() instead of error returns",
+		ID: "no-panic", Name: "No panic calls in production code", Category: CatCodeQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Code uses panic() instead of error returns — unrecoverable crash path",
 		Check: func(file string, content []byte) []Finding {
 			if isTestFile(file) {
 				return nil // panics in tests are acceptable
 			}
-			return regexCheck(re, file, content, "no-panic", CatCodeQuality, SevMajor,
-				"Uses panic() — should return error instead", "Replace panic with error return")
+			return regexCheck(re, file, content, "no-panic", CatCodeQuality, SevBlocking,
+				"Uses panic() — must return error instead", "Replace panic with proper error return")
 		},
 	}
 }
@@ -477,14 +506,14 @@ func typeBypassRule() Rule {
 	}
 	return Rule{
 		ID: "no-type-bypass", Name: "No type safety bypasses", Category: CatCodeQuality,
-		Severity: SevMajor, Enabled: true,
-		Description: "Code bypasses type checking or linting",
+		Severity: SevBlocking, Enabled: true,
+		Description: "Code bypasses type checking or linting — fix the real issue instead",
 		Check: func(file string, content []byte) []Finding {
 			var findings []Finding
 			for _, re := range patterns {
 				findings = append(findings, regexCheck(re, file, content, "no-type-bypass",
-					CatCodeQuality, SevMajor,
-					"Bypasses type safety or linting", "Fix the underlying type/lint issue")...)
+					CatCodeQuality, SevBlocking,
+					"Bypasses type safety or linting — fix the underlying issue", "Fix the type/lint error, don't suppress it")...)
 			}
 			return findings
 		},
@@ -494,18 +523,18 @@ func typeBypassRule() Rule {
 func largeFileRule() Rule {
 	return Rule{
 		ID: "no-large-files", Name: "No excessively large files", Category: CatCodeQuality,
-		Severity: SevMinor, Enabled: true,
-		Description: "Files exceeding 500 lines should be split",
+		Severity: SevMajor, Enabled: true,
+		Description: "Files exceeding 600 lines should be split for maintainability",
 		Check: func(file string, content []byte) []Finding {
 			lines := strings.Count(string(content), "\n")
-			if lines > 500 {
+			if lines > 600 {
 				return []Finding{{
 					RuleID:      "no-large-files",
 					Category:    CatCodeQuality,
-					Severity:    SevMinor,
+					Severity:    SevMajor,
 					File:        file,
-					Description: fmt.Sprintf("File has %d lines (>500) — consider splitting", lines),
-					Suggestion:  "Break into smaller, focused modules",
+					Description: fmt.Sprintf("File has %d lines (>600) — split into focused modules", lines),
+					Suggestion:  "Break into smaller, single-responsibility modules",
 				}}
 			}
 			return nil
@@ -517,14 +546,14 @@ func missingErrorHandleRule() Rule {
 	re := regexp.MustCompile(`_\s*=\s*\w+\.\w+\(`)
 	return Rule{
 		ID: "no-ignored-errors", Name: "No ignored error returns", Category: CatCodeQuality,
-		Severity: SevMajor, Enabled: true,
-		Description: "Error return values are being silently discarded",
+		Severity: SevBlocking, Enabled: true,
+		Description: "Error return values are being silently discarded — this hides bugs",
 		Check: func(file string, content []byte) []Finding {
 			if isTestFile(file) {
 				return nil // test helpers often ignore errors
 			}
-			return regexCheck(re, file, content, "no-ignored-errors", CatCodeQuality, SevMajor,
-				"Ignores error return value", "Handle the error or explicitly document why it's safe to ignore")
+			return regexCheck(re, file, content, "no-ignored-errors", CatCodeQuality, SevBlocking,
+				"Ignores error return value — hides bugs", "Handle the error properly")
 		},
 	}
 }
@@ -533,14 +562,14 @@ func debugLogRule() Rule {
 	re := regexp.MustCompile(`(?i)(console\.log|fmt\.Print(ln|f)?|print\(|System\.out\.print)`)
 	return Rule{
 		ID: "no-debug-logs", Name: "No debug print statements", Category: CatCodeQuality,
-		Severity: SevMinor, Enabled: true,
-		Description: "Debug print statements left in production code",
+		Severity: SevBlocking, Enabled: true,
+		Description: "Debug print statements left in production code — use structured logging",
 		Check: func(file string, content []byte) []Finding {
 			if isTestFile(file) {
 				return nil
 			}
-			return regexCheck(re, file, content, "no-debug-logs", CatCodeQuality, SevMinor,
-				"Contains debug print statement", "Use structured logging instead")
+			return regexCheck(re, file, content, "no-debug-logs", CatCodeQuality, SevBlocking,
+				"Contains debug print statement — not production ready", "Replace with structured logging (log.Printf or similar)")
 		},
 	}
 }
@@ -573,6 +602,186 @@ func missingTestFileRule() Rule {
 			// We flag it as info here; the validator integration should promote severity
 			// based on whether tests actually exist.
 			return nil // Handled at integration level, not per-file
+		},
+	}
+}
+
+// --- Gate 5: Everything started is finished ---
+
+func scaffoldingRule() Rule {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(scaffold|boilerplate|skeleton|template[^_]|sample code|example only)`),
+		regexp.MustCompile(`(?i)(wire this|hook this|connect this|integrate later|implement later|fill in|flesh out)`),
+		regexp.MustCompile(`(?i)(coming soon|not yet|will be|needs to be|remains to be)`),
+	}
+	return Rule{
+		ID: "no-scaffolding", Name: "No scaffolding or placeholder structures", Category: CatConsistency,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Code contains scaffolding or unfinished structural placeholders",
+		Check: func(file string, content []byte) []Finding {
+			var findings []Finding
+			for _, re := range patterns {
+				findings = append(findings, regexCheck(re, file, content, "no-scaffolding",
+					CatConsistency, SevBlocking,
+					"Contains scaffolding or unfinished placeholder — work is incomplete",
+					"Complete the implementation, remove scaffolding markers")...)
+			}
+			return findings
+		},
+	}
+}
+
+func emptyFuncRule() Rule {
+	// Match non-test functions with empty bodies (Go, TS/JS, Python, Rust)
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?s)func \w+\([^)]*\)[^{]*\{\s*(return\s*(nil|""|0|false)?\s*)?\}`),
+		regexp.MustCompile(`(?s)(function|const|let|var)\s+\w+\s*=?\s*(\([^)]*\))?\s*(=>)?\s*\{\s*\}`),
+	}
+	return Rule{
+		ID: "no-empty-functions", Name: "No empty or trivially-empty functions", Category: CatConsistency,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Functions with empty or trivial return-nil bodies indicate unfinished work",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			for _, re := range patterns {
+				matches := re.FindAllIndex(content, -1)
+				for _, m := range matches {
+					line := 1 + strings.Count(string(content[:m[0]]), "\n")
+					matched := string(content[m[0]:m[1]])
+					// Skip very short functions that are legitimate (interface satisfaction, etc.)
+					if len(matched) > 200 {
+						continue // probably not empty
+					}
+					findings = append(findings, Finding{
+						RuleID:      "no-empty-functions",
+						Category:    CatConsistency,
+						Severity:    SevBlocking,
+						File:        file,
+						Line:        line,
+						Description: "Empty or trivially-empty function — unfinished implementation",
+						Suggestion:  "Implement the function body with real logic",
+						Evidence:    strings.TrimSpace(matched),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+func commentedOutCodeRule() Rule {
+	// Detect blocks of commented-out code (3+ consecutive commented lines that look like code)
+	return Rule{
+		ID: "no-commented-code", Name: "No commented-out code blocks", Category: CatConsistency,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Commented-out code is dead weight — delete it or implement it",
+		Check: func(file string, content []byte) []Finding {
+			lines := strings.Split(string(content), "\n")
+			var findings []Finding
+			consecutiveCommented := 0
+			startLine := 0
+
+			codeIndicators := regexp.MustCompile(`(?i)(func |return |if |for |var |const |let |import |class |def |struct |^\s*//\s*[{}]\s*$)`)
+
+			for i, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				isComment := strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#")
+				isCommentedCode := isComment && (codeIndicators.MatchString(trimmed) ||
+					// Lone braces in comments are part of commented-out code blocks
+					trimmed == "//" || trimmed == "// }" || trimmed == "// {" ||
+					trimmed == "//}" || trimmed == "//{")
+				if isCommentedCode {
+					if consecutiveCommented == 0 {
+						startLine = i + 1
+					}
+					consecutiveCommented++
+				} else {
+					if consecutiveCommented >= 3 {
+						findings = append(findings, Finding{
+							RuleID:      "no-commented-code",
+							Category:    CatConsistency,
+							Severity:    SevBlocking,
+							File:        file,
+							Line:        startLine,
+							Description: fmt.Sprintf("Block of %d commented-out code lines — dead code", consecutiveCommented),
+							Suggestion:  "Delete dead code (use version control to retrieve if needed) or implement it",
+						})
+					}
+					consecutiveCommented = 0
+				}
+			}
+			// Check trailing block
+			if consecutiveCommented >= 3 {
+				findings = append(findings, Finding{
+					RuleID:      "no-commented-code",
+					Category:    CatConsistency,
+					Severity:    SevBlocking,
+					File:        file,
+					Line:        startLine,
+					Description: fmt.Sprintf("Block of %d commented-out code lines — dead code", consecutiveCommented),
+					Suggestion:  "Delete dead code or implement it",
+				})
+			}
+			return findings
+		},
+	}
+}
+
+// --- Gate 3: Security (additional rules) ---
+
+func commandInjectionRule() Rule {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`exec\.Command\(.+\+`),
+		regexp.MustCompile(`exec\.CommandContext\(.+\+`),
+		regexp.MustCompile(`os\.system\(.+\+`),
+		regexp.MustCompile(`subprocess\.(call|run|Popen)\(.+\+`),
+		regexp.MustCompile(`(?i)child_process\.exec\(.+\+`),
+	}
+	return Rule{
+		ID: "no-command-injection", Name: "No command injection vectors", Category: CatSecurity,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Shell commands built with string concatenation are injection vectors",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			for _, re := range patterns {
+				findings = append(findings, regexCheck(re, file, content, "no-command-injection",
+					CatSecurity, SevBlocking,
+					"Potential command injection — command built with string concatenation",
+					"Use exec.Command with separate arguments, never shell interpolation")...)
+			}
+			return findings
+		},
+	}
+}
+
+func pathTraversalRule() Rule {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`filepath\.Join\([^,]+,\s*r\.(URL|Form|Query)`),
+		regexp.MustCompile(`os\.(Open|ReadFile|Create|WriteFile)\([^)]*\+`),
+		regexp.MustCompile(`path\.join\([^,]+,\s*(req|request)\.(params|query|body)`),
+	}
+	return Rule{
+		ID: "no-path-traversal", Name: "No path traversal vectors", Category: CatSecurity,
+		Severity: SevBlocking, Enabled: true,
+		Description: "File paths built from user input without sanitization",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			for _, re := range patterns {
+				findings = append(findings, regexCheck(re, file, content, "no-path-traversal",
+					CatSecurity, SevBlocking,
+					"Potential path traversal — file path includes unsanitized user input",
+					"Validate and sanitize paths with filepath.Clean and base-directory checks")...)
+			}
+			return findings
 		},
 	}
 }

@@ -250,15 +250,43 @@ func BuildMissionValidatePrompt(ctx MissionContext) string {
 	b.WriteString(`## Your Task: Adversarial Validation
 
 You are NOT here to confirm the work is good. You are here to find reasons it ISN'T done.
-Be adversarial. Look for:
+Your default assumption is: THE WORK IS NOT DONE. Prove yourself wrong with evidence.
 
-1. **Unsatisfied criteria**: For each acceptance criterion, find PROOF it's met. No proof = not met.
-2. **Missing tests**: Every changed function should have tests. Tests must verify behavior, not just compile.
-3. **Stubs and TODOs**: Any TODO, FIXME, "implement later", panic("not implemented") is a failure.
-4. **Security issues**: SQL injection, XSS, hardcoded secrets, missing auth checks.
-5. **Edge cases**: Empty inputs, nil pointers, error paths, concurrent access.
-6. **Tautological tests**: Tests that assert true==true or always pass.
-7. **Missing error handling**: Ignored errors, swallowed panics.
+### The 5 Convergence Gates (ALL must be TRUE)
+
+**Gate 1: User intent is fully satisfied**
+For each acceptance criterion, find PROOF it's met. Not "it looks right" — show the
+test, show the assertion, show the output. No proof = not met.
+
+**Gate 2: Everything works — the ENTIRE system, not just what was changed**
+Build passes. ALL tests pass. Lint passes. Not just the tests for the changed code —
+ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
+
+**Gate 3: Engineering standards, security, and optimization are exhaustive**
+- No TODOs, FIXMEs, HACKs, stubs, placeholders, or "implement later" comments anywhere
+- No panics in production code
+- No ignored errors
+- No SQL injection, command injection, path traversal, XSS, hardcoded secrets
+- No debug print statements (use structured logging)
+- No type safety bypasses (@ts-ignore, nolint, etc.)
+- Every function has proper error handling
+- Tests verify BEHAVIOR, not just compilation — tautological tests are failures
+- Edge cases handled: nil inputs, empty strings, concurrent access, error paths
+
+**Gate 4: Everything was researched and confirmed accurate**
+No guesses. No hallucinated APIs. Every external dependency, every algorithm choice,
+every security decision must be based on verified knowledge.
+
+**Gate 5: Everything in the repo that was started is finished**
+Look at the ENTIRE repository, not just the files that were changed. If there are
+scaffolded features, half-built modules, or partially implemented code ANYWHERE in
+the repo, those are failures. If someone started something, it must be finished.
+
+### IMPORTANT: Do not rationalize
+Models will find reasons to say "done" — architecture decisions, pre-existing issues,
+"out of scope" — ignore those impulses. If something can be fixed or improved, it's
+not done. The question is not "is this acceptable?" The question is "is there ANYTHING
+else that could be done to make this better?" If yes, it's incomplete.
 
 ### Output Format
 Return JSON:
@@ -272,15 +300,15 @@ Return JSON:
   ],
   "gaps": [
     {
-      "category": "test|code|security|docs|completeness",
-      "severity": "blocking|major|minor|info",
+      "category": "test|code|security|completeness|optimization|consistency",
+      "severity": "blocking",
       "file": "path/to/file.go",
       "line": 42,
       "description": "...",
       "suggestion": "..."
     }
   ],
-  "reasoning": "Overall assessment of completeness"
+  "reasoning": "Overall assessment — be specific about what's missing"
 }
 ` + "```" + `
 
@@ -288,7 +316,9 @@ Return JSON:
 - Do NOT modify any files. Read only.
 - Do NOT run git commands.
 - Be specific: file paths, line numbers, concrete evidence.
-- "Looks good" is not evidence. Show the test, show the assertion, show the output.
+- "Looks good" is NOT evidence. Show the test, show the assertion, show the output.
+- When in doubt, flag it. False positives are better than missed issues.
+- ALL gap severities should be "blocking" — there is no "nice to have."
 
 `)
 
@@ -300,11 +330,12 @@ Return JSON:
 }
 
 // BuildMissionConsensusPrompt generates the prompt for the consensus check.
-// A different model reviews the validation results and either confirms or rejects.
+// A different model reviews the work independently and tries to DISPROVE
+// that the work is complete. This is not rubber-stamping — it's adversarial.
 func BuildMissionConsensusPrompt(ctx MissionContext, validationReport string) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, `You are an independent reviewer for mission "%s".
+	fmt.Fprintf(&b, `You are an independent adversarial reviewer for mission "%s".
 
 ## Mission
 **Title:** %s
@@ -316,17 +347,46 @@ func BuildMissionConsensusPrompt(ctx MissionContext, validationReport string) st
 		fmt.Fprintf(&b, "%s\n", ctx.CriteriaBlock)
 	}
 
-	fmt.Fprintf(&b, `## Validation Report (from another model)
+	fmt.Fprintf(&b, `## Prior Validation Report (from another model)
 %s
 
-## Your Task: Independent Consensus Review
+## Your Task: Try to DISPROVE Completeness
 
-Another model has reviewed this mission and produced the validation report above.
-Your job is to independently verify their assessment:
+Your job is NOT to confirm the work is done. Your job is to find what's missing.
+Assume the prior validator was too lenient. Assume the implementing agent cut corners.
+Your default stance: THIS IS NOT DONE YET.
 
-1. Do you agree with the verdict? Check the evidence yourself.
-2. Are there gaps the other model missed?
-3. Is the evidence convincing, or is it superficial?
+### Step 1: Independent verification
+DO NOT trust the prior validator's findings. Check the code yourself:
+- Read every file mentioned in the criteria
+- Run through each acceptance criterion independently
+- Look for things the validator missed or was too generous about
+
+### Step 2: Challenge with these questions
+For each "complete" verdict, ask yourself:
+- "Is this REALLY completely done, or is there more we could do?"
+- "Why can't we just make the decision for best quality and get this done?"
+- "Is this an excuse to stop working, or is it genuinely finished?"
+- "Would I ship this to a paying customer right now with confidence?"
+- "If I showed this to the most demanding code reviewer I know, what would they say?"
+
+### Step 3: Look beyond what was asked
+The entire system must work, not just the parts that were changed:
+- Are there pre-existing failures that should be fixed?
+- Are there scaffolded or partially-implemented features elsewhere?
+- Could the architecture be cleaner?
+- Are there performance issues?
+- Is error handling comprehensive everywhere, not just in new code?
+
+### CRITICAL: Anti-rationalization protocol
+Models will generate sophisticated-sounding reasons to mark work as "done":
+- "This is an architecture decision" → But is it the RIGHT decision? Can we improve it?
+- "This is pre-existing" → So? Fix it. The system should be 100%%.
+- "This is out of scope" → Nothing is out of scope for quality.
+- "This would be too much effort" → Effort is not a valid excuse.
+- "This is a minor issue" → There are no minor issues. Fix everything.
+
+If you catch yourself making ANY of these rationalizations, flag the item as incomplete.
 
 ### Output Format
 Return JSON:
@@ -334,16 +394,27 @@ Return JSON:
 {
   "verdict": "complete" | "incomplete" | "reject",
   "agree_with_validator": true | false,
-  "additional_gaps": [...],
-  "reasoning": "Why you agree or disagree with the validator's assessment"
+  "missed_by_validator": [
+    {
+      "category": "...",
+      "severity": "blocking",
+      "file": "...",
+      "description": "...",
+      "suggestion": "..."
+    }
+  ],
+  "challenges": [
+    "Question I asked myself and the honest answer"
+  ],
+  "reasoning": "Detailed reasoning for my verdict — if 'complete', explain why every challenge was genuinely answered"
 }
 `+"```"+`
 
 ### Rules
 - Do NOT modify any files. Read only.
-- Be independent. Do not rubber-stamp the other model's work.
-- If you find issues the validator missed, list them as additional_gaps.
-- "reject" means the validation itself was flawed (e.g., cited wrong evidence).
+- Do NOT rubber-stamp. If you can't find anything wrong, look harder.
+- ALL severities are "blocking" — there is no "nice to have."
+- Only vote "complete" if you genuinely cannot find a single thing to improve.
 
 `, validationReport)
 
