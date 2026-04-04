@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/mission"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 )
@@ -62,18 +63,34 @@ Flags vary by subcommand. Use "stoke mission <subcommand> --help" for details.
 }
 
 func getOrchestrator(storeDir string) (*orchestrate.Orchestrator, error) {
+	return getOrchestratorWithDiscovery(storeDir, "", false)
+}
+
+// getOrchestratorWithDiscovery creates an orchestrator with optional agentic
+// discovery engine wired in. When enabled, the DiscoveryEngine creates
+// multi-turn Claude sessions with MCP codebase tools for deep code analysis.
+func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) (*orchestrate.Orchestrator, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, err
 	}
 	if storeDir == "" {
-		// Default: .stoke/data in current directory
 		storeDir = filepath.Join(cwd, ".stoke", "data")
 	}
-	return orchestrate.New(orchestrate.Config{
+
+	config := orchestrate.Config{
 		StoreDir: storeDir,
 		RepoRoot: cwd,
-	})
+	}
+
+	if !noDiscovery {
+		runner := engine.NewClaudeRunner(claudeBin)
+		de := orchestrate.NewDiscoveryEngine(runner, cwd)
+		config.DiscoveryFn = de.DiscoveryFn()
+		config.ValidateDiscoveryFn = de.ValidateDiscoveryFn()
+	}
+
+	return orchestrate.New(config)
 }
 
 // --- create ---
@@ -281,6 +298,8 @@ func missionRunCmd(args []string) {
 	consensus := fs.Int("consensus", 2, "Required consensus model count")
 	timeout := fs.Duration("timeout", 60*time.Minute, "Overall timeout")
 	storeDir := fs.String("store", "", "Mission store directory")
+	claudeBin := fs.String("claude-bin", "", "Path to claude binary (default: auto-detect)")
+	noDiscovery := fs.Bool("no-discovery", false, "Disable agentic discovery loops")
 	fs.Parse(args)
 
 	if *id == "" {
@@ -288,7 +307,7 @@ func missionRunCmd(args []string) {
 		os.Exit(1)
 	}
 
-	orch, err := getOrchestrator(*storeDir)
+	orch, err := getOrchestratorWithDiscovery(*storeDir, *claudeBin, *noDiscovery)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
