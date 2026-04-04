@@ -214,3 +214,91 @@ func TestMissionPromptsNoGitMutations(t *testing.T) {
 		t.Error("execute prompt should prohibit git operations")
 	}
 }
+
+// --- Conditional Frontend Prompts ---
+
+func TestExecutePromptFrontendRulesWhenHasFrontend(t *testing.T) {
+	ctx := testContext()
+	ctx.HasFrontend = true
+	ctx.UIFramework = "react"
+	ctx.TestFramework = "vitest"
+	ctx.HasStorybook = true
+
+	prompt := BuildMissionExecutePrompt(ctx, "Build dashboard", nil)
+	checks := []string{
+		"REQUIRED",                          // UX rules are required
+		"alt text",                          // accessibility
+		"keyboard-accessible",               // accessibility
+		"responsive",                        // responsive design
+		"loading AND error states",          // loading states
+		"ErrorBoundary",                     // React-specific
+		"key props",                         // React-specific
+		"Storybook story",                   // Storybook
+		"vitest",                            // test framework
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("frontend execute prompt missing %q", check)
+		}
+	}
+}
+
+func TestExecutePromptNoFrontendRulesForBackend(t *testing.T) {
+	ctx := testContext()
+	ctx.HasFrontend = false
+
+	prompt := BuildMissionExecutePrompt(ctx, "Add JWT auth", nil)
+	if strings.Contains(prompt, "UX Quality Rules") {
+		t.Error("backend project should not get UX rules section")
+	}
+	if strings.Contains(prompt, "ErrorBoundary") {
+		t.Error("backend project should not mention React ErrorBoundary")
+	}
+}
+
+func TestValidatePromptFrontendGateWhenHasFrontend(t *testing.T) {
+	ctx := testContext()
+	ctx.HasFrontend = true
+	ctx.UIFramework = "react"
+	ctx.HasStorybook = true
+
+	prompt := BuildMissionValidatePrompt(ctx)
+	checks := []string{
+		"Gate 3a",              // UX gate present
+		"alt attributes",       // accessibility
+		"media queries",        // responsive
+		"ErrorBoundary",        // React-specific
+		"Storybook stories",    // Storybook
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("frontend validate prompt missing %q", check)
+		}
+	}
+}
+
+func TestValidatePromptNoFrontendGateForBackend(t *testing.T) {
+	ctx := testContext()
+	ctx.HasFrontend = false
+
+	prompt := BuildMissionValidatePrompt(ctx)
+	if strings.Contains(prompt, "Gate 3a") {
+		t.Error("backend project should not have UX gate in validation")
+	}
+	if strings.Contains(prompt, "ErrorBoundary") {
+		t.Error("backend project should not mention ErrorBoundary in validation")
+	}
+}
+
+func TestConsensusPromptMentionsUXForFrontend(t *testing.T) {
+	ctx := testContext()
+	ctx.HasFrontend = true
+
+	prompt := BuildMissionConsensusPrompt(ctx, `{"verdict":"complete"}`)
+	if !strings.Contains(prompt, "accessible") {
+		t.Error("frontend consensus prompt should mention accessibility")
+	}
+	if !strings.Contains(prompt, "Responsive") || !strings.Contains(prompt, "screen reader") {
+		t.Error("frontend consensus prompt should challenge on responsiveness and screen readers")
+	}
+}

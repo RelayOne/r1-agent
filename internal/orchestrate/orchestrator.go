@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/baseline"
+	projconfig "github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/handoff"
 	"github.com/ericmacdougall/stoke/internal/mission"
@@ -99,6 +100,9 @@ type Orchestrator struct {
 	// verifyCmds are the auto-detected or configured build/test/lint commands.
 	verifyCmds *baseline.Commands
 
+	// projectInfo describes the detected project type, framework, and capabilities.
+	projectInfo projconfig.ProjectInfo
+
 	config Config
 }
 
@@ -141,6 +145,16 @@ func New(config Config) (*Orchestrator, error) {
 	chain := handoff.NewChain(mStore)
 	validator := convergence.NewValidator()
 
+	// Detect project type and capabilities
+	var projInfo projconfig.ProjectInfo
+	if config.RepoRoot != "" {
+		projInfo = projconfig.DetectProject(config.RepoRoot)
+		if projInfo.Type != "" {
+			log.Printf("[orchestrator] detected project: type=%s frontend=%v framework=%q tests=%q storybook=%v",
+				projInfo.Type, projInfo.HasFrontend, projInfo.UIFramework, projInfo.TestFramework, projInfo.HasStorybook)
+		}
+	}
+
 	// Auto-detect build/test/lint commands from the repo
 	var verifyCmds *baseline.Commands
 	if config.RepoRoot != "" {
@@ -158,9 +172,10 @@ func New(config Config) (*Orchestrator, error) {
 		research:   rStore,
 		validator:  validator,
 		chain:      chain,
-		baselines:  make(map[string]*baseline.Snapshot),
-		verifyCmds: verifyCmds,
-		config:     config,
+		baselines:   make(map[string]*baseline.Snapshot),
+		verifyCmds:  verifyCmds,
+		projectInfo: projInfo,
+		config:      config,
 	}, nil
 }
 
@@ -392,6 +407,7 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		ContextSource:    ctxSource,
 		Validator:        o.validator,
 		RepoRoot:         o.config.RepoRoot,
+		ProjectInfo:      o.projectInfo,
 		Metrics:          mission.NewMetrics(),
 		VerifyCommands:   o.verifyCmds,
 		ExecuteFn:        o.config.ExecuteFn,

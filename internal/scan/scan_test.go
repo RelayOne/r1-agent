@@ -143,6 +143,100 @@ func TestHasBlocking(t *testing.T) {
 	}
 }
 
+// --- Frontend UX scan rules ---
+
+func TestScanDangerousHTML(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "content.tsx"), []byte(`<div dangerouslySetInnerHTML={{ __html: html }} />`+"\n"), 0644)
+	result, _ := ScanFiles(dir, DefaultRules(), nil)
+	found := false
+	for _, f := range result.Findings {
+		if f.Rule == "no-dangerous-html" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected no-dangerous-html finding")
+	}
+}
+
+func TestScanOutlineNone(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "styles.css"), []byte("button { outline: none; }\n"), 0644)
+	result, _ := ScanFiles(dir, DefaultRules(), nil)
+	found := false
+	for _, f := range result.Findings {
+		if f.Rule == "no-outline-none" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected no-outline-none finding")
+	}
+}
+
+func TestScanInlineStyleColor(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "card.tsx"), []byte(`<div style={{ color: "#ff0000" }}>Hi</div>`+"\n"), 0644)
+	result, _ := ScanFiles(dir, DefaultRules(), nil)
+	found := false
+	for _, f := range result.Findings {
+		if f.Rule == "no-inline-style-color" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected no-inline-style-color finding")
+	}
+}
+
+func TestScanDivOnClick(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "button.jsx"), []byte(`<div className="btn" onClick={go}>Click</div>`+"\n"), 0644)
+	result, _ := ScanFiles(dir, DefaultRules(), nil)
+	found := false
+	for _, f := range result.Findings {
+		if f.Rule == "no-div-onclick" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected no-div-onclick finding")
+	}
+}
+
+// --- Frontend security surface ---
+
+func TestSecuritySurfaceCORS(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "server.ts"), []byte(`res.setHeader("Access-Control-Allow-Origin", "*")`+"\n"), 0644)
+	result, _ := MapSecuritySurface(dir, nil)
+	found := false
+	for _, s := range result.Surfaces {
+		if s.Category == "injection" && s.Risk == "high" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected CORS wildcard security surface")
+	}
+}
+
+func TestSecuritySurfaceLocalStorage(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "auth.ts"), []byte(`localStorage.setItem("auth_token", token)`+"\n"), 0644)
+	result, _ := MapSecuritySurface(dir, nil)
+	found := false
+	for _, s := range result.Surfaces {
+		if s.Category == "secrets" && s.Risk == "high" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected localStorage secret security surface")
+	}
+}
+
 func TestScanSkipsNodeModules(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755)

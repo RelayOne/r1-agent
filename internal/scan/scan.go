@@ -70,6 +70,12 @@ func DefaultRules() []Rule {
 		{ID: "no-weak-assertion", Severity: "high", Pattern: regexp.MustCompile(`toBeTruthy\(\)|toBeFalsy\(\)|toBeDefined\(\)|toHaveBeenCalled\(\)`), Message: "Weak assertion hides correctness failures", Fix: "Assert exact values or arguments", FileExts: []string{".ts", ".tsx", ".js", ".jsx"}},
 		{ID: "no-test-todo", Severity: "high", Pattern: regexp.MustCompile(`test\.todo\(|it\.todo\(`), Message: "Unfinished test placeholder", Fix: "Implement or remove placeholder", FileExts: []string{".ts", ".tsx", ".js", ".jsx"}},
 		{ID: "no-placeholder-code", Severity: "high", Pattern: regexp.MustCompile(`NotImplementedError|CHANGEME|placeholder|pass\s*#\s*TODO`), Message: "Placeholder code left in implementation", Fix: "Complete the implementation", FileExts: []string{".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}},
+
+		// Frontend UX quality
+		{ID: "no-inline-style-color", Severity: "medium", Pattern: regexp.MustCompile(`style\s*=\s*\{?\{[^}]*(color|background)[^}]*#[0-9a-fA-F]`), Message: "Hardcoded color in inline style breaks theming", Fix: "Use CSS variables or design tokens", FileExts: []string{".tsx", ".jsx"}},
+		{ID: "no-outline-none", Severity: "high", Pattern: regexp.MustCompile(`outline\s*:\s*(none|0)\s*[;}]`), Message: "Focus outline removed — keyboard users lose navigation", Fix: "Use :focus-visible with a visible custom indicator", FileExts: []string{".css", ".scss", ".less", ".tsx", ".jsx"}},
+		{ID: "no-dangerous-html", Severity: "critical", Pattern: regexp.MustCompile(`dangerouslySetInnerHTML`), Message: "dangerouslySetInnerHTML is an XSS vector", Fix: "Use DOMPurify or render content with React components", FileExts: []string{".tsx", ".jsx"}},
+		{ID: "no-div-onclick", Severity: "high", Pattern: regexp.MustCompile(`<(div|span)\s[^>]*onClick[^>]*>`), Message: "onClick on non-semantic element — inaccessible to keyboard", Fix: "Use <button> or add role=\"button\" tabIndex={0}", FileExts: []string{".tsx", ".jsx"}},
 	}
 }
 
@@ -149,6 +155,7 @@ func shouldScan(relPath string) bool {
 	scannable := map[string]bool{
 		".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true,
 		".py": true, ".rs": true, ".rb": true, ".java": true, ".kt": true,
+		".css": true, ".scss": true, ".less": true, ".html": true, ".vue": true, ".svelte": true,
 	}
 	return scannable[ext]
 }

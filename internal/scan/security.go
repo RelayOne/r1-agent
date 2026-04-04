@@ -66,6 +66,14 @@ var securityRules = []securityRule{
 	{category: "secrets", risk: "high", pattern: regexp.MustCompile(`(?i)(process\.env|os\.Getenv|os\.environ)`), note: "Environment variable access"},
 	{category: "secrets", risk: "high", pattern: regexp.MustCompile(`(?i)(\.env|dotenv|godotenv)`), note: "Env file loading"},
 	{category: "secrets", risk: "high", pattern: regexp.MustCompile(`(?i)(vault|secretmanager|ssm|keyvault)`), note: "Secrets manager usage"},
+
+	// Frontend-specific security surfaces
+	{category: "injection", risk: "high", pattern: regexp.MustCompile(`(?i)Access-Control-Allow-Origin.*\*`), note: "Wildcard CORS — allows any origin", exts: []string{".ts", ".js", ".go", ".py"}},
+	{category: "injection", risk: "high", pattern: regexp.MustCompile(`(?i)unsafe-inline|unsafe-eval`), note: "Unsafe CSP directive", exts: []string{".ts", ".js", ".go", ".py", ".html"}},
+	{category: "injection", risk: "high", pattern: regexp.MustCompile(`(?i)(window\.location|window\.open|document\.location)\s*=.*\+`), note: "Open redirect risk — location from concatenation", exts: []string{".ts", ".js", ".tsx", ".jsx"}},
+	{category: "secrets", risk: "high", pattern: regexp.MustCompile(`(?i)(localStorage|sessionStorage)\.(set|get)Item\(.*(token|key|secret|password|auth)`), note: "Secrets stored in client-side storage", exts: []string{".ts", ".js", ".tsx", ".jsx"}},
+	{category: "injection", risk: "high", pattern: regexp.MustCompile(`(?i)postMessage\(\s*\*`), note: "postMessage to wildcard origin — data leak risk", exts: []string{".ts", ".js", ".tsx", ".jsx"}},
+	{category: "auth", risk: "high", pattern: regexp.MustCompile(`(?i)<form[^>]*method\s*=\s*["']?get[^>]*(password|secret|token)`), note: "Sensitive data in GET form — visible in URL/logs", exts: []string{".html", ".tsx", ".jsx", ".vue"}},
 }
 
 // MapSecuritySurface identifies all security-relevant code in a directory.

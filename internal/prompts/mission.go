@@ -30,6 +30,12 @@ type MissionContext struct {
 	HandoffBlock   string   // formatted handoff history
 	StatusBlock    string   // convergence status summary
 	PriorContext   string   // any additional context from prior executions
+
+	// Project type information for conditional prompt sections
+	HasFrontend   bool   // true if project includes UI components
+	UIFramework   string // e.g. "react", "vue", "svelte", "angular"
+	TestFramework string // e.g. "jest", "vitest", "playwright"
+	HasStorybook  bool   // true if Storybook detected
 }
 
 // BuildMissionResearchPrompt generates the prompt for the Researching phase.
@@ -209,8 +215,11 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 5. Run build and test commands to verify your work before declaring done.
 6. If you encounter a blocker you cannot resolve, explain it clearly — do not silently skip it.
 
-## UX Quality Rules (if building UI)
-If this task involves frontend/UI work, these are NOT optional:
+`)
+
+	if ctx.HasFrontend {
+		b.WriteString(`## UX Quality Rules (REQUIRED — this is a frontend project)
+These are NOT optional. The convergence validator will reject your work if these are violated:
 - Every image MUST have alt text. Every form input MUST have a label.
 - Every interactive element MUST be keyboard-accessible (use semantic HTML: button, a, input).
 - Layout MUST be responsive — test at mobile (320px), tablet (768px), and desktop widths.
@@ -218,9 +227,21 @@ If this task involves frontend/UI work, these are NOT optional:
 - Use CSS variables or design tokens for colors — no hardcoded hex in inline styles.
 - Handle empty states explicitly — show helpful messages when there's no data.
 - Focus indicators must be visible for keyboard navigation.
-- React: wrap app in ErrorBoundary, use key props on list items.
-
 `)
+		if ctx.UIFramework == "react" {
+			b.WriteString(`- Wrap app root in ErrorBoundary with user-friendly fallback UI.
+- Use key props on every list item rendered via .map().
+- No dangerouslySetInnerHTML without DOMPurify sanitization.
+`)
+		}
+		if ctx.HasStorybook {
+			b.WriteString("- Every new component MUST have a Storybook story covering its variants.\n")
+		}
+		if ctx.TestFramework != "" {
+			fmt.Fprintf(&b, "- Write component tests using %s — test user interactions, not implementation details.\n", ctx.TestFramework)
+		}
+		b.WriteString("\n")
+	}
 
 	if ctx.GapsBlock != "" {
 		fmt.Fprintf(&b, "## Open Gaps (must address)\n%s\n", ctx.GapsBlock)
@@ -284,7 +305,10 @@ ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
 - Tests verify BEHAVIOR, not just compilation — tautological tests are failures
 - Edge cases handled: nil inputs, empty strings, concurrent access, error paths
 
-**Gate 3a: UX quality — if the project has a UI, it must be complete and accessible**
+`)
+
+	if ctx.HasFrontend {
+		b.WriteString(`**Gate 3a: UX quality — THIS IS A FRONTEND PROJECT, these are mandatory**
 - ALL images have alt attributes (WCAG 2.1 Level A)
 - ALL form inputs have associated labels or aria-label
 - ALL interactive elements are keyboard-accessible (no onClick on div without role/tabIndex)
@@ -292,13 +316,22 @@ ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
 - Responsive viewport meta tag present in HTML documents
 - Stylesheets use media queries and responsive units — layout works on mobile/tablet/desktop
 - Data-fetching components have loading states AND error states — no blank screens
-- React apps have ErrorBoundary at the root — render errors show fallback, not blank page
 - No dangerouslySetInnerHTML without sanitization (XSS vector)
 - List rendering uses key props (React .map() without key = render bugs)
 - No hardcoded colors in inline styles — use CSS variables or design tokens for theming
 - UI is consistent: spacing, typography, color palette follow a design system
 - Forms have client-side validation with clear error messages
 - Empty states are handled — don't show blank pages when there's no data
+`)
+		if ctx.UIFramework == "react" {
+			b.WriteString("- React apps have ErrorBoundary at the root — render errors show fallback, not blank page\n")
+		}
+		if ctx.HasStorybook {
+			b.WriteString("- Every component has Storybook stories covering its variants\n")
+		}
+	}
+
+	b.WriteString(`
 
 **Gate 4: Everything was researched and confirmed accurate**
 No guesses. No hallucinated APIs. Every external dependency, every algorithm choice,

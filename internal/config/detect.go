@@ -31,12 +31,14 @@ const (
 
 // ProjectInfo describes the detected project type and its capabilities.
 type ProjectInfo struct {
-	Type        ProjectType // framework/language detected
-	HasFrontend bool        // true if project includes UI components
-	UIFramework string      // e.g. "react", "vue", "svelte", "angular"
-	HasTests    bool        // true if test infrastructure detected
-	HasStyles   bool        // true if CSS/SCSS/etc found
-	HasHTML     bool        // true if HTML entry points found
+	Type          ProjectType // framework/language detected
+	HasFrontend   bool        // true if project includes UI components
+	UIFramework   string      // e.g. "react", "vue", "svelte", "angular"
+	HasTests      bool        // true if test infrastructure detected
+	HasStyles     bool        // true if CSS/SCSS/etc found
+	HasHTML       bool        // true if HTML entry points found
+	TestFramework string      // e.g. "jest", "vitest", "playwright", "cypress", "pytest", "go-test"
+	HasStorybook  bool        // true if Storybook detected in devDependencies
 }
 
 // DetectProject examines the project root and returns detailed project info.
@@ -88,6 +90,27 @@ func DetectProject(projectRoot string) ProjectInfo {
 						break
 					}
 				}
+
+				// Detect test framework
+				switch {
+				case allDeps["vitest"] != "":
+					info.TestFramework = "vitest"
+				case allDeps["jest"] != "":
+					info.TestFramework = "jest"
+				case allDeps["@playwright/test"] != "" || allDeps["playwright"] != "":
+					info.TestFramework = "playwright"
+				case allDeps["cypress"] != "":
+					info.TestFramework = "cypress"
+				}
+
+				// Storybook detection
+				for dep := range allDeps {
+					if dep == "storybook" || dep == "@storybook/react" ||
+						dep == "@storybook/vue3" || dep == "@storybook/svelte" {
+						info.HasStorybook = true
+						break
+					}
+				}
 			}
 		}
 
@@ -117,6 +140,7 @@ func DetectProject(projectRoot string) ProjectInfo {
 	if fileExists(filepath.Join(projectRoot, "go.mod")) {
 		info.Type = ProjectGo
 		info.HasTests = true
+		info.TestFramework = "go-test"
 		return info
 	}
 
@@ -124,6 +148,7 @@ func DetectProject(projectRoot string) ProjectInfo {
 	if fileExists(filepath.Join(projectRoot, "Cargo.toml")) {
 		info.Type = ProjectRust
 		info.HasTests = true
+		info.TestFramework = "cargo-test"
 		return info
 	}
 
@@ -131,6 +156,7 @@ func DetectProject(projectRoot string) ProjectInfo {
 	if fileExists(filepath.Join(projectRoot, "pyproject.toml")) || fileExists(filepath.Join(projectRoot, "setup.py")) {
 		info.Type = ProjectPython
 		info.HasTests = true
+		info.TestFramework = "pytest"
 		// Python web apps (Django, Flask, FastAPI) may have templates
 		for _, tmplDir := range []string{"templates", "static"} {
 			if dirExists(filepath.Join(projectRoot, tmplDir)) {

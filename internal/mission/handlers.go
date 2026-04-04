@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/baseline"
+	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/prompts"
 )
@@ -50,6 +51,10 @@ type HandlerDeps struct {
 
 	// RepoRoot is the git repository root for file scanning.
 	RepoRoot string
+
+	// ProjectInfo describes the detected project type, framework, and capabilities.
+	// Used to conditionally enable UX rules and tailor prompts for frontend projects.
+	ProjectInfo config.ProjectInfo
 
 	// Metrics tracks operational statistics.
 	Metrics *Metrics
@@ -88,10 +93,14 @@ type HandlerDeps struct {
 // This is the bridge between the mission store and the prompt templates.
 func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
 	mc := prompts.MissionContext{
-		MissionID: m.ID,
-		Title:     m.Title,
-		Intent:    m.Intent,
-		Phase:     string(m.Phase),
+		MissionID:     m.ID,
+		Title:         m.Title,
+		Intent:        m.Intent,
+		Phase:         string(m.Phase),
+		HasFrontend:   deps.ProjectInfo.HasFrontend,
+		UIFramework:   deps.ProjectInfo.UIFramework,
+		TestFramework: deps.ProjectInfo.TestFramework,
+		HasStorybook:  deps.ProjectInfo.HasStorybook,
 	}
 
 	// Build criteria block
