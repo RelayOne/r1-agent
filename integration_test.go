@@ -623,7 +623,7 @@ func TestCodexMode1EnvStripsKeys(t *testing.T) {
 		RuntimeDir:    filepath.Join(dir, "runtime"),
 		Mode:          engine.AuthModeMode1,
 		PoolConfigDir: "/pool/codex-1",
-		Phase:         engine.PhaseSpec{Name: "execute"},
+		Phase:         engine.PhaseSpec{Name: "execute", MaxTurns: 20},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -905,6 +905,7 @@ func setupGitRepo(t *testing.T) string {
 	git("init")
 	git("config", "user.email", "test@stoke.dev")
 	git("config", "user.name", "Stoke Test")
+	git("config", "commit.gpgsign", "false")
 	git("checkout", "-b", "main")
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
 	git("add", "-A")
