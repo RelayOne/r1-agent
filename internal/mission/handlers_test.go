@@ -134,11 +134,13 @@ func TestExecuteHandler(t *testing.T) {
 	m := setupHandlerTestMission(t, store)
 
 	var capturedTask string
+	var capturedPrompt string
 	handler := NewExecuteHandler(HandlerDeps{
 		Store:   store,
 		Metrics: NewMetrics(),
-		ExecuteFn: func(ctx context.Context, m *Mission, taskDesc string) ([]string, error) {
+		ExecuteFn: func(ctx context.Context, m *Mission, prompt, taskDesc string) ([]string, error) {
 			capturedTask = taskDesc
+			capturedPrompt = prompt
 			return []string{"auth.go", "auth_test.go"}, nil
 		},
 	})
@@ -152,6 +154,19 @@ func TestExecuteHandler(t *testing.T) {
 	}
 	if !strings.Contains(capturedTask, "JWT tokens") {
 		t.Error("task description should include criteria")
+	}
+	// Verify the prompt was built from BuildMissionExecutePrompt (not ad-hoc)
+	if capturedPrompt == "" {
+		t.Error("execute prompt should be built and passed to ExecuteFn")
+	}
+	if !strings.Contains(capturedPrompt, "implementation agent") {
+		t.Error("execute prompt should come from BuildMissionExecutePrompt")
+	}
+	if !strings.Contains(capturedPrompt, "No stubs, no TODOs") {
+		t.Error("execute prompt should include anti-stub rules")
+	}
+	if !strings.Contains(capturedPrompt, "JWT tokens") {
+		t.Error("execute prompt should include criteria")
 	}
 }
 
@@ -263,10 +278,12 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 	m := setupHandlerTestMission(t, store)
 	metrics := NewMetrics()
 
+	var capturedPrompts []string
 	handler := NewConsensusHandler(HandlerDeps{
 		Store:   store,
 		Metrics: metrics,
-		ConsensusModelFn: func(ctx context.Context, missionID, model string) (string, string, []string, error) {
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			capturedPrompts = append(capturedPrompts, prompt)
 			return "complete", "looks good", nil, nil
 		},
 	}, []string{"claude", "codex"})
@@ -282,6 +299,22 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 	snap := metrics.Snapshot()
 	if snap.ConsensusVotes != 2 {
 		t.Errorf("ConsensusVotes = %d, want 2", snap.ConsensusVotes)
+	}
+
+	// Verify each model received the adversarial consensus prompt
+	if len(capturedPrompts) != 2 {
+		t.Fatalf("expected 2 prompts, got %d", len(capturedPrompts))
+	}
+	for i, p := range capturedPrompts {
+		if !strings.Contains(p, "DISPROVE Completeness") {
+			t.Errorf("prompt %d missing adversarial framing", i)
+		}
+		if !strings.Contains(p, "Anti-rationalization") {
+			t.Errorf("prompt %d missing anti-rationalization protocol", i)
+		}
+		if !strings.Contains(p, m.ID) {
+			t.Errorf("prompt %d missing mission ID", i)
+		}
 	}
 }
 

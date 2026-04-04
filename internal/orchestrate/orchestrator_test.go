@@ -305,17 +305,20 @@ func TestRunMissionWithExecuteFn(t *testing.T) {
 	writeFile(t, repoDir, "auth_test.go", "package auth\n\nimport \"testing\"\n\nfunc TestLogin(t *testing.T) {\n\tif Login() == \"\" { t.Fatal() }\n}\n")
 
 	executeCalls := 0
+	var lastExecutePrompt string
 	orch, err := New(Config{
 		StoreDir: t.TempDir(),
 		RepoRoot: repoDir,
-		ExecuteFn: func(ctx context.Context, m *mission.Mission, taskDesc string) ([]string, error) {
+		ExecuteFn: func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
 			executeCalls++
-			// Simulate satisfying criteria on first execution
-			orch2 := getOrchestratorFromStore(t, m)
-			_ = orch2
+			lastExecutePrompt = prompt
 			return []string{"auth.go", "auth_test.go"}, nil
 		},
-		ConsensusModelFn: func(ctx context.Context, missionID, model string) (string, string, []string, error) {
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			// Verify we received the adversarial prompt
+			if !strings.Contains(prompt, "DISPROVE") {
+				return "incomplete", "prompt missing adversarial framing", nil, nil
+			}
 			return "complete", "all criteria met", nil, nil
 		},
 	})
@@ -341,6 +344,13 @@ func TestRunMissionWithExecuteFn(t *testing.T) {
 	}
 	if len(result.Phases) == 0 {
 		t.Error("should have recorded phase results")
+	}
+	// Verify execute prompt was built from BuildMissionExecutePrompt
+	if lastExecutePrompt == "" {
+		t.Error("ExecuteFn should receive the mission-aware prompt")
+	}
+	if !strings.Contains(lastExecutePrompt, "implementation agent") {
+		t.Error("execute prompt should come from BuildMissionExecutePrompt")
 	}
 }
 
@@ -409,15 +419,17 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 	writeFile(t, repoDir, "handler_test.go", "package handler\n\nimport \"testing\"\n\nfunc TestHandle(t *testing.T) {\n\tif Handle() != \"ok\" { t.Fatal() }\n}\n")
 
 	consensusCalls := map[string]int{}
+	var consensusPrompts []string
 	orch, err := New(Config{
 		StoreDir:        t.TempDir(),
 		RepoRoot:        repoDir,
 		ConsensusModels: []string{"model-a", "model-b"},
-		ExecuteFn: func(ctx context.Context, m *mission.Mission, taskDesc string) ([]string, error) {
+		ExecuteFn: func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
 			return []string{"handler.go"}, nil
 		},
-		ConsensusModelFn: func(ctx context.Context, missionID, modelName string) (string, string, []string, error) {
+		ConsensusModelFn: func(ctx context.Context, missionID, modelName, prompt string) (string, string, []string, error) {
 			consensusCalls[modelName]++
+			consensusPrompts = append(consensusPrompts, prompt)
 			return "complete", "verified", nil, nil
 		},
 	})
@@ -438,6 +450,15 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 	}
 	if consensusCalls["model-a"] == 0 || consensusCalls["model-b"] == 0 {
 		t.Errorf("both models should have been called: %v", consensusCalls)
+	}
+	// Verify each model received the adversarial consensus prompt
+	for i, p := range consensusPrompts {
+		if !strings.Contains(p, "DISPROVE Completeness") {
+			t.Errorf("consensus prompt %d missing adversarial framing", i)
+		}
+		if !strings.Contains(p, "Anti-rationalization") {
+			t.Errorf("consensus prompt %d missing anti-rationalization protocol", i)
+		}
 	}
 }
 
@@ -487,6 +508,140 @@ func TestNewRunnerRepoRoot(t *testing.T) {
 	}
 	if !foundResearch {
 		t.Errorf("should have a research phase result, phases=%v", result.Phases)
+	}
+}
+
+// --- End-to-End: Baseline → Validate → Consensus ---
+
+func TestEndToEndBaselineValidateConsensus(t *testing.T) {
+	// Create a repo with a go.mod so AutoDetect finds Go commands
+	repoDir := t.TempDir()
+	writeFile(t, repoDir, "go.mod", "module testmod\n\ngo 1.21\n")
+	writeFile(t, repoDir, "main.go", "package main\n\nimport \"log\"\n\nfunc main() { log.Printf(\"ok\") }\n")
+	writeFile(t, repoDir, "main_test.go", "package main\n\nimport \"testing\"\n\nfunc TestMain2(t *testing.T) {}\n")
+
+	var validatePromptReceived string
+	var executePromptReceived string
+	var consensusPromptsReceived []string
+
+	orch, err := New(Config{
+		StoreDir:        t.TempDir(),
+		RepoRoot:        repoDir,
+		ConsensusModels: []string{"reviewer-a", "reviewer-b"},
+		ExecuteFn: func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+			executePromptReceived = prompt
+			return []string{"main.go"}, nil
+		},
+		ValidateFn: func(ctx context.Context, m *mission.Mission, prompt string) (string, error) {
+			validatePromptReceived = prompt
+			// Simulate adversarial LLM finding no additional issues
+			return "", nil
+		},
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			consensusPromptsReceived = append(consensusPromptsReceived, prompt)
+			return "complete", "validated", nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer orch.Close()
+
+	m, err := orch.CreateMission("Test E2E", "Full pipeline test", []string{"Main runs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify baseline was captured
+	bl := orch.GetBaseline(m.ID)
+	if bl == nil {
+		t.Fatal("baseline should be captured at mission creation")
+	}
+
+	// Satisfy criteria so convergence can complete
+	orch.Store().SetCriteriaSatisfied(m.ID, "c-1", "main runs", "test")
+
+	// Run the full pipeline
+	result, err := orch.RunMission(context.Background(), m.ID)
+	if err != nil {
+		t.Logf("RunMission error (may be expected if validation finds gaps): %v", err)
+	}
+
+	// Verify prompts were actually built and passed
+	if executePromptReceived == "" {
+		t.Error("ExecuteFn should receive the mission-aware prompt")
+	} else {
+		if !strings.Contains(executePromptReceived, "implementation agent") {
+			t.Error("execute prompt should come from BuildMissionExecutePrompt")
+		}
+		if !strings.Contains(executePromptReceived, "Test E2E") {
+			t.Error("execute prompt should include mission title")
+		}
+		if !strings.Contains(executePromptReceived, "Main runs") {
+			t.Error("execute prompt should include criteria")
+		}
+	}
+
+	if validatePromptReceived == "" {
+		t.Error("ValidateFn should receive the adversarial validation prompt")
+	} else {
+		if !strings.Contains(validatePromptReceived, "5 Convergence Gates") {
+			t.Error("validate prompt should include 5 convergence gates")
+		}
+		if !strings.Contains(validatePromptReceived, "Do not rationalize") {
+			t.Error("validate prompt should include anti-rationalization")
+		}
+	}
+
+	if len(consensusPromptsReceived) == 0 && result != nil && result.IsSuccess() {
+		// If mission succeeded, consensus was called
+		t.Error("consensus models should receive adversarial prompts")
+	}
+	for i, p := range consensusPromptsReceived {
+		if !strings.Contains(p, "DISPROVE Completeness") {
+			t.Errorf("consensus prompt %d missing adversarial framing", i)
+		}
+		if !strings.Contains(p, "Anti-rationalization") {
+			t.Errorf("consensus prompt %d missing anti-rationalization protocol", i)
+		}
+	}
+}
+
+func TestBaselinePersistedAndRecovered(t *testing.T) {
+	repoDir := t.TempDir()
+	writeFile(t, repoDir, "go.mod", "module testmod\n\ngo 1.21\n")
+	writeFile(t, repoDir, "x.go", "package x\n")
+
+	storeDir := t.TempDir()
+	orch, err := New(Config{StoreDir: storeDir, RepoRoot: repoDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, _ := orch.CreateMission("Persist Test", "Test baseline persistence", nil)
+	bl := orch.GetBaseline(m.ID)
+	if bl == nil {
+		t.Fatal("baseline should exist")
+	}
+	orch.Close()
+
+	// Re-open orchestrator — baseline should be recovered from disk
+	orch2, err := New(Config{StoreDir: storeDir, RepoRoot: repoDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer orch2.Close()
+
+	// Use NewRunnerForMission which loads baseline from disk
+	runner := orch2.NewRunnerForMission(mission.DefaultRunnerConfig(), m.ID)
+	if runner == nil {
+		t.Error("runner should be created")
+	}
+	// The baseline should have been loaded from disk into the runner's deps
+	// We can verify by checking the baselines map
+	bl2 := orch2.GetBaseline(m.ID)
+	if bl2 == nil {
+		t.Error("baseline should be recovered from disk")
 	}
 }
 

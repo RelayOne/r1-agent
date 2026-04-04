@@ -6,8 +6,15 @@
 //   - ResearchHandler: Gathers information needed for planning
 //   - PlanHandler: Creates a structured implementation plan
 //   - ExecuteHandler: Runs the implementation via the workflow engine
-//   - ValidateHandler: Runs adversarial convergence validation
-//   - ConsensusHandler: Gathers multi-model completion votes
+//   - ValidateHandler: Runs adversarial convergence validation (3 layers)
+//   - ConsensusHandler: Gathers multi-model adversarial completion votes
+//
+// Every handler builds a MissionContext from the store, uses it to generate
+// a mission-aware prompt via the prompts package, and passes that prompt to
+// the appropriate callback function. This ensures agents always receive:
+//   - Full mission state (criteria, gaps, convergence status)
+//   - Research findings and handoff history
+//   - The adversarial framing that prevents rationalization
 //
 // Handlers are stateless — all state flows through the mission store.
 // They receive the current Mission and return a PhaseResult.
@@ -24,6 +31,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/baseline"
 	"github.com/ericmacdougall/stoke/internal/convergence"
+	"github.com/ericmacdougall/stoke/internal/prompts"
 )
 
 // HandlerDeps bundles the dependencies that phase handlers need.
@@ -32,6 +40,10 @@ import (
 type HandlerDeps struct {
 	// Store is the mission persistence layer.
 	Store *Store
+
+	// ContextSource provides research and handoff data for prompt building.
+	// If nil, prompts are built without research/handoff enrichment.
+	ContextSource ContextSource
 
 	// Validator is the convergence rule engine.
 	Validator *convergence.Validator
@@ -54,21 +66,120 @@ type HandlerDeps struct {
 	Baseline *baseline.Snapshot
 
 	// ExecuteFn is called by the execute handler to run a task through
-	// the workflow engine. It receives the mission and task description,
-	// and returns the files changed and any error.
-	// This is the integration point with the existing workflow.Engine.
-	ExecuteFn func(ctx context.Context, m *Mission, taskDesc string) (filesChanged []string, err error)
+	// the workflow engine. It receives the mission, the full mission-aware
+	// prompt (built from BuildMissionExecutePrompt), and the raw task description.
+	// Returns the files changed and any error.
+	ExecuteFn func(ctx context.Context, m *Mission, prompt string, taskDesc string) (filesChanged []string, err error)
 
-	// ConsensusModelFn is called to get a model's verdict on mission completion.
-	// It receives the mission ID and returns the verdict and reasoning.
-	ConsensusModelFn func(ctx context.Context, missionID, model string) (verdict, reasoning string, gapsFound []string, err error)
+	// ValidateFn is called by the validate handler for adversarial LLM validation
+	// (Layer 3). It receives the mission and the full adversarial validation prompt
+	// (built from BuildMissionValidatePrompt). Returns structured JSON findings.
+	// If nil, Layer 3 is skipped (only live verification and static analysis run).
+	ValidateFn func(ctx context.Context, m *Mission, prompt string) (findings string, err error)
+
+	// ConsensusModelFn is called to get a model's adversarial verdict on mission
+	// completion. It receives the mission ID, model name, and the full adversarial
+	// consensus prompt (built from BuildMissionConsensusPrompt with the validation
+	// report embedded). Returns the verdict and reasoning.
+	ConsensusModelFn func(ctx context.Context, missionID, model, prompt string) (verdict, reasoning string, gapsFound []string, err error)
+}
+
+// buildMissionContext constructs a prompts.MissionContext for prompt generation.
+// This is the bridge between the mission store and the prompt templates.
+func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
+	mc := prompts.MissionContext{
+		MissionID: m.ID,
+		Title:     m.Title,
+		Intent:    m.Intent,
+		Phase:     string(m.Phase),
+	}
+
+	// Build criteria block
+	if len(m.Criteria) > 0 {
+		var cb strings.Builder
+		cb.WriteString("## Acceptance Criteria\n")
+		satisfied := 0
+		for _, c := range m.Criteria {
+			if c.Satisfied {
+				satisfied++
+				fmt.Fprintf(&cb, "- [x] %s\n", c.Description)
+			} else {
+				fmt.Fprintf(&cb, "- [ ] %s\n", c.Description)
+			}
+		}
+		fmt.Fprintf(&cb, "\nProgress: %d/%d criteria satisfied\n", satisfied, len(m.Criteria))
+		mc.CriteriaBlock = cb.String()
+	}
+
+	// Build gaps block
+	if deps.Store != nil {
+		gaps, _ := deps.Store.OpenGaps(m.ID)
+		if len(gaps) > 0 {
+			var gb strings.Builder
+			gb.WriteString("## Open Gaps (must resolve)\n")
+			for _, g := range gaps {
+				fmt.Fprintf(&gb, "- [%s] %s", g.Severity, g.Description)
+				if g.File != "" {
+					fmt.Fprintf(&gb, " (%s", g.File)
+					if g.Line > 0 {
+						fmt.Fprintf(&gb, ":%d", g.Line)
+					}
+					gb.WriteString(")")
+				}
+				gb.WriteString("\n")
+				if g.Suggestion != "" {
+					fmt.Fprintf(&gb, "  Suggestion: %s\n", g.Suggestion)
+				}
+			}
+			mc.GapsBlock = gb.String()
+		}
+
+		// Build convergence status
+		status, err := deps.Store.GetConvergenceStatus(m.ID, 2)
+		if err == nil {
+			mc.StatusBlock = fmt.Sprintf("## Convergence Status\n"+
+				"Criteria: %d/%d satisfied | Open gaps: %d (blocking: %d) | Consensus: %v\n",
+				status.SatisfiedCriteria, status.TotalCriteria,
+				status.OpenGapCount, status.BlockingGapCount, status.HasConsensus)
+		}
+	}
+
+	// Build research block
+	if deps.ContextSource != nil {
+		entries, err := deps.ContextSource.GetResearchByMission(m.ID)
+		if err == nil && len(entries) > 0 {
+			var rb strings.Builder
+			rb.WriteString("## Research Findings\n")
+			for _, e := range entries {
+				fmt.Fprintf(&rb, "### %s\n", e.Topic)
+				if e.Query != "" {
+					fmt.Fprintf(&rb, "Query: %s\n", e.Query)
+				}
+				fmt.Fprintf(&rb, "%s\n\n", e.Content)
+			}
+			mc.ResearchBlock = rb.String()
+		}
+
+		// Build handoff block
+		handoffCtx, err := deps.ContextSource.GetHandoffContext(m.ID, 2000)
+		if err == nil && handoffCtx != "" {
+			mc.HandoffBlock = handoffCtx
+		}
+	}
+
+	return mc
 }
 
 // NewResearchHandler creates a handler for the Researching phase.
-// It searches the codebase for relevant files and records research entries.
+// It searches the codebase for relevant files, records research entries,
+// and builds the research prompt for downstream phases.
 func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+
+		// Build mission context and research prompt
+		mc := buildMissionContext(deps, m)
+		researchPrompt := prompts.BuildMissionResearchPrompt(mc)
 
 		// Research by scanning the repo for files related to the mission intent
 		var findings []string
@@ -79,13 +190,11 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 				if err != nil || d.IsDir() {
 					return nil
 				}
-				// Skip hidden dirs, vendor, node_modules
 				rel, _ := filepath.Rel(deps.RepoRoot, path)
 				if strings.HasPrefix(rel, ".") || strings.Contains(rel, "vendor/") ||
 					strings.Contains(rel, "node_modules/") {
 					return nil
 				}
-				// Check if filename contains any keyword
 				name := strings.ToLower(d.Name())
 				for _, kw := range keywords {
 					if strings.Contains(name, kw) {
@@ -113,19 +222,25 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 			Phase:        PhaseResearching,
 			Summary:      summary,
 			FilesChanged: findings,
-			Duration:     time.Since(start),
-			Agent:        "research-handler",
+			Artifacts: map[string]string{
+				"prompt": researchPrompt,
+			},
+			Duration: time.Since(start),
+			Agent:    "research-handler",
 		}, nil
 	}
 }
 
 // NewPlanHandler creates a handler for the Planning phase.
-// It generates a structured plan based on mission criteria.
+// It generates a structured plan based on mission criteria and builds
+// the planning prompt that includes research context and gap history.
 func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
 
-		// Build a plan from criteria
+		mc := buildMissionContext(deps, m)
+		planPrompt := prompts.BuildMissionPlanPrompt(mc)
+
 		var planItems []string
 		for _, c := range m.Criteria {
 			if !c.Satisfied {
@@ -140,7 +255,8 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 			Phase:   PhasePlanning,
 			Summary: summary,
 			Artifacts: map[string]string{
-				"plan": strings.Join(planItems, "\n"),
+				"plan":   strings.Join(planItems, "\n"),
+				"prompt": planPrompt,
 			},
 			Duration: time.Since(start),
 			Agent:    "plan-handler",
@@ -149,10 +265,13 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 }
 
 // NewExecuteHandler creates a handler for the Executing phase.
-// It delegates to the ExecuteFn to run tasks through the workflow engine.
+// It builds the full mission-aware execute prompt (with criteria, gaps,
+// research context, and verification requirements) and passes it to ExecuteFn.
 func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+
+		mc := buildMissionContext(deps, m)
 
 		// Build task description from unsatisfied criteria and open gaps
 		var taskParts []string
@@ -169,10 +288,21 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 		taskDesc := fmt.Sprintf("Mission: %s\nIntent: %s\n\nRemaining work:\n- %s",
 			m.Title, m.Intent, strings.Join(taskParts, "\n- "))
 
+		// Build verification requirements from criteria
+		var verification []string
+		for _, c := range m.Criteria {
+			if !c.Satisfied {
+				verification = append(verification, c.Description)
+			}
+		}
+
+		// Build the full mission-aware execute prompt
+		executePrompt := prompts.BuildMissionExecutePrompt(mc, taskDesc, verification)
+
 		var filesChanged []string
 		if deps.ExecuteFn != nil {
 			var err error
-			filesChanged, err = deps.ExecuteFn(ctx, m, taskDesc)
+			filesChanged, err = deps.ExecuteFn(ctx, m, executePrompt, taskDesc)
 			if err != nil {
 				return nil, fmt.Errorf("execute: %w", err)
 			}
@@ -186,15 +316,18 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 			Phase:        PhaseExecuting,
 			Summary:      fmt.Sprintf("Executed %d work items, %d files changed", len(taskParts), len(filesChanged)),
 			FilesChanged: filesChanged,
-			Duration:     time.Since(start),
-			Agent:        "execute-handler",
+			Artifacts: map[string]string{
+				"prompt": executePrompt,
+			},
+			Duration: time.Since(start),
+			Agent:    "execute-handler",
 		}, nil
 	}
 }
 
 // NewValidateHandler creates a handler for the Validating phase.
 //
-// Validation has two layers:
+// Validation has three layers, all of which produce blocking gaps:
 //
 //  1. Live verification: Runs actual build/test/lint commands against the repo.
 //     ANY failure is a blocking gap — pre-existing or introduced. The harness
@@ -204,7 +337,12 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 //  2. Static analysis: Runs the convergence rule engine against source files
 //     for code quality, security, and completeness checks.
 //
-// Both layers produce gaps that must be resolved before convergence.
+//  3. Adversarial LLM validation: Sends the full mission-aware validation
+//     prompt (with criteria, gaps, research, and the 5 convergence gates)
+//     to a model via ValidateFn. The model is instructed to disprove
+//     completeness, not confirm it.
+//
+// All three layers produce gaps that must be resolved before convergence.
 func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
@@ -221,7 +359,6 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 		var summaryParts []string
 
 		// --- Layer 1: Live verification (build/test/lint) ---
-		// This is the critical layer. If the test suite fails, nothing else matters.
 		if deps.VerifyCommands != nil {
 			snap, err := baseline.Verify(ctx, deps.RepoRoot, *deps.VerifyCommands)
 			if err != nil {
@@ -231,7 +368,6 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			for _, failure := range snap.Failures() {
 				gapID := fmt.Sprintf("verify-%s-%s-%d", m.ID, failure.Name, time.Now().UnixNano())
 
-				// Classify: pre-existing or introduced
 				category := "verification"
 				description := fmt.Sprintf("%s failed (exit %d): %s",
 					failure.Name, failure.ExitCode, truncateOutput(failure.Output, 500))
@@ -337,9 +473,36 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				report.Score, len(report.Findings), report.BlockingCount()))
 		}
 
+		// --- Layer 3: Adversarial LLM validation ---
+		if deps.ValidateFn != nil {
+			mc := buildMissionContext(deps, m)
+			validatePrompt := prompts.BuildMissionValidatePrompt(mc)
+
+			findings, err := deps.ValidateFn(ctx, m, validatePrompt)
+			if err != nil {
+				summaryParts = append(summaryParts, fmt.Sprintf("adversarial: error (%v)", err))
+			} else if findings != "" {
+				// Store the raw LLM findings as a gap for the convergence loop to act on
+				gapID := fmt.Sprintf("llm-val-%s-%d", m.ID, time.Now().UnixNano())
+				deps.Store.AddGap(&Gap{
+					ID:          gapID,
+					MissionID:   m.ID,
+					Category:    "adversarial-validation",
+					Severity:    "blocking",
+					Description: truncateOutput(findings, 1000),
+					Suggestion:  "Address the findings from adversarial LLM validation",
+				})
+				allGapCount++
+				blockingCount++
+				summaryParts = append(summaryParts, "adversarial: findings reported")
+			} else {
+				summaryParts = append(summaryParts, "adversarial: no findings")
+			}
+		}
+
 		summary := strings.Join(summaryParts, " | ")
 		if len(summaryParts) == 0 {
-			summary = "Validation skipped (no commands or validator configured)"
+			summary = "Validation skipped (no commands, validator, or validate function configured)"
 		}
 
 		if deps.Metrics != nil {
@@ -369,10 +532,38 @@ func truncateOutput(output string, maxLen int) string {
 }
 
 // NewConsensusHandler creates a handler for the Converged phase.
-// It gathers completion votes from multiple models.
+// It builds the full adversarial consensus prompt (with the validation report,
+// anti-rationalization protocol, and challenge questions) and passes it to
+// each consensus model. Models must try to DISPROVE completeness.
 func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+
+		// Build mission context for the consensus prompt
+		mc := buildMissionContext(deps, m)
+
+		// Build a validation report summary from the latest gaps and convergence status
+		var reportParts []string
+		if deps.Store != nil {
+			status, err := deps.Store.GetConvergenceStatus(m.ID, len(models))
+			if err == nil {
+				reportParts = append(reportParts, fmt.Sprintf(
+					"Convergence: %d/%d criteria satisfied, %d open gaps (%d blocking), consensus=%v",
+					status.SatisfiedCriteria, status.TotalCriteria,
+					status.OpenGapCount, status.BlockingGapCount, status.HasConsensus))
+			}
+
+			gaps, _ := deps.Store.OpenGaps(m.ID)
+			if len(gaps) > 0 {
+				reportParts = append(reportParts, fmt.Sprintf("Open gaps (%d):", len(gaps)))
+				for _, g := range gaps {
+					reportParts = append(reportParts, fmt.Sprintf("  - [%s] %s (%s)", g.Severity, g.Description, g.Category))
+				}
+			} else {
+				reportParts = append(reportParts, "No open gaps found by static analysis and live verification.")
+			}
+		}
+		validationReport := strings.Join(reportParts, "\n")
 
 		if deps.ConsensusModelFn == nil {
 			// No consensus function — auto-approve
@@ -392,7 +583,10 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 
 		var verdicts []string
 		for _, model := range models {
-			verdict, reasoning, gapsFound, err := deps.ConsensusModelFn(ctx, m.ID, model)
+			// Build the adversarial consensus prompt with the validation report
+			consensusPrompt := prompts.BuildMissionConsensusPrompt(mc, validationReport)
+
+			verdict, reasoning, gapsFound, err := deps.ConsensusModelFn(ctx, m.ID, model, consensusPrompt)
 			if err != nil {
 				return nil, fmt.Errorf("consensus from %s: %w", model, err)
 			}
@@ -415,6 +609,9 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 		return &PhaseResult{
 			Phase:   PhaseConverged,
 			Summary: strings.Join(verdicts, ", "),
+			Artifacts: map[string]string{
+				"validation_report": validationReport,
+			},
 			Duration: time.Since(start),
 			Agent:    "consensus-handler",
 		}, nil
@@ -423,8 +620,6 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 
 // extractMissionKeywords extracts searchable keywords from intent text.
 func extractMissionKeywords(intent string) []string {
-	// Simple keyword extraction: split on spaces, filter short words,
-	// lowercase, deduplicate
 	words := strings.Fields(strings.ToLower(intent))
 	seen := make(map[string]bool)
 	var keywords []string
@@ -433,7 +628,6 @@ func extractMissionKeywords(intent string) []string {
 		if len(w) < 3 || seen[w] {
 			continue
 		}
-		// Skip common stop words
 		switch w {
 		case "the", "and", "for", "with", "that", "this", "from", "are",
 			"was", "been", "have", "has", "will", "can", "should", "would",

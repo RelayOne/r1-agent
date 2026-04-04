@@ -66,12 +66,19 @@ type Config struct {
 
 	// ExecuteFn is the optional callback for the execute handler.
 	// It bridges mission execution to the workflow engine.
+	// Receives the mission, the full mission-aware prompt, and the raw task description.
 	// If nil, the execute handler records tasks but does not run them.
-	ExecuteFn func(ctx context.Context, m *mission.Mission, taskDesc string) (filesChanged []string, err error) `json:"-"`
+	ExecuteFn func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) (filesChanged []string, err error) `json:"-"`
 
-	// ConsensusModelFn is the optional callback for gathering model verdicts.
+	// ValidateFn is the optional callback for adversarial LLM validation (Layer 3).
+	// Receives the mission and the adversarial validation prompt.
+	// Returns structured findings from the model. If nil, Layer 3 is skipped.
+	ValidateFn func(ctx context.Context, m *mission.Mission, prompt string) (findings string, err error) `json:"-"`
+
+	// ConsensusModelFn is the optional callback for gathering adversarial model verdicts.
+	// Receives the mission ID, model name, and the full adversarial consensus prompt.
 	// If nil, consensus is auto-approved.
-	ConsensusModelFn func(ctx context.Context, missionID, model string) (verdict, reasoning string, gapsFound []string, err error) `json:"-"`
+	ConsensusModelFn func(ctx context.Context, missionID, model, prompt string) (verdict, reasoning string, gapsFound []string, err error) `json:"-"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -376,13 +383,19 @@ func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
 func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionID string) *mission.Runner {
 	runner := mission.NewRunner(o.store, config)
 
+	// Build context adapter for research/handoff enrichment in prompts
+	var ctxSource mission.ContextSource
+	ctxSource = &contextAdapter{orch: o}
+
 	deps := mission.HandlerDeps{
 		Store:            o.store,
+		ContextSource:    ctxSource,
 		Validator:        o.validator,
 		RepoRoot:         o.config.RepoRoot,
 		Metrics:          mission.NewMetrics(),
 		VerifyCommands:   o.verifyCmds,
 		ExecuteFn:        o.config.ExecuteFn,
+		ValidateFn:       o.config.ValidateFn,
 		ConsensusModelFn: o.config.ConsensusModelFn,
 	}
 
