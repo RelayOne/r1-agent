@@ -19,6 +19,7 @@ import (
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
@@ -368,6 +369,8 @@ func main() {
 		removePoolCmd(os.Args[2:])
 	case "mission":
 		missionCmd(os.Args[2:])
+	case "mcp-serve":
+		mcpServeCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -376,6 +379,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		usage()
 		os.Exit(2)
+	}
+}
+
+// --- mcp-serve: start MCP codebase tool server ---
+
+func mcpServeCmd(args []string) {
+	fs := flag.NewFlagSet("mcp-serve", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root to index")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	srv, err := stokeMCP.BuildCodebaseServer(absRepo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building codebase server: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := srv.ServeStdio(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
