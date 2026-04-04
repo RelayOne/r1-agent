@@ -8,6 +8,7 @@
 //   - Security: Are there vulnerabilities or credential leaks?
 //   - Documentation: Is the code properly documented?
 //   - Consistency: Are there stubs, mocks, TODOs, or incomplete implementations?
+//   - UX quality: Is the UI accessible, responsive, and complete?
 //
 // The validator is adversarial by design — it looks for reasons the work is NOT done,
 // not reasons it IS done. It operates as a configurable rule engine where each rule
@@ -31,12 +32,13 @@ import (
 type Category string
 
 const (
-	CatCompleteness Category = "completeness" // acceptance criteria not met
-	CatTestCoverage Category = "test"         // missing or weak tests
-	CatCodeQuality  Category = "code"         // engineering standard violations
-	CatSecurity     Category = "security"     // vulnerabilities, credential leaks
-	CatDocumentation Category = "docs"        // missing documentation
-	CatConsistency  Category = "consistency"  // stubs, TODOs, incomplete code
+	CatCompleteness  Category = "completeness"  // acceptance criteria not met
+	CatTestCoverage  Category = "test"           // missing or weak tests
+	CatCodeQuality   Category = "code"           // engineering standard violations
+	CatSecurity      Category = "security"       // vulnerabilities, credential leaks
+	CatDocumentation Category = "docs"           // missing documentation
+	CatConsistency   Category = "consistency"    // stubs, TODOs, incomplete code
+	CatUXQuality     Category = "ux"             // UI/UX quality, accessibility, responsiveness
 )
 
 // Severity indicates how blocking a finding is.
@@ -367,6 +369,19 @@ func DefaultRules() []Rule {
 		emptyTestRule(),
 		tautologicalTestRule(),
 		missingTestFileRule(),
+
+		// Gate 6: UX quality — accessibility, responsiveness, error states, UI completeness
+		inaccessibleImageRule(),
+		inaccessibleInteractiveRule(),
+		missingViewportRule(),
+		noResponsiveDesignRule(),
+		missingErrorBoundaryRule(),
+		missingLoadingStateRule(),
+		missingFormLabelRule(),
+		focusTrapRule(),
+		hardcodedColorRule(),
+		dangerousInnerHTMLRule(),
+		missingKeyPropRule(),
 	}
 }
 
@@ -812,12 +827,422 @@ func regexCheck(re *regexp.Regexp, file string, content []byte, ruleID string, c
 func isTestFile(path string) bool {
 	return strings.HasSuffix(path, "_test.go") ||
 		strings.HasSuffix(path, ".test.ts") ||
+		strings.HasSuffix(path, ".test.tsx") ||
 		strings.HasSuffix(path, ".test.js") ||
+		strings.HasSuffix(path, ".test.jsx") ||
 		strings.HasSuffix(path, ".spec.ts") ||
+		strings.HasSuffix(path, ".spec.tsx") ||
 		strings.HasSuffix(path, ".spec.js") ||
+		strings.HasSuffix(path, ".spec.jsx") ||
 		strings.Contains(filepath.Base(path), "test_")
 }
 
 func isGoFile(path string) bool {
 	return strings.HasSuffix(path, ".go")
+}
+
+func isFrontendFile(path string) bool {
+	exts := []string{".tsx", ".jsx", ".vue", ".svelte", ".html", ".htm"}
+	for _, ext := range exts {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func isStyleFile(path string) bool {
+	exts := []string{".css", ".scss", ".sass", ".less", ".styl"}
+	for _, ext := range exts {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func isHTMLTemplateFile(path string) bool {
+	return strings.HasSuffix(path, ".html") || strings.HasSuffix(path, ".htm") ||
+		strings.HasSuffix(path, ".vue") || strings.HasSuffix(path, ".svelte")
+}
+
+// --- Gate 6: UX Quality ---
+
+// inaccessibleImageRule flags <img> tags without alt attributes.
+func inaccessibleImageRule() Rule {
+	// Match <img that does NOT have alt= on the same line
+	imgTag := regexp.MustCompile(`<img\s[^>]*>`)
+	altAttr := regexp.MustCompile(`\balt\s*=`)
+	return Rule{
+		ID: "a11y-img-alt", Name: "Images must have alt text", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Images without alt text are inaccessible to screen readers — WCAG 2.1 Level A violation",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				imgs := imgTag.FindAllString(line, -1)
+				for _, img := range imgs {
+					if !altAttr.MatchString(img) {
+						findings = append(findings, Finding{
+							RuleID:      "a11y-img-alt",
+							Category:    CatUXQuality,
+							Severity:    SevBlocking,
+							File:        file,
+							Line:        i + 1,
+							Description: "Image missing alt attribute — inaccessible to screen readers",
+							Suggestion:  "Add alt=\"descriptive text\" or alt=\"\" for decorative images",
+							Evidence:    strings.TrimSpace(img),
+						})
+					}
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// inaccessibleInteractiveRule flags click handlers on non-interactive elements without
+// proper ARIA roles and keyboard support.
+func inaccessibleInteractiveRule() Rule {
+	// onClick on div/span without role or tabIndex
+	onClickDiv := regexp.MustCompile(`<(div|span)\s[^>]*onClick`)
+	roleAttr := regexp.MustCompile(`\brole\s*=`)
+	return Rule{
+		ID: "a11y-interactive", Name: "Interactive elements must be accessible", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Click handlers on non-interactive elements (div, span) without role/tabIndex are inaccessible",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if onClickDiv.MatchString(line) && !roleAttr.MatchString(line) {
+					findings = append(findings, Finding{
+						RuleID:      "a11y-interactive",
+						Category:    CatUXQuality,
+						Severity:    SevBlocking,
+						File:        file,
+						Line:        i + 1,
+						Description: "onClick on non-interactive element without role/tabIndex — keyboard users cannot interact",
+						Suggestion:  "Use <button> instead, or add role=\"button\" tabIndex={0} onKeyDown handler",
+						Evidence:    strings.TrimSpace(line),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// missingViewportRule flags HTML files without the responsive viewport meta tag.
+func missingViewportRule() Rule {
+	return Rule{
+		ID: "ux-viewport-meta", Name: "HTML must have responsive viewport meta", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "HTML documents without viewport meta tag render incorrectly on mobile devices",
+		Check: func(file string, content []byte) []Finding {
+			if !strings.HasSuffix(file, ".html") && !strings.HasSuffix(file, ".htm") {
+				return nil
+			}
+			contentStr := string(content)
+			// Only check files that have <html or <head (i.e., full documents)
+			if !strings.Contains(contentStr, "<head") && !strings.Contains(contentStr, "<html") {
+				return nil
+			}
+			if !strings.Contains(contentStr, "viewport") {
+				return []Finding{{
+					RuleID:      "ux-viewport-meta",
+					Category:    CatUXQuality,
+					Severity:    SevBlocking,
+					File:        file,
+					Description: "Missing <meta name=\"viewport\"> — page will not be responsive on mobile",
+					Suggestion:  "Add <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"> in <head>",
+				}}
+			}
+			return nil
+		},
+	}
+}
+
+// noResponsiveDesignRule flags CSS files that lack any media queries or responsive
+// units, indicating a non-responsive layout.
+func noResponsiveDesignRule() Rule {
+	mediaQuery := regexp.MustCompile(`@media`)
+	responsiveUnit := regexp.MustCompile(`\b\d+(\.\d+)?(rem|em|vw|vh|vmin|vmax|%)`)
+	return Rule{
+		ID: "ux-responsive", Name: "Styles must include responsive design", Category: CatUXQuality,
+		Severity: SevMajor, Enabled: true,
+		Description: "Stylesheets without media queries or responsive units may not work across device sizes",
+		Check: func(file string, content []byte) []Finding {
+			if !isStyleFile(file) {
+				return nil
+			}
+			// Only flag non-trivial stylesheets (>20 lines suggests real styling)
+			lines := strings.Count(string(content), "\n")
+			if lines < 20 {
+				return nil
+			}
+			contentStr := string(content)
+			hasMedia := mediaQuery.MatchString(contentStr)
+			hasResponsiveUnits := responsiveUnit.MatchString(contentStr)
+			if !hasMedia && !hasResponsiveUnits {
+				return []Finding{{
+					RuleID:      "ux-responsive",
+					Category:    CatUXQuality,
+					Severity:    SevMajor,
+					File:        file,
+					Description: "Stylesheet has no media queries or responsive units — layout will break on mobile/tablet",
+					Suggestion:  "Add @media breakpoints and use rem/em/vw/% instead of fixed px values",
+				}}
+			}
+			return nil
+		},
+	}
+}
+
+// missingErrorBoundaryRule flags React apps that catch no render errors.
+func missingErrorBoundaryRule() Rule {
+	errorBoundary := regexp.MustCompile(`(?i)(ErrorBoundary|componentDidCatch|error\s*boundary|getDerivedStateFromError)`)
+	reactImport := regexp.MustCompile(`(?i)(from\s+['"]react['"]|import\s+React)`)
+	return Rule{
+		ID: "ux-error-boundary", Name: "React apps must have error boundaries", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "React apps without error boundaries show blank pages on render errors",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) {
+				return nil
+			}
+			contentStr := string(content)
+			// Only check React entry points (files that render the app root)
+			isEntry := strings.Contains(contentStr, "createRoot") ||
+				strings.Contains(contentStr, "ReactDOM.render") ||
+				strings.Contains(contentStr, "hydrateRoot")
+			if !isEntry {
+				return nil
+			}
+			if reactImport.MatchString(contentStr) && !errorBoundary.MatchString(contentStr) {
+				return []Finding{{
+					RuleID:      "ux-error-boundary",
+					Category:    CatUXQuality,
+					Severity:    SevBlocking,
+					File:        file,
+					Description: "React app entry point has no ErrorBoundary — render errors show blank page",
+					Suggestion:  "Wrap the app root in an ErrorBoundary component with a user-friendly fallback UI",
+				}}
+			}
+			return nil
+		},
+	}
+}
+
+// missingLoadingStateRule flags data-fetching components without loading/error states.
+func missingLoadingStateRule() Rule {
+	fetchPatterns := regexp.MustCompile(`(useQuery|useSWR|useEffect\([^)]*fetch|\.then\(|async\s+function|await\s+fetch)`)
+	loadingPattern := regexp.MustCompile(`(?i)(loading|isLoading|isFetching|spinner|skeleton|Suspense|fallback)`)
+	return Rule{
+		ID: "ux-loading-state", Name: "Data-fetching components must have loading states", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Components that fetch data without loading states show blank/broken UI during loads",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) || isStyleFile(file) {
+				return nil
+			}
+			contentStr := string(content)
+			if fetchPatterns.MatchString(contentStr) && !loadingPattern.MatchString(contentStr) {
+				return []Finding{{
+					RuleID:      "ux-loading-state",
+					Category:    CatUXQuality,
+					Severity:    SevBlocking,
+					File:        file,
+					Description: "Component fetches data but has no loading state — users see blank/broken UI",
+					Suggestion:  "Add loading indicators (spinner, skeleton) and error states for all async operations",
+				}}
+			}
+			return nil
+		},
+	}
+}
+
+// missingFormLabelRule flags form inputs without associated labels.
+func missingFormLabelRule() Rule {
+	inputNoLabel := regexp.MustCompile(`<input\s[^>]*>`)
+	labelAttr := regexp.MustCompile(`\b(aria-label|aria-labelledby|id\s*=)\s*=`)
+	return Rule{
+		ID: "a11y-form-label", Name: "Form inputs must have labels", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Form inputs without labels are inaccessible — WCAG 2.1 Level A violation",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) && !isHTMLTemplateFile(file) {
+				return nil
+			}
+			var findings []Finding
+			contentStr := string(content)
+			lines := strings.Split(contentStr, "\n")
+			hasAnyLabel := strings.Contains(contentStr, "<label")
+			for i, line := range lines {
+				inputs := inputNoLabel.FindAllString(line, -1)
+				for _, input := range inputs {
+					// Skip hidden inputs and submit buttons
+					if strings.Contains(input, "type=\"hidden\"") || strings.Contains(input, "type='hidden'") ||
+						strings.Contains(input, "type=\"submit\"") || strings.Contains(input, "type='submit'") {
+						continue
+					}
+					// Check for inline aria-label or aria-labelledby
+					if labelAttr.MatchString(input) {
+						continue
+					}
+					// Check for placeholder (not sufficient for a11y but not as bad)
+					if strings.Contains(input, "placeholder") && hasAnyLabel {
+						continue // file has labels; placeholder alone is a mild a11y issue
+					}
+					if !hasAnyLabel && !labelAttr.MatchString(input) {
+						findings = append(findings, Finding{
+							RuleID:      "a11y-form-label",
+							Category:    CatUXQuality,
+							Severity:    SevBlocking,
+							File:        file,
+							Line:        i + 1,
+							Description: "Form input has no associated <label> or aria-label — inaccessible",
+							Suggestion:  "Add <label htmlFor=\"id\"> or aria-label=\"description\" to the input",
+							Evidence:    strings.TrimSpace(input),
+						})
+					}
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// focusTrapRule flags CSS that removes focus outlines without providing alternatives.
+func focusTrapRule() Rule {
+	outlineNone := regexp.MustCompile(`outline\s*:\s*(none|0)\b`)
+	focusVisible := regexp.MustCompile(`focus-visible`)
+	return Rule{
+		ID: "a11y-focus-visible", Name: "Focus indicators must not be removed", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Removing focus outlines makes keyboard navigation impossible — WCAG 2.1 Level AA violation",
+		Check: func(file string, content []byte) []Finding {
+			if !isStyleFile(file) && !isFrontendFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if outlineNone.MatchString(line) && !focusVisible.MatchString(line) {
+					findings = append(findings, Finding{
+						RuleID:      "a11y-focus-visible",
+						Category:    CatUXQuality,
+						Severity:    SevBlocking,
+						File:        file,
+						Line:        i + 1,
+						Description: "Focus outline removed without alternative — keyboard users lose navigation",
+						Suggestion:  "Replace outline:none with a visible :focus-visible style or custom focus indicator",
+						Evidence:    strings.TrimSpace(line),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// hardcodedColorRule flags inline styles with hardcoded colors instead of
+// design tokens or CSS variables — leads to inconsistent theming and
+// dark-mode breakage.
+func hardcodedColorRule() Rule {
+	// Inline style with hardcoded hex/rgb color
+	inlineColor := regexp.MustCompile(`style\s*=\s*\{?\{[^}]*(color|background|border)[^}]*["'](#[0-9a-fA-F]{3,8}|rgb)`)
+	return Rule{
+		ID: "ux-no-hardcoded-colors", Name: "No hardcoded colors in inline styles", Category: CatUXQuality,
+		Severity: SevMajor, Enabled: true,
+		Description: "Hardcoded colors in inline styles break theming and dark mode",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if inlineColor.MatchString(line) {
+					findings = append(findings, Finding{
+						RuleID:      "ux-no-hardcoded-colors",
+						Category:    CatUXQuality,
+						Severity:    SevMajor,
+						File:        file,
+						Line:        i + 1,
+						Description: "Hardcoded color in inline style — breaks theming and dark mode support",
+						Suggestion:  "Use CSS variables (var(--color-primary)) or design tokens instead",
+						Evidence:    strings.TrimSpace(line),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// dangerousInnerHTMLRule flags use of dangerouslySetInnerHTML in React components
+// (XSS risk + rendering inconsistency).
+func dangerousInnerHTMLRule() Rule {
+	re := regexp.MustCompile(`dangerouslySetInnerHTML`)
+	return Rule{
+		ID: "ux-no-dangerous-html", Name: "No dangerouslySetInnerHTML", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "dangerouslySetInnerHTML is an XSS vector and bypasses React's rendering — avoid unless sanitized",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) {
+				return nil
+			}
+			return regexCheck(re, file, content, "ux-no-dangerous-html", CatUXQuality, SevBlocking,
+				"Uses dangerouslySetInnerHTML — XSS risk and bypasses virtual DOM",
+				"Use a sanitization library (DOMPurify) or render content safely with React components")
+		},
+	}
+}
+
+// missingKeyPropRule flags React list rendering without key props.
+func missingKeyPropRule() Rule {
+	mapReturn := regexp.MustCompile(`\.map\(\s*\(?[^)]*\)?\s*=>\s*[({]?\s*<`)
+	keyProp := regexp.MustCompile(`\bkey\s*=`)
+	return Rule{
+		ID: "ux-list-key", Name: "List items must have key props", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "React list items without key props cause rendering bugs and poor performance",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if mapReturn.MatchString(line) {
+					// Check this line and the next few for a key prop
+					context := line
+					for j := i + 1; j < len(lines) && j <= i+3; j++ {
+						context += lines[j]
+					}
+					if !keyProp.MatchString(context) {
+						findings = append(findings, Finding{
+							RuleID:      "ux-list-key",
+							Category:    CatUXQuality,
+							Severity:    SevBlocking,
+							File:        file,
+							Line:        i + 1,
+							Description: "List rendering via .map() without key prop — causes render bugs and poor performance",
+							Suggestion:  "Add a unique key prop to the first element returned from .map()",
+							Evidence:    strings.TrimSpace(line),
+						})
+					}
+				}
+			}
+			return findings
+		},
+	}
 }

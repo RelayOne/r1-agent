@@ -209,6 +209,17 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 5. Run build and test commands to verify your work before declaring done.
 6. If you encounter a blocker you cannot resolve, explain it clearly — do not silently skip it.
 
+## UX Quality Rules (if building UI)
+If this task involves frontend/UI work, these are NOT optional:
+- Every image MUST have alt text. Every form input MUST have a label.
+- Every interactive element MUST be keyboard-accessible (use semantic HTML: button, a, input).
+- Layout MUST be responsive — test at mobile (320px), tablet (768px), and desktop widths.
+- Every async operation MUST have loading AND error states — no blank screens.
+- Use CSS variables or design tokens for colors — no hardcoded hex in inline styles.
+- Handle empty states explicitly — show helpful messages when there's no data.
+- Focus indicators must be visible for keyboard navigation.
+- React: wrap app in ErrorBoundary, use key props on list items.
+
 `)
 
 	if ctx.GapsBlock != "" {
@@ -272,6 +283,22 @@ ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
 - Every function has proper error handling
 - Tests verify BEHAVIOR, not just compilation — tautological tests are failures
 - Edge cases handled: nil inputs, empty strings, concurrent access, error paths
+
+**Gate 3a: UX quality — if the project has a UI, it must be complete and accessible**
+- ALL images have alt attributes (WCAG 2.1 Level A)
+- ALL form inputs have associated labels or aria-label
+- ALL interactive elements are keyboard-accessible (no onClick on div without role/tabIndex)
+- Focus indicators are never removed without replacement (outline:none requires :focus-visible)
+- Responsive viewport meta tag present in HTML documents
+- Stylesheets use media queries and responsive units — layout works on mobile/tablet/desktop
+- Data-fetching components have loading states AND error states — no blank screens
+- React apps have ErrorBoundary at the root — render errors show fallback, not blank page
+- No dangerouslySetInnerHTML without sanitization (XSS vector)
+- List rendering uses key props (React .map() without key = render bugs)
+- No hardcoded colors in inline styles — use CSS variables or design tokens for theming
+- UI is consistent: spacing, typography, color palette follow a design system
+- Forms have client-side validation with clear error messages
+- Empty states are handled — don't show blank pages when there's no data
 
 **Gate 4: Everything was researched and confirmed accurate**
 No guesses. No hallucinated APIs. Every external dependency, every algorithm choice,
@@ -377,6 +404,9 @@ The entire system must work, not just the parts that were changed:
 - Could the architecture be cleaner?
 - Are there performance issues?
 - Is error handling comprehensive everywhere, not just in new code?
+- If there is a UI: is it accessible? Responsive? Does it handle loading/error/empty states?
+- Would a real user on a phone, using a screen reader, or on a slow connection have a good experience?
+- Are focus indicators visible? Can every interactive element be reached by keyboard?
 
 ### CRITICAL: Anti-rationalization protocol
 Models will generate sophisticated-sounding reasons to mark work as "done":

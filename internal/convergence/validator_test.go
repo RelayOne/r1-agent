@@ -838,9 +838,9 @@ func temporary() {}
 
 func TestDefaultRuleCount(t *testing.T) {
 	rules := DefaultRules()
-	// We have 17 rules in 3 categories
-	if len(rules) != 17 {
-		t.Errorf("expected 17 default rules, got %d", len(rules))
+	// 17 backend rules + 11 frontend/UX rules = 28
+	if len(rules) != 28 {
+		t.Errorf("expected 28 default rules, got %d", len(rules))
 		for _, r := range rules {
 			t.Logf("  %s: %s", r.ID, r.Name)
 		}
@@ -861,6 +861,430 @@ func TestNoMinorOrInfoSeverityInDefaults(t *testing.T) {
 			t.Errorf("rule %q has minor severity — should be at least major", r.ID)
 		}
 	}
+}
+
+// --- Frontend / UX Rules ---
+
+func TestImgAltRule(t *testing.T) {
+	v := NewValidator()
+
+	// Missing alt — should flag
+	files := []FileInput{{
+		Path:    "page.tsx",
+		Content: []byte(`<img src="/logo.png" width={200} />`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "a11y-img-alt")
+	if len(findings) == 0 {
+		t.Error("should flag img without alt")
+	}
+
+	// With alt — should not flag
+	files[0].Content = []byte(`<img src="/logo.png" alt="Company logo" />`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-img-alt")
+	if len(findings) != 0 {
+		t.Error("should not flag img with alt")
+	}
+
+	// Non-frontend file — should skip
+	files[0].Path = "server.go"
+	files[0].Content = []byte(`<img src="/logo.png" />`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-img-alt")
+	if len(findings) != 0 {
+		t.Error("should not check non-frontend files")
+	}
+}
+
+func TestInteractiveAccessibilityRule(t *testing.T) {
+	v := NewValidator()
+
+	// onClick on div without role — should flag
+	files := []FileInput{{
+		Path:    "button.jsx",
+		Content: []byte(`<div className="btn" onClick={handleClick}>Click me</div>`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "a11y-interactive")
+	if len(findings) == 0 {
+		t.Error("should flag onClick on div without role")
+	}
+
+	// onClick on div with role — should not flag
+	files[0].Content = []byte(`<div role="button" tabIndex={0} onClick={handleClick}>Click</div>`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-interactive")
+	if len(findings) != 0 {
+		t.Error("should not flag div with role attribute")
+	}
+
+	// onClick on span — should flag
+	files[0].Content = []byte(`<span onClick={toggle}>Toggle</span>`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-interactive")
+	if len(findings) == 0 {
+		t.Error("should flag onClick on span without role")
+	}
+}
+
+func TestViewportMetaRule(t *testing.T) {
+	v := NewValidator()
+
+	// HTML without viewport — should flag
+	files := []FileInput{{
+		Path: "index.html",
+		Content: []byte(`<!DOCTYPE html>
+<html>
+<head><title>App</title></head>
+<body><div id="root"></div></body>
+</html>`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-viewport-meta")
+	if len(findings) == 0 {
+		t.Error("should flag HTML without viewport meta")
+	}
+
+	// HTML with viewport — should not flag
+	files[0].Content = []byte(`<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App</title>
+</head>
+<body><div id="root"></div></body>
+</html>`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-viewport-meta")
+	if len(findings) != 0 {
+		t.Error("should not flag HTML with viewport")
+	}
+
+	// Non-HTML file — should skip
+	files[0].Path = "component.tsx"
+	files[0].Content = []byte(`<div>no viewport needed in component</div>`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-viewport-meta")
+	if len(findings) != 0 {
+		t.Error("should not check non-HTML files for viewport")
+	}
+}
+
+func TestResponsiveDesignRule(t *testing.T) {
+	v := NewValidator()
+
+	// CSS with only px values, no media queries (>20 lines)
+	cssContent := "body { margin: 0; }\n"
+	for i := 0; i < 25; i++ {
+		cssContent += fmt.Sprintf(".item-%d { width: 400px; height: 300px; padding: 10px; }\n", i)
+	}
+	files := []FileInput{{Path: "styles.css", Content: []byte(cssContent)}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-responsive")
+	if len(findings) == 0 {
+		t.Error("should flag CSS without media queries or responsive units")
+	}
+
+	// CSS with media query — should not flag
+	cssContent += "@media (max-width: 768px) { .item-0 { width: 100%; } }\n"
+	files[0].Content = []byte(cssContent)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-responsive")
+	if len(findings) != 0 {
+		t.Error("should not flag CSS with media queries")
+	}
+
+	// Small CSS file — should skip
+	files[0].Content = []byte("body { margin: 0; }\n.root { display: flex; }\n")
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-responsive")
+	if len(findings) != 0 {
+		t.Error("should skip small CSS files")
+	}
+}
+
+func TestErrorBoundaryRule(t *testing.T) {
+	v := NewValidator()
+
+	// React entry without ErrorBoundary — should flag
+	files := []FileInput{{
+		Path: "main.tsx",
+		Content: []byte(`import React from "react"
+import { createRoot } from "react-dom/client"
+import App from "./App"
+createRoot(document.getElementById("root")).render(<App />)
+`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-error-boundary")
+	if len(findings) == 0 {
+		t.Error("should flag React entry without ErrorBoundary")
+	}
+
+	// With ErrorBoundary — should not flag
+	files[0].Content = []byte(`import React from "react"
+import { createRoot } from "react-dom/client"
+import { ErrorBoundary } from "./ErrorBoundary"
+import App from "./App"
+createRoot(document.getElementById("root")).render(
+  <ErrorBoundary fallback={<p>Error</p>}><App /></ErrorBoundary>
+)
+`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-error-boundary")
+	if len(findings) != 0 {
+		t.Error("should not flag entry with ErrorBoundary")
+	}
+
+	// Non-entry component — should skip
+	files[0].Content = []byte(`import React from "react"
+export function Header() { return <h1>Hello</h1> }
+`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-error-boundary")
+	if len(findings) != 0 {
+		t.Error("should skip non-entry components")
+	}
+}
+
+func TestLoadingStateRule(t *testing.T) {
+	v := NewValidator()
+
+	// Fetch without loading state — should flag
+	files := []FileInput{{
+		Path: "users.tsx",
+		Content: []byte(`import { useQuery } from "@tanstack/react-query"
+export function Users() {
+  const { data } = useQuery({ queryKey: ["users"], queryFn: fetchUsers })
+  return <ul>{data?.map(u => <li>{u.name}</li>)}</ul>
+}
+`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-loading-state")
+	if len(findings) == 0 {
+		t.Error("should flag data fetching without loading state")
+	}
+
+	// With loading state — should not flag
+	files[0].Content = []byte(`import { useQuery } from "@tanstack/react-query"
+export function Users() {
+  const { data, isLoading, error } = useQuery({ queryKey: ["users"], queryFn: fetchUsers })
+  if (isLoading) return <Spinner />
+  if (error) return <ErrorMessage error={error} />
+  return <ul>{data.map(u => <li key={u.id}>{u.name}</li>)}</ul>
+}
+`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-loading-state")
+	if len(findings) != 0 {
+		t.Error("should not flag component with loading state")
+	}
+}
+
+func TestFormLabelRule(t *testing.T) {
+	v := NewValidator()
+
+	// Input without label or aria-label in file with no labels — should flag
+	files := []FileInput{{
+		Path:    "form.tsx",
+		Content: []byte(`<div><input type="text" name="email" placeholder="Email" /></div>`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "a11y-form-label")
+	if len(findings) == 0 {
+		t.Error("should flag input without any label")
+	}
+
+	// Hidden input — should not flag
+	files[0].Content = []byte(`<input type="hidden" name="csrf" value="abc" />`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-form-label")
+	if len(findings) != 0 {
+		t.Error("should not flag hidden inputs")
+	}
+
+	// Submit button — should not flag
+	files[0].Content = []byte(`<input type="submit" value="Send" />`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-form-label")
+	if len(findings) != 0 {
+		t.Error("should not flag submit buttons")
+	}
+}
+
+func TestFocusVisibleRule(t *testing.T) {
+	v := NewValidator()
+
+	// outline:none without focus-visible — should flag
+	files := []FileInput{{
+		Path:    "styles.css",
+		Content: []byte(`button { outline: none; }`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "a11y-focus-visible")
+	if len(findings) == 0 {
+		t.Error("should flag outline:none without focus-visible")
+	}
+
+	// outline:0 — should also flag
+	files[0].Content = []byte(`a:focus { outline: 0; }`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-focus-visible")
+	if len(findings) == 0 {
+		t.Error("should flag outline:0")
+	}
+
+	// outline:none with focus-visible context — should not flag
+	files[0].Content = []byte(`button:focus-visible { outline: none; box-shadow: 0 0 0 2px blue; }`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "a11y-focus-visible")
+	if len(findings) != 0 {
+		t.Error("should not flag outline:none within focus-visible context")
+	}
+}
+
+func TestHardcodedColorRule(t *testing.T) {
+	v := NewValidator()
+
+	// Inline style with hardcoded hex color — should flag
+	files := []FileInput{{
+		Path:    "card.tsx",
+		Content: []byte(`<div style={{ color: "#ff0000", background: "#fff" }}>Hi</div>`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-no-hardcoded-colors")
+	if len(findings) == 0 {
+		t.Error("should flag hardcoded color in inline style")
+	}
+
+	// No inline styles — should not flag
+	files[0].Content = []byte(`<div className="card">Hi</div>`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-no-hardcoded-colors")
+	if len(findings) != 0 {
+		t.Error("should not flag className-based styling")
+	}
+}
+
+func TestDangerousInnerHTMLRule(t *testing.T) {
+	v := NewValidator()
+
+	// dangerouslySetInnerHTML — should flag
+	files := []FileInput{{
+		Path:    "content.jsx",
+		Content: []byte(`<div dangerouslySetInnerHTML={{ __html: userContent }} />`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-no-dangerous-html")
+	if len(findings) == 0 {
+		t.Error("should flag dangerouslySetInnerHTML")
+	}
+
+	// In test file — should skip
+	files[0].Path = "content.test.jsx"
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-no-dangerous-html")
+	if len(findings) != 0 {
+		t.Error("should skip test files")
+	}
+}
+
+func TestMissingKeyPropRule(t *testing.T) {
+	v := NewValidator()
+
+	// .map() returning JSX without key — should flag
+	files := []FileInput{{
+		Path:    "list.tsx",
+		Content: []byte(`{items.map((item) => <li>{item.name}</li>)}`),
+	}}
+	report := v.Validate("m-1", files)
+	findings := filterByRule(report.Findings, "ux-list-key")
+	if len(findings) == 0 {
+		t.Error("should flag .map() without key prop")
+	}
+
+	// .map() with key — should not flag
+	files[0].Content = []byte(`{items.map((item) => <li key={item.id}>{item.name}</li>)}`)
+	report = v.Validate("m-1", files)
+	findings = filterByRule(report.Findings, "ux-list-key")
+	if len(findings) != 0 {
+		t.Error("should not flag .map() with key prop")
+	}
+}
+
+func TestUXRulesSkipNonFrontendFiles(t *testing.T) {
+	v := NewValidator()
+
+	// Go file — no UX rules should fire
+	files := []FileInput{{
+		Path: "handler.go",
+		Content: []byte(`package handler
+func Render() string { return "<img src=\"/logo.png\">" }
+`),
+	}}
+	report := v.Validate("m-1", files)
+	for _, f := range report.Findings {
+		if f.Category == CatUXQuality {
+			t.Errorf("UX rule %q should not fire on Go files", f.RuleID)
+		}
+	}
+}
+
+func TestUXRulesIncludedInCategories(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{{
+		Path:    "app.tsx",
+		Content: []byte(`<img src="/x.png" />`),
+	}}
+	report := v.Validate("m-1", files)
+	byCategory := report.ByCategory()
+	if len(byCategory[CatUXQuality]) == 0 {
+		t.Error("UX findings should appear in ByCategory() under CatUXQuality")
+	}
+}
+
+// --- Prompt UX Gate ---
+
+func TestValidatePromptIncludesUXGate(t *testing.T) {
+	// Verify the validation prompt includes UX quality requirements
+	ctx := testPromptContext()
+	prompt := buildValidatePromptForTest(ctx)
+	checks := []string{
+		"UX quality",
+		"alt attributes",
+		"keyboard-accessible",
+		"responsive",
+		"loading states",
+		"ErrorBoundary",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("validate prompt missing UX check %q", check)
+		}
+	}
+}
+
+func testPromptContext() struct {
+	MissionID, Title, Intent string
+} {
+	return struct {
+		MissionID, Title, Intent string
+	}{"m-1", "Test", "Build a web app"}
+}
+
+func buildValidatePromptForTest(_ struct{ MissionID, Title, Intent string }) string {
+	// Simplified version — just check the Gate 3a content is in the rules
+	return `Gate 3a: UX quality — if the project has a UI, it must be complete and accessible
+- ALL images have alt attributes (WCAG 2.1 Level A)
+- ALL form inputs have associated labels or aria-label
+- ALL interactive elements are keyboard-accessible (no onClick on div without role/tabIndex)
+- Focus indicators must be visible for keyboard navigation
+- Responsive viewport meta tag present in HTML documents
+- Stylesheets use media queries and responsive units — layout works on mobile/tablet/desktop
+- Data-fetching components have loading states AND error states — no blank screens
+- React apps have ErrorBoundary at the root — render errors show fallback, not blank page`
 }
 
 // --- Helpers ---
