@@ -366,6 +366,8 @@ func main() {
 		poolsCmd(os.Args[2:])
 	case "remove-pool":
 		removePoolCmd(os.Args[2:])
+	case "mission":
+		missionCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
