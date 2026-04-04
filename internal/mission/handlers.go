@@ -32,7 +32,10 @@ import (
 	"github.com/ericmacdougall/stoke/internal/baseline"
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
+	"github.com/ericmacdougall/stoke/internal/depgraph"
 	"github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/ericmacdougall/stoke/internal/symindex"
+	"github.com/ericmacdougall/stoke/internal/tfidf"
 )
 
 // HandlerDeps bundles the dependencies that phase handlers need.
@@ -87,6 +90,18 @@ type HandlerDeps struct {
 	// consensus prompt (built from BuildMissionConsensusPrompt with the validation
 	// report embedded). Returns the verdict and reasoning.
 	ConsensusModelFn func(ctx context.Context, missionID, model, prompt string) (verdict, reasoning string, gapsFound []string, err error)
+
+	// SymbolIndex is an optional pre-built symbol index for the repo.
+	// If nil, the research handler builds one on-demand.
+	SymbolIndex *symindex.Index
+
+	// DepGraph is an optional pre-built dependency graph.
+	// If nil, the research handler builds one on-demand.
+	DepGraph *depgraph.Graph
+
+	// TFIDFIndex is an optional pre-built TF-IDF search index.
+	// If nil, the research handler builds one on-demand.
+	TFIDFIndex *tfidf.Index
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -180,46 +195,125 @@ func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
 }
 
 // NewResearchHandler creates a handler for the Researching phase.
-// It searches the codebase for relevant files, records research entries,
-// and builds the research prompt for downstream phases.
+// It uses multi-signal semantic search to map the mission intent against
+// the codebase: TF-IDF content search, symbol index, and dependency graph.
+//
+// Instead of matching keywords against filenames, it:
+//  1. Searches file content semantically (TF-IDF) for intent-related concepts
+//  2. Finds symbols (functions, types, classes) related to the intent
+//  3. Traces dependency chains to find consumers and producers
+//  4. Expands the result set via impact analysis (dependents of relevant files)
 func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
 
-		// Build mission context and research prompt
 		mc := buildMissionContext(deps, m)
 		researchPrompt := prompts.BuildMissionResearchPrompt(mc)
 
-		// Research by scanning the repo for files related to the mission intent
-		var findings []string
-		keywords := extractMissionKeywords(m.Intent)
+		relevantFiles := make(map[string]float64) // file -> relevance score
+		var artifacts = map[string]string{"prompt": researchPrompt}
 
 		if deps.RepoRoot != "" {
-			filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return nil
-				}
-				rel, _ := filepath.Rel(deps.RepoRoot, path)
-				if strings.HasPrefix(rel, ".") || strings.Contains(rel, "vendor/") ||
-					strings.Contains(rel, "node_modules/") {
-					return nil
-				}
-				name := strings.ToLower(d.Name())
-				for _, kw := range keywords {
-					if strings.Contains(name, kw) {
-						findings = append(findings, rel)
-						break
+			exts := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java",
+				".css", ".scss", ".html", ".vue", ".svelte", ".yaml", ".yml", ".json"}
+
+			// Signal 1: TF-IDF content search — find files whose content relates to the intent
+			tfidfIdx := deps.TFIDFIndex
+			if tfidfIdx == nil {
+				tfidfIdx, _ = tfidf.Build(deps.RepoRoot, exts)
+			}
+			if tfidfIdx != nil {
+				// Search with the full intent + each criterion as separate queries
+				queries := []string{m.Intent}
+				for _, c := range m.Criteria {
+					if !c.Satisfied {
+						queries = append(queries, c.Description)
 					}
 				}
-				return nil
-			})
+				for _, q := range queries {
+					results := tfidfIdx.Search(q, 20)
+					for _, r := range results {
+						if r.Score > 0 {
+							relevantFiles[r.Path] += r.Score
+						}
+					}
+				}
+			}
+
+			// Signal 2: Symbol index — find symbols whose names relate to the intent
+			symIdx := deps.SymbolIndex
+			if symIdx == nil {
+				symIdx, _ = symindex.Build(deps.RepoRoot)
+			}
+			if symIdx != nil {
+				keywords := extractMissionKeywords(m.Intent)
+				for _, kw := range keywords {
+					syms := symIdx.Search(kw)
+					for _, s := range syms {
+						relevantFiles[s.File] += 0.5
+					}
+				}
+				// Also look up exact symbol names from criteria
+				for _, c := range m.Criteria {
+					for _, kw := range extractMissionKeywords(c.Description) {
+						syms := symIdx.Search(kw)
+						for _, s := range syms {
+							relevantFiles[s.File] += 0.3
+						}
+					}
+				}
+			}
+
+			// Signal 3: Dependency graph — expand via impact analysis
+			// Files that import or are imported by relevant files are also relevant
+			graph := deps.DepGraph
+			if graph == nil {
+				graph, _ = depgraph.Build(deps.RepoRoot, exts)
+			}
+			if graph != nil {
+				// Get the top files from signals 1+2
+				topFiles := topN(relevantFiles, 15)
+				for _, f := range topFiles {
+					// Add consumers (dependents) — what uses this file
+					for _, dep := range graph.Dependents(f) {
+						relevantFiles[dep] += 0.2
+					}
+					// Add producers (dependencies) — what this file uses
+					for _, dep := range graph.Dependencies(f) {
+						relevantFiles[dep] += 0.15
+					}
+				}
+
+				// Build a graph summary artifact for downstream phases
+				var graphSummary strings.Builder
+				for _, f := range topFiles {
+					deps := graph.Dependencies(f)
+					dependents := graph.Dependents(f)
+					if len(deps) > 0 || len(dependents) > 0 {
+						graphSummary.WriteString(fmt.Sprintf("%s:\n", f))
+						if len(deps) > 0 {
+							graphSummary.WriteString(fmt.Sprintf("  imports: %s\n", strings.Join(deps[:min(len(deps), 5)], ", ")))
+						}
+						if len(dependents) > 0 {
+							graphSummary.WriteString(fmt.Sprintf("  imported by: %s\n", strings.Join(dependents[:min(len(dependents), 5)], ", ")))
+						}
+					}
+				}
+				if graphSummary.Len() > 0 {
+					artifacts["dependency_map"] = graphSummary.String()
+				}
+			}
 		}
 
 		if deps.Metrics != nil {
 			deps.Metrics.RecordResearchQuery()
 		}
 
-		summary := fmt.Sprintf("Found %d relevant files for mission intent", len(findings))
+		// Rank and select top results
+		findings := topN(relevantFiles, 30)
+
+		summary := fmt.Sprintf("Semantic search found %d relevant files across %d signals",
+			len(findings), countSignals(deps))
 		if len(findings) > 0 {
 			summary += ": " + strings.Join(findings[:min(len(findings), 5)], ", ")
 			if len(findings) > 5 {
@@ -231,13 +325,50 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 			Phase:        PhaseResearching,
 			Summary:      summary,
 			FilesChanged: findings,
-			Artifacts: map[string]string{
-				"prompt": researchPrompt,
-			},
-			Duration: time.Since(start),
-			Agent:    "research-handler",
+			Artifacts:    artifacts,
+			Duration:     time.Since(start),
+			Agent:        "research-handler",
 		}, nil
 	}
+}
+
+// topN returns the top N files sorted by relevance score (descending).
+func topN(scores map[string]float64, n int) []string {
+	type scored struct {
+		path  string
+		score float64
+	}
+	var items []scored
+	for path, score := range scores {
+		items = append(items, scored{path, score})
+	}
+	// Sort by score descending
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			if items[j].score > items[i].score {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+	var result []string
+	for i, item := range items {
+		if i >= n {
+			break
+		}
+		result = append(result, item.path)
+	}
+	return result
+}
+
+// countSignals returns how many search signals are available.
+func countSignals(deps HandlerDeps) int {
+	count := 0
+	if deps.RepoRoot != "" {
+		count++ // TF-IDF always available with RepoRoot
+		count++ // Symbol index always available
+		count++ // Dep graph always available
+	}
+	return count
 }
 
 // NewPlanHandler creates a handler for the Planning phase.
