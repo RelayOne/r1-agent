@@ -63,16 +63,18 @@ Flags vary by subcommand. Use "stoke mission <subcommand> --help" for details.
 }
 
 func getOrchestrator(storeDir string) (*orchestrate.Orchestrator, error) {
-	return getOrchestratorWithDiscovery(storeDir, "", false)
+	orch, _, err := getOrchestratorWithDiscovery(storeDir, "", false)
+	return orch, err
 }
 
 // getOrchestratorWithDiscovery creates an orchestrator with optional agentic
 // discovery engine wired in. When enabled, the DiscoveryEngine creates
 // multi-turn Claude sessions with MCP codebase tools for deep code analysis.
-func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) (*orchestrate.Orchestrator, error) {
+// Returns the discovery engine (may be nil) so the caller can call Cleanup().
+func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) (*orchestrate.Orchestrator, *orchestrate.DiscoveryEngine, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if storeDir == "" {
 		storeDir = filepath.Join(cwd, ".stoke", "data")
@@ -83,14 +85,22 @@ func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) 
 		RepoRoot: cwd,
 	}
 
+	var de *orchestrate.DiscoveryEngine
 	if !noDiscovery {
 		runner := engine.NewClaudeRunner(claudeBin)
-		de := orchestrate.NewDiscoveryEngine(runner, cwd)
+		de = orchestrate.NewDiscoveryEngine(runner, cwd)
 		config.DiscoveryFn = de.DiscoveryFn()
 		config.ValidateDiscoveryFn = de.ValidateDiscoveryFn()
 	}
 
-	return orchestrate.New(config)
+	orch, err := orchestrate.New(config)
+	if err != nil {
+		if de != nil {
+			de.Cleanup()
+		}
+		return nil, nil, err
+	}
+	return orch, de, nil
 }
 
 // --- create ---
@@ -307,12 +317,15 @@ func missionRunCmd(args []string) {
 		os.Exit(1)
 	}
 
-	orch, err := getOrchestratorWithDiscovery(*storeDir, *claudeBin, *noDiscovery)
+	orch, de, err := getOrchestratorWithDiscovery(*storeDir, *claudeBin, *noDiscovery)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	defer orch.Close()
+	if de != nil {
+		defer de.Cleanup()
+	}
 
 	config := mission.RunnerConfig{
 		MaxConvergenceLoops: *maxLoops,
