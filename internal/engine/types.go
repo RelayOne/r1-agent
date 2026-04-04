@@ -74,6 +74,10 @@ type RunSpec struct {
 	SandboxDomains    []string
 	SandboxAllowRead  []string
 	SandboxAllowWrite []string
+
+	// Pool API fields (for APIRunner / GeminiRunner direct API access)
+	PoolAPIKey string
+	PoolBaseURL string
 }
 
 // Validate checks that all required RunSpec fields are present.
