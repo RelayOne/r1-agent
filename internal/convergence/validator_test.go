@@ -1308,6 +1308,62 @@ func testPromptContext() struct {
 	}{"m-1", "Test", "Build a web app"}
 }
 
+func TestValidateSecurityOnlyRunsOnlySecurityRules(t *testing.T) {
+	v := NewValidator()
+	files := []FileInput{
+		{
+			Path: "app.go",
+			Content: []byte(`package app
+
+// TODO: implement this
+func handler() {
+	api_key = "abcdefghijklmnopqrstuvwxyz1234567890"
+	fmt.Println("debug")
+	db.Query("SELECT * FROM users WHERE id=" + userID)
+}
+`),
+		},
+	}
+
+	// Full validation finds TODO, debug log, secret, and SQL injection
+	full := v.Validate("m-full", files)
+	fullRuleIDs := map[string]bool{}
+	for _, f := range full.Findings {
+		fullRuleIDs[f.RuleID] = true
+	}
+	if !fullRuleIDs["no-todo"] {
+		t.Error("full validate should find TODO")
+	}
+	if !fullRuleIDs["no-secrets"] {
+		t.Error("full validate should find secrets")
+	}
+
+	// Security-only validation should only find secrets and SQL injection
+	secOnly := v.ValidateSecurityOnly("m-sec", files)
+	for _, f := range secOnly.Findings {
+		if !securityRuleIDs[f.RuleID] {
+			t.Errorf("security-only validation should not include rule %q (category %s)", f.RuleID, f.Category)
+		}
+	}
+	secRuleIDs := map[string]bool{}
+	for _, f := range secOnly.Findings {
+		secRuleIDs[f.RuleID] = true
+	}
+	if !secRuleIDs["no-secrets"] {
+		t.Error("security-only should still find hardcoded secrets")
+	}
+	if !secRuleIDs["no-sql-injection"] {
+		t.Error("security-only should still find SQL injection")
+	}
+	// Should NOT find TODO, debug logs, etc.
+	if secRuleIDs["no-todo"] {
+		t.Error("security-only should not flag TODO markers")
+	}
+	if secRuleIDs["no-debug-logs"] {
+		t.Error("security-only should not flag debug logs")
+	}
+}
+
 func buildValidatePromptForTest(_ struct{ MissionID, Title, Intent string }) string {
 	// Simplified version — just check the Gate 3a content is in the rules
 	return `Gate 3a: UX quality — if the project has a UI, it must be complete and accessible

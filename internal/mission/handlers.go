@@ -225,14 +225,16 @@ func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
 }
 
 // NewResearchHandler creates a handler for the Researching phase.
-// It uses multi-signal semantic search to map the mission intent against
-// the codebase: TF-IDF content search, symbol index, and dependency graph.
 //
-// Instead of matching keywords against filenames, it:
-//  1. Searches file content semantically (TF-IDF) for intent-related concepts
-//  2. Finds symbols (functions, types, classes) related to the intent
-//  3. Traces dependency chains to find consumers and producers
-//  4. Expands the result set via impact analysis (dependents of relevant files)
+// When DiscoveryFn is configured, it drives a multi-turn model loop that
+// iteratively queries the codebase via MCP tools (search_symbols,
+// get_dependencies, search_content, get_file_symbols, impact_analysis).
+// The model reasons about intent, traces code paths, maps consumer/producer
+// relationships, and verifies cross-surface reachability — fundamentally
+// superior to any static signal combination.
+//
+// When DiscoveryFn is NOT configured, falls back to deterministic multi-signal
+// search (TF-IDF, symbol index, dependency graph expansion).
 func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
@@ -246,8 +248,9 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 		// Primary path: Agentic discovery loop (model-driven, multi-turn)
 		// The model iteratively queries the codebase to build a complete
 		// map of what exists, what's missing, consumers, producers, and
-		// reachability. This is fundamentally better than any static
-		// analysis because the model reasons about intent, not patterns.
+		// reachability. The model has access to all deterministic signals
+		// (TF-IDF, symbols, dependencies) as MCP tools and can invoke
+		// them with reasoning about what to look for next.
 		if deps.DiscoveryFn != nil {
 			discoveryPrompt := prompts.BuildMissionDiscoveryPrompt(mc)
 			discoveryResult, err := deps.DiscoveryFn(ctx, m, discoveryPrompt)
@@ -265,12 +268,12 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 					}
 				}
 			}
-		}
-
-		// Fallback: Deterministic multi-signal search
-		// Used when DiscoveryFn is not configured, or to supplement
-		// model discovery with additional signals.
-		if deps.RepoRoot != "" {
+			// When DiscoveryFn is configured, we skip the deterministic fallback.
+			// The model already has access to TF-IDF, symbols, and dependency
+			// graph as MCP tools and can invoke them with intent-aware reasoning.
+		} else if deps.RepoRoot != "" {
+			// Fallback: Deterministic multi-signal search
+			// Only used when DiscoveryFn is not configured.
 			exts := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java",
 				".css", ".scss", ".html", ".vue", ".svelte", ".yaml", ".yml", ".json"}
 
@@ -280,7 +283,6 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 				tfidfIdx, _ = tfidf.Build(deps.RepoRoot, exts)
 			}
 			if tfidfIdx != nil {
-				// Search with the full intent + each criterion as separate queries
 				queries := []string{m.Intent}
 				for _, c := range m.Criteria {
 					if !c.Satisfied {
@@ -310,7 +312,6 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 						relevantFiles[s.File] += 0.5
 					}
 				}
-				// Also look up exact symbol names from criteria
 				for _, c := range m.Criteria {
 					for _, kw := range extractMissionKeywords(c.Description) {
 						syms := symIdx.Search(kw)
@@ -322,26 +323,21 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 			}
 
 			// Signal 3: Dependency graph — expand via impact analysis
-			// Files that import or are imported by relevant files are also relevant
 			graph := deps.DepGraph
 			if graph == nil {
 				graph, _ = depgraph.Build(deps.RepoRoot, exts)
 			}
 			if graph != nil {
-				// Get the top files from signals 1+2
 				topFiles := topN(relevantFiles, 15)
 				for _, f := range topFiles {
-					// Add consumers (dependents) — what uses this file
 					for _, dep := range graph.Dependents(f) {
 						relevantFiles[dep] += 0.2
 					}
-					// Add producers (dependencies) — what this file uses
 					for _, dep := range graph.Dependencies(f) {
 						relevantFiles[dep] += 0.15
 					}
 				}
 
-				// Build a graph summary artifact for downstream phases
 				var graphSummary strings.Builder
 				for _, f := range topFiles {
 					deps := graph.Dependencies(f)
@@ -609,6 +605,10 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 		}
 
 		// --- Layer 2: Static analysis (convergence rules) ---
+		// When Layer 4 (agentic discovery validation) is available, we only
+		// run security-critical rules here. The model handles completeness,
+		// test quality, code quality, and UX analysis far better than regex.
+		// When Layer 4 is NOT available, we run the full rule set.
 		if deps.Validator != nil {
 			var files []convergence.FileInput
 			filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, err error) error {
@@ -630,18 +630,24 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				return nil
 			})
 
-			var criteriaDescs []string
-			for _, c := range m.Criteria {
-				if !c.Satisfied {
-					criteriaDescs = append(criteriaDescs, c.Description)
-				}
-			}
-
 			var report *convergence.Report
-			if len(criteriaDescs) > 0 {
-				report = deps.Validator.ValidateWithCriteria(m.ID, files, criteriaDescs)
+			if deps.ValidateDiscoveryFn != nil {
+				// Agentic validation is available — only run security rules.
+				// The model handles everything else with far more accuracy.
+				report = deps.Validator.ValidateSecurityOnly(m.ID, files)
 			} else {
-				report = deps.Validator.Validate(m.ID, files)
+				// No agentic validation — run full rule set including criteria.
+				var criteriaDescs []string
+				for _, c := range m.Criteria {
+					if !c.Satisfied {
+						criteriaDescs = append(criteriaDescs, c.Description)
+					}
+				}
+				if len(criteriaDescs) > 0 {
+					report = deps.Validator.ValidateWithCriteria(m.ID, files, criteriaDescs)
+				} else {
+					report = deps.Validator.Validate(m.ID, files)
+				}
 			}
 
 			for i, f := range report.Findings {
@@ -666,8 +672,12 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				}
 			}
 
-			summaryParts = append(summaryParts, fmt.Sprintf("static: score=%.2f, %d findings (%d blocking)",
-				report.Score, len(report.Findings), report.BlockingCount()))
+			mode := "full"
+			if deps.ValidateDiscoveryFn != nil {
+				mode = "security-only"
+			}
+			summaryParts = append(summaryParts, fmt.Sprintf("static(%s): score=%.2f, %d findings (%d blocking)",
+				mode, report.Score, len(report.Findings), report.BlockingCount()))
 		}
 
 		// --- Layer 3: Single-shot adversarial LLM validation ---

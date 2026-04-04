@@ -251,6 +251,59 @@ func (v *Validator) ValidateWithCriteria(missionID string, files []FileInput, cr
 	return buildReport(missionID, findings, len(enabledRules), start)
 }
 
+// securityRuleIDs lists the rule IDs that detect real security vulnerabilities.
+// These are worth running even when agentic model validation is available,
+// because they catch concrete patterns (hardcoded secrets, injection vectors)
+// that a model might overlook in a single pass.
+var securityRuleIDs = map[string]bool{
+	"no-secrets":           true,
+	"no-sql-injection":     true,
+	"no-command-injection": true,
+	"no-path-traversal":    true,
+}
+
+// ValidateSecurityOnly runs only security-critical rules against the files.
+// Used when agentic discovery validation (Layer 4) handles completeness,
+// code quality, test quality, and UX analysis — the model does those far
+// better than regex patterns. Security rules remain because they catch
+// concrete vulnerability patterns that must never ship.
+func (v *Validator) ValidateSecurityOnly(missionID string, files []FileInput) *Report {
+	start := time.Now()
+	v.mu.RLock()
+	rules := make([]Rule, len(v.rules))
+	copy(rules, v.rules)
+	v.mu.RUnlock()
+
+	var securityRules []Rule
+	for _, r := range rules {
+		if r.Enabled && securityRuleIDs[r.ID] {
+			securityRules = append(securityRules, r)
+		}
+	}
+
+	var mu sync.Mutex
+	var findings []Finding
+	var wg sync.WaitGroup
+
+	for _, file := range files {
+		for _, rule := range securityRules {
+			wg.Add(1)
+			go func(f FileInput, r Rule) {
+				defer wg.Done()
+				results := r.Check(f.Path, f.Content)
+				if len(results) > 0 {
+					mu.Lock()
+					findings = append(findings, results...)
+					mu.Unlock()
+				}
+			}(file, rule)
+		}
+	}
+	wg.Wait()
+
+	return buildReport(missionID, findings, len(securityRules), start)
+}
+
 // buildReport calculates score and produces a Report from findings.
 func buildReport(missionID string, findings []Finding, rulesApplied int, start time.Time) *Report {
 	score := 1.0
