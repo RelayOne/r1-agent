@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/mcp"
@@ -152,5 +153,95 @@ func (d *DiscoveryEngine) ValidateDiscoveryFn() func(ctx context.Context, m *mis
 func (d *DiscoveryEngine) Cleanup() {
 	if d.runtimeDir != "" {
 		os.RemoveAll(d.runtimeDir)
+	}
+}
+
+// ExecuteFn returns a callback suitable for HandlerDeps.ExecuteFn.
+// Unlike discovery (read-only, 30 turns), execution has write access
+// and runs with a full tool set so the model can implement code changes.
+// The MCP codebase tools are still available for the model to understand
+// what it's working with during implementation.
+func (d *DiscoveryEngine) ExecuteFn() func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+	return func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+		mcpConfig, runtimeDir, err := d.ensureMCPConfig()
+		if err != nil {
+			return nil, fmt.Errorf("execute MCP setup: %w", err)
+		}
+
+		spec := engine.RunSpec{
+			Prompt:      prompt,
+			WorktreeDir: d.RepoRoot,
+			RuntimeDir:  runtimeDir,
+			Mode:        d.Mode,
+			Phase: engine.PhaseSpec{
+				Name: "execute",
+				BuiltinTools: []string{
+					"Read", "Write", "Edit", "Glob", "Grep", "Bash",
+				},
+				MCPEnabled: true,
+				MaxTurns:   50, // Execution needs many turns for implementation + testing
+				ReadOnly:   false,
+			},
+			MCPConfigPath: mcpConfig,
+			PoolConfigDir: d.PoolConfigDir,
+			PoolAPIKey:    d.PoolAPIKey,
+			PoolBaseURL:   d.PoolBaseURL,
+		}
+
+		result, err := d.Runner.Run(ctx, spec, nil)
+		if err != nil {
+			return nil, fmt.Errorf("execute run: %w", err)
+		}
+
+		// Parse FILE: lines from the result to identify changed files
+		var filesChanged []string
+		for _, line := range strings.Split(result.ResultText, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "FILE:") {
+				path := strings.TrimSpace(strings.TrimPrefix(line, "FILE:"))
+				if path != "" {
+					filesChanged = append(filesChanged, path)
+				}
+			}
+		}
+
+		return filesChanged, nil
+	}
+}
+
+// ValidateFn returns a callback suitable for HandlerDeps.ValidateFn (Layer 3).
+// This is a single-shot adversarial validation — less thorough than
+// ValidateDiscoveryFn (Layer 4) but still model-driven.
+func (d *DiscoveryEngine) ValidateFn() func(ctx context.Context, m *mission.Mission, prompt string) (string, error) {
+	return func(ctx context.Context, m *mission.Mission, prompt string) (string, error) {
+		mcpConfig, runtimeDir, err := d.ensureMCPConfig()
+		if err != nil {
+			return "", fmt.Errorf("validate MCP setup: %w", err)
+		}
+
+		spec := engine.RunSpec{
+			Prompt:      prompt,
+			WorktreeDir: d.RepoRoot,
+			RuntimeDir:  runtimeDir,
+			Mode:        d.Mode,
+			Phase: engine.PhaseSpec{
+				Name:         "validate",
+				BuiltinTools: []string{"Read", "Glob", "Grep", "Bash"},
+				MCPEnabled:   true,
+				MaxTurns:     20, // Single-shot validation needs fewer turns
+				ReadOnly:     true,
+			},
+			MCPConfigPath: mcpConfig,
+			PoolConfigDir: d.PoolConfigDir,
+			PoolAPIKey:    d.PoolAPIKey,
+			PoolBaseURL:   d.PoolBaseURL,
+		}
+
+		result, err := d.Runner.Run(ctx, spec, nil)
+		if err != nil {
+			return "", fmt.Errorf("validate run: %w", err)
+		}
+
+		return result.ResultText, nil
 	}
 }

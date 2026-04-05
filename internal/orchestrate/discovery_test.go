@@ -136,3 +136,75 @@ func TestDiscoveryEngineBuiltinTools(t *testing.T) {
 		}
 	}
 }
+
+func TestExecuteFnRunSpec(t *testing.T) {
+	runner := &mockRunner{result: "FILE: auth.go\nFILE: auth_test.go\nDone."}
+	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
+	defer de.Cleanup()
+
+	fn := de.ExecuteFn()
+	m := &mission.Mission{ID: "m-1", Title: "Test", Intent: "test"}
+
+	files, err := fn(context.Background(), m, "implement auth", "add JWT auth")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spec := runner.lastSpec
+	if spec.Phase.Name != "execute" {
+		t.Errorf("expected phase name 'execute', got %q", spec.Phase.Name)
+	}
+	if spec.Phase.ReadOnly {
+		t.Error("execute should NOT be read-only")
+	}
+	if !spec.Phase.MCPEnabled {
+		t.Error("MCP should be enabled for execution")
+	}
+	if spec.Phase.MaxTurns != 50 {
+		t.Errorf("expected 50 max turns, got %d", spec.Phase.MaxTurns)
+	}
+
+	// Should have write tools
+	toolSet := map[string]bool{}
+	for _, tool := range spec.Phase.BuiltinTools {
+		toolSet[tool] = true
+	}
+	for _, required := range []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash"} {
+		if !toolSet[required] {
+			t.Errorf("missing execution tool %q", required)
+		}
+	}
+
+	// Should parse FILE: lines from output
+	if len(files) != 2 {
+		t.Errorf("expected 2 files, got %d: %v", len(files), files)
+	}
+}
+
+func TestValidateFnRunSpec(t *testing.T) {
+	runner := &mockRunner{result: "All criteria met. No gaps found."}
+	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
+	defer de.Cleanup()
+
+	fn := de.ValidateFn()
+	m := &mission.Mission{ID: "m-1"}
+
+	result, err := fn(context.Background(), m, "validate prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spec := runner.lastSpec
+	if spec.Phase.Name != "validate" {
+		t.Errorf("expected phase name 'validate', got %q", spec.Phase.Name)
+	}
+	if !spec.Phase.ReadOnly {
+		t.Error("validate should be read-only")
+	}
+	if spec.Phase.MaxTurns != 20 {
+		t.Errorf("expected 20 max turns, got %d", spec.Phase.MaxTurns)
+	}
+	if !strings.Contains(result, "No gaps found") {
+		t.Error("result should pass through from runner")
+	}
+}
