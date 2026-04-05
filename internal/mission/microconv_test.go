@@ -281,3 +281,162 @@ func TestMicroConvergenceRequiresCallbacks(t *testing.T) {
 		t.Fatalf("expected error about missing ValidateFn, got: %v", err)
 	}
 }
+
+// --- ConvergeStep Tests ---
+
+func TestConvergeStepSingleModelReviewsExecution(t *testing.T) {
+	// Even with ONE model, a fresh invocation reviewing the executor's
+	// output catches what the executor missed. The reviewer has no sunk-cost
+	// bias — it sees the work fresh and can say "no actually..."
+	var execCount, reviewCount int32
+
+	output, converged, err := ConvergeStep(context.Background(), convergeStepDeps{
+		ModelAskFn: func(ctx context.Context, model, prompt string) (string, error) {
+			atomic.AddInt32(&reviewCount, 1)
+			if strings.Contains(prompt, "reviewing work") {
+				// Fresh invocation reviewing executor's output
+				n := atomic.LoadInt32(&execCount)
+				if n < 2 {
+					return "INCOMPLETE: missing error handling for auth failures", nil
+				}
+				return "COMPLETE", nil
+			}
+			return "model answer", nil
+		},
+		Models:       []string{"claude"},
+		ArbiterModel: "claude",
+		ExecuteFn: func(ctx context.Context, feedback string) (string, error) {
+			n := atomic.AddInt32(&execCount, 1)
+			if n == 1 {
+				return "implemented login, happy path only", nil
+			}
+			return "implemented login with full error handling at auth.go:15-30", nil
+		},
+		Mission:  "implement login with error handling",
+		StepName: "test-single-model-review",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !converged {
+		t.Fatal("should converge after fixing gap")
+	}
+
+	execs := atomic.LoadInt32(&execCount)
+	if execs < 2 {
+		t.Fatalf("expected at least 2 executions (initial + fix), got %d", execs)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+}
+
+func TestConvergeStepModelAskFnAutoReviewsWithoutValidateStepFn(t *testing.T) {
+	// When ModelAskFn is set but ValidateStepFn is NOT, ConvergeStep should
+	// still use the model as a reviewer. No step should be single-shot when
+	// a model is available to review it.
+	var reviewCalled bool
+
+	_, _, err := ConvergeStep(context.Background(), convergeStepDeps{
+		ModelAskFn: func(ctx context.Context, model, prompt string) (string, error) {
+			if strings.Contains(prompt, "reviewing work") {
+				reviewCalled = true
+				return "COMPLETE", nil
+			}
+			return "answer", nil
+		},
+		Models:       []string{"claude"},
+		ArbiterModel: "claude",
+		// ValidateFn intentionally nil — model should auto-review
+		ExecuteFn: func(ctx context.Context, feedback string) (string, error) {
+			return "work done", nil
+		},
+		Mission:  "test auto-review",
+		StepName: "test-auto-review",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reviewCalled {
+		t.Fatal("model should have been used as reviewer even without ValidateStepFn")
+	}
+}
+
+func TestConvergeStepPureModelQuery(t *testing.T) {
+	// When there's no ExecuteFn, ConvergedAnswer should be used directly
+	output, converged, err := ConvergeStep(context.Background(), convergeStepDeps{
+		ModelAskFn: func(ctx context.Context, model, prompt string) (string, error) {
+			if strings.Contains(prompt, "Completeness") {
+				return "COMPLETE", nil
+			}
+			if strings.Contains(prompt, "Arbiter") {
+				return "synthesized answer", nil
+			}
+			return "model answer", nil
+		},
+		Models:       []string{"claude"},
+		ArbiterModel: "claude",
+		Mission:      "answer a question",
+		StepName:     "test-pure-query",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !converged {
+		t.Fatal("should converge")
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+}
+
+func TestConvergeStepFallsBackToSingleShot(t *testing.T) {
+	// When nothing is configured except ExecuteFn, single-shot is the only option
+	output, converged, err := ConvergeStep(context.Background(), convergeStepDeps{
+		ExecuteFn: func(ctx context.Context, feedback string) (string, error) {
+			return "single shot output", nil
+		},
+		Mission:  "no reviewer",
+		StepName: "test-single-shot",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !converged {
+		t.Fatal("single-shot should assume converged")
+	}
+	if output != "single shot output" {
+		t.Fatalf("unexpected output: %s", output)
+	}
+}
+
+func TestConvergeStepNoConfigError(t *testing.T) {
+	_, _, err := ConvergeStep(context.Background(), convergeStepDeps{
+		Mission:  "nothing configured",
+		StepName: "test-no-config",
+	})
+	if err == nil {
+		t.Fatal("expected error when nothing is configured")
+	}
+}
+
+func TestParseReviewVerdict(t *testing.T) {
+	tests := []struct {
+		verdict  string
+		wantGaps int
+	}{
+		{"COMPLETE", 0},
+		{"COMPLETE — fully satisfies all criteria", 0},
+		{"INCOMPLETE: missing tests", 1},
+		{"INCOMPLETE: missing tests; no error handling; needs docs", 3},
+		{"INCOMPLETE: gap one\ngap two\ngap three", 3},
+		{"INCOMPLETE:", 1}, // "said incomplete but no specifics"
+		{"gibberish", 1},  // unparseable
+	}
+	for _, tt := range tests {
+		gaps := parseReviewVerdict(tt.verdict)
+		if len(gaps) != tt.wantGaps {
+			t.Errorf("parseReviewVerdict(%q): got %d gaps, want %d: %v", tt.verdict, len(gaps), tt.wantGaps, gaps)
+		}
+	}
+}

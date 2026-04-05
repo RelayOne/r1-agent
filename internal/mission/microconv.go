@@ -163,23 +163,43 @@ func buildMicroFeedback(iteration int, gaps []string, scope string) string {
 	return b.String()
 }
 
-// ConvergeStep runs multi-model ConvergedAnswer when deps have ModelAskFn and
-// multiple ConvergenceModels configured. Falls back to single-model
-// MicroConvergence via ValidateStepFn. Falls back further to single-shot
-// execution if neither is configured.
+// ConvergeStep is the single entry point for convergent execution at any level.
 //
-// This is the single entry point for convergent execution at any level.
+// Strategy selection (highest available tier wins):
+//
+//   Tier 1: Multi-model ConvergedAnswer (ModelAskFn + 2+ models)
+//     All models answer in parallel, arbiter synthesizes, recurses until done.
+//
+//   Tier 2: Single-model ConvergedAnswer (ModelAskFn + 1 model)
+//     SAME model answers AND reviews in separate fresh invocations.
+//     A fresh invocation with no sunk-cost bias catches what the executor missed.
+//     Even one model produces different results across stateless calls.
+//
+//   Tier 3: ExecuteFn + ValidateFn loop (no ModelAskFn, but ValidateStepFn set)
+//     Execute work, validate with separate call, fix gaps, repeat.
+//     Uses MicroConvergence with arbiter-driven termination.
+//
+//   Tier 4: ExecuteFn + ModelAskFn review (ExecuteFn does real work, model reviews)
+//     Execute does work (writes files), then a fresh model invocation reviews.
+//     If incomplete, execute is called again with the review as feedback.
+//     Loops until the reviewer says done.
+//
+//   Tier 5: Single-shot (last resort, no convergence possible)
+//     Only when nothing else is available. Assumes converged.
 func ConvergeStep(ctx context.Context, deps convergeStepDeps) (output string, converged bool, err error) {
-	// Tier 1: Multi-model recursive convergence
-	if deps.ModelAskFn != nil && len(deps.Models) > 0 {
-		maxDepth := deps.MaxDepth
-		if maxDepth <= 0 {
-			maxDepth = 20
-		}
+	maxDepth := deps.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 20
+	}
+
+	// Tier 1 & 2: ConvergedAnswer — works with ANY number of models (even 1).
+	// A single model in separate fresh invocations produces different results.
+	// The arbiter (same model, fresh context, no sunk cost) catches gaps.
+	if deps.ModelAskFn != nil && len(deps.Models) > 0 && deps.ExecuteFn == nil {
 		result, cErr := ConvergedAnswer(ctx, ConvergedAnswerConfig{
-			Models:       deps.Models,
-			ArbiterModel: deps.ArbiterModel,
-			AskFn:        deps.ModelAskFn,
+			Models:        deps.Models,
+			ArbiterModel:  deps.ArbiterModel,
+			AskFn:         deps.ModelAskFn,
 			BiggerMission: deps.BiggerMission,
 			Mission:       deps.Mission,
 			MaxDepth:      maxDepth,
@@ -191,48 +211,156 @@ func ConvergeStep(ctx context.Context, deps convergeStepDeps) (output string, co
 		return result.Answer, result.Converged, nil
 	}
 
-	// Tier 2: Single-model micro-convergence with validation
-	if deps.ExecuteFn != nil && deps.ValidateFn != nil {
-		maxIter := deps.MaxIterations
-		if maxIter <= 0 {
-			maxIter = 3
+	// Tier 3 & 4: ExecuteFn does real work — need a reviewer to check it.
+	// Use ModelAskFn as reviewer if available, fall back to ValidateFn.
+	if deps.ExecuteFn != nil {
+		reviewFn := deps.ValidateFn
+
+		// When ModelAskFn is available, use it as the reviewer even without
+		// a dedicated ValidateStepFn. A fresh model invocation reviewing
+		// the executor's output catches what the executor missed — even
+		// if it's the same model, the fresh context has no sunk-cost bias.
+		if reviewFn == nil && deps.ModelAskFn != nil {
+			arbiter := deps.ArbiterModel
+			if arbiter == "" && len(deps.Models) > 0 {
+				arbiter = deps.Models[0]
+			}
+			if arbiter != "" {
+				reviewFn = func(rCtx context.Context, scope, execOutput string) ([]string, error) {
+					reviewPrompt := buildExecutionReviewPrompt(scope, execOutput)
+					verdict, askErr := deps.ModelAskFn(rCtx, arbiter, reviewPrompt)
+					if askErr != nil {
+						return nil, askErr
+					}
+					return parseReviewVerdict(verdict), nil
+				}
+			}
 		}
-		result, cErr := RunMicroConvergence(ctx, MicroConvergenceConfig{
-			MaxIterations: maxIter,
-			Scope:         deps.Mission,
+
+		if reviewFn != nil {
+			// Convergent loop: execute → review → fix → review → ...
+			// NO artificial cap. The reviewer decides when it's done.
+			// maxDepth is a safety circuit breaker, not the convergence condition.
+			result, cErr := RunMicroConvergence(ctx, MicroConvergenceConfig{
+				MaxIterations: maxDepth, // use maxDepth, NOT a small cap
+				Scope:         deps.Mission,
+				StepName:      deps.StepName,
+				ExecuteFn:     deps.ExecuteFn,
+				ValidateFn:    reviewFn,
+			})
+			if cErr != nil {
+				return "", false, cErr
+			}
+			return result.FinalOutput, result.Converged, nil
+		}
+
+		// Tier 5: Single-shot — no reviewer available at all.
+		output, execErr := deps.ExecuteFn(ctx, "")
+		return output, true, execErr
+	}
+
+	// Pure model query with ConvergedAnswer (no ExecuteFn)
+	if deps.ModelAskFn != nil && len(deps.Models) > 0 {
+		result, cErr := ConvergedAnswer(ctx, ConvergedAnswerConfig{
+			Models:        deps.Models,
+			ArbiterModel:  deps.ArbiterModel,
+			AskFn:         deps.ModelAskFn,
+			BiggerMission: deps.BiggerMission,
+			Mission:       deps.Mission,
+			MaxDepth:      maxDepth,
 			StepName:      deps.StepName,
-			ExecuteFn:     deps.ExecuteFn,
-			ValidateFn:    deps.ValidateFn,
 		})
 		if cErr != nil {
 			return "", false, cErr
 		}
-		return result.FinalOutput, result.Converged, nil
+		return result.Answer, result.Converged, nil
 	}
 
-	// Tier 3: Single-shot execution (no convergence validation)
-	if deps.ExecuteFn != nil {
-		output, execErr := deps.ExecuteFn(ctx, "")
-		return output, true, execErr // assume converged since we can't validate
-	}
-
-	return "", false, fmt.Errorf("converge: no execution function configured")
+	return "", false, fmt.Errorf("converge: no execution function or model configured")
 }
 
-// convergeStepDeps bundles config for ConvergeStep. Not all fields are
-// needed — ConvergeStep uses the highest-capability tier available.
+// buildExecutionReviewPrompt asks a model (in a fresh invocation) to review
+// the output of an execution step. The fresh context has no sunk-cost bias.
+func buildExecutionReviewPrompt(scope, executionOutput string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `You are reviewing work done by another agent (or a previous invocation of yourself).
+You have NO context from the execution — you're seeing this fresh. That's intentional:
+fresh eyes catch what the executor missed.
+
+## Scope (what MUST be satisfied)
+%s
+
+## Execution Output
+%s
+
+## Your Job
+
+Determine if the execution FULLY satisfies the scope. Not partially. Not "mostly." FULLY.
+
+Ask yourself:
+- Is every aspect of the scope addressed?
+- Is there evidence the work was actually done (file:line citations, test results)?
+- Are there gaps, shortcuts, or deferred work?
+- Would a domain expert find anything missing?
+- Did the executor hand-wave anything?
+
+Respond with EXACTLY one of:
+- "COMPLETE" — the work fully satisfies the scope
+- "INCOMPLETE: <specific gap 1>; <specific gap 2>; ..." — what's missing
+
+Do not hedge. Do not say "looks good enough." Either it's done or it's not.
+`, scope, executionOutput)
+	return b.String()
+}
+
+// parseReviewVerdict extracts gaps from a reviewer's COMPLETE/INCOMPLETE verdict.
+func parseReviewVerdict(verdict string) []string {
+	v := strings.TrimSpace(verdict)
+	upper := strings.ToUpper(v)
+
+	if strings.HasPrefix(upper, "COMPLETE") && !strings.HasPrefix(upper, "INCOMPLETE") {
+		return nil // converged
+	}
+
+	// Extract the gap descriptions after "INCOMPLETE:"
+	if idx := strings.Index(upper, "INCOMPLETE:"); idx >= 0 {
+		gapText := strings.TrimSpace(v[idx+len("INCOMPLETE:"):])
+		if gapText == "" {
+			return []string{"reviewer said incomplete but gave no specifics"}
+		}
+		// Split on semicolons or newlines
+		var gaps []string
+		for _, part := range strings.FieldsFunc(gapText, func(r rune) bool {
+			return r == ';' || r == '\n'
+		}) {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				gaps = append(gaps, part)
+			}
+		}
+		if len(gaps) == 0 {
+			return []string{gapText}
+		}
+		return gaps
+	}
+
+	// Can't parse — treat as incomplete
+	return []string{fmt.Sprintf("reviewer response unparseable (treating as incomplete): %s", truncateForHistory(v, 200))}
+}
+
+// convergeStepDeps bundles config for ConvergeStep.
 type convergeStepDeps struct {
-	// Tier 1: Multi-model convergence
+	// Multi-model convergence (works with 1+ models)
 	ModelAskFn   ModelAskFn
 	Models       []string
 	ArbiterModel string
-	MaxDepth     int
+	MaxDepth     int // safety circuit breaker, NOT convergence condition. Default: 20.
 
-	// Tier 2: Single-model micro-convergence
+	// Single-model validation (used when ModelAskFn not available)
 	ValidateFn func(ctx context.Context, scope, output string) (gaps []string, err error)
-	MaxIterations int
+	MaxIterations int // DEPRECATED: use MaxDepth. Kept for backward compat.
 
-	// Tier 3 (and shared): Execute function
+	// Execute function — does real work (writes files, runs commands)
 	ExecuteFn func(ctx context.Context, feedback string) (output string, err error)
 
 	// Context
