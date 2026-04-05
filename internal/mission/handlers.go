@@ -140,6 +140,25 @@ type HandlerDeps struct {
 	// Called by the research handler to store discovery results.
 	// If nil, discovery output is only stored as PhaseResult artifacts (not in research store).
 	RecordResearchFn func(missionID, topic, content string) error
+
+	// DecomposeFn asks a model to break a large scope into minimum-viable work items.
+	// Returns JSON: {"action":"execute"} if scope is small enough, or
+	// {"action":"decompose","items":[...]} with a DAG of sub-tasks.
+	// Used by the DAG execute handler for recursive work decomposition.
+	DecomposeFn func(ctx context.Context, m *Mission, prompt string) (string, error)
+
+	// WorkNodeFn executes a single minimum-scope work node.
+	// Receives the node prompt (built from BuildWorkNodePrompt) and the node scope.
+	// Returns files changed and any error, like ExecuteFn but for minimum scope.
+	WorkNodeFn func(ctx context.Context, m *Mission, prompt string, scope string) (filesChanged []string, err error)
+
+	// MaxDAGWorkers controls parallelism in the DAG execute handler.
+	// Default: 3 (conservative to avoid resource contention).
+	MaxDAGWorkers int
+
+	// MaxDAGDepth controls maximum recursion depth for work decomposition.
+	// Default: 4 (root → sub-task → sub-sub-task → leaf).
+	MaxDAGDepth int
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -575,6 +594,206 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 			Agent:    "execute-handler",
 		}, nil
 	}
+}
+
+// NewDAGExecuteHandler creates a DAG-aware execute handler that recursively
+// decomposes work into minimum-scope sub-tasks and executes them in parallel.
+//
+// Instead of giving one agent the entire mission scope, this handler:
+//  1. Asks DecomposeFn to break the scope into minimum-viable work items
+//  2. Builds a WorkDAG with dependency and file-conflict awareness
+//  3. Dispatches work items in parallel via WorkNodeFn
+//  4. If a work item is still too large, it recursively decomposes further
+//  5. Aggregates results and gaps from all work items
+//
+// Falls back to the monolithic NewExecuteHandler if DecomposeFn or WorkNodeFn
+// is not configured.
+func NewDAGExecuteHandler(deps HandlerDeps) PhaseHandler {
+	// Fall back to monolithic handler if DAG callbacks aren't configured
+	if deps.DecomposeFn == nil || deps.WorkNodeFn == nil {
+		return NewExecuteHandler(deps)
+	}
+
+	maxWorkers := deps.MaxDAGWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 3
+	}
+	maxDepth := deps.MaxDAGDepth
+	if maxDepth <= 0 {
+		maxDepth = 4
+	}
+
+	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
+		start := time.Now()
+		mc := buildMissionContext(deps, m)
+
+		// Build the top-level scope from unsatisfied criteria and open gaps
+		var scopeParts []string
+		unsatisfied, _ := deps.Store.UnsatisfiedCriteria(m.ID)
+		for _, c := range unsatisfied {
+			scopeParts = append(scopeParts, c.Description)
+		}
+		gaps, _ := deps.Store.OpenGaps(m.ID)
+		for _, g := range gaps {
+			scopeParts = append(scopeParts, fmt.Sprintf("[%s] %s", g.Severity, g.Description))
+		}
+
+		rootScope := fmt.Sprintf("Mission: %s\nIntent: %s\n\nRemaining work:\n- %s",
+			m.Title, m.Intent, strings.Join(scopeParts, "\n- "))
+
+		// Build decomposition prompt and ask model to break down the scope
+		decomposePrompt := prompts.BuildDecompositionPrompt(mc, "implement", rootScope, 0, maxDepth)
+		decomposeResult, err := deps.DecomposeFn(ctx, m, decomposePrompt)
+		if err != nil {
+			return nil, fmt.Errorf("decompose: %w", err)
+		}
+
+		// Parse decomposition result
+		workItems, shouldExecuteDirectly := parseDecomposition(decomposeResult)
+
+		if shouldExecuteDirectly || len(workItems) == 0 {
+			// Scope is small enough for direct execution — fall back to monolithic
+			log.Printf("[mission] %s: scope small enough for direct execution", m.ID)
+			return NewExecuteHandler(deps)(ctx, m)
+		}
+
+		log.Printf("[mission] %s: decomposed into %d work items, executing via DAG (max %d workers, max depth %d)",
+			m.ID, len(workItems), maxWorkers, maxDepth)
+
+		// Build the WorkDAG
+		executor := func(execCtx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
+			nodeStart := time.Now()
+
+			// Check if this node should recursively decompose
+			if node.Depth < maxDepth-1 && node.Type == WorkDecompose {
+				decompPrompt := prompts.BuildDecompositionPrompt(mCtx, string(node.Type), node.Scope, node.Depth, maxDepth)
+				result, dErr := deps.DecomposeFn(execCtx, m, decompPrompt)
+				if dErr != nil {
+					return nil, fmt.Errorf("decompose at depth %d: %w", node.Depth, dErr)
+				}
+				children, direct := parseDecomposition(result)
+				if !direct && len(children) > 0 {
+					return &WorkResult{
+						Summary:  fmt.Sprintf("Decomposed into %d sub-tasks", len(children)),
+						Children: children,
+						Duration: time.Since(nodeStart),
+						Agent:    "decompose",
+					}, nil
+				}
+			}
+
+			// Execute the minimum-scope work item
+			nodePrompt := prompts.BuildWorkNodePrompt(mCtx, string(node.Type), node.Scope, rootScope, "")
+			filesChanged, execErr := deps.WorkNodeFn(execCtx, m, nodePrompt, node.Scope)
+			if execErr != nil {
+				return nil, execErr
+			}
+
+			return &WorkResult{
+				Summary:      fmt.Sprintf("Completed: %s", truncateOutput(node.Scope, 100)),
+				FilesChanged: filesChanged,
+				Duration:     time.Since(nodeStart),
+				Agent:        "work-node",
+			}, nil
+		}
+
+		dag := NewWorkDAG(executor, maxWorkers)
+		dag.SetMaxDepth(maxDepth)
+
+		for _, item := range workItems {
+			if err := dag.AddNode(item); err != nil {
+				log.Printf("[mission] %s: failed to add work node %s: %v", m.ID, item.ID, err)
+			}
+		}
+
+		dagResult, err := dag.Run(ctx, mc)
+		if err != nil {
+			return nil, fmt.Errorf("dag execution: %w", err)
+		}
+
+		// Record any gaps discovered during work
+		for _, gapDesc := range dagResult.Gaps {
+			gapID := fmt.Sprintf("dag-%s-%d", m.ID, time.Now().UnixNano())
+			deps.Store.AddGap(&Gap{
+				ID:          gapID,
+				MissionID:   m.ID,
+				Category:    "completeness",
+				Severity:    "blocking",
+				Description: gapDesc,
+			})
+		}
+
+		if deps.Metrics != nil {
+			deps.Metrics.RecordPhaseTransition("executing", time.Since(start))
+		}
+
+		return &PhaseResult{
+			Phase: PhaseExecuting,
+			Summary: fmt.Sprintf("DAG execution: %d/%d nodes complete, %d failed, %d files changed",
+				dagResult.NodesComplete, dagResult.NodesTotal, dagResult.NodesFailed, len(dagResult.FilesChanged)),
+			FilesChanged: dagResult.FilesChanged,
+			Artifacts: map[string]string{
+				"dag_stats": fmt.Sprintf("total=%d complete=%d failed=%d blocked=%d",
+					dagResult.NodesTotal, dagResult.NodesComplete, dagResult.NodesFailed, dagResult.NodesBlocked),
+			},
+			Duration: time.Since(start),
+			Agent:    "dag-execute-handler",
+		}, nil
+	}
+}
+
+// parseDecomposition parses the JSON response from DecomposeFn.
+// Returns work items and whether the scope should be executed directly.
+func parseDecomposition(response string) ([]WorkNode, bool) {
+	type decompItem struct {
+		ID        string   `json:"id"`
+		Type      string   `json:"type"`
+		Scope     string   `json:"scope"`
+		DependsOn []string `json:"depends_on"`
+		Files     []string `json:"files"`
+	}
+	type decompResponse struct {
+		Action string       `json:"action"`
+		Items  []decompItem `json:"items"`
+	}
+
+	var resp decompResponse
+	if err := json.Unmarshal([]byte(response), &resp); err != nil {
+		// Try to find JSON in the response
+		start := strings.Index(response, "{")
+		end := strings.LastIndex(response, "}")
+		if start >= 0 && end > start {
+			if err2 := json.Unmarshal([]byte(response[start:end+1]), &resp); err2 != nil {
+				return nil, true // can't parse, execute directly
+			}
+		} else {
+			return nil, true
+		}
+	}
+
+	if resp.Action == "execute" || len(resp.Items) == 0 {
+		return nil, true
+	}
+
+	now := time.Now()
+	var nodes []WorkNode
+	for _, item := range resp.Items {
+		wt := WorkType(item.Type)
+		if wt == "" {
+			wt = WorkImplement
+		}
+		nodes = append(nodes, WorkNode{
+			ID:        item.ID,
+			Type:      wt,
+			Scope:     item.Scope,
+			DependsOn: item.DependsOn,
+			Files:     item.Files,
+			Status:    WorkPending,
+			MaxDepth:  4,
+			CreatedAt: now,
+		})
+	}
+	return nodes, false
 }
 
 // NewValidateHandler creates a handler for the Validating phase.

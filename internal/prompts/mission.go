@@ -687,6 +687,378 @@ Return JSON:
 	return b.String()
 }
 
+// BuildDecompositionPrompt generates the prompt for DAG-based work decomposition.
+// The agent analyzes a scope and either executes it directly (if small enough)
+// or returns a JSON DAG of minimum-viable sub-tasks.
+func BuildDecompositionPrompt(ctx MissionContext, workType string, scope string, depth int, maxDepth int) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are a work decomposition agent for mission "%s".
+
+## Mission
+**Title:** %s
+**Intent:** %s
+
+`, ctx.MissionID, ctx.Title, ctx.Intent)
+
+	if ctx.CriteriaBlock != "" {
+		fmt.Fprintf(&b, "%s\n\n", ctx.CriteriaBlock)
+	}
+
+	fmt.Fprintf(&b, `## Decomposition Task
+**Work type:** %s
+**Scope:** %s
+**Depth:** %d / %d (max)
+
+`, workType, scope, depth, maxDepth)
+
+	// At max depth, force execute — no more decomposition allowed.
+	if depth >= maxDepth-1 {
+		b.WriteString(`## FORCED EXECUTE MODE
+You are at maximum decomposition depth. You MUST NOT decompose further.
+Return ONLY:
+` + "```json" + `
+{"action": "execute"}
+` + "```" + `
+Then proceed to do the work directly within this session.
+Do NOT return sub-tasks. Do NOT request further decomposition.
+Your scope is EXACTLY what was given above. Complete it fully.
+
+`)
+	} else {
+		b.WriteString(`## Your Decision
+
+Analyze the scope above and determine: can this be completed in ONE focused session
+by a single agent? A "focused session" means implementing ONE function, ONE test,
+ONE endpoint, ONE component, or answering ONE research question.
+
+### If YES — the scope is small enough to execute directly:
+Return:
+` + "```json" + `
+{"action": "execute"}
+` + "```" + `
+
+### If NO — the scope must be broken down:
+Return a JSON DAG of minimum-viable work items:
+` + "```json" + `
+{
+  "action": "decompose",
+  "items": [
+    {"id": "w-1", "type": "research", "scope": "Determine which JWT library to use and its API surface", "depends_on": [], "files": []},
+    {"id": "w-2", "type": "implement", "scope": "Implement the JWT validation function in auth/jwt.go", "depends_on": ["w-1"], "files": ["auth/jwt.go"]},
+    {"id": "w-3", "type": "test", "scope": "Write adversarial tests for JWT validation including expired, malformed, and tampered tokens", "depends_on": ["w-2"], "files": ["auth/jwt_test.go"]},
+    {"id": "w-4", "type": "review", "scope": "Review JWT implementation for security issues", "depends_on": ["w-2", "w-3"], "files": ["auth/jwt.go", "auth/jwt_test.go"]}
+  ]
+}
+` + "```" + `
+
+## Decomposition Rules
+
+### What "minimum viable scope" means
+Each work item must be exactly ONE of:
+- ONE function or method implementation
+- ONE test file or test suite for a specific function
+- ONE endpoint or route handler
+- ONE component (UI, service, etc.)
+- ONE research question with a concrete answer
+
+If a work item could be further split into independent pieces, it MUST be split.
+If a work item cannot be split without creating artificial boundaries, it is atomic.
+
+### Dependency rules — must form a valid DAG
+- Dependencies MUST form a directed acyclic graph. No cycles allowed.
+- Each item's ` + "`depends_on`" + ` lists IDs of items that must complete before it can start.
+- Research items should have no dependencies (they come first and unblock everything).
+- Implementation items depend on their research items.
+- Test items depend on their implementation items.
+- Review items depend on everything they are reviewing.
+- Validate items depend on implementation and test items.
+
+### Critical path identification
+- Items with the most downstream dependents are on the critical path.
+- Critical path items should be scheduled first (GRPW ordering).
+- Identify which items block the most other work and note this in scope descriptions.
+
+### Parallel safety
+- Items that share NO files can execute in parallel.
+- Items that touch the same files MUST have a dependency edge between them.
+- The ` + "`files`" + ` field must accurately list every file the item will read or modify.
+
+### Work types
+- **research**: Answer a specific question with verified sources. No code changes.
+- **implement**: Write a specific function, component, or endpoint. Produces code.
+- **test**: Write adversarial tests for a specific function or component.
+- **review**: Review specific files/functions for correctness, security, and quality.
+- **validate**: Verify a specific criterion is met end-to-end.
+
+`)
+	}
+
+	if ctx.ResearchBlock != "" {
+		fmt.Fprintf(&b, "## Research Context\n%s\n\n", ctx.ResearchBlock)
+	}
+	if ctx.HandoffBlock != "" {
+		fmt.Fprintf(&b, "## Handoff Context\n%s\n\n", ctx.HandoffBlock)
+	}
+
+	return b.String()
+}
+
+// BuildWorkNodePrompt generates the prompt for executing a single minimum-scope
+// work item within a DAG decomposition. The agent receives exactly one atomic
+// piece of work and must complete it fully without expanding beyond its scope.
+func BuildWorkNodePrompt(ctx MissionContext, nodeType string, scope string, parentScope string, siblingContext string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are a focused execution agent for mission "%s".
+
+## Mission
+**Title:** %s
+**Intent:** %s
+
+`, ctx.MissionID, ctx.Title, ctx.Intent)
+
+	fmt.Fprintf(&b, `## Your Scope — EXACTLY This, Nothing More, Nothing Less
+**Work type:** %s
+**Scope:** %s
+
+`, nodeType, scope)
+
+	if parentScope != "" {
+		fmt.Fprintf(&b, `## Parent Context
+This work item is part of a larger task:
+%s
+
+You are responsible for YOUR piece only. The parent agent coordinates the whole.
+
+`, parentScope)
+	}
+
+	if siblingContext != "" {
+		fmt.Fprintf(&b, `## Sibling Context — What Other Agents Are Doing
+%s
+
+Do NOT duplicate their work. Do NOT modify files they own. Stay in your lane.
+
+`, siblingContext)
+	}
+
+	// Type-specific instructions
+	switch nodeType {
+	case "research":
+		b.WriteString(`## Research Instructions
+You are answering a SPECIFIC research question. Your job:
+1. Answer this specific question with verified sources.
+2. Search the codebase for existing implementations, patterns, and conventions.
+3. Fetch and read CURRENT documentation for any external dependencies.
+4. Do NOT rely on training data — verify against authoritative sources.
+5. Produce a structured answer with source citations (file paths, URLs, doc references).
+6. Mark anything you cannot verify as UNVERIFIED.
+7. Do NOT write code. Do NOT modify files. Research ONLY.
+
+Your output is a research document that unblocks implementation agents.
+
+`)
+	case "implement":
+		b.WriteString(`## Implementation Instructions
+You are implementing ONE specific function, component, or endpoint. Your job:
+1. Read existing code patterns before writing anything.
+2. Implement the FULL solution — no stubs, no TODOs, no placeholders.
+3. Follow existing codebase conventions exactly.
+4. Wrap every error with context — no bare ` + "`return err`" + `.
+5. Run build and test commands to verify your work compiles.
+6. Do NOT run git add, git commit, or git push — Stoke handles that.
+
+### Maximum Complete Effort
+There is no "good enough." If a better pattern exists, use it. If a security
+hardening step is possible, do it. The only question is: "Is this correct,
+complete, and production-grade?"
+
+`)
+	case "test":
+		b.WriteString(`## Test Instructions
+You are writing ADVERSARIAL tests for a specific function or component. Your job:
+1. Write tests that try to BREAK the code, not just prove it compiles.
+2. Test edge cases: nil inputs, empty strings, boundary values, malformed data.
+3. Test error paths: every function returning an error needs an error-path test.
+4. Test concurrent access if the code is used from multiple goroutines.
+5. Test negative cases: invalid input, missing permissions, timeout conditions.
+6. Test names must describe the scenario, not the function name.
+7. No mocks where real implementations are feasible.
+8. No flaky tests: no time-dependent without controlled clocks.
+
+Your tests must be adversarial — assume the implementation has bugs and find them.
+
+`)
+	case "review":
+		b.WriteString(`## Review Instructions
+You are reviewing specific files for correctness, security, and quality. Your job:
+1. Read every line of the files in your scope.
+2. Check for security issues: injection, auth bypass, hardcoded secrets, XSS.
+3. Check for correctness: logic errors, off-by-one, race conditions, nil panics.
+4. Check for quality: error handling, naming, DRY violations, dead code.
+5. Check that tests actually test the right behavior (not tautological assertions).
+6. Do NOT modify files. Report findings with file:line references.
+
+Your output is a list of findings, each with severity, file:line, and a fix suggestion.
+
+`)
+	case "validate":
+		b.WriteString(`## Validation Instructions
+You are verifying that a specific criterion is met end-to-end. Your job:
+1. Trace the code path from entry point to implementation.
+2. Verify the implementation satisfies the criterion completely.
+3. Verify tests exist and exercise the criterion.
+4. Run build and test commands to confirm everything passes.
+5. Check that the code is reachable from user-facing surfaces.
+
+Your output is a verdict: met (with evidence) or not met (with specific gaps).
+
+`)
+	default:
+		fmt.Fprintf(&b, `## Instructions
+Complete the work described in your scope above. Work type: %s.
+
+`, nodeType)
+	}
+
+	b.WriteString(`## Scope Discipline
+Your scope is EXACTLY what was described above.
+- Do NOT expand beyond your scope. Other agents handle adjacent work.
+- Do NOT leave anything in your scope undone. You own this completely.
+- Do NOT modify files outside your scope unless absolutely necessary for compilation.
+- If you discover issues outside your scope, note them but do NOT fix them.
+
+## Anti-Rationalization
+Do NOT generate reasons to stop working:
+- "This is out of scope" → If it's in YOUR scope description, it's your job.
+- "This would require too much refactoring" → Do the refactoring if it's in scope.
+- "This is blocked by X" → If X is a sibling task, note it. If X is in your scope, unblock it.
+- "I've completed the requested changes" → Is YOUR scope fully done? Every edge case?
+
+## Codebase Tools
+You have MCP tools for understanding the codebase:
+- **search_symbols**: Find existing functions/types to reuse or extend
+- **get_dependencies**: See what a file imports and what depends on it
+- **search_content**: Find related code by concept
+- **get_file_symbols**: See what a file exports before modifying it
+- **impact_analysis**: Check what will break if you change a file
+- **find_symbol_usages**: Find all consumers of a function/type
+- **trace_entry_points**: See which surfaces reach the code you're changing
+- **semantic_search**: Find conceptually related code by meaning
+
+Use these BEFORE writing code to understand existing patterns.
+Use them AFTER writing code to verify you haven't broken consumers.
+
+`)
+
+	if ctx.ResearchBlock != "" {
+		fmt.Fprintf(&b, "## Research Context\n%s\n\n", ctx.ResearchBlock)
+	}
+	if ctx.HandoffBlock != "" {
+		fmt.Fprintf(&b, "## Handoff Context\n%s\n\n", ctx.HandoffBlock)
+	}
+	if ctx.PriorContext != "" {
+		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx.PriorContext)
+	}
+
+	return b.String()
+}
+
+// BuildMonitorPrompt generates the prompt for a parent agent to review its
+// children's completed work. The monitor checks for completeness, gaps between
+// children, and integration issues, returning fix-up tasks if needed.
+func BuildMonitorPrompt(ctx MissionContext, parentScope string, childResults []string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are a monitor agent reviewing child task results for mission "%s".
+
+## Mission
+**Title:** %s
+**Intent:** %s
+
+`, ctx.MissionID, ctx.Title, ctx.Intent)
+
+	if ctx.CriteriaBlock != "" {
+		fmt.Fprintf(&b, "%s\n\n", ctx.CriteriaBlock)
+	}
+
+	fmt.Fprintf(&b, `## Parent Scope
+The original task that was decomposed into child work items:
+%s
+
+## Child Results
+`, parentScope)
+
+	for i, result := range childResults {
+		fmt.Fprintf(&b, "### Child %d\n%s\n\n", i+1, result)
+	}
+
+	b.WriteString(`## Your Task: Monitor and Verify Integration
+
+You are the parent agent. Your children have completed their individual work items.
+Your job is to verify that their combined output satisfies the original parent scope.
+
+### Step 1: Completeness Check
+For each child task, verify:
+- Did the child complete its FULL scope? Not partially — fully.
+- Did the child produce the expected output (code, tests, research, findings)?
+- Are there any unresolved issues the child flagged?
+
+### Step 2: Gap Detection — Things That Fell Through Cracks
+This is the MOST CRITICAL step. When work is decomposed, the spaces BETWEEN
+children are where bugs hide. Check for:
+- Integration glue: do the children's outputs connect to each other?
+- Missing wiring: are new functions called? Are new types used? Are new routes registered?
+- Import/dependency gaps: does child A's code correctly import child B's output?
+- Interface mismatches: do the types, signatures, and contracts align between children?
+- Edge cases at boundaries: what happens at the seams between children's work?
+
+### Step 3: Integration Verification
+- Build the project. Does it compile with all children's changes combined?
+- Run ALL tests. Do they pass together, not just individually?
+- Check for conflicts: did two children modify the same file incompatibly?
+- Check for duplication: did two children implement similar logic independently?
+
+### Step 4: Decision
+
+If ALL checks pass and the parent scope is fully satisfied:
+` + "```json" + `
+{
+  "status": "complete",
+  "summary": "All child tasks completed successfully. Integration verified.",
+  "evidence": ["file:line citations showing integration works"]
+}
+` + "```" + `
+
+If issues are found, return new sub-tasks to fix them:
+` + "```json" + `
+{
+  "status": "incomplete",
+  "issues": [
+    {"description": "Child 1 and Child 2 outputs are not wired together", "severity": "blocking"}
+  ],
+  "fix_tasks": [
+    {"id": "fix-1", "type": "implement", "scope": "Wire child 1's JWT validator into child 2's middleware", "files": ["auth/middleware.go"]}
+  ]
+}
+` + "```" + `
+
+### Rules
+- Do NOT assume integration works because individual pieces work.
+- Do NOT skip the gap detection step — it catches the most dangerous bugs.
+- Every "complete" claim must cite specific evidence (file:line).
+- If in doubt, flag it. False positives are better than shipped bugs.
+
+`)
+
+	if ctx.PriorContext != "" {
+		fmt.Fprintf(&b, "## Additional Context\n%s\n\n", ctx.PriorContext)
+	}
+
+	return b.String()
+}
+
 // BuildMissionDiscoveryPrompt generates the prompt for agentic discovery.
 // This drives a multi-turn loop where the model iteratively maps the codebase
 // against the mission intent, identifying consumers, producers, and gaps.

@@ -424,6 +424,174 @@ func TestDiscoveryPromptsIncludeMCPTools(t *testing.T) {
 	}
 }
 
+// --- Decomposition Prompt ---
+
+func TestBuildDecompositionPrompt(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildDecompositionPrompt(ctx, "implement", "Add JWT authentication to the API", 0, 4)
+
+	checks := []string{
+		"decomposition agent",          // role
+		"JWT Auth",                     // title
+		"implement",                    // work type
+		"Add JWT authentication",       // scope
+		"minimum viable scope",         // key instruction
+		"directed acyclic graph",       // DAG requirement
+		"No cycles",                    // cycle prohibition
+		"depends_on",                   // dependency field
+		"critical path",               // critical path identification
+		"Parallel safety",             // parallel safety
+		"research",                    // work type: research
+		"implement",                   // work type: implement
+		"test",                        // work type: test
+		"review",                      // work type: review
+		"validate",                    // work type: validate
+		"action",                      // JSON output: action field
+		"decompose",                   // JSON output: decompose action
+		"execute",                     // JSON output: execute action
+		"Research Context",            // includes research when available
+		"Handoff Context",             // includes handoff when available
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("decomposition prompt missing %q", check)
+		}
+	}
+}
+
+func TestBuildDecompositionPromptMaxDepth(t *testing.T) {
+	ctx := testContext()
+
+	// At max depth (depth >= maxDepth - 1), should force execute
+	prompt := BuildDecompositionPrompt(ctx, "implement", "Small task", 3, 4)
+	if !strings.Contains(prompt, "FORCED EXECUTE MODE") {
+		t.Error("at max depth, decomposition prompt should force execute mode")
+	}
+	if strings.Contains(prompt, "minimum viable scope") {
+		t.Error("at max depth, decomposition prompt should NOT include decomposition rules")
+	}
+
+	// Also test exact boundary: depth == maxDepth - 1
+	prompt2 := BuildDecompositionPrompt(ctx, "implement", "Small task", 2, 3)
+	if !strings.Contains(prompt2, "FORCED EXECUTE MODE") {
+		t.Error("at depth == maxDepth-1, should force execute mode")
+	}
+
+	// Below max depth should allow decomposition
+	prompt3 := BuildDecompositionPrompt(ctx, "implement", "Big task", 0, 3)
+	if strings.Contains(prompt3, "FORCED EXECUTE MODE") {
+		t.Error("below max depth, should NOT force execute mode")
+	}
+	if !strings.Contains(prompt3, "minimum viable scope") {
+		t.Error("below max depth, should include decomposition rules")
+	}
+}
+
+// --- Work Node Prompt ---
+
+func TestBuildWorkNodePrompt(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildWorkNodePrompt(ctx, "implement", "Implement JWT validation in auth/jwt.go", "Add JWT auth to API", "w-1: researching JWT libraries\nw-3: writing JWT tests")
+
+	checks := []string{
+		"focused execution agent",     // role
+		"JWT Auth",                    // title
+		"Implement JWT validation",    // scope
+		"Add JWT auth to API",         // parent context
+		"researching JWT libraries",   // sibling context
+		"writing JWT tests",           // sibling context
+		"Do NOT duplicate",            // sibling overlap prevention
+		"EXACTLY",                     // scope discipline
+		"search_symbols",              // MCP tool
+		"get_dependencies",            // MCP tool
+		"impact_analysis",             // MCP tool
+		"find_symbol_usages",          // MCP tool
+		"Anti-Rationalization",        // anti-rationalization
+		"Do NOT expand beyond",        // scope discipline
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("work node prompt missing %q", check)
+		}
+	}
+}
+
+func TestBuildWorkNodePromptTypes(t *testing.T) {
+	ctx := testContext()
+
+	tests := []struct {
+		nodeType string
+		expected []string
+	}{
+		{
+			"research",
+			[]string{"Research Instructions", "verified sources", "UNVERIFIED", "Do NOT write code"},
+		},
+		{
+			"implement",
+			[]string{"Implementation Instructions", "no stubs, no TODOs", "Maximum Complete Effort", "production-grade"},
+		},
+		{
+			"test",
+			[]string{"Test Instructions", "ADVERSARIAL", "edge cases", "error paths", "concurrent access"},
+		},
+		{
+			"review",
+			[]string{"Review Instructions", "security issues", "Do NOT modify files", "file:line"},
+		},
+		{
+			"validate",
+			[]string{"Validation Instructions", "entry point", "end-to-end", "verdict"},
+		},
+	}
+
+	for _, tt := range tests {
+		prompt := BuildWorkNodePrompt(ctx, tt.nodeType, "Do the thing", "", "")
+		for _, exp := range tt.expected {
+			if !strings.Contains(prompt, exp) {
+				t.Errorf("work node prompt (type=%s) missing %q", tt.nodeType, exp)
+			}
+		}
+	}
+}
+
+// --- Monitor Prompt ---
+
+func TestBuildMonitorPrompt(t *testing.T) {
+	ctx := testContext()
+	childResults := []string{
+		"Child 1: Implemented JWT validation function in auth/jwt.go",
+		"Child 2: Wrote tests for JWT validation in auth/jwt_test.go",
+	}
+	prompt := BuildMonitorPrompt(ctx, "Add JWT auth to the API", childResults)
+
+	checks := []string{
+		"monitor agent",               // role
+		"JWT Auth",                    // title
+		"Add JWT auth to the API",     // parent scope
+		"Child 1",                     // child result 1
+		"Child 2",                     // child result 2
+		"Implemented JWT validation",  // child content
+		"Wrote tests for JWT",         // child content
+		"Completeness Check",          // step 1
+		"Gap Detection",               // step 2 — the critical gap check
+		"Fell Through Cracks",         // gap language
+		"Integration Verification",    // step 3
+		"Integration glue",            // gap: integration
+		"Missing wiring",              // gap: wiring
+		"Interface mismatches",        // gap: interface mismatch
+		"complete",                    // status: complete
+		"incomplete",                  // status: incomplete
+		"fix_tasks",                   // fix tasks in output
+		"evidence",                    // evidence requirement
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("monitor prompt missing %q", check)
+		}
+	}
+}
+
 func TestDiscoveryPromptsAntiRationalization(t *testing.T) {
 	ctx := testContext()
 
