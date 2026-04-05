@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
 	"github.com/ericmacdougall/stoke/internal/hooks"
@@ -50,7 +51,8 @@ type Engine struct {
 	CodexHome        string
 	OnEvent          engine.OnEventFunc
 	State            *taskstate.TaskState
-	Wisdom           *wisdom.Store // cross-task learning accumulator (nil = disabled)
+	Wisdom           *wisdom.Store       // cross-task learning accumulator (nil = disabled)
+	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	PlanOnly         bool
 }
 
@@ -310,6 +312,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			Phase: fmt.Sprintf("execute (attempt %d)", attempt), Engine: execRunnerName, Command: execResult.Prepared,
 		})
 		result.TotalCostUSD += execResult.CostUSD
+		if e.CostTracker != nil && execResult.CostUSD > 0 {
+			e.CostTracker.Record(execRunnerName, e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
+		}
 
 		// --- VERIFY ---
 		outcomes, verifyErr := e.Verifier.Run(ctx, handle.Path)

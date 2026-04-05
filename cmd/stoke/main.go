@@ -23,12 +23,14 @@ import (
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
 	"github.com/ericmacdougall/stoke/internal/scheduler"
+	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
@@ -398,6 +400,8 @@ func main() {
 		removePoolCmd(os.Args[2:])
 	case "mission":
 		missionCmd(os.Args[2:])
+	case "serve":
+		serveCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
 	case "version", "--version", "-v":
@@ -2750,4 +2754,62 @@ QUICKSTART:
   stoke pool --claude-config-dir ~/.claude
 
 `, version)
+}
+
+// serveCmd starts the Stoke HTTP API server with optional mission orchestration.
+func serveCmd(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	port := fs.Int("port", 8420, "HTTP server port")
+	token := fs.String("token", os.Getenv("STOKE_API_TOKEN"), "Bearer token for auth (or STOKE_API_TOKEN)")
+	repo := fs.String("repo", ".", "Repository root")
+	dataDir := fs.String("data-dir", ".stoke", "Data directory for mission/research stores")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	bus := server.NewEventBus()
+	srv := server.New(*port, *token, bus)
+
+	// Try to create orchestrator for mission API
+	orch, orchErr := createOrchestrator(absRepo, *dataDir)
+	if orchErr != nil {
+		fmt.Fprintf(os.Stderr, "warn: mission API disabled: %v\n", orchErr)
+	} else {
+		server.RegisterMissionAPI(srv, orch)
+		defer orch.Close()
+		fmt.Fprintf(os.Stderr, "mission API enabled\n")
+	}
+
+	fmt.Fprintf(os.Stderr, "stoke serve listening on :%d\n", *port)
+
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+
+	// Run server in goroutine, shut down on signal
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+
+	select {
+	case <-sigCtx.Done():
+		fmt.Fprintf(os.Stderr, "stoke serve: shutting down\n")
+	case err := <-errCh:
+		if err != nil {
+			fatal("serve: %v", err)
+		}
+	}
+}
+
+// createOrchestrator builds an orchestrate.Orchestrator for the serve command.
+func createOrchestrator(repoRoot, dataDir string) (*orchestrate.Orchestrator, error) {
+	absData := filepath.Join(repoRoot, dataDir)
+	if err := os.MkdirAll(absData, 0755); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	return orchestrate.New(orchestrate.Config{
+		RepoRoot: repoRoot,
+		StoreDir: absData,
+	})
 }

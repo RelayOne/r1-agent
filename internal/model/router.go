@@ -1,6 +1,10 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/costtrack"
+)
 
 // TaskType classifies a task for benchmark-backed model routing (e.g., plan, refactor, security).
 type TaskType string
@@ -104,6 +108,45 @@ func Resolve(taskType TaskType, isAvailable func(Provider) bool) Provider {
 		}
 	}
 
+	return ProviderLintOnly
+}
+
+// CostAwareResolve wraps Resolve with budget awareness. When the tracker shows
+// the budget is over 80% consumed, it skips expensive primary providers and
+// walks the fallback chain to find a cheaper alternative.
+func CostAwareResolve(taskType TaskType, tracker *costtrack.Tracker, isAvailable func(Provider) bool) Provider {
+	if tracker == nil || tracker.BudgetRemaining() < 0 {
+		// No budget tracking or unlimited budget — standard routing.
+		return Resolve(taskType, isAvailable)
+	}
+
+	remaining := tracker.BudgetRemaining()
+	total := remaining + tracker.Total()
+	if total <= 0 {
+		return Resolve(taskType, isAvailable)
+	}
+
+	pctRemaining := remaining / total
+	if pctRemaining > 0.2 {
+		// Plenty of budget — standard routing.
+		return Resolve(taskType, isAvailable)
+	}
+
+	// Budget tight (>80% consumed). Prefer cheaper fallback providers.
+	route, ok := Routes[taskType]
+	if !ok {
+		route = Routes[TaskTypeRefactor]
+	}
+
+	// Walk fallback chain first (cheaper), then try primary.
+	for _, fb := range route.FallbackChain {
+		if fb == ProviderLintOnly || isAvailable(fb) {
+			return fb
+		}
+	}
+	if isAvailable(route.Primary) {
+		return route.Primary
+	}
 	return ProviderLintOnly
 }
 
