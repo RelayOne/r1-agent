@@ -207,6 +207,14 @@ After all tasks, what should be true of the whole system?
 - Performance characteristics that should hold
 - Security properties that should be maintained
 
+## CRITICAL: Research Over Recall
+Your training data is a potentially STALE CACHE, not a source of truth.
+Before referencing any API, library function, or framework pattern:
+1. Check the actual source code in this repo for existing patterns
+2. Verify function signatures against the real imports
+3. Do not assume API shapes — read the interface definitions
+If you are unsure about an API, read the code. Do not guess.
+
 Output ONLY valid JSON:
 {
   "id": "plan-YYYYMMDD-HHMM",
