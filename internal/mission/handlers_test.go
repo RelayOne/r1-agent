@@ -320,6 +320,38 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 
 // --- Keyword Extraction ---
 
+func TestResearchHandlerRecordsDiscovery(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	var recordedTopic, recordedContent string
+	handler := NewResearchHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		DiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "FILE: handler.go\nGAP: Missing auth middleware", nil
+		},
+		RecordResearchFn: func(missionID, topic, content string) error {
+			recordedTopic = topic
+			recordedContent = content
+			return nil
+		},
+	})
+
+	handler(context.Background(), m)
+
+	if recordedTopic == "" {
+		t.Error("RecordResearchFn should be called with discovery results")
+	}
+	if !strings.Contains(recordedContent, "FILE: handler.go") {
+		t.Error("recorded content should include discovery output")
+	}
+}
+
 func TestExtractMissionKeywords(t *testing.T) {
 	keywords := extractMissionKeywords("Add JWT authentication to the API with rate limiting")
 	found := make(map[string]bool)

@@ -428,6 +428,16 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		ConsensusModelFn:    o.config.ConsensusModelFn,
 		DiscoveryFn:         o.config.DiscoveryFn,
 		ValidateDiscoveryFn: o.config.ValidateDiscoveryFn,
+		RecordResearchFn: func(missionID, topic, content string) error {
+			return o.research.Add(&research.Entry{
+				ID:        fmt.Sprintf("disc-%s-%d", missionID, time.Now().UnixNano()),
+				MissionID: missionID,
+				Topic:     topic,
+				Content:   content,
+				Source:    "agentic-discovery",
+				Tags:      []string{"discovery", "auto"},
+			})
+		},
 	}
 
 	// Load baseline for this mission if available

@@ -132,6 +132,11 @@ type HandlerDeps struct {
 	// Returns structured JSON findings with gaps.
 	// If nil, falls back to the single-shot ValidateFn.
 	ValidateDiscoveryFn func(ctx context.Context, m *Mission, prompt string) (findings string, err error)
+
+	// RecordResearchFn persists a research finding so downstream phases can access it.
+	// Called by the research handler to store discovery results.
+	// If nil, discovery output is only stored as PhaseResult artifacts (not in research store).
+	RecordResearchFn func(missionID, topic, content string) error
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -291,6 +296,12 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 							})
 						}
 					}
+				}
+			}
+			// Persist discovery output to research store for downstream phases
+			if deps.RecordResearchFn != nil {
+				if discoveryResult, ok := artifacts["discovery"]; ok && discoveryResult != "" {
+					deps.RecordResearchFn(m.ID, "Agentic Discovery", discoveryResult)
 				}
 			}
 			// When DiscoveryFn is configured, we skip the deterministic fallback.
