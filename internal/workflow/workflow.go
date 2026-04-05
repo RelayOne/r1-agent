@@ -75,6 +75,7 @@ type Engine struct {
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	Hooks            []TaskHook          // lifecycle hooks (nil = no hooks)
 	PlanOnly         bool
+	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -388,9 +389,13 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		outcomes, verifyErr := verifier.Run(ctx, handle.Path)
 		result.Verification = outcomes
 
-		// Build evidence for this attempt
+		// Build evidence for this attempt.
+		// When a gate is disabled by policy (empty command), treat it as passing.
 		evidence := taskstate.Evidence{
 			DiffSummary: worktree.DiffSummary(ctx, handle),
+			BuildPass:   !e.Policy.Verification.Build,
+			TestPass:    !e.Policy.Verification.Tests,
+			LintPass:    !e.Policy.Verification.Lint,
 		}
 		for _, o := range outcomes {
 			switch o.Name {
@@ -981,6 +986,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 }
 
 func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
+	if e.RunnerOverride != nil {
+		return "mock", e.RunnerOverride
+	}
 	if phase == "plan" {
 		return string(model.ProviderClaude), e.Runners.Claude
 	}

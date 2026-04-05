@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -182,7 +183,18 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 	path := s.repo + "/.stoke/worktrees/" + explicitName
 	runtimeDir := os.TempDir() + "/stoke-test-runtime-" + explicitName
 	os.MkdirAll(runtimeDir, 0o755)
-	return worktree.Handle{Name: explicitName, Branch: "stoke/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: "abc123", RepoRoot: s.repo, GitBinary: "git"}, nil
+	// Initialize a minimal git repo so worktree helpers (ModifiedFiles, DiffSummary) work.
+	os.MkdirAll(path, 0o755)
+	exec.Command("git", "-C", path, "init", "-b", "main").Run()
+	exec.Command("git", "-C", path, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", path, "config", "user.name", "test").Run()
+	exec.Command("git", "-C", path, "config", "commit.gpgsign", "false").Run()
+	exec.Command("git", "-C", path, "commit", "--allow-empty", "-m", "init").Run()
+	baseCommit := "HEAD"
+	if out, err := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output(); err == nil {
+		baseCommit = strings.TrimSpace(string(out))
+	}
+	return worktree.Handle{Name: explicitName, Branch: "stoke/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: baseCommit, RepoRoot: s.repo, GitBinary: "git"}, nil
 }
 
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }
