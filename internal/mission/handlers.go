@@ -256,14 +256,39 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 			discoveryResult, err := deps.DiscoveryFn(ctx, m, discoveryPrompt)
 			if err == nil && discoveryResult != "" {
 				artifacts["discovery"] = discoveryResult
-				// Parse discovered files from the result
-				// The model returns structured findings including relevant files
-				for _, line := range strings.Split(discoveryResult, "\n") {
+				// Parse structured output from the discovery loop
+				for i, line := range strings.Split(discoveryResult, "\n") {
 					line = strings.TrimSpace(line)
 					if strings.HasPrefix(line, "FILE:") {
 						path := strings.TrimSpace(strings.TrimPrefix(line, "FILE:"))
 						if path != "" {
-							relevantFiles[path] += 2.0 // High weight for model-discovered files
+							relevantFiles[path] += 2.0
+						}
+					} else if strings.HasPrefix(line, "GAP:MAJOR:") {
+						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:MAJOR:"))
+						if gapDesc != "" {
+							gapID := fmt.Sprintf("disc-res-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
+							deps.Store.AddGap(&Gap{
+								ID:          gapID,
+								MissionID:   m.ID,
+								Category:    "discovery-research",
+								Severity:    "major",
+								Description: truncateOutput(gapDesc, 1000),
+								Suggestion:  "Address during execution phase",
+							})
+						}
+					} else if strings.HasPrefix(line, "GAP:") {
+						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
+						if gapDesc != "" {
+							gapID := fmt.Sprintf("disc-res-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
+							deps.Store.AddGap(&Gap{
+								ID:          gapID,
+								MissionID:   m.ID,
+								Category:    "discovery-research",
+								Severity:    "blocking",
+								Description: truncateOutput(gapDesc, 1000),
+								Suggestion:  "Address during execution phase",
+							})
 						}
 					}
 				}
@@ -726,39 +751,73 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: error (%v)", err))
 			} else if findings != "" {
 				// Parse structured findings from the model's discovery
+				var newGapCount, fixedCount int
 				for i, line := range strings.Split(findings, "\n") {
 					line = strings.TrimSpace(line)
 					if line == "" {
 						continue
 					}
-					// The model returns GAP: lines for each discovered gap
-					if strings.HasPrefix(line, "GAP:") {
-						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
-						if gapDesc == "" {
+
+					// Handle FIXED: lines — resolve matching open gaps
+					if strings.HasPrefix(line, "FIXED:") {
+						fixedDesc := strings.TrimSpace(strings.TrimPrefix(line, "FIXED:"))
+						if fixedDesc == "" {
 							continue
 						}
-						sev := "blocking"
-						category := "discovery-validation"
-						if strings.HasPrefix(line, "GAP:MAJOR:") {
-							sev = "major"
-							gapDesc = strings.TrimSpace(strings.TrimPrefix(line, "GAP:MAJOR:"))
+						// Try to match against open gaps by substring
+						openGaps, _ := deps.Store.OpenGaps(m.ID)
+						for _, g := range openGaps {
+							if strings.Contains(g.Description, fixedDesc) || strings.Contains(fixedDesc, g.Description) {
+								deps.Store.ResolveGap(m.ID, g.ID)
+								fixedCount++
+								break
+							}
+						}
+						continue
+					}
+
+					// Handle GAP: and GAP:MAJOR: lines
+					// Check more specific prefix first
+					if strings.HasPrefix(line, "GAP:MAJOR:") {
+						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:MAJOR:"))
+						if gapDesc == "" {
+							continue
 						}
 						gapID := fmt.Sprintf("disc-val-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
 						deps.Store.AddGap(&Gap{
 							ID:          gapID,
 							MissionID:   m.ID,
-							Category:    category,
-							Severity:    sev,
+							Category:    "discovery-validation",
+							Severity:    "major",
 							Description: truncateOutput(gapDesc, 1000),
 							Suggestion:  "Address the gap found by multi-turn discovery validation",
 						})
 						allGapCount++
-						if sev == "blocking" {
-							blockingCount++
+						newGapCount++
+					} else if strings.HasPrefix(line, "GAP:") {
+						gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
+						if gapDesc == "" {
+							continue
 						}
+						gapID := fmt.Sprintf("disc-val-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
+						deps.Store.AddGap(&Gap{
+							ID:          gapID,
+							MissionID:   m.ID,
+							Category:    "discovery-validation",
+							Severity:    "blocking",
+							Description: truncateOutput(gapDesc, 1000),
+							Suggestion:  "Address the gap found by multi-turn discovery validation",
+						})
+						allGapCount++
+						blockingCount++
+						newGapCount++
 					}
 				}
-				summaryParts = append(summaryParts, "discovery-validation: gaps found")
+				if newGapCount > 0 || fixedCount > 0 {
+					summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: %d new gaps, %d fixed", newGapCount, fixedCount))
+				} else {
+					summaryParts = append(summaryParts, "discovery-validation: no structured gaps")
+				}
 			} else {
 				summaryParts = append(summaryParts, "discovery-validation: clean")
 			}
