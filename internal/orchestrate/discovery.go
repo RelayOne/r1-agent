@@ -149,6 +149,64 @@ func (d *DiscoveryEngine) ValidateDiscoveryFn() func(ctx context.Context, m *mis
 	}
 }
 
+// ConsensusModelFn returns a callback suitable for HandlerDeps.ConsensusModelFn.
+// It runs a model session for each consensus model, passing the adversarial
+// consensus prompt. The model must try to disprove completeness.
+func (d *DiscoveryEngine) ConsensusModelFn() func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+	return func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+		mcpConfig, runtimeDir, err := d.ensureMCPConfig()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("consensus MCP setup: %w", err)
+		}
+
+		spec := engine.RunSpec{
+			Prompt:      prompt,
+			WorktreeDir: d.RepoRoot,
+			RuntimeDir:  runtimeDir,
+			Mode:        d.Mode,
+			Phase: engine.PhaseSpec{
+				Name:         "consensus-" + model,
+				BuiltinTools: []string{"Read", "Glob", "Grep"},
+				MCPEnabled:   true,
+				MaxTurns:     25,
+				ReadOnly:     true,
+			},
+			MCPConfigPath: mcpConfig,
+			PoolConfigDir: d.PoolConfigDir,
+			PoolAPIKey:    d.PoolAPIKey,
+			PoolBaseURL:   d.PoolBaseURL,
+		}
+
+		result, err := d.Runner.Run(ctx, spec, nil)
+		if err != nil {
+			return "", "", nil, fmt.Errorf("consensus run: %w", err)
+		}
+
+		// Parse structured output from the model
+		verdict := "complete"
+		reasoning := result.ResultText
+		var gapsFound []string
+
+		for _, line := range strings.Split(result.ResultText, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "VERDICT:") {
+				verdict = strings.TrimSpace(strings.TrimPrefix(line, "VERDICT:"))
+			} else if strings.HasPrefix(line, "GAP:") {
+				gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
+				if gapDesc != "" {
+					gapsFound = append(gapsFound, gapDesc)
+				}
+			}
+		}
+
+		if len(gapsFound) > 0 && verdict == "complete" {
+			verdict = "incomplete"
+		}
+
+		return verdict, reasoning, gapsFound, nil
+	}
+}
+
 // Cleanup removes temporary files created by the discovery engine.
 func (d *DiscoveryEngine) Cleanup() {
 	if d.runtimeDir != "" {

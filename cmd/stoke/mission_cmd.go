@@ -93,6 +93,7 @@ func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) 
 		config.ValidateDiscoveryFn = de.ValidateDiscoveryFn()
 		config.ExecuteFn = de.ExecuteFn()
 		config.ValidateFn = de.ValidateFn()
+		config.ConsensusModelFn = de.ConsensusModelFn()
 	}
 
 	orch, err := orchestrate.New(config)

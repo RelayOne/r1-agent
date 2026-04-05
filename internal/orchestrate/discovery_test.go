@@ -137,6 +137,56 @@ func TestDiscoveryEngineBuiltinTools(t *testing.T) {
 	}
 }
 
+func TestConsensusModelFnRunSpec(t *testing.T) {
+	runner := &mockRunner{result: "VERDICT: incomplete\nGAP: Missing error handling in auth flow\nGAP: No rate limiting tests"}
+	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
+	defer de.Cleanup()
+
+	fn := de.ConsensusModelFn()
+
+	verdict, reasoning, gaps, err := fn(context.Background(), "m-1", "claude", "consensus prompt")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	spec := runner.lastSpec
+	if spec.Phase.Name != "consensus-claude" {
+		t.Errorf("expected phase name 'consensus-claude', got %q", spec.Phase.Name)
+	}
+	if !spec.Phase.ReadOnly {
+		t.Error("consensus should be read-only")
+	}
+
+	if verdict != "incomplete" {
+		t.Errorf("expected verdict 'incomplete', got %q", verdict)
+	}
+	if len(gaps) != 2 {
+		t.Errorf("expected 2 gaps, got %d: %v", len(gaps), gaps)
+	}
+	if reasoning == "" {
+		t.Error("reasoning should not be empty")
+	}
+}
+
+func TestConsensusModelFnAutoIncomplete(t *testing.T) {
+	// When model finds gaps but doesn't explicitly say VERDICT: incomplete
+	runner := &mockRunner{result: "Looks mostly good.\nGAP: No pagination on list endpoint"}
+	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
+	defer de.Cleanup()
+
+	fn := de.ConsensusModelFn()
+	verdict, _, gaps, err := fn(context.Background(), "m-1", "codex", "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "incomplete" {
+		t.Errorf("should auto-set incomplete when gaps found, got %q", verdict)
+	}
+	if len(gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(gaps))
+	}
+}
+
 func TestExecuteFnRunSpec(t *testing.T) {
 	runner := &mockRunner{result: "FILE: auth.go\nFILE: auth_test.go\nDone."}
 	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
