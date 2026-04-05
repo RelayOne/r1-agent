@@ -28,6 +28,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -952,6 +953,55 @@ func truncateOutput(output string, maxLen int) string {
 	return "..." + output[len(output)-maxLen:]
 }
 
+// vagueAffirmationPatterns lists phrases that indicate the model is rubber-stamping
+// rather than providing evidence-based reasoning.
+var vagueAffirmationPatterns = []string{
+	"looks good",
+	"appears complete",
+	"should work",
+	"seems fine",
+	"no issues found",
+	"everything is in order",
+	"all looks correct",
+	"implementation is solid",
+}
+
+// isVagueAffirmation returns true if the reasoning contains vague affirmation
+// phrases without specific evidence, or is too terse to contain real analysis.
+func isVagueAffirmation(reasoning string) bool {
+	if len(reasoning) < 100 {
+		return true
+	}
+	lower := strings.ToLower(reasoning)
+	for _, pat := range vagueAffirmationPatterns {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+	return false
+}
+
+// evidenceCitationRe matches file:line references like "auth.go:42" or path references.
+var evidenceCitationRe = regexp.MustCompile(`\w+\.\w+:\d+`)
+
+// fileExtensionRe matches common source file extensions in reasoning text.
+var fileExtensionRe = regexp.MustCompile(`\.\b(go|ts|tsx|js|jsx|py|rs|java|rb|c|cpp|h|hpp|css|html|sql|yaml|yml|json|toml)\b`)
+
+// hasEvidenceCitations returns true if the reasoning contains at least one
+// file path reference (file:line or file extension mention).
+func hasEvidenceCitations(reasoning string) bool {
+	if evidenceCitationRe.MatchString(reasoning) {
+		return true
+	}
+	if fileExtensionRe.MatchString(reasoning) {
+		return true
+	}
+	return false
+}
+
+// scopeQualifierRe matches "pre-existing" or "out of scope" qualifiers in gap descriptions.
+var scopeQualifierRe = regexp.MustCompile(`(?i)\b(pre-existing|out of scope)\b`)
+
 // NewConsensusHandler creates a handler for the Converged phase.
 // It builds the full adversarial consensus prompt (with the validation report,
 // anti-rationalization protocol, and challenge questions) and passes it to
@@ -999,6 +1049,23 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 			verdict, reasoning, gapsFound, err := deps.ConsensusModelFn(ctx, m.ID, model, consensusPrompt)
 			if err != nil {
 				return nil, fmt.Errorf("consensus from %s: %w", model, err)
+			}
+
+			// Anti-hallucination: reject vague "complete" verdicts that lack evidence
+			if verdict == "complete" {
+				if isVagueAffirmation(reasoning) {
+					verdict = "incomplete"
+					gapsFound = append(gapsFound, "Consensus rejected: reasoning lacks specific evidence (file:line citations required)")
+				} else if !hasEvidenceCitations(reasoning) {
+					verdict = "incomplete"
+					gapsFound = append(gapsFound, "Consensus rejected: reasoning lacks specific evidence (file:line citations required)")
+				}
+			}
+
+			// Scope expansion: nothing is "out of scope" or "pre-existing" — all issues block
+			for i, gap := range gapsFound {
+				gapsFound[i] = scopeQualifierRe.ReplaceAllString(gap, "")
+				gapsFound[i] = strings.TrimSpace(gapsFound[i])
 			}
 
 			deps.Store.RecordConsensus(&ConsensusRecord{

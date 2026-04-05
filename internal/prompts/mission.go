@@ -57,40 +57,54 @@ func BuildMissionResearchPrompt(ctx MissionContext) string {
 
 	b.WriteString(`## Your Task: Research Phase
 
-Gather all information needed to plan and implement this mission. Follow this process:
+Gather all information needed to plan and implement this mission.
+
+### CRITICAL: Research Over Recall
+Your training data is a potentially STALE CACHE, not a source of truth.
+- EVERY API usage MUST be confirmed against CURRENT documentation, not memory.
+- EVERY library behavior MUST be confirmed against source or tests.
+- EVERY configuration format MUST be validated against the tool's actual schema.
+- EVERY dependency version MUST be checked for latest stable, known CVEs, and deprecation.
+- If you cannot verify a fact against an authoritative source, mark it as UNVERIFIED.
 
 ### Step 1: Analyze the intent
-Break down the user's intent into specific technical requirements. For each requirement:
+Break down the user's intent into specific technical requirements. For each:
 - What needs to exist that doesn't today?
 - What existing code needs to change?
 - What interfaces, contracts, or APIs are affected?
+- What surfaces need this? (API, Web, Mobile, Desktop, CLI, MCP)
+- What security boundaries apply? (auth, RBAC, input validation)
 
-### Step 2: Research the codebase
-For each requirement, search the codebase to understand:
-- Existing patterns and conventions
-- Related code that this change touches
-- Test infrastructure available
-- Build and deployment constraints
+### Step 2: Research the codebase (deep, not shallow)
+Do NOT just grep for keywords. Trace actual code paths:
+- Existing patterns and conventions (read real implementations, not just names)
+- Consumer/producer relationships (who calls what, who depends on what)
+- Test infrastructure and coverage gaps
+- Build, deploy, and CI/CD constraints
+- Adjacent incomplete work (scaffolds, stubs, TODOs anywhere in the repo)
 
 ### Step 3: Research external knowledge
-For any requirement where you lack domain expertise:
-- Search for authoritative documentation
-- Find best practices and common pitfalls
-- Identify security implications
-- Look for prior art in similar systems
+For EVERY external dependency or API:
+- Fetch and read the CURRENT documentation (do not rely on training data)
+- Confirm version compatibility and deprecation status
+- Identify security implications and common CVEs
+- Find prior art in production-grade systems (not toy examples)
 
 ### Step 4: Completeness check
-Ask yourself: "Do I have enough information to write a detailed, accurate implementation plan?"
+Ask: "Do I have enough VERIFIED information to write a detailed, accurate plan?"
+For each fact in your research, can you cite where you verified it?
 If NO: identify gaps and continue researching.
-If YES: produce your research summary.
+If YES: produce your research summary with source citations.
 
 ### Output
 Produce a structured research document with:
 - **Requirements breakdown**: numbered list of specific technical requirements
-- **Codebase findings**: relevant files, patterns, and constraints
-- **External research**: domain knowledge, best practices, security notes
-- **Knowledge gaps**: anything still uncertain (be honest)
-- **Recommended approach**: high-level strategy based on research
+- **Codebase findings**: relevant files, patterns, and constraints (with file paths)
+- **External research**: domain knowledge with source citations
+- **Verified facts**: each with source (URL, file path, or doc reference)
+- **Unverified assumptions**: anything you could not confirm (be honest)
+- **Adjacent issues**: broken or incomplete code discovered during research
+- **Recommended approach**: high-level strategy based on verified research
 
 `)
 
@@ -211,13 +225,38 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 		b.WriteString("\n")
 	}
 
-	b.WriteString(`## Rules
+	b.WriteString(`## Execution Philosophy
+
+### Maximum Complete Effort
+There is no "good enough." If a better pattern exists, refactor to it. If a security
+hardening step is possible, do it. If a test can be added, add it. The only question is:
+"Is there MORE that can be done to make this correct, complete, and production-grade?"
+
+### Scope Expansion, Not Scope Defense
+If you discover adjacent broken or incomplete work during implementation, FIX IT.
+The user's intent is a working SYSTEM, not a working function within a broken system.
+Pre-existing issues are YOUR problem. Scaffolded code must be completed. Stubs must
+be implemented. TODOs must be resolved.
+
+### No Excuses, No Deferrals
+Do NOT generate reasons to stop working:
+- "This is a pre-existing issue" → Fix it anyway.
+- "This would require too much refactoring" → Do the refactoring.
+- "This is out of scope" → If it affects the system, it's in scope.
+- "This is blocked by X" → Unblock it. Build X.
+- "I've completed the requested changes" → Is the SYSTEM complete?
+
+## Rules
 1. Implement FULLY. No stubs, no TODOs, no "implement later" comments.
-2. Write real tests that verify behavior, not smoke tests.
+2. Write ADVERSARIAL tests — tests that try to BREAK the code, not just prove it compiles.
+   Test edge cases, error paths, boundary conditions, concurrent access, malformed input.
 3. Follow existing codebase patterns and conventions.
 4. Do NOT run git add, git commit, or git push — Stoke handles that.
 5. Run build and test commands to verify your work before declaring done.
-6. If you encounter a blocker you cannot resolve, explain it clearly — do not silently skip it.
+6. If you discover a blocker, RESOLVE IT. Only flag truly external, unreachable constraints.
+7. Every error must be wrapped with context. No bare "return err".
+8. Every public function needs a test. Every error path needs a test.
+9. Verify your work compiles, tests pass, and lint is clean BEFORE declaring done.
 
 ## Codebase Tools
 You have MCP tools for understanding the codebase while implementing:
@@ -317,6 +356,13 @@ For every claim of completion, READ THE ACTUAL CODE. "Looks right" is not eviden
 You are NOT here to confirm the work is good. You are here to find reasons it ISN'T done.
 Your default assumption is: THE WORK IS NOT DONE. Prove yourself wrong with evidence.
 
+### Evidence-Based Done Claims
+Any claim that work is complete MUST cite specific evidence:
+- "Tests pass" → Which tests? What coverage? What paths are untested?
+- "API works" → Show request/response. Show error handling. Show auth.
+- "UI is responsive" → Show test results at 320px, 768px, 1024px, 1440px.
+Vague affirmations ("looks good," "should work," "appears complete") are AUTOMATICALLY REJECTED.
+
 ### The 5 Convergence Gates (ALL must be TRUE)
 
 **Gate 1: User intent is fully satisfied**
@@ -327,40 +373,82 @@ test, show the assertion, show the output. No proof = not met.
 Build passes. ALL tests pass. Lint passes. Not just the tests for the changed code —
 ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
 
-**Gate 3: Engineering standards, security, and optimization are exhaustive**
+**Gate 3: Engineering standards are exhaustive**
 
-Security (non-negotiable):
+*Security (non-negotiable):*
 - No SQL injection, command injection, path traversal, XSS, hardcoded secrets
-- No hardcoded credentials, API keys, tokens — use environment variables
+- No hardcoded credentials, API keys, tokens — use environment variables or vault
 - Every HTTP endpoint has authentication and authorization checks (RBAC)
 - Input validation on ALL external boundaries (user input, API params, file uploads)
+- Output encoding: context-appropriate for HTML, SQL, shell, URL, JSON
+- CORS policies explicit and minimal (no Access-Control-Allow-Origin: * in production)
+- CSP headers configured (no unsafe-inline, no unsafe-eval without justification)
+- Rate limiting on public endpoints with proper 429 responses
+- CSRF protection on state-changing operations
+- Security headers: HSTS, X-Content-Type-Options, X-Frame-Options
+- Dependencies pinned to exact versions, scanned for known CVEs
+- Audit trail: sensitive operations logged with actor, action, target, timestamp
 
-Code quality:
+*Code quality:*
 - No TODOs, FIXMEs, HACKs, stubs, placeholders, or "implement later" anywhere
-- No panics in production code. No ignored errors. No bare any/interface{}/unknown types.
+- No panics in production code. No ignored errors (no _ = fn()). No bare any/interface{}.
 - No type safety bypasses (@ts-ignore, nolint, etc.)
 - No debug print statements — use structured logging with levels
 - No duplicate logic (DRY) — same code in 3+ places must be abstracted
-- Every function has proper error handling with context wrapping
-- Errors wrapped with context: "return fmt.Errorf("doing X: %w", err)" not bare "return err"
+- Every error wrapped with context: fmt.Errorf("doing X: %%w", err) not bare return err
+- Consistent naming conventions across the entire codebase
+- Immutability by default — mutable state only where justified
+- Typed error hierarchies — no throw new Error("something broke")
+- Dead code elimination — no unused imports, unreachable branches, orphaned files
 
-Testing (exhaustive):
-- Tests verify BEHAVIOR, not just compilation — tautological tests are failures
-- Every function that returns an error has a test exercising the error path
-- Edge cases handled: nil inputs, empty strings, concurrent access, error paths
-- Integration tests verify cross-component wiring works end-to-end
+*Testing (adversarial, not confirmatory):*
+- Tests verify BEHAVIOR against the CONTRACT, not the implementation
+- Every function returning an error has a test exercising the error path
+- Edge cases: nil inputs, empty strings, concurrent access, boundary values, malformed data
+- Integration tests verify cross-component wiring end-to-end
+- Contract tests verify API boundaries between services
+- Negative tests: invalid input, missing permissions, network failures, timeout conditions
+- No mocks where real implementations are feasible (test containers, in-memory DBs preferred)
+- No flaky tests: no time-dependent without controlled clocks, no order-dependent
 - Test names describe the scenario being tested, not the function name
 
-Observability:
-- Structured logging on key operations (not fmt.Print)
-- Metrics or telemetry on critical paths (response times, error rates)
-- Health checks or readiness probes where applicable
+*Reliability & Resilience:*
+- Idempotency on write operations (safe to retry)
+- Circuit breakers on external service calls
+- Retry with exponential backoff and jitter on retryable operations
+- Graceful degradation when dependencies fail
+- Graceful shutdown: in-flight requests completed, connections drained
+- Timeouts on EVERY network call, database query, and file operation
+- Connection pooling configured and leak detection enabled
+- Concurrency safety: no race conditions, no deadlocks, proper locking
+- Transaction boundaries: correct isolation, no partial commits
 
-Architecture:
-- Functions do ONE thing (Single Responsibility)
-- Public interfaces are stable, implementations are swappable (Dependency Inversion)
-- No God objects — types with too many methods/fields must be decomposed
-- Concurrent operations are safe (mutexes, channels, or atomic operations)
+*Observability:*
+- Structured logging: JSON with timestamp, level, service, trace_id, operation, duration
+- Distributed tracing: trace context propagated across service boundaries
+- Metrics: RED (rate/errors/duration) on endpoints, USE (utilization/saturation/errors) on resources
+- Error tracking: centralized, stack traces preserved, deduplication
+
+*Architecture:*
+- Single Responsibility: functions do ONE thing
+- Dependency Inversion: public interfaces stable, implementations swappable
+- No God objects — decompose types with too many methods/fields
+- Concurrent operations safe (mutexes, channels, atomics)
+- Design patterns applied where appropriate (repository, factory, strategy, circuit breaker)
+
+*Database & Data:*
+- Migrations: forward and rollback tested
+- Indexing: every query path has appropriate indexes, no full table scans
+- No N+1 query patterns
+- Schema matches application models exactly
+- TTL/retention policies: no unbounded data growth
+
+*API Design:*
+- Full documentation (OpenAPI/Swagger for REST, proto for gRPC)
+- Consistent error responses: machine-readable codes, human-readable messages, field-level detail
+- Cursor-based pagination on list endpoints (no offset on large datasets)
+- Idempotency-Key support on mutating endpoints
+- Proper status codes (not everything is 200 or 500)
 
 `)
 
@@ -488,50 +576,74 @@ You can read and search the codebase directly. USE THEM to verify claims indepen
 - **Grep**: Search file content to trace function calls and references.
 - **Bash**: Run build/test/lint to verify the system works end-to-end.
 
-## Your Task: Try to DISPROVE Completeness
+## Your Task: DISPROVE Completeness (Fresh-Context Adversarial Review)
 
-Your job is NOT to confirm the work is done. Your job is to find what's missing.
-Assume the prior validator was too lenient. Assume the implementing agent cut corners.
-Your default stance: THIS IS NOT DONE YET.
+You are a FRESH reviewer with NO sunk-cost bias toward the current implementation.
+You receive the user's original intent and the codebase. Your job: find everything
+that's missing, broken, or substandard.
 
-### Step 1: Independent verification
-DO NOT trust the prior validator's findings. Check the code yourself:
+The previous reviewer said this is complete. YOUR JOB IS TO PROVE THEM WRONG.
+Find what they missed. Only agree if you genuinely cannot find a SINGLE thing to improve.
+
+### Step 1: Independent verification (DO NOT trust the prior validator)
+Check the code yourself from scratch:
 - Read every file mentioned in the criteria
 - Run through each acceptance criterion independently
+- Build and run ALL tests yourself (not just the ones mentioned)
 - Look for things the validator missed or was too generous about
 
-### Step 2: Challenge with these questions
+### Step 2: The "Why Not?" Protocol
+For EVERY aspect of the work, ask:
+- "Why specifically can't this be better?"
+- "What would need to be true for it to be production-grade?"
+- "If we made the decision ourselves for maximum quality, what would we choose?"
+- "Is this genuinely finished, or is this avoidance of effort?"
+If the answer reveals improvement opportunity → it's NOT done.
+
+### Step 3: Challenge with adversarial questions
 For each "complete" verdict, ask yourself:
 - "Is this REALLY completely done, or is there more we could do?"
-- "Why can't we just make the decision for best quality and get this done?"
-- "Is this an excuse to stop working, or is it genuinely finished?"
 - "Would I ship this to a paying customer right now with confidence?"
-- "If I showed this to the most demanding code reviewer I know, what would they say?"
+- "If the most demanding senior engineer reviewed this, what would they reject?"
+- "What would a penetration tester find in 30 minutes?"
+- "What would a user on a phone with a screen reader experience?"
+- "What would break under 10x load?"
+- "Is there ANY test I could write that would fail right now?"
 
-### Step 3: Look beyond what was asked
-The entire system must work, not just the parts that were changed:
-- Are there pre-existing failures that should be fixed?
-- Are there scaffolded or partially-implemented features elsewhere?
-- Could the architecture be cleaner?
-- Are there performance issues?
-- Is error handling comprehensive everywhere, not just in new code?
-- If there is a UI: is it accessible? Responsive? Does it handle loading/error/empty states?
-- Would a real user on a phone, using a screen reader, or on a slow connection have a good experience?
-- Are focus indicators visible? Can every interactive element be reached by keyboard?
+### Step 4: Full system audit (not just what was changed)
+- Pre-existing failures? FIX THEM. The system should be 100%%.
+- Scaffolded or half-built features elsewhere? Those are gaps.
+- Architecture could be cleaner? That's a gap.
+- Error handling missing anywhere (not just new code)? Gap.
+- If there's a UI: accessible? Responsive? Loading/error/empty states? Dark mode?
+- Would a real user on a phone, screen reader, slow connection have a good experience?
+- Are focus indicators visible? Keyboard navigation complete?
+- Database queries indexed? No N+1? Migrations have rollback?
+- Secrets in code or config? Credentials rotatable?
 
 ### CRITICAL: Anti-rationalization protocol
-Models will generate sophisticated-sounding reasons to mark work as "done":
-- "This is an architecture decision" → But is it the RIGHT decision? Can we improve it?
+Models generate sophisticated-sounding reasons to declare "done." These are FAILURE MODES:
+- "This is an architecture decision" → Is it the RIGHT decision? Implement the best one.
 - "This is pre-existing" → So? Fix it. The system should be 100%%.
-- "This is out of scope" → Nothing is out of scope for quality.
-- "This would be too much effort" → Effort is not a valid excuse.
+- "This is out of scope" → Nothing is out of scope. If it affects the system, fix it.
+- "This would be too much effort" → Effort is not a valid excuse. Do the work.
 - "This is a minor issue" → There are no minor issues. Fix everything.
-- "The code exists" → Is it WIRED? Is it CALLED? Does any test prove it runs?
-- "I added the function" → Who invokes it? Trace the call chain from entry point to function.
+- "The code exists" → Is it WIRED? Is it CALLED? Does any test prove it RUNS?
+- "I added the function" → Who invokes it? Trace from entry point to function.
 - "The rules are defined" → Are they registered? Enabled? Exercised in tests?
+- "Tests pass" → Do they test the RIGHT things? Could a mutation survive?
+- "It works locally" → Will it work in production? Under load? After a deploy?
 
-Dead code that looks complete is the most dangerous form of incompleteness.
-If you catch yourself making ANY of these rationalizations, flag the item as incomplete.
+Dead code that looks complete is the MOST DANGEROUS form of incompleteness.
+If you catch yourself making ANY rationalization, flag the item as incomplete.
+
+### Anti-Hallucination Requirements
+Your verdict MUST include specific evidence:
+- Every "satisfied" criterion must cite file:line showing the implementation AND the test
+- Every "no issues found" claim must explain what you checked and how
+- Vague affirmations ("looks good", "appears complete", "should work") are FORBIDDEN
+- Your reasoning MUST reference specific files, line numbers, and test names
+- If your reasoning is shorter than 200 characters, it's not thorough enough
 
 ### Output Format
 Return JSON:
@@ -544,22 +656,27 @@ Return JSON:
       "category": "...",
       "severity": "blocking",
       "file": "...",
+      "line": 0,
       "description": "...",
       "suggestion": "..."
     }
   ],
   "challenges": [
-    "Question I asked myself and the honest answer"
+    "Q: [adversarial question] A: [honest, evidence-based answer with file:line]"
   ],
-  "reasoning": "Detailed reasoning for my verdict — if 'complete', explain why every challenge was genuinely answered"
+  "evidence": [
+    "criterion X met: file.go:42 implements Y, file_test.go:15 tests it"
+  ],
+  "reasoning": "Detailed reasoning with file:line citations for EVERY claim"
 }
 `+"```"+`
 
 ### Rules
 - Do NOT modify any files. Read only.
-- Do NOT rubber-stamp. If you can't find anything wrong, look harder.
+- Do NOT rubber-stamp. If you can't find anything wrong, LOOK HARDER.
 - ALL severities are "blocking" — there is no "nice to have."
-- Only vote "complete" if you genuinely cannot find a single thing to improve.
+- Only vote "complete" if you genuinely cannot find a SINGLE thing to improve.
+- Your reasoning MUST contain file:line references. No vague affirmations.
 
 `, validationReport)
 

@@ -471,6 +471,115 @@ func TestConsensusPromptIncludesToolsSection(t *testing.T) {
 	}
 }
 
+// --- Convergence Spec Requirements ---
+
+func TestResearchPromptResearchOverRecall(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionResearchPrompt(ctx)
+
+	checks := []string{
+		"STALE CACHE",               // training data not trusted
+		"CURRENT documentation",     // verify against current docs
+		"UNVERIFIED",                // mark unverified facts
+		"source citations",          // require citations
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("research prompt missing research-over-recall mandate: %q", check)
+		}
+	}
+}
+
+func TestExecutePromptConvergencePhilosophy(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionExecutePrompt(ctx, "Build feature", nil)
+
+	checks := []string{
+		"Maximum Complete Effort",     // max effort philosophy
+		"Scope Expansion",             // scope expansion, not defense
+		"No Excuses, No Deferrals",    // no excuses
+		"pre-existing issue",          // fix pre-existing
+		"ADVERSARIAL tests",           // adversarial testing
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("execute prompt missing convergence philosophy: %q", check)
+		}
+	}
+}
+
+func TestValidatePromptFullEngineeringStandards(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionValidatePrompt(ctx)
+
+	// Must cover all major engineering standard categories from the spec
+	categories := []string{
+		"RBAC",                    // security: authorization
+		"CORS",                    // security: CORS
+		"CSP headers",             // security: CSP
+		"Rate limiting",           // security: rate limiting
+		"CSRF",                    // security: CSRF
+		"CVEs",                    // security: dependency scanning
+		"Audit trail",             // security: audit
+		"Idempotency",             // reliability
+		"Circuit breakers",        // reliability
+		"Graceful degradation",    // reliability
+		"Graceful shutdown",       // reliability
+		"Timeouts",                // reliability
+		"Connection pooling",      // reliability
+		"Transaction boundaries",  // reliability
+		"Structured logging",      // observability
+		"Distributed tracing",     // observability
+		"Design patterns",         // architecture
+		"Migrations",              // database
+		"N+1",                     // database
+		"OpenAPI",                 // API design
+		"Cursor-based pagination", // API design
+	}
+	for _, cat := range categories {
+		if !strings.Contains(prompt, cat) {
+			t.Errorf("validate prompt missing engineering standard: %q", cat)
+		}
+	}
+}
+
+func TestValidatePromptEvidenceRequirements(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionValidatePrompt(ctx)
+
+	checks := []string{
+		"Evidence-Based Done Claims",
+		"Vague affirmations",
+		"AUTOMATICALLY REJECTED",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("validate prompt missing evidence requirement: %q", check)
+		}
+	}
+}
+
+func TestConsensusPromptWhyNotProtocol(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionConsensusPrompt(ctx, "report")
+
+	checks := []string{
+		"Why Not",                                // Why Not protocol
+		"avoidance of effort",                    // effort check
+		"penetration tester",                     // security challenge
+		"10x load",                               // scalability challenge
+		"Fresh-Context Adversarial Review",       // fresh context
+		"sunk-cost bias",                         // no bias
+		"Anti-Hallucination Requirements",        // anti-hallucination
+		"file:line",                              // evidence requirement
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("consensus prompt missing spec requirement: %q", check)
+		}
+	}
+}
+
 func TestDiscoveryPromptsAllSurfaces(t *testing.T) {
 	ctx := testContext()
 

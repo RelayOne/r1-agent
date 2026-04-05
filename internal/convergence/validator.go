@@ -39,6 +39,7 @@ const (
 	CatDocumentation Category = "docs"           // missing documentation
 	CatConsistency   Category = "consistency"    // stubs, TODOs, incomplete code
 	CatUXQuality     Category = "ux"             // UI/UX quality, accessibility, responsiveness
+	CatReliability   Category = "reliability"   // production reliability, resilience
 )
 
 // Severity indicates how blocking a finding is.
@@ -422,6 +423,12 @@ func DefaultRules() []Rule {
 		tautologicalTestRule(),
 		missingTestFileRule(),
 		missingErrorTestRule(),
+
+		// Gate 3: Reliability
+		unboundedQueryRule(),
+
+		// Gate 3: Code quality (frontend)
+		consoleLogRule(),
 
 		// Gate 6: UX quality — accessibility, responsiveness, error states, UI completeness
 		inaccessibleImageRule(),
@@ -1093,6 +1100,83 @@ func missingEmptyStateRule() Rule {
 	}
 }
 
+// --- Gate 3: Reliability ---
+
+// unboundedQueryRule flags SQL SELECT queries without LIMIT clauses.
+func unboundedQueryRule() Rule {
+	selectPattern := regexp.MustCompile(`(?i)\bSELECT\b`)
+	limitPattern := regexp.MustCompile(`(?i)\bLIMIT\b`)
+	// Exclude queries that are inherently bounded or are subqueries
+	excludePattern := regexp.MustCompile(`(?i)(COUNT\s*\(|EXISTS\s*\(|SELECT\s+1\b)`)
+	return Rule{
+		ID: "no-unbounded-query", Name: "SQL queries must have LIMIT clauses", Category: CatReliability,
+		Severity: SevMajor, Enabled: true,
+		Description: "Unbounded SELECT queries can return millions of rows and crash the service",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			ext := filepath.Ext(file)
+			if ext != ".go" && ext != ".py" && ext != ".js" && ext != ".ts" && ext != ".tsx" && ext != ".jsx" {
+				return nil
+			}
+			contentStr := string(content)
+			if !selectPattern.MatchString(contentStr) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(contentStr, "\n")
+			for i, line := range lines {
+				if !selectPattern.MatchString(line) {
+					continue
+				}
+				if excludePattern.MatchString(line) {
+					continue
+				}
+				// Check the current line and next 5 lines for a LIMIT clause
+				end := i + 6
+				if end > len(lines) {
+					end = len(lines)
+				}
+				window := strings.Join(lines[i:end], "\n")
+				if !limitPattern.MatchString(window) {
+					findings = append(findings, Finding{
+						RuleID:      "no-unbounded-query",
+						Category:    CatReliability,
+						Severity:    SevMajor,
+						File:        file,
+						Line:        i + 1,
+						Description: "SQL SELECT without LIMIT — unbounded query can return excessive rows",
+						Suggestion:  "Add a LIMIT clause to prevent unbounded result sets",
+						Evidence:    strings.TrimSpace(line),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// --- Gate 3: Code quality (frontend) ---
+
+// consoleLogRule flags console.log/warn/error in JS/TS production code.
+func consoleLogRule() Rule {
+	re := regexp.MustCompile(`\bconsole\.(log|warn|error)\(`)
+	return Rule{
+		ID: "no-console-log", Name: "No console.log/warn/error in production JS/TS", Category: CatCodeQuality,
+		Severity: SevMajor, Enabled: true,
+		Description: "Console logging in production code — use structured logging instead",
+		Check: func(file string, content []byte) []Finding {
+			if !isJSOrTSFile(file) || isTestFile(file) {
+				return nil
+			}
+			return regexCheck(re, file, content, "no-console-log", CatCodeQuality, SevMajor,
+				"Uses console.log/warn/error — not suitable for production, use structured logging",
+				"Replace with a proper logging library (e.g., winston, pino, or a custom logger)")
+		},
+	}
+}
+
 // --- Helpers ---
 
 // regexCheck is a helper that scans content line-by-line for regex matches.
@@ -1145,6 +1229,16 @@ func isFrontendFile(path string) bool {
 
 func isStyleFile(path string) bool {
 	exts := []string{".css", ".scss", ".sass", ".less", ".styl"}
+	for _, ext := range exts {
+		if strings.HasSuffix(path, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func isJSOrTSFile(path string) bool {
+	exts := []string{".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 	for _, ext := range exts {
 		if strings.HasSuffix(path, ext) {
 			return true

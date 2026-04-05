@@ -279,7 +279,8 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 		Metrics: metrics,
 		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
 			capturedPrompts = append(capturedPrompts, prompt)
-			return "complete", "looks good", nil, nil
+			// Provide evidence-backed reasoning so anti-hallucination check passes
+			return "complete", "Verified auth.go:42 implements JWT token issuance with proper expiry, jwt_test.go:18 covers the happy path and error cases thoroughly", nil, nil
 		},
 	}, []string{"claude", "codex"})
 
@@ -351,6 +352,101 @@ func TestConsensusHandlerCreatesGapObjects(t *testing.T) {
 	}
 	if !found["Missing input validation"] {
 		t.Error("expected 'Missing input validation' gap from consensus")
+	}
+}
+
+func TestConsensusRejectsVagueAffirmation(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	handler := NewConsensusHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			return "complete", "looks good", nil, nil
+		},
+	}, []string{"reviewer-1"})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Vague "looks good" should be overridden to incomplete
+	if !strings.Contains(result.Summary, "incomplete") {
+		t.Errorf("expected incomplete verdict due to vague affirmation, got summary=%q", result.Summary)
+	}
+
+	// A rejection gap should have been created
+	gaps, _ := store.OpenGaps(m.ID)
+	foundRejection := false
+	for _, g := range gaps {
+		if strings.Contains(g.Description, "Consensus rejected") {
+			foundRejection = true
+		}
+	}
+	if !foundRejection {
+		t.Error("expected a 'Consensus rejected' gap to be recorded")
+	}
+}
+
+func TestConsensusRequiresEvidence(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	handler := NewConsensusHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			// Long enough to pass the terse check, no vague phrases, but no file references
+			return "complete", "The implementation correctly handles all edge cases including error propagation and boundary conditions across all modules in the system", nil, nil
+		},
+	}, []string{"reviewer-1"})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(result.Summary, "incomplete") {
+		t.Errorf("expected incomplete verdict due to missing evidence, got summary=%q", result.Summary)
+	}
+}
+
+func TestConsensusAcceptsEvidencedComplete(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	handler := NewConsensusHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			return "complete", "auth.go:42 verifies JWT signature with HMAC-SHA256, middleware.go:89 checks token expiry before allowing request through, auth_test.go:15 covers both valid and expired token scenarios", nil, nil
+		},
+	}, []string{"reviewer-1"})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(result.Summary, "complete") {
+		t.Errorf("expected complete verdict with evidence-backed reasoning, got summary=%q", result.Summary)
+	}
+	if strings.Contains(result.Summary, "incomplete") {
+		t.Errorf("evidence-backed complete verdict should not be overridden, got summary=%q", result.Summary)
 	}
 }
 

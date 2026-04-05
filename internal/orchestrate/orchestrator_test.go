@@ -319,7 +319,7 @@ func TestRunMissionWithExecuteFn(t *testing.T) {
 			if !strings.Contains(prompt, "DISPROVE") {
 				return "incomplete", "prompt missing adversarial framing", nil, nil
 			}
-			return "complete", "all criteria met", nil, nil
+			return "complete", "auth.go:3 implements Login() returning token, auth_test.go:5 verifies non-empty return value — criterion satisfied with evidence", nil, nil
 		},
 	})
 	if err != nil {
@@ -430,7 +430,7 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 		ConsensusModelFn: func(ctx context.Context, missionID, modelName, prompt string) (string, string, []string, error) {
 			consensusCalls[modelName]++
 			consensusPrompts = append(consensusPrompts, prompt)
-			return "complete", "verified", nil, nil
+			return "complete", "handler.go:3 implements Handle() returning ok, handler_test.go:5 asserts Handle() returns ok — full coverage verified", nil, nil
 		},
 	})
 	if err != nil {

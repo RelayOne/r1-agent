@@ -3,6 +3,7 @@ package mission
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -608,5 +609,24 @@ func TestRunnerPersistsFilesChanged(t *testing.T) {
 	}
 	if files != "internal/auth/jwt.go\ninternal/auth/jwt_test.go" {
 		t.Errorf("unexpected files_changed: %q", files)
+	}
+}
+
+func TestExpandScope(t *testing.T) {
+	tests := []struct {
+		input, wantContains string
+	}{
+		{"this is out of scope for now", "in scope (per convergence policy)"},
+		{"pre-existing issue in auth", "issue to fix"},
+		{"this is a minor issue", "issue"},
+		{"nice to have feature", "required"},
+		{"low priority task", "blocking"},
+		{"no scope qualifiers here", "no scope qualifiers here"},
+	}
+	for _, tt := range tests {
+		got := expandScope(tt.input)
+		if !strings.Contains(got, tt.wantContains) {
+			t.Errorf("expandScope(%q) = %q, want to contain %q", tt.input, got, tt.wantContains)
+		}
 	}
 }

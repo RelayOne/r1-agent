@@ -424,14 +424,17 @@ func (r *Runner) runConsensus(ctx context.Context, m *Mission, summary *RunSumma
 	for _, rec := range records {
 		if rec.Verdict == "reject" || rec.Verdict == "incomplete" {
 			log.Printf("[mission] %s consensus rejected by %s: %s", m.ID, rec.Model, rec.Reasoning)
-			// Create gaps from rejection
-			for _, gapID := range rec.GapsFound {
+			// Create gaps from rejection — apply scope expansion
+			// (nothing is "out of scope" or "pre-existing" — everything is in scope)
+			for _, gapDesc := range rec.GapsFound {
+				gapDesc = expandScope(gapDesc)
+				gapID := fmt.Sprintf("consensus-reject-%s-%d", m.ID, time.Now().UnixNano())
 				r.store.AddGap(&Gap{
 					ID:          gapID,
 					MissionID:   m.ID,
 					Category:    "completeness",
 					Severity:    "blocking",
-					Description: fmt.Sprintf("Consensus rejection by %s: %s", rec.Model, rec.Reasoning),
+					Description: fmt.Sprintf("Consensus rejection by %s: %s", rec.Model, gapDesc),
 				})
 			}
 			return PhaseExecuting, nil
@@ -484,4 +487,29 @@ func (s *RunSummary) IsSuccess() bool {
 // IsFailed returns true if the mission reached Failed.
 func (s *RunSummary) IsFailed() bool {
 	return s.FinalPhase == PhaseFailed
+}
+
+// expandScope removes scope-limiting qualifiers from gap descriptions.
+// Per the convergence spec: nothing is "out of scope," pre-existing issues
+// must be fixed, and effort is not a valid excuse.
+func expandScope(desc string) string {
+	lower := strings.ToLower(desc)
+	replacements := []struct{ old, repl string }{
+		{"out of scope", "in scope (per convergence policy)"},
+		{"out-of-scope", "in scope (per convergence policy)"},
+		{"pre-existing issue", "issue to fix"},
+		{"pre-existing", "existing"},
+		{"would require too much", "requires"},
+		{"blocked by", "depends on (must resolve)"},
+		{"minor issue", "issue"},
+		{"nice to have", "required"},
+		{"low priority", "blocking"},
+	}
+	for _, r := range replacements {
+		if idx := strings.Index(lower, r.old); idx >= 0 {
+			desc = desc[:idx] + r.repl + desc[idx+len(r.old):]
+			lower = strings.ToLower(desc)
+		}
+	}
+	return desc
 }
