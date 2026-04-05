@@ -163,6 +163,84 @@ func buildMicroFeedback(iteration int, gaps []string, scope string) string {
 	return b.String()
 }
 
+// ConvergeStep runs multi-model ConvergedAnswer when deps have ModelAskFn and
+// multiple ConvergenceModels configured. Falls back to single-model
+// MicroConvergence via ValidateStepFn. Falls back further to single-shot
+// execution if neither is configured.
+//
+// This is the single entry point for convergent execution at any level.
+func ConvergeStep(ctx context.Context, deps convergeStepDeps) (output string, converged bool, err error) {
+	// Tier 1: Multi-model recursive convergence
+	if deps.ModelAskFn != nil && len(deps.Models) > 0 {
+		maxDepth := deps.MaxDepth
+		if maxDepth <= 0 {
+			maxDepth = 20
+		}
+		result, cErr := ConvergedAnswer(ctx, ConvergedAnswerConfig{
+			Models:       deps.Models,
+			ArbiterModel: deps.ArbiterModel,
+			AskFn:        deps.ModelAskFn,
+			BiggerMission: deps.BiggerMission,
+			Mission:       deps.Mission,
+			MaxDepth:      maxDepth,
+			StepName:      deps.StepName,
+		})
+		if cErr != nil {
+			return "", false, cErr
+		}
+		return result.Answer, result.Converged, nil
+	}
+
+	// Tier 2: Single-model micro-convergence with validation
+	if deps.ExecuteFn != nil && deps.ValidateFn != nil {
+		maxIter := deps.MaxIterations
+		if maxIter <= 0 {
+			maxIter = 3
+		}
+		result, cErr := RunMicroConvergence(ctx, MicroConvergenceConfig{
+			MaxIterations: maxIter,
+			Scope:         deps.Mission,
+			StepName:      deps.StepName,
+			ExecuteFn:     deps.ExecuteFn,
+			ValidateFn:    deps.ValidateFn,
+		})
+		if cErr != nil {
+			return "", false, cErr
+		}
+		return result.FinalOutput, result.Converged, nil
+	}
+
+	// Tier 3: Single-shot execution (no convergence validation)
+	if deps.ExecuteFn != nil {
+		output, execErr := deps.ExecuteFn(ctx, "")
+		return output, true, execErr // assume converged since we can't validate
+	}
+
+	return "", false, fmt.Errorf("converge: no execution function configured")
+}
+
+// convergeStepDeps bundles config for ConvergeStep. Not all fields are
+// needed — ConvergeStep uses the highest-capability tier available.
+type convergeStepDeps struct {
+	// Tier 1: Multi-model convergence
+	ModelAskFn   ModelAskFn
+	Models       []string
+	ArbiterModel string
+	MaxDepth     int
+
+	// Tier 2: Single-model micro-convergence
+	ValidateFn func(ctx context.Context, scope, output string) (gaps []string, err error)
+	MaxIterations int
+
+	// Tier 3 (and shared): Execute function
+	ExecuteFn func(ctx context.Context, feedback string) (output string, err error)
+
+	// Context
+	BiggerMission string
+	Mission       string
+	StepName      string
+}
+
 // truncateForHistory keeps history entries from bloating memory.
 func truncateForHistory(s string, maxLen int) string {
 	if len(s) <= maxLen {

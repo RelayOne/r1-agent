@@ -122,6 +122,24 @@ type Config struct {
 	// MaxMicroIterations caps the execute→validate→fix cycle for each step.
 	// Default: 3.
 	MaxMicroIterations int `json:"max_micro_iterations"`
+
+	// ModelAskFn sends a prompt to a specific model by name.
+	// Used for multi-model convergence where all models answer independently
+	// and an arbiter combines/reviews until convergence.
+	// If nil, falls back to single-model convergence via ValidateStepFn.
+	ModelAskFn mission.ModelAskFn `json:"-"`
+
+	// ConvergenceModels lists models available for multi-model convergence.
+	// Each answers independently; arbiter combines and judges completeness.
+	ConvergenceModels []string `json:"convergence_models"`
+
+	// ArbiterModel decides when answers are complete. Should be strongest model.
+	// Defaults to first model in ConvergenceModels.
+	ArbiterModel string `json:"arbiter_model"`
+
+	// MaxConvergenceDepth is the safety circuit breaker for recursive convergence.
+	// NOT the convergence condition — the arbiter decides that. Default: 20.
+	MaxConvergenceDepth int `json:"max_convergence_depth"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -463,6 +481,10 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		MaxDAGDepth:         o.config.MaxDAGDepth,
 		ValidateStepFn:      o.config.ValidateStepFn,
 		MaxMicroIterations:  o.config.MaxMicroIterations,
+		ModelAskFn:          o.config.ModelAskFn,
+		ConvergenceModels:   o.config.ConvergenceModels,
+		ArbiterModel:        o.config.ArbiterModel,
+		MaxConvergenceDepth: o.config.MaxConvergenceDepth,
 		RecordResearchFn: func(missionID, topic, content string) error {
 			return o.research.Add(&research.Entry{
 				ID:        fmt.Sprintf("disc-%s-%d", missionID, time.Now().UnixNano()),
