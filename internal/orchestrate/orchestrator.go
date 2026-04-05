@@ -93,6 +93,25 @@ type Config struct {
 	// across all surfaces (mobile, web, desktop, API, MCP, CLI).
 	// If nil, only Layers 1-3 run during validation.
 	ValidateDiscoveryFn func(ctx context.Context, m *mission.Mission, prompt string) (findings string, err error) `json:"-"`
+
+	// DecomposeFn asks a model to break a large scope into minimum-viable work items.
+	// Returns JSON: {"action":"execute"} if scope is small enough, or
+	// {"action":"decompose","items":[...]} with a DAG of sub-tasks.
+	// If nil, the execute handler uses monolithic execution instead of DAG-based.
+	DecomposeFn func(ctx context.Context, m *mission.Mission, prompt string) (string, error) `json:"-"`
+
+	// WorkNodeFn executes a single minimum-scope work node.
+	// Receives the node prompt and the node scope.
+	// Returns files changed and any error.
+	WorkNodeFn func(ctx context.Context, m *mission.Mission, prompt string, scope string) (filesChanged []string, err error) `json:"-"`
+
+	// MaxDAGWorkers controls parallelism in the DAG execute handler.
+	// Default: 3.
+	MaxDAGWorkers int `json:"max_dag_workers"`
+
+	// MaxDAGDepth controls maximum recursion depth for work decomposition.
+	// Default: 4.
+	MaxDAGDepth int `json:"max_dag_depth"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -428,6 +447,10 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		ConsensusModelFn:    o.config.ConsensusModelFn,
 		DiscoveryFn:         o.config.DiscoveryFn,
 		ValidateDiscoveryFn: o.config.ValidateDiscoveryFn,
+		DecomposeFn:         o.config.DecomposeFn,
+		WorkNodeFn:          o.config.WorkNodeFn,
+		MaxDAGWorkers:       o.config.MaxDAGWorkers,
+		MaxDAGDepth:         o.config.MaxDAGDepth,
 		RecordResearchFn: func(missionID, topic, content string) error {
 			return o.research.Add(&research.Entry{
 				ID:        fmt.Sprintf("disc-%s-%d", missionID, time.Now().UnixNano()),
@@ -462,7 +485,7 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 	runner.RegisterHandler(mission.PhaseCreated, mission.NewResearchHandler(deps))
 	runner.RegisterHandler(mission.PhaseResearching, mission.NewPlanHandler(deps))
 	runner.RegisterHandler(mission.PhasePlanning, mission.NewExecuteHandler(deps))
-	runner.RegisterHandler(mission.PhaseExecuting, mission.NewExecuteHandler(deps))
+	runner.RegisterHandler(mission.PhaseExecuting, mission.NewDAGExecuteHandler(deps))
 	runner.RegisterHandler(mission.PhaseValidating, mission.NewValidateHandler(deps))
 	runner.RegisterHandler(mission.PhaseConverged, mission.NewConsensusHandler(deps, o.config.ConsensusModels))
 
