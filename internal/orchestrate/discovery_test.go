@@ -137,13 +137,26 @@ func TestDiscoveryEngineBuiltinTools(t *testing.T) {
 	}
 }
 
-func TestConsensusModelFnRunSpec(t *testing.T) {
-	runner := &mockRunner{result: "VERDICT: incomplete\nGAP: Missing error handling in auth flow\nGAP: No rate limiting tests"}
+func TestConsensusModelFnParsesJSON(t *testing.T) {
+	jsonResponse := `Here's my review:
+
+` + "```json" + `
+{
+  "verdict": "incomplete",
+  "agree_with_validator": false,
+  "missed_by_validator": [
+    {"category": "test", "severity": "blocking", "description": "No integration test for auth flow"},
+    {"category": "code", "severity": "blocking", "description": "Error handling missing in handler"}
+  ],
+  "reasoning": "The auth flow lacks integration tests and error handling is incomplete."
+}
+` + "```"
+
+	runner := &mockRunner{result: jsonResponse}
 	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
 	defer de.Cleanup()
 
 	fn := de.ConsensusModelFn()
-
 	verdict, reasoning, gaps, err := fn(context.Background(), "m-1", "claude", "consensus prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -163,14 +176,34 @@ func TestConsensusModelFnRunSpec(t *testing.T) {
 	if len(gaps) != 2 {
 		t.Errorf("expected 2 gaps, got %d: %v", len(gaps), gaps)
 	}
-	if reasoning == "" {
-		t.Error("reasoning should not be empty")
+	if !strings.Contains(reasoning, "integration tests") {
+		t.Errorf("reasoning should come from JSON, got %q", reasoning)
+	}
+}
+
+func TestConsensusModelFnFallbackLineFormat(t *testing.T) {
+	// When model doesn't return JSON, fall back to line parsing
+	runner := &mockRunner{result: "VERDICT: incomplete\nGAP: Missing error handling in auth flow\nGAP: No rate limiting tests"}
+	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
+	defer de.Cleanup()
+
+	fn := de.ConsensusModelFn()
+	verdict, _, gaps, err := fn(context.Background(), "m-1", "claude", "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict != "incomplete" {
+		t.Errorf("expected verdict 'incomplete', got %q", verdict)
+	}
+	if len(gaps) != 2 {
+		t.Errorf("expected 2 gaps, got %d: %v", len(gaps), gaps)
 	}
 }
 
 func TestConsensusModelFnAutoIncomplete(t *testing.T) {
-	// When model finds gaps but doesn't explicitly say VERDICT: incomplete
-	runner := &mockRunner{result: "Looks mostly good.\nGAP: No pagination on list endpoint"}
+	// When model finds gaps via JSON but says complete, override to incomplete
+	jsonResponse := `{"verdict":"complete","missed_by_validator":[{"description":"No pagination"}],"reasoning":"done"}`
+	runner := &mockRunner{result: jsonResponse}
 	de := NewDiscoveryEngine(runner, "/tmp/fakerepo")
 	defer de.Cleanup()
 

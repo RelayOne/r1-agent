@@ -215,6 +215,11 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 5. Run build and test commands to verify your work before declaring done.
 6. If you encounter a blocker you cannot resolve, explain it clearly — do not silently skip it.
 
+## Output Format
+When you are done, list every file you created or modified:
+FILE: <path>
+
+This tells the harness what changed so it can validate your work.
 `)
 
 	if ctx.HasFrontend {

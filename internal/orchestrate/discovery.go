@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -182,19 +183,51 @@ func (d *DiscoveryEngine) ConsensusModelFn() func(ctx context.Context, missionID
 			return "", "", nil, fmt.Errorf("consensus run: %w", err)
 		}
 
-		// Parse structured output from the model
+		// Parse structured output — try JSON first (matches prompt format),
+		// then fall back to line-based VERDICT:/GAP: parsing
 		verdict := "complete"
 		reasoning := result.ResultText
 		var gapsFound []string
 
-		for _, line := range strings.Split(result.ResultText, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "VERDICT:") {
-				verdict = strings.TrimSpace(strings.TrimPrefix(line, "VERDICT:"))
-			} else if strings.HasPrefix(line, "GAP:") {
-				gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
-				if gapDesc != "" {
-					gapsFound = append(gapsFound, gapDesc)
+		// Try to extract JSON from the response
+		type consensusJSON struct {
+			Verdict          string `json:"verdict"`
+			Reasoning        string `json:"reasoning"`
+			MissedByValidator []struct {
+				Description string `json:"description"`
+			} `json:"missed_by_validator"`
+		}
+
+		// Find JSON block in output (may be wrapped in markdown code fences)
+		jsonText := result.ResultText
+		if idx := strings.Index(jsonText, "{"); idx >= 0 {
+			if end := strings.LastIndex(jsonText, "}"); end > idx {
+				jsonText = jsonText[idx : end+1]
+			}
+		}
+
+		var parsed consensusJSON
+		if err := json.Unmarshal([]byte(jsonText), &parsed); err == nil && parsed.Verdict != "" {
+			verdict = parsed.Verdict
+			if parsed.Reasoning != "" {
+				reasoning = parsed.Reasoning
+			}
+			for _, m := range parsed.MissedByValidator {
+				if m.Description != "" {
+					gapsFound = append(gapsFound, m.Description)
+				}
+			}
+		} else {
+			// Fallback: line-based parsing
+			for _, line := range strings.Split(result.ResultText, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "VERDICT:") {
+					verdict = strings.TrimSpace(strings.TrimPrefix(line, "VERDICT:"))
+				} else if strings.HasPrefix(line, "GAP:") {
+					gapDesc := strings.TrimSpace(strings.TrimPrefix(line, "GAP:"))
+					if gapDesc != "" {
+						gapsFound = append(gapsFound, gapDesc)
+					}
 				}
 			}
 		}
