@@ -699,6 +699,74 @@ func TestValidateHandlerSecurityOnlyWithDiscoveryFn(t *testing.T) {
 	}
 }
 
+func TestValidateHandlerLayer3ParsesJSON(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+
+	jsonResponse := `{"verdict":"incomplete","gaps":[` +
+		`{"category":"test","severity":"blocking","file":"auth.go","line":42,"description":"No test for token expiry","suggestion":"Add expiry test"},` +
+		`{"category":"security","severity":"blocking","description":"SQL injection in user lookup"}` +
+		`],"reasoning":"Missing critical tests"}`
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:    store,
+		Validator: convergence.NewValidator(),
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		ValidateFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return jsonResponse, nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if !strings.Contains(result.Summary, "adversarial: 2 gaps") {
+		t.Errorf("summary should mention 2 gaps: %q", result.Summary)
+	}
+
+	// Verify individual gaps were created with correct metadata
+	gaps, _ := store.OpenGaps(m.ID)
+	var testGap, secGap *Gap
+	for i := range gaps {
+		if gaps[i].Category == "test" {
+			testGap = &gaps[i]
+		}
+		if gaps[i].Category == "security" {
+			secGap = &gaps[i]
+		}
+	}
+
+	if testGap == nil {
+		t.Error("should create gap with category 'test'")
+	} else {
+		if testGap.File != "auth.go" {
+			t.Errorf("test gap file = %q, want 'auth.go'", testGap.File)
+		}
+		if testGap.Line != 42 {
+			t.Errorf("test gap line = %d, want 42", testGap.Line)
+		}
+		if testGap.Suggestion != "Add expiry test" {
+			t.Errorf("test gap suggestion = %q", testGap.Suggestion)
+		}
+	}
+
+	if secGap == nil {
+		t.Error("should create gap with category 'security'")
+	} else if !strings.Contains(secGap.Description, "SQL injection") {
+		t.Errorf("security gap description = %q", secGap.Description)
+	}
+}
+
 func TestValidateHandlerFullRulesWithoutDiscoveryFn(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

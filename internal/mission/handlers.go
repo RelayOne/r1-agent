@@ -22,6 +22,7 @@ package mission
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -728,18 +729,14 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			if err != nil {
 				summaryParts = append(summaryParts, fmt.Sprintf("adversarial: error (%v)", err))
 			} else if findings != "" {
-				gapID := fmt.Sprintf("llm-val-%s-%d", m.ID, time.Now().UnixNano())
-				deps.Store.AddGap(&Gap{
-					ID:          gapID,
-					MissionID:   m.ID,
-					Category:    "adversarial-validation",
-					Severity:    "blocking",
-					Description: truncateOutput(findings, 1000),
-					Suggestion:  "Address the findings from adversarial LLM validation",
-				})
-				allGapCount++
-				blockingCount++
-				summaryParts = append(summaryParts, "adversarial: findings reported")
+				layer3GapCount := parseValidationFindings(findings, m.ID, deps.Store)
+				allGapCount += layer3GapCount
+				blockingCount += layer3GapCount
+				if layer3GapCount > 0 {
+					summaryParts = append(summaryParts, fmt.Sprintf("adversarial: %d gaps", layer3GapCount))
+				} else {
+					summaryParts = append(summaryParts, "adversarial: findings reported (unstructured)")
+				}
 			} else {
 				summaryParts = append(summaryParts, "adversarial: no findings")
 			}
@@ -950,6 +947,74 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 			Agent:    "consensus-handler",
 		}, nil
 	}
+}
+
+// parseValidationFindings extracts structured gaps from Layer 3 model output.
+// The prompt asks for JSON with a gaps array, but we gracefully handle raw text too.
+func parseValidationFindings(findings, missionID string, store *Store) int {
+	// Try to parse JSON response
+	type validateGap struct {
+		Category    string `json:"category"`
+		Severity    string `json:"severity"`
+		File        string `json:"file"`
+		Line        int    `json:"line"`
+		Description string `json:"description"`
+		Suggestion  string `json:"suggestion"`
+	}
+	type validateResponse struct {
+		Verdict string        `json:"verdict"`
+		Gaps    []validateGap `json:"gaps"`
+	}
+
+	// Extract JSON from response (may be wrapped in code fences)
+	jsonText := findings
+	if idx := strings.Index(jsonText, "{"); idx >= 0 {
+		if end := strings.LastIndex(jsonText, "}"); end > idx {
+			jsonText = jsonText[idx : end+1]
+		}
+	}
+
+	var parsed validateResponse
+	if err := json.Unmarshal([]byte(jsonText), &parsed); err == nil && len(parsed.Gaps) > 0 {
+		for i, g := range parsed.Gaps {
+			sev := g.Severity
+			if sev == "" {
+				sev = "blocking"
+			}
+			cat := g.Category
+			if cat == "" {
+				cat = "adversarial-validation"
+			}
+			gapID := fmt.Sprintf("llm-val-%s-%d-%d", missionID, time.Now().UnixNano(), i)
+			store.AddGap(&Gap{
+				ID:          gapID,
+				MissionID:   missionID,
+				Category:    cat,
+				Severity:    sev,
+				Description: truncateOutput(g.Description, 1000),
+				File:        g.File,
+				Line:        g.Line,
+				Suggestion:  g.Suggestion,
+			})
+		}
+		return len(parsed.Gaps)
+	}
+
+	// Fallback: store the raw findings as a single gap
+	if strings.TrimSpace(findings) != "" {
+		gapID := fmt.Sprintf("llm-val-%s-%d", missionID, time.Now().UnixNano())
+		store.AddGap(&Gap{
+			ID:          gapID,
+			MissionID:   missionID,
+			Category:    "adversarial-validation",
+			Severity:    "blocking",
+			Description: truncateOutput(findings, 1000),
+			Suggestion:  "Address the findings from adversarial LLM validation",
+		})
+		return 1
+	}
+
+	return 0
 }
 
 // extractMissionKeywords extracts searchable keywords from intent text.
