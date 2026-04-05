@@ -66,6 +66,7 @@ type Result struct {
 	Steps        []StepResult
 	Verification []verify.Outcome
 	TotalCostUSD float64
+	FilesChanged []string // files modified by the workflow (post-review validated set)
 }
 
 // StepResult records the phase name, engine used, and prepared command for one workflow step.
@@ -588,6 +589,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			}
 
 			// --- COMMIT AND MERGE ---
+			// Record validated file set in result for callers (e.g., mission bridge).
+			result.FilesChanged = postReviewFiles
+
 			// CommitVerifiedTree builds one clean commit from BaseCommit containing
 			// ONLY the validated files. No intermediate agent commits survive.
 			commitMsg := fmt.Sprintf("feat(%s): %s", slugFromTask(e.Task), e.Task)

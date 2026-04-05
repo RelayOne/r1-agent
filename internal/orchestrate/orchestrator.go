@@ -36,9 +36,18 @@ import (
 	"github.com/ericmacdougall/stoke/internal/baseline"
 	projconfig "github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/handoff"
 	"github.com/ericmacdougall/stoke/internal/mission"
+	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/research"
+	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
+	"github.com/ericmacdougall/stoke/internal/workflow"
+	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
 // defaultConsensusModels is used when Config.ConsensusModels is empty.
@@ -140,6 +149,38 @@ type Config struct {
 	// MaxConvergenceDepth is the safety circuit breaker for recursive convergence.
 	// NOT the convergence condition — the arbiter decides that. Default: 20.
 	MaxConvergenceDepth int `json:"max_convergence_depth"`
+
+	// --- Workflow engine infrastructure (optional) ---
+	// When set, WorkflowExecuteFn() returns an ExecuteFn that routes through
+	// the full workflow.Engine (plan → execute → verify → merge) instead of
+	// a raw model session.
+
+	// PolicyPath is the path to stoke.policy.yaml.
+	PolicyPath string `json:"policy_path"`
+
+	// Runners provides Claude and Codex execution engines.
+	Runners *engine.Registry `json:"-"`
+
+	// Pools manages subscription pool allocation.
+	Pools *subscriptions.Manager `json:"-"`
+
+	// Worktrees provides git worktree management.
+	Worktrees *worktree.Manager `json:"-"`
+
+	// Wisdom provides cross-task learning injection.
+	Wisdom *wisdom.Store `json:"-"`
+
+	// CostTracker tracks per-session costs.
+	CostTracker *costtrack.Tracker `json:"-"`
+
+	// ClaudeConfigDir is the config dir for Claude instances.
+	ClaudeConfigDir string `json:"claude_config_dir"`
+
+	// CodexHome is the home dir for Codex instances.
+	CodexHome string `json:"codex_home"`
+
+	// OnEvent is the streaming event callback.
+	OnEvent engine.OnEventFunc `json:"-"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -232,7 +273,7 @@ func New(config Config) (*Orchestrator, error) {
 	}
 
 	log.Printf("[orchestrator] initialized at %s", config.StoreDir)
-	return &Orchestrator{
+	orch := &Orchestrator{
 		store:      mStore,
 		research:   rStore,
 		validator:  validator,
@@ -241,7 +282,18 @@ func New(config Config) (*Orchestrator, error) {
 		verifyCmds:  verifyCmds,
 		projectInfo: projInfo,
 		config:      config,
-	}, nil
+	}
+
+	// Auto-wire workflow-backed execution if infrastructure is configured
+	// but no explicit ExecuteFn was provided.
+	if config.ExecuteFn == nil {
+		if wfFn := orch.WorkflowExecuteFn(); wfFn != nil {
+			orch.config.ExecuteFn = wfFn
+			log.Printf("[orchestrator] workflow-backed execution enabled")
+		}
+	}
+
+	return orch, nil
 }
 
 // Close shuts down all backing stores. Must be called on shutdown.
@@ -280,6 +332,112 @@ func (o *Orchestrator) HandoffChain() *handoff.Chain {
 // Validator returns the underlying convergence validator.
 func (o *Orchestrator) Validator() *convergence.Validator {
 	return o.validator
+}
+
+// WorkflowExecuteFn returns an ExecuteFn that routes task execution through
+// the full workflow.Engine (plan → execute → verify → cross-model review → merge).
+// This gives missions the full 11-layer policy enforcement instead of raw model sessions.
+//
+// Requires Config.Runners, Config.Worktrees, and Config.PolicyPath to be set.
+// Falls back gracefully: returns nil if workflow infrastructure is not configured.
+func (o *Orchestrator) WorkflowExecuteFn() func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+	if o.config.Runners == nil || o.config.PolicyPath == "" {
+		return nil
+	}
+
+	return func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+		policy, err := projconfig.LoadPolicy(o.config.PolicyPath)
+		if err != nil {
+			return nil, fmt.Errorf("workflow bridge: load policy: %w", err)
+		}
+
+		// Auto-detect verification commands
+		var buildCmd, testCmd, lintCmd string
+		if o.config.RepoRoot != "" {
+			detected := projconfig.DetectCommands(o.config.RepoRoot)
+			buildCmd = detected.Build
+			testCmd = detected.Test
+			lintCmd = detected.Lint
+		}
+		if o.verifyCmds != nil {
+			if o.verifyCmds.Build != "" {
+				buildCmd = o.verifyCmds.Build
+			}
+			if o.verifyCmds.Test != "" {
+				testCmd = o.verifyCmds.Test
+			}
+			if o.verifyCmds.Lint != "" {
+				lintCmd = o.verifyCmds.Lint
+			}
+		}
+
+		// Use provided pools or create default
+		pools := o.config.Pools
+		if pools == nil {
+			pools = subscriptions.NewManager([]subscriptions.Pool{
+				{ID: "claude-1", Provider: subscriptions.ProviderClaude, ConfigDir: o.config.ClaudeConfigDir},
+				{ID: "codex-1", Provider: subscriptions.ProviderCodex, ConfigDir: o.config.CodexHome},
+			})
+		}
+
+		// Use provided worktree manager or create per-task
+		var wm workflow.WorktreeManager
+		if o.config.Worktrees != nil {
+			wm = o.config.Worktrees
+		} else if o.config.RepoRoot != "" {
+			wm = worktree.NewManager(o.config.RepoRoot)
+		} else {
+			return nil, fmt.Errorf("workflow bridge: no worktree manager and no repo root configured")
+		}
+
+		taskType := model.InferTaskType(taskDesc)
+
+		wf := workflow.Engine{
+			RepoRoot:        o.config.RepoRoot,
+			Task:            prompt,
+			TaskType:        taskType,
+			WorktreeName:    fmt.Sprintf("mission-%s-%s", m.ID, slugify(taskDesc)),
+			AuthMode:        engine.AuthModeSubscription,
+			Policy:          policy,
+			Pools:           pools,
+			Worktrees:       wm,
+			Runners:         *o.config.Runners,
+			Verifier:        verify.NewPipeline(buildCmd, testCmd, lintCmd),
+			ClaudeConfigDir: o.config.ClaudeConfigDir,
+			CodexHome:       o.config.CodexHome,
+			OnEvent:         o.config.OnEvent,
+			State:           taskstate.NewTaskState(m.ID + "/" + slugify(taskDesc)),
+			Wisdom:          o.config.Wisdom,
+			CostTracker:     o.config.CostTracker,
+		}
+
+		result, err := wf.Run(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("workflow execution: %w", err)
+		}
+
+		return result.FilesChanged, nil
+	}
+}
+
+// slugify produces a short, filesystem-safe slug from a task description.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '-'
+	}, s)
+	// Collapse runs of dashes and trim
+	for strings.Contains(s, "--") {
+		s = strings.ReplaceAll(s, "--", "-")
+	}
+	s = strings.Trim(s, "-")
+	if len(s) > 40 {
+		s = s[:40]
+	}
+	return s
 }
 
 // --- Mission Lifecycle ---
