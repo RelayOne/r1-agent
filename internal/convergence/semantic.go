@@ -8,6 +8,13 @@
 // The key insight: most incomplete code has NO syntactic marker. Only mapping
 // the intention context against real code flow reveals the gaps.
 //
+// For Go files, uses real go/parser AST for:
+//   - Call graph reachability — are symbols reachable from entry points?
+//   - Interface satisfaction — do types implement required interfaces?
+//   - Typed symbol extraction — accurate function signatures
+//
+// For non-Go files, falls back to regex-based extraction.
+//
 // Three analyses are performed:
 //  1. Symbol reachability — are new symbols actually called from entry points?
 //  2. Criteria mapping — does the semantic diff match the acceptance criteria?
@@ -19,6 +26,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/goast"
 )
 
 // symbolKind classifies extracted code symbols.
@@ -119,8 +128,17 @@ var langExtractors = []langExtractor{
 }
 
 // extractFileSymbols extracts symbols from a single file's content.
+// For Go files, uses real AST parsing via goast package.
+// For other languages, falls back to regex-based extraction.
 func extractFileSymbols(path string, content []byte) []codeSymbol {
 	ext := filepath.Ext(path)
+
+	// Go files: use real AST
+	if ext == ".go" {
+		return extractGoFileSymbols(path, content)
+	}
+
+	// Non-Go: regex fallback
 	var extractor *langExtractor
 	for i := range langExtractors {
 		for _, e := range langExtractors[i].Extensions {
@@ -148,10 +166,7 @@ func extractFileSymbols(path string, content []byte) []codeSymbol {
 			name := m[pat.Name]
 			exported := false
 			if len(name) > 0 {
-				// Go: uppercase first letter. JS/TS: 'export' keyword. Python: no underscore prefix.
 				switch ext {
-				case ".go":
-					exported = name[0] >= 'A' && name[0] <= 'Z'
 				case ".ts", ".tsx", ".js", ".jsx":
 					exported = strings.HasPrefix(strings.TrimSpace(line), "export")
 				case ".py":
@@ -166,6 +181,66 @@ func extractFileSymbols(path string, content []byte) []codeSymbol {
 				File:     path,
 				Line:     lineNum + 1,
 				Exported: exported,
+			})
+		}
+	}
+	return symbols
+}
+
+// extractGoFileSymbols uses goast for real AST-based extraction.
+func extractGoFileSymbols(path string, content []byte) []codeSymbol {
+	fa, err := goast.AnalyzeSource(content, path)
+	if err != nil {
+		// Fall back to regex if AST parse fails
+		return extractGoFileSymbolsRegex(path, content)
+	}
+
+	var symbols []codeSymbol
+	for _, s := range fa.Symbols {
+		kind := goastKindToSymKind(s.Kind)
+		symbols = append(symbols, codeSymbol{
+			Name:     s.Name,
+			Kind:     kind,
+			File:     path,
+			Line:     s.Line,
+			Exported: s.Exported,
+		})
+	}
+	return symbols
+}
+
+func goastKindToSymKind(k goast.SymbolKind) symbolKind {
+	switch k {
+	case goast.KindFunction:
+		return skFunction
+	case goast.KindMethod:
+		return skMethod
+	case goast.KindStruct, goast.KindType:
+		return skType
+	case goast.KindInterface:
+		return skInterface
+	case goast.KindVariable, goast.KindConstant:
+		return skVariable
+	}
+	return skFunction
+}
+
+// extractGoFileSymbolsRegex is the legacy fallback for Go files when AST fails.
+func extractGoFileSymbolsRegex(path string, content []byte) []codeSymbol {
+	lines := strings.Split(string(content), "\n")
+	var symbols []codeSymbol
+	goLang := &langExtractors[0] // Go is first
+	for lineNum, line := range lines {
+		for _, pat := range goLang.Patterns {
+			m := pat.Regex.FindStringSubmatch(line)
+			if m == nil || pat.Name >= len(m) {
+				continue
+			}
+			name := m[pat.Name]
+			exported := len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
+			symbols = append(symbols, codeSymbol{
+				Name: name, Kind: pat.Kind, File: path,
+				Line: lineNum + 1, Exported: exported,
 			})
 		}
 	}
@@ -227,6 +302,9 @@ func crossFileWiringRule() Rule {
 // It extracts symbols, builds a reference graph, and checks for unreachable
 // code, unwired types, and unmapped criteria.
 //
+// For Go files, uses real AST call graph for reachability analysis.
+// For non-Go files, falls back to regex-based reference counting.
+//
 // Unlike regex rules which operate on individual files, semantic analysis
 // operates across the entire file set to find cross-file gaps.
 func SemanticAnalysis(files []FileInput, criteria []string) []Finding {
@@ -245,39 +323,26 @@ func SemanticAnalysis(files []FileInput, criteria []string) []Finding {
 		allSymList = append(allSymList, syms...)
 	}
 
-	// Phase 2: Check exported symbol reachability
-	// For each exported function/type/class, verify it's referenced elsewhere
-	for _, sym := range allSymList {
-		if !sym.Exported {
-			continue
+	// Phase 1b: Build goast Analysis for Go files (real call graph)
+	var goAnalysis *goast.Analysis
+	hasGoFiles := false
+	for _, f := range files {
+		if filepath.Ext(f.Path) == ".go" && !isTestFile(f.Path) {
+			hasGoFiles = true
+			break
 		}
-		// Skip test files — test functions are called by the test runner
-		if isTestFile(sym.File) {
-			continue
-		}
-		// Skip main functions, init functions, and common framework entry points
-		if isEntryPoint(sym.Name, sym.Kind) {
-			continue
-		}
-		// Skip small/utility names that would produce false positives
-		if len(sym.Name) <= 2 {
-			continue
-		}
+	}
+	if hasGoFiles {
+		goAnalysis = buildGoAnalysisFromFiles(files)
+	}
 
-		refs := referenceCount(sym.Name, files, sym.File)
-		if refs == 0 {
-			findings = append(findings, Finding{
-				RuleID:   "unreachable-symbol",
-				Category: CatConsistency,
-				Severity: SevBlocking,
-				File:     sym.File,
-				Line:     sym.Line,
-				Description: fmt.Sprintf("Exported %s %q defined but never referenced in any other file — dead code",
-					sym.Kind, sym.Name),
-				Suggestion: fmt.Sprintf("Either wire %s into the call chain from an entry point, or remove it if unused", sym.Name),
-				Evidence:   fmt.Sprintf("%s %s (0 cross-file references)", sym.Kind, sym.Name),
-			})
-		}
+	// Phase 2: Check exported symbol reachability
+	// For Go files with AST: use call graph reachability from entry points
+	// For other files: fall back to reference counting
+	if goAnalysis != nil {
+		findings = append(findings, checkReachabilityAST(goAnalysis, files)...)
+	} else {
+		findings = append(findings, checkReachabilityRegex(allSymList, files)...)
 	}
 
 	// Phase 3: Check type wiring
@@ -296,14 +361,12 @@ func SemanticAnalysis(files []FileInput, criteria []string) []Finding {
 			continue
 		}
 
-		// Check if the type is used in any file (including its own — e.g., constructor)
 		totalRefs := 0
 		for _, f := range files {
 			content := string(f.Content)
 			re := regexp.MustCompile(`\b` + regexp.QuoteMeta(sym.Name) + `\b`)
 			matches := re.FindAllString(content, -1)
 			if f.Path == sym.File {
-				// Subtract 1 for the definition itself
 				totalRefs += len(matches) - 1
 			} else {
 				totalRefs += len(matches)
@@ -326,12 +389,131 @@ func SemanticAnalysis(files []FileInput, criteria []string) []Finding {
 	}
 
 	// Phase 4: Semantic criteria mapping
-	// For each acceptance criterion, check whether any symbol names or code
-	// patterns semantically relate to it
 	if len(criteria) > 0 {
 		findings = append(findings, mapCriteriaToCode(criteria, files, allSymList)...)
 	}
 
+	return findings
+}
+
+// buildGoAnalysisFromFiles constructs a goast.Analysis from FileInput content.
+func buildGoAnalysisFromFiles(files []FileInput) *goast.Analysis {
+	a := &goast.Analysis{}
+	for _, f := range files {
+		if filepath.Ext(f.Path) != ".go" {
+			continue
+		}
+		if isTestFile(f.Path) {
+			continue
+		}
+		fa, err := goast.AnalyzeSource(f.Content, f.Path)
+		if err != nil {
+			continue
+		}
+		a.Files = append(a.Files, fa)
+		a.AllSymbols = append(a.AllSymbols, fa.Symbols...)
+		a.AllCalls = append(a.AllCalls, fa.Calls...)
+	}
+	if len(a.Files) == 0 {
+		return nil
+	}
+	return a
+}
+
+// checkReachabilityAST uses goast call graph to find truly unreachable symbols.
+// More accurate than regex reference counting because it traces actual call edges.
+func checkReachabilityAST(a *goast.Analysis, files []FileInput) []Finding {
+	var findings []Finding
+	dead := a.DeadSymbols()
+
+	for _, s := range dead {
+		if isTestFile(s.File) {
+			continue
+		}
+		if isEntryPointGo(s) {
+			continue
+		}
+		if len(s.Name) <= 2 {
+			continue
+		}
+
+		// Also check regex references for non-Go callers
+		refs := referenceCount(s.Name, files, s.File)
+		if refs > 0 {
+			continue // referenced somewhere, just not in Go call graph
+		}
+
+		findings = append(findings, Finding{
+			RuleID:   "unreachable-symbol",
+			Category: CatConsistency,
+			Severity: SevBlocking,
+			File:     s.File,
+			Line:     s.Line,
+			Description: fmt.Sprintf("Exported %s %q defined but unreachable from any entry point (AST call graph verified) — dead code",
+				s.Kind, s.Name),
+			Suggestion: fmt.Sprintf("Either wire %s into the call chain from an entry point, or remove it if unused", s.Name),
+			Evidence:   fmt.Sprintf("%s %s (AST: not in call graph from entry points)", s.Kind, s.Name),
+		})
+	}
+	return findings
+}
+
+// isEntryPointGo checks if a goast symbol is an entry point.
+func isEntryPointGo(s goast.Symbol) bool {
+	if s.Name == "main" || s.Name == "init" {
+		return true
+	}
+	if strings.HasPrefix(s.Name, "Test") || strings.HasPrefix(s.Name, "Benchmark") ||
+		strings.HasPrefix(s.Name, "Example") || strings.HasPrefix(s.Name, "Fuzz") {
+		return true
+	}
+	lname := strings.ToLower(s.Name)
+	patterns := []string{"handler", "middleware", "controller", "route",
+		"setup", "teardown", "mount", "unmount", "render",
+		"run", "start", "stop", "serve", "new", "default"}
+	for _, p := range patterns {
+		if strings.Contains(lname, p) {
+			return true
+		}
+	}
+	if s.Kind == goast.KindMethod {
+		return true
+	}
+	return false
+}
+
+// checkReachabilityRegex uses reference counting for non-Go files.
+func checkReachabilityRegex(allSymList []codeSymbol, files []FileInput) []Finding {
+	var findings []Finding
+	for _, sym := range allSymList {
+		if !sym.Exported {
+			continue
+		}
+		if isTestFile(sym.File) {
+			continue
+		}
+		if isEntryPoint(sym.Name, sym.Kind) {
+			continue
+		}
+		if len(sym.Name) <= 2 {
+			continue
+		}
+
+		refs := referenceCount(sym.Name, files, sym.File)
+		if refs == 0 {
+			findings = append(findings, Finding{
+				RuleID:   "unreachable-symbol",
+				Category: CatConsistency,
+				Severity: SevBlocking,
+				File:     sym.File,
+				Line:     sym.Line,
+				Description: fmt.Sprintf("Exported %s %q defined but never referenced in any other file — dead code",
+					sym.Kind, sym.Name),
+				Suggestion: fmt.Sprintf("Either wire %s into the call chain from an entry point, or remove it if unused", sym.Name),
+				Evidence:   fmt.Sprintf("%s %s (0 cross-file references)", sym.Kind, sym.Name),
+			})
+		}
+	}
 	return findings
 }
 

@@ -3,30 +3,31 @@
 // classes, functions, and their relationships. This helps AI agents understand code
 // structure without loading every file into context.
 //
-// Key patterns from Aider:
-// - TreeSitter-based symbol extraction (we use regex for Go simplicity)
-// - Graph ranking: files are nodes, imports/calls are edges
+// Key features:
+// - Real go/parser AST for accurate Go symbol extraction (not regex)
+// - Graph ranking: files are nodes, imports AND call edges are weighted
+// - Call-graph-weighted PageRank: files with more callers rank higher
 // - Budget-aware: only emit symbols that fit in the token budget
 // - Relevance scoring: rank by connectivity to the current task's files
 package repomap
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/goast"
 )
 
 // Symbol represents a code symbol (function, type, method, const).
 type Symbol struct {
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`     // func, type, method, const, var, interface
-	File    string `json:"file"`     // relative path
-	Line    int    `json:"line"`
-	Package string `json:"package"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`               // func, type, method, const, var, interface
+	File      string `json:"file"`               // relative path
+	Line      int    `json:"line"`
+	Package   string `json:"package"`
 	Signature string `json:"signature,omitempty"` // for functions
 }
 
@@ -38,6 +39,9 @@ type FileNode struct {
 	Imports    []string `json:"imports"`
 	ImportedBy []string `json:"imported_by"` // reverse edges
 	Rank       float64  `json:"rank"`        // PageRank-style score
+
+	// Call-graph-level connectivity (AST-derived)
+	CalledBy int `json:"called_by"` // number of cross-file calls into this file
 }
 
 // RepoMap is a ranked view of the codebase.
@@ -47,63 +51,163 @@ type RepoMap struct {
 	Symbols []Symbol             `json:"symbols"` // all symbols, sorted by rank
 }
 
-// Go-specific symbol extraction patterns.
-var (
-	funcRe      = regexp.MustCompile(`^func\s+(\w+)\s*\(([^)]*)\)`)
-	methodRe    = regexp.MustCompile(`^func\s+\(\w+\s+\*?(\w+)\)\s+(\w+)\s*\(([^)]*)\)`)
-	typeRe      = regexp.MustCompile(`^type\s+(\w+)\s+(struct|interface)`)
-	constRe     = regexp.MustCompile(`^\s*(\w+)\s*=`)
-	importRe    = regexp.MustCompile(`^\s*"([^"]+)"`)
-	packageRe   = regexp.MustCompile(`^package\s+(\w+)`)
-	constBlockRe = regexp.MustCompile(`^const\s*\(`)
-	varBlockRe  = regexp.MustCompile(`^var\s*\(`)
-)
-
 // Build generates a repository map by scanning Go source files.
+// Uses real AST parsing for accurate symbol extraction and call graph construction.
 func Build(root string) (*RepoMap, error) {
 	rm := &RepoMap{
 		Root:  root,
 		Files: make(map[string]*FileNode),
 	}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // skip errors
-		}
-		// Skip hidden dirs, vendor, node_modules
-		if info.IsDir() {
-			base := filepath.Base(path)
-			if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		rel, _ := filepath.Rel(root, path)
-		node, err := parseGoFile(path, rel)
-		if err != nil {
-			return nil // skip unparseable files
-		}
-		rm.Files[rel] = node
-		return nil
-	})
+	// Use goast for real AST-based analysis
+	analysis, err := goast.AnalyzeDir(root)
 	if err != nil {
 		return nil, err
+	}
+
+	if analysis != nil {
+		for _, fa := range analysis.Files {
+			node := &FileNode{
+				Path:    fa.Path,
+				Package: fa.Package,
+			}
+
+			// Convert imports
+			for _, imp := range fa.Imports {
+				node.Imports = append(node.Imports, imp.ImportPath)
+			}
+
+			// Convert symbols — only public symbols for repo map
+			for _, s := range fa.Symbols {
+				if !s.Exported {
+					continue
+				}
+				// Skip fields — too verbose for repo map
+				if s.Kind == goast.KindField {
+					continue
+				}
+				sym := Symbol{
+					Name:    s.Name,
+					Kind:    goastKindToString(s.Kind),
+					File:    fa.Path,
+					Line:    s.Line,
+					Package: fa.Package,
+				}
+				if s.Kind == goast.KindFunction || s.Kind == goast.KindMethod {
+					sym.Signature = s.Signature
+				}
+				node.Symbols = append(node.Symbols, sym)
+			}
+
+			rm.Files[fa.Path] = node
+		}
+
+		// Build call-graph-based cross-file connectivity
+		rm.buildCallGraphEdges(analysis)
 	}
 
 	// Build reverse import edges
 	rm.buildReverseEdges()
 
-	// Rank files
+	// Rank files (now uses both imports AND call graph)
 	rm.rankFiles()
 
 	// Collect all symbols sorted by file rank
 	rm.collectSymbols()
 
 	return rm, nil
+}
+
+func goastKindToString(k goast.SymbolKind) string {
+	switch k {
+	case goast.KindFunction:
+		return "func"
+	case goast.KindMethod:
+		return "method"
+	case goast.KindStruct:
+		return "type"
+	case goast.KindType:
+		return "type"
+	case goast.KindInterface:
+		return "interface"
+	case goast.KindVariable:
+		return "var"
+	case goast.KindConstant:
+		return "const"
+	}
+	return "?"
+}
+
+// buildCallGraphEdges counts cross-file call edges to weight the graph.
+func (rm *RepoMap) buildCallGraphEdges(analysis *goast.Analysis) {
+	// Map symbol names to their definition files
+	symFile := make(map[string]string)
+	for _, s := range analysis.AllSymbols {
+		if s.Exported {
+			symFile[s.Name] = s.File
+			if s.Receiver != "" {
+				symFile[s.Receiver+"."+s.Name] = s.File
+			}
+		}
+	}
+
+	// Count cross-file calls
+	for _, c := range analysis.AllCalls {
+		targetFile := ""
+		if f, ok := symFile[c.Callee]; ok && f != c.File {
+			targetFile = f
+		}
+		if targetFile != "" {
+			if node, ok := rm.Files[targetFile]; ok {
+				node.CalledBy++
+			}
+		}
+	}
+}
+
+// parseGoFile is kept for backward compatibility with existing tests.
+// Internally delegates to goast for real AST parsing.
+func parseGoFile(path, rel string) (*FileNode, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	fa, err := goast.AnalyzeSource(src, rel)
+	if err != nil {
+		return nil, err
+	}
+
+	node := &FileNode{
+		Path:    rel,
+		Package: fa.Package,
+	}
+
+	for _, imp := range fa.Imports {
+		node.Imports = append(node.Imports, imp.ImportPath)
+	}
+
+	for _, s := range fa.Symbols {
+		if !s.Exported {
+			continue
+		}
+		if s.Kind == goast.KindField {
+			continue
+		}
+		sym := Symbol{
+			Name:    s.Name,
+			Kind:    goastKindToString(s.Kind),
+			File:    rel,
+			Line:    s.Line,
+			Package: fa.Package,
+		}
+		if s.Kind == goast.KindFunction || s.Kind == goast.KindMethod {
+			sym.Signature = s.Signature
+		}
+		node.Symbols = append(node.Symbols, sym)
+	}
+
+	return node, nil
 }
 
 // Render produces a human-readable map within a token budget.
@@ -219,148 +323,12 @@ func (rm *RepoMap) RenderRelevant(relevantFiles []string, budget int) string {
 
 // --- Internal ---
 
-func parseGoFile(path, rel string) (*FileNode, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	node := &FileNode{Path: rel}
-	scanner := bufio.NewScanner(f)
-	lineNum := 0
-	inImportBlock := false
-	inConstBlock := false
-	inVarBlock := false
-
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-
-		// Package
-		if m := packageRe.FindStringSubmatch(line); m != nil {
-			node.Package = m[1]
-		}
-
-		// Import block
-		if strings.HasPrefix(trimmed, "import (") {
-			inImportBlock = true
-			continue
-		}
-		if inImportBlock {
-			if trimmed == ")" {
-				inImportBlock = false
-				continue
-			}
-			if m := importRe.FindStringSubmatch(line); m != nil {
-				node.Imports = append(node.Imports, m[1])
-			}
-			continue
-		}
-		// Single import
-		if strings.HasPrefix(trimmed, "import ") {
-			if m := importRe.FindStringSubmatch(line); m != nil {
-				node.Imports = append(node.Imports, m[1])
-			}
-			continue
-		}
-
-		// Const/var blocks (skip internals)
-		if constBlockRe.MatchString(trimmed) {
-			inConstBlock = true
-			continue
-		}
-		if varBlockRe.MatchString(trimmed) {
-			inVarBlock = true
-			continue
-		}
-		if (inConstBlock || inVarBlock) && trimmed == ")" {
-			inConstBlock = false
-			inVarBlock = false
-			continue
-		}
-		if inConstBlock || inVarBlock {
-			if m := constRe.FindStringSubmatch(line); m != nil {
-				// Only export public consts
-				if len(m[1]) > 0 && m[1][0] >= 'A' && m[1][0] <= 'Z' {
-					kind := "const"
-					if inVarBlock {
-						kind = "var"
-					}
-					node.Symbols = append(node.Symbols, Symbol{
-						Name:    m[1],
-						Kind:    kind,
-						File:    rel,
-						Line:    lineNum,
-						Package: node.Package,
-					})
-				}
-			}
-			continue
-		}
-
-		// Method
-		if m := methodRe.FindStringSubmatch(line); m != nil {
-			name := m[2]
-			if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
-				node.Symbols = append(node.Symbols, Symbol{
-					Name:      name,
-					Kind:      "method",
-					File:      rel,
-					Line:      lineNum,
-					Package:   node.Package,
-					Signature: fmt.Sprintf("(%s).%s(%s)", m[1], m[2], summarizeParams(m[3])),
-				})
-			}
-			continue
-		}
-
-		// Function
-		if m := funcRe.FindStringSubmatch(line); m != nil {
-			name := m[1]
-			if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
-				node.Symbols = append(node.Symbols, Symbol{
-					Name:      name,
-					Kind:      "func",
-					File:      rel,
-					Line:      lineNum,
-					Package:   node.Package,
-					Signature: fmt.Sprintf("%s(%s)", name, summarizeParams(m[2])),
-				})
-			}
-			continue
-		}
-
-		// Type/Interface
-		if m := typeRe.FindStringSubmatch(line); m != nil {
-			name := m[1]
-			if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
-				kind := "type"
-				if m[2] == "interface" {
-					kind = "interface"
-				}
-				node.Symbols = append(node.Symbols, Symbol{
-					Name:    name,
-					Kind:    kind,
-					File:    rel,
-					Line:    lineNum,
-					Package: node.Package,
-				})
-			}
-		}
-	}
-
-	return node, nil
-}
-
 // summarizeParams shortens parameter lists for readability.
 func summarizeParams(params string) string {
 	params = strings.TrimSpace(params)
 	if params == "" {
 		return ""
 	}
-	// Count params
 	parts := strings.Split(params, ",")
 	if len(parts) <= 3 {
 		return params
@@ -390,10 +358,9 @@ func (rm *RepoMap) buildReverseEdges() {
 	}
 }
 
-// rankFiles uses a simplified PageRank-style algorithm.
-// Files with more importers rank higher.
+// rankFiles uses PageRank weighted by both imports AND call graph edges.
+// Files with more importers and more cross-file callers rank higher.
 func (rm *RepoMap) rankFiles() {
-	// Initial rank: 1.0 per file
 	for _, node := range rm.Files {
 		node.Rank = 1.0
 	}
@@ -412,8 +379,10 @@ func (rm *RepoMap) rankFiles() {
 					rank += 0.85 * impNode.Rank / float64(outDegree)
 				}
 			}
-			// Bonus for symbol count (more symbols = more important)
+			// Symbol count bonus
 			rank += float64(len(node.Symbols)) * 0.1
+			// Call graph bonus: files that are called from other files are important
+			rank += float64(node.CalledBy) * 0.15
 			newRanks[path] = rank
 		}
 		for path, rank := range newRanks {
@@ -435,4 +404,27 @@ func (rm *RepoMap) collectSymbols() {
 		}
 		return rm.Symbols[i].Line < rm.Symbols[j].Line
 	})
+}
+
+// walkGoFiles is used by Build to find Go files (replaced by goast.AnalyzeDir).
+// Kept as unexported for reference, no longer called directly.
+func walkGoFiles(root string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			base := filepath.Base(path)
+			if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
 }
