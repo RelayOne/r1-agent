@@ -348,3 +348,372 @@ func TestExtractMissionKeywordsEmpty(t *testing.T) {
 		t.Errorf("empty intent should produce no keywords, got %v", keywords)
 	}
 }
+
+// --- Research Handler with DiscoveryFn ---
+
+func TestResearchHandlerWithDiscoveryFn(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	var capturedPrompt string
+	handler := NewResearchHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		DiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			capturedPrompt = prompt
+			return "FILE: internal/auth/jwt.go\nFILE: internal/auth/handler.go\nGAP: Missing token refresh endpoint\nGAP:MAJOR: No rate limiting on auth endpoint\n", nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	// Should have captured the discovery prompt
+	if capturedPrompt == "" {
+		t.Error("DiscoveryFn should receive a prompt")
+	}
+
+	// Should include discovered files
+	foundJWT := false
+	foundHandler := false
+	for _, f := range result.FilesChanged {
+		if f == "internal/auth/jwt.go" {
+			foundJWT = true
+		}
+		if f == "internal/auth/handler.go" {
+			foundHandler = true
+		}
+	}
+	if !foundJWT {
+		t.Error("should include jwt.go from FILE: output")
+	}
+	if !foundHandler {
+		t.Error("should include handler.go from FILE: output")
+	}
+
+	// Should have stored discovery artifact
+	if result.Artifacts["discovery"] == "" {
+		t.Error("should store discovery result as artifact")
+	}
+
+	// Should have created gaps from GAP: lines
+	gaps, _ := store.OpenGaps(m.ID)
+	blockingCount := 0
+	majorCount := 0
+	for _, g := range gaps {
+		if g.Category != "discovery-research" {
+			t.Errorf("gap category should be discovery-research, got %q", g.Category)
+		}
+		if g.Severity == "blocking" {
+			blockingCount++
+		}
+		if g.Severity == "major" {
+			majorCount++
+		}
+	}
+	if blockingCount != 1 {
+		t.Errorf("expected 1 blocking gap, got %d", blockingCount)
+	}
+	if majorCount != 1 {
+		t.Errorf("expected 1 major gap, got %d", majorCount)
+	}
+}
+
+func TestResearchHandlerDiscoveryFnSkipsFallback(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Create a temp repo with files that would match the fallback search
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "jwt.go"),
+		[]byte("package jwt\n\nfunc IssueToken() {}\n"), 0644)
+
+	discoveryRan := false
+	handler := NewResearchHandler(HandlerDeps{
+		Store:    store,
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		DiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			discoveryRan = true
+			return "FILE: custom/path.go\n", nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if !discoveryRan {
+		t.Error("DiscoveryFn should have been called")
+	}
+
+	// With DiscoveryFn present, fallback TF-IDF/symbol search should NOT run.
+	// The only file should be the one from DiscoveryFn.
+	for _, f := range result.FilesChanged {
+		if f == "jwt.go" {
+			t.Error("fallback search should not run when DiscoveryFn is configured")
+		}
+	}
+}
+
+func TestResearchHandlerDiscoveryFnError(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	handler := NewResearchHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		DiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "", context.DeadlineExceeded
+		},
+	})
+
+	// Should not fail fatally even if DiscoveryFn errors
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler should not fail: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result should not be nil")
+	}
+}
+
+// --- Validate Handler with ValidateDiscoveryFn ---
+
+func TestValidateHandlerLayer4GapParsing(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:    store,
+		Validator: convergence.NewValidator(),
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		ValidateDiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "GAP: Auth handler not wired to router at cmd/server/main.go:45\nGAP:MAJOR: No pagination on /api/users endpoint\nSome other line that should be ignored\n", nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if !strings.Contains(result.Summary, "discovery-validation") {
+		t.Errorf("summary should mention discovery-validation: %q", result.Summary)
+	}
+
+	gaps, _ := store.OpenGaps(m.ID)
+
+	// Find gaps by category
+	var discGaps []Gap
+	for _, g := range gaps {
+		if g.Category == "discovery-validation" {
+			discGaps = append(discGaps, g)
+		}
+	}
+
+	blocking := 0
+	major := 0
+	for _, g := range discGaps {
+		switch g.Severity {
+		case "blocking":
+			blocking++
+			if !strings.Contains(g.Description, "Auth handler not wired") {
+				t.Errorf("blocking gap description wrong: %q", g.Description)
+			}
+		case "major":
+			major++
+			if !strings.Contains(g.Description, "No pagination") {
+				t.Errorf("major gap description wrong: %q", g.Description)
+			}
+		}
+	}
+
+	if blocking != 1 {
+		t.Errorf("expected 1 blocking discovery gap, got %d", blocking)
+	}
+	if major != 1 {
+		t.Errorf("expected 1 major discovery gap, got %d", major)
+	}
+}
+
+func TestValidateHandlerLayer4FixedParsing(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Pre-add an open gap that the model will report as FIXED
+	store.AddGap(&Gap{
+		ID:          "existing-gap-1",
+		MissionID:   m.ID,
+		Category:    "discovery-validation",
+		Severity:    "blocking",
+		Description: "Auth handler not wired to router",
+	})
+
+	// Verify it's open
+	openBefore, _ := store.OpenGaps(m.ID)
+	if len(openBefore) != 1 {
+		t.Fatalf("expected 1 open gap before, got %d", len(openBefore))
+	}
+
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:    store,
+		Validator: convergence.NewValidator(),
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		ValidateDiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "FIXED: Auth handler not wired to router\n", nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	// Gap should now be resolved
+	openAfter, _ := store.OpenGaps(m.ID)
+	for _, g := range openAfter {
+		if g.ID == "existing-gap-1" {
+			t.Error("existing-gap-1 should have been resolved by FIXED: line")
+		}
+	}
+
+	if !strings.Contains(result.Summary, "1 fixed") {
+		t.Errorf("summary should mention fixed count: %q", result.Summary)
+	}
+}
+
+func TestValidateHandlerSecurityOnlyWithDiscoveryFn(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Create a repo with both TODO (non-security) and a hardcoded secret (security)
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "auth.go"),
+		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0644)
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:    store,
+		Validator: convergence.NewValidator(),
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		ValidateDiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "", nil // clean discovery result
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	// Should run in security-only mode
+	if !strings.Contains(result.Summary, "security-only") {
+		t.Errorf("summary should say security-only mode: %q", result.Summary)
+	}
+
+	// Should catch the hardcoded secret
+	gaps, _ := store.OpenGaps(m.ID)
+	foundSecret := false
+	foundTodo := false
+	for _, g := range gaps {
+		if strings.Contains(g.Description, "secret") || strings.Contains(g.Description, "credential") {
+			foundSecret = true
+		}
+		if strings.Contains(g.Description, "TODO") {
+			foundTodo = true
+		}
+	}
+	if !foundSecret {
+		t.Error("should still detect hardcoded secrets in security-only mode")
+	}
+	if foundTodo {
+		t.Error("should NOT flag TODO markers when ValidateDiscoveryFn is present (security-only mode)")
+	}
+}
+
+func TestValidateHandlerFullRulesWithoutDiscoveryFn(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Same files as above, but without ValidateDiscoveryFn
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "auth.go"),
+		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0644)
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:    store,
+		Validator: convergence.NewValidator(),
+		RepoRoot: repoDir,
+		Metrics:  NewMetrics(),
+		// No ValidateDiscoveryFn → full rules
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	// Should run in full mode
+	if !strings.Contains(result.Summary, "static(full)") {
+		t.Errorf("summary should say full mode: %q", result.Summary)
+	}
+
+	// Should catch both TODO and secret
+	gaps, _ := store.OpenGaps(m.ID)
+	foundSecret := false
+	foundTodo := false
+	for _, g := range gaps {
+		if strings.Contains(g.Description, "secret") || strings.Contains(g.Description, "credential") {
+			foundSecret = true
+		}
+		if strings.Contains(g.Description, "TODO") || strings.Contains(g.Description, "FIXME") {
+			foundTodo = true
+		}
+	}
+	if !foundSecret {
+		t.Error("full mode should detect hardcoded secrets")
+	}
+	if !foundTodo {
+		t.Error("full mode should flag TODO markers")
+	}
+}
