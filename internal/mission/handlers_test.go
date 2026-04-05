@@ -646,6 +646,72 @@ func TestValidateHandlerLayer4FixedParsing(t *testing.T) {
 	}
 }
 
+func TestValidateHandlerLayer4ParsesJSON(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Pre-add an open gap to test JSON "fixed" resolution
+	store.AddGap(&Gap{
+		ID:          "json-fixed-gap",
+		MissionID:   m.ID,
+		Category:    "discovery-validation",
+		Severity:    "blocking",
+		Description: "Missing rate limiter",
+	})
+
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+
+	jsonResponse := `Some preamble text before JSON.
+{"gaps":[{"category":"security","severity":"blocking","file":"api.go","line":55,"description":"No input validation on user endpoint"}],"fixed":["Missing rate limiter"]}`
+
+	handler := NewValidateHandler(HandlerDeps{
+		Store:     store,
+		Validator: convergence.NewValidator(),
+		RepoRoot:  repoDir,
+		Metrics:   NewMetrics(),
+		ValidateDiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return jsonResponse, nil
+		},
+	})
+
+	result, err := handler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	// The fixed gap should be resolved
+	openAfter, _ := store.OpenGaps(m.ID)
+	for _, g := range openAfter {
+		if g.ID == "json-fixed-gap" {
+			t.Error("json-fixed-gap should have been resolved via JSON fixed array")
+		}
+	}
+
+	// New gap should be created
+	allGaps, _ := store.AllGaps(m.ID)
+	found := false
+	for _, g := range allGaps {
+		if strings.Contains(g.Description, "No input validation") {
+			found = true
+			if !strings.Contains(g.Description, "api.go:55") {
+				t.Errorf("gap should include file:line, got: %q", g.Description)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected new gap from JSON parsing for 'No input validation'")
+	}
+
+	if !strings.Contains(result.Summary, "discovery-validation") {
+		t.Errorf("summary should mention discovery-validation: %q", result.Summary)
+	}
+}
+
 func TestValidateHandlerSecurityOnlyWithDiscoveryFn(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

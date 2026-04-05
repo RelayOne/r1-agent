@@ -760,8 +760,72 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			if err != nil {
 				summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: error (%v)", err))
 			} else if findings != "" {
-				// Parse structured findings from the model's discovery
+				// Parse structured findings from the model's discovery.
+				// Try JSON first (model may return structured response),
+				// then fall back to line-based GAP:/FIXED: parsing.
 				var newGapCount, fixedCount int
+
+				type discoveryGap struct {
+					Category    string `json:"category"`
+					Severity    string `json:"severity"`
+					File        string `json:"file"`
+					Line        int    `json:"line"`
+					Description string `json:"description"`
+					Fixed       bool   `json:"fixed"`
+				}
+				type discoveryResponse struct {
+					Gaps  []discoveryGap `json:"gaps"`
+					Fixed []string       `json:"fixed"`
+				}
+
+				jsonParsed := false
+				if idx := strings.Index(findings, "{"); idx >= 0 {
+					if end := strings.LastIndex(findings, "}"); end > idx {
+						var parsed discoveryResponse
+						if err := json.Unmarshal([]byte(findings[idx:end+1]), &parsed); err == nil && (len(parsed.Gaps) > 0 || len(parsed.Fixed) > 0) {
+							jsonParsed = true
+							for _, fix := range parsed.Fixed {
+								openGaps, _ := deps.Store.OpenGaps(m.ID)
+								for _, g := range openGaps {
+									if strings.Contains(g.Description, fix) || strings.Contains(fix, g.Description) {
+										deps.Store.ResolveGap(m.ID, g.ID)
+										fixedCount++
+										break
+									}
+								}
+							}
+							for i, gap := range parsed.Gaps {
+								if gap.Fixed {
+									continue
+								}
+								desc := gap.Description
+								if gap.File != "" {
+									desc = fmt.Sprintf("%s (%s:%d)", desc, gap.File, gap.Line)
+								}
+								severity := gap.Severity
+								if severity == "" {
+									severity = "blocking"
+								}
+								gapID := fmt.Sprintf("disc-val-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
+								deps.Store.AddGap(&Gap{
+									ID:          gapID,
+									MissionID:   m.ID,
+									Category:    "discovery-validation",
+									Severity:    severity,
+									Description: truncateOutput(desc, 1000),
+									Suggestion:  gap.Category,
+								})
+								allGapCount++
+								if severity == "blocking" {
+									blockingCount++
+								}
+								newGapCount++
+							}
+						}
+					}
+				}
+
+				if !jsonParsed {
 				for i, line := range strings.Split(findings, "\n") {
 					line = strings.TrimSpace(line)
 					if line == "" {
@@ -823,6 +887,7 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 						newGapCount++
 					}
 				}
+				} // end !jsonParsed
 				if newGapCount > 0 || fixedCount > 0 {
 					summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: %d new gaps, %d fixed", newGapCount, fixedCount))
 				} else {
