@@ -251,7 +251,23 @@ func (s *CodebaseServer) handleSearchContent(args map[string]interface{}) (strin
 
 	var sb strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&sb, "%.3f  %s\n", r.Score, r.Path)
+		fmt.Fprintf(&sb, "%.3f  %s", r.Score, r.Path)
+		// Include exported symbols from the file for quick triage
+		if s.symIdx != nil {
+			syms := s.symIdx.InFile(r.Path)
+			if len(syms) > 0 {
+				var exported []string
+				for _, sym := range syms {
+					if sym.Exported && len(exported) < 5 {
+						exported = append(exported, sym.Name)
+					}
+				}
+				if len(exported) > 0 {
+					fmt.Fprintf(&sb, "  [%s]", strings.Join(exported, ", "))
+				}
+			}
+		}
+		sb.WriteByte('\n')
 	}
 	return sb.String(), nil
 }
@@ -300,7 +316,21 @@ func (s *CodebaseServer) handleImpactAnalysis(args map[string]interface{}) (stri
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Files impacted by changes to %s (%d):\n", file, len(impact))
 	for _, f := range impact {
-		fmt.Fprintf(&sb, "  %s\n", f)
+		fmt.Fprintf(&sb, "  %s", f)
+		// Show key exports so the model understands what each consumer provides
+		if s.symIdx != nil {
+			syms := s.symIdx.InFile(f)
+			var exported []string
+			for _, sym := range syms {
+				if sym.Exported && len(exported) < 3 {
+					exported = append(exported, sym.Name)
+				}
+			}
+			if len(exported) > 0 {
+				fmt.Fprintf(&sb, "  [%s]", strings.Join(exported, ", "))
+			}
+		}
+		sb.WriteByte('\n')
 	}
 	return sb.String(), nil
 }
