@@ -366,11 +366,8 @@ func TestConvergeStepPureModelQuery(t *testing.T) {
 	// When there's no ExecuteFn, ConvergedAnswer should be used directly
 	output, converged, err := ConvergeStep(context.Background(), convergeStepDeps{
 		ModelAskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness") {
-				return "COMPLETE", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "synthesized answer", nil
+			if strings.Contains(prompt, "Your Role: Arbiter") {
+				return "The synthesized answer addresses the question completely. Evidence: the model provided a thorough response at handler.go:15 with proper reasoning and all aspects of the query are covered.\n\nVERDICT: COMPLETE", nil
 			}
 			return "model answer", nil
 		},

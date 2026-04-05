@@ -80,8 +80,8 @@ func TestBuildCodebaseServer(t *testing.T) {
 func TestToolDefinitions(t *testing.T) {
 	srv := &CodebaseServer{}
 	defs := srv.ToolDefinitions()
-	if len(defs) != 8 {
-		t.Errorf("expected 8 tool definitions, got %d", len(defs))
+	if len(defs) != 11 {
+		t.Errorf("expected 11 tool definitions, got %d", len(defs))
 	}
 
 	names := map[string]bool{}

@@ -231,6 +231,41 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 				"required": ["query"]
 			}`),
 		},
+		{
+			Name:        "get_call_graph",
+			Description: "Get the call graph for a symbol — who calls it (callers) and what it calls (callees). Uses real AST-parsed call edges for Go files. Essential for understanding code flow, impact of changes, and dependency chains between functions.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"symbol": {"type": "string", "description": "Symbol name to get call graph for"},
+					"direction": {"type": "string", "description": "callers, callees, or both (default: both)", "enum": ["callers", "callees", "both", ""], "default": "both"},
+					"limit": {"type": "integer", "description": "Maximum results per direction (default 20)", "default": 20}
+				},
+				"required": ["symbol"]
+			}`),
+		},
+		{
+			Name:        "get_interface_implementations",
+			Description: "Find all types that implement a given interface. Uses real AST method-set analysis for Go files. Critical for understanding polymorphism, finding concrete implementations, and verifying interface contracts.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"interface": {"type": "string", "description": "Interface name to find implementations of"}
+				},
+				"required": ["interface"]
+			}`),
+		},
+		{
+			Name:        "get_symbol_detail",
+			Description: "Get detailed information about a specific symbol: full typed signature, doc comment, line range, parent type, type name, and export status. Uses real AST parsing for Go files.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"symbol": {"type": "string", "description": "Exact symbol name to get details for"}
+				},
+				"required": ["symbol"]
+			}`),
+		},
 	}
 }
 
@@ -253,6 +288,12 @@ func (s *CodebaseServer) HandleToolCall(toolName string, args map[string]interfa
 		return s.handleTraceEntryPoints(args)
 	case "semantic_search":
 		return s.handleSemanticSearch(args)
+	case "get_call_graph":
+		return s.handleGetCallGraph(args)
+	case "get_interface_implementations":
+		return s.handleGetInterfaceImplementations(args)
+	case "get_symbol_detail":
+		return s.handleGetSymbolDetail(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -756,6 +797,159 @@ func expandIdentifier(name string) []string {
 
 // ServeStdio runs the MCP server on stdin/stdout using JSON-RPC 2.0.
 // This is the main entry point when the server is started as a subprocess.
+func (s *CodebaseServer) handleGetCallGraph(args map[string]interface{}) (string, error) {
+	symbol, _ := args["symbol"].(string)
+	if symbol == "" {
+		return "", fmt.Errorf("symbol is required")
+	}
+	direction := "both"
+	if d, ok := args["direction"].(string); ok && d != "" {
+		direction = d
+	}
+	limit := 20
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+
+	if s.symIdx == nil {
+		return "Symbol index not available", nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Call Graph: %s\n\n", symbol)
+
+	if direction == "callers" || direction == "both" {
+		callers := s.symIdx.Callers(symbol)
+		fmt.Fprintf(&sb, "## Callers (%d)\n", len(callers))
+		for i, c := range callers {
+			if i >= limit {
+				fmt.Fprintf(&sb, "... and %d more\n", len(callers)-limit)
+				break
+			}
+			fmt.Fprintf(&sb, "- %s (%s:%d)\n", c.Caller, c.File, c.Line)
+		}
+		if len(callers) == 0 {
+			sb.WriteString("No callers found (may be an entry point or external caller)\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if direction == "callees" || direction == "both" {
+		callees := s.symIdx.Callees(symbol)
+		fmt.Fprintf(&sb, "## Callees (%d)\n", len(callees))
+		for i, c := range callees {
+			if i >= limit {
+				fmt.Fprintf(&sb, "... and %d more\n", len(callees)-limit)
+				break
+			}
+			loc := ""
+			if c.CalleePkg != "" {
+				loc = c.CalleePkg + "."
+			}
+			fmt.Fprintf(&sb, "- %s%s (%s:%d)\n", loc, c.Callee, c.File, c.Line)
+		}
+		if len(callees) == 0 {
+			sb.WriteString("No callees found (leaf function)\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
+}
+
+func (s *CodebaseServer) handleGetInterfaceImplementations(args map[string]interface{}) (string, error) {
+	ifaceName, _ := args["interface"].(string)
+	if ifaceName == "" {
+		return "", fmt.Errorf("interface is required")
+	}
+
+	if s.symIdx == nil {
+		return "Symbol index not available", nil
+	}
+
+	implementors := s.symIdx.Implementors(ifaceName)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Types implementing %s\n\n", ifaceName)
+
+	if len(implementors) == 0 {
+		sb.WriteString("No implementations found.\n")
+		sb.WriteString("Note: Interface satisfaction is checked via AST method-set analysis for Go files.\n")
+	} else {
+		for _, typ := range implementors {
+			// Find the type's location
+			syms := s.symIdx.Lookup(typ)
+			for _, sym := range syms {
+				if sym.Kind == symindex.KindType || sym.Kind == symindex.KindInterface {
+					fmt.Fprintf(&sb, "- %s (%s:%d)\n", typ, sym.File, sym.Line)
+					break
+				}
+			}
+		}
+	}
+
+	return sb.String(), nil
+}
+
+func (s *CodebaseServer) handleGetSymbolDetail(args map[string]interface{}) (string, error) {
+	name, _ := args["symbol"].(string)
+	if name == "" {
+		return "", fmt.Errorf("symbol is required")
+	}
+
+	if s.symIdx == nil {
+		return "Symbol index not available", nil
+	}
+
+	syms := s.symIdx.Lookup(name)
+	if len(syms) == 0 {
+		return fmt.Sprintf("Symbol %q not found", name), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Symbol: %s (%d definitions)\n\n", name, len(syms))
+
+	for _, sym := range syms {
+		fmt.Fprintf(&sb, "## %s %s\n", sym.Kind, sym.Name)
+		fmt.Fprintf(&sb, "- **File:** %s:%d", sym.File, sym.Line)
+		if sym.EndLine > 0 {
+			fmt.Fprintf(&sb, "-%d", sym.EndLine)
+		}
+		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "- **Exported:** %v\n", sym.Exported)
+		if sym.Parent != "" {
+			fmt.Fprintf(&sb, "- **Receiver/Parent:** %s\n", sym.Parent)
+		}
+		if sym.Signature != "" {
+			fmt.Fprintf(&sb, "- **Signature:** `%s`\n", sym.Signature)
+		}
+		if sym.TypeName != "" {
+			fmt.Fprintf(&sb, "- **Type:** %s\n", sym.TypeName)
+		}
+		if sym.Doc != "" {
+			fmt.Fprintf(&sb, "- **Doc:** %s\n", strings.TrimSpace(sym.Doc))
+		}
+
+		// Show callers/callees if available
+		qualified := sym.Name
+		if sym.Parent != "" {
+			qualified = sym.Parent + "." + sym.Name
+		}
+		callers := s.symIdx.Callers(sym.Name)
+		callees := s.symIdx.Callees(qualified)
+		if len(callers) > 0 {
+			fmt.Fprintf(&sb, "- **Called by:** %d callers\n", len(callers))
+		}
+		if len(callees) > 0 {
+			fmt.Fprintf(&sb, "- **Calls:** %d callees\n", len(callees))
+		}
+
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
+}
+
 func (s *CodebaseServer) ServeStdio() error {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer

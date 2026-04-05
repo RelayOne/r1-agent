@@ -64,6 +64,14 @@ type MicroConvergenceResult struct {
 
 	// History records each iteration's output and gaps for debugging.
 	History []MicroConvergenceIteration
+
+	// Stalled is true if the loop detected it was stuck (same gaps repeating).
+	// When stalled, the loop terminates early to avoid wasting resources.
+	Stalled bool
+
+	// GapProgress tracks how gap count changed across iterations.
+	// A healthy convergence shows decreasing gap counts.
+	GapProgress []int
 }
 
 // MicroConvergenceIteration records a single execute→validate cycle.
@@ -76,6 +84,10 @@ type MicroConvergenceIteration struct {
 
 // RunMicroConvergence drives a single work unit through execute→validate→fix
 // cycles until converged or max iterations exhausted.
+//
+// Includes stall detection: if the same gaps appear in consecutive iterations
+// (no progress), the loop terminates early with Stalled=true to avoid
+// wasting resources on a stuck execution.
 func RunMicroConvergence(ctx context.Context, cfg MicroConvergenceConfig) (*MicroConvergenceResult, error) {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = 3
@@ -90,6 +102,11 @@ func RunMicroConvergence(ctx context.Context, cfg MicroConvergenceConfig) (*Micr
 	start := time.Now()
 	result := &MicroConvergenceResult{}
 	feedback := ""
+
+	// Track gap fingerprints for stall detection
+	var prevGapFingerprint string
+	stallCount := 0
+	const stallThreshold = 2 // exit after 2 consecutive identical gap sets
 
 	for i := 1; i <= cfg.MaxIterations; i++ {
 		select {
@@ -112,10 +129,12 @@ func RunMicroConvergence(ctx context.Context, cfg MicroConvergenceConfig) (*Micr
 		// Validate adversarially
 		gaps, err := cfg.ValidateFn(ctx, cfg.Scope, output)
 		if err != nil {
-			// Validation error is non-fatal — treat as unconverged
 			log.Printf("[microconv] %s iteration %d: validation error: %v", cfg.StepName, i, err)
 			gaps = []string{fmt.Sprintf("validation error: %v", err)}
 		}
+
+		// Deduplicate gaps within this iteration
+		gaps = deduplicateGaps(gaps)
 
 		iter := MicroConvergenceIteration{
 			Iteration: i,
@@ -125,6 +144,7 @@ func RunMicroConvergence(ctx context.Context, cfg MicroConvergenceConfig) (*Micr
 		}
 		result.History = append(result.History, iter)
 		result.Iterations = i
+		result.GapProgress = append(result.GapProgress, len(gaps))
 
 		if len(gaps) == 0 {
 			result.Converged = true
@@ -134,17 +154,92 @@ func RunMicroConvergence(ctx context.Context, cfg MicroConvergenceConfig) (*Micr
 			return result, nil
 		}
 
-		log.Printf("[microconv] %s iteration %d: %d gaps remain", cfg.StepName, i, len(gaps))
+		// Stall detection: are we seeing the exact same gaps?
+		fingerprint := gapFingerprint(gaps)
+		if fingerprint == prevGapFingerprint {
+			stallCount++
+			if stallCount >= stallThreshold {
+				result.Stalled = true
+				result.RemainingGaps = gaps
+				result.Duration = time.Since(start)
+				log.Printf("[microconv] %s STALLED after %d iterations — same %d gaps for %d consecutive rounds",
+					cfg.StepName, i, len(gaps), stallCount+1)
+				return result, nil
+			}
+		} else {
+			stallCount = 0
+		}
+		prevGapFingerprint = fingerprint
+
+		log.Printf("[microconv] %s iteration %d: %d gaps remain (progress: %v)",
+			cfg.StepName, i, len(gaps), result.GapProgress)
 		result.RemainingGaps = gaps
 
-		// Build feedback for next iteration
-		feedback = buildMicroFeedback(i, gaps, cfg.Scope)
+		// Build feedback with stall awareness
+		if stallCount > 0 {
+			feedback = buildMicroFeedbackWithStall(i, gaps, cfg.Scope, stallCount)
+		} else {
+			feedback = buildMicroFeedback(i, gaps, cfg.Scope)
+		}
 	}
 
 	result.Duration = time.Since(start)
 	log.Printf("[microconv] %s did NOT converge after %d iterations (%d remaining gaps)",
 		cfg.StepName, cfg.MaxIterations, len(result.RemainingGaps))
 	return result, nil
+}
+
+// deduplicateGaps removes exact duplicate gaps from a list.
+func deduplicateGaps(gaps []string) []string {
+	if len(gaps) <= 1 {
+		return gaps
+	}
+	seen := make(map[string]bool)
+	var unique []string
+	for _, g := range gaps {
+		normalized := strings.TrimSpace(strings.ToLower(g))
+		if !seen[normalized] {
+			seen[normalized] = true
+			unique = append(unique, g)
+		}
+	}
+	return unique
+}
+
+// gapFingerprint creates a stable fingerprint of a gap set for stall detection.
+func gapFingerprint(gaps []string) string {
+	sorted := make([]string, len(gaps))
+	for i, g := range gaps {
+		sorted[i] = strings.TrimSpace(strings.ToLower(g))
+	}
+	// Simple sort for stability
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j] < sorted[i] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	return strings.Join(sorted, "|||")
+}
+
+// buildMicroFeedbackWithStall adds urgency when the loop is stalling.
+func buildMicroFeedbackWithStall(iteration int, gaps []string, scope string, stallCount int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "CONVERGENCE FEEDBACK (iteration %d) — WARNING: STALLING\n\n", iteration)
+	fmt.Fprintf(&b, "⚠ The SAME gaps have appeared for %d consecutive iterations.\n", stallCount+1)
+	fmt.Fprintf(&b, "Your previous attempts did NOT fix them. You MUST try a DIFFERENT approach.\n\n")
+	fmt.Fprintf(&b, "Do not repeat the same strategy. Consider:\n")
+	fmt.Fprintf(&b, "- A completely different implementation approach\n")
+	fmt.Fprintf(&b, "- Breaking the problem into smaller pieces\n")
+	fmt.Fprintf(&b, "- Addressing the root cause instead of symptoms\n\n")
+	fmt.Fprintf(&b, "SCOPE (what must be satisfied):\n%s\n\n", scope)
+	fmt.Fprintf(&b, "PERSISTENT GAPS (still unfixed after %d attempts):\n", stallCount+1)
+	for i, gap := range gaps {
+		fmt.Fprintf(&b, "  %d. %s\n", i+1, gap)
+	}
+	fmt.Fprintf(&b, "\nThis is your last chance before escalation. Fix every gap with a new approach.\n")
+	return b.String()
 }
 
 // buildMicroFeedback constructs the feedback prompt for the next iteration.

@@ -175,26 +175,28 @@ func convergedAnswerRecurse(
 		}
 	}
 
-	// Step 2: Arbiter combines answers, flags conflicts, identifies gaps
+	// Step 2: Arbiter combines answers AND judges completeness in ONE call.
+	// Previously this was 2 separate calls (review + completeness), but merging
+	// them halves the arbiter cost per round while maintaining quality.
 	combinedContext := buildCombinedContext(cfg.BiggerMission, currentMission, round.ModelAnswers)
-	reviewPrompt := buildReviewPrompt(combinedContext)
+	reviewAndJudgePrompt := buildReviewAndJudgePrompt(combinedContext)
 
-	review, err := cfg.AskFn(ctx, cfg.ArbiterModel, reviewPrompt)
+	reviewAndVerdict, err := cfg.AskFn(ctx, cfg.ArbiterModel, reviewAndJudgePrompt)
 	if err != nil {
 		result.Duration = time.Since(start)
 		return result, fmt.Errorf("converged: arbiter review failed at depth %d: %w", depth, err)
 	}
+
+	// Parse the combined response: synthesized answer + verdict
+	review, verdict := splitReviewAndVerdict(reviewAndVerdict)
 	round.ArbiterReview = review
 
-	// Step 3: Arbiter judges completeness
-	completenessPrompt := buildCompletenessPrompt(combinedContext, review)
-	verdict, err := cfg.AskFn(ctx, cfg.ArbiterModel, completenessPrompt)
-	if err != nil {
-		result.Duration = time.Since(start)
-		return result, fmt.Errorf("converged: arbiter completeness check failed at depth %d: %w", depth, err)
-	}
-
 	complete := isCompleteVerdict(verdict)
+	// Anti-hallucination: reject vague affirmations
+	if complete && isVagueAffirmation(review) {
+		log.Printf("[converged] %s: arbiter gave COMPLETE but review is vague — treating as incomplete", cfg.StepName)
+		complete = false
+	}
 	round.Complete = complete
 	round.Duration = time.Since(roundStart)
 	result.Rounds = append(result.Rounds, round)
@@ -251,15 +253,18 @@ func buildCombinedContext(biggerMission, mission string, answers map[string]stri
 	return b.String()
 }
 
-// buildReviewPrompt creates the arbiter's review prompt.
-func buildReviewPrompt(combinedContext string) string {
+// buildReviewAndJudgePrompt creates a SINGLE prompt that asks the arbiter to
+// both synthesize and judge completeness. This halves the arbiter cost per round
+// compared to the old 2-call approach (review + completeness).
+func buildReviewAndJudgePrompt(combinedContext string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", combinedContext)
 	fmt.Fprintf(&b, `## Your Role: Arbiter
 
 You are the arbiter. Multiple models independently answered the mission above.
 
-Your job:
+### Part 1: Synthesize
+
 1. **Combine** the answers into one unified, complete response
 2. **Flag conflicts** where models disagree — resolve them with evidence
 3. **Identify gaps** — what did ALL models miss? What's incomplete?
@@ -268,34 +273,69 @@ Your job:
 Do NOT just pick one answer. Do NOT average them. Synthesize the strongest
 elements and fix what's wrong. If all models missed something, YOU must catch it.
 
-Provide the complete, synthesized answer. Not a meta-commentary about the answers.
-The actual answer.
-`)
-	return b.String()
-}
+### Part 2: Judge
 
-// buildCompletenessPrompt asks the arbiter if the combined answer is complete.
-func buildCompletenessPrompt(combinedContext, review string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s", combinedContext)
-	fmt.Fprintf(&b, "## Arbiter's Synthesized Answer\n\n%s\n\n", review)
-	fmt.Fprintf(&b, `## Completeness Judgment
+After synthesizing, judge your own answer adversarially:
 
-You already synthesized an answer above. Now judge it adversarially.
-
-Ask yourself:
 - Does the answer FULLY satisfy the mission? Not partially. Not "mostly." FULLY.
 - Are there conflicts that weren't resolved?
 - Are there gaps that weren't filled?
 - Would a domain expert find anything missing?
 - Is there work that was deferred, hand-waved, or marked as "future work"?
 
-Respond with EXACTLY one of:
-- "COMPLETE" — the answer fully satisfies the mission with no gaps
-- "INCOMPLETE: <what's missing>" — specific gaps that need another round
+### Required Format
 
-Do not hedge. Do not say "mostly complete." Either it's done or it's not.
+Provide your synthesized answer first, then end with a verdict on its own line:
+
+[Your complete synthesized answer here]
+
+VERDICT: COMPLETE
+  — OR —
+VERDICT: INCOMPLETE: <specific gap 1>; <specific gap 2>; ...
+
+You MUST cite specific evidence (file:line, test names, API endpoints) for
+any claims. Do not say "the implementation covers this" without a citation.
 `)
+	return b.String()
+}
+
+// splitReviewAndVerdict separates the synthesized answer from the VERDICT line.
+func splitReviewAndVerdict(response string) (review, verdict string) {
+	lines := strings.Split(response, "\n")
+
+	// Find the last VERDICT: line
+	verdictIdx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(strings.ToUpper(trimmed), "VERDICT:") {
+			verdictIdx = i
+			break
+		}
+	}
+
+	if verdictIdx < 0 {
+		// No explicit verdict — treat entire response as review
+		return response, response
+	}
+
+	review = strings.TrimSpace(strings.Join(lines[:verdictIdx], "\n"))
+	verdictLine := strings.TrimSpace(lines[verdictIdx])
+	verdict = strings.TrimPrefix(verdictLine, "VERDICT:")
+	verdict = strings.TrimPrefix(verdict, "verdict:")
+	verdict = strings.TrimSpace(verdict)
+
+	return review, verdict
+}
+
+// Kept for backward compatibility — some callers may use these directly.
+func buildReviewPrompt(combinedContext string) string {
+	return buildReviewAndJudgePrompt(combinedContext)
+}
+
+func buildCompletenessPrompt(combinedContext, review string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Review:\n%s\n\n", review)
+	fmt.Fprintf(&b, "Is this review COMPLETE or INCOMPLETE? Respond: VERDICT: COMPLETE or VERDICT: INCOMPLETE: <gaps>\n")
 	return b.String()
 }
 

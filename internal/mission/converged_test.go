@@ -13,11 +13,8 @@ func TestConvergedAnswerSingleRound(t *testing.T) {
 		Models:       []string{"claude", "codex"},
 		ArbiterModel: "claude",
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
-				return "COMPLETE", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "The answer is: auth uses JWT tokens at auth.go:15", nil
+			if strings.Contains(prompt, "Your Role: Arbiter") {
+				return "The synthesized answer confirms that authentication uses JWT tokens as implemented in auth.go:15 with proper validation at middleware.go:42. Both models agree on the approach and all criteria are satisfied.\n\nVERDICT: COMPLETE", nil
 			}
 			return fmt.Sprintf("%s says: use JWT", model), nil
 		},
@@ -53,15 +50,12 @@ func TestConvergedAnswerMultipleRounds(t *testing.T) {
 		Models:       []string{"claude", "codex"},
 		ArbiterModel: "claude",
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
+			if strings.Contains(prompt, "Your Role: Arbiter") {
 				n := atomic.AddInt32(&arbiterCalls, 1)
 				if n < 3 {
-					return "INCOMPLETE: missing error handling and tests", nil
+					return "The synthesized answer covers login endpoint implementation at handler.go:20 but has gaps in error handling at validator.go:35 and missing test coverage for edge cases in auth_test.go.\n\nVERDICT: INCOMPLETE: missing error handling and tests", nil
 				}
-				return "COMPLETE", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "synthesized answer with all parts", nil
+				return "The synthesized answer now covers all aspects: login endpoint at handler.go:20, error handling at validator.go:35, and comprehensive tests in auth_test.go:10-50. All models agree and evidence is cited.\n\nVERDICT: COMPLETE", nil
 			}
 			return fmt.Sprintf("%s answer at depth", model), nil
 		},
@@ -99,11 +93,8 @@ func TestConvergedAnswerSafetyDepthLimit(t *testing.T) {
 		ArbiterModel: "model-a",
 		MaxDepth:     3,
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
-				return "INCOMPLETE: always more to do", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "partial answer", nil
+			if strings.Contains(prompt, "Your Role: Arbiter") {
+				return "partial answer\n\nVERDICT: INCOMPLETE: always more to do", nil
 			}
 			return "model answer", nil
 		},
@@ -150,14 +141,11 @@ func TestConvergedAnswerModelFailure(t *testing.T) {
 		Models:       []string{"good-model", "bad-model"},
 		ArbiterModel: "good-model",
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if model == "bad-model" && !strings.Contains(prompt, "Arbiter") && !strings.Contains(prompt, "Completeness") {
+			if model == "bad-model" && !strings.Contains(prompt, "Your Role: Arbiter") {
 				return "", fmt.Errorf("model offline")
 			}
-			if strings.Contains(prompt, "Completeness Judgment") {
-				return "COMPLETE", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "only good-model's answer was usable", nil
+			if strings.Contains(prompt, "Your Role: Arbiter") {
+				return "Only good-model provided a usable answer. The implementation correctly handles the task with JWT auth at auth.go:15 and proper error handling at handler.go:30. Bad-model was offline but its absence does not affect completeness.\n\nVERDICT: COMPLETE", nil
 			}
 			return "good-model answer", nil
 		},
@@ -185,11 +173,8 @@ func TestConvergedAnswerAccumulatesContext(t *testing.T) {
 		ArbiterModel: "claude",
 		MaxDepth:     3,
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
-				return "INCOMPLETE: need more detail", nil
-			}
 			if strings.Contains(prompt, "Your Role: Arbiter") {
-				return "review of answers", nil
+				return "review of answers\n\nVERDICT: INCOMPLETE: need more detail", nil
 			}
 			// This is a model prompt
 			atomic.AddInt32(&modelRoundCount, 1)
@@ -226,11 +211,8 @@ func TestConvergedAnswerOnIterationCallback(t *testing.T) {
 		ArbiterModel: "claude",
 		MaxDepth:     3,
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
-				return "INCOMPLETE: more work needed", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "review", nil
+			if strings.Contains(prompt, "Your Role: Arbiter") {
+				return "review\n\nVERDICT: INCOMPLETE: more work needed", nil
 			}
 			return "answer", nil
 		},
@@ -264,12 +246,9 @@ func TestConvergedAnswerDefaultArbiter(t *testing.T) {
 		Models: []string{"first-model", "second-model"},
 		// ArbiterModel intentionally empty
 		AskFn: func(ctx context.Context, model, prompt string) (string, error) {
-			if strings.Contains(prompt, "Completeness Judgment") {
+			if strings.Contains(prompt, "Your Role: Arbiter") {
 				arbiterModel = model
-				return "COMPLETE", nil
-			}
-			if strings.Contains(prompt, "Arbiter") {
-				return "combined answer", nil
+				return "The combined answer synthesizes both models' responses. The implementation at service.go:10 correctly handles the task with proper validation at handler.go:25. All criteria are met with specific evidence cited.\n\nVERDICT: COMPLETE", nil
 			}
 			return "answer", nil
 		},
