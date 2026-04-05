@@ -245,7 +245,7 @@ func TestValidateHandlerNoValidator(t *testing.T) {
 
 // --- Consensus Handler ---
 
-func TestConsensusHandlerAutoApprove(t *testing.T) {
+func TestConsensusHandlerRequiresModelFn(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -253,19 +253,14 @@ func TestConsensusHandlerAutoApprove(t *testing.T) {
 	defer store.Close()
 	m := setupHandlerTestMission(t, store)
 
+	// Consensus must never auto-approve — it requires a real model function
 	handler := NewConsensusHandler(HandlerDeps{Store: store}, []string{"claude", "codex"})
-	result, err := handler(context.Background(), m)
-	if err != nil {
-		t.Fatal(err)
+	_, err = handler(context.Background(), m)
+	if err == nil {
+		t.Fatal("expected error when ConsensusModelFn is nil")
 	}
-	if !strings.Contains(result.Summary, "Auto-approved") {
-		t.Errorf("summary = %q", result.Summary)
-	}
-
-	// Should have recorded consensus
-	has, _ := store.HasConsensus(m.ID, 2)
-	if !has {
-		t.Error("should have consensus after auto-approve")
+	if !strings.Contains(err.Error(), "consensus requires") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

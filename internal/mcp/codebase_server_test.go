@@ -80,8 +80,8 @@ func TestBuildCodebaseServer(t *testing.T) {
 func TestToolDefinitions(t *testing.T) {
 	srv := &CodebaseServer{}
 	defs := srv.ToolDefinitions()
-	if len(defs) != 7 {
-		t.Errorf("expected 7 tool definitions, got %d", len(defs))
+	if len(defs) != 8 {
+		t.Errorf("expected 8 tool definitions, got %d", len(defs))
 	}
 
 	names := map[string]bool{}
@@ -95,7 +95,7 @@ func TestToolDefinitions(t *testing.T) {
 		}
 	}
 
-	for _, expected := range []string{"search_symbols", "get_dependencies", "search_content", "get_file_symbols", "impact_analysis", "find_symbol_usages", "trace_entry_points"} {
+	for _, expected := range []string{"search_symbols", "get_dependencies", "search_content", "get_file_symbols", "impact_analysis", "find_symbol_usages", "trace_entry_points", "semantic_search"} {
 		if !names[expected] {
 			t.Errorf("missing tool: %s", expected)
 		}
@@ -328,6 +328,55 @@ func TestTraceEntryPointsNilGraph(t *testing.T) {
 	}
 	if !strings.Contains(result, "not available") {
 		t.Errorf("expected 'not available' for nil graph, got: %s", result)
+	}
+}
+
+func TestSemanticSearch(t *testing.T) {
+	dir := setupTestRepo(t)
+	srv, err := BuildCodebaseServer(dir)
+	if err != nil {
+		t.Fatalf("BuildCodebaseServer: %v", err)
+	}
+
+	result, err := srv.HandleToolCall("semantic_search", map[string]interface{}{
+		"query": "service process",
+	})
+	if err != nil {
+		t.Fatalf("semantic_search error: %v", err)
+	}
+	// Should find something — the test repo has Service/Process/NewService
+	if strings.Contains(result, "not available") {
+		t.Error("semantic search should be available after build")
+	}
+}
+
+func TestSemanticSearchNilIndex(t *testing.T) {
+	// With no vecindex but with tfidf, should fall back
+	srv := &CodebaseServer{}
+	result, err := srv.HandleToolCall("semantic_search", map[string]interface{}{"query": "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "not available") {
+		t.Errorf("expected 'not available' for nil indexes, got: %s", result)
+	}
+}
+
+func TestExpandIdentifier(t *testing.T) {
+	tests := []struct {
+		input  string
+		expect []string
+	}{
+		{"NewService", []string{"New", "Service"}},
+		{"getHTTPClient", []string{"get", "HTTPClient"}},
+		{"snake_case_name", []string{"snake", "case", "name"}},
+		{"simple", []string{"simple"}},
+	}
+	for _, tt := range tests {
+		got := expandIdentifier(tt.input)
+		if len(got) != len(tt.expect) {
+			t.Errorf("expandIdentifier(%q) = %v, want %v", tt.input, got, tt.expect)
+		}
 	}
 }
 

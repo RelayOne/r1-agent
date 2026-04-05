@@ -76,7 +76,7 @@ type RunnerConfig struct {
 // DefaultRunnerConfig returns sensible defaults for the convergence loop.
 func DefaultRunnerConfig() RunnerConfig {
 	return RunnerConfig{
-		MaxConvergenceLoops: 5,
+		MaxConvergenceLoops: 10,
 		RequiredConsensus:   2,
 		MaxPhaseRetries:     3,
 	}
@@ -96,7 +96,7 @@ func NewRunner(store *Store, config RunnerConfig) *Runner {
 		panic("mission.NewRunner: store must not be nil")
 	}
 	if config.MaxConvergenceLoops <= 0 {
-		config.MaxConvergenceLoops = 5
+		config.MaxConvergenceLoops = 10
 	}
 	if config.RequiredConsensus <= 0 {
 		config.RequiredConsensus = 2
@@ -211,6 +211,11 @@ func (r *Runner) Run(ctx context.Context, missionID string) (*RunSummary, error)
 				summary.FinalPhase = PhaseFailed
 				summary.TotalDuration = time.Since(start)
 				return summary, err
+			}
+
+			if convergenceLoops == 5 {
+				log.Printf("[mission] WARNING: %s has reached 5 convergence loops — work may be stuck, %d loops remaining before failure",
+					missionID, r.config.MaxConvergenceLoops-5)
 			}
 
 			gaps, _ := r.store.OpenGaps(missionID)

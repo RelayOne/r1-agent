@@ -460,13 +460,11 @@ func topN(scores map[string]float64, n int) []string {
 // countSignals returns how many search signals are available.
 func countSignals(deps HandlerDeps) int {
 	if deps.DiscoveryFn != nil {
-		return 1 // agentic discovery (which has access to all tools internally)
+		return 3 // agentic discovery: strongest signal (model-driven multi-turn analysis)
 	}
 	count := 0
 	if deps.RepoRoot != "" {
-		count++ // TF-IDF
-		count++ // Symbol index
-		count++ // Dep graph
+		count++ // TF-IDF (deterministic fallback)
 	}
 	return count
 }
@@ -989,19 +987,8 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 		validationReport := strings.Join(reportParts, "\n")
 
 		if deps.ConsensusModelFn == nil {
-			// No consensus function — auto-approve
-			for _, model := range models {
-				deps.Store.RecordConsensus(&ConsensusRecord{
-					MissionID: m.ID,
-					Model:     model,
-					Verdict:   "complete",
-					Reasoning: "auto-approved (no consensus function)",
-				})
-			}
-			return &PhaseResult{
-				Phase:   PhaseConverged,
-				Summary: fmt.Sprintf("Auto-approved by %d models", len(models)),
-			}, nil
+			// Never auto-approve — consensus requires real model verification
+			return nil, fmt.Errorf("consensus requires at least one model function configured")
 		}
 
 		var verdicts []string

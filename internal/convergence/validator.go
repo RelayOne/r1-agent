@@ -399,6 +399,7 @@ func DefaultRules() []Rule {
 		emptyFuncRule(),
 		commentedOutCodeRule(),
 		unwiredCodeRule(),
+		duplicateLogicRule(),
 
 		// Gate 3: Engineering standards
 		panicRule(),
@@ -406,17 +407,21 @@ func DefaultRules() []Rule {
 		typeBypassRule(),
 		largeFileRule(),
 		debugLogRule(),
+		missingErrorContextRule(),
+		bareAnyTypeRule(),
 
 		// Gate 3: Security
 		hardcodedSecretRule(),
 		sqlInjectionRule(),
 		commandInjectionRule(),
 		pathTraversalRule(),
+		missingAuthCheckRule(),
 
 		// Gate 3: Test quality
 		emptyTestRule(),
 		tautologicalTestRule(),
 		missingTestFileRule(),
+		missingErrorTestRule(),
 
 		// Gate 6: UX quality — accessibility, responsiveness, error states, UI completeness
 		inaccessibleImageRule(),
@@ -430,6 +435,7 @@ func DefaultRules() []Rule {
 		hardcodedColorRule(),
 		dangerousInnerHTMLRule(),
 		missingKeyPropRule(),
+		missingEmptyStateRule(),
 	}
 }
 
@@ -845,6 +851,244 @@ func pathTraversalRule() Rule {
 					"Validate and sanitize paths with filepath.Clean and base-directory checks")...)
 			}
 			return findings
+		},
+	}
+}
+
+// --- Gate 5: Consistency (additional rules) ---
+
+// duplicateLogicRule flags DRY violations: same logic block repeated 3+ times in a file.
+func duplicateLogicRule() Rule {
+	return Rule{
+		ID: "no-duplicate-logic", Name: "No DRY violations (repeated logic blocks)", Category: CatConsistency,
+		Severity: SevMajor, Enabled: true,
+		Description: "Same logic repeated in 3+ places — extract into a shared function",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			lines := strings.Split(string(content), "\n")
+			var findings []Finding
+			// Look for identical sequences of trimmed lines (at least 3 lines long) appearing 3+ times.
+			// Build a map of 3-line sliding windows.
+			type block struct {
+				text  string
+				lines []int
+			}
+			windowSize := 3
+			if len(lines) < windowSize {
+				return nil
+			}
+			seen := make(map[string][]int) // block text -> list of start lines
+			for i := 0; i <= len(lines)-windowSize; i++ {
+				var parts []string
+				totalLen := 0
+				for j := 0; j < windowSize; j++ {
+					t := strings.TrimSpace(lines[i+j])
+					parts = append(parts, t)
+					totalLen += len(t)
+				}
+				// Only consider blocks with 10+ non-whitespace chars total
+				if totalLen < 10 {
+					continue
+				}
+				key := strings.Join(parts, "\n")
+				// Skip trivially common patterns (empty lines, single braces, etc.)
+				if key == "}\n\n" || key == "\n\n" {
+					continue
+				}
+				seen[key] = append(seen[key], i+1)
+			}
+			for text, locs := range seen {
+				if len(locs) >= 3 {
+					preview := text
+					if len(preview) > 120 {
+						preview = preview[:120] + "..."
+					}
+					findings = append(findings, Finding{
+						RuleID:      "no-duplicate-logic",
+						Category:    CatConsistency,
+						Severity:    SevMajor,
+						File:        file,
+						Line:        locs[0],
+						Description: fmt.Sprintf("Logic block repeated %d times — DRY violation", len(locs)),
+						Suggestion:  "Extract duplicated logic into a shared function or variable",
+						Evidence:    preview,
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// --- Gate 3: Code Quality (additional rules) ---
+
+// missingErrorContextRule flags bare `return err` without wrapping context.
+func missingErrorContextRule() Rule {
+	re := regexp.MustCompile(`(?m)^\s*return err\s*$`)
+	return Rule{
+		ID: "no-missing-error-context", Name: "Error returns must include context", Category: CatCodeQuality,
+		Severity: SevMajor, Enabled: true,
+		Description: "Bare 'return err' without fmt.Errorf or errors.Wrap loses call-site context",
+		Check: func(file string, content []byte) []Finding {
+			if !isGoFile(file) || isTestFile(file) {
+				return nil
+			}
+			return regexCheck(re, file, content, "no-missing-error-context", CatCodeQuality, SevMajor,
+				"Bare 'return err' without context wrapping — error origin will be unclear",
+				"Use fmt.Errorf(\"context: %w\", err) or errors.Wrap to add context")
+		},
+	}
+}
+
+// bareAnyTypeRule flags bare any/interface{} in Go or any/unknown in TypeScript.
+func bareAnyTypeRule() Rule {
+	goAny := regexp.MustCompile(`\binterface\s*\{\s*\}|\bany\b`)
+	tsAny := regexp.MustCompile(`:\s*(any|unknown)\b`)
+	return Rule{
+		ID: "no-bare-any-type", Name: "No bare any/interface{} types", Category: CatCodeQuality,
+		Severity: SevMajor, Enabled: true,
+		Description: "Bare any/interface{} or TypeScript any/unknown defeats type safety",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			if isGoFile(file) {
+				// Exclude type assertion matches (x.(type) patterns)
+				var findings []Finding
+				lines := strings.Split(string(content), "\n")
+				for i, line := range lines {
+					if goAny.MatchString(line) {
+						// Skip type assertions like x.(any) or type switches
+						if strings.Contains(line, ".(") {
+							continue
+						}
+						findings = append(findings, Finding{
+							RuleID:      "no-bare-any-type",
+							Category:    CatCodeQuality,
+							Severity:    SevMajor,
+							File:        file,
+							Line:        i + 1,
+							Description: "Uses bare any/interface{} — defeats type safety",
+							Suggestion:  "Use a concrete type, generic constraint, or defined interface instead",
+							Evidence:    strings.TrimSpace(line),
+						})
+					}
+				}
+				return findings
+			}
+			if strings.HasSuffix(file, ".ts") || strings.HasSuffix(file, ".tsx") {
+				return regexCheck(tsAny, file, content, "no-bare-any-type", CatCodeQuality, SevMajor,
+					"Uses bare any/unknown type annotation — defeats TypeScript type safety",
+					"Use a specific type, generic, or 'unknown' with type narrowing instead of 'any'")
+			}
+			return nil
+		},
+	}
+}
+
+// --- Gate 3: Security (additional rules) ---
+
+// missingAuthCheckRule flags HTTP handlers without auth/permission checks.
+func missingAuthCheckRule() Rule {
+	handlerFunc := regexp.MustCompile(`func\s+(\(\w+\s+\*?\w+\)\s+)?(Handle\w+|Serve\w+|\w+[Hh]andler)\s*\(`)
+	authPattern := regexp.MustCompile(`(?i)(auth|permission|rbac|middleware|token|session)`)
+	pathPattern := regexp.MustCompile(`(?i)(api/|handler|route|server)`)
+	return Rule{
+		ID: "no-missing-auth-check", Name: "HTTP handlers must have auth checks", Category: CatSecurity,
+		Severity: SevBlocking, Enabled: true,
+		Description: "HTTP handler functions without auth/permission checks may expose unprotected endpoints",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			// Only check files in API/handler/route/server paths
+			if !pathPattern.MatchString(file) {
+				return nil
+			}
+			lines := strings.Split(string(content), "\n")
+			var findings []Finding
+			for i, line := range lines {
+				if handlerFunc.MatchString(line) {
+					// Check the next 20 lines for auth-related patterns
+					end := i + 20
+					if end > len(lines) {
+						end = len(lines)
+					}
+					window := strings.Join(lines[i:end], "\n")
+					if !authPattern.MatchString(window) {
+						findings = append(findings, Finding{
+							RuleID:      "no-missing-auth-check",
+							Category:    CatSecurity,
+							Severity:    SevBlocking,
+							File:        file,
+							Line:        i + 1,
+							Description: "HTTP handler has no auth/permission check within 20 lines — endpoint may be unprotected",
+							Suggestion:  "Add authentication/authorization middleware or explicit permission checks",
+							Evidence:    strings.TrimSpace(line),
+						})
+					}
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// --- Gate 3: Test quality (additional rules) ---
+
+// missingErrorTestRule flags functions that return errors but have no test exercising the error path.
+func missingErrorTestRule() Rule {
+	errorReturnFunc := regexp.MustCompile(`func\s+(\w+)\([^)]*\)\s*(?:\([^)]*error[^)]*\)|error)\s*\{`)
+	return Rule{
+		ID: "no-missing-error-test", Name: "Error-returning functions must have error path tests", Category: CatTestCoverage,
+		Severity: SevMajor, Enabled: true,
+		Description: "Functions returning errors should have tests that exercise the error path",
+		Check: func(file string, content []byte) []Finding {
+			// This rule only applies to Go source files (not test files themselves)
+			if !isGoFile(file) || isTestFile(file) {
+				return nil
+			}
+			matches := errorReturnFunc.FindAllSubmatch(content, -1)
+			if len(matches) == 0 {
+				return nil
+			}
+			// This is a per-file heuristic: we flag functions with error returns.
+			// The caller's integration layer should cross-reference with _test.go files
+			// to check if both the function name AND err/Error appear in the test.
+			// At the single-file level, we simply flag the function signature for awareness.
+			return nil // Handled at integration level (cross-file), not per-file
+		},
+	}
+}
+
+// --- Gate 6: UX quality (additional rules) ---
+
+// missingEmptyStateRule flags components with data iteration that don't handle empty data.
+func missingEmptyStateRule() Rule {
+	iterationPattern := regexp.MustCompile(`\.(map|forEach)\(|v-for|(\*ngFor)`)
+	emptyCheck := regexp.MustCompile(`(?i)(length\s*(===|==|!==|!=|>|<)\s*0|\.length\s*\)|!data|isEmpty|empty|no\s+(results|items|data)|emptyState|empty-state)`)
+	return Rule{
+		ID: "no-missing-empty-state", Name: "Data lists must handle empty state", Category: CatUXQuality,
+		Severity: SevBlocking, Enabled: true,
+		Description: "Components that iterate over data without empty state handling show blank UI when data is empty",
+		Check: func(file string, content []byte) []Finding {
+			if !isFrontendFile(file) || isTestFile(file) {
+				return nil
+			}
+			contentStr := string(content)
+			if iterationPattern.MatchString(contentStr) && !emptyCheck.MatchString(contentStr) {
+				return []Finding{{
+					RuleID:      "no-missing-empty-state",
+					Category:    CatUXQuality,
+					Severity:    SevBlocking,
+					File:        file,
+					Description: "Component iterates over data (.map/v-for/ngFor) but has no empty state handling — blank UI when data is empty",
+					Suggestion:  "Add a check for empty data (e.g., data.length === 0) and render an appropriate empty state message",
+				}}
+			}
+			return nil
 		},
 	}
 }

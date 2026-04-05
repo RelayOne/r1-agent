@@ -228,6 +228,7 @@ You have MCP tools for understanding the codebase while implementing:
 - **impact_analysis**: Check what will break if you change a file
 - **find_symbol_usages**: Find all consumers of a function/type before changing its signature
 - **trace_entry_points**: See which surfaces (CLI, API, Web) reach the code you're changing
+- **semantic_search**: Find conceptually related code by meaning, not keywords
 
 Use these BEFORE writing code to understand existing patterns.
 Use them AFTER writing code to verify you haven't broken consumers.
@@ -327,15 +328,39 @@ Build passes. ALL tests pass. Lint passes. Not just the tests for the changed co
 ALL tests in the entire repository. Pre-existing failures are YOUR problem too.
 
 **Gate 3: Engineering standards, security, and optimization are exhaustive**
-- No TODOs, FIXMEs, HACKs, stubs, placeholders, or "implement later" comments anywhere
-- No panics in production code
-- No ignored errors
+
+Security (non-negotiable):
 - No SQL injection, command injection, path traversal, XSS, hardcoded secrets
-- No debug print statements (use structured logging)
+- No hardcoded credentials, API keys, tokens — use environment variables
+- Every HTTP endpoint has authentication and authorization checks (RBAC)
+- Input validation on ALL external boundaries (user input, API params, file uploads)
+
+Code quality:
+- No TODOs, FIXMEs, HACKs, stubs, placeholders, or "implement later" anywhere
+- No panics in production code. No ignored errors. No bare any/interface{}/unknown types.
 - No type safety bypasses (@ts-ignore, nolint, etc.)
-- Every function has proper error handling
+- No debug print statements — use structured logging with levels
+- No duplicate logic (DRY) — same code in 3+ places must be abstracted
+- Every function has proper error handling with context wrapping
+- Errors wrapped with context: "return fmt.Errorf("doing X: %w", err)" not bare "return err"
+
+Testing (exhaustive):
 - Tests verify BEHAVIOR, not just compilation — tautological tests are failures
+- Every function that returns an error has a test exercising the error path
 - Edge cases handled: nil inputs, empty strings, concurrent access, error paths
+- Integration tests verify cross-component wiring works end-to-end
+- Test names describe the scenario being tested, not the function name
+
+Observability:
+- Structured logging on key operations (not fmt.Print)
+- Metrics or telemetry on critical paths (response times, error rates)
+- Health checks or readiness probes where applicable
+
+Architecture:
+- Functions do ONE thing (Single Responsibility)
+- Public interfaces are stable, implementations are swappable (Dependency Inversion)
+- No God objects — types with too many methods/fields must be decomposed
+- Concurrent operations are safe (mutexes, channels, or atomic operations)
 
 `)
 
@@ -582,6 +607,9 @@ You have MCP tools for querying the codebase. USE THEM — do not guess.
   complete consumer/producer graph for any function, type, or class.
 - **trace_entry_points**: Trace all entry points (CLI, API, Web, Mobile, MCP)
   that can reach a file through the dependency graph. Shows chains.
+- **semantic_search**: Vector-based search by meaning, not keywords. Use this
+  when keyword search misses conceptual matches (e.g., "error handling" finds
+  try/catch, if err != nil, raise — even if the exact words aren't present).
 
 You can also read any file directly. When you find something interesting,
 READ THE ACTUAL CODE — don't stop at finding the file name.
@@ -706,6 +734,7 @@ You have MCP tools for querying the codebase. USE THEM AGGRESSIVELY.
 - **impact_analysis**: Transitive closure of everything that depends on a file.
 - **find_symbol_usages**: Find all consumer files that reference a symbol. Trace who uses what.
 - **trace_entry_points**: Find all entry points (CLI, API, Web, MCP) that reach a file.
+- **semantic_search**: Vector-based search by meaning. Finds conceptually related code.
 
 You can also read any file directly. DO NOT guess what code does — read it.
 

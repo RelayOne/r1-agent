@@ -553,7 +553,7 @@ func TestRunnerResume(t *testing.T) {
 
 func TestDefaultRunnerConfig(t *testing.T) {
 	cfg := DefaultRunnerConfig()
-	if cfg.MaxConvergenceLoops != 5 {
+	if cfg.MaxConvergenceLoops != 10 {
 		t.Errorf("MaxConvergenceLoops = %d", cfg.MaxConvergenceLoops)
 	}
 	if cfg.RequiredConsensus != 2 {

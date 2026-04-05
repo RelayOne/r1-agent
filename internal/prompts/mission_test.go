@@ -399,6 +399,7 @@ func TestDiscoveryPromptsIncludeMCPTools(t *testing.T) {
 		"impact_analysis",
 		"find_symbol_usages",
 		"trace_entry_points",
+		"semantic_search",
 	}
 
 	discovery := BuildMissionDiscoveryPrompt(ctx)

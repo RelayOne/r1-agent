@@ -11,6 +11,7 @@
 //   - impact_analysis: Compute the transitive set of files affected by a change
 //   - find_symbol_usages: Find all consumer files that reference a symbol
 //   - trace_entry_points: Find all entry points (roots) that can reach a file
+//   - semantic_search: Vector-based semantic search by meaning, not keywords
 //
 // These tools give the model structured access to the codebase during agentic
 // discovery and validation loops, replacing the need for grep/find heuristics
@@ -30,6 +31,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/depgraph"
 	"github.com/ericmacdougall/stoke/internal/symindex"
 	"github.com/ericmacdougall/stoke/internal/tfidf"
+	"github.com/ericmacdougall/stoke/internal/vecindex"
 )
 
 // CodebaseServer is an MCP tool server that exposes codebase analysis.
@@ -37,6 +39,7 @@ type CodebaseServer struct {
 	symIdx   *symindex.Index
 	depGraph *depgraph.Graph
 	tfidfIdx *tfidf.Index
+	vecIdx   *vecindex.Index
 	repoRoot string
 }
 
@@ -70,7 +73,66 @@ func BuildCodebaseServer(repoRoot string) (*CodebaseServer, error) {
 		return nil, fmt.Errorf("build tfidf index: %w", err)
 	}
 
-	return NewCodebaseServer(repoRoot, symIdx, depGraph, tfidfIdx), nil
+	// Build vector index for semantic search using symbol vocabulary
+	// This captures dimensional relationships between code concepts
+	// that TF-IDF misses (e.g., "authentication" ≈ "login" ≈ "session")
+	vecIdx := buildVectorIndex(symIdx, tfidfIdx)
+
+	srv := NewCodebaseServer(repoRoot, symIdx, depGraph, tfidfIdx)
+	srv.vecIdx = vecIdx
+	return srv, nil
+}
+
+// buildVectorIndex creates a vector index from the codebase vocabulary.
+// Uses bag-of-words embedding over the symbol+term vocabulary, which
+// captures richer relationships than pure TF-IDF matching.
+func buildVectorIndex(symIdx *symindex.Index, tfidfIdx *tfidf.Index) *vecindex.Index {
+	// Build vocabulary from symbol names (the semantic backbone of the codebase)
+	vocabSet := make(map[string]bool)
+	if symIdx != nil {
+		for _, sym := range symIdx.AllSymbols() {
+			// Expand camelCase/PascalCase into components
+			for _, word := range expandIdentifier(sym.Name) {
+				w := strings.ToLower(word)
+				if len(w) >= 3 {
+					vocabSet[w] = true
+				}
+			}
+		}
+	}
+
+	vocab := make([]string, 0, len(vocabSet))
+	for w := range vocabSet {
+		vocab = append(vocab, w)
+	}
+	sort.Strings(vocab)
+
+	// Cap vocabulary at 2000 dimensions for performance
+	if len(vocab) > 2000 {
+		vocab = vocab[:2000]
+	}
+
+	embedFn := vecindex.BagOfWordsEmbed(vocab)
+	idx := vecindex.New(vecindex.Config{
+		Dimension: len(vocab),
+		EmbedFunc: embedFn,
+	})
+
+	// Index each file's symbols as a document
+	if symIdx != nil {
+		for _, file := range symIdx.Files() {
+			syms := symIdx.InFile(file)
+			var content strings.Builder
+			for _, sym := range syms {
+				fmt.Fprintf(&content, "%s %s %s ", sym.Kind, sym.Name, sym.Parent)
+			}
+			if content.Len() > 0 {
+				idx.AddText(file, content.String(), file)
+			}
+		}
+	}
+
+	return idx
 }
 
 // ToolDefinitions returns the MCP tool definitions this server provides.
@@ -157,6 +219,18 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 				"required": ["file"]
 			}`),
 		},
+		{
+			Name:        "semantic_search",
+			Description: "Vector-based semantic search that finds code by meaning, not just keywords. Understands that 'authentication' relates to 'login', 'session', 'token'. Superior to keyword search for conceptual queries like 'error handling patterns' or 'data validation logic'.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Natural language query describing the concept you're looking for"},
+					"limit": {"type": "integer", "description": "Maximum results (default 10)", "default": 10}
+				},
+				"required": ["query"]
+			}`),
+		},
 	}
 }
 
@@ -177,6 +251,8 @@ func (s *CodebaseServer) HandleToolCall(toolName string, args map[string]interfa
 		return s.handleFindSymbolUsages(args)
 	case "trace_entry_points":
 		return s.handleTraceEntryPoints(args)
+	case "semantic_search":
+		return s.handleSemanticSearch(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -570,6 +646,56 @@ func (s *CodebaseServer) handleTraceEntryPoints(args map[string]interface{}) (st
 	return sb.String(), nil
 }
 
+func (s *CodebaseServer) handleSemanticSearch(args map[string]interface{}) (string, error) {
+	query, _ := args["query"].(string)
+	if query == "" {
+		return "", fmt.Errorf("query is required")
+	}
+
+	limit := 10
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+
+	if s.vecIdx == nil || s.vecIdx.Count() == 0 {
+		// Fall back to TF-IDF if vector index not available
+		if s.tfidfIdx != nil {
+			return s.handleSearchContent(args)
+		}
+		return "Semantic search index not available", nil
+	}
+
+	results, err := s.vecIdx.SearchText(query, limit)
+	if err != nil {
+		return "", fmt.Errorf("semantic search: %w", err)
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("No files found semantically matching %q", query), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Semantic matches for %q (%d results):\n", query, len(results))
+	for _, r := range results {
+		fmt.Fprintf(&sb, "  %.3f  %s", r.Score, r.Document.Path)
+		// Show what this file defines
+		if s.symIdx != nil {
+			syms := s.symIdx.InFile(r.Document.Path)
+			var exported []string
+			for _, sym := range syms {
+				if sym.Exported && len(exported) < 4 {
+					exported = append(exported, string(sym.Kind)+" "+sym.Name)
+				}
+			}
+			if len(exported) > 0 {
+				fmt.Fprintf(&sb, "  [%s]", strings.Join(exported, ", "))
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String(), nil
+}
+
 // classifyEntryPoint guesses the surface type from filename patterns.
 func classifyEntryPoint(path string) string {
 	base := strings.ToLower(filepath.Base(path))
@@ -596,6 +722,36 @@ func classifyEntryPoint(path string) string {
 	default:
 		return ""
 	}
+}
+
+// expandIdentifier splits camelCase/PascalCase/snake_case into words.
+func expandIdentifier(name string) []string {
+	// Split on underscores first
+	parts := strings.Split(name, "_")
+	var words []string
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		// Split camelCase: insert boundary at lowercase→uppercase transition
+		var current strings.Builder
+		for i, r := range part {
+			if i > 0 && r >= 'A' && r <= 'Z' {
+				prev := rune(part[i-1])
+				if prev >= 'a' && prev <= 'z' {
+					if current.Len() > 0 {
+						words = append(words, current.String())
+						current.Reset()
+					}
+				}
+			}
+			current.WriteRune(r)
+		}
+		if current.Len() > 0 {
+			words = append(words, current.String())
+		}
+	}
+	return words
 }
 
 // ServeStdio runs the MCP server on stdin/stdout using JSON-RPC 2.0.

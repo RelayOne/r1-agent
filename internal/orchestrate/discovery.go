@@ -24,6 +24,7 @@ import (
 //   - impact_analysis: Transitive dependency impact
 //   - find_symbol_usages: Consumer/producer tracing for any symbol
 //   - trace_entry_points: Cross-surface reachability (CLI/API/Web/MCP)
+//   - semantic_search: Vector-based search by meaning, not keywords
 //
 // The model uses these tools in a multi-turn loop to map the codebase
 // against the mission intent, trace consumer/producer relationships,
