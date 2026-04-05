@@ -150,23 +150,29 @@ func convergedAnswerRecurse(
 		ModelAnswers: make(map[string]string),
 	}
 
-	// Step 1: All models answer independently
+	// Step 1: All models answer independently — in PARALLEL
+	// Models are independent so their calls must not serialize.
 	modelPrompt := buildModelPrompt(cfg.BiggerMission, currentMission)
+	type modelResult struct {
+		model  string
+		answer string
+		err    error
+	}
+	resultCh := make(chan modelResult, len(cfg.Models))
 	for _, model := range cfg.Models {
-		select {
-		case <-ctx.Done():
-			result.Duration = time.Since(start)
-			return result, ctx.Err()
-		default:
+		go func(m string) {
+			answer, err := cfg.AskFn(ctx, m, modelPrompt)
+			resultCh <- modelResult{model: m, answer: answer, err: err}
+		}(model)
+	}
+	for range cfg.Models {
+		mr := <-resultCh
+		if mr.err != nil {
+			log.Printf("[converged] %s: model %s failed at depth %d: %v", cfg.StepName, mr.model, depth, mr.err)
+			round.ModelAnswers[mr.model] = fmt.Sprintf("[ERROR: %v]", mr.err)
+		} else {
+			round.ModelAnswers[mr.model] = mr.answer
 		}
-
-		answer, err := cfg.AskFn(ctx, model, modelPrompt)
-		if err != nil {
-			log.Printf("[converged] %s: model %s failed at depth %d: %v", cfg.StepName, model, depth, err)
-			round.ModelAnswers[model] = fmt.Sprintf("[ERROR: %v]", err)
-			continue
-		}
-		round.ModelAnswers[model] = answer
 	}
 
 	// Step 2: Arbiter combines answers, flags conflicts, identifies gaps

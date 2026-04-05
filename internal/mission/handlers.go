@@ -683,10 +683,55 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 		// Build the full mission-aware execute prompt
 		executePrompt := prompts.BuildMissionExecutePrompt(mc, taskDesc, verification)
 
-		var filesChanged []string
-		if deps.ExecuteFn != nil {
-			var err error
-			filesChanged, err = deps.ExecuteFn(ctx, m, executePrompt, taskDesc)
+		var allFiles []string
+		if deps.ExecuteFn == nil {
+			// No execute function — nothing to converge on
+			if deps.Metrics != nil {
+				deps.Metrics.RecordPhaseTransition("executing", time.Since(start))
+			}
+			return &PhaseResult{
+				Phase:    PhaseExecuting,
+				Summary:  fmt.Sprintf("No execute function configured, %d work items skipped", len(taskParts)),
+				Artifacts: map[string]string{"prompt": executePrompt},
+				Duration: time.Since(start),
+				Agent:    "execute-handler",
+			}, nil
+		}
+		{
+			// Convergent execution via ConvergeStep
+			_, _, err := ConvergeStep(ctx, convergeStepDeps{
+				ModelAskFn:    deps.ModelAskFn,
+				Models:        deps.ConvergenceModels,
+				ArbiterModel:  deps.ArbiterModel,
+				MaxDepth:      deps.MaxConvergenceDepth,
+				MaxIterations: deps.MaxMicroIterations,
+				BiggerMission: taskDesc,
+				Mission:       fmt.Sprintf("Execute the following work:\n%s", taskDesc),
+				StepName:      fmt.Sprintf("execute:%s", m.ID),
+				ExecuteFn: func(eCtx context.Context, feedback string) (string, error) {
+					prompt := executePrompt
+					if feedback != "" {
+						prompt += "\n\n" + feedback
+					}
+					filesChanged, err := deps.ExecuteFn(eCtx, m, prompt, taskDesc)
+					if err != nil {
+						return "", err
+					}
+					allFiles = append(allFiles, filesChanged...)
+					return fmt.Sprintf("Files changed: %s", strings.Join(filesChanged, ", ")), nil
+				},
+				ValidateFn: func(eCtx context.Context, scope, output string) ([]string, error) {
+					if deps.ValidateStepFn == nil {
+						return nil, nil
+					}
+					valPrompt := prompts.BuildNodeValidationPrompt("implement", scope, output)
+					valResp, err := deps.ValidateStepFn(eCtx, m, valPrompt)
+					if err != nil {
+						return nil, err
+					}
+					return ParseValidationGaps(valResp), nil
+				},
+			})
 			if err != nil {
 				return nil, fmt.Errorf("execute: %w", err)
 			}
@@ -698,13 +743,13 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 
 		return &PhaseResult{
 			Phase:        PhaseExecuting,
-			Summary:      fmt.Sprintf("Executed %d work items, %d files changed", len(taskParts), len(filesChanged)),
-			FilesChanged: filesChanged,
+			Summary:      fmt.Sprintf("Executed %d work items, %d files changed", len(taskParts), len(dedupeStrings(allFiles))),
+			FilesChanged: dedupeStrings(allFiles),
 			Artifacts: map[string]string{
 				"prompt": executePrompt,
 			},
 			Duration: time.Since(start),
-			Agent:    "execute-handler",
+			Agent:    "convergent-execute-handler",
 		}, nil
 	}
 }
@@ -1472,60 +1517,69 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 			return nil, fmt.Errorf("consensus requires at least one model function configured")
 		}
 
-		var verdicts []string
-		for _, model := range models {
-			// Build the adversarial consensus prompt with the validation report
-			consensusPrompt := prompts.BuildMissionConsensusPrompt(mc, validationReport)
+		// All models vote in PARALLEL — independent adversarial reviewers
+		type consensusVote struct {
+			model     string
+			verdict   string
+			reasoning string
+			gapsFound []string
+			err       error
+		}
+		voteCh := make(chan consensusVote, len(models))
+		consensusPrompt := prompts.BuildMissionConsensusPrompt(mc, validationReport)
 
-			verdict, reasoning, gapsFound, err := deps.ConsensusModelFn(ctx, m.ID, model, consensusPrompt)
-			if err != nil {
-				return nil, fmt.Errorf("consensus from %s: %w", model, err)
+		for _, model := range models {
+			go func(mdl string) {
+				verdict, reasoning, gapsFound, err := deps.ConsensusModelFn(ctx, m.ID, mdl, consensusPrompt)
+				voteCh <- consensusVote{model: mdl, verdict: verdict, reasoning: reasoning, gapsFound: gapsFound, err: err}
+			}(model)
+		}
+
+		var verdicts []string
+		for range models {
+			vote := <-voteCh
+			if vote.err != nil {
+				return nil, fmt.Errorf("consensus from %s: %w", vote.model, vote.err)
 			}
 
 			// Anti-hallucination: reject vague "complete" verdicts that lack evidence
-			if verdict == "complete" {
-				if isVagueAffirmation(reasoning) {
-					verdict = "incomplete"
-					gapsFound = append(gapsFound, "Consensus rejected: reasoning lacks specific evidence (file:line citations required)")
-				} else if !hasEvidenceCitations(reasoning) {
-					verdict = "incomplete"
-					gapsFound = append(gapsFound, "Consensus rejected: reasoning lacks specific evidence (file:line citations required)")
+			if vote.verdict == "complete" {
+				if isVagueAffirmation(vote.reasoning) || !hasEvidenceCitations(vote.reasoning) {
+					vote.verdict = "incomplete"
+					vote.gapsFound = append(vote.gapsFound, "Consensus rejected: reasoning lacks specific evidence (file:line citations required)")
 				}
 			}
 
 			// Scope expansion: nothing is "out of scope" or "pre-existing" — all issues block
-			for i, gap := range gapsFound {
-				gapsFound[i] = scopeQualifierRe.ReplaceAllString(gap, "")
-				gapsFound[i] = strings.TrimSpace(gapsFound[i])
+			for i, gap := range vote.gapsFound {
+				vote.gapsFound[i] = strings.TrimSpace(scopeQualifierRe.ReplaceAllString(gap, ""))
 			}
 
 			deps.Store.RecordConsensus(&ConsensusRecord{
 				MissionID: m.ID,
-				Model:     model,
-				Verdict:   verdict,
-				Reasoning: reasoning,
-				GapsFound: gapsFound,
+				Model:     vote.model,
+				Verdict:   vote.verdict,
+				Reasoning: vote.reasoning,
+				GapsFound: vote.gapsFound,
 			})
 
-			// Convert consensus gaps to stored Gap objects so they're visible
-			// to the execute handler during convergence loop retries
-			for i, gapDesc := range gapsFound {
-				gapID := fmt.Sprintf("consensus-%s-%s-%d-%d", m.ID, model, time.Now().UnixNano(), i)
+			for i, gapDesc := range vote.gapsFound {
+				gapID := fmt.Sprintf("consensus-%s-%s-%d-%d", m.ID, vote.model, time.Now().UnixNano(), i)
 				deps.Store.AddGap(&Gap{
 					ID:          gapID,
 					MissionID:   m.ID,
 					Category:    "consensus",
 					Severity:    "blocking",
 					Description: truncateOutput(gapDesc, 1000),
-					Suggestion:  fmt.Sprintf("Identified by %s during consensus review", model),
+					Suggestion:  fmt.Sprintf("Identified by %s during consensus review", vote.model),
 				})
 			}
 
 			if deps.Metrics != nil {
-				deps.Metrics.RecordConsensusVote(verdict == "complete")
+				deps.Metrics.RecordConsensusVote(vote.verdict == "complete")
 			}
 
-			verdicts = append(verdicts, fmt.Sprintf("%s: %s", model, verdict))
+			verdicts = append(verdicts, fmt.Sprintf("%s: %s", vote.model, vote.verdict))
 		}
 
 		return &PhaseResult{
