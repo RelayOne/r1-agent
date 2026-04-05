@@ -914,6 +914,10 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				} else {
 					summaryParts = append(summaryParts, "discovery-validation: no structured gaps")
 				}
+			// Persist validation findings to research store for future phases
+			if deps.RecordResearchFn != nil && findings != "" {
+				deps.RecordResearchFn(m.ID, "Validation Discovery", findings)
+			}
 			} else {
 				summaryParts = append(summaryParts, "discovery-validation: clean")
 			}
@@ -1017,6 +1021,20 @@ func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 				Reasoning: reasoning,
 				GapsFound: gapsFound,
 			})
+
+			// Convert consensus gaps to stored Gap objects so they're visible
+			// to the execute handler during convergence loop retries
+			for i, gapDesc := range gapsFound {
+				gapID := fmt.Sprintf("consensus-%s-%s-%d-%d", m.ID, model, time.Now().UnixNano(), i)
+				deps.Store.AddGap(&Gap{
+					ID:          gapID,
+					MissionID:   m.ID,
+					Category:    "consensus",
+					Severity:    "blocking",
+					Description: truncateOutput(gapDesc, 1000),
+					Suggestion:  fmt.Sprintf("Identified by %s during consensus review", model),
+				})
+			}
 
 			if deps.Metrics != nil {
 				deps.Metrics.RecordConsensusVote(verdict == "complete")

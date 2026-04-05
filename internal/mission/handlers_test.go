@@ -318,6 +318,87 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 	}
 }
 
+func TestConsensusHandlerCreatesGapObjects(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	handler := NewConsensusHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			return "incomplete", "Missing rate limiting", []string{"No rate limiter", "Missing input validation"}, nil
+		},
+	}, []string{"reviewer-1"})
+
+	_, err = handler(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Consensus gaps should be stored as Gap objects
+	gaps, _ := store.OpenGaps(m.ID)
+	if len(gaps) < 2 {
+		t.Fatalf("expected at least 2 gaps from consensus, got %d", len(gaps))
+	}
+
+	found := map[string]bool{}
+	for _, g := range gaps {
+		if g.Category == "consensus" {
+			found[g.Description] = true
+		}
+	}
+	if !found["No rate limiter"] {
+		t.Error("expected 'No rate limiter' gap from consensus")
+	}
+	if !found["Missing input validation"] {
+		t.Error("expected 'Missing input validation' gap from consensus")
+	}
+}
+
+func TestExecutePromptIncludesGaps(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := setupHandlerTestMission(t, store)
+
+	// Add an open gap
+	store.AddGap(&Gap{
+		ID:          "gap-exec-1",
+		MissionID:   m.ID,
+		Category:    "discovery-validation",
+		Severity:    "blocking",
+		Description: "Rate limiting not implemented",
+	})
+
+	var capturedPrompt string
+	handler := NewExecuteHandler(HandlerDeps{
+		Store:   store,
+		Metrics: NewMetrics(),
+		ExecuteFn: func(ctx context.Context, m *Mission, prompt, taskDesc string) ([]string, error) {
+			capturedPrompt = prompt
+			return nil, nil
+		},
+	})
+
+	_, err = handler(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(capturedPrompt, "Rate limiting not implemented") {
+		t.Error("execute prompt should include open gaps")
+	}
+	if !strings.Contains(capturedPrompt, "blocking") {
+		t.Error("execute prompt should show gap severity")
+	}
+}
+
 // --- Keyword Extraction ---
 
 func TestResearchHandlerRecordsDiscovery(t *testing.T) {

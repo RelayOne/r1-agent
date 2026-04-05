@@ -197,6 +197,10 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 		fmt.Fprintf(&b, "%s\n", ctx.StatusBlock)
 	}
 
+	if ctx.GapsBlock != "" {
+		fmt.Fprintf(&b, "%s\n", ctx.GapsBlock)
+	}
+
 	fmt.Fprintf(&b, "## Your Task\n%s\n\n", taskDescription)
 
 	if len(verification) > 0 {
