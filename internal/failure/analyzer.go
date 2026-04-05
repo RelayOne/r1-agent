@@ -113,13 +113,55 @@ func Analyze(buildOutput, testOutput, lintOutput string, diffSummary ...string) 
 	return Analysis{Class: Incomplete, Summary: "no failure output captured"}
 }
 
+// isFailing checks if command output indicates a failure.
+// This is a heuristic fallback — the primary failure signal should be exit codes.
+// We use negative patterns to avoid false-positives from legitimate mentions
+// of "error" in type names, test names, and variable declarations.
 func isFailing(output string) bool {
 	s := strings.TrimSpace(output)
 	if s == "" {
 		return false
 	}
 	lc := strings.ToLower(s)
-	return strings.Contains(lc, "error") || strings.Contains(lc, "fail") || strings.Contains(lc, "fatal")
+
+	// Negative patterns: line PREFIXES that indicate legitimate mentions of "error".
+	// These are anchored to line start to avoid false negatives from mid-line matches
+	// (e.g., "...on type 'Request'" should NOT suppress the error signal).
+	negativePrefixes := []string{
+		"type ",         // type declarations: "type ValidationError struct"
+		"func test",     // test names: "func TestHandleInvalidError"
+		"--- pass:",     // Go test pass lines
+		"ok ",           // Go test pass lines: "ok  github.com/..."
+		"var ",          // variable declarations: "var errNotFound = errors.New"
+		"// ",           // comments containing "error"
+		"/*",            // block comments
+		"import ",       // import statements
+	}
+
+	for _, line := range strings.Split(lc, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		hasSignal := strings.Contains(line, "error") ||
+			strings.Contains(line, "fail") ||
+			strings.Contains(line, "fatal")
+		if !hasSignal {
+			continue
+		}
+		// Check if this line starts with a negative prefix
+		isNegative := false
+		for _, neg := range negativePrefixes {
+			if strings.HasPrefix(line, neg) {
+				isNegative = true
+				break
+			}
+		}
+		if !isNegative {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Build error parsers ---

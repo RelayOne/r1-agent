@@ -126,6 +126,40 @@ func (p *Plan) Validate() []string {
 	return errs
 }
 
+// ValidateFiles checks that files listed in tasks actually exist in the repo.
+// Returns warnings (new files in non-existent dirs) and errors (modifications
+// to non-existent files). This catches misplanned tasks before execution.
+func (p *Plan) ValidateFiles(repoRoot string) (warnings, errors []string) {
+	for _, t := range p.Tasks {
+		for _, f := range t.Files {
+			path := filepath.Join(repoRoot, f)
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Check if parent dir exists (new file in existing dir is fine)
+					dir := filepath.Dir(path)
+					if _, dirErr := os.Stat(dir); os.IsNotExist(dirErr) {
+						warnings = append(warnings,
+							fmt.Sprintf("task %s: file %q parent directory does not exist", t.ID, f))
+					}
+					// Non-existent file could be a new file — just warn
+					warnings = append(warnings,
+						fmt.Sprintf("task %s: file %q does not exist (will be created?)", t.ID, f))
+				} else {
+					errors = append(errors,
+						fmt.Sprintf("task %s: cannot stat file %q: %v", t.ID, f, err))
+				}
+				continue
+			}
+			if info.IsDir() {
+				warnings = append(warnings,
+					fmt.Sprintf("task %s: %q is a directory, not a file", t.ID, f))
+			}
+		}
+	}
+	return warnings, errors
+}
+
 func detectCycle(tasks []Task) string {
 	adj := map[string][]string{}
 	for _, t := range tasks {

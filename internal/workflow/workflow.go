@@ -32,6 +32,24 @@ type WorktreeManager interface {
 	Cleanup(ctx context.Context, handle worktree.Handle) error
 }
 
+// TaskHook is the plugin interface for extending the workflow lifecycle.
+// Dead packages become hooks: wisdom implements AfterTask/BeforeRetry,
+// costtrack implements AfterTask, critic implements BeforeRetry, etc.
+// All methods are optional — implement only the ones you need.
+type TaskHook interface {
+	// BeforeTask is called before execution starts. Can inject context or
+	// reject a task. Return a non-nil error to abort the task.
+	BeforeTask(ctx context.Context, task string, state *taskstate.TaskState) error
+
+	// AfterTask is called after execution completes (success or failure).
+	// Used for recording costs, learning patterns, or cleanup.
+	AfterTask(ctx context.Context, task string, state *taskstate.TaskState, result Result) error
+
+	// BeforeRetry is called before a retry attempt. Returns additional prompt
+	// context to inject (e.g., learned fixes from prior failures).
+	BeforeRetry(ctx context.Context, task string, attempt int, analysis *failure.Analysis) (promptAugment string, err error)
+}
+
 // Engine drives the plan/execute/verify workflow loop for a single task, including retries and merge.
 type Engine struct {
 	RepoRoot         string
@@ -53,6 +71,7 @@ type Engine struct {
 	State            *taskstate.TaskState
 	Wisdom           *wisdom.Store       // cross-task learning accumulator (nil = disabled)
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
+	Hooks            []TaskHook          // lifecycle hooks (nil = no hooks)
 	PlanOnly         bool
 }
 
@@ -137,6 +156,22 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	}
 
 	result := Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
+
+	// Invoke BeforeTask hooks
+	for _, h := range e.Hooks {
+		if err := h.BeforeTask(ctx, e.Task, e.State); err != nil {
+			e.Worktrees.Cleanup(ctx, handle)
+			return result, fmt.Errorf("hook BeforeTask: %w", err)
+		}
+	}
+
+	// Invoke AfterTask hooks on exit (best-effort, errors logged not fatal)
+	defer func() {
+		for _, h := range e.Hooks {
+			_ = h.AfterTask(ctx, e.Task, e.State, result)
+		}
+	}()
+
 	phases := buildPhases(e)
 
 	// Dry run: just prepare commands, don't execute
@@ -211,6 +246,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		prompt := executePhase.Prompt
 		if attempt > 1 && lastFailure != nil {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff)
+			// Invoke BeforeRetry hooks for additional prompt augmentation
+			for _, h := range e.Hooks {
+				if aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure); err == nil && aug != "" {
+					prompt += "\n\n" + aug
+				}
+			}
 		}
 		// Inject cross-task learnings from previous tasks in this session.
 		if e.Wisdom != nil {
@@ -573,9 +614,7 @@ func (e Engine) runCrossModelReview(
 	for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
 		_ = reviewRot // used only as loop counter
 		verifySpec := e.buildSpec(verifyPhase, handle)
-		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification) +
-			"\n\n## Changed files (harness-enumerated)\n" +
-			strings.Join(preReviewFiles, "\n") +
+		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification, preReviewFiles...) +
 			"\n\n## Diff summary\n" +
 			worktree.DiffSummary(ctx, handle)
 
