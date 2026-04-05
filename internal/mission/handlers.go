@@ -1215,12 +1215,49 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 				mode, report.Score, len(report.Findings), report.BlockingCount()))
 		}
 
-		// --- Layer 3: Single-shot adversarial LLM validation ---
+		// --- Layer 3: Convergent adversarial LLM validation ---
+		// A fresh invocation validates the validator — catches gaps the first pass missed.
 		if deps.ValidateFn != nil {
 			mc := buildMissionContext(deps, m)
 			validatePrompt := prompts.BuildMissionValidatePrompt(mc)
 
-			findings, err := deps.ValidateFn(ctx, m, validatePrompt)
+			validationScope := fmt.Sprintf("Adversarial validation of mission: %s\nIntent: %s", m.Title, m.Intent)
+			findings, _, err := ConvergeStep(ctx, convergeStepDeps{
+				ModelAskFn:    deps.ModelAskFn,
+				Models:        deps.ConvergenceModels,
+				ArbiterModel:  deps.ArbiterModel,
+				MaxDepth:      deps.MaxConvergenceDepth,
+				MaxIterations: deps.MaxMicroIterations,
+				BiggerMission: validationScope,
+				Mission:       "Find ALL gaps in the implementation. Miss nothing.",
+				StepName:      fmt.Sprintf("validate-l3:%s", m.ID),
+				ExecuteFn: func(vCtx context.Context, feedback string) (string, error) {
+					prompt := validatePrompt
+					if feedback != "" {
+						prompt += "\n\n" + feedback
+					}
+					return deps.ValidateFn(vCtx, m, prompt)
+				},
+				ValidateFn: func(vCtx context.Context, scope, output string) ([]string, error) {
+					if deps.ValidateStepFn == nil {
+						return nil, nil
+					}
+					// Ask a fresh invocation: did the validator miss anything?
+					reviewPrompt := fmt.Sprintf(`A validator produced these findings for scope:
+%s
+
+Findings:
+%s
+
+Did the validator miss anything? Are all findings accurate and specific?
+Return {"gaps": [...]} with any missed items or {"gaps": []} if complete.`, scope, output)
+					resp, err := deps.ValidateStepFn(vCtx, m, reviewPrompt)
+					if err != nil {
+						return nil, err
+					}
+					return ParseValidationGaps(resp), nil
+				},
+			})
 			if err != nil {
 				summaryParts = append(summaryParts, fmt.Sprintf("adversarial: error (%v)", err))
 			} else if findings != "" {
@@ -1249,7 +1286,40 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 			mc := buildMissionContext(deps, m)
 			discoveryPrompt := prompts.BuildMissionValidateDiscoveryPrompt(mc)
 
-			findings, err := deps.ValidateDiscoveryFn(ctx, m, discoveryPrompt)
+			discValScope := fmt.Sprintf("Multi-turn discovery validation of mission: %s\nIntent: %s", m.Title, m.Intent)
+			findings, _, err := ConvergeStep(ctx, convergeStepDeps{
+				ModelAskFn:    deps.ModelAskFn,
+				Models:        deps.ConvergenceModels,
+				ArbiterModel:  deps.ArbiterModel,
+				MaxDepth:      deps.MaxConvergenceDepth,
+				MaxIterations: deps.MaxMicroIterations,
+				BiggerMission: discValScope,
+				Mission:       "Trace all code paths, verify consumer/producer contracts, check cross-surface reachability. Miss nothing.",
+				StepName:      fmt.Sprintf("validate-l4:%s", m.ID),
+				ExecuteFn: func(vCtx context.Context, feedback string) (string, error) {
+					prompt := discoveryPrompt
+					if feedback != "" {
+						prompt += "\n\n" + feedback
+					}
+					return deps.ValidateDiscoveryFn(vCtx, m, prompt)
+				},
+				ValidateFn: func(vCtx context.Context, scope, output string) ([]string, error) {
+					if deps.ValidateStepFn == nil {
+						return nil, nil
+					}
+					reviewPrompt := fmt.Sprintf(`A discovery validator traced code paths and produced these findings:
+%s
+
+Did the validator miss any code paths, consumer/producer relationships,
+cross-surface issues, or security implications?
+Return {"gaps": [...]} with any missed items or {"gaps": []} if thorough.`, output)
+					resp, err := deps.ValidateStepFn(vCtx, m, reviewPrompt)
+					if err != nil {
+						return nil, err
+					}
+					return ParseValidationGaps(resp), nil
+				},
+			})
 			if err != nil {
 				summaryParts = append(summaryParts, fmt.Sprintf("discovery-validation: error (%v)", err))
 			} else if findings != "" {
