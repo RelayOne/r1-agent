@@ -23,6 +23,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/ericmacdougall/stoke/internal/vecindex"
 )
 
 // Entry is a single piece of stored research.
@@ -45,12 +47,18 @@ type SearchResult struct {
 	Score float64 `json:"score"` // relevance score, higher is better
 }
 
-// Store is the SQLite-backed research persistence layer with FTS5 search.
-// Falls back to LIKE-based search when FTS5 is not available.
+// Store is the SQLite-backed research persistence layer with FTS5 search
+// and optional vector-based semantic search via vecindex.
 type Store struct {
 	db     *sql.DB
 	dbPath string
 	hasFTS bool // true if FTS5 is available
+
+	// Vector index for semantic search — built from entry content on open,
+	// updated incrementally on Add. Uses bag-of-words embedding as fallback
+	// when no external embedding service is configured.
+	vecIdx *vecindex.Index
+	vocab  []string // vocabulary for bag-of-words embedding
 }
 
 // NewStore opens or creates a research database at the given directory.
@@ -77,6 +85,9 @@ func NewStore(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate research.db: %w", err)
 	}
+
+	// Build vector index from existing entries for semantic search
+	s.buildVectorIndex()
 
 	log.Printf("[research] store opened at %s", dbPath)
 	return s, nil
@@ -186,6 +197,10 @@ func (s *Store) Add(e *Entry) error {
 	if err != nil {
 		return fmt.Errorf("add entry: %w", err)
 	}
+
+	// Update vector index for semantic search
+	s.indexEntry(e.ID, e.Topic, e.Query, e.Content)
+
 	return nil
 }
 
@@ -456,4 +471,145 @@ func sanitizeFTSQuery(query string) string {
 		parts = append(parts, "\""+w+"\"*")
 	}
 	return strings.Join(parts, " ")
+}
+
+// --- Vector-based Semantic Search ---
+
+// buildVectorIndex creates an in-memory vector index from all existing entries.
+// Uses bag-of-words embedding over vocabulary extracted from entry content.
+func (s *Store) buildVectorIndex() {
+	rows, err := s.db.Query(`SELECT id, content, topic, query FROM entries`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	// Collect all content to build vocabulary
+	type doc struct {
+		id, content, topic, query string
+	}
+	var docs []doc
+	vocabSet := make(map[string]bool)
+
+	for rows.Next() {
+		var d doc
+		if err := rows.Scan(&d.id, &d.content, &d.topic, &d.query); err != nil {
+			continue
+		}
+		docs = append(docs, d)
+		// Extract vocabulary from all text fields
+		for _, text := range []string{d.content, d.topic, d.query} {
+			for _, w := range strings.Fields(strings.ToLower(text)) {
+				w = strings.Trim(w, ".,;:!?\"'()[]{}#*-_/\\")
+				if len(w) >= 3 {
+					vocabSet[w] = true
+				}
+			}
+		}
+	}
+
+	if len(docs) == 0 {
+		return
+	}
+
+	// Cap vocabulary at 2000 dimensions
+	vocab := make([]string, 0, len(vocabSet))
+	for w := range vocabSet {
+		vocab = append(vocab, w)
+	}
+	if len(vocab) > 2000 {
+		vocab = vocab[:2000]
+	}
+	s.vocab = vocab
+
+	embedFn := vecindex.BagOfWordsEmbed(vocab)
+	idx := vecindex.New(vecindex.Config{
+		Dimension: len(vocab),
+		EmbedFunc: embedFn,
+	})
+
+	// Index each entry
+	for _, d := range docs {
+		text := d.topic + " " + d.query + " " + d.content
+		idx.AddText(d.id, text, "")
+	}
+
+	s.vecIdx = idx
+}
+
+// indexEntry adds or updates an entry in the vector index.
+// If the entry introduces new vocabulary terms, rebuilds the entire index
+// to ensure all entries are embedded in the same vector space.
+func (s *Store) indexEntry(id, topic, query, content string) {
+	// Check if new vocabulary terms exist
+	hasNew := false
+	vocabSet := make(map[string]bool, len(s.vocab))
+	for _, w := range s.vocab {
+		vocabSet[w] = true
+	}
+	for _, text := range []string{content, topic, query} {
+		for _, w := range strings.Fields(strings.ToLower(text)) {
+			w = strings.Trim(w, ".,;:!?\"'()[]{}#*-_/\\")
+			if len(w) >= 3 && !vocabSet[w] {
+				hasNew = true
+				break
+			}
+		}
+		if hasNew {
+			break
+		}
+	}
+
+	if s.vecIdx == nil || hasNew {
+		// Rebuild with updated vocabulary so all entries share the same vector space
+		s.buildVectorIndex()
+		return
+	}
+
+	text := topic + " " + query + " " + content
+	s.vecIdx.AddText(id, text, "")
+}
+
+// SemanticSearch performs vector-based similarity search across research entries.
+// Returns results ranked by cosine similarity of bag-of-words embeddings.
+// Falls back to FTS5/LIKE search when the vector index is empty.
+func (s *Store) SemanticSearch(query string, limit int) ([]SearchResult, error) {
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	if s.vecIdx == nil || s.vecIdx.Count() == 0 {
+		return s.Search(query, limit)
+	}
+
+	results, err := s.vecIdx.SearchText(query, limit)
+	if err != nil {
+		return s.Search(query, limit)
+	}
+
+	// Convert vecindex results to research SearchResults
+	var out []SearchResult
+	for _, r := range results {
+		if r.Score < 0.01 {
+			continue // skip near-zero similarity
+		}
+		entry, err := s.getWithoutIncrement(r.Document.ID)
+		if err != nil || entry == nil {
+			continue
+		}
+		out = append(out, SearchResult{Entry: *entry, Score: r.Score})
+	}
+
+	return out, nil
+}
+
+// getWithoutIncrement retrieves an entry without incrementing use_count.
+func (s *Store) getWithoutIncrement(id string) (*Entry, error) {
+	row := s.db.QueryRow(`
+		SELECT id, mission_id, topic, query, content, source, tags, use_count, created_at, updated_at
+		FROM entries WHERE id = ?`, id)
+	return s.scanEntry(row)
 }

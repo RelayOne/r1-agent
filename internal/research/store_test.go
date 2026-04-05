@@ -409,3 +409,76 @@ func TestSearchSpecialCharacters(t *testing.T) {
 	}
 	_ = results // just verify no crash
 }
+
+// --- Semantic Search ---
+
+func TestSemanticSearch(t *testing.T) {
+	s := newTestStore(t)
+
+	// Add entries with distinct topics
+	s.Add(&Entry{ID: "auth-1", Topic: "authentication", Query: "JWT validation", Content: "Use golang-jwt library for token parsing and validation"})
+	s.Add(&Entry{ID: "db-1", Topic: "database", Query: "connection pooling", Content: "Configure max connections and idle timeout for SQL database pool"})
+	s.Add(&Entry{ID: "auth-2", Topic: "authentication", Query: "OAuth flow", Content: "Implement OAuth2 authorization code flow with PKCE"})
+
+	// Search for authentication-related content
+	results, err := s.SemanticSearch("token authentication", 10)
+	if err != nil {
+		t.Fatalf("SemanticSearch: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected semantic search results")
+	}
+
+	// Top result should be auth-related (contains matching terms)
+	foundAuth := false
+	for _, r := range results {
+		if r.Entry.Topic == "authentication" {
+			foundAuth = true
+			break
+		}
+	}
+	if !foundAuth {
+		t.Error("semantic search should find authentication entries for 'token authentication' query")
+	}
+}
+
+func TestSemanticSearchEmpty(t *testing.T) {
+	s := newTestStore(t)
+	results, err := s.SemanticSearch("anything", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Empty store should fall back to regular search (also empty)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results from empty store, got %d", len(results))
+	}
+}
+
+func TestSemanticSearchEmptyQuery(t *testing.T) {
+	s := newTestStore(t)
+	results, err := s.SemanticSearch("", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results != nil {
+		t.Error("empty query should return nil")
+	}
+}
+
+func TestSemanticSearchIndexUpdatesOnAdd(t *testing.T) {
+	s := newTestStore(t)
+
+	// Add initial entry
+	s.Add(&Entry{ID: "first", Topic: "api", Query: "endpoints", Content: "REST API endpoint design"})
+
+	// Add another entry — should be findable via semantic search
+	s.Add(&Entry{ID: "second", Topic: "api", Query: "versioning", Content: "API versioning strategies with URL path prefixes"})
+
+	results, err := s.SemanticSearch("versioning strategies", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results after adding new entry")
+	}
+}
