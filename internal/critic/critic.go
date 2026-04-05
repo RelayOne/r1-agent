@@ -13,6 +13,9 @@ package critic
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 	"time"
@@ -374,7 +377,46 @@ func checkLargeFunction(file, content string) []Finding {
 	if !strings.HasSuffix(file, ".go") {
 		return nil
 	}
+	if findings := checkLargeFunctionAST(file, content); findings != nil {
+		return findings
+	}
+	return checkLargeFunctionRegex(file, content)
+}
 
+// checkLargeFunctionAST uses go/parser for precise function boundaries.
+func checkLargeFunctionAST(file, content string) []Finding {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, content, 0)
+	if err != nil {
+		return nil
+	}
+
+	var findings []Finding
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		startLine := fset.Position(fn.Pos()).Line
+		endLine := fset.Position(fn.End()).Line
+		length := endLine - startLine
+		if length > 100 {
+			findings = append(findings, Finding{
+				Severity:   SeverityInfo,
+				Category:   "complexity",
+				File:       file,
+				Line:       startLine,
+				Message:    fmt.Sprintf("Function %s is %d lines long", fn.Name.Name, length),
+				Suggestion: "Consider breaking into smaller functions",
+				Rule:       "large-function",
+			})
+		}
+	}
+	return findings
+}
+
+// checkLargeFunctionRegex is the fallback for unparseable Go source.
+func checkLargeFunctionRegex(file, content string) []Finding {
 	var findings []Finding
 	lines := strings.Split(content, "\n")
 	funcStart := -1
