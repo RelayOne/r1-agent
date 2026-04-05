@@ -274,7 +274,7 @@ func (s *CodebaseServer) handleSearchContent(args map[string]interface{}) (strin
 		return "Content search index not available", nil
 	}
 
-	results := s.tfidfIdx.Search(query, limit)
+	results := s.tfidfIdx.SearchWithContext(query, limit)
 
 	if len(results) == 0 {
 		return fmt.Sprintf("No files found matching %q", query), nil
@@ -283,6 +283,10 @@ func (s *CodebaseServer) handleSearchContent(args map[string]interface{}) (strin
 	var sb strings.Builder
 	for _, r := range results {
 		fmt.Fprintf(&sb, "%.3f  %s", r.Score, r.Path)
+		// Show matching terms so the model understands WHY this file matched
+		if len(r.MatchingTerms) > 0 {
+			fmt.Fprintf(&sb, "  (matched: %s)", strings.Join(r.MatchingTerms, ", "))
+		}
 		// Include exported symbols from the file for quick triage
 		if s.symIdx != nil {
 			syms := s.symIdx.InFile(r.Path)
@@ -423,6 +427,16 @@ func (s *CodebaseServer) handleFindSymbolUsages(args map[string]interface{}) (st
 				}
 				if len(exported) > 0 {
 					fmt.Fprintf(&sb, "  [defines: %s]", strings.Join(exported, ", "))
+				}
+			}
+			// Show if this consumer has a direct dependency on a definition file
+			if s.depGraph != nil {
+				deps := s.depGraph.Dependencies(r.Path)
+				for _, dep := range deps {
+					if defFiles[dep] {
+						fmt.Fprintf(&sb, " ←imports %s", filepath.Base(dep))
+						break
+					}
 				}
 			}
 			sb.WriteByte('\n')
