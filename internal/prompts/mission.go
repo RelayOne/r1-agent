@@ -592,24 +592,28 @@ Break the intent into concrete technical requirements. For each:
 - What does the user's actual journey look like end to end?
 
 ### Round 2: Consumer/Producer Mapping
-For each requirement, use get_dependencies and impact_analysis to trace:
+For each requirement, use find_symbol_usages on key symbols to trace:
 - What PRODUCES the data/functionality? (sources, APIs, services, databases)
 - What CONSUMES it? (UI components, API clients, other services, tests)
+  → find_symbol_usages shows all consumers AND whether they directly import the definition.
 - What do consumers EXPECT vs what producers PROVIDE?
   → Check type signatures, error types, response shapes, auth tokens
 - Are there contract mismatches? Use get_file_symbols on both sides to compare.
 - In monorepos: trace across package boundaries. A function exported from
   package A means nothing if packages B, C, D don't import and call it.
+  → find_symbol_usages confirms the import link exists.
 
 ### Round 3: Reachability Analysis
 For each piece of functionality:
 - Can users actually REACH this through the UI/API/CLI?
+  → Use trace_entry_points on the implementation file. It shows ALL entry points
+    that can reach it, classified by surface (CLI, API, Web, Mobile, MCP).
 - Is there a complete path from entry point to implementation?
-  → Use get_dependencies to trace the chain. Read each layer.
+  → trace_entry_points shows the dependency chain. Read each layer.
 - Are all intermediate layers wired (routes, handlers, middleware, components)?
 - Does the navigation/routing expose this to users?
 - Are there dead code paths — exported symbols that nothing calls?
-  → Use impact_analysis to check.
+  → If trace_entry_points returns no entry points, the code is unreachable.
 
 ### Round 4: Cross-Surface Verification
 Map every surface. For EACH one present in the codebase:
@@ -718,15 +722,11 @@ For each acceptance criterion:
 
 ### Phase 2: Cross-surface validation
 
-Use search_content to detect which surfaces exist in this codebase:
-- Express/Gin/FastAPI/etc → API surface
-- React/Vue/Svelte/Angular/etc → Web surface
-- React Native/Flutter/Swift/Kotlin → Mobile surface
-- Electron/Tauri/native → Desktop surface
-- Cobra/urfave/argparse/clap → CLI surface
-- MCP/JSON-RPC tool definitions → MCP surface
+Use trace_entry_points on each file that was changed or added. This tool
+automatically classifies entry points as CLI, API, Web, Mobile, Desktop, or MCP
+and shows the dependency chain. This tells you which surfaces can reach the code.
 
-For EACH detected surface, trace the path from user action to implementation:
+Then verify EACH reachable surface has the complete chain wired:
 - **API**: Endpoint registered → middleware applied → handler calls implementation → response shaped correctly
 - **Web**: Route exists → component renders → calls API correctly → handles loading/error states
 - **Mobile**: Screen/view exists → navigation wired → API client updated → handles offline/error
@@ -734,13 +734,17 @@ For EACH detected surface, trace the path from user action to implementation:
 - **CLI**: Command registered in dispatcher → flags parsed → calls implementation → output formatted
 - **MCP**: Tool defined → parameters validated → handler calls implementation → response marshaled
 
+If trace_entry_points shows NO entry points reaching a file, that's a gap —
+the code exists but is unreachable from any surface.
+
 "The code exists" is NOT "the user can reach it."
 "It works on one surface" is NOT "it works on all surfaces."
 
 ### Phase 3: Consumer/Producer contract verification
 
 For every new or modified API, type, interface, or data structure:
-1. Use impact_analysis to list ALL consumers
+1. Use find_symbol_usages to map ALL consumers of the symbol. The tool
+   shows which files reference it AND whether they have a direct import.
 2. For EACH consumer, use get_file_symbols to verify it uses the correct:
    - Type signatures (not stale types from before the change)
    - Error handling (not swallowing errors or assuming success)
