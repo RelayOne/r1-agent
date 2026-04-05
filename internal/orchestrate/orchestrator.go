@@ -112,6 +112,16 @@ type Config struct {
 	// MaxDAGDepth controls maximum recursion depth for work decomposition.
 	// Default: 4.
 	MaxDAGDepth int `json:"max_dag_depth"`
+
+	// ValidateStepFn adversarially validates a single step's output.
+	// Used by micro-convergence loops at every level: work nodes,
+	// decompositions, research findings, and plan steps.
+	// If nil, steps execute once without convergence validation.
+	ValidateStepFn func(ctx context.Context, m *mission.Mission, prompt string) (response string, err error) `json:"-"`
+
+	// MaxMicroIterations caps the execute→validate→fix cycle for each step.
+	// Default: 3.
+	MaxMicroIterations int `json:"max_micro_iterations"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -451,6 +461,8 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		WorkNodeFn:          o.config.WorkNodeFn,
 		MaxDAGWorkers:       o.config.MaxDAGWorkers,
 		MaxDAGDepth:         o.config.MaxDAGDepth,
+		ValidateStepFn:      o.config.ValidateStepFn,
+		MaxMicroIterations:  o.config.MaxMicroIterations,
 		RecordResearchFn: func(missionID, topic, content string) error {
 			return o.research.Add(&research.Entry{
 				ID:        fmt.Sprintf("disc-%s-%d", missionID, time.Now().UnixNano()),

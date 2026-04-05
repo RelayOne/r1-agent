@@ -1315,3 +1315,245 @@ Report NOTHING if the work is genuinely, provably complete.
 
 	return b.String()
 }
+
+// --- Micro-Convergence Validation Prompts ---
+//
+// Every step in the mission lifecycle must independently converge.
+// These prompts enable adversarial self-validation at every level.
+
+// BuildNodeValidationPrompt creates an adversarial validation prompt for a
+// single work node's output. The validator checks whether the output fully
+// satisfies the node's scope — not "good enough," but actually complete.
+func BuildNodeValidationPrompt(nodeType, scope, output string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are an adversarial validator for a %s work node.
+
+Your job is to find EVERY gap between what was requested and what was delivered.
+You are NOT the implementer's friend. You are the adversary who prevents
+incomplete work from being accepted.
+
+## Scope (what MUST be satisfied)
+%s
+
+## Output to validate
+%s
+
+## Validation Protocol
+
+For each aspect of the scope, determine:
+1. Is it FULLY addressed (not partially, not "mostly", not "good enough")?
+2. Is there evidence in the output (file:line citations, test results, etc.)?
+3. Are there edge cases, error paths, or integration points that were missed?
+
+`, nodeType, scope, output)
+
+	switch nodeType {
+	case "implement":
+		fmt.Fprintf(&b, `### Implementation-Specific Checks
+- Does the code handle ALL error paths (not just the happy path)?
+- Are there any TODOs, stubs, or placeholder implementations?
+- Does it integrate with existing code (imports, exports, type compatibility)?
+- Are there any security issues (injection, auth bypass, data exposure)?
+- Does it follow the existing code style and patterns?
+`)
+	case "test":
+		fmt.Fprintf(&b, `### Test-Specific Checks
+- Do tests cover the happy path AND error paths?
+- Are edge cases tested (empty input, max values, concurrent access)?
+- Do tests actually assert meaningful behavior (not just "no error")?
+- Are there integration points that need testing?
+- Would a mutation testing tool find surviving mutants?
+`)
+	case "research":
+		fmt.Fprintf(&b, `### Research-Specific Checks
+- Are findings verified against actual code (not assumed from training data)?
+- Are file paths and line numbers accurate?
+- Is the research complete (all relevant files found, not just obvious ones)?
+- Are consumer/producer relationships mapped?
+- Are cross-surface implications identified?
+`)
+	case "review":
+		fmt.Fprintf(&b, `### Review-Specific Checks
+- Did the review examine ALL changed files (not just a sample)?
+- Are findings backed by specific file:line citations?
+- Did the review check for security implications?
+- Did the review check for performance implications?
+- Did the review verify test coverage of changes?
+`)
+	}
+
+	fmt.Fprintf(&b, `
+## Response Format
+
+Return a JSON object:
+{"gaps": ["gap description 1", "gap description 2", ...]}
+
+If the output fully satisfies the scope with evidence, return:
+{"gaps": []}
+
+Rules:
+- Do NOT accept vague claims ("looks complete", "appears to work")
+- Do NOT accept work that "mostly" satisfies the scope — it must FULLY satisfy it
+- Every gap must be specific and actionable (not "could be better")
+- If you're unsure whether something is addressed, it's a gap
+- Do NOT add gaps for things outside the stated scope
+`)
+
+	return b.String()
+}
+
+// BuildDecompositionValidationPrompt creates an adversarial validation prompt
+// for a decomposition decision. Validates that the work items are truly
+// minimum scope, dependencies are correct, and nothing is missing.
+func BuildDecompositionValidationPrompt(scope string, items string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are an adversarial validator for a work decomposition.
+
+A scope was decomposed into work items. Your job is to find gaps in the
+decomposition — missing work, incorrect dependencies, items that are too
+large, or items that overlap.
+
+## Original Scope
+%s
+
+## Proposed Decomposition
+%s
+
+## Validation Checklist
+
+1. **Completeness**: Does the decomposition cover the ENTIRE scope?
+   - Is anything from the scope missing in the work items?
+   - Are there implicit requirements (error handling, tests, docs) not captured?
+
+2. **Minimum Scope**: Is each item truly minimum-viable?
+   - Could any item be broken down further?
+   - Does any item combine unrelated concerns?
+
+3. **Dependencies**: Are dependency relationships correct?
+   - Can items actually run in the declared order?
+   - Are there hidden dependencies (shared state, file conflicts)?
+   - Are there missing dependencies (item A writes what item B reads)?
+
+4. **Overlap**: Do any items duplicate work?
+   - Do two items touch the same files for the same reason?
+   - Could overlapping items cause merge conflicts?
+
+5. **Files**: Are file declarations accurate?
+   - Does each item list ALL files it will touch?
+   - Are there files that multiple items claim but shouldn't?
+
+## Response Format
+
+Return a JSON object:
+{"gaps": ["gap description 1", "gap description 2", ...]}
+
+If the decomposition is complete, correct, and minimum-scope, return:
+{"gaps": []}
+
+Be adversarial. A bad decomposition wastes more time than doing the work wrong.
+`, scope, items)
+
+	return b.String()
+}
+
+// BuildResearchValidationPrompt creates an adversarial validation prompt for
+// research findings. Validates that findings are accurate, complete, and
+// verified against actual code (not hallucinated from training data).
+func BuildResearchValidationPrompt(scope string, findings string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are an adversarial validator for research findings.
+
+Research was conducted on a codebase. Your job is to determine whether the
+findings are accurate, complete, and actually verified against real code
+(not hallucinated from training data).
+
+## Research Scope
+%s
+
+## Findings to Validate
+%s
+
+## Validation Checklist
+
+1. **Accuracy**: Are file paths real? Are function signatures correct?
+   - Does the code actually exist where the findings say it does?
+   - Are the described behaviors accurate?
+
+2. **Completeness**: Does the research cover the full scope?
+   - Are there files/modules that should have been examined but weren't?
+   - Are consumer/producer relationships fully mapped?
+   - Are all surfaces (API, CLI, web, mobile) accounted for?
+
+3. **Verification**: Are claims backed by evidence?
+   - Does the research cite specific file:line locations?
+   - Are assumptions clearly labeled vs. verified facts?
+   - Is training-data knowledge distinguished from verified code reading?
+
+4. **Gaps**: What's missing?
+   - Are there unanswered questions the scope requires?
+   - Are there cross-cutting concerns (auth, logging, error handling) unmapped?
+
+## Response Format
+
+Return a JSON object:
+{"gaps": ["gap description 1", "gap description 2", ...]}
+
+If findings are accurate, complete, and verified, return:
+{"gaps": []}
+`, scope, findings)
+
+	return b.String()
+}
+
+// BuildPlanValidationPrompt creates an adversarial validation prompt for a
+// plan. Validates that the plan addresses the full scope, is correctly
+// ordered, and doesn't miss critical steps.
+func BuildPlanValidationPrompt(scope string, plan string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `You are an adversarial validator for an implementation plan.
+
+A plan was created to address a scope. Your job is to find gaps — missing
+steps, incorrect ordering, unrealistic assumptions, or overlooked risks.
+
+## Scope the Plan Must Address
+%s
+
+## Proposed Plan
+%s
+
+## Validation Checklist
+
+1. **Completeness**: Does the plan cover the ENTIRE scope?
+   - Is every acceptance criterion addressed by at least one step?
+   - Are there implicit steps missing (migrations, config changes, docs)?
+   - Does the plan include testing and validation steps?
+
+2. **Ordering**: Is the sequence correct?
+   - Can each step actually run after its predecessors?
+   - Are there steps that should be parallelized but are serialized?
+   - Are there hidden dependencies between steps?
+
+3. **Feasibility**: Is each step achievable?
+   - Are there steps that assume capabilities that don't exist?
+   - Are there steps that conflict with each other?
+
+4. **Risk**: What could go wrong?
+   - Are there steps that could break existing functionality?
+   - Are rollback or recovery steps included where needed?
+   - Are security implications addressed?
+
+## Response Format
+
+Return a JSON object:
+{"gaps": ["gap description 1", "gap description 2", ...]}
+
+If the plan is complete, correctly ordered, and feasible, return:
+{"gaps": []}
+`, scope, plan)
+
+	return b.String()
+}

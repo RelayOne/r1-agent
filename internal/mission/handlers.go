@@ -159,6 +159,17 @@ type HandlerDeps struct {
 	// MaxDAGDepth controls maximum recursion depth for work decomposition.
 	// Default: 4 (root → sub-task → sub-sub-task → leaf).
 	MaxDAGDepth int
+
+	// ValidateStepFn adversarially validates a single step's output.
+	// Receives a validation prompt and returns the model's assessment.
+	// Used by micro-convergence loops at every level: work nodes,
+	// decompositions, research findings, and plan steps.
+	// If nil, steps execute once without convergence validation.
+	ValidateStepFn func(ctx context.Context, m *Mission, prompt string) (response string, err error)
+
+	// MaxMicroIterations caps the execute→validate→fix cycle for each step.
+	// Default: 3.
+	MaxMicroIterations int
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -285,7 +296,44 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 		// them with reasoning about what to look for next.
 		if deps.DiscoveryFn != nil {
 			discoveryPrompt := prompts.BuildMissionDiscoveryPrompt(mc)
-			discoveryResult, err := deps.DiscoveryFn(ctx, m, discoveryPrompt)
+
+			// Convergent research: discovery → validate findings → re-discover → repeat
+			var discoveryResult string
+			var err error
+			if deps.ValidateStepFn != nil {
+				researchScope := fmt.Sprintf("Mission: %s\nIntent: %s\nCriteria:\n%s", m.Title, m.Intent, mc.CriteriaBlock)
+				microIter := deps.MaxMicroIterations
+				if microIter <= 0 {
+					microIter = 3
+				}
+				convResult, convErr := RunMicroConvergence(ctx, MicroConvergenceConfig{
+					MaxIterations: microIter,
+					Scope:         researchScope,
+					StepName:      fmt.Sprintf("research:%s", m.ID),
+					ExecuteFn: func(rCtx context.Context, feedback string) (string, error) {
+						prompt := discoveryPrompt
+						if feedback != "" {
+							prompt += "\n\n" + feedback
+						}
+						return deps.DiscoveryFn(rCtx, m, prompt)
+					},
+					ValidateFn: func(rCtx context.Context, scope, output string) ([]string, error) {
+						valPrompt := prompts.BuildResearchValidationPrompt(scope, output)
+						valResp, vErr := deps.ValidateStepFn(rCtx, m, valPrompt)
+						if vErr != nil {
+							return nil, vErr
+						}
+						return ParseValidationGaps(valResp), nil
+					},
+				})
+				if convErr == nil {
+					discoveryResult = convResult.FinalOutput
+				} else {
+					err = convErr
+				}
+			} else {
+				discoveryResult, err = deps.DiscoveryFn(ctx, m, discoveryPrompt)
+			}
 			if err == nil && discoveryResult != "" {
 				artifacts["discovery"] = discoveryResult
 				// Parse structured output from the discovery loop
@@ -519,6 +567,57 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 			}
 		}
 
+		planText := strings.Join(planItems, "\n")
+
+		// Convergent planning: plan → validate plan → fix → repeat
+		if deps.ValidateStepFn != nil && deps.ExecuteFn != nil {
+			planScope := fmt.Sprintf("Mission: %s\nIntent: %s\nCriteria:\n%s\nGaps:\n%s",
+				m.Title, m.Intent, mc.CriteriaBlock, mc.GapsBlock)
+			microIter := deps.MaxMicroIterations
+			if microIter <= 0 {
+				microIter = 3
+			}
+			convResult, err := RunMicroConvergence(ctx, MicroConvergenceConfig{
+				MaxIterations: microIter,
+				Scope:         planScope,
+				StepName:      fmt.Sprintf("plan:%s", m.ID),
+				ExecuteFn: func(pCtx context.Context, feedback string) (string, error) {
+					prompt := planPrompt
+					if feedback != "" {
+						prompt += "\n\n" + feedback
+					}
+					_, err := deps.ExecuteFn(pCtx, m, prompt, "generate plan")
+					if err != nil {
+						// ExecuteFn failure is non-fatal for planning — use deterministic plan
+						return planText, nil
+					}
+					// Re-read gaps after model may have updated the plan
+					updatedGaps, _ := deps.Store.OpenGaps(m.ID)
+					var items []string
+					for _, c := range m.Criteria {
+						if !c.Satisfied {
+							items = append(items, fmt.Sprintf("Implement: %s", c.Description))
+						}
+					}
+					for _, g := range updatedGaps {
+						items = append(items, fmt.Sprintf("Fix [%s]: %s", g.Severity, g.Description))
+					}
+					return strings.Join(items, "\n"), nil
+				},
+				ValidateFn: func(pCtx context.Context, scope, output string) ([]string, error) {
+					valPrompt := prompts.BuildPlanValidationPrompt(scope, output)
+					valResp, err := deps.ValidateStepFn(pCtx, m, valPrompt)
+					if err != nil {
+						return nil, err
+					}
+					return ParseValidationGaps(valResp), nil
+				},
+			})
+			if err == nil {
+				planText = convResult.FinalOutput
+			}
+		}
+
 		summary := fmt.Sprintf("Plan: %d tasks (%d criteria, %d gaps)",
 			len(planItems), criteriaCount, len(gaps))
 
@@ -526,7 +625,7 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 			Phase:   PhasePlanning,
 			Summary: summary,
 			Artifacts: map[string]string{
-				"plan":   strings.Join(planItems, "\n"),
+				"plan":   planText,
 				"prompt": planPrompt,
 			},
 			Duration: time.Since(start),
@@ -623,6 +722,11 @@ func NewDAGExecuteHandler(deps HandlerDeps) PhaseHandler {
 		maxDepth = 4
 	}
 
+	microIter := deps.MaxMicroIterations
+	if microIter <= 0 {
+		microIter = 3
+	}
+
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
 		mc := buildMissionContext(deps, m)
@@ -641,18 +745,50 @@ func NewDAGExecuteHandler(deps HandlerDeps) PhaseHandler {
 		rootScope := fmt.Sprintf("Mission: %s\nIntent: %s\n\nRemaining work:\n- %s",
 			m.Title, m.Intent, strings.Join(scopeParts, "\n- "))
 
-		// Build decomposition prompt and ask model to break down the scope
-		decomposePrompt := prompts.BuildDecompositionPrompt(mc, "implement", rootScope, 0, maxDepth)
-		decomposeResult, err := deps.DecomposeFn(ctx, m, decomposePrompt)
-		if err != nil {
-			return nil, fmt.Errorf("decompose: %w", err)
+		// Convergent decomposition: decompose → validate decomposition → fix → repeat
+		var workItems []WorkNode
+		var shouldExecuteDirectly bool
+
+		if deps.ValidateStepFn != nil {
+			convResult, err := RunMicroConvergence(ctx, MicroConvergenceConfig{
+				MaxIterations: microIter,
+				Scope:         rootScope,
+				StepName:      fmt.Sprintf("decompose:%s", m.ID),
+				ExecuteFn: func(execCtx context.Context, feedback string) (string, error) {
+					prompt := prompts.BuildDecompositionPrompt(mc, "implement", rootScope, 0, maxDepth)
+					if feedback != "" {
+						prompt += "\n\n" + feedback
+					}
+					return deps.DecomposeFn(execCtx, m, prompt)
+				},
+				ValidateFn: func(execCtx context.Context, scope, output string) ([]string, error) {
+					items, direct := parseDecomposition(output)
+					if direct || len(items) == 0 {
+						return nil, nil // direct execution is valid
+					}
+					valPrompt := prompts.BuildDecompositionValidationPrompt(scope, formatDecompositionForValidation(items))
+					valResp, err := deps.ValidateStepFn(execCtx, m, valPrompt)
+					if err != nil {
+						return nil, err
+					}
+					return ParseValidationGaps(valResp), nil
+				},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("convergent decompose: %w", err)
+			}
+			workItems, shouldExecuteDirectly = parseDecomposition(convResult.FinalOutput)
+		} else {
+			// No validation — single-shot decomposition
+			decomposePrompt := prompts.BuildDecompositionPrompt(mc, "implement", rootScope, 0, maxDepth)
+			decomposeResult, err := deps.DecomposeFn(ctx, m, decomposePrompt)
+			if err != nil {
+				return nil, fmt.Errorf("decompose: %w", err)
+			}
+			workItems, shouldExecuteDirectly = parseDecomposition(decomposeResult)
 		}
 
-		// Parse decomposition result
-		workItems, shouldExecuteDirectly := parseDecomposition(decomposeResult)
-
 		if shouldExecuteDirectly || len(workItems) == 0 {
-			// Scope is small enough for direct execution — fall back to monolithic
 			log.Printf("[mission] %s: scope small enough for direct execution", m.ID)
 			return NewExecuteHandler(deps)(ctx, m)
 		}
@@ -660,29 +796,103 @@ func NewDAGExecuteHandler(deps HandlerDeps) PhaseHandler {
 		log.Printf("[mission] %s: decomposed into %d work items, executing via DAG (max %d workers, max depth %d)",
 			m.ID, len(workItems), maxWorkers, maxDepth)
 
-		// Build the WorkDAG
+		// Build the WorkDAG — each node runs through its own micro-convergence loop
 		executor := func(execCtx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
 			nodeStart := time.Now()
 
-			// Check if this node should recursively decompose
+			// Recursive decomposition nodes also converge
 			if node.Depth < maxDepth-1 && node.Type == WorkDecompose {
-				decompPrompt := prompts.BuildDecompositionPrompt(mCtx, string(node.Type), node.Scope, node.Depth, maxDepth)
-				result, dErr := deps.DecomposeFn(execCtx, m, decompPrompt)
-				if dErr != nil {
-					return nil, fmt.Errorf("decompose at depth %d: %w", node.Depth, dErr)
+				var children []WorkNode
+				decompConv := MicroConvergenceConfig{
+					MaxIterations: microIter,
+					Scope:         node.Scope,
+					StepName:      fmt.Sprintf("decompose:%s", node.ID),
+					ExecuteFn: func(dCtx context.Context, feedback string) (string, error) {
+						prompt := prompts.BuildDecompositionPrompt(mCtx, string(node.Type), node.Scope, node.Depth, maxDepth)
+						if feedback != "" {
+							prompt += "\n\n" + feedback
+						}
+						return deps.DecomposeFn(dCtx, m, prompt)
+					},
+					ValidateFn: func(dCtx context.Context, scope, output string) ([]string, error) {
+						if deps.ValidateStepFn == nil {
+							return nil, nil
+						}
+						items, direct := parseDecomposition(output)
+						if direct || len(items) == 0 {
+							return nil, nil
+						}
+						valPrompt := prompts.BuildDecompositionValidationPrompt(scope, formatDecompositionForValidation(items))
+						valResp, err := deps.ValidateStepFn(dCtx, m, valPrompt)
+						if err != nil {
+							return nil, err
+						}
+						return ParseValidationGaps(valResp), nil
+					},
 				}
-				children, direct := parseDecomposition(result)
+				convResult, dErr := RunMicroConvergence(execCtx, decompConv)
+				if dErr != nil {
+					return nil, fmt.Errorf("convergent decompose at depth %d: %w", node.Depth, dErr)
+				}
+				children, direct := parseDecomposition(convResult.FinalOutput)
 				if !direct && len(children) > 0 {
 					return &WorkResult{
-						Summary:  fmt.Sprintf("Decomposed into %d sub-tasks", len(children)),
+						Summary:  fmt.Sprintf("Decomposed into %d sub-tasks (converged in %d iterations)", len(children), convResult.Iterations),
 						Children: children,
 						Duration: time.Since(nodeStart),
-						Agent:    "decompose",
+						Agent:    "convergent-decompose",
 					}, nil
 				}
 			}
 
-			// Execute the minimum-scope work item
+			// Convergent work node execution: execute → validate → fix → repeat
+			if deps.ValidateStepFn != nil {
+				var allFiles []string
+				convResult, execErr := RunMicroConvergence(execCtx, MicroConvergenceConfig{
+					MaxIterations: microIter,
+					Scope:         node.Scope,
+					StepName:      fmt.Sprintf("node:%s:%s", node.Type, node.ID),
+					ExecuteFn: func(nCtx context.Context, feedback string) (string, error) {
+						nodePrompt := prompts.BuildWorkNodePrompt(mCtx, string(node.Type), node.Scope, rootScope, "")
+						if feedback != "" {
+							nodePrompt += "\n\n" + feedback
+						}
+						filesChanged, err := deps.WorkNodeFn(nCtx, m, nodePrompt, node.Scope)
+						if err != nil {
+							return "", err
+						}
+						allFiles = append(allFiles, filesChanged...)
+						return fmt.Sprintf("Files changed: %s", strings.Join(filesChanged, ", ")), nil
+					},
+					ValidateFn: func(nCtx context.Context, scope, output string) ([]string, error) {
+						valPrompt := prompts.BuildNodeValidationPrompt(string(node.Type), scope, output)
+						valResp, err := deps.ValidateStepFn(nCtx, m, valPrompt)
+						if err != nil {
+							return nil, err
+						}
+						return ParseValidationGaps(valResp), nil
+					},
+				})
+				if execErr != nil {
+					return nil, execErr
+				}
+
+				// Collect remaining gaps as DAG-level gaps
+				var resultGaps []string
+				if !convResult.Converged {
+					resultGaps = convResult.RemainingGaps
+				}
+
+				return &WorkResult{
+					Summary:      fmt.Sprintf("Converged(%d iter): %s", convResult.Iterations, truncateOutput(node.Scope, 80)),
+					FilesChanged: dedupeStrings(allFiles),
+					Gaps:         resultGaps,
+					Duration:     time.Since(nodeStart),
+					Agent:        "convergent-work-node",
+				}, nil
+			}
+
+			// No ValidateStepFn — single-shot execution (backward compatible)
 			nodePrompt := prompts.BuildWorkNodePrompt(mCtx, string(node.Type), node.Scope, rootScope, "")
 			filesChanged, execErr := deps.WorkNodeFn(execCtx, m, nodePrompt, node.Scope)
 			if execErr != nil {
@@ -1416,4 +1626,34 @@ func extractMissionKeywords(intent string) []string {
 		keywords = append(keywords, w)
 	}
 	return keywords
+}
+
+// dedupeStrings returns a deduplicated copy of the input slice, preserving order.
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// formatDecompositionForValidation formats work items as a human-readable
+// summary for the decomposition validation prompt.
+func formatDecompositionForValidation(items []WorkNode) string {
+	var b strings.Builder
+	for i, item := range items {
+		fmt.Fprintf(&b, "%d. [%s] %s (id=%s", i+1, item.Type, item.Scope, item.ID)
+		if len(item.DependsOn) > 0 {
+			fmt.Fprintf(&b, ", depends_on=%s", strings.Join(item.DependsOn, ","))
+		}
+		if len(item.Files) > 0 {
+			fmt.Fprintf(&b, ", files=%s", strings.Join(item.Files, ","))
+		}
+		fmt.Fprintf(&b, ")\n")
+	}
+	return b.String()
 }

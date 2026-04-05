@@ -767,3 +767,92 @@ func TestDiscoveryPromptsAllSurfaces(t *testing.T) {
 		}
 	}
 }
+
+// --- Micro-Convergence Validation Prompt Tests ---
+
+func TestBuildNodeValidationPrompt(t *testing.T) {
+	prompt := BuildNodeValidationPrompt("implement", "add auth login", "implemented login in auth.go:10")
+	checks := []string{
+		"adversarial validator",
+		"implement",
+		"add auth login",
+		"implemented login in auth.go:10",
+		"gaps",
+	}
+	for _, c := range checks {
+		if !strings.Contains(prompt, c) {
+			t.Errorf("node validation prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildNodeValidationPromptTypes(t *testing.T) {
+	types := map[string]string{
+		"implement": "error paths",
+		"test":      "edge cases",
+		"research":  "verified against actual code",
+		"review":    "file:line citations",
+	}
+	for nodeType, expected := range types {
+		prompt := BuildNodeValidationPrompt(nodeType, "scope", "output")
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("node validation for type %q should contain %q", nodeType, expected)
+		}
+	}
+}
+
+func TestBuildDecompositionValidationPrompt(t *testing.T) {
+	prompt := BuildDecompositionValidationPrompt("add auth", "1. implement login\n2. add tests")
+	checks := []string{
+		"adversarial validator",
+		"decomposition",
+		"add auth",
+		"implement login",
+		"Completeness",
+		"Minimum Scope",
+		"Dependencies",
+		"Overlap",
+	}
+	for _, c := range checks {
+		if !strings.Contains(prompt, c) {
+			t.Errorf("decomposition validation prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildResearchValidationPrompt(t *testing.T) {
+	prompt := BuildResearchValidationPrompt("find auth endpoints", "found login at api/auth.go:15")
+	checks := []string{
+		"adversarial validator",
+		"research",
+		"find auth endpoints",
+		"found login at api/auth.go:15",
+		"Accuracy",
+		"Completeness",
+		"Verification",
+	}
+	for _, c := range checks {
+		if !strings.Contains(prompt, c) {
+			t.Errorf("research validation prompt missing %q", c)
+		}
+	}
+}
+
+func TestBuildPlanValidationPrompt(t *testing.T) {
+	prompt := BuildPlanValidationPrompt("implement auth system", "1. Add login endpoint\n2. Add tests")
+	checks := []string{
+		"adversarial validator",
+		"plan",
+		"implement auth system",
+		"Add login endpoint",
+		"Completeness",
+		"Ordering",
+		"Feasibility",
+		"Risk",
+	}
+	for _, c := range checks {
+		if !strings.Contains(prompt, c) {
+			t.Errorf("plan validation prompt missing %q", c)
+		}
+	}
+}
