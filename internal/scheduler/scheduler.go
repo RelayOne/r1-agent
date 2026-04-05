@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/specexec"
 )
 
 // TaskResult is the outcome of one task execution.
@@ -245,4 +247,102 @@ func sortByGRPW(tasks []plan.Task) []plan.Task {
 		}
 	}
 	return sorted
+}
+
+// SpecExecConfig configures speculative execution integration.
+type SpecExecConfig struct {
+	// Approaches are the alternative strategy prompts to try.
+	// Each creates a specexec.Strategy with a modified prompt.
+	Approaches []string
+
+	// MaxParallel limits concurrent speculative strategies. Default: 3.
+	MaxParallel int
+
+	// Timeout per strategy. Default: 5 minutes.
+	Timeout time.Duration
+
+	// ShouldSpeculate decides whether a task should use speculative execution.
+	// If nil, all tasks use speculative execution.
+	ShouldSpeculate func(task plan.Task) bool
+}
+
+// WithSpecExec wraps an ExecuteFunc to use speculative parallel execution
+// for tasks that match the predicate. For each speculative task, it forks
+// multiple strategies (alternative prompts), runs them in parallel via
+// specexec.Run, and returns the winning result.
+//
+// Non-speculative tasks pass through to the base ExecuteFunc unchanged.
+func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
+	if len(cfg.Approaches) == 0 {
+		return base // no alternative approaches → no speculation
+	}
+	if cfg.MaxParallel <= 0 {
+		cfg.MaxParallel = 3
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 5 * time.Minute
+	}
+
+	return func(ctx context.Context, task plan.Task) TaskResult {
+		if cfg.ShouldSpeculate != nil && !cfg.ShouldSpeculate(task) {
+			return base(ctx, task)
+		}
+
+		// Build strategies from approaches
+		strategies := specexec.GenerateStrategies(task.Description, cfg.Approaches)
+
+		spec := specexec.Spec{
+			Strategies:    strategies,
+			MaxParallel:   cfg.MaxParallel,
+			Timeout:       cfg.Timeout,
+			EarlyStop:     true,
+			StopThreshold: 0.9,
+			Scorer:        specexec.DefaultScorer,
+		}
+
+		// Bridge specexec.Executor to our base ExecuteFunc
+		executor := func(ctx context.Context, strategy specexec.Strategy) specexec.Outcome {
+			// Replace the task description with the strategy prompt
+			specTask := task
+			specTask.Description = strategy.Prompt
+
+			start := time.Now()
+			result := base(ctx, specTask)
+
+			outcome := specexec.Outcome{
+				StrategyID: strategy.ID,
+				Success:    result.Success,
+				Duration:   time.Since(start),
+			}
+			if result.Error != nil {
+				outcome.Error = result.Error.Error()
+			}
+			return outcome
+		}
+
+		result := specexec.Run(ctx, spec, executor)
+
+		if result.Winner != nil {
+			return TaskResult{
+				TaskID:     task.ID,
+				Success:    result.Winner.Success,
+				DurationMs: result.Duration.Milliseconds(),
+			}
+		}
+
+		// All strategies failed — return the best attempt's error
+		bestErr := fmt.Errorf("all %d speculative strategies failed", len(result.Outcomes))
+		for _, o := range result.Outcomes {
+			if o.Error != "" {
+				bestErr = fmt.Errorf("all %d strategies failed; last: %s", len(result.Outcomes), o.Error)
+				break
+			}
+		}
+		return TaskResult{
+			TaskID:     task.ID,
+			Success:    false,
+			DurationMs: result.Duration.Milliseconds(),
+			Error:      bestErr,
+		}
+	}
 }
