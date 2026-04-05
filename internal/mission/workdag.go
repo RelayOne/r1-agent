@@ -50,6 +50,9 @@ type WorkNode struct {
 	Priority    int               `json:"priority"`           // higher = more critical (computed from downstream deps)
 	Depth       int               `json:"depth"`              // depth in tree (root=0)
 	MaxDepth    int               `json:"max_depth"`          // prevent infinite recursion
+	Timeout     time.Duration     `json:"timeout,omitempty"`  // per-node timeout (0 = no limit, inherits context)
+	MaxRetries  int               `json:"max_retries"`        // retry on failure (0 = no retries)
+	Attempt     int               `json:"attempt"`            // current attempt number (0-indexed)
 	CreatedAt   time.Time         `json:"created_at"`
 	StartedAt   *time.Time        `json:"started_at,omitempty"`
 	CompletedAt *time.Time        `json:"completed_at,omitempty"`
@@ -143,6 +146,16 @@ func (d *WorkDAG) addNodeLocked(node WorkNode) error {
 			return fmt.Errorf("workdag: node %q depends on unknown node %q", node.ID, dep)
 		}
 	}
+	// Cycle detection: adding this node must not create a cycle.
+	// A cycle exists if any dependency can reach back to this node's ID
+	// through the existing dependency graph. Since the node isn't added yet,
+	// check if any dep transitively depends on this node's ID (which would
+	// only happen if this ID appears in deps of deps — possible via children).
+	if len(node.DependsOn) > 0 {
+		if err := d.detectCycle(node.ID, node.DependsOn); err != nil {
+			return err
+		}
+	}
 	if node.Status == "" {
 		node.Status = WorkPending
 	}
@@ -156,6 +169,44 @@ func (d *WorkDAG) addNodeLocked(node WorkNode) error {
 	d.nodes[node.ID] = &n
 	if node.ParentID == "" {
 		d.rootIDs = append(d.rootIDs, node.ID)
+	}
+	return nil
+}
+
+// detectCycle checks if adding edges from nodeID → deps would create a cycle.
+// A cycle exists if nodeID is reachable from any of its deps via DependsOn edges.
+// Must be called with mu held.
+func (d *WorkDAG) detectCycle(nodeID string, deps []string) error {
+	// DFS from each dep to see if we can reach nodeID.
+	visited := make(map[string]bool)
+	var dfs func(id string) bool
+	dfs = func(id string) bool {
+		if id == nodeID {
+			return true
+		}
+		if visited[id] {
+			return false
+		}
+		visited[id] = true
+		n, ok := d.nodes[id]
+		if !ok {
+			return false
+		}
+		for _, dep := range n.DependsOn {
+			if dfs(dep) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, dep := range deps {
+		// Reset visited for each starting dep (they're independent paths).
+		for k := range visited {
+			delete(visited, k)
+		}
+		if dfs(dep) {
+			return fmt.Errorf("workdag: adding node %q would create a cycle (via %q)", nodeID, dep)
+		}
 	}
 	return nil
 }
@@ -264,7 +315,15 @@ func (d *WorkDAG) Run(ctx context.Context, mCtx prompts.MissionContext) (*DAGRes
 
 			wg.Add(1)
 			go func(n *WorkNode) {
-				result, err := d.executor(ctx, n, mCtx)
+				execCtx := ctx
+				var cancel context.CancelFunc
+				if n.Timeout > 0 {
+					execCtx, cancel = context.WithTimeout(ctx, n.Timeout)
+				}
+				result, err := d.executor(execCtx, n, mCtx)
+				if cancel != nil {
+					cancel()
+				}
 				resultCh <- nodeResult{id: n.ID, result: result, err: err}
 			}(node)
 		}
@@ -327,6 +386,13 @@ func (d *WorkDAG) handleResult(id string, result *WorkResult, err error) {
 	d.releaseFiles(id)
 
 	if err != nil {
+		if node.Attempt < node.MaxRetries {
+			// Retry: reset to pending for re-dispatch.
+			node.Attempt++
+			node.Status = WorkPending
+			node.StartedAt = nil
+			return
+		}
 		node.Status = WorkFailed
 		now := time.Now()
 		node.CompletedAt = &now

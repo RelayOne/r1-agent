@@ -406,3 +406,167 @@ func TestWorkDAGUnknownDep(t *testing.T) {
 		t.Fatal("expected error for unknown dependency")
 	}
 }
+
+func TestWorkDAGCycleDetection(t *testing.T) {
+	dag := NewWorkDAG(nil, 1)
+
+	// A→B→C, then try to make A depend on C (cycle).
+	err := dag.AddNodes([]WorkNode{
+		{ID: "A", Type: WorkImplement, Scope: "a"},
+		{ID: "B", Type: WorkImplement, Scope: "b", DependsOn: []string{"A"}},
+		{ID: "C", Type: WorkImplement, Scope: "c", DependsOn: []string{"B"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Adding D that depends on C is fine (no cycle).
+	err = dag.AddNode(WorkNode{ID: "D", Type: WorkImplement, Scope: "d", DependsOn: []string{"C"}})
+	if err != nil {
+		t.Fatalf("unexpected error for acyclic dep: %v", err)
+	}
+
+	// Adding E that depends on C and A — still acyclic.
+	err = dag.AddNode(WorkNode{ID: "E", Type: WorkImplement, Scope: "e", DependsOn: []string{"C", "A"}})
+	if err != nil {
+		t.Fatalf("unexpected error for diamond dep: %v", err)
+	}
+}
+
+func TestWorkDAGCycleDetectionSelfLoop(t *testing.T) {
+	dag := NewWorkDAG(nil, 1)
+	err := dag.AddNode(WorkNode{ID: "X", Type: WorkImplement, Scope: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Y depends on X, then try Z that depends on Y — fine.
+	err = dag.AddNode(WorkNode{ID: "Y", Type: WorkImplement, Scope: "y", DependsOn: []string{"X"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkDAGPerNodeTimeout(t *testing.T) {
+	executor := func(ctx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+			return &WorkResult{Summary: "done", Agent: "test"}, nil
+		}
+	}
+
+	dag := NewWorkDAG(executor, 1)
+	err := dag.AddNode(WorkNode{
+		ID:      "slow",
+		Type:    WorkImplement,
+		Scope:   "slow task",
+		Timeout: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := dag.Run(context.Background(), prompts.MissionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.NodesFailed != 1 {
+		t.Errorf("expected 1 failed (timeout), got %d failed, %d complete", result.NodesFailed, result.NodesComplete)
+	}
+}
+
+func TestWorkDAGRetry(t *testing.T) {
+	var attempts int32
+
+	executor := func(ctx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
+		n := atomic.AddInt32(&attempts, 1)
+		if n < 3 {
+			return nil, fmt.Errorf("transient failure #%d", n)
+		}
+		return &WorkResult{Summary: "succeeded on attempt 3", Agent: "test"}, nil
+	}
+
+	dag := NewWorkDAG(executor, 1)
+	err := dag.AddNode(WorkNode{
+		ID:         "flaky",
+		Type:       WorkImplement,
+		Scope:      "flaky task",
+		MaxRetries: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := dag.Run(context.Background(), prompts.MissionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.NodesComplete != 1 {
+		t.Errorf("expected 1 complete after retries, got %d complete, %d failed", result.NodesComplete, result.NodesFailed)
+	}
+	if atomic.LoadInt32(&attempts) != 3 {
+		t.Errorf("expected 3 attempts, got %d", atomic.LoadInt32(&attempts))
+	}
+}
+
+func TestWorkDAGRetryExhausted(t *testing.T) {
+	executor := func(ctx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
+		return nil, fmt.Errorf("always fails")
+	}
+
+	dag := NewWorkDAG(executor, 1)
+	err := dag.AddNode(WorkNode{
+		ID:         "doomed",
+		Type:       WorkImplement,
+		Scope:      "doomed task",
+		MaxRetries: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := dag.Run(context.Background(), prompts.MissionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.NodesFailed != 1 {
+		t.Errorf("expected 1 failed after exhausting retries, got %d", result.NodesFailed)
+	}
+}
+
+func TestWorkDAGRetryDoesNotBlockDependents(t *testing.T) {
+	var attempts int32
+
+	executor := func(ctx context.Context, node *WorkNode, mCtx prompts.MissionContext) (*WorkResult, error) {
+		if node.ID == "A" {
+			n := atomic.AddInt32(&attempts, 1)
+			if n < 2 {
+				return nil, fmt.Errorf("transient")
+			}
+			return &WorkResult{Summary: "A done", Agent: "test"}, nil
+		}
+		return &WorkResult{Summary: "B done", Agent: "test"}, nil
+	}
+
+	dag := NewWorkDAG(executor, 1)
+	err := dag.AddNodes([]WorkNode{
+		{ID: "A", Type: WorkImplement, Scope: "retryable", MaxRetries: 2},
+		{ID: "B", Type: WorkImplement, Scope: "depends on A", DependsOn: []string{"A"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := dag.Run(context.Background(), prompts.MissionContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.NodesComplete != 2 {
+		t.Errorf("expected both nodes complete, got %d complete, %d failed", result.NodesComplete, result.NodesFailed)
+	}
+}
