@@ -692,14 +692,20 @@ func TestValidateHandlerLayer4ParsesJSON(t *testing.T) {
 		}
 	}
 
-	// New gap should be created
+	// New gap should be created with proper structured fields
 	allGaps, _ := store.AllGaps(m.ID)
 	found := false
 	for _, g := range allGaps {
 		if strings.Contains(g.Description, "No input validation") {
 			found = true
-			if !strings.Contains(g.Description, "api.go:55") {
-				t.Errorf("gap should include file:line, got: %q", g.Description)
+			if g.File != "api.go" {
+				t.Errorf("gap File should be 'api.go', got %q", g.File)
+			}
+			if g.Line != 55 {
+				t.Errorf("gap Line should be 55, got %d", g.Line)
+			}
+			if g.Category != "security" {
+				t.Errorf("gap Category should be 'security', got %q", g.Category)
 			}
 		}
 	}

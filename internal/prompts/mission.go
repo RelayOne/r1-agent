@@ -423,6 +423,9 @@ Return JSON:
 	if ctx.GapsBlock != "" {
 		fmt.Fprintf(&b, "## Previously Identified Gaps\nVerify these are resolved:\n%s\n", ctx.GapsBlock)
 	}
+	if ctx.PriorContext != "" {
+		fmt.Fprintf(&b, "%s\n", ctx.PriorContext)
+	}
 
 	return b.String()
 }
@@ -530,6 +533,10 @@ Return JSON:
 - Only vote "complete" if you genuinely cannot find a single thing to improve.
 
 `, validationReport)
+
+	if ctx.PriorContext != "" {
+		fmt.Fprintf(&b, "%s\n", ctx.PriorContext)
+	}
 
 	return b.String()
 }
@@ -779,6 +786,10 @@ Report NOTHING if the work is genuinely, provably complete.
 - Do NOT count "the code is there" as done — trace reachability from user action.
 - If it touches the codebase, it's in scope. Period.
 `)
+
+	if ctx.PriorContext != "" {
+		fmt.Fprintf(&b, "\n%s\n", ctx.PriorContext)
+	}
 
 	return b.String()
 }

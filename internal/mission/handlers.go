@@ -155,6 +155,11 @@ func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
 		HasStorybook:  deps.ProjectInfo.HasStorybook,
 	}
 
+	// Populate files changed from prior execution (stored in metadata by runner)
+	if files, ok := m.Metadata["files_changed"]; ok && files != "" {
+		mc.PriorContext = fmt.Sprintf("## Files Changed in Last Execution\n%s\n", files)
+	}
+
 	// Build criteria block
 	if len(m.Criteria) > 0 {
 		var cb strings.Builder
@@ -784,6 +789,7 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 					File        string `json:"file"`
 					Line        int    `json:"line"`
 					Description string `json:"description"`
+					Suggestion  string `json:"suggestion"`
 					Fixed       bool   `json:"fixed"`
 				}
 				type discoveryResponse struct {
@@ -811,22 +817,24 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 								if gap.Fixed {
 									continue
 								}
-								desc := gap.Description
-								if gap.File != "" {
-									desc = fmt.Sprintf("%s (%s:%d)", desc, gap.File, gap.Line)
-								}
 								severity := gap.Severity
 								if severity == "" {
 									severity = "blocking"
+								}
+								category := gap.Category
+								if category == "" {
+									category = "discovery-validation"
 								}
 								gapID := fmt.Sprintf("disc-val-%s-%d-%d", m.ID, time.Now().UnixNano(), i)
 								deps.Store.AddGap(&Gap{
 									ID:          gapID,
 									MissionID:   m.ID,
-									Category:    "discovery-validation",
+									Category:    category,
 									Severity:    severity,
-									Description: truncateOutput(desc, 1000),
-									Suggestion:  gap.Category,
+									Description: truncateOutput(gap.Description, 1000),
+									File:        gap.File,
+									Line:        gap.Line,
+									Suggestion:  gap.Suggestion,
 								})
 								allGapCount++
 								if severity == "blocking" {

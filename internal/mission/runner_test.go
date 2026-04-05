@@ -563,3 +563,50 @@ func TestDefaultRunnerConfig(t *testing.T) {
 		t.Errorf("MaxPhaseRetries = %d", cfg.MaxPhaseRetries)
 	}
 }
+
+func TestRunnerPersistsFilesChanged(t *testing.T) {
+	runner, store := newTestRunner(t)
+	m := createTestMission(t, store, "m-files")
+
+	// Research and plan just pass through
+	runner.RegisterHandler(PhaseCreated, noopHandler("research done"))
+	runner.RegisterHandler(PhaseResearching, noopHandler("plan ready"))
+
+	// Planning returns successfully
+	runner.RegisterHandler(PhasePlanning, noopHandler("plan done"))
+
+	// Execute handler reports files changed
+	runner.RegisterHandler(PhaseExecuting, func(ctx context.Context, m *Mission) (*PhaseResult, error) {
+		store.SetCriteriaSatisfied(m.ID, "c-1", "done", "test")
+		store.SetCriteriaSatisfied(m.ID, "c-2", "done", "test")
+		return &PhaseResult{
+			Summary:      "executed",
+			FilesChanged: []string{"internal/auth/jwt.go", "internal/auth/jwt_test.go"},
+		}, nil
+	})
+
+	runner.RegisterHandler(PhaseValidating, noopHandler("validated"))
+	runner.RegisterHandler(PhaseConverged, func(ctx context.Context, m *Mission) (*PhaseResult, error) {
+		store.RecordConsensus(&ConsensusRecord{MissionID: m.ID, Model: "a", Verdict: "complete", Reasoning: "ok"})
+		store.RecordConsensus(&ConsensusRecord{MissionID: m.ID, Model: "b", Verdict: "complete", Reasoning: "ok"})
+		return &PhaseResult{Summary: "consensus"}, nil
+	})
+
+	_, err := runner.Run(context.Background(), m.ID)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Verify files_changed was persisted in metadata
+	updated, err := store.Get(m.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	files, ok := updated.Metadata["files_changed"]
+	if !ok {
+		t.Fatal("files_changed not in metadata")
+	}
+	if files != "internal/auth/jwt.go\ninternal/auth/jwt_test.go" {
+		t.Errorf("unexpected files_changed: %q", files)
+	}
+}
