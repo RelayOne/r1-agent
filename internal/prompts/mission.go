@@ -222,6 +222,8 @@ You have MCP tools for understanding the codebase while implementing:
 - **search_content**: Find related code by concept
 - **get_file_symbols**: See what a file exports before modifying it
 - **impact_analysis**: Check what will break if you change a file
+- **find_symbol_usages**: Find all consumers of a function/type before changing its signature
+- **trace_entry_points**: See which surfaces (CLI, API, Web) reach the code you're changing
 
 Use these BEFORE writing code to understand existing patterns.
 Use them AFTER writing code to verify you haven't broken consumers.
@@ -295,7 +297,17 @@ func BuildMissionValidatePrompt(ctx MissionContext) string {
 		fmt.Fprintf(&b, "%s\n", ctx.StatusBlock)
 	}
 
-	b.WriteString(`## Your Task: Adversarial Validation
+	b.WriteString(`## Codebase Tools
+
+You have tools to read and search the codebase. USE THEM — do not guess.
+- **Read**: Read any file by path to verify implementation details.
+- **Glob**: Find files by pattern (e.g. "**/*_test.go") to check coverage.
+- **Grep**: Search file content for patterns (e.g. find all callers of a function).
+- **Bash**: Run build/test/lint commands to verify the system actually works.
+
+For every claim of completion, READ THE ACTUAL CODE. "Looks right" is not evidence.
+
+## Your Task: Adversarial Validation
 
 You are NOT here to confirm the work is good. You are here to find reasons it ISN'T done.
 Your default assumption is: THE WORK IS NOT DONE. Prove yourself wrong with evidence.
@@ -436,6 +448,14 @@ func BuildMissionConsensusPrompt(ctx MissionContext, validationReport string) st
 	fmt.Fprintf(&b, `## Prior Validation Report (from another model)
 %s
 
+## Codebase Tools
+
+You can read and search the codebase directly. USE THEM to verify claims independently.
+- **Read**: Read any file by path. Do not trust summaries — read the actual code.
+- **Glob**: Find files by pattern to discover what exists.
+- **Grep**: Search file content to trace function calls and references.
+- **Bash**: Run build/test/lint to verify the system works end-to-end.
+
 ## Your Task: Try to DISPROVE Completeness
 
 Your job is NOT to confirm the work is done. Your job is to find what's missing.
@@ -547,6 +567,10 @@ You have MCP tools for querying the codebase. USE THEM — do not guess.
   what a file actually exposes vs what consumers expect.
 - **impact_analysis**: Get the transitive closure of dependents for a file.
   Use this to find every consumer that could be affected.
+- **find_symbol_usages**: Find all files that reference a symbol. Maps the
+  complete consumer/producer graph for any function, type, or class.
+- **trace_entry_points**: Trace all entry points (CLI, API, Web, Mobile, MCP)
+  that can reach a file through the dependency graph. Shows chains.
 
 You can also read any file directly. When you find something interesting,
 READ THE ACTUAL CODE — don't stop at finding the file name.
@@ -665,6 +689,8 @@ You have MCP tools for querying the codebase. USE THEM AGGRESSIVELY.
 - **search_content**: Semantic search — find files related to a concept.
 - **get_file_symbols**: List all exported symbols in a file.
 - **impact_analysis**: Transitive closure of everything that depends on a file.
+- **find_symbol_usages**: Find all consumer files that reference a symbol. Trace who uses what.
+- **trace_entry_points**: Find all entry points (CLI, API, Web, MCP) that reach a file.
 
 You can also read any file directly. DO NOT guess what code does — read it.
 

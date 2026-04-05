@@ -80,8 +80,8 @@ func TestBuildCodebaseServer(t *testing.T) {
 func TestToolDefinitions(t *testing.T) {
 	srv := &CodebaseServer{}
 	defs := srv.ToolDefinitions()
-	if len(defs) != 5 {
-		t.Errorf("expected 5 tool definitions, got %d", len(defs))
+	if len(defs) != 7 {
+		t.Errorf("expected 7 tool definitions, got %d", len(defs))
 	}
 
 	names := map[string]bool{}
@@ -95,7 +95,7 @@ func TestToolDefinitions(t *testing.T) {
 		}
 	}
 
-	for _, expected := range []string{"search_symbols", "get_dependencies", "search_content", "get_file_symbols", "impact_analysis"} {
+	for _, expected := range []string{"search_symbols", "get_dependencies", "search_content", "get_file_symbols", "impact_analysis", "find_symbol_usages", "trace_entry_points"} {
 		if !names[expected] {
 			t.Errorf("missing tool: %s", expected)
 		}
@@ -239,6 +239,116 @@ func TestImpactAnalysis(t *testing.T) {
 	// Result may or may not contain impacted files depending on depgraph resolution
 	if !strings.Contains(result, "service.go") {
 		t.Errorf("expected file name in results, got: %s", result)
+	}
+}
+
+func TestFindSymbolUsages(t *testing.T) {
+	dir := setupTestRepo(t)
+	srv, err := BuildCodebaseServer(dir)
+	if err != nil {
+		t.Fatalf("BuildCodebaseServer: %v", err)
+	}
+
+	result, err := srv.HandleToolCall("find_symbol_usages", map[string]interface{}{
+		"symbol": "NewService",
+	})
+	if err != nil {
+		t.Fatalf("find_symbol_usages error: %v", err)
+	}
+	if !strings.Contains(result, "Definitions:") {
+		t.Errorf("expected Definitions section, got: %s", result)
+	}
+	if !strings.Contains(result, "NewService") {
+		t.Errorf("expected NewService in results, got: %s", result)
+	}
+	if !strings.Contains(result, "Referenced in:") {
+		t.Errorf("expected Referenced in section, got: %s", result)
+	}
+}
+
+func TestFindSymbolUsagesNoDefinition(t *testing.T) {
+	dir := setupTestRepo(t)
+	srv, err := BuildCodebaseServer(dir)
+	if err != nil {
+		t.Fatalf("BuildCodebaseServer: %v", err)
+	}
+
+	result, err := srv.HandleToolCall("find_symbol_usages", map[string]interface{}{
+		"symbol": "NonExistentSymbol",
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	// Should not have a Definitions section when symbol not found
+	if strings.Contains(result, "Definitions:") {
+		t.Errorf("should not have Definitions for unknown symbol, got: %s", result)
+	}
+}
+
+func TestFindSymbolUsagesMissingArg(t *testing.T) {
+	srv := &CodebaseServer{}
+	_, err := srv.HandleToolCall("find_symbol_usages", map[string]interface{}{})
+	if err == nil {
+		t.Error("find_symbol_usages should require symbol")
+	}
+}
+
+func TestTraceEntryPoints(t *testing.T) {
+	dir := setupTestRepo(t)
+	srv, err := BuildCodebaseServer(dir)
+	if err != nil {
+		t.Fatalf("BuildCodebaseServer: %v", err)
+	}
+
+	// service.go should be reachable from main.go (which is a root)
+	result, err := srv.HandleToolCall("trace_entry_points", map[string]interface{}{
+		"file": "service.go",
+	})
+	if err != nil {
+		t.Fatalf("trace_entry_points error: %v", err)
+	}
+	if !strings.Contains(result, "service.go") {
+		t.Errorf("expected service.go in results, got: %s", result)
+	}
+}
+
+func TestTraceEntryPointsMissingArg(t *testing.T) {
+	srv := &CodebaseServer{}
+	_, err := srv.HandleToolCall("trace_entry_points", map[string]interface{}{})
+	if err == nil {
+		t.Error("trace_entry_points should require file")
+	}
+}
+
+func TestTraceEntryPointsNilGraph(t *testing.T) {
+	srv := &CodebaseServer{}
+	result, err := srv.HandleToolCall("trace_entry_points", map[string]interface{}{"file": "test.go"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "not available") {
+		t.Errorf("expected 'not available' for nil graph, got: %s", result)
+	}
+}
+
+func TestClassifyEntryPoint(t *testing.T) {
+	tests := []struct {
+		path   string
+		expect string
+	}{
+		{"cmd/server/main.go", "CLI"},
+		{"internal/api/handler.go", "API"},
+		{"src/pages/index.tsx", "Web"},
+		{"mobile/ios/App.swift", "Mobile"},
+		{"desktop/electron/main.js", "Desktop"},
+		{"internal/mcp/server.go", "MCP"},
+		{"internal/utils/helper.go", ""},
+	}
+	for _, tt := range tests {
+		got := classifyEntryPoint(tt.path)
+		if got != tt.expect {
+			t.Errorf("classifyEntryPoint(%q) = %q, want %q", tt.path, got, tt.expect)
+		}
 	}
 }
 

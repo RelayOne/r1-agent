@@ -397,6 +397,8 @@ func TestDiscoveryPromptsIncludeMCPTools(t *testing.T) {
 		"search_content",
 		"get_file_symbols",
 		"impact_analysis",
+		"find_symbol_usages",
+		"trace_entry_points",
 	}
 
 	discovery := BuildMissionDiscoveryPrompt(ctx)
@@ -410,6 +412,13 @@ func TestDiscoveryPromptsIncludeMCPTools(t *testing.T) {
 	for _, tool := range mcpTools {
 		if !strings.Contains(validate, tool) {
 			t.Errorf("validate discovery prompt should reference MCP tool %q", tool)
+		}
+	}
+
+	execute := BuildMissionExecutePrompt(ctx, "task", nil)
+	for _, tool := range mcpTools {
+		if !strings.Contains(execute, tool) {
+			t.Errorf("execute prompt should reference MCP tool %q", tool)
 		}
 	}
 }
@@ -430,6 +439,34 @@ func TestDiscoveryPromptsAntiRationalization(t *testing.T) {
 		if !strings.Contains(validate, phrase) {
 			t.Errorf("validate prompt should contain anti-rationalization phrase %q", phrase)
 		}
+	}
+}
+
+func TestValidatePromptIncludesToolsSection(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionValidatePrompt(ctx)
+
+	for _, tool := range []string{"Read", "Glob", "Grep", "Bash"} {
+		if !strings.Contains(prompt, tool) {
+			t.Errorf("validate prompt should reference tool %q", tool)
+		}
+	}
+	if !strings.Contains(prompt, "Codebase Tools") {
+		t.Error("validate prompt should have Codebase Tools section")
+	}
+}
+
+func TestConsensusPromptIncludesToolsSection(t *testing.T) {
+	ctx := testContext()
+	prompt := BuildMissionConsensusPrompt(ctx, `{"verdict":"complete"}`)
+
+	for _, tool := range []string{"Read", "Glob", "Grep", "Bash"} {
+		if !strings.Contains(prompt, tool) {
+			t.Errorf("consensus prompt should reference tool %q", tool)
+		}
+	}
+	if !strings.Contains(prompt, "Codebase Tools") {
+		t.Error("consensus prompt should have Codebase Tools section")
 	}
 }
 

@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -311,6 +312,7 @@ func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 		} else if deps.RepoRoot != "" {
 			// Fallback: Deterministic multi-signal search
 			// Only used when DiscoveryFn is not configured.
+			log.Printf("[mission] %s: agentic discovery disabled, using deterministic fallback", m.ID)
 			exts := []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java",
 				".css", ".scss", ".html", ".vue", ".svelte", ".yaml", ".yml", ".json"}
 

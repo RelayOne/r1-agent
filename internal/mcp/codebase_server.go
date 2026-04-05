@@ -9,6 +9,8 @@
 //   - search_content: Semantic content search across the codebase (via tfidf)
 //   - get_file_symbols: List all symbols defined in a specific file
 //   - impact_analysis: Compute the transitive set of files affected by a change
+//   - find_symbol_usages: Find all consumer files that reference a symbol
+//   - trace_entry_points: Find all entry points (roots) that can reach a file
 //
 // These tools give the model structured access to the codebase during agentic
 // discovery and validation loops, replacing the need for grep/find heuristics
@@ -21,6 +23,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/depgraph"
@@ -130,6 +134,29 @@ func (s *CodebaseServer) ToolDefinitions() []ToolDefinition {
 				"required": ["file"]
 			}`),
 		},
+		{
+			Name:        "find_symbol_usages",
+			Description: "Find all files that reference a symbol (function, type, class). Shows where a symbol is consumed across the codebase, with context about what each consuming file defines. Essential for tracing producer/consumer relationships.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"symbol": {"type": "string", "description": "Exact symbol name to find usages of"},
+					"limit": {"type": "integer", "description": "Maximum results (default 20)", "default": 20}
+				},
+				"required": ["symbol"]
+			}`),
+		},
+		{
+			Name:        "trace_entry_points",
+			Description: "Trace all entry points (roots) that can reach a given file through the dependency graph. Shows the dependency chain from each root to the target file. Essential for determining which surfaces (API, CLI, web, etc.) can trigger code in a file.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"file": {"type": "string", "description": "File path relative to repo root"}
+				},
+				"required": ["file"]
+			}`),
+		},
 	}
 }
 
@@ -146,6 +173,10 @@ func (s *CodebaseServer) HandleToolCall(toolName string, args map[string]interfa
 		return s.handleGetFileSymbols(args)
 	case "impact_analysis":
 		return s.handleImpactAnalysis(args)
+	case "find_symbol_usages":
+		return s.handleFindSymbolUsages(args)
+	case "trace_entry_points":
+		return s.handleTraceEntryPoints(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -333,6 +364,224 @@ func (s *CodebaseServer) handleImpactAnalysis(args map[string]interface{}) (stri
 		sb.WriteByte('\n')
 	}
 	return sb.String(), nil
+}
+
+func (s *CodebaseServer) handleFindSymbolUsages(args map[string]interface{}) (string, error) {
+	symbol, _ := args["symbol"].(string)
+	if symbol == "" {
+		return "", fmt.Errorf("symbol is required")
+	}
+
+	limit := 20
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+
+	if s.symIdx == nil {
+		return "Symbol index not available", nil
+	}
+
+	// Find the definition(s) of this symbol
+	defs := s.symIdx.Lookup(symbol)
+
+	var sb strings.Builder
+	if len(defs) > 0 {
+		sb.WriteString("Definitions:\n")
+		for _, d := range defs {
+			fmt.Fprintf(&sb, "  %s %s (%s:%d)", d.Kind, d.Name, d.File, d.Line)
+			if d.Parent != "" {
+				fmt.Fprintf(&sb, " [parent: %s]", d.Parent)
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Build set of files where the symbol is defined to exclude them
+	defFiles := make(map[string]bool)
+	for _, d := range defs {
+		defFiles[d.File] = true
+	}
+
+	// Search content for files that reference this symbol
+	if s.tfidfIdx != nil {
+		results := s.tfidfIdx.SearchWithContext(symbol, limit*2)
+		sb.WriteString("Referenced in:\n")
+		count := 0
+		for _, r := range results {
+			if defFiles[r.Path] {
+				continue
+			}
+			fmt.Fprintf(&sb, "  %.3f  %s", r.Score, r.Path)
+			// Show what this consumer file defines
+			if syms := s.symIdx.InFile(r.Path); len(syms) > 0 {
+				var exported []string
+				for _, sym := range syms {
+					if sym.Exported && len(exported) < 3 {
+						exported = append(exported, string(sym.Kind)+" "+sym.Name)
+					}
+				}
+				if len(exported) > 0 {
+					fmt.Fprintf(&sb, "  [defines: %s]", strings.Join(exported, ", "))
+				}
+			}
+			sb.WriteByte('\n')
+			count++
+			if count >= limit {
+				break
+			}
+		}
+		if count == 0 {
+			sb.WriteString("  (no consumer files found)\n")
+		}
+	} else {
+		sb.WriteString("Content search index not available\n")
+	}
+
+	return sb.String(), nil
+}
+
+func (s *CodebaseServer) handleTraceEntryPoints(args map[string]interface{}) (string, error) {
+	file, _ := args["file"].(string)
+	if file == "" {
+		return "", fmt.Errorf("file is required")
+	}
+
+	if s.depGraph == nil {
+		return "Dependency graph not available", nil
+	}
+
+	roots := s.depGraph.Roots()
+	rootSet := make(map[string]bool, len(roots))
+	for _, r := range roots {
+		rootSet[r] = true
+	}
+
+	// BFS backward from the target file, recording the parent at each step
+	// so we can reconstruct paths from roots to the target.
+	parent := map[string]string{file: ""}
+	queue := []string{file}
+
+	// Build reverse adjacency for BFS
+	rev := make(map[string][]string)
+	for _, dep := range s.depGraph.Dependents(file) {
+		rev[file] = append(rev[file], dep)
+	}
+	// We need reverse edges for all discovered nodes, so compute them once
+	// by iterating all nodes. (depGraph.Dependents scans all edges anyway.)
+	allNodes := s.depGraph.Roots() // just to get graph populated
+	_ = allNodes
+
+	visited := map[string]bool{file: true}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		for _, dep := range s.depGraph.Dependents(current) {
+			if !visited[dep] {
+				visited[dep] = true
+				parent[dep] = current
+				queue = append(queue, dep)
+			}
+		}
+	}
+
+	// Collect paths from roots that can reach this file
+	type entryPath struct {
+		root string
+		path []string
+	}
+	var entries []entryPath
+	for node := range visited {
+		if rootSet[node] && node != file {
+			// Reconstruct path from this root to the target
+			var chain []string
+			cur := node
+			for cur != "" {
+				chain = append(chain, cur)
+				cur = parent[cur]
+			}
+			entries = append(entries, entryPath{root: node, path: chain})
+		}
+	}
+
+	// Also check if the file itself is a root
+	if rootSet[file] {
+		entries = append(entries, entryPath{root: file, path: []string{file}})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].root < entries[j].root
+	})
+
+	if len(entries) == 0 {
+		return fmt.Sprintf("No entry points found that can reach %s", file), nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Entry points that reach %s (%d):\n\n", file, len(entries))
+	for _, e := range entries {
+		// Classify the entry point by name heuristics
+		surface := classifyEntryPoint(e.root)
+		fmt.Fprintf(&sb, "  %s", e.root)
+		if surface != "" {
+			fmt.Fprintf(&sb, " [%s]", surface)
+		}
+		// Show key symbols in the entry point
+		if s.symIdx != nil {
+			syms := s.symIdx.InFile(e.root)
+			var names []string
+			for _, sym := range syms {
+				if sym.Exported && len(names) < 3 {
+					names = append(names, sym.Name)
+				}
+			}
+			if len(names) > 0 {
+				fmt.Fprintf(&sb, " {%s}", strings.Join(names, ", "))
+			}
+		}
+		sb.WriteString("\n")
+		// Show the dependency chain
+		if len(e.path) > 1 {
+			sb.WriteString("    chain: ")
+			for i, p := range e.path {
+				if i > 0 {
+					sb.WriteString(" → ")
+				}
+				sb.WriteString(filepath.Base(p))
+			}
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String(), nil
+}
+
+// classifyEntryPoint guesses the surface type from filename patterns.
+func classifyEntryPoint(path string) string {
+	base := strings.ToLower(filepath.Base(path))
+	dir := strings.ToLower(filepath.Dir(path))
+
+	// Check most specific directory patterns first, then fall back to name heuristics.
+	switch {
+	case strings.Contains(base, "mcp") || strings.Contains(dir, "mcp"):
+		return "MCP"
+	case strings.Contains(dir, "mobile") || strings.Contains(dir, "ios") ||
+		strings.Contains(dir, "android"):
+		return "Mobile"
+	case strings.Contains(dir, "desktop") || strings.Contains(dir, "electron"):
+		return "Desktop"
+	case strings.Contains(base, "app.tsx") || strings.Contains(base, "app.jsx") ||
+		strings.Contains(base, "index.html") || strings.Contains(dir, "pages") ||
+		strings.Contains(dir, "components"):
+		return "Web"
+	case strings.Contains(base, "server") || strings.Contains(base, "handler") ||
+		strings.Contains(base, "route") || strings.Contains(dir, "api"):
+		return "API"
+	case strings.Contains(base, "main") || strings.HasSuffix(base, "_cmd.go") || strings.Contains(dir, "cmd"):
+		return "CLI"
+	default:
+		return ""
+	}
 }
 
 // ServeStdio runs the MCP server on stdin/stdout using JSON-RPC 2.0.
