@@ -215,6 +215,17 @@ func BuildMissionExecutePrompt(ctx MissionContext, taskDescription string, verif
 5. Run build and test commands to verify your work before declaring done.
 6. If you encounter a blocker you cannot resolve, explain it clearly — do not silently skip it.
 
+## Codebase Tools
+You have MCP tools for understanding the codebase while implementing:
+- **search_symbols**: Find existing functions/types to reuse or extend
+- **get_dependencies**: See what a file imports and what depends on it
+- **search_content**: Find related code by concept
+- **get_file_symbols**: See what a file exports before modifying it
+- **impact_analysis**: Check what will break if you change a file
+
+Use these BEFORE writing code to understand existing patterns.
+Use them AFTER writing code to verify you haven't broken consumers.
+
 ## Output Format
 When you are done, list every file you created or modified:
 FILE: <path>

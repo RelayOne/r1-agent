@@ -817,3 +817,154 @@ func TestValidateHandlerFullRulesWithoutDiscoveryFn(t *testing.T) {
 		t.Error("full mode should flag TODO markers")
 	}
 }
+
+// --- Full Pipeline Integration Test ---
+
+func TestFullPipelineWithDiscovery(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	m := &Mission{
+		ID:     "m-pipeline",
+		Title:  "Add JWT Auth",
+		Intent: "Add JWT authentication to the API with rate limiting",
+		Criteria: []Criterion{
+			{ID: "c-1", Description: "JWT tokens are issued on login"},
+			{ID: "c-2", Description: "Rate limiting prevents abuse"},
+		},
+	}
+	if err := store.Create(m); err != nil {
+		t.Fatal(err)
+	}
+
+	repoDir := t.TempDir()
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+
+	metrics := NewMetrics()
+
+	// Phase 1: Research with DiscoveryFn
+	researchHandler := NewResearchHandler(HandlerDeps{
+		Store:   store,
+		RepoRoot: repoDir,
+		Metrics: metrics,
+		DiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "FILE: internal/auth/jwt.go\nFILE: internal/auth/handler.go\nGAP: No auth middleware exists yet\n", nil
+		},
+		RecordResearchFn: func(missionID, topic, content string) error {
+			return nil // skip persistence in this test
+		},
+	})
+
+	researchResult, err := researchHandler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	if len(researchResult.FilesChanged) == 0 {
+		t.Error("research should find relevant files")
+	}
+	// Discovery should create a gap
+	gaps, _ := store.OpenGaps(m.ID)
+	if len(gaps) == 0 {
+		t.Error("research discovery should create gaps")
+	}
+
+	// Phase 2: Plan
+	store.Advance(m.ID, PhasePlanning, "research complete", "test")
+	m, _ = store.Get(m.ID)
+
+	planHandler := NewPlanHandler(HandlerDeps{
+		Store:   store,
+		Metrics: metrics,
+	})
+	planResult, err := planHandler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if planResult.Artifacts["prompt"] == "" {
+		t.Error("plan should produce a prompt artifact")
+	}
+
+	// Phase 3: Execute
+	store.Advance(m.ID, PhaseExecuting, "plan ready", "test")
+	m, _ = store.Get(m.ID)
+
+	var executedPrompt string
+	executeHandler := NewExecuteHandler(HandlerDeps{
+		Store:   store,
+		Metrics: metrics,
+		ExecuteFn: func(ctx context.Context, m *Mission, prompt, taskDesc string) ([]string, error) {
+			executedPrompt = prompt
+			return []string{"internal/auth/jwt.go", "internal/auth/jwt_test.go"}, nil
+		},
+	})
+	execResult, err := executeHandler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(execResult.FilesChanged) != 2 {
+		t.Errorf("execute should report 2 files changed, got %d", len(execResult.FilesChanged))
+	}
+	// Execute prompt should contain mission context
+	if !strings.Contains(executedPrompt, "JWT") {
+		t.Error("execute prompt should contain mission intent")
+	}
+	if !strings.Contains(executedPrompt, "search_symbols") {
+		t.Error("execute prompt should mention MCP codebase tools")
+	}
+
+	// Phase 4: Validate with Layer 4
+	store.Advance(m.ID, PhaseValidating, "execution done", "test")
+	m, _ = store.Get(m.ID)
+
+	validateHandler := NewValidateHandler(HandlerDeps{
+		Store:     store,
+		Validator: convergence.NewValidator(),
+		RepoRoot:  repoDir,
+		Metrics:   metrics,
+		ValidateDiscoveryFn: func(ctx context.Context, m *Mission, prompt string) (string, error) {
+			return "GAP: Rate limiting not implemented yet\nFIXED: No auth middleware exists yet\n", nil
+		},
+	})
+	valResult, err := validateHandler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	// Should have resolved the old gap and added a new one
+	if !strings.Contains(valResult.Summary, "discovery-validation") {
+		t.Errorf("validate summary should mention discovery-validation: %q", valResult.Summary)
+	}
+	if !strings.Contains(valResult.Summary, "security-only") {
+		t.Errorf("validate summary should mention security-only mode: %q", valResult.Summary)
+	}
+
+	// Phase 5: Consensus
+	store.Advance(m.ID, PhaseConverged, "validation done", "test")
+	m, _ = store.Get(m.ID)
+
+	consensusHandler := NewConsensusHandler(HandlerDeps{
+		Store:   store,
+		Metrics: metrics,
+		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			return "incomplete", "Rate limiting still missing", []string{"No rate limiter"}, nil
+		},
+	}, []string{"claude", "codex"})
+	consResult, err := consensusHandler(context.Background(), m)
+	if err != nil {
+		t.Fatalf("consensus: %v", err)
+	}
+	if !strings.Contains(consResult.Summary, "incomplete") {
+		t.Errorf("consensus should be incomplete: %q", consResult.Summary)
+	}
+
+	// Verify metrics tracked across all phases
+	snap := metrics.Snapshot()
+	if snap.ResearchQueries == 0 {
+		t.Error("should have recorded research queries")
+	}
+	if snap.ConsensusVotes != 2 {
+		t.Errorf("should have 2 consensus votes, got %d", snap.ConsensusVotes)
+	}
+}
