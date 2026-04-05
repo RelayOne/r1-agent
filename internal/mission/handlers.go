@@ -483,8 +483,21 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 			}
 		}
 
-		summary := fmt.Sprintf("Plan: %d tasks for %d unsatisfied criteria",
-			len(planItems), len(planItems))
+		// Include open gaps from discovery as additional plan items
+		gaps, _ := deps.Store.OpenGaps(m.ID)
+		for _, g := range gaps {
+			planItems = append(planItems, fmt.Sprintf("Fix [%s]: %s", g.Severity, g.Description))
+		}
+
+		criteriaCount := 0
+		for _, c := range m.Criteria {
+			if !c.Satisfied {
+				criteriaCount++
+			}
+		}
+
+		summary := fmt.Sprintf("Plan: %d tasks (%d criteria, %d gaps)",
+			len(planItems), criteriaCount, len(gaps))
 
 		return &PhaseResult{
 			Phase:   PhasePlanning,
