@@ -13,6 +13,9 @@ package chunker
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -63,6 +66,13 @@ func DetectLanguage(path string) Language {
 func ChunkFile(path, content string) []Chunk {
 	lang := DetectLanguage(path)
 	lines := strings.Split(content, "\n")
+
+	// Go files: try AST-based chunking for precise boundaries.
+	if lang == LangGo {
+		if chunks := chunkGoAST(path, content, lines); len(chunks) > 0 {
+			return chunks
+		}
+	}
 
 	var patterns []*regexp.Regexp
 	switch lang {
@@ -177,6 +187,76 @@ var javaPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^(?:public|private|protected)?\s*class\s+(\w+)`),     // class
 	regexp.MustCompile(`^(?:public|private|protected)?\s*interface\s+(\w+)`),  // interface
 	regexp.MustCompile(`^\s+(?:public|private|protected)?\s*\w+\s+(\w+)\s*\(`), // method
+}
+
+// chunkGoAST uses go/parser for precise function/type boundaries.
+func chunkGoAST(path, content string, lines []string) []Chunk {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	if err != nil {
+		return nil
+	}
+
+	type boundary struct {
+		startLine int
+		endLine   int
+		name      string
+		kind      string
+	}
+
+	var bounds []boundary
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			start := fset.Position(d.Pos()).Line
+			end := fset.Position(d.End()).Line
+			kind := "function"
+			name := d.Name.Name
+			if d.Recv != nil {
+				kind = "method"
+			}
+			bounds = append(bounds, boundary{startLine: start, endLine: end, name: name, kind: kind})
+		case *ast.GenDecl:
+			if d.Tok == token.TYPE {
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					start := fset.Position(d.Pos()).Line
+					end := fset.Position(d.End()).Line
+					bounds = append(bounds, boundary{startLine: start, endLine: end, name: ts.Name.Name, kind: "type"})
+				}
+			}
+		}
+	}
+
+	if len(bounds) == 0 {
+		return nil
+	}
+
+	var chunks []Chunk
+	for _, b := range bounds {
+		startIdx := b.startLine - 1
+		endIdx := b.endLine - 1
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if endIdx >= len(lines) {
+			endIdx = len(lines) - 1
+		}
+		c := strings.Join(lines[startIdx:endIdx+1], "\n")
+		chunks = append(chunks, Chunk{
+			File:      filepath.Base(path),
+			Name:      b.name,
+			Kind:      b.kind,
+			StartLine: b.startLine,
+			EndLine:   b.endLine,
+			Content:   c,
+			Tokens:    estimateTokens(c),
+		})
+	}
+	return chunks
 }
 
 func chunkBySyntax(path string, lines []string, patterns []*regexp.Regexp, lang Language) []Chunk {

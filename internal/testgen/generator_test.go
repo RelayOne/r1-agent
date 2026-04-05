@@ -191,6 +191,76 @@ func TestParseReturns(t *testing.T) {
 	}
 }
 
+func TestParseGoFuncComplexSignatures(t *testing.T) {
+	source := `package example
+
+func Process(data map[string][]int, opts *Config) ([]Result, error) {
+	return nil, nil
+}
+
+func (s *Server) Handle(ctx context.Context, req *http.Request) (*Response, error) {
+	return nil, nil
+}
+
+func Variadic(parts ...string) string {
+	return ""
+}
+
+func MultiReturn() (int, string, error) {
+	return 0, "", nil
+}
+
+func NoArgs() {
+}
+`
+	sigs := ParseGoFunc(source)
+	if len(sigs) != 5 {
+		t.Fatalf("expected 5 functions, got %d", len(sigs))
+	}
+
+	// Process: complex params and returns
+	proc := sigs[0]
+	if proc.Name != "Process" {
+		t.Errorf("expected Process, got %s", proc.Name)
+	}
+	if len(proc.Params) != 2 {
+		t.Errorf("Process params: expected 2, got %d", len(proc.Params))
+	}
+	if proc.Params[0].Type != "map[string][]int" {
+		t.Errorf("Process param 0 type: expected map[string][]int, got %s", proc.Params[0].Type)
+	}
+	if proc.Params[1].Type != "*Config" {
+		t.Errorf("Process param 1 type: expected *Config, got %s", proc.Params[1].Type)
+	}
+	if len(proc.Returns) != 2 || proc.Returns[0] != "[]Result" || proc.Returns[1] != "error" {
+		t.Errorf("Process returns: %v", proc.Returns)
+	}
+
+	// Handle: method with receiver
+	handle := sigs[1]
+	if handle.Receiver != "Server" {
+		t.Errorf("Handle receiver: expected Server, got %s", handle.Receiver)
+	}
+
+	// Variadic
+	variadic := sigs[2]
+	if len(variadic.Params) != 1 || variadic.Params[0].Type != "...string" {
+		t.Errorf("Variadic params: %+v", variadic.Params)
+	}
+
+	// MultiReturn
+	multi := sigs[3]
+	if len(multi.Returns) != 3 {
+		t.Errorf("MultiReturn: expected 3 returns, got %d", len(multi.Returns))
+	}
+
+	// NoArgs
+	noArgs := sigs[4]
+	if len(noArgs.Params) != 0 || len(noArgs.Returns) != 0 {
+		t.Errorf("NoArgs should have no params/returns: %+v", noArgs)
+	}
+}
+
 func TestEdgeCaseGeneration(t *testing.T) {
 	sig := FuncSig{
 		Name:   "Greet",

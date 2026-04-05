@@ -10,6 +10,8 @@
 package testselect
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -249,6 +251,29 @@ func matchesImport(dir, imp string) bool {
 }
 
 func extractImports(source string) []string {
+	if imports := extractImportsAST(source); imports != nil {
+		return imports
+	}
+	return extractImportsRegex(source)
+}
+
+// extractImportsAST uses go/parser for accurate import extraction.
+func extractImportsAST(source string) []string {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "source.go", source, parser.ImportsOnly)
+	if err != nil {
+		return nil
+	}
+	var imports []string
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		imports = append(imports, path)
+	}
+	return imports
+}
+
+// extractImportsRegex is the fallback for unparseable source.
+func extractImportsRegex(source string) []string {
 	var imports []string
 	lines := strings.Split(source, "\n")
 	inBlock := false

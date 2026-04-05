@@ -13,6 +13,9 @@ package testgen
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"regexp"
 	"strings"
 )
@@ -121,7 +124,137 @@ func GoTest(sig FuncSig) string {
 }
 
 // ParseGoFunc extracts function signatures from Go source code.
+// Uses go/parser AST for accurate extraction, falling back to regex
+// if AST parsing fails.
 func ParseGoFunc(source string) []FuncSig {
+	if sigs := parseGoFuncAST(source); sigs != nil {
+		return sigs
+	}
+	return parseGoFuncRegex(source)
+}
+
+// parseGoFuncAST uses go/parser for accurate function signature extraction.
+func parseGoFuncAST(source string) []FuncSig {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "source.go", source, parser.ParseComments)
+	if err != nil {
+		return nil
+	}
+
+	var sigs []FuncSig
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok {
+			sig := FuncSig{
+				Name: fn.Name.Name,
+			}
+			if fn.Recv != nil && len(fn.Recv.List) > 0 {
+				sig.Receiver = exprToTypeName(fn.Recv.List[0].Type)
+			}
+			if fn.Type.Params != nil {
+				sig.Params = fieldListToParams(fn.Type.Params)
+			}
+			if fn.Type.Results != nil {
+				sig.Returns = fieldListToReturns(fn.Type.Results)
+			}
+			sig.IsExported = sig.Name[0] >= 'A' && sig.Name[0] <= 'Z'
+			sigs = append(sigs, sig)
+		}
+	}
+	return sigs
+}
+
+// exprToTypeName extracts the base type name from an AST expression,
+// stripping pointer indirection.
+func exprToTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return exprToTypeName(t.X)
+	case *ast.SelectorExpr:
+		return exprToString(t.X) + "." + t.Sel.Name
+	default:
+		return exprToString(expr)
+	}
+}
+
+// exprToString renders an AST expression as Go source text.
+func exprToString(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return "*" + exprToString(t.X)
+	case *ast.SelectorExpr:
+		return exprToString(t.X) + "." + t.Sel.Name
+	case *ast.ArrayType:
+		if t.Len == nil {
+			return "[]" + exprToString(t.Elt)
+		}
+		return "[" + exprToString(t.Len) + "]" + exprToString(t.Elt)
+	case *ast.MapType:
+		return "map[" + exprToString(t.Key) + "]" + exprToString(t.Value)
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.FuncType:
+		return "func(...)"
+	case *ast.ChanType:
+		return "chan " + exprToString(t.Value)
+	case *ast.Ellipsis:
+		return "..." + exprToString(t.Elt)
+	case *ast.BasicLit:
+		return t.Value
+	case *ast.IndexExpr:
+		return exprToString(t.X) + "[" + exprToString(t.Index) + "]"
+	default:
+		return "any"
+	}
+}
+
+// fieldListToParams converts AST field list to Param slice.
+func fieldListToParams(fl *ast.FieldList) []Param {
+	var params []Param
+	argIdx := 0
+	for _, field := range fl.List {
+		typStr := exprToString(field.Type)
+		if len(field.Names) == 0 {
+			params = append(params, Param{
+				Name: fmt.Sprintf("arg%d", argIdx),
+				Type: typStr,
+			})
+			argIdx++
+		} else {
+			for _, name := range field.Names {
+				params = append(params, Param{
+					Name: name.Name,
+					Type: typStr,
+				})
+				argIdx++
+			}
+		}
+	}
+	return params
+}
+
+// fieldListToReturns converts AST field list to return type strings.
+func fieldListToReturns(fl *ast.FieldList) []string {
+	var returns []string
+	for _, field := range fl.List {
+		typStr := exprToString(field.Type)
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			returns = append(returns, typStr)
+		}
+	}
+	return returns
+}
+
+// parseGoFuncRegex is the regex fallback for non-parseable source.
+func parseGoFuncRegex(source string) []FuncSig {
 	var sigs []FuncSig
 
 	for _, m := range goFuncRegex.FindAllStringSubmatch(source, -1) {
@@ -130,23 +263,17 @@ func ParseGoFunc(source string) []FuncSig {
 		}
 		if m[1] != "" {
 			sig.Receiver = strings.TrimSpace(m[1])
-			// Extract type from receiver
 			parts := strings.Fields(sig.Receiver)
 			if len(parts) >= 2 {
 				sig.Receiver = strings.TrimPrefix(parts[1], "*")
 			}
 		}
-
-		// Parse params
 		if m[3] != "" {
 			sig.Params = parseParams(m[3])
 		}
-
-		// Parse returns
 		if m[4] != "" {
 			sig.Returns = parseReturns(m[4])
 		}
-
 		sig.IsExported = sig.Name[0] >= 'A' && sig.Name[0] <= 'Z'
 		sigs = append(sigs, sig)
 	}
