@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ericmacdougall/stoke/internal/app"
+	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
@@ -357,6 +358,13 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func main() {
+	// Initialize structured logging from STOKE_LOG_LEVEL env (default: "info").
+	logLevel := os.Getenv("STOKE_LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	logging.Init(logLevel, os.Stderr)
+
 	if len(os.Args) < 2 {
 		// No args: launch the interactive REPL
 		launchREPL()

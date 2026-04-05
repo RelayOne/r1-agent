@@ -15,6 +15,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/model"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
 	"github.com/ericmacdougall/stoke/internal/scan"
@@ -131,6 +132,7 @@ func (r Result) Render() string {
 // Run executes the full workflow: creates a worktree, runs plan/execute/verify phases with retries, and merges on success.
 func (e Engine) Run(ctx context.Context) (Result, error) {
 	name := firstNonEmpty(e.WorktreeName, string(e.TaskType)+"-"+slugFromTask(e.Task))
+	log := logging.Task("workflow", name)
 	var handle worktree.Handle
 	if e.DryRun {
 		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-dryrun-"+name)
@@ -225,6 +227,8 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		log.Info("starting attempt", "attempt", attempt, "max", maxAttempts)
+
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."
 		// The learning is in the INSTRUCTIONS (retry brief), not in code state.
 		if attempt > 1 {
@@ -360,6 +364,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 
 		// State: agent CLAIMS done (not verified yet -- model proposes, harness decides)
 		attemptStart := time.Now().Add(-time.Duration(execResult.DurationMs) * time.Millisecond)
+		logging.Attempt(log, name, attempt, true, execResult.DurationMs)
 
 		result.Steps = append(result.Steps, StepResult{
 			Phase: fmt.Sprintf("execute (attempt %d)", attempt), Engine: execRunnerName, Command: execResult.Prepared,
@@ -540,6 +545,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				return result, err
 			}
 
+			log.Info("task completed successfully", "attempt", attempt, "cost_usd", result.TotalCostUSD)
+			logging.Cost(log, name, result.TotalCostUSD, execRunnerName)
+
 			// Record successful completion as a wisdom pattern.
 			if e.Wisdom != nil && attempt > 1 {
 				e.Wisdom.Record(e.Task, wisdom.Learning{
@@ -557,10 +565,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		if analysis == nil {
 			break
 		}
+		log.Warn("verification failed", "attempt", attempt, "class", string(analysis.Class), "summary", analysis.Summary)
 
 		// Compute failure fingerprint for dedup across retries and tasks.
 		fp := failure.Compute(analysis)
 		if matched, count := failure.MatchHistory(fp, priorFingerprints); matched != nil && count > 0 {
+			log.Error("fingerprint dedup: same failure repeated", "pattern", fp.Pattern, "count", count+1)
 			_ = e.advanceState(taskstate.Failed,
 				fmt.Sprintf("same failure repeated (%s, seen %dx) -- escalating to human", fp.Pattern, count+1))
 			e.Worktrees.Cleanup(ctx, handle)
