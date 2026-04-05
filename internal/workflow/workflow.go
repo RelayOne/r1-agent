@@ -18,6 +18,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/model"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
 	"github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/verify"
@@ -608,8 +609,21 @@ func (e Engine) runCrossModelReview(
 
 	var verifyResult engine.RunResult
 	var reviewErr error
+	var reviewReadCount int // track how many Read tool uses the reviewer made
 	triedReviewPools := map[string]bool{}
 	maxReviewRotations := 5
+
+	// Wrap OnEvent to count Read tool uses during review
+	reviewOnEvent := func(ev stream.Event) {
+		for _, tu := range ev.ToolUses {
+			if tu.Name == "Read" {
+				reviewReadCount++
+			}
+		}
+		if e.OnEvent != nil {
+			e.OnEvent(ev)
+		}
+	}
 
 	for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
 		_ = reviewRot // used only as loop counter
@@ -639,7 +653,7 @@ func (e Engine) runCrossModelReview(
 			}
 		}
 
-		verifyResult, reviewErr = verifyRunner.Run(ctx, verifySpec, e.OnEvent)
+		verifyResult, reviewErr = verifyRunner.Run(ctx, verifySpec, reviewOnEvent)
 
 		if verifyPoolID != "" && e.Pools != nil {
 			rateLimited := verifyResult.Subtype == "rate_limited"
@@ -673,6 +687,20 @@ func (e Engine) runCrossModelReview(
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "review returned invalid JSON")
 		return nil, fmt.Errorf("cross-model review returned invalid JSON: %v", parseErr)
+	}
+
+	// Review quality gate: reviewer must have used Read tools proportional
+	// to the number of changed files. A reviewer that reads nothing is invalid.
+	minReads := len(preReviewFiles)
+	if minReads < 1 {
+		minReads = 1
+	}
+	if reviewReadCount < minReads {
+		evidence.ReviewPass = false
+		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: %d Read tool uses, need at least %d (one per changed file)", reviewReadCount, minReads))
+		return nil, fmt.Errorf("cross-model review quality gate failed: %d Read uses < %d changed files", reviewReadCount, minReads)
 	}
 
 	evidence.ReviewPass = verdict.Pass
