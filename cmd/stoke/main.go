@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,6 +35,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/tui"
 	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
@@ -152,7 +155,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		StartedAt: time.Now(),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, cfg.Timeout)
 	defer cancel()
 
 	// Create harness-owned plan state
@@ -169,6 +174,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// The merge mutex MUST be shared across all parallel tasks to prevent
 	// concurrent ref mutations that corrupt the repository.
 	sharedWorktrees := worktree.NewManager(absRepo)
+	wisdomStore := wisdom.NewStore()
 
 	results, err := sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 		if task.Status == plan.StatusDone {
@@ -195,6 +201,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			Pools:            pools,
 			Worktrees:        sharedWorktrees,
 			State:            ts,
+			Wisdom:           wisdomStore,
 			BuildCommand:     cfg.BuildCommand,
 			TestCommand:      cfg.TestCommand,
 			LintCommand:      cfg.LintCommand,
@@ -323,6 +330,28 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	}
 
 	return buildReport, nil
+}
+
+// signalContext returns a context that is cancelled on SIGINT or SIGTERM.
+// The returned cancel function should be deferred by the caller.
+func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sigCh:
+			fmt.Fprintf(os.Stderr, "\nstoke: received signal, shutting down gracefully...\n")
+			cancel()
+			// Second signal: hard exit.
+			<-sigCh
+			fmt.Fprintf(os.Stderr, "stoke: forced exit\n")
+			os.Exit(1)
+		case <-ctx.Done():
+		}
+		signal.Stop(sigCh)
+	}()
+	return ctx, cancel
 }
 
 func main() {
@@ -483,7 +512,9 @@ func runCmd(args []string) {
 		fatal("stoke init: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
 	defer cancel()
 
 	ui.TaskStart("task", *task, "default")
@@ -699,18 +730,21 @@ func buildCmd(args []string) {
 			checkResume(store, p)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 
-			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			sigCtx, sigCancel := signalContext(context.Background())
+			defer sigCancel()
+			ctx, cancel := context.WithTimeout(sigCtx, *timeout)
 			defer cancel()
 
 			sched := scheduler.New(*workers)
 			interactiveWorktrees := worktree.NewManager(absRepo)
+			wisdomStore := wisdom.NewStore()
 			sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 				if task.Status == plan.StatusDone {
 					return scheduler.TaskResult{TaskID: task.ID, Success: true}
 				}
 				tui.SendTaskStart(program, task.ID, task.Description, "pool-1")
 				taskStart := time.Now()
-				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), func(ev stream.Event) {
+				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), wisdomStore, func(ev stream.Event) {
 					tui.SendTaskEvent(program, task.ID, ev)
 				})
 				orchestrator, err := app.New(cfg)
@@ -2547,7 +2581,7 @@ func checkResume(store session.SessionStore, p *plan.Plan) {
 }
 
 // buildRunConfig creates an app.RunConfig for a task with the given flags.
-func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, onEvent func(stream.Event)) app.RunConfig {
+func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event)) app.RunConfig {
 	return app.RunConfig{
 		RepoRoot:         absRepo,
 		PolicyPath:       policyPath,
@@ -2564,6 +2598,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		Pools:            pools,
 		Worktrees:        worktrees,
 		State:            state,
+		Wisdom:           wisdomStore,
 		BuildCommand:     buildCmd,
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,

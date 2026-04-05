@@ -48,11 +48,11 @@ type ContextBuilder struct {
 // NewContextBuilder creates a context builder backed by a mission store.
 // The source parameter is optional — pass nil to build context without
 // research enrichment.
-func NewContextBuilder(store *Store, source ContextSource) *ContextBuilder {
+func NewContextBuilder(store *Store, source ContextSource) (*ContextBuilder, error) {
 	if store == nil {
-		panic("mission.NewContextBuilder: store must not be nil")
+		return nil, fmt.Errorf("mission.NewContextBuilder: store must not be nil")
 	}
-	return &ContextBuilder{store: store, source: source}
+	return &ContextBuilder{store: store, source: source}, nil
 }
 
 // ContextConfig controls what sections are included and their budget allocation.

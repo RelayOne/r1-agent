@@ -43,11 +43,11 @@ type Chain struct {
 }
 
 // NewChain creates a handoff chain backed by a mission store.
-func NewChain(store *mission.Store) *Chain {
+func NewChain(store *mission.Store) (*Chain, error) {
 	if store == nil {
-		panic("handoff.NewChain: store must not be nil")
+		return nil, fmt.Errorf("handoff.NewChain: store must not be nil")
 	}
-	return &Chain{store: store}
+	return &Chain{store: store}, nil
 }
 
 // Handoff records a context transfer and returns the ID.

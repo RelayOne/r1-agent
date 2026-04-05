@@ -202,7 +202,12 @@ func New(config Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("open research store: %w", err)
 	}
 
-	chain := handoff.NewChain(mStore)
+	chain, err := handoff.NewChain(mStore)
+	if err != nil {
+		rStore.Close()
+		mStore.Close()
+		return nil, fmt.Errorf("create handoff chain: %w", err)
+	}
 	validator := convergence.NewValidator()
 
 	// Detect project type and capabilities
@@ -440,7 +445,10 @@ func (o *Orchestrator) GetHandoffContext(missionID string, maxTokens int) (strin
 // research findings, and handoff history.
 func (o *Orchestrator) BuildAgentContext(missionID string, config mission.ContextConfig) (string, error) {
 	adapter := &contextAdapter{orch: o}
-	cb := mission.NewContextBuilder(o.store, adapter)
+	cb, err := mission.NewContextBuilder(o.store, adapter)
+	if err != nil {
+		return "", err
+	}
 	return cb.BuildContext(missionID, config)
 }
 
@@ -449,14 +457,17 @@ func (o *Orchestrator) BuildAgentContext(missionID string, config mission.Contex
 // NewRunner creates a fully-wired mission runner with all phase handlers
 // registered. The handlers are configured using the orchestrator's stores,
 // validator, and config callbacks.
-func (o *Orchestrator) NewRunner(config mission.RunnerConfig) *mission.Runner {
+func (o *Orchestrator) NewRunner(config mission.RunnerConfig) (*mission.Runner, error) {
 	return o.NewRunnerForMission(config, "")
 }
 
 // NewRunnerForMission creates a fully-wired runner with the baseline
 // for a specific mission loaded. If missionID is empty, no baseline is used.
-func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionID string) *mission.Runner {
-	runner := mission.NewRunner(o.store, config)
+func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionID string) (*mission.Runner, error) {
+	runner, err := mission.NewRunner(o.store, config)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build context adapter for research/handoff enrichment in prompts
 	var ctxSource mission.ContextSource
@@ -516,14 +527,23 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		deps.Baseline = snap
 	}
 
-	runner.RegisterHandler(mission.PhaseCreated, mission.NewResearchHandler(deps))
-	runner.RegisterHandler(mission.PhaseResearching, mission.NewPlanHandler(deps))
-	runner.RegisterHandler(mission.PhasePlanning, mission.NewExecuteHandler(deps))
-	runner.RegisterHandler(mission.PhaseExecuting, mission.NewDAGExecuteHandler(deps))
-	runner.RegisterHandler(mission.PhaseValidating, mission.NewValidateHandler(deps))
-	runner.RegisterHandler(mission.PhaseConverged, mission.NewConsensusHandler(deps, o.config.ConsensusModels))
+	for _, reg := range []struct {
+		phase   mission.Phase
+		handler mission.PhaseHandler
+	}{
+		{mission.PhaseCreated, mission.NewResearchHandler(deps)},
+		{mission.PhaseResearching, mission.NewPlanHandler(deps)},
+		{mission.PhasePlanning, mission.NewExecuteHandler(deps)},
+		{mission.PhaseExecuting, mission.NewDAGExecuteHandler(deps)},
+		{mission.PhaseValidating, mission.NewValidateHandler(deps)},
+		{mission.PhaseConverged, mission.NewConsensusHandler(deps, o.config.ConsensusModels)},
+	} {
+		if err := runner.RegisterHandler(reg.phase, reg.handler); err != nil {
+			return nil, err
+		}
+	}
 
-	return runner
+	return runner, nil
 }
 
 // GetBaseline returns the pre-mission baseline snapshot for a mission.
@@ -538,7 +558,10 @@ func (o *Orchestrator) GetBaseline(missionID string) *baseline.Snapshot {
 // The runner includes the mission's baseline snapshot so the validate handler
 // can classify failures as pre-existing vs. introduced. Both are blocking.
 func (o *Orchestrator) RunMission(ctx context.Context, missionID string) (*mission.RunSummary, error) {
-	runner := o.NewRunnerForMission(mission.DefaultRunnerConfig(), missionID)
+	runner, err := o.NewRunnerForMission(mission.DefaultRunnerConfig(), missionID)
+	if err != nil {
+		return nil, fmt.Errorf("create runner: %w", err)
+	}
 	return runner.Run(ctx, missionID)
 }
 

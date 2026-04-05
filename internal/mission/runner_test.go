@@ -16,7 +16,10 @@ func newTestRunner(t *testing.T) (*Runner, *Store) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	runner := NewRunner(store, DefaultRunnerConfig())
+	runner, err := NewRunner(store, DefaultRunnerConfig())
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
 	return runner, store
 }
 
@@ -494,27 +497,23 @@ func TestRunSummary(t *testing.T) {
 	}
 }
 
-// --- Nil Store Panics ---
+// --- Nil Store Returns Error ---
 
-func TestNewRunnerPanicsOnNilStore(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("NewRunner(nil) should panic")
-		}
-	}()
-	NewRunner(nil, DefaultRunnerConfig())
+func TestNewRunnerErrorsOnNilStore(t *testing.T) {
+	_, err := NewRunner(nil, DefaultRunnerConfig())
+	if err == nil {
+		t.Error("NewRunner(nil) should return error")
+	}
 }
 
-// --- Nil Handler Panics ---
+// --- Nil Handler Returns Error ---
 
-func TestRegisterNilHandlerPanics(t *testing.T) {
+func TestRegisterNilHandlerErrors(t *testing.T) {
 	runner, _ := newTestRunner(t)
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("RegisterHandler(nil) should panic")
-		}
-	}()
-	runner.RegisterHandler(PhaseCreated, nil)
+	err := runner.RegisterHandler(PhaseCreated, nil)
+	if err == nil {
+		t.Error("RegisterHandler(nil) should return error")
+	}
 }
 
 // --- Resume ---

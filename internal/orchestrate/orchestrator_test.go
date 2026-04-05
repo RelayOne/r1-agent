@@ -379,7 +379,10 @@ func TestRunMissionPhaseHandlersRegistered(t *testing.T) {
 		},
 	}
 
-	runner := orch.NewRunner(config)
+	runner, err := orch.NewRunner(config)
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
 	runner.Run(context.Background(), m.ID)
 
 	// Should have seen at least research and plan phases
@@ -478,7 +481,10 @@ func TestNewRunnerRepoRoot(t *testing.T) {
 	m, _ := orch.CreateMission("JWT", "Add JWT authentication", []string{"Tokens work"})
 
 	// Run research phase which should find jwt.go
-	runner := orch.NewRunner(mission.DefaultRunnerConfig())
+	runner, err := orch.NewRunner(mission.DefaultRunnerConfig())
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
 	// Just advance to researching and run one step
 	orch.Store().Advance(m.ID, mission.PhaseResearching, "test", "test")
 
@@ -633,7 +639,10 @@ func TestBaselinePersistedAndRecovered(t *testing.T) {
 	defer orch2.Close()
 
 	// Use NewRunnerForMission which loads baseline from disk
-	runner := orch2.NewRunnerForMission(mission.DefaultRunnerConfig(), m.ID)
+	runner, err := orch2.NewRunnerForMission(mission.DefaultRunnerConfig(), m.ID)
+	if err != nil {
+		t.Fatalf("NewRunnerForMission: %v", err)
+	}
 	if runner == nil {
 		t.Error("runner should be created")
 	}

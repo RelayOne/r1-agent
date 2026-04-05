@@ -41,7 +41,7 @@ phases:
     mcp_enabled: false
 
 files:
-  protected: [".claude/", ".forge/", "CLAUDE.md", ".env*", "forge.policy.yaml"]
+  protected: [".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"]
 
 verification:
   build: required

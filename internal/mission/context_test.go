@@ -47,7 +47,10 @@ func newTestContextBuilder(t *testing.T) (*ContextBuilder, *Store) {
 		handoff: "## Previous Agent (agent-1)\nImplemented JWT generation. Login endpoint working.\n\n**Pending:**\n- Rate limiting\n- Edge case tests\n",
 	}
 
-	cb := NewContextBuilder(store, source)
+	cb, err := NewContextBuilder(store, source)
+	if err != nil {
+		t.Fatalf("NewContextBuilder: %v", err)
+	}
 	return cb, store
 }
 
@@ -153,7 +156,10 @@ func TestBuildContextNoSource(t *testing.T) {
 	}
 	defer store.Close()
 
-	cb := NewContextBuilder(store, nil) // nil source
+	cb, err := NewContextBuilder(store, nil) // nil source
+	if err != nil {
+		t.Fatalf("NewContextBuilder: %v", err)
+	}
 
 	store.Create(&Mission{
 		ID: "m-nosrc", Title: "No Source", Intent: "test",
@@ -264,13 +270,11 @@ func TestDefaultContextConfig(t *testing.T) {
 
 // --- Nil Store Panics ---
 
-func TestNewContextBuilderPanicsOnNilStore(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("NewContextBuilder(nil) should panic")
-		}
-	}()
-	NewContextBuilder(nil, nil)
+func TestNewContextBuilderErrorsOnNilStore(t *testing.T) {
+	_, err := NewContextBuilder(nil, nil)
+	if err == nil {
+		t.Error("NewContextBuilder(nil) should return error")
+	}
 }
 
 // --- truncateStr ---

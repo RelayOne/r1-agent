@@ -20,6 +20,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
@@ -49,6 +50,7 @@ type Engine struct {
 	CodexHome        string
 	OnEvent          engine.OnEventFunc
 	State            *taskstate.TaskState
+	Wisdom           *wisdom.Store // cross-task learning accumulator (nil = disabled)
 	PlanOnly         bool
 }
 
@@ -206,6 +208,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		prompt := executePhase.Prompt
 		if attempt > 1 && lastFailure != nil {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff)
+		}
+		// Inject cross-task learnings from previous tasks in this session.
+		if e.Wisdom != nil {
+			if wisdomCtx := e.Wisdom.ForPrompt(); wisdomCtx != "" {
+				prompt = prompt + "\n\n" + wisdomCtx
+			}
 		}
 
 		// Run execute phase
@@ -604,6 +612,14 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			if err := e.advanceState(taskstate.Committed, "merged to main by harness"); err != nil {
 				return result, err
 			}
+
+			// Record successful completion as a wisdom pattern.
+			if e.Wisdom != nil && attempt > 1 {
+				e.Wisdom.Record(e.Task, wisdom.Learning{
+					Category:    wisdom.Decision,
+					Description: fmt.Sprintf("succeeded on attempt %d after retry", attempt),
+				})
+			}
 			break
 		}
 
@@ -624,6 +640,18 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		}
 
 		lastFailure = analysis
+
+		// Record failure as a wisdom gotcha for subsequent tasks.
+		if e.Wisdom != nil && analysis != nil {
+			desc := analysis.Summary
+			if analysis.RootCause != "" {
+				desc = analysis.RootCause
+			}
+			e.Wisdom.Record(e.Task, wisdom.Learning{
+				Category:    wisdom.Gotcha,
+				Description: desc,
+			})
+		}
 	}
 
 	return result, nil

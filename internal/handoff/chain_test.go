@@ -14,7 +14,10 @@ func newTestChain(t *testing.T) (*Chain, *mission.Store) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	chain := NewChain(store)
+	chain, err := NewChain(store)
+	if err != nil {
+		t.Fatalf("NewChain: %v", err)
+	}
 	return chain, store
 }
 
@@ -245,13 +248,11 @@ func TestBuildContextNonexistentMission(t *testing.T) {
 
 // --- Edge Cases ---
 
-func TestNewChainPanicsOnNilStore(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("NewChain(nil) should panic")
-		}
-	}()
-	NewChain(nil)
+func TestNewChainErrorsOnNilStore(t *testing.T) {
+	_, err := NewChain(nil)
+	if err == nil {
+		t.Error("NewChain(nil) should return error")
+	}
 }
 
 func TestParseList(t *testing.T) {

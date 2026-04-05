@@ -91,9 +91,9 @@ type Runner struct {
 }
 
 // NewRunner creates a mission runner backed by the given store.
-func NewRunner(store *Store, config RunnerConfig) *Runner {
+func NewRunner(store *Store, config RunnerConfig) (*Runner, error) {
 	if store == nil {
-		panic("mission.NewRunner: store must not be nil")
+		return nil, fmt.Errorf("mission.NewRunner: store must not be nil")
 	}
 	if config.MaxConvergenceLoops <= 0 {
 		config.MaxConvergenceLoops = 10
@@ -108,15 +108,16 @@ func NewRunner(store *Store, config RunnerConfig) *Runner {
 		store:    store,
 		config:   config,
 		handlers: make(map[Phase]PhaseHandler),
-	}
+	}, nil
 }
 
-// RegisterHandler sets the handler for a phase. Panics if handler is nil.
-func (r *Runner) RegisterHandler(phase Phase, handler PhaseHandler) {
+// RegisterHandler sets the handler for a phase. Returns error if handler is nil.
+func (r *Runner) RegisterHandler(phase Phase, handler PhaseHandler) error {
 	if handler == nil {
-		panic(fmt.Sprintf("mission.Runner: nil handler for phase %q", phase))
+		return fmt.Errorf("mission.Runner: nil handler for phase %q", phase)
 	}
 	r.handlers[phase] = handler
+	return nil
 }
 
 // Run drives a mission to completion or failure. It reads the mission's

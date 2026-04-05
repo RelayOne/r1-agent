@@ -12,6 +12,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/workflow"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
@@ -42,6 +43,7 @@ type RunConfig struct {
 	Pools            *subscriptions.Manager
 	Worktrees        *worktree.Manager
 	State            *taskstate.TaskState
+	Wisdom           *wisdom.Store // cross-task learning (nil = disabled)
 	PlanOnly         bool
 	BuildCommand     string
 	TestCommand      string
@@ -145,6 +147,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		CodexHome:        o.cfg.CodexHome,
 		OnEvent:          o.cfg.OnEvent,
 		State:            o.cfg.State,
+		Wisdom:           o.cfg.Wisdom,
 		PlanOnly:         o.cfg.PlanOnly,
 	}
 	return wf.Run(ctx)

@@ -345,7 +345,10 @@ func missionRunCmd(args []string) {
 		},
 	}
 
-	runner := orch.NewRunner(config)
+	runner, err := orch.NewRunner(config)
+	if err != nil {
+		fatal("create runner: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
