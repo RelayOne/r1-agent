@@ -147,6 +147,29 @@ func TestParseCategory(t *testing.T) {
 	}
 }
 
+func TestFindByPattern(t *testing.T) {
+	s := NewStore()
+	s.Record("T1", Learning{Category: Gotcha, Description: "build broke", FailurePattern: "abc123"})
+	s.Record("T2", Learning{Category: Decision, Description: "used mutex"})
+
+	// Match existing pattern
+	if got := s.FindByPattern("abc123"); got == nil {
+		t.Fatal("expected match for pattern abc123")
+	} else if got.TaskID != "T1" {
+		t.Errorf("expected TaskID T1, got %s", got.TaskID)
+	}
+
+	// No match
+	if got := s.FindByPattern("nonexistent"); got != nil {
+		t.Errorf("expected nil for nonexistent pattern, got %+v", got)
+	}
+
+	// Empty hash
+	if got := s.FindByPattern(""); got != nil {
+		t.Errorf("expected nil for empty hash, got %+v", got)
+	}
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	s := NewStore()
 	var wg sync.WaitGroup

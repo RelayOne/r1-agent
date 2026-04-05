@@ -222,6 +222,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	verifyPhase := phases[2]
 	var lastFailure *failure.Analysis
 	var lastDiff string
+	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."
@@ -557,6 +558,16 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			break
 		}
 
+		// Compute failure fingerprint for dedup across retries and tasks.
+		fp := failure.Compute(analysis)
+		if matched, count := failure.MatchHistory(fp, priorFingerprints); matched != nil && count > 0 {
+			_ = e.advanceState(taskstate.Failed,
+				fmt.Sprintf("same failure repeated (%s, seen %dx) -- escalating to human", fp.Pattern, count+1))
+			e.Worktrees.Cleanup(ctx, handle)
+			return result, fmt.Errorf("fingerprint dedup: same failure %q repeated %d times", fp.Pattern, count+1)
+		}
+		priorFingerprints = append(priorFingerprints, fp)
+
 		// Use failure.ShouldRetry for the retry/escalate decision
 		decision := failure.ShouldRetry(analysis, attempt, lastFailure)
 		if decision.Action == failure.Escalate {
@@ -567,15 +578,17 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 
 		lastFailure = analysis
 
-		// Record failure as a wisdom gotcha for subsequent tasks.
-		if e.Wisdom != nil && analysis != nil {
+		// Record failure as a wisdom gotcha for subsequent tasks, with fingerprint
+		// so cross-task dedup can detect if task B hits the same pattern as task A.
+		if e.Wisdom != nil {
 			desc := analysis.Summary
 			if analysis.RootCause != "" {
 				desc = analysis.RootCause
 			}
 			e.Wisdom.Record(e.Task, wisdom.Learning{
-				Category:    wisdom.Gotcha,
-				Description: desc,
+				Category:       wisdom.Gotcha,
+				Description:    desc,
+				FailurePattern: fp.Hash,
 			})
 		}
 	}

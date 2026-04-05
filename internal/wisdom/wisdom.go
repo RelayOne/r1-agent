@@ -49,10 +49,11 @@ func ParseCategory(s string) Category {
 
 // Learning is a single piece of knowledge extracted from a completed task.
 type Learning struct {
-	TaskID      string
-	Category    Category
-	Description string
-	File        string // optional: relevant file path
+	TaskID         string
+	Category       Category
+	Description    string
+	File           string // optional: relevant file path
+	FailurePattern string // optional: failure fingerprint hash for cross-task dedup
 }
 
 // Store holds accumulated learnings for a build session.
@@ -131,6 +132,25 @@ func (s *Store) ForPrompt() string {
 	}
 
 	return b.String()
+}
+
+// FindByPattern returns the first learning whose FailurePattern matches the
+// given hash, or nil if no match. This enables cross-task failure prevention:
+// if task B is about to hit a pattern that task A already failed on, we can
+// inject a proactive warning into the prompt.
+func (s *Store) FindByPattern(hash string) *Learning {
+	if hash == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.learnings {
+		if s.learnings[i].FailurePattern == hash {
+			l := s.learnings[i]
+			return &l
+		}
+	}
+	return nil
 }
 
 // formatLine renders a single learning as a markdown bullet.
