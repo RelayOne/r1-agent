@@ -129,6 +129,15 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 			active++
 			wg.Add(1)
 			go func(task plan.Task) {
+				defer func() {
+					if r := recover(); r != nil {
+						results <- TaskResult{
+							TaskID:  task.ID,
+							Success: false,
+							Error:   fmt.Errorf("panic in task %s: %v", task.ID, r),
+						}
+					}
+				}()
 				results <- execFn(ctx, task)
 			}(t)
 		}

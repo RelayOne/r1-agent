@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -144,6 +145,34 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	return normalizePolicy(p), nil
+}
+
+// policySearchNames are the filenames checked (in order) when auto-discovering
+// a policy file from the repo root.
+var policySearchNames = []string{
+	"stoke.yaml",
+	"stoke.yml",
+	".stoke.yaml",
+	".stoke.yml",
+	"stoke.policy.yaml",
+	"stoke.policy.yml",
+}
+
+// AutoLoadPolicy discovers and loads a policy file from the repo root.
+// If explicitPath is non-empty, it is used directly (same as LoadPolicy).
+// Otherwise, searches for well-known filenames in repoRoot.
+// Returns DefaultPolicy if no file is found.
+func AutoLoadPolicy(repoRoot, explicitPath string) (Policy, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		return LoadPolicy(explicitPath)
+	}
+	for _, name := range policySearchNames {
+		candidate := filepath.Join(repoRoot, name)
+		if _, err := os.Stat(candidate); err == nil {
+			return LoadPolicy(candidate)
+		}
+	}
+	return DefaultPolicy(), nil
 }
 
 func normalizePolicy(p Policy) Policy {

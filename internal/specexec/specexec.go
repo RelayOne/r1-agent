@@ -132,6 +132,17 @@ func Run(ctx context.Context, spec Spec, exec Executor) *Result {
 		wg.Add(1)
 		go func(idx int, s Strategy) {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					mu.Lock()
+					outcomes[idx] = Outcome{
+						StrategyID: s.ID,
+						Success:    false,
+						Error:      fmt.Sprintf("panic in strategy %s: %v", s.ID, r),
+					}
+					mu.Unlock()
+				}
+			}()
 
 			// Check early stop before acquiring semaphore
 			select {

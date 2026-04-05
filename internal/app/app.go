@@ -65,7 +65,7 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	if cfg.AuthMode == "" {
 		cfg.AuthMode = AuthModeMode1
 	}
-	policy, err := config.LoadPolicy(cfg.PolicyPath)
+	policy, err := config.AutoLoadPolicy(cfg.RepoRoot, cfg.PolicyPath)
 	if err != nil {
 		return nil, err
 	}
