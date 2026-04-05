@@ -41,9 +41,20 @@ type Analysis struct {
 }
 
 // Analyze classifies failure from build/test/lint output and extracts specifics.
-func Analyze(buildOutput, testOutput, lintOutput string) Analysis {
-	// Check for policy violations first (agent trying to bypass)
-	if violations := scanPolicyViolations(buildOutput + "\n" + testOutput + "\n" + lintOutput); len(violations) > 0 {
+// Analyze diagnoses a failed attempt from build/test/lint output.
+// diffSummary is the actual code diff and is used for policy violation scanning
+// (as opposed to build/test/lint output which can false-positive on legitimate
+// mentions of forbidden patterns in error messages, test names, etc.).
+func Analyze(buildOutput, testOutput, lintOutput string, diffSummary ...string) Analysis {
+	// Check for policy violations against the DIFF, not tool output.
+	// Tool output can contain legitimate mentions of forbidden patterns
+	// (e.g., linter reporting @ts-ignore, test named "TestHandleError").
+	policyInput := strings.Join(diffSummary, "\n")
+	if policyInput == "" {
+		// Fallback: if no diff provided, scan tool output (legacy behavior)
+		policyInput = buildOutput + "\n" + testOutput + "\n" + lintOutput
+	}
+	if violations := scanPolicyViolations(policyInput); len(violations) > 0 {
 		return Analysis{
 			Class:     PolicyViolation,
 			Summary:   fmt.Sprintf("%d policy violation(s) detected", len(violations)),

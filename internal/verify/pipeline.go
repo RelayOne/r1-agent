@@ -29,6 +29,11 @@ func NewPipeline(buildCmd, testCmd, lintCmd string) *Pipeline {
 	return &Pipeline{buildCmd: buildCmd, testCmd: testCmd, lintCmd: lintCmd}
 }
 
+// Commands returns the configured build, test, and lint commands.
+func (p *Pipeline) Commands() (build, test, lint string) {
+	return p.buildCmd, p.testCmd, p.lintCmd
+}
+
 // Run executes all verification steps. Returns outcomes and an error if any step failed.
 func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 	var outcomes []Outcome
@@ -57,8 +62,9 @@ func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 }
 
 // AnalyzeOutcomes converts verification outcomes into a failure analysis.
-// Returns nil if all steps passed.
-func AnalyzeOutcomes(outcomes []Outcome) *failure.Analysis {
+// Returns nil if all steps passed. diffSummary is used for policy violation
+// scanning against the actual code diff rather than tool output.
+func AnalyzeOutcomes(outcomes []Outcome, diffSummary ...string) *failure.Analysis {
 	var buildOut, testOut, lintOut string
 	allPassed := true
 	for _, o := range outcomes {
@@ -70,17 +76,23 @@ func AnalyzeOutcomes(outcomes []Outcome) *failure.Analysis {
 		}
 		switch o.Name {
 		case "build":
-			if !o.Success { buildOut = o.Output }
+			if !o.Success {
+				buildOut = o.Output
+			}
 		case "test":
-			if !o.Success { testOut = o.Output }
+			if !o.Success {
+				testOut = o.Output
+			}
 		case "lint":
-			if !o.Success { lintOut = o.Output }
+			if !o.Success {
+				lintOut = o.Output
+			}
 		}
 	}
 	if allPassed {
 		return nil
 	}
-	a := failure.Analyze(buildOut, testOut, lintOut)
+	a := failure.Analyze(buildOut, testOut, lintOut, diffSummary...)
 	return &a
 }
 

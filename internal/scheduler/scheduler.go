@@ -80,17 +80,9 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 		s.stateMu.Unlock()
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			wg.Wait()
-			return allResults, ctx.Err()
-		default:
-		}
-
-		// Drain results
-		drained := true
-		for drained {
+	// drainResults collects all immediately-available results without blocking.
+	drainResults := func() {
+		for {
 			select {
 			case r := <-results:
 				wg.Done()
@@ -98,41 +90,59 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				allResults = append(allResults, r)
 				recordResult(r)
 			default:
-				drained = false
+				return
 			}
 		}
+	}
+
+	for {
+		// Non-blocking drain of any completed results.
+		drainResults()
 
 		s.stateMu.Lock()
 		allDone := len(s.completed) == len(tasks)
 		s.stateMu.Unlock()
-		if allDone { break }
+		if allDone {
+			break
+		}
 
-		// Find dispatchable tasks
+		// Dispatch all ready tasks (collect candidates, then launch outside lock).
 		s.stateMu.Lock()
+		var toDispatch []plan.Task
 		for _, t := range tasks {
-			if s.completed[t.ID] || s.running[t.ID] { continue }
-			if active >= s.maxWorkers { break }
-			if !s.depsOK(t) || s.hasConflict(t) { continue }
-
+			if s.completed[t.ID] || s.running[t.ID] {
+				continue
+			}
+			if active+len(toDispatch) >= s.maxWorkers {
+				break
+			}
+			if !s.depsOK(t) || s.hasConflict(t) {
+				continue
+			}
 			s.acquireFiles(t)
 			s.running[t.ID] = true
+			toDispatch = append(toDispatch, t)
+		}
+		s.stateMu.Unlock()
+
+		for _, t := range toDispatch {
 			active++
 			wg.Add(1)
 			go func(task plan.Task) {
 				results <- execFn(ctx, task)
 			}(t)
 		}
-		s.stateMu.Unlock()
 
-		// If nothing is running and nothing dispatchable, check why
-		if active == 0 {
+		// If nothing is running and nothing was dispatched, check why.
+		if active == 0 && len(toDispatch) == 0 {
 			s.stateMu.Lock()
 			remaining := len(tasks) - len(s.completed)
 			if remaining > 0 {
-				// Check if remaining tasks are blocked by failed dependencies
 				blockedByFailure := 0
 				for _, t := range tasks {
-					if s.completed[t.ID] { continue }
+					if s.completed[t.ID] {
+						continue
+					}
 					for _, dep := range t.Dependencies {
 						if s.failed[dep] {
 							blockedByFailure++
@@ -148,8 +158,7 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 				}
 				s.stateMu.Unlock()
 				if blockedByFailure > 0 {
-					// Re-check: there may be more cascading blocks
-					continue
+					continue // re-check for cascading blocks
 				}
 				return allResults, fmt.Errorf("deadlock: %d tasks undispatchable (no failed deps, possible cycle)", remaining)
 			}
@@ -157,16 +166,20 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 			break
 		}
 
-		// Wait for at least one result before trying again
-		s.stateMu.Lock()
-		dispatchable := s.findDispatchable(tasks)
-		s.stateMu.Unlock()
-		if len(dispatchable) == 0 && active > 0 {
-			r := <-results
-			wg.Done()
-			active--
-			allResults = append(allResults, r)
-			recordResult(r)
+		// Block until at least one result arrives or context is cancelled.
+		// This is the key fix: no busy-wait. We only loop when there's a
+		// result to process or new tasks to dispatch.
+		if active > 0 && len(toDispatch) == 0 {
+			select {
+			case r := <-results:
+				wg.Done()
+				active--
+				allResults = append(allResults, r)
+				recordResult(r)
+			case <-ctx.Done():
+				wg.Wait()
+				return allResults, ctx.Err()
+			}
 		}
 	}
 

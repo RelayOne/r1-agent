@@ -279,6 +279,15 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				return result, fmt.Errorf("execute phase (attempt %d): %w", attempt, runErr)
 			}
 
+			// Treat non-rate-limit error states (timeout, stream failure, etc.) as
+			// execution failures. The agent may have produced partial output, but
+			// we must not verify/review an incomplete execution.
+			if execResult.IsError && execResult.Subtype != "rate_limited" {
+				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("execute phase attempt %d: agent error (%s): %s",
+					attempt, execResult.Subtype, truncate(execResult.ResultText, 200)))
+				return result, fmt.Errorf("execute phase (attempt %d): agent reported error (subtype=%s)", attempt, execResult.Subtype)
+			}
+
 			// Rate limited? Rotate to another pool (using the actual provider, not hardcoded Claude)
 			if execResult.Subtype == "rate_limited" {
 				if e.Pools != nil && e.Pools.PoolCount(execProvider) > 1 {
@@ -318,7 +327,17 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		}
 
 		// --- VERIFY ---
-		outcomes, verifyErr := e.Verifier.Run(ctx, handle.Path)
+		// Honor Policy.Verification flags: only run enabled checks.
+		verifier := e.Verifier
+		if !e.Policy.Verification.Build || !e.Policy.Verification.Tests || !e.Policy.Verification.Lint {
+			// Build a filtered verifier respecting policy flags
+			filteredBuild, filteredTest, filteredLint := verifier.Commands()
+			if !e.Policy.Verification.Build { filteredBuild = "" }
+			if !e.Policy.Verification.Tests { filteredTest = "" }
+			if !e.Policy.Verification.Lint { filteredLint = "" }
+			verifier = verify.NewPipeline(filteredBuild, filteredTest, filteredLint)
+		}
+		outcomes, verifyErr := verifier.Run(ctx, handle.Path)
 		result.Verification = outcomes
 
 		// Build evidence for this attempt
@@ -376,7 +395,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			}
 
 			scopeClean := true
-			if len(e.AllowedFiles) > 0 {
+			if len(e.AllowedFiles) > 0 && e.Policy.Verification.ScopeCheck {
 				scopeViolations := verify.CheckScope(modifiedFiles, e.AllowedFiles)
 				scopeClean = len(scopeViolations) == 0
 				if !scopeClean {
@@ -416,166 +435,23 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				preReviewTree = "" // fall back to file-set-only comparison
 			}
 
-			// --- CROSS-MODEL REVIEW with pool rotation ---
-			verifyRunnerName, verifyRunner := pickRunner(e, verifyPhase.Name)
-
-			reviewProvider := subscriptions.ProviderCodex
-			if verifyRunnerName == string(model.ProviderClaude) {
-				reviewProvider = subscriptions.ProviderClaude
-			}
-
-			var verifyResult engine.RunResult
-			var reviewErr error
-			triedReviewPools := map[string]bool{}
-			maxReviewRotations := 5
-
-			for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
-				verifySpec := e.buildSpec(verifyPhase, handle)
-				// Override verify prompt with actual changed file list.
-				// The phase prompt was pre-built with nil; now we have real data.
-				verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification) +
-					"\n\n## Changed files (harness-enumerated)\n" +
-					strings.Join(preReviewFiles, "\n") +
-					"\n\n## Diff summary\n" +
-					worktree.DiffSummary(ctx, handle)
-
-				var verifyPoolID string
-				if e.Pools != nil {
-					var pool subscriptions.Pool
-					var acqErr error
-					if len(triedReviewPools) == 0 {
-						pool, acqErr = e.Pools.Acquire(reviewProvider, "review-"+name)
-					} else {
-						pool, acqErr = e.Pools.AcquireExcluding(reviewProvider, "review-"+name, triedReviewPools)
-					}
-					if acqErr != nil && e.Pools.PoolCount(reviewProvider) > 1 {
-						waitCtx, waitCancel := context.WithTimeout(ctx, 6*time.Minute)
-						pool, acqErr = e.Pools.WaitForPool(waitCtx, reviewProvider, "review-wait-"+name)
-						waitCancel()
-					}
-					if acqErr == nil {
-						verifyPoolID = pool.ID
-						triedReviewPools[pool.ID] = true
-						verifySpec.PoolConfigDir = pool.ConfigDir
-					}
+			// --- CROSS-MODEL REVIEW ---
+			// When enabled, run a cross-model review and post-review revalidation.
+			// When disabled by policy, skip straight to commit with pre-review files.
+			postReviewFiles := preReviewFiles
+			if e.Policy.Verification.CrossModelReview {
+				reviewFiles, reviewErr := e.runCrossModelReview(ctx, name, handle, verifyPhase, preReviewFiles, preReviewTree, &evidence, &result, attempt, attemptStart, execRunnerName, execResult)
+				if reviewErr != nil {
+					return result, reviewErr
 				}
-
-				verifyResult, reviewErr = verifyRunner.Run(ctx, verifySpec, e.OnEvent)
-
-				if verifyPoolID != "" && e.Pools != nil {
-					rateLimited := verifyResult.Subtype == "rate_limited"
-					e.Pools.Release(verifyPoolID, rateLimited)
-
-					if rateLimited && e.Pools.PoolCount(reviewProvider) > 1 {
-						continue // rotate to next pool
-					}
-				}
-				break // success or non-rate-limit failure
-			}
-
-			evidence.ReviewEngine = verifyRunnerName
-			if reviewErr != nil {
-				evidence.ReviewPass = false
-				evidence.ReviewOutput = reviewErr.Error()
+				postReviewFiles = reviewFiles
+			} else {
+				evidence.ReviewPass = true
+				evidence.ReviewOutput = "cross-model review disabled by policy"
 				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, "cross-model review failed to execute")
-				return result, fmt.Errorf("cross-model review failed: %w", reviewErr)
-			}
-			result.Steps = append(result.Steps, StepResult{
-				Phase: "verify", Engine: verifyRunnerName, Command: verifyResult.Prepared,
-			})
-			result.TotalCostUSD += verifyResult.CostUSD
-			evidence.ReviewOutput = verifyResult.ResultText
-
-			// Parse review verdict as JSON (not just process exit code)
-			verdict, parseErr := parseReviewVerdict(verifyResult.ResultText)
-			if parseErr != nil {
-				evidence.ReviewPass = false
-				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, "review returned invalid JSON")
-				return result, fmt.Errorf("cross-model review returned invalid JSON: %v", parseErr)
-			}
-
-			evidence.ReviewPass = verdict.Pass
-			if !verdict.Pass {
-				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
-				return result, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
-			}
-
-			// --- POST-REVIEW REVALIDATION ---
-			// Review MUST be read-only. Any worktree mutation = task failure.
-			postReviewFiles, postModErr := worktree.ModifiedFiles(ctx, handle)
-			if postModErr != nil {
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, "post-review file check failed: "+postModErr.Error())
-				return result, fmt.Errorf("post-review validation failed: %w", postModErr)
-			}
-
-			// Exact set comparison: any difference in file sets fails the task.
-			// This catches adds, removes, AND the case where both sets have
-			// the same paths but different content.
-			preSet := make(map[string]bool, len(preReviewFiles))
-			for _, f := range preReviewFiles { preSet[f] = true }
-			postSet := make(map[string]bool, len(postReviewFiles))
-			for _, f := range postReviewFiles { postSet[f] = true }
-
-			var setDiffs []string
-			for f := range postSet {
-				if !preSet[f] { setDiffs = append(setDiffs, "+"+f) }
-			}
-			for f := range preSet {
-				if !postSet[f] { setDiffs = append(setDiffs, "-"+f) }
-			}
-			if len(setDiffs) > 0 {
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review mutated file set: %v", setDiffs))
-				return result, fmt.Errorf("post-review validation failed: file set changed: %v", setDiffs)
-			}
-
-			// Tree comparison: detect ANY working tree mutation by the reviewer.
-			// TreeSHA captures content + modes + structure. This catches in-place
-			// edits, mode changes (chmod +x), and any other tree-level mutation
-			// that file-set comparison alone would miss.
-			if preReviewTree != "" {
-				postReviewTree, postTreeErr := worktree.TreeSHA(ctx, handle)
-				if postTreeErr == nil && postReviewTree != preReviewTree {
-					e.Worktrees.Cleanup(ctx, handle)
-					_ = e.advanceState(taskstate.Failed, "review mutated working tree (tree SHA mismatch)")
-					return result, fmt.Errorf("post-review validation failed: tree SHA changed (pre=%s post=%s)", preReviewTree[:12], postReviewTree[:12])
+				if err := e.advanceState(taskstate.Reviewed, "review skipped (policy)"); err != nil {
+					return result, err
 				}
-			}
-
-			// Re-run full validation on post-review file set
-			postProtected := verify.CheckProtectedFiles(postReviewFiles, e.Policy.Files.Protected)
-			if len(postProtected) > 0 {
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("post-review protected violation: %v", postProtected))
-				return result, fmt.Errorf("post-review protected file violation: %v", postProtected)
-			}
-			if len(e.AllowedFiles) > 0 {
-				postScope := verify.CheckScope(postReviewFiles, e.AllowedFiles)
-				if len(postScope) > 0 {
-					e.Worktrees.Cleanup(ctx, handle)
-					_ = e.advanceState(taskstate.Failed, fmt.Sprintf("post-review scope violation: %v", postScope))
-					return result, fmt.Errorf("post-review scope violation: %v", postScope)
-				}
-			}
-			postScan, postScanErr := scan.ScanFiles(handle.Path, scan.DefaultRules(), postReviewFiles)
-			if postScanErr == nil && postScan.HasBlocking() {
-				e.Worktrees.Cleanup(ctx, handle)
-				_ = e.advanceState(taskstate.Failed, "post-review scan: "+postScan.Summary())
-				return result, fmt.Errorf("post-review forbidden patterns: %s", postScan.Summary())
-			}
-
-			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-
-			// State: Verified -> Reviewed (opposite-family model approved)
-			if err := e.advanceState(taskstate.Reviewed, fmt.Sprintf("%s review: approved", verifyRunnerName)); err != nil {
-				return result, err
 			}
 
 			// --- MERGE GATES: evidence AND state must agree ---
@@ -587,7 +463,6 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge blocked: state not committable (phase=%s)", e.State.Phase())
 			}
-
 			// --- COMMIT AND MERGE ---
 			// Record validated file set in result for callers (e.g., mission bridge).
 			result.FilesChanged = postReviewFiles
@@ -635,7 +510,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		// Verification FAILED -- record evidence BEFORE analyzing
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
 
-		analysis := verify.AnalyzeOutcomes(outcomes)
+		analysis := verify.AnalyzeOutcomes(outcomes, evidence.DiffSummary)
 		if analysis == nil {
 			break
 		}
@@ -664,6 +539,181 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	}
 
 	return result, nil
+}
+
+// runCrossModelReview executes the cross-model review phase including
+// post-review revalidation. Returns the validated file list or an error.
+// This is extracted from Run() to allow the review to be policy-gated.
+func (e Engine) runCrossModelReview(
+	ctx context.Context,
+	name string,
+	handle worktree.Handle,
+	verifyPhase engine.PhaseSpec,
+	preReviewFiles []string,
+	preReviewTree string,
+	evidence *taskstate.Evidence,
+	result *Result,
+	attempt int,
+	attemptStart time.Time,
+	execRunnerName string,
+	execResult engine.RunResult,
+) ([]string, error) {
+	verifyRunnerName, verifyRunner := pickRunner(e, verifyPhase.Name)
+
+	reviewProvider := subscriptions.ProviderCodex
+	if verifyRunnerName == string(model.ProviderClaude) {
+		reviewProvider = subscriptions.ProviderClaude
+	}
+
+	var verifyResult engine.RunResult
+	var reviewErr error
+	triedReviewPools := map[string]bool{}
+	maxReviewRotations := 5
+
+	for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
+		_ = reviewRot // used only as loop counter
+		verifySpec := e.buildSpec(verifyPhase, handle)
+		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification) +
+			"\n\n## Changed files (harness-enumerated)\n" +
+			strings.Join(preReviewFiles, "\n") +
+			"\n\n## Diff summary\n" +
+			worktree.DiffSummary(ctx, handle)
+
+		var verifyPoolID string
+		if e.Pools != nil {
+			var pool subscriptions.Pool
+			var acqErr error
+			if len(triedReviewPools) == 0 {
+				pool, acqErr = e.Pools.Acquire(reviewProvider, "review-"+name)
+			} else {
+				pool, acqErr = e.Pools.AcquireExcluding(reviewProvider, "review-"+name, triedReviewPools)
+			}
+			if acqErr != nil && e.Pools.PoolCount(reviewProvider) > 1 {
+				waitCtx, waitCancel := context.WithTimeout(ctx, 6*time.Minute)
+				pool, acqErr = e.Pools.WaitForPool(waitCtx, reviewProvider, "review-wait-"+name)
+				waitCancel()
+			}
+			if acqErr == nil {
+				verifyPoolID = pool.ID
+				triedReviewPools[pool.ID] = true
+				verifySpec.PoolConfigDir = pool.ConfigDir
+			}
+		}
+
+		verifyResult, reviewErr = verifyRunner.Run(ctx, verifySpec, e.OnEvent)
+
+		if verifyPoolID != "" && e.Pools != nil {
+			rateLimited := verifyResult.Subtype == "rate_limited"
+			e.Pools.Release(verifyPoolID, rateLimited)
+			if rateLimited && e.Pools.PoolCount(reviewProvider) > 1 {
+				continue
+			}
+		}
+		break
+	}
+
+	evidence.ReviewEngine = verifyRunnerName
+	if reviewErr != nil {
+		evidence.ReviewPass = false
+		evidence.ReviewOutput = reviewErr.Error()
+		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "cross-model review failed to execute")
+		return nil, fmt.Errorf("cross-model review failed: %w", reviewErr)
+	}
+	result.Steps = append(result.Steps, StepResult{
+		Phase: "verify", Engine: verifyRunnerName, Command: verifyResult.Prepared,
+	})
+	result.TotalCostUSD += verifyResult.CostUSD
+	evidence.ReviewOutput = verifyResult.ResultText
+
+	verdict, parseErr := parseReviewVerdict(verifyResult.ResultText)
+	if parseErr != nil {
+		evidence.ReviewPass = false
+		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "review returned invalid JSON")
+		return nil, fmt.Errorf("cross-model review returned invalid JSON: %v", parseErr)
+	}
+
+	evidence.ReviewPass = verdict.Pass
+	if !verdict.Pass {
+		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "cross-model review rejected")
+		return nil, fmt.Errorf("cross-model review rejected: %s severity, %d findings", verdict.Severity, len(verdict.Findings))
+	}
+
+	// --- POST-REVIEW REVALIDATION ---
+	postReviewFiles, postModErr := worktree.ModifiedFiles(ctx, handle)
+	if postModErr != nil {
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "post-review file check failed: "+postModErr.Error())
+		return nil, fmt.Errorf("post-review validation failed: %w", postModErr)
+	}
+
+	preSet := make(map[string]bool, len(preReviewFiles))
+	for _, f := range preReviewFiles {
+		preSet[f] = true
+	}
+	postSet := make(map[string]bool, len(postReviewFiles))
+	for _, f := range postReviewFiles {
+		postSet[f] = true
+	}
+
+	var setDiffs []string
+	for f := range postSet {
+		if !preSet[f] {
+			setDiffs = append(setDiffs, "+"+f)
+		}
+	}
+	for f := range preSet {
+		if !postSet[f] {
+			setDiffs = append(setDiffs, "-"+f)
+		}
+	}
+	if len(setDiffs) > 0 {
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review mutated file set: %v", setDiffs))
+		return nil, fmt.Errorf("post-review validation failed: file set changed: %v", setDiffs)
+	}
+
+	if preReviewTree != "" {
+		postReviewTree, postTreeErr := worktree.TreeSHA(ctx, handle)
+		if postTreeErr == nil && postReviewTree != preReviewTree {
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, "review mutated working tree (tree SHA mismatch)")
+			return nil, fmt.Errorf("post-review validation failed: tree SHA changed (pre=%s post=%s)", preReviewTree[:12], postReviewTree[:12])
+		}
+	}
+
+	postProtected := verify.CheckProtectedFiles(postReviewFiles, e.Policy.Files.Protected)
+	if len(postProtected) > 0 {
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("post-review protected violation: %v", postProtected))
+		return nil, fmt.Errorf("post-review protected file violation: %v", postProtected)
+	}
+	if len(e.AllowedFiles) > 0 {
+		postScope := verify.CheckScope(postReviewFiles, e.AllowedFiles)
+		if len(postScope) > 0 {
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, fmt.Sprintf("post-review scope violation: %v", postScope))
+			return nil, fmt.Errorf("post-review scope violation: %v", postScope)
+		}
+	}
+	postScan, postScanErr := scan.ScanFiles(handle.Path, scan.DefaultRules(), postReviewFiles)
+	if postScanErr == nil && postScan.HasBlocking() {
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "post-review scan: "+postScan.Summary())
+		return nil, fmt.Errorf("post-review forbidden patterns: %s", postScan.Summary())
+	}
+
+	e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+	if err := e.advanceState(taskstate.Reviewed, fmt.Sprintf("%s review: approved", verifyRunnerName)); err != nil {
+		return nil, err
+	}
+
+	return postReviewFiles, nil
 }
 
 // advanceState transitions the task state machine.
@@ -745,6 +795,10 @@ func pickRunnerName(e Engine, phase string) string {
 }
 
 // buildRetryPrompt injects failure analysis and diff context into the next attempt.
+// maxRetryContextLines caps the diff summary in retry prompts to prevent
+// unbounded prompt growth across retry attempts.
+const maxRetryContextLines = 100
+
 func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Analysis, diffSummary string) string {
 	var sb strings.Builder
 	sb.WriteString(originalPrompt)
@@ -755,16 +809,31 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	}
 	if len(analysis.Specifics) > 0 {
 		sb.WriteString("\nSPECIFIC ISSUES:\n")
-		for _, d := range analysis.Specifics {
+		// Cap specifics to first 10 to avoid unbounded growth
+		specifics := analysis.Specifics
+		if len(specifics) > 10 {
+			specifics = specifics[:10]
+		}
+		for _, d := range specifics {
 			sb.WriteString(fmt.Sprintf("  %s:%d -- %s\n", d.File, d.Line, d.Message))
 			if d.Fix != "" {
 				sb.WriteString(fmt.Sprintf("    Suggested fix: %s\n", d.Fix))
 			}
 		}
+		if len(analysis.Specifics) > 10 {
+			sb.WriteString(fmt.Sprintf("  ... and %d more issue(s)\n", len(analysis.Specifics)-10))
+		}
 	}
 	if diffSummary != "" && diffSummary != "(diff unavailable)" {
-		sb.WriteString("\nCHANGES FROM PREVIOUS ATTEMPT:\n")
-		sb.WriteString(diffSummary + "\n")
+		// Truncate diff to last N lines to keep retry context bounded.
+		lines := strings.Split(diffSummary, "\n")
+		if len(lines) > maxRetryContextLines {
+			sb.WriteString(fmt.Sprintf("\nCHANGES FROM PREVIOUS ATTEMPT (last %d of %d lines):\n", maxRetryContextLines, len(lines)))
+			sb.WriteString(strings.Join(lines[len(lines)-maxRetryContextLines:], "\n") + "\n")
+		} else {
+			sb.WriteString("\nCHANGES FROM PREVIOUS ATTEMPT:\n")
+			sb.WriteString(diffSummary + "\n")
+		}
 	}
 	sb.WriteString("\nDO NOT:\n")
 	switch analysis.Class {
@@ -917,6 +986,18 @@ func parseReviewVerdict(s string) (*reviewVerdict, error) {
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		return nil, err
 	}
+
+	// Minimum validity: a passing review with zero findings suggests the reviewer
+	// didn't actually check anything (confused output, truncated response).
+	// Require at least one finding entry for a valid review.
+	if v.Pass && len(v.Findings) == 0 && v.Severity == "" {
+		return nil, fmt.Errorf("review verdict invalid: pass=true with no findings and no severity (reviewer may not have checked)")
+	}
+	// A failing review with no findings is also suspect.
+	if !v.Pass && len(v.Findings) == 0 {
+		return nil, fmt.Errorf("review verdict invalid: pass=false with no findings (reviewer may not have checked)")
+	}
+
 	return &v, nil
 }
 
@@ -927,6 +1008,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 func slugFromTask(task string) string {

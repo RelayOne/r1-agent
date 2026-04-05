@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.
@@ -132,6 +133,10 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	return nil
 }
 
+// mergeTimeout is the maximum time allowed for merge-tree validation and
+// the actual merge operation. Prevents pathological merges from blocking forever.
+const mergeTimeout = 2 * time.Minute
+
 // Merge validates the worktree branch with merge-tree, then merges it into the target branch under a serializing mutex.
 func (m *Manager) Merge(ctx context.Context, handle Handle, message string) error {
 	// Serialize all merges -- parallel task execution is fine,
@@ -139,17 +144,26 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	m.mergeMu.Lock()
 	defer m.mergeMu.Unlock()
 
+	mergeCtx, cancel := context.WithTimeout(ctx, mergeTimeout)
+	defer cancel()
+
 	// Validate with merge-tree first (zero side effects, Git 2.38+)
-	validateCmd := exec.CommandContext(ctx, m.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch)
+	validateCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch)
 	validateCmd.Dir = m.RepoRoot
 	if out, err := validateCmd.CombinedOutput(); err != nil {
+		if mergeCtx.Err() != nil {
+			return fmt.Errorf("merge-tree timed out after %v", mergeTimeout)
+		}
 		return fmt.Errorf("merge conflict detected: %s", strings.TrimSpace(string(out)))
 	}
 
 	// Merge for real
-	mergeCmd := exec.CommandContext(ctx, m.GitBinary, "merge", "--no-ff", handle.Branch, "-m", message)
+	mergeCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--no-ff", handle.Branch, "-m", message)
 	mergeCmd.Dir = m.RepoRoot
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
+		if mergeCtx.Err() != nil {
+			return fmt.Errorf("git merge timed out after %v", mergeTimeout)
+		}
 		return fmt.Errorf("git merge: %w: %s", err, string(out))
 	}
 
