@@ -16,7 +16,6 @@ import (
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/stream"
-	"github.com/ericmacdougall/stoke/internal/toolcache"
 )
 
 // ClaudeRunner executes tasks via the Claude Code CLI with NDJSON streaming and 3-tier timeout handling.
@@ -24,7 +23,6 @@ type ClaudeRunner struct {
 	Binary     string
 	Parser     *stream.Parser
 	CacheStats *stream.PromptCacheStats // shared, records cache hits per execution
-	ToolCache  *toolcache.Cache         // caches tool results across turns (nil = disabled)
 }
 
 // NewClaudeRunner creates a ClaudeRunner using the given binary path, defaulting to "claude" if empty.
@@ -32,7 +30,7 @@ func NewClaudeRunner(binary string) *ClaudeRunner {
 	if strings.TrimSpace(binary) == "" {
 		binary = "claude"
 	}
-	return &ClaudeRunner{Binary: binary, Parser: stream.DefaultParser(), ToolCache: toolcache.New(toolcache.DefaultConfig())}
+	return &ClaudeRunner{Binary: binary, Parser: stream.DefaultParser()}
 }
 
 // Prepare builds the CLI command, settings file, and environment for a Claude Code invocation without executing it.

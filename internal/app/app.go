@@ -5,18 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/boulder"
-	"github.com/ericmacdougall/stoke/internal/compute"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/memory"
 	"github.com/ericmacdougall/stoke/internal/model"
-	"github.com/ericmacdougall/stoke/internal/plugins"
 	"github.com/ericmacdougall/stoke/internal/preflight"
 	"github.com/ericmacdougall/stoke/internal/rbac"
 	"github.com/ericmacdougall/stoke/internal/replay"
@@ -71,11 +68,9 @@ type RunConfig struct {
 	OnEvent          engine.OnEventFunc
 	RBACPolicy       *rbac.Policy        // RBAC enforcement (nil = no enforcement)
 	RBACIdentity     string              // identity for RBAC checks (e.g., username or API key)
-	Memory           *memory.Store       // cross-session persistent knowledge (nil = disabled)
-	Plugins          *plugins.Registry   // loaded plugins (nil = no plugins)
-	Telemetry        *telemetry.Collector // structured metrics collector (nil = disabled)
-	ComputeBackend   compute.Backend              // execution backend (nil = local)
-	Convergence      *convergence.Validator       // adversarial self-audit gate (nil = auto-created)
+	Memory           *memory.Store              // cross-session persistent knowledge (nil = disabled)
+	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
+	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
@@ -120,21 +115,9 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		}
 	}
 
-	// Default compute backend to local execution.
-	if cfg.ComputeBackend == nil {
-		cfg.ComputeBackend = compute.NewLocalBackend(cfg.RepoRoot)
-	}
-
 	// Default convergence validator: always-on adversarial self-audit.
 	if cfg.Convergence == nil {
 		cfg.Convergence = convergence.NewValidator()
-	}
-
-	// Load plugins if configured.
-	if cfg.Plugins == nil {
-		pluginDir := filepath.Join(cfg.RepoRoot, ".stoke", "plugins")
-		cfg.Plugins = plugins.NewRegistry(pluginDir)
-		cfg.Plugins.Discover()
 	}
 
 	return &Orchestrator{cfg: cfg, policy: policy}, nil
