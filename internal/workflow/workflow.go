@@ -41,6 +41,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/scan"
 	"github.com/ericmacdougall/stoke/internal/schemaval"
 	"github.com/ericmacdougall/stoke/internal/semdiff"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/snapshot"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
@@ -1628,6 +1629,13 @@ func planPrompt(task string) string {
 
 func executePromptWithContext(e Engine) string {
 	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
+
+	// Inject matching built-in skills (keyword-triggered prompt augmentation).
+	// DefaultRegistry auto-loads embedded skills; project/user skills override.
+	reg := skill.DefaultRegistry(e.RepoRoot)
+	_ = reg.Load() // load project/user skills (builtins already loaded)
+	prompt = reg.InjectPrompt(prompt)
+
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.
 

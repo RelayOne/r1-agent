@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/plugins"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/memory"
@@ -134,6 +136,25 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		// Register built-in file protection gate from policy
 		if len(policy.Files.Protected) > 0 {
 			cfg.EventBus.Register(hub.FileProtectionGate(policy.Files.Protected))
+		}
+
+		// Discover and register plugin hooks as hub script subscribers.
+		pluginReg := plugins.NewRegistry(filepath.Join(cfg.RepoRoot, ".stoke", "plugins"))
+		if err := pluginReg.Discover(); err != nil {
+			fmt.Fprintf(os.Stderr, "[plugins] warning: failed to discover plugins: %v\n", err)
+		}
+		for _, p := range pluginReg.Enabled() {
+			for event, script := range p.Manifest.Hooks {
+				cfg.EventBus.Register(hub.Subscriber{
+					ID:     fmt.Sprintf("plugin.%s.%s", p.Manifest.Name, event),
+					Events: []hub.EventType{hub.EventType(event)},
+					Mode:   hub.ModeObserve,
+					Script: &hub.ScriptConfig{
+						Command:   filepath.Join(p.Dir, script),
+						InputJSON: true,
+					},
+				})
+			}
 		}
 	}
 
