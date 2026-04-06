@@ -76,6 +76,13 @@ func DefaultRules() []Rule {
 		{ID: "no-outline-none", Severity: "high", Pattern: regexp.MustCompile(`outline\s*:\s*(none|0)\s*[;}]`), Message: "Focus outline removed — keyboard users lose navigation", Fix: "Use :focus-visible with a visible custom indicator", FileExts: []string{".css", ".scss", ".less", ".tsx", ".jsx"}},
 		{ID: "no-dangerous-html", Severity: "critical", Pattern: regexp.MustCompile(`dangerouslySetInnerHTML`), Message: "dangerouslySetInnerHTML is an XSS vector", Fix: "Use DOMPurify or render content with React components", FileExts: []string{".tsx", ".jsx"}},
 		{ID: "no-div-onclick", Severity: "high", Pattern: regexp.MustCompile(`<(div|span)\s[^>]*onClick[^>]*>`), Message: "onClick on non-semantic element — inaccessible to keyboard", Fix: "Use <button> or add role=\"button\" tabIndex={0}", FileExts: []string{".tsx", ".jsx"}},
+
+		// PII / compliance
+		{ID: "no-pii-logging", Severity: "high", Pattern: regexp.MustCompile(`(?i)(log|logger|logging)\.\w+\([^)]*\b(email|ssn|social.security|phone.number|credit.card|password)\b`), Message: "Possible PII in log statement — email, SSN, phone, or password", Fix: "Redact PII before logging or use a PII-safe logger"},
+		{ID: "no-time-now-naive", Severity: "medium", Pattern: regexp.MustCompile(`time\.Now\(\)\s*\.\s*Format`), Message: "time.Now().Format() without timezone — may produce inconsistent timestamps", Fix: "Use time.Now().UTC() or explicitly set timezone", FileExts: []string{".go"}},
+
+		// AI deception: silently removed error handling
+		{ID: "no-blank-error", Severity: "critical", Pattern: regexp.MustCompile(`\w+,\s*_\s*:?=\s*\w+\.\w+\(`), Message: "Error return assigned to blank identifier — error silently discarded", Fix: "Handle the error: check and return or log it"},
 	}
 }
 

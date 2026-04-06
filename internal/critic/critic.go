@@ -224,6 +224,18 @@ func DefaultRules() []Rule {
 			ID: "large-function", Name: "Function too large", Severity: SeverityInfo,
 			Check: checkLargeFunction,
 		},
+		{
+			ID: "goroutine-recover", Name: "Goroutine without recover", Severity: SeverityWarn,
+			Check: checkGoroutineRecover,
+		},
+		{
+			ID: "http-no-timeout", Name: "HTTP client without timeout", Severity: SeverityWarn,
+			Pattern: regexp.MustCompile(`http\.Client\{\s*\}`),
+		},
+		{
+			ID: "destructive-migration", Name: "Destructive SQL migration", Severity: SeverityBlock,
+			Pattern: regexp.MustCompile(`(?i)\b(DROP\s+(TABLE|COLUMN|DATABASE)|TRUNCATE\s+TABLE)\b`),
+		},
 	}
 }
 
@@ -446,6 +458,44 @@ func checkLargeFunctionRegex(file, content string) []Finding {
 				})
 			}
 			funcStart = -1
+		}
+	}
+	return findings
+}
+
+var goStmtRe = regexp.MustCompile(`go\s+func\s*\(`)
+var recoverRe = regexp.MustCompile(`recover\(\)`)
+
+func checkGoroutineRecover(file, content string) []Finding {
+	if !strings.HasSuffix(file, ".go") || strings.HasSuffix(file, "_test.go") {
+		return nil
+	}
+	var findings []Finding
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if goStmtRe.MatchString(line) {
+			found := false
+			end := i + 6
+			if end > len(lines) {
+				end = len(lines)
+			}
+			for j := i; j < end; j++ {
+				if recoverRe.MatchString(lines[j]) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				findings = append(findings, Finding{
+					Severity:   SeverityWarn,
+					Category:   "correctness",
+					File:       file,
+					Line:       i + 1,
+					Message:    "Goroutine launched without defer/recover — panics will crash the process",
+					Suggestion: "Add defer func() { if r := recover(); r != nil { ... } }()",
+					Rule:       "goroutine-recover",
+				})
+			}
 		}
 	}
 	return findings

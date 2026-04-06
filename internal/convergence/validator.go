@@ -392,7 +392,7 @@ func extractKeywords(text string) []string {
 //   - Anything that means "this works but could be better" → major (still must fix)
 //   - Informational only → minor (rare; most things are blocking)
 func DefaultRules() []Rule {
-	return []Rule{
+	rules := []Rule{
 		// Gate 5: Everything started is finished
 		todoRule(),
 		stubRule(),
@@ -444,6 +444,10 @@ func DefaultRules() []Rule {
 		missingKeyPropRule(),
 		missingEmptyStateRule(),
 	}
+	// Append extended rules (concurrency, config, database, observability,
+	// performance, error handling, AI failure modes).
+	rules = append(rules, ExtendedRules()...)
+	return rules
 }
 
 func todoRule() Rule {

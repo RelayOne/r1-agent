@@ -839,9 +839,9 @@ func temporary() {}
 
 func TestDefaultRuleCount(t *testing.T) {
 	rules := DefaultRules()
-	// 17 backend rules + 1 unwired-code rule + 11 frontend/UX rules + 6 new rules + 2 additional rules = 37
-	if len(rules) != 37 {
-		t.Errorf("expected 37 default rules, got %d", len(rules))
+	// 37 base rules + 13 extended rules (concurrency, config, database, observability, error handling, AI) = 50
+	if len(rules) != 50 {
+		t.Errorf("expected 50 default rules, got %d", len(rules))
 		for _, r := range rules {
 			t.Logf("  %s: %s", r.ID, r.Name)
 		}
