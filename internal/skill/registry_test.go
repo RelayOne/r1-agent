@@ -344,6 +344,87 @@ func TestBuiltinSkillsHaveKeywords(t *testing.T) {
 	}
 }
 
+func TestInjectPromptBudgeted(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	// Create two skills with known sizes
+	os.WriteFile(filepath.Join(skillDir, "small.md"),
+		[]byte("# small\n<!-- keywords: build -->\nShort content."), 0644)
+	os.WriteFile(filepath.Join(skillDir, "medium.md"),
+		[]byte("# medium\n<!-- keywords: build -->\n"+string(make([]byte, 400))), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	prompt := "fix the build error"
+	result, count := reg.InjectPromptBudgeted(prompt, 2550)
+
+	if count == 0 {
+		t.Fatal("expected at least one skill injected")
+	}
+	if !containsStr(result, prompt) {
+		t.Error("expected original prompt to be preserved")
+	}
+	// The injected content plus prompt should have token estimate within budget
+	injectedOnly := result[:len(result)-len(prompt)]
+	tokens := len(injectedOnly) / 4
+	if tokens > 2550 {
+		t.Errorf("injected tokens %d exceed budget 2550", tokens)
+	}
+}
+
+func TestInjectPromptBudgetedTruncation(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	// Create a skill with two sections — first section is small, total is large
+	bigContent := "# big-skill\n<!-- keywords: deploy -->\nGotcha: watch out for X.\n\n" +
+		"## Details\n\n" + string(make([]byte, 8000))
+	os.WriteFile(filepath.Join(skillDir, "big-skill.md"), []byte(bigContent), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	// Budget too small for full content but large enough for first section
+	prompt := "deploy the app"
+	result, count := reg.InjectPromptBudgeted(prompt, 100)
+
+	if count != 1 {
+		t.Fatalf("expected 1 skill injected (truncated), got %d", count)
+	}
+	if containsStr(result, "## Details") {
+		t.Error("expected truncated content to exclude ## Details section")
+	}
+	if !containsStr(result, "Gotcha: watch out for X.") {
+		t.Error("expected first section content to be preserved")
+	}
+}
+
+func TestInjectPromptBudgetedEmpty(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	os.WriteFile(filepath.Join(skillDir, "unrelated.md"),
+		[]byte("# unrelated\n<!-- keywords: zebra -->\nZebra stuff."), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	prompt := "fix the build error"
+	result, count := reg.InjectPromptBudgeted(prompt, 2550)
+
+	if count != 0 {
+		t.Errorf("expected 0 skills injected, got %d", count)
+	}
+	if result != prompt {
+		t.Error("expected original prompt to be returned unchanged")
+	}
+}
+
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {

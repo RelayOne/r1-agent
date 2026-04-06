@@ -1634,7 +1634,7 @@ func executePromptWithContext(e Engine) string {
 	// DefaultRegistry auto-loads embedded skills; project/user skills override.
 	reg := skill.DefaultRegistry(e.RepoRoot)
 	_ = reg.Load() // load project/user skills (builtins already loaded)
-	prompt = reg.InjectPrompt(prompt)
+	prompt, _ = reg.InjectPromptBudgeted(prompt, 2550)
 
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.

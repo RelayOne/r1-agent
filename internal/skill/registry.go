@@ -195,6 +195,93 @@ func (r *Registry) InjectPrompt(prompt string) string {
 	return sb.String()
 }
 
+// truncateToFirstSection returns content up to the first ## heading after the
+// initial # heading. This extracts the "gotchas only" portion of a skill.
+func truncateToFirstSection(content string) string {
+	lines := strings.Split(content, "\n")
+	pastTitle := false
+	var sb strings.Builder
+	for _, line := range lines {
+		if strings.HasPrefix(line, "# ") && !pastTitle {
+			pastTitle = true
+			sb.WriteString(line)
+			sb.WriteByte('\n')
+			continue
+		}
+		if pastTitle && strings.HasPrefix(line, "## ") {
+			break
+		}
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	return strings.TrimRight(sb.String(), "\n") + "\n"
+}
+
+// estimateTokens returns a rough token count using ~4 chars per token.
+func estimateTokens(s string) int {
+	n := len(s) / 4
+	if n == 0 && len(s) > 0 {
+		return 1
+	}
+	return n
+}
+
+// InjectPromptBudgeted augments a prompt with matching skill content,
+// respecting a token budget. Skills are prioritized by match quality and
+// truncated to fit within budget. Returns the augmented prompt and the
+// number of skills injected.
+func (r *Registry) InjectPromptBudgeted(prompt string, budgetTokens int) (string, int) {
+	matches := r.Match(prompt)
+	if len(matches) == 0 {
+		return prompt, 0
+	}
+
+	remaining := budgetTokens
+	var parts []string
+	count := 0
+
+	for _, s := range matches {
+		if remaining <= 0 {
+			break
+		}
+
+		header := fmt.Sprintf("## Skill: %s\n\n", s.Name)
+		separator := "\n\n---\n\n"
+		overhead := estimateTokens(header) + estimateTokens(separator)
+
+		fullContent := s.Content
+		fullTokens := estimateTokens(fullContent) + overhead
+
+		if fullTokens <= remaining {
+			parts = append(parts, header+fullContent+separator)
+			remaining -= fullTokens
+			count++
+			continue
+		}
+
+		// Try truncated version (first section only)
+		truncated := truncateToFirstSection(s.Content)
+		truncTokens := estimateTokens(truncated) + overhead
+
+		if truncTokens <= remaining {
+			parts = append(parts, header+truncated+separator)
+			remaining -= truncTokens
+			count++
+		}
+	}
+
+	if count == 0 {
+		return prompt, 0
+	}
+
+	var sb strings.Builder
+	for _, p := range parts {
+		sb.WriteString(p)
+	}
+	sb.WriteString(prompt)
+	return sb.String(), count
+}
+
 // Add registers a new skill. If project dir exists, saves to project skills.
 func (r *Registry) Add(name, description, content string, keywords []string) error {
 	r.mu.Lock()
