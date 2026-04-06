@@ -24,6 +24,7 @@ import (
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/notify"
@@ -225,6 +226,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// Boulder idle detection: shared across all parallel tasks.
 	boulderEnforcer := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 
+	// Unified event bus: shared across all tasks in this build session.
+	eventBus := hub.New()
+
 	// Cost tracking: shared across all tasks in this build session.
 	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
 		ui.Event("_system", stream.Event{Type: "system", DeltaText: alert.Message})
@@ -280,6 +284,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			CostTracker:      tracker,
 			TestGraph:        testGraph,
 			RepoMap:          repoMap,
+			EventBus:         eventBus,
 			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
@@ -671,6 +676,7 @@ func runCmd(args []string) {
 		CostTracker:     runTracker,
 		RepoMap:         runRepoMap,
 		TestGraph:       runTestGraph,
+		EventBus:        hub.New(),
 		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
@@ -1076,6 +1082,7 @@ Rules:
 		ClaudeBinary:    *claudeBin,
 		ClaudeConfigDir: *claudeConfigDir,
 		State:           ts,
+		EventBus:        hub.New(),
 		OnEvent: func(ev stream.Event) {
 			if ev.DeltaText != "" {
 				fmt.Print(ev.DeltaText)
@@ -2781,6 +2788,7 @@ type buildRunConfigOpts struct {
 	CostTracker *costtrack.Tracker
 	TestGraph   *testselect.Graph
 	RepoMap     *repomap.RepoMap
+	EventBus    *hub.Bus
 }
 
 func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event), opts *buildRunConfigOpts) app.RunConfig {
@@ -2813,6 +2821,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		cfg.CostTracker = opts.CostTracker
 		cfg.TestGraph = opts.TestGraph
 		cfg.RepoMap = opts.RepoMap
+		cfg.EventBus = opts.EventBus
 	}
 	return cfg
 }

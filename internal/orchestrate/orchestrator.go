@@ -39,6 +39,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/handoff"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/mission"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/research"
@@ -181,6 +182,9 @@ type Config struct {
 
 	// OnEvent is the streaming event callback.
 	OnEvent engine.OnEventFunc `json:"-"`
+
+	// EventBus is the unified event bus (nil = no events).
+	EventBus *hub.Bus `json:"-"`
 }
 
 // Orchestrator is the unified integration layer for mission-driven execution.
@@ -409,6 +413,7 @@ func (o *Orchestrator) WorkflowExecuteFn() func(ctx context.Context, m *mission.
 			State:           taskstate.NewTaskState(m.ID + "/" + slugify(taskDesc)),
 			Wisdom:          o.config.Wisdom,
 			CostTracker:     o.config.CostTracker,
+			EventBus:        o.config.EventBus,
 		}
 
 		result, err := wf.Run(ctx)

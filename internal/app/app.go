@@ -10,6 +10,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/memory"
@@ -71,6 +72,7 @@ type RunConfig struct {
 	Memory           *memory.Store              // cross-session persistent knowledge (nil = disabled)
 	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
 	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
+	EventBus         *hub.Bus                   // unified event bus (nil = no events)
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
@@ -235,6 +237,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		RepoMap:          o.cfg.RepoMap,
 		PlanOnly:         o.cfg.PlanOnly,
 		Convergence:      o.cfg.Convergence,
+		EventBus:         o.cfg.EventBus,
 	}
 	return wf.Run(ctx)
 }

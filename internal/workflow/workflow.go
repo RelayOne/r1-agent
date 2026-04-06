@@ -27,6 +27,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/fileutil"
 	"github.com/ericmacdougall/stoke/internal/gitblame"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/intent"
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/logging"
@@ -108,6 +109,7 @@ type Engine struct {
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
 	Convergence      *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
+	EventBus         *hub.Bus               // unified event bus (nil = no events)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -221,6 +223,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	}
 
 	result = Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
+
+	// Emit worktree creation event
+	e.emitEventAsync(&hub.Event{
+		Type:       hub.EventGitWorktreeCreated,
+		TaskID:     name,
+		WorktreeID: handle.Name,
+		Git: &hub.GitEvent{
+			Operation: "worktree_add",
+			Branch:    handle.Branch,
+		},
+	})
 
 	// Start a file watcher on the worktree to detect external changes during execution.
 	// Logs warnings when files are modified outside the agent's control (e.g., editor saves, git ops).
@@ -336,6 +349,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	}
 
 	planPhase := phases[0]
+	e.emitEvent(ctx, &hub.Event{
+		Type:   hub.EventMissionPlanStart,
+		TaskID: name, Phase: "plan",
+		Lifecycle: &hub.LifecycleEvent{Entity: "task", State: "plan_start"},
+	})
 	planRunner, planEngine := pickRunner(e, planPhase.Name)
 	planSpec := e.buildSpec(planPhase, handle)
 	planResult, err := planEngine.Run(execCtx, planSpec, e.OnEvent)
@@ -345,6 +363,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	}
 	result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
 	result.TotalCostUSD += planResult.CostUSD
+	e.emitEventAsync(&hub.Event{
+		Type:   hub.EventMissionPlanDone,
+		TaskID: name, Phase: "plan",
+		Model: &hub.ModelEvent{
+			Provider:     planRunner,
+			InputTokens:  planResult.Tokens.Input,
+			OutputTokens: planResult.Tokens.Output,
+			CostUSD:      planResult.CostUSD,
+		},
+	})
 	if e.CostTracker != nil && planResult.CostUSD > 0 {
 		e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
 	}
@@ -383,6 +411,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			return result, fmt.Errorf("budget exceeded ($%.2f spent), aborting", e.CostTracker.Total())
 		}
 		log.Info("starting attempt", "attempt", attempt, "max", maxAttempts)
+		e.emitEvent(ctx, &hub.Event{
+			Type:   hub.EventMissionExecuteStart,
+			TaskID: name, Phase: "execute",
+			Lifecycle: &hub.LifecycleEvent{Entity: "task", State: "execute_start", Attempt: attempt},
+		})
 
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."
 		// The learning is in the INSTRUCTIONS (retry brief), not in code state.
@@ -554,6 +587,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		outcomes, verifyErr := verifier.Run(execCtx, handle.Path)
 		result.Verification = outcomes
 
+		// Emit verification results
+		for _, o := range outcomes {
+			if !o.Skipped {
+				e.emitEventAsync(&hub.Event{
+					Type:   hub.EventVerifyBuildResult,
+					TaskID: name, Phase: "verify",
+					Test: &hub.TestEvent{Phase: o.Name},
+				})
+			}
+		}
+
 		// Build evidence for this attempt.
 		// When a gate is disabled by policy (empty command), treat it as passing.
 		evidence := taskstate.Evidence{
@@ -676,6 +720,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 			// --- FORBIDDEN-PATTERN SCAN ---
 			scanResult, scanErr := scan.ScanFiles(handle.Path, scan.DefaultRules(), modifiedFiles)
+			if scanErr == nil && len(scanResult.Findings) > 0 {
+				e.emitEventAsync(&hub.Event{
+					Type:   hub.EventSecurityScanResult,
+					TaskID: name, Phase: "verify",
+					Security: &hub.SecurityEvent{
+						Category: "scan",
+						Severity: "info",
+						Details:  scanResult.Summary(),
+					},
+				})
+			}
 			if scanErr == nil && scanResult.HasBlocking() {
 				evidence.ReviewPass = false
 				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
@@ -721,6 +776,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 
 			// --- CONVERGENCE GATE: adversarial self-audit before merge ---
+			e.emitEvent(ctx, &hub.Event{
+				Type:   hub.EventVerifyConvergenceStart,
+				TaskID: name, Phase: "convergence",
+			})
 			if e.Convergence != nil && len(postReviewFiles) > 0 {
 				var convFiles []convergence.FileInput
 				for _, f := range postReviewFiles {
@@ -822,6 +881,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			// Save main branch HEAD before merge for potential rollback.
 			mainHead := worktree.MainHeadSHA(ctx, e.RepoRoot)
 
+			e.emitEvent(ctx, &hub.Event{
+				Type:   hub.EventGitPreMerge,
+				TaskID: name, WorktreeID: handle.Name,
+				Git: &hub.GitEvent{
+					Operation: "merge",
+					Branch:    handle.Branch,
+					Message:   commitMsg,
+				},
+			})
 			if mergeErr := e.Worktrees.Merge(ctx, handle, commitMsg); mergeErr != nil {
 				// Attempt to restore main to pre-merge state if it was modified.
 				if mainHead != "" {
@@ -847,6 +915,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				return result, err
 			}
 
+			e.emitEventAsync(&hub.Event{
+				Type:   hub.EventGitPostMerge,
+				TaskID: name, WorktreeID: handle.Name,
+				Git: &hub.GitEvent{
+					Operation:    "merge",
+					Branch:       handle.Branch,
+					FilesChanged: postReviewFiles,
+				},
+			})
 			log.Info("task completed successfully", "attempt", attempt, "cost_usd", result.TotalCostUSD)
 			if e.Boulder != nil {
 				e.Boulder.UpdateStatus(name, boulder.StatusComplete)
@@ -1649,6 +1726,20 @@ func slugFromTask(task string) string {
 		return "task"
 	}
 	return cleaned
+}
+
+// emitEvent sends an event to the hub bus if configured. Nil-safe.
+func (e Engine) emitEvent(ctx context.Context, ev *hub.Event) {
+	if e.EventBus != nil {
+		e.EventBus.Emit(ctx, ev)
+	}
+}
+
+// emitEventAsync sends an event asynchronously if configured. Nil-safe.
+func (e Engine) emitEventAsync(ev *hub.Event) {
+	if e.EventBus != nil {
+		e.EventBus.EmitAsync(ev)
+	}
 }
 
 // buildSemdiffInputs builds old/new content pairs for semantic diff analysis
