@@ -290,6 +290,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Budget gate: stop before spending more if over budget.
+		if e.CostTracker != nil && e.CostTracker.OverBudget() {
+			log.Warn("budget exceeded, skipping attempt", "spent", e.CostTracker.Total(), "remaining", e.CostTracker.BudgetRemaining())
+			e.Worktrees.Cleanup(ctx, handle)
+			return result, fmt.Errorf("budget exceeded ($%.2f spent), aborting", e.CostTracker.Total())
+		}
 		log.Info("starting attempt", "attempt", attempt, "max", maxAttempts)
 
 		// §7: "Each retry starts from a clean worktree (fresh copy of main)."

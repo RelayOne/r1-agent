@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
@@ -77,6 +78,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		return RunResult{}, fmt.Errorf("stderr pipe: %w", err)
 	}
 
+	startTime := time.Now()
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, fmt.Errorf("start codex: %w", err)
 	}
@@ -123,6 +125,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 			result.Tokens.Input += raw.Usage.InputTokens
 			result.Tokens.Output += raw.Usage.OutputTokens
 			result.Tokens.CacheRead += raw.Usage.CachedInputTokens
+			result.NumTurns++
 		}
 
 		if onEvent != nil {
@@ -179,6 +182,10 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		default:
 		}
 	}
+
+	// Compute fields for parity with Claude runner.
+	result.DurationMs = time.Since(startTime).Milliseconds()
+	result.CostUSD = costtrack.ComputeCost("codex-mini", result.Tokens.Input, result.Tokens.Output, result.Tokens.CacheRead, result.Tokens.CacheCreation)
 
 	return result, nil
 }
