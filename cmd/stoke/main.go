@@ -31,6 +31,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
 	"github.com/ericmacdougall/stoke/internal/scheduler"
+	"github.com/ericmacdougall/stoke/internal/specexec"
 	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/stream"
@@ -63,6 +64,7 @@ type BuildConfig struct {
 	LintCommand     string
 	ROIFilter       string // high, medium, low, skip
 	UseSQLite       bool
+	SpecExec        bool // enable speculative parallel execution
 	Timeout         time.Duration
 }
 
@@ -179,7 +181,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sharedWorktrees := worktree.NewManager(absRepo)
 	wisdomStore := wisdom.NewStore()
 
-	results, err := sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+	execFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 		if task.Status == plan.StatusDone {
 			return scheduler.TaskResult{TaskID: task.ID, Success: true}
 		}
@@ -285,7 +287,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		markTask(p, task.ID, plan.StatusDone)
 		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
-	})
+	}
+
+	// Optionally wrap with speculative parallel execution
+	if cfg.SpecExec {
+		execFn = scheduler.WithSpecExec(execFn, scheduler.SpecExecConfig{
+			Approaches:  specexec.CommonApproaches(),
+			MaxParallel: 3,
+			Timeout:     5 * time.Minute,
+		})
+	}
+
+	results, err := sched.Run(ctx, p, execFn)
 
 	if err != nil {
 		return nil, fmt.Errorf("scheduler: %w", err)
@@ -568,6 +581,7 @@ func buildCmd(args []string) {
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip (default: medium)")
 	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
 	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
+	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
 	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -750,7 +764,7 @@ func buildCmd(args []string) {
 			sched := scheduler.New(*workers)
 			interactiveWorktrees := worktree.NewManager(absRepo)
 			wisdomStore := wisdom.NewStore()
-			sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+			tuiExecFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 				if task.Status == plan.StatusDone {
 					return scheduler.TaskResult{TaskID: task.ID, Success: true}
 				}
@@ -782,7 +796,15 @@ func buildCmd(args []string) {
 				markTask(p, task.ID, plan.StatusDone)
 				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 				return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
-			})
+			}
+			if *specExec {
+				tuiExecFn = scheduler.WithSpecExec(tuiExecFn, scheduler.SpecExecConfig{
+					Approaches:  specexec.CommonApproaches(),
+					MaxParallel: 3,
+					Timeout:     5 * time.Minute,
+				})
+			}
+			sched.Run(ctx, p, tuiExecFn)
 			// Update pool utilization in TUI
 			tui.SendPoolUpdate(program, []tui.PoolInfo{
 				{ID: "aggregate", Label: "all pools", Utilization: 0},
@@ -816,6 +838,7 @@ func buildCmd(args []string) {
 		LintCommand:     *lintC,
 		ROIFilter:       *roiFilter,
 		UseSQLite:       *useSQLite,
+		SpecExec:        *specExec,
 		Timeout:         *timeout,
 	}
 
