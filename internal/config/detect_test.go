@@ -8,16 +8,32 @@ import (
 
 func TestDetectNode(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test","scripts":{"test":"jest","lint":"eslint ."}}`), 0644)
 	cmds := DetectCommands(dir)
 	if cmds.Test != "npm test" {
 		t.Errorf("test=%q", cmds.Test)
+	}
+	if cmds.Lint != "npm run lint" {
+		t.Errorf("lint=%q", cmds.Lint)
+	}
+}
+
+func TestDetectNodeMissingScripts(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0644)
+	cmds := DetectCommands(dir)
+	// No scripts section → no commands emitted
+	if cmds.Test != "" {
+		t.Errorf("expected empty test, got %q", cmds.Test)
+	}
+	if cmds.Lint != "" {
+		t.Errorf("expected empty lint, got %q", cmds.Lint)
 	}
 }
 
 func TestDetectNodeWithTS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc"}}`), 0644)
 	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
 	cmds := DetectCommands(dir)
 	if cmds.Build != "npm run build" {

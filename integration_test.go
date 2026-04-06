@@ -388,7 +388,7 @@ func TestDetectGoCommands(t *testing.T) {
 
 func TestDetectNodeTS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc","test":"jest"}}`), 0644)
 	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
 	cmds := config.DetectCommands(dir)
 	if cmds.Build != "npm run build" {

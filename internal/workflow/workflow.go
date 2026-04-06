@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/autofix"
+	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/critic"
@@ -77,6 +79,7 @@ type Engine struct {
 	Hooks            []TaskHook          // lifecycle hooks (nil = no hooks)
 	PlanOnly         bool
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
+	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -199,6 +202,38 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	// Advance state: Pending -> Claimed (harness takes ownership)
 	if err := e.advanceState(taskstate.Claimed, "harness dispatching to plan phase"); err != nil {
 		return result, err
+	}
+
+	// Boulder: track this task for idle detection and start background scanner.
+	if e.Boulder != nil {
+		e.Boulder.TrackTask(name, e.Task, handle.Name)
+		e.Boulder.UpdateStatus(name, boulder.StatusInProgress)
+		// Background scanner: periodically check for idle agents.
+		boulderCtx, boulderCancel := context.WithCancel(ctx)
+		defer boulderCancel()
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					e.Boulder.Scan(time.Now(), func(taskID, msg string) bool {
+						log.Warn("boulder nudge", "task", taskID, "message", msg)
+						return true
+					})
+				case <-boulderCtx.Done():
+					return
+				}
+			}
+		}()
+		// Wrap OnEvent to record activity on each agent event.
+		origOnEvent := e.OnEvent
+		e.OnEvent = func(ev stream.Event) {
+			e.Boulder.RecordActivity()
+			if origOnEvent != nil {
+				origOnEvent(ev)
+			}
+		}
 	}
 
 	planPhase := phases[0]
@@ -579,6 +614,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			}
 
 			log.Info("task completed successfully", "attempt", attempt, "cost_usd", result.TotalCostUSD)
+			if e.Boulder != nil {
+				e.Boulder.UpdateStatus(name, boulder.StatusComplete)
+			}
 			logging.Cost(log, name, result.TotalCostUSD, execRunnerName)
 
 			// Record successful completion as a wisdom pattern.
@@ -956,6 +994,18 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	if analysis.RootCause != "" {
 		sb.WriteString("Root cause: " + analysis.RootCause + "\n")
 	}
+
+	// For lint failures, use autofix's structured parser for cleaner output.
+	if analysis.Class == failure.LintFailed {
+		var lintOutput string
+		for _, d := range analysis.Specifics {
+			lintOutput += fmt.Sprintf("%s:%d: %s\n", d.File, d.Line, d.Message)
+		}
+		if issues := autofix.ParseOutput(lintOutput); len(issues) > 0 {
+			sb.WriteString("\n" + autofix.FormatFixPrompt(issues))
+		}
+	}
+
 	if len(analysis.Specifics) > 0 {
 		sb.WriteString("\nSPECIFIC ISSUES:\n")
 		// Cap specifics to first 10 to avoid unbounded growth

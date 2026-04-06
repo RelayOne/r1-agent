@@ -122,14 +122,22 @@ func DetectProject(projectRoot string) ProjectInfo {
 			}
 		}
 
-		// If no framework detected but has .vue/.tsx/.jsx files, mark as frontend
+		// If no framework detected but has .vue/.tsx/.jsx files, mark as frontend.
+		// filepath.Glob doesn't support ** recursion, so walk the src directory.
 		if !info.HasFrontend {
-			for _, pattern := range []string{"src/**/*.tsx", "src/**/*.jsx", "src/**/*.vue", "src/**/*.svelte"} {
-				matches, _ := filepath.Glob(filepath.Join(projectRoot, pattern))
-				if len(matches) > 0 {
-					info.HasFrontend = true
-					break
-				}
+			frontendExts := map[string]bool{".tsx": true, ".jsx": true, ".vue": true, ".svelte": true}
+			srcDir := filepath.Join(projectRoot, "src")
+			if _, err := os.Stat(srcDir); err == nil {
+				filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+					if err != nil || d.IsDir() {
+						return nil
+					}
+					if frontendExts[filepath.Ext(path)] {
+						info.HasFrontend = true
+						return filepath.SkipAll
+					}
+					return nil
+				})
 			}
 		}
 
@@ -177,13 +185,19 @@ func DetectCommands(projectRoot string) Commands {
 
 	switch info.Type {
 	case ProjectNodeJS, ProjectReact, ProjectNextJS, ProjectVue, ProjectSvelte, ProjectAngular:
-		cmds := Commands{Test: "npm test"}
-		if fileExists(filepath.Join(projectRoot, "tsconfig.json")) {
-			cmds.Build = "npm run build"
-		} else if info.Type == ProjectNextJS {
-			cmds.Build = "npm run build"
+		scripts := npmScripts(projectRoot)
+		cmds := Commands{}
+		if scripts["test"] {
+			cmds.Test = "npm test"
 		}
-		cmds.Lint = "npm run lint"
+		if scripts["build"] {
+			cmds.Build = "npm run build"
+		} else if fileExists(filepath.Join(projectRoot, "tsconfig.json")) || info.Type == ProjectNextJS {
+			cmds.Build = "npm run build" // likely exists but not in scripts
+		}
+		if scripts["lint"] {
+			cmds.Lint = "npm run lint"
+		}
 		return cmds
 
 	case ProjectGo:
@@ -209,6 +223,25 @@ func DetectCommands(projectRoot string) Commands {
 	}
 
 	return Commands{}
+}
+
+// npmScripts returns a set of script names defined in package.json.
+func npmScripts(projectRoot string) map[string]bool {
+	result := make(map[string]bool)
+	data, err := os.ReadFile(filepath.Join(projectRoot, "package.json"))
+	if err != nil {
+		return result
+	}
+	var pkg struct {
+		Scripts map[string]json.RawMessage `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return result
+	}
+	for name := range pkg.Scripts {
+		result[name] = true
+	}
+	return result
 }
 
 func mergeMaps(a, b map[string]string) map[string]string {
