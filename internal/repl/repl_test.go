@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"strings"
 	"testing"
+
+	"github.com/ericmacdougall/stoke/internal/interview"
 )
 
 func TestNew(t *testing.T) {
@@ -274,6 +276,42 @@ func TestRunBannerShowsRegisteredCommands(t *testing.T) {
 	s := out.String()
 	if !strings.Contains(s, "ship") || !strings.Contains(s, "build") {
 		t.Error("banner should show registered commands")
+	}
+}
+
+func TestRunInterviewCommand(t *testing.T) {
+	// Simulate: /interview fix the auth bug -> answer 3 questions -> done
+	input := "/interview fix the auth bug\nMake login work\nskip\ndone\n/quit\n"
+	r, out := newTestREPL(input)
+	r.RegisterBuiltins()
+
+	var receivedScope bool
+	r.OnInterview = func(scope *interview.ClarifiedScope) {
+		receivedScope = true
+		if scope.OriginalRequest != "fix the auth bug" {
+			t.Errorf("scope.OriginalRequest = %q", scope.OriginalRequest)
+		}
+	}
+
+	r.Run()
+	s := out.String()
+	if !strings.Contains(s, "Deep Interview") {
+		t.Error("should show Deep Interview header")
+	}
+	if !strings.Contains(s, "Clarified Scope") {
+		t.Error("should show Clarified Scope")
+	}
+	if !receivedScope {
+		t.Error("OnInterview callback was not called")
+	}
+}
+
+func TestRunInterviewNoArgs(t *testing.T) {
+	r, out := newTestREPL("/interview\n/quit\n")
+	r.RegisterBuiltins()
+	r.Run()
+	if !strings.Contains(out.String(), "Usage: /interview") {
+		t.Error("should show usage when no args")
 	}
 }
 
