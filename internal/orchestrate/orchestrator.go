@@ -249,7 +249,7 @@ func New(config Config) (*Orchestrator, error) {
 		mStore.Close()
 		return nil, fmt.Errorf("create handoff chain: %w", err)
 	}
-	validator := convergence.NewValidator()
+	validator := convergence.NewValidatorForProject(config.RepoRoot)
 
 	// Detect project type and capabilities
 	var projInfo projconfig.ProjectInfo

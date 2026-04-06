@@ -116,8 +116,9 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	}
 
 	// Default convergence validator: always-on adversarial self-audit.
+	// Uses project-aware detection to activate domain-specific rules.
 	if cfg.Convergence == nil {
-		cfg.Convergence = convergence.NewValidator()
+		cfg.Convergence = convergence.NewValidatorForProject(cfg.RepoRoot)
 	}
 
 	return &Orchestrator{cfg: cfg, policy: policy}, nil
