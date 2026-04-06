@@ -277,6 +277,8 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 }
 
 // buildRequest constructs the provider.ChatRequest from current state.
+// Tools are sorted alphabetically to prevent cache busting.
+// System prompt uses cache_control breakpoints for 90% cost reduction.
 func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 	// Convert our Message format to provider's ChatMessage format
 	chatMsgs := make([]provider.ChatMessage, len(messages))
@@ -288,12 +290,20 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 		}
 	}
 
+	// Sort tools alphabetically — non-deterministic ordering busts cache on every turn
+	sortedTools := SortToolsDeterministic(l.tools)
+
+	// Build system prompt with cache_control breakpoint on static content
+	systemBlocks := BuildCachedSystemPrompt(l.config.SystemPrompt, "")
+	systemJSON, _ := json.Marshal(systemBlocks)
+
 	return provider.ChatRequest{
-		Model:     l.config.Model,
-		System:    l.config.SystemPrompt,
-		Messages:  chatMsgs,
-		MaxTokens: l.config.MaxTokens,
-		Tools:     l.tools,
+		Model:        l.config.Model,
+		SystemRaw:    systemJSON,
+		Messages:     chatMsgs,
+		MaxTokens:    l.config.MaxTokens,
+		Tools:        sortedTools,
+		CacheEnabled: true,
 	}
 }
 

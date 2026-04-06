@@ -28,13 +28,15 @@ type Provider interface {
 
 // ChatRequest is a model-agnostic chat completion request.
 type ChatRequest struct {
-	Model       string            `json:"model"`
-	System      string            `json:"system,omitempty"`
-	Messages    []ChatMessage     `json:"messages"`
-	MaxTokens   int               `json:"max_tokens"`
-	Tools       []ToolDef         `json:"tools,omitempty"`
-	Temperature *float64          `json:"temperature,omitempty"`
-	Metadata    map[string]string `json:"-"` // not sent to API
+	Model        string            `json:"model"`
+	System       string            `json:"system,omitempty"`
+	SystemRaw    json.RawMessage   `json:"-"` // pre-formatted system blocks with cache_control (takes priority over System)
+	Messages     []ChatMessage     `json:"messages"`
+	MaxTokens    int               `json:"max_tokens"`
+	Tools        []ToolDef         `json:"tools,omitempty"`
+	Temperature  *float64          `json:"temperature,omitempty"`
+	CacheEnabled bool              `json:"-"` // if true, adds cache_control to last tool definition
+	Metadata     map[string]string `json:"-"` // not sent to API
 }
 
 // ChatMessage is a single message in a chat.
@@ -232,12 +234,26 @@ func (p *AnthropicProvider) buildRequestBody(req ChatRequest, streaming bool) ma
 		"max_tokens": req.MaxTokens,
 		"messages":   req.Messages,
 	}
-	if req.System != "" {
+
+	// System prompt: prefer pre-formatted SystemRaw (with cache_control) over plain string
+	if len(req.SystemRaw) > 0 {
+		var raw interface{}
+		if err := json.Unmarshal(req.SystemRaw, &raw); err == nil {
+			body["system"] = raw
+		}
+	} else if req.System != "" {
 		body["system"] = req.System
 	}
+
+	// Tools: add cache_control to last tool definition when caching is enabled
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		if req.CacheEnabled {
+			body["tools"] = toolsWithCacheControl(req.Tools)
+		} else {
+			body["tools"] = req.Tools
+		}
 	}
+
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
@@ -245,6 +261,27 @@ func (p *AnthropicProvider) buildRequestBody(req ChatRequest, streaming bool) ma
 		body["stream"] = true
 	}
 	return body
+}
+
+// toolsWithCacheControl adds cache_control to the last tool definition.
+// This is the Anthropic-recommended pattern for caching tool definitions.
+func toolsWithCacheControl(tools []ToolDef) []interface{} {
+	result := make([]interface{}, len(tools))
+	for i, t := range tools {
+		entry := map[string]interface{}{
+			"name":         t.Name,
+			"input_schema": t.InputSchema,
+		}
+		if t.Description != "" {
+			entry["description"] = t.Description
+		}
+		// Add cache_control to last tool
+		if i == len(tools)-1 {
+			entry["cache_control"] = map[string]string{"type": "ephemeral"}
+		}
+		result[i] = entry
+	}
+	return result
 }
 
 func (p *AnthropicProvider) setHeaders(req *http.Request) {

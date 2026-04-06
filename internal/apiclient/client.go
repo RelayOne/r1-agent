@@ -76,14 +76,16 @@ type Message struct {
 
 // Request is a completion request.
 type Request struct {
-	Messages    []Message      `json:"messages"`
-	System      string         `json:"system,omitempty"`
-	MaxTokens   int            `json:"max_tokens,omitempty"`
-	Temperature *float64       `json:"temperature,omitempty"`
-	Stream      bool           `json:"stream"`
-	Tools       []ToolDef      `json:"tools,omitempty"`
-	StopSeqs    []string       `json:"stop_sequences,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Messages     []Message        `json:"messages"`
+	System       string           `json:"system,omitempty"`
+	SystemRaw    json.RawMessage  `json:"-"` // pre-formatted system blocks with cache_control
+	MaxTokens    int              `json:"max_tokens,omitempty"`
+	Temperature  *float64         `json:"temperature,omitempty"`
+	Stream       bool             `json:"stream"`
+	Tools        []ToolDef        `json:"tools,omitempty"`
+	CacheEnabled bool             `json:"-"` // add cache_control to last tool definition
+	StopSeqs     []string         `json:"stop_sequences,omitempty"`
+	Metadata     map[string]any   `json:"metadata,omitempty"`
 }
 
 // ToolDef defines a tool available to the model.
@@ -266,19 +268,46 @@ func (c *Client) buildAnthropicBody(req Request) ([]byte, error) {
 		"max_tokens": firstNonZero(req.MaxTokens, c.config.MaxTokens),
 		"stream":     req.Stream,
 	}
-	if req.System != "" {
+	// Prefer pre-formatted system blocks with cache_control
+	if len(req.SystemRaw) > 0 {
+		var raw interface{}
+		if err := json.Unmarshal(req.SystemRaw, &raw); err == nil {
+			body["system"] = raw
+		}
+	} else if req.System != "" {
 		body["system"] = req.System
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		if req.CacheEnabled {
+			body["tools"] = toolsWithAPIClientCache(req.Tools)
+		} else {
+			body["tools"] = req.Tools
+		}
 	}
 	if len(req.StopSeqs) > 0 {
 		body["stop_sequences"] = req.StopSeqs
 	}
 	return json.Marshal(body)
+}
+
+// toolsWithAPIClientCache adds cache_control to the last tool definition.
+func toolsWithAPIClientCache(tools []ToolDef) []map[string]any {
+	result := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		entry := map[string]any{
+			"name":         t.Name,
+			"description":  t.Description,
+			"input_schema": t.InputSchema,
+		}
+		if i == len(tools)-1 {
+			entry["cache_control"] = map[string]string{"type": "ephemeral"}
+		}
+		result[i] = entry
+	}
+	return result
 }
 
 func (c *Client) buildOpenAIBody(req Request) ([]byte, error) {
