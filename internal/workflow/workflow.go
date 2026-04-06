@@ -637,15 +637,29 @@ func (e Engine) runCrossModelReview(
 
 	var verifyResult engine.RunResult
 	var reviewErr error
-	var reviewReadCount int // track how many Read tool uses the reviewer made
+	reviewFilesRead := make(map[string]bool) // track unique files the reviewer Read
 	triedReviewPools := map[string]bool{}
 	maxReviewRotations := 5
 
-	// Wrap OnEvent to count Read tool uses during review
+	// Build a set of changed files for overlap checking.
+	changedSet := make(map[string]bool, len(preReviewFiles))
+	for _, f := range preReviewFiles {
+		changedSet[f] = true
+	}
+
+	// Wrap OnEvent to track unique Read tool uses on changed files.
 	reviewOnEvent := func(ev stream.Event) {
 		for _, tu := range ev.ToolUses {
 			if tu.Name == "Read" {
-				reviewReadCount++
+				if filePath, ok := tu.Input["file_path"].(string); ok {
+					// Normalize: strip worktree prefix to get relative path.
+					for cf := range changedSet {
+						if strings.HasSuffix(filePath, cf) {
+							reviewFilesRead[cf] = true
+							break
+						}
+					}
+				}
 			}
 		}
 		if e.OnEvent != nil {
@@ -694,6 +708,17 @@ func (e Engine) runCrossModelReview(
 	}
 
 	evidence.ReviewEngine = verifyRunnerName
+
+	// Fail fast on agent-side errors (timeout, stream failure) — same as execute path.
+	if verifyResult.IsError && verifyResult.Subtype != "rate_limited" {
+		evidence.ReviewPass = false
+		evidence.ReviewOutput = fmt.Sprintf("reviewer error (subtype=%s): %s", verifyResult.Subtype, truncate(verifyResult.ResultText, 200))
+		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+		e.Worktrees.Cleanup(ctx, handle)
+		_ = e.advanceState(taskstate.Failed, "cross-model review: agent error ("+verifyResult.Subtype+")")
+		return nil, fmt.Errorf("cross-model review agent error (subtype=%s)", verifyResult.Subtype)
+	}
+
 	if reviewErr != nil {
 		evidence.ReviewPass = false
 		evidence.ReviewOutput = reviewErr.Error()
@@ -717,18 +742,19 @@ func (e Engine) runCrossModelReview(
 		return nil, fmt.Errorf("cross-model review returned invalid JSON: %v", parseErr)
 	}
 
-	// Review quality gate: reviewer must have used Read tools proportional
-	// to the number of changed files. A reviewer that reads nothing is invalid.
-	minReads := len(preReviewFiles)
-	if minReads < 1 {
-		minReads = 1
+	// Review quality gate: reviewer must have Read at least half the changed files.
+	// Counts unique changed files actually read, not total Read events.
+	minFilesRead := len(preReviewFiles) / 2
+	if minFilesRead < 1 {
+		minFilesRead = 1
 	}
-	if reviewReadCount < minReads {
+	uniqueReads := len(reviewFilesRead)
+	if uniqueReads < minFilesRead {
 		evidence.ReviewPass = false
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
 		e.Worktrees.Cleanup(ctx, handle)
-		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: %d Read tool uses, need at least %d (one per changed file)", reviewReadCount, minReads))
-		return nil, fmt.Errorf("cross-model review quality gate failed: %d Read uses < %d changed files", reviewReadCount, minReads)
+		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: read %d/%d changed files, need at least %d", uniqueReads, len(preReviewFiles), minFilesRead))
+		return nil, fmt.Errorf("cross-model review quality gate failed: read %d/%d changed files (need %d)", uniqueReads, len(preReviewFiles), minFilesRead)
 	}
 
 	evidence.ReviewPass = verdict.Pass
@@ -788,7 +814,7 @@ func (e Engine) runCrossModelReview(
 		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("post-review protected violation: %v", postProtected))
 		return nil, fmt.Errorf("post-review protected file violation: %v", postProtected)
 	}
-	if len(e.AllowedFiles) > 0 {
+	if len(e.AllowedFiles) > 0 && e.Policy.Verification.ScopeCheck {
 		postScope := verify.CheckScope(postReviewFiles, e.AllowedFiles)
 		if len(postScope) > 0 {
 			e.Worktrees.Cleanup(ctx, handle)

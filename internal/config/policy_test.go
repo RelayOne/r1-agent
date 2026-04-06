@@ -6,6 +6,90 @@ import (
 	"testing"
 )
 
+func TestVerificationAllDisabledHonored(t *testing.T) {
+	dir := t.TempDir()
+	yaml := `phases:
+  plan:
+    builtin_tools: [Read]
+    denied_rules: []
+    allowed_rules: [Read]
+  execute:
+    builtin_tools: [Read, Edit]
+    denied_rules: []
+    allowed_rules: [Read, Edit]
+  verify:
+    builtin_tools: [Read]
+    denied_rules: []
+    allowed_rules: [Read]
+files:
+  protected: []
+verification:
+  build: false
+  tests: false
+  lint: false
+  cross_model_review: false
+  scope_check: false
+`
+	path := filepath.Join(dir, "stoke.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All gates should be false — not restored to defaults.
+	if p.Verification.Build {
+		t.Error("Build should be false when explicitly disabled")
+	}
+	if p.Verification.Tests {
+		t.Error("Tests should be false when explicitly disabled")
+	}
+	if p.Verification.Lint {
+		t.Error("Lint should be false when explicitly disabled")
+	}
+	if p.Verification.CrossModelReview {
+		t.Error("CrossModelReview should be false when explicitly disabled")
+	}
+	if p.Verification.ScopeCheck {
+		t.Error("ScopeCheck should be false when explicitly disabled")
+	}
+}
+
+func TestVerificationOmittedGetsDefaults(t *testing.T) {
+	dir := t.TempDir()
+	// YAML with no verification section at all
+	yaml := `phases:
+  plan:
+    builtin_tools: [Read]
+    denied_rules: []
+    allowed_rules: [Read]
+  execute:
+    builtin_tools: [Read, Edit]
+    denied_rules: []
+    allowed_rules: [Read, Edit]
+  verify:
+    builtin_tools: [Read]
+    denied_rules: []
+    allowed_rules: [Read]
+files:
+  protected: []
+`
+	path := filepath.Join(dir, "stoke.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadPolicy(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// When verification section is omitted, defaults should apply.
+	def := DefaultPolicy()
+	if p.Verification != def.Verification {
+		t.Errorf("omitted verification should get defaults: got %+v, want %+v", p.Verification, def.Verification)
+	}
+}
+
 func TestAutoLoadPolicyDiscovers(t *testing.T) {
 	dir := t.TempDir()
 	// Write a policy file with a well-known name

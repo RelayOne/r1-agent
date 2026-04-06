@@ -115,21 +115,28 @@ func Resolve(taskType TaskType, isAvailable func(Provider) bool) Provider {
 // the budget is over 80% consumed, it skips expensive primary providers and
 // walks the fallback chain to find a cheaper alternative.
 func CostAwareResolve(taskType TaskType, tracker *costtrack.Tracker, isAvailable func(Provider) bool) Provider {
-	if tracker == nil || tracker.BudgetRemaining() < 0 {
-		// No budget tracking or unlimited budget — standard routing.
+	if tracker == nil {
 		return Resolve(taskType, isAvailable)
 	}
 
 	remaining := tracker.BudgetRemaining()
-	total := remaining + tracker.Total()
-	if total <= 0 {
-		return Resolve(taskType, isAvailable)
-	}
-
-	pctRemaining := remaining / total
-	if pctRemaining > 0.2 {
-		// Plenty of budget — standard routing.
-		return Resolve(taskType, isAvailable)
+	if remaining < 0 {
+		// BudgetRemaining returns -1 for unlimited budgets (no cap set).
+		// Distinguish unlimited from over-budget.
+		if !tracker.OverBudget() {
+			return Resolve(taskType, isAvailable)
+		}
+		// Over budget: fall through to prefer cheaper providers.
+	} else {
+		budget := remaining + tracker.Total()
+		if budget <= 0 {
+			return Resolve(taskType, isAvailable)
+		}
+		pctRemaining := remaining / budget
+		if pctRemaining > 0.2 {
+			// Plenty of budget (>20% left) — standard routing.
+			return Resolve(taskType, isAvailable)
+		}
 	}
 
 	// Budget tight (>80% consumed). Prefer cheaper fallback providers.

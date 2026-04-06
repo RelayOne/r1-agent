@@ -15,6 +15,10 @@ type Policy struct {
 	Phases       map[string]PhasePolicy `json:"phases"`
 	Files        FilesPolicy            `json:"files"`
 	Verification VerificationPolicy     `json:"verification"`
+
+	// verificationExplicit is true when the YAML/JSON had a verification section.
+	// This distinguishes "all gates intentionally disabled" from "section omitted."
+	verificationExplicit bool
 }
 
 // PhasePolicy specifies the builtin tools, allow/deny rules, and MCP access for a single workflow phase.
@@ -138,6 +142,10 @@ func LoadPolicy(path string) (Policy, error) {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
+		// Detect whether the JSON had a verification section.
+		var probe struct{ Verification *json.RawMessage `json:"verification"` }
+		json.Unmarshal(raw, &probe)
+		p.verificationExplicit = probe.Verification != nil
 		return normalizePolicy(p), nil
 	}
 	p, err := parsePolicyYAML(trimmed)
@@ -200,7 +208,9 @@ func normalizePolicy(p Policy) Policy {
 	if p.Files.Protected == nil {
 		p.Files = d.Files
 	}
-	if !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
+	// Only restore default verification if the section was never explicitly provided.
+	// If a user wrote verification: with all fields false, honor that intent.
+	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
 		p.Verification = d.Verification
 	}
 	return p
@@ -287,6 +297,7 @@ func parsePolicyYAML(input string) (Policy, error) {
 			if !ok {
 				return Policy{}, fmt.Errorf("invalid verification line: %q", raw)
 			}
+			p.verificationExplicit = true
 			parsed := parseBoolLike(val)
 			switch key {
 			case "build":
