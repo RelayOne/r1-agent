@@ -230,32 +230,24 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 
 	s := string(content)
 
-	if args.ReplaceAll {
-		count := strings.Count(s, args.OldString)
-		if count == 0 {
-			return "", fmt.Errorf("old_string not found in %s — read the file again to get current content", args.Path)
-		}
-		s = strings.ReplaceAll(s, args.OldString, args.NewString)
-		if err := os.WriteFile(path, []byte(s), 0644); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Replaced %d occurrences in %s", count, args.Path), nil
+	// Use cascading str_replace: exact → whitespace → ellipsis → fuzzy
+	result, err := StrReplace(s, args.OldString, args.NewString, args.ReplaceAll)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", args.Path, err)
 	}
 
-	// Uniqueness check
-	count := strings.Count(s, args.OldString)
-	if count == 0 {
-		return "", fmt.Errorf("old_string not found in %s — read the file again to get current content", args.Path)
-	}
-	if count > 1 {
-		return "", fmt.Errorf("old_string matches %d times in %s — include more surrounding context to make it unique, or use replace_all", count, args.Path)
-	}
-
-	s = strings.Replace(s, args.OldString, args.NewString, 1)
-	if err := os.WriteFile(path, []byte(s), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(result.NewContent), 0644); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Edited %s successfully", args.Path), nil
+
+	if args.ReplaceAll {
+		return fmt.Sprintf("Replaced %d occurrences in %s (method: %s)", result.Replacements, args.Path, result.Method), nil
+	}
+	msg := fmt.Sprintf("Edited %s successfully", args.Path)
+	if result.Method != "exact" {
+		msg += fmt.Sprintf(" (matched via %s, confidence: %.0f%%)", result.Method, result.Confidence*100)
+	}
+	return msg, nil
 }
 
 func (r *Registry) handleWrite(input json.RawMessage) (string, error) {

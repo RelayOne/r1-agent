@@ -118,5 +118,6 @@ func (s RunSpec) Validate() error {
 type Registry struct {
 	Claude     *ClaudeRunner
 	Codex      *CodexRunner
+	Native     *NativeRunner               // Stoke native runner using Anthropic API directly
 	CacheStats *stream.PromptCacheStats // shared across all runners
 }
