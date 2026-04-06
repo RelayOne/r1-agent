@@ -10,6 +10,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/verify"
@@ -199,3 +200,50 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }
 func (s stubManager) Cleanup(_ context.Context, _ worktree.Handle) error        { return nil }
+
+func TestDryRunEmitsHubEvents(t *testing.T) {
+	repo := t.TempDir()
+	bus := hub.New()
+
+	var events []hub.EventType
+	bus.Register(hub.Subscriber{
+		ID:     "test.collector",
+		Events: []hub.EventType{"*"},
+		Mode:   hub.ModeObserve,
+		Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+			events = append(events, ev.Type)
+			return nil
+		},
+	})
+
+	wf := Engine{
+		RepoRoot:     repo,
+		Task:         "Add feature",
+		TaskType:     model.TaskTypeRefactor,
+		WorktreeName: "feat-task",
+		AuthMode:     engine.AuthModeMode1,
+		Policy:       config.DefaultPolicy(),
+		DryRun:       true,
+		Pools:        subscriptions.NewManager(nil),
+		Worktrees:    stubManager{repo: repo},
+		Runners:      engine.Registry{Claude: engine.NewClaudeRunner("claude"), Codex: engine.NewCodexRunner("codex")},
+		Verifier:     verify.NewPipeline("", "", ""),
+		EventBus:     bus,
+	}
+	_, err := wf.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry-run emits worktree creation event synchronously.
+	// Async events (task.started) may arrive later since they use EmitAsync.
+	hasWorktreeEvent := false
+	for _, et := range events {
+		if et == hub.EventGitWorktreeCreated {
+			hasWorktreeEvent = true
+		}
+	}
+	if !hasWorktreeEvent {
+		t.Errorf("expected EventGitWorktreeCreated, got events: %v", events)
+	}
+}
