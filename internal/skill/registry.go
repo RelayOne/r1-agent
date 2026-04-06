@@ -47,7 +47,8 @@ func NewRegistry(dirs ...string) *Registry {
 	}
 }
 
-// DefaultRegistry creates a registry with project and user skill directories.
+// DefaultRegistry creates a registry with project and user skill directories,
+// and loads built-in skills embedded in the binary.
 func DefaultRegistry(projectRoot string) *Registry {
 	home, _ := os.UserHomeDir()
 	dirs := []string{
@@ -56,7 +57,10 @@ func DefaultRegistry(projectRoot string) *Registry {
 	if home != "" {
 		dirs = append(dirs, filepath.Join(home, ".stoke", "skills")) // user
 	}
-	return NewRegistry(dirs...)
+	r := NewRegistry(dirs...)
+	// Load embedded built-in skills (lowest priority, won't overwrite project/user).
+	_ = r.LoadBuiltins()
+	return r
 }
 
 // Load discovers and loads all skills from registered directories.

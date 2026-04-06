@@ -264,6 +264,86 @@ func TestRegistryList(t *testing.T) {
 	}
 }
 
+func TestLoadBuiltins(t *testing.T) {
+	dir := t.TempDir()
+	reg := NewRegistry(dir)
+
+	if err := reg.LoadBuiltins(); err != nil {
+		t.Fatalf("LoadBuiltins: %v", err)
+	}
+
+	// Should have loaded all embedded skills
+	count := BuiltinCount()
+	if count == 0 {
+		t.Fatal("expected at least 1 embedded skill")
+	}
+
+	list := reg.List()
+	if len(list) != count {
+		t.Errorf("expected %d skills, got %d", count, len(list))
+	}
+
+	// All should have source "builtin"
+	for _, s := range list {
+		if s.Source != "builtin" {
+			t.Errorf("skill %s: expected source 'builtin', got %q", s.Name, s.Source)
+		}
+		if s.Priority != 0 {
+			t.Errorf("skill %s: expected priority 0, got %d", s.Name, s.Priority)
+		}
+		if s.Content == "" {
+			t.Errorf("skill %s: empty content", s.Name)
+		}
+	}
+}
+
+func TestLoadBuiltinsDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	// Create a project skill with same name as a builtin
+	os.WriteFile(filepath.Join(skillDir, "go-concurrency.md"),
+		[]byte("# go-concurrency\n<!-- keywords: goroutine -->\nProject version."), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	// Now load builtins — should NOT overwrite
+	if err := reg.LoadBuiltins(); err != nil {
+		t.Fatalf("LoadBuiltins: %v", err)
+	}
+
+	s := reg.Get("go-concurrency")
+	if s == nil {
+		t.Fatal("expected go-concurrency skill")
+	}
+	if s.Source != "project" {
+		t.Errorf("expected project source (should not be overwritten), got %s", s.Source)
+	}
+	if !containsStr(s.Content, "Project version.") {
+		t.Error("expected project content to be preserved")
+	}
+}
+
+func TestBuiltinCount(t *testing.T) {
+	count := BuiltinCount()
+	if count < 9 {
+		t.Errorf("expected at least 9 embedded skills, got %d", count)
+	}
+}
+
+func TestBuiltinSkillsHaveKeywords(t *testing.T) {
+	reg := NewRegistry()
+	reg.LoadBuiltins()
+
+	for _, s := range reg.List() {
+		if len(s.Keywords) == 0 {
+			t.Errorf("builtin skill %s has no keywords", s.Name)
+		}
+	}
+}
+
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {

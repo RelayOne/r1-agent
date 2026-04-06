@@ -277,8 +277,12 @@ func (b *Bus) invoke(ctx context.Context, sub *Subscriber, ev *Event) *HookRespo
 	if sub.Handler != nil {
 		return b.invokeHandler(ctx, sub, ev)
 	}
-	// External transports would be dispatched here.
-	// For now, return abstain for unimplemented transports.
+	if sub.Script != nil {
+		return b.invokeScript(ctx, sub, ev)
+	}
+	if sub.Webhook != nil {
+		return b.invokeWebhook(ctx, sub, ev)
+	}
 	return &HookResponse{Decision: Abstain}
 }
 
