@@ -15,7 +15,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/checkpoint"
 	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/consent"
+	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/critic"
 	"github.com/ericmacdougall/stoke/internal/ctxpack"
@@ -25,36 +25,25 @@ import (
 	"github.com/ericmacdougall/stoke/internal/failure"
 	"github.com/ericmacdougall/stoke/internal/filewatcher"
 	"github.com/ericmacdougall/stoke/internal/fileutil"
-	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/gitblame"
-	"github.com/ericmacdougall/stoke/internal/lifecycle"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/intent"
-	"github.com/ericmacdougall/stoke/internal/interview"
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/microcompact"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/patchapply"
-	"github.com/ericmacdougall/stoke/internal/phaserole"
 	"github.com/ericmacdougall/stoke/internal/promptcache"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
-	"github.com/ericmacdougall/stoke/internal/ralph"
 	"github.com/ericmacdougall/stoke/internal/replay"
-	"github.com/ericmacdougall/stoke/internal/permissions"
 	"github.com/ericmacdougall/stoke/internal/repomap"
-	"github.com/ericmacdougall/stoke/internal/sandbox"
-	"github.com/ericmacdougall/stoke/internal/sandattr"
-	"github.com/ericmacdougall/stoke/internal/sandguard"
 	"github.com/ericmacdougall/stoke/internal/scan"
 	"github.com/ericmacdougall/stoke/internal/schemaval"
 	"github.com/ericmacdougall/stoke/internal/semdiff"
-	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/snapshot"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
-	"github.com/ericmacdougall/stoke/internal/team"
 	"github.com/ericmacdougall/stoke/internal/testgen"
 	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/tokenest"
@@ -118,16 +107,7 @@ type Engine struct {
 	PlanOnly         bool
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
-	Interview        *interview.Session   // Socratic clarification session (nil = skip)
-	PhaseRoles       *phaserole.Mapping   // phase-based role assignment (nil = defaults)
-	Consent          *consent.Workflow    // human-in-the-loop approval (nil = auto-approve)
-	Permissions      *permissions.Pipeline // authorization pipeline (nil = allow all)
-	SandboxPolicy    *sandbox.Policy      // sandbox policy for worktrees (nil = use defaults)
-	Ralph            *ralph.Config        // persistent execution discipline (nil = disabled)
-	FlowTracker      *flowtrack.Tracker   // flow-aware intent tracking (nil = disabled)
-	TeamPerspectives []team.ReviewPerspective // parallel multi-agent review perspectives (nil = single-model)
-	LifecycleHooks   *lifecycle.Registry    // 5-tier lifecycle hook system (nil = disabled)
-	SkillRegistry    *skill.Registry        // reusable workflow patterns (nil = disabled)
+	Convergence      *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -260,10 +240,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// Checkpoint store for saving state at phase boundaries.
 	cpStore := checkpoint.NewStore(handle.RuntimeDir)
 
-	// Fire lifecycle session start event
-	e.fireLifecycleEvent(ctx, lifecycle.EventSessionStart, name, map[string]any{
-		"task": e.Task, "type": string(e.TaskType),
-	})
+	// Fire BeforeTask hooks
 
 	// Invoke BeforeTask hooks
 	for _, h := range e.Hooks {
@@ -278,10 +255,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		for _, h := range e.Hooks {
 			_ = h.AfterTask(ctx, e.Task, e.State, result)
 		}
-		// Fire lifecycle session complete event
-		e.fireLifecycleEvent(ctx, lifecycle.EventSessionComplete, name, map[string]any{
-			"cost": result.TotalCostUSD,
-		})
 	}()
 
 	phases := buildPhases(e)
@@ -305,14 +278,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	// --- PRE-PLAN: Socratic interview clarification ---
 	// If a completed interview session is attached, synthesize the clarified scope
 	// and prepend it to the task description so the planner has full context.
-	if e.Interview != nil && e.Interview.IsComplete() {
-		scope := e.Interview.Synthesize()
-		if scopePrompt := scope.ToPrompt(); scopePrompt != "" {
-			e.Task = scopePrompt + "\n\nOriginal request: " + e.Task
-			log.Info("interview scope injected", "confidence", scope.Confidence)
-		}
-	}
-
 	// --- PLAN phase (no retry) ---
 	// Advance state: Pending -> Claimed (harness takes ownership)
 	if err := e.advanceState(taskstate.Claimed, "harness dispatching to plan phase"); err != nil {
@@ -397,27 +362,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		return result, nil
 	}
 
-	// --- PERMISSIONS CHECK: authorize execution before proceeding ---
-	if e.Permissions != nil {
-		authResult := e.Permissions.Authorize("Bash", "execute:"+e.Task, &permissions.Context{Mode: permissions.ModeWorkspaceWrite})
-		if authResult.Decision == permissions.Deny {
-			e.Worktrees.Cleanup(ctx, handle)
-			return result, fmt.Errorf("permission denied for task execution: %s", authResult.Reason)
-		}
-	}
-
-	// --- SANDBOX ENVIRONMENT: detect and log container environment ---
-	sandboxEnv := sandbox.Detect()
-	if sandboxEnv.InContainer {
-		log.Info("running inside sandbox", "type", sandboxEnv.ContainerType, "platform", sandboxEnv.Platform)
-	}
-	if e.SandboxPolicy != nil {
-		if err := e.SandboxPolicy.Validate(); err != nil {
-			e.Worktrees.Cleanup(ctx, handle)
-			return result, fmt.Errorf("sandbox policy invalid: %w", err)
-		}
-	}
-
 	// --- EXECUTE + VERIFY loop (with retry) ---
 	maxAttempts := 3
 	executePhase := phases[1]
@@ -425,19 +369,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	var lastFailure *failure.Analysis
 	var lastDiff string
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
-
-	// Ralph: persistent execution discipline tracks strategy escalation across attempts.
-	var ralphState *ralph.ExecutionState
-	if e.Ralph != nil {
-		ralphState = &ralph.ExecutionState{
-			TaskID:        slugFromTask(e.Task),
-			Description:   e.Task,
-			MaxAttempts:   maxAttempts,
-			Strategy:      ralph.StrategyDirect,
-			EscalateAfter: e.Ralph.EscalateAfter,
-		}
-	}
-	_ = ralphState // used by retry escalation logic
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -484,8 +415,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				prompt = prompt + "\n\n" + wisdomCtx
 			}
 		}
-		// Inject matching skill workflow patterns into the prompt.
-		prompt = e.injectSkillPrompt(prompt)
 
 		// Run execute phase
 		currentPhase := executePhase
@@ -593,12 +522,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		result.TotalCostUSD += execResult.CostUSD
 		if e.CostTracker != nil && execResult.CostUSD > 0 {
 			e.CostTracker.Record(execRunnerName, e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
-		}
-
-		// --- SANDGUARD: scan for sandbox escape attempts in execution output ---
-		guard := sandguard.NewGuard(sandguard.DefaultConfig())
-		if threats := guard.CheckCommand(execResult.ResultText); !sandguard.IsSafe(threats) {
-			log.Warn("sandguard: potential sandbox escape detected", "severity", sandguard.MaxSeverity(threats), "count", len(threats))
 		}
 
 		// --- VERIFY ---
@@ -792,6 +715,56 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				}
 			}
 
+			// --- CONVERGENCE GATE: adversarial self-audit before merge ---
+			if e.Convergence != nil && len(postReviewFiles) > 0 {
+				var convFiles []convergence.FileInput
+				for _, f := range postReviewFiles {
+					absPath := filepath.Join(handle.Path, f)
+					if data, readErr := os.ReadFile(absPath); readErr == nil {
+						convFiles = append(convFiles, convergence.FileInput{Path: f, Content: data})
+					}
+				}
+				if len(convFiles) > 0 {
+					var convReport *convergence.Report
+					if len(e.TaskVerification) > 0 {
+						convReport = e.Convergence.ValidateWithCriteria(name, convFiles, e.TaskVerification)
+					} else {
+						convReport = e.Convergence.Validate(name, convFiles)
+					}
+					if convReport.BlockingCount() > 0 {
+						// Convergence failed: inject findings into failure context for retry.
+						var convFindings strings.Builder
+						convFindings.WriteString(fmt.Sprintf("Convergence audit BLOCKED merge: %d blocking findings (score=%.2f)\n",
+							convReport.BlockingCount(), convReport.Score))
+						for _, f := range convReport.Findings {
+							if f.Severity == convergence.SevBlocking {
+								convFindings.WriteString(fmt.Sprintf("  [%s] %s: %s", f.Category, f.File, f.Description))
+								if f.Suggestion != "" {
+									convFindings.WriteString(fmt.Sprintf(" (fix: %s)", f.Suggestion))
+								}
+								convFindings.WriteString("\n")
+							}
+						}
+						log.Warn("convergence gate blocked merge",
+							"blocking", convReport.BlockingCount(),
+							"total_findings", len(convReport.Findings),
+							"score", convReport.Score)
+						evidence.Warnings = append(evidence.Warnings, "convergence: "+convFindings.String())
+
+						// Fail this attempt so retry loop picks it up with findings context.
+						e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
+						// Don't break out of retry loop — let it continue with convergence findings.
+						lastFailure = &failure.Analysis{
+							Class:     failure.Incomplete,
+							Summary:   convFindings.String(),
+							RootCause: "convergence audit found blocking issues",
+						}
+						continue
+					}
+					log.Info("convergence gate passed", "score", convReport.Score, "findings", len(convReport.Findings))
+				}
+			}
+
 			// --- MERGE GATES: evidence AND state must agree ---
 			if !evidence.AllGatesPass() {
 				e.Worktrees.Cleanup(ctx, handle)
@@ -801,15 +774,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge blocked: state not committable (phase=%s)", e.State.Phase())
 			}
-			// --- CONSENT: require human approval for merge if configured ---
-			if e.Consent != nil {
-				decision := e.Consent.Check("merge to main", "git", fmt.Sprintf("merge task %s to main branch", name))
-				if decision == consent.DecisionDenied || decision == consent.DecisionBlocked {
-					e.Worktrees.Cleanup(ctx, handle)
-					return result, fmt.Errorf("merge denied by consent workflow (decision=%s)", decision)
-				}
-			}
-
 			// --- COMMIT AND MERGE ---
 			// Take snapshot before merge for rollback on failure.
 			snap, snapErr := snapshot.Take(handle.Path, "pre-merge-"+name)
@@ -886,17 +850,6 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Verification FAILED -- record evidence BEFORE analyzing
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-
-		// --- SANDATTR: attribute verify failure to sandbox vs code bug ---
-		var failureOutput string
-		for _, o := range outcomes {
-			if !o.Success {
-				failureOutput += o.Output + "\n"
-			}
-		}
-		if attr := sandattr.Attribute(failureOutput); attr.Cause != sandattr.CauseUnknown {
-			log.Info("sandattr: failure attributed", "cause", string(attr.Cause), "confidence", attr.Confidence, "suggestion", attr.Suggestion)
-		}
 
 		analysis := verify.AnalyzeOutcomes(outcomes, evidence.DiffSummary)
 		if analysis == nil {
@@ -1369,19 +1322,6 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 	execute := e.Policy.Phases["execute"]
 	verifyPhase := e.Policy.Phases["verify"]
 
-	// Resolve phase-based roles for system prompt augmentation.
-	// If PhaseRoles is configured, prepend the role's system prompt to each phase prompt.
-	rolePrefix := func(phase phaserole.Phase) string {
-		if e.PhaseRoles == nil {
-			return ""
-		}
-		role := e.PhaseRoles.Resolve(phase)
-		if role.SystemPrompt != "" {
-			return role.SystemPrompt + "\n\n"
-		}
-		return ""
-	}
-
 	// Classify task intent and generate a gate prompt to prepend to planning.
 	// This forces the agent to verbalize understanding before implementation.
 	intentGate := ""
@@ -1398,7 +1338,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  plan.DeniedRules,
 			MCPEnabled:   plan.MCPEnabled,
 			MaxTurns:     10,
-			Prompt:       intentGate + rolePrefix(phaserole.PhasePlan) + planPrompt(e.Task),
+			Prompt:       intentGate + planPrompt(e.Task),
 			Sandbox:      false,
 			ReadOnly:     true,
 		},
@@ -1409,7 +1349,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  execute.DeniedRules,
 			MCPEnabled:   execute.MCPEnabled,
 			MaxTurns:     20,
-			Prompt:       rolePrefix(phaserole.PhaseImplement) + executePromptWithContext(e),
+			Prompt:       executePromptWithContext(e),
 			Sandbox:      true,
 			ReadOnly:     false,
 		},
@@ -1420,7 +1360,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  verifyPhase.DeniedRules,
 			MCPEnabled:   verifyPhase.MCPEnabled,
 			MaxTurns:     5,
-			Prompt:       rolePrefix(phaserole.PhaseReview) + stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
+			Prompt:       stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
 			Sandbox:      true,
 			ReadOnly:     true,
 		},
@@ -1565,7 +1505,10 @@ func executePromptWithContext(e Engine) string {
 
 	// Track prompt fingerprint for cache stability monitoring.
 	stokeprompts.TrackPromptVersion(optimized.System)
-	_ = packed.Utilization // logged above via ctxpack
+	if packed.Utilization > 0.9 {
+		log := logging.Component("workflow")
+		log.Warn("context window nearly full", "utilization", fmt.Sprintf("%.0f%%", packed.Utilization*100), "tokens", packed.TotalTokens)
+	}
 
 	return prompt
 }
@@ -1702,23 +1645,3 @@ func buildSemdiffInputs(ctx context.Context, handle worktree.Handle) map[string]
 	return result
 }
 
-// fireLifecycleEvent dispatches a lifecycle event if the registry is configured.
-func (e Engine) fireLifecycleEvent(ctx context.Context, event lifecycle.Event, taskID string, meta map[string]any) {
-	if e.LifecycleHooks == nil {
-		return
-	}
-	hctx := &lifecycle.HookContext{
-		Event:    event,
-		TaskID:   taskID,
-		Metadata: meta,
-	}
-	e.LifecycleHooks.Dispatch(ctx, hctx)
-}
-
-// injectSkillPrompt augments the execute prompt with matching skill content.
-func (e Engine) injectSkillPrompt(prompt string) string {
-	if e.SkillRegistry == nil {
-		return prompt
-	}
-	return e.SkillRegistry.InjectPrompt(prompt)
-}
