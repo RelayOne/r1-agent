@@ -585,6 +585,18 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		if e.CostTracker != nil && execResult.CostUSD > 0 {
 			e.CostTracker.Record(execRunnerName, e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
 		}
+		e.emitEventAsync(&hub.Event{
+			Type:   hub.EventModelPostCall,
+			TaskID: name, Phase: "execute",
+			Model: &hub.ModelEvent{
+				Provider:     execRunnerName,
+				InputTokens:  execResult.Tokens.Input,
+				OutputTokens: execResult.Tokens.Output,
+				CachedTokens: execResult.Tokens.CacheRead,
+				CostUSD:      execResult.CostUSD,
+				Duration:     time.Duration(execResult.DurationMs) * time.Millisecond,
+			},
+		})
 
 		// --- VERIFY ---
 		// Honor Policy.Verification flags: only run enabled checks.
@@ -885,6 +897,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			// CommitVerifiedTree builds one clean commit from BaseCommit containing
 			// ONLY the validated files. No intermediate agent commits survive.
 			commitMsg := fmt.Sprintf("feat(%s): %s", slugFromTask(e.Task), e.Task)
+			e.emitEvent(ctx, &hub.Event{
+				Type:   hub.EventGitPreCommit,
+				TaskID: name, WorktreeID: handle.Name,
+				Git: &hub.GitEvent{
+					Operation:    "commit",
+					Branch:       handle.Branch,
+					FilesChanged: postReviewFiles,
+					Message:      commitMsg,
+				},
+			})
 			commitErr := worktree.CommitVerifiedTree(ctx, handle, postReviewFiles, commitMsg)
 			if errors.Is(commitErr, worktree.ErrNothingToCommit) {
 				// True no-op: validated file set is empty. Skip merge entirely.
