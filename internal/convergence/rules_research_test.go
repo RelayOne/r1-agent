@@ -203,10 +203,95 @@ func fetchWithRetry(url string) error {
 	}
 }
 
+func TestMigrationNoConcurrentIndexRule(t *testing.T) {
+	rule := migrationNoConcurrentIndexRule()
+
+	// Should flag CREATE INDEX without CONCURRENTLY in migration files
+	unsafe := []byte(`CREATE INDEX idx_users_email ON users (email);`)
+	findings := rule.Check("migrations/001_add_index.sql", unsafe)
+	if len(findings) == 0 {
+		t.Error("should flag CREATE INDEX without CONCURRENTLY")
+	}
+
+	// Should not flag CREATE INDEX CONCURRENTLY
+	safe := []byte(`CREATE INDEX CONCURRENTLY idx_users_email ON users (email);`)
+	findings = rule.Check("migrations/001_add_index.sql", safe)
+	if len(findings) != 0 {
+		t.Error("should not flag CREATE INDEX CONCURRENTLY")
+	}
+
+	// Should not check non-migration files
+	findings = rule.Check("main.go", unsafe)
+	if len(findings) != 0 {
+		t.Error("should not check non-migration files")
+	}
+
+	// Should flag CREATE UNIQUE INDEX without CONCURRENTLY
+	uniqueUnsafe := []byte(`CREATE UNIQUE INDEX idx_users_email ON users (email);`)
+	findings = rule.Check("migrations/002.sql", uniqueUnsafe)
+	if len(findings) == 0 {
+		t.Error("should flag CREATE UNIQUE INDEX without CONCURRENTLY")
+	}
+}
+
+func TestSingleflightMissingRule(t *testing.T) {
+	rule := singleflightMissingRule()
+
+	// Should flag cache get+set without singleflight
+	noDedup := []byte(`package main
+
+func getUser(id string) (*User, error) {
+	val, err := cache.Get(id)
+	if err == nil {
+		return val.(*User), nil
+	}
+	user, err := db.FindUser(id)
+	if err != nil {
+		return nil, err
+	}
+	cache.Set(id, user)
+	return user, nil
+}`)
+	findings := rule.Check("cache_layer.go", noDedup)
+	if len(findings) == 0 {
+		t.Error("should flag cache get/set without singleflight")
+	}
+
+	// Should not flag when singleflight is used
+	withDedup := []byte(`package main
+
+import "golang.org/x/sync/singleflight"
+
+var group singleflight.Group
+
+func getUser(id string) (*User, error) {
+	val, err := cache.Get(id)
+	if err == nil {
+		return val.(*User), nil
+	}
+	v, err, _ := group.Do(id, func() (interface{}, error) {
+		return db.FindUser(id)
+	})
+	user := v.(*User)
+	cache.Set(id, user)
+	return user, nil
+}`)
+	findings = rule.Check("cache_layer.go", withDedup)
+	if len(findings) != 0 {
+		t.Error("should not flag when singleflight is used")
+	}
+
+	// Should not check test files
+	findings = rule.Check("cache_test.go", noDedup)
+	if len(findings) != 0 {
+		t.Error("should not check test files")
+	}
+}
+
 func TestResearchRulesRegistered(t *testing.T) {
 	rules := ResearchRules()
-	if len(rules) != 6 {
-		t.Errorf("expected 6 research rules, got %d", len(rules))
+	if len(rules) != 8 {
+		t.Errorf("expected 8 research rules, got %d", len(rules))
 	}
 
 	ids := make(map[string]bool)
@@ -220,6 +305,8 @@ func TestResearchRulesRegistered(t *testing.T) {
 		"cache-ttl",
 		"missing-error-state",
 		"retry-backoff",
+		"migration-concurrent-index",
+		"singleflight-missing",
 	}
 	for _, id := range expected {
 		if !ids[id] {
@@ -234,11 +321,12 @@ func TestResearchRulesInDefaultRules(t *testing.T) {
 	for _, r := range rules {
 		if r.ID == "test-assertion-weakening" || r.ID == "unbounded-goroutine" ||
 			r.ID == "cache-ttl" || r.ID == "missing-error-state" ||
-			r.ID == "retry-backoff" || r.ID == "agent-self-report" {
+			r.ID == "retry-backoff" || r.ID == "agent-self-report" ||
+			r.ID == "migration-concurrent-index" || r.ID == "singleflight-missing" {
 			found++
 		}
 	}
-	if found != 6 {
-		t.Errorf("expected 6 research rules in DefaultRules, found %d", found)
+	if found != 8 {
+		t.Errorf("expected 8 research rules in DefaultRules, found %d", found)
 	}
 }

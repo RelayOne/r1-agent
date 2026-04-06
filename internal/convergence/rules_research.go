@@ -26,6 +26,12 @@ func ResearchRules() []Rule {
 
 		// Retry correctness
 		retryWithoutBackoffRule(),
+
+		// Database migration safety (from wf-cb78643f research)
+		migrationNoConcurrentIndexRule(),
+
+		// Cache stampede prevention (from wf-44e469d3 research)
+		singleflightMissingRule(),
 	}
 }
 
@@ -337,6 +343,90 @@ func retryWithoutBackoffRule() Rule {
 				}
 			}
 			return findings
+		},
+	}
+}
+
+// --- Database migration safety ---
+
+// migrationNoConcurrentIndexRule flags CREATE INDEX without CONCURRENTLY in
+// migration files. CREATE INDEX acquires ACCESS EXCLUSIVE lock, blocking all
+// reads and writes on live tables.
+func migrationNoConcurrentIndexRule() Rule {
+	createIndex := regexp.MustCompile(`(?i)CREATE\s+(UNIQUE\s+)?INDEX\s+`)
+	concurrently := regexp.MustCompile(`(?i)CONCURRENTLY`)
+	return Rule{
+		ID: "migration-concurrent-index", Name: "Index creation must use CONCURRENTLY", Category: CatReliability,
+		Severity: SevBlocking, Enabled: true,
+		Description: "CREATE INDEX without CONCURRENTLY locks the table — blocks all reads/writes in production",
+		Check: func(file string, content []byte) []Finding {
+			if !strings.Contains(file, "migration") && !strings.HasSuffix(file, ".sql") {
+				return nil
+			}
+			if isTestFile(file) {
+				return nil
+			}
+			var findings []Finding
+			lines := strings.Split(string(content), "\n")
+			for i, line := range lines {
+				if createIndex.MatchString(line) && !concurrently.MatchString(line) {
+					findings = append(findings, Finding{
+						RuleID:      "migration-concurrent-index",
+						Category:    CatReliability,
+						Severity:    SevBlocking,
+						File:        file,
+						Line:        i + 1,
+						Description: "CREATE INDEX without CONCURRENTLY — locks table, blocks all queries",
+						Suggestion:  "Use CREATE INDEX CONCURRENTLY to avoid locking the table",
+						Evidence:    strings.TrimSpace(line),
+					})
+				}
+			}
+			return findings
+		},
+	}
+}
+
+// --- Cache stampede prevention ---
+
+// singleflightMissingRule flags cache-miss paths that fetch from DB and set cache
+// without deduplication. Cache stampede occurs when many goroutines hit the same
+// cache miss simultaneously.
+func singleflightMissingRule() Rule {
+	cacheMiss := regexp.MustCompile(`(?i)(cache\.Get|\.Get\(.*key)`)
+	cacheSet := regexp.MustCompile(`(?i)(cache\.Set|\.Set\(.*key)`)
+	singleflight := regexp.MustCompile(`(singleflight|SingleFlight|single_flight|dedup|Dedup)`)
+	return Rule{
+		ID: "singleflight-missing", Name: "Cache-miss paths should use singleflight", Category: CatReliability,
+		Severity: SevMajor, Enabled: true,
+		Description: "Cache miss followed by fetch+set without singleflight — cache stampede risk",
+		Check: func(file string, content []byte) []Finding {
+			if isTestFile(file) {
+				return nil
+			}
+			s := string(content)
+			if !cacheMiss.MatchString(s) || !cacheSet.MatchString(s) {
+				return nil
+			}
+			if singleflight.MatchString(s) {
+				return nil
+			}
+			lines := strings.Split(s, "\n")
+			for i, line := range lines {
+				if cacheMiss.MatchString(line) {
+					return []Finding{{
+						RuleID:      "singleflight-missing",
+						Category:    CatReliability,
+						Severity:    SevMajor,
+						File:        file,
+						Line:        i + 1,
+						Description: "Cache get/set without singleflight — concurrent misses cause stampede",
+						Suggestion:  "Wrap fetch in singleflight.Group.Do() to deduplicate concurrent cache misses",
+						Evidence:    strings.TrimSpace(line),
+					}}
+				}
+			}
+			return nil
 		},
 	}
 }
