@@ -839,9 +839,9 @@ func temporary() {}
 
 func TestDefaultRuleCount(t *testing.T) {
 	rules := DefaultRules()
-	// 37 base rules + 13 extended rules (concurrency, config, database, observability, error handling, AI) = 50
-	if len(rules) != 50 {
-		t.Errorf("expected 50 default rules, got %d", len(rules))
+	// 37 base + 13 extended + 16 postmortem = 66
+	if len(rules) != 66 {
+		t.Errorf("expected 66 default rules, got %d", len(rules))
 		for _, r := range rules {
 			t.Logf("  %s: %s", r.ID, r.Name)
 		}

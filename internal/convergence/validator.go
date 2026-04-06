@@ -447,6 +447,9 @@ func DefaultRules() []Rule {
 	// Append extended rules (concurrency, config, database, observability,
 	// performance, error handling, AI failure modes).
 	rules = append(rules, ExtendedRules()...)
+	// Append postmortem-class rules (numerical correctness, resource lifecycle,
+	// distributed systems, time/clock, build discipline, agent safety).
+	rules = append(rules, PostmortemRules()...)
 	return rules
 }
 
