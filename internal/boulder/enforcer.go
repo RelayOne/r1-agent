@@ -102,6 +102,11 @@ func New(stateDir string, cfg Config) *Enforcer {
 	return e
 }
 
+// MaxNudges returns the configured maximum nudge count per task.
+func (e *Enforcer) MaxNudges() int {
+	return e.cfg.MaxNudges
+}
+
 // TrackTask adds a task for monitoring.
 func (e *Enforcer) TrackTask(id, description, worktreeID string) {
 	e.mu.Lock()

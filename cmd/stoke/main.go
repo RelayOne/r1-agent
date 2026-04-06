@@ -18,6 +18,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/app"
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/ericmacdougall/stoke/internal/metrics"
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
@@ -25,9 +26,11 @@ import (
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/notify"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
+	"github.com/ericmacdougall/stoke/internal/progress"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
@@ -186,6 +189,19 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sharedWorktrees := worktree.NewManager(absRepo)
 	wisdomStore := wisdom.NewStore()
 
+	// Metrics registry: shared across all tasks in this build session.
+	metricsReg := metrics.NewRegistry()
+
+	// Progress estimator for ETA tracking.
+	progressTasks := make([]progress.Task, len(p.Tasks))
+	for i, t := range p.Tasks {
+		progressTasks[i] = progress.Task{
+			ID: t.ID, Name: t.Description,
+			Dependencies: t.Dependencies, Weight: 1.0,
+		}
+	}
+	estimator := progress.New(progressTasks)
+
 	// Boulder idle detection: shared across all parallel tasks.
 	boulderEnforcer := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 
@@ -207,7 +223,11 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	}
 
 	execFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+		metricsReg.Counter("tasks.attempted").Inc()
+		estimator.Start(task.ID)
 		if task.Status == plan.StatusDone {
+			metricsReg.Counter("tasks.skipped").Inc()
+			estimator.Skip(task.ID)
 			return scheduler.TaskResult{TaskID: task.ID, Success: true}
 		}
 
@@ -266,6 +286,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 		orchestrator, err := app.New(appCfg)
 		if err != nil {
+			metricsReg.Counter("tasks.failed").Inc()
+			estimator.Fail(task.ID)
 			ui.TaskComplete(task.ID, false, 0, 0, 1)
 			markTask(p, task.ID, plan.StatusFailed)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
@@ -295,6 +317,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 				attempt.RootCause = analysis.RootCause
 			}
 			store.SaveAttempt(attempt)
+			metricsReg.Counter("tasks.failed").Inc()
+			estimator.Fail(task.ID)
 			if ts != nil {
 				fmt.Println(ts.ClaimedVsVerified())
 			}
@@ -314,6 +338,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			CostUSD:  result.TotalCostUSD,
 			Duration: time.Duration(elapsed * float64(time.Second)),
 		})
+		metricsReg.Counter("tasks.succeeded").Inc()
+		estimator.Complete(task.ID)
 		markTask(p, task.ID, plan.StatusDone)
 		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
@@ -364,11 +390,31 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	buildReport.SaveLatest(absRepo)
 	store.ClearState()
 
-	// Show summary
+	// Show summary with progress ETA data.
 	ui.Summary(len(p.Tasks))
 	fmt.Printf("  Report: .stoke/reports/latest.json\n")
 	if tracker.RequestCount() > 0 {
 		fmt.Printf("  Cost: %s\n", tracker.Summary())
+	}
+	fmt.Printf("  Progress: %s\n", estimator.Summary())
+
+	// Fire webhook notification on build completion (if configured).
+	if webhookURL := os.Getenv("STOKE_WEBHOOK_URL"); webhookURL != "" {
+		notifier := notify.NewWebhookNotifier(webhookURL, nil, nil)
+		eventType := "build_complete"
+		if !buildReport.Success {
+			eventType = "build_failed"
+		}
+		_ = notifier.Notify(notify.NotifyEvent{
+			Type:      eventType,
+			Message:   fmt.Sprintf("Build %s: %d/%d tasks succeeded", p.ID, buildReport.TasksDone, buildReport.TasksTotal),
+			Timestamp: time.Now(),
+			Details: map[string]string{
+				"plan_id":  p.ID,
+				"cost":     fmt.Sprintf("$%.4f", buildReport.TotalCost),
+				"duration": fmt.Sprintf("%.1fs", buildReport.DurationSec),
+			},
+		})
 	}
 	summary := planState.Summary()
 	fmt.Printf("\n  Plan state (harness-verified):\n")

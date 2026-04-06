@@ -431,3 +431,20 @@ func TreeSHA(ctx context.Context, handle Handle) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// MainHeadSHA returns the current HEAD commit SHA of the main branch.
+// Returns empty string on error (non-fatal).
+func MainHeadSHA(ctx context.Context, repoRoot string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ResetMainTo resets the main branch HEAD to the given commit SHA.
+// Used for rollback on merge failure. Best-effort — errors are not returned.
+func ResetMainTo(ctx context.Context, repoRoot, commitSHA string) {
+	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "reset", "--hard", commitSHA).Run()
+}

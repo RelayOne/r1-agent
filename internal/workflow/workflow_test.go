@@ -87,7 +87,7 @@ func TestBuildRetryPromptIncludesFailureContext(t *testing.T) {
 		},
 	}
 
-	prompt := buildRetryPrompt("Original task: add auth", 2, analysis, "src/auth.ts | 45 +++")
+	prompt := buildRetryPrompt("Original task: add auth", 2, analysis, "src/auth.ts | 45 +++", "/tmp/worktree")
 
 	if !strings.Contains(prompt, "RETRY CONTEXT (attempt 2)") {
 		t.Error("should include attempt number")
@@ -114,7 +114,7 @@ func TestBuildRetryPromptIncludesFailureContext(t *testing.T) {
 
 func TestBuildRetryPromptPolicyViolation(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.PolicyViolation, Summary: "ts-ignore used"}
-	prompt := buildRetryPrompt("task", 2, analysis, "")
+	prompt := buildRetryPrompt("task", 2, analysis, "", "")
 	if !strings.Contains(prompt, "@ts-ignore") {
 		t.Error("policy violation retry should warn about ts-ignore")
 	}
@@ -122,7 +122,7 @@ func TestBuildRetryPromptPolicyViolation(t *testing.T) {
 
 func TestBuildRetryPromptWrongFiles(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.WrongFiles, Summary: "out of scope"}
-	prompt := buildRetryPrompt("task", 2, analysis, "")
+	prompt := buildRetryPrompt("task", 2, analysis, "", "")
 	if !strings.Contains(prompt, "outside the task scope") {
 		t.Error("wrong files retry should warn about scope")
 	}
@@ -130,7 +130,7 @@ func TestBuildRetryPromptWrongFiles(t *testing.T) {
 
 func TestBuildRetryPromptNoDiff(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.BuildFailed, Summary: "errors"}
-	prompt := buildRetryPrompt("task", 2, analysis, "(diff unavailable)")
+	prompt := buildRetryPrompt("task", 2, analysis, "(diff unavailable)", "")
 	if strings.Contains(prompt, "CHANGES FROM PREVIOUS ATTEMPT") {
 		t.Error("should not include diff section when unavailable")
 	}

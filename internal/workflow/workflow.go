@@ -12,12 +12,15 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/autofix"
 	"github.com/ericmacdougall/stoke/internal/boulder"
+	"github.com/ericmacdougall/stoke/internal/checkpoint"
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/critic"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/fileutil"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/patchapply"
@@ -86,6 +89,8 @@ type Engine struct {
 	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
 	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
 	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
+	RepoMapBudget    int                 // token budget for repomap (0 = default 2000)
+	CriticConfig     *critic.Config      // per-project critic configuration (nil = defaults)
 	PlanOnly         bool
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
@@ -167,7 +172,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	var handle worktree.Handle
 	if e.DryRun {
 		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-dryrun-"+name)
-		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		if err := fileutil.EnsureDir(runtimeDir, fileutil.DirPerms); err != nil {
 			return Result{}, fmt.Errorf("create runtime dir: %w", err)
 		}
 		handle = worktree.Handle{
@@ -190,6 +195,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	}
 
 	result := Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
+
+	// Checkpoint store for saving state at phase boundaries.
+	cpStore := checkpoint.NewStore(handle.RuntimeDir)
 
 	// Invoke BeforeTask hooks
 	for _, h := range e.Hooks {
@@ -237,6 +245,8 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		// Background scanner: periodically check for idle agents.
 		boulderCtx, boulderCancel := context.WithCancel(ctx)
 		defer boulderCancel()
+		// Track nudge count to escalate from warning to cancellation.
+		var boulderNudgeCount int
 		go func() {
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
@@ -244,7 +254,21 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				select {
 				case <-ticker.C:
 					e.Boulder.Scan(time.Now(), func(taskID, msg string) bool {
-						log.Warn("boulder nudge", "task", taskID, "message", msg)
+						boulderNudgeCount++
+						log.Warn("boulder nudge", "task", taskID, "message", msg, "nudge_count", boulderNudgeCount)
+						// Fire a system event so the TUI/observer sees the nudge.
+						if e.OnEvent != nil {
+							e.OnEvent(stream.Event{
+								Type:      "system",
+								DeltaText: fmt.Sprintf("[boulder] idle agent nudge #%d: %s", boulderNudgeCount, msg),
+							})
+						}
+						// After max nudges, cancel execution to force retry with fresh context.
+						if boulderNudgeCount >= e.Boulder.MaxNudges() {
+							log.Error("boulder: max nudges exceeded, cancelling execution", "task", taskID)
+							boulderCancel()
+							return false // stop scanning
+						}
 						return true
 					})
 				case <-boulderCtx.Done():
@@ -272,6 +296,14 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	}
 	result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
 	result.TotalCostUSD += planResult.CostUSD
+
+	// Checkpoint after plan phase completion.
+	cpStore.Save(checkpoint.Checkpoint{
+		ID: checkpoint.IdempotencyKey(name, 1, 0), TaskID: name,
+		Phase: checkpoint.PhaseCheckpointed, Step: 1,
+		WorktreePath: handle.Path, Branch: handle.Branch,
+		BaseCommit: handle.BaseCommit, CostUSD: result.TotalCostUSD,
+	})
 
 	// --- PLAN-ONLY MODE: structurally prevents execute/verify/commit/merge ---
 	// This is not a prompt instruction. The harness does not call execute.
@@ -320,7 +352,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		// Build execute prompt
 		prompt := executePhase.Prompt
 		if attempt > 1 && lastFailure != nil {
-			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff)
+			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff, handle.Path)
 			// Invoke BeforeRetry hooks for additional prompt augmentation
 			for _, h := range e.Hooks {
 				if aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure); err == nil && aug != "" {
@@ -512,7 +544,11 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 					}
 				}
 				if len(changes) > 0 {
-					c := critic.New(critic.Config{})
+					criticCfg := critic.Config{}
+				if e.CriticConfig != nil {
+					criticCfg = *e.CriticConfig
+				}
+				c := critic.New(criticCfg)
 					verdict := c.Review(changes)
 					if !verdict.Pass {
 						evidence.Warnings = append(evidence.Warnings, "critic: "+verdict.Summary)
@@ -652,8 +688,20 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge validation: %w", valErr)
 			}
+			// Save main branch HEAD before merge for potential rollback.
+			mainHead := worktree.MainHeadSHA(ctx, e.RepoRoot)
+
 			if mergeErr := e.Worktrees.Merge(ctx, handle, commitMsg); mergeErr != nil {
-				// Attempt snapshot restore on merge failure.
+				// Attempt to restore main to pre-merge state if it was modified.
+				if mainHead != "" {
+					currentHead := worktree.MainHeadSHA(ctx, e.RepoRoot)
+					if currentHead != mainHead {
+						log.Warn("merge failed mid-operation, restoring main HEAD",
+							"pre_merge", mainHead, "current", currentHead)
+						worktree.ResetMainTo(ctx, e.RepoRoot, mainHead)
+					}
+				}
+				// Restore worktree snapshot.
 				if snap != nil {
 					if restoreErr := snapshot.Restore(snap); restoreErr != nil {
 						log.Warn("snapshot restore failed", "error", restoreErr)
@@ -1041,7 +1089,7 @@ func pickRunnerName(e Engine, phase string) string {
 // unbounded prompt growth across retry attempts.
 const maxRetryContextLines = 100
 
-func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Analysis, diffSummary string) string {
+func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Analysis, diffSummary string, worktreeDir string) string {
 	var sb strings.Builder
 	sb.WriteString(originalPrompt)
 	sb.WriteString(fmt.Sprintf("\n\n--- RETRY CONTEXT (attempt %d) ---\n", attempt))
@@ -1098,8 +1146,13 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	if analysis.Class == failure.TestsFailed || analysis.Class == failure.Regression {
 		for _, d := range analysis.Specifics {
 			if strings.HasSuffix(d.File, ".go") && !strings.HasSuffix(d.File, "_test.go") {
-				if src, readErr := os.ReadFile(d.File); readErr == nil {
-					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(d.File)), string(src))
+				// Normalize file path: try absolute, then relative to worktree.
+				filePath := d.File
+				if !filepath.IsAbs(filePath) && worktreeDir != "" {
+					filePath = filepath.Join(worktreeDir, filePath)
+				}
+				if src, readErr := os.ReadFile(filePath); readErr == nil {
+					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(filePath)), string(src))
 					if scaffold != "" {
 						sb.WriteString(fmt.Sprintf("\nSUGGESTED TEST SCAFFOLD for %s:\n%s\n", d.File, truncStr(scaffold, 2000)))
 						break // one scaffold is enough guidance
@@ -1244,7 +1297,11 @@ func executePromptWithContext(e Engine) string {
 	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
 	// Inject ranked codebase map for navigation context (token-budgeted).
 	if e.RepoMap != nil {
-		mapCtx := e.RepoMap.RenderRelevant(e.AllowedFiles, 2000)
+		budget := e.RepoMapBudget
+		if budget <= 0 {
+			budget = 2000
+		}
+		mapCtx := e.RepoMap.RenderRelevant(e.AllowedFiles, budget)
 		if mapCtx != "" {
 			prompt += "\n\n## Repository Map\n" + mapCtx
 		}
@@ -1277,15 +1334,18 @@ type reviewVerdict struct {
 // If the response is not valid JSON, the review is considered failed.
 func parseReviewVerdict(s string) (*reviewVerdict, error) {
 	s = strings.TrimSpace(s)
-	// Strip markdown fences if present
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
 
+	// Try jsonutil first — handles markdown fences, brace matching, mixed content.
 	var v reviewVerdict
-	if err := json.Unmarshal([]byte(s), &v); err != nil {
-		return nil, err
+	if err := jsonutil.ExtractFromMarkdown(s, &v); err != nil {
+		// Fallback: strip fences manually and try raw JSON.
+		clean := strings.TrimPrefix(s, "```json")
+		clean = strings.TrimPrefix(clean, "```")
+		clean = strings.TrimSuffix(clean, "```")
+		clean = strings.TrimSpace(clean)
+		if err2 := json.Unmarshal([]byte(clean), &v); err2 != nil {
+			return nil, err2
+		}
 	}
 
 	// Minimum validity: a passing review with zero findings suggests the reviewer
