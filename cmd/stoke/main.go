@@ -17,12 +17,14 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/app"
 	"github.com/ericmacdougall/stoke/internal/boulder"
+	"github.com/ericmacdougall/stoke/internal/consent"
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/metrics"
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
 	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
@@ -228,6 +230,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
+
+	// Flow tracking: infer development phase from action sequences.
+	flowTracker := flowtrack.NewTracker(flowtrack.Config{})
+	eventBus.Register(hub.FlowTrackObserver(flowTracker))
+
+	// Consent gate: enforce human approval for dangerous operations.
+	// In headless mode, deny risky ops (no interactive approval handler).
+	consentWorkflow := consent.NewWorkflow(nil)
+	eventBus.Register(hub.ConsentGate(consentWorkflow))
 
 	// Cost tracking: shared across all tasks in this build session.
 	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
@@ -676,7 +687,7 @@ func runCmd(args []string) {
 		CostTracker:     runTracker,
 		RepoMap:         runRepoMap,
 		TestGraph:       runTestGraph,
-		EventBus:        hub.New(),
+		EventBus:        newEventBus(),
 		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
@@ -1082,7 +1093,7 @@ Rules:
 		ClaudeBinary:    *claudeBin,
 		ClaudeConfigDir: *claudeConfigDir,
 		State:           ts,
-		EventBus:        hub.New(),
+		EventBus:        newEventBus(),
 		OnEvent: func(ev stream.Event) {
 			if ev.DeltaText != "" {
 				fmt.Print(ev.DeltaText)
@@ -1424,6 +1435,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// newEventBus creates a pre-configured event bus with standard observers and gates.
+func newEventBus() *hub.Bus {
+	bus := hub.New()
+	bus.Register(hub.FlowTrackObserver(flowtrack.NewTracker(flowtrack.Config{})))
+	bus.Register(hub.ConsentGate(consent.NewWorkflow(nil)))
+	return bus
 }
 
 // --- pool: subscription utilization ---

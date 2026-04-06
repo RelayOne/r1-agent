@@ -9,6 +9,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/conversation"
 	"github.com/ericmacdougall/stoke/internal/interview"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/viewport"
 )
 
@@ -63,6 +64,38 @@ func (r *REPL) RegisterBuiltins() {
 			}
 			r.printf("  %s\n", vp.Context())
 			r.println(vp.View())
+		},
+	}
+
+	r.Commands["skills"] = Command{
+		Name:        "skills",
+		Description: "List available skills (built-in + project + user)",
+		Usage:       "/skills [search-text]",
+		Run: func(args string) {
+			reg := skill.DefaultRegistry(r.RepoRoot)
+			_ = reg.Load()
+
+			if query := strings.TrimSpace(args); query != "" {
+				matches := reg.Match(query)
+				if len(matches) == 0 {
+					r.printf("  No skills matching %q\n", query)
+					return
+				}
+				for _, s := range matches {
+					r.printf("  %-30s %s [%s]\n", s.Name, s.Description, s.Source)
+				}
+				return
+			}
+
+			list := reg.List()
+			if len(list) == 0 {
+				r.println("  No skills loaded")
+				return
+			}
+			r.printf("  %d skills available:\n\n", len(list))
+			for _, s := range list {
+				r.printf("  %-30s %s [%s]\n", s.Name, s.Description, s.Source)
+			}
 		},
 	}
 
@@ -167,7 +200,7 @@ func (r *REPL) Run() {
 	r.println("")
 
 	// Print available commands
-	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "interview", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
+	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "interview", "skills", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
 	for _, name := range order {
 		if cmd, ok := r.Commands[name]; ok {
 			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)

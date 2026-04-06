@@ -279,6 +279,31 @@ func TestRunBannerShowsRegisteredCommands(t *testing.T) {
 	}
 }
 
+func TestRunSkillsCommand(t *testing.T) {
+	r, out := newTestREPL("/skills\n/quit\n")
+	r.RegisterBuiltins()
+	r.Run()
+	s := out.String()
+	// Should list the embedded built-in skills
+	if !strings.Contains(s, "skills available") {
+		t.Error("should show skills count")
+	}
+	if !strings.Contains(s, "go-concurrency") {
+		t.Error("should list go-concurrency skill")
+	}
+}
+
+func TestRunSkillsSearchCommand(t *testing.T) {
+	r, out := newTestREPL("/skills security\n/quit\n")
+	r.RegisterBuiltins()
+	r.Run()
+	s := out.String()
+	// Should match security-related skills
+	if !strings.Contains(s, "security") {
+		t.Error("should show security-related skills")
+	}
+}
+
 func TestRunInterviewCommand(t *testing.T) {
 	// Simulate: /interview fix the auth bug -> answer 3 questions -> done
 	input := "/interview fix the auth bug\nMake login work\nskip\ndone\n/quit\n"

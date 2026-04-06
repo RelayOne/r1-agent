@@ -659,6 +659,7 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 		ConvergenceModels:   o.config.ConvergenceModels,
 		ArbiterModel:        o.config.ArbiterModel,
 		MaxConvergenceDepth: o.config.MaxConvergenceDepth,
+		EventBus:            o.config.EventBus,
 		RecordResearchFn: func(missionID, topic, content string) error {
 			return o.research.Add(&research.Entry{
 				ID:        fmt.Sprintf("disc-%s-%d", missionID, time.Now().UnixNano()),

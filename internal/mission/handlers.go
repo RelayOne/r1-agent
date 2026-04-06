@@ -36,6 +36,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/depgraph"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/prompts"
 	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/symindex"
@@ -190,6 +191,10 @@ type HandlerDeps struct {
 	// MaxConvergenceDepth is the safety circuit breaker for recursive convergence.
 	// NOT the convergence condition — the arbiter decides that. Default: 20.
 	MaxConvergenceDepth int
+
+	// EventBus is the unified event bus for emitting mission lifecycle events.
+	// If nil, no events are emitted.
+	EventBus *hub.Bus
 }
 
 // buildMissionContext constructs a prompts.MissionContext for prompt generation.
@@ -301,6 +306,9 @@ func buildMissionContext(deps HandlerDeps, m *Mission) prompts.MissionContext {
 func NewResearchHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+		emitMissionEvent(ctx, deps.EventBus, &hub.Event{
+			Type: hub.EventMissionResearchStart, TaskID: m.ID, Phase: "research",
+		})
 
 		mc := buildMissionContext(deps, m)
 		researchPrompt := prompts.BuildMissionResearchPrompt(mc)
@@ -556,6 +564,9 @@ func countSignals(deps HandlerDeps) int {
 func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+		emitMissionEvent(ctx, deps.EventBus, &hub.Event{
+			Type: hub.EventMissionPlanStart, TaskID: m.ID, Phase: "plan",
+		})
 
 		mc := buildMissionContext(deps, m)
 		planPrompt := prompts.BuildMissionPlanPrompt(mc)
@@ -655,6 +666,9 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+		emitMissionEvent(ctx, deps.EventBus, &hub.Event{
+			Type: hub.EventMissionExecuteStart, TaskID: m.ID, Phase: "execute",
+		})
 
 		mc := buildMissionContext(deps, m)
 
@@ -1080,6 +1094,9 @@ func parseDecomposition(response string) ([]WorkNode, bool) {
 func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+		emitMissionEvent(ctx, deps.EventBus, &hub.Event{
+			Type: hub.EventMissionValidateStart, TaskID: m.ID, Phase: "validate",
+		})
 
 		if deps.RepoRoot == "" {
 			return &PhaseResult{
@@ -1561,6 +1578,9 @@ var scopeQualifierRe = regexp.MustCompile(`(?i)\b(pre-existing|out of scope)\b`)
 func NewConsensusHandler(deps HandlerDeps, models []string) PhaseHandler {
 	return func(ctx context.Context, m *Mission) (*PhaseResult, error) {
 		start := time.Now()
+		emitMissionEvent(ctx, deps.EventBus, &hub.Event{
+			Type: hub.EventMissionConsensusStart, TaskID: m.ID, Phase: "consensus",
+		})
 
 		// Build mission context for the consensus prompt
 		mc := buildMissionContext(deps, m)
@@ -1771,6 +1791,14 @@ func dedupeStrings(in []string) []string {
 		}
 	}
 	return out
+}
+
+// emitMissionEvent sends an event to the hub bus if configured. Nil-safe.
+func emitMissionEvent(ctx context.Context, bus *hub.Bus, ev *hub.Event) {
+	if bus == nil {
+		return
+	}
+	bus.Emit(ctx, ev)
 }
 
 // formatDecompositionForValidation formats work items as a human-readable

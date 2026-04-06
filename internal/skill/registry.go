@@ -33,9 +33,10 @@ type Skill struct {
 
 // Registry manages skill discovery, loading, and matching.
 type Registry struct {
-	mu     sync.RWMutex
-	skills map[string]*Skill
-	dirs   []string // search directories in priority order
+	mu             sync.RWMutex
+	skills         map[string]*Skill
+	dirs           []string // search directories in priority order
+	builtinsLoaded bool     // true after LoadBuiltins() has been called
 }
 
 // NewRegistry creates a skill registry that searches the given directories.
@@ -64,11 +65,18 @@ func DefaultRegistry(projectRoot string) *Registry {
 }
 
 // Load discovers and loads all skills from registered directories.
+// Project skills take highest priority, followed by user skills, then builtins.
+// Builtins are automatically reloaded after clearing so they remain available.
 func (r *Registry) Load() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.skills = make(map[string]*Skill)
+
+	// Reload builtins first (lowest priority, will be overwritten by project/user).
+	if r.builtinsLoaded {
+		r.loadBuiltinsLocked()
+	}
 
 	for i, dir := range r.dirs {
 		source := "user"
@@ -94,8 +102,9 @@ func (r *Registry) Load() error {
 				if err != nil {
 					continue
 				}
-				if _, exists := r.skills[name]; exists {
-					continue // project skill already loaded
+				// Overwrite builtins but not higher-priority project/user skills
+				if existing, exists := r.skills[name]; exists && existing.Source != "builtin" {
+					continue
 				}
 				r.skills[name] = parseSkill(name, string(content), source, indexPath, len(r.dirs)-i)
 			} else if strings.HasSuffix(name, ".md") {
@@ -105,7 +114,7 @@ func (r *Registry) Load() error {
 				if err != nil {
 					continue
 				}
-				if _, exists := r.skills[skillName]; exists {
+				if existing, exists := r.skills[skillName]; exists && existing.Source != "builtin" {
 					continue
 				}
 				r.skills[skillName] = parseSkill(skillName, string(content), source, filepath.Join(dir, name), len(r.dirs)-i)
