@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ericmacdougall/stoke/internal/app"
+	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
@@ -185,6 +186,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sharedWorktrees := worktree.NewManager(absRepo)
 	wisdomStore := wisdom.NewStore()
 
+	// Boulder idle detection: shared across all parallel tasks.
+	boulderEnforcer := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
+
 	// Cost tracking: shared across all tasks in this build session.
 	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
 		ui.Event("_system", stream.Event{Type: "system", DeltaText: alert.Message})
@@ -231,6 +235,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			BuildCommand:     cfg.BuildCommand,
 			TestCommand:      cfg.TestCommand,
 			LintCommand:      cfg.LintCommand,
+			Boulder:          boulderEnforcer,
 			CostTracker:      tracker,
 			TestGraph:        testGraph,
 			RepoMap:          repoMap,
@@ -539,6 +544,11 @@ func runCmd(args []string) {
 	// Create harness-owned task state (anti-deception: model cannot mark status)
 	ts := taskstate.NewTaskState("run-task")
 
+	// Build shared resources for the single-task run.
+	runTracker := costtrack.NewTracker(0, nil)
+	runRepoMap, _ := repomap.Build(absRepo)
+	runTestGraph, _ := testselect.BuildGraph(absRepo)
+
 	cfg := app.RunConfig{
 		RepoRoot:        absRepo,
 		PolicyPath:      *policy,
@@ -555,6 +565,10 @@ func runCmd(args []string) {
 		BuildCommand:    *buildC,
 		TestCommand:     *testC,
 		LintCommand:     *lintC,
+		CostTracker:     runTracker,
+		RepoMap:         runRepoMap,
+		TestGraph:       runTestGraph,
+		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
 		},
@@ -792,6 +806,19 @@ func buildCmd(args []string) {
 			sched := scheduler.New(*workers)
 			interactiveWorktrees := worktree.NewManager(absRepo)
 			wisdomStore := wisdom.NewStore()
+
+			// Shared resources for interactive mode (same as headless).
+			tuiTracker := costtrack.NewTracker(0, nil)
+			tuiTestGraph, _ := testselect.BuildGraph(absRepo)
+			tuiRepoMap, _ := repomap.Build(absRepo)
+			tuiBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
+			tuiOpts := &buildRunConfigOpts{
+				Boulder:     tuiBoulder,
+				CostTracker: tuiTracker,
+				TestGraph:   tuiTestGraph,
+				RepoMap:     tuiRepoMap,
+			}
+
 			tuiExecFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 				if task.Status == plan.StatusDone {
 					return scheduler.TaskResult{TaskID: task.ID, Success: true}
@@ -800,7 +827,7 @@ func buildCmd(args []string) {
 				taskStart := time.Now()
 				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), wisdomStore, func(ev stream.Event) {
 					tui.SendTaskEvent(program, task.ID, ev)
-				})
+				}, tuiOpts)
 				orchestrator, err := app.New(cfg)
 				if err != nil {
 					ts := interactivePlanState.Get(task.ID)
@@ -2644,8 +2671,16 @@ func checkResume(store session.SessionStore, p *plan.Plan) {
 }
 
 // buildRunConfig creates an app.RunConfig for a task with the given flags.
-func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event)) app.RunConfig {
-	return app.RunConfig{
+// buildRunConfigOpts holds optional fields for buildRunConfig that don't fit in the base signature.
+type buildRunConfigOpts struct {
+	Boulder     *boulder.Enforcer
+	CostTracker *costtrack.Tracker
+	TestGraph   *testselect.Graph
+	RepoMap     *repomap.RepoMap
+}
+
+func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event), opts *buildRunConfigOpts) app.RunConfig {
+	cfg := app.RunConfig{
 		RepoRoot:         absRepo,
 		PolicyPath:       policyPath,
 		Task:             task.Description,
@@ -2666,7 +2701,15 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,
 		OnEvent:          onEvent,
+		Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 	}
+	if opts != nil {
+		cfg.Boulder = opts.Boulder
+		cfg.CostTracker = opts.CostTracker
+		cfg.TestGraph = opts.TestGraph
+		cfg.RepoMap = opts.RepoMap
+	}
+	return cfg
 }
 
 func readOAuthToken(configDir string) string {

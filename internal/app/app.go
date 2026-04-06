@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/model"
@@ -48,6 +49,7 @@ type RunConfig struct {
 	Worktrees        *worktree.Manager
 	State            *taskstate.TaskState
 	Wisdom           *wisdom.Store       // cross-task learning (nil = disabled)
+	Boulder          *boulder.Enforcer   // idle agent detection (nil = disabled)
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
 	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
@@ -156,6 +158,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		OnEvent:          o.cfg.OnEvent,
 		State:            o.cfg.State,
 		Wisdom:           o.cfg.Wisdom,
+		Boulder:          o.cfg.Boulder,
 		CostTracker:      o.cfg.CostTracker,
 		Recorder:         o.cfg.Recorder,
 		TestGraph:        o.cfg.TestGraph,
