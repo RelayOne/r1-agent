@@ -324,6 +324,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// Track nudge count to escalate from warning to cancellation.
 		var boulderNudgeCount int
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("boulder scanner panic (recovered)", "panic", r)
+				}
+			}()
 			ticker := time.NewTicker(10 * time.Second)
 			defer ticker.Stop()
 			for {
@@ -466,7 +471,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			prompt = buildRetryPrompt(prompt, attempt, lastFailure, lastDiff, handle.Path)
 			// Invoke BeforeRetry hooks for additional prompt augmentation
 			for _, h := range e.Hooks {
-				if aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure); err == nil && aug != "" {
+				aug, err := h.BeforeRetry(ctx, e.Task, attempt, lastFailure)
+				if err != nil {
+					log.Warn("BeforeRetry hook error", "error", err, "attempt", attempt)
+					continue
+				}
+				if aug != "" {
 					prompt += "\n\n" + aug
 				}
 			}
@@ -831,7 +841,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 					} else {
 						convReport = e.Convergence.Validate(name, convFiles)
 					}
-					if convReport.BlockingCount() > 0 {
+					if convReport != nil && convReport.BlockingCount() > 0 {
 						// Convergence failed: inject findings into failure context for retry.
 						var convFindings strings.Builder
 						convFindings.WriteString(fmt.Sprintf("Convergence audit BLOCKED merge: %d blocking findings (score=%.2f)\n",
@@ -871,7 +881,13 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 						attempt-- // convergence retries don't consume the build-failure budget
 						continue
 					}
-					log.Info("convergence gate passed", "score", convReport.Score, "findings", len(convReport.Findings))
+					if convReport != nil {
+						e.emitEventAsync(&hub.Event{
+							Type:   hub.EventVerifyConvergenceResult,
+							TaskID: name, Phase: "convergence",
+						})
+						log.Info("convergence gate passed", "score", convReport.Score, "findings", len(convReport.Findings))
+					}
 				}
 			}
 
