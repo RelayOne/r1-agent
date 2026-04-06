@@ -16,10 +16,32 @@ type Policy struct {
 	Files        FilesPolicy            `json:"files"`
 	Verification VerificationPolicy     `json:"verification"`
 	Skills       SkillsConfig           `json:"skills"`
+	Honesty      HonestyConfig          `json:"honesty"`
 
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
 	verificationExplicit bool
+}
+
+// HonestyConfig controls the 7-layer Honesty Judge.
+type HonestyConfig struct {
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	CheckImports       bool   `json:"check_imports" yaml:"check_imports"`
+	HiddenTestDir      string `json:"hidden_test_dir,omitempty" yaml:"hidden_test_dir"`
+	HiddenTestCommand  string `json:"hidden_test_command,omitempty" yaml:"hidden_test_command"`
+	ClaimDecomposition bool   `json:"claim_decomposition" yaml:"claim_decomposition"`
+	CoTMonitoring      bool   `json:"cot_monitoring" yaml:"cot_monitoring"`
+	Confession         bool   `json:"confession" yaml:"confession"`
+	JudgeModel         string `json:"judge_model,omitempty" yaml:"judge_model"`
+}
+
+// DefaultHonestyConfig returns the default honesty configuration.
+func DefaultHonestyConfig() HonestyConfig {
+	return HonestyConfig{
+		Enabled:       true,
+		CheckImports:  true,
+		CoTMonitoring: true,
+	}
 }
 
 // SkillsConfig controls skill injection behavior.
