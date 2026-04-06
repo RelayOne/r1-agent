@@ -84,13 +84,20 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	absRepo := cfg.RepoRoot
 
 	// Register session with Ember dashboard for remote progress monitoring.
+	// buildSuccess is captured by the deferred closure below and set to the
+	// actual build outcome before the function returns.
+	var buildSuccess bool
 	reporter := remote.New()
 	if reporter != nil {
 		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil && url != "" {
 			fmt.Printf("  dashboard: %s\n", url)
 		}
 		defer func() {
-			_ = reporter.Complete(true, "build finished")
+			summary := "build finished"
+			if !buildSuccess {
+				summary = "build failed"
+			}
+			_ = reporter.Complete(buildSuccess, summary)
 		}()
 	}
 
@@ -398,6 +405,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	}
 	buildReport.Success = buildReport.TasksFailed == 0
 	buildReport.DurationSec = time.Since(startTime).Seconds()
+	buildSuccess = buildReport.Success // propagate to deferred reporter.Complete()
 
 	buildReport.Save(absRepo)
 	buildReport.SaveLatest(absRepo)

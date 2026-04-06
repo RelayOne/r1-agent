@@ -284,13 +284,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		return result, err
 	}
 
+	// execCtx governs the lifetime of agent processes. Boulder may cancel it
+	// when idle detection exceeds max nudges, killing the stalled agent.
+	execCtx, execCancel := context.WithCancel(ctx)
+	defer execCancel()
+
 	// Boulder: track this task for idle detection and start background scanner.
 	if e.Boulder != nil {
 		e.Boulder.TrackTask(name, e.Task, handle.Name)
 		e.Boulder.UpdateStatus(name, boulder.StatusInProgress)
 		// Background scanner: periodically check for idle agents.
-		boulderCtx, boulderCancel := context.WithCancel(ctx)
-		defer boulderCancel()
 		// Track nudge count to escalate from warning to cancellation.
 		var boulderNudgeCount int
 		go func() {
@@ -312,12 +315,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 						// After max nudges, cancel execution to force retry with fresh context.
 						if boulderNudgeCount >= e.Boulder.MaxNudges() {
 							log.Error("boulder: max nudges exceeded, cancelling execution", "task", taskID)
-							boulderCancel()
+							execCancel()
 							return false // stop scanning
 						}
 						return true
 					})
-				case <-boulderCtx.Done():
+				case <-execCtx.Done():
 					return
 				}
 			}
@@ -335,7 +338,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	planPhase := phases[0]
 	planRunner, planEngine := pickRunner(e, planPhase.Name)
 	planSpec := e.buildSpec(planPhase, handle)
-	planResult, err := planEngine.Run(ctx, planSpec, e.OnEvent)
+	planResult, err := planEngine.Run(execCtx, planSpec, e.OnEvent)
 	if err != nil {
 		_ = e.advanceState(taskstate.Failed, "plan phase failed: "+err.Error())
 		return result, fmt.Errorf("plan phase: %w", err)
@@ -465,7 +468,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 
 			var runErr error
-			execResult, runErr = execRunner.Run(ctx, execSpec, e.OnEvent)
+			execResult, runErr = execRunner.Run(execCtx, execSpec, e.OnEvent)
 
 			// Release pool
 			if acquiredPoolID != "" && e.Pools != nil {
@@ -548,7 +551,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		}
 
 		verifier = verify.NewPipeline(filteredBuild, filteredTest, filteredLint)
-		outcomes, verifyErr := verifier.Run(ctx, handle.Path)
+		outcomes, verifyErr := verifier.Run(execCtx, handle.Path)
 		result.Verification = outcomes
 
 		// Build evidence for this attempt.
@@ -1476,17 +1479,8 @@ func planPrompt(task string) string {
 
 func executePromptWithContext(e Engine) string {
 	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
-	// Inject ranked codebase map for navigation context (token-budgeted).
-	if e.RepoMap != nil {
-		budget := e.RepoMapBudget
-		if budget <= 0 {
-			budget = 2000
-		}
-		mapCtx := e.RepoMap.RenderRelevant(e.AllowedFiles, budget)
-		if mapCtx != "" {
-			prompt += "\n\n## Repository Map\n" + mapCtx
-		}
-	}
+	// Repository map is injected below via ctxpack (not here) to avoid
+	// duplication and to respect context window constraints.
 
 	// Optimize prompt for cache alignment: separate static instructions from
 	// dynamic task content so API-level prefix caching works effectively.
@@ -1509,7 +1503,11 @@ func executePromptWithContext(e Engine) string {
 		Tokens: promptTokens, Relevance: 1.0, Required: true,
 	})
 	if e.RepoMap != nil {
-		mapContent := e.RepoMap.RenderRelevant(e.AllowedFiles, 500)
+		budget := e.RepoMapBudget
+		if budget <= 0 {
+			budget = 2000
+		}
+		mapContent := e.RepoMap.RenderRelevant(e.AllowedFiles, budget)
 		if mapContent != "" {
 			contextItems = append(contextItems, ctxpack.Item{
 				ID: "repomap", Category: "file", Content: mapContent,

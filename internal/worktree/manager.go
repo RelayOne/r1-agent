@@ -159,11 +159,25 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		// Attempt semantic conflict resolution before failing.
 		mergeOutput := strings.TrimSpace(string(out))
 		conflicts := conflictres.Parse(mergeOutput, "")
-		if resolved := conflictres.AutoResolve(conflicts); len(resolved) < len(conflicts) {
-			return fmt.Errorf("merge conflict (auto-resolved %d/%d): %s",
-				len(conflicts)-len(resolved), len(conflicts), mergeOutput)
+		if len(conflicts) > 0 {
+			conflictres.AutoResolve(conflicts)
+			// Count how many remain unresolved.
+			unresolved := 0
+			for _, c := range conflicts {
+				if !c.AutoResolved {
+					unresolved++
+				}
+			}
+			if unresolved > 0 {
+				return fmt.Errorf("merge conflict (%d/%d unresolved): %s",
+					unresolved, len(conflicts), mergeOutput)
+			}
+			// All conflicts auto-resolved — log and proceed to real merge.
+			// Note: merge-tree is a dry run; the actual merge below may still
+			// succeed because git's merge strategies differ from merge-tree.
+		} else {
+			return fmt.Errorf("merge conflict detected: %s", mergeOutput)
 		}
-		return fmt.Errorf("merge conflict detected: %s", mergeOutput)
 	}
 
 	// Merge for real

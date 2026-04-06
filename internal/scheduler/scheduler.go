@@ -426,7 +426,9 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			// Run the winner through the full pipeline (with merge)
 			realTask := task
 			realTask.Description = winningPrompt
-			realTask.PlanOnly = false // ensure full pipeline even if original task was plan-only
+			// Preserve original PlanOnly contract — specexec must not
+			// escalate a plan-only task into full execution.
+			realTask.PlanOnly = task.PlanOnly
 			return base(ctx, realTask)
 		}
 
