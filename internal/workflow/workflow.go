@@ -952,8 +952,7 @@ func (e Engine) runCrossModelReview(
 		}
 	}
 
-	for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
-		_ = reviewRot // used only as loop counter
+	for range maxReviewRotations {
 		verifySpec := e.buildSpec(verifyPhase, handle)
 		diffText := worktree.DiffSummary(ctx, handle)
 		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification, preReviewFiles...) +

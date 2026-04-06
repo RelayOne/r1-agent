@@ -598,11 +598,6 @@ func (s *CodebaseServer) handleTraceEntryPoints(args map[string]interface{}) (st
 	for _, dep := range s.depGraph.Dependents(file) {
 		rev[file] = append(rev[file], dep)
 	}
-	// We need reverse edges for all discovered nodes, so compute them once
-	// by iterating all nodes. (depGraph.Dependents scans all edges anyway.)
-	allNodes := s.depGraph.Roots() // just to get graph populated
-	_ = allNodes
-
 	visited := map[string]bool{file: true}
 	for len(queue) > 0 {
 		current := queue[0]

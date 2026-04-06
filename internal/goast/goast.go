@@ -164,10 +164,6 @@ func AnalyzeSource(src []byte, relPath string) (*FileAnalysis, error) {
 		}
 	}
 
-	currentFunc = ""
-	currentRecv = ""
-	_ = currentRecv
-
 	return fa, nil
 }
 

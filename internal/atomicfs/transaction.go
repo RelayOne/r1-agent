@@ -240,7 +240,7 @@ func (tx *Transaction) Commit() error {
 	}
 
 	// Phase 4: Apply (rename temps + delete)
-	var applied []int
+
 	rollback := func() {
 		// Restore backups
 		for _, b := range backups {
@@ -249,12 +249,11 @@ func (tx *Transaction) Commit() error {
 		cleanup()
 	}
 
-	for i, s := range stg {
+	for _, s := range stg {
 		if err := os.Rename(s.tmpPath, s.op.Path); err != nil {
 			rollback()
 			return fmt.Errorf("rename %s: %w", s.op.Path, err)
 		}
-		applied = append(applied, i)
 	}
 
 	for _, op := range tx.ops {
@@ -267,7 +266,6 @@ func (tx *Transaction) Commit() error {
 	}
 
 	tx.sealed = true
-	_ = applied
 	return nil
 }
 
