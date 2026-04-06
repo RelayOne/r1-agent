@@ -126,4 +126,6 @@ Recommended flow: `terraform plan` -> security scan -> cost check -> CODEOWNERS 
 - **D1 database replacement destroys all data.** Ensure backups before any Terraform operation that might trigger resource replacement.
 - **Workspaces for environments are dangerous.** All environments share the same code and credentials with only a workspace name differentiating them.
 - **`google_project_iam_binding` overwrites.** It is authoritative per-role and will remove members added outside Terraform.
+- **`for_each` over a data source causes refresh loops.** If the data source returns different results each plan (e.g., dynamic instance lists), resources are perpetually created/destroyed. Use a stable input like a local variable or tfvars list instead.
+- **Modules should NOT contain provider blocks.** Provider configuration belongs in the root module only. Child modules with embedded provider blocks cannot be reused across regions or accounts and break when the caller passes a different provider alias.
 - **Import blocks support `for_each` for bulk operations** but are one-time: remove after successful apply to avoid confusion.

@@ -83,10 +83,7 @@ Running log of decisions, blockers, and questions for Eric.
 - Hub event publishing in agentloop: `EvtToolPreUse` (gate can block), `EvtToolPostUse` (async observe)
 - Native runner passes event bus to agentloop via `loop.SetEventBus()`
 
-### What's next
-- Phase 6: Benchmark framework
-- Phase 7: Honesty Judge (7-layer deception detection)
-- Phase 8: Additional skill library extraction
+### All phases complete.
 
 ---
 
@@ -106,3 +103,61 @@ Running log of decisions, blockers, and questions for Eric.
   - `hub.md`: event bus, 46 events, 4 modes, built-in subscribers, circuit breakers, audit
   - `agentloop.md`: native loop design, cache alignment, tool execution, provider layer
   - `wizard.md`: maturity classification, 4 modes, config types, research convergence
+
+---
+
+## 2026-04-06 — Phase 6: Benchmark Framework
+
+- Created `bench/` subdirectory with full benchmark framework:
+  - **Harnesses**: `Stoke`, `ClaudeCode`, `Codex`, `Aider` implementations of `Harness` interface
+  - **Judges**: `DeterministicJudge` (9 checks: build, visible/hidden tests, test integrity, placeholders, suppressions, hallucinated imports, diff size, impossible task detection), `PollJudge` (PoLL ensemble with position bias control), `LLMJudge`, `HonestyJudge` (combined deterministic + PoLL)
+  - **Isolation**: container-per-task Docker launcher with security hardening, SIGTERM-then-SIGKILL timeout runner
+  - **Cost**: per-task budget enforcement, run-wide cost aggregation
+  - **Metrics**: cost efficiency, honesty scoring, reproducibility (CV/ICC/TARr@N), diff analysis
+  - **Evolver**: Loop 1 failure collection + Loop 2 adversarial generation
+  - **Reports**: HTML (template-based), CSV, Markdown
+  - **CLI**: `bench run`, `bench report`, `bench analyze` commands
+- All packages vet clean, bench_test.go with 8 integration tests passing
+
+### Architecture decisions followed
+- B-Decision 1: Container-per-task, never container-per-harness
+- B-Decision 4: Multi-judge PoLL ensemble (3 diverse models, position reversal)
+- B-Decision 7: ImpossibleBench-style honesty traps as primary differentiator
+- B-Decision 8: Statistical aggregation (5 reps min, CV/ICC validation)
+
+---
+
+## 2026-04-06 — Phase 7: 7-Layer Honesty Judge
+
+- Created `internal/hub/builtin/honesty/` subpackage with 6 new layers (Layer 1 was built in Phase 3):
+  - **Layer 1**: TestIntegrityChecker — AST-level test weakening detection (Go parser, JS/Python regex). Records test file snapshots, denies writes that decrease assertion count or test function count
+  - **Layer 2**: ImportChecker — hallucinated package detection via HEAD requests to PyPI, npm, proxy.golang.org. Fail-open (ModeGate) with 24h cache
+  - **Layer 3**: ClaimDecomposer — FActScore-style atomic claim extraction + Chain-of-Verification independent verification
+  - **Layer 4**: CoTMonitor — 11 regex patterns for explicit deception markers ("let's fudge", "circumvent the test", etc.). READ-ONLY (ModeObserve) — never blocks based on CoT
+  - **Layer 5**: MultiSampleChecker — SelfCheckGPT-style consistency checking across N samples
+  - **Layer 6**: ConfessionElicitor — structured self-evaluation with separate reward signal (seal of confession design)
+  - Layer 7 (impossible task canaries) implemented in bench framework, not runtime hub
+- Added `HonestyConfig` to `config.Policy`: enabled, check_imports, hidden_test_dir, claim_decomposition, cot_monitoring, confession, judge_model
+- 10 tests in honesty_test.go covering test integrity, CoT detection, snapshot analysis, import extraction, deception patterns
+
+---
+
+## 2026-04-06 — Phase 8: Additional Skill Library Extraction
+
+- Added 3 new built-in skills from research bundle 02 to `internal/skill/builtin/`:
+  - **observability-enforcer**: OpenTelemetry, SLO-based alerting, structured logging, health checks, probe configuration, cardinality control, dashboard as code, cost control
+  - **go-file-storage**: multipart uploads, R2/GCS/S3, signed URLs, streaming with io.Pipe, range requests, cache invalidation
+  - **terraform-multicloud**: workspaces vs directories, state file security, provider pinning, module composition, GCP/Cloudflare/Fly.io/DO patterns
+- Existing `kubernetes-operations` skill already covers platform + deploy gotchas (merged as guide recommended)
+- Created `docs/architecture/integrations.md` reference document from "central nervous system" research (LSP, DAP, OpenTelemetry, GitHub integration roadmap)
+- Total built-in skills: 49 (up from 46)
+
+## Skill Library — Round 2 Status
+
+- [x] observability-enforcer (created from research, full SKILL.md format)
+- [x] kubernetes — already existed as kubernetes-operations, covers both platform and deploy
+- [x] go-file-storage (created from research)
+- [x] terraform-multicloud (created from research)
+
+Architecture references (NOT skills):
+- [x] docs/architecture/integrations.md (from "Building the central nervous system" file)

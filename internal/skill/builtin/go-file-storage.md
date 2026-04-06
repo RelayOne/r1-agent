@@ -128,4 +128,5 @@ Wrap storage calls in `sony/gobreaker` v2 (circuit breaker) with `cenkalti/backo
 - **LibreOffice is single-threaded per user profile.** For concurrent document conversion, use one container per conversion or isolated HOME directories.
 - **Content-Length header can be spoofed.** Check it for fast rejection but never rely on it as the sole size enforcement.
 - **SVG XXE attacks.** SVGs are XML -- `encoding/xml` disables external entities by default, but strip `<script>` tags and event handlers, or convert to raster before serving.
+- **Range requests need explicit server-side support.** R2/S3 support range requests natively, but custom download endpoints must parse the `Range` header and return `206 Partial Content` with correct `Content-Range`. Without this, resumable downloads and video seeking break silently.
 - **CSAM scanning must be first in any moderation pipeline.** US law (18 USC 2258A) mandates reporting to NCMEC with fines up to $300K per violation.

@@ -101,6 +101,10 @@ Use AND logic: long window AND short window must both exceed threshold. Pre-comp
 | INFO  | Significant business events | No |
 | DEBUG | Implementation details -- OFF in production | No |
 
+### Dashboard as Code
+
+Define dashboards in version-controlled JSON/YAML using Grafana provisioning, Grafonnet (Jsonnet), or the Grafana Terraform provider. Never create dashboards manually in the UI -- they drift, lack review, and are lost on instance replacement. Store dashboard definitions alongside the service they monitor. Use variables (`$namespace`, `$service`) for reusability across environments.
+
 ### Cost Control
 
 - Filter health check logs at Collector level (eliminates 20-40% volume)
