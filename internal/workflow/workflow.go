@@ -20,11 +20,17 @@ import (
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/patchapply"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/ericmacdougall/stoke/internal/replay"
+	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/snapshot"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/testgen"
+	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
@@ -77,6 +83,9 @@ type Engine struct {
 	Wisdom           *wisdom.Store       // cross-task learning accumulator (nil = disabled)
 	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
 	Hooks            []TaskHook          // lifecycle hooks (nil = no hooks)
+	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
+	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
+	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
 	PlanOnly         bool
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
@@ -138,6 +147,23 @@ func (r Result) Render() string {
 func (e Engine) Run(ctx context.Context) (Result, error) {
 	name := firstNonEmpty(e.WorktreeName, string(e.TaskType)+"-"+slugFromTask(e.Task))
 	log := logging.Task("workflow", name)
+
+	// Wire replay recorder: capture all agent events for post-mortem debugging.
+	if e.Recorder != nil {
+		e.Recorder.Record(replay.EventPhase, map[string]any{"phase": "start", "task": e.Task, "type": string(e.TaskType)})
+		origOnEvent := e.OnEvent
+		e.OnEvent = func(ev stream.Event) {
+			e.Recorder.Record(replay.EventType(ev.Type), map[string]any{
+				"delta": truncStr(ev.DeltaText, 500),
+			})
+			if origOnEvent != nil {
+				origOnEvent(ev)
+			}
+		}
+		defer func() {
+			e.Recorder.Finish("completed", string(e.TaskType))
+		}()
+	}
 	var handle worktree.Handle
 	if e.DryRun {
 		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-dryrun-"+name)
@@ -414,14 +440,25 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		// --- VERIFY ---
 		// Honor Policy.Verification flags: only run enabled checks.
 		verifier := e.Verifier
-		if !e.Policy.Verification.Build || !e.Policy.Verification.Tests || !e.Policy.Verification.Lint {
-			// Build a filtered verifier respecting policy flags
-			filteredBuild, filteredTest, filteredLint := verifier.Commands()
-			if !e.Policy.Verification.Build { filteredBuild = "" }
-			if !e.Policy.Verification.Tests { filteredTest = "" }
-			if !e.Policy.Verification.Lint { filteredLint = "" }
-			verifier = verify.NewPipeline(filteredBuild, filteredTest, filteredLint)
+		filteredBuild, filteredTest, filteredLint := verifier.Commands()
+		if !e.Policy.Verification.Build { filteredBuild = "" }
+		if !e.Policy.Verification.Tests { filteredTest = "" }
+		if !e.Policy.Verification.Lint { filteredLint = "" }
+
+		// Targeted test selection: if a dependency graph is available, narrow
+		// the test command to only packages affected by the changed files.
+		if e.TestGraph != nil && filteredTest != "" {
+			changedFiles, _ := worktree.ModifiedFiles(ctx, handle)
+			if len(changedFiles) > 0 {
+				sel := e.TestGraph.Select(changedFiles)
+				if len(sel.Packages) > 0 {
+					filteredTest = "go test " + strings.Join(sel.Packages, " ")
+					log.Info("testselect narrowed test scope", "packages", len(sel.Packages), "skipped", len(sel.Skipped))
+				}
+			}
 		}
+
+		verifier = verify.NewPipeline(filteredBuild, filteredTest, filteredLint)
 		outcomes, verifyErr := verifier.Run(ctx, handle.Path)
 		result.Verification = outcomes
 
@@ -580,6 +617,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				return result, fmt.Errorf("merge blocked: state not committable (phase=%s)", e.State.Phase())
 			}
 			// --- COMMIT AND MERGE ---
+			// Take snapshot before merge for rollback on failure.
+			snap, snapErr := snapshot.Take(handle.Path, "pre-merge-"+name)
+			if snapErr != nil {
+				log.Warn("snapshot failed (non-fatal)", "error", snapErr)
+			}
+
 			// Record validated file set in result for callers (e.g., mission bridge).
 			result.FilesChanged = postReviewFiles
 
@@ -604,6 +647,12 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				return result, fmt.Errorf("merge validation: %w", valErr)
 			}
 			if mergeErr := e.Worktrees.Merge(ctx, handle, commitMsg); mergeErr != nil {
+				// Attempt snapshot restore on merge failure.
+				if snap != nil {
+					if restoreErr := snapshot.Restore(snap); restoreErr != nil {
+						log.Warn("snapshot restore failed", "error", restoreErr)
+					}
+				}
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge: %w", mergeErr)
 			}
@@ -1024,6 +1073,11 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 		}
 	}
 	if diffSummary != "" && diffSummary != "(diff unavailable)" {
+		// Parse diff to provide structured stats (files/additions/deletions).
+		if patch, parseErr := patchapply.Parse(diffSummary); parseErr == nil {
+			files, adds, dels := patch.Stats()
+			sb.WriteString(fmt.Sprintf("\nPREVIOUS ATTEMPT STATS: %d file(s), +%d/-%d lines\n", files, adds, dels))
+		}
 		// Truncate diff to last N lines to keep retry context bounded.
 		lines := strings.Split(diffSummary, "\n")
 		if len(lines) > maxRetryContextLines {
@@ -1034,6 +1088,21 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 			sb.WriteString(diffSummary + "\n")
 		}
 	}
+	// For test failures, generate test scaffolds from changed Go files to guide the agent.
+	if analysis.Class == failure.TestsFailed || analysis.Class == failure.Regression {
+		for _, d := range analysis.Specifics {
+			if strings.HasSuffix(d.File, ".go") && !strings.HasSuffix(d.File, "_test.go") {
+				if src, readErr := os.ReadFile(d.File); readErr == nil {
+					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(d.File)), string(src))
+					if scaffold != "" {
+						sb.WriteString(fmt.Sprintf("\nSUGGESTED TEST SCAFFOLD for %s:\n%s\n", d.File, truncStr(scaffold, 2000)))
+						break // one scaffold is enough guidance
+					}
+				}
+			}
+		}
+	}
+
 	sb.WriteString("\nDO NOT:\n")
 	switch analysis.Class {
 	case failure.PolicyViolation:
@@ -1071,7 +1140,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  execute.DeniedRules,
 			MCPEnabled:   execute.MCPEnabled,
 			MaxTurns:     20,
-			Prompt:       executePrompt(e.Task, e.TaskType, e.TaskVerification),
+			Prompt:       executePromptWithContext(e),
 			Sandbox:      true,
 			ReadOnly:     false,
 		},
@@ -1163,6 +1232,18 @@ func sandboxDomainsForPhase(phase string) []string {
 
 func planPrompt(task string) string {
 	return stokeprompts.BuildPlanPrompt(task, false, "")
+}
+
+func executePromptWithContext(e Engine) string {
+	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
+	// Inject ranked codebase map for navigation context (token-budgeted).
+	if e.RepoMap != nil {
+		mapCtx := e.RepoMap.RenderRelevant(e.AllowedFiles, 2000)
+		if mapCtx != "" {
+			prompt += "\n\n## Repository Map\n" + mapCtx
+		}
+	}
+	return prompt
 }
 
 func executePrompt(task string, taskType model.TaskType, verification []string) string {

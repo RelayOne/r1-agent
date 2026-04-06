@@ -30,13 +30,17 @@ import (
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/replay"
+	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/scheduler"
 	"github.com/ericmacdougall/stoke/internal/specexec"
 	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/tui"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
@@ -181,6 +185,23 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	sharedWorktrees := worktree.NewManager(absRepo)
 	wisdomStore := wisdom.NewStore()
 
+	// Cost tracking: shared across all tasks in this build session.
+	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
+		ui.Event("_system", stream.Event{Type: "system", DeltaText: alert.Message})
+	})
+
+	// Dependency-aware test selection: build import graph once, reuse per task.
+	testGraph, testGraphErr := testselect.BuildGraph(absRepo)
+	if testGraphErr != nil {
+		testGraph = nil // non-fatal: fall back to running all tests
+	}
+
+	// Ranked codebase map for agent context injection.
+	repoMap, repoMapErr := repomap.Build(absRepo)
+	if repoMapErr != nil {
+		repoMap = nil // non-fatal: agents navigate without map
+	}
+
 	execFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 		if task.Status == plan.StatusDone {
 			return scheduler.TaskResult{TaskID: task.ID, Success: true}
@@ -210,6 +231,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			BuildCommand:     cfg.BuildCommand,
 			TestCommand:      cfg.TestCommand,
 			LintCommand:      cfg.LintCommand,
+			CostTracker:      tracker,
+			TestGraph:        testGraph,
+			RepoMap:          repoMap,
+			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
 				if ev.Type == "assistant" {
@@ -337,6 +362,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// Show summary
 	ui.Summary(len(p.Tasks))
 	fmt.Printf("  Report: .stoke/reports/latest.json\n")
+	if tracker.RequestCount() > 0 {
+		fmt.Printf("  Cost: %s\n", tracker.Summary())
+	}
 	summary := planState.Summary()
 	fmt.Printf("\n  Plan state (harness-verified):\n")
 	for _, phase := range []taskstate.Phase{taskstate.Committed, taskstate.Failed, taskstate.Blocked, taskstate.UserSkipped, taskstate.Pending} {

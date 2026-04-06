@@ -7,10 +7,14 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/replay"
+	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/workflow"
@@ -43,7 +47,11 @@ type RunConfig struct {
 	Pools            *subscriptions.Manager
 	Worktrees        *worktree.Manager
 	State            *taskstate.TaskState
-	Wisdom           *wisdom.Store // cross-task learning (nil = disabled)
+	Wisdom           *wisdom.Store       // cross-task learning (nil = disabled)
+	CostTracker      *costtrack.Tracker  // per-session cost tracking (nil = disabled)
+	Recorder         *replay.Recorder    // session replay recording (nil = disabled)
+	TestGraph        *testselect.Graph   // dependency-aware test selection (nil = run all)
+	RepoMap          *repomap.RepoMap    // ranked codebase map for context (nil = disabled)
 	PlanOnly         bool
 	BuildCommand     string
 	TestCommand      string
@@ -148,6 +156,10 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		OnEvent:          o.cfg.OnEvent,
 		State:            o.cfg.State,
 		Wisdom:           o.cfg.Wisdom,
+		CostTracker:      o.cfg.CostTracker,
+		Recorder:         o.cfg.Recorder,
+		TestGraph:        o.cfg.TestGraph,
+		RepoMap:          o.cfg.RepoMap,
 		PlanOnly:         o.cfg.PlanOnly,
 	}
 	return wf.Run(ctx)
