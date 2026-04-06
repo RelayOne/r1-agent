@@ -462,6 +462,13 @@ func MainHeadSHA(ctx context.Context, repoRoot string) string {
 
 // ResetMainTo resets the main branch HEAD to the given commit SHA.
 // Used for rollback on merge failure. Best-effort — errors are not returned.
+// Refuses to reset if the working tree has uncommitted changes to avoid data loss.
 func ResetMainTo(ctx context.Context, repoRoot, commitSHA string) {
+	// Check for dirty working tree — refuse to destroy uncommitted changes.
+	status, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain").Output()
+	if err == nil && len(strings.TrimSpace(string(status))) > 0 {
+		// Working tree is dirty — don't reset, it would destroy user's changes.
+		return
+	}
 	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "reset", "--hard", commitSHA).Run()
 }

@@ -364,6 +364,8 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 	// --- EXECUTE + VERIFY loop (with retry) ---
 	maxAttempts := 3
+	maxConvergenceRetries := 2 // separate budget for convergence-only failures
+	convergenceRetries := 0
 	executePhase := phases[1]
 	verifyPhase := phases[2]
 	var lastFailure *failure.Analysis
@@ -748,17 +750,27 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 						log.Warn("convergence gate blocked merge",
 							"blocking", convReport.BlockingCount(),
 							"total_findings", len(convReport.Findings),
-							"score", convReport.Score)
+							"score", convReport.Score,
+							"convergence_retry", convergenceRetries,
+							"max_convergence_retries", maxConvergenceRetries)
 						evidence.Warnings = append(evidence.Warnings, "convergence: "+convFindings.String())
 
-						// Fail this attempt so retry loop picks it up with findings context.
+						convergenceRetries++
+						if convergenceRetries > maxConvergenceRetries {
+							e.Worktrees.Cleanup(ctx, handle)
+							_ = e.advanceState(taskstate.Failed, "convergence retry budget exhausted")
+							return result, fmt.Errorf("convergence retry budget exhausted (%d retries): %d blocking findings remain",
+								maxConvergenceRetries, convReport.BlockingCount())
+						}
+
+						// Inject findings into retry context WITHOUT consuming the main attempt budget.
 						e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
-						// Don't break out of retry loop — let it continue with convergence findings.
 						lastFailure = &failure.Analysis{
 							Class:     failure.Incomplete,
 							Summary:   convFindings.String(),
 							RootCause: "convergence audit found blocking issues",
 						}
+						attempt-- // convergence retries don't consume the build-failure budget
 						continue
 					}
 					log.Info("convergence gate passed", "score", convReport.Score, "findings", len(convReport.Findings))
@@ -1036,23 +1048,43 @@ func (e Engine) runCrossModelReview(
 	// Review quality gate: reviewer must have Read at least half the changed files.
 	// Counts unique changed files actually read, not total Read events.
 	//
-	// Gate is skipped when:
-	// - No files were changed (preReviewFiles is empty) — nothing to read.
-	// - Reviewer is Codex — Codex doesn't emit ToolUse events in its stream,
-	//   so file-read tracking always shows 0. The gate would always fail.
-	//   Codex reviews are still validated by the verdict parse + post-review checks.
-	if len(preReviewFiles) > 0 && verifyRunnerName != string(model.ProviderCodex) {
-		minFilesRead := len(preReviewFiles) / 2
-		if minFilesRead < 1 {
-			minFilesRead = 1
-		}
-		uniqueReads := len(reviewFilesRead)
-		if uniqueReads < minFilesRead {
-			evidence.ReviewPass = false
-			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
-			e.Worktrees.Cleanup(ctx, handle)
-			_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: read %d/%d changed files, need at least %d", uniqueReads, len(preReviewFiles), minFilesRead))
-			return nil, fmt.Errorf("cross-model review quality gate failed: read %d/%d changed files (need %d)", uniqueReads, len(preReviewFiles), minFilesRead)
+	// Gate is skipped when no files were changed (preReviewFiles is empty).
+	// For Codex, which doesn't emit ToolUse events, we use output-based validation
+	// instead of file-read tracking.
+	if len(preReviewFiles) > 0 {
+		if verifyRunnerName == string(model.ProviderCodex) {
+			// Codex-specific validation: verify the review output references changed files
+			// and has substantive content (not just a bare pass/fail).
+			referencedFiles := 0
+			for _, f := range preReviewFiles {
+				if strings.Contains(verifyResult.ResultText, f) || strings.Contains(verifyResult.ResultText, filepath.Base(f)) {
+					referencedFiles++
+				}
+			}
+			minReferenced := len(preReviewFiles) / 3
+			if minReferenced < 1 {
+				minReferenced = 1
+			}
+			if referencedFiles < minReferenced {
+				evidence.ReviewPass = false
+				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+				e.Worktrees.Cleanup(ctx, handle)
+				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("codex review quality: referenced %d/%d changed files, need at least %d", referencedFiles, len(preReviewFiles), minReferenced))
+				return nil, fmt.Errorf("codex review quality gate failed: referenced %d/%d changed files (need %d)", referencedFiles, len(preReviewFiles), minReferenced)
+			}
+		} else {
+			minFilesRead := len(preReviewFiles) / 2
+			if minFilesRead < 1 {
+				minFilesRead = 1
+			}
+			uniqueReads := len(reviewFilesRead)
+			if uniqueReads < minFilesRead {
+				evidence.ReviewPass = false
+				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+				e.Worktrees.Cleanup(ctx, handle)
+				_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: read %d/%d changed files, need at least %d", uniqueReads, len(preReviewFiles), minFilesRead))
+				return nil, fmt.Errorf("cross-model review quality gate failed: read %d/%d changed files (need %d)", uniqueReads, len(preReviewFiles), minFilesRead)
+			}
 		}
 	}
 
@@ -1562,21 +1594,24 @@ func parseReviewVerdict(s string) (*reviewVerdict, error) {
 		clean = strings.TrimSpace(clean)
 		if err2 := json.Unmarshal([]byte(clean), &v); err2 != nil {
 			// Final fallback: use extract package to find JSON in mixed LLM output.
+			extracted := false
 			if obj := extract.ExtractFirstJSON(s); obj != nil {
 				if raw, mErr := json.Marshal(obj); mErr == nil {
 					if json.Unmarshal(raw, &v) == nil {
-						goto parsed
+						extracted = true
 					}
 				}
 			}
-			return nil, err2
+			if !extracted {
+				return nil, err2
+			}
 		}
 	}
-parsed:
 
 	// Minimum validity: a passing review with zero findings suggests the reviewer
 	// didn't actually check anything (confused output, truncated response).
 	// Require at least one finding entry for a valid review.
+	// This check applies to ALL extraction paths — no bypass.
 	if v.Pass && len(v.Findings) == 0 && v.Severity == "" {
 		return nil, fmt.Errorf("review verdict invalid: pass=true with no findings and no severity (reviewer may not have checked)")
 	}
