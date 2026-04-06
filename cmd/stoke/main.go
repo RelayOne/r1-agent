@@ -42,6 +42,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/wizard"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
@@ -525,6 +526,8 @@ func main() {
 		serveCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
+	case "init", "wizard":
+		initCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -533,6 +536,39 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		usage()
 		os.Exit(2)
+	}
+}
+
+// --- init/wizard: project configuration wizard ---
+
+func initCmd(args []string) {
+	projectDir, _ := os.Getwd()
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		projectDir = args[0]
+	}
+
+	autoMode := false
+	for _, a := range args {
+		if a == "--auto" || a == "-a" {
+			autoMode = true
+		}
+	}
+
+	w := wizard.New(projectDir)
+
+	var err error
+	if autoMode {
+		err = w.RunAutoDetect()
+		if err == nil {
+			fmt.Printf("  stoke.policy.yaml generated (auto-detect mode)\n")
+		}
+	} else {
+		err = w.Run()
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
