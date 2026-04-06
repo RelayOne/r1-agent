@@ -111,6 +111,8 @@ type Engine struct {
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
 	Convergence      *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
 	EventBus         *hub.Bus               // unified event bus (nil = no events)
+	SkillRegistry    *skill.Registry        // skill library for prompt injection (nil = auto-create from RepoRoot)
+	StackMatches     []string               // pre-computed stack-matched skill names from RepoProfile
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -1522,7 +1524,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  plan.DeniedRules,
 			MCPEnabled:   plan.MCPEnabled,
 			MaxTurns:     10,
-			Prompt:       intentGate + planPrompt(e.Task),
+			Prompt:       intentGate + planPromptWithSkills(e),
 			Sandbox:      false,
 			ReadOnly:     true,
 		},
@@ -1623,18 +1625,28 @@ func sandboxDomainsForPhase(phase string) []string {
 	return nil
 }
 
-func planPrompt(task string) string {
-	return stokeprompts.BuildPlanPrompt(task, false, "")
+func planPromptWithSkills(e Engine) string {
+	prompt := stokeprompts.BuildPlanPrompt(e.Task, false, "")
+	reg := e.SkillRegistry
+	if reg == nil {
+		reg = skill.DefaultRegistry(e.RepoRoot)
+		_ = reg.Load()
+	}
+	prompt, _ = reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)
+	return prompt
 }
 
 func executePromptWithContext(e Engine) string {
 	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
 
 	// Inject matching built-in skills (keyword-triggered prompt augmentation).
-	// DefaultRegistry auto-loads embedded skills; project/user skills override.
-	reg := skill.DefaultRegistry(e.RepoRoot)
-	_ = reg.Load() // load project/user skills (builtins already loaded)
-	prompt, _ = reg.InjectPromptBudgeted(prompt, 2550)
+	// Use Engine's registry if available, otherwise auto-create from project root.
+	reg := e.SkillRegistry
+	if reg == nil {
+		reg = skill.DefaultRegistry(e.RepoRoot)
+		_ = reg.Load()
+	}
+	prompt, _ = reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)
 
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.

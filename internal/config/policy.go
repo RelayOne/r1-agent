@@ -15,10 +15,32 @@ type Policy struct {
 	Phases       map[string]PhasePolicy `json:"phases"`
 	Files        FilesPolicy            `json:"files"`
 	Verification VerificationPolicy     `json:"verification"`
+	Skills       SkillsConfig           `json:"skills"`
 
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
 	verificationExplicit bool
+}
+
+// SkillsConfig controls skill injection behavior.
+type SkillsConfig struct {
+	Enabled      bool     `json:"enabled"`       // master switch (default true)
+	AlwaysOn     []string `json:"always_on"`     // skill names always injected
+	AutoDetect   bool     `json:"auto_detect"`   // run skillselect to detect repo stack
+	TokenBudget  int      `json:"token_budget"`  // max tokens for injection (default 3000)
+	ResearchFeed bool     `json:"research_feed"` // auto-update skills from research store
+	Excluded     []string `json:"excluded"`      // skill names to never load
+}
+
+// DefaultSkillsConfig returns the recommended skills configuration.
+func DefaultSkillsConfig() SkillsConfig {
+	return SkillsConfig{
+		Enabled:      true,
+		AutoDetect:   true,
+		TokenBudget:  3000,
+		ResearchFeed: true,
+		AlwaysOn:     []string{"agent-discipline"},
+	}
 }
 
 // PhasePolicy specifies the builtin tools, allow/deny rules, and MCP access for a single workflow phase.
@@ -68,6 +90,7 @@ func DefaultPolicy() Policy {
 		},
 		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"}},
 		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true},
+		Skills:       DefaultSkillsConfig(),
 	}
 }
 
@@ -212,6 +235,10 @@ func normalizePolicy(p Policy) Policy {
 	// If a user wrote verification: with all fields false, honor that intent.
 	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
 		p.Verification = d.Verification
+	}
+	// Apply skill defaults if not explicitly configured
+	if p.Skills.TokenBudget == 0 {
+		p.Skills = d.Skills
 	}
 	return p
 }

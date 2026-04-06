@@ -21,6 +21,8 @@ import (
 	"github.com/ericmacdougall/stoke/internal/rbac"
 	"github.com/ericmacdougall/stoke/internal/replay"
 	"github.com/ericmacdougall/stoke/internal/repomap"
+	"github.com/ericmacdougall/stoke/internal/skill"
+	"github.com/ericmacdougall/stoke/internal/skillselect"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/telemetry"
@@ -246,6 +248,16 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		taskType = model.TaskType(strings.ToLower(strings.TrimSpace(o.cfg.TaskType)))
 	}
 
+	// Load skill registry and detect repo profile (best-effort)
+	skillRegistry := skill.DefaultRegistry(o.cfg.RepoRoot)
+	_ = skillRegistry.Load()
+
+	profile, _ := skillselect.DetectProfile(o.cfg.RepoRoot)
+	var stackMatches []string
+	if profile != nil {
+		stackMatches = skillselect.MatchSkills(profile)
+	}
+
 	wf := workflow.Engine{
 		RepoRoot:         o.cfg.RepoRoot,
 		Task:             o.cfg.Task,
@@ -273,6 +285,8 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		PlanOnly:         o.cfg.PlanOnly,
 		Convergence:      o.cfg.Convergence,
 		EventBus:         o.cfg.EventBus,
+		SkillRegistry:    skillRegistry,
+		StackMatches:     stackMatches,
 	}
 	return wf.Run(ctx)
 }

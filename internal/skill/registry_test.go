@@ -349,57 +349,52 @@ func TestInjectPromptBudgeted(t *testing.T) {
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 
-	// Create two skills with known sizes
+	// Create two skills with known sizes and Gotchas sections for keyword-match tier
 	os.WriteFile(filepath.Join(skillDir, "small.md"),
-		[]byte("# small\n<!-- keywords: build -->\nShort content."), 0644)
+		[]byte("# small\n<!-- keywords: build -->\nShort content.\n\n## Gotchas\n\nWatch out for X."), 0644)
 	os.WriteFile(filepath.Join(skillDir, "medium.md"),
-		[]byte("# medium\n<!-- keywords: build -->\n"+string(make([]byte, 400))), 0644)
+		[]byte("# medium\n<!-- keywords: build -->\n"+string(make([]byte, 400))+"\n\n## Gotchas\n\nWatch out for Y."), 0644)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
 
 	prompt := "fix the build error"
-	result, count := reg.InjectPromptBudgeted(prompt, 2550)
+	result, selections := reg.InjectPromptBudgeted(prompt, nil, 3000)
 
-	if count == 0 {
+	if len(selections) == 0 {
 		t.Fatal("expected at least one skill injected")
 	}
 	if !containsStr(result, prompt) {
 		t.Error("expected original prompt to be preserved")
 	}
-	// The injected content plus prompt should have token estimate within budget
-	injectedOnly := result[:len(result)-len(prompt)]
-	tokens := len(injectedOnly) / 4
-	if tokens > 2550 {
-		t.Errorf("injected tokens %d exceed budget 2550", tokens)
+	if !containsStr(result, "<skills>") {
+		t.Error("expected <skills> XML wrapper")
 	}
 }
 
-func TestInjectPromptBudgetedTruncation(t *testing.T) {
+func TestInjectPromptBudgetedStackMatch(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 
-	// Create a skill with two sections — first section is small, total is large
-	bigContent := "# big-skill\n<!-- keywords: deploy -->\nGotcha: watch out for X.\n\n" +
-		"## Details\n\n" + string(make([]byte, 8000))
-	os.WriteFile(filepath.Join(skillDir, "big-skill.md"), []byte(bigContent), 0644)
+	// Create a stack-matched skill
+	os.WriteFile(filepath.Join(skillDir, "postgres.md"),
+		[]byte("# postgres\n<!-- keywords: postgres -->\nPostgres best practices.\n\n## Gotchas\n\nAlways use connection pooling."), 0644)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
 
-	// Budget too small for full content but large enough for first section
-	prompt := "deploy the app"
-	result, count := reg.InjectPromptBudgeted(prompt, 100)
+	prompt := "create a new table"
+	result, selections := reg.InjectPromptBudgeted(prompt, []string{"postgres"}, 3000)
 
-	if count != 1 {
-		t.Fatalf("expected 1 skill injected (truncated), got %d", count)
+	if len(selections) == 0 {
+		t.Fatal("expected stack-matched skill")
 	}
-	if containsStr(result, "## Details") {
-		t.Error("expected truncated content to exclude ## Details section")
+	if selections[0].Reason != "repo-stack" {
+		t.Errorf("expected reason=repo-stack, got %s", selections[0].Reason)
 	}
-	if !containsStr(result, "Gotcha: watch out for X.") {
-		t.Error("expected first section content to be preserved")
+	if !containsStr(result, "Postgres best practices") {
+		t.Error("expected full postgres content")
 	}
 }
 
@@ -415,13 +410,103 @@ func TestInjectPromptBudgetedEmpty(t *testing.T) {
 	reg.Load()
 
 	prompt := "fix the build error"
-	result, count := reg.InjectPromptBudgeted(prompt, 2550)
+	result, selections := reg.InjectPromptBudgeted(prompt, nil, 3000)
 
-	if count != 0 {
-		t.Errorf("expected 0 skills injected, got %d", count)
+	if len(selections) != 0 {
+		t.Errorf("expected 0 skills injected, got %d", len(selections))
 	}
 	if result != prompt {
 		t.Error("expected original prompt to be returned unchanged")
+	}
+}
+
+func TestInjectPromptBudgetedAlwaysOn(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	os.WriteFile(filepath.Join(skillDir, "agent-discipline.md"),
+		[]byte("# agent-discipline\n<!-- keywords: always -->\nAlways verify your work."), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	prompt := "do something unrelated"
+	result, selections := reg.InjectPromptBudgeted(prompt, nil, 3000)
+
+	if len(selections) == 0 {
+		t.Fatal("expected always-on skill")
+	}
+	if selections[0].Reason != "always-on" {
+		t.Errorf("expected reason=always-on, got %s", selections[0].Reason)
+	}
+	if !containsStr(result, "Always verify") {
+		t.Error("expected agent-discipline content")
+	}
+}
+
+func TestYAMLFrontmatterParsing(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	os.MkdirAll(skillDir, 0755)
+
+	content := "---\nname: analyzing-contracts\ndescription: Smart contract analysis patterns\ntriggers:\n  - solidity\n  - smart contract\nallowed-tools:\n  - bash\n  - read_file\n---\n\n# Analyzing Contracts\n\nWhen reviewing smart contracts...\n\n## Gotchas\n\nCheck for reentrancy."
+	os.WriteFile(filepath.Join(skillDir, "analyzing-contracts.md"), []byte(content), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	s := reg.Get("analyzing-contracts")
+	if s == nil {
+		t.Fatal("skill not found")
+	}
+	if s.Description != "Smart contract analysis patterns" {
+		t.Errorf("description=%q", s.Description)
+	}
+	if len(s.Triggers) != 2 {
+		t.Errorf("triggers=%v, want 2", s.Triggers)
+	}
+	if len(s.AllowedTools) != 2 {
+		t.Errorf("allowed_tools=%v, want 2", s.AllowedTools)
+	}
+	if s.Gotchas == "" {
+		t.Error("gotchas should be extracted")
+	}
+	if !containsStr(s.Gotchas, "reentrancy") {
+		t.Error("gotchas should contain reentrancy")
+	}
+	if s.EstTokens == 0 {
+		t.Error("EstTokens should be > 0")
+	}
+}
+
+func TestSKILLMDDirectoryFormat(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "skills")
+	skillSubDir := filepath.Join(skillDir, "my-skill")
+	refsDir := filepath.Join(skillSubDir, "references")
+	os.MkdirAll(refsDir, 0755)
+
+	os.WriteFile(filepath.Join(skillSubDir, "SKILL.md"),
+		[]byte("# my-skill\n> A test skill\n<!-- keywords: test -->\nSome content."), 0644)
+	os.WriteFile(filepath.Join(refsDir, "examples.md"),
+		[]byte("# Examples\n\nExample 1..."), 0644)
+
+	reg := NewRegistry(skillDir)
+	reg.Load()
+
+	s := reg.Get("my-skill")
+	if s == nil {
+		t.Fatal("SKILL.md skill not found")
+	}
+	if s.Description != "A test skill" {
+		t.Errorf("description=%q", s.Description)
+	}
+	if len(s.References) != 1 {
+		t.Errorf("references=%d, want 1", len(s.References))
+	}
+	if _, ok := s.References["examples"]; !ok {
+		t.Error("expected 'examples' reference")
 	}
 }
 

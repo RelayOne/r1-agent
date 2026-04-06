@@ -22,13 +22,19 @@ import (
 
 // Skill is a reusable workflow pattern.
 type Skill struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Keywords    []string `json:"keywords"`    // trigger words for auto-injection
-	Content     string   `json:"content"`     // the markdown template
-	Source      string   `json:"source"`      // "project" or "user"
-	Path        string   `json:"path"`        // file path
-	Priority    int      `json:"priority"`    // higher = matched first
+	Name            string            `json:"name"`
+	Description     string            `json:"description"`
+	Keywords        []string          `json:"keywords"`          // trigger words for auto-injection
+	Triggers        []string          `json:"triggers"`          // explicit trigger phrases from YAML frontmatter
+	AllowedTools    []string          `json:"allowed_tools"`     // tool whitelist from YAML frontmatter
+	Content         string            `json:"content"`           // the markdown template
+	Gotchas         string            `json:"gotchas"`           // extracted "Gotchas" section for compressed injection
+	References      map[string]string `json:"references"`        // filename → content for progressive disclosure
+	Source          string            `json:"source"`            // "project", "user", or "builtin"
+	Path            string            `json:"path"`              // file path
+	Priority        int               `json:"priority"`          // higher = matched first
+	EstTokens       int               `json:"est_tokens"`        // estimated token count for budgeting
+	EstGotchaTokens int               `json:"est_gotcha_tokens"` // token count of just the Gotchas section
 }
 
 // Registry manages skill discovery, loading, and matching.
@@ -96,17 +102,41 @@ func (r *Registry) Load() error {
 			name := entry.Name()
 
 			if entry.IsDir() {
-				// Skill directory: look for index.md
-				indexPath := filepath.Join(dir, name, "index.md")
-				content, err := os.ReadFile(indexPath)
-				if err != nil {
+				// Skill directory: look for SKILL.md (Trail of Bits) or index.md (legacy)
+				candidates := []string{
+					filepath.Join(dir, name, "SKILL.md"),
+					filepath.Join(dir, name, "index.md"),
+				}
+				var content []byte
+				var skillPath string
+				for _, c := range candidates {
+					if data, err := os.ReadFile(c); err == nil {
+						content = data
+						skillPath = c
+						break
+					}
+				}
+				if skillPath == "" {
 					continue
 				}
 				// Overwrite builtins but not higher-priority project/user skills
 				if existing, exists := r.skills[name]; exists && existing.Source != "builtin" {
 					continue
 				}
-				r.skills[name] = parseSkill(name, string(content), source, indexPath, len(r.dirs)-i)
+				r.skills[name] = parseSkill(name, string(content), source, skillPath, len(r.dirs)-i)
+
+				// Load progressive disclosure references from references/ subdir
+				refsDir := filepath.Join(dir, name, "references")
+				if refEntries, refErr := os.ReadDir(refsDir); refErr == nil {
+					for _, ref := range refEntries {
+						if !ref.IsDir() && strings.HasSuffix(ref.Name(), ".md") {
+							if data, err := os.ReadFile(filepath.Join(refsDir, ref.Name())); err == nil {
+								key := strings.TrimSuffix(ref.Name(), ".md")
+								r.skills[name].References[key] = string(data)
+							}
+						}
+					}
+				}
 			} else if strings.HasSuffix(name, ".md") {
 				// Skill file: name is filename without extension
 				skillName := strings.TrimSuffix(name, ".md")
@@ -226,60 +256,142 @@ func estimateTokens(s string) int {
 	return n
 }
 
-// InjectPromptBudgeted augments a prompt with matching skill content,
-// respecting a token budget. Skills are prioritized by match quality and
-// truncated to fit within budget. Returns the augmented prompt and the
-// number of skills injected.
-func (r *Registry) InjectPromptBudgeted(prompt string, budgetTokens int) (string, int) {
-	matches := r.Match(prompt)
-	if len(matches) == 0 {
-		return prompt, 0
+// InjectionTier classifies how much of a skill to include.
+type InjectionTier int
+
+const (
+	TierFull    InjectionTier = iota // entire content
+	TierGotchas                      // gotchas section only
+	TierName                         // just name + description
+)
+
+// SkillSelection represents a chosen skill with how it should be rendered.
+type SkillSelection struct {
+	Skill  *Skill
+	Tier   InjectionTier
+	Reason string // for audit/debug: why was this selected
+}
+
+// InjectPromptBudgeted selects skills for the given prompt + repo profile, respecting
+// the token budget. Returns the augmented prompt with skills injected.
+//
+// Selection priority (in order, until budget exhausted):
+//  1. Always-on skills (name "agent-discipline" or keyword "always")
+//  2. Repo-stack-matched skills (top 2, full content) — passed via stackMatches
+//  3. Keyword-matched skills (top 3, gotchas only)
+//
+// The returned prompt has skills wrapped in <skills>...</skills> XML tags.
+func (r *Registry) InjectPromptBudgeted(prompt string, stackMatches []string, tokenBudget int) (string, []SkillSelection) {
+	if tokenBudget <= 0 {
+		tokenBudget = 3000
 	}
 
-	remaining := budgetTokens
-	var parts []string
-	count := 0
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
-	for _, s := range matches {
-		if remaining <= 0 {
+	used := 0
+	var selected []SkillSelection
+	seen := make(map[string]bool)
+
+	// Helper to add a skill if it fits in budget
+	add := func(s *Skill, tier InjectionTier, reason string) {
+		if seen[s.Name] {
+			return
+		}
+		cost := s.EstTokens
+		if tier == TierGotchas {
+			cost = s.EstGotchaTokens
+		} else if tier == TierName {
+			cost = (len(s.Name) + len(s.Description)) / 4
+			if cost == 0 {
+				cost = 1
+			}
+		}
+		if cost == 0 {
+			return
+		}
+		if used+cost > tokenBudget {
+			return
+		}
+		used += cost
+		seen[s.Name] = true
+		selected = append(selected, SkillSelection{Skill: s, Tier: tier, Reason: reason})
+	}
+
+	// Tier 1: always-on
+	for _, s := range r.skills {
+		if s.Name == "agent-discipline" || hasKeyword(s.Keywords, "always") {
+			add(s, TierFull, "always-on")
+		}
+	}
+
+	// Tier 2: repo stack matches (top 2, full content)
+	stackCount := 0
+	for _, name := range stackMatches {
+		if stackCount >= 2 {
 			break
 		}
-
-		header := fmt.Sprintf("## Skill: %s\n\n", s.Name)
-		separator := "\n\n---\n\n"
-		overhead := estimateTokens(header) + estimateTokens(separator)
-
-		fullContent := s.Content
-		fullTokens := estimateTokens(fullContent) + overhead
-
-		if fullTokens <= remaining {
-			parts = append(parts, header+fullContent+separator)
-			remaining -= fullTokens
-			count++
-			continue
-		}
-
-		// Try truncated version (first section only)
-		truncated := truncateToFirstSection(s.Content)
-		truncTokens := estimateTokens(truncated) + overhead
-
-		if truncTokens <= remaining {
-			parts = append(parts, header+truncated+separator)
-			remaining -= truncTokens
-			count++
+		if s := r.skills[name]; s != nil {
+			add(s, TierFull, "repo-stack")
+			stackCount++
 		}
 	}
 
-	if count == 0 {
-		return prompt, 0
+	// Tier 3: keyword matches (top 3, gotchas only)
+	matches := r.matchInternal(prompt)
+	keywordCount := 0
+	for _, s := range matches {
+		if keywordCount >= 3 {
+			break
+		}
+		if s.EstGotchaTokens == 0 {
+			continue // skip skills without gotchas section in tier 3
+		}
+		add(s, TierGotchas, "keyword-match")
+		keywordCount++
+	}
+
+	if len(selected) == 0 {
+		return prompt, nil
 	}
 
 	var sb strings.Builder
-	for _, p := range parts {
-		sb.WriteString(p)
+	sb.WriteString("<skills>\n")
+	for _, sel := range selected {
+		sb.WriteString(fmt.Sprintf("## Skill: %s\n\n", sel.Skill.Name))
+		switch sel.Tier {
+		case TierFull:
+			sb.WriteString(sel.Skill.Content)
+		case TierGotchas:
+			sb.WriteString("(gotchas only)\n\n")
+			sb.WriteString(sel.Skill.Gotchas)
+		case TierName:
+			sb.WriteString(sel.Skill.Description)
+		}
+		sb.WriteString("\n\n---\n\n")
 	}
+	sb.WriteString("</skills>\n\n")
 	sb.WriteString(prompt)
-	return sb.String(), count
+
+	return sb.String(), selected
+}
+
+// matchInternal is the unlocked version of Match. Caller must hold r.mu.RLock().
+func (r *Registry) matchInternal(text string) []*Skill {
+	lower := strings.ToLower(text)
+	var matches []*Skill
+	for _, s := range r.skills {
+		for _, kw := range s.Keywords {
+			if strings.Contains(lower, strings.ToLower(kw)) {
+				matches = append(matches, s)
+				break
+			}
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Priority > matches[j].Priority
+	})
+	return matches
 }
 
 // Add registers a new skill. If project dir exists, saves to project skills.
@@ -358,54 +470,216 @@ func (r *Registry) SuggestSimilar(name string) []string {
 
 // --- Internal ---
 
-// parseSkill extracts metadata from markdown content.
+// parseSkill extracts metadata from skill content. Supports both YAML frontmatter
+// (Trail of Bits / Claude Code SKILL.md format) and the legacy HTML comment format.
 func parseSkill(name, content, source, path string, priority int) *Skill {
 	s := &Skill{
-		Name:     name,
-		Content:  content,
-		Source:   source,
-		Path:     path,
-		Priority: priority,
+		Name:       name,
+		Content:    content,
+		Source:     source,
+		Path:       path,
+		Priority:   priority,
+		References: make(map[string]string),
 	}
 
-	// Extract description from first blockquote
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "> ") {
-			s.Description = strings.TrimPrefix(line, "> ")
-			break
+	body := content
+
+	// Parse YAML frontmatter if present (--- delimited block at start)
+	if strings.HasPrefix(content, "---\n") {
+		end := strings.Index(content[4:], "\n---\n")
+		if end > 0 {
+			frontmatter := content[4 : 4+end]
+			body = content[4+end+5:]
+			parseFrontmatter(frontmatter, s)
 		}
 	}
 
-	// Extract keywords from HTML comment
-	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "<!-- keywords:") {
-			kw := strings.TrimPrefix(line, "<!-- keywords:")
-			kw = strings.TrimSuffix(kw, "-->")
-			kw = strings.TrimSpace(kw)
-			for _, k := range strings.Split(kw, ",") {
-				k = strings.TrimSpace(k)
-				if k != "" {
-					s.Keywords = append(s.Keywords, k)
-				}
+	// Extract description from first blockquote (if not set by frontmatter)
+	if s.Description == "" {
+		for _, line := range strings.Split(body, "\n") {
+			if strings.HasPrefix(line, "> ") {
+				s.Description = strings.TrimPrefix(line, "> ")
+				break
 			}
-			break
 		}
 	}
 
-	// If no keywords, use the name and words from description
+	// Extract keywords from HTML comment (legacy format, still supported)
+	if len(s.Keywords) == 0 {
+		for _, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, "<!-- keywords:") {
+				kw := strings.TrimPrefix(line, "<!-- keywords:")
+				kw = strings.TrimSuffix(kw, "-->")
+				kw = strings.TrimSpace(kw)
+				for _, k := range strings.Split(kw, ",") {
+					k = strings.TrimSpace(k)
+					if k != "" {
+						s.Keywords = append(s.Keywords, k)
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Fallback: derive keywords from name + description words
 	if len(s.Keywords) == 0 {
 		s.Keywords = append(s.Keywords, name)
-		if s.Description != "" {
-			words := strings.Fields(s.Description)
-			for _, w := range words {
-				if len(w) > 4 {
-					s.Keywords = append(s.Keywords, strings.ToLower(w))
-				}
+		for _, w := range strings.Fields(s.Description) {
+			if len(w) > 4 {
+				s.Keywords = append(s.Keywords, strings.ToLower(w))
 			}
 		}
 	}
 
+	// Triggers (explicit) merge into keywords for matching
+	for _, t := range s.Triggers {
+		s.Keywords = append(s.Keywords, strings.ToLower(t))
+	}
+
+	// Extract Gotchas section for compressed injection
+	s.Gotchas = extractSection(body, "Gotchas")
+
+	// Estimate tokens (rough: 1 token ≈ 4 characters for English)
+	s.EstTokens = len(body) / 4
+	if s.EstTokens == 0 && len(body) > 0 {
+		s.EstTokens = 1
+	}
+	s.EstGotchaTokens = len(s.Gotchas) / 4
+
 	return s
+}
+
+// parseFrontmatter is a minimal YAML frontmatter parser for SKILL.md files.
+// It handles the fields we care about: name, description, triggers, allowed-tools, keywords.
+func parseFrontmatter(fm string, s *Skill) {
+	var inList string
+	for _, line := range strings.Split(fm, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			inList = ""
+			continue
+		}
+
+		if inList != "" {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- ") {
+				v := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+				v = strings.Trim(v, `"'`)
+				switch inList {
+				case "triggers":
+					s.Triggers = append(s.Triggers, v)
+				case "allowed-tools":
+					s.AllowedTools = append(s.AllowedTools, v)
+				case "keywords":
+					s.Keywords = append(s.Keywords, v)
+				}
+				continue
+			}
+			inList = ""
+		}
+
+		idx := strings.Index(line, ":")
+		if idx <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		val = strings.Trim(val, `"'`)
+
+		switch key {
+		case "name":
+			if val != "" {
+				s.Name = val
+			}
+		case "description":
+			if val != "" {
+				s.Description = val
+			}
+		case "triggers":
+			if val != "" {
+				// Inline list: triggers: [foo, bar]
+				inline := strings.TrimSpace(val)
+				if strings.HasPrefix(inline, "[") && strings.HasSuffix(inline, "]") {
+					inner := strings.TrimSuffix(strings.TrimPrefix(inline, "["), "]")
+					for _, v := range strings.Split(inner, ",") {
+						v = strings.TrimSpace(v)
+						v = strings.Trim(v, `"'`)
+						if v != "" {
+							s.Triggers = append(s.Triggers, v)
+						}
+					}
+				}
+			} else {
+				inList = "triggers"
+			}
+		case "allowed-tools":
+			if val != "" {
+				// Inline list
+				inline := strings.TrimSpace(val)
+				if strings.HasPrefix(inline, "[") && strings.HasSuffix(inline, "]") {
+					inner := strings.TrimSuffix(strings.TrimPrefix(inline, "["), "]")
+					for _, v := range strings.Split(inner, ",") {
+						v = strings.TrimSpace(v)
+						v = strings.Trim(v, `"'`)
+						if v != "" {
+							s.AllowedTools = append(s.AllowedTools, v)
+						}
+					}
+				}
+			} else {
+				inList = "allowed-tools"
+			}
+		case "keywords":
+			if val != "" {
+				// Inline list
+				inline := strings.TrimSpace(val)
+				if strings.HasPrefix(inline, "[") && strings.HasSuffix(inline, "]") {
+					inner := strings.TrimSuffix(strings.TrimPrefix(inline, "["), "]")
+					for _, v := range strings.Split(inner, ",") {
+						v = strings.TrimSpace(v)
+						v = strings.Trim(v, `"'`)
+						if v != "" {
+							s.Keywords = append(s.Keywords, v)
+						}
+					}
+				}
+			} else {
+				inList = "keywords"
+			}
+		}
+	}
+}
+
+// extractSection finds a section by H2 header name and returns its body up to
+// the next H2 or end of document. Returns empty string if not found.
+func extractSection(body, name string) string {
+	lines := strings.Split(body, "\n")
+	var out []string
+	inSection := false
+	headerLower := strings.ToLower("## " + name)
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(line), headerLower) {
+			inSection = true
+			continue
+		}
+		if inSection {
+			if strings.HasPrefix(line, "## ") {
+				break
+			}
+			out = append(out, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func hasKeyword(keywords []string, target string) bool {
+	for _, k := range keywords {
+		if k == target {
+			return true
+		}
+	}
+	return false
 }
 
 // levenshtein computes the edit distance between two strings.
