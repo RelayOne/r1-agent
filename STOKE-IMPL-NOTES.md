@@ -84,7 +84,25 @@ Running log of decisions, blockers, and questions for Eric.
 - Native runner passes event bus to agentloop via `loop.SetEventBus()`
 
 ### What's next
-- Phase 5: Prompt cache alignment, package audit (PACKAGE-AUDIT.md)
 - Phase 6: Benchmark framework
 - Phase 7: Honesty Judge (7-layer deception detection)
 - Phase 8: Additional skill library extraction
+
+---
+
+## 2026-04-06 — Phase 5: Prompt Cache Alignment + Package Audit + Architecture Docs
+
+- **Prompt cache alignment**: wired cache utilities into actual request paths
+  - `agentloop/loop.go:buildRequest()`: sorts tools alphabetically via `SortToolsDeterministic()`, wraps system prompt with `BuildCachedSystemPrompt()` using cache_control breakpoints
+  - `provider/anthropic.go:buildRequestBody()`: added `SystemRaw` (json.RawMessage) support for pre-formatted system blocks, `CacheEnabled` flag, `toolsWithCacheControl()` adds `cache_control: {type: "ephemeral"}` to last tool definition
+  - `apiclient/client.go:buildAnthropicBody()`: mirrors SystemRaw/CacheEnabled support for API client path
+  - Net effect: ~90% input token cost reduction on multi-turn agentic loops
+- **PACKAGE-AUDIT.md**: full audit of all 107 packages
+  - 32 CORE, 49 HELPFUL, 13 DEPRECATED (~3,636 LOC dead code)
+  - Highest-traffic: `stream` (11 callers), `config` (8), `hub` (7), `convergence` (6)
+  - 13 packages with 0 external callers identified for deletion: compute, lifecycle, managed, permissions, phaserole, prompttpl, ralph, ratelimit, sandattr, sandbox, sandguard, team, toolcache
+- **Architecture docs** created in `docs/architecture/`:
+  - `skill-pipeline.md`: skill registry, skillselect, 3-tier injection, hub integration
+  - `hub.md`: event bus, 46 events, 4 modes, built-in subscribers, circuit breakers, audit
+  - `agentloop.md`: native loop design, cache alignment, tool execution, provider layer
+  - `wizard.md`: maturity classification, 4 modes, config types, research convergence
