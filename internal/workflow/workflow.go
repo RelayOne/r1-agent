@@ -12,6 +12,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/critic"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
 	"github.com/ericmacdougall/stoke/internal/hooks"
@@ -421,6 +422,33 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				_ = e.advanceState(taskstate.Failed, "cannot enumerate modified files: "+modErr.Error())
 				return result, fmt.Errorf("modified files check failed: %w", modErr)
+			}
+
+			// --- CRITIC: AST-aware quality gate on changed files ---
+			if len(modifiedFiles) > 0 {
+				changes := make(map[string]string, len(modifiedFiles))
+				for _, f := range modifiedFiles {
+					absPath := filepath.Join(handle.Path, f)
+					if data, readErr := os.ReadFile(absPath); readErr == nil {
+						changes[f] = string(data)
+					}
+				}
+				if len(changes) > 0 {
+					c := critic.New(critic.Config{})
+					verdict := c.Review(changes)
+					if !verdict.Pass {
+						evidence.Warnings = append(evidence.Warnings, "critic: "+verdict.Summary)
+						for _, finding := range verdict.Findings {
+							if finding.Severity == critic.SeverityBlock {
+								evidence.ReviewPass = false
+								e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
+								e.Worktrees.Cleanup(ctx, handle)
+								_ = e.advanceState(taskstate.Failed, "critic blocked: "+verdict.Summary)
+								return result, fmt.Errorf("critic blocked: %s", verdict.Summary)
+							}
+						}
+					}
+				}
 			}
 
 			// Detect gitignored files created by the agent. These are invisible
@@ -1013,6 +1041,10 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 
 func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 	if e.RunnerOverride != nil {
+		if !e.DryRun {
+			log := logging.Component("workflow")
+			log.Warn("RunnerOverride active in non-dry-run mode — all phases use same runner, cross-model review is bypassed")
+		}
 		return "mock", e.RunnerOverride
 	}
 	if phase == "plan" {
@@ -1031,13 +1063,21 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 		}
 	}
 
+	// Use cost-aware routing when a budget tracker is available.
+	resolve := func(tt model.TaskType) model.Provider {
+		if e.CostTracker != nil {
+			return model.CostAwareResolve(tt, e.CostTracker, isAvailable)
+		}
+		return model.Resolve(tt, isAvailable)
+	}
+
 	if phase == "verify" {
-		execProvider := model.Resolve(e.TaskType, isAvailable)
+		execProvider := resolve(e.TaskType)
 		reviewer := model.CrossModelReviewer(execProvider)
 		return providerToRunner(e, reviewer)
 	}
 
-	resolved := model.Resolve(e.TaskType, isAvailable)
+	resolved := resolve(e.TaskType)
 	return providerToRunner(e, resolved)
 }
 
