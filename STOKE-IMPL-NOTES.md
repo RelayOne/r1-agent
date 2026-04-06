@@ -42,11 +42,49 @@ Running log of decisions, blockers, and questions for Eric.
   - Populates `RunResult` with cost, tokens, turns, duration
   - Added `Native *NativeRunner` field to `engine.Registry`
 
-### What's next
-- Wire native runner into workflow dispatch (need `--runner native` flag or config option)
-- Add hub event publishing for tool execution (EvtToolPreUse/EvtToolPostUse)
-- Phase 2 (wizard) and Phase 3 (hub enhancements) per implementation guide
-
 ### Decisions made
 - Kept existing `tools.Registry` API (Handle + Definitions) rather than full Tool interface rewrite from guide — the current API works well and the cascade is integrated. Can refactor to per-file tools later if needed.
 - Native runner takes apiKey/model in constructor rather than from RunSpec.PoolAPIKey — simpler for now, can evolve.
+
+---
+
+## 2026-04-06 — Phase 2: Wizard Maturity Heuristics
+
+- Added `MaturityClassification` with 8-signal weighted scoring: git activity (15%), review process (15%), tests (15%), CI/CD (15%), docs (10%), security (10%), dependencies (10%), observability (10%)
+- Composite score → stage mapping: 0-20 prototype, 21-40 mvp, 41-70 growth, 71-100 mature
+- New structured `WizardConfig` types for YAML output via `yaml.v3`: ProjectConfig, ModelsConfig, QualityConfig, SecurityConfig, InfrastructureConfig, ScaleConfig, SkillsConfig, TeamConfig, RiskConfig
+- `RunWizard(ctx, Opts)` modern API with 4 modes: auto, interactive, hybrid, yes (CI-safe)
+- `buildDefaultConfig()` scales quality/security/risk defaults with project stage (honesty enforcement always strict)
+- `selectSkillsFromConfig()` selects skills from final config + detected profile
+- Research convergence (AI-powered config recommendations via Provider interface)
+- Output: `.stoke/config.yaml`, `.stoke/wizard-rationale.md`, `.stoke/skills/` (skill copies)
+
+---
+
+## 2026-04-06 — Phase 3: Hub Built-in Subscribers
+
+- Created `internal/hub/builtin/` with 4 subscribers:
+  - **HonestyGate** (gate_strict, priority 100): blocks placeholder code (TODO/FIXME, panic("not implemented"), NotImplementedError), type suppressions (@ts-ignore, as any, eslint-disable, nolint), test file removal >50%
+  - **SecretScanner** (gate_strict, priority 50): blocks AWS keys, private keys, API keys, Stripe live keys, Slack tokens, GitHub tokens
+  - **CostTracker** (observe, priority 9000): records per-model cost from model.post_call events using April 2026 Anthropic pricing
+  - **SkillInjector** (transform, priority 200): injects skills into prompts via skill.Registry
+- All use existing `Bus.Register()` API with `HandlerFunc` pattern
+
+---
+
+## 2026-04-06 — Phase 4.3: Native Runner Wiring + Hub Events
+
+- Added `ProviderNative` to model/router.go
+- Added `RunnerMode`, `NativeAPIKey`, `NativeModel` fields to `app.RunConfig`
+- Native runner initialized when `RunnerMode=native` or API key provided
+- `pickRunner()` honors `RunnerMode=native` to bypass CLI entirely
+- `providerToRunner()` handles native → fallback to claude
+- CLI: `--runner native|claude|codex|hybrid`, `--native-api-key`, `--native-model`
+- Hub event publishing in agentloop: `EvtToolPreUse` (gate can block), `EvtToolPostUse` (async observe)
+- Native runner passes event bus to agentloop via `loop.SetEventBus()`
+
+### What's next
+- Phase 5: Prompt cache alignment, package audit (PACKAGE-AUDIT.md)
+- Phase 6: Benchmark framework
+- Phase 7: Honesty Judge (7-layer deception detection)
+- Phase 8: Additional skill library extraction

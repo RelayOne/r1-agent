@@ -631,6 +631,9 @@ func runCmd(args []string) {
 	buildC := fs.String("build-cmd", "", "Build command")
 	testC := fs.String("test-cmd", "", "Test command")
 	lintC := fs.String("lint-cmd", "", "Lint command")
+	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
+	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
+	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -687,6 +690,9 @@ func runCmd(args []string) {
 		CostTracker:     runTracker,
 		RepoMap:         runRepoMap,
 		TestGraph:       runTestGraph,
+		RunnerMode:      *runnerMode,
+		NativeAPIKey:    *nativeAPIKey,
+		NativeModel:     *nativeModel,
 		EventBus:        newEventBus(),
 		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {

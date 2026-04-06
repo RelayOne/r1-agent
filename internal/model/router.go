@@ -27,6 +27,7 @@ type Provider string
 const (
 	ProviderClaude     Provider = "claude"     // Claude Code headless (subscription, $0 marginal)
 	ProviderCodex      Provider = "codex"      // Codex CLI (subscription, $0 marginal)
+	ProviderNative     Provider = "native"     // Stoke native runner via Anthropic Messages API
 	ProviderOpenRouter Provider = "openrouter" // OpenRouter API (multi-model, pay-per-token)
 	ProviderDirectAPI  Provider = "direct-api" // Direct Anthropic/OpenAI API (pay-per-token)
 	ProviderLintOnly   Provider = "lint-only"  // No model: just run build/test/lint

@@ -113,6 +113,7 @@ type Engine struct {
 	EventBus         *hub.Bus               // unified event bus (nil = no events)
 	SkillRegistry    *skill.Registry        // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches     []string               // pre-computed stack-matched skill names from RepoProfile
+	RunnerMode       string                 // runner selection: "claude", "codex", "native", "hybrid" (default: "claude")
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -1561,6 +1562,13 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 		}
 		return "mock", e.RunnerOverride
 	}
+
+	// If RunnerMode is explicitly "native" and the native runner is available,
+	// use it for all phases (no CLI subprocess needed).
+	if e.RunnerMode == "native" && e.Runners.Native != nil {
+		return string(model.ProviderNative), e.Runners.Native
+	}
+
 	if phase == "plan" {
 		return string(model.ProviderClaude), e.Runners.Claude
 	}
@@ -1572,6 +1580,8 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 			return e.Runners.Claude != nil
 		case model.ProviderCodex:
 			return e.Runners.Codex != nil
+		case model.ProviderNative:
+			return e.Runners.Native != nil
 		default:
 			return false // openrouter/direct-api not yet wired as runners
 		}
@@ -1597,6 +1607,11 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 
 func providerToRunner(e Engine, p model.Provider) (string, engine.CommandRunner) {
 	switch p {
+	case model.ProviderNative:
+		if e.Runners.Native != nil {
+			return string(p), e.Runners.Native
+		}
+		return string(model.ProviderClaude), e.Runners.Claude
 	case model.ProviderCodex:
 		if e.Runners.Codex != nil {
 			return string(p), e.Runners.Codex

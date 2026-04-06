@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
@@ -146,6 +147,7 @@ type Loop struct {
 	handler   ToolHandler
 	onText    OnTextFunc
 	onToolUse OnToolUseFunc
+	eventBus  *hub.Bus // optional: publishes EvtToolPreUse/EvtToolPostUse events
 }
 
 // New creates a new agent loop.
@@ -164,6 +166,9 @@ func (l *Loop) SetOnText(fn OnTextFunc) { l.onText = fn }
 
 // SetOnToolUse sets the callback for tool execution notifications.
 func (l *Loop) SetOnToolUse(fn OnToolUseFunc) { l.onToolUse = fn }
+
+// SetEventBus sets the hub event bus for publishing tool use events.
+func (l *Loop) SetEventBus(bus *hub.Bus) { l.eventBus = bus }
 
 // Run executes the agentic loop starting from a user message.
 // It continues until the model stops requesting tools or limits are hit.
@@ -310,56 +315,83 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 	hasError := false
 	var mu sync.Mutex
 
-	if len(toolCalls) == 1 {
-		// Single tool — execute directly
-		tc := toolCalls[0]
+	execOne := func(idx int, tc ContentBlock) {
 		if l.onToolUse != nil {
 			l.onToolUse(tc.Name, tc.Input)
 		}
+
+		// Emit pre-use event (gate can block)
+		if l.eventBus != nil {
+			preEv := &hub.Event{
+				Type:      hub.EventToolPreUse,
+				Timestamp: time.Now(),
+				Tool: &hub.ToolEvent{
+					Name:  tc.Name,
+					Input: parseToolInput(tc.Input),
+				},
+			}
+			resp := l.eventBus.Emit(ctx, preEv)
+			if resp.Decision == hub.Deny {
+				mu.Lock()
+				hasError = true
+				results[idx] = ContentBlock{
+					Type:      "tool_result",
+					ToolUseID: tc.ID,
+					Content:   fmt.Sprintf("Tool blocked by policy: %s", resp.Reason),
+					IsError:   true,
+				}
+				mu.Unlock()
+				return
+			}
+		}
+
+		start := time.Now()
 		content, err := l.handler(ctx, tc.Name, tc.Input)
+		duration := time.Since(start)
+
+		mu.Lock()
+		defer mu.Unlock()
 		if err != nil {
 			hasError = true
-			results[0] = ContentBlock{
+			results[idx] = ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
 				Content:   fmt.Sprintf("Error: %v. Try a different approach.", err),
 				IsError:   true,
 			}
 		} else {
-			results[0] = ContentBlock{
+			results[idx] = ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
 				Content:   content,
 			}
 		}
+
+		// Emit post-use event
+		if l.eventBus != nil {
+			postEv := &hub.Event{
+				Type:      hub.EventToolPostUse,
+				Timestamp: time.Now(),
+				Tool: &hub.ToolEvent{
+					Name:     tc.Name,
+					Input:    parseToolInput(tc.Input),
+					Output:   truncateOutput(content, 1024),
+					Duration: duration,
+				},
+			}
+			l.eventBus.EmitAsync(postEv)
+		}
+	}
+
+	if len(toolCalls) == 1 {
+		execOne(0, toolCalls[0])
 	} else {
-		// Multiple tools — execute in parallel
 		var wg sync.WaitGroup
 		for i, tc := range toolCalls {
 			wg.Add(1)
 			go func(idx int, call ContentBlock) {
 				defer wg.Done()
-				if l.onToolUse != nil {
-					l.onToolUse(call.Name, call.Input)
-				}
-				content, err := l.handler(ctx, call.Name, call.Input)
-				mu.Lock()
-				defer mu.Unlock()
-				if err != nil {
-					hasError = true
-					results[idx] = ContentBlock{
-						Type:      "tool_result",
-						ToolUseID: call.ID,
-						Content:   fmt.Sprintf("Error: %v. Try a different approach.", err),
-						IsError:   true,
-					}
-				} else {
-					results[idx] = ContentBlock{
-						Type:      "tool_result",
-						ToolUseID: call.ID,
-						Content:   content,
-					}
-				}
+				execOne(idx, call)
 			}(i, tc)
 		}
 		wg.Wait()
@@ -386,4 +418,24 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// parseToolInput converts JSON input to a map for hub events.
+func parseToolInput(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// truncateOutput limits output size for hub events.
+func truncateOutput(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "... (truncated)"
 }

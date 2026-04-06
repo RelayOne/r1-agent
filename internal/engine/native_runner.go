@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/agentloop"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/tools"
@@ -15,9 +16,10 @@ import (
 // NativeRunner implements CommandRunner using Stoke's own agentloop and
 // the Anthropic Messages API directly. No Claude Code CLI needed.
 type NativeRunner struct {
-	apiKey  string
-	baseURL string // empty = default Anthropic URL
-	model   string // e.g. "claude-sonnet-4-5"
+	apiKey   string
+	baseURL  string   // empty = default Anthropic URL
+	model    string   // e.g. "claude-sonnet-4-5"
+	EventBus *hub.Bus // optional: publishes tool use events
 }
 
 // NewNativeRunner creates a native runner using the Anthropic API directly.
@@ -72,6 +74,11 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Create and configure the loop
 	loop := agentloop.New(p, cfg, toolDefs, handler)
+
+	// Wire hub event bus for tool use events
+	if n.EventBus != nil {
+		loop.SetEventBus(n.EventBus)
+	}
 
 	// Wire streaming events if callback provided
 	if onEvent != nil {

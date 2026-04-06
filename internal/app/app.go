@@ -77,6 +77,9 @@ type RunConfig struct {
 	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
 	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
 	EventBus         *hub.Bus                   // unified event bus (nil = no events)
+	RunnerMode       string                     // runner selection: "claude" (default), "codex", "native", "hybrid"
+	NativeAPIKey     string                     // API key for native runner (required when RunnerMode=native)
+	NativeModel      string                     // model for native runner (default: claude-sonnet-4-6)
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
@@ -243,6 +246,19 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		Codex:  engine.NewCodexRunner(o.cfg.CodexBinary),
 	}
 
+	// Initialize native runner if requested or API key provided
+	if o.cfg.RunnerMode == "native" || o.cfg.NativeAPIKey != "" {
+		nativeModel := o.cfg.NativeModel
+		if nativeModel == "" {
+			nativeModel = "claude-sonnet-4-6"
+		}
+		if o.cfg.NativeAPIKey != "" {
+			native := engine.NewNativeRunner(o.cfg.NativeAPIKey, nativeModel)
+			native.EventBus = o.cfg.EventBus
+			runners.Native = native
+		}
+	}
+
 	taskType := model.InferTaskType(o.cfg.Task)
 	if strings.TrimSpace(o.cfg.TaskType) != "" {
 		taskType = model.TaskType(strings.ToLower(strings.TrimSpace(o.cfg.TaskType)))
@@ -287,6 +303,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		EventBus:         o.cfg.EventBus,
 		SkillRegistry:    skillRegistry,
 		StackMatches:     stackMatches,
+		RunnerMode:       o.cfg.RunnerMode,
 	}
 	return wf.Run(ctx)
 }
