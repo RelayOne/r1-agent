@@ -37,6 +37,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/depgraph"
 	"github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/symindex"
 	"github.com/ericmacdougall/stoke/internal/tfidf"
 )
@@ -680,8 +681,13 @@ func NewExecuteHandler(deps HandlerDeps) PhaseHandler {
 			}
 		}
 
-		// Build the full mission-aware execute prompt
+		// Build the full mission-aware execute prompt with skill injection.
 		executePrompt := prompts.BuildMissionExecutePrompt(mc, taskDesc, verification)
+		if deps.RepoRoot != "" {
+			reg := skill.DefaultRegistry(deps.RepoRoot)
+			_ = reg.Load()
+			executePrompt = reg.InjectPrompt(executePrompt)
+		}
 
 		var allFiles []string
 		if deps.ExecuteFn == nil {

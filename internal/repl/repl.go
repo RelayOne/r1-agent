@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/conversation"
+	"github.com/ericmacdougall/stoke/internal/interview"
 	"github.com/ericmacdougall/stoke/internal/viewport"
 )
 
@@ -24,6 +25,7 @@ type REPL struct {
 	RepoRoot     string
 	Commands     map[string]Command
 	OnChat       func(input string) // handler for free-text chat (dispatches to claude -p)
+	OnInterview  func(scope *interview.ClarifiedScope) // handler for dispatching clarified scope
 	Reader       *bufio.Scanner     // input source; defaults to os.Stdin
 	Writer       *strings.Builder   // output sink; defaults to os.Stdout via fmt
 	Conversation *conversation.Runtime // multi-turn conversation state (nil = no tracking)
@@ -63,6 +65,74 @@ func (r *REPL) RegisterBuiltins() {
 			r.println(vp.View())
 		},
 	}
+
+	r.Commands["interview"] = Command{
+		Name:        "interview",
+		Description: "Deep interview: clarify scope before executing a task",
+		Usage:       "/interview <task description>",
+		Run: func(args string) {
+			task := strings.TrimSpace(args)
+			if task == "" {
+				r.println("  Usage: /interview <task description>")
+				return
+			}
+
+			session := interview.NewSession(task)
+			r.println("")
+			r.printf("  Deep Interview: %s\n", task)
+			r.println("  Answer each question (or press Enter to use the default).")
+			r.println("  Type 'skip' to skip a question, 'done' to finish early.")
+			r.println("")
+
+			scanner := r.Reader
+			if scanner == nil {
+				scanner = bufio.NewScanner(os.Stdin)
+			}
+			for !session.IsComplete() {
+				q := session.NextQuestion()
+				if q == nil {
+					break
+				}
+				r.printf("  [%s] %s\n", q.Phase, q.Question)
+				if q.Default != "" {
+					r.printf("  (default: %s)\n", q.Default)
+				}
+				r.printf("  > ")
+
+				if !scanner.Scan() {
+					break
+				}
+				answer := strings.TrimSpace(scanner.Text())
+				switch strings.ToLower(answer) {
+				case "skip", "s":
+					session.Skip()
+					r.println("  (skipped)")
+				case "done", "d":
+					// Skip remaining questions
+					for !session.IsComplete() {
+						session.Skip()
+					}
+				case "":
+					session.Skip() // use default
+					r.println("  (using default)")
+				default:
+					session.Answer(answer)
+				}
+				r.println("")
+			}
+
+			scope := session.Synthesize()
+			r.println("  === Clarified Scope ===")
+			r.println(scope.ToPrompt())
+			r.printf("  Confidence: %.0f%%\n\n", scope.Confidence*100)
+
+			if r.OnInterview != nil {
+				r.OnInterview(scope)
+			} else {
+				r.println("  (interview handler not configured — scope printed above)")
+			}
+		},
+	}
 }
 
 // Register adds a slash command.
@@ -97,7 +167,7 @@ func (r *REPL) Run() {
 	r.println("")
 
 	// Print available commands
-	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
+	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "interview", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
 	for _, name := range order {
 		if cmd, ok := r.Commands[name]; ok {
 			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)
