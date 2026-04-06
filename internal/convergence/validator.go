@@ -450,6 +450,9 @@ func DefaultRules() []Rule {
 	// Append postmortem-class rules (numerical correctness, resource lifecycle,
 	// distributed systems, time/clock, build discipline, agent safety).
 	rules = append(rules, PostmortemRules()...)
+	// Append research-derived rules (AI agent deception, concurrency, caching,
+	// UX completeness, retry correctness — from stoke-research-01 analysis).
+	rules = append(rules, ResearchRules()...)
 	return rules
 }
 
