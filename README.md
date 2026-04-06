@@ -65,6 +65,7 @@ stoke pool --claude-config-dir /pool/claude-1
 --roi <level>        ROI filter: high, medium, low, skip (default: medium)
 --sqlite             Use SQLite session store instead of JSON
 --interactive        Launch interactive Bubble Tea TUI
+--specexec           Enable speculative parallel execution
 --dry-run            Show plan without executing
 ```
 
@@ -163,7 +164,7 @@ internal/
   + 77 additional packages    (convergence, repomap, symindex, goast, plugins, remote, etc.)
 ```
 
-103 packages. 47K lines source. 32K lines tests. 1,619 test functions. 289 Go files.
+103 packages. 51K lines source. 33K lines tests. 1,642 test functions. 292 Go files.
 
 ## Docs
 
