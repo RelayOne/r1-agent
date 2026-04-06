@@ -3046,5 +3046,6 @@ func createOrchestrator(repoRoot, dataDir string) (*orchestrate.Orchestrator, er
 	return orchestrate.New(orchestrate.Config{
 		RepoRoot: repoRoot,
 		StoreDir: absData,
+		EventBus: newEventBus(),
 	})
 }
