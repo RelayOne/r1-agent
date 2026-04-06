@@ -2,6 +2,9 @@ package hub
 
 import (
 	"context"
+
+	"github.com/ericmacdougall/stoke/internal/consent"
+	"github.com/ericmacdougall/stoke/internal/flowtrack"
 )
 
 // WisdomSubscriber creates a hub subscriber that records task outcomes as wisdom learnings.
@@ -176,6 +179,77 @@ func (a TaskHookAdapter) Subscribers(id string) []Subscriber {
 	}
 
 	return subs
+}
+
+// FlowTrackObserver creates a hub observer that feeds tool/file/git events
+// into a flowtrack.Tracker for development phase inference.
+func FlowTrackObserver(tracker *flowtrack.Tracker) Subscriber {
+	return Subscriber{
+		ID:     "hub.flowtrack",
+		Events: []EventType{EventToolFileWrite, EventToolFileRead, EventGitPostCommit, EventGitPostMerge, "tool.*"},
+		Mode:   ModeObserve,
+		Handler: func(ctx context.Context, ev *Event) *HookResponse {
+			var action flowtrack.Action
+			switch {
+			case ev.File != nil:
+				if ev.Type == EventToolFileWrite {
+					action = flowtrack.Action{Type: flowtrack.ActionFileEdit, Target: ev.File.Path}
+				} else {
+					action = flowtrack.Action{Type: flowtrack.ActionFileOpen, Target: ev.File.Path}
+				}
+			case ev.Git != nil:
+				if ev.Type == EventGitPostCommit {
+					action = flowtrack.Action{Type: flowtrack.ActionGitCommit, Target: ev.Git.Branch}
+				} else {
+					action = flowtrack.Action{Type: flowtrack.ActionGitBranch, Target: ev.Git.Branch}
+				}
+			case ev.Tool != nil:
+				action = flowtrack.Action{Type: flowtrack.ActionToolCall, Target: ev.Tool.Name}
+			default:
+				return nil
+			}
+			tracker.Record(action)
+			return nil
+		},
+	}
+}
+
+// ConsentGate creates a hub gate subscriber that enforces human-in-the-loop
+// approval for dangerous operations via a consent.Workflow.
+func ConsentGate(workflow *consent.Workflow) Subscriber {
+	return Subscriber{
+		ID:       "hub.consent",
+		Events:   []EventType{EventGitPreCommit, EventGitPreMerge, EventToolFileWrite, "tool.exec"},
+		Mode:     ModeGate,
+		Priority: 5, // run before other gates
+		Handler: func(ctx context.Context, ev *Event) *HookResponse {
+			var operation, category, description string
+			switch {
+			case ev.Git != nil:
+				operation = string(ev.Type)
+				category = "git"
+				description = "Git operation: " + ev.Git.Branch
+			case ev.File != nil:
+				operation = "write " + ev.File.Path
+				category = "file"
+				description = "File write: " + ev.File.Path
+			case ev.Tool != nil:
+				operation = ev.Tool.Name
+				category = "exec"
+				description = "Tool execution: " + ev.Tool.Name
+			default:
+				return &HookResponse{Decision: Allow}
+			}
+
+			decision := workflow.Check(operation, category, description)
+			switch decision {
+			case consent.DecisionDenied, consent.DecisionBlocked:
+				return &HookResponse{Decision: Deny, Reason: "consent: " + string(decision)}
+			default:
+				return &HookResponse{Decision: Allow}
+			}
+		},
+	}
 }
 
 // PromptInjectionTransformer creates a hub transform subscriber that injects
