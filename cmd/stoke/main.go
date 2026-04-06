@@ -31,6 +31,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/progress"
+	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
@@ -81,6 +82,17 @@ type BuildConfig struct {
 // Returns the build report and any fatal error.
 func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	absRepo := cfg.RepoRoot
+
+	// Register session with Ember dashboard for remote progress monitoring.
+	reporter := remote.New()
+	if reporter != nil {
+		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil && url != "" {
+			fmt.Printf("  dashboard: %s\n", url)
+		}
+		defer func() {
+			_ = reporter.Complete(true, "build finished")
+		}()
+	}
 
 	// Build pool configurations
 	var poolConfigs []subscriptions.Pool
@@ -2493,6 +2505,7 @@ func gitHead(dir string) string {
 func launchREPL() {
 	absRepo, _ := filepath.Abs(".")
 	r := repl.New(absRepo)
+	r.RegisterBuiltins()
 
 	// Register all slash commands
 	r.Register(repl.Command{
@@ -2735,6 +2748,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		TaskVerification: task.Verification,
 		AllowedFiles:     task.Files,
 		DryRun:           false,
+		PlanOnly:         task.PlanOnly,
 		AuthMode:         app.AuthMode(authMode),
 		ClaudeBinary:     claudeBin,
 		CodexBinary:      codexBin,

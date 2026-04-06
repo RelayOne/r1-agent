@@ -21,6 +21,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/chunker"
 )
 
 // Document is an indexed file.
@@ -95,6 +97,29 @@ func (idx *Index) AddDocument(path, content string) {
 		Terms: tf,
 	})
 	idx.docCount++
+}
+
+// AddDocumentChunked uses semantic chunking to split a file into meaningful
+// chunks (functions, types, methods) and indexes each chunk separately.
+// This improves search precision by allowing queries to match individual
+// functions rather than whole files.
+func (idx *Index) AddDocumentChunked(path, content string) {
+	chunks := chunker.ChunkFile(path, content)
+	if len(chunks) == 0 {
+		// Fallback to whole-file indexing if chunker finds no boundaries.
+		idx.AddDocument(path, content)
+		return
+	}
+	for _, ch := range chunks {
+		chunkPath := path + "#" + ch.Name
+		terms := tokenize(ch.Content)
+		tf := computeTF(terms)
+		idx.docs = append(idx.docs, Document{
+			Path:  chunkPath,
+			Terms: tf,
+		})
+		idx.docCount++
+	}
 }
 
 // Finalize computes IDF scores. Call after all documents are added.

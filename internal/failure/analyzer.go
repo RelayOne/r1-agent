@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/errtaxonomy"
 )
 
 // Class categorizes why a task failed.
@@ -337,6 +339,13 @@ func scanPolicyViolations(combined string) []Detail {
 
 func inferRootCause(details []Detail, rawOutput string) string {
 	if len(details) == 0 {
+		// Use errtaxonomy to classify raw output for better root cause annotation.
+		if rawOutput != "" {
+			errClass := errtaxonomy.Classify(rawOutput)
+			if errClass != errtaxonomy.ClassUnknown {
+				return fmt.Sprintf("[%s] %s", errClass, firstLine(rawOutput))
+			}
+		}
 		return firstLine(rawOutput)
 	}
 	// Group by message pattern
@@ -412,6 +421,16 @@ func ShouldRetry(analysis *Analysis, attempt int, prior *Analysis) Decision {
 	case RateLimited:
 		return Decision{Action: Retry} // pool manager rotates
 	default:
+		// Use structured error taxonomy for refined retry strategy on unclassified failures.
+		if analysis.Summary != "" {
+			strategy := errtaxonomy.Strategy(analysis.Summary)
+			if !strategy.ShouldRetry {
+				return Decision{Action: Escalate, Reason: "error taxonomy: " + strategy.Description}
+			}
+			if strategy.RequiresFix {
+				return Decision{Action: Retry, Constraint: "fix the underlying issue before retrying: " + strategy.Description}
+			}
+		}
 		return Decision{Action: Retry}
 	}
 }

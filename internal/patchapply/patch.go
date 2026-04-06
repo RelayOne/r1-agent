@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/hashline"
 )
 
 // Hunk represents a single diff hunk.
@@ -221,6 +223,26 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 			result.Failed = append(result.Failed, path)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, err))
 			continue
+		}
+
+		// Use hashline to verify context lines haven't been modified concurrently.
+		// Tag each line with a content hash; if a hunk's context lines don't match
+		// the current tags, the file was changed since the diff was generated.
+		if tf, tagErr := hashline.TagFile(fullPath); tagErr == nil {
+			for _, h := range fp.Hunks {
+				for i, l := range h.Lines {
+					if l.Op != OpContext && l.Op != OpDelete {
+						continue
+					}
+					lineNum := h.OldStart + i
+					if tag, ok := tf.GetTag(lineNum); ok {
+						if tag != hashline.ComputeTag(l.Text) {
+							result.Errors = append(result.Errors,
+								fmt.Sprintf("%s: hashline mismatch at line %d (concurrent edit detected)", path, lineNum))
+						}
+					}
+				}
+			}
 		}
 
 		lines := strings.Split(string(content), "\n")

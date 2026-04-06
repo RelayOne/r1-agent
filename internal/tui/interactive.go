@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/viewport"
 )
 
 // Mode controls what the TUI displays.
@@ -355,6 +356,13 @@ func (m *InteractiveModel) viewDetail() string {
 		for name, count := range toolCounts {
 			sb.WriteString(fmt.Sprintf("    %s: %d\n", name, count))
 		}
+	}
+
+	// Use viewport for constrained error/output display when content is long.
+	if t.Error != "" && len(t.Error) > 200 {
+		vp := viewport.FromString(t.Error, viewport.Config{Height: 10})
+		sb.WriteString("\n  " + dimStyle.Render("─── Error (viewport) ───") + "\n")
+		sb.WriteString("  " + strings.ReplaceAll(vp.View(), "\n", "\n  ") + "\n")
 	}
 
 	sb.WriteString(dimStyle.Render("\n  esc=back  d=dashboard  q=quit"))

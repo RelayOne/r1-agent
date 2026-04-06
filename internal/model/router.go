@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/managed"
+	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
 // TaskType classifies a task for benchmark-backed model routing (e.g., plan, refactor, security).
@@ -199,4 +201,28 @@ func containsAny(s string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+// DirectProvider returns a direct API provider for a given model name.
+// This is the fallback path when CLI runners (Claude Code, Codex) are unavailable.
+// Uses provider.ResolveProvider to select the appropriate API client.
+func DirectProvider(modelName string) provider.Provider {
+	return provider.ResolveProvider(modelName)
+}
+
+// ManagedModelForTask returns the managed endpoint model name for a task type.
+// When Ember managed AI is configured, this selects the appropriate model
+// via the managed proxy instead of direct API access.
+func ManagedModelForTask(taskType TaskType) string {
+	return managed.ModelForTask(string(taskType))
+}
+
+// NewManagedProxy creates a managed AI proxy from environment config.
+// Returns nil if EMBER_API_KEY is not set.
+func NewManagedProxy() *managed.Proxy {
+	cfg := managed.LoadConfig()
+	if !cfg.Enabled {
+		return nil
+	}
+	return managed.NewProxy(cfg)
 }

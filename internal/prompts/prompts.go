@@ -8,6 +8,9 @@ package prompts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/prompt"
+	"github.com/ericmacdougall/stoke/internal/prompttpl"
 )
 
 // --- SCOPE WORKFLOW ---
@@ -411,4 +414,44 @@ Return ONLY valid JSON:
   ]
 }
 `, tasksSummary, verificationChecklist)
+}
+
+// executeTemplate is a pre-parsed prompt template for the execute phase.
+// Using prompttpl allows separating static instructions from dynamic variables
+// (task description, verification items, context) for cache-friendly rendering.
+var executeTemplate = prompttpl.MustParse("execute", `Task: {{task}}
+{{#if verification}}
+## Verification checklist
+{{verification}}
+{{/if}}
+{{#if context}}
+## Prior context
+{{context}}
+{{/if}}
+`)
+
+// RenderExecutePrompt renders the execute prompt using the template engine.
+// This produces the same content as BuildExecutePrompt but through the
+// template engine for cache-aligned prompt construction.
+func RenderExecutePrompt(task, verification, priorContext string) string {
+	return executeTemplate.Render(prompttpl.Vars{
+		"task":         task,
+		"verification": verification,
+		"context":      priorContext,
+	})
+}
+
+// promptTracker tracks fingerprint changes across prompt versions for cache break detection.
+var promptTracker = prompt.NewTracker()
+
+// TrackPromptVersion computes a fingerprint for the given prompt and returns
+// true if the prompt's static content changed (cache break). This is used
+// to detect when system prompt changes will invalidate API-level caches.
+func TrackPromptVersion(promptText string) bool {
+	return promptTracker.Update(promptText)
+}
+
+// PromptFingerprint returns the current prompt fingerprint for cache routing.
+func PromptFingerprint() prompt.Fingerprint {
+	return promptTracker.Current()
 }

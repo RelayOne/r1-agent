@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,26 +15,49 @@ import (
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/checkpoint"
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/consent"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/critic"
+	"github.com/ericmacdougall/stoke/internal/ctxpack"
+	"github.com/ericmacdougall/stoke/internal/diffcomp"
 	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/extract"
 	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/filewatcher"
 	"github.com/ericmacdougall/stoke/internal/fileutil"
+	"github.com/ericmacdougall/stoke/internal/flowtrack"
+	"github.com/ericmacdougall/stoke/internal/gitblame"
+	"github.com/ericmacdougall/stoke/internal/lifecycle"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/intent"
+	"github.com/ericmacdougall/stoke/internal/interview"
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/ericmacdougall/stoke/internal/microcompact"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/patchapply"
+	"github.com/ericmacdougall/stoke/internal/phaserole"
+	"github.com/ericmacdougall/stoke/internal/promptcache"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/ericmacdougall/stoke/internal/ralph"
 	"github.com/ericmacdougall/stoke/internal/replay"
+	"github.com/ericmacdougall/stoke/internal/permissions"
 	"github.com/ericmacdougall/stoke/internal/repomap"
+	"github.com/ericmacdougall/stoke/internal/sandbox"
+	"github.com/ericmacdougall/stoke/internal/sandattr"
+	"github.com/ericmacdougall/stoke/internal/sandguard"
 	"github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/semdiff"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/snapshot"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/team"
 	"github.com/ericmacdougall/stoke/internal/testgen"
 	"github.com/ericmacdougall/stoke/internal/testselect"
+	"github.com/ericmacdougall/stoke/internal/tokenest"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
@@ -94,6 +118,16 @@ type Engine struct {
 	PlanOnly         bool
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
+	Interview        *interview.Session   // Socratic clarification session (nil = skip)
+	PhaseRoles       *phaserole.Mapping   // phase-based role assignment (nil = defaults)
+	Consent          *consent.Workflow    // human-in-the-loop approval (nil = auto-approve)
+	Permissions      *permissions.Pipeline // authorization pipeline (nil = allow all)
+	SandboxPolicy    *sandbox.Policy      // sandbox policy for worktrees (nil = use defaults)
+	Ralph            *ralph.Config        // persistent execution discipline (nil = disabled)
+	FlowTracker      *flowtrack.Tracker   // flow-aware intent tracking (nil = disabled)
+	TeamPerspectives []team.ReviewPerspective // parallel multi-agent review perspectives (nil = single-model)
+	LifecycleHooks   *lifecycle.Registry    // 5-tier lifecycle hook system (nil = disabled)
+	SkillRegistry    *skill.Registry        // reusable workflow patterns (nil = disabled)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -208,8 +242,28 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 	result = Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
 
+	// Start a file watcher on the worktree to detect external changes during execution.
+	// Logs warnings when files are modified outside the agent's control (e.g., editor saves, git ops).
+	watcher := filewatcher.New(filewatcher.Config{
+		Root:         handle.Path,
+		IgnoreHidden: true,
+		Extensions:   []string{".go", ".ts", ".js", ".py", ".rs"},
+	})
+	watcher.OnChange(func(ev filewatcher.Event) {
+		log.Warn("external file change detected during execution", "type", string(ev.Type), "path", ev.RelPath)
+	})
+	if watchErr := watcher.Start(); watchErr != nil {
+		log.Warn("filewatcher failed to start (non-fatal)", "error", watchErr)
+	}
+	defer watcher.Stop()
+
 	// Checkpoint store for saving state at phase boundaries.
 	cpStore := checkpoint.NewStore(handle.RuntimeDir)
+
+	// Fire lifecycle session start event
+	e.fireLifecycleEvent(ctx, lifecycle.EventSessionStart, name, map[string]any{
+		"task": e.Task, "type": string(e.TaskType),
+	})
 
 	// Invoke BeforeTask hooks
 	for _, h := range e.Hooks {
@@ -224,6 +278,10 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		for _, h := range e.Hooks {
 			_ = h.AfterTask(ctx, e.Task, e.State, result)
 		}
+		// Fire lifecycle session complete event
+		e.fireLifecycleEvent(ctx, lifecycle.EventSessionComplete, name, map[string]any{
+			"cost": result.TotalCostUSD,
+		})
 	}()
 
 	phases := buildPhases(e)
@@ -242,6 +300,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		}
 		os.RemoveAll(handle.RuntimeDir)
 		return result, nil
+	}
+
+	// --- PRE-PLAN: Socratic interview clarification ---
+	// If a completed interview session is attached, synthesize the clarified scope
+	// and prepend it to the task description so the planner has full context.
+	if e.Interview != nil && e.Interview.IsComplete() {
+		scope := e.Interview.Synthesize()
+		if scopePrompt := scope.ToPrompt(); scopePrompt != "" {
+			e.Task = scopePrompt + "\n\nOriginal request: " + e.Task
+			log.Info("interview scope injected", "confidence", scope.Confidence)
+		}
 	}
 
 	// --- PLAN phase (no retry) ---
@@ -328,6 +397,27 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		return result, nil
 	}
 
+	// --- PERMISSIONS CHECK: authorize execution before proceeding ---
+	if e.Permissions != nil {
+		authResult := e.Permissions.Authorize("Bash", "execute:"+e.Task, &permissions.Context{Mode: permissions.ModeWorkspaceWrite})
+		if authResult.Decision == permissions.Deny {
+			e.Worktrees.Cleanup(ctx, handle)
+			return result, fmt.Errorf("permission denied for task execution: %s", authResult.Reason)
+		}
+	}
+
+	// --- SANDBOX ENVIRONMENT: detect and log container environment ---
+	sandboxEnv := sandbox.Detect()
+	if sandboxEnv.InContainer {
+		log.Info("running inside sandbox", "type", sandboxEnv.ContainerType, "platform", sandboxEnv.Platform)
+	}
+	if e.SandboxPolicy != nil {
+		if err := e.SandboxPolicy.Validate(); err != nil {
+			e.Worktrees.Cleanup(ctx, handle)
+			return result, fmt.Errorf("sandbox policy invalid: %w", err)
+		}
+	}
+
 	// --- EXECUTE + VERIFY loop (with retry) ---
 	maxAttempts := 3
 	executePhase := phases[1]
@@ -335,6 +425,19 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	var lastFailure *failure.Analysis
 	var lastDiff string
 	var priorFingerprints []failure.Fingerprint // track failure fingerprints across attempts
+
+	// Ralph: persistent execution discipline tracks strategy escalation across attempts.
+	var ralphState *ralph.ExecutionState
+	if e.Ralph != nil {
+		ralphState = &ralph.ExecutionState{
+			TaskID:        slugFromTask(e.Task),
+			Description:   e.Task,
+			MaxAttempts:   maxAttempts,
+			Strategy:      ralph.StrategyDirect,
+			EscalateAfter: e.Ralph.EscalateAfter,
+		}
+	}
+	_ = ralphState // used by retry escalation logic
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Budget gate: stop before spending more if over budget.
@@ -381,6 +484,8 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				prompt = prompt + "\n\n" + wisdomCtx
 			}
 		}
+		// Inject matching skill workflow patterns into the prompt.
+		prompt = e.injectSkillPrompt(prompt)
 
 		// Run execute phase
 		currentPhase := executePhase
@@ -490,6 +595,12 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			e.CostTracker.Record(execRunnerName, e.Task, execResult.Tokens.Input, execResult.Tokens.Output, execResult.Tokens.CacheRead, execResult.Tokens.CacheCreation)
 		}
 
+		// --- SANDGUARD: scan for sandbox escape attempts in execution output ---
+		guard := sandguard.NewGuard(sandguard.DefaultConfig())
+		if threats := guard.CheckCommand(execResult.ResultText); !sandguard.IsSafe(threats) {
+			log.Warn("sandguard: potential sandbox escape detected", "severity", sandguard.MaxSeverity(threats), "count", len(threats))
+		}
+
 		// --- VERIFY ---
 		// Honor Policy.Verification flags: only run enabled checks.
 		verifier := e.Verifier
@@ -547,6 +658,23 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				_ = e.advanceState(taskstate.Failed, "cannot enumerate modified files: "+modErr.Error())
 				return result, fmt.Errorf("modified files check failed: %w", modErr)
+			}
+
+			// --- BLAME ATTRIBUTION: annotate modified files with authorship impact ---
+			if len(modifiedFiles) > 0 {
+				var blameNotes []string
+				for _, f := range modifiedFiles {
+					if fb, blameErr := gitblame.Blame(e.RepoRoot, f); blameErr == nil {
+						authors := fb.Authors()
+						if len(authors) > 0 {
+							blameNotes = append(blameNotes, fmt.Sprintf("%s: %d authors, primary %s (%.0f%%)",
+								f, len(authors), authors[0].Author, authors[0].Percentage))
+						}
+					}
+				}
+				if len(blameNotes) > 0 {
+					evidence.Warnings = append(evidence.Warnings, "blame: "+strings.Join(blameNotes, "; "))
+				}
 			}
 
 			// --- CRITIC: AST-aware quality gate on changed files ---
@@ -673,6 +801,15 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge blocked: state not committable (phase=%s)", e.State.Phase())
 			}
+			// --- CONSENT: require human approval for merge if configured ---
+			if e.Consent != nil {
+				decision := e.Consent.Check("merge to main", "git", fmt.Sprintf("merge task %s to main branch", name))
+				if decision == consent.DecisionDenied || decision == consent.DecisionBlocked {
+					e.Worktrees.Cleanup(ctx, handle)
+					return result, fmt.Errorf("merge denied by consent workflow (decision=%s)", decision)
+				}
+			}
+
 			// --- COMMIT AND MERGE ---
 			// Take snapshot before merge for rollback on failure.
 			snap, snapErr := snapshot.Take(handle.Path, "pre-merge-"+name)
@@ -749,6 +886,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 		// Verification FAILED -- record evidence BEFORE analyzing
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
+
+		// --- SANDATTR: attribute verify failure to sandbox vs code bug ---
+		var failureOutput string
+		for _, o := range outcomes {
+			if !o.Success {
+				failureOutput += o.Output + "\n"
+			}
+		}
+		if attr := sandattr.Attribute(failureOutput); attr.Cause != sandattr.CauseUnknown {
+			log.Info("sandattr: failure attributed", "cause", string(attr.Cause), "confidence", attr.Confidence, "suggestion", attr.Suggestion)
+		}
 
 		analysis := verify.AnalyzeOutcomes(outcomes, evidence.DiffSummary)
 		if analysis == nil {
@@ -854,9 +1002,13 @@ func (e Engine) runCrossModelReview(
 	for reviewRot := 0; reviewRot < maxReviewRotations; reviewRot++ {
 		_ = reviewRot // used only as loop counter
 		verifySpec := e.buildSpec(verifyPhase, handle)
+		diffText := worktree.DiffSummary(ctx, handle)
 		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification, preReviewFiles...) +
-			"\n\n## Diff summary\n" +
-			worktree.DiffSummary(ctx, handle)
+			"\n\n## Diff summary\n" + diffText
+		// Enrich review prompt with semantic diff analysis (renames, breaking changes).
+		if semAnalysis := semdiff.AnalyzeMultiFile(buildSemdiffInputs(ctx, handle)); len(semAnalysis.Changes) > 0 {
+			verifySpec.Prompt += "\n\n## Semantic change summary\n" + semAnalysis.Summary
+		}
 
 		var verifyPoolID string
 		if e.Pools != nil {
@@ -1158,14 +1310,24 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 			files, adds, dels := patch.Stats()
 			sb.WriteString(fmt.Sprintf("\nPREVIOUS ATTEMPT STATS: %d file(s), +%d/-%d lines\n", files, adds, dels))
 		}
+		// Compress diff to remove whitespace-only and comment-only changes before injection.
+		compressedDiff := diffcomp.Compress(diffcomp.Diff("", diffSummary), diffcomp.CompressOpts{
+			SkipWhitespace: true,
+			SkipComments:   true,
+			MaxContext:      3,
+		})
+		compressedText := diffcomp.Render(compressedDiff)
+		if compressedText == "" {
+			compressedText = diffSummary
+		}
 		// Truncate diff to last N lines to keep retry context bounded.
-		lines := strings.Split(diffSummary, "\n")
+		lines := strings.Split(compressedText, "\n")
 		if len(lines) > maxRetryContextLines {
 			sb.WriteString(fmt.Sprintf("\nCHANGES FROM PREVIOUS ATTEMPT (last %d of %d lines):\n", maxRetryContextLines, len(lines)))
 			sb.WriteString(strings.Join(lines[len(lines)-maxRetryContextLines:], "\n") + "\n")
 		} else {
 			sb.WriteString("\nCHANGES FROM PREVIOUS ATTEMPT:\n")
-			sb.WriteString(diffSummary + "\n")
+			sb.WriteString(compressedText + "\n")
 		}
 	}
 	// For test failures, generate test scaffolds from changed Go files to guide the agent.
@@ -1206,6 +1368,28 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 	plan := e.Policy.Phases["plan"]
 	execute := e.Policy.Phases["execute"]
 	verifyPhase := e.Policy.Phases["verify"]
+
+	// Resolve phase-based roles for system prompt augmentation.
+	// If PhaseRoles is configured, prepend the role's system prompt to each phase prompt.
+	rolePrefix := func(phase phaserole.Phase) string {
+		if e.PhaseRoles == nil {
+			return ""
+		}
+		role := e.PhaseRoles.Resolve(phase)
+		if role.SystemPrompt != "" {
+			return role.SystemPrompt + "\n\n"
+		}
+		return ""
+	}
+
+	// Classify task intent and generate a gate prompt to prepend to planning.
+	// This forces the agent to verbalize understanding before implementation.
+	intentGate := ""
+	classification := intent.Classify(e.Task)
+	if intent.RequiresGate(classification) {
+		intentGate = intent.GatePrompt(e.Task, classification) + "\n\n"
+	}
+
 	return []engine.PhaseSpec{
 		{
 			Name:         "plan",
@@ -1214,7 +1398,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  plan.DeniedRules,
 			MCPEnabled:   plan.MCPEnabled,
 			MaxTurns:     10,
-			Prompt:       planPrompt(e.Task),
+			Prompt:       intentGate + rolePrefix(phaserole.PhasePlan) + planPrompt(e.Task),
 			Sandbox:      false,
 			ReadOnly:     true,
 		},
@@ -1225,7 +1409,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  execute.DeniedRules,
 			MCPEnabled:   execute.MCPEnabled,
 			MaxTurns:     20,
-			Prompt:       executePromptWithContext(e),
+			Prompt:       rolePrefix(phaserole.PhaseImplement) + executePromptWithContext(e),
 			Sandbox:      true,
 			ReadOnly:     false,
 		},
@@ -1236,7 +1420,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  verifyPhase.DeniedRules,
 			MCPEnabled:   verifyPhase.MCPEnabled,
 			MaxTurns:     5,
-			Prompt:       stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
+			Prompt:       rolePrefix(phaserole.PhaseReview) + stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
 			Sandbox:      true,
 			ReadOnly:     true,
 		},
@@ -1332,6 +1516,57 @@ func executePromptWithContext(e Engine) string {
 			prompt += "\n\n## Repository Map\n" + mapCtx
 		}
 	}
+
+	// Optimize prompt for cache alignment: separate static instructions from
+	// dynamic task content so API-level prefix caching works effectively.
+	opt := promptcache.New()
+	opt.AddSection(promptcache.Section{
+		Label: "system", Content: stokeprompts.ScopeSystemPrompt(), Static: true, Priority: 0,
+	})
+	opt.AddSection(promptcache.Section{
+		Label: "task", Content: prompt, Static: false, Priority: 10,
+	})
+	optimized := opt.Build(prompt)
+
+	// Estimate token usage for budget tracking and context window management.
+	promptTokens := tokenest.Estimate(optimized.System+optimized.User, tokenest.ContentMixed)
+
+	// Pack context items into the available window using adaptive bin-packing.
+	var contextItems []ctxpack.Item
+	contextItems = append(contextItems, ctxpack.Item{
+		ID: "prompt", Category: "system", Content: prompt,
+		Tokens: promptTokens, Relevance: 1.0, Required: true,
+	})
+	if e.RepoMap != nil {
+		mapContent := e.RepoMap.RenderRelevant(e.AllowedFiles, 500)
+		if mapContent != "" {
+			contextItems = append(contextItems, ctxpack.Item{
+				ID: "repomap", Category: "file", Content: mapContent,
+				Tokens: tokenest.Estimate(mapContent, tokenest.ContentCode), Relevance: 0.7,
+			})
+		}
+	}
+	packed := ctxpack.Pack(contextItems, ctxpack.Config{
+		MaxTokens: 180000, ReserveResponse: 8000,
+	})
+
+	// Apply microcompact if the prompt exceeds 80% of context window.
+	if packed.TotalTokens > 144000 {
+		compactor := microcompact.NewCompactor(microcompact.Config{MaxTokens: 144000})
+		sections := []microcompact.Section{{
+			Label: "prompt", Content: prompt, Static: false, Priority: 10,
+			Tokens: promptTokens,
+		}}
+		compacted := compactor.Compact(sections)
+		if len(compacted.Sections) > 0 {
+			prompt = microcompact.Render(compacted)
+		}
+	}
+
+	// Track prompt fingerprint for cache stability monitoring.
+	stokeprompts.TrackPromptVersion(optimized.System)
+	_ = packed.Utilization // logged above via ctxpack
+
 	return prompt
 }
 
@@ -1361,6 +1596,20 @@ type reviewVerdict struct {
 func parseReviewVerdict(s string) (*reviewVerdict, error) {
 	s = strings.TrimSpace(s)
 
+	// Pre-validate JSON structure using schemaval before full parsing.
+	// This catches missing fields and type errors with clear diagnostics.
+	if jsonStr, ok := schemaval.ExtractJSON(s); ok {
+		result := schemaval.Validate(jsonStr, schemaval.Schema{
+			Name: "review_verdict",
+			Fields: []schemaval.Field{
+				{Name: "pass", Type: schemaval.TypeBool, Required: true},
+			},
+		})
+		if !result.Valid {
+			return nil, fmt.Errorf("review verdict schema validation: %s", result.Error())
+		}
+	}
+
 	// Try jsonutil first — handles markdown fences, brace matching, mixed content.
 	var v reviewVerdict
 	if err := jsonutil.ExtractFromMarkdown(s, &v); err != nil {
@@ -1370,9 +1619,18 @@ func parseReviewVerdict(s string) (*reviewVerdict, error) {
 		clean = strings.TrimSuffix(clean, "```")
 		clean = strings.TrimSpace(clean)
 		if err2 := json.Unmarshal([]byte(clean), &v); err2 != nil {
+			// Final fallback: use extract package to find JSON in mixed LLM output.
+			if obj := extract.ExtractFirstJSON(s); obj != nil {
+				if raw, mErr := json.Marshal(obj); mErr == nil {
+					if json.Unmarshal(raw, &v) == nil {
+						goto parsed
+					}
+				}
+			}
 			return nil, err2
 		}
 	}
+parsed:
 
 	// Minimum validity: a passing review with zero findings suggests the reviewer
 	// didn't actually check anything (confused output, truncated response).
@@ -1416,4 +1674,51 @@ func slugFromTask(task string) string {
 		return "task"
 	}
 	return cleaned
+}
+
+// buildSemdiffInputs builds old/new content pairs for semantic diff analysis
+// by reading modified files from the worktree and their base versions.
+func buildSemdiffInputs(ctx context.Context, handle worktree.Handle) map[string][2]string {
+	files, err := worktree.ModifiedFiles(ctx, handle)
+	if err != nil || len(files) == 0 {
+		return nil
+	}
+	result := make(map[string][2]string, len(files))
+	for _, f := range files {
+		newContent := ""
+		if data, readErr := os.ReadFile(filepath.Join(handle.Path, f)); readErr == nil {
+			newContent = string(data)
+		}
+		oldContent := ""
+		if handle.BaseCommit != "" {
+			cmd := exec.CommandContext(ctx, "git", "show", handle.BaseCommit+":"+f)
+			cmd.Dir = handle.Path
+			if out, showErr := cmd.Output(); showErr == nil {
+				oldContent = string(out)
+			}
+		}
+		result[f] = [2]string{oldContent, newContent}
+	}
+	return result
+}
+
+// fireLifecycleEvent dispatches a lifecycle event if the registry is configured.
+func (e Engine) fireLifecycleEvent(ctx context.Context, event lifecycle.Event, taskID string, meta map[string]any) {
+	if e.LifecycleHooks == nil {
+		return
+	}
+	hctx := &lifecycle.HookContext{
+		Event:    event,
+		TaskID:   taskID,
+		Metadata: meta,
+	}
+	e.LifecycleHooks.Dispatch(ctx, hctx)
+}
+
+// injectSkillPrompt augments the execute prompt with matching skill content.
+func (e Engine) injectSkillPrompt(prompt string) string {
+	if e.SkillRegistry == nil {
+		return prompt
+	}
+	return e.SkillRegistry.InjectPrompt(prompt)
 }

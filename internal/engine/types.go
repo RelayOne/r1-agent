@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/ratelimit"
 	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/toolcache"
 )
 
 // AuthMode distinguishes between subscription-based (mode1) and user-provided API key (mode2) authentication.
@@ -116,16 +118,25 @@ func (s RunSpec) Validate() error {
 // Registry holds the available engine runners (Claude and Codex) for task dispatch.
 // Also tracks prompt cache stats across all executions for cost reporting.
 type Registry struct {
-	Claude     *ClaudeRunner
-	Codex      *CodexRunner
-	CacheStats *stream.PromptCacheStats // shared across all runners
+	Claude      *ClaudeRunner
+	Codex       *CodexRunner
+	CacheStats  *stream.PromptCacheStats // shared across all runners
+	RateLimiter *ratelimit.MultiLimiter  // client-side rate limiting per provider (nil = no limiting)
+	ToolCache   *toolcache.Cache          // caches deterministic tool outputs (nil = no caching)
 }
 
 // NewRegistry creates a registry with prompt cache tracking.
 func NewRegistry(claude *ClaudeRunner, codex *CodexRunner) Registry {
+	// Set up per-provider rate limiters to avoid hitting API limits.
+	ml := ratelimit.NewMultiLimiter()
+	ml.Add("anthropic", ratelimit.ForProvider("anthropic"))
+	ml.Add("openai", ratelimit.ForProvider("openai"))
+
 	return Registry{
-		Claude:     claude,
-		Codex:      codex,
-		CacheStats: stream.NewPromptCacheStats(),
+		Claude:      claude,
+		Codex:       codex,
+		CacheStats:  stream.NewPromptCacheStats(),
+		RateLimiter: ml,
+		ToolCache:   toolcache.New(toolcache.DefaultConfig()),
 	}
 }

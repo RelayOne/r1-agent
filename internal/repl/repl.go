@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/conversation"
+	"github.com/ericmacdougall/stoke/internal/viewport"
 )
 
 // Command is a slash command handler.
@@ -18,11 +21,12 @@ type Command struct {
 
 // REPL is the Stoke interactive shell.
 type REPL struct {
-	RepoRoot string
-	Commands map[string]Command
-	OnChat   func(input string) // handler for free-text chat (dispatches to claude -p)
-	Reader   *bufio.Scanner     // input source; defaults to os.Stdin
-	Writer   *strings.Builder   // output sink; defaults to os.Stdout via fmt
+	RepoRoot     string
+	Commands     map[string]Command
+	OnChat       func(input string) // handler for free-text chat (dispatches to claude -p)
+	Reader       *bufio.Scanner     // input source; defaults to os.Stdin
+	Writer       *strings.Builder   // output sink; defaults to os.Stdout via fmt
+	Conversation *conversation.Runtime // multi-turn conversation state (nil = no tracking)
 }
 
 // New creates a REPL with the standard slash commands registered.
@@ -32,6 +36,33 @@ func New(repoRoot string) *REPL {
 		Commands: map[string]Command{},
 	}
 	return r
+}
+
+// RegisterBuiltins adds built-in slash commands including viewport-based file viewing.
+func (r *REPL) RegisterBuiltins() {
+	r.Commands["view"] = Command{
+		Name:        "view",
+		Description: "View a file with constrained viewport (100 lines at a time)",
+		Usage:       "/view <file-path>",
+		Run: func(args string) {
+			file := strings.TrimSpace(args)
+			if file == "" {
+				r.println("  Usage: /view <file-path>")
+				return
+			}
+			path := file
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(r.RepoRoot, file)
+			}
+			vp, err := viewport.Open(path, viewport.DefaultConfig())
+			if err != nil {
+				r.printf("  Error: %v\n", err)
+				return
+			}
+			r.printf("  %s\n", vp.Context())
+			r.println(vp.View())
+		},
+	}
 }
 
 // Register adds a slash command.
@@ -140,6 +171,9 @@ func (r *REPL) Run() {
 		}
 
 		// Free text -> dispatch to chat handler
+		if r.Conversation != nil {
+			r.Conversation.AddMessage(conversation.TextMessage(conversation.RoleUser, line))
+		}
 		if r.OnChat != nil {
 			r.OnChat(line)
 		} else {

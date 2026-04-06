@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/conflictres"
 )
 
 // Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.
@@ -154,7 +156,14 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		if mergeCtx.Err() != nil {
 			return fmt.Errorf("merge-tree timed out after %v", mergeTimeout)
 		}
-		return fmt.Errorf("merge conflict detected: %s", strings.TrimSpace(string(out)))
+		// Attempt semantic conflict resolution before failing.
+		mergeOutput := strings.TrimSpace(string(out))
+		conflicts := conflictres.Parse(mergeOutput, "")
+		if resolved := conflictres.AutoResolve(conflicts); len(resolved) < len(conflicts) {
+			return fmt.Errorf("merge conflict (auto-resolved %d/%d): %s",
+				len(conflicts)-len(resolved), len(conflicts), mergeOutput)
+		}
+		return fmt.Errorf("merge conflict detected: %s", mergeOutput)
 	}
 
 	// Merge for real

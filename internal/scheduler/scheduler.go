@@ -6,6 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/agentmsg"
+	"github.com/ericmacdougall/stoke/internal/branch"
+	"github.com/ericmacdougall/stoke/internal/dispatch"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/specexec"
 )
@@ -36,6 +39,14 @@ type Scheduler struct {
 	completed map[string]bool   // task finished (success or failure)
 	failed    map[string]bool   // task failed -- dependents must NOT dispatch
 	running   map[string]bool
+
+	// MessageBus enables inter-agent communication during parallel task execution.
+	// When set, tasks can broadcast status updates and conflict alerts.
+	MessageBus *agentmsg.Bus
+
+	// DispatchQueue provides reliable message delivery with retry for task events.
+	// When set, task completion/failure events are dispatched through the queue.
+	DispatchQueue *dispatch.Queue
 }
 
 // New creates a scheduler with the given concurrency limit.
@@ -78,6 +89,31 @@ func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) (
 			s.failed[r.TaskID] = true
 		}
 		s.stateMu.Unlock()
+
+		// Broadcast task completion/failure via the message bus.
+		if s.MessageBus != nil {
+			status := "completed"
+			if !r.Success {
+				status = "failed"
+			}
+			s.MessageBus.Broadcast("scheduler", "task."+status, map[string]any{
+				"task_id":  r.TaskID,
+				"success":  r.Success,
+				"cost_usd": r.CostUSD,
+			})
+		}
+
+		// Dispatch task result event through the reliable delivery queue.
+		if s.DispatchQueue != nil {
+			priority := dispatch.PriorityNormal
+			if !r.Success {
+				priority = dispatch.PriorityHigh
+			}
+			s.DispatchQueue.Enqueue("task.result", "orchestrator", priority, map[string]any{
+				"task_id": r.TaskID,
+				"success": r.Success,
+			}, fmt.Sprintf("result-%s", r.TaskID))
+		}
 	}
 
 	// drainResults collects all immediately-available results without blocking.
@@ -316,6 +352,18 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 		// Build strategies from approaches
 		strategies := specexec.GenerateStrategies(task.Description, cfg.Approaches)
 
+		// Create a branch explorer so each speculative strategy is tracked as a
+		// conversation branch. This enables scoring, selection, and pruning of
+		// failed exploration paths.
+		explorer := branch.NewExplorer([]branch.Message{
+			{Role: "system", Content: task.Description},
+		})
+		strategyBranches := make(map[string]string, len(strategies))
+		for _, s := range strategies {
+			b := explorer.Fork(s.ID)
+			strategyBranches[s.ID] = b.ID
+		}
+
 		spec := specexec.Spec{
 			Strategies:    strategies,
 			MaxParallel:   cfg.MaxParallel,
@@ -346,11 +394,20 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			}
 			if result.Error != nil {
 				outcome.Error = result.Error.Error()
+				if bid, ok := strategyBranches[strategy.ID]; ok {
+					_ = explorer.Fail(bid, result.Error.Error())
+				}
+			} else if result.Success {
+				if bid, ok := strategyBranches[strategy.ID]; ok {
+					_ = explorer.Complete(bid, 1.0)
+				}
 			}
 			return outcome
 		}
 
 		result := specexec.Run(ctx, spec, executor)
+		// Prune failed branches to free memory after speculation completes.
+		explorer.Prune()
 
 		// PHASE 2: Execute the winning strategy through the real pipeline.
 		if result.Winner != nil {
@@ -369,6 +426,7 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			// Run the winner through the full pipeline (with merge)
 			realTask := task
 			realTask.Description = winningPrompt
+			realTask.PlanOnly = false // ensure full pipeline even if original task was plan-only
 			return base(ctx, realTask)
 		}
 

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/atomicfs"
 )
 
 // ModifiedFiles returns ALL files changed in a worktree vs the task branch base.
@@ -361,6 +363,21 @@ func CommitVerifiedTree(ctx context.Context, handle Handle, validatedFiles []str
 			rmCmd.CombinedOutput()
 			os.Remove(filepath.Join(handle.Path, line))
 		}
+	}
+
+	// 6b. Atomic validation: use atomicfs to verify no concurrent modifications
+	// occurred during the checkout. Build a transaction over the validated files
+	// and run conflict detection before committing.
+	tx := atomicfs.NewTransaction(handle.Path)
+	for _, f := range existFiles {
+		data, readErr := os.ReadFile(filepath.Join(handle.Path, f))
+		if readErr != nil {
+			continue
+		}
+		_ = tx.Write(f, data) // stages file with original hash for conflict detection
+	}
+	if err := tx.Validate(); err != nil {
+		return fmt.Errorf("atomic validation failed (concurrent modification): %w", err)
 	}
 
 	// 7. Stage everything.
