@@ -289,9 +289,12 @@ type SpecExecConfig struct {
 }
 
 // WithSpecExec wraps an ExecuteFunc to use speculative parallel execution
-// for tasks that match the predicate. For each speculative task, it forks
-// multiple strategies (alternative prompts), runs them in parallel via
-// specexec.Run, and returns the winning result.
+// for tasks that match the predicate. For each speculative task, it runs
+// parallel PLAN-ONLY explorations with different strategy prompts, scores
+// the plans, and then executes the winning strategy through the real pipeline.
+//
+// SAFETY: Speculative strategies are plan-only (no execute, no verify, no merge).
+// Only the winning strategy runs through the full pipeline with side effects.
 //
 // Non-speculative tasks pass through to the base ExecuteFunc unchanged.
 func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
@@ -322,11 +325,16 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			Scorer:        specexec.DefaultScorer,
 		}
 
-		// Bridge specexec.Executor to our base ExecuteFunc
+		// PHASE 1: Run plan-only explorations in parallel.
+		// Each strategy gets a unique task ID and PlanOnly=true, so the workflow
+		// runs ONLY the plan phase (no execute, no verify, no merge).
+		// This is structurally enforced: workflow.Engine.PlanOnly skips the
+		// execute+verify loop entirely. No side effects, no worktree mutations.
 		executor := func(ctx context.Context, strategy specexec.Strategy) specexec.Outcome {
-			// Replace the task description with the strategy prompt
 			specTask := task
+			specTask.ID = fmt.Sprintf("%s-spec-%s", task.ID, strategy.ID)
 			specTask.Description = strategy.Prompt
+			specTask.PlanOnly = true // CRITICAL: prevents execute/verify/merge
 
 			start := time.Now()
 			result := base(ctx, specTask)
@@ -344,15 +352,27 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 
 		result := specexec.Run(ctx, spec, executor)
 
+		// PHASE 2: Execute the winning strategy through the real pipeline.
 		if result.Winner != nil {
-			return TaskResult{
-				TaskID:     task.ID,
-				Success:    result.Winner.Success,
-				DurationMs: result.Duration.Milliseconds(),
+			// Find the winning strategy's prompt
+			var winningPrompt string
+			for _, s := range strategies {
+				if s.ID == result.Winner.StrategyID {
+					winningPrompt = s.Prompt
+					break
+				}
 			}
+			if winningPrompt == "" {
+				winningPrompt = task.Description // fallback
+			}
+
+			// Run the winner through the full pipeline (with merge)
+			realTask := task
+			realTask.Description = winningPrompt
+			return base(ctx, realTask)
 		}
 
-		// All strategies failed — return the best attempt's error
+		// All strategies failed — return error
 		bestErr := fmt.Errorf("all %d speculative strategies failed", len(result.Outcomes))
 		for _, o := range result.Outcomes {
 			if o.Error != "" {

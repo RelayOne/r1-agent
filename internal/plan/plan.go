@@ -28,6 +28,8 @@ type Task struct {
 	Verification []string `json:"verification,omitempty"` // per-task verification checklist from planner
 	Status       Status   `json:"status,omitempty"`
 	Commit       string   `json:"commit,omitempty"`
+	PlanOnly     bool     `json:"plan_only,omitempty"` // when true, workflow runs plan phase only (no execute/verify/merge)
+
 }
 
 // Status represents the lifecycle state of a task (pending, active, verifying, done, failed, or blocked).

@@ -149,11 +149,12 @@ func (r Result) Render() string {
 }
 
 // Run executes the full workflow: creates a worktree, runs plan/execute/verify phases with retries, and merges on success.
-func (e Engine) Run(ctx context.Context) (Result, error) {
+func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	name := firstNonEmpty(e.WorktreeName, string(e.TaskType)+"-"+slugFromTask(e.Task))
 	log := logging.Task("workflow", name)
 
 	// Wire replay recorder: capture all agent events for post-mortem debugging.
+	// Uses named returns so the deferred closure sees the actual outcome.
 	if e.Recorder != nil {
 		e.Recorder.Record(replay.EventPhase, map[string]any{"phase": "start", "task": e.Task, "type": string(e.TaskType)})
 		origOnEvent := e.OnEvent
@@ -166,7 +167,18 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 			}
 		}
 		defer func() {
-			e.Recorder.Finish("completed", string(e.TaskType))
+			outcome := "success"
+			if retErr != nil {
+				outcome = "failure"
+				e.Recorder.RecordError(retErr.Error(), nil)
+			}
+			rec := e.Recorder.Finish(outcome, string(e.TaskType))
+			// Persist recording to disk for post-mortem analysis.
+			replayDir := filepath.Join(e.RepoRoot, ".stoke", "replays")
+			if mkErr := os.MkdirAll(replayDir, 0o755); mkErr == nil {
+				replayPath := filepath.Join(replayDir, rec.ID+".json")
+				_ = replay.Save(rec, replayPath)
+			}
 		}()
 	}
 	var handle worktree.Handle
@@ -194,7 +206,7 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 		}
 	}
 
-	result := Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
+	result = Result{WorktreePath: handle.Path, Branch: handle.Branch, TaskType: e.TaskType, DryRun: e.DryRun}
 
 	// Checkpoint store for saving state at phase boundaries.
 	cpStore := checkpoint.NewStore(handle.RuntimeDir)
@@ -296,6 +308,9 @@ func (e Engine) Run(ctx context.Context) (Result, error) {
 	}
 	result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
 	result.TotalCostUSD += planResult.CostUSD
+	if e.CostTracker != nil && planResult.CostUSD > 0 {
+		e.CostTracker.Record(planRunner, e.Task+"/plan", planResult.Tokens.Input, planResult.Tokens.Output, planResult.Tokens.CacheRead, planResult.Tokens.CacheCreation)
+	}
 
 	// Checkpoint after plan phase completion.
 	cpStore.Save(checkpoint.Checkpoint{
@@ -900,6 +915,9 @@ func (e Engine) runCrossModelReview(
 		Phase: "verify", Engine: verifyRunnerName, Command: verifyResult.Prepared,
 	})
 	result.TotalCostUSD += verifyResult.CostUSD
+	if e.CostTracker != nil && verifyResult.CostUSD > 0 {
+		e.CostTracker.Record(verifyRunnerName, e.Task+"/review", verifyResult.Tokens.Input, verifyResult.Tokens.Output, verifyResult.Tokens.CacheRead, verifyResult.Tokens.CacheCreation)
+	}
 	evidence.ReviewOutput = verifyResult.ResultText
 
 	verdict, parseErr := parseReviewVerdict(verifyResult.ResultText)
@@ -913,17 +931,25 @@ func (e Engine) runCrossModelReview(
 
 	// Review quality gate: reviewer must have Read at least half the changed files.
 	// Counts unique changed files actually read, not total Read events.
-	minFilesRead := len(preReviewFiles) / 2
-	if minFilesRead < 1 {
-		minFilesRead = 1
-	}
-	uniqueReads := len(reviewFilesRead)
-	if uniqueReads < minFilesRead {
-		evidence.ReviewPass = false
-		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
-		e.Worktrees.Cleanup(ctx, handle)
-		_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: read %d/%d changed files, need at least %d", uniqueReads, len(preReviewFiles), minFilesRead))
-		return nil, fmt.Errorf("cross-model review quality gate failed: read %d/%d changed files (need %d)", uniqueReads, len(preReviewFiles), minFilesRead)
+	//
+	// Gate is skipped when:
+	// - No files were changed (preReviewFiles is empty) — nothing to read.
+	// - Reviewer is Codex — Codex doesn't emit ToolUse events in its stream,
+	//   so file-read tracking always shows 0. The gate would always fail.
+	//   Codex reviews are still validated by the verdict parse + post-review checks.
+	if len(preReviewFiles) > 0 && verifyRunnerName != string(model.ProviderCodex) {
+		minFilesRead := len(preReviewFiles) / 2
+		if minFilesRead < 1 {
+			minFilesRead = 1
+		}
+		uniqueReads := len(reviewFilesRead)
+		if uniqueReads < minFilesRead {
+			evidence.ReviewPass = false
+			e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
+			e.Worktrees.Cleanup(ctx, handle)
+			_ = e.advanceState(taskstate.Failed, fmt.Sprintf("review quality: read %d/%d changed files, need at least %d", uniqueReads, len(preReviewFiles), minFilesRead))
+			return nil, fmt.Errorf("cross-model review quality gate failed: read %d/%d changed files (need %d)", uniqueReads, len(preReviewFiles), minFilesRead)
+		}
 	}
 
 	evidence.ReviewPass = verdict.Pass

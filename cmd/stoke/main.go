@@ -243,6 +243,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			TaskVerification: task.Verification,
 			AllowedFiles:     task.Files,
 			DryRun:           false,
+			PlanOnly:         task.PlanOnly,
 			AuthMode:         app.AuthMode(cfg.AuthMode),
 			ClaudeBinary:     cfg.ClaudeBinary,
 			CodexBinary:      cfg.CodexBinary,
