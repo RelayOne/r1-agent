@@ -36,15 +36,15 @@ if command -v go &>/dev/null; then
     cd "$TMPDIR"
     
     if [ "$VERSION" = "latest" ]; then
-        git clone --depth 1 https://github.com/good-ventures/stoke.git 2>/dev/null || {
+        git clone --depth 1 https://github.com/ericmacdougall/stoke.git 2>/dev/null || {
             echo "  Cannot clone repo. Install manually:"
-            echo "    git clone https://github.com/good-ventures/stoke.git"
+            echo "    git clone https://github.com/ericmacdougall/stoke.git"
             echo "    cd stoke && go build -o stoke ./cmd/stoke"
             echo "    sudo mv stoke $INSTALL_DIR/"
             exit 1
         }
     else
-        git clone --depth 1 --branch "$VERSION" https://github.com/good-ventures/stoke.git 2>/dev/null || exit 1
+        git clone --depth 1 --branch "$VERSION" https://github.com/ericmacdougall/stoke.git 2>/dev/null || exit 1
     fi
     
     cd stoke
@@ -77,4 +77,4 @@ echo "    stoke doctor"
 echo "    stoke run --task \"Add auth middleware\" --dry-run"
 echo "    stoke build --plan stoke-plan.json --dry-run"
 echo ""
-echo "  Docs: https://github.com/good-ventures/stoke/blob/main/docs/operator-guide.md"
+echo "  Docs: https://github.com/ericmacdougall/stoke/blob/main/docs/operator-guide.md"

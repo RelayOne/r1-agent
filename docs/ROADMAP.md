@@ -14,7 +14,7 @@ Stoke is a Go binary that wraps Claude Code and Codex CLI as execution engines.
 Deterministic PLAN -> EXECUTE -> VERIFY -> COMMIT phases with multi-model routing,
 parallel agent coordination via git worktrees, and structured quality gates.
 
-- 66 Go files, ~14K lines, 206 tests
+- 289 Go files, ~79K lines (47K source + 32K test), 1,619 test functions
 - Zero data races (verified with -race)
 - Single-account and multi-pool modes both work
 - MIT license
@@ -73,7 +73,7 @@ streams back -> results shown as diffs with approve/reject.
 
 ## Open Source Strategy
 
-- License: Apache 2.0
+- License: MIT
 - Stoke works fully standalone (no Ember required)
 - `compute/backend.go` interface is open (anyone can write backends)
 - `compute/ember.go` implementation is also open (just an HTTP client)
