@@ -55,6 +55,10 @@ type Bus struct {
 	breakers    map[string]*CircuitBreaker
 	audit       *AuditLog
 	log         *slog.Logger
+
+	// ChainedAudit is an optional hash-chained tamper-evident audit log.
+	// When non-nil, gate decisions are automatically appended.
+	ChainedAudit *ChainedAuditLog
 }
 
 // New creates a new event bus.
@@ -147,12 +151,26 @@ func (b *Bus) Emit(ctx context.Context, ev *Event) *HookResponse {
 	start := time.Now()
 
 	// Phase 1: Gate hooks (sync, can block)
+	// Both ModeGate (advisory/fail-open) and ModeGateStrict (deterministic/fail-closed)
 	var gateResult *HookResponse
 	for _, sub := range subs {
-		if sub.Mode != ModeGate || !sub.enabled {
+		if (sub.Mode != ModeGate && sub.Mode != ModeGateStrict) || !sub.enabled {
 			continue
 		}
 		if !b.circuitAllows(sub.ID) {
+			// Circuit open: strict gates deny, advisory gates allow
+			if sub.Mode == ModeGateStrict {
+				resp := &HookResponse{Decision: Deny, Reason: "circuit breaker open (strict gate)"}
+				entry.Subscribers = append(entry.Subscribers, sub.ID)
+				entry.Decisions = append(entry.Decisions, AuditDecision{
+					SubscriberID: sub.ID, Decision: Deny, Reason: resp.Reason,
+				})
+				entry.FinalResult = Deny
+				entry.LatencyMs = time.Since(start).Milliseconds()
+				b.audit.Record(entry)
+				b.recordChainedAudit(ev, "deny", sub.ID, resp.Reason)
+				return resp
+			}
 			continue
 		}
 		resp := b.invoke(ctx, sub, ev)
@@ -164,6 +182,7 @@ func (b *Bus) Emit(ctx context.Context, ev *Event) *HookResponse {
 			entry.FinalResult = Deny
 			entry.LatencyMs = time.Since(start).Milliseconds()
 			b.audit.Record(entry)
+			b.recordChainedAudit(ev, "deny", sub.ID, resp.Reason)
 			return resp
 		}
 		if gateResult == nil {
@@ -206,6 +225,7 @@ func (b *Bus) Emit(ctx context.Context, ev *Event) *HookResponse {
 	entry.FinalResult = Allow
 	entry.LatencyMs = time.Since(start).Milliseconds()
 	b.audit.Record(entry)
+	b.recordChainedAudit(ev, "allow", "", "")
 
 	result := &HookResponse{Decision: Allow, Injections: allInjections}
 	if gateResult != nil {
@@ -295,13 +315,20 @@ func (b *Bus) invokeHandler(ctx context.Context, sub *Subscriber, ev *Event) *Ho
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// For ModeGateStrict, failures (panic/timeout/error) result in Deny (fail-closed).
+	// For ModeGate (advisory), failures result in Allow (fail-open, existing behavior).
+	failDecision := Abstain
+	if sub.Mode == ModeGateStrict {
+		failDecision = Deny
+	}
+
 	done := make(chan *HookResponse, 1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				b.log.Error("hook panic", "subscriber", sub.ID, "event", ev.Type, "panic", r)
 				b.recordFailure(sub.ID)
-				done <- &HookResponse{Decision: Abstain, Reason: "panic"}
+				done <- &HookResponse{Decision: failDecision, Reason: fmt.Sprintf("panic: %v", r)}
 			}
 		}()
 		done <- sub.Handler(ctx, ev)
@@ -312,14 +339,14 @@ func (b *Bus) invokeHandler(ctx context.Context, sub *Subscriber, ev *Event) *Ho
 		if resp == nil {
 			return &HookResponse{Decision: Abstain}
 		}
-		if resp.Reason != "panic" {
+		if !strings.HasPrefix(resp.Reason, "panic:") {
 			b.recordSuccess(sub.ID)
 		}
 		return resp
 	case <-ctx.Done():
 		b.log.Warn("hook timeout", "subscriber", sub.ID, "event", ev.Type)
 		b.recordFailure(sub.ID)
-		return &HookResponse{Decision: Abstain, Reason: "timeout"}
+		return &HookResponse{Decision: failDecision, Reason: "timeout"}
 	}
 }
 
@@ -364,4 +391,18 @@ func generateID() string {
 	b := make([]byte, 12)
 	rand.Read(b)
 	return fmt.Sprintf("%d-%s", time.Now().UnixMilli(), hex.EncodeToString(b))
+}
+
+// recordChainedAudit appends a gate decision to the chained audit log if present.
+func (b *Bus) recordChainedAudit(ev *Event, action string, ruleID string, details string) {
+	if b.ChainedAudit == nil {
+		return
+	}
+	b.ChainedAudit.Append(ChainedAuditEntry{
+		Timestamp: ev.Timestamp,
+		EventType: ev.Type,
+		Action:    action,
+		RuleID:    ruleID,
+		Details:   details,
+	})
 }

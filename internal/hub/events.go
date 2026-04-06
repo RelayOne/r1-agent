@@ -129,9 +129,10 @@ const (
 type Mode string
 
 const (
-	ModeGate      Mode = "gate"      // sync, can block (deny/allow)
-	ModeTransform Mode = "transform" // sync, can modify payload
-	ModeObserve   Mode = "observe"   // async, fire-and-forget
+	ModeGateStrict Mode = "gate_strict" // sync, fail-closed: error/timeout/panic -> DENY
+	ModeGate       Mode = "gate"        // sync, fail-open: error/timeout/panic -> ALLOW (advisory)
+	ModeTransform  Mode = "transform"   // sync, can modify payload
+	ModeObserve    Mode = "observe"     // async, fire-and-forget
 )
 
 // Decision is what a gate hook returns.
