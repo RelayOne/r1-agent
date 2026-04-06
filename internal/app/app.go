@@ -123,6 +123,20 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		cfg.Convergence = convergence.NewValidatorForProject(cfg.RepoRoot)
 	}
 
+	// Load and apply hub hook configuration from .stoke/hooks.json.
+	if cfg.EventBus != nil {
+		hookCfg, hookErr := hub.LoadConfig(cfg.RepoRoot)
+		if hookErr != nil {
+			fmt.Fprintf(os.Stderr, "[hub] warning: failed to load hooks config: %v\n", hookErr)
+		} else if len(hookCfg.Scripts) > 0 || len(hookCfg.Webhooks) > 0 {
+			cfg.EventBus.ApplyConfig(hookCfg)
+		}
+		// Register built-in file protection gate from policy
+		if len(policy.Files.Protected) > 0 {
+			cfg.EventBus.Register(hub.FileProtectionGate(policy.Files.Protected))
+		}
+	}
+
 	return &Orchestrator{cfg: cfg, policy: policy}, nil
 }
 

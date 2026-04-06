@@ -169,6 +169,20 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	name := firstNonEmpty(e.WorktreeName, string(e.TaskType)+"-"+slugFromTask(e.Task))
 	log := logging.Task("workflow", name)
 
+	// Emit task failure event on error (uses named return).
+	defer func() {
+		if retErr != nil {
+			e.emitEventAsync(&hub.Event{
+				Type:   hub.EventTaskFailed,
+				TaskID: name,
+				Lifecycle: &hub.LifecycleEvent{
+					Entity: "task",
+					State:  "failed",
+				},
+			})
+		}
+	}()
+
 	// Wire replay recorder: capture all agent events for post-mortem debugging.
 	// Uses named returns so the deferred closure sees the actual outcome.
 	if e.Recorder != nil {
@@ -407,6 +421,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// Budget gate: stop before spending more if over budget.
 		if e.CostTracker != nil && e.CostTracker.OverBudget() {
 			log.Warn("budget exceeded, skipping attempt", "spent", e.CostTracker.Total(), "remaining", e.CostTracker.BudgetRemaining())
+			e.emitEventAsync(&hub.Event{
+				Type:   hub.EventCostBudgetExceeded,
+				TaskID: name,
+				Cost: &hub.CostEvent{
+					TotalSpent:  e.CostTracker.Total(),
+					BudgetLimit: e.CostTracker.Total() + e.CostTracker.BudgetRemaining(),
+					PercentUsed: 100,
+					Threshold:   "exceeded",
+				},
+			})
 			e.Worktrees.Cleanup(ctx, handle)
 			return result, fmt.Errorf("budget exceeded ($%.2f spent), aborting", e.CostTracker.Total())
 		}
@@ -923,6 +947,16 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 					Branch:       handle.Branch,
 					FilesChanged: postReviewFiles,
 				},
+			})
+			e.emitEventAsync(&hub.Event{
+				Type:   hub.EventTaskCompleted,
+				TaskID: name,
+				Lifecycle: &hub.LifecycleEvent{
+					Entity:  "task",
+					State:   "completed",
+					Attempt: attempt,
+				},
+				Model: &hub.ModelEvent{CostUSD: result.TotalCostUSD},
 			})
 			log.Info("task completed successfully", "attempt", attempt, "cost_usd", result.TotalCostUSD)
 			if e.Boulder != nil {

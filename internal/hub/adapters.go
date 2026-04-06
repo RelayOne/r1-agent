@@ -104,6 +104,80 @@ func SecurityScanObserver(logFn func(category, severity, details string)) Subscr
 	}
 }
 
+// TaskHookAdapter bridges the workflow.TaskHook interface to hub events.
+// Register BeforeTask as a gate on task.started, AfterTask as an observer
+// on task.completed/task.failed, and BeforeRetry as a transform on task.retrying.
+type TaskHookAdapter struct {
+	// BeforeTaskFn is called before task execution. Return error to abort.
+	BeforeTaskFn func(ctx context.Context, taskID string) error
+	// AfterTaskFn is called after task execution (success or failure).
+	AfterTaskFn func(ctx context.Context, taskID string, success bool)
+	// BeforeRetryFn is called before retry. Returns prompt augmentation.
+	BeforeRetryFn func(ctx context.Context, taskID string, attempt int) string
+}
+
+// Subscribers returns the hub subscribers for this TaskHook adapter.
+func (a TaskHookAdapter) Subscribers(id string) []Subscriber {
+	var subs []Subscriber
+
+	if a.BeforeTaskFn != nil {
+		subs = append(subs, Subscriber{
+			ID:       id + ".before-task",
+			Events:   []EventType{EventTaskStarted},
+			Mode:     ModeGate,
+			Priority: 100,
+			Handler: func(ctx context.Context, ev *Event) *HookResponse {
+				if err := a.BeforeTaskFn(ctx, ev.TaskID); err != nil {
+					return &HookResponse{Decision: Deny, Reason: err.Error()}
+				}
+				return &HookResponse{Decision: Allow}
+			},
+		})
+	}
+
+	if a.AfterTaskFn != nil {
+		subs = append(subs, Subscriber{
+			ID:     id + ".after-task",
+			Events: []EventType{EventTaskCompleted, EventTaskFailed},
+			Mode:   ModeObserve,
+			Handler: func(ctx context.Context, ev *Event) *HookResponse {
+				a.AfterTaskFn(ctx, ev.TaskID, ev.Type == EventTaskCompleted)
+				return nil
+			},
+		})
+	}
+
+	if a.BeforeRetryFn != nil {
+		subs = append(subs, Subscriber{
+			ID:       id + ".before-retry",
+			Events:   []EventType{EventTaskRetrying},
+			Mode:     ModeTransform,
+			Priority: 200,
+			Handler: func(ctx context.Context, ev *Event) *HookResponse {
+				attempt := 0
+				if ev.Lifecycle != nil {
+					attempt = ev.Lifecycle.Attempt
+				}
+				aug := a.BeforeRetryFn(ctx, ev.TaskID, attempt)
+				if aug == "" {
+					return &HookResponse{Decision: Allow}
+				}
+				return &HookResponse{
+					Decision: Allow,
+					Injections: []Injection{{
+						Position: "retry_context",
+						Content:  aug,
+						Label:    id + "-retry",
+						Priority: 200,
+					}},
+				}
+			},
+		})
+	}
+
+	return subs
+}
+
 // PromptInjectionTransformer creates a hub transform subscriber that injects
 // content into prompts. This is the hub equivalent of lifecycle.ContextInjectionHook.
 func PromptInjectionTransformer(label string, contentFn func() string) Subscriber {
