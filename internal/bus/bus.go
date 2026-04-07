@@ -130,6 +130,16 @@ func (p Pattern) Matches(evt Event) bool {
 	return true
 }
 
+// prefixKey extracts the first dotted segment from a string for index lookup.
+// e.g., "worker.declaration.done" -> "worker", "bus.hook.action_failed" -> "bus".
+// An empty string returns "" (the wildcard bucket).
+func prefixKey(s string) string {
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // HookPriority determines firing order. Higher values fire first.
 type HookPriority int
 
@@ -240,6 +250,11 @@ type Bus struct {
 	delayed     map[string]*delayedEntry
 	closed      bool
 
+	// Prefix indices for O(1) lookup by event type first segment.
+	// Key "" holds entries with empty TypePrefix (wildcard matches all).
+	subIndex  map[string][]*Subscription
+	hookIndex map[string][]Hook
+
 	// overflowCount tracks subscriber overflow events for testing.
 	overflowCount uint64
 }
@@ -252,9 +267,11 @@ func New(dir string) (*Bus, error) {
 	}
 
 	b := &Bus{
-		wal:     w,
-		seq:     w.LastSeq(),
-		delayed: make(map[string]*delayedEntry),
+		wal:       w,
+		seq:       w.LastSeq(),
+		delayed:   make(map[string]*delayedEntry),
+		subIndex:  make(map[string][]*Subscription),
+		hookIndex: make(map[string][]Hook),
 	}
 
 	// Restore delayed events from WAL.
@@ -271,8 +288,34 @@ func New(dir string) (*Bus, error) {
 // sequence number >= the one being assigned, publication is rejected.
 //
 // Hooks fire synchronously (highest priority first) before the event is
-// enqueued to subscriber channels. Subscriber delivery is asynchronous.
+// enqueued to subscriber channels. Injected events from hooks are deferred
+// until the original event has been fully delivered to all subscribers,
+// ensuring subscribers see the original event before any of its consequences.
+// Subscriber delivery is asynchronous via per-subscriber goroutines.
 func (b *Bus) Publish(evt Event) error {
+	var injected []Event
+	if err := b.publishInternal(evt, &injected); err != nil {
+		return err
+	}
+	// Drain injected events after the original event has been delivered.
+	// Each injected event may itself produce more injected events.
+	for len(injected) > 0 {
+		batch := injected
+		injected = nil
+		for _, ij := range batch {
+			if err := b.publishInternal(ij, &injected); err != nil {
+				// Log but don't fail the original publish for injection errors.
+				log.Printf("bus: injected event publish failed: %v", err)
+			}
+		}
+	}
+	return nil
+}
+
+// publishInternal is the core publish path. It writes to WAL, fires hooks,
+// collects injected events into *injected (instead of recursing), and
+// delivers to subscribers via prefix-indexed lookup.
+func (b *Bus) publishInternal(evt Event, injected *[]Event) error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
@@ -305,20 +348,17 @@ func (b *Bus) Publish(evt Event) error {
 		return fmt.Errorf("bus: WAL append: %w", err)
 	}
 
-	// Snapshot hooks and subscribers while holding the lock.
-	hooks := make([]Hook, len(b.hooks))
-	copy(hooks, b.hooks)
-	subs := make([]*Subscription, len(b.subscribers))
-	copy(subs, b.subscribers)
+	// Look up candidate hooks and subscribers via prefix index.
+	evtKey := prefixKey(string(evt.Type))
+	hooks := b.lookupHooks(evtKey)
+	subs := b.lookupSubscribers(evtKey)
 	b.mu.Unlock()
 
 	// Fire hooks (highest priority first) before subscribers.
-	b.fireHooks(hooks, evt)
+	// Injected events are collected, not recursively published.
+	b.fireHooks(hooks, evt, injected)
 
 	// Enqueue to subscriber channels (non-blocking).
-	// NOTE: This is O(subscribers) per publish. If subscriber counts grow large,
-	// consider adding a prefix index keyed by event type prefix to narrow the
-	// candidate set before full pattern matching. See audit Fix #19.
 	for _, sub := range subs {
 		if sub.ctx.Err() != nil {
 			continue
@@ -337,8 +377,36 @@ func (b *Bus) Publish(evt Event) error {
 	return nil
 }
 
+// lookupHooks returns candidate hooks for the given event prefix key.
+// Must be called while holding b.mu.
+func (b *Bus) lookupHooks(evtKey string) []Hook {
+	var candidates []Hook
+	// Hooks indexed under the event's prefix key.
+	candidates = append(candidates, b.hookIndex[evtKey]...)
+	// Hooks with empty prefix (wildcard — match all events).
+	if evtKey != "" {
+		candidates = append(candidates, b.hookIndex[""]...)
+	}
+	return candidates
+}
+
+// lookupSubscribers returns candidate subscribers for the given event prefix key.
+// Must be called while holding b.mu.
+func (b *Bus) lookupSubscribers(evtKey string) []*Subscription {
+	var candidates []*Subscription
+	// Subscribers indexed under the event's prefix key.
+	candidates = append(candidates, b.subIndex[evtKey]...)
+	// Subscribers with empty prefix (wildcard — match all events).
+	if evtKey != "" {
+		candidates = append(candidates, b.subIndex[""]...)
+	}
+	return candidates
+}
+
 // fireHooks executes matching hooks in priority order with panic recovery.
-func (b *Bus) fireHooks(hooks []Hook, evt Event) {
+// Injected events are collected into the provided slice for deferred delivery,
+// ensuring subscribers see the original event before any injected events.
+func (b *Bus) fireHooks(hooks []Hook, evt Event, injected *[]Event) {
 	// Sort by priority descending, stable to preserve registration order for ties.
 	sorted := make([]Hook, 0, len(hooks))
 	for _, h := range hooks {
@@ -350,14 +418,6 @@ func (b *Bus) fireHooks(hooks []Hook, evt Event) {
 		return sorted[i].Priority > sorted[j].Priority
 	})
 
-	// NOTE: Injected events are published recursively during hook processing.
-	// This means a subscriber may see an injected event before the original
-	// event's subsequent subscriber notifications complete. If atomic ordering
-	// is needed (subscribers see all consequences of hooks atomically with the
-	// triggering event), injected events should be collected and drained after
-	// all hooks for the original event have fired. Currently no subscriber
-	// relies on this ordering guarantee, so recursive publish is acceptable.
-	// See audit Fix #13 for details.
 	for _, h := range sorted {
 		action, err := b.invokeHook(h, evt)
 		if err != nil {
@@ -367,12 +427,9 @@ func (b *Bus) fireHooks(hooks []Hook, evt Event) {
 		if action == nil {
 			continue
 		}
-		// Process injected events (recursive publish — see note above).
-		for _, injEvt := range action.InjectEvents {
-			if pubErr := b.Publish(injEvt); pubErr != nil {
-				b.recordHookInjectionFailed(h, evt, injEvt, pubErr)
-			}
-		}
+		// Collect injected events for deferred delivery after subscribers
+		// have been notified of the original event.
+		*injected = append(*injected, action.InjectEvents...)
 	}
 }
 
@@ -498,6 +555,11 @@ func (b *Bus) Subscribe(pattern Pattern, handler func(Event)) *Subscription {
 	go sub.run()
 
 	b.subscribers = append(b.subscribers, sub)
+
+	// Add to prefix index.
+	key := prefixKey(pattern.TypePrefix)
+	b.subIndex[key] = append(b.subIndex[key], sub)
+
 	return sub
 }
 
@@ -515,6 +577,11 @@ func (b *Bus) RegisterHook(hook Hook) error {
 		hook.ID = uuid.New().String()
 	}
 	b.hooks = append(b.hooks, hook)
+
+	// Add to prefix index.
+	key := prefixKey(hook.Pattern.TypePrefix)
+	b.hookIndex[key] = append(b.hookIndex[key], hook)
+
 	return nil
 }
 
@@ -525,6 +592,15 @@ func (b *Bus) RemoveHook(hookID string) {
 
 	for i, h := range b.hooks {
 		if h.ID == hookID {
+			// Remove from prefix index.
+			key := prefixKey(h.Pattern.TypePrefix)
+			indexed := b.hookIndex[key]
+			for j, ih := range indexed {
+				if ih.ID == hookID {
+					b.hookIndex[key] = append(indexed[:j], indexed[j+1:]...)
+					break
+				}
+			}
 			b.hooks = append(b.hooks[:i], b.hooks[i+1:]...)
 			return
 		}

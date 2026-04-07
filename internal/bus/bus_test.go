@@ -896,3 +896,148 @@ func TestHookPanicIsRecovered(t *testing.T) {
 		t.Fatal("lower-priority hook should have fired despite higher-priority hook panicking")
 	}
 }
+
+func TestInjectedEventDeliveredAfterOriginalSubscribers(t *testing.T) {
+	b := tempBus(t)
+	defer b.Close()
+
+	// Track the order in which a subscriber sees events.
+	var mu sync.Mutex
+	var seen []EventType
+
+	b.Subscribe(Pattern{}, func(evt Event) {
+		// Wildcard subscriber: sees everything.
+		mu.Lock()
+		seen = append(seen, evt.Type)
+		mu.Unlock()
+	})
+
+	// Hook that injects a second event when it sees the original.
+	if err := b.RegisterHook(Hook{
+		ID:        "injector",
+		Pattern:   Pattern{TypePrefix: "original."},
+		Priority:  100,
+		Authority: "supervisor",
+		Handler: func(_ context.Context, evt Event) (*HookAction, error) {
+			return &HookAction{
+				InjectEvents: []Event{{Type: "injected.consequence"}},
+			}, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish the original event.
+	if err := b.Publish(Event{Type: "original.trigger"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for async delivery.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(seen) < 2 {
+		t.Fatalf("expected at least 2 events, got %d: %v", len(seen), seen)
+	}
+
+	// The original event MUST be seen before the injected event.
+	if seen[0] != "original.trigger" {
+		t.Errorf("first event should be original.trigger, got %s", seen[0])
+	}
+	if seen[1] != "injected.consequence" {
+		t.Errorf("second event should be injected.consequence, got %s", seen[1])
+	}
+}
+
+func TestPrefixIndexNarrowsLookup(t *testing.T) {
+	b := tempBus(t)
+	defer b.Close()
+
+	var workerCount, ledgerCount int32
+
+	// Subscribe to worker events only.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(evt Event) {
+		atomic.AddInt32(&workerCount, 1)
+	})
+
+	// Subscribe to ledger events only.
+	b.Subscribe(Pattern{TypePrefix: "ledger."}, func(evt Event) {
+		atomic.AddInt32(&ledgerCount, 1)
+	})
+
+	// Publish a worker event — should only reach the worker subscriber.
+	if err := b.Publish(Event{Type: EvtWorkerSpawned}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish a ledger event — should only reach the ledger subscriber.
+	if err := b.Publish(Event{Type: "ledger.node.added"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for delivery.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&workerCount) >= 1 && atomic.LoadInt32(&ledgerCount) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if wc := atomic.LoadInt32(&workerCount); wc != 1 {
+		t.Errorf("worker subscriber got %d events, want 1", wc)
+	}
+	if lc := atomic.LoadInt32(&ledgerCount); lc != 1 {
+		t.Errorf("ledger subscriber got %d events, want 1", lc)
+	}
+}
+
+func TestPrefixIndexWildcardSubscriber(t *testing.T) {
+	b := tempBus(t)
+	defer b.Close()
+
+	var wildcardCount int32
+	var specificCount int32
+
+	// Wildcard subscriber (empty prefix) sees all events.
+	b.Subscribe(Pattern{}, func(evt Event) {
+		atomic.AddInt32(&wildcardCount, 1)
+	})
+
+	// Specific subscriber sees only worker events.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(evt Event) {
+		atomic.AddInt32(&specificCount, 1)
+	})
+
+	// Publish events of different types.
+	b.Publish(Event{Type: "worker.spawned"})
+	b.Publish(Event{Type: "ledger.node.added"})
+	b.Publish(Event{Type: "bus.internal"})
+
+	// Wait for delivery.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&wildcardCount) >= 3 && atomic.LoadInt32(&specificCount) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if wc := atomic.LoadInt32(&wildcardCount); wc != 3 {
+		t.Errorf("wildcard subscriber got %d events, want 3", wc)
+	}
+	if sc := atomic.LoadInt32(&specificCount); sc != 1 {
+		t.Errorf("specific subscriber got %d events, want 1", sc)
+	}
+}
