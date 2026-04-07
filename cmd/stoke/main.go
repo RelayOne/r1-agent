@@ -3114,6 +3114,9 @@ func serveCmd(args []string) {
 	bus := server.NewEventBus()
 	srv := server.New(*port, *token, bus)
 
+	// Dashboard state: created early so both orchestrator and API can use it.
+	dashState := server.NewDashboardState()
+
 	// Try to create orchestrator for mission API
 	orch, orchErr := createOrchestrator(absRepo, *dataDir)
 	if orchErr != nil {
@@ -3123,14 +3126,15 @@ func serveCmd(args []string) {
 		defer orch.Close()
 		fmt.Fprintf(os.Stderr, "mission API enabled\n")
 
-		// Bridge hub events to the server's EventBus for SSE/WebSocket clients.
+		// Bridge hub events to the server's EventBus for SSE/WebSocket clients
+		// and to the dashboard state for REST API queries.
 		if orch.EventBus() != nil {
 			server.BridgeHubToEventBus(orch.EventBus(), bus)
+			server.BridgeHubToDashboard(orch.EventBus(), dashState)
 		}
 	}
 
 	// Register dashboard API (works even without orchestrator).
-	dashState := server.NewDashboardState()
 	server.RegisterDashboardAPI(srv, nil, nil, dashState)
 	server.RegisterDashboardUI(srv)
 
