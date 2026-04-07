@@ -316,6 +316,9 @@ func (b *Bus) Publish(evt Event) error {
 	b.fireHooks(hooks, evt)
 
 	// Enqueue to subscriber channels (non-blocking).
+	// NOTE: This is O(subscribers) per publish. If subscriber counts grow large,
+	// consider adding a prefix index keyed by event type prefix to narrow the
+	// candidate set before full pattern matching. See audit Fix #19.
 	for _, sub := range subs {
 		if sub.ctx.Err() != nil {
 			continue
@@ -347,6 +350,14 @@ func (b *Bus) fireHooks(hooks []Hook, evt Event) {
 		return sorted[i].Priority > sorted[j].Priority
 	})
 
+	// NOTE: Injected events are published recursively during hook processing.
+	// This means a subscriber may see an injected event before the original
+	// event's subsequent subscriber notifications complete. If atomic ordering
+	// is needed (subscribers see all consequences of hooks atomically with the
+	// triggering event), injected events should be collected and drained after
+	// all hooks for the original event have fired. Currently no subscriber
+	// relies on this ordering guarantee, so recursive publish is acceptable.
+	// See audit Fix #13 for details.
 	for _, h := range sorted {
 		action, err := b.invokeHook(h, evt)
 		if err != nil {
@@ -356,7 +367,7 @@ func (b *Bus) fireHooks(hooks []Hook, evt Event) {
 		if action == nil {
 			continue
 		}
-		// Process injected events.
+		// Process injected events (recursive publish — see note above).
 		for _, injEvt := range action.InjectEvents {
 			if pubErr := b.Publish(injEvt); pubErr != nil {
 				b.recordHookInjectionFailed(h, evt, injEvt, pubErr)
