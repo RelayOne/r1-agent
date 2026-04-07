@@ -269,14 +269,34 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// Provision execution environment if configured.
 	var buildEnv env.Environment
 	var buildEnvHandle *env.Handle
+	var buildLedger *ledger.Ledger
 	if cfg.EnvBackend != "" && cfg.EnvBackend != "inproc" {
 		var provErr error
 		buildEnv, buildEnvHandle, provErr = provisionEnv(ctx, cfg, absRepo)
 		if provErr != nil {
 			return nil, fmt.Errorf("provision environment: %w", provErr)
 		}
+
+		// Open ledger for env audit trail if available.
+		envLedgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+		if fileExists(envLedgerDir) {
+			if lg, err := ledger.New(envLedgerDir); err == nil {
+				buildLedger = lg
+				env.RecordProvision(ctx, lg, buildEnvHandle, env.Spec{
+					Backend:   env.Backend(cfg.EnvBackend),
+					BaseImage: cfg.EnvImage,
+					Size:      cfg.EnvSize,
+				})
+			}
+		}
+
 		defer func() {
 			if buildEnv != nil && buildEnvHandle != nil {
+				if buildLedger != nil {
+					cost, _ := buildEnv.Cost(context.Background(), buildEnvHandle)
+					env.RecordTeardown(context.Background(), buildLedger, buildEnvHandle, cost)
+					buildLedger.Close()
+				}
 				buildEnv.Teardown(context.Background(), buildEnvHandle)
 			}
 		}()
@@ -3174,6 +3194,11 @@ func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.En
 	case env.BackendDocker:
 		backend = docker.New()
 	case env.BackendFly:
+		for _, v := range []string{"FLARE_API_URL", "FLARE_API_KEY", "FLARE_APP_NAME", "FLARE_REGION", "FLARE_SSH_KEY"} {
+			if os.Getenv(v) == "" {
+				return nil, nil, fmt.Errorf("fly backend requires %s env var", v)
+			}
+		}
 		backend = fly.New(fly.Config{
 			APIURL:     os.Getenv("FLARE_API_URL"),
 			Token:      os.Getenv("FLARE_API_KEY"),
@@ -3182,12 +3207,20 @@ func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.En
 			SSHKeyPath: os.Getenv("FLARE_SSH_KEY"),
 		})
 	case env.BackendEmber:
+		for _, v := range []string{"EMBER_API_URL", "EMBER_API_KEY", "EMBER_SSH_KEY"} {
+			if os.Getenv(v) == "" {
+				return nil, nil, fmt.Errorf("ember backend requires %s env var", v)
+			}
+		}
 		backend = ember.New(ember.Config{
 			APIURL:     os.Getenv("EMBER_API_URL"),
 			Token:      os.Getenv("EMBER_API_KEY"),
 			SSHKeyPath: os.Getenv("EMBER_SSH_KEY"),
 		})
 	case env.BackendSSH:
+		if os.Getenv("STOKE_SSH_HOST") == "" {
+			return nil, nil, fmt.Errorf("ssh backend requires STOKE_SSH_HOST env var")
+		}
 		backend = envssh.New(envssh.Config{
 			Host:    os.Getenv("STOKE_SSH_HOST"),
 			User:    os.Getenv("STOKE_SSH_USER"),

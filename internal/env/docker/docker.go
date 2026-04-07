@@ -264,7 +264,15 @@ func (b *Backend) Cost(_ context.Context, h *env.Handle) (env.CostEstimate, erro
 
 // --- internal helpers ---
 
+// execInContainerFunc executes a docker exec command and returns the result.
+// It is a variable to allow replacement in tests.
+var execInContainerFunc = defaultExecInContainer
+
 func (b *Backend) execInContainer(ctx context.Context, containerID, dir string, cmdArgs []string, opts env.ExecOpts) (*env.ExecResult, error) {
+	return execInContainerFunc(ctx, containerID, dir, cmdArgs, opts)
+}
+
+func defaultExecInContainer(ctx context.Context, containerID, dir string, cmdArgs []string, opts env.ExecOpts) (*env.ExecResult, error) {
 	if opts.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
@@ -388,7 +396,14 @@ func cleanupState(ctx context.Context, state *envState) {
 	}
 }
 
+// checkDockerFunc verifies Docker is available. Variable for test replacement.
+var checkDockerFunc = defaultCheckDocker
+
 func checkDocker(ctx context.Context) error {
+	return checkDockerFunc(ctx)
+}
+
+func defaultCheckDocker(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -397,7 +412,15 @@ func checkDocker(ctx context.Context) error {
 	return nil
 }
 
+// dockerRunFunc is the function used to execute docker commands.
+// It is a variable to allow replacement in tests.
+var dockerRunFunc = defaultDockerRun
+
 func dockerRun(ctx context.Context, args ...string) (string, error) {
+	return dockerRunFunc(ctx, args)
+}
+
+func defaultDockerRun(ctx context.Context, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
