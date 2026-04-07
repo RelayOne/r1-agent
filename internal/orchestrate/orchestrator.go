@@ -301,6 +301,11 @@ func New(config Config) (*Orchestrator, error) {
 }
 
 // Close shuts down all backing stores. Must be called on shutdown.
+// EventBus returns the orchestrator's event bus (nil if events are disabled).
+func (o *Orchestrator) EventBus() *hub.Bus {
+	return o.config.EventBus
+}
+
 func (o *Orchestrator) Close() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()

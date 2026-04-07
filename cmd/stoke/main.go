@@ -3090,9 +3090,20 @@ func serveCmd(args []string) {
 		server.RegisterMissionAPI(srv, orch)
 		defer orch.Close()
 		fmt.Fprintf(os.Stderr, "mission API enabled\n")
+
+		// Bridge hub events to the server's EventBus for SSE/WebSocket clients.
+		if orch.EventBus() != nil {
+			server.BridgeHubToEventBus(orch.EventBus(), bus)
+		}
 	}
 
+	// Register dashboard API (works even without orchestrator).
+	dashState := server.NewDashboardState()
+	server.RegisterDashboardAPI(srv, nil, nil, dashState)
+	server.RegisterDashboardUI(srv)
+
 	fmt.Fprintf(os.Stderr, "stoke serve listening on :%d\n", *port)
+	fmt.Fprintf(os.Stderr, "dashboard: http://localhost:%d/\n", *port)
 
 	sigCtx, sigCancel := signalContext(context.Background())
 	defer sigCancel()
