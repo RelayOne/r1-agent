@@ -177,10 +177,21 @@ func TestBuildConcernField_RendersCorrectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	taskID, err := l.AddNode(ctx, ledger.Node{
+		Type:          "task",
+		SchemaVersion: 1,
+		CreatedBy:     "planner",
+		MissionID:     "m-2",
+		Content:       mustJSON(map[string]string{"summary": "Refactor auth flow"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	builder := concern.NewBuilder(l, b)
 	templates.RegisterAll(builder)
 
-	scope := concern.Scope{MissionID: "m-2", TaskID: "task-abc"}
+	scope := concern.Scope{MissionID: "m-2", TaskID: taskID}
 
 	cf, err := builder.BuildConcernField(ctx, concern.RoleDev, concern.FaceProposing, scope)
 	if err != nil {

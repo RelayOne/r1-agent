@@ -699,8 +699,17 @@ func TestAllEdgeTypesAccepted(t *testing.T) {
 	}
 
 	for _, et := range types {
-		id1, _ := l.AddNode(ctx, makeNode("decision", "from-"+string(et), "s1"))
-		id2, _ := l.AddNode(ctx, makeNode("decision", "to-"+string(et), "s1"))
+		var fromType, toType string
+		if et == EdgeDistills {
+			// distills edges must go from decision_internal to decision_repo.
+			fromType = "decision_internal"
+			toType = "decision_repo"
+		} else {
+			fromType = "task"
+			toType = "task"
+		}
+		id1, _ := l.AddNode(ctx, makeNode(fromType, "from-"+string(et), "s1"))
+		id2, _ := l.AddNode(ctx, makeNode(toType, "to-"+string(et), "s1"))
 		err := l.AddEdge(ctx, Edge{From: id1, To: id2, Type: et})
 		if err != nil {
 			t.Errorf("AddEdge with type %q: %v", et, err)
@@ -739,5 +748,148 @@ func TestConcurrentAddNodes(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Errorf("concurrent AddNode: %v", err)
 		}
+	}
+}
+
+// --- Fix #5: Integrity violation detection ---
+
+func TestQueryFailsOnMissingNodeFile(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	id, err := l.AddNode(ctx, makeNode("task", "will-disappear", "s1"))
+	if err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Verify it comes back.
+	nodes, err := l.Query(ctx, QueryFilter{Type: "task"})
+	if err != nil {
+		t.Fatalf("Query before delete: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	// Manually delete the node file (simulate corruption).
+	nodePath := filepath.Join(l.rootDir, "nodes", id+".json")
+	if err := os.Remove(nodePath); err != nil {
+		t.Fatalf("remove node file: %v", err)
+	}
+
+	// Query should now return an error, not silently skip.
+	_, err = l.Query(ctx, QueryFilter{Type: "task"})
+	if err == nil {
+		t.Fatal("expected error on query with missing node file")
+	}
+	if !strings.Contains(err.Error(), "integrity violation") {
+		t.Fatalf("expected integrity violation error, got: %v", err)
+	}
+}
+
+func TestVerifyDetectsMissingNode(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	// Add several nodes.
+	for i := 0; i < 3; i++ {
+		_, err := l.AddNode(ctx, makeNode("task", "node-"+string(rune('A'+i)), "s1"))
+		if err != nil {
+			t.Fatalf("AddNode %d: %v", i, err)
+		}
+	}
+
+	// Verify passes when all nodes are present.
+	if err := l.Verify(ctx); err != nil {
+		t.Fatalf("Verify should pass: %v", err)
+	}
+
+	// Delete one node file.
+	nodes, _ := l.Query(ctx, QueryFilter{Type: "task"})
+	if len(nodes) < 1 {
+		t.Fatal("expected at least 1 node")
+	}
+	nodePath := filepath.Join(l.rootDir, "nodes", nodes[0].ID+".json")
+	if err := os.Remove(nodePath); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	// Verify should now fail.
+	err := l.Verify(ctx)
+	if err == nil {
+		t.Fatal("expected Verify to fail with missing node")
+	}
+	if !strings.Contains(err.Error(), "missing from store") {
+		t.Fatalf("expected 'missing from store' error, got: %v", err)
+	}
+}
+
+// --- Fix #6: Decision log directionality ---
+
+func TestAddEdgeRejectsRepoCitingInternal(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	internalID, _ := l.AddNode(ctx, makeNode("decision_internal", "internal-dec", "s1"))
+	repoID, _ := l.AddNode(ctx, makeNode("decision_repo", "repo-dec", "s1"))
+
+	// repo -> internal should be rejected.
+	err := l.AddEdge(ctx, Edge{From: repoID, To: internalID, Type: EdgeReferences})
+	if err == nil {
+		t.Fatal("expected error: repo decision should not cite internal decision")
+	}
+	if !strings.Contains(err.Error(), "directionality violation") {
+		t.Fatalf("expected directionality violation error, got: %v", err)
+	}
+}
+
+func TestAddEdgeAllowsInternalCitingRepo(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	internalID, _ := l.AddNode(ctx, makeNode("decision_internal", "internal-dec", "s1"))
+	repoID, _ := l.AddNode(ctx, makeNode("decision_repo", "repo-dec", "s1"))
+
+	// internal -> repo should succeed.
+	err := l.AddEdge(ctx, Edge{From: internalID, To: repoID, Type: EdgeReferences})
+	if err != nil {
+		t.Fatalf("expected success for internal citing repo, got: %v", err)
+	}
+}
+
+func TestAddEdgeRejectsDistillsInWrongDirection(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	internalID, _ := l.AddNode(ctx, makeNode("decision_internal", "internal-dec", "s1"))
+	repoID, _ := l.AddNode(ctx, makeNode("decision_repo", "repo-dec", "s1"))
+
+	// distills from repo -> internal should be rejected (either by general
+	// directionality check or by distills-specific check).
+	err := l.AddEdge(ctx, Edge{From: repoID, To: internalID, Type: EdgeDistills})
+	if err == nil {
+		t.Fatal("expected error: distills from repo to internal")
+	}
+
+	// Also test distills between non-decision types (should fail).
+	taskID1, _ := l.AddNode(ctx, makeNode("task", "t1", "s1"))
+	taskID2, _ := l.AddNode(ctx, makeNode("task", "t2", "s1"))
+	err = l.AddEdge(ctx, Edge{From: taskID1, To: taskID2, Type: EdgeDistills})
+	if err == nil {
+		t.Fatal("expected error: distills between non-decision types")
+	}
+}
+
+func TestAddEdgeAllowsDistillsInternalToRepo(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	internalID, _ := l.AddNode(ctx, makeNode("decision_internal", "internal-dec", "s1"))
+	repoID, _ := l.AddNode(ctx, makeNode("decision_repo", "repo-dec", "s1"))
+
+	// distills from internal -> repo should succeed.
+	err := l.AddEdge(ctx, Edge{From: internalID, To: repoID, Type: EdgeDistills})
+	if err != nil {
+		t.Fatalf("expected success for distills internal to repo, got: %v", err)
 	}
 }

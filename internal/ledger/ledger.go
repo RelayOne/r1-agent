@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -194,11 +195,25 @@ func (l *Ledger) AddEdge(_ context.Context, edge Edge) error {
 	defer l.mu.Unlock()
 
 	// Verify both endpoints exist.
-	if _, err := l.store.ReadNode(edge.From); err != nil {
+	fromNode, err := l.store.ReadNode(edge.From)
+	if err != nil {
 		return fmt.Errorf("ledger: from node %q not found: %w", edge.From, err)
 	}
-	if _, err := l.store.ReadNode(edge.To); err != nil {
+	toNode, err := l.store.ReadNode(edge.To)
+	if err != nil {
 		return fmt.Errorf("ledger: to node %q not found: %w", edge.To, err)
+	}
+
+	// Decision log directionality: repo decisions cannot cite internal decisions.
+	if fromNode.Type == "decision_repo" && toNode.Type == "decision_internal" {
+		return fmt.Errorf("ledger: directionality violation: decision_repo %q cannot have edge to decision_internal %q", edge.From, edge.To)
+	}
+
+	// distills edges must go from decision_internal to decision_repo.
+	if edge.Type == EdgeDistills {
+		if fromNode.Type != "decision_internal" || toNode.Type != "decision_repo" {
+			return fmt.Errorf("ledger: distills edges must go from decision_internal to decision_repo; got %s -> %s", fromNode.Type, toNode.Type)
+		}
 	}
 
 	if err := l.store.WriteEdge(edge); err != nil {
@@ -234,7 +249,10 @@ func (l *Ledger) Query(_ context.Context, filter QueryFilter) ([]Node, error) {
 	for _, id := range ids {
 		n, err := l.store.ReadNode(id)
 		if err != nil {
-			continue // node may have been removed from FS; skip
+			// Integrity violation — index says the node exists but the store
+			// cannot find it. Do not silently skip.
+			log.Printf("ledger: INTEGRITY VIOLATION: node %s indexed but not on disk: %v", id, err)
+			return nil, fmt.Errorf("ledger: integrity violation: index references node %q but store cannot read it: %w", id, err)
 		}
 		nodes = append(nodes, n)
 	}
@@ -298,7 +316,8 @@ func (l *Ledger) Walk(_ context.Context, id NodeID, direction WalkDirection, edg
 
 		n, err := l.store.ReadNode(cur)
 		if err != nil {
-			continue
+			log.Printf("ledger: INTEGRITY VIOLATION: node %s referenced but not on disk: %v", cur, err)
+			return nil, fmt.Errorf("ledger: integrity violation: node %q referenced in graph but store cannot read it: %w", cur, err)
 		}
 		result = append(result, n)
 
@@ -446,5 +465,25 @@ func (l *Ledger) RebuildIndex() error {
 		}
 	}
 
+	return nil
+}
+
+// Verify walks the index and checks that every indexed node can be read from
+// the store. Returns an error at the first missing or corrupted file.
+// Call this at startup (e.g. `stoke init`, `stoke status`) to catch corruption early.
+func (l *Ledger) Verify(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	ids, err := l.index.QueryNodes(QueryFilter{})
+	if err != nil {
+		return fmt.Errorf("ledger: verify: query index: %w", err)
+	}
+
+	for _, id := range ids {
+		if _, err := l.store.ReadNode(id); err != nil {
+			return fmt.Errorf("ledger: verify: node %q indexed but missing from store: %w", id, err)
+		}
+	}
 	return nil
 }
