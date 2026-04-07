@@ -223,8 +223,10 @@ func (h *Harness) ResumeStance(ctx context.Context, stanceID string, additional 
 
 	// Unblock the stance runner waiting in CheckpointCheck.
 	close(sess.resumeCh)
-	// Allocate a fresh resume channel for the next pause cycle.
+	// Allocate fresh channels for the next pause cycle.
+	sess.pauseCh = make(chan struct{})
 	sess.resumeCh = make(chan struct{})
+	sess.pauseAckCh = make(chan struct{})
 
 	h.mu.Unlock()
 

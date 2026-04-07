@@ -519,3 +519,83 @@ func TestPausedStanceCanBeResumed(t *testing.T) {
 		t.Fatal("stance runner did not exit after context cancellation")
 	}
 }
+
+func TestStanceCanBePausedMultipleTimes(t *testing.T) {
+	h, cleanup := setup(t)
+	defer cleanup()
+
+	handle, err := h.SpawnStance(context.Background(), harness.SpawnRequest{
+		Role:         "dev",
+		Face:         "proposing",
+		TaskDAGScope: "task-1",
+	})
+	if err != nil {
+		t.Fatalf("SpawnStance: %v", err)
+	}
+
+	checkpointFn, err := h.StanceCheckpointer(handle.ID)
+	if err != nil {
+		t.Fatalf("StanceCheckpointer: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Runner goroutine that continuously hits checkpoints.
+	stanceExited := make(chan error, 1)
+	go func() {
+		for {
+			if err := checkpointFn(ctx); err != nil {
+				stanceExited <- err
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// First pause/resume cycle.
+	if err := h.PauseStance(ctx, handle.ID, "review-1"); err != nil {
+		t.Fatalf("PauseStance 1: %v", err)
+	}
+	state, err := h.InspectStance(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusPaused {
+		t.Errorf("after pause 1: state = %q, want %q", state.State, harness.StatusPaused)
+	}
+
+	if err := h.ResumeStance(ctx, handle.ID, "continue-1"); err != nil {
+		t.Fatalf("ResumeStance 1: %v", err)
+	}
+
+	// Give the runner time to resume and hit a few checkpoints.
+	time.Sleep(50 * time.Millisecond)
+
+	// Second pause/resume cycle.
+	if err := h.PauseStance(ctx, handle.ID, "review-2"); err != nil {
+		t.Fatalf("PauseStance 2: %v", err)
+	}
+	state, err = h.InspectStance(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusPaused {
+		t.Errorf("after pause 2: state = %q, want %q", state.State, harness.StatusPaused)
+	}
+
+	if err := h.ResumeStance(ctx, handle.ID, "continue-2"); err != nil {
+		t.Fatalf("ResumeStance 2: %v", err)
+	}
+
+	state, err = h.InspectStance(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusRunning {
+		t.Errorf("after resume 2: state = %q, want %q", state.State, harness.StatusRunning)
+	}
+
+	cancel()
+	<-stanceExited
+}
