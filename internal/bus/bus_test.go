@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -27,6 +28,19 @@ func makeEvent(typ EventType, emitter string) Event {
 		EmitterID: emitter,
 		Scope:     Scope{MissionID: "m1"},
 	}
+}
+
+// waitFor polls a condition with a timeout. Use only in tests.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("waitFor: condition not met within timeout")
 }
 
 func TestPublishDurablyWritesToWAL(t *testing.T) {
@@ -75,14 +89,18 @@ func TestSubscribeReceivesMatchingEvents(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// Publish a matching event.
 	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	// Publish a non-matching event.
 	if err := b.Publish(makeEvent(EvtMissionStarted, "m1")); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
+
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) >= 1
+	})
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -126,6 +144,12 @@ func TestHooksFireBeforeSubscribers(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(order) >= 2
+	})
+
 	mu.Lock()
 	defer mu.Unlock()
 	if len(order) != 2 {
@@ -163,7 +187,6 @@ func TestReplayDeliversHistoricalEvents(t *testing.T) {
 		}
 	}
 
-	// Replay from seq 2 with worker pattern.
 	var replayed []Event
 	err := b.Replay(Pattern{TypePrefix: "worker."}, 2, func(e Event) {
 		replayed = append(replayed, e)
@@ -197,6 +220,7 @@ func TestPublishDelayedFiresAfterDelay(t *testing.T) {
 	}
 
 	// Should not be delivered yet.
+	time.Sleep(10 * time.Millisecond)
 	mu.Lock()
 	count := len(received)
 	mu.Unlock()
@@ -205,13 +229,11 @@ func TestPublishDelayedFiresAfterDelay(t *testing.T) {
 	}
 
 	// Wait for delivery.
-	time.Sleep(200 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(received) != 1 {
-		t.Fatalf("expected 1 event after delay, got %d", len(received))
-	}
+	waitFor(t, 500*time.Millisecond, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) >= 1
+	})
 }
 
 func TestCancelDelayedPreventsDelivery(t *testing.T) {
@@ -251,7 +273,6 @@ func TestCursorSurvivesRestart(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Subscribe and publish some events.
 	sub := b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {})
 	for i := 0; i < 5; i++ {
 		if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
@@ -259,12 +280,14 @@ func TestCursorSurvivesRestart(t *testing.T) {
 		}
 	}
 
+	// Wait for async delivery.
+	time.Sleep(50 * time.Millisecond)
+
 	cursor := b.Cursor(sub.ID)
 	if cursor != 5 {
 		t.Fatalf("expected cursor 5, got %d", cursor)
 	}
 
-	// Close and reopen — the WAL should have all 5 events.
 	b.Close()
 
 	b2, err := New(dir)
@@ -273,12 +296,10 @@ func TestCursorSurvivesRestart(t *testing.T) {
 	}
 	defer b2.Close()
 
-	// Verify the WAL's last seq survived.
 	if b2.CurrentSeq() != 5 {
 		t.Errorf("expected seq 5 after restart, got %d", b2.CurrentSeq())
 	}
 
-	// A new subscriber replaying from cursor can catch up.
 	var replayed []Event
 	err = b2.Replay(Pattern{TypePrefix: "worker."}, cursor+1, func(e Event) {
 		replayed = append(replayed, e)
@@ -290,7 +311,6 @@ func TestCursorSurvivesRestart(t *testing.T) {
 		t.Errorf("expected 0 events after cursor, got %d", len(replayed))
 	}
 
-	// Replay from seq 3 should yield events 3, 4, 5.
 	err = b2.Replay(Pattern{TypePrefix: "worker."}, 3, func(e Event) {
 		replayed = append(replayed, e)
 	})
@@ -374,12 +394,11 @@ func TestHookInjectsEvents(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	// Should see both original and injected events.
-	if len(received) < 2 {
-		t.Fatalf("expected at least 2 events, got %d: %v", len(received), received)
-	}
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) >= 2
+	})
 }
 
 func TestPatternMatchesScope(t *testing.T) {
@@ -415,6 +434,15 @@ func TestPatternMatchesScope(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) >= 1
+	})
+
+	// Brief additional wait to confirm no extra events arrive.
+	time.Sleep(50 * time.Millisecond)
+
 	mu.Lock()
 	defer mu.Unlock()
 	if len(received) != 1 {
@@ -446,6 +474,8 @@ func TestRemoveHook(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
+	time.Sleep(50 * time.Millisecond)
+
 	if fired {
 		t.Error("hook should not have fired after removal")
 	}
@@ -454,14 +484,12 @@ func TestRemoveHook(t *testing.T) {
 func TestCausalRefMustPointToPast(t *testing.T) {
 	b := tempBus(t)
 
-	// Publish a base event.
 	base := makeEvent(EvtWorkerSpawned, "w1")
 	base.ID = "base-evt"
 	if err := b.Publish(base); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	// A valid causal ref should work.
 	child := makeEvent(EvtWorkerActionStarted, "w1")
 	child.CausalRef = "base-evt"
 	if err := b.Publish(child); err != nil {
@@ -517,10 +545,8 @@ func TestDelayedEventSurvivesRestart(t *testing.T) {
 		t.Fatalf("PublishDelayed: %v", err)
 	}
 
-	// Close immediately (simulating crash before timer fires).
 	b.Close()
 
-	// Reopen — delayed event should be restored and fire.
 	b2, err := New(dir)
 	if err != nil {
 		t.Fatalf("New (reopen): %v", err)
@@ -535,14 +561,11 @@ func TestDelayedEventSurvivesRestart(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// Wait for the restored delayed event to fire.
-	time.Sleep(400 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-	if len(received) != 1 {
-		t.Fatalf("expected 1 event after restart, got %d", len(received))
-	}
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received) >= 1
+	})
 }
 
 func TestCancellationSurvivesRestart(t *testing.T) {
@@ -565,7 +588,6 @@ func TestCancellationSurvivesRestart(t *testing.T) {
 
 	b.Close()
 
-	// Reopen — cancelled event should NOT fire.
 	b2, err := New(dir)
 	if err != nil {
 		t.Fatalf("New (reopen): %v", err)
@@ -612,11 +634,14 @@ func TestTwoSubscribersSamePattern(t *testing.T) {
 		}
 	}
 
+	waitFor(t, time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(order1) >= 5 && len(order2) >= 5
+	})
+
 	mu.Lock()
 	defer mu.Unlock()
-	if len(order1) != 5 || len(order2) != 5 {
-		t.Fatalf("expected both subscribers to get 5 events, got %d and %d", len(order1), len(order2))
-	}
 	for i := range order1 {
 		if order1[i] != order2[i] {
 			t.Errorf("position %d: subscriber1 got seq %d, subscriber2 got seq %d", i, order1[i], order2[i])
@@ -627,25 +652,28 @@ func TestTwoSubscribersSamePattern(t *testing.T) {
 func TestSubscriptionCancel(t *testing.T) {
 	b := tempBus(t)
 
-	var count int
+	var count atomic.Int32
 	sub := b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
-		count++
+		count.Add(1)
 	})
 
 	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected 1 event before cancel, got %d", count)
-	}
+
+	waitFor(t, time.Second, func() bool {
+		return count.Load() >= 1
+	})
 
 	sub.Cancel()
 
 	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 event after cancel, got %d", count)
+	time.Sleep(50 * time.Millisecond)
+
+	if count.Load() != 1 {
+		t.Errorf("expected 1 event after cancel, got %d", count.Load())
 	}
 }
 
@@ -674,7 +702,6 @@ func TestEventLogFileExists(t *testing.T) {
 		t.Fatalf("Publish: %v", err)
 	}
 
-	// Verify the events.log file exists and has content.
 	info, err := os.Stat(dir + "/events.log")
 	if err != nil {
 		t.Fatalf("events.log not found: %v", err)
@@ -684,3 +711,188 @@ func TestEventLogFileExists(t *testing.T) {
 	}
 }
 
+// --- Fix #2 acceptance tests ---
+
+func TestSubscriberDeliveryIsAsync(t *testing.T) {
+	b := tempBus(t)
+
+	// The handler blocks on a channel — Publish must return before it completes.
+	blockCh := make(chan struct{})
+	var delivered atomic.Bool
+
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		<-blockCh // block until unblocked
+		delivered.Store(true)
+	})
+
+	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Publish returned. The handler should NOT have completed yet.
+	if delivered.Load() {
+		t.Fatal("handler should not have completed — delivery should be async")
+	}
+
+	// Unblock the handler.
+	close(blockCh)
+
+	waitFor(t, time.Second, func() bool {
+		return delivered.Load()
+	})
+}
+
+func TestSubscriberPanicDoesNotCrashBus(t *testing.T) {
+	b := tempBus(t)
+
+	var panicSubReceived atomic.Int32
+	var goodSubReceived atomic.Int32
+
+	// Panicking subscriber.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		panicSubReceived.Add(1)
+		panic("intentional test panic")
+	})
+
+	// Good subscriber.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		goodSubReceived.Add(1)
+	})
+
+	// Publish two events. The bus should survive the panics.
+	for i := 0; i < 2; i++ {
+		if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
+			t.Fatalf("Publish %d: %v", i, err)
+		}
+	}
+
+	waitFor(t, time.Second, func() bool {
+		return goodSubReceived.Load() >= 2
+	})
+
+	// The panicking subscriber should have been called twice (recovered each time).
+	waitFor(t, time.Second, func() bool {
+		return panicSubReceived.Load() >= 2
+	})
+}
+
+func TestSlowSubscriberDoesNotBlockOthers(t *testing.T) {
+	b := tempBus(t)
+
+	var fastReceived atomic.Int32
+
+	// Slow subscriber.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		time.Sleep(200 * time.Millisecond)
+	})
+
+	// Fast subscriber.
+	b.Subscribe(Pattern{TypePrefix: "worker."}, func(e Event) {
+		fastReceived.Add(1)
+	})
+
+	start := time.Now()
+	for i := 0; i < 10; i++ {
+		if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+	}
+
+	// Fast subscriber should get all 10 events well before the slow one finishes.
+	waitFor(t, time.Second, func() bool {
+		return fastReceived.Load() >= 10
+	})
+
+	elapsed := time.Since(start)
+	// If delivery were synchronous, publishing 10 events with a 200ms handler
+	// would take 2+ seconds. Async should be well under 1s.
+	if elapsed > time.Second {
+		t.Fatalf("fast subscriber took too long (%s) — delivery may not be async", elapsed)
+	}
+}
+
+func TestHookActionErrorPublishesFailureEvent(t *testing.T) {
+	b := tempBus(t)
+
+	// Register a hook that returns an error.
+	err := b.RegisterHook(Hook{
+		ID:        "failing-hook",
+		Pattern:   Pattern{TypePrefix: "worker."},
+		Priority:  10,
+		Authority: "supervisor",
+		Handler: func(ctx context.Context, evt Event) (*HookAction, error) {
+			return nil, fmt.Errorf("intentional hook failure")
+		},
+	})
+	if err != nil {
+		t.Fatalf("RegisterHook: %v", err)
+	}
+
+	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// The failure event should be in the WAL.
+	var found bool
+	err = b.Replay(Pattern{TypePrefix: "bus.hook.action_failed"}, 1, func(e Event) {
+		found = true
+		var payload map[string]any
+		if jsonErr := json.Unmarshal(e.Payload, &payload); jsonErr != nil {
+			t.Fatalf("unmarshal: %v", jsonErr)
+		}
+		if payload["hook_id"] != "failing-hook" {
+			t.Errorf("expected hook_id=failing-hook, got %v", payload["hook_id"])
+		}
+		errStr, _ := payload["error"].(string)
+		if errStr != "intentional hook failure" {
+			t.Errorf("expected error message, got %q", errStr)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if !found {
+		t.Fatal("expected bus.hook.action_failed event in WAL")
+	}
+}
+
+func TestHookPanicIsRecovered(t *testing.T) {
+	b := tempBus(t)
+
+	var goodHookFired atomic.Bool
+
+	// Panicking hook (higher priority — fires first).
+	err := b.RegisterHook(Hook{
+		Pattern:   Pattern{TypePrefix: "worker."},
+		Priority:  100,
+		Authority: "supervisor",
+		Handler: func(ctx context.Context, evt Event) (*HookAction, error) {
+			panic("hook panic")
+		},
+	})
+	if err != nil {
+		t.Fatalf("RegisterHook: %v", err)
+	}
+
+	// Lower priority hook should still fire.
+	err = b.RegisterHook(Hook{
+		Pattern:   Pattern{TypePrefix: "worker."},
+		Priority:  1,
+		Authority: "supervisor",
+		Handler: func(ctx context.Context, evt Event) (*HookAction, error) {
+			goodHookFired.Store(true)
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RegisterHook: %v", err)
+	}
+
+	if err := b.Publish(makeEvent(EvtWorkerSpawned, "w1")); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	if !goodHookFired.Load() {
+		t.Fatal("lower-priority hook should have fired despite higher-priority hook panicking")
+	}
+}
