@@ -54,7 +54,7 @@ var validTransitions = map[Phase][]Phase{
 	Claimed:     {Executed, Failed},
 	Executed:    {Verified, Failed},
 	Verified:    {Reviewed, Failed},
-	Reviewed:    {Committed},                            // the ONLY path to committed
+	Reviewed:    {Committed, Claimed},                    // Committed is the success path; Claimed allows convergence retry
 	Failed:      {HumanNeeded},                          // escalate to operator
 	HumanNeeded: {UserSkipped, Claimed, Blocked},        // operator decides: skip, retry, or block
 	Blocked:     {HumanNeeded, Pending},               // operator can escalate or unblock
@@ -76,15 +76,27 @@ type Evidence struct {
 	ReviewPass     bool     `json:"review_pass"`
 	ScopeClean     bool     `json:"scope_clean"`
 	ProtectedClean bool     `json:"protected_clean"`
-	Warnings       []string `json:"warnings,omitempty"` // non-fatal issues (e.g. gitignored files)
+
+	// Notes are informational observations that never block merge.
+	// Examples: blame attribution, gitignored files, advisory style notes.
+	Notes []string `json:"notes,omitempty"`
+
+	// Findings are blocking issues that prevent merge.
+	// Examples: convergence audit failures, security violations.
+	Findings []string `json:"findings,omitempty"`
+
+	// Warnings is kept for backward compatibility but does NOT block merge.
+	// New code should use Notes (informational) or Findings (blocking).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // AllGatesPass returns true only if every verification gate passed
-// and no warnings are present (warnings indicate verified != merged divergence).
+// and no blocking findings are present. Informational notes and
+// advisory warnings never block merge.
 func (e Evidence) AllGatesPass() bool {
 	return e.BuildPass && e.TestPass && e.LintPass &&
 		e.ScopeClean && e.ProtectedClean && e.ReviewPass &&
-		len(e.Warnings) == 0
+		len(e.Findings) == 0
 }
 
 // FailedGates returns human-readable list of which gates failed.
@@ -96,7 +108,7 @@ func (e Evidence) FailedGates() []string {
 	if !e.ScopeClean     { failed = append(failed, "scope") }
 	if !e.ProtectedClean { failed = append(failed, "protected-files") }
 	if !e.ReviewPass     { failed = append(failed, "cross-model-review") }
-	if len(e.Warnings) > 0 { failed = append(failed, fmt.Sprintf("warnings(%d)", len(e.Warnings))) }
+	if len(e.Findings) > 0 { failed = append(failed, fmt.Sprintf("findings(%d)", len(e.Findings))) }
 	return failed
 }
 

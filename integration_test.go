@@ -826,8 +826,8 @@ func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
 	}
 }
 
-func TestAllGatesPass_RejectsWarnings(t *testing.T) {
-	// Evidence with all gates passing but with warnings should NOT pass
+func TestAllGatesPass_RejectsFindings(t *testing.T) {
+	// Evidence with all gates passing but with findings should NOT pass
 	ev := taskstate.Evidence{
 		BuildPass:      true,
 		TestPass:       true,
@@ -835,16 +835,22 @@ func TestAllGatesPass_RejectsWarnings(t *testing.T) {
 		ScopeClean:     true,
 		ProtectedClean: true,
 		ReviewPass:     true,
-		Warnings:       []string{"gitignored files present"},
+		Findings:       []string{"gitignored files present"},
 	}
 	if ev.AllGatesPass() {
-		t.Error("AllGatesPass should return false when warnings are present")
+		t.Error("AllGatesPass should return false when findings are present")
 	}
 
-	// Same evidence without warnings should pass
-	ev.Warnings = nil
+	// Same evidence without findings should pass
+	ev.Findings = nil
 	if !ev.AllGatesPass() {
-		t.Error("AllGatesPass should return true with no warnings and all gates passing")
+		t.Error("AllGatesPass should return true with no findings and all gates passing")
+	}
+
+	// Warnings (advisory) should NOT block merge
+	ev.Warnings = []string{"advisory note"}
+	if !ev.AllGatesPass() {
+		t.Error("AllGatesPass should return true even when advisory warnings are present")
 	}
 }
 

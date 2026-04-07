@@ -57,10 +57,33 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Create the tool registry
 	toolRegistry := tools.NewRegistry(spec.WorktreeDir)
-	toolDefs := toolRegistry.Definitions()
+	allDefs := toolRegistry.Definitions()
+
+	// Filter tools based on phase restrictions.
+	writableTools := map[string]bool{
+		"edit_file":  true,
+		"write_file": true,
+		"bash":       true, // bash can write; restricted in read-only mode
+	}
+	var toolDefs []provider.ToolDef
+	for _, td := range allDefs {
+		if spec.Phase.ReadOnly && writableTools[td.Name] {
+			continue // exclude write-capable tools in read-only mode
+		}
+		toolDefs = append(toolDefs, td)
+	}
+
+	// Build allowed tool set for handler enforcement.
+	allowedTools := make(map[string]bool, len(toolDefs))
+	for _, td := range toolDefs {
+		allowedTools[td.Name] = true
+	}
 
 	// Create the tool handler that bridges tools.Registry → agentloop.ToolHandler
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
+		if !allowedTools[name] {
+			return "", fmt.Errorf("tool %q not allowed in phase %q (read_only=%v)", name, spec.Phase.Name, spec.Phase.ReadOnly)
+		}
 		return toolRegistry.Handle(ctx, name, input)
 	}
 

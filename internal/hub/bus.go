@@ -72,9 +72,19 @@ func New() *Bus {
 }
 
 // Register adds a subscriber to the bus. Thread-safe.
+// If a subscriber with the same ID is already registered, the call is a no-op.
+// This prevents duplicate registrations when app.New() is called multiple times
+// with a shared bus in multi-task builds.
 func (b *Bus) Register(sub Subscriber) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// Dedup by subscriber ID.
+	if sub.ID != "" {
+		if _, exists := b.breakers[sub.ID]; exists {
+			return
+		}
+	}
 
 	sub.enabled = true
 	if sub.Priority == 0 {

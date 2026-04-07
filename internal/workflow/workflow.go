@@ -695,7 +695,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 					}
 				}
 				if len(blameNotes) > 0 {
-					evidence.Warnings = append(evidence.Warnings, "blame: "+strings.Join(blameNotes, "; "))
+					evidence.Notes = append(evidence.Notes, "blame: "+strings.Join(blameNotes, "; "))
 				}
 			}
 
@@ -716,7 +716,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				c := critic.New(criticCfg)
 					verdict := c.Review(changes)
 					if !verdict.Pass {
-						evidence.Warnings = append(evidence.Warnings, "critic: "+verdict.Summary)
+						evidence.Notes = append(evidence.Notes, "critic: "+verdict.Summary)
 						for _, finding := range verdict.Findings {
 							if finding.Severity == critic.SeverityBlock {
 								evidence.ReviewPass = false
@@ -735,7 +735,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			// may depend on them. FAIL CLOSED: if the verified environment
 			// includes files that can't ship, the verification is invalid.
 			if ignored := worktree.IgnoredNewFiles(ctx, handle); len(ignored) > 0 {
-				evidence.Warnings = append(evidence.Warnings,
+				evidence.Findings = append(evidence.Findings,
 					fmt.Sprintf("agent created %d gitignored file(s) not in merge: %v", len(ignored), ignored))
 				e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
 				e.Worktrees.Cleanup(ctx, handle)
@@ -865,7 +865,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 							"score", convReport.Score,
 							"convergence_retry", convergenceRetries,
 							"max_convergence_retries", maxConvergenceRetries)
-						evidence.Warnings = append(evidence.Warnings, "convergence: "+convFindings.String())
+						evidence.Findings = append(evidence.Findings, "convergence: "+convFindings.String())
 
 						convergenceRetries++
 						if convergenceRetries > maxConvergenceRetries {
@@ -877,6 +877,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 
 						// Inject findings into retry context WITHOUT consuming the main attempt budget.
 						e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, evidence)
+
+						// Transition back through the state machine for a clean retry.
+						// Reviewed -> Claimed is the convergence retry path.
+						_ = e.advanceState(taskstate.Claimed, "convergence retry: "+convFindings.String())
+
 						lastFailure = &failure.Analysis{
 							Class:     failure.Incomplete,
 							Summary:   convFindings.String(),
@@ -1563,10 +1568,26 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 		return "mock", e.RunnerOverride
 	}
 
-	// If RunnerMode is explicitly "native" and the native runner is available,
-	// use it for all phases (no CLI subprocess needed).
-	if e.RunnerMode == "native" && e.Runners.Native != nil {
-		return string(model.ProviderNative), e.Runners.Native
+	// Honor explicit runner mode selection.
+	switch e.RunnerMode {
+	case "native":
+		if e.Runners.Native != nil {
+			return string(model.ProviderNative), e.Runners.Native
+		}
+		// Fall through to default routing if native isn't available.
+	case "codex":
+		if e.Runners.Codex != nil {
+			if phase == "plan" {
+				// Codex doesn't plan well — use Claude for planning, Codex for execution.
+				return string(model.ProviderClaude), e.Runners.Claude
+			}
+			return string(model.ProviderCodex), e.Runners.Codex
+		}
+		// Fall through to default routing if codex isn't available.
+	case "hybrid":
+		// Hybrid = Claude for planning, Codex for execution, cross-model review.
+		// This is the default model.Resolve() behavior when both runners exist,
+		// so we fall through to the standard routing below.
 	}
 
 	if phase == "plan" {
@@ -1836,10 +1857,16 @@ func slugFromTask(task string) string {
 }
 
 // emitEvent sends an event to the hub bus if configured. Nil-safe.
-func (e Engine) emitEvent(ctx context.Context, ev *hub.Event) {
+// Returns the hub's decision (Allow/Deny/Abstain). If no bus is configured,
+// returns Allow.
+func (e Engine) emitEvent(ctx context.Context, ev *hub.Event) hub.Decision {
 	if e.EventBus != nil {
-		e.EventBus.Emit(ctx, ev)
+		resp := e.EventBus.Emit(ctx, ev)
+		if resp != nil {
+			return resp.Decision
+		}
 	}
+	return hub.Allow
 }
 
 // emitEventAsync sends an event asynchronously if configured. Nil-safe.

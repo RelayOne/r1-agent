@@ -164,7 +164,10 @@ func (r *Registry) handleRead(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	path := r.resolvePath(args.Path)
+	path, pathErr := r.resolvePath(args.Path)
+	if pathErr != nil {
+		return "", pathErr
+	}
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("cannot read %s: %w", args.Path, err)
@@ -216,7 +219,10 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	path := r.resolvePath(args.Path)
+	path, pathErr := r.resolvePath(args.Path)
+	if pathErr != nil {
+		return "", pathErr
+	}
 
 	// Guard: must have read file first
 	if _, ok := r.readFiles.Load(path); !ok {
@@ -259,7 +265,10 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
-	path := r.resolvePath(args.Path)
+	path, pathErr := r.resolvePath(args.Path)
+	if pathErr != nil {
+		return "", pathErr
+	}
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(path)
@@ -342,7 +351,11 @@ func (r *Registry) handleGrep(ctx context.Context, input json.RawMessage) (strin
 
 	searchPath := r.workDir
 	if args.Path != "" {
-		searchPath = r.resolvePath(args.Path)
+		var pathErr error
+		searchPath, pathErr = r.resolvePath(args.Path)
+		if pathErr != nil {
+			return "", pathErr
+		}
 	}
 	rgArgs = append(rgArgs, searchPath)
 
@@ -381,7 +394,11 @@ func (r *Registry) handleGlob(input json.RawMessage) (string, error) {
 
 	base := r.workDir
 	if args.Path != "" {
-		base = r.resolvePath(args.Path)
+		var pathErr error
+		base, pathErr = r.resolvePath(args.Path)
+		if pathErr != nil {
+			return "", pathErr
+		}
 	}
 
 	pattern := filepath.Join(base, args.Pattern)
@@ -408,11 +425,23 @@ func (r *Registry) handleGlob(input json.RawMessage) (string, error) {
 
 // --- Helpers ---
 
-func (r *Registry) resolvePath(path string) string {
+// resolvePath resolves a path relative to workDir and ensures it stays within
+// the workDir boundary. Absolute paths are rejected unless they are under workDir.
+func (r *Registry) resolvePath(path string) (string, error) {
+	var resolved string
 	if filepath.IsAbs(path) {
-		return path
+		resolved = filepath.Clean(path)
+	} else {
+		resolved = filepath.Join(r.workDir, path)
 	}
-	return filepath.Join(r.workDir, path)
+	resolved = filepath.Clean(resolved)
+
+	// Ensure the resolved path is within workDir (path confinement).
+	workDirClean := filepath.Clean(r.workDir)
+	if !strings.HasPrefix(resolved, workDirClean+string(filepath.Separator)) && resolved != workDirClean {
+		return "", fmt.Errorf("path %q escapes working directory %q", path, workDirClean)
+	}
+	return resolved, nil
 }
 
 func mustJSON(v interface{}) json.RawMessage {
