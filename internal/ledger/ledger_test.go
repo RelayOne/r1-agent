@@ -488,9 +488,9 @@ func TestWalkFiltersByEdgeType(t *testing.T) {
 	l := newTestLedger(t)
 	ctx := context.Background()
 
-	id1, _ := l.AddNode(ctx, makeNode("decision", "root", "s1"))
-	id2, _ := l.AddNode(ctx, makeNode("decision", "dep", "s1"))
-	id3, _ := l.AddNode(ctx, makeNode("decision", "ref", "s1"))
+	id1, _ := l.AddNode(ctx, makeNode("task", "root", "s1"))
+	id2, _ := l.AddNode(ctx, makeNode("task", "dep", "s1"))
+	id3, _ := l.AddNode(ctx, makeNode("task", "ref", "s1"))
 
 	l.AddEdge(ctx, Edge{From: id1, To: id2, Type: EdgeDependsOn})
 	l.AddEdge(ctx, Edge{From: id1, To: id3, Type: EdgeReferences})
@@ -678,9 +678,9 @@ func TestStoreEdgePersistsToDisk(t *testing.T) {
 
 	id1, _ := l.AddNode(ctx, makeNode("decision", "a", "s1"))
 	id2, _ := l.AddNode(ctx, makeNode("decision", "b", "s1"))
-	l.AddEdge(ctx, Edge{From: id1, To: id2, Type: EdgeExtends})
+	l.AddEdge(ctx, Edge{From: id1, To: id2, Type: EdgeReferences})
 
-	filename := id1 + "-" + id2 + "-" + string(EdgeExtends) + ".json"
+	filename := id1 + "-" + id2 + "-" + string(EdgeReferences) + ".json"
 	path := filepath.Join(l.rootDir, "edges", filename)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatalf("edge file not found at %s", path)
@@ -700,11 +700,17 @@ func TestAllEdgeTypesAccepted(t *testing.T) {
 
 	for _, et := range types {
 		var fromType, toType string
-		if et == EdgeDistills {
-			// distills edges must go from decision_internal to decision_repo.
+		switch et {
+		case EdgeDistills:
 			fromType = "decision_internal"
 			toType = "decision_repo"
-		} else {
+		case EdgeContradicts:
+			fromType = "decision_internal"
+			toType = "decision_internal"
+		case EdgeResolves:
+			fromType = "agree"
+			toType = "draft"
+		default:
 			fromType = "task"
 			toType = "task"
 		}
@@ -891,5 +897,142 @@ func TestAddEdgeAllowsDistillsInternalToRepo(t *testing.T) {
 	err := l.AddEdge(ctx, Edge{From: internalID, To: repoID, Type: EdgeDistills})
 	if err != nil {
 		t.Fatalf("expected success for distills internal to repo, got: %v", err)
+	}
+}
+
+// --- Fix #17: Edge-type-to-node-type matrix validation ---
+
+func TestEdgeMatrixAllowedCombinations(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		fromType string
+		toType   string
+		edgeType EdgeType
+	}{
+		{"supersedes_same_type", "task", "task", EdgeSupersedes},
+		{"depends_on_task_task", "task", "task", EdgeDependsOn},
+		{"references_any_any", "skill", "draft", EdgeReferences},
+		{"contradicts_decision", "decision_internal", "decision_internal", EdgeContradicts},
+		{"contradicts_draft", "draft", "draft", EdgeContradicts},
+		{"extends_task", "task", "task", EdgeExtends},
+		{"extends_skill", "skill", "skill", EdgeExtends},
+		{"resolves_directive_escalation", "stakeholder_directive", "escalation", EdgeResolves},
+		{"resolves_agree_draft", "agree", "draft", EdgeResolves},
+		{"distills_internal_repo", "decision_internal", "decision_repo", EdgeDistills},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fromID, _ := l.AddNode(ctx, makeNode(tc.fromType, "from-"+tc.name, "s1"))
+			toID, _ := l.AddNode(ctx, makeNode(tc.toType, "to-"+tc.name, "s1"))
+			err := l.AddEdge(ctx, Edge{From: fromID, To: toID, Type: tc.edgeType})
+			if err != nil {
+				t.Fatalf("expected allowed, got error: %v", err)
+			}
+		})
+	}
+}
+
+func TestEdgeMatrixDisallowedCombinations(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		fromType string
+		toType   string
+		edgeType EdgeType
+		errSub   string // substring expected in error
+	}{
+		{
+			name:     "depends_on_decision_not_task",
+			fromType: "decision_internal", toType: "decision_internal",
+			edgeType: EdgeDependsOn,
+			errSub:   "not allowed",
+		},
+		{
+			name:     "supersedes_different_types",
+			fromType: "task", toType: "draft",
+			edgeType: EdgeSupersedes,
+			errSub:   "same node types",
+		},
+		{
+			name:     "distills_wrong_direction",
+			fromType: "decision_repo", toType: "decision_internal",
+			edgeType: EdgeDistills,
+			errSub:   "directionality violation", // caught by directionality check first
+		},
+		{
+			name:     "distills_non_decision",
+			fromType: "task", toType: "task",
+			edgeType: EdgeDistills,
+			errSub:   "not allowed",
+		},
+		{
+			name:     "extends_decision_not_allowed",
+			fromType: "decision_internal", toType: "decision_internal",
+			edgeType: EdgeExtends,
+			errSub:   "not allowed",
+		},
+		{
+			name:     "contradicts_task_not_allowed",
+			fromType: "task", toType: "task",
+			edgeType: EdgeContradicts,
+			errSub:   "not allowed",
+		},
+		{
+			name:     "resolves_task_task",
+			fromType: "task", toType: "task",
+			edgeType: EdgeResolves,
+			errSub:   "not allowed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fromID, _ := l.AddNode(ctx, makeNode(tc.fromType, "from-"+tc.name, "s1"))
+			toID, _ := l.AddNode(ctx, makeNode(tc.toType, "to-"+tc.name, "s1"))
+			err := l.AddEdge(ctx, Edge{From: fromID, To: toID, Type: tc.edgeType})
+			if err == nil {
+				t.Fatalf("expected error for disallowed combination %s(%s -> %s)", tc.edgeType, tc.fromType, tc.toType)
+			}
+			if !strings.Contains(err.Error(), tc.errSub) {
+				t.Fatalf("expected error containing %q, got: %v", tc.errSub, err)
+			}
+		})
+	}
+}
+
+func TestEdgeMatrixValidateFunction(t *testing.T) {
+	// Unit test the validateEdgeMatrix function directly.
+	cases := []struct {
+		edge     EdgeType
+		from, to string
+		wantErr  bool
+	}{
+		{EdgeSupersedes, "task", "task", false},
+		{EdgeSupersedes, "draft", "draft", false},
+		{EdgeSupersedes, "task", "draft", true},
+		{EdgeDependsOn, "task", "task", false},
+		{EdgeDependsOn, "skill", "skill", true},
+		{EdgeReferences, "anything", "else", false},
+		{EdgeDistills, "decision_internal", "decision_repo", false},
+		{EdgeDistills, "decision_repo", "decision_internal", true},
+		{EdgeContradicts, "draft", "draft", false},
+		{EdgeContradicts, "task", "task", true},
+		{EdgeExtends, "skill", "skill", false},
+		{EdgeExtends, "decision_internal", "task", true},
+		{EdgeResolves, "agree", "draft", false},
+		{EdgeResolves, "task", "task", true},
+	}
+	for _, tc := range cases {
+		err := validateEdgeMatrix(tc.edge, tc.from, tc.to)
+		if tc.wantErr && err == nil {
+			t.Errorf("validateEdgeMatrix(%s, %s, %s): expected error", tc.edge, tc.from, tc.to)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("validateEdgeMatrix(%s, %s, %s): unexpected error: %v", tc.edge, tc.from, tc.to, err)
+		}
 	}
 }

@@ -209,11 +209,9 @@ func (l *Ledger) AddEdge(_ context.Context, edge Edge) error {
 		return fmt.Errorf("ledger: directionality violation: decision_repo %q cannot have edge to decision_internal %q", edge.From, edge.To)
 	}
 
-	// distills edges must go from decision_internal to decision_repo.
-	if edge.Type == EdgeDistills {
-		if fromNode.Type != "decision_internal" || toNode.Type != "decision_repo" {
-			return fmt.Errorf("ledger: distills edges must go from decision_internal to decision_repo; got %s -> %s", fromNode.Type, toNode.Type)
-		}
+	// Validate edge-type-to-node-type combinations via the matrix.
+	if err := validateEdgeMatrix(edge.Type, fromNode.Type, toNode.Type); err != nil {
+		return err
 	}
 
 	if err := l.store.WriteEdge(edge); err != nil {
@@ -227,8 +225,8 @@ func (l *Ledger) AddEdge(_ context.Context, edge Edge) error {
 
 // Get retrieves a node by ID directly from the store.
 func (l *Ledger) Get(_ context.Context, id NodeID) (*Node, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	// No mutex needed for reads — nodes are immutable once written,
+	// so ReadNode is safe without holding the lock.
 	n, err := l.store.ReadNode(id)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: get %q: %w", id, err)
@@ -238,10 +236,12 @@ func (l *Ledger) Get(_ context.Context, id NodeID) (*Node, error) {
 
 // Query performs a read-only search by the given filter criteria.
 func (l *Ledger) Query(_ context.Context, filter QueryFilter) ([]Node, error) {
+	// Hold the lock only for the index query; release before filesystem reads
+	// to avoid serializing all reads through the mutex.
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	ids, err := l.index.QueryNodes(filter)
+	l.mu.Unlock()
+
 	if err != nil {
 		return nil, fmt.Errorf("ledger: query index: %w", err)
 	}
@@ -299,6 +299,11 @@ func (l *Ledger) resolveUnlocked(id NodeID) (*Node, error) {
 // Walk traverses the graph starting from id, following edges of the specified
 // types in the given direction, returning all reachable nodes.
 func (l *Ledger) Walk(_ context.Context, id NodeID, direction WalkDirection, edgeTypes []EdgeType) ([]Node, error) {
+	// Walk holds the lock for the full traversal because each iteration
+	// interleaves index queries (EdgesFrom/EdgesTo) with store reads.
+	// Splitting the lock would require collecting all reachable IDs first,
+	// which would need a separate index-only walk. Acceptable since walks
+	// are infrequent compared to point queries.
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
