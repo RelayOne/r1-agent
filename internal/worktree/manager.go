@@ -150,6 +150,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	defer cancel()
 
 	// Validate with merge-tree first (zero side effects, Git 2.38+)
+	var conflicts []conflictres.Conflict // hoisted for use in merge fallback
 	validateCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch)
 	validateCmd.Dir = m.RepoRoot
 	if out, err := validateCmd.CombinedOutput(); err != nil {
@@ -158,7 +159,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		}
 		// Attempt semantic conflict resolution before failing.
 		mergeOutput := strings.TrimSpace(string(out))
-		conflicts := conflictres.Parse(mergeOutput, "")
+		conflicts = conflictres.Parse(mergeOutput, "")
 		if len(conflicts) > 0 {
 			conflictres.AutoResolve(conflicts)
 			// Count how many remain unresolved.
@@ -187,11 +188,78 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		if mergeCtx.Err() != nil {
 			return fmt.Errorf("git merge timed out after %v", mergeTimeout)
 		}
-		return fmt.Errorf("git merge: %w: %s", err, string(out))
+		// If we previously auto-resolved all conflicts via merge-tree,
+		// apply the resolutions to the working tree and complete the merge.
+		if len(conflicts) > 0 && m.allAutoResolved(conflicts) {
+			if applyErr := m.applyConflictResolutions(mergeCtx, handle, conflicts); applyErr != nil {
+				// Abort the conflicted merge state before returning.
+				abortCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--abort")
+				abortCmd.Dir = m.RepoRoot
+				_ = abortCmd.Run()
+				return fmt.Errorf("git merge conflict auto-resolution failed: %w (original: %s)", applyErr, string(out))
+			}
+		} else {
+			return fmt.Errorf("git merge: %w: %s", err, string(out))
+		}
 	}
 
 	// Clean up worktree and branch after successful merge
 	m.Cleanup(ctx, handle)
+	return nil
+}
+
+// allAutoResolved returns true if every conflict in the slice was auto-resolved.
+func (m *Manager) allAutoResolved(conflicts []conflictres.Conflict) bool {
+	for _, c := range conflicts {
+		if !c.AutoResolved {
+			return false
+		}
+	}
+	return len(conflicts) > 0
+}
+
+// applyConflictResolutions reads each conflicted file from the working tree
+// (which contains git conflict markers after a failed merge), applies the
+// auto-resolved content via conflictres.Resolve, writes the file back,
+// stages it, and commits the merge.
+func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, conflicts []conflictres.Conflict) error {
+	// Group conflicts by file.
+	byFile := make(map[string][]conflictres.Conflict)
+	for _, c := range conflicts {
+		byFile[c.File] = append(byFile[c.File], c)
+	}
+
+	for file, fileConflicts := range byFile {
+		filePath := filepath.Join(m.RepoRoot, file)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read conflicted file %s: %w", file, err)
+		}
+
+		res := conflictres.Resolve(string(content), fileConflicts)
+		if !res.AllAuto {
+			return fmt.Errorf("file %s has unresolved conflicts after apply", file)
+		}
+
+		if err := os.WriteFile(filePath, []byte(res.Resolved), 0644); err != nil {
+			return fmt.Errorf("write resolved file %s: %w", file, err)
+		}
+
+		// Stage the resolved file.
+		addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file)
+		addCmd.Dir = m.RepoRoot
+		if out, err := addCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git add %s: %w: %s", file, err, string(out))
+		}
+	}
+
+	// Complete the merge commit.
+	commitCmd := exec.CommandContext(ctx, m.GitBinary, "commit", "--no-edit")
+	commitCmd.Dir = m.RepoRoot
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit (merge): %w: %s", err, string(out))
+	}
+
 	return nil
 }
 
