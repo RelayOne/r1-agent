@@ -2803,10 +2803,17 @@ func launchREPL() {
 	r.Run()
 }
 
-// markTask updates a task's status in the plan (for session persistence).
-// extractVerifyMetrics counts test pass/fail from verification outcomes
-// and returns (testsPassed, testsFailed, diffLines). DiffLines is approximated
-// from the number of changed files (1 file ≈ 50 lines as rough proxy).
+// extractVerifyMetrics extracts suite-level test pass/fail and diff size
+// from verification outcomes. Returns (testsPassed, testsFailed, diffLines).
+//
+// NOTE: These are suite-level signals (0 or 1), not individual test counts,
+// because verify.Outcome only carries a boolean Success per step. The specexec
+// scorer treats these as "suite passed" vs "suite failed" — a 1000-test suite
+// and a 1-test suite both score the same. This is intentional: the scorer's
+// job is to pick the best strategy, not to measure test quality.
+//
+// DiffLines is estimated from the number of changed files. This is a coarse
+// proxy; a proper implementation would parse `git diff --stat` output.
 func extractVerifyMetrics(outcomes []verify.Outcome, filesChanged []string) (int, int, int) {
 	passed, failed := 0, 0
 	for _, o := range outcomes {
@@ -2821,11 +2828,13 @@ func extractVerifyMetrics(outcomes []verify.Outcome, filesChanged []string) (int
 			}
 		}
 	}
-	// Rough diff size proxy: count of changed files × 50 lines each.
-	// Zero if no files changed (e.g. plan-only mode).
+	// Estimate diff size from file count. This is intentionally rough —
+	// strategies that produce any files outrank plan-only strategies (0 files).
 	diffLines := len(filesChanged) * 50
 	return passed, failed, diffLines
 }
+
+// markTask updates a task's status in the plan (for session persistence).
 
 func markTask(p *plan.Plan, taskID string, status plan.Status) {
 	for i := range p.Tasks {

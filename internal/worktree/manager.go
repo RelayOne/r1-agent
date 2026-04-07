@@ -190,7 +190,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		}
 		// If we previously auto-resolved all conflicts via merge-tree,
 		// apply the resolutions to the working tree and complete the merge.
-		if len(conflicts) > 0 && m.allAutoResolved(conflicts) {
+		if len(conflicts) > 0 && allAutoResolved(conflicts) {
 			if applyErr := m.applyConflictResolutions(mergeCtx, handle, conflicts); applyErr != nil {
 				// Abort the conflicted merge state before returning.
 				abortCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--abort")
@@ -209,7 +209,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 }
 
 // allAutoResolved returns true if every conflict in the slice was auto-resolved.
-func (m *Manager) allAutoResolved(conflicts []conflictres.Conflict) bool {
+func allAutoResolved(conflicts []conflictres.Conflict) bool {
 	for _, c := range conflicts {
 		if !c.AutoResolved {
 			return false
@@ -222,6 +222,12 @@ func (m *Manager) allAutoResolved(conflicts []conflictres.Conflict) bool {
 // (which contains git conflict markers after a failed merge), applies the
 // auto-resolved content via conflictres.Resolve, writes the file back,
 // stages it, and commits the merge.
+//
+// SAFETY: merge-tree and git-merge use different merge strategies, so the
+// conflicts detected by merge-tree may not exactly match those in the working
+// tree. This method guards against mismatch by verifying that each file
+// actually contains conflict markers before applying resolutions. Files
+// without markers are staged as-is (git may have resolved them differently).
 func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, conflicts []conflictres.Conflict) error {
 	// Group conflicts by file.
 	byFile := make(map[string][]conflictres.Conflict)
@@ -236,7 +242,23 @@ func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, c
 			return fmt.Errorf("read conflicted file %s: %w", file, err)
 		}
 
-		res := conflictres.Resolve(string(content), fileConflicts)
+		contentStr := string(content)
+
+		// Guard: only apply resolutions if the file actually has conflict markers.
+		// merge-tree and git-merge use different strategies, so a file that
+		// merge-tree flagged as conflicted may have been cleanly merged by git.
+		// Applying Resolve() to a file without markers would corrupt it.
+		if !strings.Contains(contentStr, "<<<<<<<") {
+			// No conflict markers — git resolved this file on its own. Stage it.
+			addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file)
+			addCmd.Dir = m.RepoRoot
+			if out, addErr := addCmd.CombinedOutput(); addErr != nil {
+				return fmt.Errorf("git add %s: %w: %s", file, addErr, string(out))
+			}
+			continue
+		}
+
+		res := conflictres.Resolve(contentStr, fileConflicts)
 		if !res.AllAuto {
 			return fmt.Errorf("file %s has unresolved conflicts after apply", file)
 		}

@@ -256,6 +256,52 @@ func TestHandleUnknownTool(t *testing.T) {
 	}
 }
 
+func TestPathConfinement(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRegistry(dir)
+
+	// Relative path that escapes workDir
+	_, err := r.resolvePath("../../etc/passwd")
+	if err == nil {
+		t.Error("should reject relative path traversal escaping workDir")
+	}
+
+	// Absolute path outside workDir
+	_, err = r.resolvePath("/etc/passwd")
+	if err == nil {
+		t.Error("should reject absolute path outside workDir")
+	}
+
+	// Valid relative path within workDir
+	resolved, err := r.resolvePath("subdir/file.go")
+	if err != nil {
+		t.Fatalf("should accept valid relative path: %v", err)
+	}
+	expected := filepath.Join(dir, "subdir/file.go")
+	if resolved != expected {
+		t.Errorf("resolved=%q, want %q", resolved, expected)
+	}
+
+	// WorkDir itself is valid
+	resolved, err = r.resolvePath(".")
+	if err != nil {
+		t.Fatalf("should accept workDir itself: %v", err)
+	}
+	if resolved != filepath.Clean(dir) {
+		t.Errorf("resolved=%q, want %q", resolved, filepath.Clean(dir))
+	}
+
+	// Tools reject escaped paths at the handler level
+	_, err = r.Handle(context.Background(), "read_file",
+		toJSON(map[string]string{"path": "../../etc/passwd"}))
+	if err == nil {
+		t.Error("read_file should reject path escaping workDir")
+	}
+	if !strings.Contains(err.Error(), "escapes working directory") {
+		t.Errorf("error should mention escaping: %v", err)
+	}
+}
+
 func toJSON(v interface{}) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
