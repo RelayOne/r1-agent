@@ -10,7 +10,7 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (104 internal + 1 cmd)
+## Package map (126 internal + 1 cmd)
 
 ```
 cmd/stoke/main.go                 20 commands. --roi, --sqlite, --interactive, --specexec flags.
@@ -23,8 +23,24 @@ ledger/nodes/                      22 node type structs with NodeTyper interface
 ledger/loops/                      7-state consensus loop tracker
 bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
 supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
+supervisor/manifests/              Rule set manifests per supervisor tier (mission, branch)
+supervisor/rules/consensus/        Consensus rules (review, dissent, convergence, timeout)
+supervisor/rules/cross_team/       Cross-team coordination rules
+supervisor/rules/drift/            Drift detection rules
+supervisor/rules/hierarchy/        Hierarchy enforcement rules
+supervisor/rules/research/         Research lifecycle rules
+supervisor/rules/sdm/              SDM advisory rules
+supervisor/rules/skill/            Skill lifecycle rules
+supervisor/rules/snapshot/         Snapshot protection rules
+supervisor/rules/trust/            Trust verification rules (second-opinion gates)
 concern/                           Per-stance context projection (10 sections, 9 role templates)
+concern/sections/                  Ledger-backed section renderers for concern field projection
+concern/templates/                 Role-specific concern field templates (CTO, Dev, Reviewer)
 harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
+harness/models/                    Model provider interface and mock for stance workers
+harness/prompts/                   System prompt templates per stance role
+harness/stances/                   Stance definitions (CTO, Dev, Reviewer, PO) with system prompts
+harness/tools/                     Tool authorization model for stance workers
 snapshot/                          Protected baseline manifest (file paths + content hashes)
 wizard/                            First-time config with presets (minimal/balanced/strict)
 skillmfr/                          Skill manufacturing pipeline (4 workflows, confidence ladder)
@@ -32,7 +48,11 @@ bench/                             Golden mission benchmarking with regression d
 bridge/                            V1→V2 bridge adapters (cost, verify, wisdom, audit → bus+ledger)
 
 --- CORE WORKFLOW ---
+agentloop/                         Native agentic tool-use loop via Anthropic Messages API (caching, parallel tools)
 app/                               Orchestrator: config + engines + worktree + verify + OnEvent + auto-detect
+hub/                               Typed event hub with subscriber hooks (lifecycle, tool, cost events)
+hub/builtin/                       Built-in hub subscribers (honesty gate, cost tracker)
+mission/                           Mission lifecycle runner with convergence loop and phase handlers
 workflow/                          Phase machine: plan -> execute+verify retry loop, scope, review, merge
 engine/                            Claude/Codex CLI runners: process groups, streaming, 3-tier timeouts
 orchestrate/                       Mission execution pipeline integrator
@@ -44,6 +64,7 @@ taskstate/                         Anti-deception task state: phase transitions,
 interview/                         Socratic clarification phase before task execution
 intent/                            Intent classification and verbalization gate
 conversation/                      Multi-turn conversation state management
+skillselect/                       Tech stack auto-detection and skill mapping from repo structure
 
 --- CODE ANALYSIS ---
 goast/                             Go AST-based code analysis and extraction
@@ -83,6 +104,7 @@ patchapply/                        Unified diff parsing/application with fuzzy m
 extract/                           Structured content parsing from LLM output
 autofix/                           Auto-lint-and-fix iterative improvement loop
 conflictres/                       Smart merge conflict resolution with semantics
+tools/                             Cascading str_replace algorithm (exact, whitespace, ellipsis, fuzzy)
 
 --- AGENT BEHAVIOR ---
 boulder/                           Idle detection and continuation enforcement
