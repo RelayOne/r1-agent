@@ -152,6 +152,30 @@ func TestDefaultScorer(t *testing.T) {
 	}
 }
 
+func TestDefaultScorerPartialCreditForMissingData(t *testing.T) {
+	// Outcome with real test data should outscore one without
+	withTests := DefaultScorer(Outcome{
+		Success:     true,
+		TestsPassed: 10,
+		DiffLines:   50,
+		Duration:    30 * time.Second,
+	})
+	withoutTests := DefaultScorer(Outcome{
+		Success:  true,
+		Duration: 30 * time.Second,
+	})
+	if withTests <= withoutTests {
+		t.Errorf("outcome with test data (%.3f) should outscore one without (%.3f)", withTests, withoutTests)
+	}
+
+	// Two outcomes without data should still differentiate on duration
+	fast := DefaultScorer(Outcome{Success: true, Duration: 10 * time.Second})
+	slow := DefaultScorer(Outcome{Success: true, Duration: 300 * time.Second})
+	if fast <= slow {
+		t.Errorf("faster (%.3f) should outscore slower (%.3f) when other signals are absent", fast, slow)
+	}
+}
+
 func TestExtractInsights(t *testing.T) {
 	result := &Result{
 		Outcomes: []Outcome{

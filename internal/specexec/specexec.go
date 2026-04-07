@@ -69,6 +69,8 @@ type Result struct {
 }
 
 // DefaultScorer weights test results, diff size, and duration.
+// When test/diff data is absent (zero values), partial credit is awarded
+// so that strategies with real signals can differentiate from ones without.
 func DefaultScorer(o Outcome) float64 {
 	if !o.Success {
 		return 0
@@ -80,7 +82,9 @@ func DefaultScorer(o Outcome) float64 {
 	if total > 0 {
 		score += 0.6 * float64(o.TestsPassed) / float64(total)
 	} else {
-		score += 0.6 // no tests = assume pass
+		// No test data: award half credit instead of full.
+		// Strategies that ran tests and passed will outrank plan-only ones.
+		score += 0.3
 	}
 
 	// Smaller diffs preferred (20% weight)
@@ -89,7 +93,8 @@ func DefaultScorer(o Outcome) float64 {
 		diffScore := 100.0 / (100.0 + float64(o.DiffLines))
 		score += 0.2 * diffScore
 	} else {
-		score += 0.2
+		// No diff data: award half credit.
+		score += 0.1
 	}
 
 	// Faster preferred (20% weight)
@@ -98,7 +103,7 @@ func DefaultScorer(o Outcome) float64 {
 		speedScore := 30.0 / (30.0 + o.Duration.Seconds())
 		score += 0.2 * speedScore
 	} else {
-		score += 0.2
+		score += 0.1
 	}
 
 	return score

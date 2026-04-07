@@ -362,7 +362,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			}
 			markTask(p, task.ID, plan.StatusFailed)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
-			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+			tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
+			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
 		}
 
 		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, attemptNum)
@@ -380,7 +381,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		estimator.Complete(task.ID)
 		markTask(p, task.ID, plan.StatusDone)
 		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
-		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
+		tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
+		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
 	}
 
 	// Optionally wrap with speculative parallel execution
@@ -2802,6 +2804,29 @@ func launchREPL() {
 }
 
 // markTask updates a task's status in the plan (for session persistence).
+// extractVerifyMetrics counts test pass/fail from verification outcomes
+// and returns (testsPassed, testsFailed, diffLines). DiffLines is approximated
+// from the number of changed files (1 file ≈ 50 lines as rough proxy).
+func extractVerifyMetrics(outcomes []verify.Outcome, filesChanged []string) (int, int, int) {
+	passed, failed := 0, 0
+	for _, o := range outcomes {
+		if o.Skipped {
+			continue
+		}
+		if o.Name == "test" {
+			if o.Success {
+				passed = 1
+			} else {
+				failed = 1
+			}
+		}
+	}
+	// Rough diff size proxy: count of changed files × 50 lines each.
+	// Zero if no files changed (e.g. plan-only mode).
+	diffLines := len(filesChanged) * 50
+	return passed, failed, diffLines
+}
+
 func markTask(p *plan.Plan, taskID string, status plan.Status) {
 	for i := range p.Tasks {
 		if p.Tasks[i].ID == taskID {

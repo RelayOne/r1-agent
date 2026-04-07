@@ -20,6 +20,11 @@ type TaskResult struct {
 	CostUSD   float64
 	DurationMs int64
 	Error     error
+
+	// Verification metrics (populated when verify phase runs).
+	TestsPassed int
+	TestsFailed int
+	DiffLines   int
 }
 
 // ExecuteFunc is the callback the scheduler invokes to run one task.
@@ -388,9 +393,12 @@ func WithSpecExec(base ExecuteFunc, cfg SpecExecConfig) ExecuteFunc {
 			result := base(ctx, specTask)
 
 			outcome := specexec.Outcome{
-				StrategyID: strategy.ID,
-				Success:    result.Success,
-				Duration:   time.Since(start),
+				StrategyID:  strategy.ID,
+				Success:     result.Success,
+				Duration:    time.Since(start),
+				TestsPassed: result.TestsPassed,
+				TestsFailed: result.TestsFailed,
+				DiffLines:   result.DiffLines,
 			}
 			if result.Error != nil {
 				outcome.Error = result.Error.Error()
