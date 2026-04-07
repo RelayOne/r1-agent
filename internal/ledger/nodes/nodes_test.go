@@ -206,7 +206,7 @@ func TestDecisionInternalValidate(t *testing.T) {
 		Why:                          "because",
 		WithWhatContext:              "context",
 		AffectsPreviousDecisions:     []string{"dec-i-1"},
-		PreviousContextsAcknowledged: []string{"ack"},
+		PreviousContextsAcknowledged: []string{"The earlier decision to use SQLite was made under the assumption that write throughput would stay below 100 ops/sec. That context still holds."},
 		TaskDAGScope:                 "task-1",
 		LoopRef:                      "loop-1",
 		Version:                      1,
@@ -219,6 +219,79 @@ func TestDecisionInternalValidate(t *testing.T) {
 	bad.PreviousContextsAcknowledged = nil
 	if err := bad.Validate(); err == nil {
 		t.Error("DecisionInternal with mismatched affects/ack lengths should fail")
+	}
+}
+
+func TestDecisionInternalRejectsPlaceholderAcknowledgment(t *testing.T) {
+	d := &DecisionInternal{
+		Who:                          []DecisionParticipant{{StanceRole: "lead", SessionID: "s1"}},
+		What:                         "use approach A",
+		When:                         now,
+		Why:                          "because",
+		WithWhatContext:              "context",
+		AffectsPreviousDecisions:     []string{"dec-i-1"},
+		PreviousContextsAcknowledged: []string{"ack"},
+		TaskDAGScope:                 "task-1",
+		LoopRef:                      "loop-1",
+		Version:                      1,
+	}
+	if err := d.Validate(); err == nil {
+		t.Fatal("expected validation to reject placeholder acknowledgment 'ack'")
+	}
+}
+
+func TestDecisionInternalRejectsShortAcknowledgment(t *testing.T) {
+	d := &DecisionInternal{
+		Who:                          []DecisionParticipant{{StanceRole: "lead", SessionID: "s1"}},
+		What:                         "use approach A",
+		When:                         now,
+		Why:                          "because",
+		WithWhatContext:              "context",
+		AffectsPreviousDecisions:     []string{"dec-i-1"},
+		PreviousContextsAcknowledged: []string{"too short"},
+		TaskDAGScope:                 "task-1",
+		LoopRef:                      "loop-1",
+		Version:                      1,
+	}
+	if err := d.Validate(); err == nil {
+		t.Fatal("expected validation to reject short acknowledgment")
+	}
+}
+
+func TestDecisionInternalAcceptsSubstantiveAcknowledgment(t *testing.T) {
+	d := &DecisionInternal{
+		Who:                          []DecisionParticipant{{StanceRole: "lead", SessionID: "s1"}},
+		What:                         "use approach A",
+		When:                         now,
+		Why:                          "because",
+		WithWhatContext:              "context",
+		AffectsPreviousDecisions:     []string{"dec-i-1"},
+		PreviousContextsAcknowledged: []string{"The earlier decision to use SQLite was made under the assumption that write throughput would stay below 100 ops/sec. That context still holds and the decision remains valid."},
+		TaskDAGScope:                 "task-1",
+		LoopRef:                      "loop-1",
+		Version:                      1,
+	}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("expected substantive acknowledgment to pass, got: %v", err)
+	}
+}
+
+func TestDecisionRepoRejectsPlaceholderAcknowledgment(t *testing.T) {
+	d := &DecisionRepo{
+		Who:                          []DecisionParticipant{{StanceRole: "lead", SessionID: "s1"}},
+		What:                         "use approach A",
+		When:                         now,
+		Why:                          "because",
+		WithWhatContext:              "context",
+		AffectsPreviousDecisions:     []string{"dec-r-1"},
+		PreviousContextsAcknowledged: []string{"acknowledged"},
+		TaskDAGScope:                 "task-1",
+		LoopRef:                      "loop-1",
+		Provenance:                   "stoke_authored",
+		Version:                      1,
+	}
+	if err := d.Validate(); err == nil {
+		t.Fatal("expected validation to reject placeholder acknowledgment for stoke_authored")
 	}
 }
 

@@ -2,8 +2,35 @@ package nodes
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
+
+// minAckLength is the minimum character length for a substantive acknowledgment.
+const minAckLength = 50
+
+// placeholderPatterns are trivially short entries that indicate box-ticking.
+var placeholderPatterns = []string{
+	"ack", "noted", "considered", "n/a", "tbd", "todo",
+	"acknowledged", "reviewed", "ok", "yes", "no",
+}
+
+// validateAcknowledgment checks that an acknowledgment entry is substantive:
+// not empty, not trivially short, and not an obvious placeholder.
+func validateAcknowledgment(idx int, ack string) error {
+	trimmed := strings.TrimSpace(ack)
+	if len(trimmed) < minAckLength {
+		return fmt.Errorf("acknowledgment %d is too short (got %d chars, need at least %d): %q",
+			idx, len(trimmed), minAckLength, trimmed)
+	}
+	lower := strings.ToLower(trimmed)
+	for _, p := range placeholderPatterns {
+		if lower == p {
+			return fmt.Errorf("acknowledgment %d is a placeholder (%q) — write a substantive explanation", idx, trimmed)
+		}
+	}
+	return nil
+}
 
 // DecisionParticipant records a stance that participated in a decision.
 type DecisionParticipant struct {
@@ -58,6 +85,11 @@ func (d *DecisionInternal) Validate() error {
 	}
 	if len(d.AffectsPreviousDecisions) != len(d.PreviousContextsAcknowledged) {
 		return fmt.Errorf("decision_internal: affects_previous_decisions and previous_contexts_acknowledged must have matching lengths")
+	}
+	for i, ack := range d.PreviousContextsAcknowledged {
+		if err := validateAcknowledgment(i, ack); err != nil {
+			return fmt.Errorf("decision_internal: %w", err)
+		}
 	}
 	return nil
 }
@@ -127,6 +159,11 @@ func (d *DecisionRepo) Validate() error {
 		}
 		if len(d.AffectsPreviousDecisions) != len(d.PreviousContextsAcknowledged) {
 			return fmt.Errorf("decision_repo: affects_previous_decisions and previous_contexts_acknowledged must have matching lengths")
+		}
+		for i, ack := range d.PreviousContextsAcknowledged {
+			if err := validateAcknowledgment(i, ack); err != nil {
+				return fmt.Errorf("decision_repo: %w", err)
+			}
 		}
 	}
 	return nil
