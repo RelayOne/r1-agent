@@ -3,6 +3,7 @@ package consensus
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,14 +108,30 @@ func TestDraftRequiresReview_Action(t *testing.T) {
 	}
 
 	var published []bus.Event
+	var mu sync.Mutex
 	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
 		published = append(published, e)
+		mu.Unlock()
 	})
 
 	err = rule.Action(context.Background(), evt, b)
 	if err != nil {
 		t.Fatalf("Action: %v", err)
 	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(published)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Expect spawns for Reviewer and LeadEngineer.
 	if len(published) < 2 {

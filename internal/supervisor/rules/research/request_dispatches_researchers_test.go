@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,8 +47,11 @@ func TestRequestDispatchesResearchers_Action_LowStakes(t *testing.T) {
 	defer b.Close()
 
 	var published []bus.Event
+	var mu sync.Mutex
 	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
 		published = append(published, e)
+		mu.Unlock()
 	})
 
 	rule := NewRequestDispatchesResearchers()
@@ -66,6 +70,19 @@ func TestRequestDispatchesResearchers_Action_LowStakes(t *testing.T) {
 	if err := rule.Action(context.Background(), evt, b); err != nil {
 		t.Fatalf("Action: %v", err)
 	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(published)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Expect: 1 pause + 1 spawn = 2 events
 	if len(published) < 2 {
@@ -88,8 +105,11 @@ func TestRequestDispatchesResearchers_Action_HighStakes(t *testing.T) {
 	defer b.Close()
 
 	var published []bus.Event
+	var mu sync.Mutex
 	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
 		published = append(published, e)
+		mu.Unlock()
 	})
 
 	rule := NewRequestDispatchesResearchers()
@@ -108,6 +128,19 @@ func TestRequestDispatchesResearchers_Action_HighStakes(t *testing.T) {
 	if err := rule.Action(context.Background(), evt, b); err != nil {
 		t.Fatalf("Action: %v", err)
 	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(published)
+		mu.Unlock()
+		if n >= 4 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
 
 	// Expect: 1 pause + 3 spawns = 4 events
 	if len(published) < 4 {

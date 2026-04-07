@@ -3,6 +3,7 @@ package drift
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -75,8 +76,11 @@ func TestBudgetThreshold_Action_Warning(t *testing.T) {
 	defer b.Close()
 
 	var published []bus.Event
+	var mu sync.Mutex
 	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
 		published = append(published, e)
+		mu.Unlock()
 	})
 
 	rule := NewBudgetThreshold()
@@ -91,6 +95,20 @@ func TestBudgetThreshold_Action_Warning(t *testing.T) {
 	if err := rule.Action(context.Background(), evt, b); err != nil {
 		t.Fatalf("Action: %v", err)
 	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(published)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
 	if len(published) < 1 {
 		t.Fatal("expected warning event")
 	}
@@ -108,8 +126,11 @@ func TestBudgetThreshold_Action_HardStop(t *testing.T) {
 	defer b.Close()
 
 	var published []bus.Event
+	var mu sync.Mutex
 	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
 		published = append(published, e)
+		mu.Unlock()
 	})
 
 	rule := NewBudgetThreshold()
@@ -124,6 +145,20 @@ func TestBudgetThreshold_Action_HardStop(t *testing.T) {
 	if err := rule.Action(context.Background(), evt, b); err != nil {
 		t.Fatalf("Action: %v", err)
 	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(published)
+		mu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+
 	if len(published) < 1 {
 		t.Fatal("expected hard_stop event")
 	}

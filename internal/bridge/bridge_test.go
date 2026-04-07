@@ -67,6 +67,14 @@ func TestCostBridgeRecord(t *testing.T) {
 		t.Fatalf("expected positive cost, got %f", cost)
 	}
 
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(events()) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	evts := events()
 	if len(evts) == 0 {
 		t.Fatal("expected at least one cost event")
@@ -119,8 +127,14 @@ func TestCostBridgeBudgetAlert(t *testing.T) {
 	cb := NewCostBridge(b, l, 0.0000001)
 	cb.Record("claude-sonnet-4", "task-1", 10000, 5000, 0, 0)
 
-	// Allow time for synchronous alert delivery.
-	time.Sleep(10 * time.Millisecond)
+	// Allow time for async delivery.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(events()) >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	evts := events()
 	var alertCount int
@@ -147,6 +161,14 @@ func TestVerifyBridgeRun(t *testing.T) {
 	}
 	if len(outcomes) != 3 {
 		t.Fatalf("expected 3 outcomes, got %d", len(outcomes))
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(events()) >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	evts := events()
@@ -181,6 +203,14 @@ func TestWisdomBridgeRecord(t *testing.T) {
 		Description: "nil pointer on empty slice",
 		File:        "pkg/foo.go",
 	})
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(events()) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	evts := events()
 	if len(evts) != 1 {
@@ -228,6 +258,14 @@ func TestAuditBridgeRecordReport(t *testing.T) {
 	err := ab.RecordReport(context.Background(), "task-a1", "mission-1", report)
 	if err != nil {
 		t.Fatalf("RecordReport: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(events()) >= 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	evts := events()
