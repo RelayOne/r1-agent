@@ -10,10 +10,26 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (103 internal + 1 cmd)
+## Package map (104 internal + 1 cmd)
 
 ```
 cmd/stoke/main.go                 20 commands. --roi, --sqlite, --interactive, --specexec flags.
+
+--- V2 GOVERNANCE ---
+contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
+stokerr/                           Structured error taxonomy (10 error codes)
+ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
+ledger/nodes/                      22 node type structs with NodeTyper interface
+ledger/loops/                      7-state consensus loop tracker
+bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
+supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
+concern/                           Per-stance context projection (10 sections, 9 role templates)
+harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
+snapshot/                          Protected baseline manifest (file paths + content hashes)
+wizard/                            First-time config with presets (minimal/balanced/strict)
+skillmfr/                          Skill manufacturing pipeline (4 workflows, confidence ladder)
+bench/                             Golden mission benchmarking with regression detection
+bridge/                            V1→V2 bridge adapters (cost, verify, wisdom, audit → bus+ledger)
 
 --- CORE WORKFLOW ---
 app/                               Orchestrator: config + engines + worktree + verify + OnEvent + auto-detect
@@ -27,7 +43,6 @@ taskstate/                         Anti-deception task state: phase transitions,
 --- PLANNING & DECOMPOSITION ---
 interview/                         Socratic clarification phase before task execution
 intent/                            Intent classification and verbalization gate
-phaserole/                         Phase-based agent role assignment by task type
 conversation/                      Multi-turn conversation state management
 
 --- CODE ANALYSIS ---
@@ -46,7 +61,6 @@ gitblame/                          Git blame integration for attribution-aware e
 atomicfs/                          Multi-file atomic edits with transactional semantics
 fileutil/                          Shared file system operations and path safety
 filewatcher/                       File system monitoring with cache invalidation
-snapshot/                          Workspace snapshot and restore (pre-merge rollback)
 worktree/                          Git worktree create/merge/cleanup, BaseCommit, mergeMu
 branch/                            Conversation branching for multiple solution paths
 hashline/                          Hash-anchored line verification for concurrent edits
@@ -62,7 +76,6 @@ critic/                            Adversarial pre-commit critic for quality gat
 --- ERROR HANDLING & RECOVERY ---
 failure/                           10 failure classes, fingerprint dedup, ShouldRetry escalation
 errtaxonomy/                       Structured error taxonomy for retry strategies
-sandattr/                          Sandbox failure attribution and analysis
 checkpoint/                        Synchronous checkpointing before dangerous operations
 
 --- CODE GENERATION ---
@@ -73,10 +86,8 @@ conflictres/                       Smart merge conflict resolution with semantic
 
 --- AGENT BEHAVIOR ---
 boulder/                           Idle detection and continuation enforcement
-ralph/                             Persistent execution discipline with retry enforcement
 specexec/                          Speculative parallel execution (4 strategies, pick winner)
 handoff/                           Agent-to-agent context transfer management
-team/                              Parallel multi-agent review and coordination
 
 --- KNOWLEDGE & LEARNING ---
 memory/                            Persistent cross-session knowledge storage
@@ -91,7 +102,6 @@ provider/                          Direct AI model API clients for providers
 mcp/                               Model Context Protocol codebase tool server
 model/                             9 task types, 5-provider fallback, CostAwareResolve
 prompt/                            Prompt engineering utilities and fingerprinting
-prompttpl/                         Prompt template engine with variable substitution
 prompts/                           BuildPlanPrompt, BuildExecutePrompt, BuildReviewPrompt
 promptcache/                       Cache-aligned prompt construction for max hits
 microcompact/                      Cache-aligned context compaction
@@ -101,12 +111,9 @@ costtrack/                         Real-time cost tracking with budget alerts
 
 --- PERMISSIONS & SECURITY ---
 consent/                           Human-in-the-loop approval workflow
-permissions/                       Composable authorization pipeline for tools
 rbac/                              Role-Based Access Control enforcement
 hooks/                             Anti-deception: PreToolUse/PostToolUse guards, Install()
 scan/                              18 deterministic rules (secrets, eval, injection, exec)
-sandbox/                           Sandbox configuration for worktrees
-sandguard/                         Sandbox escape detection and prevention
 
 --- CONFIG & SESSION ---
 config/                            YAML policy parser, auto-detect, claude_settings, validate
@@ -120,7 +127,6 @@ agentmsg/                          Inter-agent communication protocol
 dispatch/                          Three-tier message dispatch queue
 logging/                           Structured leveled logging (Task, Attempt, Cost helpers)
 metrics/                           Thread-safe counters and performance metrics
-ratelimit/                         Client-side rate limiter using token bucket
 telemetry/                         Structured metrics collection
 notify/                            Event notification system
 stream/                            NDJSON parser: 6 event types, drain-on-EOF, 3-tier timeouts
@@ -139,12 +145,9 @@ progress/                          Plan-aware progress estimation and ETA
 audit/                             17 review personas (5 core + 12 specialized)
 
 --- LIFECYCLE ---
-lifecycle/                         5-tier hook system for orchestration events
 skill/                             Reusable workflow pattern system
 plugins/                           Plugin manifest and loading system
-managed/                           Proxy client for managed AI endpoint
 preflight/                         Pre-flight workspace assertions
-toolcache/                         Tool output caching
 ```
 
 ## Key design decisions
@@ -176,3 +179,4 @@ toolcache/                         Tool output caching
 25. Pre-merge snapshots (`snapshot.Take`) with restore-on-failure for safe rollback
 26. Speculative execution (`--specexec`): 4 strategies in parallel, pick the winner
 27. Codex/Claude parity: both runners populate CostUSD, DurationMs, NumTurns, Tokens
+28. V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events + write ledger nodes via bridge package

@@ -225,3 +225,23 @@ Architecture references (NOT skills):
 - `go build ./cmd/stoke` — produces binary
 - `go test` — 30 v2 packages pass (22 with tests, 8 exercised through parents)
 - All v2 packages compile and interoperate correctly
+
+### Phase 9: Integration + Cleanup
+- **Removed 13 deprecated packages** (~3,636 LOC dead code):
+  compute, lifecycle, managed, permissions, phaserole, prompttpl, ralph,
+  ratelimit, sandattr, sandbox, sandguard, team, toolcache
+  All had zero external imports — safe removal confirmed.
+- **Created `internal/bridge/`** — V1→V2 bridge adapters:
+  - `CostBridge`: wraps costtrack.Tracker, emits cost.recorded + cost.budget.alert bus events, writes cost_record ledger nodes
+  - `VerifyBridge`: wraps verify.Pipeline, emits verify.started/completed bus events, writes verification ledger nodes
+  - `WisdomBridge`: wraps wisdom.Store, emits wisdom.learning.recorded bus events, writes wisdom_learning ledger nodes
+  - `AuditBridge`: wraps audit.AuditReport, emits audit.completed bus events, writes audit_report ledger nodes with references edges
+  - 13 new bus event types defined (cost, verify, wisdom, workflow, audit, hook, skill, profile)
+  - 5 tests covering all bridges
+- **Docs cleanup**:
+  - Updated CLAUDE.md with v2 package map section
+  - Updated README.md with v2 governance architecture section
+  - Updated PACKAGE-AUDIT.md to remove deprecated packages
+  - Updated ROADMAP.md to reflect v2 current state
+  - Removed 4 legacy forge-* docs
+- **CI gate**: 121 packages pass `go build`, `go vet`, `go test`

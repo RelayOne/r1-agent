@@ -98,6 +98,18 @@ stoke build --plan stoke-plan.json
   +-- Fire event-driven reminders (context >60%, error 3x, etc.)
 ```
 
+## V2 Governance Architecture
+
+Stoke v2 adds a multi-role consensus layer that wraps the execution engine:
+
+- **Ledger** — Append-only content-addressed graph. No updates or deletes.
+- **Bus** — Durable WAL-backed event system with hooks and causality tracking.
+- **Supervisor** — 30 deterministic rules across 10 categories enforce governance.
+- **Consensus Loops** — 7-state machine for structured agreement (PRD→SOW→ticket→PR).
+- **Stances** — 10 roles (PO, CTO, QA Lead, etc.) each with dedicated concern fields.
+- **Harness** — Stance lifecycle management with per-role tool authorization.
+- **Bridge** — Adapters wiring v1 systems (cost tracking, verification, wisdom, audit) into the v2 event bus and ledger.
+
 ## What's enforced
 
 **Before every commit/merge:**
@@ -164,7 +176,7 @@ internal/
   + 77 additional packages    (convergence, repomap, symindex, goast, plugins, remote, etc.)
 ```
 
-103 packages. 51K lines source. 33K lines tests. 1,642 test functions. 292 Go files.
+104 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
 
 ## Docs
 
