@@ -12,14 +12,14 @@ import (
 func TestDefinitions(t *testing.T) {
 	r := NewRegistry("/tmp")
 	defs := r.Definitions()
-	if len(defs) != 6 {
-		t.Errorf("expected 6 tool definitions, got %d", len(defs))
+	if len(defs) != 9 {
+		t.Errorf("expected 9 tool definitions, got %d", len(defs))
 	}
 	names := make(map[string]bool)
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, name := range []string{"read_file", "edit_file", "write_file", "bash", "grep", "glob"} {
+	for _, name := range []string{"read_file", "edit_file", "write_file", "bash", "grep", "glob", "env_exec", "env_copy_in", "env_copy_out"} {
 		if !names[name] {
 			t.Errorf("missing tool definition: %s", name)
 		}

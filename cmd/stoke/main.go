@@ -27,6 +27,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/env/docker"
 	"github.com/ericmacdougall/stoke/internal/env/ember"
 	"github.com/ericmacdougall/stoke/internal/env/fly"
+	envssh "github.com/ericmacdougall/stoke/internal/env/ssh"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
@@ -3185,6 +3186,12 @@ func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.En
 			APIURL:     os.Getenv("EMBER_API_URL"),
 			Token:      os.Getenv("EMBER_API_KEY"),
 			SSHKeyPath: os.Getenv("EMBER_SSH_KEY"),
+		})
+	case env.BackendSSH:
+		backend = envssh.New(envssh.Config{
+			Host:    os.Getenv("STOKE_SSH_HOST"),
+			User:    os.Getenv("STOKE_SSH_USER"),
+			KeyPath: os.Getenv("STOKE_SSH_KEY"),
 		})
 	default:
 		return nil, nil, fmt.Errorf("unknown env backend: %s", cfg.EnvBackend)

@@ -17,16 +17,21 @@ const (
 	ToolSkillImportPropose ToolName = "skill_import_propose"
 	ToolBusPublish         ToolName = "bus_publish"
 	ToolResearchRequest    ToolName = "research_request"
+	ToolEnvExec            ToolName = "env_exec"
+	ToolEnvCopyIn          ToolName = "env_copy_in"
+	ToolEnvCopyOut         ToolName = "env_copy_out"
 )
 
 // roleTools maps each role to its authorized tool set.
 var roleTools = map[string][]ToolName{
 	"dev": {
 		ToolFileRead, ToolFileWrite, ToolCodeRun,
+		ToolEnvExec, ToolEnvCopyIn, ToolEnvCopyOut,
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,
 	},
 	"reviewer": {
 		ToolFileRead, ToolCodeRun,
+		ToolEnvExec,
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,
 	},
 	"judge": {
@@ -51,6 +56,7 @@ var roleTools = map[string][]ToolName{
 	},
 	"qa_lead": {
 		ToolFileRead, ToolCodeRun, ToolWebSearch, ToolWebFetch,
+		ToolEnvExec, ToolEnvCopyIn, ToolEnvCopyOut,
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,
 	},
 	"stakeholder": {

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -40,8 +41,17 @@ const (
 
 // Registry manages available tools and tracks state (e.g., which files have been read).
 type Registry struct {
-	workDir  string
+	workDir   string
 	readFiles sync.Map // tracks files that have been read (for Edit guard)
+	environ   env.Environment // optional execution environment (nil = no env tools)
+	envHandle *env.Handle     // optional environment handle
+}
+
+// SetEnvironment configures the registry with an execution environment,
+// enabling the env_exec, env_copy_in, and env_copy_out tools.
+func (r *Registry) SetEnvironment(e env.Environment, h *env.Handle) {
+	r.environ = e
+	r.envHandle = h
 }
 
 // NewRegistry creates a tool registry rooted at the given working directory.
@@ -129,6 +139,43 @@ func (r *Registry) Definitions() []provider.ToolDef {
 				"required": []string{"pattern"},
 			}),
 		},
+		{
+			Name:        "env_exec",
+			Description: "Execute a command in the provisioned execution environment. Returns stdout, stderr, and exit code.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]string{"type": "string", "description": "Command to execute (passed to bash -lc)"},
+					"dir":     map[string]string{"type": "string", "description": "Working directory override (default: environment work dir)"},
+					"timeout": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default 120000)"},
+				},
+				"required": []string{"command"},
+			}),
+		},
+		{
+			Name:        "env_copy_in",
+			Description: "Copy a local file or directory into the execution environment.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"src": map[string]string{"type": "string", "description": "Local source path"},
+					"dst": map[string]string{"type": "string", "description": "Remote destination path in the environment"},
+				},
+				"required": []string{"src", "dst"},
+			}),
+		},
+		{
+			Name:        "env_copy_out",
+			Description: "Copy a file or directory from the execution environment to the local filesystem.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"src": map[string]string{"type": "string", "description": "Remote source path in the environment"},
+					"dst": map[string]string{"type": "string", "description": "Local destination path"},
+				},
+				"required": []string{"src", "dst"},
+			}),
+		},
 	}
 }
 
@@ -147,6 +194,12 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleGrep(ctx, input)
 	case "glob":
 		return r.handleGlob(input)
+	case "env_exec":
+		return r.handleEnvExec(ctx, input)
+	case "env_copy_in":
+		return r.handleEnvCopyIn(ctx, input)
+	case "env_copy_out":
+		return r.handleEnvCopyOut(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -442,6 +495,91 @@ func (r *Registry) resolvePath(path string) (string, error) {
 		return "", fmt.Errorf("path %q escapes working directory %q", path, workDirClean)
 	}
 	return resolved, nil
+}
+
+// --- Environment tool handlers ---
+
+func (r *Registry) handleEnvExec(ctx context.Context, input json.RawMessage) (string, error) {
+	if r.environ == nil || r.envHandle == nil {
+		return "", fmt.Errorf("no execution environment configured")
+	}
+	var args struct {
+		Command string `json:"command"`
+		Dir     string `json:"dir"`
+		Timeout int    `json:"timeout"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if args.Command == "" {
+		return "", fmt.Errorf("command is required")
+	}
+
+	opts := env.ExecOpts{Dir: args.Dir}
+	if args.Timeout > 0 {
+		opts.Timeout = time.Duration(args.Timeout) * time.Millisecond
+	}
+
+	result, err := r.environ.Exec(ctx, r.envHandle, []string{"bash", "-lc", args.Command}, opts)
+	if err != nil {
+		return "", fmt.Errorf("env exec: %w", err)
+	}
+
+	output := result.CombinedOutput()
+	if len(output) > MaxBashOutput {
+		half := MaxBashOutput / 2
+		output = output[:half] + "\n... [truncated] ...\n" + output[len(output)-half:]
+	}
+
+	return fmt.Sprintf("exit_code: %d\nduration: %s\n\n%s", result.ExitCode, result.Duration, output), nil
+}
+
+func (r *Registry) handleEnvCopyIn(ctx context.Context, input json.RawMessage) (string, error) {
+	if r.environ == nil || r.envHandle == nil {
+		return "", fmt.Errorf("no execution environment configured")
+	}
+	var args struct {
+		Src string `json:"src"`
+		Dst string `json:"dst"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Resolve local path with confinement.
+	srcPath, err := r.resolvePath(args.Src)
+	if err != nil {
+		return "", err
+	}
+
+	if err := r.environ.CopyIn(ctx, r.envHandle, srcPath, args.Dst); err != nil {
+		return "", fmt.Errorf("env copy-in: %w", err)
+	}
+	return fmt.Sprintf("copied %s → env:%s", args.Src, args.Dst), nil
+}
+
+func (r *Registry) handleEnvCopyOut(ctx context.Context, input json.RawMessage) (string, error) {
+	if r.environ == nil || r.envHandle == nil {
+		return "", fmt.Errorf("no execution environment configured")
+	}
+	var args struct {
+		Src string `json:"src"`
+		Dst string `json:"dst"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Resolve local destination path with confinement.
+	dstPath, err := r.resolvePath(args.Dst)
+	if err != nil {
+		return "", err
+	}
+
+	if err := r.environ.CopyOut(ctx, r.envHandle, args.Src, dstPath); err != nil {
+		return "", fmt.Errorf("env copy-out: %w", err)
+	}
+	return fmt.Sprintf("copied env:%s → %s", args.Src, args.Dst), nil
 }
 
 func mustJSON(v interface{}) json.RawMessage {
