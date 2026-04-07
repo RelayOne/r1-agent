@@ -17,6 +17,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/critic"
 	"github.com/ericmacdougall/stoke/internal/ctxpack"
 	"github.com/ericmacdougall/stoke/internal/diffcomp"
@@ -114,6 +115,8 @@ type Engine struct {
 	SkillRegistry    *skill.Registry        // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches     []string               // pre-computed stack-matched skill names from RepoProfile
 	RunnerMode       string                 // runner selection: "claude", "codex", "native", "hybrid" (default: "claude")
+	Environ          env.Environment        // execution environment backend (nil = run on host)
+	EnvHandle        *env.Handle            // provisioned environment handle (nil = run on host)
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -634,6 +637,9 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		}
 
 		verifier = verify.NewPipeline(filteredBuild, filteredTest, filteredLint)
+		if e.Environ != nil && e.EnvHandle != nil {
+			verifier = verifier.WithEnvironment(e.Environ, e.EnvHandle)
+		}
 		outcomes, verifyErr := verifier.Run(execCtx, handle.Path)
 		result.Verification = outcomes
 

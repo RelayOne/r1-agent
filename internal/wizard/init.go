@@ -69,6 +69,7 @@ type Config struct {
 	Skills        SkillsConfig      `yaml:"skills"`
 	Snapshot      SnapshotConfig    `yaml:"snapshot"`
 	Bus           BusConfig         `yaml:"bus"`
+	Environment   EnvironmentConfig `yaml:"environment"`
 }
 
 // BudgetConfig controls cost enforcement thresholds.
@@ -110,6 +111,18 @@ type SnapshotConfig struct {
 // BusConfig controls event bus propagation.
 type BusConfig struct {
 	PropagationMode string `yaml:"propagation_mode"` // filtered, verbose, minimal
+}
+
+// EnvironmentConfig specifies the execution environment for missions.
+type EnvironmentConfig struct {
+	Backend       string            `yaml:"backend"`                  // inproc, docker, ssh, fly, ember
+	BaseImage     string            `yaml:"base_image,omitempty"`     // e.g. "golang:1.22-alpine"
+	SetupCommands []string          `yaml:"setup_commands,omitempty"` // run once after provisioning
+	Env           map[string]string `yaml:"env,omitempty"`            // environment variables
+	CPUs          int               `yaml:"cpus,omitempty"`
+	MemoryMB      int               `yaml:"memory_mb,omitempty"`
+	Size          string            `yaml:"size,omitempty"`           // fly/ember sizing
+	TTLMinutes    int               `yaml:"ttl_minutes,omitempty"`
 }
 
 // InitOpts configures the initialization flow.
@@ -222,6 +235,9 @@ func DefaultConfig() *Config {
 		},
 		Bus: BusConfig{
 			PropagationMode: "filtered",
+		},
+		Environment: EnvironmentConfig{
+			Backend: "inproc", // safe default: no isolation, runs on host
 		},
 	}
 }

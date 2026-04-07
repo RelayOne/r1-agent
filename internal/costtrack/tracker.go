@@ -97,6 +97,7 @@ type AlertFunc func(alert Alert)
 type Tracker struct {
 	mu       sync.RWMutex
 	records  []Usage
+	envCost  float64 // accumulated execution environment costs
 	budget   float64
 	alertFn  AlertFunc
 	alerted  map[AlertLevel]bool
@@ -135,7 +136,25 @@ func (t *Tracker) Record(model, taskID string, inputTokens, outputTokens, cacheR
 	return cost
 }
 
-// Total returns total cost so far.
+// RecordEnvCost adds execution environment cost (compute, storage) to the tracker.
+// This is separate from token-based costs but contributes to the same budget.
+func (t *Tracker) RecordEnvCost(taskID string, costUSD float64) {
+	t.mu.Lock()
+	t.envCost += costUSD
+	total := t.totalLocked()
+	t.mu.Unlock()
+
+	t.checkAlerts(total)
+}
+
+// EnvCost returns the accumulated execution environment cost.
+func (t *Tracker) EnvCost() float64 {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.envCost
+}
+
+// Total returns total cost so far (tokens + environment).
 func (t *Tracker) Total() float64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -147,7 +166,7 @@ func (t *Tracker) totalLocked() float64 {
 	for _, r := range t.records {
 		total += r.Cost
 	}
-	return total
+	return total + t.envCost
 }
 
 // ByModel returns cost breakdown by model.
