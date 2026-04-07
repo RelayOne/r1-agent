@@ -113,6 +113,9 @@ func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHan
 		SpawnRequest:    req,
 		CreatedAt:       time.Now().UTC(),
 		AdditionalCtx:   req.AdditionalCtx,
+		pauseCh:         make(chan struct{}),
+		resumeCh:        make(chan struct{}),
+		pauseAckCh:      make(chan struct{}),
 	}
 	h.stances[stanceID] = sess
 	h.mu.Unlock()
@@ -123,7 +126,7 @@ func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHan
 		"face":  face,
 		"model": model,
 	})
-	_ = h.bus.Publish(bus.Event{
+	if err := h.bus.Publish(bus.Event{
 		Type:      bus.EvtWorkerSpawned,
 		EmitterID: stanceID,
 		Scope: bus.Scope{
@@ -134,7 +137,9 @@ func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHan
 		},
 		Payload:   payload,
 		CausalRef: req.CausalityRef,
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("harness: spawn: publish event: %w", err)
+	}
 
 	// 7. Return handle.
 	return &StanceHandle{
@@ -144,24 +149,43 @@ func (h *Harness) SpawnStance(ctx context.Context, req SpawnRequest) (*StanceHan
 	}, nil
 }
 
-// PauseStance pauses a running stance.
+// PauseStance pauses a running stance. It signals the stance to halt via the
+// pause channel and waits for the stance to acknowledge at a safe checkpoint
+// before publishing the paused event.
 func (h *Harness) PauseStance(ctx context.Context, stanceID string, reason string) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	sess, ok := h.stances[stanceID]
 	if !ok {
+		h.mu.Unlock()
 		return fmt.Errorf("harness: pause: stance %q not found", stanceID)
 	}
 	if sess.Status != StatusRunning {
+		h.mu.Unlock()
 		return fmt.Errorf("harness: pause: stance %q is %s, not running", stanceID, sess.Status)
 	}
 
+	// Signal the stance to pause via the cooperative channel.
+	close(sess.pauseCh)
 	sess.Status = StatusPaused
 	sess.PauseReason = reason
 
+	// Release the lock before blocking on acknowledgment.
+	h.mu.Unlock()
+
+	// Wait for the stance to reach a safe checkpoint and acknowledge.
+	select {
+	case <-sess.pauseAckCh:
+		// Stance has stopped at a safe checkpoint.
+	case <-time.After(30 * time.Second):
+		return fmt.Errorf("harness: pause: stance %q did not acknowledge within 30s", stanceID)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// Publish the paused event only after the stance has actually stopped.
 	payload, _ := json.Marshal(map[string]string{"reason": reason})
-	_ = h.bus.Publish(bus.Event{
+	if err := h.bus.Publish(bus.Event{
 		Type:      bus.EvtWorkerPaused,
 		EmitterID: stanceID,
 		Scope: bus.Scope{
@@ -169,21 +193,25 @@ func (h *Harness) PauseStance(ctx context.Context, stanceID string, reason strin
 			StanceID:  stanceID,
 		},
 		Payload: payload,
-	})
+	}); err != nil {
+		return fmt.Errorf("harness: pause: publish event: %w", err)
+	}
 
 	return nil
 }
 
 // ResumeStance resumes a paused stance with optional additional context.
+// It closes the resume channel to unblock the stance's CheckpointCheck.
 func (h *Harness) ResumeStance(ctx context.Context, stanceID string, additional string) error {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	sess, ok := h.stances[stanceID]
 	if !ok {
+		h.mu.Unlock()
 		return fmt.Errorf("harness: resume: stance %q not found", stanceID)
 	}
 	if sess.Status != StatusPaused && sess.Status != StatusWaitingResearch && sess.Status != StatusWaitingConsensus {
+		h.mu.Unlock()
 		return fmt.Errorf("harness: resume: stance %q is %s, not paused", stanceID, sess.Status)
 	}
 
@@ -193,14 +221,23 @@ func (h *Harness) ResumeStance(ctx context.Context, stanceID string, additional 
 		sess.AdditionalCtx = additional
 	}
 
-	_ = h.bus.Publish(bus.Event{
+	// Unblock the stance runner waiting in CheckpointCheck.
+	close(sess.resumeCh)
+	// Allocate a fresh resume channel for the next pause cycle.
+	sess.resumeCh = make(chan struct{})
+
+	h.mu.Unlock()
+
+	if err := h.bus.Publish(bus.Event{
 		Type:      bus.EvtWorkerResumed,
 		EmitterID: stanceID,
 		Scope: bus.Scope{
 			MissionID: h.config.MissionID,
 			StanceID:  stanceID,
 		},
-	})
+	}); err != nil {
+		return fmt.Errorf("harness: resume: publish event: %w", err)
+	}
 
 	return nil
 }
@@ -220,14 +257,16 @@ func (h *Harness) TerminateStance(ctx context.Context, stanceID string) error {
 
 	sess.Status = StatusTerminated
 
-	_ = h.bus.Publish(bus.Event{
+	if err := h.bus.Publish(bus.Event{
 		Type:      bus.EvtWorkerTerminated,
 		EmitterID: stanceID,
 		Scope: bus.Scope{
 			MissionID: h.config.MissionID,
 			StanceID:  stanceID,
 		},
-	})
+	}); err != nil {
+		return fmt.Errorf("harness: terminate: publish event: %w", err)
+	}
 
 	return nil
 }
@@ -293,11 +332,14 @@ func (h *Harness) Recover(ctx context.Context) error {
 			}
 			_ = json.Unmarshal(evt.Payload, &payload)
 			h.stances[stanceID] = &StanceSession{
-				ID:        stanceID,
-				Role:      payload.Role,
-				Status:    StatusRunning,
-				Model:     payload.Model,
-				CreatedAt: evt.Timestamp,
+				ID:         stanceID,
+				Role:       payload.Role,
+				Status:     StatusRunning,
+				Model:      payload.Model,
+				CreatedAt:  evt.Timestamp,
+				pauseCh:    make(chan struct{}),
+				resumeCh:   make(chan struct{}),
+				pauseAckCh: make(chan struct{}),
 			}
 		case bus.EvtWorkerPaused:
 			if sess, ok := h.stances[stanceID]; ok {
@@ -319,6 +361,19 @@ func (h *Harness) Recover(ctx context.Context) error {
 			}
 		}
 	})
+}
+
+// StanceCheckpointer returns the CheckpointCheck function for a stance.
+// This is called by the stance runner at safe points to cooperate with pause.
+func (h *Harness) StanceCheckpointer(stanceID string) (func(context.Context) error, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	sess, ok := h.stances[stanceID]
+	if !ok {
+		return nil, fmt.Errorf("harness: checkpointer: stance %q not found", stanceID)
+	}
+	return sess.CheckpointCheck, nil
 }
 
 // resolveModel picks the model for a spawn request.

@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/concern"
@@ -133,6 +135,23 @@ func TestPauseStance(t *testing.T) {
 		t.Fatalf("SpawnStance: %v", err)
 	}
 
+	checkpointFn, err := h.StanceCheckpointer(handle.ID)
+	if err != nil {
+		t.Fatalf("StanceCheckpointer: %v", err)
+	}
+
+	// Simulate a stance runner that periodically hits checkpoints.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if err := checkpointFn(ctx); err != nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
 	if err := h.PauseStance(context.Background(), handle.ID, "waiting for input"); err != nil {
 		t.Fatalf("PauseStance: %v", err)
 	}
@@ -161,6 +180,23 @@ func TestResumeStance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnStance: %v", err)
 	}
+
+	checkpointFn, err := h.StanceCheckpointer(handle.ID)
+	if err != nil {
+		t.Fatalf("StanceCheckpointer: %v", err)
+	}
+
+	// Simulate a stance runner that periodically hits checkpoints.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if err := checkpointFn(ctx); err != nil {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 
 	if err := h.PauseStance(context.Background(), handle.ID, "paused"); err != nil {
 		t.Fatalf("PauseStance: %v", err)
@@ -334,5 +370,152 @@ func TestDefaultToolsForRole_Unknown(t *testing.T) {
 	tools := htools.DefaultToolsForRole("nonexistent")
 	if tools != nil {
 		t.Errorf("expected nil for unknown role, got %v", tools)
+	}
+}
+
+func TestPauseStanceWaitsForAcknowledgment(t *testing.T) {
+	h, cleanup := setup(t)
+	defer cleanup()
+
+	handle, err := h.SpawnStance(context.Background(), harness.SpawnRequest{
+		Role:         "dev",
+		Face:         "proposing",
+		TaskDAGScope: "task-1",
+	})
+	if err != nil {
+		t.Fatalf("SpawnStance: %v", err)
+	}
+
+	checkpointFn, err := h.StanceCheckpointer(handle.ID)
+	if err != nil {
+		t.Fatalf("StanceCheckpointer: %v", err)
+	}
+
+	// Track whether PauseStance has returned.
+	var pauseReturned sync.WaitGroup
+	pauseReturned.Add(1)
+	pauseDone := make(chan struct{})
+
+	// Start a goroutine that will call PauseStance. It should block until the
+	// stance's checkpoint acknowledges.
+	go func() {
+		defer pauseReturned.Done()
+		if err := h.PauseStance(context.Background(), handle.ID, "review needed"); err != nil {
+			t.Errorf("PauseStance: %v", err)
+		}
+		close(pauseDone)
+	}()
+
+	// Give PauseStance time to signal and start waiting. It should NOT return
+	// yet because no checkpoint has fired.
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-pauseDone:
+		t.Fatal("PauseStance returned before stance acknowledged the pause")
+	default:
+		// Expected: PauseStance is still blocking.
+	}
+
+	// Now simulate the stance hitting a checkpoint, which will acknowledge
+	// the pause. CheckpointCheck will block on resumeCh after acknowledging,
+	// so run it in a goroutine. We use a short-lived context since we never
+	// resume in this test.
+	checkpointCtx, checkpointCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer checkpointCancel()
+	go func() {
+		// Will return context.DeadlineExceeded since we never resume -- that's expected.
+		_ = checkpointFn(checkpointCtx)
+	}()
+
+	// PauseStance should now return.
+	select {
+	case <-pauseDone:
+		// Success.
+	case <-time.After(5 * time.Second):
+		t.Fatal("PauseStance did not return after stance acknowledged")
+	}
+
+	pauseReturned.Wait()
+
+	state, err := h.InspectStance(context.Background(), handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusPaused {
+		t.Errorf("state = %q, want %q", state.State, harness.StatusPaused)
+	}
+}
+
+func TestPausedStanceCanBeResumed(t *testing.T) {
+	h, cleanup := setup(t)
+	defer cleanup()
+
+	handle, err := h.SpawnStance(context.Background(), harness.SpawnRequest{
+		Role:         "dev",
+		Face:         "proposing",
+		TaskDAGScope: "task-1",
+	})
+	if err != nil {
+		t.Fatalf("SpawnStance: %v", err)
+	}
+
+	checkpointFn, err := h.StanceCheckpointer(handle.ID)
+	if err != nil {
+		t.Fatalf("StanceCheckpointer: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Simulate a stance runner that periodically hits checkpoints.
+	// It exits when the context is cancelled.
+	stanceExited := make(chan error, 1)
+	go func() {
+		for {
+			if err := checkpointFn(ctx); err != nil {
+				stanceExited <- err
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// Pause the stance. The goroutine will hit a checkpoint and acknowledge.
+	if err := h.PauseStance(ctx, handle.ID, "review"); err != nil {
+		t.Fatalf("PauseStance: %v", err)
+	}
+
+	// Verify paused state.
+	state, err := h.InspectStance(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusPaused {
+		t.Errorf("state = %q, want %q", state.State, harness.StatusPaused)
+	}
+
+	// Resume the stance.
+	if err := h.ResumeStance(ctx, handle.ID, "continue working"); err != nil {
+		t.Fatalf("ResumeStance: %v", err)
+	}
+
+	// Verify running state.
+	state, err = h.InspectStance(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("InspectStance: %v", err)
+	}
+	if state.State != harness.StatusRunning {
+		t.Errorf("state = %q, want %q", state.State, harness.StatusRunning)
+	}
+
+	// Cancel to stop the runner goroutine and verify it exits cleanly.
+	cancel()
+	select {
+	case err := <-stanceExited:
+		if err != nil && err != context.Canceled {
+			t.Fatalf("stance runner error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stance runner did not exit after context cancellation")
 	}
 }
