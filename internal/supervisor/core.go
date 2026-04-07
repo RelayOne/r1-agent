@@ -25,6 +25,19 @@ const (
 	TypeSDM SupervisorType = "sdm"
 )
 
+// Structural events that trigger checkpoints.
+const (
+	EvtLoopConverged           bus.EventType = "loop.converged"
+	EvtLoopEscalated           bus.EventType = "loop.escalated"
+	EvtBranchCompletionAgreed  bus.EventType = "branch.completion.agreed"
+	EvtTaskMilestoneReached    bus.EventType = "task.milestone.reached"
+)
+
+// Supervisor rule action failure event.
+const (
+	EvtSupervisorRuleActionFailed bus.EventType = "supervisor.rule.action_failed"
+)
+
 // Config holds the supervisor's runtime parameters.
 type Config struct {
 	// ID is a unique supervisor instance identifier.
@@ -35,39 +48,36 @@ type Config struct {
 	Scope bus.Scope
 	// RuleOverrides apply wizard-specified configuration to named rules.
 	RuleOverrides map[string]RuleConfig
-	// CheckpointInterval controls how often state is checkpointed.
-	// Zero means use the default (30 seconds).
-	CheckpointInterval time.Duration
+	// Pattern is the event filter for the supervisor's subscription.
+	// If empty, defaults to scope-only filtering.
+	Pattern bus.Pattern
 }
-
-// defaultCheckpointInterval is used when Config.CheckpointInterval is zero.
-const defaultCheckpointInterval = 30 * time.Second
 
 // Supervisor is the deterministic rules engine. It subscribes to bus events,
 // evaluates rules in priority order, and publishes action events when rules fire.
+//
+// Design: no polling, no internal buffering. The supervisor processes events
+// inline on its subscription goroutine (provided by the bus's async delivery).
+// Checkpoints are driven by structural events, not wall-clock timers.
 type Supervisor struct {
 	config Config
 	bus    *bus.Bus
 	ledger *ledger.Ledger
 
-	rules   []Rule // sorted by priority descending after RegisterRules
-	sub     *bus.Subscription
-	running bool
-	stopCh  chan struct{}
-	doneCh  chan struct{}
-	mu      sync.Mutex
+	rules        []Rule // sorted by priority descending after RegisterRules
+	sub          *bus.Subscription
+	checkpointSub *bus.Subscription
+	running      bool
+	mu           sync.Mutex
 
 	// stats tracks rule-fire counts for checkpoint reporting.
 	stats map[string]uint64
-	// lastCheckpoint records when the last checkpoint was written.
-	lastCheckpoint time.Time
+	// startTime records when the supervisor was started.
+	startTime time.Time
 }
 
 // New creates a supervisor with the given config, bus, and ledger.
 func New(cfg Config, b *bus.Bus, l *ledger.Ledger) *Supervisor {
-	if cfg.CheckpointInterval == 0 {
-		cfg.CheckpointInterval = defaultCheckpointInterval
-	}
 	return &Supervisor{
 		config: cfg,
 		bus:    b,
@@ -104,9 +114,10 @@ func (s *Supervisor) Rules() []Rule {
 	return out
 }
 
-// Start begins the event processing loop. It is non-blocking — the loop runs
-// in a background goroutine. Start returns an error if the supervisor is
-// already running.
+// Start begins event processing. The supervisor subscribes to bus events and
+// processes them inline on the subscription's goroutine (provided by the bus's
+// async per-subscriber delivery). No polling, no internal goroutine, no
+// buffered channel.
 func (s *Supervisor) Start(ctx context.Context) error {
 	s.mu.Lock()
 	if s.running {
@@ -114,57 +125,37 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return fmt.Errorf("supervisor %s: already running", s.config.ID)
 	}
 	s.running = true
-	s.stopCh = make(chan struct{})
-	s.doneCh = make(chan struct{})
-	s.lastCheckpoint = time.Now()
+	s.startTime = time.Now()
 
 	// Build a scope-filtered pattern that matches all event types within scope.
-	pattern := bus.Pattern{
-		Scope: &s.config.Scope,
+	pattern := s.config.Pattern
+	if pattern.Scope == nil {
+		pattern.Scope = &s.config.Scope
 	}
 
-	// Channel to receive events from the subscription handler.
-	evtCh := make(chan bus.Event, 256)
-
+	// Subscribe for event processing. The bus delivers events asynchronously
+	// on a per-subscriber goroutine, so processEvent runs without blocking
+	// the bus or other subscribers.
 	s.sub = s.bus.Subscribe(pattern, func(evt bus.Event) {
-		select {
-		case evtCh <- evt:
-		default:
-			// Drop event if channel is full — better than blocking the bus.
-			log.Printf("supervisor %s: event channel full, dropping %s seq=%d",
-				s.config.ID, evt.Type, evt.Sequence)
+		s.processEvent(ctx, evt)
+	})
+
+	// Subscribe to structural events that trigger checkpoints.
+	// This replaces the former time.NewTicker-based checkpoint loop.
+	s.checkpointSub = s.bus.Subscribe(bus.Pattern{}, func(evt bus.Event) {
+		switch evt.Type {
+		case EvtLoopConverged, EvtLoopEscalated,
+			EvtBranchCompletionAgreed, EvtTaskMilestoneReached:
+			s.checkpoint(ctx)
 		}
 	})
-	s.mu.Unlock()
 
-	go s.loop(ctx, evtCh)
+	s.mu.Unlock()
 	return nil
 }
 
-// loop is the main event processing goroutine.
-func (s *Supervisor) loop(ctx context.Context, evtCh <-chan bus.Event) {
-	defer close(s.doneCh)
-
-	ticker := time.NewTicker(s.config.CheckpointInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.checkpoint(ctx)
-			return
-		case <-s.stopCh:
-			s.checkpoint(ctx)
-			return
-		case evt := <-evtCh:
-			s.processEvent(ctx, evt)
-		case <-ticker.C:
-			s.checkpoint(ctx)
-		}
-	}
-}
-
-// Stop gracefully stops the supervisor. It blocks until the event loop exits.
+// Stop gracefully stops the supervisor by cancelling its subscriptions
+// and writing a final checkpoint.
 func (s *Supervisor) Stop() error {
 	s.mu.Lock()
 	if !s.running {
@@ -174,21 +165,24 @@ func (s *Supervisor) Stop() error {
 	s.running = false
 	s.mu.Unlock()
 
-	// Cancel the subscription first to stop new event delivery.
+	// Cancel subscriptions to stop new event delivery.
 	if s.sub != nil {
 		s.sub.Cancel()
 	}
+	if s.checkpointSub != nil {
+		s.checkpointSub.Cancel()
+	}
 
-	close(s.stopCh)
-	<-s.doneCh // wait for loop to exit
+	// Write a final checkpoint.
+	s.checkpoint(context.Background())
 
 	return nil
 }
 
 // processEvent handles a single event against all rules. Rules are evaluated
 // in priority order (highest first). Each rule that matches and evaluates to
-// true has its action executed. Evaluation or action errors are logged but do
-// not halt processing of remaining rules.
+// true has its action executed. Evaluation or action errors are logged and
+// published as observable events.
 func (s *Supervisor) processEvent(ctx context.Context, evt bus.Event) {
 	s.mu.Lock()
 	rules := make([]Rule, len(s.rules))
@@ -216,6 +210,8 @@ func (s *Supervisor) processEvent(ctx context.Context, evt bus.Event) {
 		if err := rule.Action(ctx, evt, s.bus); err != nil {
 			log.Printf("supervisor %s: rule %s action error on evt %s (seq %d): %v",
 				s.config.ID, rule.Name(), evt.Type, evt.Sequence, err)
+			// Publish observable failure event (Fix #16).
+			s.publishRuleActionFailed(evt, rule, err)
 			continue
 		}
 
@@ -268,6 +264,27 @@ func (s *Supervisor) publishRuleFired(trigger bus.Event, rule Rule) {
 	}
 }
 
+// publishRuleActionFailed emits a supervisor.rule.action_failed event.
+func (s *Supervisor) publishRuleActionFailed(trigger bus.Event, rule Rule, actionErr error) {
+	payload, _ := json.Marshal(map[string]any{
+		"supervisor_id":   s.config.ID,
+		"supervisor_type": string(s.config.Type),
+		"rule_name":       rule.Name(),
+		"triggering_evt":  trigger.ID,
+		"error":           actionErr.Error(),
+	})
+	evt := bus.Event{
+		Type:      EvtSupervisorRuleActionFailed,
+		EmitterID: s.config.ID,
+		Scope:     s.config.Scope,
+		Payload:   payload,
+		CausalRef: trigger.ID,
+	}
+	if pubErr := s.bus.Publish(evt); pubErr != nil {
+		log.Printf("supervisor %s: publish rule-action-failed: %v", s.config.ID, pubErr)
+	}
+}
+
 // checkpointPayload is the schema for supervisor.checkpoint events.
 type checkpointPayload struct {
 	SupervisorID   string            `json:"supervisor_id"`
@@ -286,7 +303,6 @@ func (s *Supervisor) checkpoint(ctx context.Context) {
 		fireCounts[k] = v
 	}
 	ruleCount := len(s.rules)
-	s.lastCheckpoint = time.Now()
 	s.mu.Unlock()
 
 	cpPayload := checkpointPayload{
@@ -294,7 +310,7 @@ func (s *Supervisor) checkpoint(ctx context.Context) {
 		SupervisorType: string(s.config.Type),
 		RuleCount:      ruleCount,
 		FireCounts:     fireCounts,
-		Uptime:         time.Since(s.lastCheckpoint).String(),
+		Uptime:         time.Since(s.startTime).String(),
 	}
 
 	payload, err := json.Marshal(cpPayload)

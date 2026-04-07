@@ -54,7 +54,6 @@ func TestSupervisorStartStop(t *testing.T) {
 	s := supervisor.New(supervisor.Config{
 		ID:                 "test-sup",
 		Type:               supervisor.TypeMission,
-		CheckpointInterval: 1 * time.Hour, // no periodic checkpoints during test
 	}, b, l)
 
 	ctx := context.Background()
@@ -102,7 +101,6 @@ func TestRulePriorityOrder(t *testing.T) {
 	s := supervisor.New(supervisor.Config{
 		ID:                 "test-sup",
 		Type:               supervisor.TypeMission,
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(
@@ -129,7 +127,6 @@ func TestRulePatternFiltering(t *testing.T) {
 	s := supervisor.New(supervisor.Config{
 		ID:                 "test-sup",
 		Type:               supervisor.TypeMission,
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(
@@ -192,7 +189,6 @@ func TestWizardDisablesRule(t *testing.T) {
 		RuleOverrides: map[string]supervisor.RuleConfig{
 			"disabled-rule": {Enabled: disabledPtr},
 		},
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(
@@ -217,10 +213,9 @@ func TestCheckpointWritesToLedger(t *testing.T) {
 	b, l := setupTestInfra(t)
 
 	s := supervisor.New(supervisor.Config{
-		ID:                 "test-sup",
-		Type:               supervisor.TypeMission,
-		Scope:              bus.Scope{MissionID: "m-1"},
-		CheckpointInterval: 50 * time.Millisecond,
+		ID:    "test-sup",
+		Type:  supervisor.TypeMission,
+		Scope: bus.Scope{MissionID: "m-1"},
 	}, b, l)
 
 	ctx := context.Background()
@@ -259,7 +254,6 @@ func TestScopeFiltering(t *testing.T) {
 			MissionID: "m-1",
 			BranchID:  "b-1",
 		},
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(&mockRule{
@@ -309,7 +303,6 @@ func TestRuleFiredEventPublished(t *testing.T) {
 	s := supervisor.New(supervisor.Config{
 		ID:                 "test-sup",
 		Type:               supervisor.TypeMission,
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(&mockRule{
@@ -367,7 +360,6 @@ func TestEvaluateFailureDoesNotCrash(t *testing.T) {
 	s := supervisor.New(supervisor.Config{
 		ID:                 "test-sup",
 		Type:               supervisor.TypeMission,
-		CheckpointInterval: 1 * time.Hour,
 	}, b, l)
 
 	s.RegisterRules(
