@@ -27,6 +27,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/ledger"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/notify"
@@ -568,6 +569,23 @@ func initCmd(args []string) {
 		if a == "--auto" || a == "-a" {
 			autoMode = true
 		}
+	}
+
+	// If reinitializing, verify existing ledger integrity first.
+	ledgerDir := filepath.Join(projectDir, ".stoke", "ledger")
+	if fileExists(ledgerDir) {
+		lg, err := ledger.New(ledgerDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ledger open error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := lg.Verify(context.Background()); err != nil {
+			lg.Close()
+			fmt.Fprintf(os.Stderr, "ledger integrity check failed: %v\n", err)
+			os.Exit(1)
+		}
+		lg.Close()
+		fmt.Println("  Ledger integrity: OK (reinitializing)")
 	}
 
 	w := wizard.New(projectDir)
@@ -1237,6 +1255,22 @@ func statusCmd(args []string) {
 	if latest, err := report.LoadLatest(absRepo); err == nil {
 		fmt.Printf("\n  Last report: %s (%d/%d done, $%.2f)\n",
 			latest.PlanID, latest.TasksDone, latest.TasksTotal, latest.TotalCost)
+	}
+
+	// Show ledger integrity status
+	ledgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+	if fileExists(ledgerDir) {
+		lg, err := ledger.New(ledgerDir)
+		if err != nil {
+			fmt.Printf("\n  Ledger integrity: FAILED (open error: %v)\n", err)
+		} else {
+			if err := lg.Verify(context.Background()); err != nil {
+				fmt.Printf("\n  Ledger integrity: FAILED (%v)\n", err)
+			} else {
+				fmt.Printf("\n  Ledger integrity: OK\n")
+			}
+			lg.Close()
+		}
 	}
 }
 
