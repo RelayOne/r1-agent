@@ -6,7 +6,9 @@ package concern
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/concern/sections"
@@ -45,6 +47,7 @@ type Scope struct {
 	TaskID    string
 	LoopID    string
 	BranchID  string
+	StanceID  string // stance being built for (used for skill load audit)
 }
 
 // ConcernField is a one-shot projection of ledger state into prompt context.
@@ -102,9 +105,10 @@ func (b *Builder) RegisterTemplate(name string, tmpl Template) {
 
 // BuildConcernField constructs a concern field for the given role, face, and scope.
 // It finds a matching template, queries the ledger for each section, and returns
-// the assembled ConcernField.
+// the assembled ConcernField. For skills sections, it writes skill_loaded ledger
+// nodes and emits skill.loaded bus events before returning.
 func (b *Builder) BuildConcernField(ctx context.Context, role StanceRole, face Face, scope Scope) (*ConcernField, error) {
-	tmpl, err := b.findTemplate(role, face)
+	tmpl, tmplName, err := b.findTemplate(role, face)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +126,7 @@ func (b *Builder) BuildConcernField(ctx context.Context, role StanceRole, face F
 		Scope: scope,
 	}
 
+	hasSkillsSection := false
 	for _, spec := range tmpl.Sections {
 		content, err := spec.QueryFn(ctx, sScope, b.ledger)
 		if err != nil {
@@ -131,6 +136,10 @@ func (b *Builder) BuildConcernField(ctx context.Context, role StanceRole, face F
 			continue
 		}
 
+		if spec.Name == "applicable_skills" && content != "" {
+			hasSkillsSection = true
+		}
+
 		cf.Sections = append(cf.Sections, Section{
 			Name:    spec.Name,
 			Content: content,
@@ -138,15 +147,78 @@ func (b *Builder) BuildConcernField(ctx context.Context, role StanceRole, face F
 		})
 	}
 
+	// Log skill loads: write skill_loaded nodes and emit skill.loaded events.
+	if hasSkillsSection {
+		if err := b.logSkillLoads(ctx, scope, role, tmplName); err != nil {
+			return nil, err
+		}
+	}
+
 	return cf, nil
 }
 
-// findTemplate returns the first template matching the given role and face.
-func (b *Builder) findTemplate(role StanceRole, face Face) (*Template, error) {
-	for _, tmpl := range b.templates {
-		if tmpl.Role == role && tmpl.Face == face {
-			return &tmpl, nil
+// logSkillLoads queries the skills that were included in the concern field
+// and writes a skill_loaded node + skill.loaded event for each.
+func (b *Builder) logSkillLoads(ctx context.Context, scope Scope, role StanceRole, tmplName string) error {
+	skills, err := b.ledger.Query(ctx, ledger.QueryFilter{
+		Type:      "skill",
+		MissionID: scope.MissionID,
+	})
+	if err != nil {
+		return fmt.Errorf("concern: query skills for audit: %w", err)
+	}
+
+	for _, sk := range skills {
+		nodeContent, _ := json.Marshal(map[string]any{
+			"schema_version":         1,
+			"skill_ref":              sk.ID,
+			"loading_stance_id":      scope.StanceID,
+			"loading_stance_role":    string(role),
+			"concern_field_template": tmplName,
+			"matching_applicability": "mission_scope",
+			"task_dag_scope":         scope.TaskID,
+			"loop_ref":               scope.LoopID,
+			"created_at":             time.Now(),
+		})
+
+		nodeID, err := b.ledger.AddNode(ctx, ledger.Node{
+			Type:          "skill_loaded",
+			SchemaVersion: 1,
+			CreatedBy:     "concern_field_builder",
+			MissionID:     scope.MissionID,
+			Content:       nodeContent,
+		})
+		if err != nil {
+			return fmt.Errorf("concern: log skill load: %w", err)
+		}
+
+		evtPayload, _ := json.Marshal(map[string]any{
+			"skill_loaded_id": nodeID,
+			"skill_id":        sk.ID,
+			"stance_id":       scope.StanceID,
+			"stance_role":     string(role),
+		})
+		if err := b.bus.Publish(bus.Event{
+			Type:      bus.EvtSkillLoaded,
+			EmitterID: "concern_field_builder",
+			Scope: bus.Scope{
+				MissionID: scope.MissionID,
+			},
+			Payload: evtPayload,
+		}); err != nil {
+			return fmt.Errorf("concern: emit skill loaded: %w", err)
 		}
 	}
-	return nil, fmt.Errorf("concern: no template for role=%s face=%s", role, face)
+	return nil
+}
+
+// findTemplate returns the first template matching the given role and face,
+// along with its registered name.
+func (b *Builder) findTemplate(role StanceRole, face Face) (*Template, string, error) {
+	for name, tmpl := range b.templates {
+		if tmpl.Role == role && tmpl.Face == face {
+			return &tmpl, name, nil
+		}
+	}
+	return nil, "", fmt.Errorf("concern: no template for role=%s face=%s", role, face)
 }
