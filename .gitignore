@@ -4,3 +4,5 @@
 *.log
 coverage.out
 dist/
+trio-main/
+trio-main.zip
