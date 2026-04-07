@@ -30,6 +30,7 @@ const (
 	ProviderNative     Provider = "native"     // Stoke native runner via Anthropic Messages API
 	ProviderOpenRouter Provider = "openrouter" // OpenRouter API (multi-model, pay-per-token)
 	ProviderDirectAPI  Provider = "direct-api" // Direct Anthropic/OpenAI API (pay-per-token)
+	ProviderEmber      Provider = "ember"      // Ember managed AI (OpenRouter proxy with credit billing)
 	ProviderLintOnly   Provider = "lint-only"  // No model: just run build/test/lint
 )
 

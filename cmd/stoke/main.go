@@ -23,6 +23,10 @@ import (
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
+	"github.com/ericmacdougall/stoke/internal/env"
+	"github.com/ericmacdougall/stoke/internal/env/docker"
+	"github.com/ericmacdougall/stoke/internal/env/ember"
+	"github.com/ericmacdougall/stoke/internal/env/fly"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
@@ -80,6 +84,9 @@ type BuildConfig struct {
 	UseSQLite       bool
 	SpecExec        bool // enable speculative parallel execution
 	Timeout         time.Duration
+	EnvBackend      string // execution environment: inproc, docker, fly, ember
+	EnvImage        string // base image for container/VM environments
+	EnvSize         string // machine size for cloud environments
 }
 
 // runBuild executes a build plan and returns the result.
@@ -258,6 +265,23 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		repoMap = nil // non-fatal: agents navigate without map
 	}
 
+	// Provision execution environment if configured.
+	var buildEnv env.Environment
+	var buildEnvHandle *env.Handle
+	if cfg.EnvBackend != "" && cfg.EnvBackend != "inproc" {
+		var provErr error
+		buildEnv, buildEnvHandle, provErr = provisionEnv(ctx, cfg, absRepo)
+		if provErr != nil {
+			return nil, fmt.Errorf("provision environment: %w", provErr)
+		}
+		defer func() {
+			if buildEnv != nil && buildEnvHandle != nil {
+				buildEnv.Teardown(context.Background(), buildEnvHandle)
+			}
+		}()
+		fmt.Printf("  env:     %s (%s)\n", cfg.EnvBackend, buildEnvHandle.ID)
+	}
+
 	execFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 		metricsReg.Counter("tasks.attempted").Inc()
 		estimator.Start(task.ID)
@@ -297,6 +321,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			TestGraph:        testGraph,
 			RepoMap:          repoMap,
 			EventBus:         eventBus,
+			Environ:          buildEnv,
+			EnvHandle:        buildEnvHandle,
 			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
@@ -770,6 +796,9 @@ func buildCmd(args []string) {
 	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
 	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
+	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
+	envImage := fs.String("env-image", "", "Base image for container/VM environments")
+	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
 	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -1041,6 +1070,9 @@ func buildCmd(args []string) {
 		UseSQLite:       *useSQLite,
 		SpecExec:        *specExec,
 		Timeout:         *timeout,
+		EnvBackend:      *envBackend,
+		EnvImage:        *envImage,
+		EnvSize:         *envSize,
 	}
 
 	buildReport, err := runBuild(buildCfg)
@@ -3120,6 +3152,45 @@ func serveCmd(args []string) {
 			fatal("serve: %v", err)
 		}
 	}
+}
+
+// provisionEnv creates and provisions an execution environment from BuildConfig.
+func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.Environment, *env.Handle, error) {
+	spec := env.Spec{
+		Backend:   env.Backend(cfg.EnvBackend),
+		BaseImage: cfg.EnvImage,
+		Size:      cfg.EnvSize,
+		RepoRoot:  repoRoot,
+		Env:       map[string]string{},
+	}
+
+	var backend env.Environment
+	switch env.Backend(cfg.EnvBackend) {
+	case env.BackendDocker:
+		backend = docker.New()
+	case env.BackendFly:
+		backend = fly.New(fly.Config{
+			APIURL:     os.Getenv("FLARE_API_URL"),
+			Token:      os.Getenv("FLARE_API_KEY"),
+			AppName:    os.Getenv("FLARE_APP_NAME"),
+			Region:     os.Getenv("FLARE_REGION"),
+			SSHKeyPath: os.Getenv("FLARE_SSH_KEY"),
+		})
+	case env.BackendEmber:
+		backend = ember.New(ember.Config{
+			APIURL:     os.Getenv("EMBER_API_URL"),
+			Token:      os.Getenv("EMBER_API_KEY"),
+			SSHKeyPath: os.Getenv("EMBER_SSH_KEY"),
+		})
+	default:
+		return nil, nil, fmt.Errorf("unknown env backend: %s", cfg.EnvBackend)
+	}
+
+	handle, err := backend.Provision(ctx, spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return backend, handle, nil
 }
 
 // createOrchestrator builds an orchestrate.Orchestrator for the serve command.
