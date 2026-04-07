@@ -11,6 +11,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/boulder"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/plugins"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
@@ -80,6 +81,8 @@ type RunConfig struct {
 	RunnerMode       string                     // runner selection: "claude" (default), "codex", "native", "hybrid"
 	NativeAPIKey     string                     // API key for native runner (required when RunnerMode=native)
 	NativeModel      string                     // model for native runner (default: claude-sonnet-4-6)
+	Environ          env.Environment            // execution environment backend (nil = run on host)
+	EnvHandle        *env.Handle                // provisioned environment handle (nil = run on host)
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
@@ -304,6 +307,8 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		SkillRegistry:    skillRegistry,
 		StackMatches:     stackMatches,
 		RunnerMode:       o.cfg.RunnerMode,
+		Environ:          o.cfg.Environ,
+		EnvHandle:        o.cfg.EnvHandle,
 	}
 	return wf.Run(ctx)
 }
