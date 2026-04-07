@@ -132,6 +132,11 @@ func (r *Runner) Run(ctx context.Context, mission *MissionConfig) (*RunResult, e
 	result.WallTimeMs = wallMs
 	result.AcceptanceTotal = len(mission.Acceptance)
 
+	// Verify ledger integrity; corruption is a bench failure.
+	if verr := l.Verify(ctx); verr != nil {
+		result.LedgerCorrupted = true
+	}
+
 	return result, nil
 }
 

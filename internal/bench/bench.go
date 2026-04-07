@@ -27,6 +27,7 @@ type RunResult struct {
 	TrustFirings    int
 	DissentCount    int
 	EscalationCount int
+	LedgerCorrupted bool
 }
 
 // ComparisonResult holds the diff between a baseline and current run.

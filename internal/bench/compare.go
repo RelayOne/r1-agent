@@ -46,5 +46,10 @@ func DetectRegression(baseline, current *RunResult) bool {
 		return true
 	}
 
+	// Ledger corruption is always a regression.
+	if current.LedgerCorrupted {
+		return true
+	}
+
 	return false
 }

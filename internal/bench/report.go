@@ -12,11 +12,15 @@ func Report(results []RunResult) string {
 	sb.WriteString("# Bench Report\n\n")
 	sb.WriteString(fmt.Sprintf("Missions run: %d\n\n", len(results)))
 
-	sb.WriteString("| Mission | State | Acceptance | Cost | Tokens | Wall Time | Loops | Trust | Dissent | Escalations |\n")
-	sb.WriteString("|---------|-------|------------|------|--------|-----------|-------|-------|---------|-------------|\n")
+	sb.WriteString("| Mission | State | Acceptance | Cost | Tokens | Wall Time | Loops | Trust | Dissent | Escalations | Ledger |\n")
+	sb.WriteString("|---------|-------|------------|------|--------|-----------|-------|-------|---------|-------------|--------|\n")
 
 	for _, r := range results {
-		sb.WriteString(fmt.Sprintf("| %s | %s | %d/%d | $%.4f | %d | %dms | %d | %d | %d | %d |\n",
+		ledgerStatus := "ok"
+		if r.LedgerCorrupted {
+			ledgerStatus = "CORRUPTED"
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %d/%d | $%.4f | %d | %dms | %d | %d | %d | %d | %s |\n",
 			r.MissionID,
 			r.TerminalState,
 			r.AcceptanceMet, r.AcceptanceTotal,
@@ -27,11 +31,12 @@ func Report(results []RunResult) string {
 			r.TrustFirings,
 			r.DissentCount,
 			r.EscalationCount,
+			ledgerStatus,
 		))
 	}
 
 	// Summary.
-	var converged, escalated, timedOut int
+	var converged, escalated, timedOut, corrupted int
 	var totalCost float64
 	var totalTokens int64
 	for _, r := range results {
@@ -43,6 +48,9 @@ func Report(results []RunResult) string {
 		case "timed_out":
 			timedOut++
 		}
+		if r.LedgerCorrupted {
+			corrupted++
+		}
 		totalCost += r.CostUSD
 		totalTokens += r.TokensUsed
 	}
@@ -51,6 +59,7 @@ func Report(results []RunResult) string {
 	sb.WriteString(fmt.Sprintf("- Converged: %d\n", converged))
 	sb.WriteString(fmt.Sprintf("- Escalated: %d\n", escalated))
 	sb.WriteString(fmt.Sprintf("- Timed out: %d\n", timedOut))
+	sb.WriteString(fmt.Sprintf("- Ledger corrupted: %d\n", corrupted))
 	sb.WriteString(fmt.Sprintf("- Total cost: $%.4f\n", totalCost))
 	sb.WriteString(fmt.Sprintf("- Total tokens: %d\n", totalTokens))
 
