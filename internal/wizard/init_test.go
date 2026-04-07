@@ -15,6 +15,7 @@ func initGitRepo(t *testing.T, dir string) {
 		{"git", "init"},
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test"},
+		{"git", "config", "commit.gpgsign", "false"},
 	}
 	// Create a file and commit so HEAD exists.
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644); err != nil {
