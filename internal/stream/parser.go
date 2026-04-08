@@ -58,12 +58,22 @@ type Parser struct {
 	GlobalTimeout     time.Duration
 }
 
-// DefaultParser returns production-safe timeouts.
+// DefaultParser returns supervisor-driven defaults.
+//
+// StreamIdleTimeout and GlobalTimeout default to 0 (disabled). The supervisor
+// (boulder.Enforcer) is authoritative for detecting stuck agents — it tracks
+// activity and nudges/restarts workers that genuinely stop making progress,
+// rather than killing them on a wall-clock timer.
+//
+// PostResultTimeout remains a small drain ceiling for the post-completion
+// path: once the model has emitted a "result" event, give it a few seconds to
+// flush stdout cleanly before forcing exit. This is process-cleanup hygiene,
+// not execution capping.
 func DefaultParser() *Parser {
 	return &Parser{
-		StreamIdleTimeout: 90 * time.Second,
+		StreamIdleTimeout: 0, // 0 = supervisor-driven, no idle wall-clock cap
 		PostResultTimeout: 30 * time.Second,
-		GlobalTimeout:     30 * time.Minute,
+		GlobalTimeout:     0, // 0 = supervisor-driven, no global wall-clock cap
 	}
 }
 
@@ -78,10 +88,21 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 		scanner := bufio.NewScanner(r)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 4*1024*1024)
 
-		idle := time.NewTimer(p.StreamIdleTimeout)
-		defer idle.Stop()
-		global := time.NewTimer(p.GlobalTimeout)
-		defer global.Stop()
+		// Treat 0 as "disabled": use a nil channel so the select case never
+		// fires. This is the supervisor-driven default.
+		var idle *time.Timer
+		var idleC <-chan time.Time
+		if p.StreamIdleTimeout > 0 {
+			idle = time.NewTimer(p.StreamIdleTimeout)
+			defer idle.Stop()
+			idleC = idle.C
+		}
+		var globalC <-chan time.Time
+		if p.GlobalTimeout > 0 {
+			global := time.NewTimer(p.GlobalTimeout)
+			defer global.Stop()
+			globalC = global.C
+		}
 
 		resultSeen := false
 		var postResult *time.Timer
@@ -102,7 +123,9 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 			select {
 			case line, ok := <-lines:
 				if !ok { return }
-				resetTimer(idle, p.StreamIdleTimeout)
+				if idle != nil {
+					resetTimer(idle, p.StreamIdleTimeout)
+				}
 				line = strings.TrimSpace(line)
 				if line == "" || line[0] != '{' { continue }
 				if !json.Valid([]byte(line)) { continue }
@@ -132,10 +155,10 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 					ch <- Event{Type: "error", IsError: true, ResultText: fmt.Sprintf("read: %v", err)}
 				}
 				return
-			case <-idle.C:
+			case <-idleC:
 				ch <- Event{Type: "error", Subtype: "stream_idle_timeout", IsError: true}
 				return
-			case <-global.C:
+			case <-globalC:
 				ch <- Event{Type: "error", Subtype: "global_timeout", IsError: true}
 				return
 			}

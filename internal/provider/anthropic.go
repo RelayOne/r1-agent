@@ -288,6 +288,12 @@ func (p *AnthropicProvider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	// When talking to a non-default base URL (LiteLLM, custom proxy), also send
+	// Authorization: Bearer. LiteLLM's Anthropic pass-through accepts either
+	// header; api.anthropic.com ignores the Authorization header harmlessly.
+	if !strings.Contains(p.baseURL, "api.anthropic.com") && p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 }
 
 // OpenAICompatProvider communicates with OpenAI-compatible endpoints (OpenAI, OpenRouter, XAI, etc.).

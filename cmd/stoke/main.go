@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -205,9 +207,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		StartedAt: time.Now(),
 	})
 
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, cfg.Timeout)
+	// No wall-clock timeout by default: the supervisor (boulder) is authoritative
+	// for detecting stuck workers. cfg.Timeout > 0 still applies as a hard safety
+	// ceiling for users who explicitly opt in.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if cfg.Timeout > 0 {
+		sigCtx, sigCancel := signalContext(context.Background())
+		defer sigCancel()
+		ctx, cancel = context.WithTimeout(sigCtx, cfg.Timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	// Create harness-owned plan state
@@ -603,6 +614,8 @@ func main() {
 		serveCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
+	case "mcp-serve-stoke":
+		mcpServeStokeCmd(os.Args[2:])
 	case "init", "wizard":
 		initCmd(os.Args[2:])
 	case "version", "--version", "-v":
@@ -691,6 +704,34 @@ func mcpServeCmd(args []string) {
 	}
 }
 
+// --- mcp-serve-stoke: start MCP server that exposes Stoke as a tool to Claude Code ---
+//
+// This is the inverse of mcp-serve: instead of giving Claude Code access to a
+// project's codebase, this gives Claude Code the ability to drive Stoke itself.
+// Claude Code can call stoke_build_from_sow to kick off a multi-session build,
+// then poll stoke_get_mission_status until completion.
+//
+// Wire it into Claude Code with:
+//   { "mcpServers": { "stoke": { "command": "stoke", "args": ["mcp-serve-stoke"] } } }
+func mcpServeStokeCmd(args []string) {
+	fs := flag.NewFlagSet("mcp-serve-stoke", flag.ExitOnError)
+	stokeBin := fs.String("stoke-bin", "", "Path to stoke binary used for spawned builds (default: argv[0])")
+	fs.Parse(args)
+
+	bin := *stokeBin
+	if bin == "" {
+		// Resolve our own executable path so subprocess builds can find us.
+		if exe, err := os.Executable(); err == nil {
+			bin = exe
+		}
+	}
+	srv := stokeMCP.NewStokeServer(bin)
+	if err := srv.ServeStdio(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 // --- run: single task through PLAN -> EXECUTE -> VERIFY ---
 
 func runCmd(args []string) {
@@ -713,7 +754,8 @@ func runCmd(args []string) {
 	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
-	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
+	// No wall-clock timeout: supervisor (boulder) monitors liveness and restarts
+	// genuinely stuck workers. Use Ctrl-C to abort.
 	fs.Parse(args)
 
 	if strings.TrimSpace(*task) == "" {
@@ -749,6 +791,9 @@ func runCmd(args []string) {
 	runTracker := costtrack.NewTracker(0, nil)
 	runRepoMap, _ := repomap.Build(absRepo)
 	runTestGraph, _ := testselect.BuildGraph(absRepo)
+	// Boulder supervisor: now authoritative for stuck-agent detection. Always
+	// enabled so the task is monitored for liveness instead of timed out.
+	runBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 
 	cfg := app.RunConfig{
 		RepoRoot:        absRepo,
@@ -762,6 +807,7 @@ func runCmd(args []string) {
 		CodexBinary:     *codexBin,
 		ClaudeConfigDir: *claudeConfigDir,
 		CodexHome:       *codexHome,
+		Boulder:         runBoulder,
 		State:           ts,
 		BuildCommand:    *buildC,
 		TestCommand:     *testC,
@@ -785,9 +831,9 @@ func runCmd(args []string) {
 		fatal("stoke init: %v", err)
 	}
 
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
+	// No wall-clock timeout: the supervisor (boulder) monitors liveness and
+	// restarts genuinely stuck workers. Ctrl-C still aborts via signalContext.
+	ctx, cancel := signalContext(context.Background())
 	defer cancel()
 
 	ui.TaskStart("task", *task, "default")
@@ -833,7 +879,9 @@ func buildCmd(args []string) {
 	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
 	envImage := fs.String("env-image", "", "Base image for container/VM environments")
 	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
-	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	// Hard timeout is disabled by default; supervisor handles stuck workers.
+	// Setting a non-zero value re-enables it as a safety ceiling.
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1145,7 +1193,10 @@ func sowCmd(args []string) {
 	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
-	timeout := fs.Duration("timeout", 120*time.Minute, "Timeout")
+	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
+	// is disabled by default; supervisor handles liveness. Set --timeout to a
+	// non-zero duration to re-enable a safety ceiling.
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1270,10 +1321,17 @@ func sowCmd(args []string) {
 		}
 	}
 
-	// Execute session-by-session with acceptance criteria gates
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
+	// Execute session-by-session with acceptance criteria gates.
+	// No wall-clock timeout by default: the supervisor is authoritative.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if *timeout > 0 {
+		sigCtx, sigCancel := signalContext(context.Background())
+		defer sigCancel()
+		ctx, cancel = context.WithTimeout(sigCtx, *timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
@@ -2086,7 +2144,7 @@ func repairCmd(args []string) {
 	workers := fs.Int("workers", 2, "Max parallel agents")
 	dryRun := fs.Bool("dry-run", false, "Show repair plan without executing")
 	authMode := fs.String("mode", "mode1", "Auth mode")
-	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -2310,7 +2368,7 @@ func shipCmd(args []string) {
 	maxRounds := fs.Int("max-rounds", 5, "Maximum build-review-fix rounds")
 	workers := fs.Int("workers", 2, "Max parallel agents")
 	authMode := fs.String("mode", "mode1", "Auth mode")
-	timeout := fs.Duration("timeout", 120*time.Minute, "Total timeout")
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	dryRun := fs.Bool("dry-run", false, "Show what would happen")
 	fs.Parse(args)
 
@@ -2355,7 +2413,13 @@ func shipCmd(args []string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if *timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), *timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	startTime := time.Now()
@@ -2941,13 +3005,244 @@ func gitHead(dir string) string {
 
 // --- helpers ---
 
+// SmartDefaults captures the auto-detected configuration that `stoke` uses
+// when launched bare with no arguments. The user explicitly asked for
+// "use all smart settings / use local litellm / use native executor" to be the
+// default behavior with zero flags.
+type SmartDefaults struct {
+	RunnerMode    string // claude, codex, native
+	NativeBaseURL string // e.g. http://localhost:8000 for LiteLLM
+	NativeAPIKey  string // from env: LITELLM_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+	NativeModel   string // e.g. claude-sonnet-4-6
+	Notes         []string // human-readable explanation of decisions
+}
+
+// detectSmartDefaults probes the local environment for the best default
+// runner. Priority:
+//  1. LITELLM_BASE_URL set or http://localhost:8000 reachable → native runner
+//     speaking Anthropic protocol to LiteLLM (works with LiteLLM routing to
+//     Minimax, OpenRouter, Anthropic, etc.).
+//  2. claude binary on PATH → claude runner (subprocess).
+//  3. codex binary on PATH → codex runner (subprocess).
+//  4. ANTHROPIC_API_KEY set → native runner direct to api.anthropic.com.
+//  5. Fall back to claude runner (will fail loudly if not installed).
+func detectSmartDefaults() SmartDefaults {
+	d := SmartDefaults{
+		NativeModel: "claude-sonnet-4-6",
+	}
+	if m := os.Getenv("STOKE_NATIVE_MODEL"); m != "" {
+		d.NativeModel = m
+	}
+
+	// 1. LiteLLM via env
+	if base := os.Getenv("LITELLM_BASE_URL"); base != "" {
+		d.RunnerMode = "native"
+		d.NativeBaseURL = strings.TrimRight(base, "/")
+		d.NativeAPIKey = firstNonEmpty(
+			os.Getenv("LITELLM_API_KEY"),
+			os.Getenv("LITELLM_MASTER_KEY"),
+			os.Getenv("ANTHROPIC_API_KEY"),
+			"sk-litellm",
+		)
+		d.Notes = append(d.Notes, "LiteLLM detected via LITELLM_BASE_URL → native runner (Anthropic protocol)")
+		return d
+	}
+
+	// 2. LiteLLM via probe at conventional localhost port
+	if probeReachable("http://localhost:8000/v1/models", 300*time.Millisecond) ||
+		probeReachable("http://localhost:4000/v1/models", 300*time.Millisecond) ||
+		probeReachable("http://localhost:8000/health", 300*time.Millisecond) {
+		base := "http://localhost:8000"
+		if probeReachable("http://localhost:4000/v1/models", 200*time.Millisecond) {
+			base = "http://localhost:4000"
+		}
+		d.RunnerMode = "native"
+		d.NativeBaseURL = base
+		d.NativeAPIKey = firstNonEmpty(
+			os.Getenv("LITELLM_API_KEY"),
+			os.Getenv("LITELLM_MASTER_KEY"),
+			os.Getenv("ANTHROPIC_API_KEY"),
+			"sk-litellm",
+		)
+		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM detected at %s → native runner (Anthropic protocol)", base))
+		return d
+	}
+
+	// 3. Claude binary
+	if _, err := exec.LookPath("claude"); err == nil {
+		d.RunnerMode = "claude"
+		d.Notes = append(d.Notes, "claude binary on PATH → claude runner")
+		return d
+	}
+
+	// 4. Codex binary
+	if _, err := exec.LookPath("codex"); err == nil {
+		d.RunnerMode = "codex"
+		d.Notes = append(d.Notes, "codex binary on PATH → codex runner")
+		return d
+	}
+
+	// 5. Anthropic API key
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		d.RunnerMode = "native"
+		d.NativeAPIKey = key
+		d.Notes = append(d.Notes, "ANTHROPIC_API_KEY set → native runner direct to api.anthropic.com")
+		return d
+	}
+
+	d.RunnerMode = "claude"
+	d.Notes = append(d.Notes, "no runner detected — defaulting to claude (will require `claude` binary)")
+	return d
+}
+
+// firstNonEmpty returns the first non-empty string from the argument list.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// probeReachable performs a quick GET to check if a URL responds at all.
+// Used for LiteLLM autodetection. Any HTTP response (including 401/404) counts
+// as "something is listening" — we are not validating auth here.
+func probeReachable(url string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 600
+}
+
+// runSOWWithDefaults executes a SOW string using the smart-defaults runner.
+// Used by the /build-from-scope slash command.
+func runSOWWithDefaults(absRepo, sowText string, defaults SmartDefaults) {
+	// Persist the SOW to .stoke/sow-from-scope.json so the existing sowCmd
+	// loader can pick it up. Accepts both JSON and YAML — sowCmd handles both.
+	stokeDir := filepath.Join(absRepo, ".stoke")
+	if err := os.MkdirAll(stokeDir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "  Error creating .stoke: %v\n", err)
+		return
+	}
+	sowPath := filepath.Join(stokeDir, "sow-from-scope.json")
+	if !strings.HasPrefix(strings.TrimSpace(sowText), "{") {
+		// Looks like YAML — write to .yaml extension instead.
+		sowPath = filepath.Join(stokeDir, "sow-from-scope.yaml")
+	}
+	if err := os.WriteFile(sowPath, []byte(sowText), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "  Error writing SOW: %v\n", err)
+		return
+	}
+	fmt.Printf("  SOW written to %s\n\n", sowPath)
+
+	args := []string{
+		"--repo", absRepo,
+		"--file", sowPath,
+		"--runner", defaults.RunnerMode,
+	}
+	if defaults.NativeBaseURL != "" {
+		args = append(args, "--native-base-url", defaults.NativeBaseURL)
+	}
+	if defaults.NativeAPIKey != "" {
+		args = append(args, "--native-api-key", defaults.NativeAPIKey)
+	}
+	if defaults.NativeModel != "" {
+		args = append(args, "--native-model", defaults.NativeModel)
+	}
+	sowCmd(args)
+}
+
+// readPastedSOW reads multi-line input from the REPL until a blank line
+// followed by END (or EOF) marker. Used by /build-from-scope to accept
+// pasted SOW content directly in the shell.
+func readPastedSOW(scanner *bufio.Scanner) string {
+	var b strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "END" || strings.TrimSpace(line) == "EOF" {
+			break
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // launchREPL starts the Stoke interactive shell.
 // Slash commands dispatch to orchestrated workflows.
 // Free text goes through claude -p as a single task.
 func launchREPL() {
 	absRepo, _ := filepath.Abs(".")
+
+	// Smart defaults: detect LiteLLM, claude/codex binaries, API keys.
+	// User explicitly asked for "use all smart settings / use local litellm /
+	// use native executor" to be the zero-flag default.
+	defaults := detectSmartDefaults()
+
+	// Banner
+	fmt.Printf("\n  \033[1;36mStoke %s\033[0m  supervised AI build orchestrator\n", version)
+	fmt.Printf("  Smart defaults active:\n")
+	fmt.Printf("    runner:  %s\n", defaults.RunnerMode)
+	if defaults.NativeBaseURL != "" {
+		fmt.Printf("    base:    %s\n", defaults.NativeBaseURL)
+	}
+	if defaults.NativeModel != "" {
+		fmt.Printf("    model:   %s\n", defaults.NativeModel)
+	}
+	fmt.Printf("    super:   boulder (no wall-clock timeouts)\n")
+	for _, note := range defaults.Notes {
+		fmt.Printf("    note:    %s\n", note)
+	}
+	fmt.Println()
+	fmt.Println("  Type /help for commands. /build-from-scope to start a multi-session build from a SOW.")
+	fmt.Println()
+
 	r := repl.New(absRepo)
 	r.RegisterBuiltins()
+
+	// /build-from-scope: paste a SOW directly or pass a file path.
+	r.Register(repl.Command{
+		Name: "build-from-scope",
+		Description: "Build a project from a pasted or file-based Statement of Work",
+		Usage: "/build-from-scope [<path-to-sow.json>]\n               (with no path: paste SOW, then 'END' on a blank line)",
+		Run: func(args string) {
+			arg := strings.TrimSpace(args)
+			var sowText string
+			if arg != "" && !strings.HasPrefix(arg, "{") {
+				// Treat as a file path
+				path := arg
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(absRepo, arg)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					fmt.Printf("  Error reading SOW file %q: %v\n", path, err)
+					return
+				}
+				sowText = string(data)
+				fmt.Printf("  Loaded SOW from %s (%d bytes)\n", path, len(sowText))
+			} else if strings.HasPrefix(arg, "{") {
+				// Inline JSON on the command line
+				sowText = arg
+			} else {
+				// Heredoc paste mode
+				fmt.Println("  Paste your SOW (JSON or YAML), then type END on a blank line:")
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+				sowText = readPastedSOW(scanner)
+				fmt.Printf("  Received %d bytes\n", len(sowText))
+			}
+			if strings.TrimSpace(sowText) == "" {
+				fmt.Println("  No SOW provided. Aborting.")
+				return
+			}
+			runSOWWithDefaults(absRepo, sowText, defaults)
+		},
+	})
 
 	// Register all slash commands
 	r.Register(repl.Command{
@@ -3123,10 +3418,22 @@ func launchREPL() {
 		Run: func(args string) {}, // handled by REPL itself
 	})
 
-	// Free text -> dispatch through the run pipeline
+	// Free text -> dispatch through the run pipeline using the smart defaults
+	// detected at startup. This is the "use all smart settings / use local
+	// litellm / use native executor" path the user asked for.
 	r.OnChat = func(input string) {
 		fmt.Println()
-		runCmd([]string{"--task", input, "--repo", absRepo})
+		args := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			args = append(args, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			args = append(args, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			args = append(args, "--native-model", defaults.NativeModel)
+		}
+		runCmd(args)
 		fmt.Println()
 	}
 

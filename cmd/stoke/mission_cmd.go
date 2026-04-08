@@ -309,7 +309,7 @@ func missionRunCmd(args []string) {
 	id := fs.String("id", "", "Mission ID (required)")
 	maxLoops := fs.Int("max-loops", 5, "Maximum convergence loop iterations")
 	consensus := fs.Int("consensus", 2, "Required consensus model count")
-	timeout := fs.Duration("timeout", 60*time.Minute, "Overall timeout")
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	storeDir := fs.String("store", "", "Mission store directory")
 	claudeBin := fs.String("claude-bin", "", "Path to claude binary (default: auto-detect)")
 	noDiscovery := fs.Bool("no-discovery", false, "Disable agentic discovery loops")
@@ -350,7 +350,13 @@ func missionRunCmd(args []string) {
 		fatal("create runner: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if *timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), *timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	result, err := runner.Run(ctx, *id)
