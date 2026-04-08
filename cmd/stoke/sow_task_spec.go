@@ -99,16 +99,31 @@ func extractTaskSpecExcerpt(rawSOW string, session plan.Session, task plan.Task,
 		return ""
 	}
 
-	// Find matching paragraph indices.
-	matches := make(map[int]bool)
+	// Find matching paragraph indices. Case-insensitive for English
+	// words (e.g. a term like "persys-concern" should match "the
+	// PERSYS-CONCERN crate" in prose), but case-sensitive for terms
+	// that contain characters like `/` or `.` or `_` (those look like
+	// code identifiers and case matters).
+	lowerParagraphs := make([]string, len(paragraphs))
 	for i, p := range paragraphs {
+		lowerParagraphs[i] = strings.ToLower(p)
+	}
+	matches := make(map[int]bool)
+	for i := range paragraphs {
 		for _, term := range terms {
 			if term == "" {
 				continue
 			}
-			if strings.Contains(p, term) {
-				matches[i] = true
-				break
+			if isCodeLikeTerm(term) {
+				if strings.Contains(paragraphs[i], term) {
+					matches[i] = true
+					break
+				}
+			} else {
+				if strings.Contains(lowerParagraphs[i], strings.ToLower(term)) {
+					matches[i] = true
+					break
+				}
 			}
 		}
 	}
@@ -237,6 +252,22 @@ func collectTaskSearchTerms(session plan.Session, task plan.Task) []string {
 	}
 
 	return terms
+}
+
+// splitIntoParagraphs breaks raw text into paragraphs. A paragraph
+// isCodeLikeTerm decides whether a search term should be matched
+// case-sensitively. Terms containing path separators, dots, or
+// underscores look like code identifiers (e.g. "crates/foo",
+// "concern.rs", "pub struct Concern") and are matched verbatim. All
+// other terms are matched case-insensitively so English prose like
+// "the persys-concern crate" hits a term like "persys-concern".
+func isCodeLikeTerm(term string) bool {
+	for _, c := range term {
+		if c == '/' || c == '.' || c == '_' || c == '(' || c == ')' || c == '<' || c == '>' || c == ':' {
+			return true
+		}
+	}
+	return false
 }
 
 // splitIntoParagraphs breaks raw text into paragraphs. A paragraph
