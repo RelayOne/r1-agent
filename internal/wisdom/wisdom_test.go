@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRecordAndLearnings(t *testing.T) {
@@ -186,5 +187,97 @@ func TestConcurrentAccess(t *testing.T) {
 	got := s.Learnings()
 	if len(got) != 100 {
 		t.Errorf("expected 100 learnings after concurrent writes, got %d", len(got))
+	}
+}
+
+func TestAsOf(t *testing.T) {
+	s := NewStore()
+
+	now := time.Now()
+	past := now.Add(-48 * time.Hour)
+	recent := now.Add(-1 * time.Hour)
+	future := now.Add(24 * time.Hour)
+
+	// Record learnings at different times
+	s.Record("T1", Learning{
+		Category:    Gotcha,
+		Description: "old learning",
+		ValidFrom:   past,
+	})
+	expiry := now.Add(-12 * time.Hour)
+	s.Record("T2", Learning{
+		Category:    Decision,
+		Description: "expired learning",
+		ValidFrom:   past,
+		ValidUntil:  &expiry,
+	})
+	s.Record("T3", Learning{
+		Category:    Pattern,
+		Description: "recent learning",
+		ValidFrom:   recent,
+	})
+	s.Record("T4", Learning{
+		Category:    Pattern,
+		Description: "future learning",
+		ValidFrom:   future,
+	})
+
+	// Query as of now: should see T1 (old, still valid), T3 (recent), not T2 (expired) or T4 (future)
+	result := s.AsOf(now)
+	if len(result) != 2 {
+		t.Fatalf("AsOf(now) returned %d learnings, want 2", len(result))
+	}
+
+	descriptions := map[string]bool{}
+	for _, l := range result {
+		descriptions[l.Description] = true
+	}
+	if !descriptions["old learning"] {
+		t.Error("expected 'old learning' in AsOf(now)")
+	}
+	if !descriptions["recent learning"] {
+		t.Error("expected 'recent learning' in AsOf(now)")
+	}
+	if descriptions["expired learning"] {
+		t.Error("'expired learning' should not be in AsOf(now)")
+	}
+
+	// Query 24 hours ago: should see T1 (old, still valid) and T2 (not yet expired at -24h)
+	oneDayAgo := now.Add(-24 * time.Hour)
+	oldResult := s.AsOf(oneDayAgo)
+	if len(oldResult) != 2 {
+		t.Fatalf("AsOf(24h ago) returned %d learnings, want 2 (T1+T2)", len(oldResult))
+	}
+}
+
+func TestInvalidate(t *testing.T) {
+	s := NewStore()
+	s.Record("T1", Learning{Category: Gotcha, Description: "will be invalidated"})
+
+	now := time.Now()
+	ok := s.Invalidate("T1", "will be invalidated", now)
+	if !ok {
+		t.Fatal("Invalidate should return true for existing learning")
+	}
+
+	// The learning should now have ValidUntil set
+	learnings := s.Learnings()
+	if len(learnings) != 1 {
+		t.Fatalf("expected 1 learning, got %d", len(learnings))
+	}
+	if learnings[0].ValidUntil == nil {
+		t.Fatal("ValidUntil should be set after Invalidate")
+	}
+
+	// Should not appear in AsOf after invalidation
+	result := s.AsOf(now.Add(1 * time.Second))
+	if len(result) != 0 {
+		t.Errorf("invalidated learning should not appear in AsOf, got %d", len(result))
+	}
+
+	// Should not find non-existent
+	ok = s.Invalidate("T99", "nonexistent", now)
+	if ok {
+		t.Error("Invalidate should return false for non-existent learning")
 	}
 }

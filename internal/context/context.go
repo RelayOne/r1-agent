@@ -6,12 +6,30 @@ import (
 )
 
 // Tier defines context priority levels.
+// The L0-L3 naming follows MemPalace's articulation of context layers:
+//   L0 (Identity):  ~50 tokens, always loaded. System identity, role, constraints.
+//   L1 (Critical):  ~120 tokens, always loaded. Active task, key facts, blockers.
+//   L2 (Topical):   On-demand. Relevant file content, recent tool outputs.
+//   L3 (Deep):      On-demand. Full semantic search results, historical context.
+//
+// The three Go tiers map to L0-L3 as follows:
+//   TierActive  = L0 + L1 (always in the API call)
+//   TierSession = L2 (promoted on demand from disk)
+//   TierProject = L3 (persistent, semantic search backed)
 type Tier int
 
 const (
-	TierActive  Tier = iota // in the API call: prompt, task, retry brief, recent tools
-	TierSession             // on disk, promoted on demand: plan state, error history
-	TierProject             // persistent: CLAUDE.md, project map, learned patterns
+	TierActive  Tier = iota // L0+L1: in the API call — prompt, task, retry brief, recent tools
+	TierSession             // L2: on disk, promoted on demand — plan state, error history
+	TierProject             // L3: persistent — CLAUDE.md, project map, learned patterns
+)
+
+// L-level aliases for documentation clarity.
+const (
+	L0Identity = TierActive  // ~50 tokens, always loaded
+	L1Critical = TierActive  // ~120 tokens, always loaded
+	L2Topical  = TierSession // on-demand topical recall
+	L3Deep     = TierProject // on-demand deep semantic search
 )
 
 // Budget controls context window utilization.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Category classifies a learning.
@@ -54,6 +55,12 @@ type Learning struct {
 	Description    string
 	File           string // optional: relevant file path
 	FailurePattern string // optional: failure fingerprint hash for cross-task dedup
+
+	// Temporal validity: when this learning is considered active.
+	// ValidFrom defaults to the time the learning was recorded.
+	// ValidUntil is nil for learnings that never expire.
+	ValidFrom  time.Time  `json:"valid_from,omitempty"`
+	ValidUntil *time.Time `json:"valid_until,omitempty"` // nil = no expiry
 }
 
 // Store holds accumulated learnings for a build session.
@@ -67,11 +74,14 @@ func NewStore() *Store {
 	return &Store{}
 }
 
-// Record adds a learning to the store.
+// Record adds a learning to the store. Sets ValidFrom to now if not already set.
 func (s *Store) Record(taskID string, l Learning) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l.TaskID = taskID
+	if l.ValidFrom.IsZero() {
+		l.ValidFrom = time.Now()
+	}
 	s.learnings = append(s.learnings, l)
 }
 
@@ -151,6 +161,41 @@ func (s *Store) FindByPattern(hash string) *Learning {
 		}
 	}
 	return nil
+}
+
+// AsOf returns all learnings that were valid at the given time.
+// A learning is valid at time t if: ValidFrom <= t AND (ValidUntil is nil OR ValidUntil > t).
+func (s *Store) AsOf(t time.Time) []Learning {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var result []Learning
+	for _, l := range s.learnings {
+		if l.ValidFrom.After(t) {
+			continue // not yet valid at time t
+		}
+		if l.ValidUntil != nil && !l.ValidUntil.After(t) {
+			continue // already expired at time t
+		}
+		result = append(result, l)
+	}
+	return result
+}
+
+// Invalidate sets ValidUntil on a learning identified by its index, without
+// rewriting history (append-only constraint preserved). The learning remains
+// in the store but is excluded from AsOf queries after endedAt.
+func (s *Store) Invalidate(taskID, description string, endedAt time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.learnings {
+		if s.learnings[i].TaskID == taskID && s.learnings[i].Description == description {
+			s.learnings[i].ValidUntil = &endedAt
+			return true
+		}
+	}
+	return false
 }
 
 // formatLine renders a single learning as a markdown bullet.
