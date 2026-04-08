@@ -4,6 +4,32 @@ Running log of decisions, blockers, and questions for Eric.
 
 ---
 
+## 2026-04-08 — Spec §16 Open Questions Resolution
+
+### Q8 — Auto-detect task dependencies from file scope
+**Status: Implemented.** `plan.AutoInferDependencies()` walks each task's declared
+`files`, builds a file-to-task index, and adds an implicit dependency when two tasks
+declare the same file. Wire via `--auto-deps` flag.
+
+### Q9 — Shared node_modules across worktrees
+**Status: Implemented.** `worktree.Prepare()` now symlinks known dependency
+directories from the main repo into each worktree: `node_modules`, `vendor`, `.venv`,
+`target`, `__pycache__`, `.gradle`, `.m2`. Default on, opt-out by removing symlink.
+
+### Q12 — Formalize the ExecutionEngine interface
+**Status: Closed.** `engine.CommandRunner` is already the formalized contract. All
+runners implement it. No separate `ExecutionEngine` interface needed.
+
+### Q14 — --bare audit
+**Status: Closed.** See `docs/architecture/bare-mode.md`. `--bare` is not used
+anywhere in Go source. Prohibition enforced by construction + PreToolUse hook.
+
+### Q11 — Naming
+**Status: Deferred.** "Stoke" no apparent trademark conflict. Reserve `stoke.dev`
+before v0.1.0 tag.
+
+---
+
 ## 2026-04-07 — v2 Architecture Implementation (Guide v2 "The Real Mission")
 
 ### Phase 0: Scaffolding

@@ -85,10 +85,47 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 		os.RemoveAll(runtimeDir)
 		return Handle{}, fmt.Errorf("git worktree add: %w: %s", err, string(out))
 	}
-	return Handle{
+	handle := Handle{
 		Name: name, Branch: branch, Path: path, RuntimeDir: runtimeDir,
 		BaseCommit: baseCommit, RepoRoot: m.RepoRoot, GitBinary: m.GitBinary,
-	}, nil
+	}
+
+	// Symlink shared dependency directories from main into the worktree
+	// to avoid reinstalling dependencies per worktree.
+	symlinkSharedDeps(m.RepoRoot, path)
+
+	return handle, nil
+}
+
+// SharedDepDirs are dependency directories that can be safely shared across
+// worktrees via symlinks. These are package manager caches that are
+// content-addressed or otherwise safe for concurrent reads.
+var SharedDepDirs = []string{
+	"node_modules",
+	"vendor",
+	".venv",
+	"target",         // Rust
+	"__pycache__",
+	".gradle",
+	".m2",
+}
+
+// symlinkSharedDeps creates symlinks from the worktree to the main repo's
+// dependency directories. This avoids reinstalling deps in each worktree.
+// Only symlinks directories that exist in the source and don't exist in
+// the target (worktree).
+func symlinkSharedDeps(repoRoot, worktreePath string) {
+	for _, dir := range SharedDepDirs {
+		src := filepath.Join(repoRoot, dir)
+		dst := filepath.Join(worktreePath, dir)
+
+		// Only symlink if source exists and destination doesn't
+		if info, err := os.Stat(src); err == nil && info.IsDir() {
+			if _, err := os.Lstat(dst); os.IsNotExist(err) {
+				os.Symlink(src, dst)
+			}
+		}
+	}
 }
 
 // Cleanup removes a worktree, its branch, runtime directory, and snapshot refs.

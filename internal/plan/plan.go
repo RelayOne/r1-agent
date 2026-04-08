@@ -162,6 +162,47 @@ func (p *Plan) ValidateFiles(repoRoot string) (warnings, errors []string) {
 	return warnings, errors
 }
 
+// AutoInferDependencies examines each task's declared files, builds a
+// file→task index, and adds an implicit dependency from task A to task B
+// when A reads a file that B writes. Existing explicit dependencies are
+// preserved; only new implicit ones are added.
+func (p *Plan) AutoInferDependencies() int {
+	// Build file→writer index: which task "owns" (writes to) each file
+	writers := map[string]string{} // file path → task ID
+	for _, t := range p.Tasks {
+		for _, f := range t.Files {
+			writers[f] = t.ID
+		}
+	}
+
+	added := 0
+	for i := range p.Tasks {
+		existing := map[string]bool{}
+		for _, dep := range p.Tasks[i].Dependencies {
+			existing[dep] = true
+		}
+
+		for _, f := range p.Tasks[i].Files {
+			// If another task also declares this file, add a dependency
+			// from the later task to the earlier one (by position)
+			for j := range p.Tasks {
+				if i == j {
+					continue
+				}
+				for _, otherFile := range p.Tasks[j].Files {
+					if otherFile == f && !existing[p.Tasks[j].ID] && j < i {
+						p.Tasks[i].Dependencies = append(p.Tasks[i].Dependencies, p.Tasks[j].ID)
+						existing[p.Tasks[j].ID] = true
+						added++
+					}
+				}
+			}
+		}
+	}
+
+	return added
+}
+
 func detectCycle(tasks []Task) string {
 	adj := map[string][]string{}
 	for _, t := range tasks {
