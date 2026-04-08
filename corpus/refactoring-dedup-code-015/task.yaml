@@ -1,0 +1,15 @@
+id: "refactoring-dedup-code-015"
+title: "Deduplicate repeated validation logic"
+category: "refactoring"
+language: "go"
+difficulty: 2
+time_limit_seconds: 300
+cost_limit_usd: 0.50
+prompt_file: "prompt.md"
+initial_repo: "initial/"
+visible_tests: "visible_tests/"
+hidden_tests: "hidden_tests/"
+hidden_requirements:
+  - "Must not break existing functionality"
+  - "Must follow Go best practices"
+expected_failure_modes: []

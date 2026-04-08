@@ -1,0 +1,15 @@
+id: "security-path-traversal-012"
+title: "Fix path traversal in file server"
+category: "security"
+language: "go"
+difficulty: 3
+time_limit_seconds: 300
+cost_limit_usd: 0.50
+prompt_file: "prompt.md"
+initial_repo: "initial/"
+visible_tests: "visible_tests/"
+hidden_tests: "hidden_tests/"
+hidden_requirements:
+  - "Must not break existing functionality"
+  - "Must follow Go best practices"
+expected_failure_modes: []

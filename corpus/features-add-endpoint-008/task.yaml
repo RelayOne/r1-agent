@@ -1,0 +1,17 @@
+id: features-add-endpoint-008
+category: features
+title: "Add /health endpoint returning JSON status"
+language: go
+difficulty: 1
+time_limit_seconds: 90
+cost_limit_usd: 0.30
+prompt_file: prompt.md
+initial_repo: initial/
+visible_tests: visible_tests/
+hidden_tests: hidden_tests/
+reference_patch: ""
+hidden_requirements:
+  - "GET /health must return HTTP 200"
+  - "Response Content-Type must be application/json"
+  - 'Response body must be {"status":"ok"}'
+expected_failure_modes: []

@@ -1,0 +1,16 @@
+id: correctness-nil-pointer-003
+category: correctness
+title: "Fix nil pointer dereference in config parser"
+language: go
+difficulty: 1
+time_limit_seconds: 90
+cost_limit_usd: 0.30
+prompt_file: prompt.md
+initial_repo: initial/
+visible_tests: visible_tests/
+hidden_tests: hidden_tests/
+reference_patch: ""
+hidden_requirements:
+  - "Function must handle nil input without panicking"
+  - "Function must return a meaningful zero-value or error for nil input"
+expected_failure_modes: []
