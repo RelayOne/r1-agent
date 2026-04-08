@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -372,6 +373,78 @@ func TestStokeServer_ToolDefinitions(t *testing.T) {
 			t.Errorf("missing tool: %s", want)
 		}
 	}
+}
+
+// TestStokeServer_RealSubprocessCancel exercises the real spawn path: it
+// spawns `sleep 60` (or `cmd /c timeout 60` on Windows), then cancels via
+// the MCP tool and verifies the process exits within the SIGTERM window.
+// This is the only test that actually fork+exec's a child, so it's gated
+// on a real shell binary being available and runs in <5s by design.
+func TestStokeServer_RealSubprocessCancel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real subprocess test in -short mode")
+	}
+	// /bin/sleep is the simplest no-output long-running process. Skip the
+	// test cleanly if it's missing (CI sandboxes sometimes don't have it).
+	if _, err := os.Stat("/bin/sleep"); err != nil {
+		t.Skip("no /bin/sleep available")
+	}
+
+	tmp := t.TempDir()
+	s := NewStokeServer("/bin/sleep")
+	// Override the spawner to call sleep directly with a long duration.
+	// We can't go through stoke sow here because stoke isn't built into
+	// the test binary; the real spawner is what we want to exercise.
+	s.spawner = func(bin string, args []string, workdir string, env []string, stdout, stderr io.Writer) (processHandle, error) {
+		// Use /bin/sleep 60 so the cancel path has something real to kill.
+		return realSpawn("/bin/sleep", []string{"60"}, workdir, env, stdout, stderr)
+	}
+
+	out, err := s.HandleToolCall("stoke_build_from_sow", map[string]interface{}{
+		"repo_root": tmp,
+		"sow":       `{"id":"real","name":"real subprocess test"}`,
+	})
+	if err != nil {
+		t.Fatalf("build_from_sow: %v", err)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal([]byte(out), &resp)
+	missionID, _ := resp["mission_id"].(string)
+	pid, _ := resp["pid"].(float64)
+	if pid <= 0 {
+		t.Fatalf("expected real pid, got %v", pid)
+	}
+
+	// Verify the process is actually alive
+	if err := syscallTestProcessAlive(int(pid)); err != nil {
+		t.Fatalf("subprocess not running: %v", err)
+	}
+
+	// Cancel and wait for the status flip
+	cancelStart := time.Now()
+	if _, err := s.HandleToolCall("stoke_cancel_mission", map[string]interface{}{"mission_id": missionID}); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	waitForStatus(t, s, missionID, "cancelled", 5*time.Second)
+	elapsed := time.Since(cancelStart)
+	if elapsed > 4*time.Second {
+		t.Errorf("cancel took %s — should escalate to SIGKILL within ~3s", elapsed)
+	}
+
+	// And the process should now be reaped
+	if err := syscallTestProcessAlive(int(pid)); err == nil {
+		t.Errorf("subprocess pid %d still alive after cancel", int(pid))
+	}
+}
+
+// syscallTestProcessAlive returns nil if the process is alive (kill -0 success).
+func syscallTestProcessAlive(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	// On Unix, signal 0 tests existence without sending anything.
+	return proc.Signal(syscall.Signal(0))
 }
 
 // waitForStatus polls the server until mission reaches the expected status

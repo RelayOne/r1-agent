@@ -85,6 +85,13 @@ type Shell struct {
 	// stopCh closes when the shell quits. Command goroutines should honor it.
 	stopCh chan struct{}
 
+	// Modal prompt: when non-nil, the next submitted line is routed to this
+	// channel instead of dispatching as a slash command. Used by /interview
+	// so a handler can ask the user a question mid-command without leaving
+	// the full-screen UI.
+	promptCh     chan string
+	promptLabel  string
+
 	startedAt time.Time
 }
 
@@ -171,6 +178,35 @@ func (sh *Shell) SetStatus(format string, args ...interface{}) {
 	text := fmt.Sprintf(format, args...)
 	if sh.program != nil {
 		sh.program.Send(shellStatusMsg{text: text})
+	}
+}
+
+// Prompt asks the user a question mid-command and blocks until they press
+// Enter. The question is echoed into the log pane with an "?" marker and the
+// input prompt switches into "answer mode" (the next submitted line returns
+// here instead of being dispatched as a slash command). Returns the user's
+// answer, or "" if the shell is shutting down.
+//
+// Safe to call from a handler goroutine. Only one prompt may be active at a
+// time; calling Prompt while another is pending will overwrite the label but
+// still return the same channel.
+func (sh *Shell) Prompt(label string) string {
+	sh.mu.Lock()
+	if sh.promptCh == nil {
+		sh.promptCh = make(chan string, 1)
+	}
+	sh.promptLabel = label
+	ch := sh.promptCh
+	sh.mu.Unlock()
+
+	// Echo the prompt into the log pane so the user sees what's being asked.
+	sh.Append("? %s", label)
+
+	select {
+	case ans := <-ch:
+		return ans
+	case <-sh.stopCh:
+		return ""
 	}
 }
 
@@ -306,22 +342,40 @@ func (sh *Shell) handleKey(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (sh *Shell) submitLine() (tea.Model, tea.Cmd) {
-	line := strings.TrimSpace(sh.input)
+	line := sh.input
 	sh.input = ""
-	if line == "" {
+	trimmed := strings.TrimSpace(line)
+
+	// Modal prompt: if the handler is waiting for an answer, route the
+	// submitted line there instead of dispatching. Empty answers are
+	// allowed; the handler can retry if needed.
+	if sh.promptCh != nil {
+		ch := sh.promptCh
+		sh.promptCh = nil
+		sh.promptLabel = ""
+		sh.logBuf = append(sh.logBuf, fmt.Sprintf("? > %s", line))
+		// Don't block the UI goroutine — the channel is buffered.
+		select {
+		case ch <- line:
+		default:
+		}
+		return sh, nil
+	}
+
+	if trimmed == "" {
 		return sh, nil
 	}
 	// History
-	sh.history = append(sh.history, line)
+	sh.history = append(sh.history, trimmed)
 	sh.histPos = len(sh.history)
 
 	// Built-in /quit
-	if line == "/quit" || line == "/exit" || line == "/q" {
+	if trimmed == "/quit" || trimmed == "/exit" || trimmed == "/q" {
 		return sh, tea.Quit
 	}
 
 	// Echo to log
-	sh.logBuf = append(sh.logBuf, fmt.Sprintf("› %s", line))
+	sh.logBuf = append(sh.logBuf, fmt.Sprintf("› %s", trimmed))
 
 	if sh.busy {
 		sh.logBuf = append(sh.logBuf, "  (busy — command already running; wait for it to finish)")
@@ -338,7 +392,7 @@ func (sh *Shell) submitLine() (tea.Model, tea.Cmd) {
 
 	// Run handler in a goroutine so the UI stays responsive
 	go func() {
-		status := sh.handler(sh, line)
+		status := sh.handler(sh, trimmed)
 		if sh.program != nil {
 			sh.program.Send(shellCommandDoneMsg{status: status})
 		}
@@ -525,9 +579,52 @@ func (sh *Shell) renderLog(width, height int) string {
 	return shellBorder.Width(width - 2).Height(height).Render(b.String())
 }
 
+// --- Test helpers (exported so cmd package tests can drive a shell without
+// a real Bubble Tea program). These mirror the internal flow exactly. ---
+
+// SubmitForTest synchronously dispatches an input line through the shell's
+// command pipeline as if the user had pressed Enter. Tests should call this
+// from a goroutine if the handler will block on Prompt().
+func (sh *Shell) SubmitForTest(line string) {
+	sh.mu.Lock()
+	sh.input = line
+	sh.mu.Unlock()
+	_, _ = sh.submitLine()
+}
+
+// HasPendingPromptForTest returns true if a handler is currently waiting on
+// Prompt(). Use it to coordinate test goroutines.
+func (sh *Shell) HasPendingPromptForTest() bool {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return sh.promptCh != nil
+}
+
+// AnswerPromptForTest delivers an answer to a pending Prompt() call. No-op
+// if no prompt is pending.
+func (sh *Shell) AnswerPromptForTest(answer string) {
+	sh.mu.Lock()
+	if sh.promptCh == nil {
+		sh.mu.Unlock()
+		return
+	}
+	ch := sh.promptCh
+	sh.promptCh = nil
+	sh.promptLabel = ""
+	sh.mu.Unlock()
+	select {
+	case ch <- answer:
+	default:
+	}
+}
+
 func (sh *Shell) renderInput(width int) string {
 	prompt := "> "
-	if sh.busy {
+	if sh.promptCh != nil {
+		// Modal prompt: show the label in the input line so the user knows
+		// they're answering a question, not running a command.
+		prompt = "? "
+	} else if sh.busy {
 		prompt = "…  "
 	}
 	line := shellPrompt.Render(prompt) + sh.input
@@ -536,9 +633,12 @@ func (sh *Shell) renderInput(width int) string {
 	}
 	status := sh.status
 	if status == "" {
-		if sh.busy {
+		switch {
+		case sh.promptCh != nil:
+			status = shellBusyStyle.Render("answer: " + truncStr(sh.promptLabel, width-12))
+		case sh.busy:
 			status = shellBusyStyle.Render("working — Ctrl+C to cancel")
-		} else {
+		default:
 			status = shellStatusStyle.Render("/help · Tab=focus · PgUp/PgDn=scroll · Ctrl+C=quit")
 		}
 	} else {

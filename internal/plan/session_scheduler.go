@@ -32,6 +32,10 @@ type SessionScheduler struct {
 	// OnProgress is called after each session completes (success or failure).
 	// Used by the TUI/REPL to update its display. May be nil.
 	OnProgress func(SessionResult)
+	// OnSessionStart is called when a session begins (and on each retry).
+	// Lets the TUI flip the session to "running" before tasks execute.
+	// May be nil.
+	OnSessionStart func(sessionID string, attempt int)
 }
 
 // SessionResult is the outcome of executing one session.
@@ -156,6 +160,9 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 		for attempt := 1; attempt <= retries; attempt++ {
 			result.Attempts = attempt
 			ss.recordSessionStart(session, attempt)
+			if ss.OnSessionStart != nil {
+				ss.OnSessionStart(session.ID, attempt)
+			}
 
 			taskResults, err := execFn(ctx, session)
 			result.TaskResults = taskResults

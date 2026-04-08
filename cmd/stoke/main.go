@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -34,6 +35,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/interview"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
@@ -1263,6 +1265,23 @@ func sowCmd(args []string) {
 	// If a TUI shell is listening, wire session progress into its
 	// Sessions pane. This is a no-op in the line REPL and CLI modes.
 	if hook := currentShellProgress; hook != nil {
+		// Session-start: flip to running state in the Sessions pane so
+		// the user sees work begin before any tasks complete.
+		ss.OnSessionStart = func(sessionID string, attempt int) {
+			// Find the session definition for task/criteria counts
+			for _, s := range sow.Sessions {
+				if s.ID == sessionID {
+					hook(tui.SessionDisplay{
+						ID:            s.ID,
+						Title:         s.Title,
+						Status:        "running",
+						TasksTotal:    len(s.Tasks),
+						CriteriaTotal: len(s.AcceptanceCriteria),
+					})
+					break
+				}
+			}
+		}
 		ss.OnProgress = func(r plan.SessionResult) {
 			status := "done"
 			switch {
@@ -3620,7 +3639,8 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 	switch name {
 	case "help", "?":
 		sh.Append("Available commands:")
-		sh.Append("  /build-from-scope [path]  Build from a SOW (JSON or YAML)")
+		sh.Append("  /build-from-scope <path>  Build from a SOW (JSON or YAML)")
+		sh.Append("  /interview <task>         Socratic clarify, then dispatch")
 		sh.Append("  /ship <goal>              Build → review → fix loop")
 		sh.Append("  /build [plan.json]        Execute plan with parallel agents")
 		sh.Append("  /plan <goal>              Generate task plan")
@@ -3635,6 +3655,11 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 		return "help shown"
 	case "build-from-scope":
 		return handleBuildFromScope(sh, absRepo, defaults, rest)
+	case "interview":
+		if rest == "" {
+			return "missing arg: /interview <task description>"
+		}
+		return handleInterview(sh, absRepo, defaults, rest)
 	case "ship":
 		if rest == "" {
 			return "missing arg: /ship <goal>"
@@ -3658,7 +3683,17 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 		if rest == "" {
 			return "missing arg: /run <task>"
 		}
-		runCmdSafe([]string{"--task", rest, "--repo", absRepo, "--runner", defaults.RunnerMode})
+		rargs := []string{"--task", rest, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			rargs = append(rargs, "--native-model", defaults.NativeModel)
+		}
+		runCmdSafe(rargs)
 		return "run done"
 	case "scope":
 		scopeCmd([]string{"--repo", absRepo})
@@ -3712,6 +3747,69 @@ func handleBuildFromScope(sh *tui.Shell, absRepo string, defaults SmartDefaults,
 	return "sow done"
 }
 
+// handleInterview runs the Socratic deep-interview flow inside the TUI.
+// Each question is posted to the log via shell.Append and the user's answer
+// is gathered via shell.Prompt — a modal text-input mode that the shell
+// supports natively. After all questions are answered, the clarified scope
+// is dispatched to runCmd just like the line REPL's interview command.
+func handleInterview(sh *tui.Shell, absRepo string, defaults SmartDefaults, task string) string {
+	session := interview.NewSession(task)
+	sh.Append("")
+	sh.Append("Deep Interview: %s", task)
+	sh.Append("Answer each question. Type 'skip' to use the default, 'done' to finish early.")
+	sh.Append("")
+
+	for !session.IsComplete() {
+		q := session.NextQuestion()
+		if q == nil {
+			break
+		}
+		sh.Append("[%s] %s", q.Phase, q.Question)
+		if q.Default != "" {
+			sh.Append("  (default: %s)", q.Default)
+		}
+		ans := sh.Prompt(string(q.Phase) + ": " + q.Question)
+		answer := strings.TrimSpace(ans)
+		switch strings.ToLower(answer) {
+		case "skip", "s":
+			session.Skip()
+			sh.Append("  (skipped)")
+		case "done", "d":
+			for !session.IsComplete() {
+				session.Skip()
+			}
+		case "":
+			session.Skip()
+			sh.Append("  (using default)")
+		default:
+			session.Answer(answer)
+		}
+	}
+
+	scope := session.Synthesize()
+	sh.Append("")
+	sh.Append("=== Clarified Scope ===")
+	for _, line := range strings.Split(scope.ToPrompt(), "\n") {
+		sh.Append("%s", line)
+	}
+	sh.Append("Confidence: %.0f%%", scope.Confidence*100)
+	sh.Append("")
+
+	// Dispatch the clarified prompt through runCmd with smart defaults
+	rargs := []string{"--task", scope.ToPrompt(), "--repo", absRepo, "--runner", defaults.RunnerMode}
+	if defaults.NativeBaseURL != "" {
+		rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+	}
+	if defaults.NativeAPIKey != "" {
+		rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+	}
+	if defaults.NativeModel != "" {
+		rargs = append(rargs, "--native-model", defaults.NativeModel)
+	}
+	runCmdSafe(rargs)
+	return "interview done"
+}
+
 // runCmdSafe is a wrapper around runCmd that recovers from unexpected
 // panics so a bad free-text dispatch doesn't take down the TUI.
 func runCmdSafe(args []string) {
@@ -3723,18 +3821,21 @@ func runCmdSafe(args []string) {
 	runCmd(args)
 }
 
-// captureStdoutTo redirects os.Stdout and os.Stderr into the shell's log
-// pane for the duration of a command. Returns a restore function and a
-// channel that closes when the capture goroutine exits (call restore then
-// wait on the channel to guarantee all output has been flushed).
-func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
+// captureToFunc is the underlying capture pipeline used by both the live
+// shell capture and the test sink. It redirects os.Stdout/os.Stderr into a
+// pipe and feeds each line (ANSI-stripped) to emit. Returns (restore, done).
+//
+// This is the single source of truth for the stdout-capture goroutine; the
+// production captureStdoutTo wraps it with a tui.Shell sink, and the unit
+// test wraps it with a recording sink. Keeping the implementation in one
+// place means a fix here is automatically tested.
+func captureToFunc(emit func(string)) (restore func(), done chan struct{}) {
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	done = make(chan struct{})
 
 	r, w, err := os.Pipe()
 	if err != nil {
-		// If the pipe fails, fall back to no capture.
 		close(done)
 		return func() {}, done
 	}
@@ -3749,21 +3850,19 @@ func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
 			n, err := r.Read(buf)
 			if n > 0 {
 				pending = append(pending, buf[:n]...)
-				// Split by newlines; everything after the last newline stays
-				// in pending until more data arrives or the pipe closes.
 				for {
-					idx := bytesIndexByte(pending, '\n')
+					idx := bytes.IndexByte(pending, '\n')
 					if idx < 0 {
 						break
 					}
 					line := string(pending[:idx])
 					pending = pending[idx+1:]
-					sh.Append("%s", stripANSI(line))
+					emit(stripANSI(line))
 				}
 			}
 			if err != nil {
 				if len(pending) > 0 {
-					sh.Append("%s", stripANSI(string(pending)))
+					emit(stripANSI(string(pending)))
 				}
 				return
 			}
@@ -3778,15 +3877,15 @@ func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
 	return restore, done
 }
 
-// bytesIndexByte is a local copy of bytes.IndexByte to avoid an extra
-// import at call sites.
-func bytesIndexByte(b []byte, c byte) int {
-	for i, v := range b {
-		if v == c {
-			return i
-		}
-	}
-	return -1
+// captureStdoutTo redirects os.Stdout and os.Stderr into the shell's log
+// pane for the duration of a command. Returns a restore function and a
+// channel that closes when the capture goroutine exits (call restore then
+// wait on the channel to guarantee all output has been flushed).
+//
+// Thin wrapper over captureToFunc — both production and test paths share
+// the same goroutine implementation.
+func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
+	return captureToFunc(func(s string) { sh.Append("%s", s) })
 }
 
 // stripANSI removes simple CSI escape sequences from a string so they
@@ -3998,24 +4097,29 @@ USAGE:
   stoke <command> [flags]
 
 COMMANDS:
-  run       Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
-  build     Execute multi-task plan with parallel agents
-  sow       Execute Statement of Work (multi-session with acceptance gates)
-  plan      Generate a task plan from codebase analysis (headless)
-  scope     Interactive scoping session with research loop (read-only)
-  yolo      Launch Claude Code interactively with full Stoke guards
-  repair    Scan -> auto-generate fix plan -> build -> re-verify
-  ship      Build -> review -> fix -> review -> ... until ship-ready
-  scan      Deterministic code scan (secrets, eval, TODO, debug output)
-  audit     Multi-perspective review (security, perf, reliability, ops)
-  status    Show session dashboard (progress, cost, learning)
-  pool      Show subscription pool utilization
-  add-claude Add a Claude Max subscription to the pool
-  add-codex  Add a Codex/OpenAI subscription to the pool
-  pools     List all registered subscription pools
-  remove-pool Remove a pool by ID
-  doctor    Check tool dependencies
-  version   Print version
+  (no args)       Launch the line REPL with smart defaults
+  tui             Launch the full-screen Bubble Tea shell (command input +
+                  live mission monitoring). Falls back to line REPL if no TTY.
+  run             Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
+  build           Execute multi-task plan with parallel agents
+  sow             Execute Statement of Work (multi-session with acceptance gates)
+  plan            Generate a task plan from codebase analysis (headless)
+  scope           Interactive scoping session with research loop (read-only)
+  yolo            Launch Claude Code interactively with full Stoke guards
+  repair          Scan -> auto-generate fix plan -> build -> re-verify
+  ship            Build -> review -> fix -> review -> ... until ship-ready
+  scan            Deterministic code scan (secrets, eval, TODO, debug output)
+  audit           Multi-perspective review (security, perf, reliability, ops)
+  status          Show session dashboard (progress, cost, learning)
+  pool            Show subscription pool utilization
+  add-claude      Add a Claude Max subscription to the pool
+  add-codex       Add a Codex/OpenAI subscription to the pool
+  pools           List all registered subscription pools
+  remove-pool     Remove a pool by ID
+  mcp-serve       Start the codebase MCP server (exposes project to Claude Code)
+  mcp-serve-stoke Start the Stoke MCP server (exposes Stoke as a tool to Claude Code)
+  doctor          Check tool dependencies
+  version         Print version
 
 RUN FLAGS:
   --task <prompt>      Task description (required)
@@ -4037,14 +4141,17 @@ BUILD FLAGS:
   --dry-run            Show plan without executing
 
 SOW FLAGS:
-  --file <path>        SOW file (default: stoke-sow.json)
-  --validate           Validate SOW and exit
-  --dry-run            Show SOW summary without executing
-  --workers <n>        Max parallel agents per session (default: 4)
-  --runner <mode>      Runner backend: claude, codex, native, hybrid
-  --native-api-key     API key for native runner (direct API, no CLI)
-  --native-base-url    Base URL for LiteLLM/custom API endpoint
-  --native-model       Model name (default: claude-sonnet-4-6)
+  --file <path>           SOW file (default: stoke-sow.{json,yaml,yml})
+  --validate              Validate SOW and exit
+  --dry-run               Show SOW summary (with acceptance commands) and exit
+  --workers <n>           Max parallel agents per session (default: 4)
+  --runner <mode>         Runner backend: claude, codex, native, hybrid
+  --native-api-key        API key for native runner (direct API, no CLI)
+  --native-base-url       Base URL for LiteLLM/custom API endpoint
+  --native-model          Model name (default: claude-sonnet-4-6)
+  --resume                Skip sessions already completed in .stoke/sow-state.json
+  --continue-on-failure   Keep running subsequent sessions after a failure
+  --session-retries <n>   Retry attempts per session (default: 2)
 
 PLAN FLAGS:
   --task <goal>        High-level goal description
