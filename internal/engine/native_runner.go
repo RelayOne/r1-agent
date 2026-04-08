@@ -87,12 +87,19 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		return toolRegistry.Handle(ctx, name, input)
 	}
 
-	// Configure the agentloop
+	// Configure the agentloop. SystemPrompt is the cacheable static
+	// context (passed via RunSpec.SystemPrompt or Phase.Prompt); it's
+	// wrapped in a cache_control breakpoint by agentloop.
+	systemPrompt := spec.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = spec.Phase.Prompt
+	}
 	cfg := agentloop.Config{
 		Model:              n.model,
 		MaxTurns:           spec.Phase.MaxTurns,
 		MaxConsecutiveErrs: 3,
 		MaxTokens:          16000,
+		SystemPrompt:       systemPrompt,
 	}
 
 	// Create and configure the loop
@@ -110,14 +117,15 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		})
 	}
 
-	// Build the system prompt incorporating the phase prompt
-	prompt := spec.Prompt
-	if spec.Phase.Prompt != "" {
-		prompt = spec.Phase.Prompt
-	}
+	// User message is spec.Prompt. The cacheable static context was
+	// already passed as cfg.SystemPrompt above. When the caller only
+	// set Phase.Prompt (legacy behavior before spec.SystemPrompt
+	// existed) we still respect it: it's treated as the system prompt
+	// and spec.Prompt becomes the user message.
+	userMessage := spec.Prompt
 
 	// Run the loop
-	result, err := loop.Run(ctx, prompt)
+	result, err := loop.Run(ctx, userMessage)
 
 	duration := time.Since(start)
 	runResult := RunResult{

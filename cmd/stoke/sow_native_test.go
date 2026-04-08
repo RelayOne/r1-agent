@@ -36,7 +36,7 @@ func TestBuildSOWNativePrompt_IncludesAllContext(t *testing.T) {
 		Dependencies: []string{"T0"},
 	}
 
-	prompt := buildSOWNativePrompt(sow, session, task)
+	prompt := buildSOWNativePrompt(sow, session, task, nil, 0, nil)
 	for _, want := range []string{
 		"Test Project",
 		"a description",
@@ -58,6 +58,51 @@ func TestBuildSOWNativePrompt_IncludesAllContext(t *testing.T) {
 			t.Errorf("prompt missing %q:\n---\n%s\n---", want, prompt)
 		}
 	}
+
+	// Split prompts: the stable context should live in the system block
+	// and the per-task lines in the user block.
+	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, nil)
+	if !strings.Contains(sys, "PROJECT: Test Project") {
+		t.Error("system prompt should include project header")
+	}
+	if !strings.Contains(sys, "SESSION S1: Foundation") {
+		t.Error("system prompt should include session framing")
+	}
+	if !strings.Contains(sys, "ACCEPTANCE CRITERIA") {
+		t.Error("system prompt should include criteria")
+	}
+	if strings.Contains(sys, "TASK T1:") {
+		t.Error("task header should NOT be in the system (cached) block")
+	}
+	if !strings.Contains(usr, "TASK T1:") {
+		t.Error("user prompt should include task header")
+	}
+	if !strings.Contains(usr, "create the Cargo.toml and main.rs") {
+		t.Error("user prompt should include task description")
+	}
+}
+
+func TestBuildSOWNativePrompts_RepairMode(t *testing.T) {
+	sow := &plan.SOW{ID: "r", Name: "Repair Project"}
+	session := plan.Session{ID: "S1", Title: "t", AcceptanceCriteria: []plan.AcceptanceCriterion{
+		{ID: "AC1", Description: "build", Command: "go build ./..."},
+	}}
+	task := plan.Task{ID: "repair-1", Description: "repair"}
+	failBlob := "- [AC1] build\n    cannot find main package"
+	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, &failBlob)
+
+	if !strings.Contains(sys, "REPAIR mode") {
+		t.Error("system prompt should switch to REPAIR mode framing")
+	}
+	if strings.Contains(sys, "TASK repair-1") {
+		t.Error("repair system prompt should not include a task header")
+	}
+	if !strings.Contains(usr, "FAILING ACCEPTANCE CRITERIA") {
+		t.Error("user prompt should include the failure block")
+	}
+	if !strings.Contains(usr, "cannot find main package") {
+		t.Error("user prompt should include the specific failure output")
+	}
 }
 
 func TestBuildSOWNativePrompt_MinimalInput(t *testing.T) {
@@ -65,7 +110,7 @@ func TestBuildSOWNativePrompt_MinimalInput(t *testing.T) {
 	session := plan.Session{ID: "S1", Title: "Go"}
 	task := plan.Task{ID: "T1", Description: "do a thing"}
 
-	prompt := buildSOWNativePrompt(sow, session, task)
+	prompt := buildSOWNativePrompt(sow, session, task, nil, 0, nil)
 	if !strings.Contains(prompt, "TASK T1") {
 		t.Error("minimal prompt should still include task header")
 	}

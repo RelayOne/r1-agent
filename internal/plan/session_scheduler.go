@@ -91,6 +91,26 @@ func (ss *SessionScheduler) LoadOrCreateState() error {
 // State returns the scheduler's current state snapshot (may be nil).
 func (ss *SessionScheduler) State() *SOWState { return ss.state }
 
+// AppendSession extends the scheduler's session list at runtime. New
+// sessions are picked up by an in-progress Run because Run iterates by
+// index on the live sow.Sessions slice. This is the hook the convergence
+// override flow uses to turn CTO-approved continuation items into new
+// work the build will automatically execute.
+//
+// Appended sessions are recorded in SOWState so resume semantics still
+// apply to them.
+func (ss *SessionScheduler) AppendSession(session Session) {
+	ss.sow.Sessions = append(ss.sow.Sessions, session)
+	if ss.state != nil {
+		ss.state.Sessions = append(ss.state.Sessions, SessionRecord{
+			SessionID: session.ID,
+			Title:     session.Title,
+			Status:    "pending",
+		})
+		_ = SaveSOWState(ss.projectRoot, ss.state)
+	}
+}
+
 // Run executes all sessions in order. For each session:
 // 1. Runs preflight checks (infra requirements)
 // 2. Calls execFn to execute the session's tasks (with retry)
@@ -98,12 +118,17 @@ func (ss *SessionScheduler) State() *SOWState { return ss.state }
 // 4. Persists progress after each session (if state is enabled)
 // 5. Stops if acceptance criteria fail unless ContinueOnFailure is set
 //
+// Iteration is index-based so AppendSession mid-run actually extends the
+// work queue (a classic Go gotcha: `for _, s := range slice` captures the
+// slice header at the start of the loop).
+//
 // Returns results for all attempted sessions.
 func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) ([]SessionResult, error) {
 	var results []SessionResult
 	var firstErr error
 
-	for _, session := range ss.sow.Sessions {
+	for i := 0; i < len(ss.sow.Sessions); i++ {
+		session := ss.sow.Sessions[i]
 		// Check context cancellation
 		if ctx.Err() != nil {
 			return results, ctx.Err()

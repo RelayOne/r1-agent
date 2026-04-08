@@ -72,6 +72,13 @@ type CommandRunner interface {
 // RunSpec contains all inputs needed for a single engine execution, including prompt, worktree, and sandbox config.
 type RunSpec struct {
 	Prompt            string
+	// SystemPrompt is the static, cacheable portion of the instruction.
+	// When set, the NativeRunner passes it to the agentloop as
+	// cfg.SystemPrompt, which wraps it in a cache_control breakpoint
+	// so the same block can be reused across turns and tasks without
+	// paying the full input cost. CLI-backed runners ignore this
+	// field (they don't support cache breakpoints in the same way).
+	SystemPrompt      string
 	WorktreeDir       string
 	RuntimeDir        string // outside worktree, for harness-owned files only
 	Mode              AuthMode

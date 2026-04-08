@@ -26,6 +26,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
+	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/env/docker"
 	"github.com/ericmacdougall/stoke/internal/env/ember"
@@ -1210,6 +1211,10 @@ func sowCmd(args []string) {
 	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
 	continueOnFailure := fs.Bool("continue-on-failure", false, "Keep running subsequent sessions after a session fails (default: halt)")
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
+	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
+	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
+	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
+	repomapBudget := fs.Int("repomap-tokens", 3000, "Max characters of repo map to inject into task prompts (0 = disable)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1236,6 +1241,46 @@ func sowCmd(args []string) {
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
+			// Auto-critique + refine: turn the LLM's first-pass SOW
+			// into something executable. Up to 2 critique/refine
+			// cycles; stop when verdict == "ship".
+			if *autoCritique && prov != nil {
+				fmt.Printf("  running SOW critique pass...\n")
+				refined, crit, critErr := plan.CritiqueAndRefine(sow, prov, modelName, 2)
+				if critErr != nil {
+					fmt.Fprintf(os.Stderr, "  critique warning: %v\n", critErr)
+				}
+				if refined != nil {
+					sow = refined
+				}
+				if crit != nil {
+					fmt.Printf("  critique: %s (score %d/100)\n", crit.Verdict, crit.OverallScore)
+					if crit.Summary != "" {
+						fmt.Printf("    %s\n", crit.Summary)
+					}
+					if len(crit.Issues) > 0 {
+						fmt.Printf("  %d issues flagged:\n", len(crit.Issues))
+						for _, iss := range crit.Issues {
+							tag := ""
+							if iss.SessionID != "" {
+								tag = " [" + iss.SessionID
+								if iss.TaskID != "" {
+									tag += "/" + iss.TaskID
+								}
+								tag += "]"
+							}
+							fmt.Printf("    - [%s]%s %s\n", iss.Severity, tag, iss.Description)
+						}
+					}
+					// Persist the refined SOW next to the cache so a
+					// human can inspect what the critic produced.
+					if refinedPath := filepath.Join(absRepo, ".stoke", "sow-refined.json"); sow != nil {
+						if data, mErr := json.MarshalIndent(sow, "", "  "); mErr == nil {
+							_ = os.WriteFile(refinedPath, data, 0o600)
+						}
+					}
+				}
+			}
 		case "yaml":
 			fmt.Printf("  loaded YAML SOW: %s\n", result.OriginalPath)
 		default:
@@ -1481,13 +1526,81 @@ func sowCmd(args []string) {
 		}
 		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
 		runner.BaseURL = *nativeBaseURL
+
+		// Build a repo map once so every task prompt can inject the
+		// ranked codebase view. If this fails we proceed without it.
+		var sowRepoMap *repomap.RepoMap
+		if *repomapBudget > 0 {
+			if rm, rmErr := repomap.Build(absRepo); rmErr == nil {
+				sowRepoMap = rm
+			}
+		}
+
+		// Cost budget is tracked across the entire SOW run, not per
+		// session — one shared pointer lets every session see the
+		// cumulative spend.
+		sharedSpent := new(float64)
+
+		// Load (or create) the CTO-approved ignore list so the
+		// override flow can accumulate across runs.
+		ignoreList, ignoreErr := convergence.LoadIgnores(absRepo)
+		if ignoreErr != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not load ignores: %v\n", ignoreErr)
+			ignoreList = &convergence.IgnoreList{Version: 1}
+		}
+
+		// Build an override judge using the same provider the native
+		// runner is using. When it's unavailable, the override flow is
+		// skipped gracefully.
+		var overrideJudge convergence.OverrideJudge
+		if prov := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL); prov != nil {
+			overrideJudge = &convergence.LLMOverrideJudge{
+				Provider: prov,
+				Model:    nativeModelName,
+			}
+		}
+
+		// Continuation callback: turn CTO-surfaced continuations into
+		// a new session the scheduler will pick up. Uses AppendSession
+		// which extends the live session list.
+		continuationCallback := func(fromSession string, items []string) {
+			if len(items) == 0 {
+				return
+			}
+			contID := fmt.Sprintf("%s-cont", fromSession)
+			cont := plan.Session{
+				ID:          contID,
+				Title:       "continuation from " + fromSession,
+				Description: "work surfaced by the CTO judge after session " + fromSession + " acceptance criteria failed",
+			}
+			for i, item := range items {
+				cont.Tasks = append(cont.Tasks, plan.Task{
+					ID:          fmt.Sprintf("%s-t%d", contID, i+1),
+					Description: item,
+				})
+			}
+			// No explicit criteria — the continuation session will
+			// inherit baseline criteria from inferBaselineCriteria via
+			// runSessionNative, so it still gets verified.
+			ss.AppendSession(cont)
+			fmt.Printf("  appended continuation session %s with %d tasks\n", contID, len(items))
+		}
+
 		nativeCfg := sowNativeConfig{
-			RepoRoot: absRepo,
-			Runner:   runner,
-			MaxTurns: 100,
-			Model:    nativeModelName,
-			SOWName:  sow.Name,
-			SOWDesc:  sow.Description,
+			RepoRoot:          absRepo,
+			Runner:            runner,
+			MaxTurns:          100,
+			MaxRepairAttempts: *maxRepairAttempts,
+			Model:             nativeModelName,
+			SOWName:           sow.Name,
+			SOWDesc:           sow.Description,
+			RepoMap:           sowRepoMap,
+			RepoMapBudget:     *repomapBudget,
+			CostBudgetUSD:     *costBudget,
+			spent:             sharedSpent,
+			OverrideJudge:     overrideJudge,
+			Ignores:           ignoreList,
+			OnContinuations:   continuationCallback,
 		}
 		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
 			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
