@@ -1,0 +1,17 @@
+id: refactoring-extract-interface-006
+category: refactoring
+title: "Extract common interface from FileStore and DBStore"
+language: go
+difficulty: 2
+time_limit_seconds: 120
+cost_limit_usd: 0.50
+prompt_file: prompt.md
+initial_repo: initial/
+visible_tests: visible_tests/
+hidden_tests: hidden_tests/
+reference_patch: ""
+hidden_requirements:
+  - "An interface type named Store (or similar) must be defined with Save and Load methods"
+  - "Both FileStore and DBStore must satisfy the interface"
+  - "A function accepting the interface must work polymorphically with both implementations"
+expected_failure_modes: []

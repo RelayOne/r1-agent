@@ -6,12 +6,30 @@ import (
 )
 
 // Tier defines context priority levels.
+// The L0-L3 naming follows MemPalace's articulation of context layers:
+//   L0 (Identity):  ~50 tokens, always loaded. System identity, role, constraints.
+//   L1 (Critical):  ~120 tokens, always loaded. Active task, key facts, blockers.
+//   L2 (Topical):   On-demand. Relevant file content, recent tool outputs.
+//   L3 (Deep):      On-demand. Full semantic search results, historical context.
+//
+// The three Go tiers map to L0-L3 as follows:
+//   TierActive  = L0 + L1 (always in the API call)
+//   TierSession = L2 (promoted on demand from disk)
+//   TierProject = L3 (persistent, semantic search backed)
 type Tier int
 
 const (
-	TierActive  Tier = iota // in the API call: prompt, task, retry brief, recent tools
-	TierSession             // on disk, promoted on demand: plan state, error history
-	TierProject             // persistent: CLAUDE.md, project map, learned patterns
+	TierActive  Tier = iota // L0+L1: in the API call — prompt, task, retry brief, recent tools
+	TierSession             // L2: on disk, promoted on demand — plan state, error history
+	TierProject             // L3: persistent — CLAUDE.md, project map, learned patterns
+)
+
+// L-level aliases for documentation clarity.
+const (
+	L0Identity = TierActive  // ~50 tokens, always loaded
+	L1Critical = TierActive  // ~120 tokens, always loaded
+	L2Topical  = TierSession // on-demand topical recall
+	L3Deep     = TierProject // on-demand deep semantic search
 )
 
 // Budget controls context window utilization.
@@ -44,9 +62,15 @@ type ContextBlock struct {
 }
 
 // Manager assembles and compacts context for each phase.
+// Supports progressive mid-phase compaction (triggered by events) in addition to
+// the original once-per-phase compaction. Inspired by claw-code-parity's
+// SessionCompaction and Claude Code's automatic context window management.
 type Manager struct {
-	budget Budget
-	blocks []ContextBlock
+	budget         Budget
+	blocks         []ContextBlock
+	compactCount   int     // number of times Compact() has been called
+	lastCompaction string  // level of last compaction
+	peakUtil       float64 // highest utilization seen
 }
 
 // NewManager creates a context manager with the given budget.
@@ -81,52 +105,95 @@ func (m *Manager) Utilization() float64 {
 
 // Compact progressively reduces context to fit within budget.
 // Returns the compaction level applied: "none", "gentle", "moderate", "aggressive".
+// Can be called multiple times during a phase (progressive compaction).
 func (m *Manager) Compact() string {
 	util := m.Utilization()
+	if util > m.peakUtil {
+		m.peakUtil = util
+	}
 
 	if util <= m.budget.TargetUtil {
 		return "none"
 	}
 
+	m.compactCount++
+
 	// Gentle: truncate tool outputs over 500 lines to summaries
+	// On repeated compaction, use progressively smaller limits
 	if util > m.budget.GentleThreshold {
+		maxLines := 500
+		if m.compactCount > 1 {
+			maxLines = 200 // tighter on repeat
+		}
+		if m.compactCount > 3 {
+			maxLines = 100 // very tight on 3rd+
+		}
 		for i := range m.blocks {
 			if m.blocks[i].Label == "tool_output" || m.blocks[i].Priority < 3 {
-				m.blocks[i].Content = truncateLines(m.blocks[i].Content, 500)
+				m.blocks[i].Content = truncateLines(m.blocks[i].Content, maxLines)
 				m.blocks[i].Tokens = len(m.blocks[i].Content) / 4
 			}
 		}
 		if m.Utilization() <= m.budget.TargetUtil {
+			m.lastCompaction = "gentle"
 			return "gentle"
 		}
 	}
 
 	// Moderate: compress file reads to "read X, found Y"
+	// On repeated compaction, summarize more aggressively
 	if util > m.budget.ModerateThresh {
+		priorityCutoff := 5
+		if m.compactCount > 2 {
+			priorityCutoff = 7 // summarize higher-priority blocks too
+		}
 		for i := range m.blocks {
-			if m.blocks[i].Tier == TierSession && m.blocks[i].Priority < 5 {
+			if m.blocks[i].Tier == TierSession && m.blocks[i].Priority < priorityCutoff {
 				m.blocks[i].Content = summarizeBlock(m.blocks[i])
 				m.blocks[i].Tokens = len(m.blocks[i].Content) / 4
 			}
 		}
 		if m.Utilization() <= m.budget.TargetUtil {
+			m.lastCompaction = "moderate"
 			return "moderate"
 		}
 	}
 
 	// Aggressive: drop low-priority blocks entirely
 	if util > m.budget.AggressiveThresh {
+		minPriority := 7
+		if m.compactCount > 3 {
+			minPriority = 9 // keep only critical blocks
+		}
 		var kept []ContextBlock
 		for _, b := range m.blocks {
-			if b.Tier == TierActive || b.Priority >= 7 {
+			if b.Tier == TierActive || b.Priority >= minPriority {
 				kept = append(kept, b)
 			}
 		}
 		m.blocks = kept
+		m.lastCompaction = "aggressive"
 		return "aggressive"
 	}
 
+	m.lastCompaction = "gentle"
 	return "gentle"
+}
+
+// CompactCount returns the number of compactions performed.
+func (m *Manager) CompactCount() int {
+	return m.compactCount
+}
+
+// PeakUtilization returns the highest utilization seen.
+func (m *Manager) PeakUtilization() float64 {
+	return m.peakUtil
+}
+
+// ShouldCompact returns true if utilization has risen above the gentle threshold.
+// Use this for event-driven mid-phase compaction checks.
+func (m *Manager) ShouldCompact() bool {
+	return m.Utilization() > m.budget.GentleThreshold
 }
 
 // Assemble returns the full context string for a phase prompt.

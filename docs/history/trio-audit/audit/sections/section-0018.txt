@@ -1,0 +1,11 @@
+./ember/devbox/src/__tests__/terminal.test.ts
+./ember/devbox/src/v1-auth.ts
+./ember/devbox/vite.config.ts
+./ember/devbox/vitest.config.ts
+./ember/devbox/web/src/App.tsx
+./ember/devbox/web/src/components/MachineMenu.tsx
+./ember/devbox/web/src/components/NewMachineModal.tsx
+./ember/devbox/web/src/lib/api.ts
+./ember/devbox/web/src/lib/auth.tsx
+./ember/devbox/web/src/lib/billingRequestId.ts
+./ember/devbox/web/src/main.tsx

@@ -1,0 +1,7 @@
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/core/config_loader.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/core/__init__.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/core/rule_engine.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/__init__.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/posttooluse.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/pretooluse.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/stop.py

@@ -1,0 +1,9 @@
+id: hello-world
+title: "Hello World Greenfield"
+description: "Create a simple Go HTTP server that returns Hello World"
+category: greenfield
+difficulty: easy
+acceptance_criteria:
+  - "Server starts on port 8080"
+  - "GET / returns 200 with body containing Hello World"
+  - "Server has graceful shutdown"

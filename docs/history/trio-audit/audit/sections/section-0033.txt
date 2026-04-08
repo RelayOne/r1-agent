@@ -1,0 +1,2 @@
+./stoke/internal/failure/analyzer.go
+./stoke/internal/failure/analyzer_test.go

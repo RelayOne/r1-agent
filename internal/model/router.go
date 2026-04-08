@@ -1,7 +1,12 @@
 package model
 
-import "strings"
+import (
+	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/costtrack"
+)
+
+// TaskType classifies a task for benchmark-backed model routing (e.g., plan, refactor, security).
 type TaskType string
 
 const (
@@ -22,8 +27,10 @@ type Provider string
 const (
 	ProviderClaude     Provider = "claude"     // Claude Code headless (subscription, $0 marginal)
 	ProviderCodex      Provider = "codex"      // Codex CLI (subscription, $0 marginal)
+	ProviderNative     Provider = "native"     // Stoke native runner via Anthropic Messages API
 	ProviderOpenRouter Provider = "openrouter" // OpenRouter API (multi-model, pay-per-token)
 	ProviderDirectAPI  Provider = "direct-api" // Direct Anthropic/OpenAI API (pay-per-token)
+	ProviderEmber      Provider = "ember"      // Ember managed AI (OpenRouter proxy with credit billing)
 	ProviderLintOnly   Provider = "lint-only"  // No model: just run build/test/lint
 )
 
@@ -103,6 +110,52 @@ func Resolve(taskType TaskType, isAvailable func(Provider) bool) Provider {
 		}
 	}
 
+	return ProviderLintOnly
+}
+
+// CostAwareResolve wraps Resolve with budget awareness. When the tracker shows
+// the budget is over 80% consumed, it skips expensive primary providers and
+// walks the fallback chain to find a cheaper alternative.
+func CostAwareResolve(taskType TaskType, tracker *costtrack.Tracker, isAvailable func(Provider) bool) Provider {
+	if tracker == nil {
+		return Resolve(taskType, isAvailable)
+	}
+
+	remaining := tracker.BudgetRemaining()
+	if remaining < 0 {
+		// BudgetRemaining returns -1 for unlimited budgets (no cap set).
+		// Distinguish unlimited from over-budget.
+		if !tracker.OverBudget() {
+			return Resolve(taskType, isAvailable)
+		}
+		// Over budget: fall through to prefer cheaper providers.
+	} else {
+		budget := remaining + tracker.Total()
+		if budget <= 0 {
+			return Resolve(taskType, isAvailable)
+		}
+		pctRemaining := remaining / budget
+		if pctRemaining > 0.2 {
+			// Plenty of budget (>20% left) — standard routing.
+			return Resolve(taskType, isAvailable)
+		}
+	}
+
+	// Budget tight (>80% consumed). Prefer cheaper fallback providers.
+	route, ok := Routes[taskType]
+	if !ok {
+		route = Routes[TaskTypeRefactor]
+	}
+
+	// Walk fallback chain first (cheaper), then try primary.
+	for _, fb := range route.FallbackChain {
+		if fb == ProviderLintOnly || isAvailable(fb) {
+			return fb
+		}
+	}
+	if isAvailable(route.Primary) {
+		return route.Primary
+	}
 	return ProviderLintOnly
 }
 

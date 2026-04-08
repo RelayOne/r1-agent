@@ -1,0 +1,3 @@
+./stoke/internal/stream/parser.go
+./stoke/internal/stream/parser_test.go
+./stoke/internal/subscriptions/manager.go

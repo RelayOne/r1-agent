@@ -12,13 +12,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// CodexRunner executes tasks via the Codex CLI with process group isolation and stderr rate-limit detection.
 type CodexRunner struct {
 	Binary string
 }
 
+// NewCodexRunner creates a CodexRunner using the given binary path, defaulting to "codex" if empty.
 func NewCodexRunner(binary string) *CodexRunner {
 	if strings.TrimSpace(binary) == "" {
 		binary = "codex"
@@ -26,14 +29,12 @@ func NewCodexRunner(binary string) *CodexRunner {
 	return &CodexRunner{Binary: binary}
 }
 
+// Prepare builds the CLI command and environment for a Codex invocation without executing it.
 func (r *CodexRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
-	if strings.TrimSpace(spec.WorktreeDir) == "" {
-		return PreparedCommand{}, fmt.Errorf("missing worktree dir")
+	if err := spec.Validate(); err != nil {
+		return PreparedCommand{}, err
 	}
 	runtimeDir := spec.RuntimeDir
-	if runtimeDir == "" {
-		return PreparedCommand{}, fmt.Errorf("missing runtime dir")
-	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return PreparedCommand{}, err
 	}
@@ -63,9 +64,14 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		return RunResult{}, err
 	}
 
-	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
-	cmd.Dir = prepared.Dir
-	cmd.Env = prepared.Env
+	var cmd *exec.Cmd
+	if spec.ContainerImage != "" && spec.ContainerVol != "" {
+		cmd = wrapInDocker(ctx, prepared, spec)
+	} else {
+		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+		cmd.Dir = prepared.Dir
+		cmd.Env = prepared.Env
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdout, err := cmd.StdoutPipe()
@@ -77,6 +83,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		return RunResult{}, fmt.Errorf("stderr pipe: %w", err)
 	}
 
+	startTime := time.Now()
 	if err := cmd.Start(); err != nil {
 		return RunResult{}, fmt.Errorf("start codex: %w", err)
 	}
@@ -123,6 +130,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 			result.Tokens.Input += raw.Usage.InputTokens
 			result.Tokens.Output += raw.Usage.OutputTokens
 			result.Tokens.CacheRead += raw.Usage.CachedInputTokens
+			result.NumTurns++
 		}
 
 		if onEvent != nil {
@@ -179,6 +187,10 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		default:
 		}
 	}
+
+	// Compute fields for parity with Claude runner.
+	result.DurationMs = time.Since(startTime).Milliseconds()
+	result.CostUSD = costtrack.ComputeCost("codex-mini", result.Tokens.Input, result.Tokens.Output, result.Tokens.CacheRead, result.Tokens.CacheCreation)
 
 	return result, nil
 }

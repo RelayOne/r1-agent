@@ -1,3 +1,4 @@
+// Package remote reports build session progress to the Ember dashboard for live monitoring.
 package remote
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 )
 
+// SessionReporter pushes session lifecycle events (register, update, complete) to the Ember API.
 type SessionReporter struct {
 	endpoint  string
 	apiKey    string
@@ -17,6 +19,7 @@ type SessionReporter struct {
 	client    *http.Client
 }
 
+// TaskProgress captures the current phase, worker, cost, and duration for a single task in a session update.
 type TaskProgress struct {
 	TaskID      string  `json:"task_id"`
 	Description string  `json:"description"`
@@ -26,6 +29,7 @@ type TaskProgress struct {
 	DurationMs  int64   `json:"duration_ms"`
 }
 
+// SessionUpdate is a progress snapshot sent to the Ember API containing all active task statuses.
 type SessionUpdate struct {
 	SessionID    string         `json:"session_id"`
 	PlanID       string         `json:"plan_id"`
@@ -112,8 +116,19 @@ func (r *SessionReporter) Update(update SessionUpdate) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("update session: HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
+}
+
+// completeRequest is the typed request body for session completion.
+type completeRequest struct {
+	Status  string `json:"status"`
+	Success bool   `json:"success"`
+	Summary string `json:"summary"`
 }
 
 // Complete marks the session as finished on Ember.
@@ -122,15 +137,19 @@ func (r *SessionReporter) Complete(success bool, summary string) error {
 		return nil
 	}
 
-	resp, err := r.doReq("PUT", "/v1/sessions/"+r.sessionID, map[string]any{
-		"status":  "completed",
-		"success": success,
-		"summary": summary,
+	resp, err := r.doReq("PUT", "/v1/sessions/"+r.sessionID, completeRequest{
+		Status:  "completed",
+		Success: success,
+		Summary: summary,
 	})
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("complete session: HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
 

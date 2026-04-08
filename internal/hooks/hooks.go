@@ -1,3 +1,6 @@
+// Package hooks provides the anti-deception enforcement layer for Stoke.
+// It installs pre/post tool-use hooks into Claude Code worktrees that guard
+// protected files, block git mutations, and detect type bypasses and secret leaks.
 package hooks
 
 import (
@@ -7,6 +10,37 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+// HookCommand represents a single hook command entry in Claude Code settings.
+type HookCommand struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+}
+
+// HookSet contains the pre and post tool-use hook commands.
+type HookSet struct {
+	PreToolUse  []HookCommand `json:"PreToolUse,omitempty"`
+	PostToolUse []HookCommand `json:"PostToolUse,omitempty"`
+}
+
+// HooksSettingsOverlay is the typed structure merged into Claude Code settings.json.
+// It contains only the "hooks" key that gets merged with the base settings.
+type HooksSettingsOverlay struct {
+	Hooks HookSet `json:"hooks"`
+}
+
+// PermissionsConfig represents the permissions block in Claude Code settings.
+type PermissionsConfig struct {
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+// InteractiveSettings is the full typed settings for interactive mode (yolo/scope).
+type InteractiveSettings struct {
+	Hooks        HookSet            `json:"hooks"`
+	Permissions  PermissionsConfig  `json:"permissions"`
+	APIKeyHelper *string            `json:"apiKeyHelper"` // JSON null via nil pointer
+}
 
 // safeWrite writes data to a file, rejecting symlinks at any path component.
 // Prevents symlink redirection attacks where .stoke or CLAUDE.md is a symlink
@@ -85,42 +119,86 @@ func Install(runtimeDir string) error {
 
 	// PreToolUse hook: blocks dangerous patterns before execution
 	// Full guard suite from the enforcer: git stash, mass revert, nested claude,
-	// protected files, destructive commands, remote code execution
+	// protected files, destructive commands, remote code execution.
+	//
+	// Uses proper JSON parsing via Python (available in all CI environments)
+	// instead of brittle grep/regex. Falls back to grep if Python unavailable.
+	// Inspired by claw-code-parity's structured permission enforcement.
 	preToolUse := `#!/bin/bash
 # Stoke enforcer hook: PreToolUse guard
 # Blocks dangerous tool invocations before they execute.
-# Ported from the Claude Code Enforcer setup.sh guard-bash-writes hook.
+# Uses structured JSON parsing for reliability.
 
-# Read tool input from stdin (Claude Code passes JSON on stdin)
+set -euo pipefail
+
 INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4)
-if [ -z "$TOOL_NAME" ]; then
-    TOOL_NAME="$1"
-fi
-TOOL_INPUT=$(echo "$INPUT" | grep -o '"tool_input":{[^}]*}' | head -1)
-if [ -z "$TOOL_INPUT" ]; then
-    TOOL_INPUT="$2"
-fi
 
 BLOCK() {
-    echo "{\"decision\":\"block\",\"reason\":\"$1\"}"
+    printf '{"decision":"block","reason":"%s"}\n' "$1"
     exit 0
 }
 
-# Block file writes to protected paths
+ALLOW() {
+    echo '{"decision":"allow"}'
+    exit 0
+}
+
+# Parse JSON input using Python (more reliable than grep for nested JSON)
+# Falls back to grep-based extraction if Python is unavailable
+if command -v python3 &>/dev/null; then
+    TOOL_NAME=$(echo "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tool_name',''))" 2>/dev/null || echo "")
+    TOOL_INPUT_JSON=$(echo "$INPUT" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+ti=d.get('tool_input',{})
+if isinstance(ti,str): print(ti)
+else: print(json.dumps(ti))
+" 2>/dev/null || echo "")
+    FILE_PATH=$(echo "$INPUT" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+ti=d.get('tool_input',{})
+if isinstance(ti,dict): print(ti.get('file_path',ti.get('path','')))
+else: print('')
+" 2>/dev/null || echo "")
+    COMMAND=$(echo "$INPUT" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+ti=d.get('tool_input',{})
+if isinstance(ti,dict): print(ti.get('command',''))
+else: print(str(ti))
+" 2>/dev/null || echo "")
+else
+    # Fallback: grep-based extraction
+    TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+    TOOL_INPUT_JSON=$(echo "$INPUT" | grep -o '"tool_input":{[^}]*}' | head -1 || echo "")
+    FILE_PATH=""
+    COMMAND="$TOOL_INPUT_JSON"
+fi
+
+if [ -z "$TOOL_NAME" ]; then
+    TOOL_NAME="${1:-}"
+fi
+
+# Block file writes to protected paths (structured path check)
 case "$TOOL_NAME" in
     Write|Edit|MultiEdit)
-        case "$TOOL_INPUT" in
-            *.claude/*|*.stoke/*|*CLAUDE.md*|*.env*|*stoke.policy.yaml*|*settings.json*)
-                BLOCK "Protected file: cannot modify .claude/, .stoke/, CLAUDE.md, .env*, or stoke.policy.yaml"
-                ;;
-        esac
+        if [ -n "$FILE_PATH" ]; then
+            case "$FILE_PATH" in
+                */.claude/*|*/.stoke/*|*/CLAUDE.md|*/.env|*/.env.*|*/stoke.policy.yaml|*/settings.json)
+                    BLOCK "Protected file: cannot modify .claude/, .stoke/, CLAUDE.md, .env*, or stoke.policy.yaml"
+                    ;;
+                .claude/*|.stoke/*|CLAUDE.md|.env|.env.*|stoke.policy.yaml|settings.json)
+                    BLOCK "Protected file: cannot modify .claude/, .stoke/, CLAUDE.md, .env*, or stoke.policy.yaml"
+                    ;;
+            esac
+        fi
         ;;
 esac
 
-# Block dangerous bash commands
-if [ "$TOOL_NAME" = "Bash" ]; then
-    CMD="$TOOL_INPUT"
+# Block dangerous bash commands (using extracted command string)
+if [ "$TOOL_NAME" = "Bash" ] && [ -n "$COMMAND" ]; then
+    CMD="$COMMAND"
 
     # Git mutations that hide work from verification
     echo "$CMD" | grep -qE '\bgit\s+stash\b' && BLOCK "git stash hides work from verification. Commit or revert."
@@ -149,10 +227,13 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     # Hook/settings tampering
     echo "$CMD" | grep -qE 'rm.*\.stoke/hooks' && BLOCK "Cannot remove Stoke hooks."
     echo "$CMD" | grep -qE 'chmod.*\.stoke/hooks' && BLOCK "Cannot modify Stoke hook permissions."
+
+    # Process manipulation (prevent killing Stoke or its subprocesses)
+    echo "$CMD" | grep -qE 'kill\s+-9\s+1\b' && BLOCK "Cannot kill PID 1."
+    echo "$CMD" | grep -qE 'pkill.*stoke' && BLOCK "Cannot kill Stoke processes."
 fi
 
-# Allow everything else
-echo '{"decision":"allow"}'
+ALLOW
 `
 
 	// PostToolUse hook: detects policy violations after execution
@@ -192,22 +273,22 @@ fi
 // This tells Claude Code to call our hook scripts on tool use events.
 func HooksConfig(runtimeDir string) map[string]interface{} {
 	hookDir := filepath.Join(runtimeDir, "hooks")
-	return map[string]interface{}{
-		"hooks": map[string]interface{}{
-			"PreToolUse": []map[string]interface{}{
-				{
-					"type":    "command",
-					"command": filepath.Join(hookDir, "pre-tool-use.sh"),
-				},
-			},
-			"PostToolUse": []map[string]interface{}{
-				{
-					"type":    "command",
-					"command": filepath.Join(hookDir, "post-tool-use.sh"),
-				},
-			},
+	overlay := HooksSettingsOverlay{
+		Hooks: HookSet{
+			PreToolUse:  []HookCommand{{Type: "command", Command: filepath.Join(hookDir, "pre-tool-use.sh")}},
+			PostToolUse: []HookCommand{{Type: "command", Command: filepath.Join(hookDir, "post-tool-use.sh")}},
 		},
 	}
+	// Marshal to map for merge compatibility with existing settings.json merge path
+	data, err := json.Marshal(overlay)
+	if err != nil {
+		return nil
+	}
+	var result map[string]interface{}
+	if json.Unmarshal(data, &result) != nil {
+		return nil
+	}
+	return result
 }
 
 // Cleanup removes hook files from a runtime directory.
@@ -233,38 +314,29 @@ func GenerateSettings(repoRoot, mode, outputFile string) (string, error) {
 	}
 
 	hookDir := filepath.Join(repoRoot, ".stoke", "hooks")
-	settings := map[string]interface{}{
-		"hooks": map[string]interface{}{
-			"PreToolUse": []map[string]interface{}{
-				{"type": "command", "command": filepath.Join(hookDir, "pre-tool-use.sh")},
-			},
-			"PostToolUse": []map[string]interface{}{
-				{"type": "command", "command": filepath.Join(hookDir, "post-tool-use.sh")},
-			},
+	settings := InteractiveSettings{
+		Hooks: HookSet{
+			PreToolUse:  []HookCommand{{Type: "command", Command: filepath.Join(hookDir, "pre-tool-use.sh")}},
+			PostToolUse: []HookCommand{{Type: "command", Command: filepath.Join(hookDir, "post-tool-use.sh")}},
 		},
-		"permissions": map[string]interface{}{
-			"allow": []string{},
-			"deny":  []string{},
-		},
+		Permissions:  PermissionsConfig{Allow: []string{}},
+		APIKeyHelper: nil, // JSON null suppresses repo helpers (Mode 1)
 	}
 
 	if mode == "yolo" {
-		settings["permissions"] = map[string]interface{}{
-			"allow": []string{"Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"},
+		settings.Permissions = PermissionsConfig{
+			Allow: []string{"Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep"},
 		}
 	} else {
 		// scope: read + write only to the plan output file
 		// Write is allowed so Claude can save the plan artifact.
 		// The PreToolUse hook blocks protected files.
 		// Bash is denied to keep the session non-destructive.
-		settings["permissions"] = map[string]interface{}{
-			"allow": []string{"Read", "Write", "Glob", "Grep", "WebSearch", "WebFetch"},
-			"deny":  []string{"Edit", "MultiEdit", "Bash"},
+		settings.Permissions = PermissionsConfig{
+			Allow: []string{"Read", "Write", "Glob", "Grep", "WebSearch", "WebFetch"},
+			Deny:  []string{"Edit", "MultiEdit", "Bash"},
 		}
 	}
-
-	// Suppress repo-supplied API key helpers (Mode 1 enforcement)
-	settings["apiKeyHelper"] = nil
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

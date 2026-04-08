@@ -75,22 +75,63 @@ Output:
   7-day:          ██░░░░░░░░░░░░░░░░░░ 10%  resets in 5d12h
 ```
 
-## macOS Keychain Caveats
+## Container Pool Runtime (recommended on macOS)
 
-**Claude Code on macOS uses the system Keychain by default.** This breaks multi-pool isolation because all pools share the same Keychain entry. GitHub issue #20553 is open with no resolution.
+**Claude Code on macOS uses the system Keychain by default.** This breaks multi-pool isolation because all pools share the same Keychain entry. The container runtime solves this by running each pool inside an isolated Docker container with file-based credentials.
 
-**Workaround: Run pool slots in Linux containers.**
+### Setup
 
 ```bash
-# Docker example
-docker run -v /pool/claude-1:/config -e CLAUDE_CONFIG_DIR=/config claude-runner
+# Pull the stoke-pool image (bundles Claude Code, Codex CLI, Node.js, Git)
+docker pull ghcr.io/ericmacdougall/stoke-pool:latest
+
+# Initialize container pools (runs interactive login inside the container)
+stoke pool init --container --name "Claude Max Account 1"
+stoke pool init --container --name "Claude Max Account 2"
+
+# List all pools (shows runtime type)
+stoke pools
+
+# Remove a container pool (also removes the Docker volume)
+stoke remove-pool claude-3
 ```
 
-File-based credentials on Linux work perfectly. Each `CLAUDE_CONFIG_DIR` is fully isolated.
+Each `stoke pool init --container` invocation:
+1. Creates a Docker volume for isolated credential storage
+2. Runs `claude login` inside a temporary container with the volume mounted
+3. Registers the pool with `runtime: container` in the manifest
 
-### Codex on macOS
+### How it works
 
-Codex supports `cli_auth_credentials_store: "file"` in its config, which bypasses the keyring. If you must run on macOS, set this before login:
+When Stoke dispatches a task to a container pool, the engine wraps the CLI command in `docker run`:
+
+```
+docker run --rm \
+  -v stoke-pool-claude-1:/config \
+  -v /path/to/worktree:/path/to/worktree \
+  -e CLAUDE_CONFIG_DIR=/config \
+  ghcr.io/ericmacdougall/stoke-pool:latest \
+  claude -p "..." --output-format stream-json ...
+```
+
+Each container gets its own credential volume, so OAuth tokens are fully isolated.
+
+### Mixing host and container pools
+
+You can mix host-direct and container pools. Stoke's pool manager treats them identically for scheduling; the only difference is how the CLI process is spawned.
+
+### Host-direct pools (opt-in on macOS)
+
+If you prefer running directly on the host (e.g., on Linux where Keychain isn't an issue):
+
+```bash
+stoke add-claude    # runs claude login directly
+stoke add-codex     # runs codex auth login directly
+```
+
+### Codex on macOS (host-direct workaround)
+
+Codex supports `cli_auth_credentials_store: "file"` in its config, which bypasses the keyring. If you must run Codex on the host on macOS:
 
 ```bash
 CODEX_HOME=/pool/codex-1 codex config set cli_auth_credentials_store file

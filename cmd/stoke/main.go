@@ -7,35 +7,63 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ericmacdougall/stoke/internal/app"
+	"github.com/ericmacdougall/stoke/internal/boulder"
+	"github.com/ericmacdougall/stoke/internal/consent"
+	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/ericmacdougall/stoke/internal/metrics"
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
+	"github.com/ericmacdougall/stoke/internal/env"
+	"github.com/ericmacdougall/stoke/internal/env/docker"
+	"github.com/ericmacdougall/stoke/internal/env/ember"
+	"github.com/ericmacdougall/stoke/internal/env/fly"
+	envssh "github.com/ericmacdougall/stoke/internal/env/ssh"
 	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
+	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/ledger"
+	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/notify"
+	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
+	"github.com/ericmacdougall/stoke/internal/progress"
+	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
 	scanpkg "github.com/ericmacdougall/stoke/internal/scan"
+	"github.com/ericmacdougall/stoke/internal/replay"
+	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/scheduler"
+	"github.com/ericmacdougall/stoke/internal/specexec"
+	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/wizard"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/tui"
 	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
-const version = "1.0.0"
+// version is set at build time via ldflags.
+var version = "dev"
 
 // BuildConfig holds all parameters for a build run.
 // Used by both buildCmd (CLI) and shipCmd (programmatic).
@@ -56,7 +84,11 @@ type BuildConfig struct {
 	LintCommand     string
 	ROIFilter       string // high, medium, low, skip
 	UseSQLite       bool
+	SpecExec        bool // enable speculative parallel execution
 	Timeout         time.Duration
+	EnvBackend      string // execution environment: inproc, docker, fly, ember
+	EnvImage        string // base image for container/VM environments
+	EnvSize         string // machine size for cloud environments
 }
 
 // runBuild executes a build plan and returns the result.
@@ -64,6 +96,24 @@ type BuildConfig struct {
 // Returns the build report and any fatal error.
 func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	absRepo := cfg.RepoRoot
+
+	// Register session with Ember dashboard for remote progress monitoring.
+	// buildSuccess is captured by the deferred closure below and set to the
+	// actual build outcome before the function returns.
+	var buildSuccess bool
+	reporter := remote.New()
+	if reporter != nil {
+		if url, err := reporter.RegisterSession(cfg.PlanPath); err == nil && url != "" {
+			fmt.Printf("  dashboard: %s\n", url)
+		}
+		defer func() {
+			summary := "build finished"
+			if !buildSuccess {
+				summary = "build failed"
+			}
+			_ = reporter.Complete(buildSuccess, summary)
+		}()
+	}
 
 	// Build pool configurations
 	var poolConfigs []subscriptions.Pool
@@ -151,7 +201,9 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		StartedAt: time.Now(),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, cfg.Timeout)
 	defer cancel()
 
 	// Create harness-owned plan state
@@ -168,9 +220,96 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// The merge mutex MUST be shared across all parallel tasks to prevent
 	// concurrent ref mutations that corrupt the repository.
 	sharedWorktrees := worktree.NewManager(absRepo)
+	wisdomStore := wisdom.NewStore()
 
-	results, err := sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+	// Metrics registry: shared across all tasks in this build session.
+	metricsReg := metrics.NewRegistry()
+
+	// Progress estimator for ETA tracking.
+	progressTasks := make([]progress.Task, len(p.Tasks))
+	for i, t := range p.Tasks {
+		progressTasks[i] = progress.Task{
+			ID: t.ID, Name: t.Description,
+			Dependencies: t.Dependencies, Weight: 1.0,
+		}
+	}
+	estimator := progress.New(progressTasks)
+
+	// Boulder idle detection: shared across all parallel tasks.
+	boulderEnforcer := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
+
+	// Unified event bus: shared across all tasks in this build session.
+	eventBus := hub.New()
+
+	// Flow tracking: infer development phase from action sequences.
+	flowTracker := flowtrack.NewTracker(flowtrack.Config{})
+	eventBus.Register(hub.FlowTrackObserver(flowTracker))
+
+	// Consent gate: enforce human approval for dangerous operations.
+	// In headless mode, deny risky ops (no interactive approval handler).
+	consentWorkflow := consent.NewWorkflow(nil)
+	eventBus.Register(hub.ConsentGate(consentWorkflow))
+
+	// Cost tracking: shared across all tasks in this build session.
+	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
+		ui.Event("_system", stream.Event{Type: "system", DeltaText: alert.Message})
+	})
+
+	// Dependency-aware test selection: build import graph once, reuse per task.
+	testGraph, testGraphErr := testselect.BuildGraph(absRepo)
+	if testGraphErr != nil {
+		testGraph = nil // non-fatal: fall back to running all tests
+	}
+
+	// Ranked codebase map for agent context injection.
+	repoMap, repoMapErr := repomap.Build(absRepo)
+	if repoMapErr != nil {
+		repoMap = nil // non-fatal: agents navigate without map
+	}
+
+	// Provision execution environment if configured.
+	var buildEnv env.Environment
+	var buildEnvHandle *env.Handle
+	var buildLedger *ledger.Ledger
+	if cfg.EnvBackend != "" && cfg.EnvBackend != "inproc" {
+		var provErr error
+		buildEnv, buildEnvHandle, provErr = provisionEnv(ctx, cfg, absRepo)
+		if provErr != nil {
+			return nil, fmt.Errorf("provision environment: %w", provErr)
+		}
+
+		// Open ledger for env audit trail if available.
+		envLedgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+		if fileExists(envLedgerDir) {
+			if lg, err := ledger.New(envLedgerDir); err == nil {
+				buildLedger = lg
+				env.RecordProvision(ctx, lg, buildEnvHandle, env.Spec{
+					Backend:   env.Backend(cfg.EnvBackend),
+					BaseImage: cfg.EnvImage,
+					Size:      cfg.EnvSize,
+				})
+			}
+		}
+
+		defer func() {
+			if buildEnv != nil && buildEnvHandle != nil {
+				if buildLedger != nil {
+					cost, _ := buildEnv.Cost(context.Background(), buildEnvHandle)
+					env.RecordTeardown(context.Background(), buildLedger, buildEnvHandle, cost)
+					buildLedger.Close()
+				}
+				buildEnv.Teardown(context.Background(), buildEnvHandle)
+			}
+		}()
+		fmt.Printf("  env:     %s (%s)\n", cfg.EnvBackend, buildEnvHandle.ID)
+	}
+
+	execFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+		metricsReg.Counter("tasks.attempted").Inc()
+		estimator.Start(task.ID)
 		if task.Status == plan.StatusDone {
+			metricsReg.Counter("tasks.skipped").Inc()
+			estimator.Skip(task.ID)
 			return scheduler.TaskResult{TaskID: task.ID, Success: true}
 		}
 
@@ -186,6 +325,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			TaskVerification: task.Verification,
 			AllowedFiles:     task.Files,
 			DryRun:           false,
+			PlanOnly:         task.PlanOnly,
 			AuthMode:         app.AuthMode(cfg.AuthMode),
 			ClaudeBinary:     cfg.ClaudeBinary,
 			CodexBinary:      cfg.CodexBinary,
@@ -194,9 +334,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			Pools:            pools,
 			Worktrees:        sharedWorktrees,
 			State:            ts,
+			Wisdom:           wisdomStore,
 			BuildCommand:     cfg.BuildCommand,
 			TestCommand:      cfg.TestCommand,
 			LintCommand:      cfg.LintCommand,
+			Boulder:          boulderEnforcer,
+			CostTracker:      tracker,
+			TestGraph:        testGraph,
+			RepoMap:          repoMap,
+			EventBus:         eventBus,
+			Environ:          buildEnv,
+			EnvHandle:        buildEnvHandle,
+			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
 				if ev.Type == "assistant" {
@@ -223,6 +372,8 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 		orchestrator, err := app.New(appCfg)
 		if err != nil {
+			metricsReg.Counter("tasks.failed").Inc()
+			estimator.Fail(task.ID)
 			ui.TaskComplete(task.ID, false, 0, 0, 1)
 			markTask(p, task.ID, plan.StatusFailed)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
@@ -252,12 +403,15 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 				attempt.RootCause = analysis.RootCause
 			}
 			store.SaveAttempt(attempt)
+			metricsReg.Counter("tasks.failed").Inc()
+			estimator.Fail(task.ID)
 			if ts != nil {
 				fmt.Println(ts.ClaimedVsVerified())
 			}
 			markTask(p, task.ID, plan.StatusFailed)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
-			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD}
+			tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
+			return scheduler.TaskResult{TaskID: task.ID, Error: err, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
 		}
 
 		ui.TaskComplete(task.ID, true, elapsed, result.TotalCostUSD, attemptNum)
@@ -271,10 +425,24 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			CostUSD:  result.TotalCostUSD,
 			Duration: time.Duration(elapsed * float64(time.Second)),
 		})
+		metricsReg.Counter("tasks.succeeded").Inc()
+		estimator.Complete(task.ID)
 		markTask(p, task.ID, plan.StatusDone)
 		store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
-		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
-	})
+		tp, tf, dl := extractVerifyMetrics(result.Verification, result.FilesChanged)
+		return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD, TestsPassed: tp, TestsFailed: tf, DiffLines: dl}
+	}
+
+	// Optionally wrap with speculative parallel execution
+	if cfg.SpecExec {
+		execFn = scheduler.WithSpecExec(execFn, scheduler.SpecExecConfig{
+			Approaches:  specexec.CommonApproaches(),
+			MaxParallel: 3,
+			Timeout:     5 * time.Minute,
+		})
+	}
+
+	results, err := sched.Run(ctx, p, execFn)
 
 	if err != nil {
 		return nil, fmt.Errorf("scheduler: %w", err)
@@ -305,14 +473,38 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	}
 	buildReport.Success = buildReport.TasksFailed == 0
 	buildReport.DurationSec = time.Since(startTime).Seconds()
+	buildSuccess = buildReport.Success // propagate to deferred reporter.Complete()
 
 	buildReport.Save(absRepo)
 	buildReport.SaveLatest(absRepo)
 	store.ClearState()
 
-	// Show summary
+	// Show summary with progress ETA data.
 	ui.Summary(len(p.Tasks))
 	fmt.Printf("  Report: .stoke/reports/latest.json\n")
+	if tracker.RequestCount() > 0 {
+		fmt.Printf("  Cost: %s\n", tracker.Summary())
+	}
+	fmt.Printf("  Progress: %s\n", estimator.Summary())
+
+	// Fire webhook notification on build completion (if configured).
+	if webhookURL := os.Getenv("STOKE_WEBHOOK_URL"); webhookURL != "" {
+		notifier := notify.NewWebhookNotifier(webhookURL, nil, nil)
+		eventType := "build_complete"
+		if !buildReport.Success {
+			eventType = "build_failed"
+		}
+		_ = notifier.Notify(notify.NotifyEvent{
+			Type:      eventType,
+			Message:   fmt.Sprintf("Build %s: %d/%d tasks succeeded", p.ID, buildReport.TasksDone, buildReport.TasksTotal),
+			Timestamp: time.Now(),
+			Details: map[string]string{
+				"plan_id":  p.ID,
+				"cost":     fmt.Sprintf("$%.4f", buildReport.TotalCost),
+				"duration": fmt.Sprintf("%.1fs", buildReport.DurationSec),
+			},
+		})
+	}
 	summary := planState.Summary()
 	fmt.Printf("\n  Plan state (harness-verified):\n")
 	for _, phase := range []taskstate.Phase{taskstate.Committed, taskstate.Failed, taskstate.Blocked, taskstate.UserSkipped, taskstate.Pending} {
@@ -324,7 +516,36 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	return buildReport, nil
 }
 
+// signalContext returns a context that is cancelled on SIGINT or SIGTERM.
+// The returned cancel function should be deferred by the caller.
+func signalContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sigCh:
+			fmt.Fprintf(os.Stderr, "\nstoke: received signal, shutting down gracefully...\n")
+			cancel()
+			// Second signal: hard exit.
+			<-sigCh
+			fmt.Fprintf(os.Stderr, "stoke: forced exit\n")
+			os.Exit(1)
+		case <-ctx.Done():
+		}
+		signal.Stop(sigCh)
+	}()
+	return ctx, cancel
+}
+
 func main() {
+	// Initialize structured logging from STOKE_LOG_LEVEL env (default: "info").
+	logLevel := os.Getenv("STOKE_LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+	logging.Init(logLevel, os.Stderr)
+
 	if len(os.Args) < 2 {
 		// No args: launch the interactive REPL
 		launchREPL()
@@ -366,6 +587,14 @@ func main() {
 		poolsCmd(os.Args[2:])
 	case "remove-pool":
 		removePoolCmd(os.Args[2:])
+	case "mission":
+		missionCmd(os.Args[2:])
+	case "serve":
+		serveCmd(os.Args[2:])
+	case "mcp-serve":
+		mcpServeCmd(os.Args[2:])
+	case "init", "wizard":
+		initCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -374,6 +603,81 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", os.Args[1])
 		usage()
 		os.Exit(2)
+	}
+}
+
+// --- init/wizard: project configuration wizard ---
+
+func initCmd(args []string) {
+	projectDir, _ := os.Getwd()
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		projectDir = args[0]
+	}
+
+	autoMode := false
+	for _, a := range args {
+		if a == "--auto" || a == "-a" {
+			autoMode = true
+		}
+	}
+
+	// If reinitializing, verify existing ledger integrity first.
+	ledgerDir := filepath.Join(projectDir, ".stoke", "ledger")
+	if fileExists(ledgerDir) {
+		lg, err := ledger.New(ledgerDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ledger open error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := lg.Verify(context.Background()); err != nil {
+			lg.Close()
+			fmt.Fprintf(os.Stderr, "ledger integrity check failed: %v\n", err)
+			os.Exit(1)
+		}
+		lg.Close()
+		fmt.Println("  Ledger integrity: OK (reinitializing)")
+	}
+
+	w := wizard.New(projectDir)
+
+	var err error
+	if autoMode {
+		err = w.RunAutoDetect()
+		if err == nil {
+			fmt.Printf("  stoke.policy.yaml generated (auto-detect mode)\n")
+		}
+	} else {
+		err = w.Run()
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// --- mcp-serve: start MCP codebase tool server ---
+
+func mcpServeCmd(args []string) {
+	fs := flag.NewFlagSet("mcp-serve", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root to index")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	srv, err := stokeMCP.BuildCodebaseServer(absRepo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building codebase server: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := srv.ServeStdio(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -395,6 +699,9 @@ func runCmd(args []string) {
 	buildC := fs.String("build-cmd", "", "Build command")
 	testC := fs.String("test-cmd", "", "Test command")
 	lintC := fs.String("lint-cmd", "", "Lint command")
+	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
+	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
+	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -427,6 +734,11 @@ func runCmd(args []string) {
 	// Create harness-owned task state (anti-deception: model cannot mark status)
 	ts := taskstate.NewTaskState("run-task")
 
+	// Build shared resources for the single-task run.
+	runTracker := costtrack.NewTracker(0, nil)
+	runRepoMap, _ := repomap.Build(absRepo)
+	runTestGraph, _ := testselect.BuildGraph(absRepo)
+
 	cfg := app.RunConfig{
 		RepoRoot:        absRepo,
 		PolicyPath:      *policy,
@@ -443,6 +755,14 @@ func runCmd(args []string) {
 		BuildCommand:    *buildC,
 		TestCommand:     *testC,
 		LintCommand:     *lintC,
+		CostTracker:     runTracker,
+		RepoMap:         runRepoMap,
+		TestGraph:       runTestGraph,
+		RunnerMode:      *runnerMode,
+		NativeAPIKey:    *nativeAPIKey,
+		NativeModel:     *nativeModel,
+		EventBus:        newEventBus(),
+		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
 		},
@@ -453,7 +773,9 @@ func runCmd(args []string) {
 		fatal("stoke init: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
 	defer cancel()
 
 	ui.TaskStart("task", *task, "default")
@@ -495,6 +817,10 @@ func buildCmd(args []string) {
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip (default: medium)")
 	useSQLite := fs.Bool("sqlite", false, "Use SQLite session store instead of JSON")
 	interactive := fs.Bool("interactive", false, "Launch interactive Bubble Tea TUI")
+	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution (tries multiple strategies per task)")
+	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
+	envImage := fs.String("env-image", "", "Base image for container/VM environments")
+	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
 	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -669,20 +995,36 @@ func buildCmd(args []string) {
 			checkResume(store, p)
 			store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 
-			ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+			sigCtx, sigCancel := signalContext(context.Background())
+			defer sigCancel()
+			ctx, cancel := context.WithTimeout(sigCtx, *timeout)
 			defer cancel()
 
 			sched := scheduler.New(*workers)
 			interactiveWorktrees := worktree.NewManager(absRepo)
-			sched.Run(ctx, p, func(ctx context.Context, task plan.Task) scheduler.TaskResult {
+			wisdomStore := wisdom.NewStore()
+
+			// Shared resources for interactive mode (same as headless).
+			tuiTracker := costtrack.NewTracker(0, nil)
+			tuiTestGraph, _ := testselect.BuildGraph(absRepo)
+			tuiRepoMap, _ := repomap.Build(absRepo)
+			tuiBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
+			tuiOpts := &buildRunConfigOpts{
+				Boulder:     tuiBoulder,
+				CostTracker: tuiTracker,
+				TestGraph:   tuiTestGraph,
+				RepoMap:     tuiRepoMap,
+			}
+
+			tuiExecFn := func(ctx context.Context, task plan.Task) scheduler.TaskResult {
 				if task.Status == plan.StatusDone {
 					return scheduler.TaskResult{TaskID: task.ID, Success: true}
 				}
 				tui.SendTaskStart(program, task.ID, task.Description, "pool-1")
 				taskStart := time.Now()
-				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), func(ev stream.Event) {
+				cfg := buildRunConfig(absRepo, *policy, task, *authMode, *claudeBin, *codexBin, *claudeConfigDir, *codexHome, *buildC, *testC, *lintC, pools, interactiveWorktrees, interactivePlanState.Get(task.ID), wisdomStore, func(ev stream.Event) {
 					tui.SendTaskEvent(program, task.ID, ev)
-				})
+				}, tuiOpts)
 				orchestrator, err := app.New(cfg)
 				if err != nil {
 					ts := interactivePlanState.Get(task.ID)
@@ -706,7 +1048,15 @@ func buildCmd(args []string) {
 				markTask(p, task.ID, plan.StatusDone)
 				store.SaveState(&session.State{PlanID: p.ID, Tasks: p.Tasks, StartedAt: time.Now()})
 				return scheduler.TaskResult{TaskID: task.ID, Success: true, CostUSD: result.TotalCostUSD}
-			})
+			}
+			if *specExec {
+				tuiExecFn = scheduler.WithSpecExec(tuiExecFn, scheduler.SpecExecConfig{
+					Approaches:  specexec.CommonApproaches(),
+					MaxParallel: 3,
+					Timeout:     5 * time.Minute,
+				})
+			}
+			sched.Run(ctx, p, tuiExecFn)
 			// Update pool utilization in TUI
 			tui.SendPoolUpdate(program, []tui.PoolInfo{
 				{ID: "aggregate", Label: "all pools", Utilization: 0},
@@ -740,7 +1090,11 @@ func buildCmd(args []string) {
 		LintCommand:     *lintC,
 		ROIFilter:       *roiFilter,
 		UseSQLite:       *useSQLite,
+		SpecExec:        *specExec,
 		Timeout:         *timeout,
+		EnvBackend:      *envBackend,
+		EnvImage:        *envImage,
+		EnvSize:         *envSize,
 	}
 
 	buildReport, err := runBuild(buildCfg)
@@ -819,6 +1173,7 @@ Rules:
 		ClaudeBinary:    *claudeBin,
 		ClaudeConfigDir: *claudeConfigDir,
 		State:           ts,
+		EventBus:        newEventBus(),
 		OnEvent: func(ev stream.Event) {
 			if ev.DeltaText != "" {
 				fmt.Print(ev.DeltaText)
@@ -957,6 +1312,22 @@ func statusCmd(args []string) {
 		fmt.Printf("\n  Last report: %s (%d/%d done, $%.2f)\n",
 			latest.PlanID, latest.TasksDone, latest.TasksTotal, latest.TotalCost)
 	}
+
+	// Show ledger integrity status
+	ledgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+	if fileExists(ledgerDir) {
+		lg, err := ledger.New(ledgerDir)
+		if err != nil {
+			fmt.Printf("\n  Ledger integrity: FAILED (open error: %v)\n", err)
+		} else {
+			if err := lg.Verify(context.Background()); err != nil {
+				fmt.Printf("\n  Ledger integrity: FAILED (%v)\n", err)
+			} else {
+				fmt.Printf("\n  Ledger integrity: OK\n")
+			}
+			lg.Close()
+		}
+	}
 }
 
 // --- scan: deterministic code scan + security surface mapping ---
@@ -984,12 +1355,14 @@ func scanCmd(args []string) {
 	}
 
 	if *jsonOut {
-		output := map[string]interface{}{"scan": result}
+		type scanOutput struct {
+			Scan            *scanpkg.ScanResult  `json:"scan"`
+			SecuritySurface *scanpkg.SecurityMap  `json:"security_surface,omitempty"`
+		}
+		output := scanOutput{Scan: result}
 		if *securityFlag {
 			secMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
-			if secMap != nil {
-				output["security_surface"] = secMap
-			}
+			output.SecuritySurface = secMap
 		}
 		data, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
@@ -1160,6 +1533,14 @@ func min(a, b int) int {
 	return b
 }
 
+// newEventBus creates a pre-configured event bus with standard observers and gates.
+func newEventBus() *hub.Bus {
+	bus := hub.New()
+	bus.Register(hub.FlowTrackObserver(flowtrack.NewTracker(flowtrack.Config{})))
+	bus.Register(hub.ConsentGate(consent.NewWorkflow(nil)))
+	return bus
+}
+
 // --- pool: subscription utilization ---
 
 func poolCmd(args []string) {
@@ -1226,8 +1607,9 @@ func doctorCmd(args []string) {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	providers := fs.Bool("providers", false, "Check all providers in the fallback chain")
 	fs.Parse(args)
-	fmt.Print(app.Doctor(*claudeBin, *codexBin))
+	fmt.Print(app.Doctor(*claudeBin, *codexBin, *providers))
 }
 
 // --- yolo: interactive Claude Code with full Stoke guards ---
@@ -1606,13 +1988,21 @@ func repairCmd(args []string) {
 	if err := os.MkdirAll(filepath.Dir(reportPath), 0755); err != nil {
 		fatal("create reports dir: %v", err)
 	}
-	repairReport := map[string]interface{}{
-		"timestamp":        time.Now().Format(time.RFC3339),
-		"before_findings":  len(findings),
-		"after_findings":   remaining,
-		"tasks_generated":  len(tasks),
-		"plan_id":          repairPlan.ID,
-		"security_scanned": *securityFlag,
+	type repairReportData struct {
+		Timestamp       string `json:"timestamp"`
+		BeforeFindings  int    `json:"before_findings"`
+		AfterFindings   int    `json:"after_findings"`
+		TasksGenerated  int    `json:"tasks_generated"`
+		PlanID          string `json:"plan_id"`
+		SecurityScanned bool   `json:"security_scanned"`
+	}
+	repairReport := repairReportData{
+		Timestamp:       time.Now().Format(time.RFC3339),
+		BeforeFindings:  len(findings),
+		AfterFindings:   remaining,
+		TasksGenerated:  len(tasks),
+		PlanID:          repairPlan.ID,
+		SecurityScanned: *securityFlag,
 	}
 	reportData, err := json.MarshalIndent(repairReport, "", "  ")
 	if err != nil {
@@ -2282,6 +2672,7 @@ func gitHead(dir string) string {
 func launchREPL() {
 	absRepo, _ := filepath.Abs(".")
 	r := repl.New(absRepo)
+	r.RegisterBuiltins()
 
 	// Register all slash commands
 	r.Register(repl.Command{
@@ -2389,6 +2780,21 @@ func launchREPL() {
 	})
 
 	r.Register(repl.Command{
+		Name: "findings", Description: "Show convergence findings for a mission",
+		Usage: "/findings <mission-id> [--severity blocking] [--all] [--json]",
+		Run: func(args string) {
+			if args == "" {
+				fmt.Println("  Usage: /findings <mission-id> [--severity blocking] [--category test] [--all] [--json]")
+				return
+			}
+			parts := strings.Fields(args)
+			cmdArgs := []string{"--id", parts[0]}
+			cmdArgs = append(cmdArgs, parts[1:]...)
+			missionFindingsCmd(cmdArgs)
+		},
+	})
+
+	r.Register(repl.Command{
 		Name: "status", Description: "Show session dashboard",
 		Run: func(args string) {
 			statusCmd([]string{"--repo", absRepo})
@@ -2452,7 +2858,39 @@ func launchREPL() {
 	r.Run()
 }
 
+// extractVerifyMetrics extracts suite-level test pass/fail and diff size
+// from verification outcomes. Returns (testsPassed, testsFailed, diffLines).
+//
+// NOTE: These are suite-level signals (0 or 1), not individual test counts,
+// because verify.Outcome only carries a boolean Success per step. The specexec
+// scorer treats these as "suite passed" vs "suite failed" — a 1000-test suite
+// and a 1-test suite both score the same. This is intentional: the scorer's
+// job is to pick the best strategy, not to measure test quality.
+//
+// DiffLines is estimated from the number of changed files. This is a coarse
+// proxy; a proper implementation would parse `git diff --stat` output.
+func extractVerifyMetrics(outcomes []verify.Outcome, filesChanged []string) (int, int, int) {
+	passed, failed := 0, 0
+	for _, o := range outcomes {
+		if o.Skipped {
+			continue
+		}
+		if o.Name == "test" {
+			if o.Success {
+				passed = 1
+			} else {
+				failed = 1
+			}
+		}
+	}
+	// Estimate diff size from file count. This is intentionally rough —
+	// strategies that produce any files outrank plan-only strategies (0 files).
+	diffLines := len(filesChanged) * 50
+	return passed, failed, diffLines
+}
+
 // markTask updates a task's status in the plan (for session persistence).
+
 func markTask(p *plan.Plan, taskID string, status plan.Status) {
 	for i := range p.Tasks {
 		if p.Tasks[i].ID == taskID {
@@ -2492,8 +2930,17 @@ func checkResume(store session.SessionStore, p *plan.Plan) {
 }
 
 // buildRunConfig creates an app.RunConfig for a task with the given flags.
-func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, onEvent func(stream.Event)) app.RunConfig {
-	return app.RunConfig{
+// buildRunConfigOpts holds optional fields for buildRunConfig that don't fit in the base signature.
+type buildRunConfigOpts struct {
+	Boulder     *boulder.Enforcer
+	CostTracker *costtrack.Tracker
+	TestGraph   *testselect.Graph
+	RepoMap     *repomap.RepoMap
+	EventBus    *hub.Bus
+}
+
+func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claudeBin, codexBin, claudeConfigDir, codexHome, buildCmd, testCmd, lintCmd string, pools *subscriptions.Manager, worktrees *worktree.Manager, state *taskstate.TaskState, wisdomStore *wisdom.Store, onEvent func(stream.Event), opts *buildRunConfigOpts) app.RunConfig {
+	cfg := app.RunConfig{
 		RepoRoot:         absRepo,
 		PolicyPath:       policyPath,
 		Task:             task.Description,
@@ -2501,6 +2948,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		TaskVerification: task.Verification,
 		AllowedFiles:     task.Files,
 		DryRun:           false,
+		PlanOnly:         task.PlanOnly,
 		AuthMode:         app.AuthMode(authMode),
 		ClaudeBinary:     claudeBin,
 		CodexBinary:      codexBin,
@@ -2509,11 +2957,21 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		Pools:            pools,
 		Worktrees:        worktrees,
 		State:            state,
+		Wisdom:           wisdomStore,
 		BuildCommand:     buildCmd,
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,
 		OnEvent:          onEvent,
+		Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 	}
+	if opts != nil {
+		cfg.Boulder = opts.Boulder
+		cfg.CostTracker = opts.CostTracker
+		cfg.TestGraph = opts.TestGraph
+		cfg.RepoMap = opts.RepoMap
+		cfg.EventBus = opts.EventBus
+	}
+	return cfg
 }
 
 func readOAuthToken(configDir string) string {
@@ -2660,4 +3118,136 @@ QUICKSTART:
   stoke pool --claude-config-dir ~/.claude
 
 `, version)
+}
+
+// serveCmd starts the Stoke HTTP API server with optional mission orchestration.
+func serveCmd(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	port := fs.Int("port", 8420, "HTTP server port")
+	token := fs.String("token", os.Getenv("STOKE_API_TOKEN"), "Bearer token for auth (or STOKE_API_TOKEN)")
+	repo := fs.String("repo", ".", "Repository root")
+	dataDir := fs.String("data-dir", ".stoke", "Data directory for mission/research stores")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	bus := server.NewEventBus()
+	srv := server.New(*port, *token, bus)
+
+	// Dashboard state: created early so both orchestrator and API can use it.
+	dashState := server.NewDashboardState()
+
+	// Try to create orchestrator for mission API
+	orch, orchErr := createOrchestrator(absRepo, *dataDir)
+	if orchErr != nil {
+		fmt.Fprintf(os.Stderr, "warn: mission API disabled: %v\n", orchErr)
+	} else {
+		server.RegisterMissionAPI(srv, orch)
+		defer orch.Close()
+		fmt.Fprintf(os.Stderr, "mission API enabled\n")
+
+		// Bridge hub events to the server's EventBus for SSE/WebSocket clients
+		// and to the dashboard state for REST API queries.
+		if orch.EventBus() != nil {
+			server.BridgeHubToEventBus(orch.EventBus(), bus)
+			server.BridgeHubToDashboard(orch.EventBus(), dashState)
+		}
+	}
+
+	// Register dashboard API (works even without orchestrator).
+	server.RegisterDashboardAPI(srv, nil, nil, dashState)
+	server.RegisterDashboardUI(srv)
+
+	fmt.Fprintf(os.Stderr, "stoke serve listening on :%d\n", *port)
+	fmt.Fprintf(os.Stderr, "dashboard: http://localhost:%d/\n", *port)
+
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+
+	// Run server in goroutine, shut down on signal
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+
+	select {
+	case <-sigCtx.Done():
+		fmt.Fprintf(os.Stderr, "stoke serve: shutting down\n")
+	case err := <-errCh:
+		if err != nil {
+			fatal("serve: %v", err)
+		}
+	}
+}
+
+// provisionEnv creates and provisions an execution environment from BuildConfig.
+func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.Environment, *env.Handle, error) {
+	spec := env.Spec{
+		Backend:   env.Backend(cfg.EnvBackend),
+		BaseImage: cfg.EnvImage,
+		Size:      cfg.EnvSize,
+		RepoRoot:  repoRoot,
+		Env:       map[string]string{},
+	}
+
+	var backend env.Environment
+	switch env.Backend(cfg.EnvBackend) {
+	case env.BackendDocker:
+		backend = docker.New()
+	case env.BackendFly:
+		for _, v := range []string{"FLARE_API_URL", "FLARE_API_KEY", "FLARE_APP_NAME", "FLARE_REGION", "FLARE_SSH_KEY"} {
+			if os.Getenv(v) == "" {
+				return nil, nil, fmt.Errorf("fly backend requires %s env var", v)
+			}
+		}
+		backend = fly.New(fly.Config{
+			APIURL:     os.Getenv("FLARE_API_URL"),
+			Token:      os.Getenv("FLARE_API_KEY"),
+			AppName:    os.Getenv("FLARE_APP_NAME"),
+			Region:     os.Getenv("FLARE_REGION"),
+			SSHKeyPath: os.Getenv("FLARE_SSH_KEY"),
+		})
+	case env.BackendEmber:
+		for _, v := range []string{"EMBER_API_URL", "EMBER_API_KEY", "EMBER_SSH_KEY"} {
+			if os.Getenv(v) == "" {
+				return nil, nil, fmt.Errorf("ember backend requires %s env var", v)
+			}
+		}
+		backend = ember.New(ember.Config{
+			APIURL:     os.Getenv("EMBER_API_URL"),
+			Token:      os.Getenv("EMBER_API_KEY"),
+			SSHKeyPath: os.Getenv("EMBER_SSH_KEY"),
+		})
+	case env.BackendSSH:
+		if os.Getenv("STOKE_SSH_HOST") == "" {
+			return nil, nil, fmt.Errorf("ssh backend requires STOKE_SSH_HOST env var")
+		}
+		backend = envssh.New(envssh.Config{
+			Host:    os.Getenv("STOKE_SSH_HOST"),
+			User:    os.Getenv("STOKE_SSH_USER"),
+			KeyPath: os.Getenv("STOKE_SSH_KEY"),
+		})
+	default:
+		return nil, nil, fmt.Errorf("unknown env backend: %s", cfg.EnvBackend)
+	}
+
+	handle, err := backend.Provision(ctx, spec)
+	if err != nil {
+		return nil, nil, err
+	}
+	return backend, handle, nil
+}
+
+// createOrchestrator builds an orchestrate.Orchestrator for the serve command.
+func createOrchestrator(repoRoot, dataDir string) (*orchestrate.Orchestrator, error) {
+	absData := filepath.Join(repoRoot, dataDir)
+	if err := os.MkdirAll(absData, 0755); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	return orchestrate.New(orchestrate.Config{
+		RepoRoot: repoRoot,
+		StoreDir: absData,
+		EventBus: newEventBus(),
+	})
 }

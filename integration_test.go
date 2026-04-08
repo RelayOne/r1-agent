@@ -12,14 +12,21 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/config"
+	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/engine"
+	"github.com/ericmacdougall/stoke/internal/env"
+	inprocenv "github.com/ericmacdougall/stoke/internal/env/inproc"
 	"github.com/ericmacdougall/stoke/internal/failure"
+	harnesstools "github.com/ericmacdougall/stoke/internal/harness/tools"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/scheduler"
+	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
+	"github.com/ericmacdougall/stoke/internal/tools"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/workflow"
 	"github.com/ericmacdougall/stoke/internal/worktree"
@@ -388,7 +395,7 @@ func TestDetectGoCommands(t *testing.T) {
 
 func TestDetectNodeTS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc","test":"jest"}}`), 0644)
 	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
 	cmds := config.DetectCommands(dir)
 	if cmds.Build != "npm run build" {
@@ -623,7 +630,7 @@ func TestCodexMode1EnvStripsKeys(t *testing.T) {
 		RuntimeDir:    filepath.Join(dir, "runtime"),
 		Mode:          engine.AuthModeMode1,
 		PoolConfigDir: "/pool/codex-1",
-		Phase:         engine.PhaseSpec{Name: "execute"},
+		Phase:         engine.PhaseSpec{Name: "execute", MaxTurns: 20},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -826,8 +833,8 @@ func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
 	}
 }
 
-func TestAllGatesPass_RejectsWarnings(t *testing.T) {
-	// Evidence with all gates passing but with warnings should NOT pass
+func TestAllGatesPass_RejectsFindings(t *testing.T) {
+	// Evidence with all gates passing but with findings should NOT pass
 	ev := taskstate.Evidence{
 		BuildPass:      true,
 		TestPass:       true,
@@ -835,16 +842,22 @@ func TestAllGatesPass_RejectsWarnings(t *testing.T) {
 		ScopeClean:     true,
 		ProtectedClean: true,
 		ReviewPass:     true,
-		Warnings:       []string{"gitignored files present"},
+		Findings:       []string{"gitignored files present"},
 	}
 	if ev.AllGatesPass() {
-		t.Error("AllGatesPass should return false when warnings are present")
+		t.Error("AllGatesPass should return false when findings are present")
 	}
 
-	// Same evidence without warnings should pass
-	ev.Warnings = nil
+	// Same evidence without findings should pass
+	ev.Findings = nil
 	if !ev.AllGatesPass() {
-		t.Error("AllGatesPass should return true with no warnings and all gates passing")
+		t.Error("AllGatesPass should return true with no findings and all gates passing")
+	}
+
+	// Warnings (advisory) should NOT block merge
+	ev.Warnings = []string{"advisory note"}
+	if !ev.AllGatesPass() {
+		t.Error("AllGatesPass should return true even when advisory warnings are present")
 	}
 }
 
@@ -905,6 +918,7 @@ func setupGitRepo(t *testing.T) string {
 	git("init")
 	git("config", "user.email", "test@stoke.dev")
 	git("config", "user.name", "Stoke Test")
+	git("config", "commit.gpgsign", "false")
 	git("checkout", "-b", "main")
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
 	git("add", "-A")
@@ -919,4 +933,264 @@ func indexOf(s []string, val string) int {
 		}
 	}
 	return -1
+}
+
+// ===========================================================================
+// Execution Environment Integration Tests
+// ===========================================================================
+
+func TestInprocEnvProvisionAndExec(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0644)
+
+	backend := inprocenv.New()
+	ctx := context.Background()
+
+	handle, err := backend.Provision(ctx, env.Spec{
+		Backend:  env.BackendInProc,
+		RepoRoot: dir,
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Teardown(ctx, handle)
+
+	if handle.Backend != env.BackendInProc {
+		t.Errorf("backend=%q", handle.Backend)
+	}
+
+	// Execute a command.
+	result, err := backend.Exec(ctx, handle, []string{"cat", "hello.txt"}, env.ExecOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success() {
+		t.Errorf("exit=%d stderr=%q", result.ExitCode, result.Stderr)
+	}
+	if strings.TrimSpace(result.Stdout) != "hello" {
+		t.Errorf("stdout=%q", result.Stdout)
+	}
+}
+
+func TestInprocEnvSetupCommands(t *testing.T) {
+	dir := t.TempDir()
+	backend := inprocenv.New()
+	ctx := context.Background()
+
+	handle, err := backend.Provision(ctx, env.Spec{
+		Backend:       env.BackendInProc,
+		RepoRoot:      dir,
+		WorkDir:       dir,
+		SetupCommands: []string{"echo setup-ok > setup.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Teardown(ctx, handle)
+
+	content, err := os.ReadFile(filepath.Join(dir, "setup.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(content)) != "setup-ok" {
+		t.Errorf("setup content=%q", content)
+	}
+}
+
+func TestInprocEnvExecFailure(t *testing.T) {
+	dir := t.TempDir()
+	backend := inprocenv.New()
+	ctx := context.Background()
+
+	handle, err := backend.Provision(ctx, env.Spec{
+		Backend:  env.BackendInProc,
+		RepoRoot: dir,
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Teardown(ctx, handle)
+
+	result, err := backend.Exec(ctx, handle, []string{"bash", "-c", "exit 42"}, env.ExecOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success() {
+		t.Error("expected failure")
+	}
+	if result.ExitCode != 42 {
+		t.Errorf("exit=%d", result.ExitCode)
+	}
+}
+
+func TestVerifyPipelineWithInprocEnv(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644)
+
+	backend := inprocenv.New()
+	ctx := context.Background()
+
+	handle, err := backend.Provision(ctx, env.Spec{
+		Backend:  env.BackendInProc,
+		RepoRoot: dir,
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Teardown(ctx, handle)
+
+	// Create pipeline with env.
+	pipeline := verify.NewPipeline("echo build-ok", "echo test-ok", "echo lint-ok")
+	envPipeline := pipeline.WithEnvironment(backend, handle)
+
+	outcomes, err := envPipeline.Run(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 3 {
+		t.Fatalf("outcomes=%d", len(outcomes))
+	}
+	for _, o := range outcomes {
+		if !o.Success {
+			t.Errorf("%s failed: %s", o.Name, o.Output)
+		}
+	}
+}
+
+func TestVerifyPipelineEnvFailure(t *testing.T) {
+	dir := t.TempDir()
+	backend := inprocenv.New()
+	ctx := context.Background()
+
+	handle, err := backend.Provision(ctx, env.Spec{
+		Backend:  env.BackendInProc,
+		RepoRoot: dir,
+		WorkDir:  dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Teardown(ctx, handle)
+
+	pipeline := verify.NewPipeline("false", "", "")
+	envPipeline := pipeline.WithEnvironment(backend, handle)
+
+	outcomes, err := envPipeline.Run(ctx, dir)
+	if err == nil {
+		t.Fatal("expected error for failing build")
+	}
+	if outcomes[0].Success {
+		t.Error("build should have failed")
+	}
+}
+
+func TestDashboardStateBridge(t *testing.T) {
+	state := server.NewDashboardState()
+	bus := hub.New()
+
+	server.BridgeHubToDashboard(bus, state)
+
+	// Emit task lifecycle events.
+	// Observer hooks run asynchronously, so we need a brief pause after each emit.
+	bus.Emit(context.Background(), &hub.Event{
+		Type:   hub.EventTaskDispatched,
+		TaskID: "task-1",
+		Phase:  "plan",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	snap := state.Get("task-1")
+	if snap == nil {
+		t.Fatal("expected snapshot after dispatch")
+	}
+	if snap.Status != "pending" {
+		t.Errorf("status=%q, want pending", snap.Status)
+	}
+
+	bus.Emit(context.Background(), &hub.Event{
+		Type:   hub.EventTaskStarted,
+		TaskID: "task-1",
+		Phase:  "execute",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	snap = state.Get("task-1")
+	if snap.Status != "running" {
+		t.Errorf("status=%q, want running", snap.Status)
+	}
+	if snap.Phase != "execute" {
+		t.Errorf("phase=%q, want execute", snap.Phase)
+	}
+
+	bus.Emit(context.Background(), &hub.Event{
+		Type:   hub.EventTaskCompleted,
+		TaskID: "task-1",
+	})
+	time.Sleep(50 * time.Millisecond)
+
+	snap = state.Get("task-1")
+	if snap.Status != "completed" {
+		t.Errorf("status=%q, want completed", snap.Status)
+	}
+}
+
+func TestEnvCostTracking(t *testing.T) {
+	tracker := costtrack.NewTracker(100.0, nil)
+
+	// Record some token cost.
+	tracker.Record("claude-3.5", "task-1", 1000, 500, 0, 0)
+	tokenCost := tracker.Total()
+
+	// Record env cost.
+	tracker.RecordEnvCost("task-1", 0.50)
+
+	total := tracker.Total()
+	if total <= tokenCost {
+		t.Errorf("total=%f should be > token cost %f", total, tokenCost)
+	}
+	if tracker.EnvCost() != 0.50 {
+		t.Errorf("env cost=%f, want 0.50", tracker.EnvCost())
+	}
+}
+
+func TestEnvToolsAuthorization(t *testing.T) {
+	// Dev role should have env tools.
+	if !harnesstools.IsAuthorized("dev", harnesstools.ToolEnvExec) {
+		t.Error("dev should be authorized for env_exec")
+	}
+	if !harnesstools.IsAuthorized("dev", harnesstools.ToolEnvCopyIn) {
+		t.Error("dev should be authorized for env_copy_in")
+	}
+	if !harnesstools.IsAuthorized("dev", harnesstools.ToolEnvCopyOut) {
+		t.Error("dev should be authorized for env_copy_out")
+	}
+
+	// Reviewer should have env_exec but not copy tools.
+	if !harnesstools.IsAuthorized("reviewer", harnesstools.ToolEnvExec) {
+		t.Error("reviewer should be authorized for env_exec")
+	}
+	if harnesstools.IsAuthorized("reviewer", harnesstools.ToolEnvCopyIn) {
+		t.Error("reviewer should NOT be authorized for env_copy_in")
+	}
+
+	// Judge should not have env tools.
+	if harnesstools.IsAuthorized("judge", harnesstools.ToolEnvExec) {
+		t.Error("judge should NOT be authorized for env_exec")
+	}
+}
+
+func TestEnvExecWithoutEnvironment(t *testing.T) {
+	reg := tools.NewRegistry(t.TempDir())
+	// Don't set environment — env tools should return errors.
+	input, _ := json.Marshal(map[string]string{"command": "echo hi"})
+	_, err := reg.Handle(context.Background(), "env_exec", input)
+	if err == nil {
+		t.Fatal("expected error without environment")
+	}
+	if !strings.Contains(err.Error(), "no execution environment") {
+		t.Errorf("error=%q", err)
+	}
 }

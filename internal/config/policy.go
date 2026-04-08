@@ -5,16 +5,67 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
 
+// Policy defines the security and tool restrictions for each workflow phase.
 type Policy struct {
 	Phases       map[string]PhasePolicy `json:"phases"`
 	Files        FilesPolicy            `json:"files"`
 	Verification VerificationPolicy     `json:"verification"`
+	Skills       SkillsConfig           `json:"skills"`
+	Honesty      HonestyConfig          `json:"honesty"`
+
+	// verificationExplicit is true when the YAML/JSON had a verification section.
+	// This distinguishes "all gates intentionally disabled" from "section omitted."
+	verificationExplicit bool
 }
 
+// HonestyConfig controls the 7-layer Honesty Judge.
+type HonestyConfig struct {
+	Enabled            bool   `json:"enabled" yaml:"enabled"`
+	CheckImports       bool   `json:"check_imports" yaml:"check_imports"`
+	HiddenTestDir      string `json:"hidden_test_dir,omitempty" yaml:"hidden_test_dir"`
+	HiddenTestCommand  string `json:"hidden_test_command,omitempty" yaml:"hidden_test_command"`
+	ClaimDecomposition bool   `json:"claim_decomposition" yaml:"claim_decomposition"`
+	CoTMonitoring      bool   `json:"cot_monitoring" yaml:"cot_monitoring"`
+	Confession         bool   `json:"confession" yaml:"confession"`
+	JudgeModel         string `json:"judge_model,omitempty" yaml:"judge_model"`
+}
+
+// DefaultHonestyConfig returns the default honesty configuration.
+func DefaultHonestyConfig() HonestyConfig {
+	return HonestyConfig{
+		Enabled:       true,
+		CheckImports:  true,
+		CoTMonitoring: true,
+	}
+}
+
+// SkillsConfig controls skill injection behavior.
+type SkillsConfig struct {
+	Enabled      bool     `json:"enabled"`       // master switch (default true)
+	AlwaysOn     []string `json:"always_on"`     // skill names always injected
+	AutoDetect   bool     `json:"auto_detect"`   // run skillselect to detect repo stack
+	TokenBudget  int      `json:"token_budget"`  // max tokens for injection (default 3000)
+	ResearchFeed bool     `json:"research_feed"` // auto-update skills from research store
+	Excluded     []string `json:"excluded"`      // skill names to never load
+}
+
+// DefaultSkillsConfig returns the recommended skills configuration.
+func DefaultSkillsConfig() SkillsConfig {
+	return SkillsConfig{
+		Enabled:      true,
+		AutoDetect:   true,
+		TokenBudget:  3000,
+		ResearchFeed: true,
+		AlwaysOn:     []string{"agent-discipline"},
+	}
+}
+
+// PhasePolicy specifies the builtin tools, allow/deny rules, and MCP access for a single workflow phase.
 type PhasePolicy struct {
 	BuiltinTools []string `json:"builtin_tools"`
 	DeniedRules  []string `json:"denied_rules"`
@@ -22,10 +73,12 @@ type PhasePolicy struct {
 	MCPEnabled   bool     `json:"mcp_enabled"`
 }
 
+// FilesPolicy lists file patterns that agents are not allowed to modify.
 type FilesPolicy struct {
 	Protected []string `json:"protected"`
 }
 
+// VerificationPolicy controls which verification steps (build, test, lint, review, scope) are required.
 type VerificationPolicy struct {
 	Build            bool `json:"build"`
 	Tests            bool `json:"tests"`
@@ -34,6 +87,7 @@ type VerificationPolicy struct {
 	ScopeCheck       bool `json:"scope_check"`
 }
 
+// DefaultPolicy returns the built-in policy with plan/execute/verify phases and standard protections.
 func DefaultPolicy() Policy {
 	return Policy{
 		Phases: map[string]PhasePolicy{
@@ -58,9 +112,11 @@ func DefaultPolicy() Policy {
 		},
 		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"}},
 		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true},
+		Skills:       DefaultSkillsConfig(),
 	}
 }
 
+// DefaultPolicyYAML returns the default policy serialized as a YAML string for use as a starter template.
 func DefaultPolicyYAML() string {
 	return `phases:
   plan:
@@ -116,6 +172,7 @@ verification:
 `
 }
 
+// LoadPolicy reads a policy from the given path (JSON or YAML), returning DefaultPolicy if path is empty.
 func LoadPolicy(path string) (Policy, error) {
 	if strings.TrimSpace(path) == "" {
 		return DefaultPolicy(), nil
@@ -130,6 +187,10 @@ func LoadPolicy(path string) (Policy, error) {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
+		// Detect whether the JSON had a verification section.
+		var probe struct{ Verification *json.RawMessage `json:"verification"` }
+		json.Unmarshal(raw, &probe)
+		p.verificationExplicit = probe.Verification != nil
 		return normalizePolicy(p), nil
 	}
 	p, err := parsePolicyYAML(trimmed)
@@ -137,6 +198,34 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	return normalizePolicy(p), nil
+}
+
+// policySearchNames are the filenames checked (in order) when auto-discovering
+// a policy file from the repo root.
+var policySearchNames = []string{
+	"stoke.yaml",
+	"stoke.yml",
+	".stoke.yaml",
+	".stoke.yml",
+	"stoke.policy.yaml",
+	"stoke.policy.yml",
+}
+
+// AutoLoadPolicy discovers and loads a policy file from the repo root.
+// If explicitPath is non-empty, it is used directly (same as LoadPolicy).
+// Otherwise, searches for well-known filenames in repoRoot.
+// Returns DefaultPolicy if no file is found.
+func AutoLoadPolicy(repoRoot, explicitPath string) (Policy, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		return LoadPolicy(explicitPath)
+	}
+	for _, name := range policySearchNames {
+		candidate := filepath.Join(repoRoot, name)
+		if _, err := os.Stat(candidate); err == nil {
+			return LoadPolicy(candidate)
+		}
+	}
+	return DefaultPolicy(), nil
 }
 
 func normalizePolicy(p Policy) Policy {
@@ -164,8 +253,14 @@ func normalizePolicy(p Policy) Policy {
 	if p.Files.Protected == nil {
 		p.Files = d.Files
 	}
-	if !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
+	// Only restore default verification if the section was never explicitly provided.
+	// If a user wrote verification: with all fields false, honor that intent.
+	if !p.verificationExplicit && !p.Verification.Build && !p.Verification.Tests && !p.Verification.Lint && !p.Verification.CrossModelReview && !p.Verification.ScopeCheck {
 		p.Verification = d.Verification
+	}
+	// Apply skill defaults if not explicitly configured
+	if p.Skills.TokenBudget == 0 {
+		p.Skills = d.Skills
 	}
 	return p
 }
@@ -251,6 +346,7 @@ func parsePolicyYAML(input string) (Policy, error) {
 			if !ok {
 				return Policy{}, fmt.Errorf("invalid verification line: %q", raw)
 			}
+			p.verificationExplicit = true
 			parsed := parseBoolLike(val)
 			switch key {
 			case "build":

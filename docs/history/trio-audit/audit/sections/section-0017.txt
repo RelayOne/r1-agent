@@ -1,0 +1,6 @@
+./ember/devbox/src/routes/workers.ts
+./ember/devbox/src/secrets.ts
+./ember/devbox/src/seed.ts
+./ember/devbox/src/__tests__/billing.test.ts
+./ember/devbox/src/__tests__/identity.test.ts
+./ember/devbox/src/__tests__/setup.ts

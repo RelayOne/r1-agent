@@ -1,0 +1,4 @@
+./stoke/internal/tui/runner.go
+./stoke/internal/tui/runner_test.go
+./stoke/internal/verify/pipeline.go
+./stoke/internal/verify/pipeline_test.go

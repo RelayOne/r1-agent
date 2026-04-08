@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/atomicfs"
 )
 
 // ModifiedFiles returns ALL files changed in a worktree vs the task branch base.
@@ -363,6 +365,21 @@ func CommitVerifiedTree(ctx context.Context, handle Handle, validatedFiles []str
 		}
 	}
 
+	// 6b. Atomic validation: use atomicfs to verify no concurrent modifications
+	// occurred during the checkout. Build a transaction over the validated files
+	// and run conflict detection before committing.
+	tx := atomicfs.NewTransaction(handle.Path)
+	for _, f := range existFiles {
+		data, readErr := os.ReadFile(filepath.Join(handle.Path, f))
+		if readErr != nil {
+			continue
+		}
+		_ = tx.Write(f, data) // stages file with original hash for conflict detection
+	}
+	if err := tx.Validate(); err != nil {
+		return fmt.Errorf("atomic validation failed (concurrent modification): %w", err)
+	}
+
 	// 7. Stage everything.
 	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A")
 	addCmd.Dir = handle.Path
@@ -430,4 +447,28 @@ func TreeSHA(ctx context.Context, handle Handle) (string, error) {
 		return "", fmt.Errorf("git write-tree: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// MainHeadSHA returns the current HEAD commit SHA of the main branch.
+// Returns empty string on error (non-fatal).
+func MainHeadSHA(ctx context.Context, repoRoot string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// ResetMainTo resets the main branch HEAD to the given commit SHA.
+// Used for rollback on merge failure. Best-effort — errors are not returned.
+// Refuses to reset if the working tree has uncommitted changes to avoid data loss.
+func ResetMainTo(ctx context.Context, repoRoot, commitSHA string) {
+	// Check for dirty working tree — refuse to destroy uncommitted changes.
+	status, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain").Output()
+	if err == nil && len(strings.TrimSpace(string(status))) > 0 {
+		// Working tree is dirty — don't reset, it would destroy user's changes.
+		return
+	}
+	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "reset", "--hard", commitSHA).Run()
 }

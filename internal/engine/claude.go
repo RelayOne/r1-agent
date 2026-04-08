@@ -1,3 +1,4 @@
+// Package engine provides Claude Code and Codex CLI runners with process group isolation and streaming output.
 package engine
 
 import (
@@ -17,11 +18,14 @@ import (
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// ClaudeRunner executes tasks via the Claude Code CLI with NDJSON streaming and 3-tier timeout handling.
 type ClaudeRunner struct {
-	Binary string
-	Parser *stream.Parser
+	Binary     string
+	Parser     *stream.Parser
+	CacheStats *stream.PromptCacheStats // shared, records cache hits per execution
 }
 
+// NewClaudeRunner creates a ClaudeRunner using the given binary path, defaulting to "claude" if empty.
 func NewClaudeRunner(binary string) *ClaudeRunner {
 	if strings.TrimSpace(binary) == "" {
 		binary = "claude"
@@ -29,16 +33,12 @@ func NewClaudeRunner(binary string) *ClaudeRunner {
 	return &ClaudeRunner{Binary: binary, Parser: stream.DefaultParser()}
 }
 
+// Prepare builds the CLI command, settings file, and environment for a Claude Code invocation without executing it.
 func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
-	if strings.TrimSpace(spec.WorktreeDir) == "" {
-		return PreparedCommand{}, fmt.Errorf("missing worktree dir")
+	if err := spec.Validate(); err != nil {
+		return PreparedCommand{}, err
 	}
-	// All harness-owned files go to RuntimeDir (outside worktree, trusted).
-	// This prevents symlink attacks from the agent-writable worktree.
 	runtimeDir := spec.RuntimeDir
-	if runtimeDir == "" {
-		return PreparedCommand{}, fmt.Errorf("missing runtime dir (harness files must not be in worktree)")
-	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return PreparedCommand{}, err
 	}
@@ -100,6 +100,10 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 		}
 		args = append(args, "--strict-mcp-config", "--mcp-config", emptyMCPPath)
 		notes = append(notes, "MCP disabled via strict empty config + mcp__* deny")
+	} else if spec.MCPConfigPath != "" {
+		// MCP enabled with a custom config (e.g., codebase analysis tools for discovery)
+		args = append(args, "--mcp-config", spec.MCPConfigPath)
+		notes = append(notes, "MCP enabled with custom config: "+spec.MCPConfigPath)
 	}
 
 	env := safeEnvMode2(nil)
@@ -118,9 +122,15 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		return RunResult{}, err
 	}
 
-	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
-	cmd.Dir = prepared.Dir
-	cmd.Env = prepared.Env
+	var cmd *exec.Cmd
+	if spec.ContainerImage != "" && spec.ContainerVol != "" {
+		// Wrap in docker run for container pool execution
+		cmd = wrapInDocker(ctx, prepared, spec)
+	} else {
+		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+		cmd.Dir = prepared.Dir
+		cmd.Env = prepared.Env
+	}
 
 	// Process group isolation: prevents orphaned claude/node subprocesses (#33979)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -152,6 +162,10 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			result.Subtype = ev.Subtype
 			result.IsError = ev.IsError
 			result.ResultText = ev.ResultText
+			// Track prompt cache stats for cost optimization reporting
+			if r.CacheStats != nil {
+				r.CacheStats.Record(ev.Tokens)
+			}
 		}
 		if ev.Type == "rate_limit_event" {
 			result.IsError = true

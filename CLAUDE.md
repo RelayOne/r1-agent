@@ -10,59 +10,166 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (19 internal + 1 cmd)
+## Package map (132 internal + 1 cmd + 9 bench)
 
 ```
-cmd/stoke/main.go                 9 commands: run, build, plan, scan, audit, status, pool, doctor, version
-                                   --roi, --sqlite, --interactive flags. checkResume, buildRunConfig helpers.
+cmd/stoke/main.go                 20 commands. --roi, --sqlite, --interactive, --specexec flags.
 
-internal/
-  app/app.go                       Orchestrator: config + engines + worktree + verify + OnEvent + auto-detect
-  audit/audit.go                   17 review personas (5 core + 12 specialized), auto-selection by context,
-                                   BuildPrompt with scan findings + security surface injection
-  config/
-    policy.go                      Full YAML parser + defaults + normalization
-    claude_settings.go             Per-worktree settings.json (sandbox, permissions, apiKeyHelper:null)
-    detect.go                      Auto-detect build/test/lint for Node.js, Go, Rust, Python
-    validate.go                    Policy validation (missing phases, write tools in plan, missing deny rules)
-  context/context.go               Three-tier budget (active/session/project), progressive compaction
-                                   (gentle/moderate/aggressive), 6 event-driven reminders
-  engine/
-    types.go                       PhaseSpec, RunSpec, RunResult, OnEventFunc, CommandRunner interface
-    env.go                         safeEnvForClaudeMode1(), safeEnvForCodexMode1(), safeEnvMode2()
-    claude.go                      StdoutPipe streaming, process group isolation, 3-tier timeouts, MCP triple
-    codex.go                       Streaming, CODEX_HOME isolation, stderr rate limit detection
-  failure/analyzer.go              10 classes, TS/Go/Python/Rust/Clippy parsers, 9 policy patterns,
-                                   ShouldRetry() with escalation logic
-  hooks/hooks.go                   PreToolUse guard (protected files, git mutations, destructive commands)
-                                   PostToolUse monitor (type bypasses, secret leaks)
-                                   Install() writes scripts into worktree, HooksConfig() for settings.json
-  model/router.go                  9 task types, benchmark-backed routes (YUV.AI, Terminal-Bench, Milvus),
-                                   Resolve() with 5-provider fallback chain, CrossModelReviewer()
-  plan/
-    plan.go                        Load, Save, Validate (cycle detection DFS, duplicate IDs, missing deps)
-    roi.go                         ROI classification (High/Medium/Low/Skip), FilterByROI()
-  report/report.go                 BuildReport with per-task TaskReport, FailureReport, ReviewReport
-  scan/
-    scan.go                        Deterministic code scan: 18 rules (secrets, eval, innerHTML, exec, etc.)
-    security.go                    Security surface mapping: auth, crypto, injection, network, file categories
-  scheduler/scheduler.go           GRPW priority ordering, file-scope conflict detection, resume support
-  session/
-    store.go                       SessionStore interface + JSON file store: state, attempts, learning
-    sqlstore.go                    SQLite-backed store: WAL mode, same interface, Stats() method
-  stream/parser.go                 NDJSON: 6 event types, drain-on-EOF, 3-tier timeouts (idle/post-result/global)
-  subscriptions/
-    manager.go                     Acquire/Release with mutex, circuit breaker (3 fails -> 5min), utilization
-    usage.go                       OAuth usage endpoint poller (api.anthropic.com/api/oauth/usage)
-  tui/
-    runner.go                      Headless text runner for CI/CD: TaskStart, Event, TaskComplete, Summary
-    interactive.go                 Bubble Tea TUI: Dashboard/Focus/Detail modes, keyboard nav, pool bars
-  verify/pipeline.go               Build/test/lint + CheckProtectedFiles + CheckScope + AnalyzeOutcomes
-  workflow/workflow.go             Phase machine: plan -> execute+verify retry loop (clean worktree per retry),
-                                   scope enforcement, cross-model review gate, merge-on-success, hooks install
-  worktree/
-    manager.go                     Create (with BaseCommit), merge (mergeMu + merge-tree), force cleanup
-    helpers.go                     ModifiedFiles, DiffSummary, ScopeCheck, CommitAll, ValidateMerge
+--- V2 GOVERNANCE ---
+contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
+stokerr/                           Structured error taxonomy (10 error codes)
+ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
+ledger/nodes/                      22 node type structs with NodeTyper interface
+ledger/loops/                      7-state consensus loop tracker
+bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
+supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
+supervisor/manifests/              Rule set manifests per supervisor tier (mission, branch)
+supervisor/rules/consensus/        Consensus rules (review, dissent, convergence, timeout)
+supervisor/rules/cross_team/       Cross-team coordination rules
+supervisor/rules/drift/            Drift detection rules
+supervisor/rules/hierarchy/        Hierarchy enforcement rules
+supervisor/rules/research/         Research lifecycle rules
+supervisor/rules/sdm/              SDM advisory rules
+supervisor/rules/skill/            Skill lifecycle rules
+supervisor/rules/snapshot/         Snapshot protection rules
+supervisor/rules/trust/            Trust verification rules (second-opinion gates)
+concern/                           Per-stance context projection (10 sections, 9 role templates)
+concern/sections/                  Ledger-backed section renderers for concern field projection
+concern/templates/                 Role-specific concern field templates (CTO, Dev, Reviewer)
+harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
+harness/models/                    Model provider interface and mock for stance workers
+harness/prompts/                   System prompt templates per stance role
+harness/stances/                   Stance definitions (CTO, Dev, Reviewer, PO) with system prompts
+harness/tools/                     Tool authorization model for stance workers
+snapshot/                          Protected baseline manifest (file paths + content hashes)
+wizard/                            First-time config with presets (minimal/balanced/strict)
+skillmfr/                          Skill manufacturing pipeline (4 workflows, confidence ladder)
+bench/                             Golden mission benchmarking with regression detection
+bridge/                            V1→V2 bridge adapters (cost, verify, wisdom, audit → bus+ledger)
+
+--- CORE WORKFLOW ---
+agentloop/                         Native agentic tool-use loop via Anthropic Messages API (caching, parallel tools)
+app/                               Orchestrator: config + engines + worktree + verify + OnEvent + auto-detect
+hub/                               Typed event hub with subscriber hooks (lifecycle, tool, cost events)
+hub/builtin/                       Built-in hub subscribers (honesty gate, cost tracker)
+mission/                           Mission lifecycle runner with convergence loop and phase handlers
+workflow/                          Phase machine: plan -> execute+verify retry loop, scope, review, merge
+engine/                            Claude/Codex CLI runners: process groups, streaming, 3-tier timeouts
+orchestrate/                       Mission execution pipeline integrator
+scheduler/                         GRPW priority ordering, file-scope conflict, resume, WithSpecExec wrapper
+plan/                              Load/Save/Validate plans (cycle DFS, deps), ROI filter
+taskstate/                         Anti-deception task state: phase transitions, evidence gates
+
+--- PLANNING & DECOMPOSITION ---
+interview/                         Socratic clarification phase before task execution
+intent/                            Intent classification and verbalization gate
+conversation/                      Multi-turn conversation state management
+skillselect/                       Tech stack auto-detection and skill mapping from repo structure
+
+--- CODE ANALYSIS ---
+goast/                             Go AST-based code analysis and extraction
+repomap/                           Repository map with graph-ranked importance (PageRank)
+symindex/                          Symbol indexing for fast function/class lookup
+depgraph/                          Import/dependency graph extraction
+chunker/                           Semantic code chunking by meaningful boundaries
+tfidf/                             TF-IDF semantic search over codebase files
+vecindex/                          Vector/embedding-based semantic code search
+semdiff/                           Semantic diff analysis with structural changes
+diffcomp/                          Diff compression for compact change representation
+gitblame/                          Git blame integration for attribution-aware editing
+
+--- FILE & WORKSPACE ---
+atomicfs/                          Multi-file atomic edits with transactional semantics
+fileutil/                          Shared file system operations and path safety
+filewatcher/                       File system monitoring with cache invalidation
+worktree/                          Git worktree create/merge/cleanup, BaseCommit, mergeMu
+branch/                            Conversation branching for multiple solution paths
+hashline/                          Hash-anchored line verification for concurrent edits
+
+--- TESTING & VERIFICATION ---
+baseline/                          Captures and compares build/test/lint state
+verify/                            Build/test/lint pipeline + CheckProtectedFiles + CheckScope
+convergence/                       Adversarial self-audit for mission completion
+testgen/                           Test scaffold generation from function signatures
+testselect/                        Dependency-aware test selection via import graph
+critic/                            Adversarial pre-commit critic for quality gates
+
+--- ERROR HANDLING & RECOVERY ---
+failure/                           10 failure classes, fingerprint dedup, ShouldRetry escalation
+errtaxonomy/                       Structured error taxonomy for retry strategies
+checkpoint/                        Synchronous checkpointing before dangerous operations
+
+--- CODE GENERATION ---
+patchapply/                        Unified diff parsing/application with fuzzy match
+extract/                           Structured content parsing from LLM output
+autofix/                           Auto-lint-and-fix iterative improvement loop
+conflictres/                       Smart merge conflict resolution with semantics
+tools/                             Cascading str_replace algorithm (exact, whitespace, ellipsis, fuzzy)
+
+--- AGENT BEHAVIOR ---
+boulder/                           Idle detection and continuation enforcement
+specexec/                          Speculative parallel execution (4 strategies, pick winner)
+handoff/                           Agent-to-agent context transfer management
+
+--- KNOWLEDGE & LEARNING ---
+memory/                            Persistent cross-session knowledge storage
+wisdom/                            Cross-task learnings: gotchas, decisions, FindByPattern
+research/                          Persistent indexed research storage with FTS5
+flowtrack/                         Flow-aware intent tracking from action sequences
+replay/                            Session recording for post-mortem debugging
+
+--- LLM INTEGRATION ---
+apiclient/                         Multi-provider SSE streaming API client
+provider/                          Direct AI model API clients for providers
+mcp/                               Model Context Protocol codebase tool server
+model/                             9 task types, 5-provider fallback, CostAwareResolve
+prompt/                            Prompt engineering utilities and fingerprinting
+prompts/                           BuildPlanPrompt, BuildExecutePrompt, BuildReviewPrompt
+promptcache/                       Cache-aligned prompt construction for max hits
+microcompact/                      Cache-aligned context compaction
+ctxpack/                           Adaptive context bin-packing for window limits
+tokenest/                          Token count estimation without external APIs
+costtrack/                         Real-time cost tracking with budget alerts
+
+--- PERMISSIONS & SECURITY ---
+consent/                           Human-in-the-loop approval workflow
+rbac/                              Role-Based Access Control enforcement
+hooks/                             Anti-deception: PreToolUse/PostToolUse guards, Install()
+scan/                              18 deterministic rules (secrets, eval, injection, exec)
+
+--- CONFIG & SESSION ---
+config/                            YAML policy parser, auto-detect, claude_settings, validate
+session/                           SessionStore interface: JSON + SQLite (WAL), attempts, state
+subscriptions/                     Pool Acquire/Release, circuit breaker, usage poller
+pools/                             Worker pool management and scaling
+context/                           Three-tier context budget, progressive compaction, reminders
+
+--- INFRASTRUCTURE ---
+agentmsg/                          Inter-agent communication protocol
+dispatch/                          Three-tier message dispatch queue
+logging/                           Structured leveled logging (Task, Attempt, Cost helpers)
+metrics/                           Thread-safe counters and performance metrics
+telemetry/                         Structured metrics collection
+notify/                            Event notification system
+stream/                            NDJSON parser: 6 event types, drain-on-EOF, 3-tier timeouts
+jsonutil/                          JSON parsing from mixed-format LLM outputs
+schemaval/                         Structured output validation for responses
+validation/                        Input validation at API boundaries
+
+--- UI & INTERFACES ---
+tui/                               Headless runner + Bubble Tea TUI (Dashboard/Focus/Detail)
+viewport/                          Constrained file viewport for focused viewing
+repl/                              Interactive REPL interface
+server/                            Mission API HTTP endpoints
+remote/                            Build session progress reporting to dashboard
+report/                            BuildReport with per-task TaskReport, FailureReport
+progress/                          Plan-aware progress estimation and ETA
+audit/                             17 review personas (5 core + 12 specialized)
+
+--- LIFECYCLE ---
+skill/                             Reusable workflow pattern system
+plugins/                           Plugin manifest and loading system
+preflight/                         Pre-flight workspace assertions
 ```
 
 ## Key design decisions
@@ -86,3 +193,12 @@ internal/
 17. Event-driven reminders fire during tool use (context >60%, error 3x, test write, etc.)
 18. ROI filter removes low-value tasks before execution
 19. `session.SessionStore` interface: both JSON (`Store`) and SQLite (`SQLStore`) satisfy it
+20. Budget enforcement: `CostTracker.OverBudget()` checked before each execute attempt
+21. Failure fingerprint dedup: `failure.Compute()` + `MatchHistory()` escalates repeated failures
+22. `verificationExplicit` bool distinguishes "all false" from "omitted" in YAML policy parsing
+23. Dependency-aware test selection via `testselect.BuildGraph()` narrows `go test` to affected pkgs
+24. Ranked repomap injected into execute prompts (token-budgeted via `RenderRelevant`)
+25. Pre-merge snapshots (`snapshot.Take`) with restore-on-failure for safe rollback
+26. Speculative execution (`--specexec`): 4 strategies in parallel, pick the winner
+27. Codex/Claude parity: both runners populate CostUSD, DurationMs, NumTurns, Tokens
+28. V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events + write ledger nodes via bridge package

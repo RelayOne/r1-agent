@@ -1,0 +1,4 @@
+./ember/devbox/web/src/pages/Admin.tsx
+./ember/devbox/web/src/pages/Credits.tsx
+./ember/devbox/web/src/pages/Dashboard.tsx
+./ember/devbox/web/src/pages/ForgotPassword.tsx

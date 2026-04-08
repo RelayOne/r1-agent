@@ -1,0 +1,1 @@
+./.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts

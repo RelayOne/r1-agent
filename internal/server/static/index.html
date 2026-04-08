@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stoke Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117; --card: #161b22; --border: #30363d;
+  --text: #c9d1d9; --text-dim: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: var(--bg); color: var(--text); }
+.header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 18px; font-weight: 600; }
+.header .status { font-size: 12px; padding: 2px 8px; border-radius: 12px; }
+.status.connected { background: rgba(63,185,80,0.15); color: var(--green); }
+.status.disconnected { background: rgba(248,81,73,0.15); color: var(--red); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; padding: 16px 24px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.card h2 { font-size: 14px; color: var(--text-dim); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric { font-size: 28px; font-weight: 700; }
+.metric-label { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.metric-row:last-child { border-bottom: none; }
+.tasks { padding: 0 24px 24px; }
+.tasks h2 { font-size: 14px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+th { text-align: left; padding: 10px 12px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-running { background: rgba(88,166,255,0.15); color: var(--blue); }
+.badge-completed { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-failed { background: rgba(248,81,73,0.15); color: var(--red); }
+.badge-pending { background: rgba(139,148,158,0.15); color: var(--text-dim); }
+.badge-retrying { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.events { padding: 0 24px 24px; }
+.events h2 { font-size: 14px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+.event-log { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+.event-item { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.event-item:last-child { border-bottom: none; }
+.event-type { color: var(--accent); }
+.event-time { color: var(--text-dim); margin-right: 8px; }
+.empty { color: var(--text-dim); font-style: italic; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Stoke</h1>
+  <span id="conn-status" class="status disconnected">disconnected</span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Tasks</h2>
+    <div class="metric" id="task-total">-</div>
+    <div class="metric-label">total tasks</div>
+    <div style="margin-top:12px">
+      <div class="metric-row"><span>Running</span><span id="task-running">0</span></div>
+      <div class="metric-row"><span>Completed</span><span id="task-completed">0</span></div>
+      <div class="metric-row"><span>Failed</span><span id="task-failed">0</span></div>
+      <div class="metric-row"><span>Pending</span><span id="task-pending">0</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Cost</h2>
+    <div class="metric" id="cost-total">$0.00</div>
+    <div class="metric-label">total spend</div>
+    <div style="margin-top:12px">
+      <div class="metric-row"><span>Environment</span><span id="cost-env">$0.00</span></div>
+      <div class="metric-row"><span>API Requests</span><span id="cost-requests">0</span></div>
+      <div class="metric-row"><span>Over Budget</span><span id="cost-over">No</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Pools</h2>
+    <div class="metric" id="pool-total">-</div>
+    <div class="metric-label">subscription pools</div>
+    <div style="margin-top:12px">
+      <div class="metric-row"><span>Active</span><span id="pool-active">0</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="tasks">
+  <h2>Task List</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Phase</th><th>Status</th><th>Cost</th><th>Duration</th><th>Worker</th></tr></thead>
+    <tbody id="task-table"><tr><td colspan="6" class="empty">No tasks yet</td></tr></tbody>
+  </table>
+</div>
+
+<div class="events">
+  <h2>Live Events</h2>
+  <div class="event-log" id="event-log"><div class="empty">Waiting for events...</div></div>
+</div>
+
+<script>
+const MAX_EVENTS = 200;
+let ws = null;
+let events = [];
+
+function $(id) { return document.getElementById(id); }
+
+function badge(status) {
+  return '<span class="badge badge-' + status + '">' + status + '</span>';
+}
+
+function fmtCost(v) { return '$' + (v || 0).toFixed(4); }
+
+function fmtDuration(ms) {
+  if (!ms) return '-';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+  return (ms/60000).toFixed(1) + 'm';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  var d = new Date(ts);
+  return d.toLocaleTimeString();
+}
+
+function fetchSummary() {
+  fetch('/api/dashboard/summary')
+    .then(r => r.json())
+    .then(data => {
+      if (data.tasks) {
+        $('task-total').textContent = data.tasks.total || 0;
+        var c = data.tasks.counts || {};
+        $('task-running').textContent = c.running || 0;
+        $('task-completed').textContent = c.completed || 0;
+        $('task-failed').textContent = c.failed || 0;
+        $('task-pending').textContent = c.pending || 0;
+      }
+      if (data.cost) {
+        $('cost-total').textContent = fmtCost(data.cost.total_usd);
+        $('cost-env').textContent = fmtCost(data.cost.env_usd);
+        $('cost-requests').textContent = data.cost.requests || 0;
+        $('cost-over').textContent = data.cost.over_budget ? 'Yes' : 'No';
+      }
+      if (data.pools) {
+        $('pool-total').textContent = data.pools.total || 0;
+        $('pool-active').textContent = data.pools.active || 0;
+      }
+    })
+    .catch(() => {});
+}
+
+function fetchTasks() {
+  fetch('/api/dashboard/tasks')
+    .then(r => r.json())
+    .then(data => {
+      var tasks = data.tasks || [];
+      var tbody = $('task-table');
+      if (tasks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No tasks yet</td></tr>';
+        return;
+      }
+      tbody.innerHTML = tasks.map(t =>
+        '<tr>' +
+        '<td>' + t.id + '</td>' +
+        '<td>' + (t.phase || '-') + '</td>' +
+        '<td>' + badge(t.status) + '</td>' +
+        '<td>' + fmtCost(t.cost_usd) + '</td>' +
+        '<td>' + fmtDuration(t.duration_ms) + '</td>' +
+        '<td>' + (t.worker || '-') + '</td>' +
+        '</tr>'
+      ).join('');
+    })
+    .catch(() => {});
+}
+
+function addEvent(ev) {
+  events.unshift(ev);
+  if (events.length > MAX_EVENTS) events.length = MAX_EVENTS;
+  renderEvents();
+}
+
+function renderEvents() {
+  var log = $('event-log');
+  if (events.length === 0) {
+    log.innerHTML = '<div class="empty">Waiting for events...</div>';
+    return;
+  }
+  log.innerHTML = events.map(e =>
+    '<div class="event-item">' +
+    '<span class="event-time">' + fmtTime(e.timestamp) + '</span>' +
+    '<span class="event-type">' + (e.type || 'unknown') + '</span>' +
+    (e.task_id ? ' <span style="color:var(--text-dim)">[' + e.task_id + ']</span>' : '') +
+    '</div>'
+  ).join('');
+}
+
+function connectWS() {
+  var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/api/ws');
+
+  ws.onopen = function() {
+    $('conn-status').textContent = 'connected';
+    $('conn-status').className = 'status connected';
+  };
+
+  ws.onclose = function() {
+    $('conn-status').textContent = 'disconnected';
+    $('conn-status').className = 'status disconnected';
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = function() { ws.close(); };
+
+  ws.onmessage = function(msg) {
+    try {
+      var ev = JSON.parse(msg.data);
+      addEvent(ev);
+      // Refresh data on lifecycle events
+      if (ev.type && (ev.type.startsWith('task.') || ev.type.startsWith('mission.'))) {
+        fetchSummary();
+        fetchTasks();
+      }
+    } catch(e) {}
+  };
+}
+
+// Initial data load + polling fallback
+fetchSummary();
+fetchTasks();
+setInterval(fetchSummary, 5000);
+setInterval(fetchTasks, 5000);
+connectWS();
+</script>
+</body>
+</html>

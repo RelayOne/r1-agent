@@ -1,0 +1,4 @@
+./stoke/internal/context/context.go
+./stoke/internal/context/context_test.go
+./stoke/internal/engine/claude.go
+./stoke/internal/engine/claude_test.go

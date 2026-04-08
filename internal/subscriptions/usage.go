@@ -18,6 +18,7 @@ type UsageData struct {
 	SevenDayOpus UsageWindow `json:"seven_day_opus"`
 }
 
+// UsageWindow represents a single rate-limit window with utilization percentage and reset time.
 type UsageWindow struct {
 	Utilization float64    `json:"utilization"` // 0-100
 	ResetsAt    *time.Time `json:"resets_at"`

@@ -28,12 +28,14 @@ type Event struct {
 	DeltaType  string    `json:"-"`
 }
 
+// ToolUse represents a single tool invocation extracted from an assistant message.
 type ToolUse struct {
 	ID    string
 	Name  string
 	Input map[string]interface{}
 }
 
+// ToolResult represents the outcome of a tool execution returned in a user message.
 type ToolResult struct {
 	ToolUseID  string
 	Content    string
@@ -41,6 +43,7 @@ type ToolResult struct {
 	DurationMs int64
 }
 
+// TokenUsage tracks input, output, and cache token counts for a single engine execution.
 type TokenUsage struct {
 	Input              int `json:"input_tokens"`
 	Output             int `json:"output_tokens"`

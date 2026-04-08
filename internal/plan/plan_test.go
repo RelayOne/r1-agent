@@ -132,6 +132,57 @@ func TestValidateEmptyPlan(t *testing.T) {
 	}
 }
 
+func TestAutoInferDependencies(t *testing.T) {
+	p := &Plan{
+		ID: "auto-deps",
+		Tasks: []Task{
+			{ID: "T1", Description: "first", Files: []string{"pkg/handler.go", "pkg/model.go"}},
+			{ID: "T2", Description: "second", Files: []string{"pkg/handler.go"}},
+			{ID: "T3", Description: "third", Files: []string{"other/file.go"}},
+		},
+	}
+
+	added := p.AutoInferDependencies()
+
+	// T2 shares pkg/handler.go with T1 (which comes first), so T2 should depend on T1
+	if added != 1 {
+		t.Errorf("AutoInferDependencies added %d deps, want 1", added)
+	}
+
+	// Check T2 now depends on T1
+	foundDep := false
+	for _, dep := range p.Tasks[1].Dependencies {
+		if dep == "T1" {
+			foundDep = true
+		}
+	}
+	if !foundDep {
+		t.Errorf("T2 should depend on T1 after auto-infer, deps: %v", p.Tasks[1].Dependencies)
+	}
+
+	// T3 has no shared files, should have no deps
+	if len(p.Tasks[2].Dependencies) != 0 {
+		t.Errorf("T3 should have no deps, got: %v", p.Tasks[2].Dependencies)
+	}
+}
+
+func TestAutoInferDependencies_NoDoubles(t *testing.T) {
+	p := &Plan{
+		ID: "no-doubles",
+		Tasks: []Task{
+			{ID: "T1", Description: "first", Files: []string{"a.go"}},
+			{ID: "T2", Description: "second", Files: []string{"a.go"}, Dependencies: []string{"T1"}},
+		},
+	}
+
+	added := p.AutoInferDependencies()
+
+	// T2 already depends on T1 explicitly, should not add a duplicate
+	if added != 0 {
+		t.Errorf("should not add duplicate deps, added %d", added)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
 }

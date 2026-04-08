@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/errtaxonomy"
 )
 
 // Class categorizes why a task failed.
@@ -41,9 +43,20 @@ type Analysis struct {
 }
 
 // Analyze classifies failure from build/test/lint output and extracts specifics.
-func Analyze(buildOutput, testOutput, lintOutput string) Analysis {
-	// Check for policy violations first (agent trying to bypass)
-	if violations := scanPolicyViolations(buildOutput + "\n" + testOutput + "\n" + lintOutput); len(violations) > 0 {
+// Analyze diagnoses a failed attempt from build/test/lint output.
+// diffSummary is the actual code diff and is used for policy violation scanning
+// (as opposed to build/test/lint output which can false-positive on legitimate
+// mentions of forbidden patterns in error messages, test names, etc.).
+func Analyze(buildOutput, testOutput, lintOutput string, diffSummary ...string) Analysis {
+	// Check for policy violations against the DIFF, not tool output.
+	// Tool output can contain legitimate mentions of forbidden patterns
+	// (e.g., linter reporting @ts-ignore, test named "TestHandleError").
+	policyInput := strings.Join(diffSummary, "\n")
+	if policyInput == "" {
+		// Fallback: if no diff provided, scan tool output (legacy behavior)
+		policyInput = buildOutput + "\n" + testOutput + "\n" + lintOutput
+	}
+	if violations := scanPolicyViolations(policyInput); len(violations) > 0 {
 		return Analysis{
 			Class:     PolicyViolation,
 			Summary:   fmt.Sprintf("%d policy violation(s) detected", len(violations)),
@@ -102,13 +115,55 @@ func Analyze(buildOutput, testOutput, lintOutput string) Analysis {
 	return Analysis{Class: Incomplete, Summary: "no failure output captured"}
 }
 
+// isFailing checks if command output indicates a failure.
+// This is a heuristic fallback — the primary failure signal should be exit codes.
+// We use negative patterns to avoid false-positives from legitimate mentions
+// of "error" in type names, test names, and variable declarations.
 func isFailing(output string) bool {
 	s := strings.TrimSpace(output)
 	if s == "" {
 		return false
 	}
 	lc := strings.ToLower(s)
-	return strings.Contains(lc, "error") || strings.Contains(lc, "fail") || strings.Contains(lc, "fatal")
+
+	// Negative patterns: line PREFIXES that indicate legitimate mentions of "error".
+	// These are anchored to line start to avoid false negatives from mid-line matches
+	// (e.g., "...on type 'Request'" should NOT suppress the error signal).
+	negativePrefixes := []string{
+		"type ",         // type declarations: "type ValidationError struct"
+		"func test",     // test names: "func TestHandleInvalidError"
+		"--- pass:",     // Go test pass lines
+		"ok ",           // Go test pass lines: "ok  github.com/..."
+		"var ",          // variable declarations: "var errNotFound = errors.New"
+		"// ",           // comments containing "error"
+		"/*",            // block comments
+		"import ",       // import statements
+	}
+
+	for _, line := range strings.Split(lc, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		hasSignal := strings.Contains(line, "error") ||
+			strings.Contains(line, "fail") ||
+			strings.Contains(line, "fatal")
+		if !hasSignal {
+			continue
+		}
+		// Check if this line starts with a negative prefix
+		isNegative := false
+		for _, neg := range negativePrefixes {
+			if strings.HasPrefix(line, neg) {
+				isNegative = true
+				break
+			}
+		}
+		if !isNegative {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Build error parsers ---
@@ -284,6 +339,13 @@ func scanPolicyViolations(combined string) []Detail {
 
 func inferRootCause(details []Detail, rawOutput string) string {
 	if len(details) == 0 {
+		// Use errtaxonomy to classify raw output for better root cause annotation.
+		if rawOutput != "" {
+			errClass := errtaxonomy.Classify(rawOutput)
+			if errClass != errtaxonomy.ClassUnknown {
+				return fmt.Sprintf("[%s] %s", errClass, firstLine(rawOutput))
+			}
+		}
 		return firstLine(rawOutput)
 	}
 	// Group by message pattern
@@ -359,6 +421,16 @@ func ShouldRetry(analysis *Analysis, attempt int, prior *Analysis) Decision {
 	case RateLimited:
 		return Decision{Action: Retry} // pool manager rotates
 	default:
+		// Use structured error taxonomy for refined retry strategy on unclassified failures.
+		if analysis.Summary != "" {
+			strategy := errtaxonomy.Strategy(analysis.Summary)
+			if !strategy.ShouldRetry {
+				return Decision{Action: Escalate, Reason: "error taxonomy: " + strategy.Description}
+			}
+			if strategy.RequiresFix {
+				return Decision{Action: Retry, Constraint: "fix the underlying issue before retrying: " + strategy.Description}
+			}
+		}
 		return Decision{Action: Retry}
 	}
 }

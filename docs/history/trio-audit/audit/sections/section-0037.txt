@@ -1,0 +1,6 @@
+./stoke/internal/prompts/prompts_test.go
+./stoke/internal/remote/session.go
+./stoke/internal/repl/repl.go
+./stoke/internal/report/report.go
+./stoke/internal/report/report_test.go
+./stoke/internal/scan/scan.go

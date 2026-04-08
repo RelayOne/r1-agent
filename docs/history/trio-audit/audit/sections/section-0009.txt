@@ -1,0 +1,6 @@
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/run_loop.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/utils.py
+./ember/devbox/drizzle.config.ts
+./ember/devbox/src/auth.ts
+./ember/devbox/src/connection.ts
+./ember/devbox/src/db.ts

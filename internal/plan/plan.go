@@ -28,8 +28,11 @@ type Task struct {
 	Verification []string `json:"verification,omitempty"` // per-task verification checklist from planner
 	Status       Status   `json:"status,omitempty"`
 	Commit       string   `json:"commit,omitempty"`
+	PlanOnly     bool     `json:"plan_only,omitempty"` // when true, workflow runs plan phase only (no execute/verify/merge)
+
 }
 
+// Status represents the lifecycle state of a task (pending, active, verifying, done, failed, or blocked).
 type Status int
 
 const (
@@ -123,6 +126,81 @@ func (p *Plan) Validate() []string {
 	}
 
 	return errs
+}
+
+// ValidateFiles checks that files listed in tasks actually exist in the repo.
+// Returns warnings (new files in non-existent dirs) and errors (modifications
+// to non-existent files). This catches misplanned tasks before execution.
+func (p *Plan) ValidateFiles(repoRoot string) (warnings, errors []string) {
+	for _, t := range p.Tasks {
+		for _, f := range t.Files {
+			path := filepath.Join(repoRoot, f)
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					// Check if parent dir exists (new file in existing dir is fine)
+					dir := filepath.Dir(path)
+					if _, dirErr := os.Stat(dir); os.IsNotExist(dirErr) {
+						warnings = append(warnings,
+							fmt.Sprintf("task %s: file %q parent directory does not exist", t.ID, f))
+					}
+					// Non-existent file could be a new file — just warn
+					warnings = append(warnings,
+						fmt.Sprintf("task %s: file %q does not exist (will be created?)", t.ID, f))
+				} else {
+					errors = append(errors,
+						fmt.Sprintf("task %s: cannot stat file %q: %v", t.ID, f, err))
+				}
+				continue
+			}
+			if info.IsDir() {
+				warnings = append(warnings,
+					fmt.Sprintf("task %s: %q is a directory, not a file", t.ID, f))
+			}
+		}
+	}
+	return warnings, errors
+}
+
+// AutoInferDependencies examines each task's declared files, builds a
+// file→task index, and adds an implicit dependency from task A to task B
+// when A reads a file that B writes. Existing explicit dependencies are
+// preserved; only new implicit ones are added.
+func (p *Plan) AutoInferDependencies() int {
+	// Build file→writer index: which task "owns" (writes to) each file
+	writers := map[string]string{} // file path → task ID
+	for _, t := range p.Tasks {
+		for _, f := range t.Files {
+			writers[f] = t.ID
+		}
+	}
+
+	added := 0
+	for i := range p.Tasks {
+		existing := map[string]bool{}
+		for _, dep := range p.Tasks[i].Dependencies {
+			existing[dep] = true
+		}
+
+		for _, f := range p.Tasks[i].Files {
+			// If another task also declares this file, add a dependency
+			// from the later task to the earlier one (by position)
+			for j := range p.Tasks {
+				if i == j {
+					continue
+				}
+				for _, otherFile := range p.Tasks[j].Files {
+					if otherFile == f && !existing[p.Tasks[j].ID] && j < i {
+						p.Tasks[i].Dependencies = append(p.Tasks[i].Dependencies, p.Tasks[j].ID)
+						existing[p.Tasks[j].ID] = true
+						added++
+					}
+				}
+			}
+		}
+	}
+
+	return added
 }
 
 func detectCycle(tasks []Task) string {

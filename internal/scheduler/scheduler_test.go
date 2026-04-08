@@ -171,3 +171,83 @@ func TestFailedTaskDoesNotBlockUnrelated(t *testing.T) {
 		t.Errorf("executed=%v, want both A and B (independent)", executed)
 	}
 }
+
+func TestWithSpecExecSelectsWinner(t *testing.T) {
+	var calls atomic.Int32
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		calls.Add(1)
+		success := task.Description != ""
+		return TaskResult{TaskID: task.ID, Success: success, DurationMs: 10}
+	}
+
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches:  []string{"approach A", "approach B"},
+		MaxParallel: 2,
+		Timeout:     5 * time.Second,
+	})
+
+	result := wrapped(context.Background(), plan.Task{
+		ID:          "T1",
+		Description: "refactor auth module",
+	})
+
+	if !result.Success {
+		t.Errorf("expected success, got failure: %v", result.Error)
+	}
+	if result.TaskID != "T1" {
+		t.Errorf("task ID = %q, want T1", result.TaskID)
+	}
+	// At least one strategy must have been called
+	if calls.Load() < 1 {
+		t.Errorf("expected at least 1 strategy call, got %d", calls.Load())
+	}
+}
+
+func TestWithSpecExecSkipsNonSpeculative(t *testing.T) {
+	var calls atomic.Int32
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		calls.Add(1)
+		return TaskResult{TaskID: task.ID, Success: true}
+	}
+
+	wrapped := WithSpecExec(base, SpecExecConfig{
+		Approaches: []string{"approach A", "approach B"},
+		ShouldSpeculate: func(task plan.Task) bool {
+			return task.Type == "refactor" // only speculate on refactor tasks
+		},
+	})
+
+	// Non-refactor task should pass through directly
+	result := wrapped(context.Background(), plan.Task{
+		ID:   "T1",
+		Type: "docs",
+	})
+	if !result.Success {
+		t.Fatal("expected success")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("expected 1 call (passthrough), got %d", calls.Load())
+	}
+}
+
+func TestWithSpecExecNoApproaches(t *testing.T) {
+	var calls atomic.Int32
+
+	base := func(ctx context.Context, task plan.Task) TaskResult {
+		calls.Add(1)
+		return TaskResult{TaskID: task.ID, Success: true}
+	}
+
+	// Empty approaches = no speculation, should return base unchanged
+	wrapped := WithSpecExec(base, SpecExecConfig{})
+
+	result := wrapped(context.Background(), plan.Task{ID: "T1"})
+	if !result.Success {
+		t.Fatal("expected success")
+	}
+	if calls.Load() != 1 {
+		t.Errorf("expected exactly 1 call, got %d", calls.Load())
+	}
+}

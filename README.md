@@ -43,6 +43,17 @@ stoke pool --claude-config-dir /pool/claude-1
 | `stoke audit` | Multi-perspective review (17 personas, auto-selected) |
 | `stoke status` | Session dashboard (progress, cost, learned patterns) |
 | `stoke pool` | Subscription pool utilization + circuit breaker |
+| `stoke pools` | List configured pool directories |
+| `stoke add-claude` | Register a Claude pool directory |
+| `stoke add-codex` | Register a Codex pool directory |
+| `stoke remove-pool` | Remove a pool directory |
+| `stoke ship` | End-to-end: plan -> build -> ship |
+| `stoke mission` | Multi-phase mission execution |
+| `stoke serve` | HTTP API server for programmatic access |
+| `stoke mcp-serve` | MCP codebase tool server |
+| `stoke yolo` | Execute without verification gates |
+| `stoke scope` | Display allowed file scope for a task |
+| `stoke repair` | Auto-fix common configuration issues |
 | `stoke doctor` | Tool dependency check |
 | `stoke version` | Version info |
 
@@ -54,6 +65,7 @@ stoke pool --claude-config-dir /pool/claude-1
 --roi <level>        ROI filter: high, medium, low, skip (default: medium)
 --sqlite             Use SQLite session store instead of JSON
 --interactive        Launch interactive Bubble Tea TUI
+--specexec           Enable speculative parallel execution
 --dry-run            Show plan without executing
 ```
 
@@ -86,6 +98,18 @@ stoke build --plan stoke-plan.json
   +-- Fire event-driven reminders (context >60%, error 3x, etc.)
 ```
 
+## V2 Governance Architecture
+
+Stoke v2 adds a multi-role consensus layer that wraps the execution engine:
+
+- **Ledger** — Append-only content-addressed graph. No updates or deletes.
+- **Bus** — Durable WAL-backed event system with hooks and causality tracking.
+- **Supervisor** — 30 deterministic rules across 10 categories enforce governance.
+- **Consensus Loops** — 7-state machine for structured agreement (PRD→SOW→ticket→PR).
+- **Stances** — 10 roles (PO, CTO, QA Lead, etc.) each with dedicated concern fields.
+- **Harness** — Stance lifecycle management with per-role tool authorization.
+- **Bridge** — Adapters wiring v1 systems (cost tracking, verification, wisdom, audit) into the v2 event bus and ledger.
+
 ## What's enforced
 
 **Before every commit/merge:**
@@ -114,36 +138,45 @@ stoke build --plan stoke-plan.json
 - 9 policy violation patterns
 - Clean worktree per retry (learning is in instructions, not code state)
 - DiffSummary injected into retry prompt
-- Same-error-twice escalation
-- Cross-task learned patterns persisted across sessions
+- Same-error-twice escalation (failure fingerprint dedup)
+- Cross-task learned patterns persisted via wisdom store
+- AST-aware critic gate (secrets, SQL injection, empty catches) runs before build/test
 
 ## Architecture
 
 ```
-cmd/stoke/main.go           9 commands, TUI wiring, plan validation, ROI filter, reports
+cmd/stoke/main.go            20 commands, TUI wiring, plan validation, ROI filter, reports
 internal/
-  app/                       Orchestrator: config + engines + worktree + verify + OnEvent
-  audit/                     17 review personas, auto-selection, prompt generation
-  config/                    Policy loader, settings builder, auto-detect, validation
-  context/                   Three-tier context budget, progressive compaction, 6 reminders
-  engine/                    Claude + Codex runners: streaming, process groups, 3-tier timeouts
-  failure/                   10 classes, TS/Go/Python/Rust parsers, policy scanner, retry decisions
-  hooks/                     PreToolUse guard + PostToolUse monitor, installed in worktrees
-  model/                     Task-type inference, routing table, 5-provider fallback chain
-  plan/                      Plan loader, cycle detection, dependency validation, ROI filter
-  report/                    Structured JSON build reports
-  scan/                      Deterministic code scan + security surface mapping
-  scheduler/                 GRPW priority, file-scope conflicts, resume
-  session/                   JSON store + SQLite store, attempt history, learned patterns
-  stream/                    NDJSON parser: 6 event types, drain-on-EOF, 3-tier timeouts
-  subscriptions/             Pool allocator: acquire/release, circuit breaker, OAuth poller
-  tui/                       Bubble Tea interactive (Focus/Dashboard/Detail) + headless runner
-  verify/                    Build/test/lint + protected files + scope check
-  workflow/                  Phase machine: retry loop, merge-on-success, cleanup-on-failure
-  worktree/                  Git worktree: create, merge (merge-tree), force cleanup, helpers
+  app/                        Orchestrator: config + engines + worktree + verify + OnEvent
+  audit/                      17 review personas, auto-selection, prompt generation
+  config/                     Policy loader (auto-discover stoke.yaml), settings, auto-detect, validation
+  context/                    Three-tier context budget, progressive compaction, 6 reminders
+  costtrack/                  Per-session cost tracking, budget-aware provider routing
+  critic/                     AST-aware pre-commit critic: secrets, injection, debug prints
+  engine/                     Claude + Codex runners: streaming, process groups, 3-tier timeouts
+  failure/                    10 classes, TS/Go/Python/Rust parsers, fingerprint dedup, retry decisions
+  hooks/                      PreToolUse guard + PostToolUse monitor, installed in worktrees
+  logging/                    Structured slog logging: component/task tagging, cost/attempt events
+  mission/                    Multi-phase mission execution with convergence validation
+  model/                      Task-type routing, cost-aware fallback chain, cross-model review
+  plan/                       Plan loader, cycle detection, file validation, ROI filter
+  report/                     Structured JSON build reports
+  scan/                       Deterministic code scan + security surface mapping
+  scheduler/                  GRPW priority, file-scope conflicts, speculative execution, resume
+  session/                    JSON store + SQLite store, attempt history, learned patterns
+  specexec/                   Speculative parallel execution: fork N approaches, pick winner
+  stream/                     NDJSON parser: 6 event types, drain-on-EOF, 3-tier timeouts
+  subscriptions/              Pool allocator: acquire/release, circuit breaker, OAuth poller
+  taskstate/                  Task state machine: phase transitions, evidence, fingerprint dedup
+  tui/                        Bubble Tea interactive (Focus/Dashboard/Detail) + headless runner
+  verify/                     Build/test/lint + protected files + scope check
+  wisdom/                     Cross-task learning: gotchas, decisions, patterns with fingerprints
+  workflow/                   Phase machine: retry loop, critic gate, merge-on-success, hooks
+  worktree/                   Git worktree: create, merge (merge-tree), force cleanup, helpers
+  + 77 additional packages    (convergence, repomap, symindex, goast, plugins, remote, etc.)
 ```
 
-19 packages. 6,500+ lines source. 3,400+ lines tests. 182 test functions. 60 Go files.
+132 internal packages + 1 cmd + 9 bench = 142 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
 
 ## Docs
 
@@ -153,12 +186,9 @@ internal/
 ## Install
 
 ```bash
-# From source
+# From source (requires Go 1.22+)
 go build -o stoke ./cmd/stoke
 sudo mv stoke /usr/local/bin/
-
-# Or via install script
-curl -fsSL https://stoke.dev/install | bash
 ```
 
 ## License

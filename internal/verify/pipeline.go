@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/failure"
 )
 
@@ -22,6 +23,11 @@ type Pipeline struct {
 	buildCmd string
 	testCmd  string
 	lintCmd  string
+
+	// Optional execution environment. When set, commands run via env.Exec
+	// instead of os/exec on the host.
+	environ env.Environment
+	handle  *env.Handle
 }
 
 // NewPipeline creates a verification pipeline.
@@ -29,7 +35,26 @@ func NewPipeline(buildCmd, testCmd, lintCmd string) *Pipeline {
 	return &Pipeline{buildCmd: buildCmd, testCmd: testCmd, lintCmd: lintCmd}
 }
 
+// WithEnvironment returns a copy of the pipeline configured to run commands
+// in the given execution environment instead of directly on the host.
+func (p *Pipeline) WithEnvironment(e env.Environment, h *env.Handle) *Pipeline {
+	return &Pipeline{
+		buildCmd: p.buildCmd,
+		testCmd:  p.testCmd,
+		lintCmd:  p.lintCmd,
+		environ:  e,
+		handle:   h,
+	}
+}
+
+// Commands returns the configured build, test, and lint commands.
+func (p *Pipeline) Commands() (build, test, lint string) {
+	return p.buildCmd, p.testCmd, p.lintCmd
+}
+
 // Run executes all verification steps. Returns outcomes and an error if any step failed.
+// When an execution environment is configured via WithEnvironment, commands run
+// inside that environment. Otherwise they run directly on the host via os/exec.
 func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 	var outcomes []Outcome
 	var hadFailure bool
@@ -41,12 +66,15 @@ func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 			outcomes = append(outcomes, Outcome{Name: item.name, Skipped: true, Success: true, Output: "no command configured"})
 			continue
 		}
-		cmd := exec.CommandContext(ctx, "bash", "-lc", item.cmd)
-		cmd.Dir = dir
-		out, err := cmd.CombinedOutput()
-		outcome := Outcome{Name: item.name, Success: err == nil, Output: string(out)}
+
+		var outcome Outcome
+		if p.environ != nil && p.handle != nil {
+			outcome = p.runInEnv(ctx, item.name, item.cmd)
+		} else {
+			outcome = p.runLocal(ctx, item.name, item.cmd, dir)
+		}
 		outcomes = append(outcomes, outcome)
-		if err != nil {
+		if !outcome.Success {
 			hadFailure = true
 		}
 	}
@@ -56,9 +84,27 @@ func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 	return outcomes, nil
 }
 
+// runLocal executes a command directly on the host.
+func (p *Pipeline) runLocal(ctx context.Context, name, cmdStr, dir string) Outcome {
+	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return Outcome{Name: name, Success: err == nil, Output: string(out)}
+}
+
+// runInEnv executes a command inside the configured execution environment.
+func (p *Pipeline) runInEnv(ctx context.Context, name, cmdStr string) Outcome {
+	result, err := p.environ.Exec(ctx, p.handle, []string{"bash", "-lc", cmdStr}, env.ExecOpts{})
+	if err != nil {
+		return Outcome{Name: name, Success: false, Output: fmt.Sprintf("env exec error: %v", err)}
+	}
+	return Outcome{Name: name, Success: result.Success(), Output: result.CombinedOutput()}
+}
+
 // AnalyzeOutcomes converts verification outcomes into a failure analysis.
-// Returns nil if all steps passed.
-func AnalyzeOutcomes(outcomes []Outcome) *failure.Analysis {
+// Returns nil if all steps passed. diffSummary is used for policy violation
+// scanning against the actual code diff rather than tool output.
+func AnalyzeOutcomes(outcomes []Outcome, diffSummary ...string) *failure.Analysis {
 	var buildOut, testOut, lintOut string
 	allPassed := true
 	for _, o := range outcomes {
@@ -70,17 +116,23 @@ func AnalyzeOutcomes(outcomes []Outcome) *failure.Analysis {
 		}
 		switch o.Name {
 		case "build":
-			if !o.Success { buildOut = o.Output }
+			if !o.Success {
+				buildOut = o.Output
+			}
 		case "test":
-			if !o.Success { testOut = o.Output }
+			if !o.Success {
+				testOut = o.Output
+			}
 		case "lint":
-			if !o.Success { lintOut = o.Output }
+			if !o.Success {
+				lintOut = o.Output
+			}
 		}
 	}
 	if allPassed {
 		return nil
 	}
-	a := failure.Analyze(buildOut, testOut, lintOut)
+	a := failure.Analyze(buildOut, testOut, lintOut, diffSummary...)
 	return &a
 }
 

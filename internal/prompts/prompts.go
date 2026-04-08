@@ -8,6 +8,8 @@ package prompts
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/prompt"
 )
 
 // --- SCOPE WORKFLOW ---
@@ -207,6 +209,14 @@ After all tasks, what should be true of the whole system?
 - Performance characteristics that should hold
 - Security properties that should be maintained
 
+## CRITICAL: Research Over Recall
+Your training data is a potentially STALE CACHE, not a source of truth.
+Before referencing any API, library function, or framework pattern:
+1. Check the actual source code in this repo for existing patterns
+2. Verify function signatures against the real imports
+3. Do not assume API shapes — read the interface definitions
+If you are unsure about an API, read the code. Do not guess.
+
 Output ONLY valid JSON:
 {
   "id": "plan-YYYYMMDD-HHMM",
@@ -259,11 +269,21 @@ func BuildExecutePrompt(task, taskVerification string, priorContext string) stri
 
 	b.WriteString(`## Rules
 - Implement the task fully. No stubs, no TODOs, no placeholders.
-- Run build/test/lint yourself to verify before claiming done.
+- Stoke will run build/test/lint independently after you finish. You MAY run
+  them to check your work, but the harness is the final authority. Focus on
+  implementation quality rather than debugging build output.
 - If you encounter a blocker, say BLOCKED with the specific reason.
 - Do NOT classify failures as "pre-existing" or "out of scope."
 - Do NOT weaken existing tests to make them pass.
 - Do NOT use @ts-ignore, as any, eslint-disable, or equivalent.
+
+## CRITICAL: Research Over Recall
+Your training data is a potentially STALE CACHE, not a source of truth.
+Before using any API, library function, or framework pattern:
+1. Check the actual source code in this repo for existing patterns
+2. Verify function signatures against the real imports
+3. Do not assume API shapes — read the interface definitions
+If you are unsure about an API, read the code. Do not guess.
 
 ## When done
 Do NOT commit your changes. Stoke will commit after cross-model review.
@@ -274,7 +294,9 @@ State exactly what you changed and what verification items you satisfied.
 
 // BuildVerifyPrompt returns the enhanced verify phase prompt.
 // This is what the cross-model reviewer uses.
-func BuildVerifyPrompt(task string, verification []string) string {
+// changedFiles and diffSummary are optional — when provided, they are
+// included directly in the prompt template instead of being appended later.
+func BuildVerifyPrompt(task string, verification []string, changedFiles ...string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("Review the working tree for task: %s\n\n", task))
@@ -288,8 +310,16 @@ func BuildVerifyPrompt(task string, verification []string) string {
 		b.WriteString("\n")
 	}
 
+	if len(changedFiles) > 0 {
+		b.WriteString("## Changed files (harness-enumerated)\n")
+		for _, f := range changedFiles {
+			b.WriteString(f + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString(`## Your review process
-1. Read the changed files using the Read tool (do NOT use git commands)
+1. Read the changed files listed above using the Read tool (do NOT use git commands)
 2. Check each verification item against the actual code
 3. Look for:
    - Correctness: does the code actually do what the task says?
@@ -384,3 +414,14 @@ Return ONLY valid JSON:
 }
 `, tasksSummary, verificationChecklist)
 }
+
+// promptTracker tracks fingerprint changes across prompt versions for cache break detection.
+var promptTracker = prompt.NewTracker()
+
+// TrackPromptVersion computes a fingerprint for the given prompt and returns
+// true if the prompt's static content changed (cache break). This is used
+// to detect when system prompt changes will invalidate API-level caches.
+func TrackPromptVersion(promptText string) bool {
+	return promptTracker.Update(promptText)
+}
+

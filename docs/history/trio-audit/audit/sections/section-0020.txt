@@ -1,0 +1,6 @@
+./ember/devbox/web/src/pages/Login.tsx
+./ember/devbox/web/src/pages/Register.tsx
+./ember/devbox/web/src/pages/ResetPassword.tsx
+./ember/devbox/web/src/pages/SessionView.tsx
+./ember/devbox/web/src/pages/Settings.tsx
+./ember/devbox/web/src/pages/VerifyEmail.tsx

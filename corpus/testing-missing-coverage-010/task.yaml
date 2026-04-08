@@ -1,0 +1,17 @@
+id: testing-missing-coverage-010
+category: testing
+title: "Write comprehensive tests for ParseDuration utility"
+language: go
+difficulty: 2
+time_limit_seconds: 120
+cost_limit_usd: 0.50
+prompt_file: prompt.md
+initial_repo: initial/
+visible_tests: visible_tests/
+hidden_tests: hidden_tests/
+reference_patch: ""
+hidden_requirements:
+  - "Tests must cover valid durations with s, m, and h suffixes"
+  - "Tests must cover edge cases: empty string, invalid suffix, negative number, zero"
+  - "Tests must cover numeric parsing errors (non-numeric input)"
+expected_failure_modes: []

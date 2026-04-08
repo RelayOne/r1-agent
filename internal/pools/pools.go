@@ -10,11 +10,13 @@ import (
 	"time"
 )
 
-// StorePath returns ~/.stoke/pools
+// StorePath returns ~/.stoke/pools. Panics if the home directory cannot
+// be determined — falling back to /tmp would expose credentials on
+// multi-user systems.
 func StorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "/tmp"
+		panic("pools: cannot determine home directory: " + err.Error())
 	}
 	return filepath.Join(home, ".stoke", "pools")
 }
@@ -24,15 +26,28 @@ func ManifestPath() string {
 	return filepath.Join(StorePath(), "manifest.json")
 }
 
+// Runtime specifies where the pool's CLI runs.
+const (
+	RuntimeHost      = "host"      // CLI runs directly on the host
+	RuntimeContainer = "container" // CLI runs inside a Docker container
+)
+
 // Pool is one registered subscription pool.
 type Pool struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`       // user-friendly name
-	ConfigDir string    `json:"config_dir"`  // path to credential dir
-	Provider  string    `json:"provider"`    // "claude" or "codex"
-	AccountID string    `json:"account_id"`  // dedup key (from credentials)
-	AddedAt   time.Time `json:"added_at"`
-	LastUsed  time.Time `json:"last_used,omitempty"`
+	ID            string    `json:"id"`
+	Label         string    `json:"label"`            // user-friendly name
+	ConfigDir     string    `json:"config_dir"`       // path to credential dir (host-side)
+	Provider      string    `json:"provider"`         // "claude" or "codex"
+	AccountID     string    `json:"account_id"`       // dedup key (from credentials)
+	Runtime       string    `json:"runtime,omitempty"` // "host" (default) or "container"
+	ContainerVol  string    `json:"container_vol,omitempty"` // Docker volume name for container runtime
+	AddedAt       time.Time `json:"added_at"`
+	LastUsed      time.Time `json:"last_used,omitempty"`
+}
+
+// IsContainer returns true if this pool runs inside a Docker container.
+func (p Pool) IsContainer() bool {
+	return p.Runtime == RuntimeContainer
 }
 
 // Manifest is the persisted pool registry.
@@ -56,16 +71,16 @@ func LoadManifest() (*Manifest, error) {
 	return &m, nil
 }
 
-// Save writes the manifest to disk.
+// Save writes the manifest to disk with restrictive permissions (0600).
 func (m *Manifest) Save() error {
-	if err := os.MkdirAll(filepath.Dir(ManifestPath()), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ManifestPath()), 0700); err != nil {
 		return fmt.Errorf("create pools dir: %w", err)
 	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ManifestPath(), data, 0644)
+	return os.WriteFile(ManifestPath(), data, 0600)
 }
 
 // FindByAccount returns the pool with this account ID, or nil.
@@ -169,8 +184,10 @@ func AddClaude(claudeBin, label string) (string, error) {
 		fmt.Printf("\n  Account already registered as %s (%s)\n", existing.ID, existing.Label)
 		fmt.Println("  Refreshing credentials...")
 
-		// Copy new credentials over old
-		copyCredentials(configDir, existing.ConfigDir)
+		// Copy new credentials over old — only remove source after success
+		if err := copyCredentials(configDir, existing.ConfigDir); err != nil {
+			return "", fmt.Errorf("copy credentials: %w", err)
+		}
 		os.RemoveAll(configDir) // remove temp dir
 		existing.LastUsed = time.Now()
 		if err := manifest.Save(); err != nil {
@@ -236,6 +253,15 @@ func RemovePool(poolID string) error {
 	return nil
 }
 
+// claudeCredentials is the typed structure of Claude Code's .credentials.json.
+type claudeCredentials struct {
+	ClaudeAiOauth struct {
+		Email       string `json:"email"`
+		AccountID   string `json:"accountId"`
+		AccessToken string `json:"accessToken"`
+	} `json:"claudeAiOauth"`
+}
+
 // readAccountID extracts an account identifier from credentials.
 func readAccountID(configDir string) string {
 	data, err := os.ReadFile(filepath.Join(configDir, ".credentials.json"))
@@ -243,24 +269,19 @@ func readAccountID(configDir string) string {
 		return ""
 	}
 
-	// Try to extract email or account ID from the credential structure
-	var creds map[string]interface{}
+	var creds claudeCredentials
 	if json.Unmarshal(data, &creds) != nil {
 		return ""
 	}
 
-	// Look for account identifiers in common locations
-	if oauth, ok := creds["claudeAiOauth"].(map[string]interface{}); ok {
-		if email, ok := oauth["email"].(string); ok && email != "" {
-			return email
-		}
-		if id, ok := oauth["accountId"].(string); ok && id != "" {
-			return id
-		}
-		// Fallback: use first 16 chars of access token as dedup key
-		if token, ok := oauth["accessToken"].(string); ok && token != "" {
-			return "tok-" + token[:min(16, len(token))]
-		}
+	if creds.ClaudeAiOauth.Email != "" {
+		return creds.ClaudeAiOauth.Email
+	}
+	if creds.ClaudeAiOauth.AccountID != "" {
+		return creds.ClaudeAiOauth.AccountID
+	}
+	if token := creds.ClaudeAiOauth.AccessToken; token != "" {
+		return "tok-" + token[:min(16, len(token))]
 	}
 
 	return ""
@@ -335,7 +356,9 @@ func AddCodex(codexBin, label string) (string, error) {
 	if existing := manifest.FindByAccount(accountID); existing != nil && existing.Provider == "codex" {
 		fmt.Printf("\n  Account already registered as %s (%s)\n", existing.ID, existing.Label)
 		fmt.Println("  Refreshing credentials...")
-		copyCredentials(configDir, existing.ConfigDir)
+		if err := copyCredentials(configDir, existing.ConfigDir); err != nil {
+			return "", fmt.Errorf("copy credentials: %w", err)
+		}
 		os.RemoveAll(configDir)
 		existing.LastUsed = time.Now()
 		if err := manifest.Save(); err != nil {
@@ -368,47 +391,267 @@ func AddCodex(codexBin, label string) (string, error) {
 	return poolID, nil
 }
 
-func readCodexAccountID(configDir string) string {
-	// Try common Codex credential locations
-	for _, name := range []string{".codex-credentials.json", "credentials.json", "auth.json"} {
-		data, err := os.ReadFile(filepath.Join(configDir, name))
-		if err != nil { continue }
+// codexCredentials is the typed union of known Codex credential formats.
+type codexCredentials struct {
+	Email       string `json:"email"`
+	AccountID   string `json:"accountId"`
+	AccountID2  string `json:"account_id"`
+	UserID      string `json:"user_id"`
+	AccessToken string `json:"accessToken"`
+	AccessTok2  string `json:"access_token"`
+	APIKey      string `json:"api_key"`
+	Token       string `json:"token"`
+}
 
-		var creds map[string]interface{}
-		if json.Unmarshal(data, &creds) != nil { continue }
-
-		// Look for email or account ID
-		for _, key := range []string{"email", "accountId", "account_id", "user_id"} {
-			if v, ok := creds[key].(string); ok && v != "" {
-				return v
-			}
-		}
-		// Fallback: use first 16 chars of any token found
-		for _, key := range []string{"accessToken", "access_token", "api_key", "token"} {
-			if v, ok := creds[key].(string); ok && len(v) > 16 {
-				return "codex-tok-" + v[:16]
-			}
+// firstNonEmpty returns the first non-empty string from the list.
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
 		}
 	}
 	return ""
 }
 
-func copyCredentials(src, dst string) {
-	if err := os.MkdirAll(dst, 0700); err != nil {
-		return
+func readCodexAccountID(configDir string) string {
+	for _, name := range []string{".codex-credentials.json", "credentials.json", "auth.json"} {
+		data, err := os.ReadFile(filepath.Join(configDir, name))
+		if err != nil {
+			continue
+		}
+
+		var creds codexCredentials
+		if json.Unmarshal(data, &creds) != nil {
+			continue
+		}
+
+		if id := firstNonEmptyStr(creds.Email, creds.AccountID, creds.AccountID2, creds.UserID); id != "" {
+			return id
+		}
+		if token := firstNonEmptyStr(creds.AccessToken, creds.AccessTok2, creds.APIKey, creds.Token); len(token) > 16 {
+			return "codex-tok-" + token[:16]
+		}
 	}
-	entries, _ := os.ReadDir(src)
+	return ""
+}
+
+func copyCredentials(src, dst string) error {
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		return fmt.Errorf("create credential dir: %w", err)
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("read source dir: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+		// Skip symlinks to prevent following links to sensitive files
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(src, e.Name()))
 		if err != nil {
-			continue
+			return fmt.Errorf("read %s: %w", e.Name(), err)
 		}
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0600); err != nil {
-			continue
+			return fmt.Errorf("write %s: %w", e.Name(), err)
 		}
+	}
+	return nil
+}
+
+// InitContainerPool creates a Docker volume, runs the Claude login flow inside
+// a stoke-pool container, and registers the pool with container runtime.
+func InitContainerPool(poolImage, name, provider string) (string, error) {
+	manifest, err := LoadManifest()
+	if err != nil {
+		return "", fmt.Errorf("load manifest: %w", err)
+	}
+
+	poolID := manifest.NextID(provider)
+	volName := "stoke-pool-" + poolID
+
+	// Create Docker volume
+	cmd := exec.Command("docker", "volume", "create", volName)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("docker volume create: %w: %s", err, out)
+	}
+
+	fmt.Printf("  Pool: %s\n", poolID)
+	fmt.Printf("  Volume: %s\n", volName)
+	fmt.Println()
+
+	// Run login flow inside container with the volume mounted
+	configMount := "/config"
+	loginBin := "claude"
+	if provider == "codex" {
+		loginBin = "codex"
+	}
+
+	var loginArgs []string
+	if provider == "claude" {
+		loginArgs = []string{
+			"run", "-it", "--rm",
+			"-v", volName + ":" + configMount,
+			"-e", "CLAUDE_CONFIG_DIR=" + configMount,
+			poolImage,
+			loginBin, "login",
+		}
+	} else {
+		loginArgs = []string{
+			"run", "-it", "--rm",
+			"-v", volName + ":" + configMount,
+			"-e", "CODEX_HOME=" + configMount,
+			poolImage,
+			loginBin, "auth", "login",
+		}
+	}
+
+	loginCmd := exec.Command("docker", loginArgs...)
+	loginCmd.Stdin = os.Stdin
+	loginCmd.Stdout = os.Stdout
+	loginCmd.Stderr = os.Stderr
+
+	fmt.Printf("  Launching %s login inside container...\n\n", provider)
+	if err := loginCmd.Run(); err != nil {
+		// Cleanup volume on failure
+		exec.Command("docker", "volume", "rm", volName).Run()
+		return "", fmt.Errorf("%s login failed: %w", provider, err)
+	}
+
+	// Read account ID from the volume by temporarily mounting it
+	accountID := readAccountIDFromVolume(poolImage, volName, configMount, provider)
+	if accountID == "" {
+		accountID = provider + "-container-" + poolID
+	}
+
+	if label := name; label == "" {
+		name = fmt.Sprintf("%s Container #%s", strings.Title(provider), strings.TrimPrefix(poolID, provider+"-"))
+	}
+
+	pool := Pool{
+		ID:           poolID,
+		Label:        name,
+		ConfigDir:    configMount, // path inside the container
+		Provider:     provider,
+		AccountID:    accountID,
+		Runtime:      RuntimeContainer,
+		ContainerVol: volName,
+		AddedAt:      time.Now(),
+	}
+
+	manifest.Pools = append(manifest.Pools, pool)
+	if err := manifest.Save(); err != nil {
+		return "", fmt.Errorf("save manifest: %w", err)
+	}
+
+	fmt.Printf("\n  Added container pool: %s (%s)\n", poolID, name)
+	return poolID, nil
+}
+
+// readAccountIDFromVolume extracts an account ID from credentials stored in a Docker volume.
+func readAccountIDFromVolume(image, volName, configMount, provider string) string {
+	var credFile string
+	if provider == "claude" {
+		credFile = ".credentials.json"
+	} else {
+		credFile = ".codex-credentials.json"
+	}
+
+	cmd := exec.Command("docker", "run", "--rm",
+		"-v", volName+":"+configMount,
+		image,
+		"cat", filepath.Join(configMount, credFile))
+
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	if provider == "claude" {
+		var creds claudeCredentials
+		if json.Unmarshal(out, &creds) != nil {
+			return ""
+		}
+		return firstNonEmptyStr(creds.ClaudeAiOauth.Email, creds.ClaudeAiOauth.AccountID)
+	}
+
+	var creds codexCredentials
+	if json.Unmarshal(out, &creds) != nil {
+		return ""
+	}
+	return firstNonEmptyStr(creds.Email, creds.AccountID, creds.AccountID2, creds.UserID)
+}
+
+// RemoveContainerPool removes a container pool and its Docker volume.
+func RemoveContainerPool(poolID string) error {
+	manifest, err := LoadManifest()
+	if err != nil {
+		return err
+	}
+
+	var kept []Pool
+	var removed *Pool
+	for i := range manifest.Pools {
+		if manifest.Pools[i].ID == poolID {
+			removed = &manifest.Pools[i]
+		} else {
+			kept = append(kept, manifest.Pools[i])
+		}
+	}
+
+	if removed == nil {
+		return fmt.Errorf("pool %s not found", poolID)
+	}
+
+	manifest.Pools = kept
+	if err := manifest.Save(); err != nil {
+		return err
+	}
+
+	// Remove Docker volume if this is a container pool
+	if removed.Runtime == RuntimeContainer && removed.ContainerVol != "" {
+		cmd := exec.Command("docker", "volume", "rm", removed.ContainerVol)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove volume %s: %s\n", removed.ContainerVol, out)
+		}
+	} else {
+		os.RemoveAll(removed.ConfigDir)
+	}
+
+	return nil
+}
+
+// ListContainerPools returns all pools with container runtime.
+func (m *Manifest) ListContainerPools() []Pool {
+	var result []Pool
+	for _, p := range m.Pools {
+		if p.Runtime == RuntimeContainer {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// DockerExecArgs builds the docker exec prefix for running a command inside a
+// container pool. The caller appends the actual command after these args.
+// workdir is bind-mounted from the host into the container at the same path.
+func DockerExecArgs(pool Pool, poolImage, workdir string) []string {
+	if !pool.IsContainer() {
+		return nil
+	}
+	containerName := "stoke-worker-" + pool.ID
+	return []string{
+		"docker", "run", "--rm",
+		"--name", containerName,
+		"-v", pool.ContainerVol + ":" + pool.ConfigDir,
+		"-v", workdir + ":" + workdir,
+		"-w", workdir,
+		"-e", "CLAUDE_CONFIG_DIR=" + pool.ConfigDir,
+		"-e", "CODEX_HOME=" + pool.ConfigDir,
+		poolImage,
 	}
 }
 

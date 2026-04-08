@@ -1,0 +1,7 @@
+./stoke/internal/app/app.go
+./stoke/internal/app/app_test.go
+./stoke/internal/compute/backend.go
+./stoke/internal/compute/ember.go
+./stoke/internal/compute/local.go
+./stoke/internal/config/claude_settings.go
+./stoke/internal/config/claude_settings_test.go

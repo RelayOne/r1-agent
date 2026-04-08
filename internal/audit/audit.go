@@ -22,6 +22,7 @@ type ReviewRequest struct {
 	DiffSummary string            `json:"diff_summary"`
 	ScanResult  *scan.ScanResult  `json:"scan_result,omitempty"`
 	SecurityMap *scan.SecurityMap `json:"security_map,omitempty"`
+	ASTContext  string            `json:"ast_context,omitempty"` // optional goast analysis summary (call graph, dead symbols, etc.)
 }
 
 // ReviewFinding is one issue from a persona review.
@@ -121,6 +122,13 @@ func BuildPrompt(p Persona, req ReviewRequest) string {
 			}
 		}
 		sb.WriteString("\n")
+	}
+
+	// Include AST structural context when available
+	if req.ASTContext != "" {
+		sb.WriteString("STRUCTURAL ANALYSIS (from AST):\n")
+		sb.WriteString(req.ASTContext)
+		sb.WriteString("\n\n")
 	}
 
 	sb.WriteString(`OUTPUT FORMAT: Return ONLY a JSON array of findings:

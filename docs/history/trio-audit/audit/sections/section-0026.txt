@@ -1,0 +1,2 @@
+./flare/internal/store/store.go
+./flare/sdk/typescript/src/index.ts

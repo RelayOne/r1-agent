@@ -3,12 +3,14 @@ package workflow
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/ericmacdougall/stoke/internal/config"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/verify"
@@ -86,7 +88,7 @@ func TestBuildRetryPromptIncludesFailureContext(t *testing.T) {
 		},
 	}
 
-	prompt := buildRetryPrompt("Original task: add auth", 2, analysis, "src/auth.ts | 45 +++")
+	prompt := buildRetryPrompt("Original task: add auth", 2, analysis, "src/auth.ts | 45 +++", "/tmp/worktree")
 
 	if !strings.Contains(prompt, "RETRY CONTEXT (attempt 2)") {
 		t.Error("should include attempt number")
@@ -113,7 +115,7 @@ func TestBuildRetryPromptIncludesFailureContext(t *testing.T) {
 
 func TestBuildRetryPromptPolicyViolation(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.PolicyViolation, Summary: "ts-ignore used"}
-	prompt := buildRetryPrompt("task", 2, analysis, "")
+	prompt := buildRetryPrompt("task", 2, analysis, "", "")
 	if !strings.Contains(prompt, "@ts-ignore") {
 		t.Error("policy violation retry should warn about ts-ignore")
 	}
@@ -121,7 +123,7 @@ func TestBuildRetryPromptPolicyViolation(t *testing.T) {
 
 func TestBuildRetryPromptWrongFiles(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.WrongFiles, Summary: "out of scope"}
-	prompt := buildRetryPrompt("task", 2, analysis, "")
+	prompt := buildRetryPrompt("task", 2, analysis, "", "")
 	if !strings.Contains(prompt, "outside the task scope") {
 		t.Error("wrong files retry should warn about scope")
 	}
@@ -129,7 +131,7 @@ func TestBuildRetryPromptWrongFiles(t *testing.T) {
 
 func TestBuildRetryPromptNoDiff(t *testing.T) {
 	analysis := &failure.Analysis{Class: failure.BuildFailed, Summary: "errors"}
-	prompt := buildRetryPrompt("task", 2, analysis, "(diff unavailable)")
+	prompt := buildRetryPrompt("task", 2, analysis, "(diff unavailable)", "")
 	if strings.Contains(prompt, "CHANGES FROM PREVIOUS ATTEMPT") {
 		t.Error("should not include diff section when unavailable")
 	}
@@ -182,8 +184,66 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 	path := s.repo + "/.stoke/worktrees/" + explicitName
 	runtimeDir := os.TempDir() + "/stoke-test-runtime-" + explicitName
 	os.MkdirAll(runtimeDir, 0o755)
-	return worktree.Handle{Name: explicitName, Branch: "stoke/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: "abc123", RepoRoot: s.repo, GitBinary: "git"}, nil
+	// Initialize a minimal git repo so worktree helpers (ModifiedFiles, DiffSummary) work.
+	os.MkdirAll(path, 0o755)
+	exec.Command("git", "-C", path, "init", "-b", "main").Run()
+	exec.Command("git", "-C", path, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", path, "config", "user.name", "test").Run()
+	exec.Command("git", "-C", path, "config", "commit.gpgsign", "false").Run()
+	exec.Command("git", "-C", path, "commit", "--allow-empty", "-m", "init").Run()
+	baseCommit := "HEAD"
+	if out, err := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output(); err == nil {
+		baseCommit = strings.TrimSpace(string(out))
+	}
+	return worktree.Handle{Name: explicitName, Branch: "stoke/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: baseCommit, RepoRoot: s.repo, GitBinary: "git"}, nil
 }
 
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }
 func (s stubManager) Cleanup(_ context.Context, _ worktree.Handle) error        { return nil }
+
+func TestDryRunEmitsHubEvents(t *testing.T) {
+	repo := t.TempDir()
+	bus := hub.New()
+
+	var events []hub.EventType
+	bus.Register(hub.Subscriber{
+		ID:     "test.collector",
+		Events: []hub.EventType{"*"},
+		Mode:   hub.ModeObserve,
+		Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+			events = append(events, ev.Type)
+			return nil
+		},
+	})
+
+	wf := Engine{
+		RepoRoot:     repo,
+		Task:         "Add feature",
+		TaskType:     model.TaskTypeRefactor,
+		WorktreeName: "feat-task",
+		AuthMode:     engine.AuthModeMode1,
+		Policy:       config.DefaultPolicy(),
+		DryRun:       true,
+		Pools:        subscriptions.NewManager(nil),
+		Worktrees:    stubManager{repo: repo},
+		Runners:      engine.Registry{Claude: engine.NewClaudeRunner("claude"), Codex: engine.NewCodexRunner("codex")},
+		Verifier:     verify.NewPipeline("", "", ""),
+		EventBus:     bus,
+	}
+	_, err := wf.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry-run emits worktree creation event synchronously.
+	// Async events (task.started) may arrive later since they use EmitAsync.
+	hasWorktreeEvent := false
+	for _, et := range events {
+		if et == hub.EventGitWorktreeCreated {
+			hasWorktreeEvent = true
+		}
+	}
+	if !hasWorktreeEvent {
+		t.Errorf("expected EventGitWorktreeCreated, got events: %v", events)
+	}
+}
