@@ -204,6 +204,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// Phase 1: run tasks. When ParallelWorkers > 1 and we have tasks
 	// with disjoint file sets and no unsatisfied deps, execute them
 	// concurrently. Otherwise fall back to sequential execution.
+	//
+	// results is the AUTHORITATIVE per-task state returned to the
+	// scheduler. Internal repair/guard tasks below do NOT append to
+	// it — they update runtime state and print progress, but their
+	// success/failure must not leak into the scheduler's view
+	// (otherwise a successful repair looks like a session failure to
+	// the outer SessionScheduler and it halts the whole SOW).
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
 
 	// Phase 1.5: spec-faithfulness guards. Before running acceptance
@@ -217,9 +224,11 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	//      placeholder, unimplemented!(), todo!(), panic("TODO"),
 	//      raise NotImplementedError, etc.
 	//
-	// If either fires, build a repair blob and drop into the repair
-	// loop directly, skipping the initial acceptance run. The
-	// acceptance loop will then verify everything after the repair.
+	// If either fires, build a repair blob and run a repair task
+	// WITHOUT appending it to results. The acceptance loop will
+	// verify everything afterwards; the final acceptance state is
+	// what determines success, not whether the guard's repair pass
+	// itself ran cleanly.
 	missing, suspicious := checkSpecFaithfulness(cfg.RepoRoot, session)
 	if len(missing) > 0 || len(suspicious) > 0 {
 		fmt.Printf("  ⚠ spec-faithfulness guard: %d missing/empty file(s), %d placeholder stub(s)\n", len(missing), len(suspicious))
@@ -235,14 +244,20 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
 		})
-		tr := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
-		results = append(results, tr)
+		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+		// NOTE: deliberately not appended to results. The acceptance
+		// loop below verifies the final state.
 	}
 
 	// Phase 2: self-repair loop. Run the session's acceptance criteria;
 	// if any fail, construct a repair prompt containing the exact failure
 	// output and run it as a new task. Repeat up to maxRepairs times
 	// before escalating to the override judge.
+	//
+	// Repair attempts are INTERNAL — their success/failure is captured
+	// in finalAcceptance/finalPassed and used below to normalize the
+	// returned results slice, but they're not appended to the slice
+	// directly (see the note on Phase 1.5).
 	var finalAcceptance []plan.AcceptanceResult
 	var finalPassed bool
 	if len(effectiveCriteria) > 0 {
@@ -282,10 +297,26 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				Wisdom:        cfg.Wisdom,
 				RawSOW:        cfg.RawSOWText,
 			})
-			repairResult := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
-			// Record as a synthetic task result so the caller sees the
-			// repair attempt happened.
-			results = append(results, repairResult)
+			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+			// NOTE: deliberately not appended to results.
+		}
+	}
+
+	// Normalize: if the repair loop closed the gap (finalPassed == true),
+	// mark every Phase 1 task as successful. The session's end state IS
+	// successful — we don't want an earlier "Phase 1 task T1 failed,
+	// repair fixed it" to leak to the scheduler as a session-level
+	// failure, which would halt the whole SOW after S1.
+	//
+	// When there are no acceptance criteria we do NOT normalize — the
+	// Phase 1 task results are the only signal we have, and silently
+	// marking them successful would hide genuine failures.
+	if finalPassed {
+		for i := range results {
+			if !results[i].Success {
+				results[i].Success = true
+				results[i].Error = nil
+			}
 		}
 	}
 

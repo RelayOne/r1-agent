@@ -1209,7 +1209,13 @@ func sowCmd(args []string) {
 	// non-zero duration to re-enable a safety ceiling.
 	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
-	continueOnFailure := fs.Bool("continue-on-failure", false, "Keep running subsequent sessions after a session fails (default: halt)")
+	// Tri-state: "" = auto (on for multi-session, off for single-
+	// session), "true" / "false" = explicit override. A multi-session
+	// SOW like PERSYS (13 sessions) should try all sessions even if
+	// one fails, otherwise the user hits "S1 worked but S2-S13 never
+	// ran" after a transient failure. Single-session runs halt on
+	// failure because there's nothing else to do.
+	continueOnFailureFlag := fs.String("continue-on-failure", "", "Keep running subsequent sessions after a session fails (true/false/auto). Default: auto — true if SOW has >1 session, false otherwise.")
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
 	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
 	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
@@ -1329,7 +1335,26 @@ func sowCmd(args []string) {
 	// Dry run: show summary
 	ss := plan.NewSessionScheduler(sow, absRepo)
 	ss.Resume = *resume
-	ss.ContinueOnFailure = *continueOnFailure
+	// Resolve --continue-on-failure: explicit true/false overrides
+	// everything; otherwise auto = on for multi-session SOWs, off for
+	// single-session. This matches the user's expected behavior when
+	// they hand Stoke a big multi-session scope: "build until it's
+	// all done, not just S1".
+	continueOnFailure := len(sow.Sessions) > 1 // auto default
+	switch strings.ToLower(strings.TrimSpace(*continueOnFailureFlag)) {
+	case "true", "yes", "1", "on":
+		continueOnFailure = true
+	case "false", "no", "0", "off":
+		continueOnFailure = false
+	case "", "auto":
+		// keep auto default
+	default:
+		fmt.Fprintf(os.Stderr, "  warning: unknown --continue-on-failure value %q; using auto\n", *continueOnFailureFlag)
+	}
+	ss.ContinueOnFailure = continueOnFailure
+	if continueOnFailure {
+		fmt.Printf("  continue-on-failure: ON (will attempt all %d sessions, report failures at end)\n", len(sow.Sessions))
+	}
 	if *maxRetries > 0 {
 		ss.MaxSessionRetries = *maxRetries
 	}
