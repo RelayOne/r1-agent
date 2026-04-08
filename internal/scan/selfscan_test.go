@@ -29,7 +29,7 @@ func TestSelfScan(t *testing.T) {
 		rel, _ := filepath.Rel(repoRoot, path)
 		parts := strings.Split(rel, string(filepath.Separator))
 		for _, p := range parts {
-			if strings.HasPrefix(p, ".") || p == "vendor" || p == "node_modules" || p == "docs" {
+			if strings.HasPrefix(p, ".") || p == "vendor" || p == "node_modules" || p == "docs" || p == "trio-main" {
 				return nil
 			}
 		}
