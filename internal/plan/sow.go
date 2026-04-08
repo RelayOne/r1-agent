@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // SOW represents a Statement of Work: a multi-session, multi-phase project plan.
@@ -77,23 +79,57 @@ type ContentMatchCriterion struct {
 	Pattern string `json:"pattern" yaml:"pattern"` // substring or regex
 }
 
-// LoadSOW reads a SOW from a JSON file.
+// LoadSOW reads a SOW from a file. Supports both JSON and YAML: the format
+// is detected from the file extension, falling back to a content sniff if
+// the extension is ambiguous.
 func LoadSOW(path string) (*SOW, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read SOW: %w", err)
 	}
+	return ParseSOW(data, path)
+}
+
+// ParseSOW parses a SOW from bytes. pathHint is used only to pick the parser
+// (json vs yaml); it may be empty, in which case the content is sniffed.
+func ParseSOW(data []byte, pathHint string) (*SOW, error) {
+	useYAML := false
+	switch strings.ToLower(filepath.Ext(pathHint)) {
+	case ".yaml", ".yml":
+		useYAML = true
+	case ".json":
+		useYAML = false
+	default:
+		// Sniff: JSON docs start with '{' or '[' after leading whitespace.
+		trimmed := strings.TrimLeft(string(data), " \t\r\n")
+		if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
+			useYAML = true
+		}
+	}
+
 	var sow SOW
-	if err := json.Unmarshal(data, &sow); err != nil {
-		return nil, fmt.Errorf("parse SOW: %w", err)
+	if useYAML {
+		if err := yaml.Unmarshal(data, &sow); err != nil {
+			return nil, fmt.Errorf("parse SOW (yaml): %w", err)
+		}
+	} else {
+		if err := json.Unmarshal(data, &sow); err != nil {
+			return nil, fmt.Errorf("parse SOW (json): %w", err)
+		}
 	}
 	return &sow, nil
 }
 
-// LoadSOWFromDir looks for stoke-sow.json in the project root.
+// LoadSOWFromDir looks for stoke-sow.json or stoke-sow.yaml in the project root.
+// Tries JSON first, then YAML, returning the first one that exists.
 func LoadSOWFromDir(projectRoot string) (*SOW, error) {
-	path := filepath.Join(projectRoot, "stoke-sow.json")
-	return LoadSOW(path)
+	for _, name := range []string{"stoke-sow.json", "stoke-sow.yaml", "stoke-sow.yml"} {
+		path := filepath.Join(projectRoot, name)
+		if _, err := os.Stat(path); err == nil {
+			return LoadSOW(path)
+		}
+	}
+	return nil, fmt.Errorf("no stoke-sow.{json,yaml,yml} in %s", projectRoot)
 }
 
 // SaveSOW writes a SOW to disk as JSON.

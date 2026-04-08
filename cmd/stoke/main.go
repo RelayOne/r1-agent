@@ -566,12 +566,17 @@ func main() {
 	logging.Init(logLevel, os.Stderr)
 
 	if len(os.Args) < 2 {
-		// No args: launch the interactive REPL
+		// No args: launch the line REPL (classic). Users who want the
+		// full-screen Bubble Tea shell can run `stoke tui` instead. We keep
+		// line mode as the default because it composes better with pipes,
+		// CI/CD logs, and non-tty contexts.
 		launchREPL()
 		return
 	}
 
 	switch os.Args[1] {
+	case "tui", "--tui", "shell":
+		launchShell(os.Args[2:])
 	case "run":
 		runCmd(os.Args[2:])
 	case "build":
@@ -1197,6 +1202,9 @@ func sowCmd(args []string) {
 	// is disabled by default; supervisor handles liveness. Set --timeout to a
 	// non-zero duration to re-enable a safety ceiling.
 	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
+	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
+	continueOnFailure := fs.Bool("continue-on-failure", false, "Keep running subsequent sessions after a session fails (default: halt)")
+	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1244,6 +1252,74 @@ func sowCmd(args []string) {
 
 	// Dry run: show summary
 	ss := plan.NewSessionScheduler(sow, absRepo)
+	ss.Resume = *resume
+	ss.ContinueOnFailure = *continueOnFailure
+	if *maxRetries > 0 {
+		ss.MaxSessionRetries = *maxRetries
+	}
+	if err := ss.LoadOrCreateState(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: SOW state init failed: %v\n", err)
+	}
+	// If a TUI shell is listening, wire session progress into its
+	// Sessions pane. This is a no-op in the line REPL and CLI modes.
+	if hook := currentShellProgress; hook != nil {
+		ss.OnProgress = func(r plan.SessionResult) {
+			status := "done"
+			switch {
+			case r.Skipped:
+				status = "skipped"
+			case r.Error != nil:
+				status = "failed"
+			case !r.AcceptanceMet:
+				status = "failed"
+			}
+			tasksDone := 0
+			for _, tr := range r.TaskResults {
+				if tr.Success {
+					tasksDone++
+				}
+			}
+			critDone := 0
+			for _, c := range r.Acceptance {
+				if c.Passed {
+					critDone++
+				}
+			}
+			errStr := ""
+			if r.Error != nil {
+				errStr = r.Error.Error()
+			}
+			hook(tui.SessionDisplay{
+				ID:            r.SessionID,
+				Title:         r.Title,
+				Status:        status,
+				TasksDone:     tasksDone,
+				TasksTotal:    len(r.TaskResults),
+				CriteriaDone:  critDone,
+				CriteriaTotal: len(r.Acceptance),
+				LastError:     errStr,
+			})
+		}
+		// Seed the sessions pane with pending entries so the user can see
+		// what's coming before the first session runs.
+		var seed []tui.SessionDisplay
+		for _, s := range sow.Sessions {
+			status := "pending"
+			if ss.State() != nil && ss.State().IsSessionComplete(s.ID) {
+				status = "done"
+			}
+			seed = append(seed, tui.SessionDisplay{
+				ID:            s.ID,
+				Title:         s.Title,
+				Status:        status,
+				TasksTotal:    len(s.Tasks),
+				CriteriaTotal: len(s.AcceptanceCriteria),
+			})
+		}
+		if seedFn := currentShellSessions; seedFn != nil {
+			seedFn(seed)
+		}
+	}
 	if *dryRun {
 		fmt.Print(ss.DryRun())
 		if detectedStack.Language != "" {
@@ -1413,18 +1489,28 @@ func sowCmd(args []string) {
 	fmt.Printf("\n=== SOW Results ===\n")
 	for _, r := range results {
 		status := "PASS"
-		if r.Error != nil {
+		switch {
+		case r.Skipped:
+			status = "SKIPPED"
+		case r.Error != nil:
 			status = "FAIL"
-		} else if !r.AcceptanceMet {
+		case !r.AcceptanceMet:
 			status = "CRITERIA NOT MET"
 		}
-		fmt.Printf("  [%s] %s: %s\n", status, r.SessionID, r.Title)
+		attemptStr := ""
+		if r.Attempts > 1 {
+			attemptStr = fmt.Sprintf(" (%d attempts)", r.Attempts)
+		}
+		fmt.Printf("  [%s] %s: %s%s\n", status, r.SessionID, r.Title, attemptStr)
 		if r.Error != nil {
 			fmt.Printf("    error: %v\n", r.Error)
 		}
 		if len(r.Acceptance) > 0 {
 			fmt.Print(plan.FormatAcceptanceResults(r.Acceptance))
 		}
+	}
+	if state := ss.State(); state != nil {
+		fmt.Printf("\n  state: %s\n", plan.SOWStatePath(absRepo))
 	}
 
 	if err != nil {
@@ -3199,6 +3285,7 @@ func launchREPL() {
 	}
 	fmt.Println()
 	fmt.Println("  Type /help for commands. /build-from-scope to start a multi-session build from a SOW.")
+	fmt.Println("  Or run `stoke tui` for the full-screen Bubble Tea shell with live mission monitoring.")
 	fmt.Println()
 
 	r := repl.New(absRepo)
@@ -3438,6 +3525,292 @@ func launchREPL() {
 	}
 
 	r.Run()
+}
+
+// currentShellProgress and currentShellSessions are package-level hooks the
+// TUI shell sets while dispatching a command. sowCmd checks them to stream
+// session progress into the Sessions pane. When nil, sowCmd runs exactly
+// as it does in CLI mode.
+var (
+	currentShellProgress func(tui.SessionDisplay)
+	currentShellSessions func([]tui.SessionDisplay)
+)
+
+// launchShell starts the full-screen Bubble Tea shell. Smart defaults
+// autodetect the runner/base/model the same way launchREPL does. Slash
+// commands and free text route through the same dispatchers as the line
+// REPL, but their stdout is captured into the shell's log pane instead of
+// going directly to the terminal.
+//
+// Known limitation: commands that read from stdin interactively (e.g. the
+// /interview flow) don't work in full-screen mode yet — the TUI owns
+// stdin. Users who need interactive commands should use the line REPL.
+func launchShell(args []string) {
+	fs := flag.NewFlagSet("tui", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	defaults := detectSmartDefaults()
+	cfg := tui.ShellConfig{
+		RepoRoot:   absRepo,
+		Version:    version,
+		Runner:     defaults.RunnerMode,
+		BaseURL:    defaults.NativeBaseURL,
+		Model:      defaults.NativeModel,
+		Supervisor: "boulder (no wall-clock timeouts)",
+		Notes:      defaults.Notes,
+	}
+
+	handler := func(sh *tui.Shell, input string) string {
+		// Capture stdout/stderr during the command's execution and stream
+		// each line into the shell's log pane via sh.Append.
+		restore, captureDone := captureStdoutTo(sh)
+		// Wire session-progress hooks so sowCmd pushes into the Sessions pane.
+		currentShellProgress = func(s tui.SessionDisplay) { sh.UpdateSession(s) }
+		currentShellSessions = func(list []tui.SessionDisplay) { sh.SetSessions(list) }
+		defer func() {
+			currentShellProgress = nil
+			currentShellSessions = nil
+			restore()
+			<-captureDone
+		}()
+
+		if strings.HasPrefix(input, "/") {
+			return dispatchSlash(sh, absRepo, defaults, input)
+		}
+		// Free text -> single run task
+		rargs := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			rargs = append(rargs, "--native-model", defaults.NativeModel)
+		}
+		runCmdSafe(rargs)
+		return "done"
+	}
+
+	shell := tui.NewShell(cfg, handler)
+	if err := shell.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// dispatchSlash routes a slash command inside the full-screen shell to the
+// appropriate Cmd. Returns a short status message. All command stdout is
+// already being captured by the caller's captureStdoutTo wrapper.
+func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input string) string {
+	line := strings.TrimPrefix(input, "/")
+	parts := strings.SplitN(line, " ", 2)
+	name := strings.ToLower(parts[0])
+	rest := ""
+	if len(parts) > 1 {
+		rest = strings.TrimSpace(parts[1])
+	}
+
+	switch name {
+	case "help", "?":
+		sh.Append("Available commands:")
+		sh.Append("  /build-from-scope [path]  Build from a SOW (JSON or YAML)")
+		sh.Append("  /ship <goal>              Build → review → fix loop")
+		sh.Append("  /build [plan.json]        Execute plan with parallel agents")
+		sh.Append("  /plan <goal>              Generate task plan")
+		sh.Append("  /run <task>               Single task through full pipeline")
+		sh.Append("  /scope                    Read-only scope session")
+		sh.Append("  /scan [--security]        Deterministic code scan")
+		sh.Append("  /audit                    Multi-persona review")
+		sh.Append("  /status                   Show session dashboard")
+		sh.Append("  /pool                     Show subscription utilization")
+		sh.Append("  /pools                    List all pools")
+		sh.Append("  /quit                     Exit")
+		return "help shown"
+	case "build-from-scope":
+		return handleBuildFromScope(sh, absRepo, defaults, rest)
+	case "ship":
+		if rest == "" {
+			return "missing arg: /ship <goal>"
+		}
+		shipCmd([]string{"--task", rest, "--repo", absRepo})
+		return "ship done"
+	case "build":
+		planPath := "stoke-plan.json"
+		if rest != "" {
+			planPath = rest
+		}
+		buildCmd([]string{"--plan", planPath, "--repo", absRepo})
+		return "build done"
+	case "plan":
+		if rest == "" {
+			return "missing arg: /plan <goal>"
+		}
+		planCmd([]string{"--task", rest, "--repo", absRepo})
+		return "plan done"
+	case "run":
+		if rest == "" {
+			return "missing arg: /run <task>"
+		}
+		runCmdSafe([]string{"--task", rest, "--repo", absRepo, "--runner", defaults.RunnerMode})
+		return "run done"
+	case "scope":
+		scopeCmd([]string{"--repo", absRepo})
+		return "scope done"
+	case "scan":
+		scanArgs := []string{"--repo", absRepo}
+		if strings.Contains(rest, "--security") {
+			scanArgs = append(scanArgs, "--security")
+		}
+		scanCmd(scanArgs)
+		return "scan done"
+	case "audit":
+		auditCmd([]string{"--repo", absRepo})
+		return "audit done"
+	case "status":
+		statusCmd([]string{"--repo", absRepo})
+		return "status shown"
+	case "pool":
+		poolCmd([]string{})
+		return "pool shown"
+	case "pools":
+		poolsCmd([]string{})
+		return "pools shown"
+	default:
+		return fmt.Sprintf("unknown command: /%s (try /help)", name)
+	}
+}
+
+// handleBuildFromScope is the TUI version of the build-from-scope slash
+// command: loads a SOW from a path or inline, writes it to .stoke, runs
+// sowCmd with smart defaults. Output goes through the captured stdout.
+func handleBuildFromScope(sh *tui.Shell, absRepo string, defaults SmartDefaults, arg string) string {
+	var sowText string
+	if arg == "" {
+		sh.Append("  /build-from-scope requires a file path in TUI mode. Use the line REPL for paste mode.")
+		return "missing SOW"
+	}
+	path := arg
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(absRepo, arg)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		sh.Append("  Error reading SOW file %q: %v", path, err)
+		return "load failed"
+	}
+	sowText = string(data)
+	sh.Append("  Loaded SOW from %s (%d bytes)", path, len(sowText))
+
+	runSOWWithDefaults(absRepo, sowText, defaults)
+	return "sow done"
+}
+
+// runCmdSafe is a wrapper around runCmd that recovers from unexpected
+// panics so a bad free-text dispatch doesn't take down the TUI.
+func runCmdSafe(args []string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("  runCmd panic: %v\n", r)
+		}
+	}()
+	runCmd(args)
+}
+
+// captureStdoutTo redirects os.Stdout and os.Stderr into the shell's log
+// pane for the duration of a command. Returns a restore function and a
+// channel that closes when the capture goroutine exits (call restore then
+// wait on the channel to guarantee all output has been flushed).
+func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	done = make(chan struct{})
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		// If the pipe fails, fall back to no capture.
+		close(done)
+		return func() {}, done
+	}
+	os.Stdout = w
+	os.Stderr = w
+
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		var pending []byte
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				pending = append(pending, buf[:n]...)
+				// Split by newlines; everything after the last newline stays
+				// in pending until more data arrives or the pipe closes.
+				for {
+					idx := bytesIndexByte(pending, '\n')
+					if idx < 0 {
+						break
+					}
+					line := string(pending[:idx])
+					pending = pending[idx+1:]
+					sh.Append("%s", stripANSI(line))
+				}
+			}
+			if err != nil {
+				if len(pending) > 0 {
+					sh.Append("%s", stripANSI(string(pending)))
+				}
+				return
+			}
+		}
+	}()
+
+	restore = func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+		w.Close()
+	}
+	return restore, done
+}
+
+// bytesIndexByte is a local copy of bytes.IndexByte to avoid an extra
+// import at call sites.
+func bytesIndexByte(b []byte, c byte) int {
+	for i, v := range b {
+		if v == c {
+			return i
+		}
+	}
+	return -1
+}
+
+// stripANSI removes simple CSI escape sequences from a string so they
+// don't pollute the log pane. The shell has its own styling.
+func stripANSI(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			// Skip until the terminating letter
+			j := i + 2
+			for j < len(s) && !((s[j] >= 'a' && s[j] <= 'z') || (s[j] >= 'A' && s[j] <= 'Z')) {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // extractVerifyMetrics extracts suite-level test pass/fail and diff size

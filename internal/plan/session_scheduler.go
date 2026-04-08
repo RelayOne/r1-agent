@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // SessionScheduler orchestrates SOW execution by running sessions sequentially,
@@ -14,6 +15,23 @@ import (
 type SessionScheduler struct {
 	sow         *SOW
 	projectRoot string
+	// State persists session outcomes to disk for resume. If nil, state
+	// tracking is disabled (original fire-and-forget behavior).
+	state *SOWState
+	// Resume controls whether a prior state file, if present, is honored.
+	// When true, completed sessions are skipped. When false, all sessions run.
+	Resume bool
+	// ContinueOnFailure keeps the scheduler going after a session fails its
+	// acceptance criteria or encounters a task error. Default is to halt
+	// immediately so the user sees the failure fast.
+	ContinueOnFailure bool
+	// MaxSessionRetries is the number of times a single session's tasks +
+	// acceptance check is retried on failure before moving on (or halting).
+	// Default 1 = no retry.
+	MaxSessionRetries int
+	// OnProgress is called after each session completes (success or failure).
+	// Used by the TUI/REPL to update its display. May be nil.
+	OnProgress func(SessionResult)
 }
 
 // SessionResult is the outcome of executing one session.
@@ -23,14 +41,16 @@ type SessionResult struct {
 	TaskResults   []TaskExecResult
 	Acceptance    []AcceptanceResult
 	AcceptanceMet bool
+	Attempts      int
 	Error         error
+	Skipped       bool // true when resumed and already complete
 }
 
 // TaskExecResult is a generic task execution result returned by the caller.
 type TaskExecResult struct {
-	TaskID  string
-	Success bool
-	Error   error
+	TaskID  string `json:"task_id"`
+	Success bool   `json:"success"`
+	Error   error  `json:"-"`
 }
 
 // SessionExecuteFunc runs all tasks for a single session. The caller decides
@@ -40,23 +60,67 @@ type SessionExecuteFunc func(ctx context.Context, session Session) ([]TaskExecRe
 
 // NewSessionScheduler creates a scheduler that processes SOW sessions in order.
 func NewSessionScheduler(sow *SOW, projectRoot string) *SessionScheduler {
-	return &SessionScheduler{sow: sow, projectRoot: projectRoot}
+	return &SessionScheduler{
+		sow:               sow,
+		projectRoot:       projectRoot,
+		MaxSessionRetries: 1,
+	}
 }
+
+// LoadOrCreateState initializes the scheduler's state tracking, loading a
+// prior state file if one exists at projectRoot/.stoke/sow-state.json.
+// Call before Run to enable resume + progress persistence.
+func (ss *SessionScheduler) LoadOrCreateState() error {
+	existing, err := LoadSOWState(ss.projectRoot)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		ss.state = NewSOWState(ss.sow)
+		return SaveSOWState(ss.projectRoot, ss.state)
+	}
+	existing.MergeSOW(ss.sow)
+	ss.state = existing
+	return SaveSOWState(ss.projectRoot, ss.state)
+}
+
+// State returns the scheduler's current state snapshot (may be nil).
+func (ss *SessionScheduler) State() *SOWState { return ss.state }
 
 // Run executes all sessions in order. For each session:
 // 1. Runs preflight checks (infra requirements)
-// 2. Calls execFn to execute the session's tasks
+// 2. Calls execFn to execute the session's tasks (with retry)
 // 3. Checks acceptance criteria
-// 4. Stops if acceptance criteria fail
+// 4. Persists progress after each session (if state is enabled)
+// 5. Stops if acceptance criteria fail unless ContinueOnFailure is set
 //
 // Returns results for all attempted sessions.
 func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) ([]SessionResult, error) {
 	var results []SessionResult
+	var firstErr error
 
 	for _, session := range ss.sow.Sessions {
 		// Check context cancellation
 		if ctx.Err() != nil {
 			return results, ctx.Err()
+		}
+
+		// Resume: skip sessions already completed.
+		if ss.Resume && ss.state != nil && ss.state.IsSessionComplete(session.ID) {
+			rec := ss.state.SessionByID(session.ID)
+			skipped := SessionResult{
+				SessionID:     session.ID,
+				Title:         session.Title,
+				Acceptance:    rec.Acceptance,
+				AcceptanceMet: true,
+				Attempts:      rec.Attempts,
+				Skipped:       true,
+			}
+			results = append(results, skipped)
+			if ss.OnProgress != nil {
+				ss.OnProgress(skipped)
+			}
+			continue
 		}
 
 		// Preflight: check infra env vars for this session
@@ -68,46 +132,155 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 				Error:     fmt.Errorf("missing infrastructure env vars: %s", strings.Join(missing, ", ")),
 			}
 			results = append(results, result)
-			return results, result.Error
-		}
-
-		// Execute session tasks via caller-provided function
-		taskResults, err := execFn(ctx, session)
-
-		result := SessionResult{
-			SessionID:   session.ID,
-			Title:       session.Title,
-			TaskResults: taskResults,
-		}
-
-		if err != nil {
-			result.Error = err
-			results = append(results, result)
-			return results, fmt.Errorf("session %s failed: %w", session.ID, err)
-		}
-
-		// Check if any tasks failed
-		for _, tr := range taskResults {
-			if !tr.Success {
-				result.Error = fmt.Errorf("task %s failed", tr.TaskID)
-				results = append(results, result)
+			ss.recordSessionFailure(session, result, result.Error)
+			if firstErr == nil {
+				firstErr = result.Error
+			}
+			if !ss.ContinueOnFailure {
 				return results, result.Error
 			}
+			continue
 		}
 
-		// Check acceptance criteria
-		acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
-		result.Acceptance = acceptance
-		result.AcceptanceMet = allPassed
-		results = append(results, result)
+		// Execute with retry loop. Every attempt re-runs the task exec plus
+		// the acceptance gate, so a model that missed a detail the first
+		// time gets a clean second try.
+		retries := ss.MaxSessionRetries
+		if retries < 1 {
+			retries = 1
+		}
+		var result SessionResult
+		result.SessionID = session.ID
+		result.Title = session.Title
 
-		if !allPassed {
-			return results, fmt.Errorf("session %s acceptance criteria not met:\n%s",
-				session.ID, FormatAcceptanceResults(acceptance))
+		for attempt := 1; attempt <= retries; attempt++ {
+			result.Attempts = attempt
+			ss.recordSessionStart(session, attempt)
+
+			taskResults, err := execFn(ctx, session)
+			result.TaskResults = taskResults
+
+			if err != nil {
+				result.Error = fmt.Errorf("session %s (attempt %d) exec failed: %w", session.ID, attempt, err)
+				if attempt < retries {
+					continue
+				}
+				break
+			}
+
+			// Check individual task failures
+			taskFailed := false
+			for _, tr := range taskResults {
+				if !tr.Success {
+					taskFailed = true
+					result.Error = fmt.Errorf("session %s (attempt %d) task %s failed", session.ID, attempt, tr.TaskID)
+					break
+				}
+			}
+			if taskFailed {
+				if attempt < retries {
+					continue
+				}
+				break
+			}
+
+			// Acceptance gate
+			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
+			result.Acceptance = acceptance
+			result.AcceptanceMet = allPassed
+
+			if !allPassed {
+				result.Error = fmt.Errorf("session %s (attempt %d) acceptance criteria not met:\n%s",
+					session.ID, attempt, FormatAcceptanceResults(acceptance))
+				if attempt < retries {
+					continue
+				}
+				break
+			}
+
+			// Success
+			result.Error = nil
+			break
+		}
+
+		results = append(results, result)
+		if result.Error != nil || !result.AcceptanceMet {
+			ss.recordSessionFailure(session, result, result.Error)
+			if firstErr == nil {
+				firstErr = result.Error
+			}
+			if ss.OnProgress != nil {
+				ss.OnProgress(result)
+			}
+			if !ss.ContinueOnFailure {
+				return results, result.Error
+			}
+			continue
+		}
+		ss.recordSessionSuccess(session, result)
+		if ss.OnProgress != nil {
+			ss.OnProgress(result)
 		}
 	}
 
-	return results, nil
+	return results, firstErr
+}
+
+// recordSessionStart marks a session as running in state.
+func (ss *SessionScheduler) recordSessionStart(session Session, attempt int) {
+	if ss.state == nil {
+		return
+	}
+	rec := ss.state.SessionByID(session.ID)
+	if rec == nil {
+		return
+	}
+	rec.Status = "running"
+	rec.Attempts = attempt
+	if rec.StartedAt.IsZero() {
+		rec.StartedAt = time.Now()
+	}
+	_ = SaveSOWState(ss.projectRoot, ss.state)
+}
+
+// recordSessionSuccess marks a session as done with acceptance met.
+func (ss *SessionScheduler) recordSessionSuccess(session Session, result SessionResult) {
+	if ss.state == nil {
+		return
+	}
+	rec := ss.state.SessionByID(session.ID)
+	if rec == nil {
+		return
+	}
+	rec.Status = "done"
+	rec.AcceptanceMet = true
+	rec.Acceptance = result.Acceptance
+	rec.TaskResults = result.TaskResults
+	rec.Attempts = result.Attempts
+	rec.LastError = ""
+	rec.FinishedAt = time.Now()
+	_ = SaveSOWState(ss.projectRoot, ss.state)
+}
+
+// recordSessionFailure persists a failed session outcome.
+func (ss *SessionScheduler) recordSessionFailure(session Session, result SessionResult, err error) {
+	if ss.state == nil {
+		return
+	}
+	rec := ss.state.SessionByID(session.ID)
+	if rec == nil {
+		return
+	}
+	rec.Status = "failed"
+	rec.AcceptanceMet = result.AcceptanceMet
+	rec.Acceptance = result.Acceptance
+	rec.TaskResults = result.TaskResults
+	rec.Attempts = result.Attempts
+	if err != nil {
+		rec.LastError = err.Error()
+	}
+	rec.FinishedAt = time.Now()
+	_ = SaveSOWState(ss.projectRoot, ss.state)
 }
 
 // DryRun validates the SOW and returns a summary of what would be executed
@@ -139,16 +312,47 @@ func (ss *SessionScheduler) DryRun() string {
 
 	fmt.Fprintf(&b, "\nSessions: %d\n", len(ss.sow.Sessions))
 	totalTasks := 0
+	totalCriteria := 0
 	for _, s := range ss.sow.Sessions {
 		totalTasks += len(s.Tasks)
+		totalCriteria += len(s.AcceptanceCriteria)
 		phase := s.Phase
 		if phase != "" {
 			phase = " [" + phase + "]"
 		}
 		fmt.Fprintf(&b, "  %s: %s%s (%d tasks, %d criteria)\n",
 			s.ID, s.Title, phase, len(s.Tasks), len(s.AcceptanceCriteria))
+		// Show how acceptance criteria will be checked so the user can
+		// audit them without running anything.
+		for _, ac := range s.AcceptanceCriteria {
+			how := "manual"
+			switch {
+			case ac.Command != "":
+				how = "$ " + ac.Command
+			case ac.FileExists != "":
+				how = "exists: " + ac.FileExists
+			case ac.ContentMatch != nil:
+				how = fmt.Sprintf("%s ~ %q", ac.ContentMatch.File, ac.ContentMatch.Pattern)
+			}
+			fmt.Fprintf(&b, "    - [%s] %s: %s\n", ac.ID, ac.Description, how)
+		}
 	}
-	fmt.Fprintf(&b, "Total tasks: %d\n", totalTasks)
+	fmt.Fprintf(&b, "Total tasks: %d, Total criteria: %d\n", totalTasks, totalCriteria)
+
+	// If state exists, show what would be skipped on resume.
+	if state, _ := LoadSOWState(ss.projectRoot); state != nil {
+		var done []string
+		for _, s := range state.Sessions {
+			if s.Status == "done" && s.AcceptanceMet {
+				done = append(done, s.SessionID)
+			}
+		}
+		if len(done) > 0 {
+			fmt.Fprintf(&b, "\nResume state: %d/%d sessions already complete: %s\n",
+				len(done), len(ss.sow.Sessions), strings.Join(done, ", "))
+		}
+	}
+
 	return b.String()
 }
 
