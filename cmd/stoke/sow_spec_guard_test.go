@@ -459,17 +459,3 @@ func TestLoadRawSOWText_NonexistentFileFallsBack(t *testing.T) {
 	}
 }
 
-func TestLenToStr(t *testing.T) {
-	cases := map[int]string{
-		0:     "0",
-		1:     "1",
-		42:    "42",
-		-5:    "-5",
-		10000: "10000",
-	}
-	for in, want := range cases {
-		if got := lenToStr(in); got != want {
-			t.Errorf("lenToStr(%d) = %q, want %q", in, got, want)
-		}
-	}
-}

@@ -312,26 +312,3 @@ func formatSpecFaithfulnessBlob(missing []string, suspicious []PlaceholderFindin
 	return b.String()
 }
 
-// lenToStr is a small helper mirroring engine.lenStr so we can render
-// truncation notices without importing strconv everywhere.
-func lenToStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits [20]byte
-	i := len(digits)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		digits[i] = byte('0' + n%10)
-		n /= 10
-	}
-	s := string(digits[i:])
-	if neg {
-		return "-" + s
-	}
-	return s
-}

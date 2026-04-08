@@ -1472,11 +1472,52 @@ func sowCmd(args []string) {
 		fmt.Printf(" [%s]", sow.Stack.Monorepo.Tool)
 	}
 	fmt.Println()
-	fmt.Printf("  workers: %d\n", *workers)
-	fmt.Printf("  runner:  %s\n", *runnerMode)
+	fmt.Printf("  runner:  %s", *runnerMode)
+	if *runnerMode == "native" && *nativeBaseURL != "" {
+		fmt.Printf(" → %s", *nativeBaseURL)
+	}
+	if *runnerMode == "native" && *nativeModel != "" {
+		fmt.Printf("  (%s)", *nativeModel)
+	}
+	fmt.Println()
+	fmt.Printf("  workers: %d", *workers)
+	if *parallelTasks > 1 {
+		fmt.Printf("  (parallel-tasks: %d)", *parallelTasks)
+	}
+	fmt.Println()
 	fmt.Printf("  build:   %s\n", orNone(*buildC))
 	fmt.Printf("  test:    %s\n", orNone(*testC))
-	fmt.Printf("  lint:    %s\n\n", orNone(*lintC))
+	fmt.Printf("  lint:    %s\n", orNone(*lintC))
+
+	// Smart-loop banner: show which guards are active so the user knows
+	// what's running. Only print the line if at least one feature is on
+	// so the existing single-session quick-runs aren't bloated.
+	if *runnerMode == "native" {
+		var smartParts []string
+		smartParts = append(smartParts, fmt.Sprintf("repair:%d", *maxRepairAttempts))
+		if *autoCritique {
+			smartParts = append(smartParts, "critique")
+		}
+		if *enableWisdom {
+			smartParts = append(smartParts, "wisdom")
+		}
+		if *enableCrossReview {
+			smartParts = append(smartParts, "cross-review")
+		}
+		if *strictScope {
+			smartParts = append(smartParts, "strict-scope")
+		}
+		if *compactThreshold > 0 {
+			smartParts = append(smartParts, fmt.Sprintf("compact@%d", *compactThreshold))
+		}
+		if *costBudget > 0 {
+			smartParts = append(smartParts, fmt.Sprintf("budget=$%.2f", *costBudget))
+		}
+		if len(smartParts) > 0 {
+			fmt.Printf("  smart:   %s\n", strings.Join(smartParts, ", "))
+		}
+	}
+	fmt.Println()
 
 	// Convert SOW to flat plan with session gates
 	p := sow.ToPlan()
@@ -1762,17 +1803,31 @@ func sowCmd(args []string) {
 
 	results, err := ss.Run(ctx, sessionExecFn)
 
-	// Report results
-	fmt.Printf("\n=== SOW Results ===\n")
+	// Tally pass/fail/skipped counts up front so a 13-session build
+	// has a clear summary even if you scroll past the per-session
+	// detail. Then print one line per session.
+	var passed, failed, skipped int
+	for _, r := range results {
+		switch {
+		case r.Skipped:
+			skipped++
+		case r.Error != nil || !r.AcceptanceMet:
+			failed++
+		default:
+			passed++
+		}
+	}
+	fmt.Printf("\n=== SOW Results: %d passed, %d failed, %d skipped (of %d sessions) ===\n",
+		passed, failed, skipped, len(sow.Sessions))
 	for _, r := range results {
 		status := "PASS"
 		switch {
 		case r.Skipped:
-			status = "SKIPPED"
+			status = "SKIP"
 		case r.Error != nil:
 			status = "FAIL"
 		case !r.AcceptanceMet:
-			status = "CRITERIA NOT MET"
+			status = "FAIL"
 		}
 		attemptStr := ""
 		if r.Attempts > 1 {
@@ -1790,11 +1845,22 @@ func sowCmd(args []string) {
 		fmt.Printf("\n  state: %s\n", plan.SOWStatePath(absRepo))
 	}
 
-	if err != nil {
+	switch {
+	case err != nil && failed == 0:
+		// Scheduler returned an error but counted no failures —
+		// surface the error verbatim so the user can see what
+		// happened.
 		fmt.Fprintf(os.Stderr, "\nSOW execution failed: %v\n", err)
 		os.Exit(1)
+	case failed > 0:
+		fmt.Fprintf(os.Stderr, "\nSOW finished with %d failed session(s).\n", failed)
+		if passed > 0 {
+			fmt.Fprintf(os.Stderr, "  %d session(s) passed; rerun with --resume to skip them.\n", passed)
+		}
+		os.Exit(1)
+	default:
+		fmt.Println("\nSOW completed successfully.")
 	}
-	fmt.Println("\nSOW completed successfully.")
 }
 
 func countSOWTasks(sow *plan.SOW) int {
@@ -4474,17 +4540,54 @@ BUILD FLAGS:
   --dry-run            Show plan without executing
 
 SOW FLAGS:
-  --file <path>           SOW file (default: stoke-sow.{json,yaml,yml})
-  --validate              Validate SOW and exit
-  --dry-run               Show SOW summary (with acceptance commands) and exit
-  --workers <n>           Max parallel agents per session (default: 4)
-  --runner <mode>         Runner backend: claude, codex, native, hybrid
-  --native-api-key        API key for native runner (direct API, no CLI)
-  --native-base-url       Base URL for LiteLLM/custom API endpoint
-  --native-model          Model name (default: claude-sonnet-4-6)
-  --resume                Skip sessions already completed in .stoke/sow-state.json
-  --continue-on-failure   Keep running subsequent sessions after a failure
-  --session-retries <n>   Retry attempts per session (default: 2)
+  Source:
+    --file <path>           SOW file: .json, .yaml, .yml, or prose .md/.txt
+                            (auto-converted via LLM, cached). Default lookup:
+                            stoke-sow.{json,yaml,yml} in repo root.
+    --validate              Validate SOW and exit
+    --dry-run               Show SOW summary (with acceptance commands) and exit
+
+  Runner:
+    --runner <mode>         claude | codex | native | hybrid (default: claude)
+    --native-api-key <key>  API key for native runner (or LITELLM_API_KEY /
+                            LITELLM_MASTER_KEY / ANTHROPIC_API_KEY env)
+    --native-base-url <url> LiteLLM/custom proxy URL (e.g. http://localhost:8000)
+    --native-model <name>   Model name (default: claude-sonnet-4-6)
+    --workers <n>           Max parallel agents per session (default: 4)
+    --parallel-tasks <n>    Concurrent tasks within a session, dependency- and
+                            file-disjoint (default: 1 = sequential)
+
+  Multi-session control:
+    --resume                Skip sessions already completed in .stoke/sow-state.json
+    --continue-on-failure   true | false | auto (default: auto = on for >1 sessions).
+                            "On" attempts every session and reports failures at end.
+    --session-retries <n>   Per-session retry budget (default: 2)
+    --repair-attempts <n>   Per-session self-repair attempts inside the native loop
+                            (run acceptance, feed failures back, retry; default: 3)
+
+  Smart loop:
+    --sow-critique          When prose SOW converted, run LLM critique+refine pass
+                            (default: true)
+    --wisdom                Capture per-session learnings and inject into later
+                            sessions (default: true)
+    --cross-review          After each successful session, run a cross-model code
+                            review over the git diff (default: true)
+    --review-model <name>   Model name for cross-review (default: same as native)
+    --strict-scope          Fail sessions that touched files outside declared
+                            scope (default: false, warn-only)
+    --repomap-tokens <n>    Max chars of ranked repo map injected into task prompts
+                            (default: 3000, 0 = disable)
+    --compact-threshold <n> Per-task input token estimate that triggers progressive
+                            context compaction inside the agent loop (default:
+                            100000, 0 = disable)
+    --cost-budget <usd>     Total cost budget across the SOW run, halts when
+                            exceeded (default: 0 = unlimited)
+    --specexec              Enable speculative parallel execution (4 strategies)
+    --roi <level>           ROI filter: high | medium | low | skip (default: medium)
+
+  Safety:
+    --timeout <duration>    Wall-clock cap (default: 0 = supervisor-driven)
+    --policy <path>         Path to stoke.policy.yaml
 
 PLAN FLAGS:
   --task <goal>        High-level goal description

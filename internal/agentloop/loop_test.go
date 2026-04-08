@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ericmacdougall/stoke/internal/provider"
@@ -284,9 +285,11 @@ func TestLoopParallelToolExecution(t *testing.T) {
 		},
 	}
 
-	var callCount int
+	// callCount is incremented concurrently from parallel tool
+	// goroutines, so it must use sync/atomic to avoid a -race report.
+	var callCount int64
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
-		callCount++
+		atomic.AddInt64(&callCount, 1)
 		return "content", nil
 	}
 
@@ -296,8 +299,8 @@ func TestLoopParallelToolExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if callCount != 2 {
-		t.Errorf("call_count=%d, want 2", callCount)
+	if got := atomic.LoadInt64(&callCount); got != 2 {
+		t.Errorf("call_count=%d, want 2", got)
 	}
 
 	// Should have tool_result messages for both
