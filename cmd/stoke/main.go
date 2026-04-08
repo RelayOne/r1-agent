@@ -89,6 +89,10 @@ type BuildConfig struct {
 	EnvBackend      string // execution environment: inproc, docker, fly, ember
 	EnvImage        string // base image for container/VM environments
 	EnvSize         string // machine size for cloud environments
+	RunnerMode      string // runner backend: claude, codex, native, hybrid
+	NativeAPIKey    string // API key for native runner (required when RunnerMode=native)
+	NativeModel     string // model for native runner
+	NativeBaseURL   string // base URL for native runner (e.g. LiteLLM proxy)
 }
 
 // runBuild executes a build plan and returns the result.
@@ -345,6 +349,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			EventBus:         eventBus,
 			Environ:          buildEnv,
 			EnvHandle:        buildEnvHandle,
+			RunnerMode:       cfg.RunnerMode,
+			NativeAPIKey:     cfg.NativeAPIKey,
+			NativeModel:      cfg.NativeModel,
+			NativeBaseURL:    cfg.NativeBaseURL,
 			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
@@ -587,6 +595,8 @@ func main() {
 		poolsCmd(os.Args[2:])
 	case "remove-pool":
 		removePoolCmd(os.Args[2:])
+	case "sow":
+		sowCmd(os.Args[2:])
 	case "mission":
 		missionCmd(os.Args[2:])
 	case "serve":
@@ -702,6 +712,7 @@ func runCmd(args []string) {
 	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
 	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
+	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
 	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
 	fs.Parse(args)
 
@@ -761,6 +772,7 @@ func runCmd(args []string) {
 		RunnerMode:      *runnerMode,
 		NativeAPIKey:    *nativeAPIKey,
 		NativeModel:     *nativeModel,
+		NativeBaseURL:   *nativeBaseURL,
 		EventBus:        newEventBus(),
 		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
@@ -1107,6 +1119,269 @@ func buildCmd(args []string) {
 		fmt.Printf("\n  Build completed with %d failed task(s)\n", buildReport.TasksFailed)
 		os.Exit(1)
 	}
+}
+
+// --- sow: execute a Statement of Work ---
+
+func sowCmd(args []string) {
+	fs := flag.NewFlagSet("sow", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	sowFile := fs.String("file", "", "SOW file (default: stoke-sow.json)")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	dryRun := fs.Bool("dry-run", false, "Show SOW summary without executing")
+	validate := fs.Bool("validate", false, "Validate SOW and exit")
+	workers := fs.Int("workers", 4, "Max parallel agents per session")
+	authMode := fs.String("mode", "mode1", "Auth mode")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "CODEX_HOME")
+	buildC := fs.String("build-cmd", "", "Build command (auto-detected)")
+	testC := fs.String("test-cmd", "", "Test command (auto-detected)")
+	lintC := fs.String("lint-cmd", "", "Lint command (auto-detected)")
+	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
+	nativeAPIKey := fs.String("native-api-key", "", "API key for native runner")
+	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
+	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
+	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
+	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
+	timeout := fs.Duration("timeout", 120*time.Minute, "Timeout")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Load SOW
+	var sow *plan.SOW
+	if *sowFile != "" {
+		sow, err = plan.LoadSOW(*sowFile)
+	} else {
+		sow, err = plan.LoadSOWFromDir(absRepo)
+	}
+	if err != nil {
+		fatal("load SOW: %v", err)
+	}
+
+	// Validate
+	if validationErrs := plan.ValidateSOW(sow); len(validationErrs) > 0 {
+		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
+		for _, e := range validationErrs {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+		if *validate {
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr)
+	} else if *validate {
+		fmt.Println("SOW is valid.")
+		return
+	}
+
+	// Check infra env vars
+	if missing := sow.ValidateInfraEnvVars(); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "Missing infrastructure env vars:\n")
+		for _, m := range missing {
+			fmt.Fprintf(os.Stderr, "  - %s\n", m)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Auto-detect stack from repo
+	detectedStack := plan.DetectStackFromRepo(absRepo)
+
+	// Dry run: show summary
+	ss := plan.NewSessionScheduler(sow, absRepo)
+	if *dryRun {
+		fmt.Print(ss.DryRun())
+		if detectedStack.Language != "" {
+			fmt.Printf("\nDetected: %s", detectedStack.Language)
+			if detectedStack.Monorepo != nil {
+				fmt.Printf(" [%s]", detectedStack.Monorepo.Tool)
+				if detectedStack.Monorepo.Manager != "" {
+					fmt.Printf(" (%s)", detectedStack.Monorepo.Manager)
+				}
+			}
+			fmt.Println()
+		}
+		return
+	}
+
+	// Auto-detect commands
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
+
+	fmt.Printf("SOW %s\n", version)
+	fmt.Printf("  sow:     %s (%d sessions, %d total tasks)\n", sow.Name, len(sow.Sessions), countSOWTasks(sow))
+	fmt.Printf("  stack:   %s", sow.Stack.Language)
+	if sow.Stack.Monorepo != nil {
+		fmt.Printf(" [%s]", sow.Stack.Monorepo.Tool)
+	}
+	fmt.Println()
+	fmt.Printf("  workers: %d\n", *workers)
+	fmt.Printf("  runner:  %s\n", *runnerMode)
+	fmt.Printf("  build:   %s\n", orNone(*buildC))
+	fmt.Printf("  test:    %s\n", orNone(*testC))
+	fmt.Printf("  lint:    %s\n\n", orNone(*lintC))
+
+	// Convert SOW to flat plan with session gates
+	p := sow.ToPlan()
+
+	// ROI filter
+	var roiClass plan.ROIClass
+	switch *roiFilter {
+	case "high":
+		roiClass = plan.ROIHigh
+	case "medium":
+		roiClass = plan.ROIMedium
+	case "low":
+		roiClass = plan.ROILow
+	case "skip":
+		roiClass = plan.ROISkip
+	default:
+		roiClass = plan.ROIMedium
+	}
+	kept, filtered := plan.FilterByROI(p.Tasks, roiClass)
+	if len(filtered) > 0 {
+		fmt.Printf("  ROI filter removed %d task(s)\n\n", len(filtered))
+		p.Tasks = kept
+	}
+
+	// Type-route tasks
+	for i := range p.Tasks {
+		if p.Tasks[i].Type == "" {
+			p.Tasks[i].Type = string(model.InferTaskType(p.Tasks[i].Description))
+		}
+	}
+
+	// Validate plan
+	if planErrs := p.Validate(); len(planErrs) > 0 {
+		for _, e := range planErrs {
+			fmt.Fprintf(os.Stderr, "  plan warning: %s\n", e)
+		}
+	}
+
+	// Execute session-by-session with acceptance criteria gates
+	sigCtx, sigCancel := signalContext(context.Background())
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
+	defer cancel()
+
+	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+		fmt.Printf("\n--- Session %s: %s ---\n", session.ID, session.Title)
+		fmt.Printf("  %d tasks\n", len(session.Tasks))
+
+		// Build a sub-plan from just this session's tasks
+		sessionPlan := &plan.Plan{
+			ID:          sow.ID + "-" + session.ID,
+			Description: session.Title,
+			Tasks:       session.Tasks,
+		}
+
+		// Use runBuild for the session's tasks
+		sessionCfg := BuildConfig{
+			RepoRoot:        absRepo,
+			PolicyPath:      *policy,
+			Workers:         *workers,
+			AuthMode:        *authMode,
+			ClaudeBinary:    *claudeBin,
+			CodexBinary:     *codexBin,
+			ClaudeConfigDir: *claudeConfigDir,
+			CodexHome:       *codexHome,
+			BuildCommand:    *buildC,
+			TestCommand:     *testC,
+			LintCommand:     *lintC,
+			ROIFilter:       *roiFilter,
+			SpecExec:        *specExec,
+			Timeout:         *timeout,
+			RunnerMode:      *runnerMode,
+			NativeAPIKey:    *nativeAPIKey,
+			NativeModel:     *nativeModel,
+			NativeBaseURL:   *nativeBaseURL,
+		}
+
+		// Save the session plan temporarily
+		tmpPlan := filepath.Join(absRepo, ".stoke", "session-plan.json")
+		os.MkdirAll(filepath.Dir(tmpPlan), 0755)
+		plan.SaveSOW(tmpPlan, &plan.SOW{}) // create .stoke dir
+		if err := plan.Save(filepath.Dir(tmpPlan), sessionPlan); err != nil {
+			// Fallback: save to repo root
+			plan.Save(absRepo, sessionPlan)
+		} else {
+			sessionCfg.PlanPath = filepath.Join(filepath.Dir(tmpPlan), "stoke-plan.json")
+		}
+
+		buildReport, err := runBuild(sessionCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert report to TaskExecResults
+		var results []plan.TaskExecResult
+		if buildReport != nil {
+			for _, tr := range buildReport.Tasks {
+				results = append(results, plan.TaskExecResult{
+					TaskID:  tr.ID,
+					Success: tr.Status == "done",
+				})
+			}
+		}
+
+		// If we didn't get per-task results, synthesize from the overall result
+		if len(results) == 0 {
+			for _, t := range session.Tasks {
+				results = append(results, plan.TaskExecResult{
+					TaskID:  t.ID,
+					Success: buildReport != nil && buildReport.Success,
+				})
+			}
+		}
+
+		return results, nil
+	}
+
+	results, err := ss.Run(ctx, sessionExecFn)
+
+	// Report results
+	fmt.Printf("\n=== SOW Results ===\n")
+	for _, r := range results {
+		status := "PASS"
+		if r.Error != nil {
+			status = "FAIL"
+		} else if !r.AcceptanceMet {
+			status = "CRITERIA NOT MET"
+		}
+		fmt.Printf("  [%s] %s: %s\n", status, r.SessionID, r.Title)
+		if r.Error != nil {
+			fmt.Printf("    error: %v\n", r.Error)
+		}
+		if len(r.Acceptance) > 0 {
+			fmt.Print(plan.FormatAcceptanceResults(r.Acceptance))
+		}
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nSOW execution failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("\nSOW completed successfully.")
+}
+
+func countSOWTasks(sow *plan.SOW) int {
+	n := 0
+	for _, s := range sow.Sessions {
+		n += len(s.Tasks)
+	}
+	return n
 }
 
 // --- plan: generate a plan file from codebase analysis ---
@@ -3045,6 +3320,7 @@ USAGE:
 COMMANDS:
   run       Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
   build     Execute multi-task plan with parallel agents
+  sow       Execute Statement of Work (multi-session with acceptance gates)
   plan      Generate a task plan from codebase analysis (headless)
   scope     Interactive scoping session with research loop (read-only)
   yolo      Launch Claude Code interactively with full Stoke guards
@@ -3079,6 +3355,16 @@ BUILD FLAGS:
   --sqlite             Use SQLite session store instead of JSON
   --interactive        Launch interactive Bubble Tea TUI
   --dry-run            Show plan without executing
+
+SOW FLAGS:
+  --file <path>        SOW file (default: stoke-sow.json)
+  --validate           Validate SOW and exit
+  --dry-run            Show SOW summary without executing
+  --workers <n>        Max parallel agents per session (default: 4)
+  --runner <mode>      Runner backend: claude, codex, native, hybrid
+  --native-api-key     API key for native runner (direct API, no CLI)
+  --native-base-url    Base URL for LiteLLM/custom API endpoint
+  --native-model       Model name (default: claude-sonnet-4-6)
 
 PLAN FLAGS:
   --task <goal>        High-level goal description
@@ -3115,6 +3401,8 @@ QUICKSTART:
   stoke build --plan stoke-plan.json --workers 4
   stoke scan --security
   stoke audit --dry-run
+  stoke sow --dry-run
+  stoke sow --runner native --native-base-url http://localhost:8000
   stoke pool --claude-config-dir ~/.claude
 
 `, version)
