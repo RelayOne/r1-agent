@@ -62,7 +62,8 @@ import (
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
-const version = "1.0.0"
+// version is set at build time via ldflags.
+var version = "dev"
 
 // BuildConfig holds all parameters for a build run.
 // Used by both buildCmd (CLI) and shipCmd (programmatic).
