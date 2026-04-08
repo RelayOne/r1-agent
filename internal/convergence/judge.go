@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -184,14 +185,8 @@ func (j *LLMOverrideJudge) Propose(ctx JudgeContext) (*JudgeProposal, error) {
 	}
 
 	raw := extractText(resp)
-	cleaned := stripJudgeFences(raw)
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end < start {
-		return nil, fmt.Errorf("vp eng response had no JSON: %s", truncateJudge(raw, 200))
-	}
 	var prop JudgeProposal
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &prop); err != nil {
+	if _, err := jsonutil.ExtractJSONInto(raw, &prop); err != nil {
 		return nil, fmt.Errorf("parse vp eng proposal: %w", err)
 	}
 	// Stamp proposer on every entry.
@@ -228,14 +223,8 @@ func (j *LLMOverrideJudge) Approve(ctx JudgeContext, proposal *JudgeProposal) (*
 	}
 
 	raw := extractText(resp)
-	cleaned := stripJudgeFences(raw)
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end < start {
-		return nil, fmt.Errorf("cto response had no JSON: %s", truncateJudge(raw, 200))
-	}
 	var dec JudgeDecision
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &dec); err != nil {
+	if _, err := jsonutil.ExtractJSONInto(raw, &dec); err != nil {
 		return nil, fmt.Errorf("parse cto decision: %w", err)
 	}
 	// Stamp approver on every entry.
@@ -259,24 +248,6 @@ func extractText(resp *provider.ChatResponse) string {
 		}
 	}
 	return sb.String()
-}
-
-func stripJudgeFences(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx >= 0 {
-			s = s[idx+1:]
-		}
-	}
-	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
-	return strings.TrimSpace(s)
-}
-
-func truncateJudge(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 // buildJudgeContextBlob serializes the JudgeContext in a compact human/model-

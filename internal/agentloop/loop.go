@@ -33,7 +33,27 @@ type Config struct {
 	SystemPrompt       string        // static system prompt (cached)
 	ThinkingBudget     int           // extended thinking budget (0 = disabled)
 	Timeout            time.Duration // per-turn timeout
+	// CompactThreshold is the estimated input-token count above which
+	// the loop calls CompactFn to rewrite the message history. 0 = no
+	// automatic compaction.
+	CompactThreshold int
+	// CompactFn is a hook that rewrites the message history when the
+	// loop detects the conversation has grown past CompactThreshold.
+	// The hook receives the current slice and must return a new slice
+	// (or the same one) that is safe to continue from. Implementations
+	// should:
+	//   - Preserve the first user message (the task brief)
+	//   - Preserve recent tool_use/tool_result pairs (in-flight work)
+	//   - Summarize or drop old tool_result content
+	// nil = no compaction.
+	CompactFn CompactFunc
 }
+
+// CompactFunc is the signature for the per-turn compaction hook. It
+// receives the current message list and the estimated token count; it
+// must return a new message list that preserves tool_use/tool_result
+// pair integrity (otherwise the API will reject the next request).
+type CompactFunc func(messages []Message, estimatedTokens int) []Message
 
 func (c *Config) defaults() {
 	if c.MaxTurns == 0 {
@@ -192,6 +212,23 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			result.Turns = turn
 			return result, ctx.Err()
 		default:
+		}
+
+		// Progressive compaction: before every API call, estimate the
+		// conversation's token footprint and call the CompactFn hook if
+		// it's grown past CompactThreshold. The hook returns a (possibly
+		// rewritten) message list; we trust it to preserve
+		// tool_use/tool_result pair integrity so the next API call
+		// doesn't 400.
+		if l.config.CompactFn != nil && l.config.CompactThreshold > 0 {
+			est := estimateMessagesTokens(messages)
+			if est > l.config.CompactThreshold {
+				compacted := l.config.CompactFn(messages, est)
+				if compacted != nil && len(compacted) > 0 {
+					messages = compacted
+					result.Messages = messages
+				}
+			}
 		}
 
 		// Build the API request
@@ -448,4 +485,35 @@ func truncateOutput(s string, max int) string {
 		return s
 	}
 	return s[:max] + "... (truncated)"
+}
+
+// estimateMessagesTokens returns a rough token count for a message list.
+// Uses the 4-chars-per-token heuristic (matches the rest of Stoke's
+// estimator helpers). Accuracy is not critical — this feeds the
+// CompactThreshold check which is a best-effort guard, not a hard
+// budget.
+func estimateMessagesTokens(messages []Message) int {
+	chars := 0
+	for _, m := range messages {
+		chars += len(m.Role) + 8 // role + framing overhead
+		for _, c := range m.Content {
+			chars += len(c.Type) + 4
+			chars += len(c.Text)
+			chars += len(c.Content)   // tool_result content
+			chars += len(c.Thinking)
+			if len(c.Input) > 0 {
+				chars += len(c.Input)
+			}
+			if len(c.ID) > 0 {
+				chars += len(c.ID) + 4
+			}
+			if len(c.Name) > 0 {
+				chars += len(c.Name) + 4
+			}
+		}
+	}
+	if chars == 0 {
+		return 0
+	}
+	return chars / 4
 }

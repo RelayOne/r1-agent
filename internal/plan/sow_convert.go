@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -132,25 +133,19 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		return nil, nil, fmt.Errorf("empty response from model")
 	}
 
-	// Strip common markdown fences in case the model disobeyed the
-	// "output only JSON" rule.
-	cleaned := stripMarkdownFences(raw)
-
-	// Find the first { and last } so stray prose before/after doesn't
-	// break parsing.
-	first := strings.Index(cleaned, "{")
-	last := strings.LastIndex(cleaned, "}")
-	if first < 0 || last < 0 || last <= first {
-		return nil, nil, fmt.Errorf("no JSON object in model response (first 200 chars: %s)", truncateForError(raw, 200))
+	// Robust extraction: handles markdown fences, prose preamble,
+	// BOM, trailing commas, etc. via the shared jsonutil helper.
+	jsonBlob, extractErr := jsonutil.ExtractJSONObject(raw)
+	if extractErr != nil {
+		return nil, nil, fmt.Errorf("parse generated SOW: %w", extractErr)
 	}
-	jsonBlob := cleaned[first : last+1]
 
-	sow, err := ParseSOW([]byte(jsonBlob), "generated.json")
+	sow, err := ParseSOW(jsonBlob, "generated.json")
 	if err != nil {
-		return nil, []byte(jsonBlob), fmt.Errorf("parse generated SOW: %w\n\nraw JSON:\n%s", err, truncateForError(jsonBlob, 800))
+		return nil, jsonBlob, fmt.Errorf("parse generated SOW: %w\n\nraw JSON:\n%s", err, truncateForError(string(jsonBlob), 800))
 	}
 	if errs := ValidateSOW(sow); len(errs) > 0 {
-		return sow, []byte(jsonBlob), fmt.Errorf("generated SOW failed validation: %s", strings.Join(errs, "; "))
+		return sow, jsonBlob, fmt.Errorf("generated SOW failed validation: %s", strings.Join(errs, "; "))
 	}
 	return sow, []byte(jsonBlob), nil
 }

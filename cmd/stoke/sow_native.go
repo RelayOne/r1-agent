@@ -14,6 +14,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/repomap"
@@ -118,6 +119,13 @@ type sowNativeConfig struct {
 	// are disjoint AND their dependencies are already satisfied.
 	// Default 1 (sequential). Set to >1 to enable parallel dispatch.
 	ParallelWorkers int
+
+	// CompactThreshold enables progressive context compaction inside
+	// long-running tasks. When the estimated input token count crosses
+	// this value between turns, the native runner's compactor rewrites
+	// the message history to shrink it. 0 = disabled. Recommended
+	// value: 100_000 to stay comfortably under a 200k context window.
+	CompactThreshold int
 }
 
 // runSessionNative is the SOW fast path: it executes a session's tasks
@@ -501,14 +509,8 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 			raw += c.Text
 		}
 	}
-	cleaned := stripSimpleFences(raw)
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end < start {
-		return nil
-	}
 	var result crossReviewResult
-	if jsonErr := unmarshalCrossReview([]byte(cleaned[start:end+1]), &result); jsonErr != nil {
+	if _, jsonErr := jsonutil.ExtractJSONInto(raw, &result); jsonErr != nil {
 		return nil
 	}
 	return &result
@@ -646,6 +648,15 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 // concurrently. Task IDs without explicit deps or files fall back to
 // sequential execution (one wave per task) so we don't accidentally
 // parallelize things that implicitly share state.
+//
+// File-collision detection: before each wave, we snapshot the set of
+// files currently in git status. After the wave completes, we diff the
+// snapshot against the new status to see which files changed DURING
+// the wave. Any changed file that wasn't in the union of declared
+// task.Files for this wave gets reported as a collision — either an
+// undeclared side-effect (agent touched a file it shouldn't have) or
+// a race between two tasks with overlapping implicit scope. Either
+// way the operator sees it clearly and can tighten the SOW.
 func runSessionPhase1Parallel(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
 	waves := buildParallelWaves(session.Tasks)
 
@@ -667,6 +678,16 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 			workers = len(wave)
 		}
 		fmt.Printf("  wave %d: %d task(s) in parallel (%d worker(s))\n", waveIdx+1, len(wave), workers)
+
+		// Snapshot git state before the wave so we can detect
+		// collisions afterwards.
+		preWaveDirty := toSet(gitDirtyFiles(ctx, cfg.RepoRoot))
+		declaredInWave := make(map[string]bool)
+		for _, ti := range wave {
+			for _, f := range session.Tasks[ti].Files {
+				declaredInWave[normalizeScopePath(f)] = true
+			}
+		}
 
 		sem := make(chan struct{}, workers)
 		resCh := make(chan indexed, len(wave))
@@ -697,8 +718,69 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 			results[r.idx] = r.res
 			completed++
 		}
+
+		// Post-wave collision audit.
+		postWaveDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+		newlyChanged := diffFileSets(postWaveDirty, preWaveDirty)
+		var undeclared []string
+		for _, f := range newlyChanged {
+			if strings.HasPrefix(f, ".stoke/") {
+				continue
+			}
+			if declaredInWave[normalizeScopePath(f)] {
+				continue
+			}
+			// Accept directory-prefix matches ("src/auth/" allows
+			// "src/auth/token.go").
+			ok := false
+			for d := range declaredInWave {
+				if strings.HasSuffix(d, "/") && strings.HasPrefix(f, d) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				undeclared = append(undeclared, f)
+			}
+		}
+		if len(undeclared) > 0 {
+			fmt.Printf("  ⚠ wave %d collision: %d file(s) touched outside declared task.Files:\n", waveIdx+1, len(undeclared))
+			for _, f := range undeclared {
+				fmt.Printf("    - %s\n", f)
+			}
+			if cfg.StrictScope {
+				// Record as a synthetic task failure so the
+				// scheduler sees the session is not clean.
+				results = append(results, plan.TaskExecResult{
+					TaskID:  fmt.Sprintf("%s-wave%d-collision", session.ID, waveIdx+1),
+					Success: false,
+					Error:   fmt.Errorf("parallel wave collision: %d undeclared file(s)", len(undeclared)),
+				})
+			}
+		}
 	}
 	return results
+}
+
+// toSet converts a string slice into a set for O(1) membership checks.
+func toSet(items []string) map[string]bool {
+	s := make(map[string]bool, len(items))
+	for _, item := range items {
+		s[item] = true
+	}
+	return s
+}
+
+// diffFileSets returns items in post that aren't in pre. Used to see
+// what changed during a wave.
+func diffFileSets(post []string, pre map[string]bool) []string {
+	var out []string
+	for _, f := range post {
+		if !pre[f] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // buildParallelWaves groups tasks into dependency-respecting waves of
@@ -836,11 +918,12 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	}
 
 	spec := engine.RunSpec{
-		Prompt:       userPrompt,
-		SystemPrompt: systemPrompt,
-		WorktreeDir:  cfg.RepoRoot,
-		RuntimeDir:   taskRuntime,
-		Mode:         engine.AuthModeAPIKey,
+		Prompt:           userPrompt,
+		SystemPrompt:     systemPrompt,
+		CompactThreshold: cfg.CompactThreshold,
+		WorktreeDir:      cfg.RepoRoot,
+		RuntimeDir:       taskRuntime,
+		Mode:             engine.AuthModeAPIKey,
 		Phase: engine.PhaseSpec{
 			Name:     "execute",
 			MaxTurns: maxTurns,

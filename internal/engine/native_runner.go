@@ -102,6 +102,16 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		SystemPrompt:       systemPrompt,
 	}
 
+	// Progressive context compaction. When RunSpec.CompactThreshold is
+	// set, hook a cache-preserving compactor into the agentloop so long
+	// tasks don't blow past the context window. The compactor keeps the
+	// first user message (task brief) + the last 6 messages verbatim
+	// and summarizes older tool_results.
+	if compactionEnabled(spec) {
+		cfg.CompactThreshold = spec.CompactThreshold
+		cfg.CompactFn = buildNativeCompactor(6, 200)
+	}
+
 	// Create and configure the loop
 	loop := agentloop.New(p, cfg, toolDefs, handler)
 
