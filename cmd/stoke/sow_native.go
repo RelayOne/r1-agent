@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,9 +15,25 @@ import (
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/wisdom"
 )
+
+// encodeTextMessage wraps a plain string in the provider's content-block
+// schema. Small helper used by the cross-review and other single-message
+// LLM calls in this package.
+func encodeTextMessage(text string) (json.RawMessage, error) {
+	return json.Marshal([]map[string]interface{}{{"type": "text", "text": text}})
+}
+
+// unmarshalCrossReview parses the reviewer's JSON response into a
+// crossReviewResult. Separated so the cross-review logic can stay
+// readable.
+func unmarshalCrossReview(data []byte, out *crossReviewResult) error {
+	return json.Unmarshal(data, out)
+}
 
 // sowNativeConfig holds the small surface area the fast-path session
 // executor needs. Passed in from sowCmd to avoid closure-capturing every
@@ -59,6 +78,46 @@ type sowNativeConfig struct {
 	// session via SessionScheduler.AppendSession so the SOW self-
 	// extends.
 	OnContinuations func(fromSession string, items []string)
+
+	// --- Multi-session intelligence ---
+
+	// Wisdom is the cross-session learning store. After each session
+	// the orchestrator asks the model to extract patterns/decisions/
+	// gotchas and records them here. ForPrompt() injects the accumulated
+	// wisdom into subsequent session system prompts so later sessions
+	// inherit what earlier ones learned. nil = wisdom disabled.
+	Wisdom *wisdom.Store
+	// WisdomProvider is the LLM used to extract wisdom after each
+	// session. Usually the same provider as the build runner. nil =
+	// skip extraction (but still inject pre-existing wisdom into
+	// prompts if the store is non-nil).
+	WisdomProvider provider.Provider
+	// SOWID is used to scope the on-disk wisdom snapshot under
+	// .stoke/wisdom/<sow-id>.json.
+	SOWID string
+
+	// --- Cross-model review + scope gate ---
+
+	// ReviewProvider is a second provider (ideally a different model)
+	// that reads the session's git diff and grades the actual code
+	// quality. When nil, cross-model review is skipped.
+	ReviewProvider provider.Provider
+	// ReviewModel is the model name for cross-review. Empty = provider
+	// default.
+	ReviewModel string
+	// StrictScope: when true, sessions that touched files outside the
+	// declared session.Outputs/task.Files set get flagged and the
+	// session fails with a scope-creep error. Default false — scope
+	// violations are logged as warnings but don't fail the session.
+	StrictScope bool
+
+	// --- Intra-session parallelism ---
+
+	// ParallelWorkers controls how many tasks within a single session
+	// can run concurrently. Tasks only parallelize when their files
+	// are disjoint AND their dependencies are already satisfied.
+	// Default 1 (sequential). Set to >1 to enable parallel dispatch.
+	ParallelWorkers int
 }
 
 // runSessionNative is the SOW fast path: it executes a session's tasks
@@ -121,27 +180,10 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	workingSession := session
 	workingSession.AcceptanceCriteria = effectiveCriteria
 
-	// Phase 1: run each task once.
-	results := make([]plan.TaskExecResult, 0, len(session.Tasks))
-	for i, task := range session.Tasks {
-		if ctx.Err() != nil {
-			return results, ctx.Err()
-		}
-		if cfg.CostBudgetUSD > 0 && *cfg.spent >= cfg.CostBudgetUSD {
-			fmt.Printf("  budget exhausted ($%.2f / $%.2f) — halting session\n", *cfg.spent, cfg.CostBudgetUSD)
-			results = append(results, plan.TaskExecResult{
-				TaskID:  task.ID,
-				Success: false,
-				Error:   fmt.Errorf("cost budget exhausted"),
-			})
-			continue
-		}
-		fmt.Printf("  [%d/%d] %s: %s\n", i+1, len(session.Tasks), task.ID, task.Description)
-
-		sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, task, cfg.RepoMap, cfg.RepoMapBudget, nil)
-		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
-		results = append(results, tr)
-	}
+	// Phase 1: run tasks. When ParallelWorkers > 1 and we have tasks
+	// with disjoint file sets and no unsatisfied deps, execute them
+	// concurrently. Otherwise fall back to sequential execution.
+	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
 
 	// Phase 2: self-repair loop. Run the session's acceptance criteria;
 	// if any fail, construct a repair prompt containing the exact failure
@@ -179,7 +221,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
 				Description: "repair session acceptance criteria",
 			}
-			sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, repairTask, cfg.RepoMap, cfg.RepoMapBudget, &failureBlob)
+			sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, repairTask, cfg.RepoMap, cfg.RepoMapBudget, &failureBlob, cfg.Wisdom)
 			repairResult := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 			// Record as a synthetic task result so the caller sees the
 			// repair attempt happened.
@@ -197,7 +239,279 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		runOverrideForSession(ctx, session, finalAcceptance, cfg)
 	}
 
+	// Phase 4: scope gate. git diff the session's changes and check
+	// which files were actually touched. Flag tasks that touched files
+	// outside the declared session.Outputs/task.Files set (scope creep)
+	// and tasks that wrote nothing at all (zombie tasks). In strict
+	// mode this fails the session; otherwise it's a warning so the
+	// caller can observe drift without halting the build.
+	touched := gitDirtyFiles(ctx, cfg.RepoRoot)
+	if len(touched) > 0 {
+		if violations := checkScopeViolations(workingSession, touched); len(violations) > 0 {
+			fmt.Printf("  ⚠ scope gate: %d file(s) outside declared scope:\n", len(violations))
+			for _, v := range violations {
+				fmt.Printf("    - %s\n", v)
+			}
+			if cfg.StrictScope {
+				results = append(results, plan.TaskExecResult{
+					TaskID:  session.ID + "-scope-violation",
+					Success: false,
+					Error:   fmt.Errorf("scope violation: %d file(s) touched outside declared scope", len(violations)),
+				})
+			}
+		}
+	}
+
+	// Phase 5: cross-model review. A second provider (ideally a
+	// different model) reads the git diff and grades it. This catches
+	// issues the acceptance criteria missed — "the code compiles but
+	// doesn't do what the task asked for" — which is invisible to
+	// command-based gates.
+	if cfg.ReviewProvider != nil && finalPassed {
+		reviewResult := runCrossModelReview(ctx, session, cfg)
+		if reviewResult != nil && !reviewResult.Approved {
+			fmt.Printf("  ⚠ cross-review: reviewer blocked with %d concerns\n", len(reviewResult.Concerns))
+			for _, c := range reviewResult.Concerns {
+				fmt.Printf("    - [%s] %s\n", c.Severity, c.Description)
+			}
+			// Downgrade a successful session to failed so the
+			// scheduler's outer retry budget kicks in with the
+			// reviewer's concerns in the context.
+			results = append(results, plan.TaskExecResult{
+				TaskID:  session.ID + "-review-fail",
+				Success: false,
+				Error:   fmt.Errorf("cross-model review blocked: %s", reviewResult.Summary),
+			})
+		} else if reviewResult != nil {
+			fmt.Printf("  ✓ cross-review: reviewer approved (score %d/100)\n", reviewResult.Score)
+		}
+	}
+
+	// Phase 6: wisdom extraction. Ask the model to distill reusable
+	// learnings (conventions, decisions, gotchas) from this session
+	// and add them to the cross-session wisdom store. Subsequent
+	// sessions will inject these via ForPrompt() into their cached
+	// system blocks.
+	if cfg.Wisdom != nil && cfg.WisdomProvider != nil && ctx.Err() == nil {
+		n, wErr := CaptureSessionWisdom(ctx, session, results, finalAcceptance, cfg.Wisdom, cfg.WisdomProvider, cfg.Model)
+		if wErr != nil {
+			fmt.Printf("  wisdom capture warning: %v\n", wErr)
+		} else if n > 0 {
+			fmt.Printf("  captured %d learning(s) from session %s\n", n, session.ID)
+			if cfg.SOWID != "" {
+				_ = SaveWisdom(cfg.RepoRoot, cfg.SOWID, cfg.Wisdom)
+			}
+		}
+	}
+
 	return results, nil
+}
+
+// gitDirtyFiles returns the list of files that have uncommitted changes
+// in the worktree. Used by the scope gate to see what a session actually
+// touched. Best-effort: any git error returns an empty list (the gate
+// is a warning mechanism, not a merge blocker).
+func gitDirtyFiles(ctx context.Context, repoRoot string) []string {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// Porcelain format: XY <path>  (2-char status + space + path)
+		path := strings.TrimSpace(line[3:])
+		// Handle renames: "old -> new"
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+4:]
+		}
+		if path != "" {
+			files = append(files, path)
+		}
+	}
+	return files
+}
+
+// checkScopeViolations compares a list of touched files against a
+// session's declared scope (session.Outputs + union of task.Files).
+// Returns files that were touched but NOT declared.
+func checkScopeViolations(session plan.Session, touched []string) []string {
+	declared := make(map[string]bool)
+	for _, f := range session.Outputs {
+		declared[normalizeScopePath(f)] = true
+	}
+	for _, t := range session.Tasks {
+		for _, f := range t.Files {
+			declared[normalizeScopePath(f)] = true
+		}
+	}
+	// If the session declared nothing, treat the whole repo as in-scope
+	// (common for foundation sessions that don't pre-declare outputs).
+	if len(declared) == 0 {
+		return nil
+	}
+	// Always allow changes inside .stoke/ (state files, caches, etc.)
+	var violations []string
+	for _, f := range touched {
+		if strings.HasPrefix(f, ".stoke/") {
+			continue
+		}
+		if declared[normalizeScopePath(f)] {
+			continue
+		}
+		// Also allow files that share a directory prefix with a
+		// declared file — scope declarations are often directories
+		// like "src/auth/" rather than full paths.
+		allowed := false
+		for d := range declared {
+			if strings.HasSuffix(d, "/") && strings.HasPrefix(f, d) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			violations = append(violations, f)
+		}
+	}
+	sort.Strings(violations)
+	return violations
+}
+
+func normalizeScopePath(p string) string {
+	p = strings.TrimSpace(p)
+	return strings.TrimPrefix(p, "./")
+}
+
+// crossReviewResult is the structured output of the review model's pass.
+type crossReviewResult struct {
+	Approved bool                `json:"approved"`
+	Score    int                 `json:"score"`
+	Summary  string              `json:"summary"`
+	Concerns []crossReviewConcern `json:"concerns"`
+}
+
+type crossReviewConcern struct {
+	Severity    string `json:"severity"` // blocking | major | minor
+	File        string `json:"file,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	Description string `json:"description"`
+}
+
+const crossReviewPrompt = `You are a senior code reviewer checking a diff produced by an autonomous agent. The agent was asked to implement a session's tasks; the build and tests pass. Your job: decide whether the CODE is actually good, not just whether it compiles.
+
+Look for:
+  - Correctness: does the implementation actually do what the task asked for?
+  - Obvious bugs: null pointer risks, race conditions, off-by-one, missing error handling at boundaries
+  - Code that will silently corrupt data
+  - Stubs/TODOs/placeholders that got left in
+  - Tests that were deleted or disabled without justification
+  - Security issues: injection, secret exposure, path traversal
+
+Do NOT nitpick style. Do NOT flag anything that has a clear, justified reason in the diff context.
+
+Output ONLY JSON, no markdown fences:
+
+{
+  "approved": bool,
+  "score": int 0-100,
+  "summary": "one paragraph",
+  "concerns": [
+    {
+      "severity": "blocking|major|minor",
+      "file": "path/to/file",
+      "line": int,
+      "description": "specific concern with enough context to fix"
+    }
+  ]
+}
+
+RULES:
+1. Approve (true) unless there are blocking issues.
+2. Score < 60 = must fix before shipping.
+3. Every concern must be actionable — point to a specific line when possible.
+4. Be honest. If the diff is fine, say so with a short summary.
+
+SESSION + DIFF:
+`
+
+// runCrossModelReview runs a separate LLM pass over the session's git
+// diff and returns a structured review. Returns nil when the review
+// can't be performed (no diff, no provider, or LLM error); the caller
+// treats nil as "no review, don't block".
+func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativeConfig) *crossReviewResult {
+	if cfg.ReviewProvider == nil {
+		return nil
+	}
+	// Capture the diff since the session started. We use `git diff HEAD`
+	// which covers working-tree changes the session just made against
+	// the last commit. If the session committed its own work we won't
+	// see it here — that's acceptable because native-mode sessions
+	// typically don't commit.
+	diffCmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+	diffCmd.Dir = cfg.RepoRoot
+	diffOut, err := diffCmd.Output()
+	if err != nil || len(diffOut) == 0 {
+		return nil
+	}
+	diff := string(diffOut)
+	// Cap the diff so a huge refactor doesn't blow the review budget.
+	if len(diff) > 50000 {
+		diff = diff[:50000] + "\n... (diff truncated)"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "SESSION %s: %s\n\n", session.ID, session.Title)
+	if session.Description != "" {
+		fmt.Fprintf(&b, "%s\n\n", session.Description)
+	}
+	if len(session.Tasks) > 0 {
+		b.WriteString("TASKS:\n")
+		for _, t := range session.Tasks {
+			fmt.Fprintf(&b, "- %s: %s\n", t.ID, t.Description)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("DIFF:\n")
+	b.WriteString(diff)
+
+	model := cfg.ReviewModel
+	if model == "" {
+		model = cfg.Model
+	}
+
+	userText := crossReviewPrompt + b.String()
+	userContent, _ := encodeTextMessage(userText)
+
+	resp, err := cfg.ReviewProvider.Chat(provider.ChatRequest{
+		Model:     model,
+		MaxTokens: 6000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		fmt.Printf("  cross-review error: %v\n", err)
+		return nil
+	}
+	raw := ""
+	for _, c := range resp.Content {
+		if c.Type == "text" {
+			raw += c.Text
+		}
+	}
+	cleaned := stripSimpleFences(raw)
+	start := strings.Index(cleaned, "{")
+	end := strings.LastIndex(cleaned, "}")
+	if start < 0 || end < start {
+		return nil
+	}
+	var result crossReviewResult
+	if jsonErr := unmarshalCrossReview([]byte(cleaned[start:end+1]), &result); jsonErr != nil {
+		return nil
+	}
+	return &result
 }
 
 // runOverrideForSession asks the VP Eng → CTO judge to review the
@@ -287,6 +601,231 @@ func runOverrideForSession(ctx context.Context, session plan.Session, acceptance
 }
 
 // execNativeTask runs a single task against the native runner and returns
+// runSessionPhase1 dispatches a session's tasks. When ParallelWorkers > 1
+// it groups tasks into dependency-respecting waves — a wave is a set of
+// tasks whose deps are already satisfied (by earlier waves) and whose
+// file sets are pairwise disjoint (to avoid write-write conflicts). Each
+// wave runs concurrently with a worker pool capped at ParallelWorkers.
+// Within a wave, tasks still share the same repo root, so the file-
+// disjointness rule is critical.
+//
+// When ParallelWorkers <= 1 the flow degrades to the original sequential
+// loop — cheaper, deterministic, and the default.
+func runSessionPhase1(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
+	if cfg.ParallelWorkers <= 1 {
+		return runSessionPhase1Sequential(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
+	}
+	return runSessionPhase1Parallel(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
+}
+
+func runSessionPhase1Sequential(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
+	results := make([]plan.TaskExecResult, 0, len(session.Tasks))
+	for i, task := range session.Tasks {
+		if ctx.Err() != nil {
+			return results
+		}
+		if cfg.CostBudgetUSD > 0 && cfg.spent != nil && *cfg.spent >= cfg.CostBudgetUSD {
+			fmt.Printf("  budget exhausted ($%.2f / $%.2f) — halting session\n", *cfg.spent, cfg.CostBudgetUSD)
+			results = append(results, plan.TaskExecResult{
+				TaskID:  task.ID,
+				Success: false,
+				Error:   fmt.Errorf("cost budget exhausted"),
+			})
+			continue
+		}
+		fmt.Printf("  [%d/%d] %s: %s\n", i+1, len(session.Tasks), task.ID, task.Description)
+
+		sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, task, cfg.RepoMap, cfg.RepoMapBudget, nil, cfg.Wisdom)
+		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+		results = append(results, tr)
+	}
+	return results
+}
+
+// runSessionPhase1Parallel groups tasks into waves and runs each wave
+// concurrently. Task IDs without explicit deps or files fall back to
+// sequential execution (one wave per task) so we don't accidentally
+// parallelize things that implicitly share state.
+func runSessionPhase1Parallel(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
+	waves := buildParallelWaves(session.Tasks)
+
+	type indexed struct {
+		idx int
+		res plan.TaskExecResult
+	}
+	results := make([]plan.TaskExecResult, len(session.Tasks))
+	completed := 0
+	for waveIdx, wave := range waves {
+		if ctx.Err() != nil {
+			return results[:completed]
+		}
+		if len(wave) == 0 {
+			continue
+		}
+		workers := cfg.ParallelWorkers
+		if workers > len(wave) {
+			workers = len(wave)
+		}
+		fmt.Printf("  wave %d: %d task(s) in parallel (%d worker(s))\n", waveIdx+1, len(wave), workers)
+
+		sem := make(chan struct{}, workers)
+		resCh := make(chan indexed, len(wave))
+		for _, ti := range wave {
+			ti := ti // capture
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem }()
+				task := session.Tasks[ti]
+				if cfg.CostBudgetUSD > 0 && cfg.spent != nil && *cfg.spent >= cfg.CostBudgetUSD {
+					resCh <- indexed{idx: ti, res: plan.TaskExecResult{
+						TaskID:  task.ID,
+						Success: false,
+						Error:   fmt.Errorf("cost budget exhausted"),
+					}}
+					return
+				}
+				fmt.Printf("  ▶ %s: %s\n", task.ID, task.Description)
+				sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, task, cfg.RepoMap, cfg.RepoMapBudget, nil, cfg.Wisdom)
+				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+				resCh <- indexed{idx: ti, res: tr}
+			}()
+		}
+		// Wait for this wave to drain before starting the next
+		// (dependency ordering).
+		for i := 0; i < len(wave); i++ {
+			r := <-resCh
+			results[r.idx] = r.res
+			completed++
+		}
+	}
+	return results
+}
+
+// buildParallelWaves groups tasks into dependency-respecting waves of
+// pairwise disjoint file sets. Returns a slice of waves where each wave
+// is a slice of task indices (into the original tasks slice).
+//
+// Rules:
+//   - A task can run in wave N if all its declared dependencies are in
+//     waves <N.
+//   - Within a single wave, no two tasks may share any file path in
+//     their Files field.
+//   - Tasks with no Files still run, but they never share a wave with
+//     another task (conservative — they might touch anything).
+func buildParallelWaves(tasks []plan.Task) [][]int {
+	if len(tasks) == 0 {
+		return nil
+	}
+	idByName := make(map[string]int, len(tasks))
+	for i, t := range tasks {
+		idByName[t.ID] = i
+	}
+	placed := make([]int, len(tasks)) // wave index or -1
+	for i := range placed {
+		placed[i] = -1
+	}
+	var waves [][]int
+	for {
+		currentWave := []int{}
+		currentFiles := make(map[string]bool)
+		unknownInWave := false
+		progress := false
+		for i, t := range tasks {
+			if placed[i] != -1 {
+				continue
+			}
+			// Check deps
+			depsReady := true
+			for _, dep := range t.Dependencies {
+				depIdx, ok := idByName[dep]
+				if !ok {
+					continue // unknown dep — ignore
+				}
+				if placed[depIdx] == -1 || placed[depIdx] >= len(waves) {
+					depsReady = false
+					break
+				}
+			}
+			if !depsReady {
+				continue
+			}
+			// Tasks with no files are conservative: only if they're
+			// alone in the wave.
+			if len(t.Files) == 0 {
+				if len(currentWave) == 0 {
+					currentWave = append(currentWave, i)
+					placed[i] = len(waves)
+					unknownInWave = true
+					progress = true
+					break // alone
+				}
+				continue
+			}
+			if unknownInWave {
+				continue
+			}
+			// Check file disjointness against everyone already in the wave.
+			conflict := false
+			for _, f := range t.Files {
+				if currentFiles[f] {
+					conflict = true
+					break
+				}
+			}
+			if conflict {
+				continue
+			}
+			// Admit.
+			currentWave = append(currentWave, i)
+			placed[i] = len(waves)
+			for _, f := range t.Files {
+				currentFiles[f] = true
+			}
+			progress = true
+		}
+		if len(currentWave) == 0 {
+			if !progress {
+				// Stuck — no progress possible. Force-place the first
+				// unplaced task in its own wave to avoid a deadlock.
+				for i := range tasks {
+					if placed[i] == -1 {
+						waves = append(waves, []int{i})
+						placed[i] = len(waves) - 1
+						break
+					}
+				}
+				// Check if anything is still unplaced.
+				anyLeft := false
+				for _, p := range placed {
+					if p == -1 {
+						anyLeft = true
+						break
+					}
+				}
+				if !anyLeft {
+					break
+				}
+				continue
+			}
+			break
+		}
+		waves = append(waves, currentWave)
+		// Stop if everything is placed.
+		done := true
+		for _, p := range placed {
+			if p == -1 {
+				done = false
+				break
+			}
+		}
+		if done {
+			break
+		}
+	}
+	return waves
+}
+
+// execNativeTask runs a single task against the native runner and returns
 // a TaskExecResult. Factored out so the first-pass loop and repair loop
 // share exactly the same execution semantics. systemPrompt is the static
 // cached block; userPrompt is the per-task dynamic message.
@@ -340,16 +879,13 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
 // The system prompt contains the STATIC context — SOW identity, stack,
-// session framing, acceptance criteria, the optional repo map — the
-// parts that don't change across tasks in the same session (other than
-// task-specific repomap slicing, which also rarely changes between
-// adjacent tasks). Agentloop wraps the system prompt in a cache_control
-// breakpoint for ~90% cost reduction across multi-task sessions.
+// session framing, acceptance criteria, the optional repo map, and any
+// accumulated wisdom from prior sessions. The user prompt is the task
+// description, expected files, dependencies, and any repair context.
 //
-// The user prompt is the task description, expected files, dependencies,
-// and any repair context. These change every task so they stay out of
-// the cached block.
-func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string) (string, string) {
+// Agentloop wraps the system prompt in a cache_control breakpoint for
+// ~82% input cost reduction after turn 1.
+func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string, wisdomStore *wisdom.Store) (string, string) {
 	var sys, usr strings.Builder
 
 	// --- SYSTEM (static, cacheable) ---
@@ -445,6 +981,17 @@ func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Tas
 		}
 	}
 
+	// Inject accumulated cross-session wisdom so later sessions
+	// automatically inherit conventions, decisions, and gotchas that
+	// earlier sessions discovered. ForPrompt is already bounded to a
+	// reasonable length so it doesn't bust the cache budget.
+	if wisdomStore != nil {
+		if wisdomBlob := wisdomStore.ForPrompt(); wisdomBlob != "" {
+			sys.WriteString(wisdomBlob)
+			sys.WriteString("\n\n")
+		}
+	}
+
 	// --- USER (dynamic, per-task) ---
 	if repair != nil {
 		usr.WriteString("FAILING ACCEPTANCE CRITERIA (fix these):\n")
@@ -468,7 +1015,7 @@ func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Tas
 // tests and any caller that wants a single string. New code should use
 // buildSOWNativePrompts for proper cache-aware system/user split.
 func buildSOWNativePrompt(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string) string {
-	sys, usr := buildSOWNativePrompts(sowDoc, session, task, rmap, mapBudget, repair)
+	sys, usr := buildSOWNativePrompts(sowDoc, session, task, rmap, mapBudget, repair, nil)
 	return sys + "\n" + usr
 }
 

@@ -1215,6 +1215,11 @@ func sowCmd(args []string) {
 	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
 	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
 	repomapBudget := fs.Int("repomap-tokens", 3000, "Max characters of repo map to inject into task prompts (0 = disable)")
+	enableWisdom := fs.Bool("wisdom", true, "Capture per-session learnings (patterns/decisions/gotchas) and inject them into later sessions")
+	enableCrossReview := fs.Bool("cross-review", true, "After each successful session, run a cross-model code review over the git diff before accepting the session")
+	reviewModel := fs.String("review-model", "", "Model name used for cross-model review (default: same as --native-model)")
+	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
+	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1586,6 +1591,35 @@ func sowCmd(args []string) {
 			fmt.Printf("  appended continuation session %s with %d tasks\n", contID, len(items))
 		}
 
+		// Wisdom store: load any prior snapshot for this SOW so a
+		// resume picks up learnings from earlier runs. New sessions
+		// append to it and we persist after each session.
+		var wisdomStore *wisdom.Store
+		var wisdomProv provider.Provider
+		if *enableWisdom {
+			if store, wErr := LoadWisdom(absRepo, sow.ID); wErr == nil {
+				wisdomStore = store
+			} else {
+				wisdomStore = wisdom.NewStore()
+			}
+			// Share the same provider as the build runner — usually
+			// the same key + base URL works for the extraction call.
+			wisdomProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+
+		// Cross-model reviewer: use the configured --review-model if
+		// set, otherwise the same model as the build runner. We still
+		// construct a separate Provider instance so the request config
+		// can differ (future: lower temperature, different max tokens).
+		var reviewProv provider.Provider
+		if *enableCrossReview {
+			reviewProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+		reviewModelName := *reviewModel
+		if reviewModelName == "" {
+			reviewModelName = nativeModelName
+		}
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			Runner:            runner,
@@ -1601,6 +1635,13 @@ func sowCmd(args []string) {
 			OverrideJudge:     overrideJudge,
 			Ignores:           ignoreList,
 			OnContinuations:   continuationCallback,
+			Wisdom:            wisdomStore,
+			WisdomProvider:    wisdomProv,
+			SOWID:             sow.ID,
+			ReviewProvider:    reviewProv,
+			ReviewModel:       reviewModelName,
+			StrictScope:       *strictScope,
+			ParallelWorkers:   *parallelTasks,
 		}
 		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
 			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)

@@ -61,7 +61,7 @@ func TestBuildSOWNativePrompt_IncludesAllContext(t *testing.T) {
 
 	// Split prompts: the stable context should live in the system block
 	// and the per-task lines in the user block.
-	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, nil)
+	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, nil, nil)
 	if !strings.Contains(sys, "PROJECT: Test Project") {
 		t.Error("system prompt should include project header")
 	}
@@ -89,7 +89,7 @@ func TestBuildSOWNativePrompts_RepairMode(t *testing.T) {
 	}}
 	task := plan.Task{ID: "repair-1", Description: "repair"}
 	failBlob := "- [AC1] build\n    cannot find main package"
-	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, &failBlob)
+	sys, usr := buildSOWNativePrompts(sow, session, task, nil, 0, &failBlob, nil)
 
 	if !strings.Contains(sys, "REPAIR mode") {
 		t.Error("system prompt should switch to REPAIR mode framing")
