@@ -228,3 +228,149 @@ func TestDetectProjectUnknown(t *testing.T) {
 		t.Error("unknown project should not have HasFrontend")
 	}
 }
+
+// --- Monorepo Detection ---
+
+func TestDetectTurborepoMonorepo(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"name": "monorepo",
+		"devDependencies": {"next": "14.0.0", "turbo": "latest"},
+		"workspaces": ["apps/*", "packages/*"],
+		"scripts": {"build": "turbo run build", "test": "turbo run test", "lint": "turbo run lint"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0644)
+
+	info := DetectProject(dir)
+	if !info.IsMonorepo {
+		t.Error("should detect monorepo")
+	}
+	if info.MonorepoTool != "turborepo" {
+		t.Errorf("tool=%q, want turborepo", info.MonorepoTool)
+	}
+	if info.PackageManager != "pnpm" {
+		t.Errorf("manager=%q, want pnpm", info.PackageManager)
+	}
+	if len(info.Workspaces) != 2 {
+		t.Errorf("workspaces=%v", info.Workspaces)
+	}
+
+	cmds := DetectCommands(dir)
+	if cmds.Build != "pnpm run build" {
+		t.Errorf("build=%q, want 'pnpm run build'", cmds.Build)
+	}
+	if cmds.Test != "pnpm run test" {
+		t.Errorf("test=%q, want 'pnpm run test'", cmds.Test)
+	}
+	if cmds.Lint != "pnpm run lint" {
+		t.Errorf("lint=%q, want 'pnpm run lint'", cmds.Lint)
+	}
+}
+
+func TestDetectCargoWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte(`[workspace]
+members = [
+    "crates/core",
+    "crates/api",
+]
+`), 0644)
+
+	info := DetectProject(dir)
+	if info.Type != ProjectRust {
+		t.Errorf("type=%q, want rust", info.Type)
+	}
+	if !info.IsMonorepo {
+		t.Error("should detect Cargo workspace as monorepo")
+	}
+	if info.MonorepoTool != "cargo-workspace" {
+		t.Errorf("tool=%q, want cargo-workspace", info.MonorepoTool)
+	}
+	if len(info.Workspaces) != 2 {
+		t.Errorf("workspaces=%v", info.Workspaces)
+	}
+
+	// Cargo handles workspaces transparently
+	cmds := DetectCommands(dir)
+	if cmds.Build != "cargo build" {
+		t.Errorf("build=%q", cmds.Build)
+	}
+}
+
+func TestDetectYarnWorkspaces(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"workspaces": ["packages/*"],
+		"scripts": {"build": "tsc", "test": "jest"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte(``), 0644)
+
+	info := DetectProject(dir)
+	if !info.IsMonorepo {
+		t.Error("should detect yarn workspaces")
+	}
+	if info.PackageManager != "yarn" {
+		t.Errorf("manager=%q, want yarn", info.PackageManager)
+	}
+
+	cmds := DetectCommands(dir)
+	if cmds.Build != "yarn run build" {
+		t.Errorf("build=%q, want 'yarn run build'", cmds.Build)
+	}
+	if cmds.Test != "yarn test" {
+		t.Errorf("test=%q, want 'yarn test'", cmds.Test)
+	}
+}
+
+func TestDetectPnpmWorkspaceOnly(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"scripts": {"build": "tsc", "test": "vitest"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "pnpm-workspace.yaml"), []byte(`packages:
+  - 'apps/*'
+  - 'libs/*'
+`), 0644)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0644)
+
+	info := DetectProject(dir)
+	if !info.IsMonorepo {
+		t.Error("should detect pnpm workspace")
+	}
+	if info.PackageManager != "pnpm" {
+		t.Errorf("manager=%q, want pnpm", info.PackageManager)
+	}
+}
+
+func TestDetectNxMonorepo(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"scripts": {"build": "nx build", "test": "nx test"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "nx.json"), []byte(`{}`), 0644)
+
+	info := DetectProject(dir)
+	if !info.IsMonorepo {
+		t.Error("should detect nx monorepo")
+	}
+	if info.MonorepoTool != "nx" {
+		t.Errorf("tool=%q, want nx", info.MonorepoTool)
+	}
+}
+
+func TestDetectNonMonorepoNode(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"name": "simple-app",
+		"scripts": {"build": "tsc", "test": "jest"}
+	}`), 0644)
+
+	info := DetectProject(dir)
+	if info.IsMonorepo {
+		t.Error("simple project should not be monorepo")
+	}
+	if info.PackageManager != "npm" {
+		t.Errorf("default manager=%q, want npm", info.PackageManager)
+	}
+}

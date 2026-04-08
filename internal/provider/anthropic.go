@@ -288,6 +288,12 @@ func (p *AnthropicProvider) setHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", p.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
+	// When talking to a non-default base URL (LiteLLM, custom proxy), also send
+	// Authorization: Bearer. LiteLLM's Anthropic pass-through accepts either
+	// header; api.anthropic.com ignores the Authorization header harmlessly.
+	if !strings.Contains(p.baseURL, "api.anthropic.com") && p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 }
 
 // OpenAICompatProvider communicates with OpenAI-compatible endpoints (OpenAI, OpenRouter, XAI, etc.).
@@ -310,7 +316,7 @@ func NewOpenAICompatProvider(name, apiKey, baseURL string) *OpenAICompatProvider
 
 func (p *OpenAICompatProvider) Name() string { return p.name }
 
-// Chat sends a non-streaming completion.
+// Chat sends a non-streaming completion with tool use support.
 func (p *OpenAICompatProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	body := map[string]interface{}{
 		"model":      req.Model,
@@ -319,6 +325,9 @@ func (p *OpenAICompatProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = p.convertToolDefs(req.Tools)
 	}
 
 	data, err := json.Marshal(body)
@@ -344,40 +353,15 @@ func (p *OpenAICompatProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, fmt.Errorf("%s API error %d: %s", p.name, resp.StatusCode, string(errBody))
 	}
 
-	var openAIResp struct {
-		ID      string `json:"id"`
-		Model   string `json:"model"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
-	}
+	var openAIResp openAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&openAIResp); err != nil {
 		return nil, err
 	}
 
-	result := &ChatResponse{
-		ID:    openAIResp.ID,
-		Model: openAIResp.Model,
-		Usage: stream.TokenUsage{
-			Input:  openAIResp.Usage.PromptTokens,
-			Output: openAIResp.Usage.CompletionTokens,
-		},
-	}
-	if len(openAIResp.Choices) > 0 {
-		result.Content = []ResponseContent{{Type: "text", Text: openAIResp.Choices[0].Message.Content}}
-		result.StopReason = openAIResp.Choices[0].FinishReason
-	}
-	return result, nil
+	return p.convertResponse(openAIResp), nil
 }
 
-// ChatStream sends a streaming completion (SSE format).
+// ChatStream sends a streaming completion with tool use support (SSE format).
 func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.Event)) (*ChatResponse, error) {
 	body := map[string]interface{}{
 		"model":      req.Model,
@@ -387,6 +371,9 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = p.convertToolDefs(req.Tools)
 	}
 
 	data, err := json.Marshal(body)
@@ -416,6 +403,9 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 	var result ChatResponse
 	var fullText strings.Builder
 
+	// Track tool calls being built up across stream chunks
+	toolCallMap := map[int]*openAIToolCall{} // index -> accumulated tool call
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -430,10 +420,15 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string            `json:"content"`
+					ToolCalls []openAIToolCall   `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			continue
@@ -442,40 +437,295 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 		for _, c := range chunk.Choices {
 			if c.Delta.Content != "" {
 				fullText.WriteString(c.Delta.Content)
-				ev := stream.Event{
-					Type:      "stream_event",
-					DeltaType: "text_delta",
-					DeltaText: c.Delta.Content,
-				}
 				if onEvent != nil {
-					onEvent(ev)
+					onEvent(stream.Event{
+						Type:      "stream_event",
+						DeltaType: "text_delta",
+						DeltaText: c.Delta.Content,
+					})
+				}
+			}
+			// Accumulate tool call fragments
+			for _, tc := range c.Delta.ToolCalls {
+				existing, ok := toolCallMap[tc.Index]
+				if !ok {
+					cp := tc
+					toolCallMap[tc.Index] = &cp
+				} else {
+					if tc.ID != "" {
+						existing.ID = tc.ID
+					}
+					if tc.Function.Name != "" {
+						existing.Function.Name = tc.Function.Name
+					}
+					existing.Function.Arguments += tc.Function.Arguments
 				}
 			}
 			if c.FinishReason != nil {
 				result.StopReason = *c.FinishReason
 			}
 		}
+		if chunk.Usage != nil {
+			result.Usage = stream.TokenUsage{
+				Input:  chunk.Usage.PromptTokens,
+				Output: chunk.Usage.CompletionTokens,
+			}
+		}
 	}
 
-	result.Content = []ResponseContent{{Type: "text", Text: fullText.String()}}
+	// Build content blocks: text first, then tool uses
+	if fullText.Len() > 0 {
+		result.Content = append(result.Content, ResponseContent{Type: "text", Text: fullText.String()})
+	}
+	for i := 0; i < len(toolCallMap); i++ {
+		tc := toolCallMap[i]
+		if tc == nil {
+			continue
+		}
+		var input map[string]interface{}
+		json.Unmarshal([]byte(tc.Function.Arguments), &input)
+		result.Content = append(result.Content, ResponseContent{
+			Type:  "tool_use",
+			ID:    tc.ID,
+			Name:  tc.Function.Name,
+			Input: input,
+		})
+	}
+
+	// Map OpenAI stop reasons to Anthropic-style for agentloop compatibility
+	if result.StopReason == "tool_calls" {
+		result.StopReason = "tool_use"
+	} else if result.StopReason == "stop" {
+		result.StopReason = "end_turn"
+	}
+
 	return &result, nil
+}
+
+// openAIChatResponse is the wire format for OpenAI chat completions.
+type openAIChatResponse struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Choices []struct {
+		Message struct {
+			Content   string           `json:"content"`
+			ToolCalls []openAIToolCall `json:"tool_calls"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+// openAIToolCall is the OpenAI tool_calls format.
+type openAIToolCall struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+func (p *OpenAICompatProvider) convertResponse(resp openAIChatResponse) *ChatResponse {
+	result := &ChatResponse{
+		ID:    resp.ID,
+		Model: resp.Model,
+		Usage: stream.TokenUsage{
+			Input:  resp.Usage.PromptTokens,
+			Output: resp.Usage.CompletionTokens,
+		},
+	}
+	if len(resp.Choices) > 0 {
+		choice := resp.Choices[0]
+
+		// Add text content
+		if choice.Message.Content != "" {
+			result.Content = append(result.Content, ResponseContent{Type: "text", Text: choice.Message.Content})
+		}
+
+		// Add tool use content blocks
+		for _, tc := range choice.Message.ToolCalls {
+			var input map[string]interface{}
+			json.Unmarshal([]byte(tc.Function.Arguments), &input)
+			result.Content = append(result.Content, ResponseContent{
+				Type:  "tool_use",
+				ID:    tc.ID,
+				Name:  tc.Function.Name,
+				Input: input,
+			})
+		}
+
+		// Map OpenAI stop reasons to Anthropic-style
+		switch choice.FinishReason {
+		case "tool_calls":
+			result.StopReason = "tool_use"
+		case "stop":
+			result.StopReason = "end_turn"
+		default:
+			result.StopReason = choice.FinishReason
+		}
+	}
+	return result
 }
 
 func (p *OpenAICompatProvider) convertMessages(req ChatRequest) []map[string]interface{} {
 	var msgs []map[string]interface{}
+
+	// System prompt
 	if req.System != "" {
 		msgs = append(msgs, map[string]interface{}{
 			"role":    "system",
 			"content": req.System,
 		})
 	}
+	// SystemRaw overrides System
+	if len(req.SystemRaw) > 0 {
+		var systemBlocks []map[string]interface{}
+		if json.Unmarshal(req.SystemRaw, &systemBlocks) == nil {
+			// Extract text from system blocks
+			var systemText string
+			for _, block := range systemBlocks {
+				if t, ok := block["text"].(string); ok {
+					systemText += t + "\n"
+				}
+			}
+			if systemText != "" {
+				msgs = append(msgs, map[string]interface{}{
+					"role":    "system",
+					"content": strings.TrimSpace(systemText),
+				})
+			}
+		}
+	}
+
 	for _, m := range req.Messages {
-		msgs = append(msgs, map[string]interface{}{
-			"role":    m.Role,
-			"content": m.Content,
-		})
+		converted := p.convertOneMessage(m)
+		msgs = append(msgs, converted...)
 	}
 	return msgs
+}
+
+// convertOneMessage translates an Anthropic-format message to OpenAI format.
+// Returns a slice because a single Anthropic user message with multiple
+// tool_result blocks maps to multiple OpenAI "tool" role messages.
+func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]interface{} {
+	// Try to parse content as typed blocks (Anthropic format)
+	var blocks []struct {
+		Type      string          `json:"type"`
+		Text      string          `json:"text,omitempty"`
+		ID        string          `json:"id,omitempty"`
+		Name      string          `json:"name,omitempty"`
+		Input     json.RawMessage `json:"input,omitempty"`
+		ToolUseID string          `json:"tool_use_id,omitempty"`
+		Content   string          `json:"content,omitempty"`
+		IsError   bool            `json:"is_error,omitempty"`
+	}
+
+	if err := json.Unmarshal(m.Content, &blocks); err == nil && len(blocks) > 0 {
+		// Classify block types in the message.
+		hasToolResults := false
+		hasToolUse := false
+		for _, b := range blocks {
+			if b.Type == "tool_result" {
+				hasToolResults = true
+			}
+			if b.Type == "tool_use" {
+				hasToolUse = true
+			}
+		}
+
+		// User message with tool_result blocks → one "tool" role message per result.
+		if hasToolResults && m.Role == "user" {
+			var toolMsgs []map[string]interface{}
+			for _, b := range blocks {
+				if b.Type == "tool_result" {
+					toolMsgs = append(toolMsgs, map[string]interface{}{
+						"role":         "tool",
+						"tool_call_id": b.ToolUseID,
+						"content":      b.Content,
+					})
+				}
+			}
+			return toolMsgs
+		}
+
+		// Assistant message with tool_use blocks → single message with tool_calls.
+		if hasToolUse && m.Role == "assistant" {
+			var toolCalls []map[string]interface{}
+			var textContent string
+			for _, b := range blocks {
+				if b.Type == "text" {
+					textContent += b.Text
+				}
+				if b.Type == "tool_use" {
+					argsJSON := "{}"
+					if b.Input != nil {
+						argsJSON = string(b.Input)
+					}
+					toolCalls = append(toolCalls, map[string]interface{}{
+						"id":   b.ID,
+						"type": "function",
+						"function": map[string]interface{}{
+							"name":      b.Name,
+							"arguments": argsJSON,
+						},
+					})
+				}
+			}
+			return []map[string]interface{}{{
+				"role":       "assistant",
+				"content":    textContent,
+				"tool_calls": toolCalls,
+			}}
+		}
+
+		// Plain text blocks
+		var text string
+		for _, b := range blocks {
+			if b.Type == "text" {
+				text += b.Text
+			}
+		}
+		if text != "" {
+			return []map[string]interface{}{{
+				"role":    m.Role,
+				"content": text,
+			}}
+		}
+	}
+
+	// Fallback: treat content as raw string or pass through
+	var contentStr string
+	if json.Unmarshal(m.Content, &contentStr) == nil {
+		return []map[string]interface{}{{
+			"role":    m.Role,
+			"content": contentStr,
+		}}
+	}
+	return []map[string]interface{}{{
+		"role":    m.Role,
+		"content": string(m.Content),
+	}}
+}
+
+// convertToolDefs converts Anthropic-style tool definitions to OpenAI format.
+func (p *OpenAICompatProvider) convertToolDefs(tools []ToolDef) []map[string]interface{} {
+	var result []map[string]interface{}
+	for _, t := range tools {
+		result = append(result, map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        t.Name,
+				"description": t.Description,
+				"parameters":  t.InputSchema,
+			},
+		})
+	}
+	return result
 }
 
 // ResolveProvider creates the appropriate provider based on model name.

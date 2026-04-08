@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Commands holds build/test/lint commands for a project.
@@ -39,6 +40,12 @@ type ProjectInfo struct {
 	HasHTML       bool        // true if HTML entry points found
 	TestFramework string      // e.g. "jest", "vitest", "playwright", "cypress", "pytest", "go-test"
 	HasStorybook  bool        // true if Storybook detected in devDependencies
+
+	// Monorepo fields
+	IsMonorepo     bool     // true if a monorepo layout was detected
+	MonorepoTool   string   // "turborepo", "nx", "lerna", "cargo-workspace", "pnpm-workspaces"
+	PackageManager string   // "pnpm", "yarn", "npm" (JS/TS only)
+	Workspaces     []string // workspace member globs/paths
 }
 
 // DetectProject examines the project root and returns detailed project info.
@@ -56,6 +63,7 @@ func DetectProject(projectRoot string) ProjectInfo {
 			var pkg struct {
 				Dependencies    map[string]string `json:"dependencies"`
 				DevDependencies map[string]string `json:"devDependencies"`
+				Workspaces      json.RawMessage   `json:"workspaces"`
 			}
 			if json.Unmarshal(data, &pkg) == nil {
 				allDeps := mergeMaps(pkg.Dependencies, pkg.DevDependencies)
@@ -111,6 +119,49 @@ func DetectProject(projectRoot string) ProjectInfo {
 						break
 					}
 				}
+
+				// Monorepo detection
+				if fileExists(filepath.Join(projectRoot, "turbo.json")) {
+					info.IsMonorepo = true
+					info.MonorepoTool = "turborepo"
+				} else if fileExists(filepath.Join(projectRoot, "nx.json")) {
+					info.IsMonorepo = true
+					info.MonorepoTool = "nx"
+				} else if fileExists(filepath.Join(projectRoot, "lerna.json")) {
+					info.IsMonorepo = true
+					info.MonorepoTool = "lerna"
+				} else if pkg.Workspaces != nil {
+					info.IsMonorepo = true
+					info.MonorepoTool = "workspaces"
+				}
+
+				// Package manager detection
+				if fileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) || fileExists(filepath.Join(projectRoot, "pnpm-workspace.yaml")) {
+					info.PackageManager = "pnpm"
+					if !info.IsMonorepo && fileExists(filepath.Join(projectRoot, "pnpm-workspace.yaml")) {
+						info.IsMonorepo = true
+						info.MonorepoTool = "pnpm-workspaces"
+					}
+				} else if fileExists(filepath.Join(projectRoot, "yarn.lock")) {
+					info.PackageManager = "yarn"
+				} else {
+					info.PackageManager = "npm"
+				}
+
+				// Parse workspace globs
+				if info.IsMonorepo && pkg.Workspaces != nil {
+					var ws []string
+					if json.Unmarshal(pkg.Workspaces, &ws) == nil {
+						info.Workspaces = ws
+					} else {
+						var wsObj struct {
+							Packages []string `json:"packages"`
+						}
+						if json.Unmarshal(pkg.Workspaces, &wsObj) == nil {
+							info.Workspaces = wsObj.Packages
+						}
+					}
+				}
 			}
 		}
 
@@ -157,6 +208,15 @@ func DetectProject(projectRoot string) ProjectInfo {
 		info.Type = ProjectRust
 		info.HasTests = true
 		info.TestFramework = "cargo-test"
+		// Detect Cargo workspace
+		if data, err := os.ReadFile(filepath.Join(projectRoot, "Cargo.toml")); err == nil {
+			content := string(data)
+			if strings.Contains(content, "[workspace]") {
+				info.IsMonorepo = true
+				info.MonorepoTool = "cargo-workspace"
+				info.Workspaces = parseCargoMembers(content)
+			}
+		}
 		return info
 	}
 
@@ -187,16 +247,56 @@ func DetectCommands(projectRoot string) Commands {
 	case ProjectNodeJS, ProjectReact, ProjectNextJS, ProjectVue, ProjectSvelte, ProjectAngular:
 		scripts := npmScripts(projectRoot)
 		cmds := Commands{}
-		if scripts["test"] {
-			cmds.Test = "npm test"
+
+		// Select the right runner for monorepos
+		runner := "npm"
+		if info.IsMonorepo {
+			switch info.PackageManager {
+			case "pnpm":
+				runner = "pnpm"
+			case "yarn":
+				runner = "yarn"
+			}
 		}
-		if scripts["build"] {
-			cmds.Build = "npm run build"
-		} else if fileExists(filepath.Join(projectRoot, "tsconfig.json")) || info.Type == ProjectNextJS {
-			cmds.Build = "npm run build" // likely exists but not in scripts
-		}
-		if scripts["lint"] {
-			cmds.Lint = "npm run lint"
+
+		if info.IsMonorepo && info.MonorepoTool == "turborepo" {
+			// Turborepo: use turbo run for orchestrated builds
+			if scripts["build"] {
+				cmds.Build = runner + " run build"
+			}
+			if scripts["test"] {
+				cmds.Test = runner + " run test"
+			}
+			if scripts["lint"] {
+				cmds.Lint = runner + " run lint"
+			}
+			// turbo run handles workspace-aware task execution
+		} else if runner != "npm" {
+			// pnpm/yarn monorepo without turbo
+			if scripts["test"] {
+				cmds.Test = runner + " test"
+			}
+			if scripts["build"] {
+				cmds.Build = runner + " run build"
+			} else if fileExists(filepath.Join(projectRoot, "tsconfig.json")) || info.Type == ProjectNextJS {
+				cmds.Build = runner + " run build"
+			}
+			if scripts["lint"] {
+				cmds.Lint = runner + " run lint"
+			}
+		} else {
+			// Plain npm
+			if scripts["test"] {
+				cmds.Test = "npm test"
+			}
+			if scripts["build"] {
+				cmds.Build = "npm run build"
+			} else if fileExists(filepath.Join(projectRoot, "tsconfig.json")) || info.Type == ProjectNextJS {
+				cmds.Build = "npm run build"
+			}
+			if scripts["lint"] {
+				cmds.Lint = "npm run lint"
+			}
 		}
 		return cmds
 
@@ -208,6 +308,7 @@ func DetectCommands(projectRoot string) Commands {
 		}
 
 	case ProjectRust:
+		// Cargo workspace or single crate — cargo handles both transparently
 		return Commands{
 			Build: "cargo build",
 			Test:  "cargo test",
@@ -263,4 +364,28 @@ func fileExists(path string) bool {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// parseCargoMembers extracts workspace member paths from Cargo.toml content.
+func parseCargoMembers(content string) []string {
+	var members []string
+	inMembers := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "members") && strings.Contains(trimmed, "=") {
+			inMembers = true
+		}
+		if inMembers {
+			for _, part := range strings.Split(trimmed, "\"") {
+				clean := strings.TrimSpace(part)
+				if clean != "" && !strings.ContainsAny(clean, "=[],") {
+					members = append(members, clean)
+				}
+			}
+			if strings.Contains(trimmed, "]") {
+				break
+			}
+		}
+	}
+	return members
 }

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -32,6 +35,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/interview"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
@@ -89,6 +93,10 @@ type BuildConfig struct {
 	EnvBackend      string // execution environment: inproc, docker, fly, ember
 	EnvImage        string // base image for container/VM environments
 	EnvSize         string // machine size for cloud environments
+	RunnerMode      string // runner backend: claude, codex, native, hybrid
+	NativeAPIKey    string // API key for native runner (required when RunnerMode=native)
+	NativeModel     string // model for native runner
+	NativeBaseURL   string // base URL for native runner (e.g. LiteLLM proxy)
 }
 
 // runBuild executes a build plan and returns the result.
@@ -201,9 +209,18 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 		StartedAt: time.Now(),
 	})
 
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, cfg.Timeout)
+	// No wall-clock timeout by default: the supervisor (boulder) is authoritative
+	// for detecting stuck workers. cfg.Timeout > 0 still applies as a hard safety
+	// ceiling for users who explicitly opt in.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if cfg.Timeout > 0 {
+		sigCtx, sigCancel := signalContext(context.Background())
+		defer sigCancel()
+		ctx, cancel = context.WithTimeout(sigCtx, cfg.Timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	// Create harness-owned plan state
@@ -345,6 +362,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			EventBus:         eventBus,
 			Environ:          buildEnv,
 			EnvHandle:        buildEnvHandle,
+			RunnerMode:       cfg.RunnerMode,
+			NativeAPIKey:     cfg.NativeAPIKey,
+			NativeModel:      cfg.NativeModel,
+			NativeBaseURL:    cfg.NativeBaseURL,
 			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
@@ -547,12 +568,17 @@ func main() {
 	logging.Init(logLevel, os.Stderr)
 
 	if len(os.Args) < 2 {
-		// No args: launch the interactive REPL
+		// No args: launch the line REPL (classic). Users who want the
+		// full-screen Bubble Tea shell can run `stoke tui` instead. We keep
+		// line mode as the default because it composes better with pipes,
+		// CI/CD logs, and non-tty contexts.
 		launchREPL()
 		return
 	}
 
 	switch os.Args[1] {
+	case "tui", "--tui", "shell":
+		launchShell(os.Args[2:])
 	case "run":
 		runCmd(os.Args[2:])
 	case "build":
@@ -587,12 +613,16 @@ func main() {
 		poolsCmd(os.Args[2:])
 	case "remove-pool":
 		removePoolCmd(os.Args[2:])
+	case "sow":
+		sowCmd(os.Args[2:])
 	case "mission":
 		missionCmd(os.Args[2:])
 	case "serve":
 		serveCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
+	case "mcp-serve-stoke":
+		mcpServeStokeCmd(os.Args[2:])
 	case "init", "wizard":
 		initCmd(os.Args[2:])
 	case "version", "--version", "-v":
@@ -681,6 +711,34 @@ func mcpServeCmd(args []string) {
 	}
 }
 
+// --- mcp-serve-stoke: start MCP server that exposes Stoke as a tool to Claude Code ---
+//
+// This is the inverse of mcp-serve: instead of giving Claude Code access to a
+// project's codebase, this gives Claude Code the ability to drive Stoke itself.
+// Claude Code can call stoke_build_from_sow to kick off a multi-session build,
+// then poll stoke_get_mission_status until completion.
+//
+// Wire it into Claude Code with:
+//   { "mcpServers": { "stoke": { "command": "stoke", "args": ["mcp-serve-stoke"] } } }
+func mcpServeStokeCmd(args []string) {
+	fs := flag.NewFlagSet("mcp-serve-stoke", flag.ExitOnError)
+	stokeBin := fs.String("stoke-bin", "", "Path to stoke binary used for spawned builds (default: argv[0])")
+	fs.Parse(args)
+
+	bin := *stokeBin
+	if bin == "" {
+		// Resolve our own executable path so subprocess builds can find us.
+		if exe, err := os.Executable(); err == nil {
+			bin = exe
+		}
+	}
+	srv := stokeMCP.NewStokeServer(bin)
+	if err := srv.ServeStdio(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 // --- run: single task through PLAN -> EXECUTE -> VERIFY ---
 
 func runCmd(args []string) {
@@ -702,7 +760,9 @@ func runCmd(args []string) {
 	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
 	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
-	timeout := fs.Duration("timeout", 45*time.Minute, "Timeout")
+	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
+	// No wall-clock timeout: supervisor (boulder) monitors liveness and restarts
+	// genuinely stuck workers. Use Ctrl-C to abort.
 	fs.Parse(args)
 
 	if strings.TrimSpace(*task) == "" {
@@ -738,6 +798,9 @@ func runCmd(args []string) {
 	runTracker := costtrack.NewTracker(0, nil)
 	runRepoMap, _ := repomap.Build(absRepo)
 	runTestGraph, _ := testselect.BuildGraph(absRepo)
+	// Boulder supervisor: now authoritative for stuck-agent detection. Always
+	// enabled so the task is monitored for liveness instead of timed out.
+	runBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 
 	cfg := app.RunConfig{
 		RepoRoot:        absRepo,
@@ -751,6 +814,7 @@ func runCmd(args []string) {
 		CodexBinary:     *codexBin,
 		ClaudeConfigDir: *claudeConfigDir,
 		CodexHome:       *codexHome,
+		Boulder:         runBoulder,
 		State:           ts,
 		BuildCommand:    *buildC,
 		TestCommand:     *testC,
@@ -761,6 +825,7 @@ func runCmd(args []string) {
 		RunnerMode:      *runnerMode,
 		NativeAPIKey:    *nativeAPIKey,
 		NativeModel:     *nativeModel,
+		NativeBaseURL:   *nativeBaseURL,
 		EventBus:        newEventBus(),
 		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
 		OnEvent: func(ev stream.Event) {
@@ -773,9 +838,9 @@ func runCmd(args []string) {
 		fatal("stoke init: %v", err)
 	}
 
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, *timeout)
+	// No wall-clock timeout: the supervisor (boulder) monitors liveness and
+	// restarts genuinely stuck workers. Ctrl-C still aborts via signalContext.
+	ctx, cancel := signalContext(context.Background())
 	defer cancel()
 
 	ui.TaskStart("task", *task, "default")
@@ -821,7 +886,9 @@ func buildCmd(args []string) {
 	envBackend := fs.String("env", "", "Execution environment: inproc, docker, fly, ember (default: from config or inproc)")
 	envImage := fs.String("env-image", "", "Base image for container/VM environments")
 	envSize := fs.String("env-size", "", "Machine size for cloud environments (e.g. performance-4x)")
-	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	// Hard timeout is disabled by default; supervisor handles stuck workers.
+	// Setting a non-zero value re-enables it as a safety ceiling.
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1107,6 +1174,377 @@ func buildCmd(args []string) {
 		fmt.Printf("\n  Build completed with %d failed task(s)\n", buildReport.TasksFailed)
 		os.Exit(1)
 	}
+}
+
+// --- sow: execute a Statement of Work ---
+
+func sowCmd(args []string) {
+	fs := flag.NewFlagSet("sow", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Git repository root")
+	sowFile := fs.String("file", "", "SOW file (default: stoke-sow.json)")
+	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
+	dryRun := fs.Bool("dry-run", false, "Show SOW summary without executing")
+	validate := fs.Bool("validate", false, "Validate SOW and exit")
+	workers := fs.Int("workers", 4, "Max parallel agents per session")
+	authMode := fs.String("mode", "mode1", "Auth mode")
+	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
+	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	codexHome := fs.String("codex-home", "", "CODEX_HOME")
+	buildC := fs.String("build-cmd", "", "Build command (auto-detected)")
+	testC := fs.String("test-cmd", "", "Test command (auto-detected)")
+	lintC := fs.String("lint-cmd", "", "Lint command (auto-detected)")
+	runnerMode := fs.String("runner", "claude", "Runner backend: claude, codex, native, hybrid")
+	nativeAPIKey := fs.String("native-api-key", "", "API key for native runner")
+	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
+	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
+	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
+	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
+	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
+	// is disabled by default; supervisor handles liveness. Set --timeout to a
+	// non-zero duration to re-enable a safety ceiling.
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
+	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
+	continueOnFailure := fs.Bool("continue-on-failure", false, "Keep running subsequent sessions after a session fails (default: halt)")
+	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	// Load SOW
+	var sow *plan.SOW
+	if *sowFile != "" {
+		sow, err = plan.LoadSOW(*sowFile)
+	} else {
+		sow, err = plan.LoadSOWFromDir(absRepo)
+	}
+	if err != nil {
+		fatal("load SOW: %v", err)
+	}
+
+	// Validate
+	if validationErrs := plan.ValidateSOW(sow); len(validationErrs) > 0 {
+		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
+		for _, e := range validationErrs {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+		if *validate {
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr)
+	} else if *validate {
+		fmt.Println("SOW is valid.")
+		return
+	}
+
+	// Check infra env vars
+	if missing := sow.ValidateInfraEnvVars(); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "Missing infrastructure env vars:\n")
+		for _, m := range missing {
+			fmt.Fprintf(os.Stderr, "  - %s\n", m)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Auto-detect stack from repo
+	detectedStack := plan.DetectStackFromRepo(absRepo)
+
+	// Dry run: show summary
+	ss := plan.NewSessionScheduler(sow, absRepo)
+	ss.Resume = *resume
+	ss.ContinueOnFailure = *continueOnFailure
+	if *maxRetries > 0 {
+		ss.MaxSessionRetries = *maxRetries
+	}
+	if err := ss.LoadOrCreateState(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: SOW state init failed: %v\n", err)
+	}
+	// If a TUI shell is listening, wire session progress into its
+	// Sessions pane. This is a no-op in the line REPL and CLI modes.
+	if hook := currentShellProgress; hook != nil {
+		// Session-start: flip to running state in the Sessions pane so
+		// the user sees work begin before any tasks complete.
+		ss.OnSessionStart = func(sessionID string, attempt int) {
+			// Find the session definition for task/criteria counts
+			for _, s := range sow.Sessions {
+				if s.ID == sessionID {
+					hook(tui.SessionDisplay{
+						ID:            s.ID,
+						Title:         s.Title,
+						Status:        "running",
+						TasksTotal:    len(s.Tasks),
+						CriteriaTotal: len(s.AcceptanceCriteria),
+					})
+					break
+				}
+			}
+		}
+		ss.OnProgress = func(r plan.SessionResult) {
+			status := "done"
+			switch {
+			case r.Skipped:
+				status = "skipped"
+			case r.Error != nil:
+				status = "failed"
+			case !r.AcceptanceMet:
+				status = "failed"
+			}
+			tasksDone := 0
+			for _, tr := range r.TaskResults {
+				if tr.Success {
+					tasksDone++
+				}
+			}
+			critDone := 0
+			for _, c := range r.Acceptance {
+				if c.Passed {
+					critDone++
+				}
+			}
+			errStr := ""
+			if r.Error != nil {
+				errStr = r.Error.Error()
+			}
+			hook(tui.SessionDisplay{
+				ID:            r.SessionID,
+				Title:         r.Title,
+				Status:        status,
+				TasksDone:     tasksDone,
+				TasksTotal:    len(r.TaskResults),
+				CriteriaDone:  critDone,
+				CriteriaTotal: len(r.Acceptance),
+				LastError:     errStr,
+			})
+		}
+		// Seed the sessions pane with pending entries so the user can see
+		// what's coming before the first session runs.
+		var seed []tui.SessionDisplay
+		for _, s := range sow.Sessions {
+			status := "pending"
+			if ss.State() != nil && ss.State().IsSessionComplete(s.ID) {
+				status = "done"
+			}
+			seed = append(seed, tui.SessionDisplay{
+				ID:            s.ID,
+				Title:         s.Title,
+				Status:        status,
+				TasksTotal:    len(s.Tasks),
+				CriteriaTotal: len(s.AcceptanceCriteria),
+			})
+		}
+		if seedFn := currentShellSessions; seedFn != nil {
+			seedFn(seed)
+		}
+	}
+	if *dryRun {
+		fmt.Print(ss.DryRun())
+		if detectedStack.Language != "" {
+			fmt.Printf("\nDetected: %s", detectedStack.Language)
+			if detectedStack.Monorepo != nil {
+				fmt.Printf(" [%s]", detectedStack.Monorepo.Tool)
+				if detectedStack.Monorepo.Manager != "" {
+					fmt.Printf(" (%s)", detectedStack.Monorepo.Manager)
+				}
+			}
+			fmt.Println()
+		}
+		return
+	}
+
+	// Auto-detect commands
+	detected := config.DetectCommands(absRepo)
+	if *buildC == "" {
+		*buildC = detected.Build
+	}
+	if *testC == "" {
+		*testC = detected.Test
+	}
+	if *lintC == "" {
+		*lintC = detected.Lint
+	}
+
+	fmt.Printf("SOW %s\n", version)
+	fmt.Printf("  sow:     %s (%d sessions, %d total tasks)\n", sow.Name, len(sow.Sessions), countSOWTasks(sow))
+	fmt.Printf("  stack:   %s", sow.Stack.Language)
+	if sow.Stack.Monorepo != nil {
+		fmt.Printf(" [%s]", sow.Stack.Monorepo.Tool)
+	}
+	fmt.Println()
+	fmt.Printf("  workers: %d\n", *workers)
+	fmt.Printf("  runner:  %s\n", *runnerMode)
+	fmt.Printf("  build:   %s\n", orNone(*buildC))
+	fmt.Printf("  test:    %s\n", orNone(*testC))
+	fmt.Printf("  lint:    %s\n\n", orNone(*lintC))
+
+	// Convert SOW to flat plan with session gates
+	p := sow.ToPlan()
+
+	// ROI filter
+	var roiClass plan.ROIClass
+	switch *roiFilter {
+	case "high":
+		roiClass = plan.ROIHigh
+	case "medium":
+		roiClass = plan.ROIMedium
+	case "low":
+		roiClass = plan.ROILow
+	case "skip":
+		roiClass = plan.ROISkip
+	default:
+		roiClass = plan.ROIMedium
+	}
+	kept, filtered := plan.FilterByROI(p.Tasks, roiClass)
+	if len(filtered) > 0 {
+		fmt.Printf("  ROI filter removed %d task(s)\n\n", len(filtered))
+		p.Tasks = kept
+	}
+
+	// Type-route tasks
+	for i := range p.Tasks {
+		if p.Tasks[i].Type == "" {
+			p.Tasks[i].Type = string(model.InferTaskType(p.Tasks[i].Description))
+		}
+	}
+
+	// Validate plan
+	if planErrs := p.Validate(); len(planErrs) > 0 {
+		for _, e := range planErrs {
+			fmt.Fprintf(os.Stderr, "  plan warning: %s\n", e)
+		}
+	}
+
+	// Execute session-by-session with acceptance criteria gates.
+	// No wall-clock timeout by default: the supervisor is authoritative.
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if *timeout > 0 {
+		sigCtx, sigCancel := signalContext(context.Background())
+		defer sigCancel()
+		ctx, cancel = context.WithTimeout(sigCtx, *timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
+	defer cancel()
+
+	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+		fmt.Printf("\n--- Session %s: %s ---\n", session.ID, session.Title)
+		fmt.Printf("  %d tasks\n", len(session.Tasks))
+
+		// Build a sub-plan from just this session's tasks
+		sessionPlan := &plan.Plan{
+			ID:          sow.ID + "-" + session.ID,
+			Description: session.Title,
+			Tasks:       session.Tasks,
+		}
+
+		// Use runBuild for the session's tasks
+		sessionCfg := BuildConfig{
+			RepoRoot:        absRepo,
+			PolicyPath:      *policy,
+			Workers:         *workers,
+			AuthMode:        *authMode,
+			ClaudeBinary:    *claudeBin,
+			CodexBinary:     *codexBin,
+			ClaudeConfigDir: *claudeConfigDir,
+			CodexHome:       *codexHome,
+			BuildCommand:    *buildC,
+			TestCommand:     *testC,
+			LintCommand:     *lintC,
+			ROIFilter:       *roiFilter,
+			SpecExec:        *specExec,
+			Timeout:         *timeout,
+			RunnerMode:      *runnerMode,
+			NativeAPIKey:    *nativeAPIKey,
+			NativeModel:     *nativeModel,
+			NativeBaseURL:   *nativeBaseURL,
+		}
+
+		// Save the session plan temporarily
+		tmpPlan := filepath.Join(absRepo, ".stoke", "session-plan.json")
+		os.MkdirAll(filepath.Dir(tmpPlan), 0755)
+		plan.SaveSOW(tmpPlan, &plan.SOW{}) // create .stoke dir
+		if err := plan.Save(filepath.Dir(tmpPlan), sessionPlan); err != nil {
+			// Fallback: save to repo root
+			plan.Save(absRepo, sessionPlan)
+		} else {
+			sessionCfg.PlanPath = filepath.Join(filepath.Dir(tmpPlan), "stoke-plan.json")
+		}
+
+		buildReport, err := runBuild(sessionCfg)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert report to TaskExecResults
+		var results []plan.TaskExecResult
+		if buildReport != nil {
+			for _, tr := range buildReport.Tasks {
+				results = append(results, plan.TaskExecResult{
+					TaskID:  tr.ID,
+					Success: tr.Status == "done",
+				})
+			}
+		}
+
+		// If we didn't get per-task results, synthesize from the overall result
+		if len(results) == 0 {
+			for _, t := range session.Tasks {
+				results = append(results, plan.TaskExecResult{
+					TaskID:  t.ID,
+					Success: buildReport != nil && buildReport.Success,
+				})
+			}
+		}
+
+		return results, nil
+	}
+
+	results, err := ss.Run(ctx, sessionExecFn)
+
+	// Report results
+	fmt.Printf("\n=== SOW Results ===\n")
+	for _, r := range results {
+		status := "PASS"
+		switch {
+		case r.Skipped:
+			status = "SKIPPED"
+		case r.Error != nil:
+			status = "FAIL"
+		case !r.AcceptanceMet:
+			status = "CRITERIA NOT MET"
+		}
+		attemptStr := ""
+		if r.Attempts > 1 {
+			attemptStr = fmt.Sprintf(" (%d attempts)", r.Attempts)
+		}
+		fmt.Printf("  [%s] %s: %s%s\n", status, r.SessionID, r.Title, attemptStr)
+		if r.Error != nil {
+			fmt.Printf("    error: %v\n", r.Error)
+		}
+		if len(r.Acceptance) > 0 {
+			fmt.Print(plan.FormatAcceptanceResults(r.Acceptance))
+		}
+	}
+	if state := ss.State(); state != nil {
+		fmt.Printf("\n  state: %s\n", plan.SOWStatePath(absRepo))
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nSOW execution failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("\nSOW completed successfully.")
+}
+
+func countSOWTasks(sow *plan.SOW) int {
+	n := 0
+	for _, s := range sow.Sessions {
+		n += len(s.Tasks)
+	}
+	return n
 }
 
 // --- plan: generate a plan file from codebase analysis ---
@@ -1811,7 +2249,7 @@ func repairCmd(args []string) {
 	workers := fs.Int("workers", 2, "Max parallel agents")
 	dryRun := fs.Bool("dry-run", false, "Show repair plan without executing")
 	authMode := fs.String("mode", "mode1", "Auth mode")
-	timeout := fs.Duration("timeout", 60*time.Minute, "Timeout")
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -2035,7 +2473,7 @@ func shipCmd(args []string) {
 	maxRounds := fs.Int("max-rounds", 5, "Maximum build-review-fix rounds")
 	workers := fs.Int("workers", 2, "Max parallel agents")
 	authMode := fs.String("mode", "mode1", "Auth mode")
-	timeout := fs.Duration("timeout", 120*time.Minute, "Total timeout")
+	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	dryRun := fs.Bool("dry-run", false, "Show what would happen")
 	fs.Parse(args)
 
@@ -2080,7 +2518,13 @@ func shipCmd(args []string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if *timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), *timeout)
+	} else {
+		ctx, cancel = signalContext(context.Background())
+	}
 	defer cancel()
 
 	startTime := time.Now()
@@ -2666,13 +3110,245 @@ func gitHead(dir string) string {
 
 // --- helpers ---
 
+// SmartDefaults captures the auto-detected configuration that `stoke` uses
+// when launched bare with no arguments. The user explicitly asked for
+// "use all smart settings / use local litellm / use native executor" to be the
+// default behavior with zero flags.
+type SmartDefaults struct {
+	RunnerMode    string // claude, codex, native
+	NativeBaseURL string // e.g. http://localhost:8000 for LiteLLM
+	NativeAPIKey  string // from env: LITELLM_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+	NativeModel   string // e.g. claude-sonnet-4-6
+	Notes         []string // human-readable explanation of decisions
+}
+
+// detectSmartDefaults probes the local environment for the best default
+// runner. Priority:
+//  1. LITELLM_BASE_URL set or http://localhost:8000 reachable → native runner
+//     speaking Anthropic protocol to LiteLLM (works with LiteLLM routing to
+//     Minimax, OpenRouter, Anthropic, etc.).
+//  2. claude binary on PATH → claude runner (subprocess).
+//  3. codex binary on PATH → codex runner (subprocess).
+//  4. ANTHROPIC_API_KEY set → native runner direct to api.anthropic.com.
+//  5. Fall back to claude runner (will fail loudly if not installed).
+func detectSmartDefaults() SmartDefaults {
+	d := SmartDefaults{
+		NativeModel: "claude-sonnet-4-6",
+	}
+	if m := os.Getenv("STOKE_NATIVE_MODEL"); m != "" {
+		d.NativeModel = m
+	}
+
+	// 1. LiteLLM via env
+	if base := os.Getenv("LITELLM_BASE_URL"); base != "" {
+		d.RunnerMode = "native"
+		d.NativeBaseURL = strings.TrimRight(base, "/")
+		d.NativeAPIKey = firstNonEmpty(
+			os.Getenv("LITELLM_API_KEY"),
+			os.Getenv("LITELLM_MASTER_KEY"),
+			os.Getenv("ANTHROPIC_API_KEY"),
+			"sk-litellm",
+		)
+		d.Notes = append(d.Notes, "LiteLLM detected via LITELLM_BASE_URL → native runner (Anthropic protocol)")
+		return d
+	}
+
+	// 2. LiteLLM via probe at conventional localhost port
+	if probeReachable("http://localhost:8000/v1/models", 300*time.Millisecond) ||
+		probeReachable("http://localhost:4000/v1/models", 300*time.Millisecond) ||
+		probeReachable("http://localhost:8000/health", 300*time.Millisecond) {
+		base := "http://localhost:8000"
+		if probeReachable("http://localhost:4000/v1/models", 200*time.Millisecond) {
+			base = "http://localhost:4000"
+		}
+		d.RunnerMode = "native"
+		d.NativeBaseURL = base
+		d.NativeAPIKey = firstNonEmpty(
+			os.Getenv("LITELLM_API_KEY"),
+			os.Getenv("LITELLM_MASTER_KEY"),
+			os.Getenv("ANTHROPIC_API_KEY"),
+			"sk-litellm",
+		)
+		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM detected at %s → native runner (Anthropic protocol)", base))
+		return d
+	}
+
+	// 3. Claude binary
+	if _, err := exec.LookPath("claude"); err == nil {
+		d.RunnerMode = "claude"
+		d.Notes = append(d.Notes, "claude binary on PATH → claude runner")
+		return d
+	}
+
+	// 4. Codex binary
+	if _, err := exec.LookPath("codex"); err == nil {
+		d.RunnerMode = "codex"
+		d.Notes = append(d.Notes, "codex binary on PATH → codex runner")
+		return d
+	}
+
+	// 5. Anthropic API key
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		d.RunnerMode = "native"
+		d.NativeAPIKey = key
+		d.Notes = append(d.Notes, "ANTHROPIC_API_KEY set → native runner direct to api.anthropic.com")
+		return d
+	}
+
+	d.RunnerMode = "claude"
+	d.Notes = append(d.Notes, "no runner detected — defaulting to claude (will require `claude` binary)")
+	return d
+}
+
+// firstNonEmpty returns the first non-empty string from the argument list.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// probeReachable performs a quick GET to check if a URL responds at all.
+// Used for LiteLLM autodetection. Any HTTP response (including 401/404) counts
+// as "something is listening" — we are not validating auth here.
+func probeReachable(url string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 600
+}
+
+// runSOWWithDefaults executes a SOW string using the smart-defaults runner.
+// Used by the /build-from-scope slash command.
+func runSOWWithDefaults(absRepo, sowText string, defaults SmartDefaults) {
+	// Persist the SOW to .stoke/sow-from-scope.json so the existing sowCmd
+	// loader can pick it up. Accepts both JSON and YAML — sowCmd handles both.
+	stokeDir := filepath.Join(absRepo, ".stoke")
+	if err := os.MkdirAll(stokeDir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "  Error creating .stoke: %v\n", err)
+		return
+	}
+	sowPath := filepath.Join(stokeDir, "sow-from-scope.json")
+	if !strings.HasPrefix(strings.TrimSpace(sowText), "{") {
+		// Looks like YAML — write to .yaml extension instead.
+		sowPath = filepath.Join(stokeDir, "sow-from-scope.yaml")
+	}
+	if err := os.WriteFile(sowPath, []byte(sowText), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "  Error writing SOW: %v\n", err)
+		return
+	}
+	fmt.Printf("  SOW written to %s\n\n", sowPath)
+
+	args := []string{
+		"--repo", absRepo,
+		"--file", sowPath,
+		"--runner", defaults.RunnerMode,
+	}
+	if defaults.NativeBaseURL != "" {
+		args = append(args, "--native-base-url", defaults.NativeBaseURL)
+	}
+	if defaults.NativeAPIKey != "" {
+		args = append(args, "--native-api-key", defaults.NativeAPIKey)
+	}
+	if defaults.NativeModel != "" {
+		args = append(args, "--native-model", defaults.NativeModel)
+	}
+	sowCmd(args)
+}
+
+// readPastedSOW reads multi-line input from the REPL until a blank line
+// followed by END (or EOF) marker. Used by /build-from-scope to accept
+// pasted SOW content directly in the shell.
+func readPastedSOW(scanner *bufio.Scanner) string {
+	var b strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "END" || strings.TrimSpace(line) == "EOF" {
+			break
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // launchREPL starts the Stoke interactive shell.
 // Slash commands dispatch to orchestrated workflows.
 // Free text goes through claude -p as a single task.
 func launchREPL() {
 	absRepo, _ := filepath.Abs(".")
+
+	// Smart defaults: detect LiteLLM, claude/codex binaries, API keys.
+	// User explicitly asked for "use all smart settings / use local litellm /
+	// use native executor" to be the zero-flag default.
+	defaults := detectSmartDefaults()
+
+	// Banner
+	fmt.Printf("\n  \033[1;36mStoke %s\033[0m  supervised AI build orchestrator\n", version)
+	fmt.Printf("  Smart defaults active:\n")
+	fmt.Printf("    runner:  %s\n", defaults.RunnerMode)
+	if defaults.NativeBaseURL != "" {
+		fmt.Printf("    base:    %s\n", defaults.NativeBaseURL)
+	}
+	if defaults.NativeModel != "" {
+		fmt.Printf("    model:   %s\n", defaults.NativeModel)
+	}
+	fmt.Printf("    super:   boulder (no wall-clock timeouts)\n")
+	for _, note := range defaults.Notes {
+		fmt.Printf("    note:    %s\n", note)
+	}
+	fmt.Println()
+	fmt.Println("  Type /help for commands. /build-from-scope to start a multi-session build from a SOW.")
+	fmt.Println("  Or run `stoke tui` for the full-screen Bubble Tea shell with live mission monitoring.")
+	fmt.Println()
+
 	r := repl.New(absRepo)
 	r.RegisterBuiltins()
+
+	// /build-from-scope: paste a SOW directly or pass a file path.
+	r.Register(repl.Command{
+		Name: "build-from-scope",
+		Description: "Build a project from a pasted or file-based Statement of Work",
+		Usage: "/build-from-scope [<path-to-sow.json>]\n               (with no path: paste SOW, then 'END' on a blank line)",
+		Run: func(args string) {
+			arg := strings.TrimSpace(args)
+			var sowText string
+			if arg != "" && !strings.HasPrefix(arg, "{") {
+				// Treat as a file path
+				path := arg
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(absRepo, arg)
+				}
+				data, err := os.ReadFile(path)
+				if err != nil {
+					fmt.Printf("  Error reading SOW file %q: %v\n", path, err)
+					return
+				}
+				sowText = string(data)
+				fmt.Printf("  Loaded SOW from %s (%d bytes)\n", path, len(sowText))
+			} else if strings.HasPrefix(arg, "{") {
+				// Inline JSON on the command line
+				sowText = arg
+			} else {
+				// Heredoc paste mode
+				fmt.Println("  Paste your SOW (JSON or YAML), then type END on a blank line:")
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
+				sowText = readPastedSOW(scanner)
+				fmt.Printf("  Received %d bytes\n", len(sowText))
+			}
+			if strings.TrimSpace(sowText) == "" {
+				fmt.Println("  No SOW provided. Aborting.")
+				return
+			}
+			runSOWWithDefaults(absRepo, sowText, defaults)
+		},
+	})
 
 	// Register all slash commands
 	r.Register(repl.Command{
@@ -2848,14 +3524,392 @@ func launchREPL() {
 		Run: func(args string) {}, // handled by REPL itself
 	})
 
-	// Free text -> dispatch through the run pipeline
+	// Free text -> dispatch through the run pipeline using the smart defaults
+	// detected at startup. This is the "use all smart settings / use local
+	// litellm / use native executor" path the user asked for.
 	r.OnChat = func(input string) {
 		fmt.Println()
-		runCmd([]string{"--task", input, "--repo", absRepo})
+		args := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			args = append(args, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			args = append(args, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			args = append(args, "--native-model", defaults.NativeModel)
+		}
+		runCmd(args)
 		fmt.Println()
 	}
 
 	r.Run()
+}
+
+// currentShellProgress and currentShellSessions are package-level hooks the
+// TUI shell sets while dispatching a command. sowCmd checks them to stream
+// session progress into the Sessions pane. When nil, sowCmd runs exactly
+// as it does in CLI mode.
+var (
+	currentShellProgress func(tui.SessionDisplay)
+	currentShellSessions func([]tui.SessionDisplay)
+)
+
+// launchShell starts the full-screen Bubble Tea shell. Smart defaults
+// autodetect the runner/base/model the same way launchREPL does. Slash
+// commands and free text route through the same dispatchers as the line
+// REPL, but their stdout is captured into the shell's log pane instead of
+// going directly to the terminal.
+//
+// Known limitation: commands that read from stdin interactively (e.g. the
+// /interview flow) don't work in full-screen mode yet — the TUI owns
+// stdin. Users who need interactive commands should use the line REPL.
+func launchShell(args []string) {
+	fs := flag.NewFlagSet("tui", flag.ExitOnError)
+	repo := fs.String("repo", ".", "Repository root")
+	fs.Parse(args)
+
+	absRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fatal("resolve repo: %v", err)
+	}
+
+	defaults := detectSmartDefaults()
+	cfg := tui.ShellConfig{
+		RepoRoot:   absRepo,
+		Version:    version,
+		Runner:     defaults.RunnerMode,
+		BaseURL:    defaults.NativeBaseURL,
+		Model:      defaults.NativeModel,
+		Supervisor: "boulder (no wall-clock timeouts)",
+		Notes:      defaults.Notes,
+	}
+
+	handler := func(sh *tui.Shell, input string) string {
+		// Capture stdout/stderr during the command's execution and stream
+		// each line into the shell's log pane via sh.Append.
+		restore, captureDone := captureStdoutTo(sh)
+		// Wire session-progress hooks so sowCmd pushes into the Sessions pane.
+		currentShellProgress = func(s tui.SessionDisplay) { sh.UpdateSession(s) }
+		currentShellSessions = func(list []tui.SessionDisplay) { sh.SetSessions(list) }
+		defer func() {
+			currentShellProgress = nil
+			currentShellSessions = nil
+			restore()
+			<-captureDone
+		}()
+
+		if strings.HasPrefix(input, "/") {
+			return dispatchSlash(sh, absRepo, defaults, input)
+		}
+		// Free text -> single run task
+		rargs := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			rargs = append(rargs, "--native-model", defaults.NativeModel)
+		}
+		runCmdSafe(rargs)
+		return "done"
+	}
+
+	shell := tui.NewShell(cfg, handler)
+	if err := shell.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// dispatchSlash routes a slash command inside the full-screen shell to the
+// appropriate Cmd. Returns a short status message. All command stdout is
+// already being captured by the caller's captureStdoutTo wrapper.
+func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input string) string {
+	line := strings.TrimPrefix(input, "/")
+	parts := strings.SplitN(line, " ", 2)
+	name := strings.ToLower(parts[0])
+	rest := ""
+	if len(parts) > 1 {
+		rest = strings.TrimSpace(parts[1])
+	}
+
+	switch name {
+	case "help", "?":
+		sh.Append("Available commands:")
+		sh.Append("  /build-from-scope <path>  Build from a SOW (JSON or YAML)")
+		sh.Append("  /interview <task>         Socratic clarify, then dispatch")
+		sh.Append("  /ship <goal>              Build → review → fix loop")
+		sh.Append("  /build [plan.json]        Execute plan with parallel agents")
+		sh.Append("  /plan <goal>              Generate task plan")
+		sh.Append("  /run <task>               Single task through full pipeline")
+		sh.Append("  /scope                    Read-only scope session")
+		sh.Append("  /scan [--security]        Deterministic code scan")
+		sh.Append("  /audit                    Multi-persona review")
+		sh.Append("  /status                   Show session dashboard")
+		sh.Append("  /pool                     Show subscription utilization")
+		sh.Append("  /pools                    List all pools")
+		sh.Append("  /quit                     Exit")
+		return "help shown"
+	case "build-from-scope":
+		return handleBuildFromScope(sh, absRepo, defaults, rest)
+	case "interview":
+		if rest == "" {
+			return "missing arg: /interview <task description>"
+		}
+		return handleInterview(sh, absRepo, defaults, rest)
+	case "ship":
+		if rest == "" {
+			return "missing arg: /ship <goal>"
+		}
+		shipCmd([]string{"--task", rest, "--repo", absRepo})
+		return "ship done"
+	case "build":
+		planPath := "stoke-plan.json"
+		if rest != "" {
+			planPath = rest
+		}
+		buildCmd([]string{"--plan", planPath, "--repo", absRepo})
+		return "build done"
+	case "plan":
+		if rest == "" {
+			return "missing arg: /plan <goal>"
+		}
+		planCmd([]string{"--task", rest, "--repo", absRepo})
+		return "plan done"
+	case "run":
+		if rest == "" {
+			return "missing arg: /run <task>"
+		}
+		rargs := []string{"--task", rest, "--repo", absRepo, "--runner", defaults.RunnerMode}
+		if defaults.NativeBaseURL != "" {
+			rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+		}
+		if defaults.NativeAPIKey != "" {
+			rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+		}
+		if defaults.NativeModel != "" {
+			rargs = append(rargs, "--native-model", defaults.NativeModel)
+		}
+		runCmdSafe(rargs)
+		return "run done"
+	case "scope":
+		scopeCmd([]string{"--repo", absRepo})
+		return "scope done"
+	case "scan":
+		scanArgs := []string{"--repo", absRepo}
+		if strings.Contains(rest, "--security") {
+			scanArgs = append(scanArgs, "--security")
+		}
+		scanCmd(scanArgs)
+		return "scan done"
+	case "audit":
+		auditCmd([]string{"--repo", absRepo})
+		return "audit done"
+	case "status":
+		statusCmd([]string{"--repo", absRepo})
+		return "status shown"
+	case "pool":
+		poolCmd([]string{})
+		return "pool shown"
+	case "pools":
+		poolsCmd([]string{})
+		return "pools shown"
+	default:
+		return fmt.Sprintf("unknown command: /%s (try /help)", name)
+	}
+}
+
+// handleBuildFromScope is the TUI version of the build-from-scope slash
+// command: loads a SOW from a path or inline, writes it to .stoke, runs
+// sowCmd with smart defaults. Output goes through the captured stdout.
+func handleBuildFromScope(sh *tui.Shell, absRepo string, defaults SmartDefaults, arg string) string {
+	var sowText string
+	if arg == "" {
+		sh.Append("  /build-from-scope requires a file path in TUI mode. Use the line REPL for paste mode.")
+		return "missing SOW"
+	}
+	path := arg
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(absRepo, arg)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		sh.Append("  Error reading SOW file %q: %v", path, err)
+		return "load failed"
+	}
+	sowText = string(data)
+	sh.Append("  Loaded SOW from %s (%d bytes)", path, len(sowText))
+
+	runSOWWithDefaults(absRepo, sowText, defaults)
+	return "sow done"
+}
+
+// handleInterview runs the Socratic deep-interview flow inside the TUI.
+// Each question is posted to the log via shell.Append and the user's answer
+// is gathered via shell.Prompt — a modal text-input mode that the shell
+// supports natively. After all questions are answered, the clarified scope
+// is dispatched to runCmd just like the line REPL's interview command.
+func handleInterview(sh *tui.Shell, absRepo string, defaults SmartDefaults, task string) string {
+	session := interview.NewSession(task)
+	sh.Append("")
+	sh.Append("Deep Interview: %s", task)
+	sh.Append("Answer each question. Type 'skip' to use the default, 'done' to finish early.")
+	sh.Append("")
+
+	for !session.IsComplete() {
+		q := session.NextQuestion()
+		if q == nil {
+			break
+		}
+		sh.Append("[%s] %s", q.Phase, q.Question)
+		if q.Default != "" {
+			sh.Append("  (default: %s)", q.Default)
+		}
+		ans := sh.Prompt(string(q.Phase) + ": " + q.Question)
+		answer := strings.TrimSpace(ans)
+		switch strings.ToLower(answer) {
+		case "skip", "s":
+			session.Skip()
+			sh.Append("  (skipped)")
+		case "done", "d":
+			for !session.IsComplete() {
+				session.Skip()
+			}
+		case "":
+			session.Skip()
+			sh.Append("  (using default)")
+		default:
+			session.Answer(answer)
+		}
+	}
+
+	scope := session.Synthesize()
+	sh.Append("")
+	sh.Append("=== Clarified Scope ===")
+	for _, line := range strings.Split(scope.ToPrompt(), "\n") {
+		sh.Append("%s", line)
+	}
+	sh.Append("Confidence: %.0f%%", scope.Confidence*100)
+	sh.Append("")
+
+	// Dispatch the clarified prompt through runCmd with smart defaults
+	rargs := []string{"--task", scope.ToPrompt(), "--repo", absRepo, "--runner", defaults.RunnerMode}
+	if defaults.NativeBaseURL != "" {
+		rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
+	}
+	if defaults.NativeAPIKey != "" {
+		rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
+	}
+	if defaults.NativeModel != "" {
+		rargs = append(rargs, "--native-model", defaults.NativeModel)
+	}
+	runCmdSafe(rargs)
+	return "interview done"
+}
+
+// runCmdSafe is a wrapper around runCmd that recovers from unexpected
+// panics so a bad free-text dispatch doesn't take down the TUI.
+func runCmdSafe(args []string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("  runCmd panic: %v\n", r)
+		}
+	}()
+	runCmd(args)
+}
+
+// captureToFunc is the underlying capture pipeline used by both the live
+// shell capture and the test sink. It redirects os.Stdout/os.Stderr into a
+// pipe and feeds each line (ANSI-stripped) to emit. Returns (restore, done).
+//
+// This is the single source of truth for the stdout-capture goroutine; the
+// production captureStdoutTo wraps it with a tui.Shell sink, and the unit
+// test wraps it with a recording sink. Keeping the implementation in one
+// place means a fix here is automatically tested.
+func captureToFunc(emit func(string)) (restore func(), done chan struct{}) {
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	done = make(chan struct{})
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		close(done)
+		return func() {}, done
+	}
+	os.Stdout = w
+	os.Stderr = w
+
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		var pending []byte
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				pending = append(pending, buf[:n]...)
+				for {
+					idx := bytes.IndexByte(pending, '\n')
+					if idx < 0 {
+						break
+					}
+					line := string(pending[:idx])
+					pending = pending[idx+1:]
+					emit(stripANSI(line))
+				}
+			}
+			if err != nil {
+				if len(pending) > 0 {
+					emit(stripANSI(string(pending)))
+				}
+				return
+			}
+		}
+	}()
+
+	restore = func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+		w.Close()
+	}
+	return restore, done
+}
+
+// captureStdoutTo redirects os.Stdout and os.Stderr into the shell's log
+// pane for the duration of a command. Returns a restore function and a
+// channel that closes when the capture goroutine exits (call restore then
+// wait on the channel to guarantee all output has been flushed).
+//
+// Thin wrapper over captureToFunc — both production and test paths share
+// the same goroutine implementation.
+func captureStdoutTo(sh *tui.Shell) (restore func(), done chan struct{}) {
+	return captureToFunc(func(s string) { sh.Append("%s", s) })
+}
+
+// stripANSI removes simple CSI escape sequences from a string so they
+// don't pollute the log pane. The shell has its own styling.
+func stripANSI(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			// Skip until the terminating letter
+			j := i + 2
+			for j < len(s) && !((s[j] >= 'a' && s[j] <= 'z') || (s[j] >= 'A' && s[j] <= 'Z')) {
+				j++
+			}
+			if j < len(s) {
+				j++
+			}
+			i = j
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 // extractVerifyMetrics extracts suite-level test pass/fail and diff size
@@ -3043,23 +4097,29 @@ USAGE:
   stoke <command> [flags]
 
 COMMANDS:
-  run       Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
-  build     Execute multi-task plan with parallel agents
-  plan      Generate a task plan from codebase analysis (headless)
-  scope     Interactive scoping session with research loop (read-only)
-  yolo      Launch Claude Code interactively with full Stoke guards
-  repair    Scan -> auto-generate fix plan -> build -> re-verify
-  ship      Build -> review -> fix -> review -> ... until ship-ready
-  scan      Deterministic code scan (secrets, eval, TODO, debug output)
-  audit     Multi-perspective review (security, perf, reliability, ops)
-  status    Show session dashboard (progress, cost, learning)
-  pool      Show subscription pool utilization
-  add-claude Add a Claude Max subscription to the pool
-  add-codex  Add a Codex/OpenAI subscription to the pool
-  pools     List all registered subscription pools
-  remove-pool Remove a pool by ID
-  doctor    Check tool dependencies
-  version   Print version
+  (no args)       Launch the line REPL with smart defaults
+  tui             Launch the full-screen Bubble Tea shell (command input +
+                  live mission monitoring). Falls back to line REPL if no TTY.
+  run             Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
+  build           Execute multi-task plan with parallel agents
+  sow             Execute Statement of Work (multi-session with acceptance gates)
+  plan            Generate a task plan from codebase analysis (headless)
+  scope           Interactive scoping session with research loop (read-only)
+  yolo            Launch Claude Code interactively with full Stoke guards
+  repair          Scan -> auto-generate fix plan -> build -> re-verify
+  ship            Build -> review -> fix -> review -> ... until ship-ready
+  scan            Deterministic code scan (secrets, eval, TODO, debug output)
+  audit           Multi-perspective review (security, perf, reliability, ops)
+  status          Show session dashboard (progress, cost, learning)
+  pool            Show subscription pool utilization
+  add-claude      Add a Claude Max subscription to the pool
+  add-codex       Add a Codex/OpenAI subscription to the pool
+  pools           List all registered subscription pools
+  remove-pool     Remove a pool by ID
+  mcp-serve       Start the codebase MCP server (exposes project to Claude Code)
+  mcp-serve-stoke Start the Stoke MCP server (exposes Stoke as a tool to Claude Code)
+  doctor          Check tool dependencies
+  version         Print version
 
 RUN FLAGS:
   --task <prompt>      Task description (required)
@@ -3079,6 +4139,19 @@ BUILD FLAGS:
   --sqlite             Use SQLite session store instead of JSON
   --interactive        Launch interactive Bubble Tea TUI
   --dry-run            Show plan without executing
+
+SOW FLAGS:
+  --file <path>           SOW file (default: stoke-sow.{json,yaml,yml})
+  --validate              Validate SOW and exit
+  --dry-run               Show SOW summary (with acceptance commands) and exit
+  --workers <n>           Max parallel agents per session (default: 4)
+  --runner <mode>         Runner backend: claude, codex, native, hybrid
+  --native-api-key        API key for native runner (direct API, no CLI)
+  --native-base-url       Base URL for LiteLLM/custom API endpoint
+  --native-model          Model name (default: claude-sonnet-4-6)
+  --resume                Skip sessions already completed in .stoke/sow-state.json
+  --continue-on-failure   Keep running subsequent sessions after a failure
+  --session-retries <n>   Retry attempts per session (default: 2)
 
 PLAN FLAGS:
   --task <goal>        High-level goal description
@@ -3115,6 +4188,8 @@ QUICKSTART:
   stoke build --plan stoke-plan.json --workers 4
   stoke scan --security
   stoke audit --dry-run
+  stoke sow --dry-run
+  stoke sow --runner native --native-base-url http://localhost:8000
   stoke pool --claude-config-dir ~/.claude
 
 `, version)

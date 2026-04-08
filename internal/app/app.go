@@ -81,6 +81,7 @@ type RunConfig struct {
 	RunnerMode       string                     // runner selection: "claude" (default), "codex", "native", "hybrid"
 	NativeAPIKey     string                     // API key for native runner (required when RunnerMode=native)
 	NativeModel      string                     // model for native runner (default: claude-sonnet-4-6)
+	NativeBaseURL    string                     // base URL for native runner (e.g. LiteLLM proxy)
 	Environ          env.Environment            // execution environment backend (nil = run on host)
 	EnvHandle        *env.Handle                // provisioned environment handle (nil = run on host)
 }
@@ -257,6 +258,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		}
 		if o.cfg.NativeAPIKey != "" {
 			native := engine.NewNativeRunner(o.cfg.NativeAPIKey, nativeModel)
+			native.BaseURL = o.cfg.NativeBaseURL // supports LiteLLM, custom proxies
 			native.EventBus = o.cfg.EventBus
 			runners.Native = native
 		}
