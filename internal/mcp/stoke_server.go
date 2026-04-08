@@ -421,28 +421,50 @@ func (s *StokeServer) handleGetStatus(args map[string]interface{}) (string, erro
 	if id == "" {
 		return "", fmt.Errorf("mission_id is required")
 	}
+	// Hold the lock for the whole snapshot. The background waiter
+	// goroutine writes Status / FinishedAt / ExitCode under the same
+	// lock when the subprocess exits, so reading without the lock
+	// races. Snapshot every field we need into locals while holding
+	// the lock and assemble the response after release.
 	s.mu.Lock()
 	rec, ok := s.missions[id]
-	s.mu.Unlock()
 	if !ok {
+		s.mu.Unlock()
 		return "", fmt.Errorf("mission %q not found", id)
 	}
+	snap := struct {
+		ID, Status, RepoRoot, StdoutPath, StderrPath string
+		ExitCode                                     int
+		StartedAt, FinishedAt                        time.Time
+		Command                                      []string
+	}{
+		ID:         rec.ID,
+		Status:     rec.Status,
+		RepoRoot:   rec.RepoRoot,
+		StdoutPath: rec.StdoutPath,
+		StderrPath: rec.StderrPath,
+		ExitCode:   rec.ExitCode,
+		StartedAt:  rec.StartedAt,
+		FinishedAt: rec.FinishedAt,
+		Command:    rec.Command,
+	}
+	s.mu.Unlock()
 
 	resp := map[string]interface{}{
-		"mission_id": rec.ID,
-		"status":     rec.Status,
-		"exit_code":  rec.ExitCode,
-		"repo_root":  rec.RepoRoot,
-		"started_at": rec.StartedAt.Format(time.RFC3339),
-		"stdout_log": rec.StdoutPath,
-		"stderr_log": rec.StderrPath,
-		"command":    rec.Command,
+		"mission_id": snap.ID,
+		"status":     snap.Status,
+		"exit_code":  snap.ExitCode,
+		"repo_root":  snap.RepoRoot,
+		"started_at": snap.StartedAt.Format(time.RFC3339),
+		"stdout_log": snap.StdoutPath,
+		"stderr_log": snap.StderrPath,
+		"command":    snap.Command,
 	}
-	if !rec.FinishedAt.IsZero() {
-		resp["finished_at"] = rec.FinishedAt.Format(time.RFC3339)
-		resp["duration_sec"] = rec.FinishedAt.Sub(rec.StartedAt).Seconds()
+	if !snap.FinishedAt.IsZero() {
+		resp["finished_at"] = snap.FinishedAt.Format(time.RFC3339)
+		resp["duration_sec"] = snap.FinishedAt.Sub(snap.StartedAt).Seconds()
 	} else {
-		resp["elapsed_sec"] = s.now().Sub(rec.StartedAt).Seconds()
+		resp["elapsed_sec"] = s.now().Sub(snap.StartedAt).Seconds()
 	}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return string(out), nil
@@ -465,16 +487,22 @@ func (s *StokeServer) handleGetLogs(args map[string]interface{}) (string, error)
 	}
 	s.mu.Lock()
 	rec, ok := s.missions[id]
-	s.mu.Unlock()
 	if !ok {
+		s.mu.Unlock()
 		return "", fmt.Errorf("mission %q not found", id)
 	}
+	// Snapshot under the lock — Status is mutated by the waiter goroutine.
+	missionID := rec.ID
+	status := rec.Status
+	stdoutPath := rec.StdoutPath
+	stderrPath := rec.StderrPath
+	s.mu.Unlock()
 
-	stdout := tailFile(rec.StdoutPath, tail)
-	stderr := tailFile(rec.StderrPath, tail)
+	stdout := tailFile(stdoutPath, tail)
+	stderr := tailFile(stderrPath, tail)
 	resp := map[string]interface{}{
-		"mission_id": rec.ID,
-		"status":     rec.Status,
+		"mission_id": missionID,
+		"status":     status,
 		"stdout":     stdout,
 		"stderr":     stderr,
 	}
@@ -489,14 +517,20 @@ func (s *StokeServer) handleCancelMission(args map[string]interface{}) (string, 
 	}
 	s.mu.Lock()
 	rec, ok := s.missions[id]
-	s.mu.Unlock()
 	if !ok {
+		s.mu.Unlock()
 		return "", fmt.Errorf("mission %q not found", id)
 	}
-	if rec.Status != "running" {
+	missionID := rec.ID
+	currentStatus := rec.Status
+	cancelCh := rec.Cancel
+	proc := rec.proc
+	s.mu.Unlock()
+
+	if currentStatus != "running" {
 		resp := map[string]interface{}{
-			"mission_id": rec.ID,
-			"status":     rec.Status,
+			"mission_id": missionID,
+			"status":     currentStatus,
 			"message":    "mission already finished",
 		}
 		out, _ := json.MarshalIndent(resp, "", "  ")
@@ -505,16 +539,16 @@ func (s *StokeServer) handleCancelMission(args map[string]interface{}) (string, 
 	// Signal cancellation first so the waiter marks the status correctly
 	// even if Kill() races the natural exit.
 	select {
-	case <-rec.Cancel:
+	case <-cancelCh:
 		// Already cancelled
 	default:
-		close(rec.Cancel)
+		close(cancelCh)
 	}
-	if err := rec.proc.Kill(); err != nil {
+	if err := proc.Kill(); err != nil {
 		return "", fmt.Errorf("kill mission: %w", err)
 	}
 	resp := map[string]interface{}{
-		"mission_id": rec.ID,
+		"mission_id": missionID,
 		"status":     "cancelling",
 		"message":    "SIGTERM/SIGKILL sent; status will flip to cancelled when process exits",
 	}

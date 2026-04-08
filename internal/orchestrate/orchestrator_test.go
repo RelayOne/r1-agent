@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ericmacdougall/stoke/internal/convergence"
@@ -421,8 +422,13 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 	writeFile(t, repoDir, "handler.go", "package handler\n\nfunc Handle() string { return \"ok\" }\n")
 	writeFile(t, repoDir, "handler_test.go", "package handler\n\nimport \"testing\"\n\nfunc TestHandle(t *testing.T) {\n\tif Handle() != \"ok\" { t.Fatal() }\n}\n")
 
-	consensusCalls := map[string]int{}
-	var consensusPrompts []string
+	// consensusCalls and consensusPrompts are mutated by parallel
+	// consensus goroutines; guard them with a mutex to satisfy -race.
+	var (
+		consensusMu      sync.Mutex
+		consensusCalls   = map[string]int{}
+		consensusPrompts []string
+	)
 	orch, err := New(Config{
 		StoreDir:        t.TempDir(),
 		RepoRoot:        repoDir,
@@ -431,8 +437,10 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 			return []string{"handler.go"}, nil
 		},
 		ConsensusModelFn: func(ctx context.Context, missionID, modelName, prompt string) (string, string, []string, error) {
+			consensusMu.Lock()
 			consensusCalls[modelName]++
 			consensusPrompts = append(consensusPrompts, prompt)
+			consensusMu.Unlock()
 			return "complete", "handler.go:3 implements Handle() returning ok, handler_test.go:5 asserts Handle() returns ok — full coverage verified", nil, nil
 		},
 	})
@@ -451,6 +459,8 @@ func TestRunMissionEndToEndWithConsensusFn(t *testing.T) {
 	if !result.IsSuccess() {
 		t.Errorf("expected success, got %s", result.FinalPhase)
 	}
+	consensusMu.Lock()
+	defer consensusMu.Unlock()
 	if consensusCalls["model-a"] == 0 || consensusCalls["model-b"] == 0 {
 		t.Errorf("both models should have been called: %v", consensusCalls)
 	}
@@ -526,25 +536,36 @@ func TestEndToEndBaselineValidateConsensus(t *testing.T) {
 	writeFile(t, repoDir, "main.go", "package main\n\nimport \"log\"\n\nfunc main() { log.Printf(\"ok\") }\n")
 	writeFile(t, repoDir, "main_test.go", "package main\n\nimport \"testing\"\n\nfunc TestMain2(t *testing.T) {}\n")
 
-	var validatePromptReceived string
-	var executePromptReceived string
-	var consensusPromptsReceived []string
+	// All three captures are written from concurrent handler goroutines.
+	// Guard with a mutex to satisfy -race.
+	var (
+		captureMu                sync.Mutex
+		validatePromptReceived   string
+		executePromptReceived    string
+		consensusPromptsReceived []string
+	)
 
 	orch, err := New(Config{
 		StoreDir:        t.TempDir(),
 		RepoRoot:        repoDir,
 		ConsensusModels: []string{"reviewer-a", "reviewer-b"},
 		ExecuteFn: func(ctx context.Context, m *mission.Mission, prompt, taskDesc string) ([]string, error) {
+			captureMu.Lock()
 			executePromptReceived = prompt
+			captureMu.Unlock()
 			return []string{"main.go"}, nil
 		},
 		ValidateFn: func(ctx context.Context, m *mission.Mission, prompt string) (string, error) {
+			captureMu.Lock()
 			validatePromptReceived = prompt
+			captureMu.Unlock()
 			// Simulate adversarial LLM finding no additional issues
 			return "", nil
 		},
 		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			captureMu.Lock()
 			consensusPromptsReceived = append(consensusPromptsReceived, prompt)
+			captureMu.Unlock()
 			return "complete", "validated", nil, nil
 		},
 	})
@@ -573,37 +594,45 @@ func TestEndToEndBaselineValidateConsensus(t *testing.T) {
 		t.Logf("RunMission error (may be expected if validation finds gaps): %v", err)
 	}
 
+	// Snapshot the captured prompts under the mutex so the assertion
+	// reads don't race against the goroutines that mutated them.
+	captureMu.Lock()
+	executeP := executePromptReceived
+	validateP := validatePromptReceived
+	consensusP := append([]string(nil), consensusPromptsReceived...)
+	captureMu.Unlock()
+
 	// Verify prompts were actually built and passed
-	if executePromptReceived == "" {
+	if executeP == "" {
 		t.Error("ExecuteFn should receive the mission-aware prompt")
 	} else {
-		if !strings.Contains(executePromptReceived, "implementation agent") {
+		if !strings.Contains(executeP, "implementation agent") {
 			t.Error("execute prompt should come from BuildMissionExecutePrompt")
 		}
-		if !strings.Contains(executePromptReceived, "Test E2E") {
+		if !strings.Contains(executeP, "Test E2E") {
 			t.Error("execute prompt should include mission title")
 		}
-		if !strings.Contains(executePromptReceived, "Main runs") {
+		if !strings.Contains(executeP, "Main runs") {
 			t.Error("execute prompt should include criteria")
 		}
 	}
 
-	if validatePromptReceived == "" {
+	if validateP == "" {
 		t.Error("ValidateFn should receive the adversarial validation prompt")
 	} else {
-		if !strings.Contains(validatePromptReceived, "5 Convergence Gates") {
+		if !strings.Contains(validateP, "5 Convergence Gates") {
 			t.Error("validate prompt should include 5 convergence gates")
 		}
-		if !strings.Contains(validatePromptReceived, "Do not rationalize") {
+		if !strings.Contains(validateP, "Do not rationalize") {
 			t.Error("validate prompt should include anti-rationalization")
 		}
 	}
 
-	if len(consensusPromptsReceived) == 0 && result != nil && result.IsSuccess() {
+	if len(consensusP) == 0 && result != nil && result.IsSuccess() {
 		// If mission succeeded, consensus was called
 		t.Error("consensus models should receive adversarial prompts")
 	}
-	for i, p := range consensusPromptsReceived {
+	for i, p := range consensusP {
 		if !strings.Contains(p, "DISPROVE Completeness") {
 			t.Errorf("consensus prompt %d missing adversarial framing", i)
 		}

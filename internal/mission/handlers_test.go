@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ericmacdougall/stoke/internal/convergence"
@@ -273,12 +274,19 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 	m := setupHandlerTestMission(t, store)
 	metrics := NewMetrics()
 
-	var capturedPrompts []string
+	// capturedPrompts is appended from concurrent consensus goroutines.
+	// Guard with a mutex to prevent a -race report.
+	var (
+		capturedMu      sync.Mutex
+		capturedPrompts []string
+	)
 	handler := NewConsensusHandler(HandlerDeps{
 		Store:   store,
 		Metrics: metrics,
 		ConsensusModelFn: func(ctx context.Context, missionID, model, prompt string) (string, string, []string, error) {
+			capturedMu.Lock()
 			capturedPrompts = append(capturedPrompts, prompt)
+			capturedMu.Unlock()
 			// Provide evidence-backed reasoning so anti-hallucination check passes
 			return "complete", "Verified auth.go:42 implements JWT token issuance with proper expiry, jwt_test.go:18 covers the happy path and error cases thoroughly", nil, nil
 		},
@@ -298,6 +306,8 @@ func TestConsensusHandlerWithFn(t *testing.T) {
 	}
 
 	// Verify each model received the adversarial consensus prompt
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
 	if len(capturedPrompts) != 2 {
 		t.Fatalf("expected 2 prompts, got %d", len(capturedPrompts))
 	}

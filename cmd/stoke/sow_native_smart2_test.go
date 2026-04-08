@@ -220,7 +220,7 @@ func TestUnmarshalCrossReview(t *testing.T) {
   ]
 }`
 	var out crossReviewResult
-	if err := unmarshalCrossReview([]byte(raw), &out); err != nil {
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out.Approved {

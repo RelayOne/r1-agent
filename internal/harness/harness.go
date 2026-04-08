@@ -165,8 +165,13 @@ func (h *Harness) PauseStance(ctx context.Context, stanceID string, reason strin
 		return fmt.Errorf("harness: pause: stance %q is %s, not running", stanceID, sess.Status)
 	}
 
-	// Signal the stance to pause via the cooperative channel.
+	// Signal the stance to pause via the cooperative channel. Hold
+	// sess.pauseMu while reading/closing pauseCh so it doesn't race
+	// with CheckpointCheck's snapshot read.
+	sess.pauseMu.Lock()
 	close(sess.pauseCh)
+	pauseAckCh := sess.pauseAckCh
+	sess.pauseMu.Unlock()
 	sess.Status = StatusPaused
 	sess.PauseReason = reason
 
@@ -175,7 +180,7 @@ func (h *Harness) PauseStance(ctx context.Context, stanceID string, reason strin
 
 	// Wait for the stance to reach a safe checkpoint and acknowledge.
 	select {
-	case <-sess.pauseAckCh:
+	case <-pauseAckCh:
 		// Stance has stopped at a safe checkpoint.
 	case <-time.After(30 * time.Second):
 		return fmt.Errorf("harness: pause: stance %q did not acknowledge within 30s", stanceID)
@@ -221,12 +226,17 @@ func (h *Harness) ResumeStance(ctx context.Context, stanceID string, additional 
 		sess.AdditionalCtx = additional
 	}
 
-	// Unblock the stance runner waiting in CheckpointCheck.
+	// The stance runner reads pauseCh/resumeCh/pauseAckCh under
+	// sess.pauseMu in CheckpointCheck. Take that lock before closing
+	// the resume channel and reallocating the cycle channels so the
+	// reader either sees the OLD set (and waits on the snapshot) or
+	// the NEW set (and waits on the next pause).
+	sess.pauseMu.Lock()
 	close(sess.resumeCh)
-	// Allocate fresh channels for the next pause cycle.
 	sess.pauseCh = make(chan struct{})
 	sess.resumeCh = make(chan struct{})
 	sess.pauseAckCh = make(chan struct{})
+	sess.pauseMu.Unlock()
 
 	h.mu.Unlock()
 

@@ -126,17 +126,3 @@ func TestCompactionEnabled(t *testing.T) {
 	}
 }
 
-func TestLenStr(t *testing.T) {
-	cases := map[int]string{
-		0:   "0",
-		1:   "1",
-		42:  "42",
-		100: "100",
-		-7:  "-7",
-	}
-	for in, want := range cases {
-		if got := lenStr(in); got != want {
-			t.Errorf("lenStr(%d) = %q, want %q", in, got, want)
-		}
-	}
-}

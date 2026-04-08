@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,13 +28,6 @@ import (
 // LLM calls in this package.
 func encodeTextMessage(text string) (json.RawMessage, error) {
 	return json.Marshal([]map[string]interface{}{{"type": "text", "text": text}})
-}
-
-// unmarshalCrossReview parses the reviewer's JSON response into a
-// crossReviewResult. Separated so the cross-review logic can stay
-// readable.
-func unmarshalCrossReview(data []byte, out *crossReviewResult) error {
-	return json.Unmarshal(data, out)
 }
 
 // sowNativeConfig holds the small surface area the fast-path session
@@ -1223,7 +1217,7 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		raw := opts.RawSOW
 		const rawCap = 32000
 		if len(raw) > rawCap {
-			raw = raw[:rawCap] + "\n... (SOW truncated at " + lenToStr(rawCap) + " bytes — full spec in .stoke/)"
+			raw = raw[:rawCap] + "\n... (SOW truncated at " + strconv.Itoa(rawCap) + " bytes — full spec in .stoke/)"
 		}
 		sys.WriteString("SPEC (verbatim from the SOW — cross-reference this whenever you're about to choose a name):\n")
 		sys.WriteString("----- BEGIN SOW -----\n")

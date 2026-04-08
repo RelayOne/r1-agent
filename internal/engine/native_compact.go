@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/agentloop"
@@ -62,7 +63,7 @@ func buildNativeCompactor(keepRecent, summaryChars int) agentloop.CompactFunc {
 				switch block.Type {
 				case "tool_result":
 					if len(block.Content) > summaryChars {
-						nb.Content = "(tool result truncated: " + lenStr(len(block.Content)) + " bytes)"
+						nb.Content = "(tool result truncated: " + strconv.Itoa(len(block.Content)) + " bytes)"
 					}
 				case "text":
 					// Collapse long text blocks (model narration). Keep
@@ -79,37 +80,12 @@ func buildNativeCompactor(keepRecent, summaryChars int) agentloop.CompactFunc {
 	}
 }
 
-// lenStr converts an int to a short string without importing strconv at
-// every call site. Microscopic helper used in the truncation notice.
-func lenStr(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits [20]byte
-	i := len(digits)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		digits[i] = byte('0' + n%10)
-		n /= 10
-	}
-	s := string(digits[i:])
-	if neg {
-		return "-" + s
-	}
-	return s
-}
-
 // compactionEnabled reports whether the given RunSpec asked for progressive
 // compaction. Helper for native_runner.go so the wiring stays readable.
 func compactionEnabled(spec RunSpec) bool {
 	return spec.CompactThreshold > 0
 }
 
-// ensureNoTrailingDot is a tiny helper kept here so the compactor file
-// compiles standalone (no import needed). Prevents a lint warning on
-// the unused strings import if the file evolves.
+// strings is imported for symmetry with future expansions; reference
+// the package once so the import is never flagged when callers shrink.
 var _ = strings.TrimSpace

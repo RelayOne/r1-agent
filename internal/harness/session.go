@@ -38,8 +38,15 @@ func (s *StanceSession) CheckpointCheck(ctx context.Context) error {
 		return err
 	}
 
+	// Snapshot the pause channel under the lock so concurrent
+	// ResumeStance reassigning s.pauseCh to a fresh channel doesn't
+	// race against our read.
+	s.pauseMu.Lock()
+	pauseCh := s.pauseCh
+	s.pauseMu.Unlock()
+
 	select {
-	case <-s.pauseCh:
+	case <-pauseCh:
 		// Acknowledge the pause.
 		s.pauseMu.Lock()
 		select {
@@ -48,11 +55,14 @@ func (s *StanceSession) CheckpointCheck(ctx context.Context) error {
 		default:
 			close(s.pauseAckCh)
 		}
+		// Snapshot resumeCh under the same lock so the wait below
+		// uses a stable reference.
+		resumeCh := s.resumeCh
 		s.pauseMu.Unlock()
 
 		// Wait for resume or context cancellation.
 		select {
-		case <-s.resumeCh:
+		case <-resumeCh:
 			// Reset channels for next pause cycle.
 			s.pauseMu.Lock()
 			s.pauseCh = make(chan struct{})
