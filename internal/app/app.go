@@ -19,6 +19,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/memory"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/preflight"
+	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/rbac"
 	"github.com/ericmacdougall/stoke/internal/replay"
 	"github.com/ericmacdougall/stoke/internal/repomap"
@@ -77,6 +78,24 @@ type RunConfig struct {
 	Memory           *memory.Store              // cross-session persistent knowledge (nil = disabled)
 	Telemetry        *telemetry.Collector       // structured metrics collector (nil = disabled)
 	Convergence      *convergence.Validator     // adversarial self-audit gate (nil = auto-created)
+	// ConvergenceIgnores is the CTO-approved ignore list used to filter
+	// false positives before the convergence gate decides to block a
+	// merge. When nil, the orchestrator loads/creates it from
+	// .stoke/convergence-ignores.json.
+	ConvergenceIgnores *convergence.IgnoreList
+	// ConvergenceRepeats tracks how many times a specific finding has
+	// blocked convergence. Persisted under
+	// .stoke/convergence-repeats.json. Auto-loaded if nil.
+	ConvergenceRepeats *convergence.RepeatTracker
+	// ConvergenceRepeatThreshold is how many repeats must occur before
+	// the VP Eng → CTO override flow is triggered. Default 2.
+	ConvergenceRepeatThreshold int
+	// OverrideJudge is the two-role (VP Eng → CTO) judge that proposes
+	// and approves ignore entries. When nil, the orchestrator constructs
+	// an LLM-backed judge using the same provider as the native runner
+	// (only when a provider can be built). Set to a MockOverrideJudge
+	// from tests.
+	OverrideJudge    convergence.OverrideJudge
 	EventBus         *hub.Bus                   // unified event bus (nil = no events)
 	RunnerMode       string                     // runner selection: "claude" (default), "codex", "native", "hybrid"
 	NativeAPIKey     string                     // API key for native runner (required when RunnerMode=native)
@@ -245,24 +264,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		})
 	}
 
-	runners := engine.Registry{
-		Claude: engine.NewClaudeRunner(o.cfg.ClaudeBinary),
-		Codex:  engine.NewCodexRunner(o.cfg.CodexBinary),
-	}
-
-	// Initialize native runner if requested or API key provided
-	if o.cfg.RunnerMode == "native" || o.cfg.NativeAPIKey != "" {
-		nativeModel := o.cfg.NativeModel
-		if nativeModel == "" {
-			nativeModel = "claude-sonnet-4-6"
-		}
-		if o.cfg.NativeAPIKey != "" {
-			native := engine.NewNativeRunner(o.cfg.NativeAPIKey, nativeModel)
-			native.BaseURL = o.cfg.NativeBaseURL // supports LiteLLM, custom proxies
-			native.EventBus = o.cfg.EventBus
-			runners.Native = native
-		}
-	}
+	runners := buildRunners(o.cfg)
 
 	taskType := model.InferTaskType(o.cfg.Task)
 	if strings.TrimSpace(o.cfg.TaskType) != "" {
@@ -303,16 +305,116 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		Recorder:         o.cfg.Recorder,
 		TestGraph:        o.cfg.TestGraph,
 		RepoMap:          o.cfg.RepoMap,
-		PlanOnly:         o.cfg.PlanOnly,
-		Convergence:      o.cfg.Convergence,
-		EventBus:         o.cfg.EventBus,
-		SkillRegistry:    skillRegistry,
-		StackMatches:     stackMatches,
-		RunnerMode:       o.cfg.RunnerMode,
-		Environ:          o.cfg.Environ,
-		EnvHandle:        o.cfg.EnvHandle,
+		PlanOnly:                   o.cfg.PlanOnly,
+		Convergence:                o.cfg.Convergence,
+		ConvergenceIgnores:         o.cfg.ConvergenceIgnores,
+		ConvergenceRepeats:         o.cfg.ConvergenceRepeats,
+		ConvergenceRepeatThreshold: o.cfg.ConvergenceRepeatThreshold,
+		OverrideJudge:              o.cfg.OverrideJudge,
+		EventBus:                   o.cfg.EventBus,
+		SkillRegistry:              skillRegistry,
+		StackMatches:               stackMatches,
+		RunnerMode:                 o.cfg.RunnerMode,
+		Environ:                    o.cfg.Environ,
+		EnvHandle:                  o.cfg.EnvHandle,
+	}
+	// Auto-load the CTO-approved ignore list and repeat tracker from disk
+	// if the caller didn't supply them. This makes the override flow
+	// transparent: users don't need to know about the files, they just
+	// see that repeated false positives stop blocking convergence.
+	if wf.ConvergenceIgnores == nil {
+		if list, err := convergence.LoadIgnores(o.cfg.RepoRoot); err == nil {
+			wf.ConvergenceIgnores = list
+		}
+	}
+	if wf.ConvergenceRepeats == nil {
+		if tracker, err := convergence.LoadRepeatTracker(o.cfg.RepoRoot); err == nil {
+			wf.ConvergenceRepeats = tracker
+		}
+	}
+	// Auto-construct an LLM override judge when a provider is available
+	// (native runner mode with a key). In other modes the judge stays
+	// nil and the override flow is skipped.
+	if wf.OverrideJudge == nil && (o.cfg.RunnerMode == "native" || o.cfg.NativeAPIKey != "") {
+		if judgeProv := buildJudgeProvider(o.cfg); judgeProv != nil {
+			wf.OverrideJudge = &convergence.LLMOverrideJudge{
+				Provider: judgeProv,
+				Model:    o.cfg.NativeModel,
+			}
+		}
 	}
 	return wf.Run(ctx)
+}
+
+// buildJudgeProvider returns a provider.Provider for the LLM override judge,
+// or nil if one can't be constructed (e.g. no API key and no base URL). It
+// mirrors buildRunners' key-selection logic.
+func buildJudgeProvider(cfg RunConfig) provider.Provider {
+	apiKey := cfg.NativeAPIKey
+	if apiKey == "" {
+		apiKey = firstEnv("LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY")
+	}
+	if apiKey == "" && cfg.NativeBaseURL != "" {
+		apiKey = provider.LocalLiteLLMStub
+	}
+	if apiKey == "" {
+		return nil
+	}
+	return provider.NewAnthropicProvider(apiKey, cfg.NativeBaseURL)
+}
+
+// firstEnv returns the first non-empty value from the named env vars, or ""
+// if none are set. Used to pick an API key for the native runner without
+// forcing the user to pass an explicit --native-api-key when their env is
+// already configured.
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := os.Getenv(n); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// buildRunners constructs the engine.Registry from a RunConfig. Extracted
+// from Run() so the runner-selection logic is unit-testable without spinning
+// up a full orchestrator.
+//
+// The Claude and Codex runners are always constructed (they're cheap — just
+// bind a binary path). The Native runner is constructed iff:
+//
+//   - cfg.RunnerMode == "native" (user explicitly asked for it), OR
+//   - cfg.NativeAPIKey != "" (implicit opt-in via API key)
+//
+// When --runner=native is explicit but no key is supplied, we fall back to
+// LITELLM_API_KEY / LITELLM_MASTER_KEY / ANTHROPIC_API_KEY in that order,
+// and finally to a stub "sk-litellm" value if a BaseURL is set (local
+// LiteLLM often doesn't care about the header). This closes a footgun
+// where --runner=native silently fell back to Claude Code.
+func buildRunners(cfg RunConfig) engine.Registry {
+	runners := engine.Registry{
+		Claude: engine.NewClaudeRunner(cfg.ClaudeBinary),
+		Codex:  engine.NewCodexRunner(cfg.CodexBinary),
+	}
+	if cfg.RunnerMode != "native" && cfg.NativeAPIKey == "" {
+		return runners
+	}
+	nativeModel := cfg.NativeModel
+	if nativeModel == "" {
+		nativeModel = "claude-sonnet-4-6"
+	}
+	apiKey := cfg.NativeAPIKey
+	if apiKey == "" {
+		apiKey = firstEnv("LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY")
+		if apiKey == "" && cfg.NativeBaseURL != "" {
+			apiKey = provider.LocalLiteLLMStub // local LiteLLM stub
+		}
+	}
+	native := engine.NewNativeRunner(apiKey, nativeModel)
+	native.BaseURL = cfg.NativeBaseURL
+	native.EventBus = cfg.EventBus
+	runners.Native = native
+	return runners
 }
 
 // Doctor checks whether the claude and codex binaries are available on PATH and returns a diagnostic report.

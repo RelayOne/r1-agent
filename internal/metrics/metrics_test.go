@@ -209,8 +209,13 @@ func TestDefaultRegistry(t *testing.T) {
 	if DefaultRegistry == nil {
 		t.Fatal("DefaultRegistry should not be nil")
 	}
-	DefaultRegistry.Counter("test.default").Inc()
-	if DefaultRegistry.Counter("test.default").Value() != 1 {
-		t.Error("default registry should track values")
+	// DefaultRegistry is package-level shared state, so use a unique
+	// counter name per run so -count=N doesn't accumulate counts across
+	// invocations.
+	name := "test.default." + t.Name()
+	start := DefaultRegistry.Counter(name).Value()
+	DefaultRegistry.Counter(name).Inc()
+	if got := DefaultRegistry.Counter(name).Value(); got != start+1 {
+		t.Errorf("default registry should track values: %d → %d (expected +1)", start, got)
 	}
 }

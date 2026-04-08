@@ -26,6 +26,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/audit"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
+	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/env"
 	"github.com/ericmacdougall/stoke/internal/env/docker"
 	"github.com/ericmacdougall/stoke/internal/env/ember"
@@ -44,6 +45,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/progress"
+	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
@@ -775,6 +777,7 @@ func runCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
@@ -895,6 +898,7 @@ func buildCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Build pool configurations from flags
 	var claudePoolDirs, codexPoolDirs []string
@@ -1207,17 +1211,86 @@ func sowCmd(args []string) {
 	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
 	continueOnFailure := fs.Bool("continue-on-failure", false, "Keep running subsequent sessions after a session fails (default: halt)")
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
+	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
+	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
+	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
+	repomapBudget := fs.Int("repomap-tokens", 3000, "Max characters of repo map to inject into task prompts (0 = disable)")
+	enableWisdom := fs.Bool("wisdom", true, "Capture per-session learnings (patterns/decisions/gotchas) and inject them into later sessions")
+	enableCrossReview := fs.Bool("cross-review", true, "After each successful session, run a cross-model code review over the git diff before accepting the session")
+	reviewModel := fs.String("review-model", "", "Model name used for cross-model review (default: same as --native-model)")
+	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
+	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
-	// Load SOW
+	// Load SOW. Supports three input formats:
+	//   - .json / .yaml / .yml → parsed directly
+	//   - .txt / .md / prose   → converted via LLM (needs a provider)
+	// The prose path requires a functional provider (native runner w/ key
+	// OR Anthropic key) because it calls the configured model to turn
+	// prose into a structured SOW. Cached to .stoke/sow-from-prose.json
+	// keyed on source hash.
 	var sow *plan.SOW
 	if *sowFile != "" {
-		sow, err = plan.LoadSOW(*sowFile)
+		prov, modelName := buildProseProvider(*runnerMode, *nativeAPIKey, *nativeBaseURL, *nativeModel)
+		loaded, result, loadErr := plan.LoadSOWFile(*sowFile, absRepo, prov, modelName)
+		if loadErr != nil {
+			fatal("load SOW: %v", loadErr)
+		}
+		sow = loaded
+		switch result.Format {
+		case "prose":
+			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
+			// Auto-critique + refine: turn the LLM's first-pass SOW
+			// into something executable. Up to 2 critique/refine
+			// cycles; stop when verdict == "ship".
+			if *autoCritique && prov != nil {
+				fmt.Printf("  running SOW critique pass...\n")
+				refined, crit, critErr := plan.CritiqueAndRefine(sow, prov, modelName, 2)
+				if critErr != nil {
+					fmt.Fprintf(os.Stderr, "  critique warning: %v\n", critErr)
+				}
+				if refined != nil {
+					sow = refined
+				}
+				if crit != nil {
+					fmt.Printf("  critique: %s (score %d/100)\n", crit.Verdict, crit.OverallScore)
+					if crit.Summary != "" {
+						fmt.Printf("    %s\n", crit.Summary)
+					}
+					if len(crit.Issues) > 0 {
+						fmt.Printf("  %d issues flagged:\n", len(crit.Issues))
+						for _, iss := range crit.Issues {
+							tag := ""
+							if iss.SessionID != "" {
+								tag = " [" + iss.SessionID
+								if iss.TaskID != "" {
+									tag += "/" + iss.TaskID
+								}
+								tag += "]"
+							}
+							fmt.Printf("    - [%s]%s %s\n", iss.Severity, tag, iss.Description)
+						}
+					}
+					// Persist the refined SOW next to the cache so a
+					// human can inspect what the critic produced.
+					if refinedPath := filepath.Join(absRepo, ".stoke", "sow-refined.json"); sow != nil {
+						if data, mErr := json.MarshalIndent(sow, "", "  "); mErr == nil {
+							_ = os.WriteFile(refinedPath, data, 0o600)
+						}
+					}
+				}
+			}
+		case "yaml":
+			fmt.Printf("  loaded YAML SOW: %s\n", result.OriginalPath)
+		default:
+			fmt.Printf("  loaded JSON SOW: %s\n", result.OriginalPath)
+		}
 	} else {
 		sow, err = plan.LoadSOWFromDir(absRepo)
 	}
@@ -1429,7 +1502,158 @@ func sowCmd(args []string) {
 	}
 	defer cancel()
 
+	// FAST PATH: when the native runner is selected, bypass runBuild
+	// entirely. runBuild delegates to the single-task workflow engine
+	// which expects a pre-existing codebase, git worktree, plan phase,
+	// execute phase, verify phase, and merge — none of which are the
+	// right shape for a greenfield multi-session SOW. The native fast
+	// path drives the agentloop directly against absRepo for each task.
+	var nativeExec func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error)
+	if *runnerMode == "native" {
+		nativeKey := *nativeAPIKey
+		if nativeKey == "" {
+			for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+				if v := os.Getenv(k); v != "" {
+					nativeKey = v
+					break
+				}
+			}
+		}
+		if nativeKey == "" && *nativeBaseURL != "" {
+			nativeKey = provider.LocalLiteLLMStub
+		}
+		if nativeKey == "" {
+			fatal("SOW fast path requires a native API key: set --native-api-key or one of LITELLM_API_KEY/LITELLM_MASTER_KEY/ANTHROPIC_API_KEY")
+		}
+		nativeModelName := *nativeModel
+		if nativeModelName == "" {
+			nativeModelName = "claude-sonnet-4-6"
+		}
+		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
+		runner.BaseURL = *nativeBaseURL
+
+		// Build a repo map once so every task prompt can inject the
+		// ranked codebase view. If this fails we proceed without it.
+		var sowRepoMap *repomap.RepoMap
+		if *repomapBudget > 0 {
+			if rm, rmErr := repomap.Build(absRepo); rmErr == nil {
+				sowRepoMap = rm
+			}
+		}
+
+		// Cost budget is tracked across the entire SOW run, not per
+		// session — one shared pointer lets every session see the
+		// cumulative spend.
+		sharedSpent := new(float64)
+
+		// Load (or create) the CTO-approved ignore list so the
+		// override flow can accumulate across runs.
+		ignoreList, ignoreErr := convergence.LoadIgnores(absRepo)
+		if ignoreErr != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not load ignores: %v\n", ignoreErr)
+			ignoreList = &convergence.IgnoreList{Version: 1}
+		}
+
+		// Build an override judge using the same provider the native
+		// runner is using. When it's unavailable, the override flow is
+		// skipped gracefully.
+		var overrideJudge convergence.OverrideJudge
+		if prov := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL); prov != nil {
+			overrideJudge = &convergence.LLMOverrideJudge{
+				Provider: prov,
+				Model:    nativeModelName,
+			}
+		}
+
+		// Continuation callback: turn CTO-surfaced continuations into
+		// a new session the scheduler will pick up. Uses AppendSession
+		// which extends the live session list.
+		continuationCallback := func(fromSession string, items []string) {
+			if len(items) == 0 {
+				return
+			}
+			contID := fmt.Sprintf("%s-cont", fromSession)
+			cont := plan.Session{
+				ID:          contID,
+				Title:       "continuation from " + fromSession,
+				Description: "work surfaced by the CTO judge after session " + fromSession + " acceptance criteria failed",
+			}
+			for i, item := range items {
+				cont.Tasks = append(cont.Tasks, plan.Task{
+					ID:          fmt.Sprintf("%s-t%d", contID, i+1),
+					Description: item,
+				})
+			}
+			// No explicit criteria — the continuation session will
+			// inherit baseline criteria from inferBaselineCriteria via
+			// runSessionNative, so it still gets verified.
+			ss.AppendSession(cont)
+			fmt.Printf("  appended continuation session %s with %d tasks\n", contID, len(items))
+		}
+
+		// Wisdom store: load any prior snapshot for this SOW so a
+		// resume picks up learnings from earlier runs. New sessions
+		// append to it and we persist after each session.
+		var wisdomStore *wisdom.Store
+		var wisdomProv provider.Provider
+		if *enableWisdom {
+			if store, wErr := LoadWisdom(absRepo, sow.ID); wErr == nil {
+				wisdomStore = store
+			} else {
+				wisdomStore = wisdom.NewStore()
+			}
+			// Share the same provider as the build runner — usually
+			// the same key + base URL works for the extraction call.
+			wisdomProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+
+		// Cross-model reviewer: use the configured --review-model if
+		// set, otherwise the same model as the build runner. We still
+		// construct a separate Provider instance so the request config
+		// can differ (future: lower temperature, different max tokens).
+		var reviewProv provider.Provider
+		if *enableCrossReview {
+			reviewProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+		reviewModelName := *reviewModel
+		if reviewModelName == "" {
+			reviewModelName = nativeModelName
+		}
+
+		nativeCfg := sowNativeConfig{
+			RepoRoot:          absRepo,
+			Runner:            runner,
+			MaxTurns:          100,
+			MaxRepairAttempts: *maxRepairAttempts,
+			Model:             nativeModelName,
+			SOWName:           sow.Name,
+			SOWDesc:           sow.Description,
+			RepoMap:           sowRepoMap,
+			RepoMapBudget:     *repomapBudget,
+			CostBudgetUSD:     *costBudget,
+			spent:             sharedSpent,
+			OverrideJudge:     overrideJudge,
+			Ignores:           ignoreList,
+			OnContinuations:   continuationCallback,
+			Wisdom:            wisdomStore,
+			WisdomProvider:    wisdomProv,
+			SOWID:             sow.ID,
+			ReviewProvider:    reviewProv,
+			ReviewModel:       reviewModelName,
+			StrictScope:       *strictScope,
+			ParallelWorkers:   *parallelTasks,
+		}
+		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
+			fmt.Printf("  %d tasks\n", len(session.Tasks))
+			return runSessionNative(ctx, session, sow, nativeCfg)
+		}
+	}
+
 	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+		if nativeExec != nil {
+			return nativeExec(ctx, session)
+		}
 		fmt.Printf("\n--- Session %s: %s ---\n", session.ID, session.Title)
 		fmt.Printf("  %d tasks\n", len(session.Tasks))
 
@@ -2063,6 +2287,7 @@ func yoloCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	fmt.Printf("⚡ STOKE yolo\n")
 	fmt.Printf("  repo: %s\n", absRepo)
@@ -2256,6 +2481,7 @@ func repairCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
@@ -2487,6 +2713,7 @@ func shipCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	detected := config.DetectCommands(absRepo)
 	if *buildC == "" {
@@ -3147,7 +3374,7 @@ func detectSmartDefaults() SmartDefaults {
 			os.Getenv("LITELLM_API_KEY"),
 			os.Getenv("LITELLM_MASTER_KEY"),
 			os.Getenv("ANTHROPIC_API_KEY"),
-			"sk-litellm",
+			provider.LocalLiteLLMStub,
 		)
 		d.Notes = append(d.Notes, "LiteLLM detected via LITELLM_BASE_URL → native runner (Anthropic protocol)")
 		return d
@@ -3167,7 +3394,7 @@ func detectSmartDefaults() SmartDefaults {
 			os.Getenv("LITELLM_API_KEY"),
 			os.Getenv("LITELLM_MASTER_KEY"),
 			os.Getenv("ANTHROPIC_API_KEY"),
-			"sk-litellm",
+			provider.LocalLiteLLMStub,
 		)
 		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM detected at %s → native runner (Anthropic protocol)", base))
 		return d
@@ -4072,6 +4299,54 @@ func orNone(s string) string {
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// buildProseProvider returns a one-shot provider and model name the prose
+// SOW converter can use. It mirrors the same runner-selection logic used by
+// buildRunners in internal/app: prefer explicit NativeAPIKey, then env vars,
+// then LiteLLM stub. Returns (nil, "") if no provider can be constructed —
+// in that case sowCmd will surface a clear error telling the user to pass
+// a native runner config or a real SOW file.
+func buildProseProvider(runnerMode, apiKey, baseURL, model string) (provider.Provider, string) {
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+	// Only build a provider when the user has actually asked for a native
+	// runner or supplied a key. If they're still using the default claude
+	// runner, we shouldn't silently spin up a new API client.
+	if runnerMode != "native" && apiKey == "" {
+		return nil, ""
+	}
+	if apiKey == "" {
+		for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+			if v := os.Getenv(k); v != "" {
+				apiKey = v
+				break
+			}
+		}
+	}
+	if apiKey == "" && baseURL != "" {
+		apiKey = provider.LocalLiteLLMStub
+	}
+	if apiKey == "" {
+		return nil, ""
+	}
+	return provider.NewAnthropicProvider(apiKey, baseURL), model
+}
+
+// ensureGitRepoOrFatal is the "auto-init git" convenience wrapper used by
+// commands that need a workable git repo (run, build, sow, ship, repair,
+// yolo). Empty or non-git target directories are initialized automatically;
+// existing repos are left alone. Prints a one-line notice when it had to
+// create a repo so the user isn't surprised.
+func ensureGitRepoOrFatal(absRepo string) {
+	created, err := worktree.EnsureRepo(context.Background(), absRepo)
+	if err != nil {
+		fatal("ensure git repo: %v", err)
+	}
+	if created {
+		fmt.Printf("  initialized new git repo at %s\n", absRepo)
+	}
 }
 
 func fileExists(path string) bool {

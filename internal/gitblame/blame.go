@@ -107,8 +107,15 @@ func (fb *FileBlame) Authors() []AuthorStat {
 		})
 	}
 
+	// Stable sort by line count descending, breaking ties
+	// alphabetically by author name so the output is deterministic
+	// (sort.Slice is not stable and produces flaky test results when
+	// two authors have the same line count).
 	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].Lines > stats[j].Lines
+		if stats[i].Lines != stats[j].Lines {
+			return stats[i].Lines > stats[j].Lines
+		}
+		return stats[i].Author < stats[j].Author
 	})
 	return stats
 }

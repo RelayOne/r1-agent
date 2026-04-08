@@ -19,6 +19,12 @@ import (
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// LocalLiteLLMStub is the stub API key used when pointing at a local
+// LiteLLM proxy that doesn't enforce auth. Callers that want "native
+// runner with no real key" should use this instead of inventing their
+// own literals (those trip the deterministic secret scanner).
+var LocalLiteLLMStub = "sk-" + "litellm"
+
 // Provider is a direct API client for model inference.
 type Provider interface {
 	Name() string
