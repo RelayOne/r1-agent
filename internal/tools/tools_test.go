@@ -191,6 +191,67 @@ func TestHandleWriteCreatesDirectory(t *testing.T) {
 	}
 }
 
+// TestHandleWrite_ReportsAbsolutePathAnchor is the regression test for
+// "3 consecutive tool errors" caused by the model not knowing WHERE
+// a relative write landed. The tool response must now include both
+// the absolute resolved path AND the working directory so the model
+// can verify its writes unambiguously.
+func TestHandleWrite_ReportsAbsolutePathAnchor(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRegistry(dir)
+	result, err := r.Handle(context.Background(), "write_file",
+		toJSON(map[string]interface{}{"path": "Cargo.toml", "content": "[package]\nname = \"x\"\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Wrote Cargo.toml") {
+		t.Errorf("should include relative path: %s", result)
+	}
+	if !strings.Contains(result, "absolute: ") {
+		t.Errorf("should include absolute path anchor: %s", result)
+	}
+	if !strings.Contains(result, "working_dir: "+dir) {
+		t.Errorf("should include working_dir: %s", result)
+	}
+}
+
+func TestHandleRead_ReportsAbsolutePathAnchor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "seed.txt")
+	os.WriteFile(path, []byte("line1\nline2\n"), 0o644)
+	r := NewRegistry(dir)
+	result, err := r.Handle(context.Background(), "read_file",
+		toJSON(map[string]interface{}{"path": "seed.txt"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The header should include the resolved absolute path.
+	if !strings.Contains(result, path) {
+		t.Errorf("read result should include absolute path header: %s", result)
+	}
+	if !strings.Contains(result, "line1") {
+		t.Errorf("read should still return content: %s", result)
+	}
+}
+
+func TestHandleEdit_ReportsAbsolutePathAnchor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.txt")
+	os.WriteFile(path, []byte("old content"), 0o644)
+	r := NewRegistry(dir)
+	// Must read first
+	_, _ = r.Handle(context.Background(), "read_file",
+		toJSON(map[string]interface{}{"path": "src.txt"}))
+	result, err := r.Handle(context.Background(), "edit_file",
+		toJSON(map[string]interface{}{"path": "src.txt", "old_string": "old", "new_string": "new"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "absolute: "+path) {
+		t.Errorf("edit result should include absolute path: %s", result)
+	}
+}
+
 func TestHandleBash(t *testing.T) {
 	r := NewRegistry(t.TempDir())
 	result, err := r.Handle(context.Background(), "bash",

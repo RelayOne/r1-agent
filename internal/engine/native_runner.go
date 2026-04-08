@@ -112,6 +112,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		cfg.CompactFn = buildNativeCompactor(6, 200)
 	}
 
+	// Midturn spec-faithfulness supervisor. When RunSpec.Supervisor
+	// is set, install a hook that scans the declared files every N
+	// write_file/edit_file tool calls and pushes a [SUPERVISOR NOTE]
+	// into the next user message if the code has drifted from the
+	// canonical identifiers in the SOW.
+	if spec.Supervisor != nil {
+		if fn := BuildNativeSupervisor(*spec.Supervisor); fn != nil {
+			cfg.MidturnCheckFn = fn
+		}
+	}
+
 	// Create and configure the loop
 	loop := agentloop.New(p, cfg, toolDefs, handler)
 
