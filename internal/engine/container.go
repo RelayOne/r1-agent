@@ -20,6 +20,8 @@ func wrapInDocker(ctx context.Context, prepared PreparedCommand, spec RunSpec) *
 
 	args := []string{
 		"run", "--rm",
+		"--security-opt=no-new-privileges",
+		"--cap-drop=ALL",
 		"-v", spec.ContainerVol + ":" + configDir,
 		"-v", spec.WorktreeDir + ":" + spec.WorktreeDir,
 		"-v", spec.RuntimeDir + ":" + spec.RuntimeDir,

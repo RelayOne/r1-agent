@@ -107,12 +107,18 @@ main() {
     if command -v cosign &>/dev/null; then
         local sig_url="${url}.sig"
         info "Verifying cosign signature..."
-        curl -fsSL -o "${tmp_dir}/${archive_name}.sig" "${sig_url}" 2>/dev/null &&
-            cosign verify-blob \
+        if curl -fsSL -o "${tmp_dir}/${archive_name}.sig" "${sig_url}" 2>/dev/null; then
+            # Signature file downloaded — verification MUST pass
+            if cosign verify-blob \
                 --signature "${tmp_dir}/${archive_name}.sig" \
-                "${tmp_dir}/${archive_name}" 2>/dev/null &&
-            info "Signature verified." ||
-            info "Signature verification skipped (signature not available or cosign error)."
+                "${tmp_dir}/${archive_name}" 2>/dev/null; then
+                info "Signature verified."
+            else
+                error "Cosign signature verification FAILED. The binary may have been tampered with."
+            fi
+        else
+            info "Signature file not available (pre-release?). Skipping signature verification."
+        fi
     fi
 
     info "Installing to ${INSTALL_DIR}..."

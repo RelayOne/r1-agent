@@ -10,11 +10,13 @@ import (
 	"time"
 )
 
-// StorePath returns ~/.stoke/pools
+// StorePath returns ~/.stoke/pools. Panics if the home directory cannot
+// be determined — falling back to /tmp would expose credentials on
+// multi-user systems.
 func StorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "/tmp"
+		panic("pools: cannot determine home directory: " + err.Error())
 	}
 	return filepath.Join(home, ".stoke", "pools")
 }
@@ -69,16 +71,16 @@ func LoadManifest() (*Manifest, error) {
 	return &m, nil
 }
 
-// Save writes the manifest to disk.
+// Save writes the manifest to disk with restrictive permissions (0600).
 func (m *Manifest) Save() error {
-	if err := os.MkdirAll(filepath.Dir(ManifestPath()), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(ManifestPath()), 0700); err != nil {
 		return fmt.Errorf("create pools dir: %w", err)
 	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ManifestPath(), data, 0644)
+	return os.WriteFile(ManifestPath(), data, 0600)
 }
 
 // FindByAccount returns the pool with this account ID, or nil.
@@ -182,8 +184,10 @@ func AddClaude(claudeBin, label string) (string, error) {
 		fmt.Printf("\n  Account already registered as %s (%s)\n", existing.ID, existing.Label)
 		fmt.Println("  Refreshing credentials...")
 
-		// Copy new credentials over old
-		copyCredentials(configDir, existing.ConfigDir)
+		// Copy new credentials over old — only remove source after success
+		if err := copyCredentials(configDir, existing.ConfigDir); err != nil {
+			return "", fmt.Errorf("copy credentials: %w", err)
+		}
 		os.RemoveAll(configDir) // remove temp dir
 		existing.LastUsed = time.Now()
 		if err := manifest.Save(); err != nil {
@@ -352,7 +356,9 @@ func AddCodex(codexBin, label string) (string, error) {
 	if existing := manifest.FindByAccount(accountID); existing != nil && existing.Provider == "codex" {
 		fmt.Printf("\n  Account already registered as %s (%s)\n", existing.ID, existing.Label)
 		fmt.Println("  Refreshing credentials...")
-		copyCredentials(configDir, existing.ConfigDir)
+		if err := copyCredentials(configDir, existing.ConfigDir); err != nil {
+			return "", fmt.Errorf("copy credentials: %w", err)
+		}
 		os.RemoveAll(configDir)
 		existing.LastUsed = time.Now()
 		if err := manifest.Save(); err != nil {
@@ -429,23 +435,31 @@ func readCodexAccountID(configDir string) string {
 	return ""
 }
 
-func copyCredentials(src, dst string) {
+func copyCredentials(src, dst string) error {
 	if err := os.MkdirAll(dst, 0700); err != nil {
-		return
+		return fmt.Errorf("create credential dir: %w", err)
 	}
-	entries, _ := os.ReadDir(src)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("read source dir: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
+		// Skip symlinks to prevent following links to sensitive files
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(src, e.Name()))
 		if err != nil {
-			continue
+			return fmt.Errorf("read %s: %w", e.Name(), err)
 		}
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0600); err != nil {
-			continue
+			return fmt.Errorf("write %s: %w", e.Name(), err)
 		}
 	}
+	return nil
 }
 
 // InitContainerPool creates a Docker volume, runs the Claude login flow inside
