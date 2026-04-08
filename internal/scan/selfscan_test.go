@@ -115,24 +115,29 @@ func isKnownFalsePositive(f Finding) bool {
 		return true
 	}
 
+	// Narrow exclusions to specific files that define detection patterns,
+	// NOT entire directories (to avoid masking real issues in new files).
+
 	// scan.go contains regex patterns that match its own rules
-	if strings.Contains(f.File, "internal/scan/") {
+	if strings.HasSuffix(f.File, "internal/scan/scan.go") {
 		return true
 	}
-	// hooks.go contains shell script templates with patterns
-	if strings.Contains(f.File, "internal/hooks/") {
+	// hooks.go contains shell script templates with guard patterns
+	if strings.HasSuffix(f.File, "internal/hooks/hooks.go") {
 		return true
 	}
-	// prompt templates contain example patterns
-	if strings.Contains(f.File, "prompts/") || strings.Contains(f.File, "harness/prompts/") {
+	// Prompt templates instruct agents not to use placeholders (the word appears
+	// as part of the instruction, not as leftover code)
+	if f.Rule == "no-placeholder-code" && strings.Contains(f.File, "prompts/") {
 		return true
 	}
-	// convergence contains analysis patterns
-	if strings.Contains(f.File, "internal/convergence/") {
+	// convergence validator/rules define regex patterns to detect stubs and placeholders
+	if f.Rule == "no-placeholder-code" && strings.Contains(f.File, "internal/convergence/") {
 		return true
 	}
-	// hub/builtin/honesty contains deception patterns
-	if strings.Contains(f.File, "honesty/") {
+	// honesty judge defines deception detection patterns
+	if strings.HasSuffix(f.File, "hub/builtin/honesty/honesty.go") ||
+		strings.HasSuffix(f.File, "hub/builtin/honesty.go") {
 		return true
 	}
 	// bench/judge contains placeholder patterns in judge implementations
@@ -157,12 +162,12 @@ func isKnownFalsePositive(f Finding) bool {
 			}
 		}
 	}
-	// no-hardcoded-secret false positives: setting env vars from runtime values
-	if f.Rule == "no-hardcoded-secret" && strings.Contains(f.File, "internal/engine/") {
+	// no-hardcoded-secret: gemini.go sets GEMINI_API_KEY from a runtime variable
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/engine/gemini.go") {
 		return true
 	}
-	// no-tautological-test: failure code constants that include the word pattern
-	if f.Rule == "no-tautological-test" && strings.Contains(f.File, "internal/taskstate/") {
+	// no-tautological-test: failures.go defines TAUTOLOGICAL_TEST as a constant string
+	if f.Rule == "no-tautological-test" && strings.HasSuffix(f.File, "internal/taskstate/failures.go") {
 		return true
 	}
 	return false

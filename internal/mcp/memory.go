@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -188,7 +189,9 @@ func (s *MemoryServer) handleWisdomFind(args json.RawMessage) (string, error) {
 		Query   string `json:"query"`
 		Pattern string `json:"pattern"`
 	}
-	json.Unmarshal(args, &params)
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
 
 	if s.Wisdom == nil {
 		return "wisdom store not initialized", nil
@@ -247,7 +250,9 @@ func (s *MemoryServer) handleResearchSearch(args json.RawMessage) (string, error
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
 	}
-	json.Unmarshal(args, &params)
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
 	if params.Limit <= 0 {
 		params.Limit = 10
 	}
@@ -281,14 +286,19 @@ func (s *MemoryServer) handleResearchAdd(args json.RawMessage) (string, error) {
 		return "research store not initialized", nil
 	}
 
+	now := time.Now()
+	idSrc := fmt.Sprintf("%s:%s:%s:%d", params.Topic, params.Query, params.Content[:min(256, len(params.Content))], now.UnixNano())
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte(idSrc)))[:16]
+
 	entry := research.Entry{
+		ID:        id,
 		Topic:     params.Topic,
 		Query:     params.Query,
 		Content:   params.Content,
 		Source:    params.Source,
 		Tags:      params.Tags,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if err := s.Research.Add(&entry); err != nil {
 		return "", err
@@ -301,7 +311,9 @@ func (s *MemoryServer) handleCheckDuplicate(args json.RawMessage) (string, error
 		Topic string `json:"topic"`
 		Query string `json:"query"`
 	}
-	json.Unmarshal(args, &params)
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
 
 	if s.Research == nil {
 		return `{"duplicate": false, "reason": "research store not initialized"}`, nil
@@ -324,7 +336,9 @@ func (s *MemoryServer) handleLedgerQuery(ctx context.Context, args json.RawMessa
 		Since     string `json:"since"`
 		Limit     int    `json:"limit"`
 	}
-	json.Unmarshal(args, &params)
+	if err := json.Unmarshal(args, &params); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
 	if params.Limit <= 0 {
 		params.Limit = 20
 	}

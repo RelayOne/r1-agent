@@ -97,33 +97,49 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	return handle, nil
 }
 
-// SharedDepDirs are dependency directories that can be safely shared across
-// worktrees via symlinks. These are package manager caches that are
-// content-addressed or otherwise safe for concurrent reads.
-var SharedDepDirs = []string{
-	"node_modules",
-	"vendor",
-	".venv",
-	"target",         // Rust
-	"__pycache__",
-	".gradle",
-	".m2",
+// sharedDepDirs returns dependency directories that can be safely shared
+// across worktrees via symlinks. Returns a fresh slice each call to prevent
+// mutation of a package-level variable.
+func sharedDepDirs() []string {
+	return []string{
+		"node_modules",
+		"vendor",
+		".venv",
+		"target",      // Rust
+		"__pycache__",
+		".gradle",
+		".m2",
+	}
 }
 
 // symlinkSharedDeps creates symlinks from the worktree to the main repo's
 // dependency directories. This avoids reinstalling deps in each worktree.
-// Only symlinks directories that exist in the source and don't exist in
-// the target (worktree).
+// Only symlinks directories that exist in the source (verified via Lstat to
+// avoid following existing symlinks) and don't exist in the target.
 func symlinkSharedDeps(repoRoot, worktreePath string) {
-	for _, dir := range SharedDepDirs {
+	cleanRoot := filepath.Clean(repoRoot)
+	for _, dir := range sharedDepDirs() {
 		src := filepath.Join(repoRoot, dir)
+
+		// Validate the resolved path is still under repoRoot
+		cleanSrc := filepath.Clean(src)
+		if !strings.HasPrefix(cleanSrc, cleanRoot+string(filepath.Separator)) && cleanSrc != cleanRoot {
+			continue
+		}
+
 		dst := filepath.Join(worktreePath, dir)
 
-		// Only symlink if source exists and destination doesn't
-		if info, err := os.Stat(src); err == nil && info.IsDir() {
-			if _, err := os.Lstat(dst); os.IsNotExist(err) {
-				os.Symlink(src, dst)
-			}
+		// Use Lstat to avoid following symlinks in the source repo
+		info, err := os.Lstat(src)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Skip if source is itself a symlink (prevents indirection attacks)
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		if _, err := os.Lstat(dst); os.IsNotExist(err) {
+			os.Symlink(src, dst)
 		}
 	}
 }
