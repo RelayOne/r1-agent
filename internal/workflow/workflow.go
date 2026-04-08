@@ -111,6 +111,23 @@ type Engine struct {
 	RunnerOverride   engine.CommandRunner // if set, used for all phases (testing only)
 	Boulder          *boulder.Enforcer   // idle detection (nil = disabled)
 	Convergence      *convergence.Validator // adversarial self-audit: blocks merge if blocking findings (nil = skip)
+	// ConvergenceIgnores persists CTO-approved ignore entries that
+	// suppress specific regex/semantic findings the VP Eng review has
+	// judged to be false positives. Loaded from
+	// .stoke/convergence-ignores.json when non-nil.
+	ConvergenceIgnores *convergence.IgnoreList
+	// ConvergenceRepeats tracks how many times a given finding has
+	// blocked convergence. The override flow is triggered when a flag
+	// crosses ConvergenceRepeatThreshold (default 2).
+	ConvergenceRepeats *convergence.RepeatTracker
+	// ConvergenceRepeatThreshold is the number of consecutive iterations
+	// a finding must block before the VP Eng → CTO review is triggered.
+	// Default (0) resolves to 2.
+	ConvergenceRepeatThreshold int
+	// OverrideJudge is the VP Eng → CTO judge used when the repeat
+	// threshold is crossed. When nil, the override flow is skipped and
+	// convergence failures propagate normally.
+	OverrideJudge    convergence.OverrideJudge
 	EventBus         *hub.Bus               // unified event bus (nil = no events)
 	SkillRegistry    *skill.Registry        // skill library for prompt injection (nil = auto-create from RepoRoot)
 	StackMatches     []string               // pre-computed stack-matched skill names from RepoProfile
@@ -850,6 +867,71 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 						convReport = e.Convergence.ValidateWithCriteria(name, convFiles, e.TaskVerification)
 					} else {
 						convReport = e.Convergence.Validate(name, convFiles)
+					}
+					// Apply any CTO-approved overrides before evaluating
+					// the blocking count. This closes the "regex keeps
+					// flagging a false positive forever" loop.
+					if e.ConvergenceIgnores != nil {
+						convReport = convergence.ApplyIgnores(convReport, e.ConvergenceIgnores)
+					}
+					// VP Eng → CTO override flow. Triggered when the
+					// supervisor has seen the same blocking flag on
+					// repeated iterations AND the build/tests are
+					// passing (build+test failure means the flag is
+					// probably real). The judge proposes ignores, the
+					// CTO signs off, approved entries are added to the
+					// persistent ignore list, and we re-apply before
+					// deciding whether convergence blocks the merge.
+					if convReport != nil && convReport.BlockingCount() > 0 && e.OverrideJudge != nil && e.ConvergenceRepeats != nil {
+						buildPassed, testsPassed, lintPassed := verifySummary(result.Verification)
+						if buildPassed && testsPassed {
+							threshold := e.ConvergenceRepeatThreshold
+							if threshold < 1 {
+								threshold = 2
+							}
+							triggered := e.ConvergenceRepeats.RecordReportBlocks(convReport, threshold)
+							if len(triggered) > 0 {
+								snippets := buildFileSnippets(handle.Path, triggered)
+								judgeCtx := convergence.JudgeContext{
+									MissionID:    name,
+									Findings:     triggered,
+									FileSnippets: snippets,
+									SOWCriteria:  e.TaskVerification,
+									BuildPassed:  buildPassed,
+									TestsPassed:  testsPassed,
+									LintPassed:   lintPassed,
+									ProjectRoot:  e.RepoRoot,
+								}
+								decision, ojErr := convergence.RunOverrideFlow(e.OverrideJudge, e.ConvergenceIgnores, judgeCtx)
+								if ojErr != nil {
+									log.Warn("convergence override flow failed", "err", ojErr)
+								} else if decision != nil && len(decision.Approved) > 0 {
+									if saveErr := e.ConvergenceIgnores.Save(e.RepoRoot); saveErr != nil {
+										log.Warn("persist convergence ignores", "err", saveErr)
+									}
+									// Reset the repeat counter for
+									// overridden signatures so a
+									// subsequent, genuine failure
+									// isn't pre-confused as repeat.
+									for _, ap := range decision.Approved {
+										e.ConvergenceRepeats.Reset(convergence.FlagSignature{
+											RuleID: ap.RuleID,
+											File:   ap.File,
+											Line:   ap.LineStart,
+										})
+									}
+									_ = e.ConvergenceRepeats.Save(e.RepoRoot)
+									// Re-apply the (now expanded)
+									// ignore list and re-evaluate.
+									convReport = convergence.ApplyIgnores(convReport, e.ConvergenceIgnores)
+									log.Info("convergence override applied",
+										"approved", len(decision.Approved),
+										"denied", len(decision.Denied),
+										"blocking_remaining", convReport.BlockingCount(),
+										"continuations", len(decision.Continuations))
+								}
+							}
+						}
 					}
 					if convReport != nil && convReport.BlockingCount() > 0 {
 						// Convergence failed: inject findings into failure context for retry.
@@ -1906,5 +1988,79 @@ func buildSemdiffInputs(ctx context.Context, handle worktree.Handle) map[string]
 		result[f] = [2]string{oldContent, newContent}
 	}
 	return result
+}
+
+// verifySummary extracts pass/fail flags for build, tests, and lint from a
+// slice of verification outcomes. Used by the convergence override flow to
+// decide whether the build+test state supports overriding a regex flag.
+//
+// Any outcome for a step named "build" / "test" / "tests" / "lint" is taken
+// into account; unknown steps are ignored. A missing step is treated as
+// passing (matches the convergence gate's existing optimistic semantics).
+func verifySummary(outcomes []verify.Outcome) (buildPassed, testsPassed, lintPassed bool) {
+	buildPassed = true
+	testsPassed = true
+	lintPassed = true
+	for _, o := range outcomes {
+		if o.Skipped {
+			continue
+		}
+		name := strings.ToLower(o.Name)
+		switch {
+		case strings.Contains(name, "build"):
+			if !o.Success {
+				buildPassed = false
+			}
+		case strings.Contains(name, "test"):
+			if !o.Success {
+				testsPassed = false
+			}
+		case strings.Contains(name, "lint"):
+			if !o.Success {
+				lintPassed = false
+			}
+		}
+	}
+	return
+}
+
+// buildFileSnippets returns a map of file path → short excerpt for the
+// files referenced by a set of findings. The excerpt is ±5 lines around
+// each finding's Line, or the first 40 lines if Line is unknown. Used to
+// give the VP Eng judge enough context to decide if a flag is a false
+// positive.
+func buildFileSnippets(worktreePath string, findings []convergence.Finding) map[string]string {
+	seen := make(map[string]bool)
+	out := make(map[string]string)
+	for _, f := range findings {
+		if f.File == "" || seen[f.File] {
+			continue
+		}
+		seen[f.File] = true
+		data, err := os.ReadFile(filepath.Join(worktreePath, f.File))
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		start, end := 0, len(lines)
+		if f.Line > 0 {
+			start = f.Line - 6
+			if start < 0 {
+				start = 0
+			}
+			end = f.Line + 5
+			if end > len(lines) {
+				end = len(lines)
+			}
+		} else if end > 40 {
+			end = 40
+		}
+		var b strings.Builder
+		for i := start; i < end; i++ {
+			fmt.Fprintf(&b, "%4d | %s\n", i+1, lines[i])
+		}
+		out[f.File] = b.String()
+	}
+	return out
 }
 

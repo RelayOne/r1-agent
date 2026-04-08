@@ -99,3 +99,81 @@ func TestDoctor_Providers(t *testing.T) {
 		t.Error("Doctor --providers should list lint-only fallback")
 	}
 }
+
+// TestBuildRunners_NativeExplicitWithoutKey is the regression test for the
+// bug where `--runner native` without a NativeAPIKey silently fell back to
+// Claude Code because the old construction predicate required key != "".
+// Now a bare `--runner native` must produce a non-nil Native runner by
+// using env fallbacks (or a stub when BaseURL is set).
+func TestBuildRunners_NativeExplicitWithoutKey(t *testing.T) {
+	// Clear any env keys that could mask the test.
+	for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+		t.Setenv(k, "")
+	}
+	cfg := RunConfig{
+		RunnerMode:    "native",
+		NativeBaseURL: "http://localhost:8000",
+	}
+	r := buildRunners(cfg)
+	if r.Native == nil {
+		t.Fatal("buildRunners: --runner=native must produce Native runner even without an explicit key")
+	}
+	if r.Claude == nil {
+		t.Error("Claude runner should still be constructed as a fallback")
+	}
+}
+
+func TestBuildRunners_NativeExplicit_NoBaseURL_UsesEnv(t *testing.T) {
+	t.Setenv("LITELLM_API_KEY", "")
+	t.Setenv("LITELLM_MASTER_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-123")
+	cfg := RunConfig{RunnerMode: "native"}
+	r := buildRunners(cfg)
+	if r.Native == nil {
+		t.Fatal("buildRunners: --runner=native with ANTHROPIC_API_KEY env should produce Native runner")
+	}
+}
+
+func TestBuildRunners_NativeExplicit_LiteLLMEnv(t *testing.T) {
+	t.Setenv("LITELLM_MASTER_KEY", "sk-litellm-master")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg := RunConfig{
+		RunnerMode:    "native",
+		NativeBaseURL: "http://localhost:4000",
+	}
+	r := buildRunners(cfg)
+	if r.Native == nil {
+		t.Fatal("buildRunners: --runner=native with LITELLM_MASTER_KEY should produce Native runner")
+	}
+}
+
+func TestBuildRunners_NativeImplicit_ApiKeyOnly(t *testing.T) {
+	cfg := RunConfig{NativeAPIKey: "sk-explicit"}
+	r := buildRunners(cfg)
+	if r.Native == nil {
+		t.Fatal("buildRunners: explicit NativeAPIKey should produce Native runner even without --runner flag")
+	}
+}
+
+func TestBuildRunners_ClaudeMode_NoNative(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	cfg := RunConfig{RunnerMode: "claude"}
+	r := buildRunners(cfg)
+	if r.Native != nil {
+		t.Error("buildRunners: --runner=claude should NOT produce a Native runner")
+	}
+	if r.Claude == nil {
+		t.Error("buildRunners: --runner=claude should produce a Claude runner")
+	}
+}
+
+func TestBuildRunners_DefaultModel(t *testing.T) {
+	cfg := RunConfig{RunnerMode: "native", NativeAPIKey: "x", NativeBaseURL: "http://localhost:8000"}
+	r := buildRunners(cfg)
+	if r.Native == nil {
+		t.Fatal("expected native runner")
+	}
+	// Default model is wired via NewNativeRunner — we can't inspect it
+	// directly without exporting it, but construction succeeding with
+	// no NativeModel set is the contract we care about.
+}

@@ -44,6 +44,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/progress"
+	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
@@ -775,6 +776,7 @@ func runCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
@@ -895,6 +897,7 @@ func buildCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Build pool configurations from flags
 	var claudePoolDirs, codexPoolDirs []string
@@ -1213,11 +1216,31 @@ func sowCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
-	// Load SOW
+	// Load SOW. Supports three input formats:
+	//   - .json / .yaml / .yml → parsed directly
+	//   - .txt / .md / prose   → converted via LLM (needs a provider)
+	// The prose path requires a functional provider (native runner w/ key
+	// OR Anthropic key) because it calls the configured model to turn
+	// prose into a structured SOW. Cached to .stoke/sow-from-prose.json
+	// keyed on source hash.
 	var sow *plan.SOW
 	if *sowFile != "" {
-		sow, err = plan.LoadSOW(*sowFile)
+		prov, modelName := buildProseProvider(*runnerMode, *nativeAPIKey, *nativeBaseURL, *nativeModel)
+		loaded, result, loadErr := plan.LoadSOWFile(*sowFile, absRepo, prov, modelName)
+		if loadErr != nil {
+			fatal("load SOW: %v", loadErr)
+		}
+		sow = loaded
+		switch result.Format {
+		case "prose":
+			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
+		case "yaml":
+			fmt.Printf("  loaded YAML SOW: %s\n", result.OriginalPath)
+		default:
+			fmt.Printf("  loaded JSON SOW: %s\n", result.OriginalPath)
+		}
 	} else {
 		sow, err = plan.LoadSOWFromDir(absRepo)
 	}
@@ -1429,7 +1452,54 @@ func sowCmd(args []string) {
 	}
 	defer cancel()
 
+	// FAST PATH: when the native runner is selected, bypass runBuild
+	// entirely. runBuild delegates to the single-task workflow engine
+	// which expects a pre-existing codebase, git worktree, plan phase,
+	// execute phase, verify phase, and merge — none of which are the
+	// right shape for a greenfield multi-session SOW. The native fast
+	// path drives the agentloop directly against absRepo for each task.
+	var nativeExec func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error)
+	if *runnerMode == "native" {
+		nativeKey := *nativeAPIKey
+		if nativeKey == "" {
+			for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+				if v := os.Getenv(k); v != "" {
+					nativeKey = v
+					break
+				}
+			}
+		}
+		if nativeKey == "" && *nativeBaseURL != "" {
+			nativeKey = provider.LocalLiteLLMStub
+		}
+		if nativeKey == "" {
+			fatal("SOW fast path requires a native API key: set --native-api-key or one of LITELLM_API_KEY/LITELLM_MASTER_KEY/ANTHROPIC_API_KEY")
+		}
+		nativeModelName := *nativeModel
+		if nativeModelName == "" {
+			nativeModelName = "claude-sonnet-4-6"
+		}
+		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
+		runner.BaseURL = *nativeBaseURL
+		nativeCfg := sowNativeConfig{
+			RepoRoot: absRepo,
+			Runner:   runner,
+			MaxTurns: 100,
+			Model:    nativeModelName,
+			SOWName:  sow.Name,
+			SOWDesc:  sow.Description,
+		}
+		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
+			fmt.Printf("  %d tasks\n", len(session.Tasks))
+			return runSessionNative(ctx, session, sow, nativeCfg)
+		}
+	}
+
 	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
+		if nativeExec != nil {
+			return nativeExec(ctx, session)
+		}
 		fmt.Printf("\n--- Session %s: %s ---\n", session.ID, session.Title)
 		fmt.Printf("  %d tasks\n", len(session.Tasks))
 
@@ -2063,6 +2133,7 @@ func yoloCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	fmt.Printf("⚡ STOKE yolo\n")
 	fmt.Printf("  repo: %s\n", absRepo)
@@ -2256,6 +2327,7 @@ func repairCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
@@ -2487,6 +2559,7 @@ func shipCmd(args []string) {
 	if err != nil {
 		fatal("resolve repo: %v", err)
 	}
+	ensureGitRepoOrFatal(absRepo)
 
 	detected := config.DetectCommands(absRepo)
 	if *buildC == "" {
@@ -3147,7 +3220,7 @@ func detectSmartDefaults() SmartDefaults {
 			os.Getenv("LITELLM_API_KEY"),
 			os.Getenv("LITELLM_MASTER_KEY"),
 			os.Getenv("ANTHROPIC_API_KEY"),
-			"sk-litellm",
+			provider.LocalLiteLLMStub,
 		)
 		d.Notes = append(d.Notes, "LiteLLM detected via LITELLM_BASE_URL → native runner (Anthropic protocol)")
 		return d
@@ -3167,7 +3240,7 @@ func detectSmartDefaults() SmartDefaults {
 			os.Getenv("LITELLM_API_KEY"),
 			os.Getenv("LITELLM_MASTER_KEY"),
 			os.Getenv("ANTHROPIC_API_KEY"),
-			"sk-litellm",
+			provider.LocalLiteLLMStub,
 		)
 		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM detected at %s → native runner (Anthropic protocol)", base))
 		return d
@@ -4072,6 +4145,54 @@ func orNone(s string) string {
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// buildProseProvider returns a one-shot provider and model name the prose
+// SOW converter can use. It mirrors the same runner-selection logic used by
+// buildRunners in internal/app: prefer explicit NativeAPIKey, then env vars,
+// then LiteLLM stub. Returns (nil, "") if no provider can be constructed —
+// in that case sowCmd will surface a clear error telling the user to pass
+// a native runner config or a real SOW file.
+func buildProseProvider(runnerMode, apiKey, baseURL, model string) (provider.Provider, string) {
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+	// Only build a provider when the user has actually asked for a native
+	// runner or supplied a key. If they're still using the default claude
+	// runner, we shouldn't silently spin up a new API client.
+	if runnerMode != "native" && apiKey == "" {
+		return nil, ""
+	}
+	if apiKey == "" {
+		for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+			if v := os.Getenv(k); v != "" {
+				apiKey = v
+				break
+			}
+		}
+	}
+	if apiKey == "" && baseURL != "" {
+		apiKey = provider.LocalLiteLLMStub
+	}
+	if apiKey == "" {
+		return nil, ""
+	}
+	return provider.NewAnthropicProvider(apiKey, baseURL), model
+}
+
+// ensureGitRepoOrFatal is the "auto-init git" convenience wrapper used by
+// commands that need a workable git repo (run, build, sow, ship, repair,
+// yolo). Empty or non-git target directories are initialized automatically;
+// existing repos are left alone. Prints a one-line notice when it had to
+// create a repo so the user isn't surprised.
+func ensureGitRepoOrFatal(absRepo string) {
+	created, err := worktree.EnsureRepo(context.Background(), absRepo)
+	if err != nil {
+		fatal("ensure git repo: %v", err)
+	}
+	if created {
+		fmt.Printf("  initialized new git repo at %s\n", absRepo)
+	}
 }
 
 func fileExists(path string) bool {
