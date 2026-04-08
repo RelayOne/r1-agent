@@ -29,8 +29,21 @@ func TestInferBaselineCriteria_Rust(t *testing.T) {
 	if len(crit) == 0 {
 		t.Fatal("expected Rust baseline criteria")
 	}
-	if !strings.Contains(crit[0].Command, "cargo build") {
-		t.Errorf("Rust first criterion should be cargo build, got %q", crit[0].Command)
+	// Collect commands + file checks into a flat blob so the assertion
+	// doesn't care about ordering (we now prepend a root Cargo.toml
+	// check + workspace-consistency check before the build step).
+	var blob strings.Builder
+	for _, c := range crit {
+		blob.WriteString(c.Command)
+		blob.WriteString(" ")
+		blob.WriteString(c.FileExists)
+		blob.WriteString(" ")
+	}
+	joined := blob.String()
+	for _, want := range []string{"cargo build", "Cargo.toml"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Rust baseline missing %q: %v", want, crit)
+		}
 	}
 }
 

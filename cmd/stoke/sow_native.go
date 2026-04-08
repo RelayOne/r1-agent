@@ -126,6 +126,19 @@ type sowNativeConfig struct {
 	// the message history to shrink it. 0 = disabled. Recommended
 	// value: 100_000 to stay comfortably under a 200k context window.
 	CompactThreshold int
+
+	// RawSOWText is the original SOW content as the user wrote it
+	// (prose .md, JSON, or YAML). When non-empty, it's injected into
+	// the cached system prompt under a "SPEC (verbatim)" header so
+	// the agent can always cross-reference what it's being asked to
+	// do against the actual spec — not just the compressed framing.
+	//
+	// This is the fix for "agent hallucinates plausible crate/module
+	// names because the SOW's exact names aren't reinforced anywhere
+	// it can see". Structured SOW fields (task.Files, session.Outputs,
+	// ContentMatch.Pattern) still feed the canonical-names block, but
+	// the raw text is the source of truth the agent can grep against.
+	RawSOWText string
 }
 
 // runSessionNative is the SOW fast path: it executes a session's tasks
@@ -193,6 +206,39 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// concurrently. Otherwise fall back to sequential execution.
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
 
+	// Phase 1.5: spec-faithfulness guards. Before running acceptance
+	// criteria (which may be generic like `cargo build`), run two
+	// cheap deterministic checks that catch the most common "agent
+	// cut corners" failure modes:
+	//
+	//   a) Missing/empty declared files — task.Files entries that
+	//      don't exist or are 0 bytes.
+	//   b) Placeholder/stub patterns in declared files — pub fn
+	//      placeholder, unimplemented!(), todo!(), panic("TODO"),
+	//      raise NotImplementedError, etc.
+	//
+	// If either fires, build a repair blob and drop into the repair
+	// loop directly, skipping the initial acceptance run. The
+	// acceptance loop will then verify everything after the repair.
+	missing, suspicious := checkSpecFaithfulness(cfg.RepoRoot, session)
+	if len(missing) > 0 || len(suspicious) > 0 {
+		fmt.Printf("  ⚠ spec-faithfulness guard: %d missing/empty file(s), %d placeholder stub(s)\n", len(missing), len(suspicious))
+		failureBlob := formatSpecFaithfulnessBlob(missing, suspicious)
+		repairTask := plan.Task{
+			ID:          fmt.Sprintf("%s-spec-guard", session.ID),
+			Description: "fix missing files and placeholder stubs before acceptance runs",
+		}
+		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+			RepoMap:       cfg.RepoMap,
+			RepoMapBudget: cfg.RepoMapBudget,
+			Repair:        &failureBlob,
+			Wisdom:        cfg.Wisdom,
+			RawSOW:        cfg.RawSOWText,
+		})
+		tr := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+		results = append(results, tr)
+	}
+
 	// Phase 2: self-repair loop. Run the session's acceptance criteria;
 	// if any fail, construct a repair prompt containing the exact failure
 	// output and run it as a new task. Repeat up to maxRepairs times
@@ -229,7 +275,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
 				Description: "repair session acceptance criteria",
 			}
-			sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, repairTask, cfg.RepoMap, cfg.RepoMapBudget, &failureBlob, cfg.Wisdom)
+			sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+				RepoMap:       cfg.RepoMap,
+				RepoMapBudget: cfg.RepoMapBudget,
+				Repair:        &failureBlob,
+				Wisdom:        cfg.Wisdom,
+				RawSOW:        cfg.RawSOWText,
+			})
 			repairResult := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 			// Record as a synthetic task result so the caller sees the
 			// repair attempt happened.
@@ -637,7 +689,12 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		}
 		fmt.Printf("  [%d/%d] %s: %s\n", i+1, len(session.Tasks), task.ID, task.Description)
 
-		sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, task, cfg.RepoMap, cfg.RepoMapBudget, nil, cfg.Wisdom)
+		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
+			RepoMap:       cfg.RepoMap,
+			RepoMapBudget: cfg.RepoMapBudget,
+			Wisdom:        cfg.Wisdom,
+			RawSOW:        cfg.RawSOWText,
+		})
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 		results = append(results, tr)
 	}
@@ -706,7 +763,12 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					return
 				}
 				fmt.Printf("  ▶ %s: %s\n", task.ID, task.Description)
-				sysP, usrP := buildSOWNativePrompts(sowDoc, workingSession, task, cfg.RepoMap, cfg.RepoMapBudget, nil, cfg.Wisdom)
+				sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
+					RepoMap:       cfg.RepoMap,
+					RepoMapBudget: cfg.RepoMapBudget,
+					Wisdom:        cfg.Wisdom,
+					RawSOW:        cfg.RawSOWText,
+				})
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 				resCh <- indexed{idx: ti, res: tr}
 			}()
@@ -960,15 +1022,47 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	return tr
 }
 
+// promptOpts bundles the extras buildSOWNativePrompts needs beyond the
+// core SOW/session/task triple. Added as a struct so new fields don't
+// keep stretching the function signature.
+type promptOpts struct {
+	RepoMap       *repomap.RepoMap
+	RepoMapBudget int
+	Repair        *string
+	Wisdom        *wisdom.Store
+	// RawSOW is the original SOW text (prose / JSON / YAML). When
+	// non-empty, it's injected verbatim into the cached system block
+	// under a "SPEC (verbatim)" header.
+	RawSOW string
+}
+
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
 // The system prompt contains the STATIC context — SOW identity, stack,
-// session framing, acceptance criteria, the optional repo map, and any
+// session framing, acceptance criteria, canonical names the agent must
+// use, the optional raw SOW text, the optional repo map, and any
 // accumulated wisdom from prior sessions. The user prompt is the task
 // description, expected files, dependencies, and any repair context.
 //
 // Agentloop wraps the system prompt in a cache_control breakpoint for
 // ~82% input cost reduction after turn 1.
 func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string, wisdomStore *wisdom.Store) (string, string) {
+	return buildSOWNativePromptsWithOpts(sowDoc, session, task, promptOpts{
+		RepoMap:       rmap,
+		RepoMapBudget: mapBudget,
+		Repair:        repair,
+		Wisdom:        wisdomStore,
+	})
+}
+
+// buildSOWNativePromptsWithOpts is the full builder. Callers should use
+// this when they have the raw SOW text. The legacy buildSOWNativePrompts
+// wrapper exists so existing test callers (and places that don't have
+// RawSOW handy) don't need updating.
+func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task plan.Task, opts promptOpts) (string, string) {
+	rmap := opts.RepoMap
+	mapBudget := opts.RepoMapBudget
+	repair := opts.Repair
+	wisdomStore := opts.Wisdom
 	var sys, usr strings.Builder
 
 	// --- SYSTEM (static, cacheable) ---
@@ -1075,6 +1169,40 @@ func buildSOWNativePrompts(sowDoc *plan.SOW, session plan.Session, task plan.Tas
 		}
 	}
 
+	// Canonical names block: the SOW declares specific identifiers
+	// (crate names, module paths, file names, error-type variants
+	// via ContentMatch patterns). Reinforce them here so the agent
+	// never invents plausible-but-wrong names. This is the direct
+	// fix for the "agent created persys-domain instead of persys-
+	// concern" failure mode — the user's actual spec had persys-
+	// concern but the agent hallucinated persys-domain because the
+	// exact name wasn't reinforced anywhere it could see.
+	if canonicalBlock := buildCanonicalNamesBlock(sowDoc, session, task); canonicalBlock != "" {
+		sys.WriteString(canonicalBlock)
+		sys.WriteString("\n")
+	}
+
+	// Raw SOW text: the original file the user wrote (prose, JSON,
+	// or YAML). Included verbatim under a clearly-labeled header so
+	// the agent can grep/scan it for exact identifiers, error
+	// variant names, acceptance commands, etc. that the compressed
+	// framing might miss. Bounded by a soft cap so a huge SOW
+	// doesn't blow the prompt cache.
+	if opts.RawSOW != "" {
+		raw := opts.RawSOW
+		const rawCap = 32000
+		if len(raw) > rawCap {
+			raw = raw[:rawCap] + "\n... (SOW truncated at " + lenToStr(rawCap) + " bytes — full spec in .stoke/)"
+		}
+		sys.WriteString("SPEC (verbatim from the SOW — cross-reference this whenever you're about to choose a name):\n")
+		sys.WriteString("----- BEGIN SOW -----\n")
+		sys.WriteString(raw)
+		if !strings.HasSuffix(raw, "\n") {
+			sys.WriteString("\n")
+		}
+		sys.WriteString("----- END SOW -----\n\n")
+	}
+
 	// --- USER (dynamic, per-task) ---
 	if repair != nil {
 		usr.WriteString("FAILING ACCEPTANCE CRITERIA (fix these):\n")
@@ -1116,6 +1244,13 @@ func inferBaselineCriteria(stack plan.StackSpec) []plan.AcceptanceCriterion {
 	var out []plan.AcceptanceCriterion
 	switch stack.Language {
 	case "go":
+		// Root go.mod must exist — catches "session created packages
+		// under cmd/ but forgot to run go mod init first".
+		out = append(out, plan.AcceptanceCriterion{
+			ID:          "inferred-gomod-root",
+			Description: "go.mod exists at repo root",
+			FileExists:  "go.mod",
+		})
 		out = append(out, plan.AcceptanceCriterion{ID: "inferred-build", Description: "go build succeeds", Command: "go build ./..."})
 		out = append(out, plan.AcceptanceCriterion{ID: "inferred-vet", Description: "go vet succeeds", Command: "go vet ./..."})
 		out = append(out, plan.AcceptanceCriterion{
@@ -1124,6 +1259,25 @@ func inferBaselineCriteria(stack plan.StackSpec) []plan.AcceptanceCriterion {
 			Command:     "if ls *_test.go 2>/dev/null || find . -name '*_test.go' -type f | head -1 | grep -q .; then go test ./...; else true; fi",
 		})
 	case "rust":
+		// Root Cargo.toml must exist — catches "session created
+		// crates/foo/ but forgot the workspace root". Also check
+		// that the workspace declares a [workspace] section when
+		// any crate references workspace.true, which catches the
+		// specific "rust-version.workspace = true references a
+		// workspace key that doesn't exist" failure the user hit.
+		out = append(out, plan.AcceptanceCriterion{
+			ID:          "inferred-cargo-root",
+			Description: "Cargo.toml exists at workspace root",
+			FileExists:  "Cargo.toml",
+		})
+		out = append(out, plan.AcceptanceCriterion{
+			ID:          "inferred-cargo-workspace-consistent",
+			Description: "if any crate uses workspace = true, root Cargo.toml has a [workspace] section",
+			Command: `set -e
+if find crates -name Cargo.toml 2>/dev/null | xargs -r grep -l "workspace = true" 2>/dev/null | head -1 | grep -q .; then
+  grep -q "^\[workspace\]" Cargo.toml || (echo "crates reference workspace.true but root Cargo.toml has no [workspace] section" >&2 && exit 1)
+fi`,
+		})
 		out = append(out, plan.AcceptanceCriterion{ID: "inferred-build", Description: "cargo build succeeds", Command: "cargo build"})
 		out = append(out, plan.AcceptanceCriterion{
 			ID:          "inferred-test",

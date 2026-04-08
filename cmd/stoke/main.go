@@ -1621,6 +1621,12 @@ func sowCmd(args []string) {
 			reviewModelName = nativeModelName
 		}
 
+		// Load the raw SOW text — prose source if the original was
+		// prose, marshaled JSON otherwise. This gets injected into
+		// the cached system prompt so the agent can always cross-
+		// reference specific identifiers against the actual spec.
+		rawSOWText := loadRawSOWText(*sowFile, sow)
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			Runner:            runner,
@@ -1644,6 +1650,7 @@ func sowCmd(args []string) {
 			StrictScope:       *strictScope,
 			ParallelWorkers:   *parallelTasks,
 			CompactThreshold:  *compactThreshold,
+			RawSOWText:        rawSOWText,
 		}
 		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
 			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
@@ -4301,6 +4308,30 @@ func orNone(s string) string {
 func fatal(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// loadRawSOWText returns the raw SOW text that should be injected into
+// every task's cached system prompt. When sowFilePath points to a file
+// (prose .md, .json, .yaml, .txt) we read it directly — for prose this
+// IS the spec, and for structured files the verbatim user input is
+// more faithful than a round-tripped marshaled copy.
+//
+// When sowFilePath is empty (the default-lookup path), we fall back to
+// marshaling the parsed SOW back to JSON.
+func loadRawSOWText(sowFilePath string, sow *plan.SOW) string {
+	if sowFilePath != "" {
+		if data, err := os.ReadFile(sowFilePath); err == nil && len(data) > 0 {
+			return string(data)
+		}
+	}
+	if sow == nil {
+		return ""
+	}
+	data, err := json.MarshalIndent(sow, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // buildProseProvider returns a one-shot provider and model name the prose
