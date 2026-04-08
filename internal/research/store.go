@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -59,6 +60,7 @@ type Store struct {
 	// when no external embedding service is configured.
 	vecIdx *vecindex.Index
 	vocab  []string // vocabulary for bag-of-words embedding
+	vecMu  sync.RWMutex // protects vecIdx and vocab from concurrent access
 }
 
 // NewStore opens or creates a research database at the given directory.
@@ -541,6 +543,9 @@ func (s *Store) buildVectorIndex() {
 // If the entry introduces new vocabulary terms, rebuilds the entire index
 // to ensure all entries are embedded in the same vector space.
 func (s *Store) indexEntry(id, topic, query, content string) {
+	s.vecMu.Lock()
+	defer s.vecMu.Unlock()
+
 	// Check if new vocabulary terms exist
 	hasNew := false
 	vocabSet := make(map[string]bool, len(s.vocab))
@@ -581,11 +586,17 @@ func (s *Store) SemanticSearch(query string, limit int) ([]SearchResult, error) 
 		limit = 20
 	}
 
-	if s.vecIdx == nil || s.vecIdx.Count() == 0 {
+	s.vecMu.RLock()
+	vecAvailable := s.vecIdx != nil && s.vecIdx.Count() > 0
+	s.vecMu.RUnlock()
+
+	if !vecAvailable {
 		return s.Search(query, limit)
 	}
 
+	s.vecMu.RLock()
 	results, err := s.vecIdx.SearchText(query, limit)
+	s.vecMu.RUnlock()
 	if err != nil {
 		return s.Search(query, limit)
 	}
