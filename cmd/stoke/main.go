@@ -1220,6 +1220,7 @@ func sowCmd(args []string) {
 	reviewModel := fs.String("review-model", "", "Model name used for cross-model review (default: same as --native-model)")
 	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
 	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
+	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1642,6 +1643,7 @@ func sowCmd(args []string) {
 			ReviewModel:       reviewModelName,
 			StrictScope:       *strictScope,
 			ParallelWorkers:   *parallelTasks,
+			CompactThreshold:  *compactThreshold,
 		}
 		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
 			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)

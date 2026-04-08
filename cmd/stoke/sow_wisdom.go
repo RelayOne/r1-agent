@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
@@ -91,14 +92,8 @@ func CaptureSessionWisdom(ctx context.Context, session plan.Session, results []p
 			raw += c.Text
 		}
 	}
-	cleaned := stripSimpleFences(raw)
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end < start {
-		return 0, fmt.Errorf("wisdom extractor returned no JSON")
-	}
 	var out extractWisdomResponse
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &out); err != nil {
+	if _, err := jsonutil.ExtractJSONInto(raw, &out); err != nil {
 		return 0, fmt.Errorf("parse wisdom response: %w", err)
 	}
 
@@ -156,19 +151,6 @@ func buildWisdomContext(session plan.Session, results []plan.TaskExecResult, acc
 		}
 	}
 	return b.String()
-}
-
-// stripSimpleFences is a local copy of the same logic in sow_convert so
-// sow_wisdom doesn't have a cross-package dependency on test helpers.
-func stripSimpleFences(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx >= 0 {
-			s = s[idx+1:]
-		}
-	}
-	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
-	return strings.TrimSpace(s)
 }
 
 // wisdomPathForSOW is the on-disk location of the persistent wisdom snapshot

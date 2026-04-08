@@ -79,6 +79,12 @@ type RunSpec struct {
 	// paying the full input cost. CLI-backed runners ignore this
 	// field (they don't support cache breakpoints in the same way).
 	SystemPrompt      string
+	// CompactThreshold, when > 0, enables progressive context
+	// compaction inside the native agentloop: whenever the estimated
+	// input token count crosses this threshold between turns, the
+	// native runner's built-in compactor rewrites the message list
+	// to shrink it back down. 0 = no automatic compaction.
+	CompactThreshold int
 	WorktreeDir       string
 	RuntimeDir        string // outside worktree, for harness-owned files only
 	Mode              AuthMode

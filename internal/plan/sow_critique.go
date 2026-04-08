@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -134,14 +135,8 @@ func CritiqueSOW(sow *SOW, prov provider.Provider, model string) (*SOWCritique, 
 			raw += c.Text
 		}
 	}
-	cleaned := stripMarkdownFences(raw)
-	start := strings.Index(cleaned, "{")
-	end := strings.LastIndex(cleaned, "}")
-	if start < 0 || end < start {
-		return nil, fmt.Errorf("critic response had no JSON (first 200 chars: %s)", truncateForError(raw, 200))
-	}
 	var crit SOWCritique
-	if err := json.Unmarshal([]byte(cleaned[start:end+1]), &crit); err != nil {
+	if _, err := jsonutil.ExtractJSONInto(raw, &crit); err != nil {
 		return nil, fmt.Errorf("parse critique: %w", err)
 	}
 	return &crit, nil
@@ -187,13 +182,11 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 			raw += c.Text
 		}
 	}
-	cleaned := stripMarkdownFences(raw)
-	first := strings.Index(cleaned, "{")
-	last := strings.LastIndex(cleaned, "}")
-	if first < 0 || last < first {
-		return nil, fmt.Errorf("refine response had no JSON (first 200 chars: %s)", truncateForError(raw, 200))
+	blob, extractErr := jsonutil.ExtractJSONObject(raw)
+	if extractErr != nil {
+		return nil, fmt.Errorf("parse refined SOW: %w", extractErr)
 	}
-	refined, err := ParseSOW([]byte(cleaned[first:last+1]), "refined.json")
+	refined, err := ParseSOW(blob, "refined.json")
 	if err != nil {
 		return nil, fmt.Errorf("parse refined SOW: %w", err)
 	}
