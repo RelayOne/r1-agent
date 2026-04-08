@@ -1,0 +1,6 @@
+./stoke/internal/model/router.go
+./stoke/internal/model/router_test.go
+./stoke/internal/plan/plan.go
+./stoke/internal/plan/plan_test.go
+./stoke/internal/plan/roi.go
+./stoke/internal/plan/roi_test.go

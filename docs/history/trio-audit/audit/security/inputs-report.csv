@@ -1,0 +1,639 @@
+Component,File,Input,Classification,Type,Line,Maps to DB,Snippet
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,DISCORD_STATE_DIR,Config,Env Variable (Node),37,No,"const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,token,Sensitive,Auth Token,43,No,// Plugin-spawned servers don't get an env block — this is where the token lives.
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,DISCORD_BOT_TOKEN,Sensitive,Env Variable (Node),53,No,const TOKEN = process.env.DISCORD_BOT_TOKEN
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,DISCORD_ACCESS_MODE,Config,Env Variable (Node),54,No,const STATIC = process.env.DISCORD_ACCESS_MODE === 'static'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,session,Sensitive,Auth Token,453,No,"'The sender reads Discord, not this session. Anything you want them to see must go through the reply tool — your transcr"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,arguments,Volatile,Route Parameter,599,No,"const args = (req.params.arguments ?? {}) as Record<string, unknown>"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,name,Persistent,Route Parameter,601,Yes,switch (req.params.name) {
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,chat_id,Volatile,GraphQL/RPC Argument,603,No,const chat_id = args.chat_id as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,text,Volatile,GraphQL/RPC Argument,604,No,const text = args.text as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,reply_to,Volatile,GraphQL/RPC Argument,605,No,const reply_to = args.reply_to as string | undefined
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,files,Volatile,GraphQL/RPC Argument,606,No,const files = (args.files as string[] | undefined) ?? []
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,channel,Volatile,GraphQL/RPC Argument,655,No,const ch = await fetchAllowedChannel(args.channel as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,limit,Volatile,GraphQL/RPC Argument,656,No,"const limit = Math.min((args.limit as number) ?? 20, 100)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,chat_id,Volatile,GraphQL/RPC Argument,678,No,const ch = await fetchAllowedChannel(args.chat_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,message_id,Volatile,GraphQL/RPC Argument,679,No,const msg = await ch.messages.fetch(args.message_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,emoji,Volatile,GraphQL/RPC Argument,680,No,await msg.react(args.emoji as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,chat_id,Volatile,GraphQL/RPC Argument,684,No,const ch = await fetchAllowedChannel(args.chat_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,message_id,Volatile,GraphQL/RPC Argument,685,No,const msg = await ch.messages.fetch(args.message_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,text,Volatile,GraphQL/RPC Argument,686,No,const edited = await msg.edit(args.text as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,chat_id,Volatile,GraphQL/RPC Argument,690,No,const ch = await fetchAllowedChannel(args.chat_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,message_id,Volatile,GraphQL/RPC Argument,691,No,const msg = await ch.messages.fetch(args.message_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,name,Persistent,Route Parameter,707,Yes,"content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/discord/server.ts,name,Persistent,Route Parameter,714,Yes,"content: [{ type: 'text', text: `${req.params.name} failed: ${msg}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,token,Sensitive,Auth Token,6,No,"* no tokens, no access control."
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,FAKECHAT_PORT,Config,Env Variable (Node),20,No,const PORT = Number(process.env.FAKECHAT_PORT ?? 8787)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,session,Sensitive,Auth Token,63,No,"instructions: `The sender reads the fakechat UI, not this session. Anything you want them to see must go through the rep"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,arguments,Volatile,Route Parameter,95,No,"const args = (req.params.arguments ?? {}) as Record<string, unknown>"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,name,Persistent,Route Parameter,97,Yes,switch (req.params.name) {
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,text,Volatile,GraphQL/RPC Argument,99,No,const text = args.text as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,reply_to,Volatile,GraphQL/RPC Argument,100,No,const replyTo = args.reply_to as string | undefined
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,files,Volatile,GraphQL/RPC Argument,101,No,const files = (args.files as string[] | undefined) ?? []
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,message_id,Volatile,GraphQL/RPC Argument,122,No,"broadcast({ type: 'edit', id: args.message_id as string, text: args.text as string })"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,text,Volatile,GraphQL/RPC Argument,122,No,"broadcast({ type: 'edit', id: args.message_id as string, text: args.text as string })"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,name,Persistent,Route Parameter,126,Yes,"return { content: [{ type: 'text', text: `unknown: ${req.params.name}` }], isError: true }"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/fakechat/server.ts,name,Persistent,Route Parameter,129,Yes,"return { content: [{ type: 'text', text: `${req.params.name}: ${err instanceof Error ? err.message : err}` }], isError: "
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,IMESSAGE_ACCESS_MODE,Config,Env Variable (Node),33,No,const STATIC = process.env.IMESSAGE_ACCESS_MODE === 'static'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,IMESSAGE_APPEND_SIGNATURE,Config,Env Variable (Node),34,No,const APPEND_SIGNATURE = process.env.IMESSAGE_APPEND_SIGNATURE !== 'false'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,IMESSAGE_ALLOW_SMS,Config,Env Variable (Node),38,No,const ALLOW_SMS = process.env.IMESSAGE_ALLOW_SMS === 'true'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,IMESSAGE_DB_PATH,Config,Env Variable (Node),41,No,"process.env.IMESSAGE_DB_PATH ?? join(homedir(), 'Library', 'Messages', 'chat.db')"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,IMESSAGE_STATE_DIR,Config,Env Variable (Node),43,No,"const STATE_DIR = process.env.IMESSAGE_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'imessage')"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,session,Sensitive,Auth Token,558,No,"'The sender reads iMessage, not this session. Anything you want them to see must go through the reply tool — your transc"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,arguments,Volatile,Route Parameter,656,No,"const args = (req.params.arguments ?? {}) as Record<string, unknown>"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,name,Persistent,Route Parameter,658,Yes,switch (req.params.name) {
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,chat_id,Volatile,GraphQL/RPC Argument,660,No,const chat_id = args.chat_id as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,text,Volatile,GraphQL/RPC Argument,661,No,const text = args.text as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,files,Volatile,GraphQL/RPC Argument,662,No,const files = (args.files as string[] | undefined) ?? []
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,chat_guid,Volatile,GraphQL/RPC Argument,697,No,const guid = args.chat_guid as string | undefined
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,limit,Volatile,GraphQL/RPC Argument,698,No,"const limit = Math.min((args.limit as number) ?? 100, 500)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,name,Persistent,Route Parameter,720,Yes,"content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/imessage/server.ts,name,Persistent,Route Parameter,727,Yes,"content: [{ type: 'text', text: `${req.params.name} failed: ${msg}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,TELEGRAM_STATE_DIR,Config,Env Variable (Node),26,No,"const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'telegram')"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,token,Sensitive,Auth Token,32,No,// Plugin-spawned servers don't get an env block — this is where the token lives.
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,TELEGRAM_BOT_TOKEN,Sensitive,Env Variable (Node),42,No,const TOKEN = process.env.TELEGRAM_BOT_TOKEN
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,TELEGRAM_ACCESS_MODE,Config,Env Variable (Node),43,No,const STATIC = process.env.TELEGRAM_ACCESS_MODE === 'static'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,369,No,"'The sender reads Telegram, not this session. Anything you want them to see must go through the reply tool — your transc"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,arguments,Volatile,Route Parameter,491,No,"const args = (req.params.arguments ?? {}) as Record<string, unknown>"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,name,Persistent,Route Parameter,493,Yes,switch (req.params.name) {
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,chat_id,Volatile,GraphQL/RPC Argument,495,No,const chat_id = args.chat_id as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,text,Volatile,GraphQL/RPC Argument,496,No,const text = args.text as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,reply_to,Volatile,GraphQL/RPC Argument,497,No,const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,files,Volatile,GraphQL/RPC Argument,498,No,const files = (args.files as string[] | undefined) ?? []
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,format,Volatile,GraphQL/RPC Argument,499,No,const format = (args.format as string | undefined) ?? 'text'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,chat_id,Volatile,GraphQL/RPC Argument,562,No,assertAllowedChat(args.chat_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,chat_id,Volatile,GraphQL/RPC Argument,563,No,"await bot.api.setMessageReaction(args.chat_id as string, Number(args.message_id), ["
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,message_id,Volatile,GraphQL/RPC Argument,563,No,"await bot.api.setMessageReaction(args.chat_id as string, Number(args.message_id), ["
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,emoji,Volatile,GraphQL/RPC Argument,564,No,"{ type: 'emoji', emoji: args.emoji as ReactionTypeEmoji['emoji'] },"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,file_id,Volatile,GraphQL/RPC Argument,569,No,const file_id = args.file_id as string
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,chat_id,Volatile,GraphQL/RPC Argument,587,No,assertAllowedChat(args.chat_id as string)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,format,Volatile,GraphQL/RPC Argument,588,No,const editFormat = (args.format as string | undefined) ?? 'text'
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,chat_id,Volatile,GraphQL/RPC Argument,591,No,"args.chat_id as string,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,message_id,Volatile,GraphQL/RPC Argument,592,No,"Number(args.message_id),"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,text,Volatile,GraphQL/RPC Argument,593,No,"args.text as string,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,message_id,Volatile,GraphQL/RPC Argument,596,No,const id = typeof edited === 'object' ? edited.message_id : args.message_id
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,name,Persistent,Route Parameter,601,Yes,"content: [{ type: 'text', text: `unknown tool: ${req.params.name}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,name,Persistent,Route Parameter,608,Yes,"content: [{ type: 'text', text: `${req.params.name} failed: ${msg}` }],"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,token,Sensitive,Auth Token,617,No,"// the bot keeps polling forever as a zombie, holding the token and blocking"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,618,No,// the next session with 409 Conflict.
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,647,No,`This bot bridges Telegram to a Claude Code session.\n\n` +
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,651,No,"`After that, DMs here reach that session.`"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,658,No,`Messages you send here route to a paired Claude Code session. ` +
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,957,No,"// previous session, or a second Claude Code instance). Retry with backoff"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts,session,Sensitive,Auth Token,981,No,"? ' — another instance is polling (zombie session, or a second Claude Code running?)'"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/posttooluse.py,CLAUDE_PLUGIN_ROOT,Config,Env Variable (Python),13,No,PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/pretooluse.py,CLAUDE_PLUGIN_ROOT,Config,Env Variable (Python),13,No,PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/stop.py,CLAUDE_PLUGIN_ROOT,Config,Env Variable (Python),13,No,PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/userpromptsubmit.py,CLAUDE_PLUGIN_ROOT,Config,Env Variable (Python),13,No,PLUGIN_ROOT = os.environ.get('CLAUDE_PLUGIN_ROOT')
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,28,No,# State file to track warnings shown (session-scoped using session ID)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,129,No,def get_state_file(session_id):
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,130,No,"""""""Get session-specific state file path."""""""
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,131,No,"return os.path.expanduser(f""~/.claude/security_warnings_state_{session_id}.json"")"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,159,No,def load_state(session_id):
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,161,No,state_file = get_state_file(session_id)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,171,No,"def save_state(session_id, shown_warnings):"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,173,No,state_file = get_state_file(session_id)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,238,No,# Extract session ID and tool information from the hook input
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,239,No,"session_id = input_data.get(""session_id"", ""default"")"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,262,No,# Load existing warnings for this session
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,263,No,shown_warnings = load_state(session_id)
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,265,No,# Check if we've already shown this warning in this session
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py,session,Sensitive,Auth Token,269,No,"save_state(session_id, shown_warnings)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,145,No,"result[""tokens""] = timing_data.get(""total_tokens"", 0)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,152,No,"if not result.get(""tokens""):"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,153,No,"result[""tokens""] = metrics.get(""output_chars"", 0)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,192,No,"""tokens"": {""mean"": 0, ""stddev"": 0, ""min"": 0, ""max"": 0}"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,198,No,"tokens = [r.get(""tokens"", 0) for r in runs]"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,203,No,"""tokens"": calculate_stats(tokens)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,216,No,"delta_tokens = primary.get(""tokens"", {}).get(""mean"", 0) - baseline.get(""tokens"", {}).get(""mean"", 0)"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,221,No,"""tokens"": f""{delta_tokens:+.0f}"""
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,248,No,"""tokens"": result.get(""tokens"", 0),"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,320,No,# Format tokens
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,321,No,"a_tokens = a_summary.get(""tokens"", {})"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,322,No,"b_tokens = b_summary.get(""tokens"", {})"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/aggregate_benchmark.py,token,Sensitive,Auth Token,323,No,"lines.append(f""| Tokens | {a_tokens.get('mean', 0):.0f} ± {a_tokens.get('stddev', 0):.0f} | {b_tokens.get('mean', 0):.0f"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/improve_description.py,token,Sensitive,Auth Token,116,No,"max_tokens=16000,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/improve_description.py,token,Sensitive,Auth Token,119,No,"""budget_tokens"": 10000,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/improve_description.py,token,Sensitive,Auth Token,153,No,"max_tokens=16000,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/improve_description.py,token,Sensitive,Auth Token,156,No,"""budget_tokens"": 10000,"
+.claude-config,.claude-config/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/skill-creator/scripts/run_eval.py,session,Sensitive,Auth Token,81,No,# Claude Code session. The guard is for interactive terminal conflicts;
+.claude,.claude/scripts/security/scan_config.py,token,Sensitive,Auth Token,2,No,"""""""Secrets & Exposure Scanner — finds env vars, tokens, credentials and rates exposure risk."""""""
+.claude,.claude/scripts/security/scan_config.py,session,Sensitive,Auth Token,12,No,"""ts_storage"": {""regex"": r'(?:localStorage|sessionStorage)\.getItem\([\'""]([a-zA-Z0-9_-]+)[\'""]\)', ""type"": ""Browser Stor"
+.claude,.claude/scripts/security/scan_config.py,token,Sensitive,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,Authorization,Sensitive,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,x-api-key,Sensitive,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,stripe-signature,Volatile,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,jwt,Sensitive,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,bearer,Volatile,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,session,Sensitive,Auth Token,17,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|session)', ""type"": ""Auth To"
+.claude,.claude/scripts/security/scan_config.py,token,Sensitive,Auth Token,21,No,"SENSITIVE_KEYS = ['key','secret','token','password','auth','credential','signature','dsn','jwt','session','private']"
+.claude,.claude/scripts/security/scan_config.py,jwt,Sensitive,Auth Token,21,No,"SENSITIVE_KEYS = ['key','secret','token','password','auth','credential','signature','dsn','jwt','session','private']"
+.claude,.claude/scripts/security/scan_config.py,session,Sensitive,Auth Token,21,No,"SENSITIVE_KEYS = ['key','secret','token','password','auth','credential','signature','dsn','jwt','session','private']"
+.claude,.claude/scripts/security/scan_inputs.py,session,Sensitive,Auth Token,20,No,"""ts_storage"": {""regex"": r'(?:localStorage|sessionStorage)\.getItem\([\'""]([a-zA-Z0-9_-]+)[\'""]\)', ""type"": ""Browser Stor"
+.claude,.claude/scripts/security/scan_inputs.py,token,Sensitive,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,Authorization,Sensitive,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,x-api-key,Sensitive,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,stripe-signature,Volatile,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,jwt,Sensitive,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,bearer,Volatile,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,session,Sensitive,Auth Token,26,No,"""auth_token"": {""regex"": r'(Authorization|x-api-key|stripe-signature|clerk-[a-z-]+|jwt|bearer|token|session)', ""type"": ""A"
+.claude,.claude/scripts/security/scan_inputs.py,token,Sensitive,Auth Token,57,No,"if any(k in nl for k in ['key','secret','token','password','auth','credential','jwt','session']): return ""Sensitive"""
+.claude,.claude/scripts/security/scan_inputs.py,jwt,Sensitive,Auth Token,57,No,"if any(k in nl for k in ['key','secret','token','password','auth','credential','jwt','session']): return ""Sensitive"""
+.claude,.claude/scripts/security/scan_inputs.py,session,Sensitive,Auth Token,57,No,"if any(k in nl for k in ['key','secret','token','password','auth','credential','jwt','session']): return ""Sensitive"""
+ember,ember/devbox/drizzle.config.ts,DATABASE_URL,Config,Env Variable (Node),7,No,"dbCredentials: { url: process.env.DATABASE_URL! },"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,61,No,"it(""creates and consumes a reset token"", async () => {"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,63,No,"const token = crypto.randomBytes(32).toString(""hex"");"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,64,No,"const tokenHash = crypto.createHash(""sha256"").update(token).digest(""hex"");"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,67,No,"await testSql`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,68,No,"VALUES ('prt_1', ${user.id}, ${tokenHash}, ${expiresAt.toISOString()})`;"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,72,No,UPDATE password_reset_tokens SET used_at = NOW()
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,73,No,WHERE token_hash = ${tokenHash} AND expires_at > NOW() AND used_at IS NULL
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,81,No,UPDATE password_reset_tokens SET used_at = NOW()
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,82,No,WHERE token_hash = ${tokenHash} AND used_at IS NULL
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,88,No,"it(""expired token cannot be consumed"", async () => {"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,90,No,"const tokenHash = crypto.createHash(""sha256"").update(""expired_token"").digest(""hex"");"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,92,No,"await testSql`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,93,No,"VALUES ('prt_exp', ${user.id}, ${tokenHash}, NOW() - interval '1 hour')`;"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,96,No,UPDATE password_reset_tokens SET used_at = NOW()
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,97,No,WHERE token_hash = ${tokenHash} AND expires_at > NOW() AND used_at IS NULL
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,105,No,"it(""creates and consumes a verification token"", async () => {"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,107,No,"const token = crypto.randomBytes(32).toString(""hex"");"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,108,No,"const tokenHash = crypto.createHash(""sha256"").update(token).digest(""hex"");"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,110,No,"await testSql`INSERT INTO email_verification_tokens (id, user_id, email, token_hash, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,111,No,"VALUES ('evt_1', ${user.id}, 'unverified@t.com', ${tokenHash}, NOW() + interval '1 day')`;"
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,114,No,UPDATE email_verification_tokens SET used_at = NOW()
+src/__tests__,ember/devbox/src/__tests__/identity.test.ts,token,Sensitive,Auth Token,115,No,WHERE token_hash = ${tokenHash} AND expires_at > NOW() AND used_at IS NULL
+src/__tests__,ember/devbox/src/__tests__/setup.ts,TEST_DATABASE_URL,Config,Env Variable (Node),12,No,"const TEST_DB_URL = process.env.TEST_DATABASE_URL || ""postgres://root@127.0.0.1:5432/ember_test"";"
+src/__tests__,ember/devbox/src/__tests__/setup.ts,DATABASE_URL,Config,Env Variable (Node),18,No,process.env.DATABASE_URL = TEST_DB_URL;
+src/__tests__,ember/devbox/src/__tests__/setup.ts,session,Sensitive,Auth Token,39,No,await testSql`SET session_replication_role = replica`; // Disable FK checks
+src/__tests__,ember/devbox/src/__tests__/setup.ts,session,Sensitive,Auth Token,42,No,"""stoke_sessions"", ""ai_usage"", ""api_keys"","
+src/__tests__,ember/devbox/src/__tests__/setup.ts,session,Sensitive,Auth Token,43,No,"""audit_log"", ""billing_events"", ""terminal_sessions"", ""exchange_codes"","
+src/__tests__,ember/devbox/src/__tests__/setup.ts,token,Sensitive,Auth Token,44,No,"""purchase_intents"", ""password_reset_tokens"", ""email_verification_tokens"","
+src/__tests__,ember/devbox/src/__tests__/setup.ts,session,Sensitive,Auth Token,45,No,"""machines"", ""slots"", ""subscriptions"", ""oauth_accounts"", ""sessions"", ""users"","
+src/__tests__,ember/devbox/src/__tests__/setup.ts,session,Sensitive,Auth Token,49,No,await testSql`SET session_replication_role = DEFAULT`;
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,80,No,"it(""creates a session record on terminal auth"", async () => {"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,86,No,"const sessionId = crypto.randomUUID().replace(/-/g, """").slice(0, 20);"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,89,No,"await testSql`INSERT INTO terminal_sessions (id, machine_id, user_id, status, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,90,No,"VALUES (${sessionId}, ${machine.id}, ${user.id}, 'active', ${expiresAt.toISOString()})`;"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,92,No,const [row] = await testSql`SELECT * FROM terminal_sessions WHERE id = ${sessionId}`;
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,98,No,"it(""revokes all sessions for a user with reason"", async () => {"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,104,No,// Create 3 sessions
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,106,No,"await testSql`INSERT INTO terminal_sessions (id, machine_id, user_id, status, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,111,No,"await testSql`UPDATE terminal_sessions SET status = 'revoked', revoked_at = NOW(), revoke_reason = 'logout'"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,114,No,"const rows = await testSql`SELECT status, revoke_reason FROM terminal_sessions WHERE user_id = ${user.id}`;"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,129,No,"await testSql`INSERT INTO terminal_sessions (id, machine_id, user_id, status, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,131,No,"await testSql`INSERT INTO terminal_sessions (id, machine_id, user_id, status, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,135,No,await testSql`UPDATE terminal_sessions SET status = 'revoked' WHERE user_id = ${user1.id}`;
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,137,No,const [s1] = await testSql`SELECT status FROM terminal_sessions WHERE id = 'ts_u1'`;
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,138,No,const [s2] = await testSql`SELECT status FROM terminal_sessions WHERE id = 'ts_u2'`;
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,153,No,"await testSql`INSERT INTO terminal_sessions (id, machine_id, user_id, status, expires_at)"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,155,No,"await testSql`UPDATE terminal_sessions SET status = 'revoked', revoke_reason = ${reason} WHERE id = ${sid}`;"
+src/__tests__,ember/devbox/src/__tests__/terminal.test.ts,session,Sensitive,Auth Token,158,No,const rows = await testSql`SELECT revoke_reason FROM terminal_sessions WHERE user_id = ${user.id} ORDER BY revoke_reason
+src/auth.ts,ember/devbox/src/auth.ts,session,Sensitive,Auth Token,5,No,"import { users, sessions } from ""./db.js"";"
+src/auth.ts,ember/devbox/src/auth.ts,session,Sensitive,Auth Token,8,No,"const adapter = new DrizzlePostgreSQLAdapter(db, sessions, users);"
+src/auth.ts,ember/devbox/src/auth.ts,session,Sensitive,Auth Token,11,No,sessionCookie: {
+src/auth.ts,ember/devbox/src/auth.ts,NODE_ENV,Config,Env Variable (Node),13,No,"secure: process.env.NODE_ENV === ""production"","
+src/auth.ts,ember/devbox/src/auth.ts,APP_URL,Config,Env Variable (Node),40,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/auth.ts,ember/devbox/src/auth.ts,GITHUB_CLIENT_ID,Config,Env Variable (Node),45,No,"process.env.GITHUB_CLIENT_ID || """","
+src/auth.ts,ember/devbox/src/auth.ts,GITHUB_CLIENT_SECRET,Sensitive,Env Variable (Node),46,No,"process.env.GITHUB_CLIENT_SECRET || """","
+src/auth.ts,ember/devbox/src/auth.ts,GITHUB_CLIENT_ID,Config,Env Variable (Node),52,No,"process.env.GITHUB_CLIENT_ID || """","
+src/auth.ts,ember/devbox/src/auth.ts,GITHUB_CLIENT_SECRET,Sensitive,Env Variable (Node),53,No,"process.env.GITHUB_CLIENT_SECRET || """","
+src/auth.ts,ember/devbox/src/auth.ts,GOOGLE_CLIENT_ID,Config,Env Variable (Node),58,No,"process.env.GOOGLE_CLIENT_ID || """","
+src/auth.ts,ember/devbox/src/auth.ts,GOOGLE_CLIENT_SECRET,Sensitive,Env Variable (Node),59,No,"process.env.GOOGLE_CLIENT_SECRET || """","
+src/connection.ts,ember/devbox/src/connection.ts,DATABASE_URL,Config,Env Variable (Node),7,No,export const rawSql = postgres(process.env.DATABASE_URL!);
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,23,No,"export const sessions = pgTable(""sessions"", {"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,40,No,"accessToken: text(""access_token""),    // Encrypted via secrets.ts"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,41,No,"refreshToken: text(""refresh_token""),  // Encrypted via secrets.ts"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,42,No,"tokenScope: text(""token_scope""),      // e.g. ""user:email"" or ""user:email,repo,read:org"""
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,99,No,"stripeSessionId: text(""stripe_session_id""),"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,125,No,"machineToken: text(""machine_token""),"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,135,No,"""terminal_sessions"","
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,152,No,"index(""terminal_sessions_machine_idx"").on(table.machineId),"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,153,No,"index(""terminal_sessions_user_idx"").on(table.userId),"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,178,No,"sessionId: text(""session_id""),   // Links to terminal_sessions.id for cookie tracking"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,184,No,"export const passwordResetTokens = pgTable(""password_reset_tokens"", {"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,189,No,"tokenHash: text(""token_hash"").notNull(),  // SHA-256 of the token sent to user"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,196,No,"export const emailVerificationTokens = pgTable(""email_verification_tokens"", {"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,202,No,"tokenHash: text(""token_hash"").notNull(),"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,229,No,"// ── API Keys (for v1 endpoints: workers, AI, sessions) ──"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,247,No,"inputTokens: integer(""input_tokens"").notNull().default(0),"
+src/db.ts,ember/devbox/src/db.ts,token,Sensitive,Auth Token,248,No,"outputTokens: integer(""output_tokens"").notNull().default(0),"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,257,No,"export const stokeSessions = pgTable(""stoke_sessions"", {"
+src/db.ts,ember/devbox/src/db.ts,session,Sensitive,Auth Token,268,No,"index(""stoke_sessions_user_idx"").on(table.userId),"
+src/email.ts,ember/devbox/src/email.ts,EMAIL_PROVIDER,Config,Env Variable (Node),13,No,"const provider = process.env.EMAIL_PROVIDER || ""console"";"
+src/email.ts,ember/devbox/src/email.ts,NODE_ENV,Config,Env Variable (Node),16,No,"if (process.env.NODE_ENV === ""production"") {"
+src/email.ts,ember/devbox/src/email.ts,RESEND_API_KEY,Sensitive,Env Variable (Node),31,No,"""Authorization"": `Bearer ${process.env.RESEND_API_KEY}`,"
+src/email.ts,ember/devbox/src/email.ts,Authorization,Sensitive,Auth Token,31,No,"""Authorization"": `Bearer ${process.env.RESEND_API_KEY}`,"
+src/email.ts,ember/devbox/src/email.ts,EMAIL_FROM,Config,Env Variable (Node),34,No,"from: process.env.EMAIL_FROM || ""Ember <noreply@ember.dev>"","
+src/fly.ts,ember/devbox/src/fly.ts,FLY_API_TOKEN,Sensitive,Env Variable (Node),5,No,const FLY_TOKEN = () => process.env.FLY_API_TOKEN!;
+src/fly.ts,ember/devbox/src/fly.ts,FLY_ORG,Config,Env Variable (Node),6,No,"const FLY_ORG = () => process.env.FLY_ORG || ""personal"";"
+src/fly.ts,ember/devbox/src/fly.ts,MACHINE_HOST_SUFFIX,Config,Env Variable (Node),8,No,"const MACHINE_HOST_SUFFIX = () => process.env.MACHINE_HOST_SUFFIX || "".fly.dev"";"
+src/fly.ts,ember/devbox/src/fly.ts,Authorization,Sensitive,Auth Token,57,No,"Authorization: `Bearer ${FLY_TOKEN()}`,"
+src/fly.ts,ember/devbox/src/fly.ts,Authorization,Sensitive,Auth Token,81,No,"Authorization: `Bearer ${FLY_TOKEN()}`,"
+src/fly.ts,ember/devbox/src/fly.ts,INTERNAL_API_URL,Config,Env Variable (Node),238,No,"API_URL: process.env.INTERNAL_API_URL || opts.apiUrl,"
+src/fly.ts,ember/devbox/src/fly.ts,Authorization,Sensitive,Auth Token,350,No,"headers: { Authorization: `Bearer ${machineToken}` },"
+src/fly.ts,ember/devbox/src/fly.ts,token,Sensitive,Auth Token,362,No,// Sends raw file bytes with filename in header. Auth via machine token.
+src/fly.ts,ember/devbox/src/fly.ts,Authorization,Sensitive,Auth Token,380,No,"Authorization: `Bearer ${machineToken}`,"
+src/fly.ts,ember/devbox/src/fly.ts,token,Sensitive,Auth Token,392,No,"// Auth failure is definitive (same machine, wrong token) - don't retry"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,2,No,"// Uses fine-grained, short-lived installation tokens instead of classic OAuth repo tokens."
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,3,No,// GitHub recommends Apps because permissions are repository-scoped and tokens expire.
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,10,No,"//   5. At machine creation, we generate a short-lived installation token for the specific repo"
+src/github-app.ts,ember/devbox/src/github-app.ts,GITHUB_APP_ID,Config,Env Variable (Node),14,No,"const APP_ID = () => process.env.GITHUB_APP_ID || """";"
+src/github-app.ts,ember/devbox/src/github-app.ts,GITHUB_APP_PRIVATE_KEY,Sensitive,Env Variable (Node),15,No,"const PRIVATE_KEY = () => process.env.GITHUB_APP_PRIVATE_KEY || """";"
+src/github-app.ts,ember/devbox/src/github-app.ts,jwt,Sensitive,Auth Token,44,No,const jwt = createAppJWT();
+src/github-app.ts,ember/devbox/src/github-app.ts,Authorization,Sensitive,Auth Token,47,No,"Authorization: `Bearer ${jwt}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,jwt,Sensitive,Auth Token,47,No,"Authorization: `Bearer ${jwt}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,69,No,// Generate a short-lived installation token scoped to specific repositories
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,73,No,): Promise<{ token: string; expiresAt: string } | null> {
+src/github-app.ts,ember/devbox/src/github-app.ts,jwt,Sensitive,Auth Token,77,No,const jwt = createAppJWT();
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,85,No,"`https://api.github.com/app/installations/${installationId}/access_tokens`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,Authorization,Sensitive,Auth Token,89,No,"Authorization: `Bearer ${jwt}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,jwt,Sensitive,Auth Token,89,No,"Authorization: `Bearer ${jwt}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,103,No,"return { token: data.token, expiresAt: data.expires_at };"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,114,No,const tokenResult = await createInstallationToken(installationId);
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,115,No,if (!tokenResult) return [];
+src/github-app.ts,ember/devbox/src/github-app.ts,Authorization,Sensitive,Auth Token,120,No,"Authorization: `Bearer ${tokenResult.token}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,120,No,"Authorization: `Bearer ${tokenResult.token}`,"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,145,No,"// Get a clone token for a specific repo. Prefers GitHub App (short-lived, scoped)"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,146,No,// but falls back to classic OAuth token if App is not configured.
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,151,No,"): Promise<{ token: string; method: ""app"" | ""oauth"" } | null> {"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,160,No,"const tokenResult = await createInstallationToken(ownerInstallation, [parsed.repo]);"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,161,No,if (tokenResult) {
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,162,No,"return { token: tokenResult.token, method: ""app"" };"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,170,No,"const tokenResult = await createInstallationToken(userInstallation, [parsed.repo]);"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,171,No,if (tokenResult) {
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,172,No,"return { token: tokenResult.token, method: ""app"" };"
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,178,No,// Fall back to classic OAuth token
+src/github-app.ts,ember/devbox/src/github-app.ts,token,Sensitive,Auth Token,180,No,"return { token: classicOAuthToken, method: ""oauth"" };"
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,19,No,"import sessionRoutes from ""./routes/sessions.js"";"
+src/index.ts,ember/devbox/src/index.ts,NODE_ENV,Config,Env Variable (Node),30,No,"if (process.env.NODE_ENV !== ""production"") return;"
+src/index.ts,ember/devbox/src/index.ts,APP_URL,Config,Env Variable (Node),33,No,"const appUrl = process.env.APP_URL || """";"
+src/index.ts,ember/devbox/src/index.ts,MACHINE_HOST_SUFFIX,Config,Env Variable (Node),34,No,"const machineHostSuffix = process.env.MACHINE_HOST_SUFFIX || "".fly.dev"";"
+src/index.ts,ember/devbox/src/index.ts,EMAIL_PROVIDER,Config,Env Variable (Node),60,No,"if (process.env.EMAIL_PROVIDER === ""console"") {"
+src/index.ts,ember/devbox/src/index.ts,EMAIL_PROVIDER,Config,Env Variable (Node),63,No,"if (process.env.EMAIL_PROVIDER === ""resend"" && !process.env.RESEND_API_KEY) {"
+src/index.ts,ember/devbox/src/index.ts,RESEND_API_KEY,Sensitive,Env Variable (Node),63,No,"if (process.env.EMAIL_PROVIDER === ""resend"" && !process.env.RESEND_API_KEY) {"
+src/index.ts,ember/devbox/src/index.ts,EMAIL_PROVIDER,Config,Env Variable (Node),66,No,"if (process.env.EMAIL_PROVIDER === ""resend"" && !process.env.EMAIL_FROM) {"
+src/index.ts,ember/devbox/src/index.ts,EMAIL_FROM,Config,Env Variable (Node),66,No,"if (process.env.EMAIL_PROVIDER === ""resend"" && !process.env.EMAIL_FROM) {"
+src/index.ts,ember/devbox/src/index.ts,MACHINE_HOST_SUFFIX,Config,Env Variable (Node),94,No,"const machineHostSuffix = process.env.MACHINE_HOST_SUFFIX || "".fly.dev"";"
+src/index.ts,ember/devbox/src/index.ts,Authorization,Sensitive,Auth Token,112,No,"// /v1/* uses API key auth (Authorization header), which is inherently CSRF-proof."
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,113,No,// Only browser-session routes need Origin-based CSRF.
+src/index.ts,ember/devbox/src/index.ts,ENABLE_V1_WORKERS,Config,Env Variable (Node),145,No,"if (process.env.ENABLE_V1_WORKERS === ""true"") {"
+src/index.ts,ember/devbox/src/index.ts,ENABLE_MANAGED_AI,Config,Env Variable (Node),152,No,"if (process.env.ENABLE_MANAGED_AI === ""true"") {"
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,159,No,"app.route(""/v1/sessions"", sessionRoutes);"
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,166,No,// Authenticate via reconcile secret OR admin session cookie
+src/index.ts,ember/devbox/src/index.ts,Authorization,Sensitive,Auth Token,167,No,"const auth = c.req.header(""Authorization"");"
+src/index.ts,ember/devbox/src/index.ts,RECONCILE_SECRET,Sensitive,Env Variable (Node),168,No,const secret = process.env.RECONCILE_SECRET;
+src/index.ts,ember/devbox/src/index.ts,bearer,Volatile,Auth Token,171,No,// Check bearer token
+src/index.ts,ember/devbox/src/index.ts,token,Sensitive,Auth Token,171,No,// Check bearer token
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,176,No,// Check admin session cookie
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,180,No,"const sessionId = getCookie(c, lucia.sessionCookieName);"
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,181,No,if (sessionId) {
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,182,No,"const { session, user: sessionUser } = await lucia.validateSession(sessionId);"
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,183,No,if (session && sessionUser) {
+src/index.ts,ember/devbox/src/index.ts,session,Sensitive,Auth Token,184,No,"const [dbUser] = await db.select({ role: users.role }).from(users).where(eq(users.id, sessionUser.id));"
+src/index.ts,ember/devbox/src/index.ts,PORT,Config,Env Variable (Node),232,No,"const port = parseInt(process.env.PORT || ""3000"", 10);"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,9,No,session: { id: string };
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,27,No,"const sessionId = getCookie(c, lucia.sessionCookieName);"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,28,No,"if (!sessionId) return c.json({ error: ""Not authenticated"" }, 401);"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,30,No,"const { session, user } = await lucia.validateSession(sessionId);"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,31,No,if (!session) {
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,37,No,if (session.fresh) {
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,38,No,const fresh = lucia.createSessionCookie(session.id);
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,45,No,"c.set(""session"", session);"
+src/middleware.ts,ember/devbox/src/middleware.ts,token,Sensitive,Auth Token,74,No,"// Exempt startup script fetch (Bearer token auth, machine-to-API calls)"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,79,No,// No origin: allow if there's a valid session cookie (same-origin non-fetch)
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,80,No,"const sessionId = getCookie(c, lucia.sessionCookieName);"
+src/middleware.ts,ember/devbox/src/middleware.ts,session,Sensitive,Auth Token,81,No,if (sessionId) return next();
+src/middleware.ts,ember/devbox/src/middleware.ts,APP_URL,Config,Env Variable (Node),86,No,"const appUrl = process.env.APP_URL || ""http://localhost:3000"";"
+src/rate-limit.ts,ember/devbox/src/rate-limit.ts,RATE_LIMIT_BACKEND,Config,Env Variable (Node),114,No,"const usePostgres = process.env.RATE_LIMIT_BACKEND === ""postgres"";"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,9,No,"import { users, sessions, passwordResetTokens, emailVerificationTokens } from ""../db.js"";"
+src/routes,ember/devbox/src/routes/account.ts,STRIPE_SECRET_KEY,Sensitive,Env Variable (Node),15,No,"const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: ""2024-04-10"" as any });"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,17,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/account.ts,APP_URL,Config,Env Variable (Node),18,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,20,No,function hashToken(token: string): string {
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,21,No,"return crypto.createHash(""sha256"").update(token).digest(""hex"");"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,40,No,// Rate limit: max 3 active tokens per user
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,42,No,SELECT count(*) as c FROM password_reset_tokens
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,46,No,"const token = crypto.randomBytes(32).toString(""hex"");"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,47,No,const tokenId = nanoid();
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,51,No,"id: tokenId, userId: user.id, tokenHash: hashToken(token), expiresAt,"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,54,No,const resetUrl = `${APP_URL}/reset-password?token=${token}`;
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,58,No,"// Still return ok to avoid leaking user existence, but token won't arrive"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,65,No,"token: z.string().min(1),"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,73,No,"const { token, password } = parsed.data;"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,74,No,const tokenHash = hashToken(token);
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,76,No,// Atomically find and mark the token as used
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,78,No,UPDATE password_reset_tokens SET used_at = NOW()
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,79,No,WHERE token_hash = ${tokenHash} AND expires_at > NOW() AND used_at IS NULL
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,82,No,"if (!result.length) return c.json({ error: ""Invalid or expired token"" }, 400);"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,89,No,// Invalidate ALL outstanding reset tokens for this user (not just the one we consumed).
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,91,No,await rawSql`UPDATE password_reset_tokens SET used_at = NOW()
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,94,No,// Invalidate all sessions and terminal sessions (password changed = full logout)
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,110,No,// Rate limit: max 3 active tokens
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,112,No,SELECT count(*) as c FROM email_verification_tokens
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,116,No,"const token = crypto.randomBytes(32).toString(""hex"");"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,117,No,const tokenId = nanoid();
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,121,No,"id: tokenId, userId: user.id, email: dbUser.email, tokenHash: hashToken(token), expiresAt,"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,124,No,const verifyUrl = `${APP_URL}/verify-email?token=${token}`;
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,134,No,const { token } = await c.req.json().catch(() => ({} as any));
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,135,No,"if (!token) return c.json({ error: ""Missing token"" }, 400);"
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,137,No,const tokenHash = hashToken(token);
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,140,No,UPDATE email_verification_tokens SET used_at = NOW()
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,141,No,WHERE token_hash = ${tokenHash} AND expires_at > NOW() AND used_at IS NULL
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,144,No,"if (!result.length) return c.json({ error: ""Invalid or expired token"" }, 400);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,161,No,// List active sessions
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,162,No,"app.get(""/sessions"", requireAuth(), async (c) => {"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,164,No,"const currentSessionId = getCookie(c, lucia.sessionCookieName);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,167,No,"id: sessions.id,"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,168,No,"expiresAt: sessions.expiresAt,"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,169,No,"}).from(sessions).where(eq(sessions.userId, user.id)).orderBy(desc(sessions.expiresAt));"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,172,No,sessions: userSessions.map(s => ({
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,180,No,// Revoke a specific session
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,181,No,"app.post(""/sessions/:id/revoke"", requireAuth(), async (c) => {"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,183,No,"const sessionId = c.req.param(""id"");"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,184,No,"const currentSessionId = getCookie(c, lucia.sessionCookieName);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,186,No,if (sessionId === currentSessionId) {
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,187,No,"return c.json({ error: ""Cannot revoke current session. Use logout instead."" }, 400);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,190,No,// Verify session belongs to this user
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,191,No,const [session] = await db.select().from(sessions)
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,192,No,".where(and(eq(sessions.id, sessionId!), eq(sessions.userId, user.id))).limit(1);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,193,No,"if (!session) return c.json({ error: ""Session not found"" }, 404);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,195,No,await lucia.invalidateSession(sessionId!);
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,199,No,// Revoke all other sessions (browser + terminal)
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,200,No,"app.post(""/sessions/revoke-all"", requireAuth(), async (c) => {"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,202,No,"const currentSessionId = getCookie(c, lucia.sessionCookieName);"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,204,No,// Revoke all browser sessions except current
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,205,No,const userSessions = await db.select({ id: sessions.id }).from(sessions)
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,206,No,".where(eq(sessions.userId, user.id));"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,213,No,// Also revoke all terminal sessions + burn exchange codes.
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,215,No,"await revokeAllTerminalSessionsForUser(user.id, ""revoke_all_sessions"");"
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,306,No,// 3. Invalidate all sessions
+src/routes,ember/devbox/src/routes/account.ts,session,Sensitive,Auth Token,309,No,// 3. Revoke terminal sessions
+src/routes,ember/devbox/src/routes/account.ts,token,Sensitive,Auth Token,312,No,// 4. Delete OAuth tokens + revoke API keys
+src/routes,ember/devbox/src/routes/admin.ts,session,Sensitive,Auth Token,11,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/admin.ts,session,Sensitive,Auth Token,89,No,"// ── Ban: revoke sessions, destroy machines, invalidate app sessions ──"
+src/routes,ember/devbox/src/routes/admin.ts,session,Sensitive,Auth Token,99,No,// Unified terminal session revocation
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,7,No,// Auth: Ember API key (Bearer token).
+src/routes,ember/devbox/src/routes/ai.ts,OPENROUTER_API_KEY,Sensitive,Env Variable (Node),24,No,"const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || """";"
+src/routes,ember/devbox/src/routes/ai.ts,AI_MARKUP_PERCENT,Config,Env Variable (Node),26,No,"const MARKUP_PERCENT = parseFloat(process.env.AI_MARKUP_PERCENT || ""0.20"");"
+src/routes,ember/devbox/src/routes/ai.ts,AI_MONTHLY_CAP_USD,Config,Env Variable (Node),43,No,"const MONTHLY_CAP_USD = parseFloat(process.env.AI_MONTHLY_CAP_USD || ""50"");"
+src/routes,ember/devbox/src/routes/ai.ts,Authorization,Sensitive,Auth Token,54,No,"""Authorization"": `Bearer ${OPENROUTER_KEY}`,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,122,No,"rawSql`INSERT INTO ai_usage (id, user_id, model, input_tokens, output_tokens,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,125,No,"${lastUsage.prompt_tokens || 0}, ${lastUsage.completion_tokens || 0},"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,140,No,"await rawSql`INSERT INTO ai_usage (id, user_id, model, input_tokens, output_tokens,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,142,No,"VALUES (${nanoid()}, ${userId}, ${model || 'unknown'}, ${usage.prompt_tokens || 0},"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,143,No,"${usage.completion_tokens || 0}, ${costUSD}, ${markupUSD}, NOW())`.catch((e) => console.error(""[ai] metering failed:"", e"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,148,No,// GET /v1/ai/usage - get token usage summary for billing
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,157,No,"COALESCE(SUM(input_tokens), 0)::int as input_tokens,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,158,No,"COALESCE(SUM(output_tokens), 0)::int as output_tokens,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,166,No,"input_tokens: totals?.input_tokens || 0,"
+src/routes,ember/devbox/src/routes/ai.ts,token,Sensitive,Auth Token,167,No,"output_tokens: totals?.output_tokens || 0,"
+src/routes,ember/devbox/src/routes/api-keys.ts,session,Sensitive,Auth Token,2,No,// Mounted under /api/account (browser-session auth).
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,15,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/auth.ts,NODE_ENV,Config,Env Variable (Node),16,No,"const isProd = process.env.NODE_ENV === ""production"";"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,45,No,"const session = await lucia.createSession(userId, {});"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,46,No,const cookie = lucia.createSessionCookie(session.id);
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,71,No,"const session = await lucia.createSession(user.id, {});"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,72,No,const cookie = lucia.createSessionCookie(session.id);
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,80,No,"const sessionId = getCookie(c, lucia.sessionCookieName);"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,81,No,if (sessionId) {
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,82,No,const { user } = await lucia.validateSession(sessionId);
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,84,No,// Unified terminal session revocation
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,93,No,await lucia.invalidateSession(sessionId);
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,102,No,"const sessionId = getCookie(c, lucia.sessionCookieName);"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,103,No,if (!sessionId) return c.json({ user: null });
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,104,No,"const { user, session } = await lucia.validateSession(sessionId);"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,107,No,await lucia.invalidateSession(session!.id);
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,119,No,"const url = github.createAuthorizationURL(state, [""user:email""]);"
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,132,No,const tokens = await github.validateAuthorizationCode(code);
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,132,No,const tokens = await github.validateAuthorizationCode(code);
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,133,No,const accessToken = tokens.accessToken();
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,136,No,"headers: { Authorization: `Bearer ${accessToken}` },"
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,142,No,"headers: { Authorization: `Bearer ${accessToken}` },"
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,164,No,"// via /api/github/connect, we'd downgrade their token."
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,165,No,// Only update if they don't have a token at all.
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,215,No,"const session = await lucia.createSession(userId, {});"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,216,No,const cookie = lucia.createSessionCookie(session.id);
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,230,No,"const url = google.createAuthorizationURL(state, codeVerifier, [""openid"", ""email"", ""profile""]);"
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,245,No,"const tokens = await google.validateAuthorizationCode(code, codeVerifier);"
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,245,No,"const tokens = await google.validateAuthorizationCode(code, codeVerifier);"
+src/routes,ember/devbox/src/routes/auth.ts,token,Sensitive,Auth Token,246,No,const accessToken = tokens.accessToken();
+src/routes,ember/devbox/src/routes/auth.ts,Authorization,Sensitive,Auth Token,249,No,"headers: { Authorization: `Bearer ${accessToken}` },"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,290,No,"const session = await lucia.createSession(userId, {});"
+src/routes,ember/devbox/src/routes/auth.ts,session,Sensitive,Auth Token,291,No,const cookie = lucia.createSessionCookie(session.id);
+src/routes,ember/devbox/src/routes/billing.ts,STRIPE_SECRET_KEY,Sensitive,Env Variable (Node),14,No,const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+src/routes,ember/devbox/src/routes/billing.ts,STRIPE_PRICE_4X,Config,Env Variable (Node),17,No,"""performance-4x"": { stripePriceId: process.env.STRIPE_PRICE_4X!, cents: 9600 },"
+src/routes,ember/devbox/src/routes/billing.ts,STRIPE_PRICE_8X,Config,Env Variable (Node),18,No,"""performance-8x"": { stripePriceId: process.env.STRIPE_PRICE_8X!, cents: 17400 },"
+src/routes,ember/devbox/src/routes/billing.ts,STRIPE_PRICE_16X,Config,Env Variable (Node),19,No,"""performance-16x"": { stripePriceId: process.env.STRIPE_PRICE_16X!, cents: 34800 },"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,36,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/billing.ts,APP_URL,Config,Env Variable (Node),148,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,149,No,const session = await stripe.billingPortal.sessions.create({
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,152,No,"return c.json({ url: session.url, reason: ""fix_payment"", intentId: intent.id });"
+src/routes,ember/devbox/src/routes/billing.ts,APP_URL,Config,Env Variable (Node),157,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,158,No,const session = await stripe.billingPortal.sessions.create({
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,161,No,"return c.json({ url: session.url, reason: ""manage_subscriptions"", intentId: intent.id });"
+src/routes,ember/devbox/src/routes/billing.ts,APP_URL,Config,Env Variable (Node),212,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,213,No,const session = await stripe.checkout.sessions.create({
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,223,No,".set({ type: ""checkout"", stripeSessionId: session.id })"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,226,No,"return c.json({ url: session.url, intentId: intent.id });"
+src/routes,ember/devbox/src/routes/billing.ts,APP_URL,Config,Env Variable (Node),234,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,235,No,const session = await stripe.billingPortal.sessions.create({
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,238,No,return c.json({ url: session.url });
+src/routes,ember/devbox/src/routes/billing.ts,stripe-signature,Volatile,Auth Token,391,No,"const sig = c.req.header(""stripe-signature"");"
+src/routes,ember/devbox/src/routes/billing.ts,STRIPE_WEBHOOK_SECRET,Sensitive,Env Variable (Node),396,No,"event = stripe.webhooks.constructEvent(body, sig!, process.env.STRIPE_WEBHOOK_SECRET!);"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,407,No,"case ""checkout.session.completed"": {"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,408,No,const session = event.data.object as Stripe.Checkout.Session;
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,411,No,"if (session.metadata?.payment_type === ""credit_purchase"") {"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,413,No,"if (session.payment_status !== ""paid"") break;"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,414,No,const userId = session.metadata.user_id;
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,415,No,"const creditsCents = parseInt(session.metadata.credits_cents, 10);"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,434,No,"${JSON.stringify({ stripe_session_id: session.id, stripe_event_id: event.id, package_id: session.metadata?.package_id })"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,440,No,const userId = session.metadata?.userId;
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,441,No,const intentId = session.metadata?.intentId;
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,442,No,if (!userId || !session.subscription) break;
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,445,No,"const localSubId = await syncSubscription(session.subscription as string, userId, undefined, event.id);"
+src/routes,ember/devbox/src/routes/billing.ts,FLY_INFRA_APPS,Config,Env Variable (Node),653,No,"const INFRA_APPS = new Set((process.env.FLY_INFRA_APPS || """").split("","").map(s => s.trim()).filter(Boolean));"
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,674,No,// 9. Expire old terminal sessions
+src/routes,ember/devbox/src/routes/billing.ts,session,Sensitive,Auth Token,675,No,await rawSql`UPDATE terminal_sessions SET status = 'expired' WHERE status = 'active' AND expires_at < NOW()`;
+src/routes,ember/devbox/src/routes/billing.ts,Authorization,Sensitive,Auth Token,721,No,"const auth = c.req.header(""Authorization"");"
+src/routes,ember/devbox/src/routes/billing.ts,RECONCILE_SECRET,Sensitive,Env Variable (Node),722,No,const secret = process.env.RECONCILE_SECRET;
+src/routes,ember/devbox/src/routes/billing.ts,RECONCILE_INTERVAL_SECONDS,Config,Env Variable (Node),735,No,const rawInterval = process.env.RECONCILE_INTERVAL_SECONDS
+src/routes,ember/devbox/src/routes/billing.ts,NODE_ENV,Config,Env Variable (Node),736,No,"|| (process.env.NODE_ENV === ""production"" ? ""60"" : ""0"");"
+src/routes,ember/devbox/src/routes/credits.ts,STRIPE_SECRET_KEY,Sensitive,Env Variable (Node),11,No,"const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: ""2024-04-10"" as any });"
+src/routes,ember/devbox/src/routes/credits.ts,APP_URL,Config,Env Variable (Node),45,No,"const appUrl = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/credits.ts,session,Sensitive,Auth Token,47,No,const session = await stripe.checkout.sessions.create({
+src/routes,ember/devbox/src/routes/credits.ts,session,Sensitive,Auth Token,64,No,"success_url: `${appUrl}/credits?purchase=success&session_id={CHECKOUT_SESSION_ID}`,"
+src/routes,ember/devbox/src/routes/credits.ts,session,Sensitive,Auth Token,68,No,return c.json({ checkoutUrl: session.url });
+src/routes,ember/devbox/src/routes/github.ts,session,Sensitive,Auth Token,16,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/github.ts,NODE_ENV,Config,Env Variable (Node),17,No,"const isProd = process.env.NODE_ENV === ""production"";"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,31,No,"console.error(`[github] failed to decrypt token for user ${userId}:`, e.message);"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,39,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,40,No,"if (!token) return c.json({ connected: false, hasRepoAccess: false });"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,42,No,// Check if the token has repo scope by trying to list repos
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,44,No,"headers: { Authorization: `Bearer ${token}` },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,44,No,"headers: { Authorization: `Bearer ${token}` },"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,58,No,"const url = githubConnect.createAuthorizationURL(state, [""user:email"", ""read:org"", ""repo""]);"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,71,No,const tokens = await githubConnect.validateAuthorizationCode(code);
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,71,No,const tokens = await githubConnect.validateAuthorizationCode(code);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,72,No,const accessToken = tokens.accessToken();
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,75,No,// Always get the GitHub identity for this token
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,77,No,"headers: { Authorization: `Bearer ${accessToken}` },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,99,No,// Update both providerId (in case they switched GitHub accounts) and token
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,122,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,123,No,"if (!token) return c.json({ error: ""Connect GitHub first"", needsConnect: true, repos: [] });"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,126,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,126,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,147,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,148,No,"if (!token) return c.json({ error: ""Connect GitHub first"", orgs: [] });"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,151,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,151,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,161,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,162,No,"if (!token) return c.json({ error: ""Connect GitHub first"" }, 400);"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,166,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,166,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,GITHUB_APP_SLUG,Config,Env Variable (Node),182,No,const appSlug = process.env.GITHUB_APP_SLUG;
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,197,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,198,No,"if (!token) return c.json({ repos: [], method: ""no_github_account"" });"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,203,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,203,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,GITHUB_APP_SLUG,Config,Env Variable (Node),215,No,"return c.json({ repos: [], method: ""no_installation"", installUrl: process.env.GITHUB_APP_SLUG"
+src/routes,ember/devbox/src/routes/github.ts,GITHUB_APP_SLUG,Config,Env Variable (Node),216,No,? `https://github.com/apps/${process.env.GITHUB_APP_SLUG}/installations/new`
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,237,No,const token = await getGithubToken(user.id);
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,238,No,"if (!token) return c.json({ configured: true, installed: false, needsOAuth: true });"
+src/routes,ember/devbox/src/routes/github.ts,Authorization,Sensitive,Auth Token,243,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,token,Sensitive,Auth Token,243,No,"headers: { Authorization: `Bearer ${token}`, Accept: ""application/vnd.github+json"" },"
+src/routes,ember/devbox/src/routes/github.ts,GITHUB_APP_SLUG,Config,Env Variable (Node),257,No,installUrl: !installationId && process.env.GITHUB_APP_SLUG
+src/routes,ember/devbox/src/routes/github.ts,GITHUB_APP_SLUG,Config,Env Variable (Node),258,No,? `https://github.com/apps/${process.env.GITHUB_APP_SLUG}/installations/new`
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,15,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/machines.ts,API_URL,Config,Env Variable (Node),16,No,"const API_URL = process.env.API_URL || process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/machines.ts,APP_URL,Config,Env Variable (Node),16,No,"const API_URL = process.env.API_URL || process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/machines.ts,INTERNAL_API_URL,Config,Env Variable (Node),18,No,const INTERNAL_API_URL = process.env.INTERNAL_API_URL || API_URL;
+src/routes,ember/devbox/src/routes/machines.ts,CANONICAL_IMAGE_DIGEST,Config,Env Variable (Node),65,No,const imageDigest = process.env.CANONICAL_IMAGE_DIGEST!;
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,67,No,"// GitHub clone token: prefer GitHub App (short-lived, repo-scoped), fall back to OAuth"
+src/routes,ember/devbox/src/routes/machines.ts,Authorization,Sensitive,Auth Token,83,No,"headers: { Authorization: `Bearer ${decrypted}` },"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,100,No,gitToken = cloneResult.token;
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,104,No,"} catch (e) { console.error(""[create] git token resolution failed:"", e); }"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,125,No,"fly_region, size, state, git_repo, machine_token, hostname_status, created_at, updated_at)"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,258,No,// Revoke terminal sessions on stop
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,270,No,// Revoke sessions first
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,272,No,"await fly.revokeTerminalSessions(machine.flyAppName, machine.machineToken).catch((e) => console.error(""[delete] revoke t"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,293,No,"// TERMINAL AUTH: POST-based exchange, session tracking"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,296,No,// Dashboard requests a terminal session (returns exchange code)
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,325,No,// Create terminal session record
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,326,No,const sessionId = nanoid();
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,327,No,const sessionExpiresAt = new Date(Date.now() + 86400_000); // 24h
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,329,No,"id: sessionId, machineId: machine.id, userId: user.id,"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,330,No,"status: ""active"", expiresAt: sessionExpiresAt,"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,333,No,// Store sessionId alongside code so verify-code can return it
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,335,No,"await rawSql`INSERT INTO exchange_codes (code, machine_id, user_id, fly_app_name, session_id, expires_at)"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,336,No,"VALUES (${code}, ${machine.id}, ${user.id}, ${machine.flyAppName}, ${sessionId}, ${expiresAt.toISOString()})`;"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,339,No,"// the code via same-origin POST, sets the session cookie, then redirects to /"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,345,No,"sessionId,"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,408,No,"if (!machine.machineToken) return c.json({ error: ""Machine has no auth token"" }, 500);"
+src/routes,ember/devbox/src/routes/machines.ts,file,Volatile,FormData,411,No,"const file = formData.get(""file"");"
+src/routes,ember/devbox/src/routes/machines.ts,Authorization,Sensitive,Auth Token,429,No,"const auth = c.req.header(""Authorization"");"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,430,No,"const token = auth?.replace(""Bearer "", """");"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,431,No,"if (!token) return c.json({ ok: false }, 401);"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,434,No,".from(machines).where(eq(machines.machineToken, token)).limit(1);"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,440,No,"// Atomically consume the code, but also validate the associated session"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,447,No,"RETURNING code, user_id, machine_id, session_id`;"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,451,No,"const { user_id, machine_id, session_id } = result[0];"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,453,No,// Validate terminal session is still active and not expired
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,454,No,if (session_id) {
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,455,No,const [session] = await rawSql`
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,456,No,"SELECT status, expires_at FROM terminal_sessions"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,457,No,WHERE id = ${session_id}`;
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,458,No,"if (!session || session.status !== ""active"" || new Date(session.expires_at) < new Date()) {"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,473,No,"sessionId: session_id,"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,479,No,// Revoke all terminal sessions for a machine
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,481,No,"await rawSql`UPDATE terminal_sessions SET status = 'revoked', revoked_at = NOW(), revoke_reason = ${reason}"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,485,No,"// Revoke all terminal sessions for a user (logout, ban, password reset)"
+src/routes,ember/devbox/src/routes/machines.ts,session,Sensitive,Auth Token,487,No,"await rawSql`UPDATE terminal_sessions SET status = 'revoked', revoked_at = NOW(), revoke_reason = ${reason}"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,509,No,// Auth is via Bearer machine token. We validate the :id matches the authenticated machine.
+src/routes,ember/devbox/src/routes/machines.ts,Authorization,Sensitive,Auth Token,511,No,"const auth = c.req.header(""Authorization"");"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,512,No,"const token = auth?.replace(""Bearer "", """");"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,513,No,"if (!token) return c.text("""", 401);"
+src/routes,ember/devbox/src/routes/machines.ts,token,Sensitive,Auth Token,516,No,".from(machines).where(eq(machines.machineToken, token)).limit(1);"
+src/routes,ember/devbox/src/routes/machines.ts,Authorization,Sensitive,Auth Token,551,No,"headers: { Authorization: `Bearer ${machine.machineToken}` },"
+src/routes,ember/devbox/src/routes/sessions.ts,APP_URL,Config,Env Variable (Node),10,No,"const APP_URL = process.env.APP_URL || ""http://localhost:3000"";"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,18,No,// POST /v1/sessions - register a new Stoke session
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,23,No,const sessionId = nanoid(12);
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,25,No,"await rawSql`INSERT INTO stoke_sessions (id, user_id, plan_id, status, tasks, total_cost_usd, burst_workers, created_at,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,26,No,"VALUES (${sessionId}, ${userId}, ${parsed.data.plan_id || ''}, 'active', '[]'::jsonb, 0, 0, NOW(), NOW())`;"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,29,No,"session_id: sessionId,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,30,No,"url: `${APP_URL}/s/${sessionId}`,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,34,No,// PUT /v1/sessions/:id - update progress
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,36,No,"const sessionId = c.req.param(""id"")!;"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,40,No,const [existing] = await rawSql`SELECT user_id FROM stoke_sessions WHERE id = ${sessionId}`;
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,58,No,await rawSql`UPDATE stoke_sessions SET
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,64,No,WHERE id = ${sessionId}`;
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,69,No,// GET /v1/sessions/:id - read progress (public for shareable links)
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,71,No,"const sessionId = c.req.param(""id"")!;"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,72,No,"const [session] = await rawSql`SELECT id, plan_id, status, tasks, total_cost_usd, burst_workers, created_at, updated_at"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,73,No,FROM stoke_sessions WHERE id = ${sessionId}`;
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,74,No,"if (!session) return c.json({ error: ""Session not found"" }, 404);"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,77,No,"session_id: session.id,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,78,No,"plan_id: session.plan_id,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,79,No,"status: session.status,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,80,No,"tasks: session.tasks,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,81,No,"total_cost_usd: parseFloat(session.total_cost_usd || ""0""),"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,82,No,"burst_workers: session.burst_workers || 0,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,83,No,"created_at: session.created_at,"
+src/routes,ember/devbox/src/routes/sessions.ts,session,Sensitive,Auth Token,84,No,"updated_at: session.updated_at,"
+src/routes,ember/devbox/src/routes/settings.ts,session,Sensitive,Auth Token,16,No,const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+src/routes,ember/devbox/src/routes/workers.ts,CANONICAL_IMAGE_DIGEST,Config,Env Variable (Node),105,No,"imageDigest: process.env.CANONICAL_IMAGE_DIGEST!,"
+src/routes,ember/devbox/src/routes/workers.ts,INTERNAL_API_URL,Config,Env Variable (Node),106,No,"apiUrl: process.env.INTERNAL_API_URL!,"
+src/routes,ember/devbox/src/routes/workers.ts,MACHINE_HOST_SUFFIX,Config,Env Variable (Node),118,No,"hostname: `${flyAppName}${process.env.MACHINE_HOST_SUFFIX || '.fly.dev'}`,"
+src/secrets.ts,ember/devbox/src/secrets.ts,APP_ENCRYPTION_KEY,Sensitive,Env Variable (Node),6,No,"const raw = process.env.APP_ENCRYPTION_KEY || """";"
+src/v1-auth.ts,ember/devbox/src/v1-auth.ts,Authorization,Sensitive,Auth Token,10,No,"const auth = c.req.header(""Authorization"");"
+src/v1-auth.ts,ember/devbox/src/v1-auth.ts,token,Sensitive,Auth Token,11,No,"const token = auth?.replace(""Bearer "", """");"
+src/v1-auth.ts,ember/devbox/src/v1-auth.ts,token,Sensitive,Auth Token,12,No,"if (!token) return c.json({ error: ""Missing API key"" }, 401);"
+src/v1-auth.ts,ember/devbox/src/v1-auth.ts,token,Sensitive,Auth Token,19,No,"WHERE k.key_hash = encode(sha256(${token}::bytea), 'hex')"
+src/components,ember/devbox/web/src/components/NewMachineModal.tsx,token,Sensitive,Auth Token,25,No,"// Try GitHub App first (preferred: finer-grained, short-lived tokens)"
+src/pages,ember/devbox/web/src/pages/Credits.tsx,purchase,Volatile,URL Parameter,20,No,"const purchaseStatus = searchParams.get(""purchase"");"
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,code,Volatile,URL Parameter,56,No,"const code = d.code || url.searchParams.get(""code"") || """";"
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,75,No,// NOT eagerly for all machines. This avoids creating unused sessions.
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,246,No,// the auth proxy sets a session cookie for subsequent loads.
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,359,No,// then sends the exchange code back. The auth proxy sets a session cookie so
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,394,No,"No active Stoke session. Run <code style={{ color: ""var(--accent)"", margin: ""0 4px"" }}>stoke build</code> in the termina"
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,398,No,const session = data.session;
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,399,No,const tasks = session?.tasks || [];
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,423,No,{session?.total_cost_usd != null && <span>${session.total_cost_usd.toFixed(2)} AI</span>}
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,424,No,{session?.burst_workers > 0 && <span>{session.burst_workers} burst</span>}
+src/pages,ember/devbox/web/src/pages/Dashboard.tsx,session,Sensitive,Auth Token,434,No,"{session?.plan_id && <div style={{ fontSize: 7, color: ""var(--dim)"", marginTop: 8 }}>Plan: {session.plan_id}</div>}"
+src/pages,ember/devbox/web/src/pages/ResetPassword.tsx,token,Sensitive,URL Parameter,8,No,"const token = params.get(""token"") || """";"
+src/pages,ember/devbox/web/src/pages/ResetPassword.tsx,get,Volatile,Route Parameter,8,No,"const token = params.get(""token"") || """";"
+src/pages,ember/devbox/web/src/pages/ResetPassword.tsx,token,Sensitive,Auth Token,15,No,if (!token) return (
+src/pages,ember/devbox/web/src/pages/ResetPassword.tsx,token,Sensitive,Auth Token,30,No,"const d = await post(""/api/account/reset-password"", { token, password });"
+src/pages,ember/devbox/web/src/pages/ResetPassword.tsx,session,Sensitive,Auth Token,41,No,"<p style={{ fontFamily: ""var(--mono)"", fontSize: 11, color: ""var(--muted)"", marginBottom: 16 }}>All sessions have been l"
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,6,No,"const [session, setSession] = useState<any>(null);"
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,13,No,const res = await fetch(`/v1/sessions/${id}`);
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,16,No,"} catch { setError(""Failed to load session""); }"
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,24,No,if (!session) return <Page><Msg>Loading...</Msg></Page>;
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,26,No,const tasks = session.tasks || [];
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,37,No,"{session.status === ""completed"" ? ""completed"" : `${done}/${tasks.length} tasks`}"
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,41,No,{session.plan_id && (
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,43,No,Plan: {session.plan_id}
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,48,No,"{session.total_cost_usd > 0 && <span style={{ color: ""var(--muted)"" }}>${session.total_cost_usd.toFixed(2)} AI cost</spa"
+src/pages,ember/devbox/web/src/pages/SessionView.tsx,session,Sensitive,Auth Token,49,No,"{session.burst_workers > 0 && <span style={{ color: ""var(--accent)"" }}>{session.burst_workers} burst workers</span>}"
+src/pages,ember/devbox/web/src/pages/VerifyEmail.tsx,token,Sensitive,URL Parameter,7,No,"const token = params.get(""token"") || """";"
+src/pages,ember/devbox/web/src/pages/VerifyEmail.tsx,get,Volatile,Route Parameter,7,No,"const token = params.get(""token"") || """";"
+src/pages,ember/devbox/web/src/pages/VerifyEmail.tsx,token,Sensitive,Auth Token,12,No,"if (!token) { setStatus(""error""); setError(""Invalid verification link""); return; }"
+src/pages,ember/devbox/web/src/pages/VerifyEmail.tsx,token,Sensitive,Auth Token,13,No,"post(""/api/account/verify-email"", { token })"
+src/pages,ember/devbox/web/src/pages/VerifyEmail.tsx,token,Sensitive,Auth Token,16,No,"}, [token]);"
+cmd/control-plane,flare/cmd/control-plane/integration_test.go,DATABASE_URL,Config,Env Variable (Go),46,No,"dsn := os.Getenv(""DATABASE_URL"")"
+cmd/control-plane,flare/cmd/control-plane/integration_test.go,FLARE_API_KEY,Sensitive,Env Variable (Go),50,No,"apiKey := os.Getenv(""FLARE_API_KEY"")"
+cmd/control-plane,flare/cmd/control-plane/main.go,FLARE_API_KEY,Sensitive,Env Variable (Go),45,No,"apiKey := os.Getenv(""FLARE_API_KEY"")"
+cmd/control-plane,flare/cmd/control-plane/main.go,DATABASE_URL,Config,Env Variable (Go),51,No,"dsn := os.Getenv(""DATABASE_URL"")"
+cmd/control-plane,flare/cmd/control-plane/main.go,FLARE_INTERNAL_KEY,Sensitive,Env Variable (Go),70,No,"internalKey: os.Getenv(""FLARE_INTERNAL_KEY""),"
+cmd/control-plane,flare/cmd/control-plane/main.go,Authorization,Sensitive,Go HTTP Input,78,No,"token := strings.TrimPrefix(r.Header.Get(""Authorization""), ""Bearer "")"
+cmd/control-plane,flare/cmd/control-plane/main.go,X-Internal-Key,Sensitive,Go HTTP Input,89,No,"if cp.internalKey != """" && r.Header.Get(""X-Internal-Key"") != cp.internalKey {"
+cmd/placement,flare/cmd/placement/main.go,X-Internal-Key,Sensitive,Go HTTP Input,79,No,"if d.internalKey != """" && r.Header.Get(""X-Internal-Key"") != d.internalKey {"
+src/index.ts,flare/sdk/typescript/src/index.ts,Authorization,Sensitive,Auth Token,78,No,"Authorization: `Bearer ${this.apiKey}`,"
+cmd/stoke,stoke/cmd/stoke/main.go,CLAUDE_CONFIG_DIR,Config,Env Variable (Go),1177,No,"} else if env := os.Getenv(""CLAUDE_CONFIG_DIR""); env != """" {"
+cmd/stoke,stoke/cmd/stoke/main.go,CLAUDE_CONFIG_DIR,Config,Env Variable (Go),1295,No,"configDir = os.Getenv(""CLAUDE_CONFIG_DIR"")"
+cmd/stoke,stoke/cmd/stoke/main.go,CLAUDE_CONFIG_DIR,Config,Env Variable (Go),1393,No,"scopeConfigDir = os.Getenv(""CLAUDE_CONFIG_DIR"")"
+internal/managed,stoke/internal/managed/proxy.go,EMBER_API_KEY,Sensitive,Env Variable (Go),25,No,"key := os.Getenv(""EMBER_API_KEY"")"
+internal/managed,stoke/internal/managed/proxy.go,EMBER_API_URL,Config,Env Variable (Go),29,No,"endpoint := os.Getenv(""EMBER_API_URL"")"
+internal/remote,stoke/internal/remote/session.go,EMBER_API_KEY,Sensitive,Env Variable (Go),40,No,"key := os.Getenv(""EMBER_API_KEY"")"
+internal/remote,stoke/internal/remote/session.go,EMBER_API_URL,Config,Env Variable (Go),44,No,"endpoint := os.Getenv(""EMBER_API_URL"")"

@@ -118,13 +118,14 @@ Generated: 2026-04-06
 
 ## Summary
 
-- **Total packages**: 108 (94 v1 + 14 v2 governance)
+- **Total internal packages**: 132 (includes sub-packages under concern/, env/, harness/, hub/, ledger/, supervisor/)
+- **Additional packages**: 1 cmd + 9 bench = 142 total
 - **CORE**: 47 packages (32 v1 + 15 v2)
 - **HELPFUL**: 47 packages
 - **DEPRECATED**: 0 packages (13 removed in v2 cleanup)
 - **Highest-traffic** (by caller count): `stream` (11), `config` (8), `stokerr` (8), `hub` (7), `contentid` (6), `convergence` (6), `costtrack` (6), `engine` (6), `ledger` (6), `skill` (6)
+- **Note**: Table above lists top-level internal packages. Sub-packages (e.g., `concern/sections`, `supervisor/rules/*`, `env/*`) are grouped under their parent. Run `make check-pkg-count` to verify the count hasn't drifted.
 
 ## Recommendations
 
 1. **Watch list**: 47 HELPFUL packages with only 1 caller each — candidates for inlining if the caller package is small enough
-2. **Add missing packages to CLAUDE.md**: agentloop, mission, skillselect, tools, hub/builtin

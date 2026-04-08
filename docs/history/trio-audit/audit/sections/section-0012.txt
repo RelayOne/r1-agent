@@ -1,0 +1,4 @@
+./ember/devbox/src/routes/account.ts
+./ember/devbox/src/routes/admin.ts
+./ember/devbox/src/routes/ai.ts
+./ember/devbox/src/routes/api-keys.ts

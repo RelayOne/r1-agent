@@ -1,0 +1,6 @@
+./stoke/internal/config/detect.go
+./stoke/internal/config/detect_test.go
+./stoke/internal/config/policy.go
+./stoke/internal/config/policy_test.go
+./stoke/internal/config/validate.go
+./stoke/internal/config/validate_test.go

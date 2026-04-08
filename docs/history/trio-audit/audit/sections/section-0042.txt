@@ -1,0 +1,2 @@
+./stoke/internal/taskstate/taskstate_test.go
+./stoke/internal/tui/interactive.go

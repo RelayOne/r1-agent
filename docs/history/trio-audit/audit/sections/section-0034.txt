@@ -1,0 +1,3 @@
+./stoke/internal/hooks/hooks.go
+./stoke/internal/hooks/hooks_test.go
+./stoke/internal/managed/proxy.go

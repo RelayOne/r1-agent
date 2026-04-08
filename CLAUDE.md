@@ -10,7 +10,7 @@ go vet ./...
 
 These three commands are the CI gate.
 
-## Package map (126 internal + 1 cmd)
+## Package map (132 internal + 1 cmd + 9 bench)
 
 ```
 cmd/stoke/main.go                 20 commands. --roi, --sqlite, --interactive, --specexec flags.

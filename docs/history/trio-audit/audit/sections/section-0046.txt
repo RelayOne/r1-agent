@@ -1,0 +1,2 @@
+./stoke/internal/worktree/manager.go
+./stoke/internal/worktree/manager_test.go

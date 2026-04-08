@@ -176,7 +176,7 @@ internal/
   + 77 additional packages    (convergence, repomap, symindex, goast, plugins, remote, etc.)
 ```
 
-104 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
+132 internal packages + 1 cmd + 9 bench = 142 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
 
 ## Docs
 

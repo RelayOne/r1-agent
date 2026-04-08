@@ -1,0 +1,3 @@
+./stoke/internal/workflow/workflow_test.go
+./stoke/internal/worktree/helpers.go
+./stoke/internal/worktree/helpers_test.go

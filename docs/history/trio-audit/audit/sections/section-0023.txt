@@ -1,0 +1,2 @@
+./flare/cmd/placement/main.go
+./flare/internal/api/types.go

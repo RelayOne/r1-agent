@@ -1,0 +1,33 @@
+# Deterministic Scan
+## Findings (critical:0 high:4 medium:26)
+- [high] ./ember/devbox/src/routes/billing.ts:148 — Hardcoded localhost:     const APP_URL = process.env.APP_URL || "http://localhost:3000";
+- [high] ./ember/devbox/src/routes/billing.ts:157 — Hardcoded localhost:     const APP_URL = process.env.APP_URL || "http://localhost:3000";
+- [high] ./ember/devbox/src/routes/billing.ts:212 — Hardcoded localhost:   const APP_URL = process.env.APP_URL || "http://localhost:3000";
+- [high] ./ember/devbox/src/routes/billing.ts:234 — Hardcoded localhost:   const APP_URL = process.env.APP_URL || "http://localhost:3000";
+- [medium] ./ember/devbox/src/routes/billing.ts:36 — TypeScript any: const app = new Hono<{ Variables: { user: any; session: any; requestId: string } }>();
+- [medium] ./ember/devbox/src/routes/billing.ts:43 — TypeScript any:   const user = c.get("user") as any;
+- [medium] ./ember/devbox/src/routes/billing.ts:90 — TypeScript any:   const user = c.get("user") as any;
+- [medium] ./ember/devbox/src/routes/billing.ts:99 — TypeScript any:   let intent: any;
+- [medium] ./ember/devbox/src/routes/billing.ts:178 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:187 — TypeScript any:       await rawSql.begin(async (tx: any) => {
+- [medium] ./ember/devbox/src/routes/billing.ts:201 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:204 — TypeScript any:       catch (ce: any) { console.error(`[billing] COMPENSATION FAILED: item ${item.id}: ${ce.message}`); }
+- [medium] ./ember/devbox/src/routes/billing.ts:231 — TypeScript any:   const user = c.get("user") as any;
+- [medium] ./ember/devbox/src/routes/billing.ts:242 — TypeScript any:   const user = c.get("user") as any;
+- [medium] ./ember/devbox/src/routes/billing.ts:250 — TypeScript any:   const user = c.get("user") as any;
+- [medium] ./ember/devbox/src/routes/billing.ts:269 — TypeScript any:   const periodStart = new Date((stripeSub as any).current_period_start * 1000).toISOString();
+- [medium] ./ember/devbox/src/routes/billing.ts:270 — TypeScript any:   const periodEnd = new Date((stripeSub as any).current_period_end * 1000).toISOString();
+- [medium] ./ember/devbox/src/routes/billing.ts:361 — TypeScript any:   ).map((r: any) => r.id);
+- [medium] ./ember/devbox/src/routes/billing.ts:420 — TypeScript any:           await rawSql.begin(async (tx: any) => {
+- [medium] ./ember/devbox/src/routes/billing.ts:582 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:601 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:611 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:647 — TypeScript any:     workerFlyApps = new Set(activeWorkers.map((w: any) => w.fly_app).filter(Boolean));
+- [medium] ./ember/devbox/src/routes/billing.ts:648 — TypeScript any:   } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:656 — TypeScript any:     const dbAppNames = new Set(dbMachines.map((m: any) => m.fly_app_name));
+- [medium] ./ember/devbox/src/routes/billing.ts:667 — TypeScript any:   } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:681 — TypeScript any:     } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:713 — TypeScript any:   } catch (e: any) {
+- [medium] ./ember/devbox/src/routes/billing.ts:745 — TypeScript any:       await rawSql.begin(async (tx: any) => {
+- [medium] ./ember/devbox/src/routes/billing.ts:753 — TypeScript any:     } catch (e: any) {
+

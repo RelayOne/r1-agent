@@ -1,0 +1,4 @@
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/hooks/userpromptsubmit.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/matchers/__init__.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/hookify/utils/__init__.py
+./.claude-config/plugins/marketplaces/claude-plugins-official/plugins/security-guidance/hooks/security_reminder_hook.py
