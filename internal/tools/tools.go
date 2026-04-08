@@ -59,16 +59,26 @@ func NewRegistry(workDir string) *Registry {
 	return &Registry{workDir: workDir}
 }
 
+// WorkDir returns the resolved absolute path the registry is rooted at.
+// Tools interpret all relative paths as being relative to this directory.
+func (r *Registry) WorkDir() string { return r.workDir }
+
 // Definitions returns the tool definitions for the Anthropic API.
+//
+// All path parameters interpret relative paths as being relative to the
+// registry's working directory (see WorkDir()). The bash tool also runs
+// its commands with that directory as cwd. Tools that modify files echo
+// back the resolved absolute path in their response so the model can
+// verify writes without guessing where they landed.
 func (r *Registry) Definitions() []provider.ToolDef {
 	return []provider.ToolDef{
 		{
 			Name:        "read_file",
-			Description: "Read contents of a file. Returns content in cat -n format with line numbers.",
+			Description: "Read contents of a file. Path may be relative to the project working directory (preferred) or absolute (must still be under the working directory). Returns content prefixed with the resolved absolute path plus cat -n formatted lines with 1-indexed line numbers. Call this before edit_file.",
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":   map[string]string{"type": "string", "description": "File path (relative to working directory)"},
+					"path":   map[string]string{"type": "string", "description": "File path, relative to the working directory OR absolute (must resolve under the working directory)"},
 					"offset": map[string]interface{}{"type": "integer", "description": "Starting line number (1-indexed, default 1)"},
 					"limit":  map[string]interface{}{"type": "integer", "description": "Max lines to read (default 2000)"},
 				},
@@ -77,11 +87,11 @@ func (r *Registry) Definitions() []provider.ToolDef {
 		},
 		{
 			Name:        "edit_file",
-			Description: "Replace an exact string match in a file. File must have been read first. old_string must be unique in the file.",
+			Description: "Replace an exact string match in a file. You MUST read_file first on this path — the edit will reject any path that hasn't been read. old_string must be unique in the file unless replace_all is true. Response includes the resolved absolute path on success.",
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"path":        map[string]string{"type": "string", "description": "File path"},
+					"path":        map[string]string{"type": "string", "description": "File path, relative to the working directory OR absolute"},
 					"old_string":  map[string]string{"type": "string", "description": "Exact text to find and replace"},
 					"new_string":  map[string]string{"type": "string", "description": "Replacement text"},
 					"replace_all": map[string]interface{}{"type": "boolean", "description": "Replace all occurrences (default false)"},
@@ -91,7 +101,7 @@ func (r *Registry) Definitions() []provider.ToolDef {
 		},
 		{
 			Name:        "write_file",
-			Description: "Create or overwrite a file with the given content.",
+			Description: "Create or overwrite a file with the given content. Parent directories are created automatically. Response includes the resolved absolute path AND working_dir so you can verify where the file landed — if you then run `pwd && ls -la` via bash, the cwd will match working_dir and you'll see the file.",
 			InputSchema: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -249,8 +259,10 @@ func (r *Registry) handleRead(input json.RawMessage) (string, error) {
 		end = len(lines)
 	}
 
-	// Format as cat -n
+	// Format as cat -n, prefixed with the resolved absolute path so
+	// the model has an unambiguous anchor to reason about.
 	var sb strings.Builder
+	fmt.Fprintf(&sb, "# %s (read %d of %d lines)\n", path, end-start, len(lines))
 	for i := start; i < end; i++ {
 		line := lines[i]
 		if len(line) > MaxLineLength {
@@ -299,13 +311,18 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 		return "", err
 	}
 
-	if args.ReplaceAll {
-		return fmt.Sprintf("Replaced %d occurrences in %s (method: %s)", result.Replacements, args.Path, result.Method), nil
+	rel, _ := filepath.Rel(r.workDir, path)
+	if rel == "" {
+		rel = args.Path
 	}
-	msg := fmt.Sprintf("Edited %s successfully", args.Path)
+	if args.ReplaceAll {
+		return fmt.Sprintf("Replaced %d occurrences in %s (method: %s)\n  absolute: %s", result.Replacements, rel, result.Method, path), nil
+	}
+	msg := fmt.Sprintf("Edited %s successfully", rel)
 	if result.Method != "exact" {
 		msg += fmt.Sprintf(" (matched via %s, confidence: %.0f%%)", result.Method, result.Confidence*100)
 	}
+	msg += fmt.Sprintf("\n  absolute: %s", path)
 	return msg, nil
 }
 
@@ -335,7 +352,19 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 
 	// Track as read since we know the content
 	r.readFiles.Store(path, true)
-	return fmt.Sprintf("Wrote %s (%d bytes)", args.Path, len(args.Content)), nil
+
+	// Report the resolved absolute path AND the working directory so
+	// the model has an unambiguous anchor. Without this, a relative
+	// write like "Cargo.toml" echoes back as "Wrote Cargo.toml" — no
+	// confirmation of WHERE the file actually went — and the next
+	// `pwd && ls -la` can look like a failure to the model even though
+	// the write succeeded. (This was the "3 consecutive tool errors"
+	// root cause.)
+	rel, _ := filepath.Rel(r.workDir, path)
+	if rel == "" {
+		rel = args.Path
+	}
+	return fmt.Sprintf("Wrote %s (%d bytes)\n  absolute: %s\n  working_dir: %s", rel, len(args.Content), path, r.workDir), nil
 }
 
 func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (string, error) {

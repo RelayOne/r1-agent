@@ -47,7 +47,27 @@ type Config struct {
 	//   - Summarize or drop old tool_result content
 	// nil = no compaction.
 	CompactFn CompactFunc
+	// MidturnCheckFn is an optional supervisor hook called between
+	// turns (AFTER tool results are appended, BEFORE the next API
+	// call). If it returns a non-empty string, that text is appended
+	// to the next user message as a "SUPERVISOR NOTE" so the model
+	// sees an out-of-band directive on its next turn.
+	//
+	// Typical use: "every few writes, scan the declared files for
+	// spec violations and push a correction if identifiers drifted".
+	// The hook must NOT mutate messages directly — it should only
+	// return the text to inject.
+	//
+	// nil = no midturn checks (default).
+	MidturnCheckFn MidturnCheckFunc
 }
+
+// MidturnCheckFunc is the signature for the between-turn supervisor
+// hook. It receives the current message history and the turn number
+// (0-indexed, counting only turns that produced tool calls) and
+// returns a supervisor message to append, or "" if no intervention is
+// needed.
+type MidturnCheckFunc func(messages []Message, turn int) string
 
 // CompactFunc is the signature for the per-turn compaction hook. It
 // receives the current message list and the estimated token count; it
@@ -305,6 +325,26 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			Role:    "user",
 			Content: toolResults,
 		})
+
+		// Midturn supervisor check. Runs AFTER tool results are in
+		// but BEFORE the next API call, so any note gets attached to
+		// the existing user message (which already holds the tool
+		// results). The supervisor typically uses this to run a
+		// spec-faithfulness scan every N writes and push a
+		// correction when code diverges from canonical identifiers.
+		if l.config.MidturnCheckFn != nil {
+			if note := l.config.MidturnCheckFn(messages, turn); note != "" {
+				// Attach as an extra text block on the same user
+				// message. Anthropic content blocks can mix
+				// tool_result and text in one message — the model
+				// reads them in order.
+				lastIdx := len(messages) - 1
+				messages[lastIdx].Content = append(messages[lastIdx].Content, ContentBlock{
+					Type: "text",
+					Text: "[SUPERVISOR NOTE] " + note,
+				})
+			}
+		}
 	}
 
 	result.StopReason = "max_turns"

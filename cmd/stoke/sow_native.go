@@ -237,8 +237,10 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			Repair:        &failureBlob,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
+			WorkDir:       cfg.RepoRoot,
 		})
-		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+		sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, repairTask, 3))
+		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 		// NOTE: deliberately not appended to results. The acceptance
 		// loop below verifies the final state.
 	}
@@ -290,8 +292,10 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				Repair:        &failureBlob,
 				Wisdom:        cfg.Wisdom,
 				RawSOW:        cfg.RawSOWText,
+				WorkDir:       cfg.RepoRoot,
 			})
-			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+			sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, repairTask, 3))
+			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 			// NOTE: deliberately not appended to results.
 		}
 	}
@@ -719,8 +723,10 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			RepoMapBudget: cfg.RepoMapBudget,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
+			WorkDir:       cfg.RepoRoot,
 		})
-		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+		sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, task, 3))
+		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 		results = append(results, tr)
 	}
 	return results
@@ -793,8 +799,10 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					RepoMapBudget: cfg.RepoMapBudget,
 					Wisdom:        cfg.Wisdom,
 					RawSOW:        cfg.RawSOWText,
+					WorkDir:       cfg.RepoRoot,
 				})
-				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
+				sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, task, 3))
+				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 				resCh <- indexed{idx: ti, res: tr}
 			}()
 		}
@@ -998,7 +1006,7 @@ func buildParallelWaves(tasks []plan.Task) [][]int {
 // a TaskExecResult. Factored out so the first-pass loop and repair loop
 // share exactly the same execution semantics. systemPrompt is the static
 // cached block; userPrompt is the per-task dynamic message.
-func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runtimeDir string, cfg sowNativeConfig, maxTurns int) plan.TaskExecResult {
+func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runtimeDir string, cfg sowNativeConfig, maxTurns int, supervisor *engine.SupervisorConfig) plan.TaskExecResult {
 	taskRuntime := filepath.Join(runtimeDir, taskID)
 	if err := os.MkdirAll(taskRuntime, 0o755); err != nil {
 		return plan.TaskExecResult{TaskID: taskID, Success: false, Error: err}
@@ -1016,6 +1024,7 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 			MaxTurns: maxTurns,
 			ReadOnly: false,
 		},
+		Supervisor: supervisor,
 	}
 
 	start := time.Now()
@@ -1059,6 +1068,12 @@ type promptOpts struct {
 	// non-empty, it's injected verbatim into the cached system block
 	// under a "SPEC (verbatim)" header.
 	RawSOW string
+	// WorkDir is the absolute path where the agent's file tools
+	// operate. Injected into the system prompt as an anchor so the
+	// model knows EXACTLY where `write_file "foo.toml"` will land
+	// and what `pwd && ls -la` will show. Leaving this empty drops
+	// the anchor line but doesn't break anything.
+	WorkDir string
 }
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
@@ -1100,6 +1115,18 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		sys.WriteString("Your job: implement the single task described in the user message by writing files directly to the project root. ")
 		sys.WriteString("Use the available file tools (read_file, write_file, edit_file, bash) to create or modify files as needed. ")
 		sys.WriteString("Do NOT create worktrees or branches — write directly to the repo. When you believe the task is complete, verify by running the relevant acceptance criteria commands with bash before ending.\n\n")
+	}
+
+	// Working-directory anchor. Without this, a model that writes
+	// "Cargo.toml" (relative) has no way to verify WHERE that file
+	// landed, and running `pwd && ls -la` looks like a failure when
+	// the model expected a different cwd. Upstream hit "3 consecutive
+	// tool errors" because of exactly this. Making the anchor
+	// explicit in the system prompt resolves the ambiguity at the
+	// source.
+	if opts.WorkDir != "" {
+		fmt.Fprintf(&sys, "WORKING DIRECTORY (absolute): %s\n", opts.WorkDir)
+		sys.WriteString("All your file tools (read_file, write_file, edit_file) and the bash tool operate relative to this directory. When you call write_file with \"path\": \"Cargo.toml\", the file lands at WORKING_DIRECTORY/Cargo.toml. When you run `pwd` via bash, it prints WORKING_DIRECTORY. Use simple relative paths like \"Cargo.toml\" or \"crates/foo/src/lib.rs\" — do NOT try to cd somewhere else, and do NOT pass paths that escape this directory.\n\n")
 	}
 
 	if sowDoc != nil && sowDoc.Name != "" {
@@ -1229,11 +1256,30 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 	}
 
 	// --- USER (dynamic, per-task) ---
+	//
+	// Structure matters here. Task descriptions in LLM-generated SOWs
+	// are often tiny ("Create error.rs, concern.rs") — not enough for
+	// the agent to know what those files should actually contain. We
+	// compensate by putting the spec excerpt FIRST (where the model's
+	// attention actually lives) and the task description as a short
+	// pointer into the excerpt.
+	//
+	// Order: identifier checklist → task header → spec excerpt →
+	// expected files / deps → closing instruction.
 	if repair != nil {
 		usr.WriteString("FAILING ACCEPTANCE CRITERIA (fix these):\n")
 		usr.WriteString(*repair)
 		usr.WriteString("\nInvestigate the failures, make the minimum changes necessary to fix them, then re-run the failing command(s) with bash to confirm your fix before ending.\n")
 	} else {
+		// 1. Identifier checklist — forces the model to state its
+		// planned names against the spec before writing.
+		if checklist := buildTaskIdentifierChecklist(session, task); checklist != "" {
+			usr.WriteString(checklist)
+			usr.WriteString("\n")
+		}
+
+		// 2. Task header — short, because the spec excerpt below
+		// does the heavy lifting.
 		fmt.Fprintf(&usr, "TASK %s: %s\n", task.ID, task.Description)
 		if len(task.Files) > 0 {
 			fmt.Fprintf(&usr, "  expected files: %s\n", strings.Join(task.Files, ", "))
@@ -1241,7 +1287,25 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		if len(task.Dependencies) > 0 {
 			fmt.Fprintf(&usr, "  depends on: %s\n", strings.Join(task.Dependencies, ", "))
 		}
-		usr.WriteString("\nBegin implementing the task now. When you're done, your final message should briefly summarize what you changed.\n")
+		usr.WriteString("\n")
+
+		// 3. Spec excerpt — the authoritative thing the model must
+		// follow. Pulled from the raw SOW by matching file paths,
+		// crate names, and identifiers from the task. This is the
+		// fix for "tiny task description + 32k buried SOW = model
+		// invents plausible names".
+		if opts.RawSOW != "" {
+			excerpt := extractTaskSpecExcerpt(opts.RawSOW, session, task, specExcerptConfig{})
+			if excerpt != "" {
+				usr.WriteString("SPEC EXCERPT (authoritative — the task header above is just a summary):\n")
+				usr.WriteString("----- BEGIN SPEC -----\n")
+				usr.WriteString(excerpt)
+				usr.WriteString("\n----- END SPEC -----\n\n")
+				usr.WriteString("Read the SPEC EXCERPT above carefully before writing any code. If the spec defines a specific struct, function signature, or field layout, implement it EXACTLY as written — no interpretation, no generic alternatives, no \"plausible\" fill-ins. Exact identifiers from the spec must appear verbatim in your code.\n\n")
+			}
+		}
+
+		usr.WriteString("Begin implementing the task now. When you're done, your final message should briefly summarize what you changed, and you should run the acceptance command(s) yourself with bash to confirm the work is complete.\n")
 	}
 
 	return sys.String(), usr.String()

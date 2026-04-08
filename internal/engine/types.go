@@ -85,6 +85,13 @@ type RunSpec struct {
 	// native runner's built-in compactor rewrites the message list
 	// to shrink it back down. 0 = no automatic compaction.
 	CompactThreshold int
+	// Supervisor, when non-nil, enables a midturn spec-faithfulness
+	// check inside the native agent loop. Every SupervisorConfig.
+	// WritesPerCheck write_file / edit_file tool calls, the
+	// supervisor scans the declared files against canonical
+	// identifiers from the SOW and pushes a correction note into
+	// the next user message when code has drifted from the spec.
+	Supervisor *SupervisorConfig
 	WorktreeDir       string
 	RuntimeDir        string // outside worktree, for harness-owned files only
 	Mode              AuthMode
