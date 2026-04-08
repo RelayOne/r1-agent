@@ -89,8 +89,14 @@ type RunSpec struct {
 	MCPConfigPath string
 
 	// Pool API fields (for APIRunner / GeminiRunner direct API access)
-	PoolAPIKey string
+	PoolAPIKey  string
 	PoolBaseURL string
+
+	// Container runtime fields: when set, the engine wraps the CLI command
+	// in a docker run invocation against the pool's container volume.
+	ContainerImage string   // e.g., "ghcr.io/ericmacdougall/stoke-pool:latest"
+	ContainerVol   string   // Docker volume name for credentials
+	ContainerConfigDir string // Config dir path inside the container
 }
 
 // Validate checks that all required RunSpec fields are present.

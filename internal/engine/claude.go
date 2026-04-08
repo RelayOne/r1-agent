@@ -122,9 +122,15 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		return RunResult{}, err
 	}
 
-	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
-	cmd.Dir = prepared.Dir
-	cmd.Env = prepared.Env
+	var cmd *exec.Cmd
+	if spec.ContainerImage != "" && spec.ContainerVol != "" {
+		// Wrap in docker run for container pool execution
+		cmd = wrapInDocker(ctx, prepared, spec)
+	} else {
+		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+		cmd.Dir = prepared.Dir
+		cmd.Env = prepared.Env
+	}
 
 	// Process group isolation: prevents orphaned claude/node subprocesses (#33979)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

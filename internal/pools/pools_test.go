@@ -151,6 +151,74 @@ func TestManifest_NextID(t *testing.T) {
 	}
 }
 
+func TestPool_IsContainer(t *testing.T) {
+	host := Pool{ID: "claude-1", Runtime: ""}
+	if host.IsContainer() {
+		t.Error("empty runtime should not be container")
+	}
+	hostExplicit := Pool{ID: "claude-2", Runtime: RuntimeHost}
+	if hostExplicit.IsContainer() {
+		t.Error("host runtime should not be container")
+	}
+	container := Pool{ID: "claude-3", Runtime: RuntimeContainer, ContainerVol: "stoke-pool-claude-3"}
+	if !container.IsContainer() {
+		t.Error("container runtime should be container")
+	}
+}
+
+func TestManifest_ListContainerPools(t *testing.T) {
+	m := &Manifest{
+		Pools: []Pool{
+			{ID: "claude-1", Provider: "claude", Runtime: RuntimeHost},
+			{ID: "claude-2", Provider: "claude", Runtime: RuntimeContainer, ContainerVol: "vol-2"},
+			{ID: "codex-1", Provider: "codex", Runtime: ""},
+			{ID: "claude-3", Provider: "claude", Runtime: RuntimeContainer, ContainerVol: "vol-3"},
+		},
+	}
+
+	containers := m.ListContainerPools()
+	if len(containers) != 2 {
+		t.Fatalf("ListContainerPools() = %d, want 2", len(containers))
+	}
+	if containers[0].ID != "claude-2" || containers[1].ID != "claude-3" {
+		t.Errorf("unexpected container pools: %+v", containers)
+	}
+}
+
+func TestDockerExecArgs(t *testing.T) {
+	// Host pool returns nil
+	host := Pool{ID: "claude-1", Runtime: RuntimeHost}
+	if args := DockerExecArgs(host, "image:latest", "/work"); args != nil {
+		t.Errorf("host pool should return nil, got %v", args)
+	}
+
+	// Container pool returns docker run args
+	container := Pool{
+		ID:           "claude-2",
+		Runtime:      RuntimeContainer,
+		ContainerVol: "stoke-pool-claude-2",
+		ConfigDir:    "/config",
+	}
+	args := DockerExecArgs(container, "ghcr.io/ericmacdougall/stoke-pool:latest", "/workspace/task-1")
+	if len(args) == 0 {
+		t.Fatal("container pool should return docker args")
+	}
+	if args[0] != "docker" || args[1] != "run" {
+		t.Errorf("expected docker run, got %v", args[:2])
+	}
+	// Check volume mount is present
+	found := false
+	for i, a := range args {
+		if a == "-v" && i+1 < len(args) && args[i+1] == "stoke-pool-claude-2:/config" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("volume mount not found in args: %v", args)
+	}
+}
+
 func TestRemovePool(t *testing.T) {
 	home := withTestHome(t)
 

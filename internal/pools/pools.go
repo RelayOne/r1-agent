@@ -24,15 +24,28 @@ func ManifestPath() string {
 	return filepath.Join(StorePath(), "manifest.json")
 }
 
+// Runtime specifies where the pool's CLI runs.
+const (
+	RuntimeHost      = "host"      // CLI runs directly on the host
+	RuntimeContainer = "container" // CLI runs inside a Docker container
+)
+
 // Pool is one registered subscription pool.
 type Pool struct {
-	ID        string    `json:"id"`
-	Label     string    `json:"label"`       // user-friendly name
-	ConfigDir string    `json:"config_dir"`  // path to credential dir
-	Provider  string    `json:"provider"`    // "claude" or "codex"
-	AccountID string    `json:"account_id"`  // dedup key (from credentials)
-	AddedAt   time.Time `json:"added_at"`
-	LastUsed  time.Time `json:"last_used,omitempty"`
+	ID            string    `json:"id"`
+	Label         string    `json:"label"`            // user-friendly name
+	ConfigDir     string    `json:"config_dir"`       // path to credential dir (host-side)
+	Provider      string    `json:"provider"`         // "claude" or "codex"
+	AccountID     string    `json:"account_id"`       // dedup key (from credentials)
+	Runtime       string    `json:"runtime,omitempty"` // "host" (default) or "container"
+	ContainerVol  string    `json:"container_vol,omitempty"` // Docker volume name for container runtime
+	AddedAt       time.Time `json:"added_at"`
+	LastUsed      time.Time `json:"last_used,omitempty"`
+}
+
+// IsContainer returns true if this pool runs inside a Docker container.
+func (p Pool) IsContainer() bool {
+	return p.Runtime == RuntimeContainer
 }
 
 // Manifest is the persisted pool registry.
@@ -432,6 +445,199 @@ func copyCredentials(src, dst string) {
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0600); err != nil {
 			continue
 		}
+	}
+}
+
+// InitContainerPool creates a Docker volume, runs the Claude login flow inside
+// a stoke-pool container, and registers the pool with container runtime.
+func InitContainerPool(poolImage, name, provider string) (string, error) {
+	manifest, err := LoadManifest()
+	if err != nil {
+		return "", fmt.Errorf("load manifest: %w", err)
+	}
+
+	poolID := manifest.NextID(provider)
+	volName := "stoke-pool-" + poolID
+
+	// Create Docker volume
+	cmd := exec.Command("docker", "volume", "create", volName)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("docker volume create: %w: %s", err, out)
+	}
+
+	fmt.Printf("  Pool: %s\n", poolID)
+	fmt.Printf("  Volume: %s\n", volName)
+	fmt.Println()
+
+	// Run login flow inside container with the volume mounted
+	configMount := "/config"
+	loginBin := "claude"
+	if provider == "codex" {
+		loginBin = "codex"
+	}
+
+	var loginArgs []string
+	if provider == "claude" {
+		loginArgs = []string{
+			"run", "-it", "--rm",
+			"-v", volName + ":" + configMount,
+			"-e", "CLAUDE_CONFIG_DIR=" + configMount,
+			poolImage,
+			loginBin, "login",
+		}
+	} else {
+		loginArgs = []string{
+			"run", "-it", "--rm",
+			"-v", volName + ":" + configMount,
+			"-e", "CODEX_HOME=" + configMount,
+			poolImage,
+			loginBin, "auth", "login",
+		}
+	}
+
+	loginCmd := exec.Command("docker", loginArgs...)
+	loginCmd.Stdin = os.Stdin
+	loginCmd.Stdout = os.Stdout
+	loginCmd.Stderr = os.Stderr
+
+	fmt.Printf("  Launching %s login inside container...\n\n", provider)
+	if err := loginCmd.Run(); err != nil {
+		// Cleanup volume on failure
+		exec.Command("docker", "volume", "rm", volName).Run()
+		return "", fmt.Errorf("%s login failed: %w", provider, err)
+	}
+
+	// Read account ID from the volume by temporarily mounting it
+	accountID := readAccountIDFromVolume(poolImage, volName, configMount, provider)
+	if accountID == "" {
+		accountID = provider + "-container-" + poolID
+	}
+
+	if label := name; label == "" {
+		name = fmt.Sprintf("%s Container #%s", strings.Title(provider), strings.TrimPrefix(poolID, provider+"-"))
+	}
+
+	pool := Pool{
+		ID:           poolID,
+		Label:        name,
+		ConfigDir:    configMount, // path inside the container
+		Provider:     provider,
+		AccountID:    accountID,
+		Runtime:      RuntimeContainer,
+		ContainerVol: volName,
+		AddedAt:      time.Now(),
+	}
+
+	manifest.Pools = append(manifest.Pools, pool)
+	if err := manifest.Save(); err != nil {
+		return "", fmt.Errorf("save manifest: %w", err)
+	}
+
+	fmt.Printf("\n  Added container pool: %s (%s)\n", poolID, name)
+	return poolID, nil
+}
+
+// readAccountIDFromVolume extracts an account ID from credentials stored in a Docker volume.
+func readAccountIDFromVolume(image, volName, configMount, provider string) string {
+	var credFile string
+	if provider == "claude" {
+		credFile = ".credentials.json"
+	} else {
+		credFile = ".codex-credentials.json"
+	}
+
+	cmd := exec.Command("docker", "run", "--rm",
+		"-v", volName+":"+configMount,
+		image,
+		"cat", filepath.Join(configMount, credFile))
+
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	if provider == "claude" {
+		var creds claudeCredentials
+		if json.Unmarshal(out, &creds) != nil {
+			return ""
+		}
+		return firstNonEmptyStr(creds.ClaudeAiOauth.Email, creds.ClaudeAiOauth.AccountID)
+	}
+
+	var creds codexCredentials
+	if json.Unmarshal(out, &creds) != nil {
+		return ""
+	}
+	return firstNonEmptyStr(creds.Email, creds.AccountID, creds.AccountID2, creds.UserID)
+}
+
+// RemoveContainerPool removes a container pool and its Docker volume.
+func RemoveContainerPool(poolID string) error {
+	manifest, err := LoadManifest()
+	if err != nil {
+		return err
+	}
+
+	var kept []Pool
+	var removed *Pool
+	for i := range manifest.Pools {
+		if manifest.Pools[i].ID == poolID {
+			removed = &manifest.Pools[i]
+		} else {
+			kept = append(kept, manifest.Pools[i])
+		}
+	}
+
+	if removed == nil {
+		return fmt.Errorf("pool %s not found", poolID)
+	}
+
+	manifest.Pools = kept
+	if err := manifest.Save(); err != nil {
+		return err
+	}
+
+	// Remove Docker volume if this is a container pool
+	if removed.Runtime == RuntimeContainer && removed.ContainerVol != "" {
+		cmd := exec.Command("docker", "volume", "rm", removed.ContainerVol)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove volume %s: %s\n", removed.ContainerVol, out)
+		}
+	} else {
+		os.RemoveAll(removed.ConfigDir)
+	}
+
+	return nil
+}
+
+// ListContainerPools returns all pools with container runtime.
+func (m *Manifest) ListContainerPools() []Pool {
+	var result []Pool
+	for _, p := range m.Pools {
+		if p.Runtime == RuntimeContainer {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// DockerExecArgs builds the docker exec prefix for running a command inside a
+// container pool. The caller appends the actual command after these args.
+// workdir is bind-mounted from the host into the container at the same path.
+func DockerExecArgs(pool Pool, poolImage, workdir string) []string {
+	if !pool.IsContainer() {
+		return nil
+	}
+	containerName := "stoke-worker-" + pool.ID
+	return []string{
+		"docker", "run", "--rm",
+		"--name", containerName,
+		"-v", pool.ContainerVol + ":" + pool.ConfigDir,
+		"-v", workdir + ":" + workdir,
+		"-w", workdir,
+		"-e", "CLAUDE_CONFIG_DIR=" + pool.ConfigDir,
+		"-e", "CODEX_HOME=" + pool.ConfigDir,
+		poolImage,
 	}
 }
 
