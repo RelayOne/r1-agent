@@ -239,7 +239,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			RawSOW:        cfg.RawSOWText,
 			WorkDir:       cfg.RepoRoot,
 		})
-		sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, repairTask, 3))
+		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 		// NOTE: deliberately not appended to results. The acceptance
 		// loop below verifies the final state.
@@ -294,7 +294,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				RawSOW:        cfg.RawSOWText,
 				WorkDir:       cfg.RepoRoot,
 			})
-			sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, repairTask, 3))
+			sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 			// NOTE: deliberately not appended to results.
 		}
@@ -725,7 +725,7 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			RawSOW:        cfg.RawSOWText,
 			WorkDir:       cfg.RepoRoot,
 		})
-		sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, task, 3))
+		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 		results = append(results, tr)
 	}
@@ -801,7 +801,7 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					RawSOW:        cfg.RawSOWText,
 					WorkDir:       cfg.RepoRoot,
 				})
-				sup := toEngineSupervisor(buildTaskSupervisor(cfg.RepoRoot, workingSession, task, 3))
+				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 				resCh <- indexed{idx: ti, res: tr}
 			}()

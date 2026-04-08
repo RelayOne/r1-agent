@@ -1227,6 +1227,7 @@ func sowCmd(args []string) {
 	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
 	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
+	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -1799,6 +1800,20 @@ func sowCmd(args []string) {
 		}
 
 		return results, nil
+	}
+
+	// --dump-task-prompts: bypass the scheduler entirely. Walk every
+	// session's tasks, build their would-be prompts, write them to
+	// .stoke/prompt-dump/, and exit. Lets the user verify spec
+	// extraction without spending on an LLM run.
+	if *dumpPrompts {
+		count, dumpErr := dumpTaskPrompts(absRepo, sow, loadRawSOWText(*sowFile, sow))
+		if dumpErr != nil {
+			fatal("dump task prompts: %v", dumpErr)
+		}
+		fmt.Printf("\nWrote %d task prompt file(s) to %s\n", count, filepath.Join(absRepo, ".stoke", "prompt-dump"))
+		fmt.Println("Inspect them to verify spec extraction, canonical identifiers, and task framing before a real run.")
+		return
 	}
 
 	results, err := ss.Run(ctx, sessionExecFn)
