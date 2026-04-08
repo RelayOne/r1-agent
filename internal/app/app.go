@@ -314,16 +314,92 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 }
 
 // Doctor checks whether the claude and codex binaries are available on PATH and returns a diagnostic report.
-func Doctor(claudeBin, codexBin string) string {
+func Doctor(claudeBin, codexBin string, showProviders bool) string {
 	var b strings.Builder
+
+	// Binary availability
+	fmt.Fprintln(&b, "Binary availability:")
 	check := func(label, bin string) {
 		if path, err := exec.LookPath(bin); err == nil {
-			fmt.Fprintf(&b, "[ok] %s: %s\n", label, path)
+			fmt.Fprintf(&b, "  [ok]      %s: %s\n", label, path)
 		} else {
-			fmt.Fprintf(&b, "[missing] %s: %v\n", label, err)
+			fmt.Fprintf(&b, "  [missing] %s: %v\n", label, err)
 		}
 	}
 	check("claude", claudeBin)
 	check("codex", codexBin)
+
+	// Docker availability (for container pools)
+	if path, err := exec.LookPath("docker"); err == nil {
+		fmt.Fprintf(&b, "  [ok]      docker: %s\n", path)
+	} else {
+		fmt.Fprintf(&b, "  [info]    docker: not found (container pools unavailable)\n")
+	}
+
+	if showProviders {
+		fmt.Fprintln(&b, "\nProvider fallback chain:")
+		providers := []struct {
+			name  string
+			check func() (string, bool)
+		}{
+			{"Claude Code", func() (string, bool) {
+				_, err := exec.LookPath(claudeBin)
+				if err != nil {
+					return "binary not found", false
+				}
+				out, err := exec.Command(claudeBin, "--version").Output()
+				if err != nil {
+					return "binary found, version check failed", true
+				}
+				return strings.TrimSpace(string(out)), true
+			}},
+			{"Codex CLI", func() (string, bool) {
+				_, err := exec.LookPath(codexBin)
+				if err != nil {
+					return "binary not found", false
+				}
+				out, err := exec.Command(codexBin, "--version").Output()
+				if err != nil {
+					return "binary found, version check failed", true
+				}
+				return strings.TrimSpace(string(out)), true
+			}},
+			{"OpenRouter API", func() (string, bool) {
+				key := os.Getenv("OPENROUTER_API_KEY")
+				if key == "" {
+					return "OPENROUTER_API_KEY not set", false
+				}
+				return "key configured", true
+			}},
+			{"Direct API (Anthropic)", func() (string, bool) {
+				key := os.Getenv("ANTHROPIC_API_KEY")
+				if key == "" {
+					return "ANTHROPIC_API_KEY not set", false
+				}
+				return "key configured", true
+			}},
+			{"Lint-only (fallback)", func() (string, bool) {
+				return "always available", true
+			}},
+		}
+
+		for i, p := range providers {
+			detail, ok := p.check()
+			status := "[ok]     "
+			if !ok {
+				status = "[missing]"
+			}
+			fmt.Fprintf(&b, "  %s %d. %s: %s\n", status, i+1, p.name, detail)
+		}
+
+		// Ember provider
+		emberKey := os.Getenv("EMBER_API_KEY")
+		if emberKey != "" {
+			fmt.Fprintf(&b, "  [ok]      Ember: key configured\n")
+		} else {
+			fmt.Fprintf(&b, "  [info]    Ember: EMBER_API_KEY not set (standalone mode)\n")
+		}
+	}
+
 	return b.String()
 }

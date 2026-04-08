@@ -1607,8 +1607,9 @@ func doctorCmd(args []string) {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
 	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	providers := fs.Bool("providers", false, "Check all providers in the fallback chain")
 	fs.Parse(args)
-	fmt.Print(app.Doctor(*claudeBin, *codexBin))
+	fmt.Print(app.Doctor(*claudeBin, *codexBin, *providers))
 }
 
 // --- yolo: interactive Claude Code with full Stoke guards ---

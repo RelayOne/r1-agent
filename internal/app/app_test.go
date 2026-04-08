@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ericmacdougall/stoke/internal/taskstate"
@@ -80,8 +81,21 @@ func TestNewRejectsNilState(t *testing.T) {
 }
 
 func TestDoctor(t *testing.T) {
-	result := Doctor("nonexistent-claude", "nonexistent-codex")
+	result := Doctor("nonexistent-claude", "nonexistent-codex", false)
 	if result == "" {
 		t.Error("Doctor should produce output")
+	}
+}
+
+func TestDoctor_Providers(t *testing.T) {
+	result := Doctor("nonexistent-claude", "nonexistent-codex", true)
+	if result == "" {
+		t.Error("Doctor --providers should produce output")
+	}
+	if !strings.Contains(result, "Provider fallback chain") {
+		t.Error("Doctor --providers should include provider chain info")
+	}
+	if !strings.Contains(result, "Lint-only") {
+		t.Error("Doctor --providers should list lint-only fallback")
 	}
 }
