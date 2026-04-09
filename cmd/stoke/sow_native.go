@@ -237,6 +237,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			Repair:        &failureBlob,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
+			RepoRoot:      cfg.RepoRoot,
 		})
 		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 		// NOTE: deliberately not appended to results. The acceptance
@@ -290,6 +291,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				Repair:        &failureBlob,
 				Wisdom:        cfg.Wisdom,
 				RawSOW:        cfg.RawSOWText,
+				RepoRoot:      cfg.RepoRoot,
 			})
 			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 			// NOTE: deliberately not appended to results.
@@ -719,6 +721,7 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			RepoMapBudget: cfg.RepoMapBudget,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
+			RepoRoot:      cfg.RepoRoot,
 		})
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 		results = append(results, tr)
@@ -793,6 +796,7 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					RepoMapBudget: cfg.RepoMapBudget,
 					Wisdom:        cfg.Wisdom,
 					RawSOW:        cfg.RawSOWText,
+					RepoRoot:      cfg.RepoRoot,
 				})
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns)
 				resCh <- indexed{idx: ti, res: tr}
@@ -1059,6 +1063,11 @@ type promptOpts struct {
 	// non-empty, it's injected verbatim into the cached system block
 	// under a "SPEC (verbatim)" header.
 	RawSOW string
+	// RepoRoot is the absolute path to the project being built. When
+	// set, the prompt builder injects the public API surface from
+	// existing source files so later sessions can wire against earlier
+	// sessions' types instead of guessing or rewriting them.
+	RepoRoot string
 }
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
@@ -1180,6 +1189,20 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 			sys.WriteString("REPOSITORY MAP (ranked by importance):\n")
 			sys.WriteString(rendered)
 			sys.WriteString("\n\n")
+		}
+	}
+
+	// Public API surface from prior session code. Without this, an abstract
+	// per-session description like "implement update_concern_field" leaves
+	// the agent stalling because it doesn't know the concrete types/signatures
+	// the previous session defined. The repo map only lists file paths; this
+	// adds the actual `pub fn` / `pub struct` / `export` lines so the model
+	// can wire against existing definitions instead of guessing or rewriting.
+	if opts.RepoRoot != "" {
+		surface := sowAPISurface(opts.RepoRoot, 30000)
+		if surface != "" {
+			sys.WriteString(surface)
+			sys.WriteString("\n")
 		}
 	}
 
