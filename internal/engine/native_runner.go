@@ -94,6 +94,10 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	if systemPrompt == "" {
 		systemPrompt = spec.Phase.Prompt
 	}
+	// Inject working directory so the model uses correct paths.
+	if spec.WorktreeDir != "" {
+		systemPrompt += fmt.Sprintf("\n\nPROJECT ROOT: %s\nAll file paths in tool calls (read_file, write_file, edit_file, bash) must be ABSOLUTE paths under this directory.\nBash commands should use absolute paths or cd to %s first.\nBE ACTION-ORIENTED: use tools immediately, keep text under 200 words.\n", spec.WorktreeDir, spec.WorktreeDir)
+	}
 	cfg := agentloop.Config{
 		Model:              n.model,
 		MaxTurns:           spec.Phase.MaxTurns,

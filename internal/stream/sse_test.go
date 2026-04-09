@@ -39,20 +39,45 @@ func TestSSEParserBasicText(t *testing.T) {
 func TestSSEParserToolUse(t *testing.T) {
 	parser := NewSSEParser()
 
-	chunk := []byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"Read\",\"input\":{}}}\n\n")
+	// Anthropic streams a tool_use as: start (empty input) → input_json_delta
+	// fragments → stop. The complete ToolUse with assembled input is emitted
+	// on content_block_stop, not on start.
+	chunks := [][]byte{
+		[]byte("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"Read\",\"input\":{}}}\n\n"),
+		[]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n"),
+		[]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"/tmp/x.go\\\"}\"}}\n\n"),
+		[]byte("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n"),
+	}
 
-	events, err := parser.Push(chunk)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var allEvents []Event
+	for _, c := range chunks {
+		events, err := parser.Push(c)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		allEvents = append(allEvents, events...)
 	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
+
+	// Find the assistant event with the completed tool use.
+	var toolEv *Event
+	for i := range allEvents {
+		if len(allEvents[i].ToolUses) > 0 {
+			toolEv = &allEvents[i]
+			break
+		}
 	}
-	if len(events[0].ToolUses) != 1 {
-		t.Fatalf("expected 1 tool use, got %d", len(events[0].ToolUses))
+	if toolEv == nil {
+		t.Fatalf("expected an event with ToolUses, got %d events: %+v", len(allEvents), allEvents)
 	}
-	if events[0].ToolUses[0].Name != "Read" {
-		t.Errorf("expected Read, got %s", events[0].ToolUses[0].Name)
+	if toolEv.ToolUses[0].Name != "Read" {
+		t.Errorf("expected Read, got %s", toolEv.ToolUses[0].Name)
+	}
+	if toolEv.ToolUses[0].ID != "tu_1" {
+		t.Errorf("expected tu_1, got %s", toolEv.ToolUses[0].ID)
+	}
+	path, _ := toolEv.ToolUses[0].Input["path"].(string)
+	if path != "/tmp/x.go" {
+		t.Errorf("expected input.path=/tmp/x.go, got %q (full input: %+v)", path, toolEv.ToolUses[0].Input)
 	}
 }
 

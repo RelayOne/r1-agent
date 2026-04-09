@@ -180,19 +180,22 @@ func (r *Registry) Definitions() []provider.ToolDef {
 }
 
 // Handle dispatches a tool call to the appropriate handler.
+// Accepts both snake_case (read_file) and PascalCase (Read) tool names
+// since different models/providers may use either convention.
 func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessage) (string, error) {
+	fmt.Fprintf(os.Stderr, "[tools] %s in workDir=%s input=%s\n", name, r.workDir, string(input)[:min(len(input), 200)])
 	switch name {
-	case "read_file":
+	case "read_file", "Read", "read":
 		return r.handleRead(input)
-	case "edit_file":
+	case "edit_file", "Edit", "edit", "str_replace_editor":
 		return r.handleEdit(input)
-	case "write_file":
+	case "write_file", "Write", "write", "create_file":
 		return r.handleWrite(input)
-	case "bash":
+	case "bash", "Bash", "execute_bash", "run_command":
 		return r.handleBash(ctx, input)
-	case "grep":
+	case "grep", "Grep", "search":
 		return r.handleGrep(ctx, input)
-	case "glob":
+	case "glob", "Glob", "find_files":
 		return r.handleGlob(input)
 	case "env_exec":
 		return r.handleEnvExec(ctx, input)
