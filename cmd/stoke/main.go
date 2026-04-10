@@ -37,6 +37,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/interview"
+	litellmPkg "github.com/ericmacdougall/stoke/internal/litellm"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
@@ -789,6 +790,17 @@ func runCmd(args []string) {
 	}
 	if *lintC == "" {
 		*lintC = detected.Lint
+	}
+
+	// Auto-discover LiteLLM for native runner.
+	if *runnerMode == "native" && *nativeBaseURL == "" {
+		if d := litellmPkg.Discover(); d != nil {
+			*nativeBaseURL = d.BaseURL
+			if *nativeAPIKey == "" && d.APIKey != "" {
+				*nativeAPIKey = d.APIKey
+			}
+			fmt.Printf("  litellm: auto-discovered %s (%d models)\n", d.BaseURL, len(d.Models))
+		}
 	}
 
 	// Create TUI runner for live progress
@@ -1585,6 +1597,16 @@ func sowCmd(args []string) {
 					nativeKey = v
 					break
 				}
+			}
+		}
+		// Auto-discover LiteLLM proxy when no base URL provided.
+		if *nativeBaseURL == "" {
+			if d := litellmPkg.Discover(); d != nil {
+				*nativeBaseURL = d.BaseURL
+				if nativeKey == "" && d.APIKey != "" {
+					nativeKey = d.APIKey
+				}
+				fmt.Printf("  litellm: auto-discovered %s (%d models)\n", d.BaseURL, len(d.Models))
 			}
 		}
 		if nativeKey == "" && *nativeBaseURL != "" {
@@ -3481,37 +3503,17 @@ func detectSmartDefaults() SmartDefaults {
 		d.NativeModel = m
 	}
 
-	// 1. LiteLLM via env
-	if base := os.Getenv("LITELLM_BASE_URL"); base != "" {
+	// 1+2. LiteLLM auto-discovery: checks LITELLM_BASE_URL env, probes
+	// common ports (4000, 8000, 7813, 8080, 4100, 8888), and falls back
+	// to parsing ~/.litellm/config.yaml.
+	if disc := litellmPkg.Discover(); disc != nil {
 		d.RunnerMode = "native"
-		d.NativeBaseURL = strings.TrimRight(base, "/")
-		d.NativeAPIKey = firstNonEmpty(
-			os.Getenv("LITELLM_API_KEY"),
-			os.Getenv("LITELLM_MASTER_KEY"),
-			os.Getenv("ANTHROPIC_API_KEY"),
-			provider.LocalLiteLLMStub,
-		)
-		d.Notes = append(d.Notes, "LiteLLM detected via LITELLM_BASE_URL → native runner (Anthropic protocol)")
-		return d
-	}
-
-	// 2. LiteLLM via probe at conventional localhost port
-	if probeReachable("http://localhost:8000/v1/models", 300*time.Millisecond) ||
-		probeReachable("http://localhost:4000/v1/models", 300*time.Millisecond) ||
-		probeReachable("http://localhost:8000/health", 300*time.Millisecond) {
-		base := "http://localhost:8000"
-		if probeReachable("http://localhost:4000/v1/models", 200*time.Millisecond) {
-			base = "http://localhost:4000"
+		d.NativeBaseURL = disc.BaseURL
+		d.NativeAPIKey = disc.APIKey
+		if d.NativeAPIKey == "" {
+			d.NativeAPIKey = provider.LocalLiteLLMStub
 		}
-		d.RunnerMode = "native"
-		d.NativeBaseURL = base
-		d.NativeAPIKey = firstNonEmpty(
-			os.Getenv("LITELLM_API_KEY"),
-			os.Getenv("LITELLM_MASTER_KEY"),
-			os.Getenv("ANTHROPIC_API_KEY"),
-			provider.LocalLiteLLMStub,
-		)
-		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM detected at %s → native runner (Anthropic protocol)", base))
+		d.Notes = append(d.Notes, fmt.Sprintf("LiteLLM auto-discovered at %s (%d models) → native runner", disc.BaseURL, len(disc.Models)))
 		return d
 	}
 

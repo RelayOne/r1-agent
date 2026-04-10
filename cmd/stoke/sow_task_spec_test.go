@@ -357,7 +357,7 @@ func TestSplitIntoParagraphs_ByHeading(t *testing.T) {
 
 func TestBuildSOWNativePromptsWithOpts_InjectsWorkDir(t *testing.T) {
 	sys, _ := buildSOWNativePromptsWithOpts(&plan.SOW{Name: "X"}, plan.Session{ID: "S1"}, plan.Task{ID: "T1"}, promptOpts{
-		WorkDir: "/abs/project/root",
+		RepoRoot: "/abs/project/root",
 	})
 	if !strings.Contains(sys, "WORKING DIRECTORY (absolute): /abs/project/root") {
 		t.Errorf("system prompt should include WORKING DIRECTORY anchor:\n%s", sys)
@@ -392,7 +392,7 @@ The Concern struct has 11 streams. This is the authoritative spec.
 `
 	_, user := buildSOWNativePromptsWithOpts(sow, session, task, promptOpts{
 		RawSOW:  rawSOW,
-		WorkDir: "/tmp",
+		RepoRoot: "/tmp",
 	})
 	if !strings.Contains(user, "SPEC EXCERPT") {
 		t.Errorf("user prompt should include SPEC EXCERPT header:\n%s", user)
