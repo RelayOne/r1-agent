@@ -1248,6 +1248,20 @@ func sowCmd(args []string) {
 	}
 	ensureGitRepoOrFatal(absRepo)
 
+	// Auto-discover LiteLLM BEFORE we need a provider anywhere downstream
+	// (prose SOW conversion, critique pass, override judge, native runner).
+	// Without this the prose converter silently falls back to api.anthropic.com
+	// and 401s when the only key available is a LiteLLM master key.
+	if *runnerMode == "native" && *nativeBaseURL == "" {
+		if d := litellmPkg.Discover(); d != nil {
+			*nativeBaseURL = d.BaseURL
+			if *nativeAPIKey == "" && d.APIKey != "" {
+				*nativeAPIKey = d.APIKey
+			}
+			fmt.Printf("  litellm: auto-discovered %s (%d models)\n", d.BaseURL, len(d.Models))
+		}
+	}
+
 	// Load SOW. Supports three input formats:
 	//   - .json / .yaml / .yml → parsed directly
 	//   - .txt / .md / prose   → converted via LLM (needs a provider)
