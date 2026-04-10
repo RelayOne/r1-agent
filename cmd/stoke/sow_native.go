@@ -161,13 +161,35 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	if cfg.RepoRoot == "" {
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
 	}
+
+	// Persistent marker fast-path: if a prior run already drove this
+	// session to completion (or accepted it as preexisting), skip the
+	// agent entirely and return synthetic success results. The marker
+	// is invalidated automatically when the session spec changes.
+	if done, reason := isUpstreamSessionAlreadyComplete(cfg.RepoRoot, session); done {
+		fmt.Printf("  ✓ session %s already complete (marker: %s) — skipping\n", session.ID, reason)
+		results := make([]plan.TaskExecResult, 0, len(session.Tasks))
+		for _, t := range session.Tasks {
+			results = append(results, plan.TaskExecResult{
+				TaskID:  t.ID,
+				Success: true,
+			})
+		}
+		return results, nil
+	}
+
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 100
 	}
 	maxRepairs := cfg.MaxRepairAttempts
 	if maxRepairs <= 0 {
-		maxRepairs = 3
+		// 3 was too few for thinking-emitting models that write
+		// elaborate test suites and then can't satisfy them on the
+		// first or second pass. 10 gives the agent enough chances to
+		// either fix the implementation OR delete the broken tests it
+		// just wrote, without burning forever on hopeless sessions.
+		maxRepairs = 10
 	}
 	if cfg.spent == nil {
 		var initial float64
@@ -388,6 +410,34 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if cfg.SOWID != "" {
 				_ = SaveWisdom(cfg.RepoRoot, cfg.SOWID, cfg.Wisdom)
 			}
+		}
+	}
+
+	// Phase 7: persist a completion marker so subsequent SOW runs can
+	// fast-skip this session via the cache check at the top of
+	// runSessionNative. Two flavors:
+	//   - Real-pass marker: finalPassed AND there are touched files →
+	//     record file hashes for strict drift detection.
+	//   - Preexisting marker: finalPassed but no touched files (rare,
+	//     but possible when the work was already in place from a prior
+	//     attempt that died mid-run) → record spec hash only.
+	if finalPassed {
+		var changed []string
+		for _, f := range touched {
+			if !strings.HasPrefix(f, ".stoke/") {
+				changed = append(changed, f)
+			}
+		}
+		note := ""
+		if len(changed) == 0 {
+			note = "preexisting work — no diff vs prior state"
+		}
+		if err := writeUpstreamSessionMarker(cfg.RepoRoot, session, changed, note); err != nil {
+			fmt.Printf("  marker warning: %v\n", err)
+		} else if len(changed) > 0 {
+			fmt.Printf("  ✓ wrote completion marker for session %s (%d files)\n", session.ID, len(changed))
+		} else {
+			fmt.Printf("  ✓ wrote spec-only marker for session %s\n", session.ID)
 		}
 	}
 
