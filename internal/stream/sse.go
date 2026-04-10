@@ -10,13 +10,31 @@ import (
 // Inspired by claw-code-parity's Rust SSE parser. Unlike NDJSON (Claude Code CLI output),
 // SSE uses "event:" + "data:" line pairs separated by blank lines.
 // This enables direct Anthropic API streaming without requiring Claude Code CLI.
+//
+// Tool use streaming: Anthropic sends tool_use blocks in three phases:
+//  1. content_block_start with empty input {}
+//  2. content_block_delta with input_json_delta partial_json chunks
+//  3. content_block_stop
+//
+// The parser buffers tool use metadata and partial_json fragments per
+// content block index, then emits a complete ToolUse event on stop.
 type SSEParser struct {
-	buffer []byte
+	buffer       []byte
+	pendingTools map[int]*pendingTool // keyed by content_block index
+}
+
+// pendingTool holds in-progress tool_use streaming state.
+type pendingTool struct {
+	ID        string
+	Name      string
+	JSONFrags strings.Builder
 }
 
 // NewSSEParser creates an SSE parser.
 func NewSSEParser() *SSEParser {
-	return &SSEParser{}
+	return &SSEParser{
+		pendingTools: make(map[int]*pendingTool),
+	}
 }
 
 // SSEFrame holds a parsed SSE frame with event type and data payload.
@@ -145,7 +163,7 @@ func (p *SSEParser) sseEventToStreamEvent(eventName, payload string) (*Event, er
 	case "content_block_delta":
 		return p.parseContentBlockDelta(payload)
 	case "content_block_stop":
-		return nil, nil // no useful data
+		return p.parseContentBlockStop(payload)
 	case "message_delta":
 		return p.parseMessageDelta(payload)
 	case "message_stop":
@@ -194,6 +212,7 @@ func (p *SSEParser) parseMessageStart(payload string) (*Event, error) {
 
 func (p *SSEParser) parseContentBlockStart(payload string) (*Event, error) {
 	var block struct {
+		Index        int `json:"index"`
 		ContentBlock struct {
 			Type  string          `json:"type"`
 			ID    string          `json:"id"`
@@ -205,23 +224,28 @@ func (p *SSEParser) parseContentBlockStart(payload string) (*Event, error) {
 		return nil, fmt.Errorf("parse content_block_start: %w", err)
 	}
 
-	ev := &Event{Type: "assistant", Raw: []byte(payload)}
 	if block.ContentBlock.Type == "tool_use" {
-		var input map[string]interface{}
-		if block.ContentBlock.Input != nil {
-			json.Unmarshal(block.ContentBlock.Input, &input)
+		// Buffer the tool use metadata. Don't emit yet — input arrives in
+		// streamed input_json_delta chunks. We finalize on content_block_stop.
+		pt := &pendingTool{
+			ID:   block.ContentBlock.ID,
+			Name: block.ContentBlock.Name,
 		}
-		ev.ToolUses = append(ev.ToolUses, ToolUse{
-			ID:    block.ContentBlock.ID,
-			Name:  block.ContentBlock.Name,
-			Input: input,
-		})
+		// Some implementations send the full input here (non-streamed). If so,
+		// pre-seed JSONFrags so content_block_stop assembles it correctly.
+		if len(block.ContentBlock.Input) > 0 && string(block.ContentBlock.Input) != "{}" {
+			pt.JSONFrags.Write(block.ContentBlock.Input)
+		}
+		p.pendingTools[block.Index] = pt
+		// No event emitted at start — tool use is incomplete.
+		return nil, nil
 	}
-	return ev, nil
+	return &Event{Type: "assistant", Raw: []byte(payload)}, nil
 }
 
 func (p *SSEParser) parseContentBlockDelta(payload string) (*Event, error) {
 	var delta struct {
+		Index int `json:"index"`
 		Delta struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -241,8 +265,50 @@ func (p *SSEParser) parseContentBlockDelta(payload string) (*Event, error) {
 	case "input_json_delta":
 		ev.DeltaType = "input_json_delta"
 		ev.DeltaText = delta.Delta.PartialJSON
+		// Accumulate the partial_json into the pending tool use for this block
+		// index. The complete input is assembled and emitted on content_block_stop.
+		if pt, ok := p.pendingTools[delta.Index]; ok {
+			pt.JSONFrags.WriteString(delta.Delta.PartialJSON)
+		}
 	}
 	return ev, nil
+}
+
+// parseContentBlockStop finalizes a streamed tool_use block. Anthropic sends
+// the input as input_json_delta fragments between content_block_start and
+// content_block_stop. We assemble them here and emit a complete ToolUse.
+func (p *SSEParser) parseContentBlockStop(payload string) (*Event, error) {
+	var stop struct {
+		Index int `json:"index"`
+	}
+	if err := json.Unmarshal([]byte(payload), &stop); err != nil {
+		return nil, nil
+	}
+	pt, ok := p.pendingTools[stop.Index]
+	if !ok {
+		return nil, nil
+	}
+	delete(p.pendingTools, stop.Index)
+
+	// Parse the assembled input JSON. Empty/invalid → empty map so handlers
+	// at least see the tool call rather than dropping it entirely.
+	var input map[string]interface{}
+	frags := strings.TrimSpace(pt.JSONFrags.String())
+	if frags == "" {
+		input = map[string]interface{}{}
+	} else if err := json.Unmarshal([]byte(frags), &input); err != nil {
+		input = map[string]interface{}{}
+	}
+
+	return &Event{
+		Type: "assistant",
+		Raw:  []byte(payload),
+		ToolUses: []ToolUse{{
+			ID:    pt.ID,
+			Name:  pt.Name,
+			Input: input,
+		}},
+	}, nil
 }
 
 func (p *SSEParser) parseMessageDelta(payload string) (*Event, error) {

@@ -161,13 +161,35 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	if cfg.RepoRoot == "" {
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
 	}
+
+	// Persistent marker fast-path: if a prior run already drove this
+	// session to completion (or accepted it as preexisting), skip the
+	// agent entirely and return synthetic success results. The marker
+	// is invalidated automatically when the session spec changes.
+	if done, reason := isUpstreamSessionAlreadyComplete(cfg.RepoRoot, session); done {
+		fmt.Printf("  ✓ session %s already complete (marker: %s) — skipping\n", session.ID, reason)
+		results := make([]plan.TaskExecResult, 0, len(session.Tasks))
+		for _, t := range session.Tasks {
+			results = append(results, plan.TaskExecResult{
+				TaskID:  t.ID,
+				Success: true,
+			})
+		}
+		return results, nil
+	}
+
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 100
 	}
 	maxRepairs := cfg.MaxRepairAttempts
 	if maxRepairs <= 0 {
-		maxRepairs = 3
+		// 3 was too few for thinking-emitting models that write
+		// elaborate test suites and then can't satisfy them on the
+		// first or second pass. 10 gives the agent enough chances to
+		// either fix the implementation OR delete the broken tests it
+		// just wrote, without burning forever on hopeless sessions.
+		maxRepairs = 10
 	}
 	if cfg.spent == nil {
 		var initial float64
@@ -237,7 +259,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			Repair:        &failureBlob,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
-			WorkDir:       cfg.RepoRoot,
+			RepoRoot:      cfg.RepoRoot,
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -292,7 +314,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				Repair:        &failureBlob,
 				Wisdom:        cfg.Wisdom,
 				RawSOW:        cfg.RawSOWText,
-				WorkDir:       cfg.RepoRoot,
+				RepoRoot:      cfg.RepoRoot,
 			})
 			sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -390,6 +412,34 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if cfg.SOWID != "" {
 				_ = SaveWisdom(cfg.RepoRoot, cfg.SOWID, cfg.Wisdom)
 			}
+		}
+	}
+
+	// Phase 7: persist a completion marker so subsequent SOW runs can
+	// fast-skip this session via the cache check at the top of
+	// runSessionNative. Two flavors:
+	//   - Real-pass marker: finalPassed AND there are touched files →
+	//     record file hashes for strict drift detection.
+	//   - Preexisting marker: finalPassed but no touched files (rare,
+	//     but possible when the work was already in place from a prior
+	//     attempt that died mid-run) → record spec hash only.
+	if finalPassed {
+		var changed []string
+		for _, f := range touched {
+			if !strings.HasPrefix(f, ".stoke/") {
+				changed = append(changed, f)
+			}
+		}
+		note := ""
+		if len(changed) == 0 {
+			note = "preexisting work — no diff vs prior state"
+		}
+		if err := writeUpstreamSessionMarker(cfg.RepoRoot, session, changed, note); err != nil {
+			fmt.Printf("  marker warning: %v\n", err)
+		} else if len(changed) > 0 {
+			fmt.Printf("  ✓ wrote completion marker for session %s (%d files)\n", session.ID, len(changed))
+		} else {
+			fmt.Printf("  ✓ wrote spec-only marker for session %s\n", session.ID)
 		}
 	}
 
@@ -723,7 +773,7 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			RepoMapBudget: cfg.RepoMapBudget,
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
-			WorkDir:       cfg.RepoRoot,
+			RepoRoot:      cfg.RepoRoot,
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -799,7 +849,7 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					RepoMapBudget: cfg.RepoMapBudget,
 					Wisdom:        cfg.Wisdom,
 					RawSOW:        cfg.RawSOWText,
-					WorkDir:       cfg.RepoRoot,
+					RepoRoot:      cfg.RepoRoot,
 				})
 				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -1068,12 +1118,11 @@ type promptOpts struct {
 	// non-empty, it's injected verbatim into the cached system block
 	// under a "SPEC (verbatim)" header.
 	RawSOW string
-	// WorkDir is the absolute path where the agent's file tools
-	// operate. Injected into the system prompt as an anchor so the
-	// model knows EXACTLY where `write_file "foo.toml"` will land
-	// and what `pwd && ls -la` will show. Leaving this empty drops
-	// the anchor line but doesn't break anything.
-	WorkDir string
+	// RepoRoot is the absolute path to the project being built. When
+	// set, the prompt builder injects the public API surface from
+	// existing source files so later sessions can wire against earlier
+	// sessions' types instead of guessing or rewriting them.
+	RepoRoot string
 }
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
@@ -1124,8 +1173,8 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 	// tool errors" because of exactly this. Making the anchor
 	// explicit in the system prompt resolves the ambiguity at the
 	// source.
-	if opts.WorkDir != "" {
-		fmt.Fprintf(&sys, "WORKING DIRECTORY (absolute): %s\n", opts.WorkDir)
+	if opts.RepoRoot != "" {
+		fmt.Fprintf(&sys, "WORKING DIRECTORY (absolute): %s\n", opts.RepoRoot)
 		sys.WriteString("All your file tools (read_file, write_file, edit_file) and the bash tool operate relative to this directory. When you call write_file with \"path\": \"Cargo.toml\", the file lands at WORKING_DIRECTORY/Cargo.toml. When you run `pwd` via bash, it prints WORKING_DIRECTORY. Use simple relative paths like \"Cargo.toml\" or \"crates/foo/src/lib.rs\" — do NOT try to cd somewhere else, and do NOT pass paths that escape this directory.\n\n")
 	}
 
@@ -1207,6 +1256,20 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 			sys.WriteString("REPOSITORY MAP (ranked by importance):\n")
 			sys.WriteString(rendered)
 			sys.WriteString("\n\n")
+		}
+	}
+
+	// Public API surface from prior session code. Without this, an abstract
+	// per-session description like "implement update_concern_field" leaves
+	// the agent stalling because it doesn't know the concrete types/signatures
+	// the previous session defined. The repo map only lists file paths; this
+	// adds the actual `pub fn` / `pub struct` / `export` lines so the model
+	// can wire against existing definitions instead of guessing or rewriting.
+	if opts.RepoRoot != "" {
+		surface := sowAPISurface(opts.RepoRoot, 30000)
+		if surface != "" {
+			sys.WriteString(surface)
+			sys.WriteString("\n")
 		}
 	}
 

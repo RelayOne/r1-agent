@@ -64,7 +64,7 @@ func dumpTaskPrompts(repoRoot string, sow *plan.SOW, rawSOW string) (int, error)
 		for _, task := range session.Tasks {
 			sys, usr := buildSOWNativePromptsWithOpts(sow, session, task, promptOpts{
 				RawSOW:  rawSOW,
-				WorkDir: repoRoot,
+				RepoRoot: repoRoot,
 			})
 
 			// Build the supervisor expectations the real run would use.
