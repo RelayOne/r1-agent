@@ -2515,6 +2515,7 @@ func scopeCmd(args []string) {
 	output := fs.String("output", "stoke-plan.json", "Output plan file")
 	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
 	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	task := fs.String("task", "", "Optional task brief to seed the session (used by chat-driven dispatch)")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
@@ -2525,7 +2526,11 @@ func scopeCmd(args []string) {
 	fmt.Printf("⚡ STOKE scope\n")
 	fmt.Printf("  repo: %s\n", absRepo)
 	fmt.Printf("  mode: read-only (no writes allowed)\n")
-	fmt.Printf("  output: %s\n\n", *output)
+	fmt.Printf("  output: %s\n", *output)
+	if strings.TrimSpace(*task) != "" {
+		fmt.Printf("  brief: %s\n", truncOne(*task, 100))
+	}
+	fmt.Println()
 
 	// Install hooks and generate read-only settings
 	if err := hooks.InstallInRepo(absRepo); err != nil {
@@ -2535,7 +2540,7 @@ func scopeCmd(args []string) {
 	if err != nil {
 		fatal("generate settings: %v", err)
 	}
-	if err := hooks.GenerateCLAUDEmd(absRepo, "scope", *output); err != nil {
+	if err := hooks.GenerateCLAUDEmdWithTask(absRepo, "scope", *output, *task); err != nil {
 		fatal("write CLAUDE.md: %v", err)
 	}
 
@@ -3632,6 +3637,13 @@ func launchREPL() {
 	// use native executor" to be the zero-flag default.
 	defaults := detectSmartDefaults()
 
+	// Stand up the chat session so free text becomes a real
+	// conversation instead of a /run dispatch. If no provider is
+	// available, chatSession is nil and the OnChat handler falls
+	// back to the legacy "run the text as a task" path with a note.
+	chatSession, chatErr := buildChatSession(defaults)
+	dispatcher := &stokeDispatcher{absRepo: absRepo, defaults: defaults}
+
 	// Banner
 	fmt.Printf("\n  \033[1;36mStoke %s\033[0m  supervised AI build orchestrator\n", version)
 	fmt.Printf("  Smart defaults active:\n")
@@ -3643,12 +3655,22 @@ func launchREPL() {
 		fmt.Printf("    model:   %s\n", defaults.NativeModel)
 	}
 	fmt.Printf("    super:   boulder (no wall-clock timeouts)\n")
+	if chatSession != nil {
+		fmt.Printf("    chat:    %s\n", providerHint(defaults))
+	} else if chatErr != nil {
+		fmt.Printf("    chat:    \033[33m%s\033[0m\n", describeChatFailure(chatErr))
+	}
 	for _, note := range defaults.Notes {
 		fmt.Printf("    note:    %s\n", note)
 	}
 	fmt.Println()
-	fmt.Println("  Type /help for commands. /build-from-scope to start a multi-session build from a SOW.")
-	fmt.Println("  Or run `stoke tui` for the full-screen Bubble Tea shell with live mission monitoring.")
+	if chatSession != nil {
+		fmt.Println("  Type naturally to chat. When you agree (\"ya build it\", \"make that a scope\"),")
+		fmt.Println("  Stoke dispatches the conversation to the right command automatically.")
+	} else {
+		fmt.Println("  Type naturally to kick off a /run task — or use slash commands directly.")
+	}
+	fmt.Println("  Slash commands: /ship /build /scope /run /plan /audit /scan /status /help /quit")
 	fmt.Println()
 
 	r := repl.New(absRepo)
@@ -3868,23 +3890,15 @@ func launchREPL() {
 		Run: func(args string) {}, // handled by REPL itself
 	})
 
-	// Free text -> dispatch through the run pipeline using the smart defaults
-	// detected at startup. This is the "use all smart settings / use local
-	// litellm / use native executor" path the user asked for.
+	// Free text -> the smart chat session. The LLM chats until the user
+	// agrees on something, then emits a dispatcher tool call that routes
+	// back into runCmd/shipCmd/scopeCmd/etc. via stokeDispatcher. If no
+	// provider is available (chatSession == nil), chatOnceREPL falls back
+	// to the old "run the text as a task" behavior with a warning.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	r.OnChat = func(input string) {
-		fmt.Println()
-		args := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
-		if defaults.NativeBaseURL != "" {
-			args = append(args, "--native-base-url", defaults.NativeBaseURL)
-		}
-		if defaults.NativeAPIKey != "" {
-			args = append(args, "--native-api-key", defaults.NativeAPIKey)
-		}
-		if defaults.NativeModel != "" {
-			args = append(args, "--native-model", defaults.NativeModel)
-		}
-		runCmd(args)
-		fmt.Println()
+		chatOnceREPL(ctx, chatSession, dispatcher, input)
 	}
 
 	r.Run()
@@ -3919,6 +3933,7 @@ func launchShell(args []string) {
 	}
 
 	defaults := detectSmartDefaults()
+	chatSession, chatErr := buildChatSession(defaults)
 	cfg := tui.ShellConfig{
 		RepoRoot:   absRepo,
 		Version:    version,
@@ -3928,10 +3943,20 @@ func launchShell(args []string) {
 		Supervisor: "boulder (no wall-clock timeouts)",
 		Notes:      defaults.Notes,
 	}
+	if chatSession != nil {
+		cfg.Notes = append(cfg.Notes, "chat mode "+providerHint(defaults)+" — type to talk, agree to dispatch")
+	} else if chatErr != nil {
+		cfg.Notes = append(cfg.Notes, describeChatFailure(chatErr))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	handler := func(sh *tui.Shell, input string) string {
 		// Capture stdout/stderr during the command's execution and stream
-		// each line into the shell's log pane via sh.Append.
+		// each line into the shell's log pane via sh.Append. This stays
+		// active for the whole handler because dispatcher tools run
+		// subcommands whose stdout should still land in the log pane.
 		restore, captureDone := captureStdoutTo(sh)
 		// Wire session-progress hooks so sowCmd pushes into the Sessions pane.
 		currentShellProgress = func(s tui.SessionDisplay) { sh.UpdateSession(s) }
@@ -3946,19 +3971,11 @@ func launchShell(args []string) {
 		if strings.HasPrefix(input, "/") {
 			return dispatchSlash(sh, absRepo, defaults, input)
 		}
-		// Free text -> single run task
-		rargs := []string{"--task", input, "--repo", absRepo, "--runner", defaults.RunnerMode}
-		if defaults.NativeBaseURL != "" {
-			rargs = append(rargs, "--native-base-url", defaults.NativeBaseURL)
-		}
-		if defaults.NativeAPIKey != "" {
-			rargs = append(rargs, "--native-api-key", defaults.NativeAPIKey)
-		}
-		if defaults.NativeModel != "" {
-			rargs = append(rargs, "--native-model", defaults.NativeModel)
-		}
-		runCmdSafe(rargs)
-		return "done"
+		// Free text -> smart chat. Dispatcher tool calls route back
+		// through stokeDispatcher to the real pipeline.
+		disp := &stokeDispatcher{absRepo: absRepo, defaults: defaults, sh: sh}
+		chatOnceShell(ctx, sh, chatSession, disp, input)
+		return "chat"
 	}
 
 	shell := tui.NewShell(cfg, handler)

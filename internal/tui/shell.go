@@ -92,6 +92,12 @@ type Shell struct {
 	promptCh     chan string
 	promptLabel  string
 
+	// streamBuf holds in-progress streamed text from a chat delta
+	// until a newline arrives (or StreamFinish is called). Each
+	// completed line is emitted as a shellLogMsg so the log pane
+	// renders updates in real time.
+	streamBuf string
+
 	startedAt time.Time
 }
 
@@ -137,6 +143,18 @@ type shellStatusMsg struct{ text string }
 type shellCommandDoneMsg struct{ status string }
 type shellTickMsg time.Time
 
+// shellStreamMsg is a streaming text fragment. The shell appends it to
+// the in-progress streamBuf, emits every completed line into the log,
+// and keeps any trailing (un-newlined) text buffered until the next
+// chunk or StreamFinish. This is what makes chat replies appear token
+// by token in the TUI.
+type shellStreamMsg struct{ text string }
+
+// shellStreamFinishMsg flushes any remaining buffered streamBuf text
+// as a final log line. Called at the end of a chat turn so a reply
+// that ends without a trailing newline still shows.
+type shellStreamFinishMsg struct{}
+
 func shellTick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return shellTickMsg(t) })
 }
@@ -157,6 +175,96 @@ func (sh *Shell) AppendLines(block string) {
 	if sh.program != nil {
 		sh.program.Send(shellLogMsg{lines: lines})
 	}
+}
+
+// StreamChunk appends a streaming text fragment. Chunks are buffered
+// until a newline arrives, at which point the completed line(s) are
+// committed to the log pane. Use this from a chat handler so the
+// reply appears token by token.
+//
+// Safe to call from any goroutine. No-op if the shell has no program
+// attached (e.g. during tests before Run()).
+func (sh *Shell) StreamChunk(text string) {
+	if text == "" {
+		return
+	}
+	if sh.program != nil {
+		sh.program.Send(shellStreamMsg{text: text})
+	} else {
+		// Test mode: apply the update synchronously so unit tests
+		// that drive the shell without a program still see the
+		// streaming behavior.
+		sh.mu.Lock()
+		sh.applyStream(text)
+		sh.mu.Unlock()
+	}
+}
+
+// StreamFinish flushes any remaining buffered stream text as a final
+// log line. Call this at the end of a chat turn so a reply that ends
+// without a trailing newline still shows in full.
+func (sh *Shell) StreamFinish() {
+	if sh.program != nil {
+		sh.program.Send(shellStreamFinishMsg{})
+	} else {
+		sh.mu.Lock()
+		sh.flushStream()
+		sh.mu.Unlock()
+	}
+}
+
+// applyStream appends text to streamBuf, splits on newlines, and
+// commits every completed line to logBuf. Trailing un-newlined text
+// stays in streamBuf for the next chunk. Caller must hold sh.mu.
+func (sh *Shell) applyStream(text string) {
+	sh.streamBuf += text
+	// Show partial reply as a preview on the current line. The
+	// simplest approach: maintain a "live line" at the tail of
+	// logBuf that gets replaced on every stream update. When a
+	// newline arrives we commit the live line and start a new one.
+	for {
+		idx := strings.IndexByte(sh.streamBuf, '\n')
+		if idx < 0 {
+			break
+		}
+		line := sh.streamBuf[:idx]
+		sh.streamBuf = sh.streamBuf[idx+1:]
+		// Indent streamed chat lines by 4 spaces so they visually
+		// hang under the preceding "● (chat)" marker.
+		sh.logBuf = append(sh.logBuf, "    "+line)
+	}
+	// Update the live preview line (replaces the last log entry if
+	// it's a preview, else appends).
+	if sh.streamBuf != "" {
+		preview := "    " + sh.streamBuf + "▏"
+		if n := len(sh.logBuf); n > 0 && strings.HasSuffix(sh.logBuf[n-1], "▏") {
+			sh.logBuf[n-1] = preview
+		} else {
+			sh.logBuf = append(sh.logBuf, preview)
+		}
+	} else {
+		// We just committed the final newline: drop any preview line.
+		if n := len(sh.logBuf); n > 0 && strings.HasSuffix(sh.logBuf[n-1], "▏") {
+			sh.logBuf = sh.logBuf[:n-1]
+		}
+	}
+	if len(sh.logBuf) > 2000 {
+		sh.logBuf = sh.logBuf[len(sh.logBuf)-1500:]
+	}
+}
+
+// flushStream commits any buffered streamBuf content as a final log
+// line and clears the buffer. Caller must hold sh.mu.
+func (sh *Shell) flushStream() {
+	// Drop the live preview line if any.
+	if n := len(sh.logBuf); n > 0 && strings.HasSuffix(sh.logBuf[n-1], "▏") {
+		sh.logBuf = sh.logBuf[:n-1]
+	}
+	if sh.streamBuf == "" {
+		return
+	}
+	sh.logBuf = append(sh.logBuf, "    "+sh.streamBuf)
+	sh.streamBuf = ""
 }
 
 // SetSessions replaces the sessions display with a fresh list.
@@ -228,10 +336,34 @@ func (sh *Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case shellLogMsg:
 		sh.mu.Lock()
+		// If there's an in-progress stream preview, drop it so the
+		// new log lines land underneath rather than next to the
+		// half-finished chat reply.
+		if n := len(sh.logBuf); n > 0 && strings.HasSuffix(sh.logBuf[n-1], "▏") {
+			pending := strings.TrimSuffix(sh.logBuf[n-1], "▏")
+			sh.logBuf[n-1] = pending
+		}
 		sh.logBuf = append(sh.logBuf, m.lines...)
 		if len(sh.logBuf) > 2000 {
 			sh.logBuf = sh.logBuf[len(sh.logBuf)-1500:]
 		}
+		// If a stream was in progress, start a fresh preview line
+		// after the new log lines.
+		if sh.streamBuf != "" {
+			sh.logBuf = append(sh.logBuf, "    "+sh.streamBuf+"▏")
+		}
+		sh.mu.Unlock()
+		return sh, nil
+
+	case shellStreamMsg:
+		sh.mu.Lock()
+		sh.applyStream(m.text)
+		sh.mu.Unlock()
+		return sh, nil
+
+	case shellStreamFinishMsg:
+		sh.mu.Lock()
+		sh.flushStream()
 		sh.mu.Unlock()
 		return sh, nil
 
@@ -374,8 +506,14 @@ func (sh *Shell) submitLine() (tea.Model, tea.Cmd) {
 		return sh, tea.Quit
 	}
 
-	// Echo to log
-	sh.logBuf = append(sh.logBuf, fmt.Sprintf("› %s", trimmed))
+	// Echo to log — different marker for chat vs slash commands so
+	// the user can visually separate "I typed this" from assistant
+	// replies (which use "● (chat)").
+	echoMark := "❯"
+	if !strings.HasPrefix(trimmed, "/") {
+		echoMark = "›"
+	}
+	sh.logBuf = append(sh.logBuf, fmt.Sprintf("%s %s", shellCmdEcho.Render(echoMark), trimmed))
 
 	if sh.busy {
 		sh.logBuf = append(sh.logBuf, "  (busy — command already running; wait for it to finish)")
@@ -404,17 +542,23 @@ func (sh *Shell) submitLine() (tea.Model, tea.Cmd) {
 // --- Rendering ---
 
 var (
-	shellBorder       = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
-	shellBannerTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	shellBannerSub    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	shellSectionTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
-	shellSessionDone  = lipgloss.NewStyle().Foreground(lipgloss.Color("35"))
-	shellSessionRun   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	shellSessionFail  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	shellSessionPend  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	shellPrompt       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	shellStatusStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
-	shellBusyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	shellBorder        = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
+	shellBorderActive  = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86"))
+	shellBannerTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	shellBannerAccent  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207"))
+	shellBannerSub     = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	shellSectionTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	shellSessionDone   = lipgloss.NewStyle().Foreground(lipgloss.Color("35"))
+	shellSessionRun    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	shellSessionFail   = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	shellSessionPend   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	shellPrompt        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	shellPromptBusy    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
+	shellPromptAnswer  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207"))
+	shellStatusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+	shellBusyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	shellChatMarker    = lipgloss.NewStyle().Foreground(lipgloss.Color("207"))
+	shellCmdEcho       = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 )
 
 func (sh *Shell) View() string {
@@ -433,11 +577,22 @@ func (sh *Shell) View() string {
 	var b strings.Builder
 	b.WriteString(sh.renderBanner(width))
 	b.WriteString("\n")
-	b.WriteString(sh.renderSessions(width))
-	b.WriteString("\n")
+
+	// Sessions pane is only shown when there are active sessions.
+	// In pure-chat mode this lets the log pane use the full height
+	// instead of wasting 4 lines on an empty "(no active SOW)" box.
+	sessionsVisible := len(sh.sessions) > 0
+	if sessionsVisible {
+		b.WriteString(sh.renderSessions(width))
+		b.WriteString("\n")
+	}
 
 	// Log pane takes remaining space above the input (3 lines for input+status)
-	logHeight := height - sh.bannerHeight() - sh.sessionsHeight() - 3
+	usedHeight := sh.bannerHeight() + 3 // input+status+gap
+	if sessionsVisible {
+		usedHeight += sh.sessionsHeight()
+	}
+	logHeight := height - usedHeight
 	if logHeight < 3 {
 		logHeight = 3
 	}
@@ -448,7 +603,8 @@ func (sh *Shell) View() string {
 }
 
 func (sh *Shell) bannerHeight() int {
-	n := 3 // 1 title + 1 sub + 1 gap
+	// 1 title + 1 meta line + 1 gap line = 3.
+	n := 3
 	if len(sh.cfg.Notes) > 0 {
 		n += len(sh.cfg.Notes)
 	}
@@ -468,25 +624,34 @@ func (sh *Shell) sessionsHeight() int {
 
 func (sh *Shell) renderBanner(width int) string {
 	var b strings.Builder
-	title := fmt.Sprintf("⚡ Stoke %s  %s", sh.cfg.Version, truncStr(sh.cfg.RepoRoot, width-20))
-	b.WriteString(shellBannerTitle.Render(title) + "\n")
+	// Title line: big, colorful, with repo path in muted color.
+	title := shellBannerTitle.Render(fmt.Sprintf("⚡ Stoke %s", sh.cfg.Version))
+	repo := shellBannerSub.Render("  " + truncStr(sh.cfg.RepoRoot, width-24))
+	b.WriteString(title + repo + "\n")
 
+	// Meta line: runner / base / model / supervisor, separated by a
+	// middle dot. Accent the runner so the eye catches it.
 	var parts []string
 	if sh.cfg.Runner != "" {
-		parts = append(parts, "runner: "+sh.cfg.Runner)
+		parts = append(parts, shellBannerAccent.Render(sh.cfg.Runner))
 	}
 	if sh.cfg.BaseURL != "" {
-		parts = append(parts, "base: "+sh.cfg.BaseURL)
+		parts = append(parts, shellBannerSub.Render("base "+truncStr(sh.cfg.BaseURL, 30)))
 	}
 	if sh.cfg.Model != "" {
-		parts = append(parts, "model: "+sh.cfg.Model)
+		parts = append(parts, shellBannerSub.Render("model "+sh.cfg.Model))
 	}
 	if sh.cfg.Supervisor != "" {
-		parts = append(parts, "super: "+sh.cfg.Supervisor)
+		parts = append(parts, shellBannerSub.Render("super "+sh.cfg.Supervisor))
 	}
-	b.WriteString(shellBannerSub.Render(strings.Join(parts, " · ")))
+	if len(parts) > 0 {
+		dot := shellBannerSub.Render(" · ")
+		b.WriteString(strings.Join(parts, dot))
+	}
+	// Notes render as their own lines below the meta — this is where
+	// the "chat mode via ..." and auto-detect notes live.
 	for _, note := range sh.cfg.Notes {
-		b.WriteString("\n" + shellBannerSub.Render("  "+note))
+		b.WriteString("\n" + shellBannerSub.Render("  "+truncStr(note, width-4)))
 	}
 	return b.String()
 }
@@ -494,10 +659,6 @@ func (sh *Shell) renderBanner(width int) string {
 func (sh *Shell) renderSessions(width int) string {
 	var b strings.Builder
 	b.WriteString(shellSectionTitle.Render("Sessions") + "\n")
-	if len(sh.sessions) == 0 {
-		b.WriteString(shellSessionPend.Render("  (no active SOW — type /build-from-scope to start)"))
-		return shellBorder.Width(width - 2).Render(b.String())
-	}
 	// Render up to 8 most recent
 	start := 0
 	if len(sh.sessions) > 8 {
@@ -619,27 +780,32 @@ func (sh *Shell) AnswerPromptForTest(answer string) {
 }
 
 func (sh *Shell) renderInput(width int) string {
-	prompt := "> "
-	if sh.promptCh != nil {
-		// Modal prompt: show the label in the input line so the user knows
-		// they're answering a question, not running a command.
-		prompt = "? "
-	} else if sh.busy {
-		prompt = "…  "
+	var prompt string
+	switch {
+	case sh.promptCh != nil:
+		// Modal prompt mode (e.g. interview question)
+		prompt = shellPromptAnswer.Render("? ")
+	case sh.busy:
+		prompt = shellPromptBusy.Render("… ")
+	default:
+		// Chat-first prompt: chevron pair signals "say something"
+		prompt = shellPrompt.Render("❯ ")
 	}
-	line := shellPrompt.Render(prompt) + sh.input
+
+	line := prompt + sh.input
 	if sh.focus == focusInput {
-		line += "▎" // cursor indicator
+		line += shellPrompt.Render("▎") // cursor indicator
 	}
+
 	status := sh.status
 	if status == "" {
 		switch {
 		case sh.promptCh != nil:
 			status = shellBusyStyle.Render("answer: " + truncStr(sh.promptLabel, width-12))
 		case sh.busy:
-			status = shellBusyStyle.Render("working — Ctrl+C to cancel")
+			status = shellBusyStyle.Render("working… Ctrl+C to cancel")
 		default:
-			status = shellStatusStyle.Render("/help · Tab=focus · PgUp/PgDn=scroll · Ctrl+C=quit")
+			status = shellStatusStyle.Render("talk to Stoke · /help for commands · Tab=focus · PgUp/PgDn=scroll · Ctrl+C=quit")
 		}
 	} else {
 		status = shellStatusStyle.Render(status)

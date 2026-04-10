@@ -6,3 +6,9 @@
 coverage.out
 dist/
 trio-main/
+.claude/
+.claude-config/
+.codex/
+runclaude
+runloop
+setup.sh

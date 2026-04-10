@@ -393,6 +393,17 @@ echo '{"decision":"allow"}'
 // GenerateCLAUDEmd writes a CLAUDE.md file with Stoke context for interactive sessions.
 // outputFile: for scope mode, the allowed plan output path.
 func GenerateCLAUDEmd(repoRoot, mode, outputFile string) error {
+	return GenerateCLAUDEmdWithTask(repoRoot, mode, outputFile, "")
+}
+
+// GenerateCLAUDEmdWithTask is GenerateCLAUDEmd with an optional task
+// description that gets embedded in the scope-mode preamble so the
+// interactive Claude Code session starts with context from whatever
+// upstream flow dispatched it (e.g. the chat handler's "ya make that
+// a scope" agreement).
+//
+// Passing task == "" is identical to calling GenerateCLAUDEmd.
+func GenerateCLAUDEmdWithTask(repoRoot, mode, outputFile, task string) error {
 	content := `# Stoke-Managed Session
 
 This repo is under Stoke orchestration. Rules:
@@ -430,6 +441,15 @@ This repo is under Stoke orchestration. Rules:
 - The JSON should follow this format:
   {"id": "plan-YYYYMMDD", "description": "...", "tasks": [{"id": "TASK-1", "description": "...", "files": [...], "dependencies": [], "type": "refactor"}]}
 `, outputFile, outputFile)
+		if strings.TrimSpace(task) != "" {
+			content += fmt.Sprintf(`
+## Task Brief
+The upstream chat session agreed on this scope — use it as your starting point
+and ask clarifying questions before writing the plan:
+
+%s
+`, strings.TrimSpace(task))
+		}
 	}
 
 	return safeWrite(filepath.Join(repoRoot, "CLAUDE.md"), []byte(content), 0644)

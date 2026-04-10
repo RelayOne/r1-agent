@@ -192,21 +192,22 @@ func (r *REPL) Run() {
 	absRepo, _ := filepath.Abs(r.RepoRoot)
 	repoName := filepath.Base(absRepo)
 
-	r.println("⚡ STOKE")
+	// Inline banner. Kept compact because launchREPL prints a richer
+	// banner with chat/runner/model info before calling Run, but we
+	// still list registered commands so a REPL used standalone (e.g.
+	// in unit tests or a host that doesn't print its own banner)
+	// has a self-explanatory help surface.
+	r.println("⚡ STOKE  /help for all commands  /quit to exit")
 	r.printf("  repo: %s\n", absRepo)
 	r.println("")
-	r.println("  Type naturally to chat. Stoke dispatches to Claude Code behind the scenes.")
-	r.println("  Slash commands trigger orchestrated workflows:")
-	r.println("")
 
-	// Print available commands
+	// Display order for the /help command and startup listing.
 	order := []string{"ship", "build", "scope", "repair", "scan", "audit", "plan", "run", "interview", "skills", "yolo", "findings", "add-claude", "add-codex", "pools", "remove-pool", "status", "pool", "help", "quit"}
 	for _, name := range order {
 		if cmd, ok := r.Commands[name]; ok {
 			r.printf("    /%-10s %s\n", cmd.Name, cmd.Description)
 		}
 	}
-	// Print any commands not in the ordered list
 	for name, cmd := range r.Commands {
 		found := false
 		for _, o := range order {
