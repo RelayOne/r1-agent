@@ -36,6 +36,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	hubbuiltin "github.com/ericmacdougall/stoke/internal/hub/builtin"
 	"github.com/ericmacdougall/stoke/internal/interview"
 	litellmPkg "github.com/ericmacdougall/stoke/internal/litellm"
 	"github.com/ericmacdougall/stoke/internal/ledger"
@@ -1742,9 +1743,20 @@ func sowCmd(args []string) {
 		// reference specific identifiers against the actual spec.
 		rawSOWText := loadRawSOWText(*sowFile, sow)
 
+		// Event bus for SOW native path: the default observers (flowtrack,
+		// consent gate) plus the workspace reconciler, which watches
+		// package.json edits and runs pnpm install between tasks so the
+		// next task starts with a consistent node_modules graph. This
+		// removes an entire class of "cannot find module" repair loops
+		// the Sentinel SOW run kept hitting.
+		sowBus := newEventBus()
+		reconciler := hubbuiltin.NewWorkspaceReconciler(absRepo)
+		reconciler.Register(sowBus)
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			Runner:            runner,
+			EventBus:          sowBus,
 			MaxTurns:          100,
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
