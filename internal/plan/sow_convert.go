@@ -257,8 +257,19 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 	// BOM, trailing commas, etc. via the shared jsonutil helper.
 	jsonBlob, extractErr := jsonutil.ExtractJSONObject(raw)
 	if extractErr != nil {
-		dumpOnErr(nil)
-		return nil, nil, fmt.Errorf("parse generated SOW: %w (raw saved to /tmp/stoke-sow-raw.txt)", extractErr)
+		// Last-ditch: send the broken raw output back to the model
+		// with a narrow 'fix the JSON syntax' prompt. Long prose
+		// conversions occasionally produce structurally invalid
+		// JSON (missing commas between array elements, stray colons
+		// where comma-separated keys were intended, etc.) that no
+		// static repair can reliably handle. One extra LLM call,
+		// but it recovers dozens of minutes of downstream work.
+		repaired, repairErr := repairJSONViaLLM(raw, prov, model)
+		if repairErr != nil {
+			dumpOnErr(nil)
+			return nil, nil, fmt.Errorf("parse generated SOW: %w; repair attempt also failed: %v (raw saved to /tmp/stoke-sow-raw.txt)", extractErr, repairErr)
+		}
+		jsonBlob = repaired
 	}
 
 	sow, err := ParseSOW(jsonBlob, "generated.json")
