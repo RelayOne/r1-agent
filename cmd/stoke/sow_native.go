@@ -1159,11 +1159,41 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		sys.WriteString("You are an autonomous coding agent in REPAIR mode. A previous pass through this session produced code that fails the session's acceptance criteria. ")
 		sys.WriteString("Read the failure output in the user message below, understand what's wrong, and fix it by editing files directly in the project root. ")
 		sys.WriteString("Do not rewrite unrelated code. Do not break criteria that are already passing. Use the bash tool to re-run the failing commands yourself to verify your fix before ending.\n\n")
+		sys.WriteString("COMMON FAILURE CLASSES and how to fix them:\n")
+		sys.WriteString("  - \"X: not found\" or \"command not found\" → the binary isn't installed. For Node workspaces: add the package to the relevant package.json devDependencies and run `pnpm install` (or npm/yarn). Do NOT switch to a different command that happens to exist.\n")
+		sys.WriteString("  - \"Cannot find module X\" / \"Module not found\" → the import path is wrong OR the dependency isn't declared. Check that every `import` / `require` matches a declared dependency.\n")
+		sys.WriteString("  - \"missing script: X\" → package.json has no script with that name. Add it. `pnpm <script>` only runs scripts declared in package.json.scripts.\n")
+		sys.WriteString("  - \"node_modules missing\" → run `pnpm install` at the workspace root first.\n")
+		sys.WriteString("  - \"file not found: X\" → create X with real content, not an empty stub.\n")
+		sys.WriteString("  - Test fails with 0 tests collected → the test runner isn't configured (missing vitest.config.ts / jest.config.js) OR the test files don't match the runner's glob pattern.\n")
+		sys.WriteString("  - Type errors reference missing @types → add the @types/<pkg> devDep and re-install.\n")
+		sys.WriteString("After you make each fix, re-run the exact failing command via bash and confirm exit 0 BEFORE moving to the next fix. Never end the repair without re-running every failing command at least once.\n\n")
 	} else {
 		sys.WriteString("You are an autonomous coding agent working on a project defined by a Statement of Work (SOW). ")
 		sys.WriteString("Your job: implement the single task described in the user message by writing files directly to the project root. ")
 		sys.WriteString("Use the available file tools (read_file, write_file, edit_file, bash) to create or modify files as needed. ")
 		sys.WriteString("Do NOT create worktrees or branches — write directly to the repo. When you believe the task is complete, verify by running the relevant acceptance criteria commands with bash before ending.\n\n")
+		sys.WriteString("BEFORE YOU END the task, run through this self-check (don't just trust that you did these):\n")
+		sys.WriteString("  1. Every file listed in 'expected files' below actually exists and has REAL content (not a one-line stub, not a comment-only file). Use `ls -la` and `wc -l` to verify.\n")
+		sys.WriteString("  2. Every library you `import` / `require` / `use` is declared in the matching package.json / Cargo.toml / go.mod / requirements.txt. Missing imports become runtime failures the ACs will catch later.\n")
+		sys.WriteString("  3. If your task creates a package.json that has an acceptance criterion like `pnpm build --filter=X`, that package.json MUST have a `build` script. Same for `typecheck`, `test`, `lint` — if the SOW ACs reference them, declare them.\n")
+		sys.WriteString("  4. If you created test files, you also need the test runner configured (vitest.config.ts / jest.config.js / pytest.ini) AND a `test` script in the package that owns the tests. Test files with no runner are dead code.\n")
+		sys.WriteString("  5. If you added a new dep to package.json, run `pnpm install` so node_modules is updated before ending.\n")
+		sys.WriteString("  6. Run the session's acceptance criteria commands via bash yourself. If any exit non-zero, investigate and fix before ending — don't hand it off to the repair loop to find.\n\n")
+	}
+
+	// Node-specific ecosystem discipline. Emit only when the SOW stack
+	// or framework signals a JS/TS workspace, so Rust/Go/Python runs
+	// aren't cluttered by irrelevant guidance.
+	if isNodeStack(sowDoc) {
+		sys.WriteString("NODE/TYPESCRIPT ECOSYSTEM DISCIPLINE (this project uses pnpm + a monorepo):\n")
+		sys.WriteString("  - node_modules/.bin is on PATH when acceptance commands run, so prefer direct invocation (`tsc --noEmit`, `vitest run`, `next build`) over `npx` / `pnpm exec` wrappers.\n")
+		sys.WriteString("  - If you add a dependency, put it in the package.json of the package that actually imports it — NOT always the root. Each package in the workspace owns its own deps.\n")
+		sys.WriteString("  - Workspace dependencies across packages use `\"@sentinel/types\": \"workspace:*\"` syntax so pnpm resolves them to the sibling package, not a registry lookup.\n")
+		sys.WriteString("  - Every package that has a `tsconfig.json` should extend from a shared base in `tooling/tsconfig/base.json` and set `\"extends\": \"@sentinel/tsconfig/base.json\"` only if that package is actually in the workspace. When extending a relative path, use `\"../../tooling/tsconfig/base.json\"`.\n")
+		sys.WriteString("  - `pnpm` scripts run in the cwd of the package that owns them. `pnpm --filter <pkg> <script>` is the correct way to target one package from the root.\n")
+		sys.WriteString("  - Never rely on `$REPO_URL`, `git clone`, or any external network access for acceptance criteria. The repo IS the current working directory; ACs test the state on disk right here.\n")
+		sys.WriteString("  - When tests are added, the test runner (vitest / jest) must be in devDependencies AND its config file must exist AND a `test` script must invoke it. Any of these missing = tests are dead code.\n\n")
 	}
 
 	// Working-directory anchor. Without this, a model that writes
@@ -1332,7 +1362,43 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 	if repair != nil {
 		usr.WriteString("FAILING ACCEPTANCE CRITERIA (fix these):\n")
 		usr.WriteString(*repair)
-		usr.WriteString("\nInvestigate the failures, make the minimum changes necessary to fix them, then re-run the failing command(s) with bash to confirm your fix before ending.\n")
+		usr.WriteString(`
+INVESTIGATION PROTOCOL:
+  1. Read the failure output carefully. Don't skim it — specific error
+     strings ("Cannot find module", "tsc: not found", "missing script:",
+     "exit status 1") each have a known cause and fix.
+  2. For EACH failing criterion, run the exact command yourself via bash
+     FIRST to reproduce. Don't guess from the output you were given.
+  3. Trace each error to its root cause on disk. "tsc: not found" is
+     NOT a toolchain problem — it means node_modules wasn't installed
+     or the package has no tsc dep. Fix the root cause, not the symptom.
+  4. After each fix, re-run the SAME command and confirm exit 0.
+  5. Only end when every failing command passes. Do not end early,
+     do not say "should be fixed now" without verifying.
+
+TYPICAL ROOT CAUSES (apply the matching fix, not a workaround):
+  - "missing script: build" in a package.json → add the script to that
+    package.json's "scripts" block. Don't work around it by running
+    tsc directly from the root.
+  - "Cannot find module '@scope/pkg'" → either (a) the import path is
+    wrong, (b) the workspace dependency isn't declared via
+    "workspace:*", or (c) pnpm install needs to re-run. Check all three.
+  - "tsc: not found" → add typescript to the package's devDependencies
+    and run pnpm install. Every package that has its own tsconfig
+    needs its own typescript devDep (pnpm doesn't hoist unless
+    explicitly configured).
+  - Test file exists but runner says "0 tests found" → the runner
+    config doesn't pick it up. Check vitest.config.ts / jest.config.js
+    include globs and the file extension.
+  - "pnpm --filter X build" fails → open X/package.json, verify the
+    "build" script exists and points at a real tool.
+  - File-exists check fails → write the file with REAL content. Not an
+    empty stub, not a one-line comment.
+
+Make the minimum changes that actually fix the root cause. After your
+fixes, re-run every failing command listed above with bash and confirm
+exit 0 before you end.
+`)
 	} else {
 		// 1. Identifier checklist — forces the model to state its
 		// planned names against the spec before writing.
@@ -1380,6 +1446,36 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 func buildSOWNativePrompt(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string) string {
 	sys, usr := buildSOWNativePrompts(sowDoc, session, task, rmap, mapBudget, repair, nil)
 	return sys + "\n" + usr
+}
+
+// isNodeStack reports whether a SOW declares a JavaScript / TypeScript
+// stack. Used to gate ecosystem-specific prompt nudges so Rust/Go/Python
+// sessions don't get irrelevant pnpm / tsc guidance.
+func isNodeStack(sowDoc *plan.SOW) bool {
+	if sowDoc == nil {
+		return false
+	}
+	lang := strings.ToLower(sowDoc.Stack.Language)
+	if lang == "typescript" || lang == "javascript" || lang == "ts" || lang == "js" {
+		return true
+	}
+	fw := strings.ToLower(sowDoc.Stack.Framework)
+	if strings.Contains(fw, "next") || strings.Contains(fw, "react") || strings.Contains(fw, "vue") ||
+		strings.Contains(fw, "svelte") || strings.Contains(fw, "expo") || strings.Contains(fw, "nest") ||
+		strings.Contains(fw, "remix") || strings.Contains(fw, "astro") {
+		return true
+	}
+	if sowDoc.Stack.Monorepo != nil {
+		mgr := strings.ToLower(sowDoc.Stack.Monorepo.Manager)
+		if mgr == "pnpm" || mgr == "npm" || mgr == "yarn" || mgr == "bun" {
+			return true
+		}
+		tool := strings.ToLower(sowDoc.Stack.Monorepo.Tool)
+		if strings.Contains(tool, "turbo") || strings.Contains(tool, "nx") || strings.Contains(tool, "lerna") {
+			return true
+		}
+	}
+	return false
 }
 
 // inferBaselineCriteria returns synthetic acceptance criteria for a stack
