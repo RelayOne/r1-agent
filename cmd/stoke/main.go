@@ -1685,8 +1685,37 @@ func sowCmd(args []string) {
 		// Continuation callback: turn CTO-surfaced continuations into
 		// a new session the scheduler will pick up. Uses AppendSession
 		// which extends the live session list.
+		//
+		// Cascade guard: we cap the continuation chain depth so an
+		// unsolvable failing criterion can't spawn S1 -> S1-cont ->
+		// S1-cont-cont -> ... indefinitely. The Sentinel SOW run
+		// surfaced this: every continuation for an escalated session
+		// got stuck on the same 1 criterion, the CTO judge kept
+		// surfacing it as "still needed", and AppendSession kept
+		// creating new -cont sessions for it. Each iteration burned
+		// LLM calls and made zero progress.
+		//
+		// maxCascadeDepth: 2 allows one round of auto-remediation
+		// (S1 -> S1-cont) plus one retry (S1-cont -> S1-cont-cont),
+		// then halts. Any deeper cascade is classified as
+		// "non-converging" and surfaced to the final SOW report for
+		// operator attention.
+		const maxCascadeDepth = 2
 		continuationCallback := func(fromSession string, items []string) {
 			if len(items) == 0 {
+				return
+			}
+			// Count how deep in the cascade this continuation would
+			// be. "-cont" suffixes in the parent ID tell us; each
+			// suffix adds a depth level. e.g. "S1" -> depth 0, so
+			// creating S1-cont = depth 1. "S1-cont-cont" -> depth 2,
+			// so creating S1-cont-cont-cont = depth 3 (blocked).
+			depth := strings.Count(fromSession, "-cont")
+			if depth >= maxCascadeDepth {
+				fmt.Printf("  ✗ cascade guard: refusing to spawn continuation from %s (depth %d >= max %d)\n", fromSession, depth+1, maxCascadeDepth)
+				fmt.Printf("    the CTO judge has surfaced %d item(s) for %s but the cascade hasn't converged.\n", len(items), fromSession)
+				fmt.Printf("    items: %v\n", items)
+				fmt.Printf("    the failing criterion is likely structurally unfixable by the current SOW (brittle AC, missing task, wrong command). Inspect .stoke/sow-state.json to triage.\n")
 				return
 			}
 			contID := fmt.Sprintf("%s-cont", fromSession)
@@ -1705,7 +1734,7 @@ func sowCmd(args []string) {
 			// inherit baseline criteria from inferBaselineCriteria via
 			// runSessionNative, so it still gets verified.
 			ss.AppendSession(cont)
-			fmt.Printf("  appended continuation session %s with %d tasks\n", contID, len(items))
+			fmt.Printf("  appended continuation session %s with %d tasks (cascade depth %d/%d)\n", contID, len(items), depth+1, maxCascadeDepth)
 		}
 
 		// Wisdom store: load any prior snapshot for this SOW so a
