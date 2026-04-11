@@ -30,6 +30,24 @@ func ExtractJSONObject(raw string) (json.RawMessage, error) {
 	blob = removeTrailingCommas(blob)
 	// Validate via a round-trip parse.
 	var v interface{}
+	if err := json.Unmarshal([]byte(blob), &v); err == nil {
+		return json.RawMessage(blob), nil
+	}
+	// First parse failed. Try repairing the two most common LLM
+	// emission bugs on long outputs: missing commas between array/object
+	// elements (e.g. `},"id"` or `]"next"` — the model closed one
+	// element and started the next without a separator). If the repair
+	// produces valid JSON, return it. Otherwise return the original
+	// error so the caller sees what actually broke.
+	repaired := insertMissingCommas(blob)
+	if repaired != blob {
+		if err := json.Unmarshal([]byte(repaired), &v); err == nil {
+			return json.RawMessage(repaired), nil
+		}
+	}
+	// Re-run the original unmarshal to generate the same error message
+	// callers were seeing before repair was added, so diagnostics line
+	// up with the blob we return in ExtractError.
 	if err := json.Unmarshal([]byte(blob), &v); err != nil {
 		return nil, &ExtractError{Raw: raw, Blob: blob, Reason: "unmarshal: " + err.Error()}
 	}
@@ -127,6 +145,72 @@ func findBalancedObject(s string) (int, int) {
 		}
 	}
 	return -1, -1
+}
+
+// insertMissingCommas inserts a comma between two adjacent JSON
+// elements when the model forgot the separator. It handles these
+// patterns (outside of string literals):
+//
+//	}"    -> },"      (object followed by next key/element)
+//	]"    -> ],"      (array  followed by next key/element)
+//	}{    -> },{      (two objects in an array, no comma)
+//	][    -> ],[      (two arrays  in an array, no comma)
+//	]{    -> ],{      (array then object in an array, no comma)
+//	}[    -> },[      (object then array in an array, no comma)
+//
+// It is conservative: it only inserts commas when the left-hand
+// character actually closes a container, never inside strings, and
+// never when the next non-whitespace character is one of , ] } which
+// would be legitimate continuations. If the input was already valid,
+// the output equals the input and the caller's second unmarshal pass
+// is a no-op. This is the minimal repair for long LLM-emitted JSON
+// that truncates or drops a separator at container boundaries.
+func insertMissingCommas(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 16)
+	inStr := false
+	escaped := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		b.WriteByte(c)
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inStr {
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			continue
+		}
+		if c == '}' || c == ']' {
+			// Look ahead past whitespace to the next non-space char.
+			j := i + 1
+			for j < len(s) && unicode.IsSpace(rune(s[j])) {
+				j++
+			}
+			if j >= len(s) {
+				continue
+			}
+			next := s[j]
+			// Next char starts a new element if it opens a string,
+			// an object, or an array. The valid continuations after
+			// a closing brace/bracket are , ] } (end of parent) or
+			// EOF — none of which trigger the repair.
+			if next == '"' || next == '{' || next == '[' {
+				b.WriteByte(',')
+			}
+		}
+	}
+	return b.String()
 }
 
 // removeTrailingCommas strips JavaScript-style trailing commas (before

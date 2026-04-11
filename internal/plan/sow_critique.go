@@ -203,7 +203,18 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 
 	blob, extractErr := jsonutil.ExtractJSONObject(raw)
 	if extractErr != nil {
-		return nil, fmt.Errorf("parse refined SOW: %w (raw saved to /tmp/stoke-refine-raw.txt, stop_reason=%q)", extractErr, resp.StopReason)
+		// Last-ditch: send the broken JSON back to the model with a
+		// narrow "fix the syntax only" prompt. LLMs emitting long
+		// SOWs occasionally produce structurally invalid JSON
+		// (missing commas, missing braces on array elements) that
+		// no static repair pass can reliably fix. The repair call is
+		// cheap because the input is only the broken blob plus a
+		// one-paragraph directive.
+		repaired, repairErr := repairJSONViaLLM(raw, prov, model)
+		if repairErr != nil {
+			return nil, fmt.Errorf("parse refined SOW: %w; repair attempt also failed: %v (raw saved to /tmp/stoke-refine-raw.txt, stop_reason=%q)", extractErr, repairErr, resp.StopReason)
+		}
+		blob = repaired
 	}
 	refined, err := ParseSOW(blob, "refined.json")
 	if err != nil {
@@ -224,6 +235,50 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 		return nil, fmt.Errorf("refined SOW failed validation: %s (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", strings.Join(errs, "; "), resp.StopReason)
 	}
 	return refined, nil
+}
+
+// repairJSONViaLLM is a last-ditch salvage path for long SOW
+// refinements that come back structurally invalid (missing commas,
+// missing opening braces on array elements, etc.). It sends the broken
+// blob back to the model with a single narrow directive: emit valid
+// JSON with the same intent, nothing else. One extra LLM call, but
+// reliable where hand-rolled repair passes fail on real model output.
+//
+// The returned json.RawMessage is guaranteed to parse as JSON if the
+// error is nil — the caller still has to check the SOW schema.
+func repairJSONViaLLM(brokenRaw string, prov provider.Provider, model string) (json.RawMessage, error) {
+	if prov == nil {
+		return nil, fmt.Errorf("no provider for JSON repair")
+	}
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+	prompt := `The following text is supposed to be a single JSON object but has one or more structural syntax errors (missing commas, missing opening braces, truncation mid-element, etc.). Fix the syntax ONLY — do not add, remove, or change any meaningful content. Preserve every id, description, command, file path, and structural field exactly as written. If the text was truncated mid-element, close the open containers in the natural place and drop the incomplete element rather than fabricating content. Output ONLY the fixed JSON object — no markdown fences, no prose, no explanation.
+
+BROKEN JSON:
+` + brokenRaw
+	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": prompt}})
+	resp, err := prov.Chat(provider.ChatRequest{
+		Model:     model,
+		MaxTokens: 32000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("repair chat: %w", err)
+	}
+	raw, _ := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("repair returned no usable content (stop_reason=%q)", resp.StopReason)
+	}
+	// Dump the repair output too, so failures downstream are visible.
+	dumpRespMu.Lock()
+	_ = os.WriteFile("/tmp/stoke-refine-repair-raw.txt", []byte(raw), 0o644)
+	dumpRespMu.Unlock()
+	blob, err := jsonutil.ExtractJSONObject(raw)
+	if err != nil {
+		return nil, fmt.Errorf("repair output still unparseable: %w (saved to /tmp/stoke-refine-repair-raw.txt)", err)
+	}
+	return blob, nil
 }
 
 // CritiqueAndRefine runs up to maxPasses critique→refine cycles until the
