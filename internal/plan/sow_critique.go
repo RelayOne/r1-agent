@@ -48,6 +48,10 @@ ACCEPTANCE CRITERION HYGIENE RULES (flag as BLOCKING if any are violated):
      content_match or command that verifies the file is not empty /
      is a real implementation. A file_exists check alone passes on
      any 0-byte file the model writes.
+  7. No Playwright, Cypress, or browser-based E2E test commands.
+     These require browser binaries and display servers that the
+     build agent doesn't have. Flag any AC that runs playwright,
+     cypress, or puppeteer as BLOCKING.
 
 Output ONLY a JSON object. No prose, no markdown fences.
 

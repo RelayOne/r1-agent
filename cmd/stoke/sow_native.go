@@ -452,6 +452,22 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		// loop below verifies the final state.
 	}
 
+	// Phase 1.75: foundation sanity check. Before running the session's
+	// declared ACs, run a quick "does the workspace even build?" gate.
+	// This catches the two most common root causes that cascade into
+	// EVERY session AC failing:
+	//   a) deps not installed → pnpm install
+	//   b) TypeScript syntax error → tsc --noEmit
+	//
+	// If either fails, dispatch a targeted repair task focused on
+	// making the build green, THEN proceed to the declared ACs. This
+	// avoids the "4/4 ACs fail because pnpm install wasn't run" waste
+	// loop that was burning 3 repair attempts × 5 reasoning calls on
+	// something a single pnpm install would fix.
+	if isNodeStack(sowDoc) && cfg.RepoRoot != "" {
+		runFoundationSanityCheck(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
+	}
+
 	// Phase 2: self-repair loop. Run the session's acceptance criteria;
 	// if any fail, construct a repair prompt containing the exact failure
 	// output and run it as a new task. Repeat up to maxRepairs times
@@ -1945,6 +1961,48 @@ func runReasoningForStuckCriteria(
 		}
 	}
 	return hintBlob.String()
+}
+
+// runFoundationSanityCheck runs a quick build gate before the session's
+// declared ACs fire. For Node workspaces: pnpm install + tsc --noEmit.
+// If either fails, dispatches a focused repair task to fix it. This
+// prevents the "every AC fails because deps weren't installed" cascade.
+func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *plan.SOW, workingSession plan.Session, runtimeDir string, maxTurns int) {
+	if cfg.RepoRoot == "" {
+		return
+	}
+	// Step 1: ensure deps are installed
+	installCmd := exec.CommandContext(ctx, "bash", "-lc", "pnpm install --silent 2>&1 || npm install --silent 2>&1 || true")
+	installCmd.Dir = cfg.RepoRoot
+	_ = installCmd.Run()
+
+	// Step 2: check if tsc compiles. If not, repair.
+	tscCmd := exec.CommandContext(ctx, "bash", "-lc", "tsc --noEmit 2>&1 || pnpm --filter './packages/*' typecheck 2>&1")
+	tscCmd.Dir = cfg.RepoRoot
+	// Augment PATH with node_modules/.bin
+	tscCmd.Env = append(os.Environ(), "PATH="+filepath.Join(cfg.RepoRoot, "node_modules", ".bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := tscCmd.CombinedOutput()
+	if err == nil {
+		return // foundation is green
+	}
+
+	// TypeScript doesn't compile. Dispatch a targeted repair.
+	failureBlob := fmt.Sprintf("FOUNDATION BUILD FAILURE — TypeScript does not compile. Fix ALL type errors before the session's acceptance criteria run.\n\nOutput of `tsc --noEmit`:\n%s", string(out))
+	fmt.Printf("  ⚠ foundation sanity: TypeScript errors detected, dispatching pre-AC repair...\n")
+	repairTask := plan.Task{
+		ID:          workingSession.ID + "-foundation-fix",
+		Description: "fix TypeScript compilation errors before acceptance criteria run",
+	}
+	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+		RepoMap:       cfg.RepoMap,
+		RepoMapBudget: cfg.RepoMapBudget,
+		Repair:        &failureBlob,
+		Wisdom:        cfg.Wisdom,
+		RawSOW:        cfg.RawSOWText,
+		RepoRoot:      cfg.RepoRoot,
+	})
+	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
+	_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 }
 
 // collectFailingACs returns the subset of acceptance results that failed.

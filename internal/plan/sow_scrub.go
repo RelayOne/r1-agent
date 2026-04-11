@@ -67,6 +67,8 @@ var (
 	scrubOrTrue       = regexp.MustCompile(`\s*\|\|\s*true\s*`)
 	scrubNpx          = regexp.MustCompile(`\bnpx\s+`)
 	scrubPnpmExec     = regexp.MustCompile(`\bpnpm\s+exec\s+`)
+	scrubStderrNull   = regexp.MustCompile(`\s*2>/dev/null\s*`)
+	scrubPlaywright   = regexp.MustCompile(`\bplaywright\s+test\b[^;&|]*`)
 )
 
 // scrubCommand applies every scrub rule to a single command string and
@@ -110,6 +112,20 @@ func scrubCommand(cmd string) (string, []string) {
 		fixed = scrubPnpmExec.ReplaceAllString(fixed, "")
 		if fixed != before {
 			changes = append(changes, `replaced "pnpm exec X" with direct "X" (stoke prepends node_modules/.bin to PATH)`)
+		}
+	}
+	if scrubStderrNull.MatchString(fixed) {
+		before := fixed
+		fixed = scrubStderrNull.ReplaceAllString(fixed, " ")
+		if fixed != before {
+			changes = append(changes, `stripped "2>/dev/null" (hides useful error output from AC runner)`)
+		}
+	}
+	if scrubPlaywright.MatchString(fixed) {
+		before := fixed
+		fixed = scrubPlaywright.ReplaceAllString(fixed, `echo "playwright e2e deferred"`)
+		if fixed != before {
+			changes = append(changes, `replaced "playwright test ..." with deferred echo (browser-based E2E requires setup the build agent cannot provide)`)
 		}
 	}
 

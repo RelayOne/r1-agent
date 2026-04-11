@@ -241,6 +241,13 @@ ACCEPTANCE CRITERION HYGIENE (follow these or the SOW will fail on real executio
      stack.infra. Do NOT emit commands that depend on unspecified
      global tools.
 
+  j. Do NOT emit acceptance criteria that run Playwright, Cypress, or
+     other browser-based E2E test frameworks. These require browser
+     binaries, display servers, and complex setup that an automated
+     build agent cannot provide. Use build/typecheck/unit-test
+     commands instead. If the SOW mentions E2E tests, defer them to
+     a manual testing session — do NOT make them acceptance criteria.
+
 PROSE INPUT:
 `
 
