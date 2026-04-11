@@ -1286,8 +1286,20 @@ func sowCmd(args []string) {
 			if *autoCritique && prov != nil {
 				fmt.Printf("  running SOW critique pass...\n")
 				refined, crit, critErr := plan.CritiqueAndRefine(sow, prov, modelName, 2)
+				// Smart-loop philosophy: critique IS the supervisor
+				// gate. If it produced a refined SOW we use it; if it
+				// produced an error AND no usable refinement, we halt
+				// rather than silently proceeding with a SOW the
+				// critic flagged as broken. The previous behavior was
+				// "warn and run anyway", which made critique
+				// informational-only at exactly the moment it
+				// mattered. Use --sow-critique=false to opt out
+				// entirely if you really want to skip it.
+				if critErr != nil && (refined == nil || refined == sow) {
+					fatal("SOW critique gate failed and refinement could not salvage it: %v\n  (run with --sow-critique=false to bypass at your own risk)", critErr)
+				}
 				if critErr != nil {
-					fmt.Fprintf(os.Stderr, "  critique warning: %v\n", critErr)
+					fmt.Fprintf(os.Stderr, "  critique note: %v (using refined SOW)\n", critErr)
 				}
 				if refined != nil {
 					sow = refined

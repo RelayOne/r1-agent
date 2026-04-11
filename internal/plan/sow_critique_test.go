@@ -200,6 +200,12 @@ func TestCritiqueAndRefine_ShipsAfterRefinement(t *testing.T) {
 	}
 }
 
+// When the critic rejects but refinement is impossible (mock returns
+// the same reject critique even from RefineSOW so the parse fails),
+// the error chain still surfaces "rejected" so the caller can tell
+// the difference between "buggy critique pipeline" and "critic actually
+// rejected the work". This was the previous behavior — it is preserved
+// because main.go pattern-matches on "rejected" for its warning text.
 func TestCritiqueAndRefine_Rejects(t *testing.T) {
 	rejectResp := `{"overall_score":10,"dimensions":{},"issues":[],"verdict":"reject","summary":"fundamentally broken"}`
 	prov := &mockProvider{name: "mock", response: rejectResp}
@@ -209,6 +215,41 @@ func TestCritiqueAndRefine_Rejects(t *testing.T) {
 	}
 	if crit == nil || crit.Verdict != "reject" {
 		t.Errorf("expected reject verdict")
+	}
+}
+
+// When the critic rejects but a follow-up RefineSOW call produces a
+// valid SOW that passes the next critique, CritiqueAndRefine returns
+// the refined SOW with no error. This is the smart-loop fix: a reject
+// is the strongest signal that refinement is needed, NOT a reason to
+// bail out and let the caller proceed with the buggy SOW.
+func TestCritiqueAndRefine_RefinesAfterReject(t *testing.T) {
+	rejectCrit := `{"overall_score":40,"dimensions":{"foundation":40,"decomposition":40,"criteria":30,"stack":50,"dependencies":50,"specificity":40},"issues":[{"severity":"blocking","description":"acceptance criteria are grep checks that always pass","fix":"replace with real build commands"}],"verdict":"reject","summary":"too brittle to ship"}`
+	refined := `{
+  "id": "ok",
+  "name": "Refined-after-reject",
+  "sessions": [
+    {
+      "id": "S1", "title": "Setup",
+      "tasks": [{"id": "T1", "description": "init"}],
+      "acceptance_criteria": [{"id": "AC1", "description": "build", "command": "go build ./..."}]
+    }
+  ]
+}`
+	shipCrit := `{"overall_score":92,"dimensions":{"foundation":95,"decomposition":90,"criteria":95,"stack":90,"dependencies":90,"specificity":92},"issues":[],"verdict":"ship","summary":"now it ships"}`
+	prov := &flipProvider{responses: []string{rejectCrit, refined, shipCrit}}
+	sow, crit, err := CritiqueAndRefine(goodSOW(), prov, "m", 3)
+	if err != nil {
+		t.Fatalf("CritiqueAndRefine: %v", err)
+	}
+	if crit == nil || crit.Verdict != "ship" {
+		t.Errorf("expected ship after refine; got %+v", crit)
+	}
+	if sow == nil || sow.Name != "Refined-after-reject" {
+		t.Errorf("refined SOW not used: %+v", sow)
+	}
+	if prov.call != 3 {
+		t.Errorf("expected 3 LLM calls (reject, refine, ship), got %d", prov.call)
 	}
 }
 

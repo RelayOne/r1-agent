@@ -206,6 +206,17 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 // This is the "smart" entry point called from sowCmd after prose
 // conversion: turn a rough LLM-generated SOW into something the build
 // agent can actually execute against.
+//
+// Verdict handling:
+//   - "ship" + no blocking issues → accept and return immediately
+//   - "refine" → call RefineSOW, loop with the refined SOW
+//   - "reject" → ALSO call RefineSOW. A reject verdict means "this SOW
+//     is too broken to ship as-is", which is the strongest possible
+//     signal that we should rewrite it. The previous behavior — return
+//     an error and let the caller proceed with the buggy SOW — defeated
+//     the entire point of the critique pass: it became informational
+//     only at exactly the moment it mattered most. If refinement also
+//     fails, THEN we surface the error.
 func CritiqueAndRefine(sow *SOW, prov provider.Provider, model string, maxPasses int) (*SOW, *SOWCritique, error) {
 	if maxPasses < 1 {
 		maxPasses = 2
@@ -221,14 +232,18 @@ func CritiqueAndRefine(sow *SOW, prov provider.Provider, model string, maxPasses
 		if crit.Verdict == "ship" && !crit.HasBlocking() {
 			return current, crit, nil
 		}
-		if crit.Verdict == "reject" {
-			return current, crit, fmt.Errorf("critic rejected SOW: %s", crit.Summary)
-		}
-		// Refine and loop.
+		// Both "refine" and "reject" trigger a refinement attempt. The
+		// difference is severity, not action: we always try to fix what
+		// the critic found. If RefineSOW itself fails on a reject, we
+		// surface the original reject error so the caller knows the
+		// SOW was unsalvageable rather than merely under-refined.
 		refined, err := RefineSOW(current, crit, prov, model)
 		if err != nil {
-			// Refinement failed but we have a critique — return the
-			// current SOW and let the caller decide.
+			if crit.Verdict == "reject" {
+				return current, crit, fmt.Errorf("refine pass %d failed AND critic rejected SOW: %s; refine error: %w", pass, crit.Summary, err)
+			}
+			// "refine" verdict + refine failed: return the current SOW
+			// with the critique so the caller can decide.
 			return current, crit, fmt.Errorf("refine pass %d: %w", pass, err)
 		}
 		current = refined
