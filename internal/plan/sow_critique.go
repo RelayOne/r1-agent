@@ -276,6 +276,13 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	// oversight in the refined output (single missing stack entry)
 	// would nuke the entire refinement pass.
 	autoAddMissingInfra(refined)
+	// Dependency cleanup: drop any task.Dependencies entry pointing at
+	// a task ID that no longer exists in the refined SOW. Refinement
+	// can collapse/rename tasks without updating every downstream
+	// reference, which previously failed validation with 'session S1
+	// task T26 depends on unknown task T13' even though the rest of
+	// the refinement was usable.
+	autoCleanTaskDeps(refined)
 	if errs := ValidateSOW(refined); len(errs) > 0 {
 		return nil, fmt.Errorf("refined SOW failed validation: %s (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", strings.Join(errs, "; "), resp.StopReason)
 	}
@@ -306,6 +313,44 @@ func autoAddMissingInfra(sow *SOW) {
 			}
 			sow.Stack.Infra = append(sow.Stack.Infra, InfraRequirement{Name: needed})
 			declared[needed] = true
+		}
+	}
+}
+
+// autoCleanTaskDeps drops any task.Dependencies entries that reference a
+// task ID which doesn't exist anywhere in the SOW. Refinement sometimes
+// collapses tasks or renames IDs without updating the dependency graph
+// ('session S1 task T26 depends on unknown task T13'), and ValidateSOW
+// would then reject the refined SOW even though the rest of it was
+// usable. Pruning the orphaned dep is safer than requiring the refiner
+// to emit a perfectly consistent graph: the worst case is a task runs
+// before something it wanted to wait for, which the intra-session
+// scheduler already handles via its own retry logic.
+//
+// Mutation is in place on the passed SOW.
+func autoCleanTaskDeps(sow *SOW) {
+	if sow == nil {
+		return
+	}
+	known := map[string]bool{}
+	for _, s := range sow.Sessions {
+		for _, t := range s.Tasks {
+			known[t.ID] = true
+		}
+	}
+	for si := range sow.Sessions {
+		for ti := range sow.Sessions[si].Tasks {
+			t := &sow.Sessions[si].Tasks[ti]
+			if len(t.Dependencies) == 0 {
+				continue
+			}
+			cleaned := t.Dependencies[:0]
+			for _, dep := range t.Dependencies {
+				if known[dep] {
+					cleaned = append(cleaned, dep)
+				}
+			}
+			t.Dependencies = cleaned
 		}
 	}
 }
