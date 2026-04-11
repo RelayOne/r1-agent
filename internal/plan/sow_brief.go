@@ -63,6 +63,13 @@ type TaskBriefing struct {
 	// worker's own reasoning, but a checklist that catches the
 	// "missed a step" failure mode.
 	SuggestedSteps []string `json:"suggested_steps,omitempty"`
+
+	// RelevantSkills is a list of skill names the lead dev identified
+	// as applicable to this task. Workers should read the gotchas
+	// from these skills and follow the conventions they describe.
+	// Populated by the lead-dev LLM from the skill references
+	// injected into its prompt.
+	RelevantSkills []string `json:"relevant_skills,omitempty"`
 }
 
 // SessionBriefingInput is everything the lead dev needs to produce
@@ -100,6 +107,13 @@ type SessionBriefingInput struct {
 	// said — catches "task description is abstract, spec has the
 	// exact requirements".
 	RawSOW string
+
+	// SkillReferences is a pre-formatted block listing the skills
+	// most relevant to this session's tasks. The lead dev reads
+	// this and includes applicable skill names in each task's
+	// RelevantSkills field so workers know which conventions to
+	// follow.
+	SkillReferences string
 }
 
 // BriefingRunner produces task briefings via the LLM.
@@ -190,6 +204,11 @@ func (b *BriefingRunner) Brief(ctx context.Context, in SessionBriefingInput) (ma
 		pb.WriteString("\n\n")
 	}
 
+	if in.SkillReferences != "" {
+		pb.WriteString(in.SkillReferences)
+		pb.WriteString("\n")
+	}
+
 	pb.WriteString(leadDevOutputInstructions)
 
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": pb.String()}})
@@ -263,6 +282,12 @@ func (tb *TaskBriefing) Format() string {
 			fmt.Fprintf(&b, "  %d. %s\n", i+1, s)
 		}
 	}
+	if len(tb.RelevantSkills) > 0 {
+		b.WriteString("FOLLOW THESE SKILLS (read the gotchas before starting):\n")
+		for _, s := range tb.RelevantSkills {
+			fmt.Fprintf(&b, "  - %s\n", s)
+		}
+	}
 	b.WriteString("\n")
 	return b.String()
 }
@@ -293,6 +318,8 @@ Ground rules:
 
   - Output ONE briefing per task in this wave. If a wave has 5 tasks, your output has 5 briefings.
 
+  - If RELEVANT SKILLS are shown below, read them and include the most applicable skill names in each task's "relevant_skills" list. Workers will use these to look up conventions and gotchas. Only include skills that are genuinely relevant to that specific task — don't spray every skill onto every task.
+
 `
 
 const leadDevOutputInstructions = `Output ONLY a single JSON object in this schema — no prose, no backticks, no markdown fences:
@@ -305,7 +332,8 @@ const leadDevOutputInstructions = `Output ONLY a single JSON object in this sche
       "what_is_missing": ["concrete item 1", "concrete item 2"],
       "identifiers": ["ExistingIdent1", "ExistingIdent2"],
       "pitfalls": ["specific thing to avoid"],
-      "suggested_steps": ["step 1", "step 2", "step 3"]
+      "suggested_steps": ["step 1", "step 2", "step 3"],
+      "relevant_skills": ["pnpm-monorepo-discipline", "node-test-runner-triad"]
     }
   ]
 }

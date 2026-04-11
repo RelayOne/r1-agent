@@ -43,6 +43,7 @@ type Registry struct {
 	skills         map[string]*Skill
 	dirs           []string // search directories in priority order
 	builtinsLoaded bool     // true after LoadBuiltins() has been called
+	skillIndex     *SkillIndex // multi-axis semantic index, rebuilt on Load/LoadBuiltins
 }
 
 // NewRegistry creates a skill registry that searches the given directories.
@@ -151,6 +152,9 @@ func (r *Registry) Load() error {
 			}
 		}
 	}
+	// Rebuild the multi-axis index so SearchSkills works against the
+	// freshly loaded skill set.
+	r.buildIndexLocked()
 	return nil
 }
 

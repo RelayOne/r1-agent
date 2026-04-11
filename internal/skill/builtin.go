@@ -16,7 +16,14 @@ func (r *Registry) LoadBuiltins() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtinsLoaded = true
-	return r.loadBuiltinsLocked()
+	if err := r.loadBuiltinsLocked(); err != nil {
+		return err
+	}
+	// Rebuild multi-axis index after builtins load so SearchSkills
+	// works immediately from DefaultRegistry (which calls
+	// LoadBuiltins but not Load).
+	r.buildIndexLocked()
+	return nil
 }
 
 // loadBuiltinsLocked loads builtins without acquiring the mutex.

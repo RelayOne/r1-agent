@@ -382,6 +382,24 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			}
 			repoMapBlob = cfg.RepoMap.RenderRelevant(anchor, 4000)
 		}
+		// Search the skill index for skills relevant to this session's
+		// tasks. The skill references go into the briefing prompt so
+		// the lead dev can tell each worker which skills to follow.
+		skillRefs := ""
+		if cfg.RepoRoot != "" {
+			reg := skill.DefaultRegistry(cfg.RepoRoot)
+			_ = reg.Load()
+			// Build a query from the session title + all task descriptions
+			// so skill search considers the full scope of this wave.
+			var queryBuf strings.Builder
+			queryBuf.WriteString(session.Title + " ")
+			for _, t := range session.Tasks {
+				queryBuf.WriteString(t.Description + " ")
+			}
+			matches := reg.SearchSkills(queryBuf.String(), 5)
+			skillRefs = skill.FormatSkillReferences(matches)
+		}
+
 		fmt.Printf("  lead-dev briefing pass (analyzing current codebase for %d tasks)...\n", len(session.Tasks))
 		briefings, berr := briefer.Brief(ctx, plan.SessionBriefingInput{
 			SessionID:          session.ID,
@@ -392,6 +410,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			APISurface:         surface,
 			RepoMap:            repoMapBlob,
 			RawSOW:             cfg.RawSOWText,
+			SkillReferences:    skillRefs,
 		})
 		if berr != nil {
 			fmt.Printf("  briefing pass warning: %v (dispatching without briefings)\n", berr)
