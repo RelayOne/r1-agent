@@ -79,6 +79,35 @@ type ContentMatchCriterion struct {
 	Pattern string `json:"pattern" yaml:"pattern"` // substring or regex
 }
 
+// UnmarshalJSON accepts both the structured form ({"file": "...",
+// "pattern": "..."}) AND the degenerate string form that LLM refiners
+// occasionally emit ("content_match": "some description"). The string
+// form is tolerated but stripped to the zero value — a content match
+// with no file is unrunnable anyway, and the alternative (failing the
+// whole refine pass) was making stoke halt on an otherwise-usable SOW
+// because of a single malformed AC shape.
+//
+// The behavior: bare string -> zero ContentMatchCriterion. Callers that
+// check .File == "" treat it as "no content match" and skip the check.
+// Structured form parses normally.
+func (c *ContentMatchCriterion) UnmarshalJSON(data []byte) error {
+	// Try the structured form first.
+	type alias ContentMatchCriterion
+	var a alias
+	if err := json.Unmarshal(data, &a); err == nil {
+		*c = ContentMatchCriterion(a)
+		return nil
+	}
+	// Fall back: the model emitted a bare string. Accept it by
+	// leaving the criterion empty.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*c = ContentMatchCriterion{}
+		return nil
+	}
+	return fmt.Errorf("content_match must be an object {file, pattern} or a string; got %s", string(data))
+}
+
 // LoadSOW reads a SOW from a file. Supports both JSON and YAML: the format
 // is detected from the file extension, falling back to a content sniff if
 // the extension is ambiguous.
