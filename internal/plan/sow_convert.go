@@ -146,48 +146,55 @@ RULES:
 1. Output ONLY the JSON. No prose, no backticks, no markdown fences, no commentary.
 2. Every session MUST have at least one verifiable acceptance_criteria. Prefer "command" (e.g. "cargo build" or "go test ./...") over file_exists. Use file_exists only for artifacts that don't have a build/test.
 3. Task IDs are unique across the entire SOW (T1, T2, ..., not restarting per session). Task.dependencies entries must ALL reference task IDs that exist somewhere in this SOW — never a stale or renamed ID.
-4. Break the work into 4-8 sessions. Bias toward FEWER, LARGER sessions. Each session should be a cohesive slice of work that terminates in a visible build/test gate. A 12-session SOW is almost always over-decomposed; most real projects fit in 5-6.
+4. Session COUNT follows from the feature decomposition — typically one session per major deliverable or feature slice. Don't compress sessions for compression's sake. A SOW describing 10 deliverables naturally has ~10 sessions. A SOW describing 3 deliverables has ~3 sessions.
 5. Every task description must be a single specific sentence — no bullet lists inside.
 6. Infer the stack from the prose. If the prose says "Rust" or mentions Cargo, set language="rust". If it says Next.js, set framework="next". If ambiguous, leave stack fields empty.
 7. If the prose mentions Postgres, Redis, or other services, add them to stack.infra with env_vars they need. Every name referenced in session.infra_needed MUST also appear in stack.infra.
 8. The first session must be foundational (repo layout, deps, config, one end-to-end 'hello world' build pass). The last session must be integration/acceptance.
 
-SESSION DECOMPOSITION PRINCIPLES (follow these or the SOW will over-decompose):
+DECOMPOSITION PRINCIPLES:
 
-  a. A session = a cohesive SLICE of work that terminates in a visible
-     build gate. "Initialize the monorepo and get a hello-world build
-     green" is a session. "Create 7 empty package.json files" is NOT a
-     session — it's a substep inside the foundation session.
+  a. TASKS SHOULD BE SMALL AND FOCUSED. One task = one discrete change
+     the agent can complete in a few tool calls. 10-15 tasks per
+     session is fine; 3 tasks per session usually means you grouped
+     too coarsely. Small tasks give the agent focused context, bound
+     failure to one file/concern, and let parallel execution work
+     because file sets stay disjoint. DO split "create package.json +
+     tsconfig + eslintrc" into three tasks if they have distinct
+     contents. DON'T split "add a single function" into three tasks.
 
-  b. Prefer 5-10 tasks per session over 2-3. Small tasks create more
-     acceptance surface area without producing more useful work.
-     Group related file writes into one task ("create all shared-
-     tooling config files: eslint, tsconfig, tailwind preset") rather
-     than emitting one task per file.
+  b. SESSIONS GROUP RELATED TASKS UNDER ONE ACCEPTANCE BOUNDARY. A
+     session = "one feature or one infrastructure slice whose
+     completion is verifiable as a unit". The acceptance criteria
+     test the session's overall outcome, not each task individually.
+     One session per major deliverable from the source spec is
+     usually the right granularity.
 
-  c. Every session should have 2-4 acceptance criteria, not 6+. If
-     you're about to emit a 5th criterion, ask whether it's testing
-     something the first 4 already cover. Prefer one authoritative
-     build/test command over five grep checks.
+  c. EACH SESSION SHOULD HAVE 2-4 ACCEPTANCE CRITERIA, not 6+. The
+     ACs verify the session's feature works as a whole (build green,
+     tests pass, one smoke check), not that each task wrote the file
+     it was supposed to. If you're about to emit a 5th AC, check
+     whether the first 4 already cover it.
 
-  d. Tasks that produce the same kind of file (config files, tests,
-     docs, translations) should be ONE task with a files[] list, not
-     N tasks with N task IDs. The agent can write all of them in a
-     single execution; splitting them into separate tasks just
-     fragments the graph.
+  d. SESSION BOUNDARIES ARE CONTEXT BOUNDARIES. Within a session the
+     agent carries context across tasks (prior tool results, wisdom,
+     shared system prompt). Across sessions the context resets.
+     Don't split a feature's implementation across two sessions just
+     because it has many tasks — keep the whole feature in one
+     session so later tasks can build on earlier tool-use state.
 
-  e. Infra setup (pnpm workspace layout, turbo config, tsconfig base)
-     goes in session 1. Feature work starts in session 2. Don't
-     spread foundation across three sessions.
+  e. THE FIRST SESSION is foundation: repo layout, dependency
+     install, config files, one end-to-end 'hello world' that
+     compiles. Don't spread foundation across three sessions.
 
-  f. The final session is always integration + end-to-end tests +
-     docs + deployment configs, in one pass. Not "polish" as a
-     separate session from "accessibility" as a separate session
-     from "docs".
+  f. THE LAST SESSION is integration + polish + docs + deployment
+     configs, in one pass. Don't have a separate "Polish" session
+     that touches code from 5 prior sessions — fold that work into
+     the sessions that own the code.
 
-  g. Avoid session names like "Polish" or "Cleanup" — those are code
-     smells for "I didn't know where to put this work". Fold polish
-     tasks into the sessions that own the code being polished.
+  g. Avoid session names like "Cleanup" or "Misc" — those are smells
+     for "I didn't know where to put this work". Every session
+     should have a clear feature name.
 
 ACCEPTANCE CRITERION HYGIENE (follow these or the SOW will fail on real execution):
 
