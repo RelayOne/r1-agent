@@ -154,6 +154,25 @@ type sowNativeConfig struct {
 	// .stoke/wisdom/<sow-id>.json.
 	SOWID string
 
+	// --- Lead-dev briefing phase ---
+
+	// Briefings is a map of task ID -> per-task briefing produced by
+	// the lead-dev phase that runs BEFORE Phase 1 dispatches the
+	// session's tasks. Each briefing carries current-codebase
+	// context (what exists on disk right now, what's missing, which
+	// identifiers to reuse, which pitfalls earlier work already
+	// stepped on). Workers read their own briefing via promptOpts.
+	// When a task has no entry here it dispatches with no extra
+	// context — equivalent to pre-briefing behavior.
+	Briefings map[string]*plan.TaskBriefing
+	// BriefingProvider is the LLM used by the lead-dev phase. When
+	// nil, briefing is skipped and workers run with the original
+	// context set.
+	BriefingProvider provider.Provider
+	// BriefingModel is the model name for the briefing phase. Empty
+	// = use cfg.Model.
+	BriefingModel string
+
 	// --- Reasoning loop (multi-analyst + judge) ---
 
 	// ReasoningProvider runs the stuck-AC reasoning loop: when a
@@ -292,6 +311,64 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	workingSession := session
 	workingSession.AcceptanceCriteria = effectiveCriteria
+
+	// Phase 0: lead-dev briefing. Run the multi-analyst-style
+	// briefing pass that reads the CURRENT codebase state (API
+	// surface + repomap + raw SOW) and produces per-task briefings
+	// for this session. Each briefing tells its worker "here's
+	// what exists on disk right now, here's what's missing, here
+	// are the identifiers you must use verbatim, here are
+	// pitfalls". The briefings flow through cfg.Briefings into the
+	// per-task promptOpts so workers see them ahead of the task
+	// header. When no briefing provider is configured OR the
+	// briefing call fails, we fall through to the old behavior
+	// (workers get the original context set) — briefings are a
+	// quality improvement, not a correctness gate.
+	if cfg.BriefingProvider != nil && len(session.Tasks) > 0 {
+		briefingModel := cfg.BriefingModel
+		if briefingModel == "" {
+			briefingModel = cfg.Model
+		}
+		briefer := &plan.BriefingRunner{Provider: cfg.BriefingProvider, Model: briefingModel}
+		// Compute the current API surface and repomap snippet for
+		// the briefing input. The budget here is separate from the
+		// per-task prompt budget — briefings can see more of the
+		// codebase because they happen once per session, not once
+		// per task.
+		surface := ""
+		if cfg.RepoRoot != "" {
+			surface = sowAPISurface(cfg.RepoRoot, 16000)
+		}
+		repoMapBlob := ""
+		if cfg.RepoMap != nil {
+			var anchor []string
+			for _, t := range session.Tasks {
+				anchor = append(anchor, t.Files...)
+			}
+			if len(session.Outputs) > 0 {
+				anchor = append(anchor, session.Outputs...)
+			}
+			repoMapBlob = cfg.RepoMap.RenderRelevant(anchor, 4000)
+		}
+		fmt.Printf("  lead-dev briefing pass (analyzing current codebase for %d tasks)...\n", len(session.Tasks))
+		briefings, berr := briefer.Brief(ctx, plan.SessionBriefingInput{
+			SessionID:          session.ID,
+			SessionTitle:       session.Title,
+			Tasks:              session.Tasks,
+			AcceptanceCriteria: effectiveCriteria,
+			RepoRoot:           cfg.RepoRoot,
+			APISurface:         surface,
+			RepoMap:            repoMapBlob,
+			RawSOW:             cfg.RawSOWText,
+		})
+		if berr != nil {
+			fmt.Printf("  briefing pass warning: %v (dispatching without briefings)\n", berr)
+		}
+		if len(briefings) > 0 {
+			fmt.Printf("  briefings produced for %d/%d tasks\n", len(briefings), len(session.Tasks))
+			cfg.Briefings = briefings
+		}
+	}
 
 	// Phase 1: run tasks. When ParallelWorkers > 1 and we have tasks
 	// with disjoint file sets and no unsatisfied deps, execute them
@@ -907,6 +984,7 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			Wisdom:        cfg.Wisdom,
 			RawSOW:        cfg.RawSOWText,
 			RepoRoot:      cfg.RepoRoot,
+			Briefing:      cfg.Briefings[task.ID],
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -983,6 +1061,7 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					Wisdom:        cfg.Wisdom,
 					RawSOW:        cfg.RawSOWText,
 					RepoRoot:      cfg.RepoRoot,
+					Briefing:      cfg.Briefings[task.ID],
 				})
 				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -1256,6 +1335,12 @@ type promptOpts struct {
 	// existing source files so later sessions can wire against earlier
 	// sessions' types instead of guessing or rewriting them.
 	RepoRoot string
+	// Briefing is the lead-dev briefing for THIS specific task, if the
+	// session's briefing phase ran and produced one. The briefing
+	// carries current-codebase context (what exists, what's missing,
+	// exact identifiers to use, pitfalls) that the SOW spec alone
+	// doesn't capture. nil = no briefing, just use the spec.
+	Briefing *plan.TaskBriefing
 }
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
@@ -1558,7 +1643,22 @@ exit 0 before you end.
 			usr.WriteString("\n")
 		}
 
-		// 2. Task header — short, because the spec excerpt below
+		// 2. Lead-dev briefing — current-codebase context produced
+		// by the briefing phase that ran at the start of this wave.
+		// Tells the worker what actually exists on disk right now
+		// (which the SOW spec couldn't know because it was written
+		// before any code existed), which identifiers to use
+		// verbatim, which pitfalls earlier tasks in this session
+		// already stepped on, and a suggested step order. Lives
+		// BEFORE the task header so the worker reads current reality
+		// before reading the task description's assumptions.
+		if opts.Briefing != nil {
+			if blob := opts.Briefing.Format(); blob != "" {
+				usr.WriteString(blob)
+			}
+		}
+
+		// 3. Task header — short, because the spec excerpt below
 		// does the heavy lifting.
 		fmt.Fprintf(&usr, "TASK %s: %s\n", task.ID, task.Description)
 		if len(task.Files) > 0 {

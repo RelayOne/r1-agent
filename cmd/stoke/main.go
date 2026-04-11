@@ -1789,6 +1789,13 @@ func sowCmd(args []string) {
 		// repair loop is flailing.
 		reasoningProv := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
 
+		// Lead-dev briefing provider: reuses the same key + URL so
+		// the pre-Phase-1 briefing pass runs against the same model
+		// pool. Always constructed. The briefing pass runs once per
+		// session before any task dispatches, so cost is bounded at
+		// 1 extra LLM call per session.
+		briefingProv := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+
 		// Load the raw SOW text — prose source if the original was
 		// prose, marshaled JSON otherwise. This gets injected into
 		// the cached system prompt so the agent can always cross-
@@ -1828,6 +1835,8 @@ func sowCmd(args []string) {
 			ReviewModel:       reviewModelName,
 			ReasoningProvider: reasoningProv,
 			ReasoningModel:    nativeModelName,
+			BriefingProvider:  briefingProv,
+			BriefingModel:     nativeModelName,
 			StrictScope:       *strictScope,
 			ParallelWorkers:   *parallelTasks,
 			CompactThreshold:  *compactThreshold,
