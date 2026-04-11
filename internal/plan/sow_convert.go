@@ -321,10 +321,90 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		dumpOnErr(jsonBlob)
 		return nil, jsonBlob, fmt.Errorf("parse generated SOW: %w (raw: /tmp/stoke-sow-raw.txt, extracted: /tmp/stoke-sow-extracted.json)\n\nfirst 800 chars of extracted:\n%s", err, truncateForError(string(jsonBlob), 800))
 	}
+	// Auto-synthesize missing required fields on acceptance criteria
+	// (id, description). LLM-generated SOWs occasionally emit a
+	// criterion with only "command" or "file_exists" populated,
+	// missing the id/description the validator requires. Rather than
+	// halt on a trivial bookkeeping miss, fill in sensible defaults
+	// and let the critique+refine loop improve them downstream.
+	autoFillMissingACFields(sow)
 	if errs := ValidateSOW(sow); len(errs) > 0 {
 		return sow, jsonBlob, fmt.Errorf("generated SOW failed validation: %s", strings.Join(errs, "; "))
 	}
 	return sow, []byte(jsonBlob), nil
+}
+
+// autoFillMissingACFields walks every acceptance criterion and fills
+// in synthetic values for id and description when the LLM omitted
+// them. Uses a deterministic naming scheme so two successive runs on
+// the same SOW produce stable IDs.
+//
+// Mutation is in place on the passed SOW.
+func autoFillMissingACFields(sow *SOW) {
+	if sow == nil {
+		return
+	}
+	// Collect existing IDs so our synthetic IDs don't collide.
+	existing := map[string]bool{}
+	for _, s := range sow.Sessions {
+		for _, ac := range s.AcceptanceCriteria {
+			if ac.ID != "" {
+				existing[ac.ID] = true
+			}
+		}
+	}
+
+	// Generate a fresh unique ID within this session scope.
+	nextID := func(sessID string, used map[string]bool) string {
+		for i := 1; i < 10000; i++ {
+			candidate := fmt.Sprintf("%s-ac%d", sessID, i)
+			if !used[candidate] && !existing[candidate] {
+				used[candidate] = true
+				existing[candidate] = true
+				return candidate
+			}
+		}
+		return fmt.Sprintf("%s-ac-x", sessID)
+	}
+
+	// Build a sensible description when none was provided, using the
+	// shape of the criterion that did come through.
+	fallbackDesc := func(ac AcceptanceCriterion) string {
+		switch {
+		case ac.Command != "":
+			// Truncate long commands so the description stays readable.
+			cmd := ac.Command
+			if len(cmd) > 80 {
+				cmd = cmd[:77] + "..."
+			}
+			return "command succeeds: " + cmd
+		case ac.FileExists != "":
+			return "file exists: " + ac.FileExists
+		case ac.ContentMatch != nil && ac.ContentMatch.File != "":
+			return fmt.Sprintf("file %s contains expected content", ac.ContentMatch.File)
+		default:
+			return "session acceptance check"
+		}
+	}
+
+	for si := range sow.Sessions {
+		sess := &sow.Sessions[si]
+		used := map[string]bool{}
+		for _, ac := range sess.AcceptanceCriteria {
+			if ac.ID != "" {
+				used[ac.ID] = true
+			}
+		}
+		for ci := range sess.AcceptanceCriteria {
+			ac := &sess.AcceptanceCriteria[ci]
+			if ac.ID == "" {
+				ac.ID = nextID(sess.ID, used)
+			}
+			if ac.Description == "" {
+				ac.Description = fallbackDesc(*ac)
+			}
+		}
+	}
 }
 
 // LoadSOWFile loads a SOW from a path, auto-detecting JSON / YAML / prose.
