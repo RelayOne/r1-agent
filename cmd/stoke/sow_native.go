@@ -341,6 +341,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// directly (see the note on Phase 1.5).
 	var finalAcceptance []plan.AcceptanceResult
 	var finalPassed bool
+	// stickyFailures tracks which criterion IDs failed in EVERY prior
+	// repair attempt. Criteria that keep failing across attempts are
+	// likely either (a) structurally unsatisfiable (the AC command is
+	// broken), or (b) the model is applying the same failed fix. We
+	// note them explicitly in the next repair prompt so the model can
+	// switch approach rather than retry identically. A criterion
+	// becomes "sticky" only after failing twice in a row.
+	stickyAttempts := map[string]int{} // criterion ID -> consecutive failure count
 	if len(effectiveCriteria) > 0 {
 		for attempt := 1; attempt <= maxRepairs; attempt++ {
 			if ctx.Err() != nil {
@@ -354,6 +362,15 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				}
 				break
 			}
+			// Update sticky counters. A criterion that passes this
+			// attempt is cleared; a criterion that fails gets +1.
+			for _, ac := range acceptance {
+				if ac.Passed {
+					delete(stickyAttempts, ac.CriterionID)
+				} else {
+					stickyAttempts[ac.CriterionID]++
+				}
+			}
 			if attempt == maxRepairs {
 				fmt.Printf("  ✗ session %s still failing %d criteria after %d repair attempts — escalating\n",
 					session.ID, countFailed(acceptance), attempt)
@@ -364,8 +381,29 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				break
 			}
 			failureBlob := formatAcceptanceFailures(acceptance)
-			fmt.Printf("  ↻ session %s: repair attempt %d/%d for %d failing criteria\n",
+			// Prepend a sticky-warning block when any criterion has
+			// been failing across multiple attempts, so the repair
+			// prompt tells the model "the last attempt tried the
+			// obvious fix and it didn't work; look for a deeper
+			// cause". Without this, the repair model tends to apply
+			// the same surface fix on every attempt.
+			var sticky []string
+			for id, n := range stickyAttempts {
+				if n >= 2 {
+					sticky = append(sticky, fmt.Sprintf("%s (failed %d repair attempts in a row)", id, n))
+				}
+			}
+			if len(sticky) > 0 {
+				failureBlob = "STICKY FAILURES — the following criteria have resisted every prior repair attempt this session. The obvious fix didn't work. Look for a DIFFERENT root cause: the AC command may be wrong, the model may be in a dep/script/import loop, the test runner may not be picking up tests, etc. Do NOT apply the same fix you tried last time.\n  - " +
+					strings.Join(sticky, "\n  - ") +
+					"\n\n" + failureBlob
+			}
+			fmt.Printf("  ↻ session %s: repair attempt %d/%d for %d failing criteria",
 				session.ID, attempt, maxRepairs, countFailed(acceptance))
+			if len(sticky) > 0 {
+				fmt.Printf(" (%d sticky)", len(sticky))
+			}
+			fmt.Println()
 
 			repairTask := plan.Task{
 				ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
