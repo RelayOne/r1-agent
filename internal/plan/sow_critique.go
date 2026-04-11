@@ -122,18 +122,21 @@ func CritiqueSOW(sow *SOW, prov provider.Provider, model string) (*SOWCritique, 
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
 	resp, err := prov.Chat(provider.ChatRequest{
-		Model:     model,
-		MaxTokens: 8000,
+		Model: model,
+		// 16k matches the convert/refine ceilings. Extended-thinking
+		// models can burn 4-8k on reasoning before emitting the final
+		// JSON, and the previous 8k cap was leaving them no room to
+		// finish — the response came back with thinking-only or empty
+		// content blocks, which collectModelText now also salvages.
+		MaxTokens: 16000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("critic chat: %w", err)
 	}
-	raw := ""
-	for _, c := range resp.Content {
-		if c.Type == "text" {
-			raw += c.Text
-		}
+	raw, diag := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("critic returned no usable content (stop_reason=%q, %d blocks)\n%s", resp.StopReason, len(resp.Content), diag)
 	}
 	var crit SOWCritique
 	if _, err := jsonutil.ExtractJSONInto(raw, &crit); err != nil {
@@ -176,11 +179,9 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 		return nil, fmt.Errorf("refine chat: %w", err)
 	}
 
-	raw := ""
-	for _, c := range resp.Content {
-		if c.Type == "text" {
-			raw += c.Text
-		}
+	raw, diag := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("refine returned no usable content (stop_reason=%q, %d blocks)\n%s", resp.StopReason, len(resp.Content), diag)
 	}
 	blob, extractErr := jsonutil.ExtractJSONObject(raw)
 	if extractErr != nil {

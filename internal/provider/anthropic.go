@@ -68,12 +68,24 @@ type ChatResponse struct {
 }
 
 // ResponseContent is a content block in a response.
+//
+// Anthropic emits four content block shapes today: "text", "tool_use",
+// "thinking", and "redacted_thinking". The Thinking field is populated
+// when extended-thinking models (or LiteLLM-fronted MiniMax in
+// "thinking" mode) emit a reasoning block. Stoke does not normally
+// surface thinking to the user, but consumers may use it as a
+// fallback when the model emitted only thinking and never reached the
+// final text — that prevents the silent "empty response from model"
+// failure mode where stoke discards the only content the model
+// produced.
 type ResponseContent struct {
-	Type  string                 `json:"type"`
-	Text  string                 `json:"text,omitempty"`
-	ID    string                 `json:"id,omitempty"`
-	Name  string                 `json:"name,omitempty"`
-	Input map[string]interface{} `json:"input,omitempty"`
+	Type      string                 `json:"type"`
+	Text      string                 `json:"text,omitempty"`
+	Thinking  string                 `json:"thinking,omitempty"`
+	Signature string                 `json:"signature,omitempty"`
+	ID        string                 `json:"id,omitempty"`
+	Name      string                 `json:"name,omitempty"`
+	Input     map[string]interface{} `json:"input,omitempty"`
 }
 
 // AnthropicProvider communicates directly with the Anthropic Messages API.

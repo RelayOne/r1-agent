@@ -8,10 +8,71 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
+
+// dumpRespMu serializes the debug dump writes so two concurrent
+// conversion attempts don't interleave at the byte level.
+var dumpRespMu sync.Mutex
+
+// collectModelText pulls assistant text out of a Chat response. It
+// prefers `text` content blocks (the normal case) but falls back to
+// `thinking` blocks when no text was emitted at all — which happens
+// when extended-thinking models burn their entire output budget on
+// reasoning and never reach the final answer. The fallback is best-
+// effort: if the JSON SOW is hidden inside a thinking block, downstream
+// JSON extraction (jsonutil.ExtractJSONObject) will still find the
+// {...} object inside it.
+//
+// The second return value is a one-line-per-block diagnostic that
+// callers can include in error messages so the failure mode is
+// obvious without re-running with extra logging.
+func collectModelText(resp *provider.ChatResponse) (string, string) {
+	if resp == nil {
+		return "", "  <nil response>\n"
+	}
+	var text, thinking strings.Builder
+	var diag strings.Builder
+	for i, c := range resp.Content {
+		fmt.Fprintf(&diag, "  block[%d] type=%q text_len=%d thinking_len=%d name=%q\n",
+			i, c.Type, len(c.Text), len(c.Thinking), c.Name)
+		switch c.Type {
+		case "text":
+			text.WriteString(c.Text)
+		case "thinking", "redacted_thinking":
+			if c.Thinking != "" {
+				thinking.WriteString(c.Thinking)
+				thinking.WriteString("\n")
+			}
+		}
+	}
+	if text.Len() > 0 {
+		return text.String(), diag.String()
+	}
+	// No text blocks at all. If thinking blocks exist, fall back to
+	// them — extraction will salvage any embedded JSON object.
+	if thinking.Len() > 0 {
+		return thinking.String(), diag.String()
+	}
+	return "", diag.String()
+}
+
+// marshalRespOrEmpty pretty-prints a ChatResponse to JSON. On marshal
+// failure it returns a one-line marker so the dump file always has
+// something useful in it.
+func marshalRespOrEmpty(resp *provider.ChatResponse) []byte {
+	if resp == nil {
+		return []byte("null\n")
+	}
+	b, err := json.MarshalIndent(resp, "", "  ")
+	if err != nil {
+		return []byte(fmt.Sprintf("marshal error: %v\n", err))
+	}
+	return b
+}
 
 // hashBytes returns a short hex SHA-256 of b. Used to invalidate the prose
 // cache when the source file changes.
@@ -123,26 +184,42 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		return nil, nil, fmt.Errorf("provider chat: %w", err)
 	}
 
-	var raw string
-	for _, c := range resp.Content {
-		if c.Type == "text" {
-			raw += c.Text
-		}
-	}
+	raw, diag := collectModelText(resp)
 	if strings.TrimSpace(raw) == "" {
-		return nil, nil, fmt.Errorf("empty response from model")
+		// Dump everything we can to /tmp so we can diagnose. Anthropic-shape
+		// providers like MiniMax-via-LiteLLM occasionally return responses
+		// where every content block is empty AND usage is zero — that
+		// previously surfaced here as a bare "empty response" with no clue
+		// what happened.
+		dumpRespMu.Lock()
+		_ = os.WriteFile("/tmp/stoke-sow-resp-debug.json", marshalRespOrEmpty(resp), 0o644)
+		dumpRespMu.Unlock()
+		return nil, nil, fmt.Errorf("empty response from model (stop_reason=%q, %d content blocks; full response saved to /tmp/stoke-sow-resp-debug.json)\n%s", resp.StopReason, len(resp.Content), diag)
+	}
+
+	// On any parse failure below, write both the raw model output and
+	// the extracted JSON blob to /tmp for post-mortem inspection. These
+	// files are overwritten per call and are never read by the runner,
+	// so they're safe to leave behind.
+	dumpOnErr := func(extracted []byte) {
+		_ = os.WriteFile("/tmp/stoke-sow-raw.txt", []byte(raw), 0o644)
+		if extracted != nil {
+			_ = os.WriteFile("/tmp/stoke-sow-extracted.json", extracted, 0o644)
+		}
 	}
 
 	// Robust extraction: handles markdown fences, prose preamble,
 	// BOM, trailing commas, etc. via the shared jsonutil helper.
 	jsonBlob, extractErr := jsonutil.ExtractJSONObject(raw)
 	if extractErr != nil {
-		return nil, nil, fmt.Errorf("parse generated SOW: %w", extractErr)
+		dumpOnErr(nil)
+		return nil, nil, fmt.Errorf("parse generated SOW: %w (raw saved to /tmp/stoke-sow-raw.txt)", extractErr)
 	}
 
 	sow, err := ParseSOW(jsonBlob, "generated.json")
 	if err != nil {
-		return nil, jsonBlob, fmt.Errorf("parse generated SOW: %w\n\nraw JSON:\n%s", err, truncateForError(string(jsonBlob), 800))
+		dumpOnErr(jsonBlob)
+		return nil, jsonBlob, fmt.Errorf("parse generated SOW: %w (raw: /tmp/stoke-sow-raw.txt, extracted: /tmp/stoke-sow-extracted.json)\n\nfirst 800 chars of extracted:\n%s", err, truncateForError(string(jsonBlob), 800))
 	}
 	if errs := ValidateSOW(sow); len(errs) > 0 {
 		return sow, jsonBlob, fmt.Errorf("generated SOW failed validation: %s", strings.Join(errs, "; "))
