@@ -152,6 +152,51 @@ RULES:
 7. If the prose mentions Postgres, Redis, or other services, add them to stack.infra with env_vars they need.
 8. The first session must be foundational (repo layout, deps, config). The last session must be integration/acceptance.
 
+ACCEPTANCE CRITERION HYGIENE (follow these or the SOW will fail on real execution):
+
+  a. Commands run in the CURRENT WORKING DIRECTORY — there is no remote
+     clone, no $REPO_URL, no mktemp. Do NOT emit commands that start
+     with "cd $(mktemp -d)" or "git clone $REPO_URL".
+
+  b. Keep each session to 3-5 acceptance criteria. More than 5 is
+     usually a sign you're checking implementation details instead
+     of behavior. Cut until each criterion is load-bearing.
+
+  c. Every command must terminate on its own in under 60 seconds.
+     Never emit long-running processes (no "next dev", no "vitest"
+     without "run", no "expo start").
+
+  d. Never use "|| echo ok" / "|| true" / "|| echo 'X'" fallbacks.
+     These turn every command into a pass and defeat the whole point
+     of mechanical verification. If a check is optional, don't emit
+     it at all.
+
+  e. For Node workspaces: stoke auto-runs 'pnpm install' and prepends
+     node_modules/.bin to PATH before AC evaluation. So commands can
+     call "tsc", "vitest", "eslint", "next", "jest" directly without
+     "npx" or "pnpm exec" wrappers. Prefer direct binaries; they're
+     cheaper and more reliable.
+
+  f. Prefer "pnpm --filter <pkg> <script>" over cd-into-directory +
+     run-command. Filters are scope-safe and consistent with the
+     monorepo's declared scripts.
+
+  g. Grep checks are OK for "the word X appears in file Y" structural
+     assertions but should NEVER be used for behavioral assertions
+     like "SSE works" or "auth redirects unauthenticated users". Use
+     a real build/test command instead, or drop the criterion.
+
+  h. file_exists is OK for artifacts like .github/workflows/ci.yml,
+     README.md, package.json — things whose existence IS the
+     deliverable. Do NOT use file_exists on source files: the
+     content matters, not the path.
+
+  i. If an acceptance criterion requires a tool (axe-core for a11y,
+     eas-cli for mobile submission, docker for containerization),
+     that tool must be declared in the relevant package.json OR in
+     stack.infra. Do NOT emit commands that depend on unspecified
+     global tools.
+
 PROSE INPUT:
 `
 
