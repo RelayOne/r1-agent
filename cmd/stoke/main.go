@@ -1780,6 +1780,15 @@ func sowCmd(args []string) {
 			reviewModelName = nativeModelName
 		}
 
+		// Reasoning loop provider: reuses the native runner's key +
+		// base URL so the multi-analyst + judge pass runs against the
+		// same model the build agent uses. Always constructed (no
+		// opt-in flag) — the reasoning loop is the supervisor the
+		// user explicitly asked for, and it only fires when a
+		// criterion becomes sticky, so there's no cost unless the
+		// repair loop is flailing.
+		reasoningProv := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+
 		// Load the raw SOW text — prose source if the original was
 		// prose, marshaled JSON otherwise. This gets injected into
 		// the cached system prompt so the agent can always cross-
@@ -1817,6 +1826,8 @@ func sowCmd(args []string) {
 			SOWID:             sow.ID,
 			ReviewProvider:    reviewProv,
 			ReviewModel:       reviewModelName,
+			ReasoningProvider: reasoningProv,
+			ReasoningModel:    nativeModelName,
 			StrictScope:       *strictScope,
 			ParallelWorkers:   *parallelTasks,
 			CompactThreshold:  *compactThreshold,

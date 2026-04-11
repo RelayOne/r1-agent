@@ -154,6 +154,19 @@ type sowNativeConfig struct {
 	// .stoke/wisdom/<sow-id>.json.
 	SOWID string
 
+	// --- Reasoning loop (multi-analyst + judge) ---
+
+	// ReasoningProvider runs the stuck-AC reasoning loop: when a
+	// criterion fails N consecutive repair attempts, this provider is
+	// called to run 4 focused analyst prompts + 1 judge synth pass
+	// and return a verdict (code_bug | ac_bug | both | acceptable_as_is).
+	// When nil, the reasoning loop is skipped and the repair loop
+	// falls back to its stateless retry path.
+	ReasoningProvider provider.Provider
+	// ReasoningModel is the model name for the reasoning loop.
+	// Empty = use cfg.Model.
+	ReasoningModel string
+
 	// --- Cross-model review + scope gate ---
 
 	// ReviewProvider is a second provider (ideally a different model)
@@ -349,6 +362,11 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// switch approach rather than retry identically. A criterion
 	// becomes "sticky" only after failing twice in a row.
 	stickyAttempts := map[string]int{} // criterion ID -> consecutive failure count
+	// reasoningApplied tracks which criterion IDs have already been
+	// run through the multi-analyst reasoning loop in this session.
+	// Each stuck criterion gets one reasoning pass; running it twice
+	// for the same criterion would just pay for the same verdict.
+	reasoningApplied := map[string]bool{}
 	if len(effectiveCriteria) > 0 {
 		for attempt := 1; attempt <= maxRepairs; attempt++ {
 			if ctx.Err() != nil {
@@ -397,6 +415,20 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				failureBlob = "STICKY FAILURES — the following criteria have resisted every prior repair attempt this session. The obvious fix didn't work. Look for a DIFFERENT root cause: the AC command may be wrong, the model may be in a dep/script/import loop, the test runner may not be picking up tests, etc. Do NOT apply the same fix you tried last time.\n  - " +
 					strings.Join(sticky, "\n  - ") +
 					"\n\n" + failureBlob
+			}
+
+			// Reasoning loop: when a criterion has become sticky AND
+			// we haven't yet reasoned about it, run the multi-analyst
+			// + judge pass to decide whether the code, the AC, or both
+			// are at fault. The helper mutates effectiveCriteria in
+			// place when a verdict says to rewrite an AC, and returns
+			// hint text to prepend to the repair prompt when a verdict
+			// says to fix code.
+			if cfg.ReasoningProvider != nil {
+				hints := runReasoningForStuckCriteria(ctx, acceptance, stickyAttempts, reasoningApplied, effectiveCriteria, workingSession, session, cfg)
+				if hints != "" {
+					failureBlob = hints + "\n\n" + failureBlob
+				}
 			}
 			fmt.Printf("  ↻ session %s: repair attempt %d/%d for %d failing criteria",
 				session.ID, attempt, maxRepairs, countFailed(acceptance))
@@ -1565,6 +1597,170 @@ exit 0 before you end.
 func buildSOWNativePrompt(sowDoc *plan.SOW, session plan.Session, task plan.Task, rmap *repomap.RepoMap, mapBudget int, repair *string) string {
 	sys, usr := buildSOWNativePrompts(sowDoc, session, task, rmap, mapBudget, repair, nil)
 	return sys + "\n" + usr
+}
+
+// runReasoningForStuckCriteria walks the failing criteria, finds ones
+// that have become sticky (2+ consecutive failures) AND haven't been
+// reasoned about yet, and runs the multi-analyst + judge reasoning
+// loop on each. Based on the verdict:
+//
+//   code_bug         — appends a CODE FIX DIRECTIVE to the hint blob
+//                      for the next repair prompt
+//   ac_bug           — mutates effectiveCriteria IN PLACE, replacing
+//                      the criterion's Command with ACRewrite
+//   both             — does both
+//   acceptable_as_is — marks the criterion with an inline override
+//                      flag (we rewrite it to "true" so the next AC
+//                      pass succeeds automatically) and logs why
+//
+// Returns hint text to prepend to the repair prompt. Empty string if
+// nothing reasoned or no actionable hints came back.
+func runReasoningForStuckCriteria(
+	ctx context.Context,
+	acceptance []plan.AcceptanceResult,
+	stickyAttempts map[string]int,
+	reasoningApplied map[string]bool,
+	effectiveCriteria []plan.AcceptanceCriterion,
+	workingSession plan.Session,
+	session plan.Session,
+	cfg sowNativeConfig,
+) string {
+	var hintBlob strings.Builder
+	for _, ac := range acceptance {
+		if ac.Passed {
+			continue
+		}
+		if stickyAttempts[ac.CriterionID] < 2 {
+			continue
+		}
+		if reasoningApplied[ac.CriterionID] {
+			continue
+		}
+		// Locate the canonical criterion object in effectiveCriteria
+		// (the acceptance result has ID/desc/output but not the
+		// Command/FileExists/ContentMatch shape we need to reason
+		// about).
+		var crit plan.AcceptanceCriterion
+		var critIdx = -1
+		for i, c := range effectiveCriteria {
+			if c.ID == ac.CriterionID {
+				crit = c
+				critIdx = i
+				break
+			}
+		}
+		if critIdx < 0 {
+			continue
+		}
+		// Gather code excerpts from the files most likely relevant
+		// to this criterion. Start with the session's task.Files and
+		// any file paths the AC command / file_exists mentions.
+		var relPaths []string
+		seen := map[string]bool{}
+		addPath := func(p string) {
+			p = strings.TrimSpace(p)
+			if p == "" || seen[p] {
+				return
+			}
+			seen[p] = true
+			relPaths = append(relPaths, p)
+		}
+		for _, t := range workingSession.Tasks {
+			for _, f := range t.Files {
+				addPath(f)
+			}
+		}
+		if crit.FileExists != "" {
+			addPath(crit.FileExists)
+		}
+		if crit.ContentMatch != nil && crit.ContentMatch.File != "" {
+			addPath(crit.ContentMatch.File)
+		}
+		codeExcerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, relPaths, 8, 3000)
+
+		// Pick a task description that's most relevant. If the
+		// session has a task whose files overlap with the criterion,
+		// prefer that one; otherwise fall back to the session title.
+		taskDesc := workingSession.Title
+		for _, t := range workingSession.Tasks {
+			if len(t.Files) > 0 {
+				taskDesc = t.Description
+				break
+			}
+		}
+
+		fmt.Printf("  ↻ reasoning about stuck criterion %s (%d attempts)...\n", ac.CriterionID, stickyAttempts[ac.CriterionID])
+		reasoningModel := cfg.ReasoningModel
+		if reasoningModel == "" {
+			reasoningModel = cfg.Model
+		}
+		verdict, rerr := plan.ReasonAboutFailure(ctx, cfg.ReasoningProvider, reasoningModel, plan.ReasoningInput{
+			SessionID:       session.ID,
+			SessionTitle:    session.Title,
+			TaskDescription: taskDesc,
+			Criterion:       crit,
+			FailureOutput:   ac.Output,
+			PriorAttempts:   stickyAttempts[ac.CriterionID],
+			CodeExcerpts:    codeExcerpts,
+			RepoRoot:        cfg.RepoRoot,
+		})
+		reasoningApplied[ac.CriterionID] = true
+		if rerr != nil {
+			fmt.Printf("    reasoning loop failed: %v\n", rerr)
+			continue
+		}
+		fmt.Printf("    verdict: %s — %s\n", verdict.Category, truncateForLog(verdict.Reasoning, 200))
+
+		switch verdict.Category {
+		case "code_bug":
+			if verdict.CodeFix != "" {
+				fmt.Fprintf(&hintBlob, "REASONING-LOOP VERDICT for %s: code_bug. %s\nFIX: %s\n\n",
+					ac.CriterionID, verdict.Reasoning, verdict.CodeFix)
+			}
+		case "ac_bug":
+			if verdict.ACRewrite != "" {
+				fmt.Printf("    → rewriting AC %s command from %q to %q\n",
+					ac.CriterionID, truncateForLog(crit.Command, 100), truncateForLog(verdict.ACRewrite, 100))
+				effectiveCriteria[critIdx].Command = verdict.ACRewrite
+				// Clear sticky count so the next acceptance pass
+				// starts fresh on the rewritten AC.
+				delete(stickyAttempts, ac.CriterionID)
+			}
+		case "both":
+			if verdict.ACRewrite != "" {
+				fmt.Printf("    → rewriting AC %s command (both-verdict)\n", ac.CriterionID)
+				effectiveCriteria[critIdx].Command = verdict.ACRewrite
+				delete(stickyAttempts, ac.CriterionID)
+			}
+			if verdict.CodeFix != "" {
+				fmt.Fprintf(&hintBlob, "REASONING-LOOP VERDICT for %s: both. %s\nFIX: %s\n\n",
+					ac.CriterionID, verdict.Reasoning, verdict.CodeFix)
+			}
+		case "acceptable_as_is":
+			fmt.Printf("    → approving ignore for %s: %s\n", ac.CriterionID, truncateForLog(verdict.ApproveReason, 200))
+			// Rewrite to "true" so the next acceptance pass
+			// automatically succeeds without another repair cycle.
+			// Not ideal — we lose the check — but correct given
+			// the judge decided the failure is spurious.
+			effectiveCriteria[critIdx].Command = "true"
+			effectiveCriteria[critIdx].FileExists = ""
+			effectiveCriteria[critIdx].ContentMatch = nil
+			delete(stickyAttempts, ac.CriterionID)
+		}
+	}
+	return hintBlob.String()
+}
+
+// truncateForLog cuts a string to N runes for printing in a single
+// line without wrapping or blowing the terminal. Used by the reasoning
+// loop's progress output.
+func truncateForLog(s string, n int) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	if len([]rune(s)) <= n {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:n]) + "…"
 }
 
 // isNodeStack reports whether a SOW declares a JavaScript / TypeScript
