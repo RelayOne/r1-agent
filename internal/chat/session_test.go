@@ -567,10 +567,27 @@ func TestDispatcherTools_SchemasAreValidJSON(t *testing.T) {
 		}
 	}
 	// Sanity: core tools are present.
-	for _, want := range []string{"dispatch_scope", "dispatch_build", "dispatch_ship", "dispatch_plan", "dispatch_audit", "dispatch_scan", "show_status"} {
+	for _, want := range []string{"dispatch_scope", "dispatch_build", "dispatch_ship", "dispatch_plan", "dispatch_audit", "dispatch_scan", "dispatch_sow", "show_status"} {
 		if !seen[want] {
 			t.Errorf("missing core tool %q", want)
 		}
+	}
+}
+
+func TestRunToolCall_DispatchSOW(t *testing.T) {
+	d := &stubDispatcher{}
+	out, err := RunToolCall(d, "dispatch_sow", json.RawMessage(`{"file_path":"/tmp/sow.md"}`))
+	if err != nil {
+		t.Fatalf("RunToolCall: %v", err)
+	}
+	if d.lastMethod != "SOW" {
+		t.Errorf("lastMethod = %q, want SOW", d.lastMethod)
+	}
+	if d.lastFile != "/tmp/sow.md" {
+		t.Errorf("lastFile = %q, want /tmp/sow.md", d.lastFile)
+	}
+	if out != "sow ok" {
+		t.Errorf("out = %q, want sow ok", out)
 	}
 }
 

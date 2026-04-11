@@ -63,6 +63,7 @@ Available dispatchers:
   dispatch_plan    — generate a plan without executing
   dispatch_audit   — run the multi-persona audit
   dispatch_scan    — run the deterministic code scanner
+  dispatch_sow     — execute a Statement of Work file (.json/.yaml/.md/.txt) through the multi-session SOW pipeline; use when the user asks to build a structured spec on disk that's bigger than a single task
   show_status      — show the current session dashboard`
 
 // Config controls a chat Session's behavior.

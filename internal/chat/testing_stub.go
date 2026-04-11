@@ -14,6 +14,7 @@ type stubDispatcher struct {
 	lastMethod string
 	lastDesc   string
 	lastSec    bool
+	lastFile   string
 }
 
 func (d *stubDispatcher) Scope(desc string) (string, error) {
@@ -54,6 +55,12 @@ func (d *stubDispatcher) Scan(sec bool) (string, error) {
 func (d *stubDispatcher) Status() (string, error) {
 	d.lastMethod = "Status"
 	return "status ok", nil
+}
+
+func (d *stubDispatcher) SOW(filePath string) (string, error) {
+	d.lastMethod = "SOW"
+	d.lastFile = filePath
+	return "sow ok", nil
 }
 
 // Compile-time check that the stub satisfies the interface — any

@@ -33,6 +33,12 @@ type Dispatcher interface {
 	Scan(securityOnly bool) (string, error)
 	// Status shows the current session dashboard.
 	Status() (string, error)
+	// SOW executes a Statement of Work file (.json/.yaml/.md/.txt) via
+	// the multi-session SOW pipeline. Used when the user has a structured
+	// scope larger than a single task — chat agrees, dispatches once,
+	// stoke runs every session through the same native runner the chat
+	// session is connected to.
+	SOW(filePath string) (string, error)
 }
 
 // DispatcherTools returns the provider.ToolDef slice that backs the
@@ -127,6 +133,20 @@ func DispatcherTools() []provider.ToolDef {
 				"properties": map[string]interface{}{},
 			}),
 		},
+		{
+			Name:        "dispatch_sow",
+			Description: "Run a Statement of Work file through the multi-session SOW pipeline. Use when the user has a structured spec on disk (a .json/.yaml/.md/.txt file) bigger than a single task — for example 'build the SOW at /path/to/sow.md', 'execute that scope', or 'run the contractor spec'. The pipeline decomposes prose into sessions, runs each session through the same native runner the chat is using, and gates session-to-session transitions on acceptance criteria. Pass the absolute path of the SOW file. Do NOT use this for ad-hoc single tasks — use dispatch_build for those.",
+			InputSchema: mustSchema(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Absolute path to the SOW file (.json, .yaml, .yml, .md, .txt). Required.",
+					},
+				},
+				"required": []string{"file_path"},
+			}),
+		},
 	}
 }
 
@@ -136,6 +156,7 @@ func DispatcherTools() []provider.ToolDef {
 type DispatchToolArgs struct {
 	Description  string `json:"description"`
 	SecurityOnly bool   `json:"security_only"`
+	FilePath     string `json:"file_path"`
 }
 
 // ExtractArgs decodes the model's tool input into a DispatchToolArgs.
@@ -174,6 +195,8 @@ func RunToolCall(d Dispatcher, name string, input json.RawMessage) (string, erro
 		return d.Scan(args.SecurityOnly)
 	case "show_status":
 		return d.Status()
+	case "dispatch_sow":
+		return d.SOW(args.FilePath)
 	}
 	return "", errUnknownTool{name: name}
 }

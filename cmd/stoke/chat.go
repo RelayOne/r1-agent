@@ -168,6 +168,30 @@ func (d *stokeDispatcher) Status() (string, error) {
 	return "/status shown above.", nil
 }
 
+// SOW dispatches an on-disk Statement of Work file through the
+// multi-session SOW pipeline. The chat-mode entry point: the user has
+// a structured spec they want stoke to build, the model agrees, and
+// chat hands off to sowCmd with the same runner config the chat is
+// using. The pipeline takes over from there — sessions, acceptance
+// gates, repair attempts, the lot.
+func (d *stokeDispatcher) SOW(filePath string) (string, error) {
+	if strings.TrimSpace(filePath) == "" {
+		return "", fmt.Errorf("dispatch_sow needs a file_path")
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return "", fmt.Errorf("SOW file not readable: %w", err)
+	}
+	d.announce("▸ Dispatching to /sow: %s", filePath)
+	args := append(
+		[]string{"--repo", d.absRepo, "--file", filePath},
+		d.nativeArgs()...,
+	)
+	d.runCaptured(func() {
+		sowCmd(args)
+	})
+	return fmt.Sprintf("/sow pipeline finished for: %s. See the session-by-session output above.", filePath), nil
+}
+
 // truncOne truncates s to max runes on a single line with an ellipsis.
 func truncOne(s string, max int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
