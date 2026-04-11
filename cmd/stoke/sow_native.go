@@ -514,20 +514,75 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			}
 			fmt.Println()
 
-			repairTask := plan.Task{
-				ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
-				Description: "repair session acceptance criteria",
+			// Split repairs: instead of one worker trying to fix ALL
+			// failing criteria at once (which leads to "fixed 2, broke
+			// 1, missed 1"), dispatch one repair task PER failing
+			// criterion. Each worker gets ONE focused fix assignment
+			// and verifies ONE command. When ParallelWorkers > 1,
+			// non-overlapping repairs run concurrently.
+			//
+			// When there's only 1 failing criterion or parallel
+			// workers = 1, this collapses to the old behavior — one
+			// sequential repair with the full failure blob. The split
+			// only adds value when there are 2+ failures to fix.
+			failingACs := collectFailingACs(acceptance)
+			if len(failingACs) <= 1 || cfg.ParallelWorkers <= 1 {
+				// Single-criterion or sequential: old path.
+				repairTask := plan.Task{
+					ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
+					Description: "repair session acceptance criteria",
+				}
+				sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+					RepoMap:       cfg.RepoMap,
+					RepoMapBudget: cfg.RepoMapBudget,
+					Repair:        &failureBlob,
+					Wisdom:        cfg.Wisdom,
+					RawSOW:        cfg.RawSOWText,
+					RepoRoot:      cfg.RepoRoot,
+				})
+				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
+				_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+			} else {
+				// Multi-criterion parallel repair: one worker per
+				// failing AC, each with a targeted failure blob
+				// containing only their own criterion's failure.
+				fmt.Printf("    → splitting into %d parallel fix assignments\n", len(failingACs))
+				type repairResult struct {
+					acID string
+					tr   plan.TaskExecResult
+				}
+				sem := make(chan struct{}, cfg.ParallelWorkers)
+				resCh := make(chan repairResult, len(failingACs))
+				for _, fac := range failingACs {
+					fac := fac // capture
+					sem <- struct{}{}
+					go func() {
+						defer func() { <-sem }()
+						// Build a targeted failure blob for just this
+						// one criterion.
+						singleFailure := formatSingleACFailure(fac)
+						repairTask := plan.Task{
+							ID:          fmt.Sprintf("%s-repair-%d-%s", session.ID, attempt, fac.CriterionID),
+							Description: fmt.Sprintf("fix failing criterion %s: %s", fac.CriterionID, fac.Description),
+						}
+						sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+							RepoMap:       cfg.RepoMap,
+							RepoMapBudget: cfg.RepoMapBudget,
+							Repair:        &singleFailure,
+							Wisdom:        cfg.Wisdom,
+							RawSOW:        cfg.RawSOWText,
+							RepoRoot:      cfg.RepoRoot,
+						})
+						sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
+						tr := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+						resCh <- repairResult{acID: fac.CriterionID, tr: tr}
+					}()
+				}
+				// Drain all results.
+				for range failingACs {
+					<-resCh
+				}
 			}
-			sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
-				RepoMap:       cfg.RepoMap,
-				RepoMapBudget: cfg.RepoMapBudget,
-				Repair:        &failureBlob,
-				Wisdom:        cfg.Wisdom,
-				RawSOW:        cfg.RawSOWText,
-				RepoRoot:      cfg.RepoRoot,
-			})
-			sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
-			_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 			// NOTE: deliberately not appended to results.
 		}
 	}
@@ -1849,6 +1904,34 @@ func runReasoningForStuckCriteria(
 		}
 	}
 	return hintBlob.String()
+}
+
+// collectFailingACs returns the subset of acceptance results that failed.
+func collectFailingACs(acceptance []plan.AcceptanceResult) []plan.AcceptanceResult {
+	var out []plan.AcceptanceResult
+	for _, ac := range acceptance {
+		if !ac.Passed {
+			out = append(out, ac)
+		}
+	}
+	return out
+}
+
+// formatSingleACFailure builds a repair prompt block for exactly ONE
+// failing criterion. Used by the per-criterion parallel repair path
+// so each worker gets a focused assignment instead of the full failure
+// blob.
+func formatSingleACFailure(ac plan.AcceptanceResult) string {
+	var b strings.Builder
+	b.WriteString("FAILING ACCEPTANCE CRITERION (fix THIS ONE criterion only):\n\n")
+	fmt.Fprintf(&b, "  [FAIL] %s: %s\n", ac.CriterionID, ac.Description)
+	if ac.Output != "" {
+		for _, line := range strings.Split(strings.TrimSpace(ac.Output), "\n") {
+			fmt.Fprintf(&b, "         %s\n", line)
+		}
+	}
+	b.WriteString("\nFix ONLY this criterion. Do not touch code unrelated to this specific failure. After your fix, re-run the exact failing command via bash and confirm exit 0.\n")
+	return b.String()
 }
 
 // truncateForLog cuts a string to N runes for printing in a single
