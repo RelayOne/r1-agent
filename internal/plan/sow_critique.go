@@ -267,10 +267,47 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	if len(refined.Sessions) == 0 && len(original.Sessions) > 0 {
 		refined.Sessions = original.Sessions
 	}
+	// Infra consistency fixup: if a session references infra that isn't
+	// declared in stack.infra (e.g. the refiner added docker to a session
+	// without adding docker to the stack), auto-add a stub infra entry
+	// so ValidateSOW accepts it. This is non-destructive — the operator
+	// still sees the infra is needed, and downstream env checks will
+	// catch any required env vars. Without this fixup, a trivial
+	// oversight in the refined output (single missing stack entry)
+	// would nuke the entire refinement pass.
+	autoAddMissingInfra(refined)
 	if errs := ValidateSOW(refined); len(errs) > 0 {
 		return nil, fmt.Errorf("refined SOW failed validation: %s (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", strings.Join(errs, "; "), resp.StopReason)
 	}
 	return refined, nil
+}
+
+// autoAddMissingInfra walks every session.InfraNeeded entry and, if any
+// name is not already declared in sow.Stack.Infra, appends a stub infra
+// entry for it. This fixes the common refinement failure where the
+// model adds a new infra reference to a session (e.g. "docker") without
+// also updating the top-level stack.infra list — a trivial oversight
+// that previously nuked the entire refinement pass when ValidateSOW
+// rejected it with "session S10 references unknown infra: docker".
+//
+// Mutation is in place on the passed SOW.
+func autoAddMissingInfra(sow *SOW) {
+	if sow == nil {
+		return
+	}
+	declared := map[string]bool{}
+	for _, inf := range sow.Stack.Infra {
+		declared[inf.Name] = true
+	}
+	for _, s := range sow.Sessions {
+		for _, needed := range s.InfraNeeded {
+			if declared[needed] || needed == "" {
+				continue
+			}
+			sow.Stack.Infra = append(sow.Stack.Infra, InfraRequirement{Name: needed})
+			declared[needed] = true
+		}
+	}
 }
 
 // repairJSONViaLLM is a last-ditch salvage path for long SOW
