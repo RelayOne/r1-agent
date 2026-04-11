@@ -1278,6 +1278,20 @@ func sowCmd(args []string) {
 			fatal("load SOW: %v", loadErr)
 		}
 		sow = loaded
+		// Deterministic AC command scrub: runs BEFORE the critique
+		// pass so obvious anti-patterns ($REPO_URL git clones,
+		// "|| echo ok" fallbacks, npx wrappers, etc.) are stripped
+		// locally without burning an LLM call. The scrub is safe
+		// (regex-based, only removes known-bad subpatterns) and idempotent.
+		// Whatever remains goes to the critique model, which now has
+		// less noise to wade through.
+		if scrubbed, scrubDiag := plan.ScrubSOW(sow); len(scrubDiag) > 0 {
+			_ = scrubbed // ScrubSOW mutates in place; assignment is belt-and-suspenders
+			fmt.Printf("  scrubbed %d AC command pattern(s) before critique:\n", len(scrubDiag))
+			for _, d := range scrubDiag {
+				fmt.Printf("    - %s\n", d)
+			}
+		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
