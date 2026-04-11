@@ -40,6 +40,13 @@ E2E tests belong in:
 
 They do NOT belong in acceptance criteria that gate automated SOW session transitions.
 
+## Gotchas
+
+- `playwright test` needs `npx playwright install` first (200MB+ download) — never in an AC
+- Cypress needs a display server (`DISPLAY` env) — can't run headless in CI without setup
+- "No tests found" from playwright usually means the binary isn't installed, not that tests are missing
+- Vitest with jsdom is the correct substitute for browser-behavior unit tests
+
 ## The failure mode this prevents
 
 Without this rule, the LLM generates ACs like:

@@ -111,6 +111,14 @@ If you import anything from `@testing-library/react`:
 
 Skipping any of these produces confusing errors like "document is not defined" or "toBeInTheDocument is not a function".
 
+## Gotchas
+
+- Tests without a runner dep + config file + test script = dead code that silently passes "0 tests found"
+- vitest needs `environment: 'jsdom'` for React components, otherwise "document is not defined"
+- `@testing-library/jest-dom` must be imported in a setup file, not inline in each test
+- Jest and vitest have different setup file keys: `setupFilesAfterSetup` vs `setupFiles`
+- Test files must match the runner's `include` glob: `**/*.test.{ts,tsx}` is the vitest default
+
 ## Common failure signatures
 
 | Error | Cause | Fix |

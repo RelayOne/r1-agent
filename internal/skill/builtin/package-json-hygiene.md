@@ -96,6 +96,14 @@ If the SOW stack is TypeScript and the package contains source code, every packa
 
 Missing any of these is fine IF there are no downstream consumers, but if the SOW's acceptance criteria reference `pnpm <script>`, that script must exist.
 
+## Gotchas
+
+- Adding a dep to package.json without `pnpm install` = "Cannot find module" on next command
+- `"build": "tsc"` without `"typescript"` in devDeps = "tsc: not found"
+- workspace:* deps that point at a package without a matching `"name"` field = silent resolution failure
+- `pnpm --filter X build` when X has no "build" script = ERR_PNPM_NO_SCRIPT, not a helpful error
+- Root package.json devDeps do NOT auto-hoist to child packages in pnpm strict mode
+
 ## Self-verify before ending
 
 The model's most common mistake is ending a task while the workspace is still in a "half-baked" state. Before you end, run:

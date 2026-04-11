@@ -47,6 +47,14 @@ Common failure patterns and their actual root causes:
 | AC fails with "missing script: build" | package.json has no build script | Add the script, don't change the AC command |
 | AC fails with "0 tests found" | Test runner config doesn't match test file glob | Fix the config's `include` pattern |
 
+## Gotchas
+
+- Fixing 4 things at once usually fixes 2 and breaks 1 — fix ONE, verify, then next
+- "tsc: not found" and "Cannot find module zod" are often the SAME root cause (missing dep)
+- Don't rewrite the AC command unless the reasoning loop told you to (verdict: ac_bug)
+- Always re-run the exact failing command BEFORE ending — "should be fixed" is not verification
+- pnpm install after any package.json change — the most common missed step in repair
+
 ## What NOT to do in repair mode
 
 - Don't rewrite the AC command unless the reasoning loop explicitly told you to (verdict: `ac_bug`)

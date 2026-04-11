@@ -47,6 +47,13 @@ This catches foundation issues before the feature ACs fire. If AC1 fails, the re
 | `error TS6053: File not found` in tsconfig extends | Wrong extends path | Use relative path `../../tooling/tsconfig/base.json` |
 | `ENOENT: no such file or directory` from pnpm | Package dir doesn't exist | Create the package dir with package.json, re-run `pnpm install` |
 
+## Gotchas
+
+- "tsc: not found" is NOT a toolchain problem — it means typescript isn't in the package's devDeps
+- A cascading type error in one shared package will fail EVERY downstream AC that typechecks
+- `pnpm install` after adding deps is non-optional — the dep graph is stale without it
+- Foundation issues must be fixed FIRST, before feature code. Don't skip to the feature.
+
 ## Why this matters for autonomous agents
 
 Human developers instinctively run `npm install` and check that things compile before writing feature code. LLM agents don't have this instinct — they start writing feature files immediately because the task description says "implement X", not "make sure the workspace compiles first, then implement X". This skill fills that gap.

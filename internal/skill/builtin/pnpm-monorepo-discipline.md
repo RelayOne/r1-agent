@@ -96,8 +96,13 @@ This is counterintuitive: even though typescript is in the root `package.json`, 
 
 `^build` means "run build in every upstream dependency first". If `apps/web` depends on `@sentinel/types` (via `workspace:*`), then `turbo run build --filter=apps/web` will build `@sentinel/types` first.
 
-## Gotchas
+## Gotchas (CRITICAL — read before writing any monorepo code)
 
+- **Every package needs its own deps**: pnpm does NOT hoist. If `apps/web` imports `@sentinel/types`, `apps/web/package.json` must declare it. Root devDeps don't help child packages.
+- **Every package that runs tsc needs typescript in its own devDeps**: "tsc: not found" means add typescript to THAT package's devDeps, not the root.
+- **After editing any package.json, run `pnpm install`**: the dep graph is stale until you do.
+- **workspace:* for sibling deps**: use `"@sentinel/types": "workspace:*"` not a version number.
+- **tsconfig extends uses relative paths**: `"../../tooling/tsconfig/base.json"` not `"@sentinel/tsconfig/base.json"`.
 - **`node_modules` looks weird**: pnpm uses a symlinked `node_modules/.pnpm/` content-addressable store. Each package's `node_modules/` is just symlinks into the store. This is fine; don't try to "fix" it.
 - **`pnpm install` is idempotent but NOT free**. After editing a `package.json`, you MUST re-run `pnpm install` before expecting new deps to resolve.
 - **`pnpm exec X` and direct `X` both work** when stoke runs acceptance commands (stoke prepends `node_modules/.bin` to PATH). Prefer direct.

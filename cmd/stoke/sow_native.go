@@ -1658,7 +1658,18 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		reg := skill.DefaultRegistry(opts.RepoRoot)
 		_ = reg.Load()
 		stackMatches := stackMatchesForSOW(sowDoc, session, task)
-		skillBlob, _ := reg.InjectPromptBudgeted("", stackMatches, 4000)
+		// Pass the task description + session title as the "prompt"
+		// for keyword matching. Without this, keyword matching runs
+		// against an empty string and no skills match via Tier 3.
+		// Also include the session's AC commands so skills that
+		// match AC patterns (e.g. no-e2e-in-ac matching "playwright")
+		// get injected.
+		var matchCtx strings.Builder
+		matchCtx.WriteString(session.Title + " " + task.Description + " ")
+		for _, ac := range session.AcceptanceCriteria {
+			matchCtx.WriteString(ac.Command + " " + ac.Description + " ")
+		}
+		skillBlob, _ := reg.InjectPromptBudgeted(matchCtx.String(), stackMatches, 6000)
 		if strings.TrimSpace(skillBlob) != "" {
 			sys.WriteString("ECOSYSTEM PLAYBOOKS (canonical conventions for this stack — follow these unless the SOW says otherwise):\n")
 			sys.WriteString(skillBlob)
