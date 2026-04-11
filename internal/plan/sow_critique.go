@@ -3,6 +3,7 @@ package plan
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
@@ -170,9 +171,16 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	userText := sowRefinePrompt + string(critBlob) + "\n\nORIGINAL SOW:\n" + string(origBlob)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
+	// MaxTokens 32000: a refinement emits a complete replacement SOW
+	// plus reasoning. For a ~50KB source SOW with 10 sessions, the
+	// output can easily hit 50KB too (~12k tokens of SOW content),
+	// and an extended-thinking model will burn another 4-8k on
+	// reasoning on top. The previous 16k cap was producing truncated
+	// refinements — the output stopped mid-sessions-array and
+	// ValidateSOW later rejected it with "SOW has no sessions".
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 16000,
+		MaxTokens: 32000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -181,18 +189,39 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 
 	raw, diag := collectModelText(resp)
 	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("refine returned no usable content (stop_reason=%q, %d blocks)\n%s", resp.StopReason, len(resp.Content), diag)
+		dumpRespMu.Lock()
+		_ = os.WriteFile("/tmp/stoke-refine-resp-debug.json", marshalRespOrEmpty(resp), 0o644)
+		dumpRespMu.Unlock()
+		return nil, fmt.Errorf("refine returned no usable content (stop_reason=%q, %d blocks; response saved to /tmp/stoke-refine-resp-debug.json)\n%s", resp.StopReason, len(resp.Content), diag)
 	}
+	// Always dump the raw refinement output so failures downstream
+	// (extract, parse, validate) have something to inspect. Overwritten
+	// per call. Cheap insurance.
+	dumpRespMu.Lock()
+	_ = os.WriteFile("/tmp/stoke-refine-raw.txt", []byte(raw), 0o644)
+	dumpRespMu.Unlock()
+
 	blob, extractErr := jsonutil.ExtractJSONObject(raw)
 	if extractErr != nil {
-		return nil, fmt.Errorf("parse refined SOW: %w", extractErr)
+		return nil, fmt.Errorf("parse refined SOW: %w (raw saved to /tmp/stoke-refine-raw.txt, stop_reason=%q)", extractErr, resp.StopReason)
 	}
 	refined, err := ParseSOW(blob, "refined.json")
 	if err != nil {
-		return nil, fmt.Errorf("parse refined SOW: %w", err)
+		return nil, fmt.Errorf("parse refined SOW: %w (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", err, resp.StopReason)
+	}
+	// If the refinement came back with an empty sessions array — which
+	// typically means the model truncated mid-output — and the original
+	// had sessions, splice the original's sessions back in rather than
+	// failing the entire refinement. The non-session fields (id, name,
+	// stack, description) from the refinement are still useful, and
+	// preserving original sessions is safer than returning no SOW at
+	// all to the caller. This is a guard against extended-thinking
+	// models that use most of their output budget on reasoning.
+	if len(refined.Sessions) == 0 && len(original.Sessions) > 0 {
+		refined.Sessions = original.Sessions
 	}
 	if errs := ValidateSOW(refined); len(errs) > 0 {
-		return nil, fmt.Errorf("refined SOW failed validation: %s", strings.Join(errs, "; "))
+		return nil, fmt.Errorf("refined SOW failed validation: %s (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", strings.Join(errs, "; "), resp.StopReason)
 	}
 	return refined, nil
 }

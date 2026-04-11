@@ -121,11 +121,47 @@ func TestRefineSOW_HappyPath(t *testing.T) {
 }
 
 func TestRefineSOW_RejectsInvalidSchema(t *testing.T) {
-	// Response has no sessions — fails ValidateSOW.
+	// Response has no sessions. Because RefineSOW splices the
+	// original's sessions in when the refined copy comes back empty
+	// (a guard against extended-thinking models truncating output),
+	// we need an original with no sessions so the splice cannot
+	// rescue the refinement. Then ValidateSOW catches the missing
+	// sessions and the test's original intent — "invalid refined
+	// SOW schema surfaces as an error" — still holds.
+	emptyOrig := &SOW{ID: "x", Name: "x", Sessions: nil}
 	prov := &mockProvider{name: "mock", response: `{"id":"x","name":"x","sessions":[]}`}
-	_, err := RefineSOW(goodSOW(), &SOWCritique{}, prov, "m")
+	_, err := RefineSOW(emptyOrig, &SOWCritique{}, prov, "m")
 	if err == nil {
 		t.Error("expected validation error")
+	}
+}
+
+// When the model returns a refinement with an empty sessions array —
+// typically because extended-thinking models truncate mid-output — and
+// the original DID have sessions, RefineSOW splices the original's
+// sessions into the refined envelope so the refinement still produces
+// a usable SOW instead of failing the whole pipeline. The refined's
+// id/name/description updates are preserved; only the sessions array
+// is inherited from the original.
+func TestRefineSOW_SplicesOriginalSessionsWhenRefinedIsEmpty(t *testing.T) {
+	// Refined has id+name updated but no sessions (model truncated).
+	prov := &mockProvider{name: "mock", response: `{"id":"refined","name":"After Review","description":"addressed review","sessions":[]}`}
+	sow, err := RefineSOW(goodSOW(), &SOWCritique{}, prov, "m")
+	if err != nil {
+		t.Fatalf("RefineSOW: %v", err)
+	}
+	if sow == nil {
+		t.Fatal("nil refined SOW")
+	}
+	if sow.Name != "After Review" {
+		t.Errorf("refined name not propagated: %q", sow.Name)
+	}
+	if len(sow.Sessions) == 0 {
+		t.Error("expected original sessions spliced in, got none")
+	}
+	// The original's session should be present.
+	if sow.Sessions[0].ID != "S1" {
+		t.Errorf("expected S1 from original, got %q", sow.Sessions[0].ID)
 	}
 }
 
