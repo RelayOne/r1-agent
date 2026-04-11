@@ -109,15 +109,31 @@ func NewAnthropicProvider(apiKey, baseURL string) *AnthropicProvider {
 		baseURL = "https://api.anthropic.com"
 	}
 	return &AnthropicProvider{
-		apiKey:     apiKey,
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{Timeout: 10 * time.Minute},
+		apiKey:  apiKey,
+		baseURL: strings.TrimRight(baseURL, "/"),
+		// 30-minute ceiling: extended-thinking models with large
+		// max_tokens (16k+ conversion, 32k+ refine) can legitimately
+		// take 10-20 minutes when the LiteLLM proxy is contended by
+		// other concurrent workers. The 10-minute cap was causing
+		// SOW prose conversion to fail on shared proxies under load,
+		// even though the underlying request would have succeeded.
+		httpClient: &http.Client{Timeout: 30 * time.Minute},
 	}
 }
 
 func (p *AnthropicProvider) Name() string { return "anthropic" }
 
-// Chat sends a non-streaming chat completion request.
+// Chat sends a non-streaming chat completion request with bounded
+// retries on transient failures. Transient failures include:
+//
+//   - context deadline exceeded / client timeout waiting for headers
+//   - 429 rate limiting
+//   - 5xx server errors
+//   - EOF / connection reset mid-response
+//
+// Retries use exponential backoff starting at 5 seconds: 5s, 15s, 45s.
+// After 3 attempts the final error is returned unchanged. Non-retriable
+// errors (4xx other than 429, JSON parse failures) fail immediately.
 func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	body := p.buildRequestBody(req, false)
 	data, err := json.Marshal(body)
@@ -125,6 +141,31 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		chatResp, err := p.chatOnce(data)
+		if err == nil {
+			return chatResp, nil
+		}
+		lastErr = err
+		if !isRetriableProviderError(err) {
+			return nil, err
+		}
+		if attempt < maxAttempts {
+			// Exponential backoff: 5s, 15s, 45s. The goal is to let
+			// a contended LiteLLM proxy drain its queue before we
+			// retry; aggressive retry just piles on.
+			wait := time.Duration(5*intPow(3, attempt-1)) * time.Second
+			time.Sleep(wait)
+		}
+	}
+	return nil, fmt.Errorf("Chat failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// chatOnce is the single-request path extracted from Chat so the retry
+// loop can reuse it cleanly.
+func (p *AnthropicProvider) chatOnce(data []byte) (*ChatResponse, error) {
 	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/messages", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -147,6 +188,50 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return &chatResp, nil
+}
+
+// isRetriableProviderError reports whether err looks like a transient
+// failure worth retrying. Client timeouts, 429s, 5xx errors, and
+// connection-reset / EOF errors all qualify. Hard failures (4xx other
+// than 429, malformed JSON that parsed but decoded wrong) do not.
+func isRetriableProviderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	retriable := []string{
+		"context deadline exceeded",
+		"Client.Timeout exceeded",
+		"i/o timeout",
+		"connection reset",
+		"EOF",
+		"broken pipe",
+		"Anthropic API error 429",
+		"Anthropic API error 500",
+		"Anthropic API error 502",
+		"Anthropic API error 503",
+		"Anthropic API error 504",
+		"Anthropic API error 520",
+		"Anthropic API error 522",
+		"Anthropic API error 524",
+	}
+	for _, pat := range retriable {
+		if strings.Contains(msg, pat) {
+			return true
+		}
+	}
+	return false
+}
+
+// intPow returns base^exp for small non-negative integers. Used by the
+// exponential backoff schedule without pulling in math.Pow + float
+// conversions.
+func intPow(base, exp int) int {
+	r := 1
+	for i := 0; i < exp; i++ {
+		r *= base
+	}
+	return r
 }
 
 // ChatStream sends a streaming chat completion request, calling onEvent for each event.
