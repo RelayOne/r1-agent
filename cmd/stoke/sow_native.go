@@ -156,6 +156,22 @@ type sowNativeConfig struct {
 
 	// --- Lead-dev briefing phase ---
 
+	// ACRewrites persists reasoning-loop AC rewrites across session
+	// retries. Keyed on criterion ID -> rewritten command string.
+	// When the reasoning loop rewrites an AC, the new command is
+	// stored here AND applied to effectiveCriteria. On session retry,
+	// runSessionNative reads this map and applies any prior rewrites
+	// to the fresh session.AcceptanceCriteria before Phase 1, so the
+	// fix doesn't get lost between attempts.
+	//
+	// Without this, the reasoning loop correctly diagnosed ac_bug and
+	// produced a rewrite, but the session retry re-read the original
+	// SOW criteria and the rewrite was lost. The loop then
+	// re-discovered the same bug, re-produced the same rewrite, and
+	// the same repair failed the same way — an O(n) waste of LLM
+	// calls per retry.
+	ACRewrites map[string]string
+
 	// Briefings is a map of task ID -> per-task briefing produced by
 	// the lead-dev phase that runs BEFORE Phase 1 dispatches the
 	// session's tasks. Each briefing carries current-codebase
@@ -307,6 +323,22 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if len(effectiveCriteria) > 0 {
 				fmt.Printf("  (no criteria in SOW; inferred %d baseline from stack)\n", len(effectiveCriteria))
 			}
+		}
+	}
+	// Apply any AC rewrites from prior session attempts. The reasoning
+	// loop may have diagnosed ac_bug and rewritten a criterion's
+	// command during attempt N; without this merge step, attempt N+1
+	// would re-read the original SOW criteria and lose the rewrite.
+	if len(cfg.ACRewrites) > 0 {
+		applied := 0
+		for ci := range effectiveCriteria {
+			if newCmd, ok := cfg.ACRewrites[effectiveCriteria[ci].ID]; ok {
+				effectiveCriteria[ci].Command = newCmd
+				applied++
+			}
+		}
+		if applied > 0 {
+			fmt.Printf("  applied %d AC rewrite(s) from prior attempt reasoning\n", applied)
 		}
 	}
 	workingSession := session
@@ -1877,6 +1909,11 @@ func runReasoningForStuckCriteria(
 				fmt.Printf("    → rewriting AC %s command from %q to %q\n",
 					ac.CriterionID, truncateForLog(crit.Command, 100), truncateForLog(verdict.ACRewrite, 100))
 				effectiveCriteria[critIdx].Command = verdict.ACRewrite
+				// Persist so session retries see this rewrite too.
+				if cfg.ACRewrites == nil {
+					cfg.ACRewrites = map[string]string{}
+				}
+				cfg.ACRewrites[ac.CriterionID] = verdict.ACRewrite
 				// Clear sticky count so the next acceptance pass
 				// starts fresh on the rewritten AC.
 				delete(stickyAttempts, ac.CriterionID)
@@ -1885,6 +1922,10 @@ func runReasoningForStuckCriteria(
 			if verdict.ACRewrite != "" {
 				fmt.Printf("    → rewriting AC %s command (both-verdict)\n", ac.CriterionID)
 				effectiveCriteria[critIdx].Command = verdict.ACRewrite
+				if cfg.ACRewrites == nil {
+					cfg.ACRewrites = map[string]string{}
+				}
+				cfg.ACRewrites[ac.CriterionID] = verdict.ACRewrite
 				delete(stickyAttempts, ac.CriterionID)
 			}
 			if verdict.CodeFix != "" {
