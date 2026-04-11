@@ -19,9 +19,72 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/repomap"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
 )
+
+// stackMatchesForSOW returns keyword tags used to match skills against
+// the SOW stack. These become the second argument to
+// skill.Registry.InjectPromptBudgeted, which scores each skill against
+// the prompt text plus these tags. The tags broaden matches so a
+// project that says "next.js 14 app router" still gets tagged with
+// "react", "typescript", and "nextjs" for skill lookup.
+func stackMatchesForSOW(sowDoc *plan.SOW, session plan.Session, task plan.Task) []string {
+	if sowDoc == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+	}
+	add(sowDoc.Stack.Language)
+	add(sowDoc.Stack.Framework)
+	if sowDoc.Stack.Monorepo != nil {
+		add(sowDoc.Stack.Monorepo.Tool)
+		add(sowDoc.Stack.Monorepo.Manager)
+	}
+	// Language-adjacent tags so skill files with broader keywords still
+	// match. e.g. language=typescript implies "javascript", "node",
+	// "pnpm" for node workspaces.
+	lang := strings.ToLower(sowDoc.Stack.Language)
+	if lang == "typescript" || lang == "javascript" {
+		add("node")
+		add("npm")
+		add("pnpm")
+	}
+	fw := strings.ToLower(sowDoc.Stack.Framework)
+	if strings.Contains(fw, "next") {
+		add("nextjs")
+		add("react")
+	}
+	if strings.Contains(fw, "expo") || strings.Contains(fw, "react-native") {
+		add("react-native")
+		add("expo")
+	}
+	// Surface infra tags too — redis/postgres skills exist in the
+	// builtin set and are useful when the stack uses them.
+	for _, inf := range sowDoc.Stack.Infra {
+		add(inf.Name)
+	}
+	// Task-specific hints from the session title and task description.
+	// These bias matches toward testing/deployment/auth skills when the
+	// current work actually touches those areas.
+	for _, w := range strings.Fields(strings.ToLower(session.Title + " " + task.Description)) {
+		if len(w) > 3 && len(w) < 30 {
+			add(w)
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	return out
+}
 
 // encodeTextMessage wraps a plain string in the provider's content-block
 // schema. Small helper used by the cross-review and other single-message
@@ -1325,6 +1388,24 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 	if canonicalBlock := buildCanonicalNamesBlock(sowDoc, session, task); canonicalBlock != "" {
 		sys.WriteString(canonicalBlock)
 		sys.WriteString("\n")
+	}
+
+	// Skill injection: keyword-match the SOW stack against the skill
+	// registry (project ~> user ~> builtin) and append any matching
+	// skill content. This is where ecosystem-specific playbooks
+	// (pnpm-monorepo-discipline, node-test-runner-triad, package-json-
+	// hygiene, react-native-core, etc.) get pulled into the per-task
+	// prompt. Budget-bounded so one chatty skill can't blow the cache.
+	if opts.RepoRoot != "" {
+		reg := skill.DefaultRegistry(opts.RepoRoot)
+		_ = reg.Load()
+		stackMatches := stackMatchesForSOW(sowDoc, session, task)
+		skillBlob, _ := reg.InjectPromptBudgeted("", stackMatches, 4000)
+		if strings.TrimSpace(skillBlob) != "" {
+			sys.WriteString("ECOSYSTEM PLAYBOOKS (canonical conventions for this stack — follow these unless the SOW says otherwise):\n")
+			sys.WriteString(skillBlob)
+			sys.WriteString("\n")
+		}
 	}
 
 	// Raw SOW text: the original file the user wrote (prose, JSON,
