@@ -19,10 +19,35 @@ const sowCritiquePrompt = `You are a senior engineering reviewer grading a draft
 Score the SOW 0-100 on each dimension:
   - foundation: does the first session establish the repo layout, dependencies, and config?
   - decomposition: are sessions appropriately sized (3-12 total; each runnable in one focused work block)?
-  - criteria: is EVERY session's acceptance_criteria verifiable mechanically (command / file_exists / content_match, not "manual review")?
+  - criteria: is EVERY session's acceptance_criteria verifiable mechanically AND hygienic?
   - stack: is the stack inferred correctly from the prose (language, framework, monorepo, infra)?
   - dependencies: are task dependencies declared properly (no cycles, no missing refs)?
   - specificity: are task descriptions single-sentence specific statements (not bullet lists or vague goals)?
+
+ACCEPTANCE CRITERION HYGIENE RULES (flag as BLOCKING if any are violated):
+  1. No references to unset environment variables. Commands like
+     "cd $(mktemp -d) && git clone $REPO_URL ." are ALWAYS wrong —
+     the SOW runs against the current working directory, there is no
+     remote clone. Rewrite to "pnpm install && pnpm build --filter=X"
+     (or the equivalent for the stack) run directly at the repo root.
+  2. No "|| echo ok" / "|| true" fallbacks that swallow real failures.
+     A command that always exits 0 is not a verification; it is a lie.
+  3. No commands that require binaries or services that aren't part
+     of the stack (e.g. 'docker build' when no Dockerfile task exists
+     yet; 'axe' when no axe-core dep is declared).
+  4. Commands must be runnable by a Node workspace with
+     node_modules/.bin on PATH after 'pnpm install' — stoke
+     auto-installs the workspace before AC evaluation, so commands
+     should assume node_modules EXISTS but should not assume any
+     global toolchain beyond what the stack declares.
+  5. Prefer 'pnpm <script>' or direct binary calls (tsc, vitest, next)
+     over 'npx' / 'pnpm exec'. Local workspace binaries resolve
+     without wrappers because stoke prepends node_modules/.bin to
+     PATH.
+  6. File-existence criteria are fine but SHOULD be paired with a
+     content_match or command that verifies the file is not empty /
+     is a real implementation. A file_exists check alone passes on
+     any 0-byte file the model writes.
 
 Output ONLY a JSON object. No prose, no markdown fences.
 
@@ -70,6 +95,17 @@ RULES:
 3. Every session MUST have at least one mechanically-verifiable acceptance_criterion (command / file_exists / content_match).
 4. Task IDs stay unique across the whole SOW.
 5. Do NOT introduce new sessions just for the sake of it — fix what's broken.
+6. ACCEPTANCE CRITERIA COMMANDS must be runnable against the current
+   working directory. Do NOT emit commands that clone a remote repo,
+   reference unset env vars ($REPO_URL, $CI, etc.), or use "|| true" /
+   "|| echo ok" fallbacks that swallow failures. Assume stoke runs
+   'pnpm install' before AC evaluation and that node_modules/.bin is
+   on PATH, so prefer direct binary invocations (tsc, vitest, next)
+   and workspace scripts (pnpm --filter X build) over npx wrappers.
+7. When rewriting an acceptance command, keep it SMALL and focused on
+   a single observable outcome. 'pnpm build --filter=@sentinel/types'
+   is a valid command; 'cd $(mktemp -d) && git clone $REPO_URL . && ...'
+   is not.
 
 CRITIQUE ISSUES:
 `
