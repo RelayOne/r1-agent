@@ -408,21 +408,40 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			// so skill search considers the full scope of this wave.
 			var queryBuf strings.Builder
 			queryBuf.WriteString(session.Title + " ")
+			var taskDescs []string
 			for _, t := range session.Tasks {
 				queryBuf.WriteString(t.Description + " ")
+				taskDescs = append(taskDescs, t.Description)
 			}
-			matches := reg.SearchSkills(queryBuf.String(), 5)
-			skillRefs = skill.FormatSkillReferences(matches)
-			// Observability: log which skills were selected so the
-			// operator can see whether the skill index is pulling in
-			// relevant guidance for this session's scope.
+			// Phase 1: TF-IDF keyword + categorical match (cheap).
+			// Oversample with topK=10 so the judge has more to
+			// choose from.
+			matches := reg.SearchSkills(queryBuf.String(), 10)
+			// Log the pre-judge candidates so operators see what TF-IDF
+			// surfaced before filtering.
 			if len(matches) > 0 {
 				var names []string
 				for _, m := range matches {
 					names = append(names, m.Skill.Name)
 				}
-				fmt.Printf("  skills matched for this session: %s\n", strings.Join(names, ", "))
+				fmt.Printf("  skill candidates (pre-judge): %s\n", strings.Join(names, ", "))
 			}
+			// Phase 2: LLM judge prunes irrelevant matches. The
+			// keyword-based TF-IDF frequently surfaces skills that
+			// overlap on incidental words ("operator" matching
+			// kubernetes). The judge removes those.
+			if cfg.ReasoningProvider != nil && len(matches) > 0 {
+				judged := skill.JudgeRelevance(ctx, cfg.ReasoningProvider, cfg.ReasoningModel, session.Title, taskDescs, matches)
+				if len(judged) < len(matches) {
+					var names []string
+					for _, m := range judged {
+						names = append(names, m.Skill.Name)
+					}
+					fmt.Printf("  skills kept by judge: %s\n", strings.Join(names, ", "))
+				}
+				matches = judged
+			}
+			skillRefs = skill.FormatSkillReferences(matches)
 		}
 
 		fmt.Printf("  lead-dev briefing pass (analyzing current codebase for %d tasks)...\n", len(session.Tasks))
