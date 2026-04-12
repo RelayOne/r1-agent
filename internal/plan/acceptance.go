@@ -17,7 +17,23 @@ type AcceptanceResult struct {
 	Description string
 	Passed      bool
 	Output      string // command output or diagnostic message
+
+	// JudgeRuled is true when the criterion initially failed its
+	// mechanical check but was overridden to pass by the semantic
+	// LLM judge. Recorded so the operator knows which passes were
+	// literal vs semantic.
+	JudgeRuled bool
+
+	// JudgeReasoning is the semantic judge's explanation when it
+	// overrode a mechanical failure. Empty when no judge ran.
+	JudgeReasoning string
 }
+
+// SemanticEvaluator is called when a mechanical AC check fails. The
+// implementation typically delegates to JudgeAC from this package.
+// Returning (true, ...) overrides the mechanical failure to a pass.
+// Returning (false, ...) or (_, err) leaves the mechanical verdict.
+type SemanticEvaluator func(ctx context.Context, ac AcceptanceCriterion, failureOutput string) (overridePass bool, reasoning string, err error)
 
 // installedOnce tracks workspace roots where we've already run the
 // package-manager install, so we don't redo it on every AC invocation
@@ -40,6 +56,18 @@ var (
 // PATH so locally-installed binaries (tsc, vitest, next, eslint, etc.)
 // resolve directly without needing `pnpm exec` or `npx` wrappers.
 func CheckAcceptanceCriteria(ctx context.Context, projectRoot string, criteria []AcceptanceCriterion) ([]AcceptanceResult, bool) {
+	return CheckAcceptanceCriteriaWithJudge(ctx, projectRoot, criteria, nil)
+}
+
+// CheckAcceptanceCriteriaWithJudge is the full-featured acceptance
+// runner. When judge is non-nil, any criterion that fails its
+// mechanical check gets consulted with the semantic judge before
+// being marked failed. If the judge says the code actually
+// implements the requirement (pattern mismatch, not real gap), the
+// mechanical failure is overridden to a pass and the result is
+// annotated with JudgeRuled + JudgeReasoning so the operator sees
+// which passes are mechanical vs semantic.
+func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, criteria []AcceptanceCriterion, judge SemanticEvaluator) ([]AcceptanceResult, bool) {
 	ensureWorkspaceInstalled(ctx, projectRoot)
 
 	var results []AcceptanceResult
@@ -47,6 +75,26 @@ func CheckAcceptanceCriteria(ctx context.Context, projectRoot string, criteria [
 
 	for _, ac := range criteria {
 		result := checkOneCriterion(ctx, projectRoot, ac)
+		// If the mechanical check failed AND we have a semantic
+		// judge, ask the judge whether the code actually implements
+		// the requirement. This is the "reasoning loop as judge"
+		// the user asked for: grep-based checks can't tell whether
+		// the feature was built, only whether the pattern matches.
+		if !result.Passed && judge != nil {
+			overridePass, reasoning, err := judge(ctx, ac, result.Output)
+			if err == nil && overridePass {
+				result.Passed = true
+				result.JudgeRuled = true
+				result.JudgeReasoning = reasoning
+				result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED but semantic judge approved:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
+			} else if err == nil && !overridePass && reasoning != "" {
+				// Judge agreed with the mechanical failure. Record
+				// its reasoning for the operator to see WHY the
+				// feature isn't considered implemented.
+				result.JudgeReasoning = reasoning
+				result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED and semantic judge agrees:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
+			}
+		}
 		results = append(results, result)
 		if !result.Passed {
 			allPassed = false

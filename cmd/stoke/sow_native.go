@@ -554,7 +554,53 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if ctx.Err() != nil {
 				return results, ctx.Err()
 			}
-			acceptance, allPassed := plan.CheckAcceptanceCriteria(ctx, cfg.RepoRoot, effectiveCriteria)
+			// Build a semantic judge closure that consults the LLM
+			// when a mechanical check fails. This is the "grep
+			// found the wrong pattern but the code implements the
+			// feature" escape that content_match ACs desperately
+			// need. No skipping — the judge must affirmatively say
+			// "this code implements the requirement" before a
+			// mechanical failure is overridden to pass.
+			var judge plan.SemanticEvaluator
+			if cfg.ReasoningProvider != nil {
+				judge = func(jctx context.Context, ac plan.AcceptanceCriterion, failureOutput string) (bool, string, error) {
+					// Pick a relevant task description to feed the judge.
+					taskDesc := workingSession.Title
+					var taskFiles []string
+					for _, t := range workingSession.Tasks {
+						if len(t.Files) > 0 {
+							taskDesc = t.Description
+							taskFiles = append(taskFiles, t.Files...)
+						}
+					}
+					codeExcerpts := plan.CollectCodeExcerptsForAC(cfg.RepoRoot, ac, failureOutput, taskFiles, 6, 4000)
+					// Pull a relevant SOW excerpt too.
+					sowExcerpt := ""
+					if cfg.RawSOWText != "" {
+						sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, plan.Task{ID: ac.ID, Description: ac.Description}, specExcerptConfig{})
+					}
+					verdict, err := plan.JudgeAC(jctx, cfg.ReasoningProvider, cfg.ReasoningModel, plan.SemanticJudgeInput{
+						TaskDescription: taskDesc,
+						SOWSpec:         sowExcerpt,
+						Criterion:       ac,
+						FailureOutput:   failureOutput,
+						CodeExcerpts:    codeExcerpts,
+						RepoRoot:        cfg.RepoRoot,
+					})
+					if err != nil || verdict == nil {
+						return false, "", err
+					}
+					if verdict.ImplementsRequirement {
+						fmt.Printf("    ⚖ semantic judge: %s implements requirement despite mechanical mismatch — %s\n",
+							ac.ID, truncateForLog(verdict.Reasoning, 200))
+					} else {
+						fmt.Printf("    ⚖ semantic judge: %s does NOT implement requirement — %s\n",
+							ac.ID, truncateForLog(verdict.Reasoning, 200))
+					}
+					return verdict.ImplementsRequirement, verdict.Reasoning, nil
+				}
+			}
+			acceptance, allPassed := plan.CheckAcceptanceCriteriaWithJudge(ctx, cfg.RepoRoot, effectiveCriteria, judge)
 			finalAcceptance, finalPassed = acceptance, allPassed
 			// Observability: log pass/fail per criterion on every
 			// acceptance check. Without this, the operator has no
