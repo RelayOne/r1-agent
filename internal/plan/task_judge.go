@@ -50,6 +50,62 @@ type TaskReviewInput struct {
 	// WorkerSummary is what the worker claimed it did (the final
 	// agent message). Reviewer sanity-checks this against the code.
 	WorkerSummary string
+
+	// PriorAttempts counts how many follow-up attempts have already
+	// tried to close gaps on this task's scope. Enables the reviewer
+	// to reason about whether continued follow-ups are productive or
+	// whether the remaining gap needs further decomposition into
+	// smaller pieces.
+	PriorAttempts int
+
+	// PriorGaps is the list of gaps previous reviews flagged, so
+	// the current review can see what's been tried and avoid
+	// re-flagging things already attempted.
+	PriorGaps []string
+}
+
+// DecomposeInput asks the decomposer to split a single stuck gap into
+// smaller sub-problems that can be fixed independently. Used when a
+// follow-up itself produces code the reviewer STILL rejects — instead
+// of another identical follow-up, decompose the remaining work.
+type DecomposeInput struct {
+	// OriginalTask is the task scope we're still trying to complete.
+	OriginalTask Task
+
+	// StuckGap is the gap the reviewer keeps flagging across
+	// multiple follow-up attempts.
+	StuckGap string
+
+	// PriorDirectives is the list of follow-up directives that have
+	// already been tried and failed to close this gap.
+	PriorDirectives []string
+
+	// CodeState is the current on-disk state of files relevant to
+	// the gap.
+	CodeState map[string]string
+
+	// SOWSpec is the task-relevant spec excerpt.
+	SOWSpec string
+}
+
+// DecomposeVerdict is the decomposer's output: a list of narrower
+// sub-problems, each phrased as a concrete follow-up directive.
+type DecomposeVerdict struct {
+	// Reasoning is why the decomposer chose this split.
+	Reasoning string `json:"reasoning"`
+
+	// SubDirectives is the list of narrower follow-up directives.
+	// Each should be independently fixable and together they should
+	// close the stuck gap.
+	SubDirectives []string `json:"sub_directives"`
+
+	// Abandon is true when the decomposer judges the gap
+	// structurally unfixable with the current task's scope. Caller
+	// should escalate rather than spawn more workers.
+	Abandon bool `json:"abandon"`
+
+	// AbandonReason explains why, when Abandon is true.
+	AbandonReason string `json:"abandon_reason,omitempty"`
 }
 
 // ReviewTaskWork consults the LLM to judge whether a worker's task
@@ -129,6 +185,116 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	}
 	return &verdict, nil
 }
+
+// DecomposeTaskGap consults the LLM to split a stuck gap into smaller
+// sub-problems. Called when prior follow-up directives failed to close
+// the gap — rather than another identical directive, recursively
+// decompose into narrower pieces that a worker CAN fix.
+//
+// Returns nil + nil when no provider is configured.
+func DecomposeTaskGap(ctx context.Context, prov provider.Provider, model string, in DecomposeInput) (*DecomposeVerdict, error) {
+	if prov == nil {
+		return nil, nil
+	}
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+
+	var b strings.Builder
+	b.WriteString(decomposePrompt)
+	b.WriteString("\n\n")
+
+	fmt.Fprintf(&b, "ORIGINAL TASK %s: %s\n", in.OriginalTask.ID, in.OriginalTask.Description)
+	if len(in.OriginalTask.Files) > 0 {
+		fmt.Fprintf(&b, "  files: %s\n", strings.Join(in.OriginalTask.Files, ", "))
+	}
+	b.WriteString("\n")
+
+	b.WriteString("STUCK GAP (reviewer keeps flagging this, multiple follow-ups haven't closed it):\n")
+	b.WriteString(in.StuckGap)
+	b.WriteString("\n\n")
+
+	if len(in.PriorDirectives) > 0 {
+		b.WriteString("PRIOR FOLLOW-UP DIRECTIVES THAT ALREADY FAILED:\n")
+		for i, d := range in.PriorDirectives {
+			fmt.Fprintf(&b, "  %d. %s\n", i+1, d)
+		}
+		b.WriteString("\n")
+	}
+
+	if strings.TrimSpace(in.SOWSpec) != "" {
+		b.WriteString("SPEC EXCERPT:\n")
+		b.WriteString(truncateForReasoning(in.SOWSpec, 3000))
+		b.WriteString("\n\n")
+	}
+
+	if len(in.CodeState) > 0 {
+		b.WriteString("CURRENT CODE STATE:\n")
+		paths := sortedKeys(in.CodeState)
+		for _, p := range paths {
+			fmt.Fprintf(&b, "\n--- %s ---\n", p)
+			b.WriteString(truncateForReasoning(in.CodeState[p], 2500))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Output the JSON verdict described in the system prompt.")
+
+	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
+	resp, err := prov.Chat(provider.ChatRequest{
+		Model:     model,
+		MaxTokens: 2500,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decomposer chat: %w", err)
+	}
+	raw, _ := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("decomposer returned no content")
+	}
+
+	var verdict DecomposeVerdict
+	if _, err := jsonutil.ExtractJSONInto(raw, &verdict); err != nil {
+		return nil, fmt.Errorf("parse decomposer verdict: %w", err)
+	}
+	return &verdict, nil
+}
+
+const decomposePrompt = `You are a tech lead decomposing a stuck work item. Prior follow-up directives have failed to close a gap on a specific task. Your job: split the remaining work into narrower, independently-achievable sub-problems that a worker CAN actually complete, OR determine that the gap is structurally unfixable.
+
+When to decompose into sub-directives:
+  - The stuck gap is genuinely multi-part ('fix the auth middleware AND add the rate limiter AND wire the test suite')
+  - Prior directives asked for too much at once and the worker kept missing pieces
+  - The gap touches multiple files where each file has its own fix
+
+When to abandon:
+  - The gap is about something the task's scope doesn't actually own (e.g. an imported package needs to change — that's a different task's responsibility)
+  - The gap requires external services, credentials, or manual steps
+  - Prior directives have already been narrow AND the worker still can't produce code that satisfies the reviewer — suggests the gap is not mechanically fixable
+
+When decomposing, each sub-directive must be:
+  - ONE concrete action on ONE file (or at most two files)
+  - Scoped small enough that a worker can complete it in a few tool calls
+  - Independently verifiable: completing just this sub-directive produces observable progress
+  - Non-overlapping with other sub-directives
+
+Be honest about abandonment. It's better to escalate gracefully than to keep spawning workers that can't make progress.
+
+Output ONLY a single JSON object — no prose, no backticks:
+
+{
+  "reasoning": "one paragraph explaining the split or the abandon decision",
+  "sub_directives": [
+    "Open apps/web/middleware.ts and add the JWT verification call using jose.jwtVerify",
+    "Open apps/web/lib/auth.ts and export a validateToken helper that wraps the jose call"
+  ],
+  "abandon": false,
+  "abandon_reason": "only when abandon is true"
+}
+
+`
 
 const taskReviewPrompt = `You are a senior code reviewer checking a single task's completion BEFORE the session's acceptance criteria run. The worker agent just finished writing code for this task. Your job: decide whether the task is actually COMPLETE per the TASK DESCRIPTION — not per an ideal implementation.
 

@@ -2272,72 +2272,150 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 }
 
 // reviewAndFollowup runs the per-task LLM reviewer after a worker
-// completes and, if the reviewer finds gaps, dispatches ONE targeted
-// follow-up worker to close them. Cap of one follow-up per task keeps
-// cost bounded and prevents infinite loops. Noop when cfg has no
-// ReasoningProvider.
+// completes. When gaps are found, dispatches a focused follow-up
+// worker. If the follow-up's own review STILL flags gaps, consults
+// the decomposer to split the remaining work into narrower sub-
+// directives that are easier to fix, and dispatches a worker per
+// sub-directive. Recursion is bounded by maxReviewDepth.
 //
-// Mutates tr in place: on follow-up failure the result is marked
-// failed; on follow-up success the result stays successful (the
-// follow-up is a supplement, not a replacement).
+// Noop when cfg has no ReasoningProvider.
 func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, task plan.Task, tr *plan.TaskExecResult, runtimeDir string, cfg sowNativeConfig, maxTurns int) {
-	if cfg.ReasoningProvider == nil {
+	if cfg.ReasoningProvider == nil || tr == nil || !tr.Success {
 		return
 	}
-	if tr == nil || !tr.Success {
+	reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil)
+}
+
+// maxReviewDepth caps recursive follow-up decomposition. At depth N
+// we've already dispatched 1 + sum(sub_directives from each depth)
+// workers on this task's scope. 3 is enough for "original → follow-up
+// → decomposed sub-fix" without spiraling.
+const maxReviewDepth = 3
+
+// reviewAndFollowupRecursive is the workhorse. currentTask is the
+// most recent worker's task (original task at depth 0, follow-up at
+// depth 1, decomposed sub-directive at depth 2+). priorDirectives
+// carries the trail of follow-up attempts so the decomposer knows
+// what's already been tried.
+func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string) {
+	if depth >= maxReviewDepth {
+		fmt.Printf("    ⏹ review recursion cap reached for %s at depth %d — letting session ACs catch remaining gaps\n", originalTask.ID, depth)
 		return
 	}
-	// Collect code excerpts from task.Files.
-	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, task.Files, 8, 4000)
-	// Pull SOW excerpt.
+	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, originalTask.Files, 8, 4000)
 	sowExcerpt := ""
 	if cfg.RawSOWText != "" {
-		sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, task, specExcerptConfig{})
+		sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, originalTask, specExcerptConfig{})
 	}
 	reviewModel := cfg.ReasoningModel
 	if reviewModel == "" {
 		reviewModel = cfg.Model
 	}
 	verdict, err := plan.ReviewTaskWork(ctx, cfg.ReasoningProvider, reviewModel, plan.TaskReviewInput{
-		Task:              task,
+		Task:              originalTask,
 		SOWSpec:           sowExcerpt,
 		SessionAcceptance: workingSession.AcceptanceCriteria,
 		CodeExcerpts:      excerpts,
-		WorkerSummary:     "", // result blob isn't available here; rely on code + spec
+		WorkerSummary:     "",
+		PriorAttempts:     depth,
+		PriorGaps:         priorDirectives,
 	})
 	if err != nil || verdict == nil {
 		return
 	}
 	if verdict.Complete {
-		fmt.Printf("    ✔ reviewer: %s complete — %s\n", task.ID, truncateForLog(verdict.Reasoning, 200))
+		if depth == 0 {
+			fmt.Printf("    ✔ reviewer: %s complete — %s\n", originalTask.ID, truncateForLog(verdict.Reasoning, 200))
+		} else {
+			fmt.Printf("    ✔ reviewer: %s complete at depth %d — %s\n", originalTask.ID, depth, truncateForLog(verdict.Reasoning, 200))
+		}
 		return
 	}
-	fmt.Printf("    ✗ reviewer: %s has gaps:\n", task.ID)
+	fmt.Printf("    ✗ reviewer: %s has gaps at depth %d:\n", originalTask.ID, depth)
 	for _, gap := range verdict.GapsFound {
 		fmt.Printf("      - %s\n", gap)
 	}
-	if strings.TrimSpace(verdict.FollowupDirective) == "" {
+
+	// If this is the first failed review (depth 0), dispatch the
+	// reviewer's suggested follow-up directly. Subsequent failures
+	// (depth >= 1) trigger recursive decomposition.
+	var directivesToDispatch []string
+	if depth == 0 && strings.TrimSpace(verdict.FollowupDirective) != "" {
+		fmt.Printf("    → dispatching follow-up to close gaps: %s\n", truncateForLog(verdict.FollowupDirective, 150))
+		directivesToDispatch = []string{verdict.FollowupDirective}
+	} else if depth >= 1 {
+		// Recursion: the reviewer is still flagging gaps after a
+		// prior follow-up. Ask the decomposer to split the remaining
+		// work into narrower sub-directives.
+		stuckGap := strings.Join(verdict.GapsFound, "; ")
+		if stuckGap == "" {
+			stuckGap = verdict.Reasoning
+		}
+		decVerdict, decErr := plan.DecomposeTaskGap(ctx, cfg.ReasoningProvider, reviewModel, plan.DecomposeInput{
+			OriginalTask:    originalTask,
+			StuckGap:        stuckGap,
+			PriorDirectives: priorDirectives,
+			CodeState:       excerpts,
+			SOWSpec:         sowExcerpt,
+		})
+		if decErr != nil || decVerdict == nil {
+			fmt.Printf("    ⚠ decomposer error at depth %d: %v — letting session ACs catch\n", depth, decErr)
+			return
+		}
+		if decVerdict.Abandon {
+			fmt.Printf("    ⏹ decomposer abandoned %s at depth %d: %s\n", originalTask.ID, depth, truncateForLog(decVerdict.AbandonReason, 200))
+			return
+		}
+		if len(decVerdict.SubDirectives) == 0 {
+			// Decomposer had nothing to split; fall back to the
+			// reviewer's directive if present.
+			if strings.TrimSpace(verdict.FollowupDirective) != "" {
+				directivesToDispatch = []string{verdict.FollowupDirective}
+			}
+		} else {
+			fmt.Printf("    ↯ decomposing stuck gap into %d sub-directives (depth %d)\n", len(decVerdict.SubDirectives), depth)
+			for i, sd := range decVerdict.SubDirectives {
+				fmt.Printf("      %d. %s\n", i+1, truncateForLog(sd, 150))
+			}
+			directivesToDispatch = decVerdict.SubDirectives
+		}
+	}
+
+	if len(directivesToDispatch) == 0 {
 		return
 	}
-	fmt.Printf("    → dispatching follow-up to close gaps: %s\n", truncateForLog(verdict.FollowupDirective, 150))
 
-	// Build a follow-up task with the directive as the description.
-	followup := plan.Task{
-		ID:           fmt.Sprintf("%s-followup", task.ID),
-		Description:  verdict.FollowupDirective,
-		Files:        task.Files,
-		Dependencies: []string{task.ID},
+	// Dispatch each directive as a worker, then recurse on each one.
+	// Parallel when cfg.ParallelWorkers > 1 and we have multiple.
+	for i, directive := range directivesToDispatch {
+		if ctx.Err() != nil {
+			return
+		}
+		followupID := fmt.Sprintf("%s-d%d-%d", originalTask.ID, depth+1, i+1)
+		followup := plan.Task{
+			ID:           followupID,
+			Description:  directive,
+			Files:        originalTask.Files,
+			Dependencies: []string{currentTask.ID},
+		}
+		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, followup, promptOpts{
+			RepoMap:       cfg.RepoMap,
+			RepoMapBudget: cfg.RepoMapBudget,
+			Wisdom:        cfg.Wisdom,
+			RawSOW:        cfg.RawSOWText,
+			RepoRoot:      cfg.RepoRoot,
+			Briefing:      cfg.Briefings[originalTask.ID],
+		})
+		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, followup, 3))
+		ftr := execNativeTask(ctx, followup.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		if !ftr.Success {
+			continue
+		}
+		// Recurse: review the follow-up's work and decompose
+		// further if gaps remain.
+		nextPriorDirectives := append(append([]string{}, priorDirectives...), directive)
+		reviewAndFollowupRecursive(ctx, sowDoc, workingSession, originalTask, followup, runtimeDir, cfg, maxTurns, depth+1, nextPriorDirectives)
 	}
-	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, followup, promptOpts{
-		RepoMap:       cfg.RepoMap,
-		RepoMapBudget: cfg.RepoMapBudget,
-		Wisdom:        cfg.Wisdom,
-		RawSOW:        cfg.RawSOWText,
-		RepoRoot:      cfg.RepoRoot,
-		Briefing:      cfg.Briefings[task.ID], // reuse original briefing
-	})
-	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, followup, 3))
-	_ = execNativeTask(ctx, followup.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 }
 
 // collectFailingACs returns the subset of acceptance results that failed.
