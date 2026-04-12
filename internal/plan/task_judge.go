@@ -130,29 +130,43 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	return &verdict, nil
 }
 
-const taskReviewPrompt = `You are a senior code reviewer checking a single task's completion BEFORE the session's acceptance criteria run. The worker agent just finished writing code for this task. Your job: decide whether the task is actually COMPLETE, or whether gaps remain that a follow-up should address.
+const taskReviewPrompt = `You are a senior code reviewer checking a single task's completion BEFORE the session's acceptance criteria run. The worker agent just finished writing code for this task. Your job: decide whether the task is actually COMPLETE per the TASK DESCRIPTION — not per an ideal implementation.
+
+SCOPE DISCIPLINE (the most important rule):
+
+  Only flag gaps for things the TASK DESCRIPTION explicitly required, OR things that would cause the SESSION'S declared ACCEPTANCE CRITERIA to fail. Do NOT flag:
+
+    - Missing fields that could be added later (e.g. "you should also add a BuildingUpdate type")
+    - Additional error handling beyond what the task asked for
+    - Extra tests that weren't requested
+    - Documentation that wasn't part of the task
+    - Features from the SOW that belong to OTHER tasks in the session
+
+  If a "gap" is out-of-scope polish that another task or future session will handle, mark complete: true with a note like "could also do X but that's out of scope for this task — mentioning for awareness".
 
 A task is COMPLETE when:
-  - Every requirement in the task description has concrete code supporting it
+  - Every requirement IN THE TASK DESCRIPTION has concrete code supporting it
   - Every file listed in "expected files" exists with real content (not empty stubs)
-  - The code implements the behavior the task asked for (not just the structure)
-  - No obvious bugs — missing imports, wrong identifiers, unfinished functions
+  - The code implements the BEHAVIOR the task asked for
+  - The code won't cause the session's listed acceptance criteria to fail
+  - The task's contribution to the session as a whole is self-contained and won't block downstream tasks
 
 A task is NOT COMPLETE when:
-  - Expected files are missing or contain only stub content
+  - Expected files are missing or contain only stub content (e.g. one-line re-exports, empty functions)
   - The worker's summary claims something that isn't actually in the code
-  - A sub-requirement from the task description has no corresponding code
-  - There are comments marking unfinished work (the 4-letter TO-DO or FIX-ME pattern with hyphens removed)
+  - A requirement the TASK DESCRIPTION stated has no corresponding code
   - Imports reference identifiers that don't exist
+  - The code won't compile OR will definitely fail a session AC
+  - The code contains unfinished-work comment markers
 
-Be strict. The point of this review is to catch gaps at TASK scope, before they cascade into session-level AC failures. A gap that's obvious here gets fixed in a targeted follow-up; a gap that slips through turns into a sticky AC failure later that's much harder to diagnose.
+Bias HEAVILY toward "complete" when the core requirement is met. One narrow, concrete gap that will cause a session AC failure is worth flagging. A vague concern about "could be more comprehensive" is NOT.
 
-When gaps are found:
+When gaps ARE worth flagging:
   - List each gap as ONE sentence describing what's missing or wrong
-  - Emit a followup_directive that tells the next worker exactly what to do:
-    "Open apps/web/hooks/useAuth.ts and add the useAuth hook that wraps AuthContext with useContext. Export it as a named export."
+  - Emit a followup_directive that tells the next worker exactly what to do, citing the session AC it would unblock:
+    "Open apps/web/hooks/useAuth.ts and add the useAuth hook that wraps AuthContext with useContext — needed to pass AC4 'auth middleware includes JWT validation'."
 
-When the task IS complete, explain briefly why you're confident (cite specific file + function).
+When the task IS complete, explain briefly why you're confident (cite specific file + identifier). Don't manufacture reasons to flag it as incomplete just because the file could be richer.
 
 Output ONLY a single JSON object — no prose, no backticks:
 
