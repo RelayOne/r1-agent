@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // AcceptanceResult is the outcome of checking one acceptance criterion.
@@ -86,7 +87,14 @@ func ensureWorkspaceInstalled(ctx context.Context, projectRoot string) {
 		if _, err := exec.LookPath(bin); err != nil {
 			return false
 		}
-		cmd := exec.CommandContext(ctx, bin, args...)
+		// 3-minute sub-deadline so a stuck install (waiting for
+		// network, postinstall hang, stdin prompt) can't block the
+		// entire SOW run. The SOW-level ctx has no timeout when
+		// --timeout=0 (default), so without this we'd hang forever
+		// — which killed run18 and run20 in exactly this spot.
+		installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(installCtx, bin, args...)
 		cmd.Dir = projectRoot
 		// Silence output: anything useful shows up in the AC failure
 		// anyway. We just want to get node_modules on disk.
@@ -141,8 +149,15 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 	// command runs in projectRoot with node_modules/.bin prepended to
 	// PATH so locally-installed workspace binaries (tsc, vitest, etc.)
 	// resolve without needing pnpm exec / npx wrappers.
+	//
+	// Per-AC timeout: 5 minutes. An AC command that doesn't terminate
+	// in 5 minutes is either a dev server (should never be an AC) or
+	// a hung process. The SOW-level ctx has no timeout by default, so
+	// without a sub-deadline a hung AC blocks the entire SOW.
 	if ac.Command != "" {
-		cmd := exec.CommandContext(ctx, "bash", "-lc", ac.Command)
+		cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", ac.Command)
 		cmd.Dir = projectRoot
 		cmd.Env = acceptanceCommandEnv(projectRoot)
 		out, err := cmd.CombinedOutput()
