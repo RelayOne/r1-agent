@@ -288,14 +288,17 @@ The four possible categories:
   1. code_bug        — analysts agree the code is the issue. AC is fine. Fix the code.
   2. ac_bug          — analysts agree the AC is the issue. Code is fine. Rewrite the AC.
   3. both            — both code and AC have issues. Fix both.
-  4. acceptable_as_is — the code matches the task spec, the AC is incidentally failing, and the right move is to approve an ignore so later runs don't re-fail. VERY RARE — only use when A1 says code_correct AND A2 says ac_ill_formed in a way where the fix is clearly out-of-scope for the current session.
+  4. acceptable_as_is — the runner is configured to REJECT skip verdicts. Do NOT return this. If you would have classified the failure as acceptable_as_is, pick ac_bug instead and emit a concrete rewritten command that correctly measures the task's actual requirement. If you truly cannot produce a valid rewrite, pick both and emit a code_fix describing what the code would need to do to satisfy the original AC. The runner will NOT accept silent skips — every stuck criterion must have either a real code fix or a real AC rewrite.
 
 Ground rules:
   - When A1 says code_incorrect, category must be code_bug or both.
   - When A2 says ac_ill_formed and A1 says code_correct, category must be ac_bug.
   - When both analysts say "incorrect" / "ill_formed", category must be both.
   - When A1 says code_correct and A2 says ac_well_formed, something else is wrong — look at A3's root cause and classify accordingly (usually code_bug in a subtle way the initial review missed).
-  - Do NOT classify as acceptable_as_is just because the repair loop is stuck. Stuck does not mean acceptable.
+  - Do NOT classify as acceptable_as_is. Ever. The runner rejects this verdict. If a criterion appears impossible to satisfy with the current code and the current AC, the correct response is:
+      a) ac_bug with a concrete rewritten command that measures the ACTUAL intent of the original AC in a way that's achievable, OR
+      b) both with a concrete code_fix describing exactly what the code must do to satisfy the original AC
+    Never pick acceptable_as_is to escape a stuck criterion. Stuck means "we haven't found the right approach yet", not "this can be ignored".
 
 Output ONLY a single JSON object — no prose, no backticks:
 

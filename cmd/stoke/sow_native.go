@@ -398,6 +398,16 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			}
 			matches := reg.SearchSkills(queryBuf.String(), 5)
 			skillRefs = skill.FormatSkillReferences(matches)
+			// Observability: log which skills were selected so the
+			// operator can see whether the skill index is pulling in
+			// relevant guidance for this session's scope.
+			if len(matches) > 0 {
+				var names []string
+				for _, m := range matches {
+					names = append(names, m.Skill.Name)
+				}
+				fmt.Printf("  skills matched for this session: %s\n", strings.Join(names, ", "))
+			}
 		}
 
 		fmt.Printf("  lead-dev briefing pass (analyzing current codebase for %d tasks)...\n", len(session.Tasks))
@@ -417,6 +427,19 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		}
 		if len(briefings) > 0 {
 			fmt.Printf("  briefings produced for %d/%d tasks\n", len(briefings), len(session.Tasks))
+			// Observability: count how many briefings named at least
+			// one relevant skill, so we can verify the skills->briefings
+			// path is actually flowing. If this is 0 but matches > 0,
+			// the lead dev saw the skill block but didn't pick any —
+			// which usually means the skill names aren't matching what
+			// the tasks need.
+			withSkills := 0
+			for _, b := range briefings {
+				if b != nil && len(b.RelevantSkills) > 0 {
+					withSkills++
+				}
+			}
+			fmt.Printf("  briefings naming skills: %d/%d\n", withSkills, len(briefings))
 			cfg.Briefings = briefings
 		}
 	}
@@ -518,6 +541,28 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			}
 			acceptance, allPassed := plan.CheckAcceptanceCriteria(ctx, cfg.RepoRoot, effectiveCriteria)
 			finalAcceptance, finalPassed = acceptance, allPassed
+			// Observability: log pass/fail per criterion on every
+			// acceptance check. Without this, the operator has no
+			// idea which criteria passed vs failed until the very
+			// end of the repair loop.
+			passedCount := 0
+			for _, ac := range acceptance {
+				if ac.Passed {
+					passedCount++
+				}
+			}
+			fmt.Printf("  acceptance check attempt %d: %d/%d passed\n", attempt, passedCount, len(acceptance))
+			for _, ac := range acceptance {
+				mark := "✓"
+				if !ac.Passed {
+					mark = "✗"
+				}
+				desc := ac.Description
+				if len(desc) > 80 {
+					desc = desc[:77] + "..."
+				}
+				fmt.Printf("    %s %s: %s\n", mark, ac.CriterionID, desc)
+			}
 			if allPassed {
 				if attempt > 1 {
 					fmt.Printf("  ✓ session %s repaired on attempt %d\n", session.ID, attempt)
@@ -1427,15 +1472,20 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	}
 
 	tr := plan.TaskExecResult{TaskID: taskID, Success: !result.IsError && err == nil}
+	// Observability: every task termination logs taskID + outcome +
+	// timing + cost. This is the only signal the operator gets
+	// between "task dispatched" and "session acceptance runs", so
+	// silence here was what made prior runs look hung when they
+	// weren't. Always include taskID.
 	switch {
 	case err != nil:
 		tr.Error = err
-		fmt.Printf("    ✗ error: %v (%.1fs, %d turns)\n", err, dur.Seconds(), result.NumTurns)
+		fmt.Printf("    ✗ %s error: %v (%.1fs, %d turns)\n", taskID, err, dur.Seconds(), result.NumTurns)
 	case result.IsError:
 		tr.Error = fmt.Errorf("native runner: %s", result.Subtype)
-		fmt.Printf("    ✗ failed: %s (%.1fs, %d turns, $%.4f)\n", result.Subtype, dur.Seconds(), result.NumTurns, result.CostUSD)
+		fmt.Printf("    ✗ %s failed: %s (%.1fs, %d turns, $%.4f)\n", taskID, result.Subtype, dur.Seconds(), result.NumTurns, result.CostUSD)
 	default:
-		fmt.Printf("    ✓ done (%.1fs, %d turns, $%.4f)\n", dur.Seconds(), result.NumTurns, result.CostUSD)
+		fmt.Printf("    ✓ %s done (%.1fs, %d turns, $%.4f)\n", taskID, dur.Seconds(), result.NumTurns, result.CostUSD)
 	}
 	return tr
 }
@@ -1979,15 +2029,24 @@ func runReasoningForStuckCriteria(
 					ac.CriterionID, verdict.Reasoning, verdict.CodeFix)
 			}
 		case "acceptable_as_is":
-			fmt.Printf("    → approving ignore for %s: %s\n", ac.CriterionID, truncateForLog(verdict.ApproveReason, 200))
-			// Rewrite to "true" so the next acceptance pass
-			// automatically succeeds without another repair cycle.
-			// Not ideal — we lose the check — but correct given
-			// the judge decided the failure is spurious.
-			effectiveCriteria[critIdx].Command = "true"
-			effectiveCriteria[critIdx].FileExists = ""
-			effectiveCriteria[critIdx].ContentMatch = nil
-			delete(stickyAttempts, ac.CriterionID)
+			// The user explicitly said "no skipping important shit".
+			// When the judge says acceptable_as_is, we do NOT rewrite
+			// the AC to "true". Instead, we record the judge's
+			// approval reasoning as a hint and force the repair loop
+			// to keep trying — the code must actually satisfy the
+			// real criterion, not have it silently disabled.
+			//
+			// If the criterion is genuinely unsolvable as written,
+			// the reasoning loop should emit ac_bug with a rewritten
+			// command that correctly measures the same intent, not
+			// acceptable_as_is.
+			fmt.Printf("    → reasoning said acceptable_as_is for %s, but skipping is disabled; continuing repair. Judge reasoning: %s\n", ac.CriterionID, truncateForLog(verdict.ApproveReason, 200))
+			fmt.Fprintf(&hintBlob, "REASONING-LOOP VERDICT for %s: judge said acceptable_as_is but skipping is disabled. Re-examine: either the code genuinely fails this check (and needs fixing), or the AC is wrong (and needs a concrete rewrite via ac_bug verdict). Do NOT accept the failure. Judge's stated reasoning: %s\n\n",
+				ac.CriterionID, verdict.ApproveReason)
+			// Allow reasoning to fire again on subsequent attempts —
+			// the judge may produce a different (correct) verdict
+			// when forced to confront the real failure again.
+			delete(reasoningApplied, ac.CriterionID)
 		}
 	}
 	return hintBlob.String()

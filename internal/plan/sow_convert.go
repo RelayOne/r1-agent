@@ -248,6 +248,27 @@ ACCEPTANCE CRITERION HYGIENE (follow these or the SOW will fail on real executio
      commands instead. If the SOW mentions E2E tests, defer them to
      a manual testing session — do NOT make them acceptance criteria.
 
+  k. EVERY session should include one universal build/test command as
+     its FIRST criterion. For Node/TS: "pnpm --filter <session-scope>
+     build" or "pnpm --filter <pkg> typecheck". For Go: "go build
+     ./...". For Rust: "cargo build". This catches the 80% of
+     failures (compilation, type errors, missing deps) before any
+     feature-specific check fires. Feature-specific ACs come AFTER
+     the build gate.
+
+  l. Acceptance criteria must be SATISFIABLE by the code the session
+     produces. Do NOT emit ACs that require manual steps, external
+     services, or post-session setup. If you cannot imagine the
+     exact code change that would make the AC pass, the AC is
+     malformed — rewrite it or drop it.
+
+  m. If a criterion fails and retries don't converge, the criterion
+     itself is likely at fault. The runner has a reasoning loop that
+     can rewrite a failing criterion to one that correctly measures
+     the same intent. Criteria you emit should be the CONCRETE shape
+     of what you actually want measured — not a vague goal that the
+     reasoning loop then has to translate into a runnable command.
+
 PROSE INPUT:
 `
 
