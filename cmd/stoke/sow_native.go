@@ -2001,13 +2001,21 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 	if cfg.RepoRoot == "" {
 		return
 	}
-	// Step 1: ensure deps are installed
-	installCmd := exec.CommandContext(ctx, "bash", "-lc", "pnpm install --silent 2>&1 || npm install --silent 2>&1 || true")
+	// Step 1: ensure deps are installed. Use a 3-minute timeout so a
+	// stuck pnpm install (waiting for network, postinstall hang, stdin
+	// prompt) can't block the entire session forever. The parent ctx
+	// has no timeout when --timeout=0 (default), so without this
+	// sub-deadline we'd hang indefinitely — which is what killed run18.
+	installCtx, installCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer installCancel()
+	installCmd := exec.CommandContext(installCtx, "bash", "-lc", "pnpm install --silent 2>&1 || npm install --silent 2>&1 || true")
 	installCmd.Dir = cfg.RepoRoot
 	_ = installCmd.Run()
 
-	// Step 2: check if tsc compiles. If not, repair.
-	tscCmd := exec.CommandContext(ctx, "bash", "-lc", "tsc --noEmit 2>&1 || pnpm --filter './packages/*' typecheck 2>&1")
+	// Step 2: check if tsc compiles. If not, repair. 2-minute timeout.
+	tscCtx, tscCancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer tscCancel()
+	tscCmd := exec.CommandContext(tscCtx, "bash", "-lc", "tsc --noEmit 2>&1 || pnpm --filter './packages/*' typecheck 2>&1")
 	tscCmd.Dir = cfg.RepoRoot
 	// Augment PATH with node_modules/.bin
 	tscCmd.Env = append(os.Environ(), "PATH="+filepath.Join(cfg.RepoRoot, "node_modules", ".bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
