@@ -1235,6 +1235,10 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		// Per-task reviewer: catch gaps at task scope before
+		// cascading into session AC failures. Bounded at 1
+		// follow-up max per task to cap cost and prevent loops.
+		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns)
 		results = append(results, tr)
 	}
 	return results
@@ -1312,6 +1316,10 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				})
 				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+				// Per-task reviewer (bounded follow-up) runs in
+				// each worker goroutine so parallel review + fix
+				// happens per-task without serializing the wave.
+				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns)
 				resCh <- indexed{idx: ti, res: tr}
 			}()
 		}
@@ -2180,6 +2188,75 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 	})
 	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 	_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+}
+
+// reviewAndFollowup runs the per-task LLM reviewer after a worker
+// completes and, if the reviewer finds gaps, dispatches ONE targeted
+// follow-up worker to close them. Cap of one follow-up per task keeps
+// cost bounded and prevents infinite loops. Noop when cfg has no
+// ReasoningProvider.
+//
+// Mutates tr in place: on follow-up failure the result is marked
+// failed; on follow-up success the result stays successful (the
+// follow-up is a supplement, not a replacement).
+func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, task plan.Task, tr *plan.TaskExecResult, runtimeDir string, cfg sowNativeConfig, maxTurns int) {
+	if cfg.ReasoningProvider == nil {
+		return
+	}
+	if tr == nil || !tr.Success {
+		return
+	}
+	// Collect code excerpts from task.Files.
+	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, task.Files, 8, 4000)
+	// Pull SOW excerpt.
+	sowExcerpt := ""
+	if cfg.RawSOWText != "" {
+		sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, task, specExcerptConfig{})
+	}
+	reviewModel := cfg.ReasoningModel
+	if reviewModel == "" {
+		reviewModel = cfg.Model
+	}
+	verdict, err := plan.ReviewTaskWork(ctx, cfg.ReasoningProvider, reviewModel, plan.TaskReviewInput{
+		Task:              task,
+		SOWSpec:           sowExcerpt,
+		SessionAcceptance: workingSession.AcceptanceCriteria,
+		CodeExcerpts:      excerpts,
+		WorkerSummary:     "", // result blob isn't available here; rely on code + spec
+	})
+	if err != nil || verdict == nil {
+		return
+	}
+	if verdict.Complete {
+		fmt.Printf("    ✔ reviewer: %s complete — %s\n", task.ID, truncateForLog(verdict.Reasoning, 200))
+		return
+	}
+	fmt.Printf("    ✗ reviewer: %s has gaps:\n", task.ID)
+	for _, gap := range verdict.GapsFound {
+		fmt.Printf("      - %s\n", gap)
+	}
+	if strings.TrimSpace(verdict.FollowupDirective) == "" {
+		return
+	}
+	fmt.Printf("    → dispatching follow-up to close gaps: %s\n", truncateForLog(verdict.FollowupDirective, 150))
+
+	// Build a follow-up task with the directive as the description.
+	followup := plan.Task{
+		ID:           fmt.Sprintf("%s-followup", task.ID),
+		Description:  verdict.FollowupDirective,
+		Files:        task.Files,
+		Dependencies: []string{task.ID},
+	}
+	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, followup, promptOpts{
+		RepoMap:       cfg.RepoMap,
+		RepoMapBudget: cfg.RepoMapBudget,
+		Wisdom:        cfg.Wisdom,
+		RawSOW:        cfg.RawSOWText,
+		RepoRoot:      cfg.RepoRoot,
+		Briefing:      cfg.Briefings[task.ID], // reuse original briefing
+	})
+	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, followup, 3))
+	_ = execNativeTask(ctx, followup.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
 }
 
 // collectFailingACs returns the subset of acceptance results that failed.
