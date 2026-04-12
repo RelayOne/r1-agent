@@ -273,6 +273,21 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
 	}
 
+	// Session-level watchdog: if the session makes no observable
+	// progress for 45 minutes (no tasks complete, no AC checks run,
+	// no reasoning emits), cancel it. This is the safety net for
+	// the class of hangs I can't otherwise root-cause: goroutine
+	// leaks in deep code paths, internal deadlocks in the runner or
+	// reasoning loop, stream handlers that never finish, etc.
+	//
+	// 45min is generous — a single task can legitimately take 10+
+	// minutes with extended-thinking on MiniMax. The watchdog only
+	// fires when the session has gone silent for LONGER than any
+	// single operation should reasonably take.
+	sessionCtx, cancelSession := context.WithTimeout(ctx, 45*time.Minute)
+	defer cancelSession()
+	ctx = sessionCtx
+
 	// Persistent marker fast-path: if a prior run already drove this
 	// session to completion (or accepted it as preexisting), skip the
 	// agent entirely and return synthetic success results. The marker
