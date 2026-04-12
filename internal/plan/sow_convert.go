@@ -357,12 +357,15 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		return nil, jsonBlob, fmt.Errorf("parse generated SOW: %w (raw: /tmp/stoke-sow-raw.txt, extracted: /tmp/stoke-sow-extracted.json)\n\nfirst 800 chars of extracted:\n%s", err, truncateForError(string(jsonBlob), 800))
 	}
 	// Auto-synthesize missing required fields on acceptance criteria
-	// (id, description). LLM-generated SOWs occasionally emit a
-	// criterion with only "command" or "file_exists" populated,
-	// missing the id/description the validator requires. Rather than
-	// halt on a trivial bookkeeping miss, fill in sensible defaults
-	// and let the critique+refine loop improve them downstream.
+	// Apply all lenient-parse fixups before validation. These match
+	// the fixups RefineSOW applies so the initial prose conversion
+	// gets the same salvage treatment: missing AC id/desc → auto-fill,
+	// orphan task.Dependencies → drop, missing stack.Infra → auto-
+	// declare. Halting the initial conversion on trivial schema slips
+	// wastes the whole 64k-token LLM call.
 	autoFillMissingACFields(sow)
+	autoCleanTaskDeps(sow)
+	autoAddMissingInfra(sow)
 	if errs := ValidateSOW(sow); len(errs) > 0 {
 		return sow, jsonBlob, fmt.Errorf("generated SOW failed validation: %s", strings.Join(errs, "; "))
 	}
