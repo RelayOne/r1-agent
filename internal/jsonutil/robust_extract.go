@@ -33,21 +33,33 @@ func ExtractJSONObject(raw string) (json.RawMessage, error) {
 	if err := json.Unmarshal([]byte(blob), &v); err == nil {
 		return json.RawMessage(blob), nil
 	}
-	// First parse failed. Try repairing the two most common LLM
-	// emission bugs on long outputs: missing commas between array/object
-	// elements (e.g. `},"id"` or `]"next"` — the model closed one
-	// element and started the next without a separator). If the repair
-	// produces valid JSON, return it. Otherwise return the original
-	// error so the caller sees what actually broke.
+	// Repair pass 1: missing commas between array/object elements.
 	repaired := insertMissingCommas(blob)
 	if repaired != blob {
 		if err := json.Unmarshal([]byte(repaired), &v); err == nil {
 			return json.RawMessage(repaired), nil
 		}
 	}
-	// Re-run the original unmarshal to generate the same error message
-	// callers were seeing before repair was added, so diagnostics line
-	// up with the blob we return in ExtractError.
+	// Repair pass 2: truncated output — the model hit max_tokens and
+	// the JSON just stops mid-element. closeTruncatedJSON appends
+	// closing quotes/brackets/braces to make it structurally valid.
+	// This loses whatever was being written at the truncation point,
+	// but preserves all the complete sessions/tasks/ACs before it.
+	closed := closeTruncatedJSON(blob)
+	if closed != blob {
+		closed = removeTrailingCommas(closed)
+		if err := json.Unmarshal([]byte(closed), &v); err == nil {
+			return json.RawMessage(closed), nil
+		}
+		// Try missing-comma repair on the closed version too.
+		closedRepaired := insertMissingCommas(closed)
+		if closedRepaired != closed {
+			if err := json.Unmarshal([]byte(closedRepaired), &v); err == nil {
+				return json.RawMessage(closedRepaired), nil
+			}
+		}
+	}
+	// All repair attempts failed. Return the original error.
 	if err := json.Unmarshal([]byte(blob), &v); err != nil {
 		return nil, &ExtractError{Raw: raw, Blob: blob, Reason: "unmarshal: " + err.Error()}
 	}
@@ -106,9 +118,12 @@ func cleanLLMJSON(raw string) string {
 }
 
 // findBalancedObject locates the first balanced { ... } block, ignoring
-// braces inside quoted strings. Returns (-1, -1) if no balanced object
-// exists. This handles the common case where the model prefixes its
-// response with "Here's the JSON: { ... } Let me know if ...".
+// braces inside quoted strings. If the input is truncated (starts with
+// { but runs out before closing all braces), the function closes the
+// unclosed containers by appending the necessary } characters and
+// returns the patched string's bounds. This handles LLM output that
+// hit max_tokens mid-JSON — the truncated suffix is lost but the
+// structural prefix is salvageable.
 func findBalancedObject(s string) (int, int) {
 	start := -1
 	depth := 0
@@ -144,7 +159,78 @@ func findBalancedObject(s string) (int, int) {
 			}
 		}
 	}
+	// Truncation recovery: if we found a start '{' but depth > 0 at
+	// EOF, the model hit max_tokens mid-JSON. Rather than returning
+	// -1,-1 and halting the whole pipeline, return the bounds of
+	// what we have. The caller's json.Unmarshal will still fail, but
+	// the truncation-aware ExtractJSONObject path can then try
+	// closing the unclosed braces before parsing.
+	if start >= 0 && depth > 0 {
+		return start, len(s) - 1
+	}
 	return -1, -1
+}
+
+// closeTruncatedJSON appends the necessary closing characters to make
+// a truncated JSON object structurally valid. It tracks a stack of
+// container types ({/[) so closures are emitted in the correct order.
+// If the text was truncated mid-string or mid-value, the string is
+// closed and the incomplete key-value pair is dropped.
+func closeTruncatedJSON(blob string) string {
+	var stack []byte // '{' or '['
+	inStr := false
+	escaped := false
+	for _, r := range blob {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inStr {
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inStr = true
+		case '{':
+			stack = append(stack, '{')
+		case '}':
+			if len(stack) > 0 && stack[len(stack)-1] == '{' {
+				stack = stack[:len(stack)-1]
+			}
+		case '[':
+			stack = append(stack, '[')
+		case ']':
+			if len(stack) > 0 && stack[len(stack)-1] == '[' {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	if len(stack) == 0 && !inStr {
+		return blob // already balanced
+	}
+	var b strings.Builder
+	b.WriteString(blob)
+	// Close an open string literal.
+	if inStr {
+		b.WriteString(`"`)
+	}
+	// Close containers in reverse order (LIFO).
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch stack[i] {
+		case '{':
+			b.WriteByte('}')
+		case '[':
+			b.WriteByte(']')
+		}
+	}
+	return b.String()
 }
 
 // insertMissingCommas inserts a comma between two adjacent JSON

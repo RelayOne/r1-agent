@@ -112,11 +112,30 @@ func TestExtractJSONObject_NoObject_Errors(t *testing.T) {
 	}
 }
 
-func TestExtractJSONObject_MalformedJSON_Errors(t *testing.T) {
+func TestExtractJSONObject_TruncatedJSON_Recovered(t *testing.T) {
+	// Truncated JSON (missing closing brace) should be recovered by
+	// closeTruncatedJSON rather than erroring. The recovered value
+	// should contain the complete fields that were emitted before
+	// truncation.
 	raw := `{"id": "x"` // missing closing brace
-	_, err := ExtractJSONObject(raw)
-	if err == nil {
-		t.Error("expected error for unbalanced JSON")
+	blob, err := ExtractJSONObject(raw)
+	if err != nil {
+		t.Fatalf("expected truncation recovery, got error: %v", err)
+	}
+	if !strings.Contains(string(blob), `"id"`) {
+		t.Errorf("recovered blob missing 'id' field: %s", string(blob))
+	}
+}
+
+func TestExtractJSONObject_TruncatedDeep_Recovered(t *testing.T) {
+	// Deeply nested truncation: multiple unclosed containers.
+	raw := `{"sessions": [{"id": "S1", "tasks": [{"id": "T1"`
+	blob, err := ExtractJSONObject(raw)
+	if err != nil {
+		t.Fatalf("expected deep truncation recovery, got error: %v", err)
+	}
+	if !strings.Contains(string(blob), `"S1"`) {
+		t.Errorf("recovered blob missing S1: %s", string(blob))
 	}
 }
 

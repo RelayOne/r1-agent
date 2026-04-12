@@ -269,9 +269,16 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		{"type": "text", "text": fullPrompt},
 	})
 
+	// 64k output budget: the Sentinel SOW (1408 lines of prose)
+	// generates ~38k chars of JSON (~10k tokens). Extended-thinking
+	// models burn another 4-8k on reasoning. The previous 16k cap
+	// caused truncation mid-sessions-array — the output was valid
+	// JSON up to the cutoff, then just stopped, leaving 3 unclosed
+	// braces that findBalancedObject couldn't close. 64k is enough
+	// for even the largest conceivable prose SOW conversion.
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 16000,
+		MaxTokens: 64000,
 		Messages: []provider.ChatMessage{
 			{Role: "user", Content: userMsg},
 		},
