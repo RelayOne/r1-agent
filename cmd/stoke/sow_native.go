@@ -540,7 +540,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// avoids the "4/4 ACs fail because pnpm install wasn't run" waste
 	// loop that was burning 3 repair attempts × 5 reasoning calls on
 	// something a single pnpm install would fix.
-	if isNodeStack(sowDoc) && cfg.RepoRoot != "" {
+	if cfg.RepoRoot != "" {
 		runFoundationSanityCheck(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
 	}
 
@@ -2144,39 +2144,114 @@ func runReasoningForStuckCriteria(
 // declared ACs fire. For Node workspaces: pnpm install + tsc --noEmit.
 // If either fails, dispatches a focused repair task to fix it. This
 // prevents the "every AC fails because deps weren't installed" cascade.
+// foundationCommand holds the stack-specific commands used by the
+// foundation sanity gate. The install command is optional and may be
+// empty for stacks where no install step is needed (Go modules with
+// vendor, most Rust workspaces).
+type foundationCommand struct {
+	// Label appears in log messages (e.g. "TypeScript" or "Go").
+	Label string
+	// Install is the command that brings dependencies on-disk. Runs
+	// first. Empty = skip.
+	Install string
+	// Build is the command that verifies the code compiles. Must
+	// terminate quickly. exit 0 = foundation green.
+	Build string
+	// PATHExtra is prepended to PATH when running commands. Useful
+	// for node_modules/.bin; empty for other stacks.
+	PATHExtra string
+}
+
+// foundationCommandForStack picks install + build commands based on
+// the SOW's declared stack. The set is intentionally conservative:
+// build-only, no tests, no lint — the gate is only checking that the
+// code compiles before ACs fire. Real verification happens in the
+// session's declared ACs.
+func foundationCommandForStack(sowDoc *plan.SOW, repoRoot string) foundationCommand {
+	if sowDoc == nil {
+		return foundationCommand{}
+	}
+	lang := strings.ToLower(sowDoc.Stack.Language)
+	switch lang {
+	case "typescript", "javascript":
+		return foundationCommand{
+			Label:     "TypeScript",
+			Install:   "pnpm install --silent 2>&1 || npm install --silent 2>&1 || true",
+			Build:     "tsc --noEmit 2>&1 || pnpm --filter './packages/*' typecheck 2>&1",
+			PATHExtra: filepath.Join(repoRoot, "node_modules", ".bin"),
+		}
+	case "go":
+		return foundationCommand{
+			Label:   "Go",
+			Install: "",
+			Build:   "go build ./... 2>&1",
+		}
+	case "rust":
+		return foundationCommand{
+			Label:   "Rust",
+			Install: "",
+			Build:   "cargo build --all-targets 2>&1",
+		}
+	case "python":
+		return foundationCommand{
+			Label:   "Python",
+			Install: "pip install -r requirements.txt 2>&1 || poetry install 2>&1 || true",
+			Build:   "python -m compileall -q . 2>&1",
+		}
+	default:
+		return foundationCommand{}
+	}
+}
+
+// runFoundationSanityCheck runs a stack-appropriate build gate before
+// the session's declared ACs fire. Currently handles typescript,
+// javascript, go, rust, python. Other stacks are skipped (noop).
+//
+// When the build fails, dispatches a focused repair task to fix it
+// before the session's ACs run. This prevents the "every AC fails
+// because the workspace doesn't compile" cascade.
 func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *plan.SOW, workingSession plan.Session, runtimeDir string, maxTurns int) {
 	if cfg.RepoRoot == "" {
 		return
 	}
-	// Step 1: ensure deps are installed. Use a 3-minute timeout so a
-	// stuck pnpm install (waiting for network, postinstall hang, stdin
-	// prompt) can't block the entire session forever. The parent ctx
-	// has no timeout when --timeout=0 (default), so without this
-	// sub-deadline we'd hang indefinitely — which is what killed run18.
-	installCtx, installCancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer installCancel()
-	installCmd := exec.CommandContext(installCtx, "bash", "-lc", "pnpm install --silent 2>&1 || npm install --silent 2>&1 || true")
-	installCmd.Dir = cfg.RepoRoot
-	_ = installCmd.Run()
+	fc := foundationCommandForStack(sowDoc, cfg.RepoRoot)
+	if fc.Label == "" || fc.Build == "" {
+		// Unknown stack — skip. The session's own ACs will catch
+		// build failures when they run.
+		return
+	}
 
-	// Step 2: check if tsc compiles. If not, repair. 2-minute timeout.
-	tscCtx, tscCancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer tscCancel()
-	tscCmd := exec.CommandContext(tscCtx, "bash", "-lc", "tsc --noEmit 2>&1 || pnpm --filter './packages/*' typecheck 2>&1")
-	tscCmd.Dir = cfg.RepoRoot
-	// Augment PATH with node_modules/.bin
-	tscCmd.Env = append(os.Environ(), "PATH="+filepath.Join(cfg.RepoRoot, "node_modules", ".bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := tscCmd.CombinedOutput()
+	// Step 1: ensure deps are installed (when the stack has an
+	// install step). 3-minute timeout prevents stuck installers
+	// from blocking the session.
+	if fc.Install != "" {
+		installCtx, installCancel := context.WithTimeout(ctx, 3*time.Minute)
+		installCmd := exec.CommandContext(installCtx, "bash", "-lc", fc.Install)
+		installCmd.Dir = cfg.RepoRoot
+		_ = installCmd.Run()
+		installCancel()
+	}
+
+	// Step 2: run the stack's build check. 2-minute timeout.
+	buildCtx, buildCancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer buildCancel()
+	buildCmd := exec.CommandContext(buildCtx, "bash", "-lc", fc.Build)
+	buildCmd.Dir = cfg.RepoRoot
+	if fc.PATHExtra != "" {
+		buildCmd.Env = append(os.Environ(), "PATH="+fc.PATHExtra+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	out, err := buildCmd.CombinedOutput()
 	if err == nil {
 		return // foundation is green
 	}
 
-	// TypeScript doesn't compile. Dispatch a targeted repair.
-	failureBlob := fmt.Sprintf("FOUNDATION BUILD FAILURE — TypeScript does not compile. Fix ALL type errors before the session's acceptance criteria run.\n\nOutput of `tsc --noEmit`:\n%s", string(out))
-	fmt.Printf("  ⚠ foundation sanity: TypeScript errors detected, dispatching pre-AC repair...\n")
+	// Build failed. Dispatch a targeted repair.
+	failureBlob := fmt.Sprintf("FOUNDATION BUILD FAILURE — %s code does not compile. Fix ALL compilation errors before the session's acceptance criteria run.\n\nOutput of `%s`:\n%s",
+		fc.Label, fc.Build, string(out))
+	fmt.Printf("  ⚠ foundation sanity: %s errors detected, dispatching pre-AC repair...\n", fc.Label)
 	repairTask := plan.Task{
 		ID:          workingSession.ID + "-foundation-fix",
-		Description: "fix TypeScript compilation errors before acceptance criteria run",
+		Description: fmt.Sprintf("fix %s compilation errors before acceptance criteria run", fc.Label),
 	}
 	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
 		RepoMap:       cfg.RepoMap,
