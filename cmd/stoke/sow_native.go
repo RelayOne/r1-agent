@@ -273,20 +273,23 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
 	}
 
-	// Session-level watchdog: if the session makes no observable
-	// progress for 45 minutes (no tasks complete, no AC checks run,
-	// no reasoning emits), cancel it. This is the safety net for
-	// the class of hangs I can't otherwise root-cause: goroutine
-	// leaks in deep code paths, internal deadlocks in the runner or
-	// reasoning loop, stream handlers that never finish, etc.
+	// Session-level PROGRESS watchdog: cancels the session's ctx
+	// when no observable progress happens for a configured idle
+	// window. Different from context.WithTimeout(45min) — that kills
+	// sessions that legitimately take 60min to complete. The
+	// watchdog only kills when the session goes SILENT (no task
+	// completes, no AC check runs, no reasoning emits) for the idle
+	// window, allowing productive sessions to run as long as they
+	// keep making progress.
 	//
-	// 45min is generous — a single task can legitimately take 10+
-	// minutes with extended-thinking on MiniMax. The watchdog only
-	// fires when the session has gone silent for LONGER than any
-	// single operation should reasonably take.
-	sessionCtx, cancelSession := context.WithTimeout(ctx, 45*time.Minute)
-	defer cancelSession()
-	ctx = sessionCtx
+	// 20-minute idle window: a single task can take 5-10min with
+	// extended thinking, the reasoning loop is 5 LLM calls × 2-3min
+	// each = up to 15min, foundation sanity is ~5min. 20min is long
+	// enough to cover any legitimate operation and short enough to
+	// catch real hangs reasonably fast.
+	watchdogCtx, watchdog := plan.NewWatchdog(ctx, 20*time.Minute, fmt.Sprintf("session %s", session.ID))
+	defer watchdog.Stop()
+	ctx = watchdogCtx
 
 	// Persistent marker fast-path: if a prior run already drove this
 	// session to completion (or accepted it as preexisting), skip the
@@ -461,6 +464,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		}
 		if len(briefings) > 0 {
 			fmt.Printf("  briefings produced for %d/%d tasks\n", len(briefings), len(session.Tasks))
+			watchdog.Pulse()
 			// Observability: count how many briefings named at least
 			// one relevant skill, so we can verify the skills->briefings
 			// path is actually flowing. If this is 0 but matches > 0,
@@ -542,6 +546,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// something a single pnpm install would fix.
 	if cfg.RepoRoot != "" {
 		runFoundationSanityCheck(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
+		watchdog.Pulse()
 	}
 
 	// Phase 2: self-repair loop. Run the session's acceptance criteria;
@@ -632,6 +637,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				}
 			}
 			fmt.Printf("  acceptance check attempt %d: %d/%d passed\n", attempt, passedCount, len(acceptance))
+			watchdog.Pulse()
 			for _, ac := range acceptance {
 				mark := "✓"
 				if !ac.Passed {
