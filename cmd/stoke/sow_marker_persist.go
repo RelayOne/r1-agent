@@ -32,6 +32,28 @@ type SessionPersistMarker struct {
 	Files       map[string]string `json:"files"`
 	CompletedAt string            `json:"completed_at"`
 	Note        string            `json:"note,omitempty"`
+	// Provenance records which model/prompt/context produced this
+	// session's work. Populated at marker-write time; used for
+	// forensic replay ("which model actually wrote this?") and for
+	// correlating session outputs to the SOW run that produced them.
+	// SLSA/in-toto don't yet define an agent-provenance predicate —
+	// this is stoke's pragmatic fill-in until a standard emerges.
+	Provenance *SessionProvenance `json:"provenance,omitempty"`
+}
+
+// SessionProvenance is the model+context fingerprint for a session.
+// All hashes are sha256 hex prefixes (16 chars) for compactness.
+type SessionProvenance struct {
+	WorkerModel        string `json:"worker_model,omitempty"`
+	ReasoningModel     string `json:"reasoning_model,omitempty"`
+	BaseURL            string `json:"base_url,omitempty"`
+	UniversalCtxHash   string `json:"universal_context_hash,omitempty"`
+	SOWSpecHash        string `json:"sow_spec_hash,omitempty"`
+	SOWID              string `json:"sow_id,omitempty"`
+	StokeVersion       string `json:"stoke_version,omitempty"`
+	GitBaseSHA         string `json:"git_base_sha,omitempty"`
+	ParallelWorkers    int    `json:"parallel_workers,omitempty"`
+	ReviewerSplitUsed  bool   `json:"reviewer_split_used,omitempty"`
 }
 
 func sessionMarkerDir(repoRoot string) string {
@@ -79,7 +101,9 @@ func hashUpstreamSession(s plan.Session) string {
 
 // writeUpstreamSessionMarker persists a marker for a converged session.
 // changedFiles may be nil/empty for spec-only markers (preexisting case).
-func writeUpstreamSessionMarker(repoRoot string, session plan.Session, changedFiles []string, note string) error {
+// provenance may be nil when caller doesn't have the context to fill it
+// (preserves backward-compat with existing call sites).
+func writeUpstreamSessionMarker(repoRoot string, session plan.Session, changedFiles []string, note string, provenance *SessionProvenance) error {
 	if repoRoot == "" {
 		return fmt.Errorf("writeUpstreamSessionMarker: empty repoRoot")
 	}
@@ -94,6 +118,7 @@ func writeUpstreamSessionMarker(repoRoot string, session plan.Session, changedFi
 		Files:       make(map[string]string, len(changedFiles)),
 		CompletedAt: time.Now().Format(time.RFC3339),
 		Note:        note,
+		Provenance:  provenance,
 	}
 	for _, rel := range changedFiles {
 		abs := filepath.Join(repoRoot, rel)

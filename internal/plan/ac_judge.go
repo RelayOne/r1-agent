@@ -70,6 +70,11 @@ type SemanticJudgeInput struct {
 
 	// RepoRoot is the workspace root (for logging only).
 	RepoRoot string
+
+	// UniversalPromptBlock carries the universal coding-standards +
+	// known-gotchas block for injection into the semantic-judge
+	// prompt. Empty is fine.
+	UniversalPromptBlock string
 }
 
 // JudgeAC consults the LLM to decide whether a failed mechanical AC
@@ -89,6 +94,10 @@ func JudgeAC(ctx context.Context, prov provider.Provider, model string, in Seman
 
 	var body strings.Builder
 	body.WriteString(semanticJudgePrompt)
+	if strings.TrimSpace(in.UniversalPromptBlock) != "" {
+		body.WriteString("\n\n")
+		body.WriteString(in.UniversalPromptBlock)
+	}
 	body.WriteString("\n\n")
 
 	body.WriteString("TASK THE WORKER WAS ASKED TO BUILD:\n")

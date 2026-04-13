@@ -2,11 +2,34 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
+
+// ExtraToolHandler is a bridge that callers install on a RunSpec to
+// handle tool names beyond the native registry's built-ins. When the
+// agentloop invokes a tool whose name matches an ExtraTool definition,
+// the corresponding handler is called and its string return becomes the
+// tool_result content. If the handler returns an error, the loop sends
+// is_error=true and the model sees it as a tool failure.
+//
+// This is how request_clarification (and any future out-of-band tools)
+// plugs into the existing tool-use loop without modifying agentloop or
+// tools.Registry.
+type ExtraToolHandler func(ctx context.Context, input json.RawMessage) (string, error)
+
+// ExtraTool bundles a tool definition with its handler. Callers build
+// a slice of ExtraTools and pass it on RunSpec.ExtraTools; the native
+// runner merges them into the tool list and dispatches calls whose
+// name matches to the attached handler.
+type ExtraTool struct {
+	Def     provider.ToolDef
+	Handler ExtraToolHandler
+}
 
 // AuthMode distinguishes between subscription-based (mode1) and user-provided API key (mode2) authentication.
 type AuthMode string
@@ -117,6 +140,14 @@ type RunSpec struct {
 	ContainerImage string   // e.g., "ghcr.io/ericmacdougall/stoke-pool:latest"
 	ContainerVol   string   // Docker volume name for credentials
 	ContainerConfigDir string // Config dir path inside the container
+
+	// ExtraTools are caller-supplied tool definitions with attached
+	// handlers. The native runner merges them into the advertised
+	// tool list and dispatches any call whose name matches to the
+	// attached handler. Subprocess-backed runners (Claude/Codex CLI)
+	// ignore this field — the CLI has its own tool set. Used today
+	// by the clarification round-trip to install request_clarification.
+	ExtraTools []ExtraTool
 }
 
 // Validate checks that all required RunSpec fields are present.

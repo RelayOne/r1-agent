@@ -73,6 +73,20 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		toolDefs = append(toolDefs, td)
 	}
 
+	// Merge caller-supplied ExtraTools into the advertised tool list.
+	// Each ExtraTool carries both its schema (advertised to the model)
+	// and its handler (wired into dispatch below). This is the plug-
+	// point for out-of-band tools like request_clarification that
+	// don't belong in tools.Registry.
+	extraHandlers := make(map[string]ExtraToolHandler, len(spec.ExtraTools))
+	for _, et := range spec.ExtraTools {
+		if et.Def.Name == "" || et.Handler == nil {
+			continue
+		}
+		toolDefs = append(toolDefs, et.Def)
+		extraHandlers[et.Def.Name] = et.Handler
+	}
+
 	// Build allowed tool set for handler enforcement.
 	allowedTools := make(map[string]bool, len(toolDefs))
 	for _, td := range toolDefs {
@@ -80,9 +94,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	}
 
 	// Create the tool handler that bridges tools.Registry → agentloop.ToolHandler
+	// and dispatches any ExtraTool calls to their attached handler.
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		if !allowedTools[name] {
 			return "", fmt.Errorf("tool %q not allowed in phase %q (read_only=%v)", name, spec.Phase.Name, spec.Phase.ReadOnly)
+		}
+		if h, ok := extraHandlers[name]; ok {
+			return h(ctx, input)
 		}
 		return toolRegistry.Handle(ctx, name, input)
 	}

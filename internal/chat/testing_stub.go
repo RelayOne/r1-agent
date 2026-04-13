@@ -15,6 +15,15 @@ type stubDispatcher struct {
 	lastDesc   string
 	lastSec    bool
 	lastFile   string
+	lastImages []string
+}
+
+func (d *stubDispatcher) SetTurnImages(paths []string) {
+	if len(paths) == 0 {
+		d.lastImages = nil
+		return
+	}
+	d.lastImages = append([]string(nil), paths...)
 }
 
 func (d *stubDispatcher) Scope(desc string) (string, error) {
@@ -65,5 +74,7 @@ func (d *stubDispatcher) SOW(filePath string) (string, error) {
 
 // Compile-time check that the stub satisfies the interface — any
 // method drift will fail the build instead of surfacing as a runtime
-// test failure much later.
+// test failure much later. Also asserts the optional
+// ImageAwareDispatcher surface so tests can exercise that path.
 var _ Dispatcher = (*stubDispatcher)(nil)
+var _ ImageAwareDispatcher = (*stubDispatcher)(nil)

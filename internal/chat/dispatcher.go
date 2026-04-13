@@ -41,6 +41,23 @@ type Dispatcher interface {
 	SOW(filePath string) (string, error)
 }
 
+// ImageAwareDispatcher is an optional extension of Dispatcher for
+// implementations that want to receive per-turn image attachments. If a
+// Dispatcher satisfies this interface, RunToolCall calls SetTurnImages
+// just before the underlying Scope/Build/Ship/... method so the
+// dispatcher can fold the paths into the downstream prompt.
+//
+// Kept as a separate interface so existing Dispatcher implementations
+// in tests and third-party embedders don't need to grow a method.
+type ImageAwareDispatcher interface {
+	Dispatcher
+	// SetTurnImages is called with the user-typed image paths for the
+	// turn that triggered this dispatch. A nil/empty slice means no
+	// images were attached. Implementations should treat this as
+	// turn-scoped: the next call resets the set.
+	SetTurnImages(paths []string)
+}
+
 // DispatcherTools returns the provider.ToolDef slice that backs the
 // chat system prompt's dispatcher tool list. Schemas are intentionally
 // minimal — one required field ("description") on most tools — so the
@@ -178,7 +195,25 @@ func ExtractArgs(input json.RawMessage) DispatchToolArgs {
 //
 // Unknown tool names return an error so the model learns to pick from
 // the advertised list.
+//
+// For image-aware dispatch, use RunToolCallWithImages and pass the
+// per-turn image paths (typically from Session.LastTurnImages()).
 func RunToolCall(d Dispatcher, name string, input json.RawMessage) (string, error) {
+	return RunToolCallWithImages(d, name, input, nil)
+}
+
+// RunToolCallWithImages is RunToolCall plus the per-turn image paths
+// attached to the user message that triggered this dispatch. When d
+// implements ImageAwareDispatcher, the paths are pushed via
+// SetTurnImages before the underlying method fires; otherwise the
+// paths are ignored (backwards compatible with plain Dispatcher).
+func RunToolCallWithImages(d Dispatcher, name string, input json.RawMessage, imagePaths []string) (string, error) {
+	if ia, ok := d.(ImageAwareDispatcher); ok {
+		// Always call SetTurnImages, even with nil, so a prior turn's
+		// images cannot leak forward. The dispatcher is responsible
+		// for clearing its own state on a nil/empty list.
+		ia.SetTurnImages(imagePaths)
+	}
 	args := ExtractArgs(input)
 	switch name {
 	case "dispatch_scope":

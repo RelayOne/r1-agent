@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -122,6 +124,46 @@ type sowNativeConfig struct {
 	// spent is the running total of cost (internal, mutated by runSessionNative).
 	spent *float64
 
+	// Watchdog is the session-scope progress watchdog. Set by
+	// runSessionNative before dispatching tasks so execNativeTask
+	// can Pulse on every streamed tool event — otherwise a
+	// long-running repair worker (e.g. iterating pnpm install +
+	// tsconfig fixes) looks silent to the watchdog and gets
+	// cancelled mid-progress. nil when the watchdog isn't active.
+	Watchdog *plan.Watchdog
+
+	// UniversalContext holds the merged coding-standards +
+	// known-gotchas content (see internal/skill.LoadUniversalContext)
+	// that runSessionNative injects into every worker prompt, every
+	// judge prompt, every reasoning loop, and every integration
+	// review. Cheap to pass by value.
+	UniversalContext skill.UniversalContext
+
+	// Hooks is the loaded registry of per-agent / per-scenario /
+	// per-phase hook files (see internal/skill.LoadHookSet). At each
+	// LLM call site, runSessionNative and its helpers compose a
+	// small HookSelector slice describing the (agent, scenario,
+	// phase) that applies, and concatenate hooks.PromptBlock(...)
+	// alongside the universal block before dispatching. Cheap to
+	// pass by value.
+	Hooks skill.HookSet
+
+	// VerboseStream controls whether worker DeltaText (the raw
+	// streaming model output, including partial tool-call JSON
+	// args and giant JSX blobs) is printed to stdout. Default
+	// false keeps the log readable; structural events (tool
+	// names, completions, warnings, reviewer verdicts) still
+	// print regardless. Gate via --verbose-stream on sowCmd.
+	VerboseStream bool
+
+	// SessionAttempt is the 1-indexed attempt counter for this session
+	// invocation. Set by nativeExec from the per-session-ID counter.
+	// Used by runSessionNative to gate the per-task completion fast-
+	// path: attempt 1 always dispatches all tasks; attempt > 1 may
+	// skip tasks whose declared output files already exist with
+	// substantive content (saves $1-3 per skipped task on retry).
+	SessionAttempt int
+
 	// --- Override / continuation hooks (post-repair) ---
 
 	// OverrideJudge is the VP Eng → CTO judge invoked when the self-
@@ -134,8 +176,43 @@ type sowNativeConfig struct {
 	// continuation items — work the CTO deemed "actually missing, not
 	// a false positive". The callback typically turns these into a new
 	// session via SessionScheduler.AppendSession so the SOW self-
-	// extends.
-	OnContinuations func(fromSession string, items []string)
+	// extends. The ContinuationContext argument carries the failing
+	// session's unresolved-AC diagnoses and the repair trail so the
+	// callback (specifically the cascade-cap root-cause planner in
+	// cmd/stoke/main.go) can ground a fix DAG in real diagnostic data
+	// rather than re-deriving it from scratch.
+	OnContinuations func(fromSession string, items []string, overrideCtx ContinuationContext)
+
+	// OnSessionEscalation is called on EVERY session escalation that
+	// still has sticky failing ACs, regardless of whether the CTO
+	// judge produced continuation items. This is the UNCONDITIONAL
+	// entry point for PlanFixDAG — when the CTO returns zero items
+	// (which empirically happens on every Sentinel session run), the
+	// continuation path is skipped, and without this hook the
+	// root-cause planner never engages despite being the architecture's
+	// most powerful escalation mechanism.
+	//
+	// Wire to a callback that runs PlanFixDAG with the diagnostic
+	// context, ApplyFixDAG-promotes the result if non-abandon, and
+	// calls SessionScheduler.AppendSession on the new session.
+	OnSessionEscalation func(fromSessionID, fromSessionTitle string, overrideCtx ContinuationContext)
+
+	// OnDecompOverflow is called when the per-task recursive reviewer
+	// hits its depth cap AND the decomposer still has productive
+	// sub-directives to dispatch. Rather than silently dropping them
+	// ("letting session ACs catch remaining gaps"), we PROMOTE the
+	// overflow into first-class scope — a new session whose tasks
+	// become the deep sub-directives. Each promoted task then gets
+	// the full pipeline treatment (briefing, scope-aware review,
+	// decomposition with its OWN fresh budget, integration review,
+	// AC coverage). This mirrors what a senior dev would do when
+	// they realize "this one task is actually 5 deliverables" —
+	// they promote it to tickets rather than cramming it all into
+	// one scope container.
+	//
+	// When nil, the orchestrator falls back to the old cap-and-defer
+	// behavior. Wired in main.go to SessionScheduler.AppendSession.
+	OnDecompOverflow func(fromTaskID string, fromSessionID string, subDirectives []string)
 
 	// --- Multi-session intelligence ---
 
@@ -244,6 +321,53 @@ type sowNativeConfig struct {
 	// ContentMatch.Pattern) still feed the canonical-names block, but
 	// the raw text is the source of truth the agent can grep against.
 	RawSOWText string
+
+	// BuildWatcher is the live compile-verification daemon for the
+	// currently-running session. Started after Phase 0 (briefings) and
+	// before Phase 1 (task dispatch); stopped on session return via
+	// defer. When non-nil, its SummaryForPrompt() output is injected
+	// into worker prompts and its FilterToFiles() output is fed to the
+	// per-task reviewer as authoritative gaps. nil = no live watcher
+	// (graceful fallback — the session behaves as pre-watcher).
+	BuildWatcher *plan.BuildWatcher
+
+	// PriorLearnings is a pre-formatted block summarizing prevention
+	// rules distilled from prior meta-reports on this repo. Loaded
+	// once at SOW startup via plan.LoadRecentMetaReports and
+	// plan.FormatPriorLearningsForBriefing, then threaded through
+	// each session's lead-dev briefing pass so the briefings can
+	// preempt failure classes that already burned previous runs.
+	PriorLearnings string
+
+	// ClarifyResponder handles a worker's request_clarification tool
+	// calls. When nil, headless runs synthesize a SupervisorResponder
+	// from ReasoningProvider + RawSOWText automatically (see
+	// resolveClarifyResponder). Chat-dispatched SOWs install their
+	// own ChatResponder before calling runSessionNative so the
+	// question surfaces to the user instead.
+	ClarifyResponder plan.ClarifyResponder
+}
+
+// ContinuationContext is the diagnostic snapshot passed to
+// sowNativeConfig.OnContinuations. It carries everything the
+// cascade-cap root-cause planner needs to propose a grounded fix
+// DAG: per-AC failure output + semantic-judge verdicts + the flat
+// repair-directive history accumulated during the session.
+type ContinuationContext struct {
+	// StickyACs is the set of acceptance criteria still failing
+	// when the override flow ran. Each entry carries the AC's
+	// description, executable command, latest failure output, and
+	// (when present) the semantic judge's reasoning.
+	StickyACs []plan.StickyACContext
+	// RepairHistory is the flat list of repair directives attempted
+	// during the session's repair loop, oldest first. Used to
+	// prevent the planner from re-proposing the same fix.
+	RepairHistory []string
+	// SOWSpec is the raw SOW excerpt the planner cross-references.
+	SOWSpec string
+	// FromSessionTitle is the human-readable title of the failing
+	// session.
+	FromSessionTitle string
 }
 
 // runSessionNative is the SOW fast path: it executes a session's tasks
@@ -290,6 +414,77 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	watchdogCtx, watchdog := plan.NewWatchdog(ctx, 20*time.Minute, fmt.Sprintf("session %s", session.ID))
 	defer watchdog.Stop()
 	ctx = watchdogCtx
+	// Expose to execNativeTask so every streamed tool event pulses
+	// the watchdog. Without this, a repair worker that's actively
+	// running (tool calls firing every few seconds) looks idle to
+	// the session-scope watchdog — phase-level pulses only fire
+	// between Phase transitions, which can be 20+ minutes apart
+	// on a long repair loop.
+	cfg.Watchdog = watchdog
+
+	// Heartbeat: every 60s during the session, emit a one-line
+	// status so the operator sees progress even when the watcher's
+	// structural events (task complete, AC result, etc.) are minutes
+	// apart. Stops when the session returns. Shows elapsed-in-
+	// session + running cost + last watchdog pulse age.
+	heartbeatStop := make(chan struct{})
+	sessionStart := time.Now()
+	go func() {
+		tick := time.NewTicker(60 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				elapsed := time.Since(sessionStart).Truncate(time.Second)
+				cost := 0.0
+				if cfg.spent != nil {
+					cost = *cfg.spent
+				}
+				lastPulseAgo := "never"
+				if lp := watchdog.LastPulse(); !lp.IsZero() {
+					lastPulseAgo = time.Since(lp).Truncate(time.Second).String()
+				}
+				fmt.Printf("  🏃 heartbeat: %s in session %s · run cost $%.2f · last pulse %s ago\n",
+					elapsed, session.ID, cost, lastPulseAgo)
+			}
+		}
+	}()
+	defer close(heartbeatStop)
+
+	// Per-task completion fast-path on session retry. When a session
+	// is being re-run (attempt > 1), check each task's declared output
+	// files. If they ALL exist with substantive (non-stub) content,
+	// skip dispatching the worker — emit a synthetic success result
+	// and let the rest of the pipeline (integration review, ACs, etc)
+	// run as usual on the partially-prefilled session. Saves $1-3 per
+	// skipped task, often the dominant cost on a session retry.
+	//
+	// Only fires when SessionAttempt > 1 because attempt 1's outputs
+	// are the source of truth for what's on disk.
+	var prefilledResults []plan.TaskExecResult
+	if cfg.SessionAttempt > 1 {
+		var stillNeeded []plan.Task
+		for _, t := range session.Tasks {
+			if taskOutputsLookComplete(cfg.RepoRoot, t) {
+				fmt.Printf("    ⚡ task %s: outputs exist with content, skipping (saved a worker dispatch)\n", t.ID)
+				prefilledResults = append(prefilledResults, plan.TaskExecResult{
+					TaskID:  t.ID,
+					Success: true,
+				})
+			} else {
+				stillNeeded = append(stillNeeded, t)
+			}
+		}
+		if len(prefilledResults) > 0 {
+			session.Tasks = stillNeeded
+			fmt.Printf("  ⚡ session %s retry: %d/%d tasks pre-completed from prior attempt, dispatching %d remaining\n",
+				session.ID, len(prefilledResults), len(prefilledResults)+len(stillNeeded), len(stillNeeded))
+		}
+	}
 
 	// Persistent marker fast-path: if a prior run already drove this
 	// session to completion (or accepted it as preexisting), skip the
@@ -448,16 +643,24 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		}
 
 		fmt.Printf("  lead-dev briefing pass (analyzing current codebase for %d tasks)...\n", len(session.Tasks))
+		// Log once per briefing pass which universal-context sources
+		// are active, so the operator can verify the baseline rules
+		// the lead dev is briefing against.
+		if block := cfg.UniversalContext.PromptBlock(); strings.TrimSpace(block) != "" {
+			fmt.Printf("  🧭 universal context injected (briefing): %s\n", cfg.UniversalContext.ShortSources())
+		}
 		briefings, berr := briefer.Brief(ctx, plan.SessionBriefingInput{
-			SessionID:          session.ID,
-			SessionTitle:       session.Title,
-			Tasks:              session.Tasks,
-			AcceptanceCriteria: effectiveCriteria,
-			RepoRoot:           cfg.RepoRoot,
-			APISurface:         surface,
-			RepoMap:            repoMapBlob,
-			RawSOW:             cfg.RawSOWText,
-			SkillReferences:    skillRefs,
+			SessionID:            session.ID,
+			SessionTitle:         session.Title,
+			Tasks:                session.Tasks,
+			AcceptanceCriteria:   effectiveCriteria,
+			RepoRoot:             cfg.RepoRoot,
+			APISurface:           surface,
+			RepoMap:              repoMapBlob,
+			RawSOW:               cfg.RawSOWText,
+			SkillReferences:      skillRefs,
+			PriorLearnings:       cfg.PriorLearnings,
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("planner-lead-dev-briefing", "0-briefing", &session, 1)),
 		})
 		if berr != nil {
 			fmt.Printf("  briefing pass warning: %v (dispatching without briefings)\n", berr)
@@ -482,6 +685,41 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		}
 	}
 
+	// Phase 0.5: live build-watcher. Launch the stack's continuous
+	// compile check (tsc --watch, go build ./..., cargo check,
+	// pyright --watch) so workers see compile errors the moment they
+	// appear. SummaryForPrompt() is injected into every worker prompt
+	// below; the per-task reviewer also consults Current() to treat
+	// in-file compile errors as authoritative gaps. A missing compiler
+	// on PATH is a soft failure — the watcher just stays empty and
+	// the session proceeds as pre-watcher.
+	if cfg.BuildWatcher == nil && sowDoc != nil {
+		if kind := plan.WatcherKindForLanguage(sowDoc.Stack.Language); kind != "" {
+			if bw := plan.NewBuildWatcher(cfg.RepoRoot, kind); bw != nil {
+				if err := bw.Start(ctx); err == nil {
+					cfg.BuildWatcher = bw
+					defer bw.Stop()
+					fmt.Printf("  build-watcher: live %s compile checks enabled\n", kind)
+				}
+			}
+		}
+	}
+
+	// Scope-gate baseline: snapshot which files already had uncommitted
+	// changes BEFORE this session runs. Prior sessions in the same SOW
+	// write files without committing between sessions, so a naive
+	// `git status` at scope-gate time would attribute every earlier
+	// session's dirty files to the current session — producing false
+	// positives like "S1-mobile-apps touched 9 files outside declared
+	// scope" when those 9 files were actually written by the prior
+	// S1-web-app session. Subtracting this baseline at gate time
+	// isolates what THIS session actually touched.
+	preSessionDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+	preSessionDirtySet := make(map[string]bool, len(preSessionDirty))
+	for _, f := range preSessionDirty {
+		preSessionDirtySet[f] = true
+	}
+
 	// Phase 1: run tasks. When ParallelWorkers > 1 and we have tasks
 	// with disjoint file sets and no unsatisfied deps, execute them
 	// concurrently. Otherwise fall back to sequential execution.
@@ -493,6 +731,19 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// (otherwise a successful repair looks like a session failure to
 	// the outer SessionScheduler and it halts the whole SOW).
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
+
+	// Phase 1.4: integration review. Dispatch an LLM agent with real
+	// tool authority (read/grep/glob/bash) to sweep the repo for
+	// cross-file consistency bugs the per-task reviewer structurally
+	// cannot see — missing exports, empty tsconfig includes, dangling
+	// package.json references, interface drift between packages. Each
+	// gap it returns becomes a focused repair dispatch BEFORE
+	// foundation sanity runs.
+	if cfg.RepoRoot != "" {
+		watchdog.Pulse()
+		runIntegrationReviewPhase(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
+		watchdog.Pulse()
+	}
 
 	// Phase 1.5: spec-faithfulness guards. Before running acceptance
 	// criteria (which may be generic like `cargo build`), run two
@@ -519,12 +770,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			Description: "fix missing files and placeholder stubs before acceptance runs",
 		}
 		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
-			RepoMap:       cfg.RepoMap,
-			RepoMapBudget: cfg.RepoMapBudget,
-			Repair:        &failureBlob,
-			Wisdom:        cfg.Wisdom,
-			RawSOW:        cfg.RawSOWText,
-			RepoRoot:      cfg.RepoRoot,
+			RepoMap:              cfg.RepoMap,
+			RepoMapBudget:        cfg.RepoMapBudget,
+			Repair:               &failureBlob,
+			Wisdom:               cfg.Wisdom,
+			RawSOW:               cfg.RawSOWText,
+			RepoRoot:             cfg.RepoRoot,
+			LiveBuildState:       liveBuildStateFor(cfg),
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-preac-repair", "1-5-spec-faithfulness", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -573,6 +826,18 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// Each stuck criterion gets one reasoning pass; running it twice
 	// for the same criterion would just pay for the same verdict.
 	reasoningApplied := map[string]bool{}
+	// repairTrail accumulates a record per completed repair attempt
+	// so subsequent attempts see what earlier ones tried. Injected
+	// into the repair worker's prompt via PromptBlock() and consulted
+	// by the mid-loop meta-judge and the deterministic fingerprint
+	// gate.
+	repairTrail := &plan.RepairTrail{SessionID: session.ID}
+	// seenFingerprints maps directive fingerprint -> attempt number
+	// of the earliest attempt that tried it. Populated after each
+	// dispatch; consulted BEFORE the next dispatch to short-circuit
+	// retry loops that would try the same fix twice.
+	seenFingerprints := map[string]int{}
+	_ = seenFingerprints // reserved for future fingerprint dedup gate
 	if len(effectiveCriteria) > 0 {
 		for attempt := 1; attempt <= maxRepairs; attempt++ {
 			if ctx.Err() != nil {
@@ -604,12 +869,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 						sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, plan.Task{ID: ac.ID, Description: ac.Description}, specExcerptConfig{})
 					}
 					verdict, err := plan.JudgeAC(jctx, cfg.ReasoningProvider, cfg.ReasoningModel, plan.SemanticJudgeInput{
-						TaskDescription: taskDesc,
-						SOWSpec:         sowExcerpt,
-						Criterion:       ac,
-						FailureOutput:   failureOutput,
-						CodeExcerpts:    codeExcerpts,
-						RepoRoot:        cfg.RepoRoot,
+						TaskDescription:      taskDesc,
+						SOWSpec:              sowExcerpt,
+						Criterion:            ac,
+						FailureOutput:        failureOutput,
+						CodeExcerpts:         codeExcerpts,
+						RepoRoot:             cfg.RepoRoot,
+						UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-semantic-ac", "2-ac-check", &session, 1)),
 					})
 					if err != nil || verdict == nil {
 						return false, "", err
@@ -705,12 +971,92 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					failureBlob = hints + "\n\n" + failureBlob
 				}
 			}
+
+			// Attempt memory: inject the trail of prior repair
+			// attempts so the next worker sees what's already been
+			// tried. Pure-Go PromptBlock() — no LLM — so it's free
+			// and deterministic.
+			if trailBlock := repairTrail.PromptBlock(); trailBlock != "" {
+				failureBlob = trailBlock + "\n" + failureBlob
+			}
+
+			// Collect failing ACs up front: the fingerprint gate, the
+			// meta-judge, and the dispatch switch all need them.
+			failingACs := collectFailingACs(acceptance)
+			forceDecompose := false
+			decomposeReason := ""
+
+			// Mid-loop meta-judge: when the trail has at least one
+			// record with net progress <= 0, consult the repair-stuck
+			// diagnoser. 5-minute budget matching task_judge.
+			if cfg.ReasoningProvider != nil && trailHasZeroProgress(repairTrail) {
+				mjCtx, mjCancel := context.WithTimeout(ctx, 5*time.Minute)
+				reviewModel := cfg.ReasoningModel
+				if reviewModel == "" {
+					reviewModel = cfg.Model
+				}
+				effIdx := indexCriteriaByID(effectiveCriteria)
+				var acsForJudge []plan.AcceptanceCriterion
+				for _, fac := range failingACs {
+					if ac, ok := effIdx[fac.CriterionID]; ok {
+						acsForJudge = append(acsForJudge, ac)
+					} else {
+						acsForJudge = append(acsForJudge, plan.AcceptanceCriterion{ID: fac.CriterionID, Description: fac.Description})
+					}
+				}
+				codeExcerpts := collectExcerptsForFailingACs(cfg.RepoRoot, acsForJudge, workingSession)
+				diag, diagErr := plan.RunRepairMetaJudge(mjCtx, cfg.ReasoningProvider, reviewModel, repairTrail, acsForJudge, codeExcerpts)
+				mjCancel()
+				if diagErr != nil {
+					fmt.Printf("    ⚠ repair meta-judge error: %v — continuing without diagnosis\n", diagErr)
+				} else if diag != nil {
+					fmt.Printf("    ⚖ repair meta-judge: %s — %s\n", diag.StuckKind, truncateForLog(diag.Reasoning, 200))
+					if strings.TrimSpace(diag.RecommendedDirective) != "" {
+						failureBlob = "META-JUDGE RECOMMENDATION (" + diag.StuckKind + "): " + diag.RecommendedDirective + "\n\n" + failureBlob
+					}
+					if diag.Decompose {
+						forceDecompose = true
+						decomposeReason = "meta-judge recommended decomposition: " + diag.Reasoning
+					}
+				}
+			}
+
+			// Fingerprint gate: compute a deterministic signature
+			// for the dispatch that's about to happen. If an earlier
+			// attempt with net progress <= 0 had the same fingerprint,
+			// we are about to try the same fix again. Short-circuit
+			// into the decomposer instead. Pure Go — no LLM hop.
+			plannedDirective := plannedRepairDirective(failingACs)
+			plannedFiles := fileUnionFromSession(workingSession)
+			fp := plan.DirectiveFingerprint(plannedDirective, plannedFiles)
+			if priorAttempt, collision := seenFingerprints[fp]; collision && trailAttemptStuck(repairTrail, priorAttempt) {
+				fmt.Printf("    ⏸ repair fingerprint collision with attempt %d — skipping retry, decomposing gap\n", priorAttempt)
+				forceDecompose = true
+				if decomposeReason == "" {
+					decomposeReason = fmt.Sprintf("fingerprint collision with attempt %d (same files + same intent)", priorAttempt)
+				}
+			}
+			if _, exists := seenFingerprints[fp]; !exists {
+				seenFingerprints[fp] = attempt
+			}
+
 			fmt.Printf("  ↻ session %s: repair attempt %d/%d for %d failing criteria",
 				session.ID, attempt, maxRepairs, countFailed(acceptance))
 			if len(sticky) > 0 {
 				fmt.Printf(" (%d sticky)", len(sticky))
 			}
 			fmt.Println()
+
+			// Capture pre-dispatch git state so we can compute the
+			// attempt's diff summary and touched-file set after it
+			// runs. Best-effort: git errors yield an empty baseline.
+			preDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+			preSet := map[string]bool{}
+			for _, f := range preDirty {
+				preSet[f] = true
+			}
+			attemptStart := time.Now()
+			acsFailingBefore := failingACIDs(acceptance)
 
 			// Split repairs: instead of one worker trying to fix ALL
 			// failing criteria at once (which leads to "fixed 2, broke
@@ -723,20 +1069,23 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			// workers = 1, this collapses to the old behavior — one
 			// sequential repair with the full failure blob. The split
 			// only adds value when there are 2+ failures to fix.
-			failingACs := collectFailingACs(acceptance)
-			if len(failingACs) <= 1 || cfg.ParallelWorkers <= 1 {
+			if forceDecompose {
+				runForcedDecomposition(ctx, sowDoc, workingSession, session, failingACs, runtimeDir, cfg, maxTurns, attempt, decomposeReason, plannedFiles)
+			} else if len(failingACs) <= 1 || cfg.ParallelWorkers <= 1 {
 				// Single-criterion or sequential: old path.
 				repairTask := plan.Task{
 					ID:          fmt.Sprintf("%s-repair-%d", session.ID, attempt),
 					Description: "repair session acceptance criteria",
 				}
 				sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
-					RepoMap:       cfg.RepoMap,
-					RepoMapBudget: cfg.RepoMapBudget,
-					Repair:        &failureBlob,
-					Wisdom:        cfg.Wisdom,
-					RawSOW:        cfg.RawSOWText,
-					RepoRoot:      cfg.RepoRoot,
+					RepoMap:              cfg.RepoMap,
+					RepoMapBudget:        cfg.RepoMapBudget,
+					Repair:               &failureBlob,
+					Wisdom:               cfg.Wisdom,
+					RawSOW:               cfg.RawSOWText,
+					RepoRoot:             cfg.RepoRoot,
+					LiveBuildState:       liveBuildStateFor(cfg),
+					UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-repair", "2-repair-loop", &session, attempt)),
 				})
 				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 				_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -764,12 +1113,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 							Description: fmt.Sprintf("fix failing criterion %s: %s", fac.CriterionID, fac.Description),
 						}
 						sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
-							RepoMap:       cfg.RepoMap,
-							RepoMapBudget: cfg.RepoMapBudget,
-							Repair:        &singleFailure,
-							Wisdom:        cfg.Wisdom,
-							RawSOW:        cfg.RawSOWText,
-							RepoRoot:      cfg.RepoRoot,
+							RepoMap:              cfg.RepoMap,
+							RepoMapBudget:        cfg.RepoMapBudget,
+							Repair:               &singleFailure,
+							Wisdom:               cfg.Wisdom,
+							RawSOW:               cfg.RawSOWText,
+							RepoRoot:             cfg.RepoRoot,
+							LiveBuildState:       liveBuildStateFor(cfg),
+							UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-repair", "2-repair-loop", &session, attempt)),
 						})
 						sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 						tr := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -781,6 +1132,49 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					<-resCh
 				}
 			}
+
+			// Post-dispatch: compute files touched since pre-state,
+			// re-check the failing-AC set, and record this attempt on
+			// the trail. The next attempt will see this record in its
+			// PromptBlock() and the fingerprint gate.
+			postDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+			var filesTouched []string
+			for _, f := range postDirty {
+				if !preSet[f] {
+					filesTouched = append(filesTouched, f)
+				}
+			}
+			// When nothing new appeared (e.g. files were already
+			// dirty), fall back to recording the full dirty set that
+			// overlaps the session scope so the trail carries signal.
+			if len(filesTouched) == 0 {
+				scopeSet := map[string]bool{}
+				for _, f := range plannedFiles {
+					scopeSet[f] = true
+				}
+				for _, f := range postDirty {
+					if scopeSet[f] {
+						filesTouched = append(filesTouched, f)
+					}
+				}
+			}
+			sort.Strings(filesTouched)
+			// Re-run the mechanical AC check to know what's STILL
+			// failing post-attempt. This is cheap (same check the
+			// next iteration would run) and gives us the exact
+			// before/after IDs for the record.
+			postCheck, _ := plan.CheckAcceptanceCriteriaWithJudge(ctx, cfg.RepoRoot, effectiveCriteria, judge)
+			acsFailingAfter := failingACIDs(postCheck)
+			repairTrail.AppendAttempt(plan.RepairAttemptRecord{
+				Attempt:          attempt,
+				Timestamp:        time.Now(),
+				Directive:        plannedDirective,
+				FilesTouched:     filesTouched,
+				DiffSummary:      summarizeFilesTouched(filesTouched),
+				ACsFailingBefore: acsFailingBefore,
+				ACsFailingAfter:  acsFailingAfter,
+				DurationMs:       time.Since(attemptStart).Milliseconds(),
+			})
 			// NOTE: deliberately not appended to results.
 		}
 	}
@@ -810,7 +1204,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// are applied to subsequent runs. Continuations flow through
 	// OnContinuations to extend the SOW with a new session.
 	if !finalPassed && cfg.OverrideJudge != nil && cfg.Ignores != nil && len(finalAcceptance) > 0 {
-		runOverrideForSession(ctx, session, finalAcceptance, cfg)
+		runOverrideForSession(ctx, session, finalAcceptance, repairTrail, cfg)
 	}
 
 	// Phase 4: scope gate. git diff the session's changes and check
@@ -820,6 +1214,20 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// mode this fails the session; otherwise it's a warning so the
 	// caller can observe drift without halting the build.
 	touched := gitDirtyFiles(ctx, cfg.RepoRoot)
+	// Subtract the pre-session baseline — any file that was already
+	// dirty before this session started was touched by a prior session
+	// in the same SOW run (sessions don't commit between themselves),
+	// not by this one. Without this, every session after the first
+	// inherits all prior sessions' writes as false-positive drift.
+	if len(preSessionDirtySet) > 0 {
+		filtered := touched[:0]
+		for _, f := range touched {
+			if !preSessionDirtySet[f] {
+				filtered = append(filtered, f)
+			}
+		}
+		touched = filtered
+	}
 	if len(touched) > 0 {
 		if violations := checkScopeViolations(workingSession, touched); len(violations) > 0 {
 			fmt.Printf("  ⚠ scope gate: %d file(s) outside declared scope:\n", len(violations))
@@ -897,7 +1305,8 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		if len(changed) == 0 {
 			note = "preexisting work — no diff vs prior state"
 		}
-		if err := writeUpstreamSessionMarker(cfg.RepoRoot, session, changed, note); err != nil {
+		prov := buildSessionProvenance(cfg, sowDoc)
+		if err := writeUpstreamSessionMarker(cfg.RepoRoot, session, changed, note, prov); err != nil {
 			fmt.Printf("  marker warning: %v\n", err)
 		} else if len(changed) > 0 {
 			fmt.Printf("  ✓ wrote completion marker for session %s (%d files)\n", session.ID, len(changed))
@@ -906,7 +1315,107 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 		}
 	}
 
+	// Merge prefilled results from the session-retry fast-path so the
+	// scheduler sees the full task list (skipped + dispatched).
+	if len(prefilledResults) > 0 {
+		results = append(prefilledResults, results...)
+	}
 	return results, nil
+}
+
+// buildSessionProvenance extracts agent-provenance metadata from the
+// runtime config and the parsed SOW so it can be recorded alongside
+// the completion marker. All fields are best-effort: missing context
+// produces empty strings, never errors.
+func buildSessionProvenance(cfg sowNativeConfig, sowDoc *plan.SOW) *SessionProvenance {
+	prov := &SessionProvenance{
+		WorkerModel:       cfg.Model,
+		ReasoningModel:    cfg.ReasoningModel,
+		SOWID:             cfg.SOWID,
+		ParallelWorkers:   cfg.ParallelWorkers,
+		ReviewerSplitUsed: cfg.ReasoningProvider != nil,
+	}
+	// Hash the universal-context prompt block so we can tell whether
+	// two sessions got the same rules injected.
+	if ub := cfg.UniversalContext.PromptBlock(); ub != "" {
+		sum := sha256.Sum256([]byte(ub))
+		prov.UniversalCtxHash = hex.EncodeToString(sum[:])[:16]
+	}
+	if cfg.RawSOWText != "" {
+		sum := sha256.Sum256([]byte(cfg.RawSOWText))
+		prov.SOWSpecHash = hex.EncodeToString(sum[:])[:16]
+	}
+	// Best-effort git base — HEAD at the time the marker gets written.
+	if sha := gitHeadSHA(cfg.RepoRoot); sha != "" {
+		prov.GitBaseSHA = sha
+	}
+	return prov
+}
+
+// gitHeadSHA returns the current HEAD SHA of the repo (best-effort,
+// empty string on any error). Used for provenance attribution.
+func gitHeadSHA(repoRoot string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// taskOutputsLookComplete returns true when ALL of a task's declared
+// output files exist on disk with substantive (non-stub) content.
+// Used by the per-task completion fast-path on session retry to skip
+// dispatching workers for tasks whose outputs are already good.
+//
+// Pure file I/O + string match. No LLM. Conservative: returns false
+// if Files is empty (we can't verify), if any file is missing, if
+// any file is under 50 bytes, or if any non-config file contains a
+// stub marker.
+func taskOutputsLookComplete(repoRoot string, t plan.Task) bool {
+	if len(t.Files) == 0 {
+		return false
+	}
+	for _, rel := range t.Files {
+		path := filepath.Join(repoRoot, rel)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return false
+		}
+		if info.Size() < 50 {
+			return false
+		}
+		ext := strings.ToLower(filepath.Ext(rel))
+		// Skip stub-pattern check for config-file types where stub
+		// markers commonly appear as legitimate values (turbo.json
+		// pipeline names, package.json scripts, etc).
+		if ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" || ext == ".md" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		lower := strings.ToLower(string(data))
+		for _, marker := range taskOutputStubMarkers {
+			if strings.Contains(lower, marker) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// taskOutputStubMarkers lists case-insensitive substrings that
+// indicate a file is a stub rather than a real implementation.
+// Matched by taskOutputsLookComplete.
+var taskOutputStubMarkers = []string{
+	"todo", "fixme", "xxx",
+	"unimplemented!", "not implemented", "notimplementederror",
+	`panic("todo"`, `panic("not implemented"`,
+	"placeholder", "// stub", "# stub",
+	"// removed", "# removed",
 }
 
 // gitDirtyFiles returns the list of files that have uncommitted changes
@@ -1120,7 +1629,7 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 // prevent the same flag from re-tripping on the scheduler's outer retry.
 // Continuation items are the lever for extending the SOW forward when
 // the work is genuinely incomplete.
-func runOverrideForSession(ctx context.Context, session plan.Session, acceptance []plan.AcceptanceResult, cfg sowNativeConfig) {
+func runOverrideForSession(ctx context.Context, session plan.Session, acceptance []plan.AcceptanceResult, repairTrail *plan.RepairTrail, cfg sowNativeConfig) {
 	// Turn failing acceptance results into convergence.Finding shapes so
 	// the existing judge can operate on them. Each failing criterion
 	// becomes a synthetic finding with Evidence = command output.
@@ -1192,7 +1701,80 @@ func runOverrideForSession(ctx context.Context, session plan.Session, acceptance
 	}
 	if len(decision.Continuations) > 0 && cfg.OnContinuations != nil {
 		fmt.Printf("  CTO surfaced %d continuation item(s); appending to SOW\n", len(decision.Continuations))
-		cfg.OnContinuations(session.ID, decision.Continuations)
+		overrideCtx := buildContinuationContext(session, acceptance, repairTrail, cfg)
+		cfg.OnContinuations(session.ID, decision.Continuations, overrideCtx)
+	}
+	// Independent of continuations: invoke the root-cause planner on
+	// EVERY escalation that still has sticky failing ACs. The CTO judge
+	// returning zero continuation items doesn't mean "nothing to do" —
+	// it means the judge couldn't articulate continuations from the
+	// repair-loop trail alone. PlanFixDAG with full tool authority
+	// (read/grep/glob/bash) can independently research the root cause
+	// across files and produce a dependency-ordered fix plan that the
+	// continuation path's prose-only judge couldn't surface.
+	//
+	// Without this hook, run33 spent 9+ hours and $54+ across 4
+	// sessions with PlanFixDAG never engaging — every session escalated
+	// with sticky ACs and zero continuations, so OnContinuations never
+	// fired, so the planner never ran. This callback runs whether or
+	// not the CTO judge produced items.
+	if cfg.OnSessionEscalation != nil {
+		stickyCount := 0
+		for _, r := range acceptance {
+			if !r.Passed {
+				stickyCount++
+			}
+		}
+		if stickyCount > 0 {
+			overrideCtx := buildContinuationContext(session, acceptance, repairTrail, cfg)
+			cfg.OnSessionEscalation(session.ID, session.Title, overrideCtx)
+		}
+	}
+}
+
+// buildContinuationContext assembles the ContinuationContext passed
+// to OnContinuations from the session's unresolved acceptance
+// results plus the in-memory repair trail. StickyACs are the
+// acceptance entries that remained failing after the repair loop;
+// RepairHistory is the flat directive list pulled out of the trail.
+func buildContinuationContext(session plan.Session, acceptance []plan.AcceptanceResult, repairTrail *plan.RepairTrail, cfg sowNativeConfig) ContinuationContext {
+	acIdx := map[string]plan.AcceptanceCriterion{}
+	for _, ac := range session.AcceptanceCriteria {
+		acIdx[ac.ID] = ac
+	}
+	var sticky []plan.StickyACContext
+	for _, r := range acceptance {
+		if r.Passed {
+			continue
+		}
+		sc := plan.StickyACContext{
+			ACID:        r.CriterionID,
+			Description: r.Description,
+			LastOutput:  r.Output,
+		}
+		if ac, ok := acIdx[r.CriterionID]; ok {
+			sc.Command = ac.Command
+		}
+		if strings.TrimSpace(r.JudgeReasoning) != "" {
+			sc.SemanticJudgeVerdicts = append(sc.SemanticJudgeVerdicts, r.JudgeReasoning)
+		}
+		sticky = append(sticky, sc)
+	}
+	var history []string
+	if repairTrail != nil {
+		for _, rec := range repairTrail.Records {
+			d := strings.TrimSpace(rec.Directive)
+			if d == "" {
+				continue
+			}
+			history = append(history, d)
+		}
+	}
+	return ContinuationContext{
+		StickyACs:        sticky,
+		RepairHistory:    history,
+		SOWSpec:          cfg.RawSOWText,
+		FromSessionTitle: session.Title,
 	}
 }
 
@@ -1231,13 +1813,27 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		}
 		fmt.Printf("  [%d/%d] %s: %s\n", i+1, len(session.Tasks), task.ID, task.Description)
 
+		// Per-task file-drift snapshot: capture dirty tree BEFORE the
+		// worker runs so we can diff afterward and detect (a) zombie
+		// tasks that claim success but wrote no files, and (b) silent
+		// scope creep where the worker edits files not in task.Files.
+		// This is a superset of the wave-level collision check used
+		// by the parallel path — it runs per-task regardless of mode.
+		preTaskDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+		preTaskDirtySet := make(map[string]bool, len(preTaskDirty))
+		for _, f := range preTaskDirty {
+			preTaskDirtySet[f] = true
+		}
+
 		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
-			RepoMap:       cfg.RepoMap,
-			RepoMapBudget: cfg.RepoMapBudget,
-			Wisdom:        cfg.Wisdom,
-			RawSOW:        cfg.RawSOWText,
-			RepoRoot:      cfg.RepoRoot,
-			Briefing:      cfg.Briefings[task.ID],
+			RepoMap:              cfg.RepoMap,
+			RepoMapBudget:        cfg.RepoMapBudget,
+			Wisdom:               cfg.Wisdom,
+			RawSOW:               cfg.RawSOWText,
+			RepoRoot:             cfg.RepoRoot,
+			Briefing:             cfg.Briefings[task.ID],
+			LiveBuildState:       liveBuildStateFor(cfg),
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -1245,9 +1841,71 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		// cascading into session AC failures. Bounded at 1
 		// follow-up max per task to cap cost and prevent loops.
 		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns)
+
+		// Post-task diff: what did THIS task actually touch?
+		reportPerTaskFileDrift(ctx, cfg.RepoRoot, task, preTaskDirtySet, tr.Success)
+
 		results = append(results, tr)
 	}
 	return results
+}
+
+// reportPerTaskFileDrift compares the files a task claims it will
+// touch (task.Files) against what actually changed on disk during
+// its dispatch. Warnings only — never fails the task — because the
+// SOW's file declarations can be incomplete for legitimate reasons
+// (config files, generated types, etc.). Surfaces two distinct
+// signals:
+//   - zombie: worker reported success but wrote zero files.
+//   - drift: worker touched files not in task.Files.
+func reportPerTaskFileDrift(ctx context.Context, repoRoot string, task plan.Task, preDirty map[string]bool, claimedSuccess bool) {
+	postDirty := gitDirtyFiles(ctx, repoRoot)
+	changed := make([]string, 0, len(postDirty))
+	for _, f := range postDirty {
+		if preDirty[f] {
+			continue
+		}
+		if strings.HasPrefix(f, ".stoke/") {
+			continue
+		}
+		changed = append(changed, f)
+	}
+	if len(changed) == 0 {
+		if claimedSuccess && len(task.Files) > 0 {
+			fmt.Printf("    ⚠ task %s claimed success but wrote 0 files (declared %d)\n", task.ID, len(task.Files))
+		}
+		return
+	}
+	if len(task.Files) == 0 {
+		return // no declared scope → can't measure drift
+	}
+	declared := make(map[string]bool, len(task.Files))
+	for _, f := range task.Files {
+		declared[normalizeScopePath(f)] = true
+	}
+	var drift []string
+	for _, f := range changed {
+		if declared[normalizeScopePath(f)] {
+			continue
+		}
+		matched := false
+		for d := range declared {
+			if strings.HasSuffix(d, "/") && strings.HasPrefix(f, d) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			drift = append(drift, f)
+		}
+	}
+	if len(drift) > 0 {
+		sort.Strings(drift)
+		fmt.Printf("    ⚠ task %s touched %d file(s) outside declared scope:\n", task.ID, len(drift))
+		for _, f := range drift {
+			fmt.Printf("      - %s\n", f)
+		}
+	}
 }
 
 // runSessionPhase1Parallel groups tasks into waves and runs each wave
@@ -1313,12 +1971,14 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				}
 				fmt.Printf("  ▶ %s: %s\n", task.ID, task.Description)
 				sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
-					RepoMap:       cfg.RepoMap,
-					RepoMapBudget: cfg.RepoMapBudget,
-					Wisdom:        cfg.Wisdom,
-					RawSOW:        cfg.RawSOWText,
-					RepoRoot:      cfg.RepoRoot,
-					Briefing:      cfg.Briefings[task.ID],
+					RepoMap:              cfg.RepoMap,
+					RepoMapBudget:        cfg.RepoMapBudget,
+					Wisdom:               cfg.Wisdom,
+					RawSOW:               cfg.RawSOWText,
+					RepoRoot:             cfg.RepoRoot,
+					Briefing:             cfg.Briefings[task.ID],
+					LiveBuildState:       liveBuildStateFor(cfg),
+					UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 				})
 				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -1535,6 +2195,16 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		return plan.TaskExecResult{TaskID: taskID, Success: false, Error: err}
 	}
 
+	// Clarification round-trip: give the worker a dedicated tool for
+	// asking scoped questions instead of guessing. Responder is chat
+	// in chat-dispatched runs, supervisor-LLM in headless runs, noop
+	// when no provider is configured (worker then sees UNKNOWN and
+	// abandons). Counter is per-task so each worker gets its own
+	// MaxClarificationsPerTask budget.
+	clarifyCounter := &plan.ClarifyCounter{}
+	clarifyResponder := resolveClarifyResponder(cfg)
+	clarifyTool := buildClarifyExtraTool(taskID, clarifyResponder, clarifyCounter, nil)
+
 	spec := engine.RunSpec{
 		Prompt:           userPrompt,
 		SystemPrompt:     systemPrompt,
@@ -1548,15 +2218,31 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 			ReadOnly: false,
 		},
 		Supervisor: supervisor,
+		ExtraTools: []engine.ExtraTool{clarifyTool},
 	}
 
 	start := time.Now()
 	result, err := cfg.Runner.Run(ctx, spec, func(ev stream.Event) {
-		if ev.DeltaText != "" {
+		// DeltaText is the model's raw streaming output — including
+		// partial tool-call JSON arguments, inline reasoning, and the
+		// giant JSX/TSX blobs workers emit mid-edit. Dumping that to
+		// stdout makes the operator log unreadable. Gate it behind
+		// cfg.VerboseStream; the default path shows only structural
+		// events (tool names, completions, warnings).
+		if cfg.VerboseStream && ev.DeltaText != "" {
 			fmt.Print(ev.DeltaText)
 		}
 		for _, tu := range ev.ToolUses {
 			fmt.Printf("    ⚙ %s\n", tu.Name)
+		}
+		// Pulse the session-scope watchdog so long-running repair
+		// workers aren't misidentified as idle. Any streamed event
+		// — token delta, tool use, stop reason — counts as progress.
+		// Without this, a worker running a slow `pnpm install`
+		// chain for 20+ minutes gets cancelled mid-work even though
+		// it's actively making progress.
+		if cfg.Watchdog != nil {
+			cfg.Watchdog.Pulse()
 		}
 	})
 	dur := time.Since(start)
@@ -1579,9 +2265,26 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		tr.Error = fmt.Errorf("native runner: %s", result.Subtype)
 		fmt.Printf("    ✗ %s failed: %s (%.1fs, %d turns, $%.4f)\n", taskID, result.Subtype, dur.Seconds(), result.NumTurns, result.CostUSD)
 	default:
-		fmt.Printf("    ✓ %s done (%.1fs, %d turns, $%.4f)\n", taskID, dur.Seconds(), result.NumTurns, result.CostUSD)
+		// Suffix each task completion with the running SOW-run total.
+		// Lets the operator track spend velocity without polling a
+		// separate source. cfg.spent is already updated above.
+		runTotal := 0.0
+		if cfg.spent != nil {
+			runTotal = *cfg.spent
+		}
+		fmt.Printf("    ✓ %s done (%.1fs, %d turns, $%.4f · run total $%.2f)\n", taskID, dur.Seconds(), result.NumTurns, result.CostUSD, runTotal)
 	}
 	return tr
+}
+
+// liveBuildStateFor returns the current BuildWatcher summary snapshot
+// for injection into worker prompts. Empty string when the session has
+// no watcher or the watcher currently reports a clean tree.
+func liveBuildStateFor(cfg sowNativeConfig) string {
+	if cfg.BuildWatcher == nil {
+		return ""
+	}
+	return cfg.BuildWatcher.SummaryForPrompt()
 }
 
 // promptOpts bundles the extras buildSOWNativePrompts needs beyond the
@@ -1607,6 +2310,23 @@ type promptOpts struct {
 	// exact identifiers to use, pitfalls) that the SOW spec alone
 	// doesn't capture. nil = no briefing, just use the spec.
 	Briefing *plan.TaskBriefing
+	// GitContext is a deterministic recent-history summary for the
+	// files a repair worker is about to touch. Populated only on
+	// repair paths where the orchestrator pre-assembles it; plain
+	// task dispatch leaves this empty.
+	GitContext string
+	// LiveBuildState is the BuildWatcher.SummaryForPrompt() snapshot
+	// at dispatch time. When non-empty, the prompt builder renders
+	// it into the user prompt so the worker sees which compile errors
+	// currently exist in the repo and must not declare the task
+	// complete until they are gone (or demonstrably outside scope).
+	LiveBuildState string
+	// UniversalPromptBlock is the rendered universal-context block
+	// (coding-standards + known-gotchas) from
+	// skill.UniversalContext.PromptBlock(). When non-empty the
+	// prompt builder appends it to the system prompt, giving every
+	// coding worker the same baseline rules.
+	UniversalPromptBlock string
 }
 
 // buildSOWNativePrompts returns (systemPrompt, userPrompt) for a task.
@@ -1861,6 +2581,20 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		sys.WriteString("----- END SOW -----\n\n")
 	}
 
+	// Recent git history for the files this worker is about to touch.
+	// Injected only on repair paths where the orchestrator pre-assembles
+	// it (see plan.AssembleRepairContext). Shown verbatim — deterministic
+	// log + diff, no LLM summarization — so the worker can't silently
+	// re-introduce a bug an earlier turn just fixed.
+	if opts.GitContext != "" {
+		sys.WriteString("\n\nRECENT GIT HISTORY:\n")
+		sys.WriteString(opts.GitContext)
+		if !strings.HasSuffix(opts.GitContext, "\n") {
+			sys.WriteString("\n")
+		}
+		sys.WriteString("\n")
+	}
+
 	// --- USER (dynamic, per-task) ---
 	//
 	// Structure matters here. Task descriptions in LLM-generated SOWs
@@ -1962,7 +2696,36 @@ exit 0 before you end.
 			}
 		}
 
+		// Live build-watcher snapshot. When present, the worker sees
+		// the current compile-error list and is told not to end the
+		// task while leaving errors in files it touched. Injected as
+		// authoritative ground-truth: tsc / go / cargo / pyright said
+		// so, no LLM re-evaluation.
+		if strings.TrimSpace(opts.LiveBuildState) != "" {
+			usr.WriteString(opts.LiveBuildState)
+			if !strings.HasSuffix(opts.LiveBuildState, "\n") {
+				usr.WriteString("\n")
+			}
+			usr.WriteString("Before you end the task, re-run the stack's build/typecheck command via bash and confirm the errors above that fall inside YOUR files are resolved. Compile errors in files outside your task's scope are NOT yours to fix unless the task description says otherwise.\n\n")
+		}
+
 		usr.WriteString("Begin implementing the task now. When you're done, your final message should briefly summarize what you changed, and you should run the acceptance command(s) yourself with bash to confirm the work is complete.\n")
+	}
+
+	// Append the universal context (coding-standards + known-gotchas)
+	// to the end of the system prompt, after every role-specific
+	// instruction and static context. Kept last so it lives inside
+	// the cacheable prefix (same layering as wisdom/ API surface).
+	if strings.TrimSpace(opts.UniversalPromptBlock) != "" {
+		if !strings.HasSuffix(sys.String(), "\n\n") {
+			if strings.HasSuffix(sys.String(), "\n") {
+				sys.WriteString("\n")
+			} else {
+				sys.WriteString("\n\n")
+			}
+		}
+		sys.WriteString(opts.UniversalPromptBlock)
+		sys.WriteString("\n")
 	}
 
 	return sys.String(), usr.String()
@@ -2071,16 +2834,43 @@ func runReasoningForStuckCriteria(
 		if reasoningModel == "" {
 			reasoningModel = cfg.Model
 		}
+		// ReasonAboutFailure runs multi-analyst consensus — several
+		// sequential non-streaming Chat calls that can take 2-5 min
+		// total. None of them pulse the session watchdog because
+		// they're not routed through execNativeTask's stream callback.
+		// Keep the watchdog fresh with a 30s ticker so a stuck-AC
+		// reasoning pass doesn't look idle to the session-scope
+		// watchdog and trigger a false-positive kill.
+		reasonPulseStop := make(chan struct{})
+		if cfg.Watchdog != nil {
+			go func() {
+				t := time.NewTicker(30 * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-reasonPulseStop:
+						return
+					case <-t.C:
+						cfg.Watchdog.Pulse()
+					}
+				}
+			}()
+		}
+		if block := cfg.UniversalContext.PromptBlock(); strings.TrimSpace(block) != "" {
+			fmt.Printf("    🧭 universal context injected (reasoning): %s\n", cfg.UniversalContext.ShortSources())
+		}
 		verdict, rerr := plan.ReasonAboutFailure(ctx, cfg.ReasoningProvider, reasoningModel, plan.ReasoningInput{
-			SessionID:       session.ID,
-			SessionTitle:    session.Title,
-			TaskDescription: taskDesc,
-			Criterion:       crit,
-			FailureOutput:   ac.Output,
-			PriorAttempts:   stickyAttempts[ac.CriterionID],
-			CodeExcerpts:    codeExcerpts,
-			RepoRoot:        cfg.RepoRoot,
+			SessionID:            session.ID,
+			SessionTitle:         session.Title,
+			TaskDescription:      taskDesc,
+			Criterion:            crit,
+			FailureOutput:        ac.Output,
+			PriorAttempts:        stickyAttempts[ac.CriterionID],
+			CodeExcerpts:         codeExcerpts,
+			RepoRoot:             cfg.RepoRoot,
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("reasoning-judge-synthesis", "2-repair-loop", &session, 1)),
 		})
+		close(reasonPulseStop)
 		reasoningApplied[ac.CriterionID] = true
 		if rerr != nil {
 			fmt.Printf("    reasoning loop failed: %v\n", rerr)
@@ -2227,6 +3017,27 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 		return
 	}
 
+	// Pre-install: deterministic workspace hygiene. Fixes missing
+	// devDeps and install-level issues BEFORE the stack's build gate
+	// runs, so tsc/next/expo/cargo/go binaries actually resolve when
+	// the build command invokes them.
+	report, _ := plan.ScanAndAutoFix(ctx, cfg.RepoRoot)
+	if report != nil {
+		if len(report.AutoFixed) > 0 {
+			fmt.Printf("  🧽 hygiene: auto-fixed %d finding(s): %s\n", len(report.AutoFixed), report.Summary)
+		}
+		if len(report.Remaining) > 0 && cfg.ReasoningProvider != nil {
+			fmt.Printf("  🔧 hygiene: %d finding(s) need agent repair — dispatching\n", len(report.Remaining))
+			hygModel := cfg.ReasoningModel
+			if hygModel == "" {
+				hygModel = cfg.Model
+			}
+			if err := plan.AgentRepair(ctx, cfg.ReasoningProvider, hygModel, cfg.RepoRoot, report.Remaining); err != nil {
+				fmt.Printf("  ⚠ hygiene-agent: %v\n", err)
+			}
+		}
+	}
+
 	// Step 1: ensure deps are installed (when the stack has an
 	// install step). 3-minute timeout prevents stuck installers
 	// from blocking the session.
@@ -2259,13 +3070,17 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 		ID:          workingSession.ID + "-foundation-fix",
 		Description: fmt.Sprintf("fix %s compilation errors before acceptance criteria run", fc.Label),
 	}
+	gitCtx := plan.AssembleRepairContext(cfg.RepoRoot, repairTask.Files, 4000)
 	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
-		RepoMap:       cfg.RepoMap,
-		RepoMapBudget: cfg.RepoMapBudget,
-		Repair:        &failureBlob,
-		Wisdom:        cfg.Wisdom,
-		RawSOW:        cfg.RawSOWText,
-		RepoRoot:      cfg.RepoRoot,
+		RepoMap:              cfg.RepoMap,
+		RepoMapBudget:        cfg.RepoMapBudget,
+		Repair:               &failureBlob,
+		Wisdom:               cfg.Wisdom,
+		RawSOW:               cfg.RawSOWText,
+		RepoRoot:             cfg.RepoRoot,
+		GitContext:           gitCtx,
+		LiveBuildState:       liveBuildStateFor(cfg),
+		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-preac-repair", "1-75-foundation-sanity", &workingSession, 1)),
 	})
 	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
 	_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -2286,10 +3101,22 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil)
 }
 
-// maxReviewDepth caps recursive follow-up decomposition. At depth N
-// we've already dispatched 1 + sum(sub_directives from each depth)
-// workers on this task's scope. 3 is enough for "original → follow-up
-// → decomposed sub-fix" without spiraling.
+// maxReviewDepth caps recursive follow-up decomposition. The depth
+// is the *structural* depth of the decomposition tree, not total
+// worker count — the branching factor is bounded by the decomposer
+// prompt (5-9 sub-directives per call) and the fingerprint gate +
+// abandon verdict halt any branch that isn't making genuine
+// progress. 6 is the sweet spot: enough to let a genuinely complex
+// task (e.g. an auth-infrastructure scaffold touching 25+ files)
+// decompose down to tractable sub-problems, few enough that a
+// stuck branch still terminates quickly. Cost is not the limit —
+// Lowered from 6 to 3 now that PlanFixDAG exists at cascade cap:
+// the root-cause planner with full tool access resolves stuck
+// gaps more reliably than deep per-task decomp grinding. 3 keeps
+// the "original → follow-up → decomposed sub-fix" shape that
+// solves genuine multi-file tasks, but escalates structurally
+// hard problems to the smarter planner via promote-overflow +
+// cascade path instead of burning compute on diminishing returns.
 const maxReviewDepth = 3
 
 // reviewAndFollowupRecursive is the workhorse. currentTask is the
@@ -2298,10 +3125,11 @@ const maxReviewDepth = 3
 // carries the trail of follow-up attempts so the decomposer knows
 // what's already been tried.
 func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string) {
-	if depth >= maxReviewDepth {
-		fmt.Printf("    ⏹ review recursion cap reached for %s at depth %d — letting session ACs catch remaining gaps\n", originalTask.ID, depth)
-		return
-	}
+	// At-or-past-cap handling is implemented below (see atCap branch)
+	// — we still run the reviewer + decomposer at the cap boundary so
+	// productive sub-directives get promoted to first-class scope via
+	// OnDecompOverflow rather than silently dropped.
+	atCap := depth >= maxReviewDepth
 	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, originalTask.Files, 8, 4000)
 	sowExcerpt := ""
 	if cfg.RawSOWText != "" {
@@ -2311,14 +3139,24 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	if reviewModel == "" {
 		reviewModel = cfg.Model
 	}
+	// Snapshot the live compile-error queue filtered to files this
+	// task is responsible for. The reviewer treats these as
+	// authoritative, in-scope gaps even when the general scope-
+	// discipline rule would otherwise suppress them.
+	var liveErrs []plan.CompileError
+	if cfg.BuildWatcher != nil {
+		liveErrs = cfg.BuildWatcher.FilterToFiles(originalTask.Files)
+	}
 	verdict, err := plan.ReviewTaskWork(ctx, cfg.ReasoningProvider, reviewModel, plan.TaskReviewInput{
-		Task:              originalTask,
-		SOWSpec:           sowExcerpt,
-		SessionAcceptance: workingSession.AcceptanceCriteria,
-		CodeExcerpts:      excerpts,
-		WorkerSummary:     "",
-		PriorAttempts:     depth,
-		PriorGaps:         priorDirectives,
+		Task:                 originalTask,
+		SOWSpec:              sowExcerpt,
+		SessionAcceptance:    workingSession.AcceptanceCriteria,
+		CodeExcerpts:         excerpts,
+		WorkerSummary:        "",
+		PriorAttempts:        depth,
+		PriorGaps:            priorDirectives,
+		LiveCompileErrors:    liveErrs,
+		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-task-reviewer", "1-task-dispatch", &workingSession, 1)),
 	})
 	if err != nil || verdict == nil {
 		return
@@ -2352,11 +3190,12 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			stuckGap = verdict.Reasoning
 		}
 		decVerdict, decErr := plan.DecomposeTaskGap(ctx, cfg.ReasoningProvider, reviewModel, plan.DecomposeInput{
-			OriginalTask:    originalTask,
-			StuckGap:        stuckGap,
-			PriorDirectives: priorDirectives,
-			CodeState:       excerpts,
-			SOWSpec:         sowExcerpt,
+			OriginalTask:         originalTask,
+			StuckGap:             stuckGap,
+			PriorDirectives:      priorDirectives,
+			CodeState:            excerpts,
+			SOWSpec:              sowExcerpt,
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-decomposer", "2-repair-loop", &workingSession, 1)),
 		})
 		if decErr != nil || decVerdict == nil {
 			fmt.Printf("    ⚠ decomposer error at depth %d: %v — letting session ACs catch\n", depth, decErr)
@@ -2385,6 +3224,24 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		return
 	}
 
+	// At-cap overflow: if we'd dispatch deeper, promote the remaining
+	// directives to first-class scope instead. The decomposer has
+	// already given us a clean split — rather than silently drop the
+	// work or spiral past the cap, append a new session whose tasks
+	// are these sub-directives. Each promoted task gets the full
+	// pipeline treatment (briefing, review, decomp with fresh budget,
+	// AC coverage).
+	if atCap {
+		if cfg.OnDecompOverflow != nil {
+			fmt.Printf("    ⬆ promoting %d decomp overflow directive(s) from %s at depth %d to new session scope\n", len(directivesToDispatch), originalTask.ID, depth)
+			cfg.OnDecompOverflow(originalTask.ID, workingSession.ID, directivesToDispatch)
+			return
+		}
+		// No promotion hook — legacy behavior: cap and defer to ACs.
+		fmt.Printf("    ⏹ review recursion cap reached for %s at depth %d — letting session ACs catch remaining gaps (no OnDecompOverflow hook)\n", originalTask.ID, depth)
+		return
+	}
+
 	// Dispatch each directive as a worker, then recurse on each one.
 	// Parallel when cfg.ParallelWorkers > 1 and we have multiple.
 	for i, directive := range directivesToDispatch {
@@ -2398,13 +3255,21 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			Files:        originalTask.Files,
 			Dependencies: []string{currentTask.ID},
 		}
+		gitCtx := plan.AssembleRepairContext(cfg.RepoRoot, originalTask.Files, 4000)
+		followupAgent := "worker-task-reviewer-followup"
+		if depth >= 2 {
+			followupAgent = "worker-task-decomp-subfix"
+		}
 		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, followup, promptOpts{
-			RepoMap:       cfg.RepoMap,
-			RepoMapBudget: cfg.RepoMapBudget,
-			Wisdom:        cfg.Wisdom,
-			RawSOW:        cfg.RawSOWText,
-			RepoRoot:      cfg.RepoRoot,
-			Briefing:      cfg.Briefings[originalTask.ID],
+			RepoMap:              cfg.RepoMap,
+			RepoMapBudget:        cfg.RepoMapBudget,
+			Wisdom:               cfg.Wisdom,
+			RawSOW:               cfg.RawSOWText,
+			RepoRoot:             cfg.RepoRoot,
+			Briefing:             cfg.Briefings[originalTask.ID],
+			GitContext:           gitCtx,
+			LiveBuildState:       liveBuildStateFor(cfg),
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(followupAgent, "1-task-dispatch", &workingSession, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, followup, 3))
 		ftr := execNativeTask(ctx, followup.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
@@ -2427,6 +3292,230 @@ func collectFailingACs(acceptance []plan.AcceptanceResult) []plan.AcceptanceResu
 		}
 	}
 	return out
+}
+
+// trailHasZeroProgress reports whether the repair trail has at least
+// one completed attempt whose NetProgress is <= 0. Used to gate the
+// mid-loop meta-judge and the fingerprint collision check.
+func trailHasZeroProgress(trail *plan.RepairTrail) bool {
+	if trail == nil {
+		return false
+	}
+	for _, rec := range trail.Records {
+		if rec.NetProgress <= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// trailAttemptStuck reports whether the record for a specific attempt
+// number in the trail has NetProgress <= 0. Used by the fingerprint
+// gate to ensure we only short-circuit when the earlier attempt with
+// the same fingerprint did NOT close ACs.
+func trailAttemptStuck(trail *plan.RepairTrail, attempt int) bool {
+	if trail == nil {
+		return false
+	}
+	for _, rec := range trail.Records {
+		if rec.Attempt == attempt {
+			return rec.NetProgress <= 0
+		}
+	}
+	return false
+}
+
+// failingACIDs returns the criterion IDs of the failing acceptance
+// results. Order is preserved from the input slice.
+func failingACIDs(acceptance []plan.AcceptanceResult) []string {
+	var out []string
+	for _, ac := range acceptance {
+		if !ac.Passed {
+			out = append(out, ac.CriterionID)
+		}
+	}
+	return out
+}
+
+// plannedRepairDirective synthesizes a compact directive describing
+// the fix the next repair worker is about to attempt. Used as input
+// to the deterministic fingerprint so "same AC set + same file set"
+// collides across attempts.
+func plannedRepairDirective(failing []plan.AcceptanceResult) string {
+	parts := make([]string, 0, len(failing))
+	for _, fac := range failing {
+		parts = append(parts, fmt.Sprintf("fix %s: %s", fac.CriterionID, fac.Description))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// fileUnionFromSession returns the union of all declared file paths
+// across the session's tasks plus session.Outputs. These become the
+// "files the next attempt is expected to touch" input to the
+// directive fingerprint.
+func fileUnionFromSession(session plan.Session) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, t := range session.Tasks {
+		for _, f := range t.Files {
+			add(f)
+		}
+	}
+	for _, f := range session.Outputs {
+		add(f)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// indexCriteriaByID builds a map from criterion ID to the full
+// AcceptanceCriterion. Used by the meta-judge call path to hand the
+// original criterion (with its Command / FileExists / ContentMatch)
+// to RunRepairMetaJudge rather than the bare AcceptanceResult shape.
+func indexCriteriaByID(criteria []plan.AcceptanceCriterion) map[string]plan.AcceptanceCriterion {
+	out := make(map[string]plan.AcceptanceCriterion, len(criteria))
+	for _, c := range criteria {
+		out[c.ID] = c
+	}
+	return out
+}
+
+// collectExcerptsForFailingACs reads source from the files the
+// failing ACs probably touch. Best-effort; returns an empty map on
+// any fs error or when no files can be identified.
+func collectExcerptsForFailingACs(repoRoot string, acs []plan.AcceptanceCriterion, session plan.Session) map[string]string {
+	if repoRoot == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, ac := range acs {
+		if ac.FileExists != "" && !seen[ac.FileExists] {
+			seen[ac.FileExists] = true
+			paths = append(paths, ac.FileExists)
+		}
+		if ac.ContentMatch != nil && ac.ContentMatch.File != "" && !seen[ac.ContentMatch.File] {
+			seen[ac.ContentMatch.File] = true
+			paths = append(paths, ac.ContentMatch.File)
+		}
+	}
+	// Augment with the session's declared scope files so the judge
+	// can see the layer where repairs have actually been landing.
+	for _, f := range fileUnionFromSession(session) {
+		if !seen[f] {
+			seen[f] = true
+			paths = append(paths, f)
+		}
+	}
+	return plan.CollectCodeExcerpts(repoRoot, paths, 8, 4000)
+}
+
+// summarizeFilesTouched renders a one-line summary of the files an
+// attempt modified. Used when building the RepairAttemptRecord's
+// DiffSummary field. Keeps the trail's PromptBlock output compact.
+func summarizeFilesTouched(files []string) string {
+	if len(files) == 0 {
+		return "(no files modified)"
+	}
+	if len(files) == 1 {
+		return "modified " + files[0]
+	}
+	if len(files) <= 4 {
+		return "modified " + strings.Join(files, ", ")
+	}
+	return fmt.Sprintf("modified %s and %d more", strings.Join(files[:3], ", "), len(files)-3)
+}
+
+// runForcedDecomposition replaces the normal repair dispatch when
+// either the fingerprint gate or the meta-judge decides that
+// retrying with a directive is futile. It calls DecomposeTaskGap on
+// the synthetic stuck task (the session's failing ACs rolled up into
+// one gap description), then dispatches one repair worker per
+// returned sub-directive. Returns true when at least one sub-worker
+// was dispatched.
+func runForcedDecomposition(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, session plan.Session, failingACs []plan.AcceptanceResult, runtimeDir string, cfg sowNativeConfig, maxTurns int, attempt int, reason string, scopeFiles []string) bool {
+	if cfg.ReasoningProvider == nil || len(failingACs) == 0 {
+		return false
+	}
+	reviewModel := cfg.ReasoningModel
+	if reviewModel == "" {
+		reviewModel = cfg.Model
+	}
+	// Build a synthetic task so DecomposeTaskGap has something to
+	// anchor on. Files = session scope union; description = session
+	// title + "repair".
+	syntheticTask := plan.Task{
+		ID:          fmt.Sprintf("%s-decompose-%d", session.ID, attempt),
+		Description: "repair session acceptance criteria (forced decomposition): " + workingSession.Title,
+		Files:       scopeFiles,
+	}
+	stuckGap := plannedRepairDirective(failingACs)
+	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, scopeFiles, 8, 4000)
+	sowExcerpt := ""
+	if cfg.RawSOWText != "" {
+		sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, syntheticTask, specExcerptConfig{})
+	}
+	decCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	decVerdict, decErr := plan.DecomposeTaskGap(decCtx, cfg.ReasoningProvider, reviewModel, plan.DecomposeInput{
+		OriginalTask:         syntheticTask,
+		StuckGap:             stuckGap,
+		PriorDirectives:      []string{reason},
+		CodeState:            excerpts,
+		SOWSpec:              sowExcerpt,
+		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-decomposer", "2-repair-loop", &workingSession, attempt)),
+	})
+	cancel()
+	if decErr != nil || decVerdict == nil {
+		fmt.Printf("    ⚠ forced decomposer error: %v — falling back to plain repair next attempt\n", decErr)
+		return false
+	}
+	if decVerdict.Abandon {
+		fmt.Printf("    ⏹ decomposer abandoned stuck gap: %s\n", truncateForLog(decVerdict.AbandonReason, 200))
+		return false
+	}
+	if len(decVerdict.SubDirectives) == 0 {
+		fmt.Printf("    ⚠ decomposer returned no sub-directives — falling back to plain repair next attempt\n")
+		return false
+	}
+	fmt.Printf("    ↯ decomposing stuck gap into %d sub-directives (via fingerprint gate)\n", len(decVerdict.SubDirectives))
+	for i, sd := range decVerdict.SubDirectives {
+		fmt.Printf("      %d. %s\n", i+1, truncateForLog(sd, 150))
+	}
+	dispatched := false
+	for i, sd := range decVerdict.SubDirectives {
+		if ctx.Err() != nil {
+			return dispatched
+		}
+		subID := fmt.Sprintf("%s-decompose-%d-%d", session.ID, attempt, i+1)
+		subTask := plan.Task{
+			ID:          subID,
+			Description: sd,
+			Files:       scopeFiles,
+		}
+		subBlob := "FORCED DECOMPOSITION SUB-DIRECTIVE (one of " + strconv.Itoa(len(decVerdict.SubDirectives)) + "):\n\n" + sd
+		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, subTask, promptOpts{
+			RepoMap:              cfg.RepoMap,
+			RepoMapBudget:        cfg.RepoMapBudget,
+			Repair:               &subBlob,
+			Wisdom:               cfg.Wisdom,
+			RawSOW:               cfg.RawSOWText,
+			RepoRoot:             cfg.RepoRoot,
+			LiveBuildState:       liveBuildStateFor(cfg),
+			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-decomp-subfix", "2-repair-loop", &workingSession, attempt)),
+		})
+		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, subTask, 3))
+		_ = execNativeTask(ctx, subTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		dispatched = true
+	}
+	return dispatched
 }
 
 // formatSingleACFailure builds a repair prompt block for exactly ONE
@@ -2598,4 +3687,234 @@ func countFailed(results []plan.AcceptanceResult) int {
 		}
 	}
 	return n
+}
+
+// applySessionSizerPass runs the session sizer judge (see
+// internal/plan/session_sizer.go) on each session in the SOW. When
+// the judge recommends a split, the parent session is replaced in
+// sow.Sessions with the materialized sub-sessions so the scheduler
+// iterates the narrower units instead of the oversized original.
+//
+// Silent noop when prov is nil, the session is below the sizer's
+// task-count floor, or the judge declines to split. Only logs when
+// an actual split fires so small-session runs stay quiet.
+// applySessionSizerPass returns true when at least one session was
+// split (so the caller can rebuild scheduler state to match), false
+// when the SOW was unchanged.
+func applySessionSizerPass(ctx context.Context, sow *plan.SOW, prov provider.Provider, model string, rawSOW string, universal skill.UniversalContext, hooks skill.HookSet) bool {
+	if sow == nil || prov == nil {
+		return false
+	}
+	originalCount := len(sow.Sessions)
+	out := make([]plan.Session, 0, len(sow.Sessions))
+	for _, session := range sow.Sessions {
+		// Skip obviously-small sessions without paying for the LLM
+		// call. The library also floors on this, but the double-check
+		// keeps the outer log quiet.
+		if len(session.Tasks) < 6 {
+			out = append(out, session)
+			continue
+		}
+
+		totalFiles := 0
+		for _, t := range session.Tasks {
+			totalFiles += len(t.Files)
+		}
+
+		spec := rawSOW
+		if len(spec) > 6000 {
+			spec = spec[:6000]
+		}
+
+		split, err := plan.JudgeSessionSize(ctx, prov, model, plan.SessionSizerInput{
+			Session:              session,
+			SOWSpec:              spec,
+			TotalExpectedFiles:   totalFiles,
+			UniversalPromptBlock: skill.ConcatPromptBlocks(universal.PromptBlock(), hooks.PromptBlock(skill.HookSelector{Kind: "agents", Name: "judge-session-sizer"})),
+		})
+		if err != nil {
+			fmt.Printf("  ⚠ session sizer: %s: %v\n", session.ID, err)
+			out = append(out, session)
+			continue
+		}
+		if split == nil || !split.ShouldSplit {
+			out = append(out, session)
+			continue
+		}
+
+		subs, aerr := plan.ApplySessionSplit(session, *split)
+		if aerr != nil {
+			fmt.Printf("  ⚠ session sizer: %s: %v (keeping original)\n", session.ID, aerr)
+			out = append(out, session)
+			continue
+		}
+
+		reasoning := split.Reasoning
+		if len(reasoning) > 400 {
+			reasoning = reasoning[:400] + "…"
+		}
+		fmt.Printf("  📐 session sizer: %s %q → split into %d (reasoning: %s)\n",
+			session.ID, session.Title, len(subs), reasoning)
+		for _, sub := range subs {
+			fmt.Printf("     - %s: %d tasks\n", sub.ID, len(sub.Tasks))
+		}
+		out = append(out, subs...)
+	}
+	sow.Sessions = out
+	return len(out) != originalCount
+}
+
+// runIntegrationReviewPhase dispatches the integration reviewer
+// after a session's parallel tasks complete. Each gap it returns
+// becomes a targeted follow-up dispatch so broken cross-file
+// contracts are fixed BEFORE foundation sanity runs. Noop when
+// cfg.ReasoningProvider is nil.
+func runIntegrationReviewPhase(ctx context.Context, cfg sowNativeConfig, sowDoc *plan.SOW, workingSession plan.Session, runtimeDir string, maxTurns int) {
+	if cfg.ReasoningProvider == nil || cfg.RepoRoot == "" {
+		return
+	}
+	model := cfg.ReasoningModel
+	if model == "" {
+		model = cfg.Model
+	}
+
+	sowSpec := ""
+	if cfg.RawSOWText != "" {
+		// No session-level excerpt helper exists in the codebase — the
+		// existing helper is task-scoped. For an integration review we
+		// want broader context, so pass the raw SOW truncated.
+		sowSpec = cfg.RawSOWText
+		if len(sowSpec) > 6000 {
+			sowSpec = sowSpec[:6000]
+		}
+	}
+
+	// Keep the watchdog alive while the review runs. The reviewer's
+	// turns are non-streaming Chat calls, so nothing inside plan/
+	// pulses the session's watchdog. Without this keepalive, a 10-min
+	// review can stack on top of prior quiet phases and nudge the
+	// 20-min session-watchdog to kill an actively-working session.
+	// A ticker goroutine pulses every 30s; stops when the review
+	// returns. Noop when no watchdog is attached.
+	pulseStop := make(chan struct{})
+	if cfg.Watchdog != nil {
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-pulseStop:
+					return
+				case <-t.C:
+					cfg.Watchdog.Pulse()
+				}
+			}
+		}()
+	}
+	if block := cfg.UniversalContext.PromptBlock(); strings.TrimSpace(block) != "" {
+		fmt.Printf("  🧭 universal context injected (integration review): %s\n", cfg.UniversalContext.ShortSources())
+	}
+	report, err := plan.RunIntegrationReviewChunked(ctx, cfg.ReasoningProvider, model, plan.IntegrationReviewInput{
+		RepoRoot:             cfg.RepoRoot,
+		Session:              workingSession,
+		SOWSpec:              sowSpec,
+		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-integration-reviewer-chunked", "1-4-integration-review", &workingSession, 1)),
+	}, 10*time.Minute)
+	close(pulseStop)
+	if err != nil {
+		fmt.Printf("  ⚠ integration review: %v\n", err)
+		return
+	}
+	if report == nil {
+		return
+	}
+	summary := report.Summary
+	if len(summary) > 120 {
+		summary = summary[:120]
+	}
+	if len(report.Gaps) == 0 {
+		fmt.Printf("  🔗 integration review: surface clean (%s)\n", summary)
+		return
+	}
+	fmt.Printf("  🔗 integration review: %d cross-file gap(s)\n", len(report.Gaps))
+	for i, gap := range report.Gaps {
+		detail := gap.Detail
+		if len(detail) > 140 {
+			detail = detail[:140]
+		}
+		fmt.Printf("     %d. [%s] %s — %s\n", i+1, gap.Kind, gap.Location, detail)
+		dispatchIntegrationRepair(ctx, cfg, sowDoc, workingSession, gap, runtimeDir, maxTurns)
+	}
+}
+
+// collectFilesFromGap derives file paths from an IntegrationGap's
+// Location field. Location is documented as "file:line" or
+// "package:symbol" — we only keep entries that look like file paths
+// (contain a "/" or a recognizable extension). Returns nil when no
+// reliable path can be extracted; callers should skip git context in
+// that case rather than invent one.
+func collectFilesFromGap(gap plan.IntegrationGap) []string {
+	loc := strings.TrimSpace(gap.Location)
+	if loc == "" {
+		return nil
+	}
+	// Strip :line suffix if present.
+	if idx := strings.Index(loc, ":"); idx > 0 {
+		loc = loc[:idx]
+	}
+	loc = strings.TrimSpace(loc)
+	if loc == "" {
+		return nil
+	}
+	// Heuristic: a "package:symbol" form without a file path looks
+	// like "foo.bar.Baz" or a bare identifier with no slash and no
+	// dot-extension. Skip those.
+	hasSlash := strings.Contains(loc, "/")
+	hasExt := filepath.Ext(loc) != ""
+	if !hasSlash && !hasExt {
+		return nil
+	}
+	return []string{loc}
+}
+
+// dispatchIntegrationRepair spawns a focused repair worker for one
+// cross-file gap. Uses the same buildSOWNativePromptsWithOpts +
+// execNativeTask path as other repair dispatches.
+func dispatchIntegrationRepair(ctx context.Context, cfg sowNativeConfig, sowDoc *plan.SOW, workingSession plan.Session, gap plan.IntegrationGap, runtimeDir string, maxTurns int) {
+	kindSlug := strings.ReplaceAll(strings.ToLower(gap.Kind), " ", "-")
+	if kindSlug == "" {
+		kindSlug = "other"
+	}
+	repairTask := plan.Task{
+		ID:          workingSession.ID + "-integration-" + kindSlug,
+		Description: fmt.Sprintf("Fix cross-file integration gap at %s: %s", gap.Location, gap.SuggestedFollowup),
+	}
+	failureBlob := fmt.Sprintf("INTEGRATION REVIEW GAP — %s at %s\n\n%s\n\nDIRECTIVE: %s",
+		gap.Kind, gap.Location, gap.Detail, gap.SuggestedFollowup)
+	gitCtx := plan.AssembleRepairContext(cfg.RepoRoot, collectFilesFromGap(gap), 4000)
+	sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, repairTask, promptOpts{
+		RepoMap:              cfg.RepoMap,
+		RepoMapBudget:        cfg.RepoMapBudget,
+		Repair:               &failureBlob,
+		Wisdom:               cfg.Wisdom,
+		RawSOW:               cfg.RawSOWText,
+		RepoRoot:             cfg.RepoRoot,
+		GitContext:           gitCtx,
+		LiveBuildState:       liveBuildStateFor(cfg),
+		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-integration-repair", "1-4-integration-review", &workingSession, 1)),
+	})
+	sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
+	tr := execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+	// Propagate failure visibly: if the repair worker couldn't
+	// close the integration gap Phase 1.4 identified, surface it
+	// loudly so the session's downstream ACs + semantic judge see
+	// the unresolved gap as a first-class signal (not a silent
+	// swallow). The failing file remains on disk for Phase 1.75
+	// foundation sanity + Phase 2 ACs to catch; if those checks
+	// don't exercise the gap, the only recourse is the operator-
+	// visible warning here — we can't force an AC failure for
+	// something the AC schema doesn't already check.
+	if !tr.Success {
+		fmt.Printf("     ✗ integration repair for %s (%s) FAILED — gap unresolved, expect downstream AC failure\n", gap.Kind, gap.Location)
+	}
 }

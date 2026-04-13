@@ -59,6 +59,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/server"
 	"github.com/ericmacdougall/stoke/internal/session"
 	"github.com/ericmacdougall/stoke/internal/costtrack"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/wizard"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
@@ -593,6 +594,10 @@ func main() {
 		scanCmd(os.Args[2:])
 	case "audit":
 		auditCmd(os.Args[2:])
+	case "inspect":
+		inspectCmd(os.Args[2:])
+	case "watch":
+		watchCmd(os.Args[2:])
 	case "status":
 		statusCmd(os.Args[2:])
 	case "pool":
@@ -1215,6 +1220,16 @@ func sowCmd(args []string) {
 	nativeAPIKey := fs.String("native-api-key", "", "API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
+	// Reviewer/judge model can be different from the worker model. Research
+	// finding: the verifier is the bottleneck — convergence depends on
+	// critic > generator capability. When the same model judges its own
+	// kind of output, you get confirmation bias (~54% accuracy on self-
+	// review per CRITIC paper). Set --reasoning-model to a stronger model
+	// (e.g. claude-opus, gpt-5) to break out of that ceiling. Empty =
+	// fall back to --native-model (current behavior, backward compatible).
+	reasoningModel := fs.String("reasoning-model", "", "Override the model used for judges/reviewers/decomposers (defaults to --native-model). Recommended: a stronger model than the worker — research shows convergence depends on critic > generator.")
+	reasoningBaseURL := fs.String("reasoning-base-url", "", "Override the base URL for the reasoning provider (defaults to --native-base-url).")
+	reasoningAPIKey := fs.String("reasoning-api-key", "", "Override the API key for the reasoning provider (defaults to --native-api-key).")
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
@@ -1238,6 +1253,7 @@ func sowCmd(args []string) {
 	enableCrossReview := fs.Bool("cross-review", true, "After each successful session, run a cross-model code review over the git diff before accepting the session")
 	reviewModel := fs.String("review-model", "", "Model name used for cross-model review (default: same as --native-model)")
 	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
+	verboseStream := fs.Bool("verbose-stream", false, "Print raw model streaming output (DeltaText) to stdout. Default off — structural events (tool names, completions, warnings) still print. Useful for debugging, noisy in normal runs.")
 	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
 	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
@@ -1248,6 +1264,32 @@ func sowCmd(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// Load the universal context (coding-standards + known-gotchas)
+	// ONCE per sowCmd run. These markdown blobs — embedded defaults
+	// plus any $HOME/.stoke or <repoRoot>/.stoke overrides — are
+	// injected into every agent's system prompt downstream: coding
+	// workers, briefing lead, integration reviewer, task judge,
+	// fix-DAG planner, reasoning loops. See internal/skill/universal.go.
+	universalCtx := skill.LoadUniversalContext(absRepo)
+	csLines := strings.Count(universalCtx.CodingStandards, "\n")
+	if strings.TrimSpace(universalCtx.CodingStandards) != "" && !strings.HasSuffix(universalCtx.CodingStandards, "\n") {
+		csLines++
+	}
+	kgLines := strings.Count(universalCtx.KnownGotchas, "\n")
+	if strings.TrimSpace(universalCtx.KnownGotchas) != "" && !strings.HasSuffix(universalCtx.KnownGotchas, "\n") {
+		kgLines++
+	}
+	fmt.Printf("🧭 universal context: coding-standards (%d lines), known-gotchas (%d lines), sources: %s\n",
+		csLines, kgLines, universalCtx.ShortSources())
+
+	// Load the per-agent / per-scenario / per-phase hook registry.
+	// Hooks layer on TOP of the universal context at specific call
+	// sites — worker dispatch, judge passes, phase transitions — so
+	// users can add narrowly-targeted guidance without code changes.
+	hookSet := skill.LoadHookSet(absRepo)
+	fmt.Printf("🪝 hooks loaded: agents=%d, scenarios=%d, phases=%d (sources: %s)\n",
+		hookSet.AgentCount, hookSet.ScenarioCount, hookSet.PhaseCount, hookSet.ShortSources())
 
 	// Auto-discover LiteLLM BEFORE we need a provider anywhere downstream
 	// (prose SOW conversion, critique pass, override judge, native runner).
@@ -1311,9 +1353,17 @@ func sowCmd(args []string) {
 				// mattered. Use --sow-critique=false to opt out
 				// entirely if you really want to skip it.
 				if critErr != nil && (refined == nil || refined == sow) {
-					fatal("SOW critique gate failed and refinement could not salvage it: %v\n  (run with --sow-critique=false to bypass at your own risk)", critErr)
-				}
-				if critErr != nil {
+					// Soft-fail: the critic couldn't salvage a refined
+					// version (usually an LLM JSON parse issue downstream
+					// of critique — hallucinated S0.5 sessions, orphan
+					// task deps with new names, unclosed arrays). The
+					// ORIGINAL sow already passed ParseSOW + ValidateSOW
+					// upstream, so it's safe to proceed with unrefined
+					// scope. Loudly log what we're giving up rather than
+					// killing the whole run and forcing the operator to
+					// re-trigger a $5+ conversion.
+					fmt.Fprintf(os.Stderr, "  ⚠ critique gate: refinement failed (%v) — proceeding with the ORIGINAL prose-converted SOW. Scope will not benefit from critique's rule-6 tightening.\n", critErr)
+				} else if critErr != nil {
 					fmt.Fprintf(os.Stderr, "  critique note: %v (using refined SOW)\n", critErr)
 				}
 				if refined != nil {
@@ -1630,6 +1680,12 @@ func sowCmd(args []string) {
 	// right shape for a greenfield multi-session SOW. The native fast
 	// path drives the agentloop directly against absRepo for each task.
 	var nativeExec func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error)
+	// runCostCapture is set at the end of the native-runner block so
+	// the post-run meta-reasoner (which lives OUTSIDE that block's
+	// scope) can populate MetaRunTelemetry.TotalCostUSD without
+	// re-scoping the sharedSpent pointer.
+	var runCostCapture *float64
+	var runTotalCost float64
 	if *runnerMode == "native" {
 		nativeKey := *nativeAPIKey
 		if nativeKey == "" {
@@ -1676,6 +1732,10 @@ func sowCmd(args []string) {
 		// session — one shared pointer lets every session see the
 		// cumulative spend.
 		sharedSpent := new(float64)
+		// Expose the counter to the outer-scope capture so the
+		// post-run meta-reasoner can read the final cost after this
+		// block exits.
+		runCostCapture = sharedSpent
 
 		// Load (or create) the CTO-approved ignore list so the
 		// override flow can accumulate across runs.
@@ -1694,6 +1754,41 @@ func sowCmd(args []string) {
 				Provider: prov,
 				Model:    nativeModelName,
 			}
+		}
+
+		// Reasoning provider built early: the continuation callback's
+		// cascade-cap root-cause planner branch needs it when depth
+		// exceeds maxCascadeDepth.
+		//
+		// When --reasoning-base-url or --reasoning-api-key is set, build
+		// a SEPARATE provider so judges/reviewers can route to a
+		// stronger model at a different endpoint (e.g. Claude Opus
+		// behind one proxy, MiniMax workers behind another). When both
+		// flags are empty, reuse the worker provider (current behavior).
+		reasoningKey := *reasoningAPIKey
+		if reasoningKey == "" {
+			reasoningKey = nativeKey
+		}
+		reasoningURL := *reasoningBaseURL
+		if reasoningURL == "" {
+			reasoningURL = *nativeBaseURL
+		}
+		var reasoningProv provider.Provider
+		if reasoningURL != *nativeBaseURL || reasoningKey != nativeKey {
+			reasoningProv = provider.NewAnthropicProvider(reasoningKey, reasoningURL)
+		} else {
+			reasoningProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+		// Resolve reviewer model: --reasoning-model wins, else falls
+		// back to the worker model. Log when split is active so the
+		// operator sees the configuration.
+		reasoningModelChoice := *reasoningModel
+		if reasoningModelChoice == "" {
+			reasoningModelChoice = nativeModelName
+		}
+		if reasoningModelChoice != nativeModelName || reasoningURL != *nativeBaseURL {
+			fmt.Printf("  🔍 reviewer model split: workers=%s @ %s, reviewers/judges=%s @ %s\n",
+				nativeModelName, *nativeBaseURL, reasoningModelChoice, reasoningURL)
 		}
 
 		// Continuation callback: turn CTO-surfaced continuations into
@@ -1715,7 +1810,7 @@ func sowCmd(args []string) {
 		// "non-converging" and surfaced to the final SOW report for
 		// operator attention.
 		const maxCascadeDepth = 2
-		continuationCallback := func(fromSession string, items []string) {
+		continuationCallback := func(fromSession string, items []string, overrideCtx ContinuationContext) {
 			if len(items) == 0 {
 				return
 			}
@@ -1726,10 +1821,78 @@ func sowCmd(args []string) {
 			// so creating S1-cont-cont-cont = depth 3 (blocked).
 			depth := strings.Count(fromSession, "-cont")
 			if depth >= maxCascadeDepth {
-				fmt.Printf("  ✗ cascade guard: refusing to spawn continuation from %s (depth %d >= max %d)\n", fromSession, depth+1, maxCascadeDepth)
-				fmt.Printf("    the CTO judge has surfaced %d item(s) for %s but the cascade hasn't converged.\n", len(items), fromSession)
-				fmt.Printf("    items: %v\n", items)
-				fmt.Printf("    the failing criterion is likely structurally unfixable by the current SOW (brittle AC, missing task, wrong command). Inspect .stoke/sow-state.json to triage.\n")
+				// Cascade cap reached. Instead of surrendering, hand
+				// the diagnostic context to the root-cause planner:
+				// a tool-authoritative agent that verifies the sticky
+				// ACs' root cause against the repo and returns a
+				// dependency-ordered DAG of fix tasks. We promote the
+				// DAG via AppendSession so the scheduler picks up a
+				// new session whose intra-task Dependencies drive
+				// correct ordering. Falls through to the old hard-cap
+				// behavior on any failure path (nil provider, planner
+				// error, planner abandon).
+				if reasoningProv == nil {
+					fmt.Printf("  ✗ cascade cap reached for %s (depth %d) and no reasoning provider configured — surrendering\n", fromSession, depth)
+					fmt.Printf("    items: %v\n", items)
+					return
+				}
+				fmt.Printf("  ⏭ cascade cap reached for %s (depth %d). Invoking root-cause planner...\n", fromSession, depth)
+				fmt.Printf("  🔬 researching: %d sticky AC, %d repair attempts already tried\n", len(overrideCtx.StickyACs), len(overrideCtx.RepairHistory))
+				if block := universalCtx.PromptBlock(); strings.TrimSpace(block) != "" {
+					fmt.Printf("  🧭 universal context injected (fix-DAG): %s\n", universalCtx.ShortSources())
+				}
+				dagInput := plan.FixDAGInput{
+					RepoRoot:             absRepo,
+					FromSessionID:        fromSession,
+					FromSessionTitle:     overrideCtx.FromSessionTitle,
+					StickyACs:            overrideCtx.StickyACs,
+					RepairHistory:        overrideCtx.RepairHistory,
+					SOWSpec:              overrideCtx.SOWSpec,
+					UniversalPromptBlock: skill.ConcatPromptBlocks(universalCtx.PromptBlock(), hookSet.PromptBlock(skill.HookSelector{Kind: "agents", Name: "judge-fix-dag-planner"})),
+				}
+				dag, err := plan.PlanFixDAG(ctx, reasoningProv, nativeModelName, dagInput)
+				if err != nil {
+					fmt.Printf("    ⚠ root-cause planner: %v — falling through to hard cap\n", err)
+					return
+				}
+				if dag == nil || dag.Abandon || len(dag.Tasks) == 0 {
+					reason := "no tasks proposed"
+					if dag != nil && dag.AbandonReason != "" {
+						reason = dag.AbandonReason
+					}
+					fmt.Printf("    ⏹ root-cause planner abandoned: %s\n", reason)
+					return
+				}
+				fixSession, aerr := plan.ApplyFixDAG(*dag, fromSession, "root-cause fix from "+fromSession)
+				if aerr != nil {
+					fmt.Printf("    ⚠ apply fix DAG: %v — falling through\n", aerr)
+					return
+				}
+				ss.AppendSession(fixSession)
+				fmt.Printf("  ✅ promoted root-cause fix session %s with %d DAG task(s)\n", fixSession.ID, len(fixSession.Tasks))
+				if strings.TrimSpace(dag.ResearchSummary) != "" {
+					summary := dag.ResearchSummary
+					if len(summary) > 300 {
+						summary = summary[:297] + "..."
+					}
+					fmt.Printf("     research: %s\n", summary)
+				}
+				for _, t := range fixSession.Tasks {
+					depNote := "no deps"
+					if len(t.Dependencies) > 0 {
+						short := make([]string, 0, len(t.Dependencies))
+						prefix := fromSession + "-fix-"
+						for _, d := range t.Dependencies {
+							short = append(short, strings.TrimPrefix(d, prefix))
+						}
+						depNote = "deps: " + strings.Join(short, ", ")
+					}
+					desc := t.Description
+					if len(desc) > 120 {
+						desc = desc[:117] + "..."
+					}
+					fmt.Printf("     - %s: %s (%s)\n", t.ID, desc, depNote)
+				}
 				return
 			}
 			contID := fmt.Sprintf("%s-cont", fromSession)
@@ -1780,15 +1943,6 @@ func sowCmd(args []string) {
 			reviewModelName = nativeModelName
 		}
 
-		// Reasoning loop provider: reuses the native runner's key +
-		// base URL so the multi-analyst + judge pass runs against the
-		// same model the build agent uses. Always constructed (no
-		// opt-in flag) — the reasoning loop is the supervisor the
-		// user explicitly asked for, and it only fires when a
-		// criterion becomes sticky, so there's no cost unless the
-		// repair loop is flailing.
-		reasoningProv := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
-
 		// Lead-dev briefing provider: reuses the same key + URL so
 		// the pre-Phase-1 briefing pass runs against the same model
 		// pool. Always constructed. The briefing pass runs once per
@@ -1827,25 +1981,176 @@ func sowCmd(args []string) {
 			spent:             sharedSpent,
 			OverrideJudge:     overrideJudge,
 			Ignores:           ignoreList,
-			OnContinuations:   continuationCallback,
+			UniversalContext:  universalCtx,
+			Hooks:             hookSet,
+			OnContinuations: continuationCallback,
+			// OnSessionEscalation: unconditional PlanFixDAG entry. Fires
+			// on EVERY session escalation that has sticky failing ACs,
+			// regardless of whether the CTO judge produced continuation
+			// items. Without this, the planner never engaged on Sentinel
+			// runs because the override judge consistently produced zero
+			// continuations and the OnContinuations callback was the
+			// only path to PlanFixDAG.
+			OnSessionEscalation: func(fromSessionID, fromSessionTitle string, overrideCtx ContinuationContext) {
+				if reasoningProv == nil || len(overrideCtx.StickyACs) == 0 {
+					return
+				}
+				fmt.Printf("  ⏭ session %s escalated with %d sticky AC(s). Invoking root-cause planner...\n", fromSessionID, len(overrideCtx.StickyACs))
+				if block := universalCtx.PromptBlock(); strings.TrimSpace(block) != "" {
+					fmt.Printf("  🧭 universal context injected (fix-DAG): %s\n", universalCtx.ShortSources())
+				}
+				dagInput := plan.FixDAGInput{
+					RepoRoot:             absRepo,
+					FromSessionID:        fromSessionID,
+					FromSessionTitle:     fromSessionTitle,
+					StickyACs:            overrideCtx.StickyACs,
+					RepairHistory:        overrideCtx.RepairHistory,
+					SOWSpec:              overrideCtx.SOWSpec,
+					UniversalPromptBlock: skill.ConcatPromptBlocks(universalCtx.PromptBlock(), hookSet.PromptBlock(skill.HookSelector{Kind: "agents", Name: "judge-fix-dag-planner"})),
+				}
+				dagCtx, dagCancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer dagCancel()
+				dag, derr := plan.PlanFixDAG(dagCtx, reasoningProv, nativeModelName, dagInput)
+				if derr != nil {
+					fmt.Printf("    ⚠ root-cause planner: %v — moving on\n", derr)
+					return
+				}
+				if dag == nil || dag.Abandon || len(dag.Tasks) == 0 {
+					reason := "no tasks proposed"
+					if dag != nil && dag.AbandonReason != "" {
+						reason = dag.AbandonReason
+					}
+					fmt.Printf("    ⏹ root-cause planner abandoned: %s\n", reason)
+					return
+				}
+				fixSession, aerr := plan.ApplyFixDAG(*dag, fromSessionID, "root-cause fix from "+fromSessionTitle)
+				if aerr != nil {
+					fmt.Printf("    ⚠ apply fix DAG: %v — moving on\n", aerr)
+					return
+				}
+				ss.AppendSession(fixSession)
+				researchSummary := dag.ResearchSummary
+				if len(researchSummary) > 200 {
+					researchSummary = researchSummary[:200] + "…"
+				}
+				fmt.Printf("  ✅ promoted root-cause fix session %s with %d DAG task(s)\n     research: %s\n", fixSession.ID, len(fixSession.Tasks), researchSummary)
+				for _, t := range fixSession.Tasks {
+					depList := ""
+					if len(t.Dependencies) > 0 {
+						depList = " (deps: " + strings.Join(t.Dependencies, ", ") + ")"
+					}
+					desc := t.Description
+					if len(desc) > 80 {
+						desc = desc[:80] + "…"
+					}
+					fmt.Printf("     - %s: %s%s\n", t.ID, desc, depList)
+				}
+			},
+			OnDecompOverflow: func(fromTaskID, fromSessionID string, subDirectives []string) {
+				// Promote per-task decomp overflow to first-class scope.
+				// When reviewAndFollowupRecursive hits its depth cap but
+				// the decomposer still has productive sub-directives,
+				// make each one a task in a new session rather than
+				// dropping them. The new session gets briefing +
+				// scope-aware review + decomposition with a fresh budget.
+				if len(subDirectives) == 0 {
+					return
+				}
+				newSessionID := fromSessionID + "-deep-" + fromTaskID
+				newSession := plan.Session{
+					ID:          newSessionID,
+					Title:       "deep decomp overflow from " + fromTaskID,
+					Description: "sub-directives promoted from " + fromTaskID + " after review recursion cap; each becomes its own reviewed task with fresh decomp budget",
+				}
+				for i, directive := range subDirectives {
+					newSession.Tasks = append(newSession.Tasks, plan.Task{
+						ID:          fmt.Sprintf("%s-t%d", newSessionID, i+1),
+						Description: directive,
+					})
+				}
+				ss.AppendSession(newSession)
+				fmt.Printf("    ⬆ promoted %d overflow task(s) into new session %s\n", len(subDirectives), newSessionID)
+			},
 			Wisdom:            wisdomStore,
 			WisdomProvider:    wisdomProv,
 			SOWID:             sow.ID,
 			ReviewProvider:    reviewProv,
 			ReviewModel:       reviewModelName,
 			ReasoningProvider: reasoningProv,
-			ReasoningModel:    nativeModelName,
+			ReasoningModel:    reasoningModelChoice,
 			BriefingProvider:  briefingProv,
 			BriefingModel:     nativeModelName,
 			StrictScope:       *strictScope,
+			VerboseStream:     *verboseStream,
 			ParallelWorkers:   *parallelTasks,
 			CompactThreshold:  *compactThreshold,
 			RawSOWText:        rawSOWText,
 		}
+
+		// Load up to 3 most recent meta-reports from prior runs on
+		// this repo and render their prevention rules into a briefing
+		// block. The block is threaded through every session's
+		// lead-dev briefing pass so briefings can preempt failure
+		// classes that already burned previous runs. Missing dir or
+		// malformed reports degrade to "no learnings" — never an
+		// error.
+		if priors, perr := plan.LoadRecentMetaReports(absRepo, 3); perr == nil && len(priors) > 0 {
+			nativeCfg.PriorLearnings = plan.FormatPriorLearningsForBriefing(priors)
+			if nativeCfg.PriorLearnings != "" {
+				fmt.Printf("  loaded %d prior meta-report(s) for briefing context\n", len(priors))
+			}
+		} else if perr != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not load prior meta-reports: %v\n", perr)
+		}
+		// sessionAttemptCount tracks how many times we've seen each
+		// session ID so the header shows attempt N/total instead of
+		// printing "--- Session S1: ..." twice and leaving the
+		// operator unsure whether that's a retry, a continuation, or
+		// a different session entirely. Attempts are bumped by the
+		// SessionScheduler's retry loop — we just count visits.
+		sessionAttemptCount := map[string]int{}
 		nativeExec = func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
-			fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
+			sessionAttemptCount[session.ID]++
+			attempt := sessionAttemptCount[session.ID]
+			if attempt > 1 {
+				fmt.Printf("\n--- Session %s: %s (native fast path · attempt %d) ---\n", session.ID, session.Title, attempt)
+			} else {
+				fmt.Printf("\n--- Session %s: %s (native fast path) ---\n", session.ID, session.Title)
+			}
 			fmt.Printf("  %d tasks\n", len(session.Tasks))
-			return runSessionNative(ctx, session, sow, nativeCfg)
+			// Per-task completion fast-path on session retry: skip
+			// dispatching tasks whose declared output files already
+			// exist on disk with substantive (non-stub) content. Only
+			// fires on attempt > 1 because attempt 1's outputs are
+			// the source of truth for what's on disk. Pure file I/O,
+			// no LLM. Saves on the order of $1-3 per skipped task.
+			cfgWithAttempt := nativeCfg
+			cfgWithAttempt.SessionAttempt = attempt
+			return runSessionNative(ctx, session, sow, cfgWithAttempt)
+		}
+
+		// Phase -0.5: session sizer. For each session, ask the
+		// reasoning provider whether it's too broad to converge
+		// in one pass. When the judge recommends a split, replace
+		// the session in-place on the scheduler's SOW with the
+		// materialized sub-sessions BEFORE ss.Run iterates. This
+		// keeps the 13-task, 50+-file "Shared Packages" class of
+		// session from overwhelming the downstream integration
+		// reviewer. Noop when reasoningProv is nil or the session
+		// is below the task-count floor.
+		if applySessionSizerPass(ctx, sow, reasoningProv, nativeModelName, rawSOWText, universalCtx, hookSet) {
+			// Sizer mutated sow.Sessions. The scheduler's SOWState
+			// was built earlier from the pre-split session list,
+			// so its SessionRecord set is now stale: sub-sessions
+			// have no records (recordSessionStart silently drops
+			// progress) and replaced parents linger as orphans.
+			// MergeSOW (called via LoadOrCreateState) reconciles:
+			// it appends pending records for new sub-sessions and
+			// marks the replaced parents as skipped so dashboards
+			// stay accurate.
+			if err := ss.LoadOrCreateState(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: SOW state re-init after sizer failed: %v\n", err)
+			}
 		}
 	}
 
@@ -1939,7 +2244,9 @@ func sowCmd(args []string) {
 		return
 	}
 
+	runStart := time.Now()
 	results, err := ss.Run(ctx, sessionExecFn)
+	runElapsed := time.Since(runStart)
 
 	// Tally pass/fail/skipped counts up front so a 13-session build
 	// has a clear summary even if you scroll past the per-session
@@ -1981,6 +2288,117 @@ func sowCmd(args []string) {
 	}
 	if state := ss.State(); state != nil {
 		fmt.Printf("\n  state: %s\n", plan.SOWStatePath(absRepo))
+	}
+
+	// Meta-reasoner: run-level learning pass. Gather deterministic
+	// telemetry from the session results and ask the LLM to classify
+	// this run's failures into root-cause classes, emitting one
+	// machine-actionable prevention rule per class. The report is
+	// persisted to .stoke/meta-reports/<run-id>.json so the next run
+	// can load it via plan.LoadRecentMetaReports and inject the
+	// prevention rules into its lead-dev briefings.
+	//
+	// Only runs in native mode (where we have a provider configured
+	// and a sharedSpent cost counter) and only when there's at least
+	// one session result to reason about.
+	if *runnerMode == "native" && len(results) > 0 {
+		metaKey := *nativeAPIKey
+		if metaKey == "" {
+			for _, k := range []string{"LITELLM_API_KEY", "LITELLM_MASTER_KEY", "ANTHROPIC_API_KEY"} {
+				if v := os.Getenv(k); v != "" {
+					metaKey = v
+					break
+				}
+			}
+		}
+		var metaProv provider.Provider
+		if metaKey != "" {
+			metaProv = provider.NewAnthropicProvider(metaKey, *nativeBaseURL)
+		}
+		if metaProv != nil {
+			// Build telemetry + per-session summaries + flat AC list
+			// from the scheduler's results. All counters are
+			// deterministic — the LLM never recounts.
+			tel := plan.MetaRunTelemetry{
+				Sessions:        len(results),
+				SessionsPassed:  passed,
+				SessionsFailed:  failed,
+				SessionsSkipped: skipped,
+				TotalElapsed:    runElapsed,
+			}
+			// Populate actual USD cost from the shared spend
+			// counter the scheduler accumulates across every task
+			// attempt. Without this, the persisted meta-report
+			// showed cost: $0.00 for every run, defeating the
+			// prior-learnings-by-cost heuristic.
+			// sharedSpent lives in the native-runner block's scope;
+			// runCostCapture (outer-scope var) points at the same
+			// float64 so the post-run meta-reasoner can read the
+			// final cost here. Without this the persisted meta
+			// report always showed cost: $0.00.
+			if runCostCapture != nil {
+				runTotalCost = *runCostCapture
+			}
+			tel.TotalCostUSD = runTotalCost
+			var summaries []plan.MetaSessionSummary
+			var flatACs []plan.AcceptanceResult
+			for _, r := range results {
+				tel.TasksDispatched += len(r.TaskResults)
+				for _, tr := range r.TaskResults {
+					if tr.Success {
+						tel.TasksCompleted++
+					}
+				}
+				if r.Attempts > 0 {
+					tel.TotalAttempts += r.Attempts
+				}
+				acsPassed := 0
+				for _, ac := range r.Acceptance {
+					if ac.Passed {
+						acsPassed++
+					}
+				}
+				errStr := ""
+				if r.Error != nil {
+					errStr = r.Error.Error()
+				}
+				summaries = append(summaries, plan.MetaSessionSummary{
+					SessionID:     r.SessionID,
+					Title:         r.Title,
+					Attempts:      r.Attempts,
+					AcceptanceMet: r.AcceptanceMet,
+					Skipped:       r.Skipped,
+					Error:         errStr,
+					ACsTotal:      len(r.Acceptance),
+					ACsPassed:     acsPassed,
+				})
+				flatACs = append(flatACs, r.Acceptance...)
+			}
+
+			metaModel := *nativeModel
+			if metaModel == "" {
+				metaModel = "claude-sonnet-4-6"
+			}
+			metaCtx, metaCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			report, merr := plan.RunMetaReasoning(metaCtx, metaProv, metaModel, plan.MetaReasonInput{
+				RunID:            sow.ID,
+				Telemetry:        tel,
+				ACResults:        flatACs,
+				SessionSummaries: summaries,
+			})
+			metaCancel()
+			if merr != nil {
+				fmt.Fprintf(os.Stderr, "\n  meta-reasoner: %v\n", merr)
+			} else if report != nil {
+				fmt.Println()
+				fmt.Print(plan.FormatMetaReportForOperator(report))
+				if serr := plan.SaveMetaReport(absRepo, report); serr != nil {
+					fmt.Fprintf(os.Stderr, "  meta-reasoner: could not persist report: %v\n", serr)
+				} else {
+					fmt.Printf("  (persisted to %s)\n", filepath.Join(plan.MetaReportsDir(absRepo), report.RunID+".json"))
+				}
+			}
+		}
 	}
 
 	switch {
@@ -4644,6 +5062,8 @@ COMMANDS:
   ship            Build -> review -> fix -> review -> ... until ship-ready
   scan            Deterministic code scan (secrets, eval, TODO, debug output)
   audit           Multi-perspective review (security, perf, reliability, ops)
+  inspect         Standalone codebase audit: hygiene + integration review (no SOW)
+  watch           Live operator dashboard for an in-flight SOW run
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization
   add-claude      Add a Claude Max subscription to the pool

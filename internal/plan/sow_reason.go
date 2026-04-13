@@ -59,6 +59,13 @@ type ReasoningInput struct {
 	PriorAttempts   int
 	CodeExcerpts    map[string]string
 	RepoRoot        string
+
+	// UniversalPromptBlock carries the universal coding-standards +
+	// known-gotchas block. When non-empty it is prepended to each
+	// analyst's and the judge's system prompt so the reasoning loop
+	// evaluates failures against the same baseline rules coding
+	// workers follow.
+	UniversalPromptBlock string
 }
 
 // ReasonAboutFailure runs a multi-analyst + judge reasoning loop on a
@@ -112,32 +119,47 @@ func ReasonAboutFailure(ctx context.Context, prov provider.Provider, model strin
 	// total latency becomes a problem, these can be made concurrent.
 	analystNotes := map[string]string{}
 
-	codeReview, err := runAnalyst(ctx, prov, model, analystCodeReviewPrompt, sharedCtx, "A1")
+	// Append the universal context to each analyst's role prompt so
+	// both the analysts and the downstream judge evaluate against the
+	// same coding-standards + known-gotchas as every other agent.
+	withUniversal := func(roleSysPrompt string) string {
+		if strings.TrimSpace(in.UniversalPromptBlock) == "" {
+			return roleSysPrompt
+		}
+		return roleSysPrompt + "\n\n" + in.UniversalPromptBlock
+	}
+
+	codeReview, err := runAnalyst(ctx, prov, model, withUniversal(analystCodeReviewPrompt), sharedCtx, "A1")
 	if err != nil {
 		return nil, fmt.Errorf("analyst A1 (code-review): %w", err)
 	}
 	analystNotes["code_review"] = codeReview
 
-	acHygiene, err := runAnalyst(ctx, prov, model, analystACHygienePrompt, sharedCtx, "A2")
+	acHygiene, err := runAnalyst(ctx, prov, model, withUniversal(analystACHygienePrompt), sharedCtx, "A2")
 	if err != nil {
 		return nil, fmt.Errorf("analyst A2 (ac-hygiene): %w", err)
 	}
 	analystNotes["ac_hygiene"] = acHygiene
 
-	rootCause, err := runAnalyst(ctx, prov, model, analystRootCausePrompt, sharedCtx, "A3")
+	rootCause, err := runAnalyst(ctx, prov, model, withUniversal(analystRootCausePrompt), sharedCtx, "A3")
 	if err != nil {
 		return nil, fmt.Errorf("analyst A3 (root-cause): %w", err)
 	}
 	analystNotes["root_cause"] = rootCause
 
-	acRewrite, err := runAnalyst(ctx, prov, model, analystACRewritePrompt, sharedCtx, "A4")
+	acRewrite, err := runAnalyst(ctx, prov, model, withUniversal(analystACRewritePrompt), sharedCtx, "A4")
 	if err != nil {
 		return nil, fmt.Errorf("analyst A4 (ac-rewrite): %w", err)
 	}
 	analystNotes["ac_rewrite"] = acRewrite
 
-	// Judge synthesis call.
-	verdict, err := runJudgeSynthesis(ctx, prov, model, sharedCtx, analystNotes)
+	// Judge synthesis call — inject universal context via sharedCtx
+	// prefix so the judge's synthesis honors the same baseline rules.
+	judgeCtx := sharedCtx
+	if strings.TrimSpace(in.UniversalPromptBlock) != "" {
+		judgeCtx = in.UniversalPromptBlock + "\n\n" + sharedCtx
+	}
+	verdict, err := runJudgeSynthesis(ctx, prov, model, judgeCtx, analystNotes)
 	if err != nil {
 		return nil, fmt.Errorf("judge synthesis: %w", err)
 	}

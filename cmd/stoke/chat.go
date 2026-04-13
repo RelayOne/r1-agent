@@ -17,13 +17,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/chat"
+	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/tui"
 )
@@ -44,6 +49,43 @@ type stokeDispatcher struct {
 	// banners go to sh.Append instead of fmt.Println, so the full-screen
 	// layout is preserved. When nil, dispatches write to stdout.
 	sh *tui.Shell
+
+	// turnImages holds the image paths attached to the chat turn that
+	// triggered the current dispatch. Set via SetTurnImages (from the
+	// chat.RunToolCallWithImages path) immediately before the
+	// underlying Scope/Build/Ship/... method runs; cleared on the next
+	// dispatch so images never bleed across turns.
+	turnImages []string
+}
+
+// SetTurnImages records the chat turn's image attachments so subsequent
+// dispatch methods can weave the paths into the downstream prompt. A
+// nil or empty slice clears the set. Implements
+// chat.ImageAwareDispatcher.
+func (d *stokeDispatcher) SetTurnImages(paths []string) {
+	if len(paths) == 0 {
+		d.turnImages = nil
+		return
+	}
+	d.turnImages = append([]string(nil), paths...)
+}
+
+// decorateWithImages appends a short "user attached these screenshots"
+// section to the description so the downstream worker's prompt
+// references the files on disk. Returns description unchanged when no
+// images were attached to the triggering turn.
+func (d *stokeDispatcher) decorateWithImages(description string) string {
+	if len(d.turnImages) == 0 {
+		return description
+	}
+	// Log the paths so the operator can audit what visual context the
+	// worker was handed. Goes through the shell log when in TUI mode,
+	// stdout otherwise.
+	d.announce("▸ forwarding %d image(s) to worker: %s", len(d.turnImages), strings.Join(d.turnImages, ", "))
+	if strings.TrimSpace(description) == "" {
+		return "User attached these screenshots when requesting this work: " + strings.Join(d.turnImages, ", ")
+	}
+	return description + "\n\nUser attached these screenshots when requesting this work: " + strings.Join(d.turnImages, ", ")
 }
 
 // announce writes a short "dispatching..." banner so the user sees what
@@ -88,6 +130,7 @@ func (d *stokeDispatcher) runCaptured(fn func()) {
 }
 
 func (d *stokeDispatcher) Scope(description string) (string, error) {
+	description = d.decorateWithImages(description)
 	d.announce("▸ Dispatching to /scope: %s", truncOne(description, 80))
 	args := []string{"--repo", d.absRepo}
 	if strings.TrimSpace(description) != "" {
@@ -108,6 +151,7 @@ func (d *stokeDispatcher) Build(description string) (string, error) {
 	if strings.TrimSpace(description) == "" {
 		return "", fmt.Errorf("build needs a description")
 	}
+	description = d.decorateWithImages(description)
 	d.announce("▸ Dispatching to /run: %s", truncOne(description, 80))
 	args := append([]string{"--task", description, "--repo", d.absRepo}, d.nativeArgs()...)
 	d.runCaptured(func() {
@@ -120,6 +164,7 @@ func (d *stokeDispatcher) Ship(description string) (string, error) {
 	if strings.TrimSpace(description) == "" {
 		return "", fmt.Errorf("ship needs a description")
 	}
+	description = d.decorateWithImages(description)
 	d.announce("▸ Dispatching to /ship: %s", truncOne(description, 80))
 	d.runCaptured(func() {
 		shipCmd([]string{"--task", description, "--repo", d.absRepo})
@@ -131,6 +176,7 @@ func (d *stokeDispatcher) Plan(description string) (string, error) {
 	if strings.TrimSpace(description) == "" {
 		return "", fmt.Errorf("plan needs a description")
 	}
+	description = d.decorateWithImages(description)
 	d.announce("▸ Dispatching to /plan: %s", truncOne(description, 80))
 	d.runCaptured(func() {
 		planCmd([]string{"--task", description, "--repo", d.absRepo})
@@ -174,6 +220,126 @@ func (d *stokeDispatcher) Status() (string, error) {
 // chat hands off to sowCmd with the same runner config the chat is
 // using. The pipeline takes over from there — sessions, acceptance
 // gates, repair attempts, the lot.
+// chatStdinClarifyResponder returns a ChatResponder that renders
+// clarify questions to stdout (or the TUI shell log) and reads the
+// user's answer from stdin on a background goroutine. Used by the
+// chat-mode SOW dispatch path so dispatched workers can surface
+// questions to the user instead of synthesizing answers from a
+// supervisor LLM.
+//
+// The responder runs one stdin-reader goroutine for the lifetime of
+// the SOW dispatch; the goroutine exits when stop() is returned by
+// the caller (via the returned cleanup).
+func (d *stokeDispatcher) chatStdinClarifyResponder() (*chat.ChatResponder, func()) {
+	resp := &chat.ChatResponder{
+		Prompter: func(req plan.ClarifyRequest) {
+			banner := chat.FormatClarifyPrompt(req)
+			if d.sh != nil {
+				for _, line := range strings.Split(banner, "\n") {
+					d.sh.Append("%s", line)
+				}
+				return
+			}
+			fmt.Print(banner)
+		},
+	}
+
+	// In TUI mode (d.sh != nil) Bubble Tea owns os.Stdin and we
+	// MUST NOT spawn a parallel reader — it would either steal
+	// keystrokes from the TUI or sit blocked forever. The clarify
+	// question renders into the shell log via the Prompter above;
+	// the user's typed answer comes in via the TUI's normal input
+	// path, which must call resp.Submit() when it sees a message
+	// starting with "/clarify " (or equivalent). If that wiring
+	// isn't present, clarify times out gracefully to the supervisor
+	// LLM fallback — that's the honest failure mode, not a
+	// stolen-keystroke bug.
+	if d.sh != nil {
+		// TUI mode: the Bubble Tea shell owns input and does not
+		// yet route typed lines into resp.Submit(). Returning nil
+		// here is critical — the call site (SOW dispatch) installs
+		// the returned responder via SetActiveClarifyResponder,
+		// and resolveClarifyResponder PREFERS the active responder
+		// over the supervisor-LLM fallback. If we returned a live
+		// responder with no input wiring, every worker clarify
+		// would block for the full 5-min DefaultChatClarifyTimeout
+		// before falling through to UNKNOWN. Returning nil lets
+		// resolveClarifyResponder fall straight through to the
+		// supervisor responder for headless-equivalent behavior.
+		// Operator gets a one-time warning so they know clarifies
+		// won't reach them in TUI mode until input routing lands.
+		d.sh.Append("%s", "  ⚠ clarify: TUI input routing isn't wired yet — worker clarifications will fall through to supervisor-LLM. Use `stoke chat --no-tui` if you want to answer directly.")
+		return nil, func() {}
+	}
+
+	// Line-REPL mode: the REPL input loop isn't running during SOW
+	// dispatch (we're inside the dispatcher call), so we can safely
+	// own stdin for the dispatch window. Poll Pending() at a low
+	// frequency; when a question is waiting, block on ReadString;
+	// discard orphaned reads after shutdown via the `drained` flag
+	// so a late-arriving keystroke can't leak into a subsequent
+	// REPL command.
+	stopCh := make(chan struct{})
+	var drained atomic.Bool
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
+			_, pending := resp.Pending()
+			if !pending {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			line, err := reader.ReadString('\n')
+			if drained.Load() {
+				// Cleanup fired while we were blocked in ReadString.
+				// The line the user typed belonged to nothing — the
+				// clarify already timed out. Print a visible notice
+				// to stderr so the user knows their input was
+				// discarded and can re-enter the intended REPL
+				// command, rather than silently losing it.
+				if err == nil && strings.TrimSpace(line) != "" {
+					fmt.Fprintf(os.Stderr, "  ⚠ discarded after clarify timeout: %q — re-enter if you meant this for the REPL.\n", strings.TrimSpace(line))
+				}
+				return
+			}
+			if err != nil {
+				return
+			}
+			if err := resp.Submit(line); err != nil {
+				continue
+			}
+		}
+	}()
+
+	cleanup := func() {
+		drained.Store(true)
+		close(stopCh)
+		// Wait briefly for the goroutine to actually exit. Without
+		// this, a second SOW dispatch could install a new responder
+		// while the OLD goroutine is still blocked in ReadString,
+		// stealing the next REPL input. We give it 1.5s — enough
+		// for a Pending() poll to come around AND see drained,
+		// short enough that a wedged terminal doesn't hang the
+		// REPL. After the timeout we proceed regardless; the
+		// drained flag still discards any late-arriving line.
+		done := make(chan struct{})
+		go func() { wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(1500 * time.Millisecond):
+		}
+	}
+	return resp, cleanup
+}
+
 func (d *stokeDispatcher) SOW(filePath string) (string, error) {
 	if strings.TrimSpace(filePath) == "" {
 		return "", fmt.Errorf("dispatch_sow needs a file_path")
@@ -182,10 +348,32 @@ func (d *stokeDispatcher) SOW(filePath string) (string, error) {
 		return "", fmt.Errorf("SOW file not readable: %w", err)
 	}
 	d.announce("▸ Dispatching to /sow: %s", filePath)
+	if len(d.turnImages) > 0 {
+		// SOW dispatches by file path, so we surface the image paths
+		// to the operator via the log. The native SOW runner does not
+		// yet accept image attachments directly; forwarding requires a
+		// second pass (adding --image flags to sowCmd).
+		d.announce("▸ user attached %d image(s) with SOW dispatch: %s", len(d.turnImages), strings.Join(d.turnImages, ", "))
+	}
 	args := append(
 		[]string{"--repo", d.absRepo, "--file", filePath},
 		d.nativeArgs()...,
 	)
+
+	// Install a chat-mode clarification responder so any worker the
+	// SOW spawns routes request_clarification to the user instead of
+	// to a synthetic supervisor LLM. Cleared when the dispatch
+	// returns. Note: a nil responder MUST NOT be installed — Go's
+	// typed-nil-interface gotcha would make resolveClarifyResponder
+	// see the responder as non-nil and prefer it over the supervisor
+	// fallback (which is the bug we're avoiding in TUI mode).
+	responder, stopReader := d.chatStdinClarifyResponder()
+	if responder != nil {
+		SetActiveClarifyResponder(responder)
+		defer SetActiveClarifyResponder(nil)
+	}
+	defer stopReader()
+
 	d.runCaptured(func() {
 		sowCmd(args)
 	})
@@ -267,7 +455,10 @@ func chatOnceREPL(ctx context.Context, session *chat.Session, disp *stokeDispatc
 		// Announce the dispatch on its own line so streaming text
 		// and the dispatch banner don't interleave visually.
 		fmt.Println()
-		return chat.RunToolCall(disp, name, input)
+		// Forward the turn's image attachments to the dispatcher so
+		// Build/Ship/Plan/Scope can fold the paths into the worker's
+		// prompt context.
+		return chat.RunToolCallWithImages(disp, name, input, session.LastTurnImages())
 	}
 
 	result, err := session.Send(ctx, input, onDelta, onDispatch)
@@ -306,7 +497,7 @@ func chatOnceShell(ctx context.Context, sh *tui.Shell, session *chat.Session, di
 	}
 	onDispatch := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		sh.StreamFinish() // flush any in-progress text line first
-		return chat.RunToolCall(disp, name, input)
+		return chat.RunToolCallWithImages(disp, name, input, session.LastTurnImages())
 	}
 
 	// Mark the start of the chat reply with a leading bullet so it's

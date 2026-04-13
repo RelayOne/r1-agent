@@ -114,6 +114,19 @@ type SessionBriefingInput struct {
 	// RelevantSkills field so workers know which conventions to
 	// follow.
 	SkillReferences string
+
+	// PriorLearnings is an optional pre-formatted block summarizing
+	// prevention rules from prior SOW runs on this repo (produced
+	// by FormatPriorLearningsForBriefing). When non-empty, it's
+	// injected into the lead-dev prompt so the briefings can
+	// preempt failure classes that already burned previous runs.
+	PriorLearnings string
+
+	// UniversalPromptBlock carries the universal coding-standards +
+	// known-gotchas block. When non-empty it is appended to the
+	// lead-dev briefing prompt so briefings respect the same
+	// baseline rules the workers will.
+	UniversalPromptBlock string
 }
 
 // BriefingRunner produces task briefings via the LLM.
@@ -148,6 +161,10 @@ func (b *BriefingRunner) Brief(ctx context.Context, in SessionBriefingInput) (ma
 	// task list + current state + output schema.
 	var pb strings.Builder
 	pb.WriteString(leadDevSystemPrompt)
+	if strings.TrimSpace(in.UniversalPromptBlock) != "" {
+		pb.WriteString("\n\n")
+		pb.WriteString(in.UniversalPromptBlock)
+	}
 	pb.WriteString("\n\n")
 
 	fmt.Fprintf(&pb, "SESSION: %s — %s\n\n", in.SessionID, in.SessionTitle)
@@ -206,6 +223,11 @@ func (b *BriefingRunner) Brief(ctx context.Context, in SessionBriefingInput) (ma
 
 	if in.SkillReferences != "" {
 		pb.WriteString(in.SkillReferences)
+		pb.WriteString("\n")
+	}
+
+	if strings.TrimSpace(in.PriorLearnings) != "" {
+		pb.WriteString(in.PriorLearnings)
 		pb.WriteString("\n")
 	}
 

@@ -65,7 +65,7 @@ type extractWisdomResponse struct {
 // descriptions, acceptance criteria pass/fail, and the list of files
 // touched (derived from declared task.Files + session.Outputs). The model
 // then proposes learnings; we stamp the task ID on each and record them.
-func CaptureSessionWisdom(ctx context.Context, session plan.Session, results []plan.TaskExecResult, acceptance []plan.AcceptanceResult, store *wisdom.Store, prov provider.Provider, model string) (int, error) {
+func CaptureSessionWisdom(ctx context.Context, session plan.Session, results []plan.TaskExecResult, acceptance []plan.AcceptanceResult, store *wisdom.Store, prov provider.Provider, model string, promptPrefix ...string) (int, error) {
 	if store == nil || prov == nil {
 		return 0, nil
 	}
@@ -74,7 +74,19 @@ func CaptureSessionWisdom(ctx context.Context, session plan.Session, results []p
 	}
 
 	ctxBlob := buildWisdomContext(session, results, acceptance)
-	userText := sessionWisdomExtractPrompt + ctxBlob
+	prefix := ""
+	for _, p := range promptPrefix {
+		if s := strings.TrimSpace(p); s != "" {
+			if prefix != "" {
+				prefix += "\n\n"
+			}
+			prefix += s
+		}
+	}
+	if prefix != "" {
+		prefix += "\n\n"
+	}
+	userText := prefix + sessionWisdomExtractPrompt + ctxBlob
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
 	resp, err := prov.Chat(provider.ChatRequest{

@@ -62,6 +62,22 @@ type TaskReviewInput struct {
 	// the current review can see what's been tried and avoid
 	// re-flagging things already attempted.
 	PriorGaps []string
+
+	// LiveCompileErrors is the authoritative list of compile errors
+	// currently present in files this task touched. Supplied by the
+	// live BuildWatcher (tsc / go / cargo / pyright). Treated as
+	// ground truth — the reviewer must NOT second-guess whether these
+	// are real errors. Errors in files this task owns are in-scope
+	// gaps even if the reviewer would otherwise apply scope
+	// discipline and skip them.
+	LiveCompileErrors []CompileError
+
+	// UniversalPromptBlock is the rendered universal-context block
+	// (coding-standards + known-gotchas) built by
+	// skill.LoadUniversalContext(...).PromptBlock(). Empty is fine —
+	// the injection code skips blank blocks. See internal/skill for
+	// the source of truth.
+	UniversalPromptBlock string
 }
 
 // DecomposeInput asks the decomposer to split a single stuck gap into
@@ -86,6 +102,10 @@ type DecomposeInput struct {
 
 	// SOWSpec is the task-relevant spec excerpt.
 	SOWSpec string
+
+	// UniversalPromptBlock carries the universal coding-standards +
+	// known-gotchas block for injection into the decomposer prompt.
+	UniversalPromptBlock string
 }
 
 // DecomposeVerdict is the decomposer's output: a list of narrower
@@ -124,6 +144,10 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 
 	var b strings.Builder
 	b.WriteString(taskReviewPrompt)
+	if strings.TrimSpace(in.UniversalPromptBlock) != "" {
+		b.WriteString("\n\n")
+		b.WriteString(in.UniversalPromptBlock)
+	}
 	b.WriteString("\n\n")
 
 	fmt.Fprintf(&b, "TASK %s: %s\n", in.Task.ID, in.Task.Description)
@@ -161,6 +185,24 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+	}
+
+	if len(in.LiveCompileErrors) > 0 {
+		b.WriteString("LIVE COMPILE ERRORS THIS TASK TOUCHED (authoritative — emitted by the compiler in watch mode; do NOT second-guess whether they are real):\n")
+		for _, e := range in.LiveCompileErrors {
+			code := ""
+			if e.Code != "" {
+				code = " [" + e.Code + "]"
+			}
+			if e.Line > 0 && e.Column > 0 {
+				fmt.Fprintf(&b, "  - %s:%d:%d%s %s\n", e.File, e.Line, e.Column, code, e.Message)
+			} else if e.Line > 0 {
+				fmt.Fprintf(&b, "  - %s:%d%s %s\n", e.File, e.Line, code, e.Message)
+			} else {
+				fmt.Fprintf(&b, "  - %s%s %s\n", e.File, code, e.Message)
+			}
+		}
+		b.WriteString("\nSCOPE EXCEPTION: compile errors listed above are in files this task touched, so they ARE the task's responsibility — mark the task incomplete and emit a followup_directive that resolves every error in the list. Do NOT apply scope discipline to these.\n\n")
 	}
 
 	b.WriteString("Output the JSON verdict described in the system prompt.")
@@ -202,6 +244,10 @@ func DecomposeTaskGap(ctx context.Context, prov provider.Provider, model string,
 
 	var b strings.Builder
 	b.WriteString(decomposePrompt)
+	if strings.TrimSpace(in.UniversalPromptBlock) != "" {
+		b.WriteString("\n\n")
+		b.WriteString(in.UniversalPromptBlock)
+	}
 	b.WriteString("\n\n")
 
 	fmt.Fprintf(&b, "ORIGINAL TASK %s: %s\n", in.OriginalTask.ID, in.OriginalTask.Description)
@@ -309,6 +355,8 @@ SCOPE DISCIPLINE (the most important rule):
     - Features from the SOW that belong to OTHER tasks in the session
 
   If a "gap" is out-of-scope polish that another task or future session will handle, mark complete: true with a note like "could also do X but that's out of scope for this task — mentioning for awareness".
+
+  SCOPE EXCEPTION — LIVE COMPILE ERRORS: when the user message below includes a "LIVE COMPILE ERRORS THIS TASK TOUCHED" block, every error listed there is IN SCOPE for this task regardless of the scope-discipline rules above. Those errors come directly from the compiler / type-checker, not from LLM judgement — they are ground truth. Mark the task incomplete and emit a followup_directive that resolves them.
 
 A task is COMPLETE when:
   - Every requirement IN THE TASK DESCRIPTION has concrete code supporting it

@@ -40,13 +40,44 @@ func ExtractJSONObject(raw string) (json.RawMessage, error) {
 			return json.RawMessage(repaired), nil
 		}
 	}
+	// Repair pass 1.5: bare identifier tokens inside arrays. LLM
+	// output frequently emits `"dependencies": [T5, T6]` when it
+	// means `["T5", "T6"]` — the model elides the quotes on what
+	// looks to it like symbolic identifiers. Quote any bare token
+	// that sits alone between `[` / `,` and `,` / `]` and matches
+	// an identifier shape. Does NOT touch numbers, null, true,
+	// false — those are legitimate bare JSON values.
+	quoted := quoteBareIdentifiersInArrays(blob)
+	if quoted != blob {
+		if err := json.Unmarshal([]byte(quoted), &v); err == nil {
+			return json.RawMessage(quoted), nil
+		}
+		// Also try in combination with comma repair.
+		combined := insertMissingCommas(quoted)
+		if combined != quoted {
+			if err := json.Unmarshal([]byte(combined), &v); err == nil {
+				return json.RawMessage(combined), nil
+			}
+		}
+	}
 	// Repair pass 2: truncated output — the model hit max_tokens and
 	// the JSON just stops mid-element. closeTruncatedJSON appends
 	// closing quotes/brackets/braces to make it structurally valid.
 	// This loses whatever was being written at the truncation point,
 	// but preserves all the complete sessions/tasks/ACs before it.
-	closed := closeTruncatedJSON(blob)
-	if closed != blob {
+	//
+	// Carry the bare-identifier quoting forward: we run the close /
+	// comma passes on BOTH the raw blob and the quoted variant so a
+	// document with both `[T5]` drift and a truncation is recoverable
+	// in one sweep instead of either repair winning on its own.
+	for _, base := range []string{blob, quoted} {
+		if base == "" {
+			continue
+		}
+		closed := closeTruncatedJSON(base)
+		if closed == base {
+			continue
+		}
 		closed = removeTrailingCommas(closed)
 		if err := json.Unmarshal([]byte(closed), &v); err == nil {
 			return json.RawMessage(closed), nil
@@ -56,6 +87,19 @@ func ExtractJSONObject(raw string) (json.RawMessage, error) {
 		if closedRepaired != closed {
 			if err := json.Unmarshal([]byte(closedRepaired), &v); err == nil {
 				return json.RawMessage(closedRepaired), nil
+			}
+		}
+		// And the quote-plus-close combo.
+		closedQuoted := quoteBareIdentifiersInArrays(closed)
+		if closedQuoted != closed {
+			if err := json.Unmarshal([]byte(closedQuoted), &v); err == nil {
+				return json.RawMessage(closedQuoted), nil
+			}
+			combo := insertMissingCommas(closedQuoted)
+			if combo != closedQuoted {
+				if err := json.Unmarshal([]byte(combo), &v); err == nil {
+					return json.RawMessage(combo), nil
+				}
 			}
 		}
 	}
@@ -297,6 +341,137 @@ func insertMissingCommas(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// quoteBareIdentifiersInArrays scans s and wraps bare identifier
+// tokens inside array literals in double quotes. Handles the common
+// LLM drift of emitting `"dependencies": [T5, T6, T7]` or
+// `"refs": [S1]` where the emitted value should be a string.
+//
+// Rules:
+//   - Only operates inside `[ ... ]` regions (after colons or
+//     nested).
+//   - A bare token is `[A-Za-z_][A-Za-z0-9_-]*` that is NOT
+//     surrounded by quotes, NOT a JSON keyword (true/false/null),
+//     NOT a number, and sits between `[` or `,` and `,` or `]`.
+//   - Strings, numbers, objects, nested arrays are left alone.
+//
+// The function is intentionally conservative — the target pattern
+// is task-ID-shaped tokens (T5, S2, AC1); any other bare tokens
+// that fit the identifier regex are also quoted, which is safe
+// because true/false/null/numbers short-circuit before this
+// reaches the wrapping step.
+func quoteBareIdentifiersInArrays(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 32)
+	inStr := false
+	escaped := false
+	arrayDepth := 0
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if inStr {
+			b.WriteByte(c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inStr = false
+			}
+			i++
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if c == '[' {
+			arrayDepth++
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		if c == ']' {
+			if arrayDepth > 0 {
+				arrayDepth--
+			}
+			b.WriteByte(c)
+			i++
+			continue
+		}
+		// Inside an array context, check for a bare identifier token
+		// that needs quoting. Valid start: position immediately after
+		// `[` or `,` (skipping whitespace).
+		if arrayDepth > 0 && isIdentStart(c) {
+			// Walk backward past whitespace to confirm we're right
+			// after a `[` or `,`.
+			k := len(s)
+			out := b.String()
+			_ = k
+			_ = out
+			prev := prevNonSpace(b.String())
+			if prev == '[' || prev == ',' {
+				end := i
+				for end < len(s) && isIdentPart(s[end]) {
+					end++
+				}
+				token := s[i:end]
+				// Skip JSON keywords (true/false/null) and anything
+				// that already starts with a digit (numbers handled
+				// by the default path).
+				low := strings.ToLower(token)
+				if low == "true" || low == "false" || low == "null" {
+					b.WriteString(token)
+					i = end
+					continue
+				}
+				// Next non-space char after token must be `,` or `]`
+				// for this to be a bare-array-element scenario.
+				j := end
+				for j < len(s) && unicode.IsSpace(rune(s[j])) {
+					j++
+				}
+				if j < len(s) && (s[j] == ',' || s[j] == ']') {
+					b.WriteByte('"')
+					b.WriteString(token)
+					b.WriteByte('"')
+					i = end
+					continue
+				}
+			}
+		}
+		b.WriteByte(c)
+		i++
+	}
+	return b.String()
+}
+
+// isIdentStart reports whether c can start a JSON-adjacent bare
+// identifier token that quoteBareIdentifiersInArrays should rescue.
+// Numbers start paths (`.`, digits) are intentionally excluded so
+// real numeric literals parse as-is.
+func isIdentStart(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'
+}
+
+// isIdentPart reports whether c can continue an identifier.
+func isIdentPart(c byte) bool {
+	return isIdentStart(c) || (c >= '0' && c <= '9') || c == '-'
+}
+
+// prevNonSpace returns the last non-whitespace byte of s, or 0 if
+// none. Used by quoteBareIdentifiersInArrays to decide whether we
+// just crossed a `[` or `,` boundary.
+func prevNonSpace(s string) byte {
+	for i := len(s) - 1; i >= 0; i-- {
+		if !unicode.IsSpace(rune(s[i])) {
+			return s[i]
+		}
+	}
+	return 0
 }
 
 // removeTrailingCommas strips JavaScript-style trailing commas (before

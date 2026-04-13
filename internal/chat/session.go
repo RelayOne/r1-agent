@@ -97,6 +97,15 @@ type Session struct {
 
 	mu       sync.Mutex
 	messages []provider.ChatMessage
+
+	// lastTurnImages holds the user-typed paths of every image attached
+	// to the MOST RECENT user turn, in order. Reset at the start of each
+	// Send call — images are explicitly turn-scoped so a screenshot
+	// pasted into turn 3 does NOT leak into a dispatch triggered by
+	// turn 7. Dispatchers read this via LastTurnImages() while a tool
+	// call is being executed (tool dispatch runs synchronously inside
+	// Send).
+	lastTurnImages []string
 }
 
 // NewSession constructs a chat Session. The provider must be non-nil.
@@ -167,7 +176,54 @@ func (s *Session) Send(ctx context.Context, userText string, onDelta OnDelta, on
 		return nil, errors.New("chat: user text is empty")
 	}
 
-	userMsg, err := newUserTextMessage(userText)
+	// Parse out any image references BEFORE checking emptiness of the
+	// residual. A message like "![ui](/tmp/a.png)" strips to empty text
+	// but is still a valid image-only turn.
+	imgPaths, residualText := ExtractImageRefs(userText)
+
+	// Reset last-turn images up front so a mid-turn error doesn't leave
+	// stale paths visible to a later dispatcher call.
+	s.mu.Lock()
+	s.lastTurnImages = nil
+	s.mu.Unlock()
+
+	var attached []AttachedImage
+	var imageNotices []string
+	for _, p := range imgPaths {
+		img, err := LoadImage(p)
+		if err != nil {
+			return nil, fmt.Errorf("chat: %w", err)
+		}
+		attached = append(attached, img)
+	}
+
+	// Vision capability gate. If the chat model is not on the allowlist,
+	// strip image content blocks but keep the paths on lastTurnImages —
+	// dispatched workers may run vision-capable models and should still
+	// receive the references.
+	if len(attached) > 0 && !ModelSupportsVision(s.cfg.Model) {
+		imageNotices = append(imageNotices,
+			fmt.Sprintf("(note: %q does not support vision input; image(s) ignored for this chat turn but forwarded to any dispatched worker. Switch to a vision-capable model or describe the image in text.)", s.cfg.Model))
+		attached = nil
+	}
+
+	if len(imgPaths) > 0 {
+		s.mu.Lock()
+		s.lastTurnImages = append([]string(nil), imgPaths...)
+		s.mu.Unlock()
+	}
+
+	effectiveText := residualText
+	if len(imageNotices) > 0 {
+		joined := strings.Join(imageNotices, " ")
+		if effectiveText == "" {
+			effectiveText = joined
+		} else {
+			effectiveText = joined + "\n\n" + effectiveText
+		}
+	}
+
+	userMsg, err := newUserMessage(effectiveText, attached)
 	if err != nil {
 		return nil, fmt.Errorf("chat: build user message: %w", err)
 	}
@@ -405,14 +461,57 @@ type toolResultBlock struct {
 }
 
 // newUserTextMessage wraps plain text into the content-block JSON shape
-// that provider.ChatMessage expects.
+// that provider.ChatMessage expects. Kept as a thin backwards-compatible
+// wrapper over newUserMessage for any older call sites; new code should
+// call newUserMessage directly.
 func newUserTextMessage(text string) (provider.ChatMessage, error) {
-	blocks := []textContentBlock{{Type: "text", Text: text}}
+	return newUserMessage(text, nil)
+}
+
+// newUserMessage builds a user ChatMessage that may contain one text
+// block and zero or more image blocks. The image content-block shape
+// matches Anthropic's Messages API exactly, so the existing provider
+// wire code passes it through unchanged.
+//
+// Image-only turns (empty text, one or more images) are valid — the
+// API accepts them. An empty text AND empty image list produces a
+// single empty text block for API-shape consistency; callers are
+// expected to filter out truly-empty turns earlier.
+func newUserMessage(text string, images []AttachedImage) (provider.ChatMessage, error) {
+	blocks := make([]interface{}, 0, 1+len(images))
+	if text != "" {
+		blocks = append(blocks, textContentBlock{Type: "text", Text: text})
+	}
+	for _, img := range images {
+		blocks = append(blocks, img.ContentBlock())
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, textContentBlock{Type: "text", Text: ""})
+	}
 	raw, err := json.Marshal(blocks)
 	if err != nil {
 		return provider.ChatMessage{}, err
 	}
 	return provider.ChatMessage{Role: "user", Content: raw}, nil
+}
+
+// LastTurnImages returns a defensive copy of the image paths attached
+// to the most recent Send call. Returns nil if no images were
+// attached. Thread-safe.
+//
+// Dispatchers call this from inside onDispatch to pick up the image
+// paths that belong to the triggering user turn. Images are
+// turn-scoped, not session-scoped, so a dispatch in turn N sees only
+// images from turn N.
+func (s *Session) LastTurnImages() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.lastTurnImages) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.lastTurnImages))
+	copy(out, s.lastTurnImages)
+	return out
 }
 
 // newAssistantContentMessage builds an assistant message that may
