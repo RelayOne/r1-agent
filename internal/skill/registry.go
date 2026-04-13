@@ -18,7 +18,26 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/ericmacdougall/stoke/internal/promptguard"
 )
+
+// scanUserContent runs project/user-supplied skill content through the
+// prompt-injection intake scanner. Builtins are trusted source-controlled
+// content and skip the scan. Action is currently Warn across the board —
+// operators see a one-line telemetry note, content is passed through
+// unchanged. After a telemetry period shows the false-positive rate,
+// escalate to Strip for project/user sources via a policy flag.
+func scanUserContent(content []byte, source, path string) []byte {
+	if source == "builtin" {
+		return content
+	}
+	_, report, _ := promptguard.Sanitize(string(content), promptguard.ActionWarn, path)
+	if len(report.Threats) > 0 {
+		fmt.Fprintf(os.Stderr, "  ⚠ %s\n", report.Summary())
+	}
+	return content
+}
 
 // Skill is a reusable workflow pattern.
 type Skill struct {
@@ -124,6 +143,7 @@ func (r *Registry) Load() error {
 				if existing, exists := r.skills[name]; exists && existing.Source != "builtin" {
 					continue
 				}
+				content = scanUserContent(content, source, skillPath)
 				r.skills[name] = parseSkill(name, string(content), source, skillPath, len(r.dirs)-i)
 
 				// Load progressive disclosure references from references/ subdir
@@ -131,9 +151,10 @@ func (r *Registry) Load() error {
 				if refEntries, refErr := os.ReadDir(refsDir); refErr == nil {
 					for _, ref := range refEntries {
 						if !ref.IsDir() && strings.HasSuffix(ref.Name(), ".md") {
-							if data, err := os.ReadFile(filepath.Join(refsDir, ref.Name())); err == nil {
+							refPath := filepath.Join(refsDir, ref.Name())
+							if data, err := os.ReadFile(refPath); err == nil {
 								key := strings.TrimSuffix(ref.Name(), ".md")
-								r.skills[name].References[key] = string(data)
+								r.skills[name].References[key] = string(scanUserContent(data, source, refPath))
 							}
 						}
 					}
@@ -141,14 +162,16 @@ func (r *Registry) Load() error {
 			} else if strings.HasSuffix(name, ".md") {
 				// Skill file: name is filename without extension
 				skillName := strings.TrimSuffix(name, ".md")
-				content, err := os.ReadFile(filepath.Join(dir, name))
+				flatPath := filepath.Join(dir, name)
+				content, err := os.ReadFile(flatPath)
 				if err != nil {
 					continue
 				}
 				if existing, exists := r.skills[skillName]; exists && existing.Source != "builtin" {
 					continue
 				}
-				r.skills[skillName] = parseSkill(skillName, string(content), source, filepath.Join(dir, name), len(r.dirs)-i)
+				content = scanUserContent(content, source, flatPath)
+				r.skills[skillName] = parseSkill(skillName, string(content), source, flatPath, len(r.dirs)-i)
 			}
 		}
 	}
