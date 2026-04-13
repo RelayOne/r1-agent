@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/ericmacdougall/stoke/internal/redact"
 )
 
 // Level constants matching slog levels for convenience.
@@ -35,6 +37,14 @@ func Init(level string, output io.Writer) {
 	initOnce.Do(func() {
 		if output == nil {
 			output = os.Stderr
+		}
+		// Wrap every log sink with the secret redactor. This is the
+		// centralized egress control: whatever path a secret arrives on
+		// (tool output, API error, operator shell command echoed into a
+		// log line), it gets stripped before it lands on disk. Operators
+		// who want raw logs for debugging can set STOKE_LOG_REDACT=0.
+		if os.Getenv("STOKE_LOG_REDACT") != "0" {
+			output = redact.NewWriter(output)
 		}
 		var lvl slog.Level
 		switch strings.ToLower(level) {
