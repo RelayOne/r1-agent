@@ -9,7 +9,69 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/depcheck"
 )
+
+// depcheckOnceMu / depcheckOnce dedup the multi-language registry
+// validation per projectRoot so we pay the HEAD cost once, not per AC.
+var (
+	depcheckOnceMu sync.Mutex
+	depcheckOnce   = map[string]bool{}
+	depcheckClient = depcheck.DefaultClient()
+)
+
+// runDepCheck validates every declared dep in every recognized manifest
+// under projectRoot against the matching public registry, emitting loud
+// warnings when a package name doesn't exist. Rate-limited to once per
+// projectRoot per process. The check has a short deadline so a slow
+// registry can't delay the run.
+func runDepCheck(ctx context.Context, projectRoot string) {
+	depcheckOnceMu.Lock()
+	if depcheckOnce[projectRoot] {
+		depcheckOnceMu.Unlock()
+		return
+	}
+	depcheckOnce[projectRoot] = true
+	depcheckOnceMu.Unlock()
+
+	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	findings, err := depcheckClient.Validate(deadline, projectRoot)
+	if err != nil {
+		// Walk error (missing root, permission). Log and move on; the
+		// real install will surface real problems.
+		fmt.Printf("  ⚠ depcheck: walk error under %s: %v — continuing\n", projectRoot, err)
+		return
+	}
+	if len(findings) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Println("  ════════════════════════════════════════════════════════════════")
+	fmt.Printf("  ❌ depcheck: %d declared dependenc%s cannot be resolved against its registry\n", len(findings), pluralY(len(findings)))
+	fmt.Println("     These look like LLM-hallucinated package names. The install step will")
+	fmt.Println("     fail with a 404 and every downstream AC will misdiagnose the symptom.")
+	fmt.Println("     Fix by removing the entry or replacing it with the real package name.")
+	fmt.Println()
+	for _, f := range findings {
+		// projectRoot-relative path for readability.
+		rel := f.PackageJSON
+		if r, err := filepath.Rel(projectRoot, f.PackageJSON); err == nil {
+			rel = r
+		}
+		fmt.Printf("     - %s: %s in [%s] (%s)\n", rel, f.Name, f.Section, f.Reason)
+	}
+	fmt.Println("  ════════════════════════════════════════════════════════════════")
+	fmt.Println()
+}
+
+func pluralY(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}
 
 // AcceptanceResult is the outcome of checking one acceptance criterion.
 type AcceptanceResult struct {
@@ -109,6 +171,16 @@ func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, c
 // node_modules is missing. Guarded by installedOnce so repeated AC passes
 // don't keep reinstalling. Silent on success; errors are ignored — the AC
 // commands themselves will surface any real issue with their own output.
+//
+// Before attempting install, we run a fast registry-resolution check
+// against every declared dep in the repo (npm / PyPI / crates / Go).
+// When the check flags packages that don't exist (the classic LLM
+// hallucination: e.g. "@nativewind/style" invented when the real
+// package is just "nativewind"), we emit a loud warning. That warning
+// shows up in the AC failure context and helps the downstream
+// reasoning loop correctly classify the root cause as code_bug
+// rather than ac_bug. Transport errors are silent — a dead registry
+// must not block a real build.
 func ensureWorkspaceInstalled(ctx context.Context, projectRoot string) {
 	installedOnceMu.Lock()
 	if installedOnce[projectRoot] {
@@ -122,6 +194,10 @@ func ensureWorkspaceInstalled(ctx context.Context, projectRoot string) {
 	if _, err := os.Stat(filepath.Join(projectRoot, "package.json")); err != nil {
 		return
 	}
+	// Pre-install registry validation. Runs even when node_modules
+	// exists on disk — a pre-existing node_modules doesn't tell us
+	// whether a NEWLY added dep resolves.
+	runDepCheck(ctx, projectRoot)
 	// If node_modules already exists, trust whatever is there.
 	if _, err := os.Stat(filepath.Join(projectRoot, "node_modules")); err == nil {
 		return
