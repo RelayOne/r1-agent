@@ -29,6 +29,14 @@ type SessionScheduler struct {
 	// acceptance check is retried on failure before moving on (or halting).
 	// Default 1 = no retry.
 	MaxSessionRetries int
+	// BuildRequiredEnvVars, when non-nil, restricts the infra-env-var
+	// preflight gate to only those variables the env-var classifier
+	// identified as genuinely required at build/test time. Runtime-only
+	// vars (DB URLs, API endpoints, message-broker URLs) no longer
+	// block session dispatch. When nil, the legacy behavior applies:
+	// ALL declared env vars gate the session. Callers populate this
+	// from plan.ClassifyEnvVars before Run().
+	BuildRequiredEnvVars map[string]bool
 	// OnProgress is called after each session completes (success or failure).
 	// Used by the TUI/REPL to update its display. May be nil.
 	OnProgress func(SessionResult)
@@ -152,16 +160,38 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 			continue
 		}
 
-		// Preflight: check infra env vars for this session
+		// Preflight: check infra env vars for this session. When
+		// ss.BuildRequiredEnvVars is populated, only variables the
+		// classifier flagged as build-required trigger the gate —
+		// runtime-only vars pass through silently since they're
+		// deployment concerns, not build concerns.
 		infraReqs := ss.sow.InfraForSession(session.ID)
-		if missing := checkInfraEnvVars(infraReqs); len(missing) > 0 {
+		if missing := checkInfraEnvVarsFiltered(infraReqs, ss.BuildRequiredEnvVars); len(missing) > 0 {
+			// Loud surfacing: this is a SKIP, not a code-level failure —
+			// the session never ran a single task. Print a wide banner so
+			// it's visible in heartbeat-stream logs and impossible to miss
+			// when scrolling. Without this, a missing env var silently
+			// drops a substantive session and downstream sessions then
+			// run against missing outputs.
+			fmt.Printf("\n  ❌❌❌ SESSION %s BLOCKED — missing infrastructure env vars: %s\n", session.ID, strings.Join(missing, ", "))
+			fmt.Printf("       title: %s\n", session.Title)
+			fmt.Printf("       set the env var(s) above and re-run, or add a mock fallback\n")
+			if ss.ContinueOnFailure {
+				fmt.Printf("       continuing with downstream sessions, but they may produce broken output\n\n")
+			} else {
+				fmt.Printf("       halting (--continue-on-failure=false)\n\n")
+			}
 			result := SessionResult{
 				SessionID: session.ID,
 				Title:     session.Title,
-				Error:     fmt.Errorf("missing infrastructure env vars: %s", strings.Join(missing, ", ")),
+				Error:     fmt.Errorf("BLOCKED: missing infrastructure env vars: %s", strings.Join(missing, ", ")),
 			}
 			results = append(results, result)
-			ss.recordSessionFailure(session, result, result.Error)
+			// Record as "blocked" not "failed" — semantically distinct:
+			// the session never executed, so calling it "failed" misleads
+			// retry logic and post-run audits. Blocked sessions need an
+			// environment fix, not a code fix.
+			ss.recordSessionBlocked(session, result, result.Error)
 			if firstErr == nil {
 				firstErr = result.Error
 			}
@@ -255,6 +285,41 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 		}
 	}
 
+	// End-of-run banner: if any sessions were blocked or failed under
+	// ContinueOnFailure, surface them loudly so they aren't lost in the
+	// stream of heartbeat output. Without this the operator has to dig
+	// into sow-state.json to find that S3 was silently dropped.
+	if ss.state != nil && ss.ContinueOnFailure {
+		var blocked, failed []string
+		for _, s := range ss.state.Sessions {
+			switch s.Status {
+			case "blocked":
+				blocked = append(blocked, fmt.Sprintf("%s (%s)", s.SessionID, s.LastError))
+			case "failed":
+				failed = append(failed, fmt.Sprintf("%s (%s)", s.SessionID, s.LastError))
+			}
+		}
+		if len(blocked) > 0 || len(failed) > 0 {
+			fmt.Println()
+			fmt.Println("  ════════════════════════════════════════════════════════════════")
+			fmt.Println("  ❌ END-OF-RUN SUMMARY: not all sessions converged")
+			if len(blocked) > 0 {
+				fmt.Printf("  blocked (%d) — environment fix needed:\n", len(blocked))
+				for _, s := range blocked {
+					fmt.Printf("    - %s\n", s)
+				}
+			}
+			if len(failed) > 0 {
+				fmt.Printf("  failed (%d) — code fix needed:\n", len(failed))
+				for _, s := range failed {
+					fmt.Printf("    - %s\n", s)
+				}
+			}
+			fmt.Println("  ════════════════════════════════════════════════════════════════")
+			fmt.Println()
+		}
+	}
+
 	return results, firstErr
 }
 
@@ -308,6 +373,29 @@ func (ss *SessionScheduler) recordSessionFailure(session Session, result Session
 	rec.Acceptance = result.Acceptance
 	rec.TaskResults = result.TaskResults
 	rec.Attempts = result.Attempts
+	if err != nil {
+		rec.LastError = err.Error()
+	}
+	rec.FinishedAt = time.Now()
+	_ = SaveSOWState(ss.projectRoot, ss.state)
+}
+
+// recordSessionBlocked persists a session that was skipped before any
+// task executed because a precondition (e.g. missing env var) wasn't
+// satisfied. Distinct from "failed" so post-run audits and retry logic
+// can treat blocked sessions as needing environment fixes, not code
+// fixes.
+func (ss *SessionScheduler) recordSessionBlocked(session Session, result SessionResult, err error) {
+	if ss.state == nil {
+		return
+	}
+	rec := ss.state.SessionByID(session.ID)
+	if rec == nil {
+		return
+	}
+	rec.Status = "blocked"
+	rec.AcceptanceMet = false
+	rec.Attempts = 0
 	if err != nil {
 		rec.LastError = err.Error()
 	}
@@ -390,9 +478,21 @@ func (ss *SessionScheduler) DryRun() string {
 
 // checkInfraEnvVars returns missing env vars for the given infra requirements.
 func checkInfraEnvVars(reqs []InfraRequirement) []string {
+	return checkInfraEnvVarsFiltered(reqs, nil)
+}
+
+// checkInfraEnvVarsFiltered is checkInfraEnvVars with an optional filter
+// that restricts the gate to only classifier-approved build-required
+// variables. A nil filter reverts to legacy behavior (gate on every
+// declared var). An empty non-nil filter (len==0) gates on nothing —
+// the classifier decided every var is runtime-only.
+func checkInfraEnvVarsFiltered(reqs []InfraRequirement, buildRequired map[string]bool) []string {
 	var missing []string
 	for _, req := range reqs {
 		for _, v := range req.EnvVars {
+			if buildRequired != nil && !buildRequired[v] {
+				continue // classifier says runtime-only — don't gate
+			}
 			if envLookup(v) == "" {
 				missing = append(missing, v)
 			}

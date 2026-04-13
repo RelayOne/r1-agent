@@ -1237,6 +1237,7 @@ func sowCmd(args []string) {
 	// non-zero duration to re-enable a safety ceiling.
 	timeout := fs.Duration("timeout", 0, "Hard wall-clock timeout (0 = supervisor-driven, recommended)")
 	resume := fs.Bool("resume", false, "Resume from prior .stoke/sow-state.json: skip completed sessions")
+	fresh := fs.Bool("fresh", false, "Clear cached SOW state before running: session markers, scheduler state, cached SOW conversions/refinements, env-var classifier cache. Preserves wisdom, reports, and code. Incompatible with --resume (use one or the other).")
 	// Tri-state: "" = auto (on for multi-session, off for single-
 	// session), "true" / "false" = explicit override. A multi-session
 	// SOW like PERSYS (13 sessions) should try all sessions even if
@@ -1264,6 +1265,44 @@ func sowCmd(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// --fresh: clear cached SOW state BEFORE anything loads. Deletes
+	// session completion markers, scheduler state, cached prose→JSON
+	// conversions and refinements, and the env-var classifier cache
+	// so the next run starts from scratch. Preserves wisdom/, reports/,
+	// meta-reports/, and everything outside .stoke/ (code, git, etc.).
+	//
+	// Incompatible with --resume — if both are passed, --fresh wins
+	// (since there's nothing left to resume from after the clear) and
+	// a warning is printed.
+	if *fresh {
+		if *resume {
+			fmt.Fprintln(os.Stderr, "  ⚠ --fresh overrides --resume: clearing cached state, nothing to resume from")
+		}
+		stokeDir := filepath.Join(absRepo, ".stoke")
+		targets := []string{
+			filepath.Join(stokeDir, "sow-state-markers"),
+			filepath.Join(stokeDir, "sow-state.json"),
+			filepath.Join(stokeDir, "sow-from-prose.json"),
+			filepath.Join(stokeDir, "sow-refined.json"),
+			filepath.Join(stokeDir, "env-var-classification.json"),
+		}
+		var cleared []string
+		for _, t := range targets {
+			if _, statErr := os.Stat(t); statErr == nil {
+				if rmErr := os.RemoveAll(t); rmErr != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ --fresh: could not remove %s: %v\n", t, rmErr)
+					continue
+				}
+				cleared = append(cleared, filepath.Base(t))
+			}
+		}
+		if len(cleared) > 0 {
+			fmt.Printf("  🧹 --fresh: cleared %d cached item(s): %s\n", len(cleared), strings.Join(cleared, ", "))
+		} else {
+			fmt.Println("  🧹 --fresh: no cached state to clear (already clean)")
+		}
+	}
 
 	// Load the universal context (coding-standards + known-gotchas)
 	// ONCE per sowCmd run. These markdown blobs — embedded defaults
@@ -2152,6 +2191,39 @@ func sowCmd(args []string) {
 				fmt.Fprintf(os.Stderr, "warning: SOW state re-init after sizer failed: %v\n", err)
 			}
 		}
+
+		// Pre-flight env var classifier: ask the reasoning provider
+		// which declared env vars are GENUINELY required at build/test
+		// time (vs pure runtime concerns of the code being built).
+		// Without this, the SOW reasoner's over-declarations —
+		// EVENT_STREAM_URL, API_BASE_URL, etc. invented from SOW
+		// prose — block entire sessions for variables that should
+		// be deployment concerns, not build preconditions.
+		//
+		// Cached by SOW hash, so successive runs don't re-pay. Graceful
+		// degradation: when no provider is available, every var is
+		// marked "unsure" which the filter treats as non-gating,
+		// restoring sensible behavior (build proceeds, ACs will catch
+		// real failures).
+		classification, cErr := plan.ClassifyEnvVars(ctx, reasoningProv, reasoningModelChoice, sow, loadRawSOWText(*sowFile, sow), absRepo)
+		if cErr != nil {
+			fmt.Printf("  ⚠ env-var classifier failed: %v — falling back to gating all declared vars\n", cErr)
+		}
+		if classification != nil && len(classification.Classifications) > 0 {
+			buildReq := classification.BuildRequiredSet()
+			ss.BuildRequiredEnvVars = buildReq
+			runtimeOnly := 0
+			for _, c := range classification.Classifications {
+				if c.Category == plan.EnvVarRuntimeOnly {
+					runtimeOnly++
+				}
+			}
+			fmt.Printf("  🔎 env-var classifier: %d var(s) classified — %d build-required, %d runtime-only\n",
+				len(classification.Classifications), len(buildReq), runtimeOnly)
+			for _, c := range classification.Classifications {
+				fmt.Printf("     - %s → %s (%s)\n", c.Variable, c.Category, c.Reason)
+			}
+		}
 	}
 
 	sessionExecFn := func(ctx context.Context, session plan.Session) ([]plan.TaskExecResult, error) {
@@ -2242,6 +2314,51 @@ func sowCmd(args []string) {
 		fmt.Printf("\nWrote %d task prompt file(s) to %s\n", count, filepath.Join(absRepo, ".stoke", "prompt-dump"))
 		fmt.Println("Inspect them to verify spec extraction, canonical identifiers, and task framing before a real run.")
 		return
+	}
+
+	// Pre-flight env var audit: enumerate every infra env var declared
+	// across all sessions and report which are unset BEFORE the run
+	// starts. Without this, a 30-minute run can blow past a missing
+	// env var on session 3 and silently skip it. Surfacing at startup
+	// gives the operator a chance to set the var or accept the skip.
+	// Now honors the classifier result — runtime-only vars don't
+	// appear in the pre-flight warning either.
+	{
+		type missing struct {
+			sessionID string
+			vars      []string
+		}
+		var unset []missing
+		buildReq := ss.BuildRequiredEnvVars // may be nil (= gate everything, legacy)
+		for _, s := range sow.Sessions {
+			reqs := sow.InfraForSession(s.ID)
+			var miss []string
+			for _, r := range reqs {
+				for _, v := range r.EnvVars {
+					if buildReq != nil && !buildReq[v] {
+						continue // classifier said runtime-only
+					}
+					if os.Getenv(v) == "" {
+						miss = append(miss, v)
+					}
+				}
+			}
+			if len(miss) > 0 {
+				unset = append(unset, missing{sessionID: s.ID, vars: miss})
+			}
+		}
+		if len(unset) > 0 {
+			fmt.Println()
+			fmt.Println("  ════════════════════════════════════════════════════════════════")
+			fmt.Printf("  ⚠ pre-flight: %d session(s) declare unset infrastructure env vars\n", len(unset))
+			for _, m := range unset {
+				fmt.Printf("    - %s: missing %s\n", m.sessionID, strings.Join(m.vars, ", "))
+			}
+			fmt.Println("    these sessions will be marked BLOCKED at dispatch time.")
+			fmt.Println("    set the vars above (export VAR=value) and re-run, OR accept the skips.")
+			fmt.Println("  ════════════════════════════════════════════════════════════════")
+			fmt.Println()
+		}
 	}
 
 	runStart := time.Now()

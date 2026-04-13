@@ -76,6 +76,14 @@ Short-form failure patterns that recur across LLM-generated code. Each line: PAT
 - `EAS Build` needs `expo` + `eas-cli` and valid `eas.json` with real project IDs (not placeholders)
 - `vercel.json` `buildCommand` must reference real scripts in the root `package.json`
 
+## Environment variables — build-time vs runtime
+
+- **Do not invent new env vars during planning/reasoning.** If a session's prose mentions "real-time events", that's a RUNTIME concern for the deployed service — NOT a build-time precondition. Do not declare `EVENT_STREAM_URL`, `API_BASE_URL`, `WEBHOOK_SECRET`, or similar just because the feature uses them.
+- **Build-time env vars are rare.** Examples: `NEXT_PUBLIC_*` baked into the bundle, monorepo workspace roots, tool license keys. If unsure, assume RUNTIME.
+- **Runtime env vars belong in config + typed loaders.** Write code that reads them from `process.env` / `os.environ` via a single config module with Zod/TypedDict validation. Do not hardcode them, do not gate build on them, do not fail CI when they're absent.
+- **Tests must not require live service URLs.** Use mocks, in-memory fakes, or `msw` / `nock` for HTTP. A test that fails when `DATABASE_URL` points at prod is a test that will corrupt prod when someone runs it by accident.
+- **When a spec says "integrates with X", deliver the code + tests that WOULD work if X were reachable.** Use a mock/stub with a clear boundary. Real-service wiring is a deployment concern, not a coding deliverable.
+
 ## What LLM agents hallucinate most
 
 - Non-existent CLI flags (always verify before using)

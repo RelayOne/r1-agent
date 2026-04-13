@@ -238,11 +238,29 @@ func RunIntegrationReview(ctx context.Context, prov provider.Provider, model str
 			raw, _ := collectModelText(resp)
 			var report IntegrationReport
 			if _, err := jsonutil.ExtractJSONInto(raw, &report); err != nil {
-				// No JSON verdict — treat as best-effort completion
-				// with no gaps. Record the raw text as the summary so
-				// an operator can trace what the reviewer said.
-				fmt.Printf("  🔗 integration-review: (no JSON verdict) %s\n", firstLine(raw))
-				return &IntegrationReport{Summary: firstLine(raw)}, nil
+				// No JSON verdict — the reviewer broke its contract.
+				// Previously this was silently treated as "0 gaps,
+				// surface clean", which actively hid findings: a
+				// reviewer that produced prose findings then failed
+				// the JSON wrapper would be parsed as a green light
+				// and the run would advance past unresolved gaps.
+				//
+				// Now we surface a synthetic gap so downstream code
+				// dispatches a follow-up (or at minimum the operator
+				// sees an unconverged signal in the logs).
+				fmt.Printf("  🔗 integration-review: ⚠ NON-COMPLIANT VERDICT (no parseable JSON) — flagging as unknown\n")
+				fmt.Printf("    raw response: %s\n", firstLine(raw))
+				return &IntegrationReport{
+					Summary: "reviewer returned prose instead of JSON; verdict unknown — see raw output",
+					Gaps: []IntegrationGap{
+						{
+							Kind:              "reviewer-noncompliant",
+							Location:          "(meta)",
+							Detail:            "integration reviewer returned non-JSON output: " + firstLine(raw),
+							SuggestedFollowup: "re-run integration review or manually inspect cross-file consistency",
+						},
+					},
+				}, nil
 			}
 			return &report, nil
 		}
