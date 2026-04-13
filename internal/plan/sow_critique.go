@@ -333,21 +333,54 @@ func autoAddMissingInfra(sow *SOW) {
 //
 // Mutation is in place on the passed SOW.
 func autoCleanTaskDeps(sow *SOW) {
+	_ = CleanTaskDependencies(sow)
+}
+
+// DroppedDep describes one auto-repair action performed on a SOW:
+// either an empty-ID/empty-description task dropped, or a dangling
+// Dependencies entry dropped because its target doesn't resolve.
+// Surfacing these lets the operator see silent repairs that previously
+// only showed up as a quiet "plan warning" after dispatch began.
+type DroppedDep struct {
+	SessionID string
+	TaskID    string
+	Dropped   string
+	Reason    string
+}
+
+// CleanTaskDependencies drops malformed tasks (empty ID or description)
+// and removes any task.Dependencies entry whose target doesn't exist in
+// the SOW. Returns a list of every dropped item so the caller can
+// surface the repair to the operator. Idempotent.
+//
+// This is the authoritative pre-dispatch cleaner. Call it at every
+// boundary where a new SOW shape could introduce dangling refs:
+// initial prose conversion, critique/refine, session-sizer splits,
+// and the main.go dispatch path right before ValidateSOW.
+func CleanTaskDependencies(sow *SOW) []DroppedDep {
 	if sow == nil {
-		return
+		return nil
 	}
-	// Drop empty-task entries BEFORE computing the known set.
-	// LLM output occasionally emits an object with empty ID or
-	// empty description (truncation mid-element, schema drift).
-	// Rather than halt the whole run on a validation error like
-	// "session S15 task[3] has no ID", drop the malformed entry —
-	// the session scheduler + integration reviewer will catch
-	// any missing downstream coverage.
+	var drops []DroppedDep
+	// Drop empty-task entries BEFORE computing the known set. LLM
+	// output occasionally emits an object with empty ID or empty
+	// description (truncation mid-element, schema drift). Dropping
+	// the malformed entry is safer than halting on a validation
+	// error like "session S15 task[3] has no ID" — the session
+	// scheduler + integration reviewer will catch any missing
+	// downstream coverage.
 	for si := range sow.Sessions {
+		sid := sow.Sessions[si].ID
 		in := sow.Sessions[si].Tasks
 		out := in[:0]
 		for _, t := range in {
 			if strings.TrimSpace(t.ID) == "" || strings.TrimSpace(t.Description) == "" {
+				drops = append(drops, DroppedDep{
+					SessionID: sid,
+					TaskID:    t.ID,
+					Dropped:   "(entire task)",
+					Reason:    "empty ID or empty description",
+				})
 				continue
 			}
 			out = append(out, t)
@@ -361,6 +394,7 @@ func autoCleanTaskDeps(sow *SOW) {
 		}
 	}
 	for si := range sow.Sessions {
+		sid := sow.Sessions[si].ID
 		for ti := range sow.Sessions[si].Tasks {
 			t := &sow.Sessions[si].Tasks[ti]
 			if len(t.Dependencies) == 0 {
@@ -370,11 +404,19 @@ func autoCleanTaskDeps(sow *SOW) {
 			for _, dep := range t.Dependencies {
 				if known[dep] {
 					cleaned = append(cleaned, dep)
+					continue
 				}
+				drops = append(drops, DroppedDep{
+					SessionID: sid,
+					TaskID:    t.ID,
+					Dropped:   dep,
+					Reason:    "dependency target does not exist in any session",
+				})
 			}
 			t.Dependencies = cleaned
 		}
 	}
+	return drops
 }
 
 // repairJSONViaLLM is a last-ditch salvage path for long SOW

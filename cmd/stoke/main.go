@@ -1448,6 +1448,23 @@ func sowCmd(args []string) {
 		fatal("load SOW: %v", err)
 	}
 
+	// Auto-repair dangling task dependencies and empty-task slots
+	// BEFORE validation. Earlier pipeline stages (ConvertProseToSOW,
+	// CritiqueAndRefine) run the cleaner too, but the session-sizer
+	// pass between them and this dispatch point can rename/split
+	// sessions in ways that leave stragglers. Running the cleaner
+	// one last time here is cheap and catches the residue so we
+	// don't hit "plan warning: task T87 depends on unknown task T85"
+	// at dispatch time — that warning was previously a silent
+	// no-op; auto-dropping the dangling ref means downstream
+	// scheduling is actually valid.
+	if drops := plan.CleanTaskDependencies(sow); len(drops) > 0 {
+		fmt.Fprintf(os.Stderr, "  🧹 auto-repair: %d dangling SOW reference(s) dropped before dispatch:\n", len(drops))
+		for _, d := range drops {
+			fmt.Fprintf(os.Stderr, "     - [%s/%s] %s — %s\n", d.SessionID, d.TaskID, d.Dropped, d.Reason)
+		}
+	}
+
 	// Validate
 	if validationErrs := plan.ValidateSOW(sow); len(validationErrs) > 0 {
 		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
