@@ -1,0 +1,320 @@
+// Package plan — externaldocs.go
+//
+// External-service detection and documentation requirement. Stoke's
+// shippability contract refuses to build code against an external
+// service (Guesty, Stripe, Mews, etc.) without real documentation
+// — the harness does not synthesize mocks. This file is the part
+// of the feasibility gate that enforces that contract.
+//
+// Responsibilities:
+//
+//  1. Detect which external services the SOW references. Uses a
+//     curated alias table for common names (keeps precision high)
+//     plus a generic "integrates with <X>" pattern for unknown
+//     services (lower precision but catches the long tail).
+//
+//  2. Check whether the SOW itself supplies sufficient documentation
+//     for each referenced service. A sufficient doc carries enough
+//     to build a real integration: endpoint URLs, request/response
+//     shape, auth mechanism. A one-liner "integrates with Stripe"
+//     does not count.
+//
+//  3. When the SOW is insufficient, consult a websearch.Searcher.
+//     Any non-empty result set (title + excerpt or body) is treated
+//     as attempted doc retrieval; the caller can accept or reject
+//     based on policy. When no searcher is configured, the gap
+//     stays open and the gate refuses the run.
+
+package plan
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/websearch"
+)
+
+// ExternalService is one third-party service the SOW references.
+type ExternalService struct {
+	// Name is the service's canonical short name (e.g. "guesty",
+	// "stripe", "mews"). Lowercase.
+	Name string
+	// Aliases are the strings the detector matched against. The
+	// canonical name is included.
+	Aliases []string
+	// MentionedInTaskIDs lists the task IDs that reference this
+	// service. Empty when only the session-level text mentions it
+	// but no task explicitly depends on it.
+	MentionedInTaskIDs []string
+}
+
+// ExternalServiceDocs is the documentation-coverage verdict for one
+// service. Produced by CheckExternalDocs.
+type ExternalServiceDocs struct {
+	Service ExternalService
+	// SOWProvides is true when the SOW itself contains enough doc
+	// content (endpoint URLs + schema hints + auth instructions).
+	SOWProvides bool
+	// SOWEvidence is the substring from the SOW that satisfied the
+	// check, when SOWProvides is true.
+	SOWEvidence string
+	// WebResults are any documentation pages the Searcher returned
+	// when the SOW was insufficient. Callers treat a non-empty set
+	// as "docs are reachable; inject them into the task briefing."
+	WebResults []websearch.Result
+	// WebQuery is the query we sent to the searcher (for audit).
+	WebQuery string
+	// Covered is true when either SOWProvides OR len(WebResults) > 0.
+	// When Covered is false after both checks, the gate refuses.
+	Covered bool
+}
+
+// knownExternalServices maps canonical name → alternate aliases used
+// in SOW prose. Keeps precision high for common cases so the gate
+// doesn't false-fire on in-codebase tokens that happen to match a
+// vendor name.
+var knownExternalServices = map[string][]string{
+	"guesty":         {"guesty"},
+	"hostaway":       {"hostaway"},
+	"mews":           {"mews"},
+	"pointclickcare": {"pointclickcare", "point click care"},
+	"yardi":          {"yardi"},
+	"realpage":       {"realpage"},
+	"stripe":         {"stripe"},
+	"sendgrid":       {"sendgrid"},
+	"twilio":         {"twilio"},
+	"slack":          {"slack webhook", "slack api", "slack bot"},
+	"fcm":            {"fcm", "firebase cloud messaging"},
+	"apns":           {"apns", "apple push notification"},
+	"expo":           {"expo push notifications"},
+	"okta":           {"okta"},
+	"auth0":          {"auth0"},
+	"openai":         {"openai api"},
+	"anthropic":      {"anthropic api"},
+	"github":         {"github api", "github webhook"},
+	"gitlab":         {"gitlab api"},
+	"datadog":        {"datadog api"},
+	"segment":        {"segment analytics"},
+	"sentry":         {"sentry dsn", "sentry api"},
+	"postmark":       {"postmark"},
+	"mailgun":        {"mailgun"},
+}
+
+// genericIntegrationHint catches "integrates with X", "calls the X
+// API", "X SDK", "X webhook" patterns for services not in the known
+// list. Lower precision; treated as "worth a web search" rather
+// than "definitely external."
+var genericIntegrationHint = regexp.MustCompile(`(?i)\b(?:integrates?\s+with|calls?\s+the|connects?\s+to|uses?\s+the)\s+([A-Z][A-Za-z0-9]{2,}(?:\s+[A-Z][a-z]+)?)\s+(?:API|SDK|webhook|service|platform)`)
+
+// DetectExternalServices returns every external service the SOW
+// references, combining the curated alias table with the generic
+// hint regex. Tasks that explicitly mention a service are recorded
+// in MentionedInTaskIDs so the operator sees blast radius.
+func DetectExternalServices(sow *SOW, rawSOW string) []ExternalService {
+	if sow == nil && rawSOW == "" {
+		return nil
+	}
+	found := map[string]*ExternalService{}
+
+	addMatch := func(canon, alias string, taskID string) {
+		if s, ok := found[canon]; ok {
+			s.Aliases = appendUnique(s.Aliases, alias)
+			if taskID != "" {
+				s.MentionedInTaskIDs = appendUnique(s.MentionedInTaskIDs, taskID)
+			}
+			return
+		}
+		out := &ExternalService{Name: canon, Aliases: []string{alias}}
+		if taskID != "" {
+			out.MentionedInTaskIDs = []string{taskID}
+		}
+		found[canon] = out
+	}
+
+	scan := func(text, taskID string) {
+		lower := strings.ToLower(text)
+		for canon, aliases := range knownExternalServices {
+			for _, a := range aliases {
+				if strings.Contains(lower, a) {
+					addMatch(canon, a, taskID)
+					break
+				}
+			}
+		}
+		for _, m := range genericIntegrationHint.FindAllStringSubmatch(text, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			canon := strings.ToLower(strings.TrimSpace(m[1]))
+			if _, isKnown := knownExternalServices[canon]; isKnown {
+				continue
+			}
+			addMatch(canon, m[1], taskID)
+		}
+	}
+
+	if rawSOW != "" {
+		scan(rawSOW, "")
+	}
+	if sow != nil {
+		for _, s := range sow.Sessions {
+			scan(s.Title+"\n"+s.Description, "")
+			for _, t := range s.Tasks {
+				scan(t.Description, t.ID)
+			}
+		}
+	}
+
+	out := make([]ExternalService, 0, len(found))
+	for _, s := range found {
+		sort.Strings(s.MentionedInTaskIDs)
+		sort.Strings(s.Aliases)
+		out = append(out, *s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// sowProvidesDocumentation is the deterministic first-pass check.
+// It looks for three signals that the SOW ships usable API docs for
+// the service:
+//
+//  1. A vendor-domain URL (e.g. "docs.guesty.com", "api.stripe.com")
+//  2. At least one endpoint-shaped line (HTTP verb + path)
+//  3. Some schema hint (field names in backticks or fence blocks)
+//
+// Returns (true, evidence-string) when at least two of the three
+// signals are present for the service name. Not perfect — an LLM
+// judge catches the ambiguous cases in feasibility.go — but
+// deterministic enough to skip the LLM call when the SOW clearly
+// does or doesn't carry docs.
+func sowProvidesDocumentation(rawSOW, serviceName string) (bool, string) {
+	if rawSOW == "" || serviceName == "" {
+		return false, ""
+	}
+	lower := strings.ToLower(rawSOW)
+	snameLower := strings.ToLower(serviceName)
+	if !strings.Contains(lower, snameLower) {
+		return false, ""
+	}
+
+	signals := 0
+	evidence := []string{}
+
+	// Signal 1: vendor-domain URL
+	urlRE := regexp.MustCompile(`(?i)https?://[a-z0-9.-]*` + regexp.QuoteMeta(snameLower) + `[a-z0-9./-]*`)
+	if m := urlRE.FindString(rawSOW); m != "" {
+		signals++
+		evidence = append(evidence, "URL: "+m)
+	}
+
+	// Signal 2: endpoint-shaped line
+	endpointRE := regexp.MustCompile(`(?i)(?:GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}?-]+`)
+	if m := endpointRE.FindString(rawSOW); m != "" {
+		signals++
+		evidence = append(evidence, "endpoint: "+m)
+	}
+
+	// Signal 3: schema hint — a code fence or tick-quoted field list
+	// near the service name
+	if i := strings.Index(lower, snameLower); i >= 0 {
+		window := rawSOW
+		start := i - 500
+		if start < 0 {
+			start = 0
+		}
+		end := i + 1500
+		if end > len(rawSOW) {
+			end = len(rawSOW)
+		}
+		window = rawSOW[start:end]
+		if strings.Contains(window, "```") || strings.Count(window, "`") >= 4 {
+			signals++
+			evidence = append(evidence, "schema fence near mention")
+		}
+	}
+
+	// Require at least 2 of 3 signals — ensures the SOW genuinely
+	// carries doc content, not just a passing mention.
+	if signals < 2 {
+		return false, ""
+	}
+	return true, strings.Join(evidence, " | ")
+}
+
+// CheckExternalDocs runs the full documentation-coverage check:
+// deterministic SOW scan first, web search when the SOW is
+// insufficient. Returns one ExternalServiceDocs per service.
+//
+// When searcher is nil, web-search path is skipped and any
+// service lacking SOW documentation has Covered=false; the gate
+// must refuse.
+//
+// When searcher is non-nil, each uncovered service gets one
+// search query of the form "<service> API documentation
+// endpoints authentication". The caller can inspect WebResults
+// and fold them into task briefings.
+func CheckExternalDocs(ctx context.Context, services []ExternalService, rawSOW string, searcher websearch.Searcher) []ExternalServiceDocs {
+	out := make([]ExternalServiceDocs, 0, len(services))
+	for _, svc := range services {
+		r := ExternalServiceDocs{Service: svc}
+		if ok, ev := sowProvidesDocumentation(rawSOW, svc.Name); ok {
+			r.SOWProvides = true
+			r.SOWEvidence = ev
+			r.Covered = true
+			out = append(out, r)
+			continue
+		}
+		if searcher == nil {
+			out = append(out, r)
+			continue
+		}
+		query := fmt.Sprintf("%s API documentation endpoints authentication", svc.Name)
+		r.WebQuery = query
+		if results, err := searcher.Search(ctx, query, 5); err == nil && len(results) > 0 {
+			r.WebResults = results
+			r.Covered = true
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// RefusalReason builds the operator-facing message for uncovered
+// services. One line per uncovered service with actionable
+// suggestions: paste docs, set TAVILY_API_KEY, pass --docs-dir.
+func RefusalReason(uncovered []ExternalServiceDocs) string {
+	if len(uncovered) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "SOW references %d external service(s) without usable documentation:\n", len(uncovered))
+	for _, u := range uncovered {
+		fmt.Fprintf(&b, "  - %s", u.Service.Name)
+		if len(u.Service.MentionedInTaskIDs) > 0 {
+			fmt.Fprintf(&b, " (tasks: %s)", strings.Join(u.Service.MentionedInTaskIDs, ", "))
+		}
+		b.WriteString("\n")
+		if u.WebQuery != "" {
+			fmt.Fprintf(&b, "      web-search query tried: %q — no results or searcher unavailable\n", u.WebQuery)
+		}
+	}
+	b.WriteString("\nTo proceed, either:\n")
+	b.WriteString("  1. Paste the API reference for each service into the SOW (endpoints, schemas, auth).\n")
+	b.WriteString("  2. Set TAVILY_API_KEY or WEBSEARCH_COMMAND so stoke can fetch docs itself.\n")
+	b.WriteString("  3. Supply docs on disk via --docs-dir <path>.\n")
+	b.WriteString("  4. Pass --force to proceed without docs (stoke will NOT synthesize mocks).\n")
+	return b.String()
+}
+
+func appendUnique(s []string, v string) []string {
+	for _, e := range s {
+		if e == v {
+			return s
+		}
+	}
+	return append(s, v)
+}

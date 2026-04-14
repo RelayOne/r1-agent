@@ -44,6 +44,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/modelsource"
 	"github.com/ericmacdougall/stoke/internal/smoketest"
+	"github.com/ericmacdougall/stoke/internal/websearch"
 	"github.com/ericmacdougall/stoke/internal/notify"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
@@ -1274,6 +1275,8 @@ func sowCmd(args []string) {
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
 	parallelSessions := fs.Int("parallel", 0, "Run up to N sessions concurrently via the DAG-driven scheduler (0 = legacy sequential; 2-4 recommended). Sessions are parallelized when their declared Inputs/Outputs or file scopes prove independence; declaration order is the safe fallback.")
 	smokeEnabled := fs.Bool("smoke", true, "Run an environment-aware smoke check after each session's ACs pass. Failing smoke flips the session to failed; static-only (e.g. iOS target on Linux) is reported but does not block. Disable only for debugging; this is the #1 anti-fake gate.")
+	forceFeasibility := fs.Bool("force", false, "Skip the feasibility gate. Operator explicitly acknowledges that the SOW may reference external services without documentation and that stoke will NOT synthesize mocks. Use only when you know something the gate doesn't.")
+	docsDir := fs.String("docs-dir", "", "Directory of additional API documentation (markdown files) the feasibility gate can consult. Each file is appended to the SOW-view the gate evaluates; useful when vendor docs are stored alongside the repo but not pasted into the SOW.")
 	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
 	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
 	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
@@ -2536,6 +2539,53 @@ func sowCmd(args []string) {
 			fmt.Println("  ════════════════════════════════════════════════════════════════")
 			fmt.Println()
 		}
+	}
+
+	// Feasibility gate: runs AFTER convert+critique+refine but BEFORE
+	// the first task dispatches. Enforces the shippability contract:
+	// every external service the SOW references must have usable API
+	// documentation (in the SOW itself, or fetchable via Tavily /
+	// WEBSEARCH_COMMAND). The harness refuses to build against an
+	// external API it does not know how to call correctly; no mocks
+	// are synthesized under any circumstance.
+	//
+	// Operator overrides (explicit, visible, never implicit):
+	//   --force                  skip the gate
+	//   --docs-dir <path>        additional docs the gate can read
+	//   TAVILY_API_KEY=...       enables Tavily search
+	//   WEBSEARCH_COMMAND=...    enables shell-wrapped MCP search
+	if !*forceFeasibility {
+		rawSOWForGate := loadRawSOWText(*sowFile, sow)
+		if *docsDir != "" {
+			if extra, err := readDocsDir(*docsDir); err == nil && extra != "" {
+				rawSOWForGate = rawSOWForGate + "\n\n## Additional docs from --docs-dir\n\n" + extra
+			} else if err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ --docs-dir read failed: %v — proceeding without\n", err)
+			}
+		}
+		searcher := websearch.DefaultFromEnv()
+		if searcher != nil {
+			fmt.Printf("  🔎 feasibility gate: web-search provider(s) available: %s\n", searcher.Name())
+		}
+		fRep := plan.EvaluateFeasibility(ctx, sow, rawSOWForGate, searcher)
+		fmt.Print(fRep.FormatReport())
+		if !fRep.AllShippable {
+			fmt.Fprintln(os.Stderr, "  Run aborted by feasibility gate. See reasons above.")
+			fmt.Fprintln(os.Stderr, "  Pass --force to proceed anyway (no mocks will be synthesized).")
+			os.Exit(3)
+		}
+		// Stash fetched docs so they get injected into task briefings.
+		// We do this by writing them to .stoke/external-docs/<service>.md
+		// and pointing the briefing code at that directory — keeps
+		// briefing plumbing unchanged while giving workers the real
+		// documentation content.
+		if len(fRep.FetchedDocsForTaskBrief) > 0 {
+			if err := persistFetchedDocs(absRepo, fRep.FetchedDocsForTaskBrief); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ could not persist fetched docs: %v — proceeding\n", err)
+			}
+		}
+	} else {
+		fmt.Println("  ⚠ feasibility gate SKIPPED via --force (operator acknowledges no mocks will be synthesized)")
 	}
 
 	runStart := time.Now()
@@ -5303,6 +5353,77 @@ func buildProseProvider(runnerMode, apiKey, baseURL, model string) (provider.Pro
 		return nil, ""
 	}
 	return provider.NewAnthropicProvider(apiKey, baseURL), model
+}
+
+// readDocsDir concatenates every .md / .txt file under dir into one
+// string. Non-existent dir returns ("", nil) — the caller treats that
+// as "no extra docs supplied," not a failure. Used by the feasibility
+// gate so operators can keep vendor docs alongside the repo and have
+// stoke consult them without pasting the full text into the SOW.
+func readDocsDir(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		b, err := os.ReadFile(dir)
+		return string(b), err
+	}
+	var b strings.Builder
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".md" && ext != ".txt" && ext != ".json" && ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil // skip unreadable; docs-dir is best-effort
+		}
+		rel, _ := filepath.Rel(dir, path)
+		fmt.Fprintf(&b, "\n### %s\n\n%s\n", rel, string(data))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// persistFetchedDocs writes the feasibility gate's fetched
+// documentation to <repoRoot>/.stoke/external-docs/<service>.md so
+// subsequent runs can reuse it (cache hit) and so task briefings
+// can reference the file path rather than re-embedding the text.
+func persistFetchedDocs(repoRoot string, docs map[string]string) error {
+	dir := filepath.Join(repoRoot, ".stoke", "external-docs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for service, content := range docs {
+		safe := strings.ToLower(service)
+		safe = strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				return r
+			}
+			return '-'
+		}, safe)
+		if safe == "" {
+			continue
+		}
+		p := filepath.Join(dir, safe+".md")
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // ensureGitRepoOrFatal is the "auto-init git" convenience wrapper used by
