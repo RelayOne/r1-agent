@@ -33,6 +33,24 @@ type TaskResult struct {
 // Implementations must not mutate shared state without synchronization.
 type ExecuteFunc func(ctx context.Context, task plan.Task) TaskResult
 
+// PriorityFunc returns the input tasks in the order they should be
+// dispatched. Pure — must not modify the input slice in place. The
+// default is sortByGRPW (Greatest Rank Positional Weight); alternative
+// algorithms (Autellix PLAS, Continuum KV-cache affinity) can be
+// registered via Algorithms and selected via Scheduler.PriorityName.
+// When PriorityName is empty or unknown, the scheduler falls back to
+// GRPW so behavior is byte-identical to the pre-pluggable build.
+type PriorityFunc func(tasks []plan.Task) []plan.Task
+
+// Algorithms is the registry of named PriorityFunc implementations.
+// Seeded with "grpw" (the legacy default). Callers who bring an
+// alternative (e.g. cmd/stoke at startup) can add entries before the
+// scheduler runs. Safe for concurrent registration as long as writes
+// happen before any Scheduler.Run call begins.
+var Algorithms = map[string]PriorityFunc{
+	"grpw": sortByGRPW,
+}
+
 // Scheduler dispatches tasks in parallel, respecting dependencies and file conflicts.
 type Scheduler struct {
 	maxWorkers int
@@ -45,6 +63,11 @@ type Scheduler struct {
 	failed    map[string]bool   // task failed -- dependents must NOT dispatch
 	running   map[string]bool
 
+	// PriorityName selects which Algorithms entry drives task ordering.
+	// Empty string or unknown name → fallback to "grpw" without error,
+	// so misconfiguration degrades gracefully rather than halting runs.
+	PriorityName string
+
 	// MessageBus enables inter-agent communication during parallel task execution.
 	// When set, tasks can broadcast status updates and conflict alerts.
 	MessageBus *agentmsg.Bus
@@ -52,6 +75,17 @@ type Scheduler struct {
 	// DispatchQueue provides reliable message delivery with retry for task events.
 	// When set, task completion/failure events are dispatched through the queue.
 	DispatchQueue *dispatch.Queue
+}
+
+// priority returns the resolved PriorityFunc for this Scheduler, always
+// yielding a non-nil result. Unknown PriorityName degrades to GRPW.
+func (s *Scheduler) priority() PriorityFunc {
+	if s != nil && s.PriorityName != "" {
+		if fn, ok := Algorithms[s.PriorityName]; ok && fn != nil {
+			return fn
+		}
+	}
+	return sortByGRPW
 }
 
 // New creates a scheduler with the given concurrency limit.
@@ -70,7 +104,7 @@ func New(maxWorkers int) *Scheduler {
 // Tasks with StatusDone are skipped (resume support).
 // Returns results for all tasks.
 func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) ([]TaskResult, error) {
-	tasks := sortByGRPW(p.Tasks)
+	tasks := s.priority()(p.Tasks)
 	results := make(chan TaskResult, len(tasks))
 	var allResults []TaskResult
 	var wg sync.WaitGroup

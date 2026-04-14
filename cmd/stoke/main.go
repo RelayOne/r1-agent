@@ -103,6 +103,7 @@ type BuildConfig struct {
 	NativeAPIKey    string // API key for native runner (required when RunnerMode=native)
 	NativeModel     string // model for native runner
 	NativeBaseURL   string // base URL for native runner (e.g. LiteLLM proxy)
+	SchedulerAlgo   string // task priority algorithm: grpw (default) | plas | continuum
 }
 
 // runBuild executes a build plan and returns the result.
@@ -237,6 +238,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	planState := taskstate.NewPlanState(taskIDs)
 
 	sched := scheduler.New(cfg.Workers)
+	sched.PriorityName = cfg.SchedulerAlgo
 	startTime := time.Now()
 
 	// Create ONE shared worktree manager for the entire build session.
@@ -891,6 +893,7 @@ func buildCmd(args []string) {
 	policy := fs.String("policy", "", "Path to stoke.policy.yaml")
 	dryRun := fs.Bool("dry-run", false, "Show plan without executing")
 	workers := fs.Int("workers", 4, "Max parallel agents")
+	schedulerAlgo := fs.String("scheduler", "grpw", "Task priority algorithm: grpw (default) | plas (Autellix program-level attained service approximation) | continuum (file-scope KV-cache affinity approximation). Unknown values fall back to grpw.")
 	authMode := fs.String("mode", "mode1", "Auth mode")
 	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
@@ -1091,6 +1094,7 @@ func buildCmd(args []string) {
 			defer cancel()
 
 			sched := scheduler.New(*workers)
+			sched.PriorityName = *schedulerAlgo
 			interactiveWorktrees := worktree.NewManager(absRepo)
 			wisdomStore := wisdom.NewStore()
 
@@ -1185,6 +1189,7 @@ func buildCmd(args []string) {
 		EnvBackend:      *envBackend,
 		EnvImage:        *envImage,
 		EnvSize:         *envSize,
+		SchedulerAlgo:   *schedulerAlgo,
 	}
 
 	buildReport, err := runBuild(buildCfg)
