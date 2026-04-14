@@ -1840,7 +1840,10 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		// Per-task reviewer: catch gaps at task scope before
 		// cascading into session AC failures. Bounded at 1
 		// follow-up max per task to cap cost and prevent loops.
-		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns)
+		// preTaskDirtySet is passed in so the reviewer can
+		// deterministically verify the task wrote its declared
+		// files — closes the zombie-task false-complete hole.
+		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns, preTaskDirtySet)
 
 		// Post-task diff: what did THIS task actually touch?
 		reportPerTaskFileDrift(ctx, cfg.RepoRoot, task, preTaskDirtySet, tr.Success)
@@ -1848,6 +1851,41 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		results = append(results, tr)
 	}
 	return results
+}
+
+// zombieWrites returns true when a task declared at least one file
+// and wrote NONE of those files during its dispatch. This is the
+// deterministic signal we use to override an LLM reviewer's
+// over-eager "complete" verdict. It is intentionally strict: we
+// only flag zombies when declared files exist AND none of them
+// changed AND the overall post-dispatch dirty delta vs preTaskDirty
+// is empty. A task that legitimately wrote something (e.g. a
+// different file outside task.Files) is not a zombie; scope drift
+// is a separate signal surfaced by reportPerTaskFileDrift.
+//
+// preTaskDirty is the set of files that were already dirty before
+// this task (or follow-up) ran. When preTaskDirty is nil we default
+// to "not zombie" — without a baseline we can't prove the writes
+// didn't happen.
+func zombieWrites(ctx context.Context, repoRoot string, task plan.Task, preTaskDirty map[string]bool) bool {
+	if len(task.Files) == 0 {
+		return false
+	}
+	if preTaskDirty == nil {
+		return false
+	}
+	postDirty := gitDirtyFiles(ctx, repoRoot)
+	changed := 0
+	for _, f := range postDirty {
+		if preTaskDirty[f] {
+			continue
+		}
+		if strings.HasPrefix(f, ".stoke/") {
+			continue
+		}
+		changed++
+	}
+	return changed == 0
 }
 
 // reportPerTaskFileDrift compares the files a task claims it will
@@ -1985,7 +2023,14 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// Per-task reviewer (bounded follow-up) runs in
 				// each worker goroutine so parallel review + fix
 				// happens per-task without serializing the wave.
-				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns)
+				// We pass preWaveDirty as the pre-task baseline.
+				// In a parallel wave we can't cheaply isolate
+				// per-task writes, but preWaveDirty at least tells
+				// the reviewer which files were already on disk
+				// before the wave started — enough to catch the
+				// pure zombie case (declared files, zero writes in
+				// the whole wave).
+				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns, preWaveDirty)
 				resCh <- indexed{idx: ti, res: tr}
 			}()
 		}
@@ -3094,11 +3139,11 @@ func runFoundationSanityCheck(ctx context.Context, cfg sowNativeConfig, sowDoc *
 // sub-directive. Recursion is bounded by maxReviewDepth.
 //
 // Noop when cfg has no ReasoningProvider.
-func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, task plan.Task, tr *plan.TaskExecResult, runtimeDir string, cfg sowNativeConfig, maxTurns int) {
+func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, task plan.Task, tr *plan.TaskExecResult, runtimeDir string, cfg sowNativeConfig, maxTurns int, preTaskDirty map[string]bool) {
 	if cfg.ReasoningProvider == nil || tr == nil || !tr.Success {
 		return
 	}
-	reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil)
+	reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil, preTaskDirty)
 }
 
 // maxReviewDepth caps recursive follow-up decomposition. The depth
@@ -3124,7 +3169,7 @@ const maxReviewDepth = 3
 // depth 1, decomposed sub-directive at depth 2+). priorDirectives
 // carries the trail of follow-up attempts so the decomposer knows
 // what's already been tried.
-func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string) {
+func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string, preTaskDirty map[string]bool) {
 	// At-or-past-cap handling is implemented below (see atCap branch)
 	// — we still run the reviewer + decomposer at the cap boundary so
 	// productive sub-directives get promoted to first-class scope via
@@ -3160,6 +3205,28 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	})
 	if err != nil || verdict == nil {
 		return
+	}
+	if verdict.Complete {
+		// Deterministic zombie-task check: the LLM reviewer routinely
+		// approves "complete" when the declared files already exist on
+		// disk from earlier scaffolding tasks — even when THIS task
+		// wrote zero of those files. Run 1 / T18 is the canonical
+		// example ("task T18 claimed success but wrote 0 files
+		// (declared 3)" followed by reviewer ✔). Here we measure what
+		// actually changed since pre-task snapshot; if the task
+		// declared files and none of them changed, we override the
+		// reviewer's verdict to incomplete and force a re-dispatch
+		// that explicitly names the missing writes. This is the one
+		// layer of enforcement no LLM can talk its way past.
+		if zombieWrites(ctx, cfg.RepoRoot, originalTask, preTaskDirty) {
+			fmt.Printf("    ⛔ reviewer said 'complete' but task %s wrote 0 of %d declared file(s) — overriding to incomplete\n", originalTask.ID, len(originalTask.Files))
+			verdict.Complete = false
+			zombieGap := fmt.Sprintf("task declared %d file(s) but wrote none of them during dispatch — the 'complete' verdict was based on files that already existed on disk from other tasks. Declared files: %s", len(originalTask.Files), strings.Join(originalTask.Files, ", "))
+			verdict.GapsFound = append([]string{zombieGap}, verdict.GapsFound...)
+			if strings.TrimSpace(verdict.FollowupDirective) == "" {
+				verdict.FollowupDirective = fmt.Sprintf("Create or modify each of these declared files with the content required by the task description. The prior attempt claimed success without actually writing any of them. Files: %s", strings.Join(originalTask.Files, ", "))
+			}
+		}
 	}
 	if verdict.Complete {
 		if depth == 0 {
@@ -3202,7 +3269,18 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			return
 		}
 		if decVerdict.Abandon {
-			fmt.Printf("    ⏹ decomposer abandoned %s at depth %d: %s\n", originalTask.ID, depth, truncateForLog(decVerdict.AbandonReason, 200))
+			// The decomposer has concluded the remaining gap is
+			// structurally unmeetable within this task's scope. That
+			// is DIFFERENT from "complete" — previous logging used ⏹
+			// which read like a neutral stop. Explicitly flag BLOCKED
+			// so downstream integration-review picks up a real gap
+			// rather than inheriting a silent accept. T4 / run 1 was
+			// the canonical example: abandon at depth 3 with reason
+			// "types package has no imports from any @sentinel/*
+			// workspace package" — the SOW-required peerDependencies
+			// with workspace:* was structurally unsatisfiable, but
+			// the task rolled on as if complete.
+			fmt.Printf("    ⛔ decomposer ABANDONED %s at depth %d — task BLOCKED, not complete: %s\n", originalTask.ID, depth, truncateForLog(decVerdict.AbandonReason, 200))
 			return
 		}
 		if len(decVerdict.SubDirectives) == 0 {
@@ -3277,9 +3355,13 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			continue
 		}
 		// Recurse: review the follow-up's work and decompose
-		// further if gaps remain.
+		// further if gaps remain. Re-snapshot dirty state around
+		// this follow-up so the next level's zombie check is
+		// scoped to the follow-up's writes, not the original
+		// task's pre-dispatch state.
 		nextPriorDirectives := append(append([]string{}, priorDirectives...), directive)
-		reviewAndFollowupRecursive(ctx, sowDoc, workingSession, originalTask, followup, runtimeDir, cfg, maxTurns, depth+1, nextPriorDirectives)
+		followupPreDirty := toSet(gitDirtyFiles(ctx, cfg.RepoRoot))
+		reviewAndFollowupRecursive(ctx, sowDoc, workingSession, originalTask, followup, runtimeDir, cfg, maxTurns, depth+1, nextPriorDirectives, followupPreDirty)
 	}
 }
 
