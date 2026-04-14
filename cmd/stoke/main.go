@@ -1246,6 +1246,7 @@ func sowCmd(args []string) {
 	// failure because there's nothing else to do.
 	continueOnFailureFlag := fs.String("continue-on-failure", "", "Keep running subsequent sessions after a session fails (true/false/auto). Default: auto — true if SOW has >1 session, false otherwise.")
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
+	parallelSessions := fs.Int("parallel", 0, "Run up to N sessions concurrently via the DAG-driven scheduler (0 = legacy sequential; 2-4 recommended). Sessions are parallelized when their declared Inputs/Outputs or file scopes prove independence; declaration order is the safe fallback.")
 	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
 	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
 	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
@@ -1517,6 +1518,10 @@ func sowCmd(args []string) {
 	}
 	if *maxRetries > 0 {
 		ss.MaxSessionRetries = *maxRetries
+	}
+	if *parallelSessions >= 2 {
+		ss.ParallelSessions = *parallelSessions
+		fmt.Printf("  parallel-sessions: ON (up to %d concurrent sessions via DAG scheduler)\n", *parallelSessions)
 	}
 	if err := ss.LoadOrCreateState(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: SOW state init failed: %v\n", err)

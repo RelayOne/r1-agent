@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+// ParallelSessions, when > 0, enables the DAG-driven parallel runner.
+// Callers set this to the max number of sessions that may execute
+// concurrently. Zero (the default) preserves the legacy linear for-
+// loop behavior exactly so opt-in use doesn't regress any existing
+// deployment.
+//
+// Reasonable values: 2-4. Higher parallelism shifts the bottleneck to
+// LiteLLM rate limits and git / install contention, not CPU. The
+// runner still enforces shared-state mutexes around pnpm install,
+// depcheck, and SOWState persistence so concurrent sessions don't
+// corrupt each other.
+
 // SessionScheduler orchestrates SOW execution by running sessions sequentially,
 // checking acceptance criteria at each session boundary. Within each session,
 // tasks are dispatched to the caller's execute function which can use Stoke's
@@ -29,6 +41,12 @@ type SessionScheduler struct {
 	// acceptance check is retried on failure before moving on (or halting).
 	// Default 1 = no retry.
 	MaxSessionRetries int
+	// ParallelSessions, when >= 2, enables DAG-driven parallel session
+	// dispatch. The scheduler builds a dependency graph from Session.Inputs
+	// / Session.Outputs + file-scope inference + declaration-order fallback
+	// and launches up to N sessions concurrently whenever their blockers
+	// are resolved. Zero or one keeps the legacy sequential runner.
+	ParallelSessions int
 	// BuildRequiredEnvVars, when non-nil, restricts the infra-env-var
 	// preflight gate to only those variables the env-var classifier
 	// identified as genuinely required at build/test time. Runtime-only
@@ -132,6 +150,12 @@ func (ss *SessionScheduler) AppendSession(session Session) {
 //
 // Returns results for all attempted sessions.
 func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) ([]SessionResult, error) {
+	// Opt-in DAG-driven parallel execution. When disabled, fall through
+	// to the legacy sequential loop below — behavior is byte-for-byte
+	// identical to pre-parallel releases.
+	if ss.ParallelSessions >= 2 {
+		return ss.runParallel(ctx, execFn)
+	}
 	var results []SessionResult
 	var firstErr error
 
