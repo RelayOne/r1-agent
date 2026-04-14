@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/websearch"
 )
 
@@ -67,8 +68,14 @@ type ExternalServiceDocs struct {
 	WebResults []websearch.Result
 	// WebQuery is the query we sent to the searcher (for audit).
 	WebQuery string
-	// Covered is true when either SOWProvides OR len(WebResults) > 0.
-	// When Covered is false after both checks, the gate refuses.
+	// BundledDoc is the embedded API reference shipped inside stoke
+	// for well-known services. When non-empty, the doc is authored +
+	// verified by the stoke team and should be preferred over web
+	// search results for briefing injection.
+	BundledDoc string
+	// Covered is true when BundledDoc OR SOWProvides OR
+	// len(WebResults) > 0. When Covered is false after every check,
+	// the gate refuses.
 	Covered bool
 }
 
@@ -398,12 +405,26 @@ func CheckExternalDocs(ctx context.Context, services []ExternalService, rawSOW s
 		// overrides STILL records SOWProvides=true for audit trail.
 		if IsWellKnownService(svc.Name) {
 			r.Covered = true
+			if doc := skill.IntegrationDoc(svc.Name); doc != "" {
+				r.BundledDoc = doc
+			}
 			if ok, ev := sowProvidesDocumentation(rawSOW, svc.Name); ok {
 				r.SOWProvides = true
 				r.SOWEvidence = ev
+			} else if r.BundledDoc != "" {
+				r.SOWEvidence = "bundled reference doc ships with stoke"
 			} else {
 				r.SOWEvidence = "well-known service; trusted to model's training-data coverage"
 			}
+			out = append(out, r)
+			continue
+		}
+		// Tier-2 fallback: check for a bundled doc even on niche
+		// services — when one exists, it counts as coverage.
+		if doc := skill.IntegrationDoc(svc.Name); doc != "" {
+			r.BundledDoc = doc
+			r.Covered = true
+			r.SOWEvidence = "bundled reference doc ships with stoke"
 			out = append(out, r)
 			continue
 		}

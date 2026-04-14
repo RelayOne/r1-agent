@@ -83,6 +83,9 @@ func EvaluateFeasibility(ctx context.Context, sow *SOW, rawSOW string, searcher 
 		}
 		// Build the briefing-injection text for this service.
 		var b strings.Builder
+		if doc.BundledDoc != "" {
+			fmt.Fprintf(&b, "Bundled API reference for %s (verified; shipped with stoke):\n\n%s\n", doc.Service.Name, doc.BundledDoc)
+		}
 		if doc.SOWProvides {
 			fmt.Fprintf(&b, "Documentation for %s is provided inline in the SOW (evidence: %s).\n", doc.Service.Name, doc.SOWEvidence)
 		}
@@ -123,8 +126,13 @@ func (r *FeasibilityReport) FormatReport() string {
 		fmt.Fprintf(&b, "  ✔ feasibility gate: %d external service(s), all covered by documentation\n", len(r.DocCoverage))
 		for _, d := range r.DocCoverage {
 			src := "SOW"
-			if !d.SOWProvides {
-				src = "web (" + d.Service.Name + ")"
+			switch {
+			case d.BundledDoc != "":
+				src = "bundled"
+			case !d.SOWProvides && len(d.WebResults) > 0:
+				src = "web"
+			case !d.SOWProvides:
+				src = "model training"
 			}
 			fmt.Fprintf(&b, "     - %s: docs from %s\n", d.Service.Name, src)
 		}
