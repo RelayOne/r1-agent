@@ -76,31 +76,84 @@ type ExternalServiceDocs struct {
 // in SOW prose. Keeps precision high for common cases so the gate
 // doesn't false-fire on in-codebase tokens that happen to match a
 // vendor name.
+//
+// Tier classification is orthogonal, enforced via wellKnownServices
+// below: the detector sees every entry here the same way — as a
+// "there's a service referenced" signal — but the documentation
+// requirement is only applied to NICHE services. Well-known services
+// have stable, widely-documented APIs that every modern code model
+// has training-data coverage for; the harness does not demand
+// operator-supplied docs to build against them.
 var knownExternalServices = map[string][]string{
+	// Niche / proprietary vendor APIs (documentation required):
 	"guesty":         {"guesty"},
 	"hostaway":       {"hostaway"},
 	"mews":           {"mews"},
 	"pointclickcare": {"pointclickcare", "point click care"},
 	"yardi":          {"yardi"},
 	"realpage":       {"realpage"},
-	"stripe":         {"stripe"},
-	"sendgrid":       {"sendgrid"},
-	"twilio":         {"twilio"},
-	"slack":          {"slack webhook", "slack api", "slack bot"},
-	"fcm":            {"fcm", "firebase cloud messaging"},
-	"apns":           {"apns", "apple push notification"},
-	"expo":           {"expo push notifications"},
-	"okta":           {"okta"},
-	"auth0":          {"auth0"},
-	"openai":         {"openai api"},
-	"anthropic":      {"anthropic api"},
-	"github":         {"github api", "github webhook"},
-	"gitlab":         {"gitlab api"},
-	"datadog":        {"datadog api"},
-	"segment":        {"segment analytics"},
-	"sentry":         {"sentry dsn", "sentry api"},
-	"postmark":       {"postmark"},
-	"mailgun":        {"mailgun"},
+	// Well-known ubiquitous services (model training covers these):
+	"stripe":    {"stripe"},
+	"sendgrid":  {"sendgrid"},
+	"twilio":    {"twilio"},
+	"slack":     {"slack webhook", "slack api", "slack bot"},
+	"fcm":       {"fcm", "firebase cloud messaging"},
+	"apns":      {"apns", "apple push notification"},
+	"expo":      {"expo push notifications"},
+	"okta":      {"okta"},
+	"auth0":     {"auth0"},
+	"openai":    {"openai api"},
+	"anthropic": {"anthropic api"},
+	"github":    {"github api", "github webhook"},
+	"gitlab":    {"gitlab api"},
+	"datadog":   {"datadog api"},
+	"segment":   {"segment analytics"},
+	"sentry":    {"sentry dsn", "sentry api"},
+	"postmark":  {"postmark"},
+	"mailgun":   {"mailgun"},
+}
+
+// wellKnownServices are services whose APIs are stable enough AND
+// documented in enough training data that modern code models can
+// build against them correctly without operator-provided docs. The
+// feasibility gate treats references to these as Covered by default.
+//
+// Criteria for inclusion:
+//   - Public docs portal indexed by every major LLM training set
+//   - API shape stable for ≥2 years (webhooks, REST, SDK)
+//   - Widely-used — at least hundreds of open-source repos integrate
+//     against it so model training has seen many correct examples
+//
+// Services NOT in this set (Guesty, Hostaway, Mews, PointClickCare,
+// Yardi, RealPage, etc.) are proprietary vendor platforms where
+// model training is thin and operator-provided docs are needed to
+// avoid hallucinated endpoints.
+var wellKnownServices = map[string]bool{
+	"stripe":    true,
+	"sendgrid":  true,
+	"twilio":    true,
+	"slack":     true,
+	"fcm":       true,
+	"apns":      true,
+	"expo":      true,
+	"okta":      true,
+	"auth0":     true,
+	"openai":    true,
+	"anthropic": true,
+	"github":    true,
+	"gitlab":    true,
+	"datadog":   true,
+	"segment":   true,
+	"sentry":    true,
+	"postmark":  true,
+	"mailgun":   true,
+}
+
+// IsWellKnownService returns true when the service is covered by
+// model training data strongly enough that the feasibility gate
+// trusts the worker to build against it without additional docs.
+func IsWellKnownService(name string) bool {
+	return wellKnownServices[strings.ToLower(strings.TrimSpace(name))]
 }
 
 // genericIntegrationHint catches "integrates with X", "calls the X
@@ -336,6 +389,25 @@ func CheckExternalDocs(ctx context.Context, services []ExternalService, rawSOW s
 	out := make([]ExternalServiceDocs, 0, len(services))
 	for _, svc := range services {
 		r := ExternalServiceDocs{Service: svc}
+		// Tier-1: well-known services (Stripe, FCM, SendGrid, etc.).
+		// Model training has broad, stable coverage; no operator docs
+		// required. The SOW can still supply custom specifics
+		// (different webhook signing key shape, non-default endpoint)
+		// and those would be picked up by the sowProvidesDocumentation
+		// check below — so a well-known service with SOW-provided
+		// overrides STILL records SOWProvides=true for audit trail.
+		if IsWellKnownService(svc.Name) {
+			r.Covered = true
+			if ok, ev := sowProvidesDocumentation(rawSOW, svc.Name); ok {
+				r.SOWProvides = true
+				r.SOWEvidence = ev
+			} else {
+				r.SOWEvidence = "well-known service; trusted to model's training-data coverage"
+			}
+			out = append(out, r)
+			continue
+		}
+		// Tier-2: niche / proprietary vendor. Require real docs.
 		if ok, ev := sowProvidesDocumentation(rawSOW, svc.Name); ok {
 			r.SOWProvides = true
 			r.SOWEvidence = ev
