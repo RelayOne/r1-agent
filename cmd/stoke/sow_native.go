@@ -3448,6 +3448,19 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			fmt.Printf("    ⚠ decomposer error at depth %d: %v — letting session ACs catch\n", depth, decErr)
 			return
 		}
+		// Typed validation + breadth cap on the decomposer's output.
+		// A malformed verdict used to fall through with implicit no-op
+		// semantics; now a validator turns those cases into explicit
+		// decisions under deterministic code. The breadth cap also
+		// catches LLM fan-out explosions (run 5 observed T1 produce
+		// 13 sub-directives) by truncating to the configured max so
+		// one stuck task can't monopolize the run's dispatch budget.
+		budget := plan.ReviewBudget{}.WithDefaults()
+		if vErrs := plan.ValidateDecomposeVerdict(decVerdict, budget.MaxDecompBreadth); len(vErrs) > 0 {
+			fmt.Printf("    ⚠ decomposer verdict malformed at depth %d: %s — treating as Abandon (BLOCKED) rather than acting on invalid output\n", depth, strings.Join(vErrs, "; "))
+			return
+		}
+		decVerdict = plan.TruncateSubDirectives(decVerdict, budget.MaxDecompBreadth)
 		if decVerdict.Abandon {
 			// The decomposer has concluded the remaining gap is
 			// structurally unmeetable within this task's scope. That
@@ -3739,6 +3752,15 @@ func runForcedDecomposition(ctx context.Context, sowDoc *plan.SOW, workingSessio
 		fmt.Printf("    ⚠ forced decomposer error: %v — falling back to plain repair next attempt\n", decErr)
 		return false
 	}
+	// Same typed validation + breadth truncation as the primary
+	// decomposer call site. Keeps both code paths consistent: one
+	// source of deterministic verdict-shape truth.
+	budget := plan.ReviewBudget{}.WithDefaults()
+	if vErrs := plan.ValidateDecomposeVerdict(decVerdict, budget.MaxDecompBreadth); len(vErrs) > 0 {
+		fmt.Printf("    ⚠ forced decomposer verdict malformed: %s — falling back to plain repair\n", strings.Join(vErrs, "; "))
+		return false
+	}
+	decVerdict = plan.TruncateSubDirectives(decVerdict, budget.MaxDecompBreadth)
 	if decVerdict.Abandon {
 		fmt.Printf("    ⏹ decomposer abandoned stuck gap: %s\n", truncateForLog(decVerdict.AbandonReason, 200))
 		return false
