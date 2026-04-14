@@ -360,10 +360,18 @@ func ResolveRole(role Role, flagModel, flagSource, flagURL, flagAPIKey, legacyMo
 	if cfg.Model == "" {
 		cfg.Model = legacyModel
 	}
-	if cfg.URL == "" && cfg.Source == SourceLiteLLM {
+	// Legacy URL / API key fallback applies across ALL sources, not
+	// just LiteLLM. A deployment whose --native-base-url already
+	// points at a direct Anthropic endpoint or an OpenRouter proxy
+	// must keep using that endpoint when the operator adds only
+	// --builder-source=direct or --reviewer-source=openrouter without
+	// re-stating URL/key. Limiting fallback to LiteLLM silently
+	// dropped those legacy endpoints for non-LiteLLM sources — the
+	// codex-review P2 on fee0de4.
+	if cfg.URL == "" {
 		cfg.URL = legacyURL
 	}
-	if cfg.APIKey == "" && cfg.Source == SourceLiteLLM {
+	if cfg.APIKey == "" {
 		cfg.APIKey = legacyAPIKey
 	}
 

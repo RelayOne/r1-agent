@@ -1802,8 +1802,91 @@ func sowCmd(args []string) {
 		if nativeModelName == "" {
 			nativeModelName = "claude-sonnet-4-6"
 		}
+
+		// Precompute reviewer-side provider + model BEFORE the native
+		// runner is constructed, because modelsource.ResolveRole for
+		// the builder role needs to run first — otherwise overrides
+		// like BUILDER_SOURCE=openrouter end up too late: the runner
+		// has already been built with the legacy Anthropic values.
+		// This is the codex-review P1 on fee0de4.
+		reasoningKey := *reasoningAPIKey
+		if reasoningKey == "" {
+			reasoningKey = nativeKey
+		}
+		reasoningURL := *reasoningBaseURL
+		if reasoningURL == "" {
+			reasoningURL = *nativeBaseURL
+		}
+		var reasoningProv provider.Provider
+		if reasoningURL != *nativeBaseURL || reasoningKey != nativeKey {
+			reasoningProv = provider.NewAnthropicProvider(reasoningKey, reasoningURL)
+		} else {
+			reasoningProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		}
+		reasoningModelChoice := *reasoningModel
+		if reasoningModelChoice == "" {
+			reasoningModelChoice = nativeModelName
+		}
+
+		// Resolve BUILDER_* first so nativeKey / nativeBaseURL /
+		// nativeModelName are correct by the time we build the runner.
+		nativeBaseURLForRunner := *nativeBaseURL
+		if br, changed, err := modelsource.ResolveRole(modelsource.RoleBuilder,
+			*builderModelFlag, *builderSourceFlag, *builderURLFlag, *builderAPIKeyFlag,
+			nativeModelName, *nativeBaseURL, nativeKey); err != nil {
+			fatal("builder model-source: %v", err)
+		} else if changed && br != nil {
+			fmt.Printf("  🧩 builder via modelsource: %s @ %s (source=%s)\n", br.Model, br.Endpoint, br.Source)
+			if br.Model != "" {
+				nativeModelName = br.Model
+			}
+			// Swap the runner's endpoint + key only when the builder
+			// Resolved carried them (direct / openrouter). For litellm
+			// we keep the legacy --native-base-url to preserve the
+			// operator's explicit proxy configuration.
+			if br.Endpoint != "" {
+				nativeBaseURLForRunner = br.Endpoint
+			}
+			// The builder provider comes back ready to go, but the
+			// existing engine.NewNativeRunner constructor takes raw
+			// key + model rather than a provider; the simplest wiring
+			// is to update the key/URL the constructor sees so the
+			// runner's internal provider matches what ResolveRole picked.
+			// When the operator supplied a direct API key via flag,
+			// propagate it through so the runner authenticates at the
+			// right endpoint.
+			if br.Source == modelsource.SourceDirect || br.Source == modelsource.SourceOpenRouter {
+				// Extract the API key the modelsource Build() resolved;
+				// since Build() doesn't currently surface it separately,
+				// prefer the operator's explicit flag when given.
+				if *builderAPIKeyFlag != "" {
+					nativeKey = *builderAPIKeyFlag
+				}
+			}
+		}
+
+		// Resolve REVIEWER_* after the builder so the reviewer's legacy
+		// fallback (reasoningModelChoice / reasoningURL / reasoningKey)
+		// reflects the final builder-resolved values.
+		if rr, changed, err := modelsource.ResolveRole(modelsource.RoleReviewer,
+			*reviewerModelFlag, *reviewerSourceFlag, *reviewerURLFlag, *reviewerAPIKeyFlag,
+			reasoningModelChoice, reasoningURL, reasoningKey); err != nil {
+			fatal("reviewer model-source: %v", err)
+		} else if changed && rr != nil {
+			fmt.Printf("  🧩 reviewer via modelsource: %s @ %s (source=%s)\n", rr.Model, rr.Endpoint, rr.Source)
+			reasoningProv = rr.Provider
+			if rr.Model != "" {
+				reasoningModelChoice = rr.Model
+			}
+		}
+
+		if reasoningModelChoice != nativeModelName || reasoningURL != *nativeBaseURL {
+			fmt.Printf("  🔍 reviewer model split: workers=%s @ %s, reviewers/judges=%s @ %s\n",
+				nativeModelName, *nativeBaseURL, reasoningModelChoice, reasoningURL)
+		}
+
 		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
-		runner.BaseURL = *nativeBaseURL
+		runner.BaseURL = nativeBaseURLForRunner
 
 		// Build a repo map once so every task prompt can inject the
 		// ranked codebase view. If this fails we proceed without it.
@@ -1842,68 +1925,9 @@ func sowCmd(args []string) {
 			}
 		}
 
-		// Reasoning provider built early: the continuation callback's
-		// cascade-cap root-cause planner branch needs it when depth
-		// exceeds maxCascadeDepth.
-		//
-		// When --reasoning-base-url or --reasoning-api-key is set, build
-		// a SEPARATE provider so judges/reviewers can route to a
-		// stronger model at a different endpoint (e.g. Claude Opus
-		// behind one proxy, MiniMax workers behind another). When both
-		// flags are empty, reuse the worker provider (current behavior).
-		reasoningKey := *reasoningAPIKey
-		if reasoningKey == "" {
-			reasoningKey = nativeKey
-		}
-		reasoningURL := *reasoningBaseURL
-		if reasoningURL == "" {
-			reasoningURL = *nativeBaseURL
-		}
-		var reasoningProv provider.Provider
-		if reasoningURL != *nativeBaseURL || reasoningKey != nativeKey {
-			reasoningProv = provider.NewAnthropicProvider(reasoningKey, reasoningURL)
-		} else {
-			reasoningProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
-		}
-		// Resolve reviewer model: --reasoning-model wins, else falls
-		// back to the worker model. Log when split is active so the
-		// operator sees the configuration.
-		reasoningModelChoice := *reasoningModel
-		if reasoningModelChoice == "" {
-			reasoningModelChoice = nativeModelName
-		}
-		if reasoningModelChoice != nativeModelName || reasoningURL != *nativeBaseURL {
-			fmt.Printf("  🔍 reviewer model split: workers=%s @ %s, reviewers/judges=%s @ %s\n",
-				nativeModelName, *nativeBaseURL, reasoningModelChoice, reasoningURL)
-		}
-
-		// Model-source overrides: if the operator specified any of the
-		// BUILDER_* / REVIEWER_* flags or env vars — or if GEMINI_KEY
-		// is set and would trigger the implicit reviewer-is-gemini
-		// default — swap in providers built by the modelsource
-		// resolver. Silent fallthrough when all inputs are empty so
-		// legacy --native-* / --reasoning-* behavior is preserved.
-		if br, changed, err := modelsource.ResolveRole(modelsource.RoleBuilder,
-			*builderModelFlag, *builderSourceFlag, *builderURLFlag, *builderAPIKeyFlag,
-			nativeModelName, *nativeBaseURL, nativeKey); err != nil {
-			fatal("builder model-source: %v", err)
-		} else if changed && br != nil {
-			fmt.Printf("  🧩 builder via modelsource: %s @ %s (source=%s)\n", br.Model, br.Endpoint, br.Source)
-			if br.Model != "" {
-				nativeModelName = br.Model
-			}
-		}
-		if rr, changed, err := modelsource.ResolveRole(modelsource.RoleReviewer,
-			*reviewerModelFlag, *reviewerSourceFlag, *reviewerURLFlag, *reviewerAPIKeyFlag,
-			reasoningModelChoice, reasoningURL, reasoningKey); err != nil {
-			fatal("reviewer model-source: %v", err)
-		} else if changed && rr != nil {
-			fmt.Printf("  🧩 reviewer via modelsource: %s @ %s (source=%s)\n", rr.Model, rr.Endpoint, rr.Source)
-			reasoningProv = rr.Provider
-			if rr.Model != "" {
-				reasoningModelChoice = rr.Model
-			}
-		}
+		// Reasoning provider / reviewer model already resolved above,
+		// before the native runner was constructed, so modelsource
+		// BUILDER_* / REVIEWER_* overrides land in the right place.
 
 		// Continuation callback: turn CTO-surfaced continuations into
 		// a new session the scheduler will pick up. Uses AppendSession
@@ -1964,7 +1988,7 @@ func sowCmd(args []string) {
 					SOWSpec:              overrideCtx.SOWSpec,
 					UniversalPromptBlock: skill.ConcatPromptBlocks(universalCtx.PromptBlock(), hookSet.PromptBlock(skill.HookSelector{Kind: "agents", Name: "judge-fix-dag-planner"})),
 				}
-				dag, err := plan.PlanFixDAG(ctx, reasoningProv, nativeModelName, dagInput)
+				dag, err := plan.PlanFixDAG(ctx, reasoningProv, reasoningModelChoice, dagInput)
 				if err != nil {
 					fmt.Printf("    ⚠ root-cause planner: %v — falling through to hard cap\n", err)
 					return
@@ -2124,7 +2148,7 @@ func sowCmd(args []string) {
 				}
 				dagCtx, dagCancel := context.WithTimeout(ctx, 10*time.Minute)
 				defer dagCancel()
-				dag, derr := plan.PlanFixDAG(dagCtx, reasoningProv, nativeModelName, dagInput)
+				dag, derr := plan.PlanFixDAG(dagCtx, reasoningProv, reasoningModelChoice, dagInput)
 				if derr != nil {
 					fmt.Printf("    ⚠ root-cause planner: %v — moving on\n", derr)
 					return
@@ -2252,7 +2276,7 @@ func sowCmd(args []string) {
 		// session from overwhelming the downstream integration
 		// reviewer. Noop when reasoningProv is nil or the session
 		// is below the task-count floor.
-		if applySessionSizerPass(ctx, sow, reasoningProv, nativeModelName, rawSOWText, universalCtx, hookSet) {
+		if applySessionSizerPass(ctx, sow, reasoningProv, reasoningModelChoice, rawSOWText, universalCtx, hookSet) {
 			// Sizer mutated sow.Sessions. The scheduler's SOWState
 			// was built earlier from the pre-split session list,
 			// so its SessionRecord set is now stale: sub-sessions

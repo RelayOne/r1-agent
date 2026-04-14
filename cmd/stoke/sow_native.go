@@ -1883,6 +1883,50 @@ const (
 	ZombieMissing
 )
 
+// containsExplicitStubMarkers returns true when any of the task's
+// declared files contains a recognizable stub marker in its body
+// (TODO / FIXME / NotImplementedError / unimplemented! / stub-text,
+// etc., per taskOutputStubMarkers). Unlike taskOutputsLookComplete
+// this function does not reject files for being small — legitimately
+// tiny outputs (barrel exports, thin wrappers, re-export modules) are
+// common in modern monorepos and must not be mistaken for placeholders.
+// Config-file extensions are skipped because their legitimate content
+// sometimes contains words like "todo" or "placeholder" as data
+// values rather than code stubs.
+//
+// Used by the zombie override's ZombieAlreadyDone branch. This is
+// the codex-review P2 fix: taskOutputsLookComplete was designed as a
+// conservative retry-skip helper and rejects any non-config file
+// under 50 bytes, which tripped on legitimate barrel exports and
+// single-line wrappers when wired as a hard failure gate.
+func containsExplicitStubMarkers(repoRoot string, t plan.Task) bool {
+	if len(t.Files) == 0 {
+		return false
+	}
+	for _, rel := range t.Files {
+		full := filepath.Join(repoRoot, rel)
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(rel))
+		if ext == ".json" || ext == ".yaml" || ext == ".yml" || ext == ".toml" || ext == ".md" {
+			continue
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		lower := strings.ToLower(string(data))
+		for _, marker := range taskOutputStubMarkers {
+			if strings.Contains(lower, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // classifyZombie inspects post-dispatch state and returns one of the
 // three verdicts above. missingOrEmpty lists the declared files that
 // are missing or empty on disk (populated only for ZombieMissing).
@@ -1910,11 +1954,30 @@ func classifyZombie(ctx context.Context, repoRoot string, task plan.Task, preTas
 	// Zero writes this dispatch. Distinguish pre-existing-complete
 	// from actual-missing by checking each declared file's presence
 	// and non-empty content on disk.
+	//
+	// Directory-scoped task entries (e.g. "apps/web/") are treated as
+	// satisfied when the directory exists and is non-empty — the task
+	// declared the directory as its scope, not a specific file that
+	// must exist at that path. Flagging directories as "missing" was
+	// the codex-review P1: zero-write tasks whose Files list contains
+	// directory entries got re-dispatched into the exact nothing-to-
+	// write loop the three-state zombie classifier was supposed to
+	// prevent.
 	var missingOrEmpty []string
 	for _, f := range task.Files {
 		full := filepath.Join(repoRoot, f)
 		info, err := os.Stat(full)
-		if err != nil || info.IsDir() || info.Size() == 0 {
+		if err != nil {
+			missingOrEmpty = append(missingOrEmpty, f)
+			continue
+		}
+		if info.IsDir() {
+			if entries, rerr := os.ReadDir(full); rerr != nil || len(entries) == 0 {
+				missingOrEmpty = append(missingOrEmpty, f)
+			}
+			continue
+		}
+		if info.Size() == 0 {
 			missingOrEmpty = append(missingOrEmpty, f)
 		}
 	}
@@ -3275,10 +3338,16 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			}
 		case ZombieAlreadyDone:
 			// Deterministic layer first — cheap regex over file bodies.
-			// Returns false if any declared file is a stub/placeholder/
-			// under-sized. A false here is strong evidence of fake
-			// content even before we spend an LLM call.
-			detOK := taskOutputsLookComplete(cfg.RepoRoot, originalTask)
+			// We use containsExplicitStubMarkers (marker-only) rather
+			// than taskOutputsLookComplete: the latter was designed as
+			// a conservative retry-skip helper and rejects any file
+			// under 50 bytes, which legitimately-tiny outputs (barrel
+			// exports, thin wrappers, re-export modules) trip. That
+			// was the codex-review P2 false positive — using the
+			// retry-skip helper as a hard failure gate re-dispatched
+			// valid small-output tasks into the same nothing-to-write
+			// loop this three-state classifier exists to prevent.
+			detOK := !containsExplicitStubMarkers(cfg.RepoRoot, originalTask)
 			if !detOK {
 				fmt.Printf("    ⛔ task %s: zero writes AND deterministic stub scan flagged declared files as placeholder/too-short — overriding to incomplete\n", originalTask.ID)
 				verdict.Complete = false

@@ -13,13 +13,10 @@ func TestMessagesWithCacheControlStringContent(t *testing.T) {
 		{Role: "user", Content: json.RawMessage(`"third"`)},
 	}
 	out := messagesWithCacheControl(msgs, 2)
-	// First message is outside the cache tail — passes through.
-	if _, ok := out[0].(ChatMessage); !ok {
-		t.Fatalf("message 0 must pass through as ChatMessage; got %T", out[0])
-	}
-	// Last two messages must be wrapped maps with cache_control on the
-	// final content block.
-	for i := 1; i < 3; i++ {
+	// Invariant: every message must wrap to the same shape (array-of-
+	// blocks) so Anthropic's byte-prefix cache reads are stable across
+	// turns. Only the last nTail carry cache_control.
+	for i := 0; i < len(out); i++ {
 		m, ok := out[i].(map[string]interface{})
 		if !ok {
 			t.Fatalf("message %d: expected wrapped map, got %T", i, out[i])
@@ -32,13 +29,61 @@ func TestMessagesWithCacheControlStringContent(t *testing.T) {
 		if !ok {
 			t.Fatalf("message %d: last block not a map", i)
 		}
-		cc, ok := last["cache_control"].(map[string]interface{})
-		if !ok {
-			t.Fatalf("message %d: missing cache_control; got %+v", i, last)
+		_, hasCC := last["cache_control"]
+		shouldHaveCC := i >= 1 // nTail=2 → last two messages
+		if shouldHaveCC && !hasCC {
+			t.Fatalf("message %d should have cache_control: %+v", i, last)
 		}
-		if cc["type"] != "ephemeral" {
-			t.Fatalf("message %d: expected ephemeral, got %v", i, cc["type"])
+		if !shouldHaveCC && hasCC {
+			t.Fatalf("message %d must NOT have cache_control (would shift the prefix bytes): %+v", i, last)
 		}
+	}
+}
+
+// TestPrefixStabilityAcrossTurns is the regression test for the
+// codex-review P1 on bf940c6: on turn N+1 the same message should
+// serialize to the same bytes as on turn N (minus its own cache_control
+// if it fell out of the tail), so the cache prefix hash matches.
+func TestPrefixStabilityAcrossTurns(t *testing.T) {
+	turnN := []ChatMessage{
+		{Role: "user", Content: json.RawMessage(`"first"`)},
+		{Role: "assistant", Content: json.RawMessage(`"second"`)},
+	}
+	turnN1 := []ChatMessage{
+		{Role: "user", Content: json.RawMessage(`"first"`)},
+		{Role: "assistant", Content: json.RawMessage(`"second"`)},
+		{Role: "user", Content: json.RawMessage(`"third"`)},
+	}
+	// On turn N, messages 0 + 1 are both in the tail (nTail=2).
+	outN := messagesWithCacheControl(turnN, 2)
+	// On turn N+1, message 0 falls out of the tail; message 1 & 2 are in.
+	outN1 := messagesWithCacheControl(turnN1, 2)
+
+	// Strip cache_control from both and compare: the non-cache-control
+	// parts must be byte-identical so Anthropic's prefix cache can hit.
+	raw := func(v interface{}) string {
+		b, _ := json.Marshal(v)
+		s := string(b)
+		// Remove cache_control entries; Anthropic ignores their presence
+		// for the purposes of byte-prefix matching, so we normalize
+		// them out of the comparison.
+		for strings.Contains(s, `,"cache_control":{"type":"ephemeral"}`) {
+			s = strings.Replace(s, `,"cache_control":{"type":"ephemeral"}`, "", 1)
+		}
+		for strings.Contains(s, `"cache_control":{"type":"ephemeral"},`) {
+			s = strings.Replace(s, `"cache_control":{"type":"ephemeral"},`, "", 1)
+		}
+		return s
+	}
+	msg0N := raw(outN[0])
+	msg0N1 := raw(outN1[0])
+	if msg0N != msg0N1 {
+		t.Fatalf("message 0 encoding changed between turns — cache will miss:\nturnN: %s\nturnN1:%s", msg0N, msg0N1)
+	}
+	msg1N := raw(outN[1])
+	msg1N1 := raw(outN1[1])
+	if msg1N != msg1N1 {
+		t.Fatalf("message 1 encoding changed between turns — cache will miss:\nturnN: %s\nturnN1:%s", msg1N, msg1N1)
 	}
 }
 

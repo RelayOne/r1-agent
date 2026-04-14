@@ -138,12 +138,12 @@ func JudgeDeclaredContent(ctx context.Context, prov provider.Provider, model str
 	if err != nil {
 		return nil, fmt.Errorf("content judge: %w", err)
 	}
-	var raw string
-	for _, c := range resp.Content {
-		if c.Type == "text" {
-			raw += c.Text
-		}
-	}
+	// Use collectModelText so extended-thinking providers that return
+	// only thinking / redacted_thinking blocks still yield usable text
+	// for JSON parsing. Without this fallback the judge silently
+	// defaults to Real=true on every suspect task when wired to a
+	// thinking-emitting model — codex-review P2.
+	raw, _ := collectModelText(resp)
 	var verdict ContentJudgeVerdict
 	if _, perr := jsonutil.ExtractJSONInto(raw, &verdict); perr != nil {
 		// Non-JSON verdict — default to non-gating rather than making
