@@ -399,20 +399,41 @@ func (p *AnthropicProvider) setHeaders(req *http.Request) {
 	}
 }
 
-// OpenAICompatProvider communicates with OpenAI-compatible endpoints (OpenAI, OpenRouter, XAI, etc.).
+// OpenAICompatProvider communicates with OpenAI-compatible endpoints (OpenAI, OpenRouter, Gemini OpenAI-compat, XAI, etc.).
 type OpenAICompatProvider struct {
 	name       string
 	apiKey     string
 	baseURL    string
+	// chatPath is the path appended to baseURL for chat completions.
+	// OpenAI / OpenRouter use "/v1/chat/completions"; Google's
+	// Gemini OpenAI-compat prefixes that path into the base URL
+	// (https://generativelanguage.googleapis.com/v1beta/openai/) and
+	// expects "/chat/completions" appended. Empty means default.
+	chatPath   string
 	httpClient *http.Client
 }
 
-// NewOpenAICompatProvider creates an OpenAI-compatible API client.
+// NewOpenAICompatProvider creates an OpenAI-compatible API client. The
+// chat completions endpoint defaults to baseURL + "/v1/chat/completions".
+// Use NewOpenAICompatProviderWithPath for backends whose chat path
+// doesn't follow that convention (e.g. Gemini's OpenAI-compat surface).
 func NewOpenAICompatProvider(name, apiKey, baseURL string) *OpenAICompatProvider {
+	return NewOpenAICompatProviderWithPath(name, apiKey, baseURL, "/v1/chat/completions")
+}
+
+// NewOpenAICompatProviderWithPath is NewOpenAICompatProvider but with
+// an explicit chatPath (the path appended to baseURL for every
+// /chat/completions call). Kept separate so the default constructor's
+// callers aren't required to know about path conventions.
+func NewOpenAICompatProviderWithPath(name, apiKey, baseURL, chatPath string) *OpenAICompatProvider {
+	if chatPath == "" {
+		chatPath = "/v1/chat/completions"
+	}
 	return &OpenAICompatProvider{
 		name:       name,
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
+		chatPath:   chatPath,
 		httpClient: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
@@ -438,7 +459,7 @@ func (p *OpenAICompatProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(data))
+	httpReq, err := http.NewRequest("POST", p.baseURL+p.chatPath, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +505,7 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(data))
+	httpReq, err := http.NewRequest("POST", p.baseURL+p.chatPath, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}

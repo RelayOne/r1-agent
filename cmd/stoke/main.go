@@ -42,6 +42,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
+	"github.com/ericmacdougall/stoke/internal/modelsource"
 	"github.com/ericmacdougall/stoke/internal/notify"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
@@ -1230,6 +1231,25 @@ func sowCmd(args []string) {
 	reasoningModel := fs.String("reasoning-model", "", "Override the model used for judges/reviewers/decomposers (defaults to --native-model). Recommended: a stronger model than the worker — research shows convergence depends on critic > generator.")
 	reasoningBaseURL := fs.String("reasoning-base-url", "", "Override the base URL for the reasoning provider (defaults to --native-base-url).")
 	reasoningAPIKey := fs.String("reasoning-api-key", "", "Override the API key for the reasoning provider (defaults to --native-api-key).")
+	// Model-source flags: the BUILDER/REVIEWER x MODEL/SOURCE/URL/API_KEY
+	// matrix. Each flag takes precedence over its matching env var, which
+	// in turn takes precedence over the legacy --native-*/--reasoning-*
+	// flags above. Sources: litellm (default, routes through local
+	// LiteLLM gateway), openrouter (openrouter.ai), direct (vendor
+	// endpoint inferred from the model alias). Models: sonnet / opus /
+	// haiku / gemini / flash / codex / gpt-5 / litellm, or any exact
+	// vendor model ID. See internal/modelsource for the full resolution
+	// table. When GEMINI_KEY is set and no reviewer flags/env are
+	// specified, the reviewer role auto-routes to gemini direct so the
+	// operator gets a second-perspective reviewer by setting one env var.
+	builderModelFlag := fs.String("builder-model", "", "Builder (worker) model alias or exact ID (sonnet|opus|gemini|codex|litellm|<vendor-id>). Overrides BUILDER_MODEL env.")
+	builderSourceFlag := fs.String("builder-source", "", "Builder source (litellm|openrouter|direct). Overrides BUILDER_SOURCE env.")
+	builderURLFlag := fs.String("builder-url", "", "Builder endpoint URL (source=direct). Overrides BUILDER_URL env.")
+	builderAPIKeyFlag := fs.String("builder-api-key", "", "Builder API key. Overrides BUILDER_API_KEY env.")
+	reviewerModelFlag := fs.String("reviewer-model", "", "Reviewer (judge) model alias or exact ID. Overrides REVIEWER_MODEL env.")
+	reviewerSourceFlag := fs.String("reviewer-source", "", "Reviewer source (litellm|openrouter|direct). Overrides REVIEWER_SOURCE env.")
+	reviewerURLFlag := fs.String("reviewer-url", "", "Reviewer endpoint URL (source=direct). Overrides REVIEWER_URL env.")
+	reviewerAPIKeyFlag := fs.String("reviewer-api-key", "", "Reviewer API key. Overrides REVIEWER_API_KEY env.")
 	roiFilter := fs.String("roi", "medium", "ROI threshold: high, medium, low, skip")
 	specExec := fs.Bool("specexec", false, "Enable speculative parallel execution")
 	// SOW builds are long-running (hours-to-days for large SOWs). Hard timeout
@@ -1850,6 +1870,34 @@ func sowCmd(args []string) {
 		if reasoningModelChoice != nativeModelName || reasoningURL != *nativeBaseURL {
 			fmt.Printf("  🔍 reviewer model split: workers=%s @ %s, reviewers/judges=%s @ %s\n",
 				nativeModelName, *nativeBaseURL, reasoningModelChoice, reasoningURL)
+		}
+
+		// Model-source overrides: if the operator specified any of the
+		// BUILDER_* / REVIEWER_* flags or env vars — or if GEMINI_KEY
+		// is set and would trigger the implicit reviewer-is-gemini
+		// default — swap in providers built by the modelsource
+		// resolver. Silent fallthrough when all inputs are empty so
+		// legacy --native-* / --reasoning-* behavior is preserved.
+		if br, changed, err := modelsource.ResolveRole(modelsource.RoleBuilder,
+			*builderModelFlag, *builderSourceFlag, *builderURLFlag, *builderAPIKeyFlag,
+			nativeModelName, *nativeBaseURL, nativeKey); err != nil {
+			fatal("builder model-source: %v", err)
+		} else if changed && br != nil {
+			fmt.Printf("  🧩 builder via modelsource: %s @ %s (source=%s)\n", br.Model, br.Endpoint, br.Source)
+			if br.Model != "" {
+				nativeModelName = br.Model
+			}
+		}
+		if rr, changed, err := modelsource.ResolveRole(modelsource.RoleReviewer,
+			*reviewerModelFlag, *reviewerSourceFlag, *reviewerURLFlag, *reviewerAPIKeyFlag,
+			reasoningModelChoice, reasoningURL, reasoningKey); err != nil {
+			fatal("reviewer model-source: %v", err)
+		} else if changed && rr != nil {
+			fmt.Printf("  🧩 reviewer via modelsource: %s @ %s (source=%s)\n", rr.Model, rr.Endpoint, rr.Source)
+			reasoningProv = rr.Provider
+			if rr.Model != "" {
+				reasoningModelChoice = rr.Model
+			}
 		}
 
 		// Continuation callback: turn CTO-surfaced continuations into
