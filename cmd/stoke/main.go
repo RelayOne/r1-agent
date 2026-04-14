@@ -2229,6 +2229,64 @@ func sowCmd(args []string) {
 				ss.AppendSession(newSession)
 				fmt.Printf("    ⬆ promoted %d overflow task(s) into new session %s\n", len(subDirectives), newSessionID)
 			},
+			OnTaskAbandon: func(originalTask plan.Task, fromSessionID, abandonReason string) bool {
+				// Task-level escalation to the root-cause planner. When
+				// the decomposer gives up, the task is not "done" — we
+				// invoke PlanFixDAG scoped to this single task with its
+				// abandon reason framed as a sticky AC. If the planner
+				// produces a viable recovery plan, we append it as a new
+				// session and the harness keeps trying. Only when the
+				// planner ALSO abandons does the caller surface the task
+				// as TRULY BLOCKED (operator-requiring signal).
+				if reasoningProv == nil {
+					return false
+				}
+				fmt.Printf("  ⏭ task %s abandoned by decomposer: %s — invoking root-cause planner\n", originalTask.ID, truncateForLog(abandonReason, 180))
+				stickyAC := plan.StickyACContext{
+					ACID:        "decomposer-abandon-" + originalTask.ID,
+					Description: "task " + originalTask.ID + " (" + originalTask.Description + ") decomposer concluded structurally unfixable at its scope; find a broader recovery path",
+					LastOutput:  abandonReason,
+				}
+				dagInput := plan.FixDAGInput{
+					RepoRoot:             absRepo,
+					FromSessionID:        fromSessionID,
+					FromSessionTitle:     "task " + originalTask.ID,
+					StickyACs:            []plan.StickyACContext{stickyAC},
+					RepairHistory:        []string{"decomposer abandoned: " + abandonReason},
+					SOWSpec:              loadRawSOWText(*sowFile, sow),
+					UniversalPromptBlock: skill.ConcatPromptBlocks(universalCtx.PromptBlock(), hookSet.PromptBlock(skill.HookSelector{Kind: "agents", Name: "judge-fix-dag-planner"})),
+				}
+				dagCtx, dagCancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer dagCancel()
+				dag, derr := plan.PlanFixDAG(dagCtx, reasoningProv, reasoningModelChoice, dagInput)
+				if derr != nil {
+					fmt.Printf("    ⚠ task-escalation planner: %v\n", derr)
+					return false
+				}
+				if dag == nil || dag.Abandon || len(dag.Tasks) == 0 {
+					reason := "no recovery plan"
+					if dag != nil && dag.AbandonReason != "" {
+						reason = dag.AbandonReason
+					}
+					fmt.Printf("    ⏹ task-escalation planner also abandoned: %s\n", reason)
+					return false
+				}
+				fixSession, aerr := plan.ApplyFixDAG(*dag, fromSessionID, "task-escalation fix from "+originalTask.ID)
+				if aerr != nil {
+					fmt.Printf("    ⚠ apply task-escalation fix DAG: %v\n", aerr)
+					return false
+				}
+				ss.AppendSession(fixSession)
+				fmt.Printf("  ✅ promoted task-escalation fix session %s with %d task(s)\n", fixSession.ID, len(fixSession.Tasks))
+				for _, t := range fixSession.Tasks {
+					desc := t.Description
+					if len(desc) > 80 {
+						desc = desc[:80] + "…"
+					}
+					fmt.Printf("     - %s: %s\n", t.ID, desc)
+				}
+				return true
+			},
 			Wisdom:            wisdomStore,
 			WisdomProvider:    wisdomProv,
 			SOWID:             sow.ID,

@@ -214,6 +214,25 @@ type sowNativeConfig struct {
 	// behavior. Wired in main.go to SessionScheduler.AppendSession.
 	OnDecompOverflow func(fromTaskID string, fromSessionID string, subDirectives []string)
 
+	// OnTaskAbandon is called when the decomposer returns Abandon=true
+	// for an individual task. The previous behavior was to print a
+	// "BLOCKED" line and silently move on — effectively shipping a
+	// broken task. That violates the shippability contract: BLOCKED
+	// must mean the harness genuinely cannot produce the deliverable,
+	// not "the decomposer gave up." The hook escalates to the root-
+	// cause planner (PlanFixDAG) scoped to the abandoned task.
+	//
+	// Returns true when the planner produced a viable recovery plan
+	// (handler appended a fix session via SessionScheduler.AppendSession).
+	// False means the planner also abandoned, at which point the task
+	// is marked in the end-of-run "truly blocked" list with the full
+	// escalation history — a loud, operator-requiring signal rather
+	// than a silent skip.
+	//
+	// When nil, decomposer Abandon reverts to the legacy silent-skip
+	// behavior. Wired in main.go.
+	OnTaskAbandon func(originalTask plan.Task, fromSessionID string, abandonReason string) bool
+
 	// --- Multi-session intelligence ---
 
 	// Wisdom is the cross-session learning store. After each session
@@ -3462,18 +3481,34 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		}
 		decVerdict = plan.TruncateSubDirectives(decVerdict, budget.MaxDecompBreadth)
 		if decVerdict.Abandon {
-			// The decomposer has concluded the remaining gap is
-			// structurally unmeetable within this task's scope. That
-			// is DIFFERENT from "complete" — previous logging used ⏹
-			// which read like a neutral stop. Explicitly flag BLOCKED
-			// so downstream integration-review picks up a real gap
-			// rather than inheriting a silent accept. T4 / run 1 was
-			// the canonical example: abandon at depth 3 with reason
-			// "types package has no imports from any @sentinel/*
-			// workspace package" — the SOW-required peerDependencies
-			// with workspace:* was structurally unsatisfiable, but
-			// the task rolled on as if complete.
-			fmt.Printf("    ⛔ decomposer ABANDONED %s at depth %d — task BLOCKED, not complete: %s\n", originalTask.ID, depth, truncateForLog(decVerdict.AbandonReason, 200))
+			// Decomposer concluded the remaining gap is structurally
+			// unmeetable at this task's scope. Previously we printed
+			// a BLOCKED banner and returned silently, which shipped
+			// an incomplete task as if it were done.
+			//
+			// New semantics (matches the shippability contract): an
+			// Abandon at the decomposer level is an escalation signal,
+			// not a silent skip. Route to the root-cause planner
+			// scoped to this task; if the planner produces a viable
+			// recovery plan, it gets appended as a new session and
+			// the harness keeps trying. Only when the planner ALSO
+			// abandons does the task surface as truly-blocked — and
+			// that path is a loud operator-requiring signal, not a
+			// silent accept.
+			fmt.Printf("    ↺ decomposer abandoned %s at depth %d: %s — escalating to root-cause planner\n", originalTask.ID, depth, truncateForLog(decVerdict.AbandonReason, 200))
+			if cfg.OnTaskAbandon != nil {
+				recovered := cfg.OnTaskAbandon(originalTask, workingSession.ID, decVerdict.AbandonReason)
+				if recovered {
+					fmt.Printf("    ✅ task %s: root-cause planner produced a recovery session; harness will keep trying\n", originalTask.ID)
+					return
+				}
+				fmt.Printf("    ⛔ task %s TRULY BLOCKED — root-cause planner could not produce a recovery plan either. Operator must revise SOW or runtime.\n", originalTask.ID)
+				return
+			}
+			// No escalation hook wired — preserve the legacy behavior
+			// so callers that opt out of escalation still see the
+			// BLOCKED marker rather than a silent continue.
+			fmt.Printf("    ⛔ task %s BLOCKED (no OnTaskAbandon hook wired)\n", originalTask.ID)
 			return
 		}
 		if len(decVerdict.SubDirectives) == 0 {
