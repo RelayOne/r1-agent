@@ -28,11 +28,13 @@ func withEnv(t *testing.T, kv map[string]string, fn func()) {
 
 func TestExpandModelAlias(t *testing.T) {
 	cases := map[string]string{
-		"sonnet":     "claude-sonnet-4-6",
-		"opus":       "claude-opus-4-6",
-		"gemini":     "gemini-2.5-pro",
-		"flash":      "gemini-2.5-flash",
-		"codex":      "gpt-5-codex",
+		"sonnet":                  "claude-sonnet-4-6",
+		"opus":                    "claude-opus-4-6",
+		"gemini":                  "gemini-3.1-pro-preview",
+		"gemini-3.1":              "gemini-3.1-pro-preview",
+		"flash":                   "gemini-2.5-flash",
+		"flash-lite":              "gemini-2.5-flash-lite",
+		"codex":                   "gpt-5-codex",
 		"something-else-verbatim": "something-else-verbatim",
 	}
 	for in, want := range cases {
@@ -49,7 +51,7 @@ func TestFamilyFor(t *testing.T) {
 	}{
 		{"claude-sonnet-4-6", "sonnet", familyAnthropic},
 		{"gpt-5-codex", "codex", familyOpenAI},
-		{"gemini-2.5-pro", "gemini", familyGemini},
+		{"gemini-3.1-pro-preview", "gemini", familyGemini},
 		{"gpt-5", "", familyOpenAI},
 		{"something-unknown", "", familyUnknown},
 	}
@@ -81,7 +83,7 @@ func TestBuildDirectGemini(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Model != "gemini-2.5-pro" {
+	if r.Model != "gemini-3.1-pro-preview" {
 		t.Fatalf("alias not expanded; got %q", r.Model)
 	}
 	// Gemini's chat completions live at /v1beta/openai/chat/completions —
@@ -124,8 +126,8 @@ func TestResolveRoleImplicitGeminiReviewer(t *testing.T) {
 		if !changed || r == nil {
 			t.Fatal("expected implicit override when GEMINI_KEY is set")
 		}
-		if r.Source != SourceDirect || r.Model != "gemini-2.5-pro" {
-			t.Fatalf("expected direct gemini-2.5-pro; got %+v", r)
+		if r.Source != SourceDirect || r.Model != "gemini-3.1-pro-preview" {
+			t.Fatalf("expected direct gemini-3.1-pro-preview; got %+v", r)
 		}
 	})
 }
@@ -161,7 +163,7 @@ func TestResolveRoleFlagOverridesEnv(t *testing.T) {
 		if !changed || r == nil {
 			t.Fatal("expected override")
 		}
-		if r.Source != SourceDirect || r.Model != "gemini-2.5-pro" {
+		if r.Source != SourceDirect || r.Model != "gemini-3.1-pro-preview" {
 			t.Fatalf("flags should beat env; got %+v", r)
 		}
 	})

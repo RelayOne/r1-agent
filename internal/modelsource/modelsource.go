@@ -247,6 +247,16 @@ func familyFor(modelID, alias string) modelFamily {
 // expandModelAlias turns short aliases into concrete vendor model IDs.
 // Unknown inputs are returned unchanged so an operator can always
 // specify a full vendor model ID by hand.
+//
+// Gemini aliases reflect the April 2026 lineup:
+//   - gemini-3-pro-preview was shut down March 9, 2026; operators now
+//     migrate to gemini-3.1-pro-preview.
+//   - gemini-2.5-pro and gemini-2.5-flash are slated for shutdown
+//     June 1, 2026 — still work today but the "gemini" alias points
+//     at the current preview flagship rather than a soon-to-be-dead
+//     stable model.
+//   - gemini-2.5-flash-lite is the budget-tier stable model.
+//   - gemini-3.1-flash-lite-preview is the budget-tier preview.
 func expandModelAlias(in string) string {
 	switch strings.ToLower(strings.TrimSpace(in)) {
 	case "":
@@ -257,10 +267,18 @@ func expandModelAlias(in string) string {
 		return "claude-opus-4-6"
 	case "haiku":
 		return "claude-haiku-4-5-20251001"
-	case "gemini", "pro":
+	case "gemini", "pro", "gemini-pro", "gemini-3", "gemini-3.1":
+		return "gemini-3.1-pro-preview"
+	case "gemini-2.5-pro":
+		// Retained as an explicit alias for callers pinning to the
+		// legacy stable family before its June 2026 shutdown.
 		return "gemini-2.5-pro"
 	case "flash":
 		return "gemini-2.5-flash"
+	case "flash-lite":
+		return "gemini-2.5-flash-lite"
+	case "gemini-3.1-flash-lite", "flash-lite-preview":
+		return "gemini-3.1-flash-lite-preview"
 	case "codex":
 		return "gpt-5-codex"
 	case "gpt", "gpt-5":
