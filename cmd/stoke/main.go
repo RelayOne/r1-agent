@@ -43,6 +43,7 @@ import (
 	stokeMCP "github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/modelsource"
+	"github.com/ericmacdougall/stoke/internal/smoketest"
 	"github.com/ericmacdougall/stoke/internal/notify"
 	"github.com/ericmacdougall/stoke/internal/orchestrate"
 	"github.com/ericmacdougall/stoke/internal/plan"
@@ -1272,6 +1273,7 @@ func sowCmd(args []string) {
 	continueOnFailureFlag := fs.String("continue-on-failure", "", "Keep running subsequent sessions after a session fails (true/false/auto). Default: auto — true if SOW has >1 session, false otherwise.")
 	maxRetries := fs.Int("session-retries", 2, "Retry attempts per session (tasks + acceptance) before giving up")
 	parallelSessions := fs.Int("parallel", 0, "Run up to N sessions concurrently via the DAG-driven scheduler (0 = legacy sequential; 2-4 recommended). Sessions are parallelized when their declared Inputs/Outputs or file scopes prove independence; declaration order is the safe fallback.")
+	smokeEnabled := fs.Bool("smoke", true, "Run an environment-aware smoke check after each session's ACs pass. Failing smoke flips the session to failed; static-only (e.g. iOS target on Linux) is reported but does not block. Disable only for debugging; this is the #1 anti-fake gate.")
 	maxRepairAttempts := fs.Int("repair-attempts", 3, "Per-session self-repair attempts (run acceptance, feed failures back, retry)")
 	costBudget := fs.Float64("cost-budget", 0, "Total cost budget in USD for the SOW run (0 = unlimited)")
 	autoCritique := fs.Bool("sow-critique", true, "When a prose SOW is converted, run a critique+refine pass before execution")
@@ -1547,6 +1549,24 @@ func sowCmd(args []string) {
 	if *parallelSessions >= 2 {
 		ss.ParallelSessions = *parallelSessions
 		fmt.Printf("  parallel-sessions: ON (up to %d concurrent sessions via DAG scheduler)\n", *parallelSessions)
+	}
+	if *smokeEnabled {
+		// Smoke gate: environment-aware runtime verification after a
+		// session's ACs pass. Wired as a closure so it closes over
+		// absRepo + the smoketest package, keeping the scheduler
+		// package dependency-free.
+		ss.SmokeGate = func(session plan.Session) (kind, reason, output string) {
+			// Smoke runner carries its own 5-minute per-command
+			// timeout via context.WithTimeout inside Run, so a fresh
+			// background context here is safe — we don't need to
+			// piggyback on the outer run ctx (which is out of scope
+			// at this point in the flag-parsing block) and we'd
+			// rather smoke complete on its own clock than be killed
+			// mid-verification by an unrelated run-level cancellation.
+			v := smoketest.Run(context.Background(), session, absRepo)
+			return string(v.Kind), v.Reason, v.Output
+		}
+		fmt.Println("  smoke-gate: ON (environment-aware runtime verification after AC pass)")
 	}
 	if err := ss.LoadOrCreateState(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: SOW state init failed: %v\n", err)

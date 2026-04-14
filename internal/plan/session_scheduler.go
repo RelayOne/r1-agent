@@ -41,6 +41,17 @@ type SessionScheduler struct {
 	// acceptance check is retried on failure before moving on (or halting).
 	// Default 1 = no retry.
 	MaxSessionRetries int
+	// SmokeGate, when non-nil, is invoked after a session's acceptance
+	// criteria pass but BEFORE the session is recorded as successful.
+	// Verdict Fail flips AcceptanceMet false and populates result.Error
+	// so the session is treated as failed (or blocked-upstream for
+	// dependents). StaticOnly and Pass allow the success path to
+	// continue; StaticOnly is surfaced in the end-of-run banner so the
+	// operator knows what wasn't runtime-verified.
+	//
+	// Injected by cmd/stoke when --smoke (default on) is configured;
+	// leaving it nil preserves exact pre-smoke behavior.
+	SmokeGate func(session Session) (kind string, reason string, output string)
 	// ParallelSessions, when >= 2, enables DAG-driven parallel session
 	// dispatch. The scheduler builds a dependency graph from Session.Inputs
 	// / Session.Outputs + file-scope inference + declaration-order fallback
@@ -274,6 +285,26 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
 			result.Acceptance = acceptance
 			result.AcceptanceMet = allPassed
+
+			// Smoke gate: runtime-level verification after ACs pass.
+			// Only runs on the attempt that actually passed ACs; a
+			// failing smoke flips AcceptanceMet false so the retry/
+			// escalation paths treat it as a genuine session failure.
+			if allPassed && ss.SmokeGate != nil {
+				kind, reason, output := ss.SmokeGate(session)
+				switch kind {
+				case "fail":
+					fmt.Printf("  ⛔ smoke gate failed for %s: %s\n", session.ID, reason)
+					allPassed = false
+					result.AcceptanceMet = false
+					result.Error = fmt.Errorf("session %s smoke gate failed: %s\n\n%s", session.ID, reason, output)
+				case "static_only":
+					fmt.Printf("  ◉ smoke %s: %s\n", session.ID, reason)
+					// Still counts as passed; reason surfaced in banner.
+				case "pass":
+					fmt.Printf("  ✔ smoke %s: %s\n", session.ID, reason)
+				}
+			}
 
 			if !allPassed {
 				result.Error = fmt.Errorf("session %s (attempt %d) acceptance criteria not met:\n%s",

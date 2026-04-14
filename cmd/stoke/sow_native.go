@@ -1409,13 +1409,47 @@ func taskOutputsLookComplete(repoRoot string, t plan.Task) bool {
 
 // taskOutputStubMarkers lists case-insensitive substrings that
 // indicate a file is a stub rather than a real implementation.
-// Matched by taskOutputsLookComplete.
+// Matched by taskOutputsLookComplete and containsExplicitStubMarkers.
+//
+// Expanded to catch TS/JS-specific fakes that pass type-checks but
+// don't actually implement the spec: trivial `return null/[] /{};`
+// bodies, bare `throw new Error('')` rejections, empty catch blocks
+// that swallow failures, and `as any` / `as never` type-bypasses
+// used to paper over missing implementations. These patterns
+// regularly land in worker output because they compile cleanly and
+// satisfy type-checker ACs without implementing the required
+// behavior — the exact "ships a fake, passes the gate" class the
+// user's #1 goal of zero-fake one-shot completion targets.
 var taskOutputStubMarkers = []string{
 	"todo", "fixme", "xxx",
 	"unimplemented!", "not implemented", "notimplementederror",
 	`panic("todo"`, `panic("not implemented"`,
 	"placeholder", "// stub", "# stub",
 	"// removed", "# removed",
+	// TS / JS stub bodies
+	"return null;\n", "return null\n",
+	"return [];\n", "return []\n",
+	"return {};\n", "return {}\n",
+	"return undefined;", "return void 0",
+	// Bare rejection / unimplemented throws
+	`throw new error("not implemented`,
+	`throw new error('not implemented`,
+	`throw new error("todo`,
+	`throw new error('todo`,
+	`throw new error("unimplemented`,
+	`throw new error('unimplemented`,
+	`throw new error("")`, `throw new error('')`,
+	// Empty catch swallowers
+	"} catch {}", "} catch { }",
+	"} catch (_) {}", "} catch (_) { }",
+	"} catch (e) {}", "} catch (e) { }",
+	"} catch (err) {}", "} catch (err) { }",
+	// TS type-check bypasses
+	" as any", " as never", " as unknown",
+	"// @ts-ignore", "// @ts-nocheck", "// @ts-expect-error",
+	"// eslint-disable",
+	// Python
+	"raise notimplementederror", "pass  # todo", "pass # todo",
 }
 
 // gitDirtyFiles returns the list of files that have uncommitted changes
@@ -3306,29 +3340,12 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		return
 	}
 	if verdict.Complete {
-		// Deterministic zombie-task check: the LLM reviewer routinely
-		// approves "complete" when the declared files already exist on
-		// disk. Three outcomes:
-		//
-		//   ZombieMissing — declared file(s) missing or empty on disk.
-		//   The worker claimed success without actually writing them.
-		//   Override Complete → Incomplete, synthesize a gap naming
-		//   the missing files, force re-dispatch.
-		//
-		//   ZombieAlreadyDone — every declared file exists with
-		//   non-empty content. The work may have been done by a prior
-		//   task's scaffolding (legit) OR the existing content may be
-		//   a plausible-looking fake the reviewer was fooled by.
-		//   Run a two-layer authenticity check:
-		//     1. Deterministic stub-marker scan (taskOutputsLookComplete)
-		//     2. LLM content-faithfulness judge on suspect files
-		//   Either layer flagging fake → override to incomplete.
-		//
-		//   ZombieOK — task wrote ≥1 file OR no files declared.
-		//   Reviewer verdict stands without further checks.
+		// Structural check first: classify zombie for the
+		// missing-files case. ZombieMissing is the worker-lied-about-
+		// success path — files were declared but do not exist on disk.
+		// Handle here and short-circuit the deeper content checks.
 		zv, missing := classifyZombie(ctx, cfg.RepoRoot, originalTask, preTaskDirty)
-		switch zv {
-		case ZombieMissing:
+		if zv == ZombieMissing {
 			fmt.Printf("    ⛔ reviewer said 'complete' but task %s wrote 0 files AND %d declared file(s) are missing/empty on disk — overriding to incomplete\n", originalTask.ID, len(missing))
 			verdict.Complete = false
 			zombieGap := fmt.Sprintf("task declared %d file(s) but wrote none during dispatch AND these declared files are missing or empty on disk: %s. The 'complete' verdict was incorrect — the worker claimed success without actually writing the required files.", len(originalTask.Files), strings.Join(missing, ", "))
@@ -3336,48 +3353,58 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			if strings.TrimSpace(verdict.FollowupDirective) == "" {
 				verdict.FollowupDirective = fmt.Sprintf("Create the following declared files with the content required by the task description — they are currently missing or empty on disk: %s", strings.Join(missing, ", "))
 			}
-		case ZombieAlreadyDone:
-			// Deterministic layer first — cheap regex over file bodies.
-			// We use containsExplicitStubMarkers (marker-only) rather
-			// than taskOutputsLookComplete: the latter was designed as
-			// a conservative retry-skip helper and rejects any file
-			// under 50 bytes, which legitimately-tiny outputs (barrel
-			// exports, thin wrappers, re-export modules) trip. That
-			// was the codex-review P2 false positive — using the
-			// retry-skip helper as a hard failure gate re-dispatched
-			// valid small-output tasks into the same nothing-to-write
-			// loop this three-state classifier exists to prevent.
-			detOK := !containsExplicitStubMarkers(cfg.RepoRoot, originalTask)
-			if !detOK {
-				fmt.Printf("    ⛔ task %s: zero writes AND deterministic stub scan flagged declared files as placeholder/too-short — overriding to incomplete\n", originalTask.ID)
-				verdict.Complete = false
-				stubGap := fmt.Sprintf("declared files exist on disk but contain stub markers (TODO/FIXME/NotImplementedError/placeholder/too-short body). The worker's 'complete' verdict was based on placeholder content, not real implementation. Declared files: %s", strings.Join(originalTask.Files, ", "))
-				verdict.GapsFound = append([]string{stubGap}, verdict.GapsFound...)
-				if strings.TrimSpace(verdict.FollowupDirective) == "" {
-					verdict.FollowupDirective = fmt.Sprintf("Replace the stub/placeholder content in %s with a real implementation of the task's required behavior per the SOW spec.", strings.Join(originalTask.Files, ", "))
-				}
-			} else {
-				// LLM layer second — content looks clean to the regex
-				// but may still be a sophisticated fake (hardcoded
-				// return, copy-pasted sibling, trivial re-export). The
-				// reasoning model has the task spec and the full file
-				// content; ask directly "is this real or fake?"
-				cj, cjerr := plan.JudgeDeclaredContent(ctx, cfg.ReasoningProvider, reviewModel, originalTask, sowExcerpt, cfg.RepoRoot)
-				if cjerr == nil && cj != nil && !cj.Real {
-					who := cj.FakeFile
-					if who == "" {
-						who = "one of the declared files"
-					}
-					fmt.Printf("    ⛔ task %s: content judge verdict FAKE — %s (file: %s). Overriding to incomplete.\n", originalTask.ID, truncateForLog(cj.Reason, 180), who)
-					verdict.Complete = false
-					judgeGap := fmt.Sprintf("content-faithfulness judge flagged declared file(s) as placeholder rather than real implementation: %s (file: %s). The worker claimed complete without writing new content and the pre-existing content does not genuinely implement the task.", cj.Reason, who)
-					verdict.GapsFound = append([]string{judgeGap}, verdict.GapsFound...)
-					if strings.TrimSpace(verdict.FollowupDirective) == "" {
-						verdict.FollowupDirective = fmt.Sprintf("Rewrite the declared files with a real implementation of the task's required behavior. The current content reads as placeholder. Files: %s", strings.Join(originalTask.Files, ", "))
-					}
-				} else {
-					fmt.Printf("    ℹ task %s: no new writes this dispatch — declared files already present and both stub scan + content judge passed, accepting reviewer's 'complete' verdict\n", originalTask.ID)
-				}
+		}
+	}
+
+	// Content-quality checks on EVERY Complete verdict that has
+	// declared files — not just the zombie-already-done case. This is
+	// the #1 anti-fake gate per the operator's stated goal of zero-
+	// fake one-shot completion. A worker that wrote files (non-zombie)
+	// can still produce a fake implementation that compiles and
+	// type-checks; the reviewer's structural "code exists and looks
+	// like a module" verdict is not sufficient proof the feature
+	// actually works. Two layers:
+	//
+	//   1. Deterministic stub scan — catches explicit markers
+	//      (TODO/FIXME/NotImplementedError/return null/as any/empty
+	//      catch/etc.) in the declared files. Cheap regex; runs
+	//      every time.
+	//
+	//   2. LLM content-faithfulness judge — sends the task spec + SOW
+	//      excerpt + full file contents to the reasoning model and
+	//      asks "is this a real implementation or a plausible-looking
+	//      placeholder?" Catches the sophisticated fakes the regex
+	//      misses (hardcoded handlers, trivial re-exports, copy-pasted
+	//      sibling code, version-pin violations).
+	//
+	// Cost of (2) is one extra reasoning-LLM call per Complete verdict
+	// per task. For a 150-task SOW that's 150 extra calls, roughly
+	// $10-15 per run. Accepted because the operator explicitly put
+	// quality above cost and speed.
+	if verdict.Complete && len(originalTask.Files) > 0 {
+		if containsExplicitStubMarkers(cfg.RepoRoot, originalTask) {
+			fmt.Printf("    ⛔ task %s: deterministic stub scan flagged declared files as placeholder — overriding to incomplete\n", originalTask.ID)
+			verdict.Complete = false
+			stubGap := fmt.Sprintf("declared files contain stub markers (TODO/FIXME/NotImplementedError/return null/as any/empty catch/etc.). The worker's 'complete' verdict was based on placeholder content, not real implementation. Declared files: %s", strings.Join(originalTask.Files, ", "))
+			verdict.GapsFound = append([]string{stubGap}, verdict.GapsFound...)
+			if strings.TrimSpace(verdict.FollowupDirective) == "" {
+				verdict.FollowupDirective = fmt.Sprintf("Replace the stub/placeholder content in %s with a real implementation of the task's required behavior per the SOW spec. Remove any TODO / FIXME / return null / as any / empty catch / @ts-ignore markers; produce working logic that satisfies the spec.", strings.Join(originalTask.Files, ", "))
+			}
+		}
+	}
+	if verdict.Complete && len(originalTask.Files) > 0 {
+		cj, cjerr := plan.JudgeDeclaredContent(ctx, cfg.ReasoningProvider, reviewModel, originalTask, sowExcerpt, cfg.RepoRoot)
+		if cjerr == nil && cj != nil && !cj.Real {
+			who := cj.FakeFile
+			if who == "" {
+				who = "one of the declared files"
+			}
+			fmt.Printf("    ⛔ task %s: content judge verdict FAKE — %s (file: %s). Overriding to incomplete.\n", originalTask.ID, truncateForLog(cj.Reason, 180), who)
+			verdict.Complete = false
+			judgeGap := fmt.Sprintf("content-faithfulness judge flagged declared file(s) as placeholder rather than real implementation: %s (file: %s). Rewrite with a real implementation of the task's required behavior per the SOW spec.", cj.Reason, who)
+			verdict.GapsFound = append([]string{judgeGap}, verdict.GapsFound...)
+			if strings.TrimSpace(verdict.FollowupDirective) == "" {
+				verdict.FollowupDirective = fmt.Sprintf("Rewrite the declared files with a real implementation of the task's required behavior. The current content reads as placeholder per the content-faithfulness judge: %s. Files: %s", cj.Reason, strings.Join(originalTask.Files, ", "))
 			}
 		}
 	}

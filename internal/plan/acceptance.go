@@ -91,6 +91,57 @@ type AcceptanceResult struct {
 	JudgeReasoning string
 }
 
+// groundTruthCommandTokens lists substrings that, when present in an
+// AC's command, mark it as a ground-truth execution whose exit code
+// is authoritative. These commands actually build / install / type-
+// check / test the code; a failure means the code does not work in
+// the literal sense. No amount of semantic reasoning should be able
+// to flip a failing `pnpm build` into a pass — that's how run 3
+// shipped hallucinated dependencies as "acceptable" until the cascade
+// caught it.
+//
+// Conservative list: only explicit builder / package manager / test
+// runner binaries. Shell scaffolding like `cd` or `mkdir` is not here
+// because those are typically wrappers around a real command further
+// down the pipeline; the pipeline as a whole is judged by its final
+// tool's exit.
+var groundTruthCommandTokens = []string{
+	// Package managers / installers
+	"pnpm install", "npm install", "npm ci", "yarn install", "yarn ",
+	"pip install", "poetry install", "cargo fetch", "go mod download",
+	// Build / bundlers
+	"pnpm build", "npm run build", "yarn build",
+	"turbo run build", "turbo build", "next build", "vite build",
+	"expo build", "eas build", "cargo build", "go build",
+	"tsc ", "tsc\n", "tsc\t", "tsc$",
+	// Type-check / lint
+	"pnpm typecheck", "tsc --noEmit", "cargo check",
+	"pnpm lint", "eslint ", "biome check",
+	// Test runners
+	"vitest", "jest", "mocha", "playwright", "cypress",
+	"cargo test", "go test", "pytest", "unittest",
+	"npm test", "pnpm test", "yarn test",
+	// Generic run that commonly actually executes
+	"node ", "python ", "deno ",
+}
+
+// isGroundTruthACCommand returns true when the AC's command is a
+// build / install / type-check / test / run invocation whose exit
+// code should be treated as authoritative. Case-insensitive
+// substring match on a conservative allow-list.
+func isGroundTruthACCommand(cmd string) bool {
+	if cmd == "" {
+		return false
+	}
+	lc := strings.ToLower(cmd)
+	for _, tok := range groundTruthCommandTokens {
+		if strings.Contains(lc, tok) {
+			return true
+		}
+	}
+	return false
+}
+
 // SemanticEvaluator is called when a mechanical AC check fails. The
 // implementation typically delegates to JudgeAC from this package.
 // Returning (true, ...) overrides the mechanical failure to a pass.
@@ -137,24 +188,41 @@ func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, c
 
 	for _, ac := range criteria {
 		result := checkOneCriterion(ctx, projectRoot, ac)
-		// If the mechanical check failed AND we have a semantic
-		// judge, ask the judge whether the code actually implements
-		// the requirement. This is the "reasoning loop as judge"
-		// the user asked for: grep-based checks can't tell whether
-		// the feature was built, only whether the pattern matches.
+		// If the mechanical check failed AND we have a semantic judge
+		// AND the AC's command is not a ground-truth command, ask the
+		// judge whether the code actually implements the requirement.
+		//
+		// Ground-truth commands (build / install / typecheck / test /
+		// run) cannot be overridden by any amount of semantic reasoning:
+		// a failing `pnpm build` is not a pattern mismatch, it's real
+		// compile failure. Run 3 burned through ACs with hallucinated
+		// deps still broken because the judge kept approving "code is
+		// structurally sound" while `turbo` wasn't even on PATH. That
+		// hole is closed here: the judge annotates but never overrides
+		// ground truth.
+		//
+		// Grep / pattern / file-existence ACs remain overridable: a
+		// worker can produce correct code that grep happens to miss.
 		if !result.Passed && judge != nil {
-			overridePass, reasoning, err := judge(ctx, ac, result.Output)
-			if err == nil && overridePass {
-				result.Passed = true
-				result.JudgeRuled = true
-				result.JudgeReasoning = reasoning
-				result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED but semantic judge approved:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
-			} else if err == nil && !overridePass && reasoning != "" {
-				// Judge agreed with the mechanical failure. Record
-				// its reasoning for the operator to see WHY the
-				// feature isn't considered implemented.
-				result.JudgeReasoning = reasoning
-				result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED and semantic judge agrees:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
+			if isGroundTruthACCommand(ac.Command) {
+				// Judge can still speak — we record its verdict for the
+				// operator, but pass stays false regardless.
+				_, reasoning, err := judge(ctx, ac, result.Output)
+				if err == nil && reasoning != "" {
+					result.JudgeReasoning = reasoning
+					result.Output = fmt.Sprintf("GROUND-TRUTH COMMAND FAILED (judge cannot override):\n%s\n\nJudge observation:\n%s", result.Output, reasoning)
+				}
+			} else {
+				overridePass, reasoning, err := judge(ctx, ac, result.Output)
+				if err == nil && overridePass {
+					result.Passed = true
+					result.JudgeRuled = true
+					result.JudgeReasoning = reasoning
+					result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED but semantic judge approved:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
+				} else if err == nil && !overridePass && reasoning != "" {
+					result.JudgeReasoning = reasoning
+					result.Output = fmt.Sprintf("MECHANICAL CHECK FAILED and semantic judge agrees:\n%s\n\nOriginal mechanical output:\n%s", reasoning, result.Output)
+				}
 			}
 		}
 		results = append(results, result)

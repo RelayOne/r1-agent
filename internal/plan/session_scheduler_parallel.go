@@ -228,6 +228,23 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
 			result.Acceptance = acceptance
 			result.AcceptanceMet = allPassed
+			// Smoke gate — same hook the sequential runner uses. Fail
+			// flips AcceptanceMet false so retry / escalation sees a
+			// real failure; StaticOnly is logged but allows success.
+			if allPassed && ss.SmokeGate != nil {
+				kind, reason, output := ss.SmokeGate(session)
+				switch kind {
+				case "fail":
+					fmt.Printf("  ⛔ smoke gate failed for %s: %s\n", session.ID, reason)
+					allPassed = false
+					result.AcceptanceMet = false
+					result.Error = fmt.Errorf("session %s smoke gate failed: %s\n\n%s", session.ID, reason, output)
+				case "static_only":
+					fmt.Printf("  ◉ smoke %s: %s\n", session.ID, reason)
+				case "pass":
+					fmt.Printf("  ✔ smoke %s: %s\n", session.ID, reason)
+				}
+			}
 			if !allPassed {
 				result.Error = fmt.Errorf("session %s (attempt %d) acceptance criteria not met:\n%s",
 					session.ID, attempt, FormatAcceptanceResults(acceptance))
