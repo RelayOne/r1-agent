@@ -227,17 +227,32 @@ func overlaps(a, b map[string]bool) bool {
 		if large[k] {
 			return true
 		}
-		// Prefix overlap: "apps/web/" in small and "apps/web/app/page.tsx"
-		// in large, or vice versa. Tasks often declare directory-level
-		// scope for one session and file-level for another; the prefix
-		// check catches the common case.
-		if strings.HasSuffix(k, "/") {
-			for lk := range large {
-				if strings.HasPrefix(lk, k) {
-					return true
-				}
+		// Prefix overlap, in BOTH directions. normalizePath has
+		// already stripped any trailing slash via filepath.Clean,
+		// so we can't gate on HasSuffix("/") — that was the
+		// codex-review P1 here. Instead, treat any path as a
+		// candidate prefix and require a directory-boundary match
+		// (full prefix + the next character is `/`) so partial
+		// component matches like "app" vs "apps" don't false-fire.
+		for lk := range large {
+			if hasDirPrefix(lk, k) || hasDirPrefix(k, lk) {
+				return true
 			}
 		}
 	}
 	return false
+}
+
+// hasDirPrefix returns true when prefix is a directory-bounded prefix
+// of path. Both inputs are normalized (no trailing slash). A prefix
+// matches when path == prefix exactly (already handled by the equality
+// check at the call site) or when path starts with prefix + "/".
+func hasDirPrefix(path, prefix string) bool {
+	if path == prefix || prefix == "" {
+		return false
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	return path[len(prefix)] == '/'
 }

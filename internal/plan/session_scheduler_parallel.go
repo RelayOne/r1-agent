@@ -57,11 +57,47 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		done      = map[string]bool{} // every session that has reached a terminal state (success | fail | blocked)
 	)
 
-	sessions := make(map[string]Session, len(ss.sow.Sessions))
-	order := make([]string, 0, len(ss.sow.Sessions))
-	for _, s := range ss.sow.Sessions {
-		sessions[s.ID] = s
-		order = append(order, s.ID)
+	// Snapshot of session metadata. ss.sow.Sessions is the live list
+	// the harness mutates via AppendSession (continuations, fix-DAG
+	// promotions, decomp overflow). The dispatch loop below re-reads
+	// the live list each iteration so newly appended sessions get
+	// picked up — sessions / order / dag are also rebuilt on demand.
+	rebuildMaps := func() (map[string]Session, []string) {
+		s := make(map[string]Session, len(ss.sow.Sessions))
+		o := make([]string, 0, len(ss.sow.Sessions))
+		for _, sess := range ss.sow.Sessions {
+			s[sess.ID] = sess
+			o = append(o, sess.ID)
+		}
+		return s, o
+	}
+	sessions, order := rebuildMaps()
+
+	// Resume support: pre-mark already-completed sessions as done +
+	// completed so the dispatch loop skips them and downstream sessions
+	// see their deps as satisfied. Sequential Run() does this inline at
+	// the top of every iteration; the parallel path needs the same skip
+	// or `--resume --parallel N` re-executes everything. (Codex P1.)
+	if ss.Resume && ss.state != nil {
+		for _, sess := range ss.sow.Sessions {
+			if ss.state.IsSessionComplete(sess.ID) {
+				rec := ss.state.SessionByID(sess.ID)
+				skipped := SessionResult{
+					SessionID:     sess.ID,
+					Title:         sess.Title,
+					Acceptance:    rec.Acceptance,
+					AcceptanceMet: true,
+					Attempts:      rec.Attempts,
+					Skipped:       true,
+				}
+				results = append(results, skipped)
+				completed[sess.ID] = true
+				done[sess.ID] = true
+				if ss.OnProgress != nil {
+					ss.OnProgress(skipped)
+				}
+			}
+		}
 	}
 
 	sem := make(chan struct{}, ss.ParallelSessions)
@@ -234,11 +270,38 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 	// bounds. When no more sessions are ready we drain the wait group
 	// and exit. Terminal blocked-by-upstream sessions are surfaced
 	// after each completion so we don't wait on them forever.
+	//
+	// On every iteration we also (a) re-snapshot ss.sow.Sessions to
+	// pick up sessions that AppendSession added mid-run (continuations,
+	// fix-DAG promotions, decomp overflow — codex P1), and (b) check
+	// ctx for cancellation so a --timeout or operator interrupt
+	// returns ctx.Err() instead of nil-success (codex P2).
 	started := map[string]bool{}
 	for {
 		if ctx.Err() != nil {
+			if firstErr == nil {
+				firstErr = ctx.Err()
+			}
 			break
 		}
+		// On --continue-on-failure=false, stop dispatching ANY new
+		// session as soon as we have a recorded failure — even if the
+		// failed session and the next ready session are independent.
+		// The sequential runner halts on first failure regardless of
+		// dependencies; the parallel runner must mirror that.
+		// (codex P2.)
+		if !ss.ContinueOnFailure {
+			stateMu.Lock()
+			anyFailure := len(failed) > 0
+			stateMu.Unlock()
+			if anyFailure {
+				break
+			}
+		}
+		// Pick up any sessions appended via AppendSession since the
+		// last iteration so continuations actually get dispatched.
+		sessions, order = rebuildMaps()
+		dag = BuildSessionDAG(ss.sow)
 		progress := false
 		// Collect blocked-but-not-dispatched sessions whose upstream failed
 		// AND we can't continue-on-failure. Mark them as blocked and
@@ -293,6 +356,7 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			wg.Wait()
 			// After draining, loop once more to pick up newly-ready
 			// sessions; if still none, we're done.
+			sessions, order = rebuildMaps()
 			stateMu.Lock()
 			anyLeft := false
 			for _, id := range order {
