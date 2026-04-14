@@ -1853,26 +1853,45 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 	return results
 }
 
-// zombieWrites returns true when a task declared at least one file
-// and wrote NONE of those files during its dispatch. This is the
-// deterministic signal we use to override an LLM reviewer's
-// over-eager "complete" verdict. It is intentionally strict: we
-// only flag zombies when declared files exist AND none of them
-// changed AND the overall post-dispatch dirty delta vs preTaskDirty
-// is empty. A task that legitimately wrote something (e.g. a
-// different file outside task.Files) is not a zombie; scope drift
-// is a separate signal surfaced by reportPerTaskFileDrift.
+// ZombieVerdict distinguishes three post-dispatch states for a task:
 //
-// preTaskDirty is the set of files that were already dirty before
-// this task (or follow-up) ran. When preTaskDirty is nil we default
-// to "not zombie" — without a baseline we can't prove the writes
-// didn't happen.
-func zombieWrites(ctx context.Context, repoRoot string, task plan.Task, preTaskDirty map[string]bool) bool {
+//   - ZombieOK: task wrote ≥1 file OR declared no files. No override
+//     needed; the reviewer's verdict stands.
+//   - ZombieAlreadyDone: task declared files AND wrote zero AND every
+//     declared file exists non-empty on disk. This is NOT a real
+//     zombie — the files were written by a prior task's scaffolding.
+//     Accept the reviewer's "complete" verdict with an annotation so
+//     audit trails show the task produced no new writes.
+//   - ZombieMissing: task declared files AND wrote zero AND at least
+//     one declared file is missing or empty on disk. This IS a real
+//     zombie — the worker claimed success without doing the work.
+//     Override the reviewer's verdict and force re-dispatch naming
+//     the specific missing/empty files.
+//
+// The distinction matters: the aggressive "any zero-write task is
+// a zombie" rule created a false-positive explosion where tasks
+// whose files were legitimately produced by scaffolding got re-
+// dispatched into an infinite "nothing to write" loop that
+// eventually decomposer-abandoned. Splitting the case by file
+// presence restores correctness: real zombies still get caught,
+// already-complete tasks pass through.
+type ZombieVerdict int
+
+const (
+	ZombieOK ZombieVerdict = iota
+	ZombieAlreadyDone
+	ZombieMissing
+)
+
+// classifyZombie inspects post-dispatch state and returns one of the
+// three verdicts above. missingOrEmpty lists the declared files that
+// are missing or empty on disk (populated only for ZombieMissing).
+func classifyZombie(ctx context.Context, repoRoot string, task plan.Task, preTaskDirty map[string]bool) (ZombieVerdict, []string) {
 	if len(task.Files) == 0 {
-		return false
+		return ZombieOK, nil
 	}
 	if preTaskDirty == nil {
-		return false
+		return ZombieOK, nil
 	}
 	postDirty := gitDirtyFiles(ctx, repoRoot)
 	changed := 0
@@ -1885,7 +1904,24 @@ func zombieWrites(ctx context.Context, repoRoot string, task plan.Task, preTaskD
 		}
 		changed++
 	}
-	return changed == 0
+	if changed > 0 {
+		return ZombieOK, nil
+	}
+	// Zero writes this dispatch. Distinguish pre-existing-complete
+	// from actual-missing by checking each declared file's presence
+	// and non-empty content on disk.
+	var missingOrEmpty []string
+	for _, f := range task.Files {
+		full := filepath.Join(repoRoot, f)
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() || info.Size() == 0 {
+			missingOrEmpty = append(missingOrEmpty, f)
+		}
+	}
+	if len(missingOrEmpty) == 0 {
+		return ZombieAlreadyDone, nil
+	}
+	return ZombieMissing, missingOrEmpty
 }
 
 // reportPerTaskFileDrift compares the files a task claims it will
@@ -3209,22 +3245,70 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	if verdict.Complete {
 		// Deterministic zombie-task check: the LLM reviewer routinely
 		// approves "complete" when the declared files already exist on
-		// disk from earlier scaffolding tasks — even when THIS task
-		// wrote zero of those files. Run 1 / T18 is the canonical
-		// example ("task T18 claimed success but wrote 0 files
-		// (declared 3)" followed by reviewer ✔). Here we measure what
-		// actually changed since pre-task snapshot; if the task
-		// declared files and none of them changed, we override the
-		// reviewer's verdict to incomplete and force a re-dispatch
-		// that explicitly names the missing writes. This is the one
-		// layer of enforcement no LLM can talk its way past.
-		if zombieWrites(ctx, cfg.RepoRoot, originalTask, preTaskDirty) {
-			fmt.Printf("    ⛔ reviewer said 'complete' but task %s wrote 0 of %d declared file(s) — overriding to incomplete\n", originalTask.ID, len(originalTask.Files))
+		// disk. Three outcomes:
+		//
+		//   ZombieMissing — declared file(s) missing or empty on disk.
+		//   The worker claimed success without actually writing them.
+		//   Override Complete → Incomplete, synthesize a gap naming
+		//   the missing files, force re-dispatch.
+		//
+		//   ZombieAlreadyDone — every declared file exists with
+		//   non-empty content. The work may have been done by a prior
+		//   task's scaffolding (legit) OR the existing content may be
+		//   a plausible-looking fake the reviewer was fooled by.
+		//   Run a two-layer authenticity check:
+		//     1. Deterministic stub-marker scan (taskOutputsLookComplete)
+		//     2. LLM content-faithfulness judge on suspect files
+		//   Either layer flagging fake → override to incomplete.
+		//
+		//   ZombieOK — task wrote ≥1 file OR no files declared.
+		//   Reviewer verdict stands without further checks.
+		zv, missing := classifyZombie(ctx, cfg.RepoRoot, originalTask, preTaskDirty)
+		switch zv {
+		case ZombieMissing:
+			fmt.Printf("    ⛔ reviewer said 'complete' but task %s wrote 0 files AND %d declared file(s) are missing/empty on disk — overriding to incomplete\n", originalTask.ID, len(missing))
 			verdict.Complete = false
-			zombieGap := fmt.Sprintf("task declared %d file(s) but wrote none of them during dispatch — the 'complete' verdict was based on files that already existed on disk from other tasks. Declared files: %s", len(originalTask.Files), strings.Join(originalTask.Files, ", "))
+			zombieGap := fmt.Sprintf("task declared %d file(s) but wrote none during dispatch AND these declared files are missing or empty on disk: %s. The 'complete' verdict was incorrect — the worker claimed success without actually writing the required files.", len(originalTask.Files), strings.Join(missing, ", "))
 			verdict.GapsFound = append([]string{zombieGap}, verdict.GapsFound...)
 			if strings.TrimSpace(verdict.FollowupDirective) == "" {
-				verdict.FollowupDirective = fmt.Sprintf("Create or modify each of these declared files with the content required by the task description. The prior attempt claimed success without actually writing any of them. Files: %s", strings.Join(originalTask.Files, ", "))
+				verdict.FollowupDirective = fmt.Sprintf("Create the following declared files with the content required by the task description — they are currently missing or empty on disk: %s", strings.Join(missing, ", "))
+			}
+		case ZombieAlreadyDone:
+			// Deterministic layer first — cheap regex over file bodies.
+			// Returns false if any declared file is a stub/placeholder/
+			// under-sized. A false here is strong evidence of fake
+			// content even before we spend an LLM call.
+			detOK := taskOutputsLookComplete(cfg.RepoRoot, originalTask)
+			if !detOK {
+				fmt.Printf("    ⛔ task %s: zero writes AND deterministic stub scan flagged declared files as placeholder/too-short — overriding to incomplete\n", originalTask.ID)
+				verdict.Complete = false
+				stubGap := fmt.Sprintf("declared files exist on disk but contain stub markers (TODO/FIXME/NotImplementedError/placeholder/too-short body). The worker's 'complete' verdict was based on placeholder content, not real implementation. Declared files: %s", strings.Join(originalTask.Files, ", "))
+				verdict.GapsFound = append([]string{stubGap}, verdict.GapsFound...)
+				if strings.TrimSpace(verdict.FollowupDirective) == "" {
+					verdict.FollowupDirective = fmt.Sprintf("Replace the stub/placeholder content in %s with a real implementation of the task's required behavior per the SOW spec.", strings.Join(originalTask.Files, ", "))
+				}
+			} else {
+				// LLM layer second — content looks clean to the regex
+				// but may still be a sophisticated fake (hardcoded
+				// return, copy-pasted sibling, trivial re-export). The
+				// reasoning model has the task spec and the full file
+				// content; ask directly "is this real or fake?"
+				cj, cjerr := plan.JudgeDeclaredContent(ctx, cfg.ReasoningProvider, reviewModel, originalTask, sowExcerpt, cfg.RepoRoot)
+				if cjerr == nil && cj != nil && !cj.Real {
+					who := cj.FakeFile
+					if who == "" {
+						who = "one of the declared files"
+					}
+					fmt.Printf("    ⛔ task %s: content judge verdict FAKE — %s (file: %s). Overriding to incomplete.\n", originalTask.ID, truncateForLog(cj.Reason, 180), who)
+					verdict.Complete = false
+					judgeGap := fmt.Sprintf("content-faithfulness judge flagged declared file(s) as placeholder rather than real implementation: %s (file: %s). The worker claimed complete without writing new content and the pre-existing content does not genuinely implement the task.", cj.Reason, who)
+					verdict.GapsFound = append([]string{judgeGap}, verdict.GapsFound...)
+					if strings.TrimSpace(verdict.FollowupDirective) == "" {
+						verdict.FollowupDirective = fmt.Sprintf("Rewrite the declared files with a real implementation of the task's required behavior. The current content reads as placeholder. Files: %s", strings.Join(originalTask.Files, ", "))
+					}
+				} else {
+					fmt.Printf("    ℹ task %s: no new writes this dispatch — declared files already present and both stub scan + content judge passed, accepting reviewer's 'complete' verdict\n", originalTask.ID)
+				}
 			}
 		}
 	}
