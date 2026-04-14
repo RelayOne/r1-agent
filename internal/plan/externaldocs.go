@@ -138,10 +138,19 @@ func DetectExternalServices(sow *SOW, rawSOW string) []ExternalService {
 		lower := strings.ToLower(text)
 		for canon, aliases := range knownExternalServices {
 			for _, a := range aliases {
-				if strings.Contains(lower, a) {
-					addMatch(canon, a, taskID)
+				idx := strings.Index(lower, a)
+				if idx < 0 {
+					continue
+				}
+				if mentionIsPlaceholderContext(lower, idx, len(a)) {
+					// Service appears in a "Coming Soon" / "placeholder" /
+					// "v2" context — operator has signaled no integration
+					// code is being written. Skip to avoid false-positive
+					// refusals on SOWs that have future-work notes.
 					break
 				}
+				addMatch(canon, a, taskID)
+				break
 			}
 		}
 		for _, m := range genericIntegrationHint.FindAllStringSubmatch(text, -1) {
@@ -150,6 +159,11 @@ func DetectExternalServices(sow *SOW, rawSOW string) []ExternalService {
 			}
 			canon := strings.ToLower(strings.TrimSpace(m[1]))
 			if _, isKnown := knownExternalServices[canon]; isKnown {
+				continue
+			}
+			// Also suppress generic-hint matches in placeholder contexts.
+			idx := strings.Index(lower, strings.ToLower(m[0]))
+			if idx >= 0 && mentionIsPlaceholderContext(lower, idx, len(m[0])) {
 				continue
 			}
 			addMatch(canon, m[1], taskID)
@@ -176,6 +190,67 @@ func DetectExternalServices(sow *SOW, rawSOW string) []ExternalService {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// placeholderMarkers are substrings that indicate a service mention
+// is a UI-only card, future-work note, or explicit non-integration
+// reference. When one of these appears within a short window of the
+// service mention, the detector suppresses the match so the gate
+// doesn't refuse builds that explicitly scope OUT a service as
+// placeholder-only.
+var placeholderMarkers = []string{
+	"coming soon", "placeholder", "ui only", "ui-only",
+	"not in v1", "not implemented in v1", "deferred to v2",
+	"future work", "future integration", "stub card",
+	"not functional", "not yet implemented", "out of scope",
+	"will be added", "v2 scope",
+}
+
+// mentionIsPlaceholderContext returns true when a placeholder marker
+// appears in the SAME clause as the service mention — not just the
+// same paragraph. Clause boundaries are period, newline, em-dash,
+// semicolon. This matters because SOWs commonly list one real
+// integration and several placeholders in the same paragraph, e.g.
+// "Guesty is functional — wire it up. Hostaway, Mews are placeholder
+// cards with 'Coming Soon' overlay." The real integration (Guesty)
+// and the placeholder list (Hostaway, Mews) are in the same
+// paragraph but different clauses; a per-paragraph window would
+// suppress Guesty too. We look at the clause around each mention
+// only.
+func mentionIsPlaceholderContext(lower string, mentionStart, mentionLen int) bool {
+	clauseStart := mentionStart
+	for clauseStart > 0 {
+		c := lower[clauseStart-1]
+		if c == '.' || c == '\n' || c == ';' {
+			break
+		}
+		// Em-dash (—) is three UTF-8 bytes: 0xE2 0x80 0x94. Check the
+		// last byte since we're scanning backward byte-by-byte.
+		if clauseStart >= 3 &&
+			lower[clauseStart-3] == 0xE2 && lower[clauseStart-2] == 0x80 && lower[clauseStart-1] == 0x94 {
+			break
+		}
+		clauseStart--
+	}
+	clauseEnd := mentionStart + mentionLen
+	for clauseEnd < len(lower) {
+		c := lower[clauseEnd]
+		if c == '.' || c == '\n' || c == ';' {
+			break
+		}
+		if clauseEnd+2 < len(lower) &&
+			lower[clauseEnd] == 0xE2 && lower[clauseEnd+1] == 0x80 && lower[clauseEnd+2] == 0x94 {
+			break
+		}
+		clauseEnd++
+	}
+	slice := lower[clauseStart:clauseEnd]
+	for _, m := range placeholderMarkers {
+		if strings.Contains(slice, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // sowProvidesDocumentation is the deterministic first-pass check.
