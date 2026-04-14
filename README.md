@@ -2,7 +2,7 @@
 
 An AI coding orchestrator that drives Claude Code and Codex CLI as execution engines with deterministic PLAN->EXECUTE->VERIFY->COMMIT phases, multi-model routing, intelligent retry, parallel agent coordination, and structured quality layers.
 
-**The thesis:** SWE-bench Pro shows the same model jumps ~15 points when you optimize the scaffold. The harness is the product.
+**The thesis:** SWE-bench Pro shows the same model jumps ~15 points when you optimize the scaffold. The harness is the product. (Stoke reports deltas on SWE-bench Pro, SWE-rebench, and Terminal-Bench — not contaminated Verified numbers. See [docs/benchmark-stance.md](docs/benchmark-stance.md).)
 
 ## Quick start
 
