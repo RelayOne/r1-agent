@@ -332,10 +332,20 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 }
 
 func (p *AnthropicProvider) buildRequestBody(req ChatRequest, streaming bool) map[string]interface{} {
+	msgs := interface{}(req.Messages)
+	// When caching is enabled, extend cache_control to the rolling
+	// message window. Anthropic allows up to 4 cache_control breakpoints;
+	// with system (1) + tools (1) typically claimed, the remaining 2 go
+	// on the last 2 messages. This is the Hermes pattern and the one
+	// R-3623e901 documents at 45-90% input-token savings on multi-turn
+	// workloads — the single biggest cost lever in the codebase.
+	if req.CacheEnabled && len(req.Messages) > 0 {
+		msgs = messagesWithCacheControl(req.Messages, 2)
+	}
 	body := map[string]interface{}{
 		"model":      req.Model,
 		"max_tokens": req.MaxTokens,
-		"messages":   req.Messages,
+		"messages":   msgs,
 	}
 
 	// System prompt: prefer pre-formatted SystemRaw (with cache_control) over plain string
@@ -364,6 +374,86 @@ func (p *AnthropicProvider) buildRequestBody(req ChatRequest, streaming bool) ma
 		body["stream"] = true
 	}
 	return body
+}
+
+// messagesWithCacheControl annotates the last nTail messages' content
+// with cache_control: {type: ephemeral}. The shape of ChatMessage.Content
+// is deliberately loose (json.RawMessage): callers frequently pass a
+// bare string, a pre-built array of content blocks, or a structured
+// object. We normalize to the Anthropic array-of-blocks form when we
+// touch a message so the cache_control field has a concrete attachment
+// point, and leave already-wrapped arrays alone except for appending
+// cache_control to the last block.
+//
+// The returned slice is []interface{} so the Anthropic request body
+// can mix wrapped and unwrapped messages without forcing every caller
+// through this function.
+func messagesWithCacheControl(messages []ChatMessage, nTail int) []interface{} {
+	out := make([]interface{}, len(messages))
+	breakpointStart := len(messages) - nTail
+	if breakpointStart < 0 {
+		breakpointStart = 0
+	}
+	for i, m := range messages {
+		// Messages outside the cache-tail pass through verbatim so
+		// we don't pay serialization cost on the rest of the history.
+		if i < breakpointStart {
+			out[i] = m
+			continue
+		}
+		out[i] = wrapMessageWithCacheControl(m)
+	}
+	return out
+}
+
+// wrapMessageWithCacheControl returns a map representation of the
+// message with cache_control attached to the final content block.
+// Three input shapes are handled:
+//
+//   - Content is a quoted string: wrap into [{type:text, text:..., cache_control:...}]
+//   - Content is already a JSON array of blocks: clone and annotate last block
+//   - Content is some other JSON value: wrap into [{type:text, text:<stringified>, cache_control:...}]
+//     This last case should not happen in practice but the fallback
+//     ensures we never produce a malformed request.
+func wrapMessageWithCacheControl(m ChatMessage) map[string]interface{} {
+	cacheControl := map[string]interface{}{"type": "ephemeral"}
+
+	// Try array-of-blocks first.
+	var blocks []interface{}
+	if err := json.Unmarshal(m.Content, &blocks); err == nil && len(blocks) > 0 {
+		last := blocks[len(blocks)-1]
+		if asMap, ok := last.(map[string]interface{}); ok {
+			asMap["cache_control"] = cacheControl
+			blocks[len(blocks)-1] = asMap
+		} else {
+			// Array contained something we can't annotate; append a
+			// trailing marker block that carries the cache_control.
+			blocks = append(blocks, map[string]interface{}{
+				"type": "text", "text": "", "cache_control": cacheControl,
+			})
+		}
+		return map[string]interface{}{"role": m.Role, "content": blocks}
+	}
+
+	// Try string.
+	var asString string
+	if err := json.Unmarshal(m.Content, &asString); err == nil {
+		return map[string]interface{}{
+			"role": m.Role,
+			"content": []interface{}{
+				map[string]interface{}{"type": "text", "text": asString, "cache_control": cacheControl},
+			},
+		}
+	}
+
+	// Fallback: preserve original content and append a marker block.
+	return map[string]interface{}{
+		"role": m.Role,
+		"content": []interface{}{
+			m.Content,
+			map[string]interface{}{"type": "text", "text": "", "cache_control": cacheControl},
+		},
+	}
 }
 
 // toolsWithCacheControl adds cache_control to the last tool definition.
