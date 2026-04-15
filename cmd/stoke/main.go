@@ -71,6 +71,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/tui"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
+	"github.com/ericmacdougall/stoke/internal/stancesign"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
 
@@ -247,6 +248,17 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// The merge mutex MUST be shared across all parallel tasks to prevent
 	// concurrent ref mutations that corrupt the repository.
 	sharedWorktrees := worktree.NewManager(absRepo)
+	// A1: attach the harness stance signing identity. Commits the
+	// worktree manager produces (merges to main + conflict-resolution
+	// commits) will carry the "stoke" stance's signing-key overlay.
+	// Failure to resolve the key is a warn-and-continue — unsigned
+	// commits still work; the Signer == nil branch inside Manager is
+	// the fallback.
+	if stanceID, sErr := stancesign.IdentityFor("", "stoke"); sErr == nil {
+		sharedWorktrees.Signer = stanceID
+	} else {
+		fmt.Printf("  ⚠ stancesign: could not resolve identity (%v) — commits will be unsigned\n", sErr)
+	}
 	wisdomStore := wisdom.NewStore()
 
 	// Metrics registry: shared across all tasks in this build session.
@@ -1098,6 +1110,9 @@ func buildCmd(args []string) {
 			sched := scheduler.New(*workers)
 			sched.PriorityName = *schedulerAlgo
 			interactiveWorktrees := worktree.NewManager(absRepo)
+			if stanceID, sErr := stancesign.IdentityFor("", "stoke"); sErr == nil {
+				interactiveWorktrees.Signer = stanceID
+			}
 			wisdomStore := wisdom.NewStore()
 
 			// Shared resources for interactive mode (same as headless).

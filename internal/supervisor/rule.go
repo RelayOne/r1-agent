@@ -11,6 +11,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
 )
 
 // Rule is the interface all supervisor rules implement.
@@ -35,23 +36,42 @@ type Rule interface {
 	Rationale() string
 }
 
+// ValidatePayload is a helper rules with declared schemas call on
+// themselves inside Action() before publishing the event. Returns nil
+// when the payload matches the rule's declared schema (or when the
+// rule doesn't declare one). Returns a non-nil error naming the
+// failing field when the payload violates the schema — callers
+// should log the error and skip the publish rather than emitting a
+// malformed event. Closes matrix gap A3 at the call-site layer.
+func ValidatePayload(r Rule, payload map[string]any) error {
+	sp, ok := r.(PayloadSchemaProvider)
+	if !ok {
+		return nil
+	}
+	schema := sp.PayloadSchema()
+	if schema == nil || len(schema.Fields) == 0 {
+		return nil
+	}
+	res := schemaval.ValidateMap(payload, *schema)
+	if res.Valid {
+		return nil
+	}
+	return res
+}
+
 // PayloadSchemaProvider is an OPTIONAL interface a Rule may implement
-// to declare the JSON Schema its emitted Action payloads must satisfy.
-// The supervisor checks for this interface at dispatch time via a type
-// assertion — rules that don't implement it remain schemaless. New
-// rules SHOULD implement it: a payload with a missing required field
-// fails silently at replay because the consumer has no schema to
-// validate against. See docs/anti-deception-matrix.md row "supervisor
-// payloads."
+// to declare the schema its emitted Action payloads must satisfy.
+// The supervisor dispatcher checks for this interface at rule-firing
+// time via a type assertion — rules that don't implement it remain
+// schemaless. New rules SHOULD implement it: a payload with a missing
+// required field fails silently at replay because the consumer has
+// no schema to validate against. See docs/anti-deception-matrix.md
+// row "supervisor payloads."
 //
-// The schema is returned as a raw JSON-encoded byte slice (e.g. from
-// `json.Marshal` of a JSON Schema document, or an embed of a .json
-// file). Returning nil or an empty slice means "no schema declared" —
-// equivalent to not implementing the interface at all. Validation
-// itself is performed by internal/schemaval which already exists for
-// phase-contract validation.
+// Returning nil means "no schema declared" — equivalent to not
+// implementing the interface. Validation uses internal/schemaval.
 type PayloadSchemaProvider interface {
-	PayloadSchema() []byte
+	PayloadSchema() *schemaval.Schema
 }
 
 // ConfigSchema describes wizard-tunable knobs for a rule.

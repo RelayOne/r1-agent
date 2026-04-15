@@ -98,6 +98,18 @@ func (s *Supervisor) RegisterRules(rules ...Rule) {
 				continue // rule disabled by wizard
 			}
 		}
+		// A3 preflight: if the rule declares a payload schema, verify
+		// it is well-formed (non-nil + at least one field). Catches
+		// schema-drift at registration rather than at replay — the
+		// silent-failure mode where a rule emits a payload missing a
+		// required field and the consumer has no schema to check against.
+		if sp, ok := r.(PayloadSchemaProvider); ok {
+			schema := sp.PayloadSchema()
+			if schema == nil || len(schema.Fields) == 0 {
+				log.Printf("supervisor %s: rule %s declares PayloadSchemaProvider but returns empty schema — payloads will not be validated at dispatch",
+					s.config.ID, r.Name())
+			}
+		}
 		s.rules = append(s.rules, r)
 	}
 	sort.SliceStable(s.rules, func(i, j int) bool {

@@ -101,6 +101,34 @@ type Tracker struct {
 	budget   float64
 	alertFn  AlertFunc
 	alerted  map[AlertLevel]bool
+
+	// amp is the optional amplification-budget tracker. When non-nil,
+	// every Record call forwards (inputTokens + outputTokens) to
+	// amp.Add so the tracker's state machine fires its OnTransition
+	// hook at the alert / exceeded boundaries. Nil means "no
+	// amplification budget attached" — pre-B2 behavior.
+	amp *AmplificationTracker
+}
+
+// AttachAmplification wires an AmplificationTracker into the cost
+// tracker. After this call, every Record invocation also accounts
+// against the amplification budget. Safe to pass nil to detach.
+// Closes matrix gap B2 at the wiring layer — the Q16 baseline-
+// measurement effort is still the blocker for meaningful
+// BaselineTokens values, but the wire is live so the moment
+// baselines land the ceiling is enforced.
+func (t *Tracker) AttachAmplification(amp *AmplificationTracker) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.amp = amp
+}
+
+// Amplification returns the attached AmplificationTracker (may be
+// nil). Exposed for diagnostic rendering.
+func (t *Tracker) Amplification() *AmplificationTracker {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.amp
 }
 
 // NewTracker creates a cost tracker with an optional budget (0 = unlimited).
@@ -130,9 +158,16 @@ func (t *Tracker) Record(model, taskID string, inputTokens, outputTokens, cacheR
 	t.mu.Lock()
 	t.records = append(t.records, u)
 	total := t.totalLocked()
+	amp := t.amp
 	t.mu.Unlock()
 
 	t.checkAlerts(total)
+	// Amplification accounting runs OUTSIDE the tracker mutex —
+	// amp has its own lock and calling it under t.mu could deadlock
+	// any OnTransition callback that also wants tracker state.
+	if amp != nil {
+		amp.Add(inputTokens + outputTokens)
+	}
 	return cost
 }
 
