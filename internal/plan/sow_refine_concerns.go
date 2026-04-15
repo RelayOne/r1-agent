@@ -205,29 +205,50 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 }
 
 // refineGateRegressions returns "" when the refined SOW preserves
-// every original AC's verifier (description + at least one of
-// command/file_exists/content_match), and a non-empty reason string
-// otherwise. Catches the case where the refiner kept an AC's id but
-// cleared its description or verifier — autoFillMissingACFields
-// would otherwise turn that into a pass-by-default manual check.
+// every original AC's verifier exactly, and a non-empty reason
+// string otherwise. The refiner is allowed to MOVE an AC between
+// sessions (concerns often request reassignment) but must NOT
+// change the verifier — the gate strength has a strict ordering:
+//
+//	command > content_match > file_exists > description-only
+//
+// A refinement that swaps a `command` gate for a `file_exists`
+// gate, or downgrades a strong content_match to a weak one, has
+// silently weakened the verification surface even though the AC
+// id and "having a gate" flag are both preserved. We require the
+// (Command, FileExists, ContentMatch) tuple to compare equal
+// modulo whitespace; description changes are also rejected
+// because the description carries the manual-check intent when
+// no automated verifier is configured.
 func refineGateRegressions(original, refined *SOW) string {
-	type acGate struct {
-		desc       string
-		hasGate    bool
+	type acFields struct {
+		desc            string
+		command         string
+		fileExists      string
+		contentMatchSig string
 	}
-	gateOf := func(ac AcceptanceCriterion) acGate {
-		hg := strings.TrimSpace(ac.Command) != "" ||
-			strings.TrimSpace(ac.FileExists) != "" ||
-			ac.ContentMatch != nil
-		return acGate{desc: strings.TrimSpace(ac.Description), hasGate: hg}
+	signatureOf := func(ac AcceptanceCriterion) acFields {
+		cms := ""
+		if ac.ContentMatch != nil {
+			// Marshal to compact JSON for a stable signature; small
+			// struct so cost is negligible.
+			b, _ := json.Marshal(ac.ContentMatch)
+			cms = string(b)
+		}
+		return acFields{
+			desc:            strings.TrimSpace(ac.Description),
+			command:         strings.TrimSpace(ac.Command),
+			fileExists:      strings.TrimSpace(ac.FileExists),
+			contentMatchSig: cms,
+		}
 	}
-	originalACs := map[string]acGate{}
+	originalACs := map[string]acFields{}
 	for _, s := range original.Sessions {
 		for _, a := range s.AcceptanceCriteria {
 			if a.ID == "" {
 				continue
 			}
-			originalACs[a.ID] = gateOf(a)
+			originalACs[a.ID] = signatureOf(a)
 		}
 	}
 	for _, s := range refined.Sessions {
@@ -236,12 +257,18 @@ func refineGateRegressions(original, refined *SOW) string {
 			if !ok {
 				continue // newly added AC; allowed
 			}
-			after := gateOf(a)
-			if before.desc != "" && after.desc == "" {
-				return fmt.Sprintf("AC %s lost its description", a.ID)
+			after := signatureOf(a)
+			if before.command != after.command {
+				return fmt.Sprintf("AC %s `command` field changed (was %q, now %q)", a.ID, before.command, after.command)
 			}
-			if before.hasGate && !after.hasGate {
-				return fmt.Sprintf("AC %s lost its verifier (command/file_exists/content_match)", a.ID)
+			if before.fileExists != after.fileExists {
+				return fmt.Sprintf("AC %s `file_exists` field changed", a.ID)
+			}
+			if before.contentMatchSig != after.contentMatchSig {
+				return fmt.Sprintf("AC %s `content_match` field changed", a.ID)
+			}
+			if before.desc != after.desc {
+				return fmt.Sprintf("AC %s description changed (refine must preserve verifier text)", a.ID)
 			}
 		}
 	}
