@@ -169,7 +169,7 @@ func CritiqueSOW(sow *SOW, prov provider.Provider, model string) (*SOWCritique, 
 		// JSON, and the previous 8k cap was leaving them no room to
 		// finish — the response came back with thinking-only or empty
 		// content blocks, which collectModelText now also salvages.
-		MaxTokens: 16000,
+		MaxTokens: 64000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -483,7 +483,7 @@ BROKEN JSON:
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": prompt}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 32000,
+		MaxTokens: 64000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -674,7 +674,7 @@ func refineOneSession(sess Session, issues []CritiqueIssue, prov provider.Provid
 	// 30-task session with 5 ACs fits in ~5k tokens of JSON).
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 16000,
+		MaxTokens: 64000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

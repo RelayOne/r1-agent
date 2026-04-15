@@ -147,7 +147,7 @@ func JudgeSessionSize(ctx context.Context, prov provider.Provider, model string,
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
 		System:    sysPrompt,
-		MaxTokens: 2500,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

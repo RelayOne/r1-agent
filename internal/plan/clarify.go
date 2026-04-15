@@ -245,7 +245,7 @@ func (r *SupervisorResponder) Respond(ctx context.Context, req ClarifyRequest) (
 		Model:     r.Model,
 		System:    supervisorSystemPrompt,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userMsgRaw}},
-		MaxTokens: 512,
+		MaxTokens: 2000,
 	}
 
 	// Honor ctx cancellation by running the call in a goroutine.

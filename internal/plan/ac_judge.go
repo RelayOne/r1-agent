@@ -143,7 +143,7 @@ func JudgeAC(ctx context.Context, prov provider.Provider, model string, in Seman
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": body.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 3000,
+		MaxTokens: 8000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

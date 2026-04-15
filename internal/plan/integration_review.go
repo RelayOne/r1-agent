@@ -218,7 +218,7 @@ func RunIntegrationReview(ctx context.Context, prov provider.Provider, model str
 			Model:     model,
 			System:    sysPrompt,
 			Messages:  messages,
-			MaxTokens: 3000,
+			MaxTokens: 8000,
 			Tools:     tools,
 		})
 		if err != nil {

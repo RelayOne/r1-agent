@@ -210,7 +210,7 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 2500,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -290,7 +290,7 @@ func DecomposeTaskGap(ctx context.Context, prov provider.Provider, model string,
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 2500,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

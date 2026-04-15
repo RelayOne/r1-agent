@@ -132,7 +132,7 @@ func JudgeDeclaredContent(ctx context.Context, prov provider.Provider, model str
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 800,
+		MaxTokens: 3000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

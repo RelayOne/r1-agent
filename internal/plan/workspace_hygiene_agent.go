@@ -122,7 +122,7 @@ func AgentRepair(ctx context.Context, prov provider.Provider, model string, repo
 			Model:     model,
 			System:    system,
 			Messages:  messages,
-			MaxTokens: 2500,
+			MaxTokens: 6000,
 			Tools:     []provider.ToolDef{tool},
 		})
 		if err != nil {

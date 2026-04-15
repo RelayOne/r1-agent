@@ -91,7 +91,7 @@ func CaptureSessionWisdom(ctx context.Context, session plan.Session, results []p
 
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 2000,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

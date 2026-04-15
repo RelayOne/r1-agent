@@ -189,7 +189,7 @@ func runRepairMetaAnalyst(ctx context.Context, prov provider.Provider, model, sy
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": full}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 1500,
+		MaxTokens: 4000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -222,7 +222,7 @@ func synthesizeRepairMetaDiagnosis(ctx context.Context, prov provider.Provider, 
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 2000,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

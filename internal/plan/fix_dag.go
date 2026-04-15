@@ -214,7 +214,7 @@ func PlanFixDAG(ctx context.Context, prov provider.Provider, model string, in Fi
 			Model:     model,
 			System:    sysPrompt,
 			Messages:  messages,
-			MaxTokens: 3000,
+			MaxTokens: 8000,
 			Tools:     tools,
 		})
 		if err != nil {

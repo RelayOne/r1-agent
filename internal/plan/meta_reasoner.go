@@ -302,7 +302,7 @@ func RunMetaReasoning(ctx context.Context, prov provider.Provider, model string,
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 4000,
+		MaxTokens: 12000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

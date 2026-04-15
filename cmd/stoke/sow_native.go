@@ -1687,7 +1687,7 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 
 	resp, err := cfg.ReviewProvider.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 6000,
+		MaxTokens: 12000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

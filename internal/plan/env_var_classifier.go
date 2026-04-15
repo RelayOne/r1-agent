@@ -117,7 +117,7 @@ func ClassifyEnvVars(ctx context.Context, prov provider.Provider, model string, 
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": prompt}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     chatModel,
-		MaxTokens: 2000,
+		MaxTokens: 6000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

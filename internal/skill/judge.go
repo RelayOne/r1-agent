@@ -46,7 +46,7 @@ func JudgeRelevance(ctx context.Context, prov provider.Provider, model string, s
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 1500,
+		MaxTokens: 4000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {

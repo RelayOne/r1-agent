@@ -413,7 +413,7 @@ func buildChatSession(defaults SmartDefaults) (*chat.Session, error) {
 	}
 	session, err := chat.NewSession(p, chat.Config{
 		Model:     model,
-		MaxTokens: 2048,
+		MaxTokens: 6000,
 		Tools:     chat.DispatcherTools(),
 	})
 	if err != nil {

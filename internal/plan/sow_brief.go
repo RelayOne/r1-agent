@@ -238,7 +238,7 @@ func (b *BriefingRunner) Brief(ctx context.Context, in SessionBriefingInput) (ma
 		Model: model,
 		// Briefings for a wave of 5-10 tasks fit comfortably in
 		// 6000 output tokens. Extended-thinking budget is on top.
-		MaxTokens: 8000,
+		MaxTokens: 16000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
