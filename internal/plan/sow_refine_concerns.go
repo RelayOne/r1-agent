@@ -118,53 +118,91 @@ func RefineSOWFromConcerns(ctx context.Context, prose string, sow *SOW, concerns
 		return nil, fmt.Errorf("parse refined SOW: %w", err)
 	}
 
-	// Defensive sanitation: strip any prose that snuck into session
-	// IDs even after the prompt's explicit rule. The same fix that
-	// guards the coverage round applies here.
+	// Defensive sanitation with collision avoidance. The refiner
+	// often labels split sessions like "S7 (api)" / "S7 (ui)" —
+	// raw sanitize would map both to "S7" and one would clobber
+	// the other in BuildSessionDAG (which keys by ID). When a
+	// sanitized ID collides with one already taken, append the
+	// next available suffix so each session keeps a distinct id.
+	used := map[string]bool{}
 	for i := range refined.Sessions {
 		clean := sanitizeSessionID(refined.Sessions[i].ID)
 		if clean == "" {
-			// Fall back to original ID if sanitizer rejects.
 			clean = refined.Sessions[i].ID
 		}
+		if used[clean] {
+			// Find an unused suffix. Start from -2 (the original
+			// keeps the bare id, the next gets -2, -3, etc.).
+			n := 2
+			candidate := fmt.Sprintf("%s-%d", clean, n)
+			for used[candidate] {
+				n++
+				candidate = fmt.Sprintf("%s-%d", clean, n)
+			}
+			clean = candidate
+		}
+		used[clean] = true
 		refined.Sessions[i].ID = clean
 	}
 
-	// Conservation check: every original task ID must appear in the
-	// refined SOW. If the refiner dropped tasks, treat as failure
-	// and return the unmodified SOW (the caller will proceed with
-	// the original; better than a lossy refine).
-	originalTasks := map[string]bool{}
-	for _, s := range sow.Sessions {
-		for _, t := range s.Tasks {
-			originalTasks[t.ID] = true
+	// Conservation: every original task AND acceptance criterion ID
+	// must appear in the refined SOW. Verifying tasks alone lets a
+	// refiner silently drop ACs while still leaving each session
+	// with at least one — the dispatcher would then run weakened
+	// gates on exactly the plans serious enough to need refinement.
+	originalTasks, originalACs := collectIDs(sow)
+	refinedTasks, refinedACs := collectIDs(&refined)
+	missingT := diff(originalTasks, refinedTasks)
+	missingA := diff(originalACs, refinedACs)
+	if len(missingT) > 0 || len(missingA) > 0 {
+		var details []string
+		if len(missingT) > 0 {
+			preview := missingT
+			if len(preview) > 8 {
+				preview = preview[:8]
+			}
+			details = append(details, fmt.Sprintf("%d task(s) (e.g. %s)", len(missingT), strings.Join(preview, ", ")))
 		}
-	}
-	refinedTasks := map[string]bool{}
-	for _, s := range refined.Sessions {
-		for _, t := range s.Tasks {
-			refinedTasks[t.ID] = true
+		if len(missingA) > 0 {
+			preview := missingA
+			if len(preview) > 8 {
+				preview = preview[:8]
+			}
+			details = append(details, fmt.Sprintf("%d acceptance criterion (e.g. %s)", len(missingA), strings.Join(preview, ", ")))
 		}
-	}
-	var missing []string
-	for tid := range originalTasks {
-		if !refinedTasks[tid] {
-			missing = append(missing, tid)
-		}
-	}
-	if len(missing) > 0 {
-		// Show up to 8 missing IDs in the error so the operator can
-		// see the scope loss without flooding the log.
-		preview := missing
-		if len(preview) > 8 {
-			preview = preview[:8]
-		}
-		return nil, fmt.Errorf("refine dropped %d task(s) (e.g. %s) — preserving original SOW",
-			len(missing), strings.Join(preview, ", "))
+		return nil, fmt.Errorf("refine dropped %s — preserving original SOW", strings.Join(details, " and "))
 	}
 
 	// Preserve transient flag (refine output won't have it).
 	refined.ChunkedConvertApproved = sow.ChunkedConvertApproved
 
 	return &refined, nil
+}
+
+// collectIDs returns (taskIDs, acIDs) for every session in the SOW.
+// Used by the conservation check so dropped tasks AND dropped ACs
+// are both detected — earlier versions only checked tasks.
+func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
+	tasks := map[string]bool{}
+	acs := map[string]bool{}
+	for _, s := range sow.Sessions {
+		for _, t := range s.Tasks {
+			tasks[t.ID] = true
+		}
+		for _, a := range s.AcceptanceCriteria {
+			acs[a.ID] = true
+		}
+	}
+	return tasks, acs
+}
+
+// diff returns the keys present in a but missing from b.
+func diff(a, b map[string]bool) []string {
+	var out []string
+	for k := range a {
+		if !b[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
