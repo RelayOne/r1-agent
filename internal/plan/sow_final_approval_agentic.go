@@ -463,9 +463,13 @@ func indexProseSections(prose string) *proseIndex {
 	// until it finds an unused value. The "[N]" form was chosen
 	// over "#N" because real markdown headings often contain `#`
 	// (e.g. cross-references) but rarely "name [N]" verbatim.
+	// Track taken values case-insensitively because read() falls
+	// back to case-insensitive lookup; if we treat "Intro [2]" and
+	// "intro [2]" as different keys, a literal "intro [2]" section
+	// could shadow the synthetic "Intro [2]" on a normalized lookup.
 	taken := map[string]struct{}{}
 	for i := range idx.sections {
-		taken[idx.sections[i].Name] = struct{}{}
+		taken[strings.ToLower(idx.sections[i].Name)] = struct{}{}
 	}
 	counts := map[string]int{}
 	for i := range idx.sections {
@@ -475,18 +479,19 @@ func indexProseSections(prose string) *proseIndex {
 			idx.sections[i].Path = name
 			continue
 		}
-		// Find an unused "name [N]" suffix.
+		// Find an unused "name [N]" suffix (case-insensitive
+		// collision check).
 		n := counts[name]
 		var candidate string
 		for {
 			candidate = fmt.Sprintf("%s [%d]", name, n)
-			if _, dup := taken[candidate]; !dup {
+			if _, dup := taken[strings.ToLower(candidate)]; !dup {
 				break
 			}
 			n++
 		}
 		idx.sections[i].Path = candidate
-		taken[candidate] = struct{}{}
+		taken[strings.ToLower(candidate)] = struct{}{}
 	}
 	return idx
 }
