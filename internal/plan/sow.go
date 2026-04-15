@@ -19,6 +19,16 @@ type SOW struct {
 	Description string    `json:"description,omitempty" yaml:"description"`
 	Stack       StackSpec `json:"stack,omitempty" yaml:"stack"`
 	Sessions    []Session `json:"sessions" yaml:"sessions"`
+
+	// ChunkedConvertApproved is true when the SOW came from
+	// ConvertProseToSOWChunked and passed its internal review loop
+	// (semantic merger + coverage review + CTO final approval).
+	// Callers use this to skip the legacy CritiqueAndRefine pass,
+	// which is redundant on a chunked-reviewed SOW and was adding
+	// 20-40 min of critique/refine LLM calls on top of the
+	// chunked path's own review work. Transient (json:"-") — the
+	// flag lives for one run only.
+	ChunkedConvertApproved bool `json:"-" yaml:"-"`
 }
 
 // StackSpec describes the project's technology stack for command inference.

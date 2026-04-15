@@ -1444,7 +1444,10 @@ func sowCmd(args []string) {
 			// Auto-critique + refine: turn the LLM's first-pass SOW
 			// into something executable. Up to 2 critique/refine
 			// cycles; stop when verdict == "ship".
-			if *autoCritique && prov != nil {
+			if sow.ChunkedConvertApproved {
+				fmt.Println("  ⏭ skipping legacy critique/refine: chunked convert already ran semantic merger + coverage + CTO approval")
+			}
+			if *autoCritique && prov != nil && !sow.ChunkedConvertApproved {
 				fmt.Printf("  running SOW critique pass...\n")
 				refined, crit, critErr := plan.CritiqueAndRefine(sow, prov, modelName, 2)
 				// Smart-loop philosophy: critique IS the supervisor

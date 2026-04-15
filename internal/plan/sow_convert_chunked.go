@@ -304,6 +304,10 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			if verdict.Decision == "reject" || verdict.HasBlocking() {
 				return out, nil, fmt.Errorf("final plan approval: %s — %d blocking concern(s); SOW not fit for dispatch", verdict.Decision, len(verdict.Concerns))
 			}
+			// Mark the SOW as chunked-approved so the caller skips
+			// the legacy CritiqueAndRefine pass (redundant on a
+			// chunked-reviewed plan, adds 20-40 min of LLM calls).
+			out.ChunkedConvertApproved = true
 		}
 	}
 

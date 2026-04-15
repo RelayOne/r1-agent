@@ -4100,10 +4100,16 @@ func applySessionSizerPass(ctx context.Context, sow *plan.SOW, prov provider.Pro
 	originalCount := len(sow.Sessions)
 	out := make([]plan.Session, 0, len(sow.Sessions))
 	for _, session := range sow.Sessions {
-		// Skip obviously-small sessions without paying for the LLM
-		// call. The library also floors on this, but the double-check
-		// keeps the outer log quiet.
-		if len(session.Tasks) < 6 {
+		// Skip small-to-medium sessions without paying for the LLM
+		// call. Threshold 20 matches the chunked-convert per-session
+		// budget — sessions produced by ConvertProseToSOWChunked
+		// already expand to coherent scope at ~15-25 tasks each, so
+		// LLM-calling each to decide "should this split?" usually
+		// returns no-split and burns 45s/session × 20+ sessions =
+		// 15+ minutes of pure overhead. Only paying the call on
+		// sessions > 20 tasks catches the genuinely-oversized cases
+		// (e.g. an S10 that got 42 tasks in one expand).
+		if len(session.Tasks) <= 20 {
 			out = append(out, session)
 			continue
 		}
