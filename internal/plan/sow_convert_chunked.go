@@ -219,6 +219,13 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		Stack:       skel.Stack,
 		Sessions:    expanded,
 	}
+	// Per-session expanders run independently and can't coordinate
+	// on task-ID ranges, so two sessions often pick overlapping
+	// numeric ranges (e.g. both emit T30-T44). Renumber every
+	// task to a globally-unique ID in session order and rewrite
+	// intra-session Dependencies via the oldID→newID map. AC IDs
+	// get the same treatment.
+	renumberTasksAndACsGlobally(out)
 	autoFillMissingACFields(out)
 	autoCleanTaskDeps(out)
 	autoAddMissingInfra(out)
@@ -348,6 +355,66 @@ func callChatWithCtx(ctx context.Context, prov provider.Provider, req provider.C
 		return nil, fmt.Errorf("chat timed out after %v: %w", deadlineDuration(ctx), ctx.Err())
 	case r := <-ch:
 		return r.resp, r.err
+	}
+}
+
+// renumberTasksAndACsGlobally assigns each task + AC a globally
+// unique ID in session/task order (T1, T2, ..., AC1, AC2, ...) and
+// rewrites intra-session task.Dependencies via the oldID→newID
+// map. Per-session expanders can't coordinate on numbering (they
+// run independently) so two sessions often picked overlapping
+// ranges like T30-T44 on both sides — ValidateSOW then rejected
+// with "duplicate task ID across sessions". Renumbering fixes the
+// collision without losing the expander output.
+//
+// Cross-session task Dependencies from the expanders are almost
+// always speculative (the expander can't know the other session's
+// final IDs) so they get dropped here. Real cross-session
+// dependencies live in Session.Inputs/Outputs (artifact names, not
+// task IDs) which the DAG resolver uses.
+func renumberTasksAndACsGlobally(sow *SOW) {
+	if sow == nil {
+		return
+	}
+	taskNext := 1
+	acNext := 1
+	// Per-session oldID→newID for tasks; used to rewrite
+	// Dependencies AFTER we've walked every task in the session.
+	for si := range sow.Sessions {
+		s := &sow.Sessions[si]
+		oldToNew := map[string]string{}
+		for ti := range s.Tasks {
+			t := &s.Tasks[ti]
+			oldID := strings.TrimSpace(t.ID)
+			newID := fmt.Sprintf("T%d", taskNext)
+			taskNext++
+			oldToNew[oldID] = newID
+			t.ID = newID
+		}
+		// Rewrite intra-session deps. Drop any dep that doesn't
+		// resolve (cross-session speculative refs or dangling).
+		for ti := range s.Tasks {
+			t := &s.Tasks[ti]
+			kept := t.Dependencies[:0]
+			for _, dep := range t.Dependencies {
+				dep = strings.TrimSpace(dep)
+				if dep == "" {
+					continue
+				}
+				if newDep, ok := oldToNew[dep]; ok {
+					kept = append(kept, newDep)
+				}
+				// else: drop (cross-session or dangling)
+			}
+			t.Dependencies = kept
+		}
+		// Renumber ACs similarly. No structural dep to rewrite for
+		// ACs in the current schema.
+		for ai := range s.AcceptanceCriteria {
+			ac := &s.AcceptanceCriteria[ai]
+			ac.ID = fmt.Sprintf("AC%d", acNext)
+			acNext++
+		}
 	}
 }
 
