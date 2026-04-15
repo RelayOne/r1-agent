@@ -21,6 +21,28 @@ type Manager struct {
 	GitBinary    string
 	WorktreeBase string
 	mergeMu      sync.Mutex // serializes merges to main (parallel execution ok, parallel mutation of refs is not)
+
+	// Signer, when non-nil, is applied to every git command this Manager
+	// invokes that creates a commit (merge, conflict-resolution commit,
+	// snapshot commits via helpers). Applies signing-key git config +
+	// committer/author env so the resulting commit carries the stance's
+	// cryptographic attestation. Closes anti-deception matrix row A1
+	// (commit attribution).
+	//
+	// Defined as an interface (single-method) instead of importing
+	// internal/stancesign directly to keep this package's import graph
+	// small. Real implementations satisfy it via stancesign.Identity.
+	// Unset = unsigned commits = pre-A1 behavior preserved.
+	Signer CommitSigner
+}
+
+// CommitSigner is implemented by anything that can attach a signing
+// identity to a git command — typically *stancesign.Identity. The
+// interface is single-method by design so callers can pass either a
+// real Identity or a no-op stub for tests / unsigned mode without
+// pulling in the full stancesign package.
+type CommitSigner interface {
+	ApplyTo(cmd *exec.Cmd)
 }
 
 // Handle holds the paths, branch name, and base commit for a single git worktree created by the Manager.
@@ -237,6 +259,9 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	// Merge for real
 	mergeCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--no-ff", handle.Branch, "-m", message)
 	mergeCmd.Dir = m.RepoRoot
+	if m.Signer != nil {
+		m.Signer.ApplyTo(mergeCmd)
+	}
 	if out, err := mergeCmd.CombinedOutput(); err != nil {
 		if mergeCtx.Err() != nil {
 			return fmt.Errorf("git merge timed out after %v", mergeTimeout)
@@ -331,6 +356,9 @@ func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, c
 	// Complete the merge commit.
 	commitCmd := exec.CommandContext(ctx, m.GitBinary, "commit", "--no-edit")
 	commitCmd.Dir = m.RepoRoot
+	if m.Signer != nil {
+		m.Signer.ApplyTo(commitCmd)
+	}
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit (merge): %w: %s", err, string(out))
 	}

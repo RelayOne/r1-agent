@@ -290,7 +290,20 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 //  5. Create one clean harness commit
 //
 // Works regardless of whether agent committed, staged, or left changes loose.
+// CommitVerifiedTreeWithSigner is the signer-aware variant of
+// CommitVerifiedTree. When signer is non-nil, the underlying git
+// commit invocation receives the signing identity overlay (signing
+// key + committer/author env). signer == nil falls back to the
+// unsigned path so existing callers stay untouched.
+func CommitVerifiedTreeWithSigner(ctx context.Context, handle Handle, validatedFiles []string, message string, signer interface{ ApplyTo(*exec.Cmd) }) error {
+	return commitVerifiedTreeImpl(ctx, handle, validatedFiles, message, signer)
+}
+
 func CommitVerifiedTree(ctx context.Context, handle Handle, validatedFiles []string, message string) error {
+	return commitVerifiedTreeImpl(ctx, handle, validatedFiles, message, nil)
+}
+
+func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles []string, message string, signer interface{ ApplyTo(*exec.Cmd) }) error {
 	if len(validatedFiles) == 0 {
 		return ErrNothingToCommit
 	}
@@ -397,6 +410,9 @@ func CommitVerifiedTree(ctx context.Context, handle Handle, validatedFiles []str
 	// 9. Commit.
 	commitCmd := exec.CommandContext(ctx, handle.GitBinary, "commit", "-m", message)
 	commitCmd.Dir = handle.Path
+	if signer != nil {
+		signer.ApplyTo(commitCmd)
+	}
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
