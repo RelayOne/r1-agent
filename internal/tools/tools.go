@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -338,6 +339,16 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid input: %w", err)
 	}
 
+	// Some models double-escape newlines in tool-call content —
+	// emit `\\n` where they should emit `\n`. JSON unmarshal then
+	// produces literal "\n" (2 chars: backslash + n) instead of a
+	// real newline, and the written file is one huge line with
+	// visible escape sequences. Detect + fix: if content has many
+	// literal `\n` pairs and few real newlines, rewrite with real
+	// escapes. (Run 15 bug: sonnet-4-6 emitted entire API-client
+	// source with \\n and \\t double-escaped.)
+	args.Content = maybeUnescapeContent(args.Content)
+
 	path, pathErr := r.resolvePath(args.Path)
 	if pathErr != nil {
 		return "", pathErr
@@ -620,4 +631,46 @@ func mustJSON(v interface{}) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+// maybeUnescapeContent detects + fixes the double-escape pattern
+// that some models (observed: sonnet-4-6 through LiteLLM) emit in
+// tool-call content. The model produces `\\n` in the JSON string
+// where it should produce `\n`, causing json.Unmarshal to leave the
+// literal backslash+n in the output string and the written file to
+// have visible escape sequences instead of newlines.
+//
+// Heuristic: if the string has ≥5 literal `\n` (two bytes:
+// backslash + 'n') and fewer real newlines than literal escapes,
+// the file is double-escaped. Re-apply strconv.Unquote as a pass
+// through standard JSON/Go escape rules; if that fails, fall back
+// to targeted per-sequence replacement for the common escapes.
+//
+// Returns the content unchanged when the heuristic doesn't trip so
+// files that genuinely contain the literal `\n` string (e.g. shell
+// scripts that echo `\n` as text, test fixtures) are preserved.
+func maybeUnescapeContent(content string) string {
+	literalEscapes := strings.Count(content, `\n`)
+	realNewlines := strings.Count(content, "\n")
+	if literalEscapes < 5 {
+		return content
+	}
+	if realNewlines > literalEscapes/2 {
+		// File has plenty of real newlines relative to literal
+		// escapes — probably a legitimate fixture containing the
+		// string. Don't touch.
+		return content
+	}
+	if unq, err := strconv.Unquote(`"` + content + `"`); err == nil {
+		return unq
+	}
+	// Fallback for content that won't round-trip through Unquote
+	// (e.g. literal quotes inside). Replace the common escape
+	// sequences directly.
+	out := content
+	out = strings.ReplaceAll(out, `\n`, "\n")
+	out = strings.ReplaceAll(out, `\t`, "\t")
+	out = strings.ReplaceAll(out, `\r`, "\r")
+	out = strings.ReplaceAll(out, `\\`, `\`)
+	return out
 }
