@@ -205,20 +205,23 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 }
 
 // cmHasContent reports whether a ContentMatchCriterion is meaningful
-// enough to lock against refinement. ONLY the fully zero-value
-// struct (the tolerated bare-string JSON parse artifact, where both
-// File and Pattern are empty) is treated as malformed-and-repairable.
-// Any criterion with a non-empty File OR a non-empty Pattern is
-// treated as locked, because other parts of the pipeline
-// (CritiqueDeterministic, checkOneCriterion) still treat partially-
-// populated content_match values as active runnable checks. Locking
-// them prevents refine from silently retargeting or removing an AC
-// that downstream code is gating on.
+// enough to lock against refinement. The File field is the gate's
+// semantic anchor (which file we're scanning); when it's empty, the
+// rest of the pipeline (critiqueAcceptanceCriteria) treats the AC
+// as malformed and skips it. Locking pattern-only or fully-empty
+// payloads would block legitimate refine repairs of exactly the
+// malformed shapes the loop is supposed to fix.
+//
+// Lock when File is non-empty regardless of Pattern: the file
+// targets the verifier's intent. Refine must not retarget which
+// file an AC checks. The Pattern can be repaired (e.g. tightening
+// "*" → "specific-string") but only via same-File payloads, which
+// the tuple-equality check above enforces.
 func cmHasContent(cm *ContentMatchCriterion) bool {
 	if cm == nil {
 		return false
 	}
-	return strings.TrimSpace(cm.File) != "" || strings.TrimSpace(cm.Pattern) != ""
+	return strings.TrimSpace(cm.File) != ""
 }
 
 // refineGateRegressions returns "" when the refined SOW does not
