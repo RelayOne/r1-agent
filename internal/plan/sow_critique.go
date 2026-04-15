@@ -402,6 +402,20 @@ func CleanTaskDependencies(sow *SOW) []DroppedDep {
 			}
 			cleaned := t.Dependencies[:0]
 			for _, dep := range t.Dependencies {
+				// Self-loops — a task listing its own ID as a
+				// dependency — are never valid. The LLM occasionally
+				// emits these (e.g. T148 -> T148) and the validator
+				// rejects them, aborting the whole run. Drop here
+				// before validation fires.
+				if dep == t.ID {
+					drops = append(drops, DroppedDep{
+						SessionID: sid,
+						TaskID:    t.ID,
+						Dropped:   dep,
+						Reason:    "self-loop dependency",
+					})
+					continue
+				}
 				if known[dep] {
 					cleaned = append(cleaned, dep)
 					continue
