@@ -3341,17 +3341,20 @@ const maxReviewDepth = 3
 // what's already been tried.
 func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string, preTaskDirty map[string]bool) {
 	// Overflow-budget short-circuit: once originalTask has triggered
-	// one decomp-overflow promotion this session, stop re-reviewing
-	// the same task for sibling decomp directives. The reviewer is
-	// task-scoped so each sibling branch produces another "task
-	// still has gaps" verdict, driving another overflow + another
-	// no-progress cycle. With the guard, the remaining review budget
-	// is spent on other tasks instead of grinding on a task whose
-	// leftover work already lives in a new session scope.
-	// Fix for run-11 T6 spiral (40+ min stuck at [6/15]).
+	// a decomp-overflow promotion this session, the FULL outstanding
+	// scope (not just the overflow tail) was moved to a new session.
+	// Re-running the reviewer on the same originalTask before that
+	// new session completes just produces a "still has gaps" verdict
+	// because the work is queued, not done — and each rejection
+	// drives another decompose+overflow cycle (the run-11 T6 spiral).
+	// Skip re-review here; the new session will complete the work
+	// and that session's ACs are the actual acceptance gate. This is
+	// NOT a "give up" — the work IS being done in the new session.
+	// The original task is logged as deferred so the operator can
+	// trace it.
 	if cfg.overflowBudget != nil {
 		if _, overflowed := cfg.overflowBudget.Load(originalTask.ID); overflowed {
-			fmt.Printf("    ⏩ skipping follow-up review for %s at depth %d: remaining work already promoted to a new session scope\n", originalTask.ID, depth)
+			fmt.Printf("    ⏩ %s deferred to overflow session — skipping re-review until that session completes\n", originalTask.ID)
 			return
 		}
 	}
@@ -3573,15 +3576,24 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	// AC coverage).
 	if atCap {
 		if cfg.OnDecompOverflow != nil {
-			fmt.Printf("    ⬆ promoting %d decomp overflow directive(s) from %s at depth %d to new session scope\n", len(directivesToDispatch), originalTask.ID, depth)
+			// Promote the FULL outstanding scope (every directive
+			// the decomposer produced this round, not just the
+			// breadth-cap tail) into a new session. Two reasons:
+			//
+			//   1. Atomicity: the new session has its own fresh review
+			//      depth budget so the dispatched directives can each
+			//      decompose further if needed without inheriting the
+			//      depth-3 cap.
+			//   2. Acceptance correctness: the originalTask's
+			//      "complete" verdict now hinges on the new session's
+			//      ACs, not on a partial in-place dispatch that left
+			//      half the work in overflow.
+			//
+			// Combined with the overflowBudget skip at function entry,
+			// this means: one promotion per task, all the work moved,
+			// no re-review until the new session's ACs decide.
+			fmt.Printf("    ⬆ promoting %d decomp directive(s) from %s at depth %d to new session scope (full-scope handoff, not partial)\n", len(directivesToDispatch), originalTask.ID, depth)
 			cfg.OnDecompOverflow(originalTask.ID, workingSession.ID, directivesToDispatch)
-			// Mark the task as overflow-exhausted so subsequent
-			// sibling reviews short-circuit at function entry. Without
-			// this, the caller's for-loop keeps invoking this function
-			// for each sibling directive, each call re-runs the
-			// reviewer (which always rejects because the task scope
-			// is wider than any sibling branch), and each call
-			// overflows again — the run-11 T6 spiral.
 			if cfg.overflowBudget != nil {
 				cfg.overflowBudget.Store(originalTask.ID, struct{}{})
 			}
