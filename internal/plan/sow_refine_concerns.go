@@ -205,69 +205,68 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 }
 
 // refineGateRegressions returns "" when the refined SOW does not
-// DOWNGRADE any original AC's verifier, and a non-empty reason
-// string otherwise. The refiner is allowed to:
+// weaken any original AC's verifier, and a non-empty reason string
+// otherwise. The rules below are the result of iterated review and
+// are deliberately conservative on the brittle (non-command) verifier
+// kinds.
 //
-//   - Move an AC between sessions (concerns often request reassignment)
-//   - Rewrite an AC's verifier to fix a real defect the reviewer flagged
-//     (generic command, malformed content_match, etc.) AS LONG AS the
-//     new verifier is at least as strong as the original
-//   - Strengthen an AC (file_exists → content_match → command, or add
-//     a verifier where none existed)
+// Per-kind rules:
 //
-// What it CAN'T do:
+//   - Command ACs: the command text MAY change (this is the most
+//     common legitimate reviewer-driven refine — fixing a generic,
+//     unrunnable, or malformed command). Within-kind weakenings
+//     like `npm test` → `true` are caught by the existing AC-command
+//     scrubber in cmd/stoke that strips fake / bypass patterns
+//     pre-dispatch. The kind itself, however, must NOT change to a
+//     weaker verifier (no command → file_exists, no command → desc).
 //
-//   - Replace a strong gate with a weaker one (command → file_exists is
-//     a silent weakening even though "some gate exists")
-//   - Drop a verifier entirely (command → description-only)
-//   - Clear the description on an AC that had no automated verifier
-//     (turns a real manual check into a pass-by-default empty AC)
+//   - file_exists ACs: the path IS the gate's semantic intent
+//     ("migrations/001.sql exists"). Refining cannot change the
+//     path — that retargets what the gate proves. Switching to a
+//     command of equal/stronger nominal kind is also blocked
+//     because the new command may not actually verify the same
+//     artifact.
 //
-// Strength ordering: command (3) > content_match (2) > file_exists (1)
-// > description-only (0). The refiner can move sideways within a kind
-// (e.g. rewriting a command to fix a flaw) — that's the reviewer-
-// directed change codex flagged as legitimate. Within-kind weakenings
-// (e.g. command: "npm test" → command: "true") are caught by the
-// existing AC-command scrubber in cmd/stoke that strips fake/bypass
-// patterns before dispatch.
+//   - content_match ACs: the (file, pattern) tuple IS the intent.
+//     Same lock as file_exists — full body equality required.
+//     Substituting a command that "looks similar" doesn't preserve
+//     the original verifier's semantics.
+//
+//   - Description-only ACs (no verifier): the description text IS
+//     the manual-check intent. It cannot be cleared, and the AC
+//     cannot be downgraded (it's already at the floor).
+//
+// Adding a verifier where none existed (description-only → command,
+// etc.) is allowed — that's a strengthening.
 func refineGateRegressions(original, refined *SOW) string {
-	strengthOf := func(ac AcceptanceCriterion) int {
-		if strings.TrimSpace(ac.Command) != "" {
-			return 3
+	type acState struct {
+		hasCommand    bool
+		fileExists    string
+		contentMatch  string // compact JSON or "" when nil
+		description   string
+		hasAnyGate    bool
+	}
+	stateOf := func(ac AcceptanceCriterion) acState {
+		st := acState{
+			hasCommand:  strings.TrimSpace(ac.Command) != "",
+			fileExists:  strings.TrimSpace(ac.FileExists),
+			description: strings.TrimSpace(ac.Description),
 		}
 		if ac.ContentMatch != nil {
-			return 2
+			b, _ := json.Marshal(ac.ContentMatch)
+			st.contentMatch = string(b)
 		}
-		if strings.TrimSpace(ac.FileExists) != "" {
-			return 1
-		}
-		return 0
+		st.hasAnyGate = st.hasCommand || st.fileExists != "" || st.contentMatch != ""
+		return st
 	}
-	kindName := func(level int) string {
-		switch level {
-		case 3:
-			return "command"
-		case 2:
-			return "content_match"
-		case 1:
-			return "file_exists"
-		}
-		return "description-only"
-	}
-	type acState struct {
-		strength int
-		desc     string
-	}
+
 	originalACs := map[string]acState{}
 	for _, s := range original.Sessions {
 		for _, a := range s.AcceptanceCriteria {
 			if a.ID == "" {
 				continue
 			}
-			originalACs[a.ID] = acState{
-				strength: strengthOf(a),
-				desc:     strings.TrimSpace(a.Description),
-			}
+			originalACs[a.ID] = stateOf(a)
 		}
 	}
 	for _, s := range refined.Sessions {
@@ -276,17 +275,23 @@ func refineGateRegressions(original, refined *SOW) string {
 			if !ok {
 				continue // newly added AC; allowed
 			}
-			afterStrength := strengthOf(a)
-			if afterStrength < before.strength {
-				return fmt.Sprintf("AC %s downgraded from %s to %s",
-					a.ID, kindName(before.strength), kindName(afterStrength))
+			after := stateOf(a)
+
+			// command kind — can rewrite text but cannot drop kind.
+			if before.hasCommand && !after.hasCommand {
+				return fmt.Sprintf("AC %s lost its command verifier", a.ID)
 			}
-			// Description-only ACs (strength 0) carry their semantics
-			// in the description text; clearing it turns a real
-			// manual check into an empty pass-by-default. Block
-			// that specifically.
-			if before.strength == 0 && before.desc != "" &&
-				afterStrength == 0 && strings.TrimSpace(a.Description) == "" {
+			// file_exists — locked: path IS the intent.
+			if before.fileExists != "" && before.fileExists != after.fileExists {
+				return fmt.Sprintf("AC %s file_exists path changed (was %q, now %q) — refine cannot retarget what a file_exists gate proves",
+					a.ID, before.fileExists, after.fileExists)
+			}
+			// content_match — locked: (file, pattern) IS the intent.
+			if before.contentMatch != "" && before.contentMatch != after.contentMatch {
+				return fmt.Sprintf("AC %s content_match payload changed — refine cannot retarget what a content_match gate proves", a.ID)
+			}
+			// description-only AC — cannot lose its description.
+			if !before.hasAnyGate && before.description != "" && after.description == "" {
 				return fmt.Sprintf("AC %s lost its description (description-only AC)", a.ID)
 			}
 		}
