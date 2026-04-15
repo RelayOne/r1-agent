@@ -405,8 +405,20 @@ func runJudgeSynthesis(ctx context.Context, prov provider.Provider, model, share
 // --- Helpers ---------------------------------------------------------------
 
 // CollectCodeExcerpts reads the contents of up to maxFiles files from
-// the given paths. Files that don't exist or are larger than
-// maxBytesPerFile are skipped / truncated.
+// the given paths. Files that exceed maxBytesPerFile are truncated.
+//
+// CRITICAL for reviewer correctness: every path is recorded in the
+// output map whether or not content is loaded. When a file exists
+// but the excerpt cap hits it, the value is a "(file exists at N
+// bytes — excerpt omitted due to cap)" sentinel so the reviewer
+// doesn't hallucinate the file as missing. When a file genuinely
+// doesn't exist on disk, the value is "(file does not exist at
+// <path>)" so the reviewer can distinguish missing vs omitted.
+//
+// The pre-fix behavior (silently dropping files past maxFiles + also
+// silently dropping Stat-failing files) caused the reviewer to see
+// no entry for cap-omitted files and claim "missing" — that's what
+// TRULY BLOCKED T3 in sentinel run 11 on a file that existed.
 func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerFile int) map[string]string {
 	if maxFiles <= 0 {
 		maxFiles = 8
@@ -415,10 +427,8 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 		maxBytesPerFile = 6000
 	}
 	out := map[string]string{}
+	loaded := 0
 	for _, p := range paths {
-		if len(out) >= maxFiles {
-			break
-		}
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
@@ -427,13 +437,31 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 			abs = filepath.Join(repoRoot, p)
 		}
 		info, err := os.Stat(abs)
-		if err != nil || info.IsDir() {
+		if err != nil {
+			// File genuinely doesn't exist. Record the sentinel so
+			// the reviewer correctly reports it as missing instead
+			// of silently omitting it.
+			out[p] = fmt.Sprintf("(file does not exist at %s)", abs)
+			continue
+		}
+		if info.IsDir() {
+			out[p] = fmt.Sprintf("(path is a directory, not a file: %s)", abs)
+			continue
+		}
+		if loaded >= maxFiles {
+			// Excerpt cap hit. Tell the reviewer the file exists but
+			// the content is not shown — without this, the reviewer
+			// hallucinates the file as missing. (Fix for run-11 T3
+			// TRULY BLOCKED bug.)
+			out[p] = fmt.Sprintf("(file exists at %d bytes — excerpt omitted due to cap)", info.Size())
 			continue
 		}
 		data, err := os.ReadFile(abs)
 		if err != nil {
+			out[p] = fmt.Sprintf("(file exists but read failed: %v)", err)
 			continue
 		}
+		loaded++
 		if len(data) > maxBytesPerFile {
 			data = append([]byte{}, data[:maxBytesPerFile]...)
 			data = append(data, []byte("\n... (truncated)\n")...)
