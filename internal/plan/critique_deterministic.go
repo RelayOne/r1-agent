@@ -227,7 +227,6 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 		{"git clone", "blocking", "AC should not clone — the workspace is already present", "remove the clone step; verify the already-present tree"},
 		{"next dev", "blocking", "long-running process never exits; AC command must terminate", "use 'next build' or 'next lint' instead"},
 		{"expo start", "blocking", "long-running process; AC command must terminate", "use 'expo doctor' or a build command instead"},
-		{"vite ", "blocking", "'vite' dev server is long-running", "use 'vite build' or 'vitest run' instead"},
 		{"playwright", "blocking", "browser E2E requires browser binaries + display server not available in the build agent", "replace with unit / integration tests at the API layer"},
 		{"cypress", "blocking", "browser E2E not supported in the build agent", "replace with unit tests or Playwright-less integration tests"},
 		{"puppeteer", "blocking", "browser automation requires Chromium not available in the build agent", "replace with unit / integration tests"},
@@ -241,6 +240,23 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 		}
 		// Allow 'vitest run' explicitly.
 		return !strings.Contains(lower, "vitest run")
+	}
+	// Vite dev-server detection: flag bare 'vite' invocations without
+	// 'build' / 'preview' / 'optimize' (dev mode hangs). Separate
+	// from vitest — '"vite "' substring match would otherwise reject
+	// valid 'vite build' commands which acceptance.go treats as a
+	// legitimate build (codex P2).
+	checkViteMode := func(cmd string) bool {
+		lower := strings.ToLower(cmd)
+		if !strings.Contains(lower, "vite") || strings.Contains(lower, "vitest") {
+			return false
+		}
+		for _, ok := range []string{"vite build", "vite preview", "vite optimize"} {
+			if strings.Contains(lower, ok) {
+				return false
+			}
+		}
+		return true
 	}
 
 	for _, s := range sow.Sessions {
@@ -262,13 +278,20 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 			})
 		}
 		for _, ac := range s.AcceptanceCriteria {
-			cmd := ac.Command
-			if cmd == "" && ac.FileExists == "" && ac.ContentMatch == nil {
+			cmd := strings.TrimSpace(ac.Command)
+			fileExists := strings.TrimSpace(ac.FileExists)
+			// ContentMatch parses to zero-value when the SOW emits
+			// the tolerated string form (see sow.go UnmarshalJSON);
+			// a zero-value ContentMatch has empty File + Pattern and
+			// is unrunnable. Treat as "no verification" regardless
+			// of whether the struct pointer is nil. (codex P2.)
+			hasContentMatch := ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) != ""
+			if cmd == "" && fileExists == "" && !hasContentMatch {
 				c.Issues = append(c.Issues, CritiqueIssue{
 					Severity:    "major",
 					SessionID:   s.ID,
-					Description: fmt.Sprintf("AC %s has no command, no file_exists, no content_match", ac.ID),
-					Fix:         "every AC needs one of: command / file_exists / content_match",
+					Description: fmt.Sprintf("AC %s has no runnable check (command / file_exists / content_match all empty or malformed)", ac.ID),
+					Fix:         "every AC needs a runnable verification; a whitespace-only command or empty content_match doesn't count",
 				})
 				continue
 			}
@@ -289,6 +312,14 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 					SessionID:   s.ID,
 					Description: fmt.Sprintf("AC %s uses 'vitest' without 'run' — dev mode hangs", ac.ID),
 					Fix:         "change to 'vitest run' so it exits after one pass",
+				})
+			}
+			if checkViteMode(cmd) {
+				c.Issues = append(c.Issues, CritiqueIssue{
+					Severity:    "blocking",
+					SessionID:   s.ID,
+					Description: fmt.Sprintf("AC %s uses 'vite' dev-server — long-running, never exits", ac.ID),
+					Fix:         "change to 'vite build' or 'vite preview' (which has its own timeout handling)",
 				})
 			}
 		}
