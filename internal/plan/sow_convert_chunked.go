@@ -342,7 +342,7 @@ func extractSkeleton(ctx context.Context, prose string, prov provider.Provider, 
 	defer cancel()
 	resp, err := callChatWithCtx(skelCtx, prov, provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 16000,
+		MaxTokens: 64000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
@@ -365,16 +365,28 @@ func extractSkeleton(ctx context.Context, prose string, prov provider.Provider, 
 	return &skel, nil
 }
 
-// expandSessionWithRetry runs expandSession with one retry on
-// transient error. Per-call timeout is enforced inside expandSession.
+// expandSessionWithRetry runs expandSession with escalating
+// budget. First attempt uses 64k output; if that hits max_tokens,
+// the retry doubles to 128k which is the practical ceiling on
+// most providers and enough for truly large sessions. Non-
+// max_tokens transient errors (JSON parse, timeout, network) get
+// the same retry at the SAME budget since bigger output wouldn't
+// help there.
 func expandSessionWithRetry(ctx context.Context, prose string, stack *StackSpec, stub Session, prov provider.Provider, model string) (Session, error) {
-	full, err := expandSession(ctx, prose, stack, stub, prov, model)
+	const firstBudget = 64000
+	const retryBudget = 128000
+	full, err := expandSession(ctx, prose, stack, stub, prov, model, firstBudget)
 	if err == nil {
 		return full, nil
 	}
-	// One retry on first failure (covers transient LLM glitches /
-	// rate limits without compounding wall clock).
-	full, err2 := expandSession(ctx, prose, stack, stub, prov, model)
+	// Pick retry budget based on failure class. max_tokens → bigger
+	// budget gives the model room. Other errors → same budget since
+	// the issue is parse/network, not size.
+	budget := firstBudget
+	if strings.Contains(err.Error(), "max_tokens") {
+		budget = retryBudget
+	}
+	full, err2 := expandSession(ctx, prose, stack, stub, prov, model, budget)
 	if err2 != nil {
 		return Session{}, fmt.Errorf("first attempt: %v; retry: %v", err, err2)
 	}
@@ -382,8 +394,14 @@ func expandSessionWithRetry(ctx context.Context, prose string, stack *StackSpec,
 }
 
 // expandSession issues one phase-2 LLM call to fill in tasks + ACs
-// for a single session stub.
-func expandSession(ctx context.Context, prose string, stack *StackSpec, stub Session, prov provider.Provider, model string) (Session, error) {
+// for a single session stub. maxTokens is the output budget for
+// this attempt — expandSessionWithRetry escalates this on
+// max_tokens truncation so a genuinely-too-big session gets a
+// second chance with more room.
+func expandSession(ctx context.Context, prose string, stack *StackSpec, stub Session, prov provider.Provider, model string, maxTokens int) (Session, error) {
+	if maxTokens <= 0 {
+		maxTokens = 64000
+	}
 	stubBlob, err := json.MarshalIndent(stub, "", "  ")
 	if err != nil {
 		return Session{}, fmt.Errorf("marshal stub: %w", err)
@@ -398,14 +416,14 @@ func expandSession(ctx context.Context, prose string, stack *StackSpec, stub Ses
 	defer cancel()
 	resp, err := callChatWithCtx(sessCtx, prov, provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 32000,
+		MaxTokens: maxTokens,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
 		return Session{}, err
 	}
 	if resp.StopReason == "max_tokens" {
-		return Session{}, fmt.Errorf("session truncated at max_tokens — session may be too large for one expansion")
+		return Session{}, fmt.Errorf("session truncated at max_tokens (budget %d) — retry with larger budget", maxTokens)
 	}
 	raw, _ := collectModelText(resp)
 	if strings.TrimSpace(raw) == "" {
@@ -916,7 +934,7 @@ func reviewCoverageAndPatch(ctx context.Context, prose string, sow *SOW, prov pr
 	defer cancel()
 	resp, err := callChatWithCtx(revCtx, prov, provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 16000,
+		MaxTokens: 32000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
