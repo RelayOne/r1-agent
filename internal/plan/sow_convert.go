@@ -571,22 +571,31 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 		return nil, result, err
 	}
 
-	// Persist the converted SOW + the source hash so rerunning with
-	// the same file hits the cache. ONLY cache when the chunked
-	// path succeeded with CTO approval (sow.ChunkedConvertApproved
-	// == true). Monolithic-fallback results don't carry that flag
-	// and haven't been gated by the agentic reviewer; caching them
-	// as schema-v2 would let future reruns reuse an ungated SOW.
-	if sow != nil && sow.ChunkedConvertApproved {
-		if mkErr := os.MkdirAll(stokeDir, 0o755); mkErr == nil {
-			if writeErr := writeProseCache(cachePath, data, jsonBlob); writeErr == nil {
+	// Persistence policy:
+	//
+	//  - CTO-approved chunked SOWs go into the reusable cache
+	//    (.stoke/sow-from-prose.json) — future reruns skip the
+	//    convert pipeline entirely on a source-hash match.
+	//
+	//  - Monolithic-fallback SOWs go into a snapshot
+	//    (.stoke/sow-fallback-snapshot.json) — NOT used by
+	//    loadProseCache (gated convert always re-runs), but
+	//    available for resume's MergeSOW so completed sessions
+	//    aren't orphaned by nondeterministic re-conversion.
+	if mkErr := os.MkdirAll(stokeDir, 0o755); mkErr == nil {
+		if sow != nil && sow.ChunkedConvertApproved {
+			if writeErr := writeProseCache(cachePath, data, jsonBlob, true); writeErr == nil {
 				result.ConvertedPath = cachePath
 			}
+		} else {
+			snapshotPath := filepath.Join(stokeDir, "sow-fallback-snapshot.json")
+			if writeErr := os.WriteFile(snapshotPath, jsonBlob, 0o600); writeErr == nil {
+				fmt.Printf("  ◉ saved ungated SOW snapshot to %s for resume continuity (NOT used as cache; gated convert re-runs)\n", snapshotPath)
+				result.ConvertedPath = snapshotPath
+			} else {
+				fmt.Println("  ◉ skipping prose cache write: SOW did not pass chunked CTO approval (monolithic fallback)")
+			}
 		}
-	} else {
-		// Surface to the operator that this run produced an
-		// ungated SOW so they know reruns will redo the convert.
-		fmt.Println("  ◉ skipping prose cache write: SOW did not pass chunked CTO approval (monolithic fallback or convert error path)")
 	}
 	result.Format = "prose"
 	return sow, result, nil
@@ -623,19 +632,28 @@ func truncateForError(s string, n int) string {
 // History:
 //
 //	v1: initial cache shape.
-//	v2: bumped after introducing TerminalApprovalError + the
-//	    blocking-concern refine loop. Pre-v2 caches were generated
-//	    when blocking concerns silently fell through the refine path,
-//	    so reusing one would skip the new approval gate entirely.
-const proseCacheSchemaVersion = 2
+//	v2: introduced TerminalApprovalError + blocking-concern refine
+//	    loop. Pre-v2 caches were generated when blocking concerns
+//	    silently fell through.
+//	v3: introduced approval-provenance gating in the cache writer
+//	    (only chunked-CTO-approved SOWs are cached). v2 caches may
+//	    have been written to disk between v1 and v3 from the
+//	    monolithic fallback path, so they need to be invalidated
+//	    too.
+const proseCacheSchemaVersion = 3
 
 // proseCache is the on-disk cache file format: stores the source
-// prose hash, the converted SOW blob, and the pipeline schema
-// version that produced it.
+// prose hash, the converted SOW blob, the pipeline schema version,
+// and an explicit ChunkedApproved bit so the load path can restore
+// the in-memory ChunkedConvertApproved flag (which is `json:"-"`
+// on the SOW struct itself and would otherwise be lost across
+// cache round-trips, causing main.go to re-run the legacy critique
+// pass redundantly).
 type proseCache struct {
-	SourceHash    string          `json:"source_hash"`
-	Generated     json.RawMessage `json:"generated_sow"`
-	SchemaVersion int             `json:"schema_version,omitempty"`
+	SourceHash      string          `json:"source_hash"`
+	Generated       json.RawMessage `json:"generated_sow"`
+	SchemaVersion   int             `json:"schema_version,omitempty"`
+	ChunkedApproved bool            `json:"chunked_approved,omitempty"`
 }
 
 func loadProseCache(path string, sourceData []byte) (*SOW, bool) {
@@ -661,14 +679,19 @@ func loadProseCache(path string, sourceData []byte) (*SOW, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// Restore the transient ChunkedConvertApproved flag from the
+	// cache so reruns skip the legacy critique pass when the
+	// cached SOW already passed CTO approval.
+	sow.ChunkedConvertApproved = c.ChunkedApproved
 	return sow, true
 }
 
-func writeProseCache(path string, sourceData, generatedBlob []byte) error {
+func writeProseCache(path string, sourceData, generatedBlob []byte, chunkedApproved bool) error {
 	c := proseCache{
-		SourceHash:    hashBytes(sourceData),
-		Generated:     json.RawMessage(generatedBlob),
-		SchemaVersion: proseCacheSchemaVersion,
+		SourceHash:      hashBytes(sourceData),
+		Generated:       json.RawMessage(generatedBlob),
+		SchemaVersion:   proseCacheSchemaVersion,
+		ChunkedApproved: chunkedApproved,
 	}
 	out, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
