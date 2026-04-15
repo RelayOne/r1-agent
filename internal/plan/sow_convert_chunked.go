@@ -286,6 +286,27 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	if errs := ValidateSOW(out); len(errs) > 0 {
 		return out, nil, fmt.Errorf("chunked convert produced invalid SOW: %s", strings.Join(errs, "; "))
 	}
+
+	// Final plan approval — CTO-role LLM asks: "reading the prose
+	// AND this merged SOW, will this plan deliver what the user
+	// asked for?" Coverage loop confirms no gaps; this confirms
+	// fidelity + feasibility + coherence. Best-effort: a transport
+	// error logs + proceeds rather than halting (the review is
+	// advisory). A blocking verdict, however, halts with the
+	// operator-facing concern list so the SOW gets fixed before
+	// dispatch.
+	if ctx.Err() == nil {
+		verdict, aerr := FinalPlanApproval(ctx, prose, out, prov, model)
+		if aerr != nil {
+			fmt.Printf("  ⚠ final plan approval skipped: %v\n", aerr)
+		} else {
+			fmt.Print(FormatApprovalVerdict(verdict))
+			if verdict.Decision == "reject" || verdict.HasBlocking() {
+				return out, nil, fmt.Errorf("final plan approval: %s — %d blocking concern(s); SOW not fit for dispatch", verdict.Decision, len(verdict.Concerns))
+			}
+		}
+	}
+
 	raw, _ := json.MarshalIndent(out, "", "  ")
 	return out, raw, nil
 }
