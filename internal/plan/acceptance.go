@@ -377,13 +377,20 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		return result
 	}
 
-	// Content match check. Skip when File is empty — that's the
-	// malformed shape critiqueAcceptanceCriteria already treats as
-	// non-runnable; running it here would always fail (ReadFile of
-	// projectRoot fails) and turn a malformed AC into a permanent
-	// session failure, which is worse than letting it fall through
-	// to the description-only manual-check branch below.
-	if ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) != "" {
+	// Content match check.
+	if ac.ContentMatch != nil {
+		// Empty File is the tolerated bare-string parse shape
+		// (UnmarshalJSON leaves a non-nil zero-value struct).
+		// Critique skips them as malformed; the OLD executor would
+		// silently fail on ReadFile(projectRoot). Make the failure
+		// explicit so the operator sees a real signal — auto-pass
+		// would mask incomplete work, and silent-fail looks like a
+		// flaky test.
+		if strings.TrimSpace(ac.ContentMatch.File) == "" {
+			result.Passed = false
+			result.Output = "content_match has no file (malformed AC; refine path can repair this)"
+			return result
+		}
 		path := ac.ContentMatch.File
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(projectRoot, path)
