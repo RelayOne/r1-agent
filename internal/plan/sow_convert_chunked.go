@@ -235,6 +235,13 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// coverage review adds zero sessions.
 	const maxReviewRounds = 3
 	for round := 1; round <= maxReviewRounds; round++ {
+		// Deterministic repair FIRST — fixes file-ownership conflicts
+		// and drops dangling inputs in-place. Then re-run the check
+		// to see what remains after the auto-repair.
+		fd, id := repairChunkedConsistency(out)
+		if fd > 0 || id > 0 {
+			fmt.Printf("  🔧 chunked convert consistency round %d auto-repair: %d file-claim drop(s), %d input drop(s)\n", round, fd, id)
+		}
 		issues := checkChunkedConsistency(out)
 		added := 0
 		if ctx.Err() == nil {
@@ -245,8 +252,12 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			}
 		}
 		if len(issues) > 0 {
-			fmt.Printf("  ⚠ chunked convert consistency round %d: %d issue(s)\n", round, len(issues))
-			for _, is := range issues {
+			fmt.Printf("  ⚠ chunked convert consistency round %d: %d residual issue(s) after repair\n", round, len(issues))
+			for i, is := range issues {
+				if i >= 10 {
+					fmt.Printf("     ... and %d more\n", len(issues)-10)
+					break
+				}
 				fmt.Printf("     - %s\n", is)
 			}
 		}
@@ -254,18 +265,18 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			fmt.Printf("  ✓ chunked convert coverage round %d added %d session(s)\n", round, added)
 			renumberTasksAndACsGlobally(out)
 		}
-		// Converged: no coverage gaps found. Consistency issues
-		// that remain after the LLM round are typically data-shape
-		// concerns the execution layer resolves via the fuzzy DAG,
-		// so we accept them with a warning rather than loop forever.
-		if added == 0 {
+		// Converged: coverage added zero sessions AND repair found
+		// nothing to fix this round. Residual consistency issues
+		// that survive auto-repair are edge cases the execution
+		// layer handles via the fuzzy DAG.
+		if added == 0 && fd == 0 && id == 0 {
 			if round > 1 {
 				fmt.Printf("  ✓ chunked convert converged after %d review round(s)\n", round)
 			}
 			break
 		}
 		if round == maxReviewRounds {
-			fmt.Printf("  ⚠ chunked convert hit review cap (%d rounds) with %d coverage adds last round — proceeding\n", maxReviewRounds, added)
+			fmt.Printf("  ⚠ chunked convert hit review cap (%d rounds) — proceeding with %d residual issues\n", maxReviewRounds, len(issues))
 		}
 	}
 
@@ -399,6 +410,96 @@ func callChatWithCtx(ctx context.Context, prov provider.Provider, req provider.C
 	case r := <-ch:
 		return r.resp, r.err
 	}
+}
+
+// repairChunkedConsistency auto-fixes the most common cross-session
+// issues: (1) file ownership conflicts — when N sessions list the
+// same file in task.Files, keep the earliest session's claim and
+// drop the file from later sessions' tasks. (2) dangling inputs —
+// when session.Inputs references a producer that doesn't exist,
+// drop the input.
+//
+// Returns the count of (file-claim drops, input drops) so callers
+// can log/verify the repair. Mutates the SOW in place.
+func repairChunkedConsistency(sow *SOW) (fileDrops, inputDrops int) {
+	if sow == nil {
+		return 0, 0
+	}
+	// Pass 1: file ownership. For each file, find the earliest
+	// session that declares it. Remove it from every later
+	// session's task.Files.
+	earliestOwner := map[string]int{}
+	for i, s := range sow.Sessions {
+		_ = s
+		for ti, t := range sow.Sessions[i].Tasks {
+			_ = ti
+			for _, f := range t.Files {
+				key := strings.TrimSpace(f)
+				if key == "" {
+					continue
+				}
+				if _, seen := earliestOwner[key]; !seen {
+					earliestOwner[key] = i
+				}
+			}
+		}
+	}
+	for i := range sow.Sessions {
+		s := &sow.Sessions[i]
+		for ti := range s.Tasks {
+			t := &s.Tasks[ti]
+			kept := t.Files[:0]
+			for _, f := range t.Files {
+				key := strings.TrimSpace(f)
+				if key == "" {
+					continue
+				}
+				if owner, ok := earliestOwner[key]; ok && owner < i {
+					fileDrops++
+					continue // earlier session owns this file
+				}
+				kept = append(kept, f)
+			}
+			t.Files = kept
+		}
+	}
+	// Pass 2: dangling inputs. Rebuild producer set from outputs
+	// (some outputs may have been renamed but this path doesn't
+	// touch outputs, only inputs).
+	producers := map[string]bool{}
+	for _, s := range sow.Sessions {
+		for _, out := range s.Outputs {
+			producers[strings.ToLower(strings.TrimSpace(out))] = true
+		}
+	}
+	fuzzy := func(in string) bool {
+		key := strings.ToLower(strings.TrimSpace(in))
+		if key == "" {
+			return true // empty = skip
+		}
+		if producers[key] {
+			return true
+		}
+		for pk := range producers {
+			if strings.Contains(key, pk) || strings.Contains(pk, key) {
+				return true
+			}
+		}
+		return false
+	}
+	for i := range sow.Sessions {
+		s := &sow.Sessions[i]
+		kept := s.Inputs[:0]
+		for _, in := range s.Inputs {
+			if fuzzy(in) {
+				kept = append(kept, in)
+				continue
+			}
+			inputDrops++
+		}
+		s.Inputs = kept
+	}
+	return fileDrops, inputDrops
 }
 
 // checkChunkedConsistency validates cross-session contracts after
