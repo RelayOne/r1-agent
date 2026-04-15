@@ -204,6 +204,22 @@ func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, c
 		// Grep / pattern / file-existence ACs remain overridable: a
 		// worker can produce correct code that grep happens to miss.
 		if !result.Passed && judge != nil {
+			// Malformed-AC failures are non-overridable for the same
+			// reason ground-truth command failures are: there's no
+			// pattern-mismatch story; the AC itself is broken and
+			// must be repaired by refine.
+			if strings.HasPrefix(result.Output, "MALFORMED-AC:") {
+				_, reasoning, err := judge(ctx, ac, result.Output)
+				if err == nil && reasoning != "" {
+					result.JudgeReasoning = reasoning
+					result.Output = fmt.Sprintf("%s\n\nJudge observation:\n%s", result.Output, reasoning)
+				}
+				results = append(results, result)
+				if !result.Passed {
+					allPassed = false
+				}
+				continue
+			}
 			if isGroundTruthACCommand(ac.Command) {
 				// Judge can still speak — we record its verdict for the
 				// operator, but pass stays false regardless.
@@ -388,7 +404,13 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		// flaky test.
 		if strings.TrimSpace(ac.ContentMatch.File) == "" {
 			result.Passed = false
-			result.Output = "content_match has no file (malformed AC; refine path can repair this)"
+			// Tag this output with the GROUND-TRUTH prefix so the
+			// judge-override branch in CheckAcceptanceCriteriaWithJudge
+			// classifies it as non-overridable. Without that, a
+			// semantic judge could rule "feature looks present in code"
+			// and override the malformed-AC failure to PASS, exactly
+			// the auto-pass regression codex flagged.
+			result.Output = "MALFORMED-AC: content_match has no file (refine path can repair this)"
 			return result
 		}
 		path := ac.ContentMatch.File
