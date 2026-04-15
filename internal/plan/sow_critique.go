@@ -211,20 +211,28 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	userText := sowRefinePrompt + string(critBlob) + "\n\nORIGINAL SOW:\n" + string(origBlob)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
-	// MaxTokens 32000: a refinement emits a complete replacement SOW
-	// plus reasoning. For a ~50KB source SOW with 10 sessions, the
-	// output can easily hit 50KB too (~12k tokens of SOW content),
-	// and an extended-thinking model will burn another 4-8k on
-	// reasoning on top. The previous 16k cap was producing truncated
-	// refinements — the output stopped mid-sessions-array and
-	// ValidateSOW later rejected it with "SOW has no sessions".
+	// MaxTokens 64000: matches ConvertProseToSOW. 32k was hitting
+	// stop_reason=max_tokens on 20+ session SOWs — the truncated
+	// output landed a session with zero ACs which then failed
+	// validation. Papering over that with a synthetic stub AC is a
+	// fake completion (session trivially passes with `true` command)
+	// so the right fix is fitting the actual content. 64k is enough
+	// for a 400-task SOW with extended-thinking reasoning overhead.
 	resp, err := prov.Chat(provider.ChatRequest{
 		Model:     model,
-		MaxTokens: 32000,
+		MaxTokens: 64000,
 		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("refine chat: %w", err)
+	}
+	// Detect LLM truncation and fail loudly. The prior "truncate
+	// then autofill stub ACs" path produced bogus always-passing
+	// ACs; callers must know truncation happened so they can
+	// increase budget / chunk / fall back to the pre-refine SOW
+	// rather than silently shipping a lie.
+	if resp.StopReason == "max_tokens" {
+		return nil, fmt.Errorf("refine chat truncated at max_tokens — increase MaxTokens or chunk per-session (raw: /tmp/stoke-refine-raw.txt)")
 	}
 
 	raw, diag := collectModelText(resp)
@@ -287,59 +295,19 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	// task T26 depends on unknown task T13' even though the rest of
 	// the refinement was usable.
 	autoCleanTaskDeps(refined)
-	// Auto-fill missing AC fields + inject a stub AC when a session
-	// ends up with zero acceptance criteria. Refinement can truncate
-	// mid-session (stop_reason=max_tokens) and leave a session
-	// structurally valid but AC-less — validation then rejects with
-	// "session SN has no acceptance criteria". Synthesizing a stub
-	// AC (file_exists on the session's first task's first file, or
-	// a generic build command) preserves the refinement's other
-	// improvements rather than reverting the whole pass.
+	// autoFillMissingACFields synthesizes id/description on ACs that
+	// the model emitted as partial structures — harmless, doesn't
+	// invent verification from nothing. NOT auto-injecting stub ACs
+	// for zero-AC sessions: that was a fake-completion vector (the
+	// stub is an always-pass `true` command, making the session
+	// trivially "succeed"). Max_tokens truncation is caught earlier
+	// and surfaces as a hard error so callers can retry / chunk /
+	// fall back.
 	autoFillMissingACFields(refined)
-	autoAddStubACForEmptySessions(refined)
 	if errs := ValidateSOW(refined); len(errs) > 0 {
 		return nil, fmt.Errorf("refined SOW failed validation: %s (raw: /tmp/stoke-refine-raw.txt, stop_reason=%q)", strings.Join(errs, "; "), resp.StopReason)
 	}
 	return refined, nil
-}
-
-// autoAddStubACForEmptySessions walks every session and appends a
-// synthetic file_exists AC when the session has zero criteria. Used
-// to recover from max_tokens truncation during refine, where a
-// session's AC list gets dropped mid-write. The stub AC references
-// the session's first task's first file so it's at least minimally
-// meaningful. When no file is available, falls back to a "session
-// has at least one task output" marker check. Without this, a
-// truncated refine invalidates the whole pass and the caller
-// reverts to the pre-refine SOW — losing every other improvement.
-func autoAddStubACForEmptySessions(sow *SOW) {
-	if sow == nil {
-		return
-	}
-	for si := range sow.Sessions {
-		s := &sow.Sessions[si]
-		if len(s.AcceptanceCriteria) > 0 {
-			continue
-		}
-		stub := AcceptanceCriterion{
-			ID:          s.ID + "-AC-stub",
-			Description: "auto-generated stub AC — refine pass truncated before emitting real ACs for this session; replace with real verification",
-		}
-		for _, t := range s.Tasks {
-			if len(t.Files) > 0 {
-				stub.FileExists = t.Files[0]
-				break
-			}
-		}
-		if stub.FileExists == "" {
-			// No files declared anywhere; use a permissive command
-			// that always passes so validation clears. The operator
-			// will see this session got a stub AC and can decide
-			// whether to re-run refine or add real ACs.
-			stub.Command = "true"
-		}
-		s.AcceptanceCriteria = append(s.AcceptanceCriteria, stub)
-	}
 }
 
 // autoAddMissingInfra walks every session.InfraNeeded entry and, if any
@@ -556,6 +524,177 @@ BROKEN JSON:
 //     the entire point of the critique pass: it became informational
 //     only at exactly the moment it mattered most. If refinement also
 //     fails, THEN we surface the error.
+// sessionRefinePrompt is the per-session refine prompt used by
+// RefineSOWChunked. It's narrower than sowRefinePrompt: instead of
+// "rewrite the whole SOW", the LLM is asked to emit a single
+// refined session JSON object given that session's slice of the
+// original SOW + the critique issues targeting it.
+const sessionRefinePrompt = `You are refining ONE session of a larger Statement of Work (SOW). The rest of the SOW is unchanged; your job is to emit the refined session JSON object addressing every reviewer issue below.
+
+Output ONLY a JSON session object matching the Session schema — no surrounding prose, no markdown fences, no commentary, no top-level SOW wrapper. Start with '{' and end with '}'.
+
+Required shape:
+{
+  "id": "same ID as original session",
+  "phase": "optional phase label",
+  "title": "string",
+  "description": "string",
+  "tasks": [ { "id": "TN", "description": "...", "files": [...], "dependencies": [...] } ],
+  "acceptance_criteria": [ { "id": "ACN", "description": "...", "command": "..." } ],
+  "inputs": ["artifact names"],
+  "outputs": ["artifact names"]
+}
+
+RULES:
+1. Keep the session.id EXACTLY as provided; the reassembler matches on it.
+2. Task IDs inside this session should stay stable unless a reviewer issue requires renaming; if you rename, every dependency reference inside THIS session must be updated.
+3. Do NOT reference tasks in OTHER sessions — the reassembler will keep cross-session deps from the original wherever you preserve the original task IDs.
+4. Every session MUST have at least one mechanically-verifiable acceptance_criterion.
+5. Acceptance commands must be runnable in the current working directory — no remote clones, no unset env vars, no '|| true' fallbacks, no long-running dev servers.
+6. Node workspaces have node_modules/.bin on PATH after pnpm install; prefer direct binaries ('tsc', 'vitest run') over 'npx'.
+7. Do NOT invent toolchains not in the SOW stack (no docker build without a Dockerfile task, no axe without axe-core dep).
+
+ORIGINAL SESSION:
+`
+
+// RefineSOWChunked runs refinement per-session instead of as one
+// monolithic LLM call. This avoids the max_tokens truncation that
+// hits large SOWs: a 20-session refine can easily exceed 32k output
+// tokens. Chunking keeps each call to ~2-5k output per session.
+//
+// Flow:
+//   1. Group critique issues by session_id. Global issues (no
+//      session_id) surface to EVERY flagged session so the refiner
+//      sees cross-cutting concerns. Non-flagged sessions pass
+//      through unchanged.
+//   2. For each flagged session, call the LLM with just that
+//      session's JSON + its issues.
+//   3. Reassemble: replace the original session with the refined
+//      one by ID; sessions not touched by refine retain their
+//      original definitions.
+//   4. Run the same post-refine cleanup (infra, deps, AC fields) +
+//      ValidateSOW the monolithic path uses.
+//
+// Returns the refined SOW or an error if any per-session call
+// fails / max_tokens truncates. Per-session failure surfaces as
+// a hard error (not swallowed) so callers can retry or fall back.
+func RefineSOWChunked(original *SOW, crit *SOWCritique, prov provider.Provider, model string) (*SOW, error) {
+	if original == nil || crit == nil {
+		return nil, fmt.Errorf("nil SOW or critique")
+	}
+	if prov == nil {
+		return nil, fmt.Errorf("no provider configured")
+	}
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+
+	// Bucket issues by session_id. Empty session_id = global.
+	bySession := map[string][]CritiqueIssue{}
+	var global []CritiqueIssue
+	for _, iss := range crit.Issues {
+		if strings.TrimSpace(iss.SessionID) == "" {
+			global = append(global, iss)
+			continue
+		}
+		bySession[iss.SessionID] = append(bySession[iss.SessionID], iss)
+	}
+
+	// Deep-copy the original so we don't mutate caller state if a
+	// per-session call fails midway.
+	refined := *original
+	refined.Sessions = append([]Session(nil), original.Sessions...)
+
+	// Identify sessions that need refine: those with session-specific
+	// issues. When there are ZERO session-specific issues but global
+	// issues exist, refine every session (rare case).
+	targets := map[string]bool{}
+	for sid := range bySession {
+		targets[sid] = true
+	}
+	if len(targets) == 0 && len(global) > 0 {
+		for _, s := range original.Sessions {
+			targets[s.ID] = true
+		}
+	}
+
+	for i, sess := range refined.Sessions {
+		if !targets[sess.ID] {
+			continue
+		}
+		issues := append([]CritiqueIssue(nil), bySession[sess.ID]...)
+		issues = append(issues, global...)
+		newSess, err := refineOneSession(sess, issues, prov, model)
+		if err != nil {
+			return nil, fmt.Errorf("refine session %s: %w", sess.ID, err)
+		}
+		if strings.TrimSpace(newSess.ID) == "" {
+			newSess.ID = sess.ID
+		}
+		refined.Sessions[i] = newSess
+	}
+
+	// Post-refine cleanups — identical to the monolith's pre-
+	// ValidateSOW chain so chunked + monolith produce the same
+	// downstream shape.
+	autoAddMissingInfra(&refined)
+	autoCleanTaskDeps(&refined)
+	autoFillMissingACFields(&refined)
+	if errs := ValidateSOW(&refined); len(errs) > 0 {
+		return nil, fmt.Errorf("chunked refine failed validation: %s", strings.Join(errs, "; "))
+	}
+	return &refined, nil
+}
+
+// refineOneSession issues the per-session LLM call + parses the
+// response into a plan.Session. Used internally by
+// RefineSOWChunked.
+func refineOneSession(sess Session, issues []CritiqueIssue, prov provider.Provider, model string) (Session, error) {
+	sessBlob, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return Session{}, fmt.Errorf("marshal session: %w", err)
+	}
+	var issuesBuf strings.Builder
+	issuesBuf.WriteString("REVIEWER ISSUES TARGETING THIS SESSION:\n")
+	if len(issues) == 0 {
+		issuesBuf.WriteString("(none; but refine for consistency with cross-cutting concerns)\n")
+	} else {
+		for _, iss := range issues {
+			loc := ""
+			if iss.TaskID != "" {
+				loc = " task " + iss.TaskID
+			}
+			fmt.Fprintf(&issuesBuf, "  - [%s]%s %s (fix: %s)\n", iss.Severity, loc, iss.Description, iss.Fix)
+		}
+	}
+	userText := sessionRefinePrompt + string(sessBlob) + "\n\n" + issuesBuf.String()
+	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
+
+	// Per-session budget: 16k is ample for a single session (even a
+	// 30-task session with 5 ACs fits in ~5k tokens of JSON).
+	resp, err := prov.Chat(provider.ChatRequest{
+		Model:     model,
+		MaxTokens: 16000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return Session{}, fmt.Errorf("chat: %w", err)
+	}
+	if resp.StopReason == "max_tokens" {
+		return Session{}, fmt.Errorf("per-session refine truncated at max_tokens (session=%s) — session likely too large; split it", sess.ID)
+	}
+	raw, _ := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return Session{}, fmt.Errorf("empty response (stop_reason=%s)", resp.StopReason)
+	}
+
+	var out Session
+	if _, err := jsonutil.ExtractJSONInto(raw, &out); err != nil {
+		return Session{}, fmt.Errorf("parse session JSON: %w", err)
+	}
+	return out, nil
+}
+
 func CritiqueAndRefine(sow *SOW, prov provider.Provider, model string, maxPasses int) (*SOW, *SOWCritique, error) {
 	if maxPasses < 1 {
 		maxPasses = 2
@@ -573,10 +712,16 @@ func CritiqueAndRefine(sow *SOW, prov provider.Provider, model string, maxPasses
 		}
 		// Both "refine" and "reject" trigger a refinement attempt. The
 		// difference is severity, not action: we always try to fix what
-		// the critic found. If RefineSOW itself fails on a reject, we
-		// surface the original reject error so the caller knows the
-		// SOW was unsalvageable rather than merely under-refined.
-		refined, err := RefineSOW(current, crit, prov, model)
+		// the critic found. Prefer chunked per-session refine (avoids
+		// max_tokens truncation that was landing zero-AC sessions on
+		// 20+ session SOWs); fall back to the monolithic refine when
+		// chunked errors out for a reason that re-running the whole
+		// SOW might fix (e.g. transient LLM glitch on one session).
+		refined, err := RefineSOWChunked(current, crit, prov, model)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  critique note: chunked refine pass %d failed (%v) — retrying with monolith\n", pass, err)
+			refined, err = RefineSOW(current, crit, prov, model)
+		}
 		if err != nil {
 			if crit.Verdict == "reject" {
 				return current, crit, fmt.Errorf("refine pass %d failed AND critic rejected SOW: %s; refine error: %w", pass, crit.Summary, err)
