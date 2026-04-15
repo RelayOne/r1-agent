@@ -363,10 +363,20 @@ func isRealFilePath(projectRoot, p string) bool {
 	if p == "" {
 		return false
 	}
-	// First: if the path exists on disk as a file, accept it
-	// unconditionally — the filesystem is authoritative, prose-
-	// shaped filenames (even truly exotic ones like
-	// "Foo or Bar/Podfile") are legal when they resolve.
+	// Unconditionally reject shell-unsafe characters. Go's %q
+	// wraps in double quotes — which protect spaces and single
+	// quotes but NOT backticks (command substitution inside ""
+	// is still active) or control chars (which mangle the
+	// generated acceptance-check command). These reject regardless
+	// of filesystem state since they'd break the shell-based
+	// hash-AC downstream even for existing paths.
+	if strings.ContainsAny(p, "`\t\n\r") {
+		return false
+	}
+	// Then: if the path exists on disk as a file, accept it —
+	// the filesystem is authoritative, prose-shaped filenames
+	// (even exotic ones like "Foo or Bar/Podfile") are legal when
+	// they resolve.
 	abs := p
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(projectRoot, p)
@@ -380,7 +390,7 @@ func isRealFilePath(projectRoot, p string) bool {
 	// policy", "Podfile / Package.swift"). Apply the prose filters
 	// only in this branch so legitimate-but-exotic existing paths
 	// above don't get rejected.
-	if strings.ContainsAny(p, "()`\t\n\r") {
+	if strings.ContainsAny(p, "()") {
 		return false
 	}
 	// Alternation shapes — no real path separates segments with
