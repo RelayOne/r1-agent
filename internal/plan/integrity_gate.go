@@ -363,46 +363,44 @@ func isRealFilePath(projectRoot, p string) bool {
 	if p == "" {
 		return false
 	}
-	// Parenthetical clarifications, backticks, tabs, newlines are
-	// the telltale sign of a prose-ish label ("main.rs
-	// (invoke_handler)"). Plain spaces are legal in filenames
-	// ("My App/My App.csproj") and are allowed.
-	if strings.ContainsAny(p, "()`\t\n\r") {
-		return false
-	}
-	// " / " (space-slash-space) signals alternation
-	// ("Podfile / Package.swift"), which a real path never contains
-	// — POSIX / Windows paths separate segments with a bare slash
-	// or backslash, no surrounding spaces. Comma alternation too.
-	if strings.Contains(p, " / ") || strings.Contains(p, ", ") ||
-		strings.Contains(p, " or ") {
-		return false
-	}
-	// Trailing slash → directory-shaped, never a file target.
-	if strings.HasSuffix(p, "/") || strings.HasSuffix(p, string(os.PathSeparator)) {
-		return false
-	}
+	// First: if the path exists on disk as a file, accept it
+	// unconditionally — the filesystem is authoritative, prose-
+	// shaped filenames (even truly exotic ones like
+	// "Foo or Bar/Podfile") are legal when they resolve.
 	abs := p
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(projectRoot, p)
 	}
-	// Accept any path that exists as a file.
 	if info, err := os.Stat(abs); err == nil {
 		return !info.IsDir()
 	}
-	// Missing path: accept only when the shape is path-like — has a
-	// directory separator AND an extension on the basename. This
-	// rejects prose ("SOW architecture policy") while accepting
-	// creatable targets like "ios/Podfile.lock" or
-	// "src-tauri/Cargo.toml" that the fix worker will generate.
-	base := filepath.Base(p)
+	// Path does NOT exist. We must decide whether it's a creatable
+	// target (e.g., "ios/Podfile.lock" before pod install) or a
+	// prose label masquerading as a path ("SOW architecture
+	// policy", "Podfile / Package.swift"). Apply the prose filters
+	// only in this branch so legitimate-but-exotic existing paths
+	// above don't get rejected.
+	if strings.ContainsAny(p, "()`\t\n\r") {
+		return false
+	}
+	// Alternation shapes — no real path separates segments with
+	// " / ", ", ", or " or " spacing.
+	if strings.Contains(p, " / ") || strings.Contains(p, ", ") ||
+		strings.Contains(p, " or ") {
+		return false
+	}
+	// Trailing slash → directory-shaped, not a file target.
+	if strings.HasSuffix(p, "/") || strings.HasSuffix(p, string(os.PathSeparator)) {
+		return false
+	}
+	// Creatable shape: has a directory separator AND an extension
+	// on the basename. Rejects prose like "SOW architecture policy"
+	// while accepting "ios/Podfile.lock" and "src-tauri/Cargo.toml".
 	if !strings.ContainsRune(p, '/') && !strings.ContainsRune(p, os.PathSeparator) {
 		return false
 	}
-	if !strings.Contains(base, ".") {
-		return false
-	}
-	return true
+	base := filepath.Base(p)
+	return strings.Contains(base, ".")
 }
 
 // collectSessionFiles returns absolute paths of every file the
