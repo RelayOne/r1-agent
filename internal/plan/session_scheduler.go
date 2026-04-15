@@ -75,6 +75,14 @@ type SessionScheduler struct {
 	// May be nil.
 	OnSessionStart func(sessionID string, attempt int)
 
+	// SkipIntegrityGate disables the post-session integrity gate
+	// (manifest-import / public-surface / vendor-policy / mobile /
+	// tauri cross-check). Default false — the gate runs after every
+	// successful session. Set true for pipelines that want bare
+	// session execution without integrity-driven fix promotion
+	// (e.g., replay / regression harness).
+	SkipIntegrityGate bool
+
 	// promotedAt tracks when each AppendSession-promoted session was
 	// queued. Used by CheckPromotedDispatch to detect deadlocks where a
 	// promoted session sits in the queue long past PromotedDispatchSLA.

@@ -297,6 +297,31 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		}
 
 		success := result.Error == nil && result.AcceptanceMet
+
+		// Post-success integrity gate. Runs every registered
+		// ecosystem's import/surface probes against this session's
+		// declared files. Any findings are promoted as a fix session
+		// via AppendSession so the next scheduler iteration dispatches
+		// them. Skipped on failure (the session already has issues
+		// to address via the normal retry/escalation path).
+		if success && !ss.SkipIntegrityGate {
+			if report, err := RunIntegrityGate(ctx, ss.projectRoot, session, nil); err == nil && report != nil && len(report.Directives) > 0 {
+				fmt.Printf("\n  🛡 integrity gate: %d finding(s) in session %s:\n", len(report.Directives), session.ID)
+				for _, d := range report.Directives {
+					first := d
+					if i := strings.Index(d, "\n"); i >= 0 {
+						first = d[:i]
+					}
+					if len(first) > 240 {
+						first = first[:237] + "..."
+					}
+					fmt.Printf("     • %s\n", first)
+				}
+				fixSession := synthIntegrityFixSession(session, report)
+				ss.AppendSession(fixSession)
+			}
+		}
+
 		stateMu.Lock()
 		if success {
 			ss.recordSessionSuccess(session, result)
