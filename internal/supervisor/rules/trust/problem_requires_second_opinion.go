@@ -7,6 +7,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // ProblemRequiresSecondOpinion handles escalation requests of type
@@ -120,4 +122,9 @@ func (r *ProblemRequiresSecondOpinion) Action(ctx context.Context, evt bus.Event
 	}
 
 	return nil
+}
+
+// PayloadSchema declares the worker.paused shape. Closes A3.
+func (r *ProblemRequiresSecondOpinion) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }

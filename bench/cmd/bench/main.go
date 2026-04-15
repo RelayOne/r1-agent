@@ -71,6 +71,8 @@ func cmdRun(args []string) {
 	maxParallel := fs.Int("max-parallel", 5, "Maximum parallel task runs")
 	costCapFlag := fs.Float64("cost-cap", 3.0, "Per-task cost cap in USD")
 	outputDir := fs.String("output", "reports/", "Output directory for results")
+	varianceOut := fs.String("variance-out", "", "Optional: write a slim JSON per harness at this path prefix (shape consumed by bench/cmd/variance-regression)")
+	varianceLabel := fs.String("variance-label", "", "Optional: label to record in the variance-out JSON (e.g. git SHA, scaffold version). Defaults to 'HEAD' when empty.")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
 	}
@@ -169,8 +171,68 @@ func cmdRun(args []string) {
 	os.WriteFile(resultsPath, data, 0o644)
 	fmt.Printf("\nResults saved to %s (%d runs)\n", resultsPath, len(allResults))
 
+	// Variance regression export (B3). One JSON per harness in the
+	// slim shape bench/cmd/variance-regression consumes. Success rate
+	// is the mean of Verdict.Passed across reps for each task.
+	if *varianceOut != "" {
+		label := *varianceLabel
+		if label == "" {
+			label = "HEAD"
+		}
+		writeVarianceReports(allResults, *varianceOut, label)
+	}
+
 	// Print summary
 	printSummary(allResults, tracker)
+}
+
+// writeVarianceReports emits one JSON per harness in the shape the
+// variance-regression CLI expects: {label, tasks: [{task_id,
+// success_rate}]}. Path prefix + "-" + harness + ".json". Success
+// rate is mean Verdict.Passed (0 or 1) across reps for each task.
+func writeVarianceReports(results []BenchResult, pathPrefix, label string) {
+	type key struct{ harness, task string }
+	type agg struct{ passed, total int }
+	byHarness := map[string]map[string]*agg{}
+	for _, r := range results {
+		if byHarness[r.HarnessName] == nil {
+			byHarness[r.HarnessName] = map[string]*agg{}
+		}
+		a := byHarness[r.HarnessName][r.TaskID]
+		if a == nil {
+			a = &agg{}
+			byHarness[r.HarnessName][r.TaskID] = a
+		}
+		a.total++
+		if r.Verdict.Passed {
+			a.passed++
+		}
+	}
+	for harness, taskAgg := range byHarness {
+		type outcome struct {
+			TaskID      string  `json:"task_id"`
+			SuccessRate float64 `json:"success_rate"`
+		}
+		type out struct {
+			Label string    `json:"label"`
+			Tasks []outcome `json:"tasks"`
+		}
+		doc := out{Label: fmt.Sprintf("%s:%s", label, harness)}
+		for tid, a := range taskAgg {
+			rate := 0.0
+			if a.total > 0 {
+				rate = float64(a.passed) / float64(a.total)
+			}
+			doc.Tasks = append(doc.Tasks, outcome{TaskID: tid, SuccessRate: rate})
+		}
+		data, _ := json.MarshalIndent(doc, "", "  ")
+		path := fmt.Sprintf("%s-%s.json", pathPrefix, harness)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "  variance-out %s: %v\n", path, err)
+			continue
+		}
+		fmt.Printf("variance-out saved: %s (%d tasks)\n", path, len(doc.Tasks))
+	}
 }
 
 func loadTasks(dir string) ([]judge.Task, error) {

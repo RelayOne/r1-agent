@@ -128,6 +128,41 @@ func (p *Plan) Validate() []string {
 	return errs
 }
 
+// CleanPlanTaskDependenciesDrop records a single dep-drop the
+// cleaner performed.
+type CleanPlanTaskDependenciesDrop struct {
+	TaskID  string
+	Dropped string
+}
+
+// CleanPlanTaskDependencies removes task.Dependencies entries that
+// reference task IDs not present in the plan. Returns one drop
+// record per removed reference for audit-log rendering. Idempotent.
+// Companion to CleanTaskDependencies for SOW shape — runs against a
+// flat plan.Plan which the native fast path uses.
+func CleanPlanTaskDependencies(p *Plan) []CleanPlanTaskDependenciesDrop {
+	if p == nil {
+		return nil
+	}
+	ids := map[string]bool{}
+	for _, t := range p.Tasks {
+		ids[t.ID] = true
+	}
+	var drops []CleanPlanTaskDependenciesDrop
+	for i := range p.Tasks {
+		kept := p.Tasks[i].Dependencies[:0]
+		for _, dep := range p.Tasks[i].Dependencies {
+			if ids[dep] {
+				kept = append(kept, dep)
+				continue
+			}
+			drops = append(drops, CleanPlanTaskDependenciesDrop{TaskID: p.Tasks[i].ID, Dropped: dep})
+		}
+		p.Tasks[i].Dependencies = kept
+	}
+	return drops
+}
+
 // ValidateFiles checks that files listed in tasks actually exist in the repo.
 // Returns warnings (new files in non-existent dirs) and errors (modifications
 // to non-existent files). This catches misplanned tasks before execution.

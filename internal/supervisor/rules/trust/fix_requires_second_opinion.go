@@ -7,6 +7,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // FixRequiresSecondOpinion pauses a worker that declares a fix complete and
@@ -114,4 +116,10 @@ func (r *FixRequiresSecondOpinion) Action(ctx context.Context, evt bus.Event, b 
 	}
 
 	return nil
+}
+
+// PayloadSchema declares the worker.paused shape for this rule's
+// primary emitted event. Closes A3 for this rule.
+func (r *FixRequiresSecondOpinion) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }

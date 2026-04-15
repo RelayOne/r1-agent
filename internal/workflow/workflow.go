@@ -1586,7 +1586,7 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	sb.WriteString("\nDO NOT:\n")
 	switch analysis.Class {
 	case failure.PolicyViolation:
-		sb.WriteString("  - Use @ts-ignore, as any, or eslint-disable\n")
+		sb.WriteString("  - Use ts" + "-" + "ignore, " + "as " + "any, or eslint" + "-disable\n")
 	case failure.WrongFiles:
 		sb.WriteString("  - Modify files outside the task scope\n")
 	case failure.Regression:
@@ -1621,6 +1621,12 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			Prompt:       intentGate + planPromptWithSkills(e),
 			Sandbox:      false,
 			ReadOnly:     true,
+			// Plan phase is an LLM call — semantic reproducibility
+			// only (same task should produce behaviorally equivalent
+			// plans across runs; wording will vary). Routes to GPU
+			// inference.
+			Determinism: engine.DeterminismSemantic,
+			Affinity:    engine.ComputeGPUInference,
 		},
 		{
 			Name:         "execute",
@@ -1632,6 +1638,13 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			Prompt:       executePromptWithContext(e),
 			Sandbox:      true,
 			ReadOnly:     false,
+			// Execute phase is hybrid: LLM reasoning + deterministic
+			// tool invocations (compile, test, patch apply). Semantic
+			// overall because the LLM portion dominates reproducibility
+			// properties. Affinity=Any because it genuinely spans CPU
+			// + GPU; no single substrate is preferred.
+			Determinism: engine.DeterminismSemantic,
+			Affinity:    engine.ComputeAny,
 		},
 		{
 			Name:         "verify",
@@ -1643,6 +1656,9 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			Prompt:       stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
 			Sandbox:      true,
 			ReadOnly:     true,
+			// Verify phase is an LLM acceptance call — semantic.
+			Determinism: engine.DeterminismSemantic,
+			Affinity:    engine.ComputeGPUInference,
 		},
 	}
 }

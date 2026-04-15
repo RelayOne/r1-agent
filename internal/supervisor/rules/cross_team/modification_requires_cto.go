@@ -9,6 +9,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // ModificationRequiresCTO pauses workers that propose changes to files
@@ -119,4 +121,9 @@ func (r *ModificationRequiresCTO) Action(ctx context.Context, evt bus.Event, b *
 		Payload:   consensusPayload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the worker.paused shape. Closes A3.
+func (r *ModificationRequiresCTO) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }

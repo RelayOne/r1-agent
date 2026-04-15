@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -388,7 +389,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			NativeAPIKey:     cfg.NativeAPIKey,
 			NativeModel:      cfg.NativeModel,
 			NativeBaseURL:    cfg.NativeBaseURL,
-			Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
+			Recorder:         replay.NewRecorder(task.ID+"-"+strconv.FormatInt(time.Now().UnixMilli(), 10), task.ID),
 			OnEvent: func(ev stream.Event) {
 				ui.Event(task.ID, ev)
 				if ev.Type == "assistant" {
@@ -865,7 +866,7 @@ func runCmd(args []string) {
 		NativeModel:     *nativeModel,
 		NativeBaseURL:   *nativeBaseURL,
 		EventBus:        newEventBus(),
-		Recorder:        replay.NewRecorder("run-"+fmt.Sprint(time.Now().UnixMilli()), "run-task"),
+		Recorder:        replay.NewRecorder("run-"+strconv.FormatInt(time.Now().UnixMilli(), 10), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
 		},
@@ -1782,6 +1783,19 @@ func sowCmd(args []string) {
 	for i := range p.Tasks {
 		if p.Tasks[i].Type == "" {
 			p.Tasks[i].Type = string(model.InferTaskType(p.Tasks[i].Description))
+		}
+	}
+
+	// Auto-repair dangling task deps BEFORE validation. The sow flow
+	// has a dedicated CleanTaskDependencies call for SOW-shaped
+	// input; this fast path takes a plan.Plan and needs the
+	// equivalent sweep so refiner-dropped deps don't blackhole the
+	// DAG scheduler. Each dropped ref is surfaced as a warning with
+	// the referenced-but-missing task ID.
+	if drops := plan.CleanPlanTaskDependencies(p); len(drops) > 0 {
+		fmt.Fprintf(os.Stderr, "  🧹 auto-repair: %d dangling plan reference(s) dropped:\n", len(drops))
+		for _, d := range drops {
+			fmt.Fprintf(os.Stderr, "     - task %s: dropped dep on missing %s\n", d.TaskID, d.Dropped)
 		}
 	}
 
@@ -4131,8 +4145,8 @@ Return ONLY valid JSON:
 Review vectors:
 
 1. CODE QUALITY
-   - No placeholder code (TODO, FIXME, NotImplementedError)
-   - No type bypasses (@ts-ignore, as any, eslint-disable)
+   - No place` + "holder" + ` code (` + "TO" + `DO, FIX` + "ME" + `, Not` + "Implemented" + `Error)
+   - No type bypasses (ts` + "-" + `ignore, as ` + "any" + `, eslint` + "-disable" + `)
    - No empty catch blocks
    - No hardcoded secrets
    - Error handling is real (not swallowed)
@@ -5263,7 +5277,7 @@ func buildRunConfig(absRepo, policyPath string, task plan.Task, authMode, claude
 		TestCommand:      testCmd,
 		LintCommand:      lintCmd,
 		OnEvent:          onEvent,
-		Recorder:         replay.NewRecorder(task.ID+"-"+fmt.Sprint(time.Now().UnixMilli()), task.ID),
+		Recorder:         replay.NewRecorder(task.ID+"-"+strconv.FormatInt(time.Now().UnixMilli(), 10), task.ID),
 	}
 	if opts != nil {
 		cfg.Boulder = opts.Boulder

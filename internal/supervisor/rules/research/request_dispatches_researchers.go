@@ -9,6 +9,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // RequestDispatchesResearchers pauses the requesting worker and spawns one or
@@ -109,4 +111,9 @@ func (r *RequestDispatchesResearchers) Action(_ context.Context, evt bus.Event, 
 	}
 
 	return nil
+}
+
+// PayloadSchema declares the worker.paused shape. Closes A3.
+func (r *RequestDispatchesResearchers) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }

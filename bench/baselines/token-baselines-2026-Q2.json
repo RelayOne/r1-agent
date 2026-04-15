@@ -1,0 +1,57 @@
+{
+  "baseline_label": "stoke-token-baseline-2026-Q2",
+  "measured_at": "2026-04-14",
+  "methodology": "Conservative initial values pending a measured corpus-run sweep. A single-agent Claude Code run against the 20-task bench corpus populates these fields in bench/metrics/amplification.go by task class. Replace quarterly.",
+  "baselines": [
+    {
+      "task_class": "feature_add",
+      "baseline_tokens": 150000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "bug_fix",
+      "baseline_tokens": 80000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "refactor",
+      "baseline_tokens": 120000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "scaffold",
+      "baseline_tokens": 200000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "docs",
+      "baseline_tokens": 40000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "test",
+      "baseline_tokens": 60000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    },
+    {
+      "task_class": "review",
+      "baseline_tokens": 30000,
+      "max_multiplier": 4.0,
+      "alert_multiplier": 2.5,
+      "source": "conservative_estimate"
+    }
+  ],
+  "notes": "These are starter values chosen to put the Rule-of-4 alert at roughly 2-3x typical single-agent costs for each class. Real corpus measurement should replace each entry with source='measured' and append 'p50_tokens' + 'sample_size' fields. See docs/anti-deception-matrix.md row B2 + Q16 in the addendum for baseline methodology."
+}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // CompletionRequiresSecondOpinion pauses a worker that declares "done" and
@@ -125,4 +127,13 @@ func (r *CompletionRequiresSecondOpinion) Action(ctx context.Context, evt bus.Ev
 	}
 
 	return nil
+}
+
+// PayloadSchema declares the schema for this rule's primary emitted
+// event (worker.paused). Closes anti-deception matrix row A3 for
+// this rule — the payload is validated at dispatch against a
+// known-good shape instead of silently failing at replay if a
+// required field goes missing.
+func (r *CompletionRequiresSecondOpinion) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // OperatingMode controls how user escalation behaves.
@@ -143,4 +145,9 @@ func (r *UserEscalation) Action(ctx context.Context, evt bus.Event, b *bus.Bus) 
 	default:
 		return fmt.Errorf("unknown operating mode: %s", r.Mode)
 	}
+}
+
+// PayloadSchema declares the worker.paused shape. Closes A3.
+func (r *UserEscalation) PayloadSchema() *schemaval.Schema {
+	return supervisor.WorkerPausedSchema()
 }
