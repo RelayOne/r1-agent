@@ -1533,8 +1533,12 @@ func sowCmd(args []string) {
 		}
 	}
 
-	// Validate
-	if validationErrs := plan.ValidateSOW(sow); len(validationErrs) > 0 {
+	// Validate. Strict mode at dispatch time so any malformed AC
+	// (empty-file content_match, etc.) surfaces here instead of
+	// after the session does work that would deterministically
+	// fail at the gate. Lenient ValidateSOW is reserved for
+	// intermediate convert/refine pipeline calls.
+	if validationErrs := plan.ValidateSOWStrict(sow); len(validationErrs) > 0 {
 		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
 		for _, e := range validationErrs {
 			fmt.Fprintf(os.Stderr, "  - %s\n", e)

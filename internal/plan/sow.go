@@ -192,7 +192,35 @@ func SaveSOW(path string, sow *SOW) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// ValidateSOW checks a SOW for structural problems.
+// ValidateSOWStrict runs every check in ValidateSOW PLUS the strict
+// gates that intermediate-state SOWs (mid-convert, mid-refine) can't
+// satisfy yet. Used by the CLI's --validate flag and by the
+// dispatch-time pre-flight so hand-authored or cached SOWs surface
+// malformed acceptance criteria BEFORE a session does work that
+// would deterministically fail at the gate.
+//
+// Strict-only checks:
+//
+//   - content_match with empty File: the bare-string parse artifact.
+//     Tolerated mid-pipeline so the repair loop can fix it; rejected
+//     here because by the time we're validating strictly we expect a
+//     fully-resolved SOW.
+func ValidateSOWStrict(sow *SOW) []string {
+	errs := ValidateSOW(sow)
+	for _, s := range sow.Sessions {
+		for _, ac := range s.AcceptanceCriteria {
+			if ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) == "" {
+				errs = append(errs, fmt.Sprintf("session %s criterion %s has content_match with no file (refine path can repair this; --validate rejects it as unrunnable)", s.ID, ac.ID))
+			}
+		}
+	}
+	return errs
+}
+
+// ValidateSOW checks a SOW for structural problems. Lenient on the
+// shapes the convert/refine pipeline tolerates for repair (empty-file
+// content_match etc.). Use ValidateSOWStrict at execution time and
+// for --validate.
 func ValidateSOW(sow *SOW) []string {
 	var errs []string
 
@@ -264,14 +292,12 @@ func ValidateSOW(sow *SOW) []string {
 				errs = append(errs, fmt.Sprintf("session %s criterion %s has no description", s.ID, ac.ID))
 			}
 			// NB: empty-file content_match is intentionally NOT
-			// flagged here. ContentMatchCriterion.UnmarshalJSON
-			// tolerates the bare-string form by leaving a zero-value
-			// struct so the convert / critique / refine passes can
-			// repair the AC instead of aborting the whole pipeline
-			// on one bad criterion. The acceptance executor handles
-			// the malformed case explicitly (MALFORMED-AC failure
-			// in checkOneCriterion, non-overridable in
-			// CheckAcceptanceCriteriaWithJudge).
+			// flagged in lenient ValidateSOW. The bare-string parse
+			// shape (UnmarshalJSON leaves a zero-value struct) is
+			// tolerated so the convert / critique / refine passes
+			// can repair it. ValidateSOWStrict does flag it — used
+			// for hand-authored / cached SOWs that bypass the
+			// repair pipeline.
 		}
 
 		// Validate infra references
