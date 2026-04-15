@@ -226,11 +226,21 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 				if fix == "" {
 					fix = fmt.Sprintf("add %q to %s", m.ImportPath, m.Manifest)
 				}
+				// TargetFile must be a real editable file. Some
+				// ecosystems (infra-policy, tauri cross-ecosystem)
+				// emit Manifest strings that are prose labels or
+				// directory paths, not file paths — fall back to
+				// SourceFile in those cases so the hash-based AC
+				// targets something the worker can actually mutate.
+				target := m.Manifest
+				if !isRealFilePath(projectRoot, target) {
+					target = m.SourceFile
+				}
 				report.Issues = append(report.Issues, IntegrityIssue{
 					Ecosystem:  name,
 					Category:   "manifest-import",
 					SourceFile: m.SourceFile,
-					TargetFile: m.Manifest, // edit the manifest, not the source
+					TargetFile: target,
 					Detail:     m.ImportPath,
 					Fix:        fix,
 				})
@@ -335,6 +345,33 @@ func CaptureCompileBaseline(ctx context.Context, projectRoot string, files []str
 		out[name] = errs
 	}
 	return out
+}
+
+// isRealFilePath reports whether the given relative or absolute path
+// points at an actual file inside projectRoot. Used by the manifest-
+// import issue synthesis to reject prose labels ("SOW architecture
+// policy"), directory paths ("src-tauri/src/"), and path strings
+// with parenthetical clarifications ("src-tauri/src/main.rs
+// (invoke_handler)") — any of which would break the hash-based
+// acceptance check downstream.
+func isRealFilePath(projectRoot, p string) bool {
+	if p == "" {
+		return false
+	}
+	// Parenthetical clarifications / whitespace mean not a clean
+	// file path. Similarly for backticks or other punctuation.
+	if strings.ContainsAny(p, "() \t`") {
+		return false
+	}
+	abs := p
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(projectRoot, p)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 // collectSessionFiles returns absolute paths of every file the

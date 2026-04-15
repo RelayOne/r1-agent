@@ -51,10 +51,22 @@ func synthIntegrityFixSession(projectRoot string, src Session, report *Integrity
 			}
 			desc := fmt.Sprintf("[%s/%s] %s — edit %s. %s",
 				iss.Ecosystem, iss.Category, iss.Detail, target, iss.Fix)
+			// Files: both target (the file the fix must edit) AND
+			// source (the file whose content triggered detection).
+			// Keeping the source keeps it visible to the next
+			// integrity-gate pass — without it, a manifest fix would
+			// leave the original .ts/.rs/etc. invisible to the
+			// ecosystem's Owns() and the next pass would miss any
+			// still-unresolved findings. target first so the hash AC
+			// and scope checker see it as the primary file.
+			files := []string{target}
+			if iss.SourceFile != "" && iss.SourceFile != target {
+				files = append(files, iss.SourceFile)
+			}
 			tasks = append(tasks, Task{
 				ID:          tid,
 				Description: desc,
-				Files:       []string{target},
+				Files:       files,
 			})
 			before := snapshotHash(projectRoot, target)
 			preview := before
