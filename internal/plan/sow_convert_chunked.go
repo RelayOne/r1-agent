@@ -350,21 +350,43 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 				break
 			}
 			fmt.Print(FormatApprovalVerdict(verdict))
-			if verdict.Decision == "reject" || verdict.HasBlocking() {
-				return out, nil, fmt.Errorf("final plan approval: %s — %d blocking concern(s); SOW not fit for dispatch", verdict.Decision, len(verdict.Concerns))
+			// reject is terminal — reviewer says the SOW is structurally
+			// unfit and no refinement will recover it.
+			if verdict.Decision == "reject" {
+				return out, nil, fmt.Errorf("final plan approval: reject — %d concern(s); SOW not fit for dispatch", len(verdict.Concerns))
 			}
 			if verdict.Decision == "approve" || len(verdict.Concerns) == 0 {
 				out.ChunkedConvertApproved = true
 				break
 			}
-			// request_changes with non-blocking concerns. Refine the
-			// SOW addressing each concern; loop back to re-review.
+			// request_changes with concerns (any severity) — refine
+			// loop attempts to fix them. Blocking concerns are
+			// EXACTLY what the refine loop should target: explicit
+			// fix directives the reviewer wants applied (file
+			// collisions to resolve, undeclared packages to declare,
+			// oversized sessions to split). Bailing on blocking
+			// before refine bypasses the entire purpose of the
+			// loop. After the cap, if blocking concerns still
+			// remain, halt with the operator-facing concern list.
 			if round >= maxRefineRounds {
-				fmt.Printf("  ⚠ refine cap (%d rounds) reached — proceeding with %d unaddressed concern(s)\n", maxRefineRounds, len(verdict.Concerns))
+				if verdict.HasBlocking() {
+					return out, nil, fmt.Errorf("final plan approval: %d blocking concern(s) remain after %d refine round(s); SOW not fit for dispatch", len(verdict.Concerns), maxRefineRounds)
+				}
+				fmt.Printf("  ⚠ refine cap (%d rounds) reached — proceeding with %d unaddressed non-blocking concern(s)\n", maxRefineRounds, len(verdict.Concerns))
 				out.ChunkedConvertApproved = true
 				break
 			}
-			fmt.Printf("  🔁 refine round %d: addressing %d concern(s) before dispatch\n", round+1, len(verdict.Concerns))
+			blockingCount := 0
+			for _, c := range verdict.Concerns {
+				if c.Severity == "blocking" {
+					blockingCount++
+				}
+			}
+			if blockingCount > 0 {
+				fmt.Printf("  🔁 refine round %d: addressing %d concern(s) (%d blocking) — refine first, halt only if cap reached with blockers remaining\n", round+1, len(verdict.Concerns), blockingCount)
+			} else {
+				fmt.Printf("  🔁 refine round %d: addressing %d concern(s) before dispatch\n", round+1, len(verdict.Concerns))
+			}
 			refined, rerr := RefineSOWFromConcerns(ctx, prose, out, verdict.Concerns, prov, model)
 			if rerr != nil {
 				fmt.Printf("  ⚠ refine pass failed (%v); proceeding with current SOW\n", rerr)
