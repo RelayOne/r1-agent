@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/env"
@@ -403,6 +404,27 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 
 	cmd := exec.CommandContext(ctx, "bash", "-c", args.Command)
 	cmd.Dir = r.workDir
+	// Process-group isolation: pnpm (and other build tools) spawn
+	// hundreds of child processes. exec.CommandContext only kills
+	// the immediate child on timeout; grandchildren inherit the
+	// stdout pipe and keep it open, blocking CombinedOutput()
+	// forever even after the parent is killed. Put the command in
+	// its own process group so Cancel can kill the whole tree.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// Negative PID = kill the process group.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return nil
+	}
+	// WaitDelay bounds how long cmd.Wait will hang after Cancel
+	// fires reading leftover pipe output. Without this, a
+	// group-killed pnpm with hundreds of zombie grandchildren can
+	// still hold the pipe open for a long time. 5s is enough to
+	// drain any in-flight buffer + bail.
+	cmd.WaitDelay = 5 * time.Second
 
 	output, err := cmd.CombinedOutput()
 	result := string(output)
