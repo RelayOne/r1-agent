@@ -45,6 +45,65 @@ const (
 	AuthModeMode2 = AuthModeAPIKey
 )
 
+// DeterminismCategory labels a phase by the reproducibility contract
+// it makes with the replay system. Bit-exact phases must produce
+// byte-identical output on replay (compile, lint, deterministic patch
+// apply, test). Semantic phases must produce behaviorally equivalent
+// output — wording / formatting may vary (LLM phases). BestEffort
+// phases make no reproducibility claim (creative exploration). The
+// replay player switches verification mode based on this label:
+// bit-exact diff for BitExact, LLM-judge equivalence for Semantic,
+// skip for BestEffort. See docs/anti-deception-matrix.md row B1.
+type DeterminismCategory int
+
+const (
+	DeterminismSemantic   DeterminismCategory = iota // default — behavior equivalent, wording may vary
+	DeterminismBitExact                              // byte-for-byte identical on replay
+	DeterminismBestEffort                            // no reproducibility contract
+)
+
+// String returns the JSON-friendly category name.
+func (d DeterminismCategory) String() string {
+	switch d {
+	case DeterminismBitExact:
+		return "bit_exact"
+	case DeterminismBestEffort:
+		return "best_effort"
+	default:
+		return "semantic"
+	}
+}
+
+// ComputeAffinity is a routing hint for heterogeneous compute. The
+// scheduler uses it to prefer a substrate that matches the phase's
+// structural shape — e.g. patch-apply on CPU, LLM call on GPU,
+// MCTS exploration on a probabilistic substrate when one is
+// available. Today everything routes to the existing execution
+// engine regardless; the field is latent optionality, not active
+// routing. See docs/anti-deception-matrix.md row B4.
+type ComputeAffinity int
+
+const (
+	ComputeAny              ComputeAffinity = iota // default — no affinity, route anywhere
+	ComputeCPUDeterministic                        // patch apply, compile, test, AST transforms
+	ComputeGPUInference                            // LLM call (most current phases)
+	ComputeProbabilistic                           // sampling, MCTS, exploration
+)
+
+// String returns the JSON-friendly affinity name.
+func (c ComputeAffinity) String() string {
+	switch c {
+	case ComputeCPUDeterministic:
+		return "cpu_deterministic"
+	case ComputeGPUInference:
+		return "gpu_inference"
+	case ComputeProbabilistic:
+		return "probabilistic"
+	default:
+		return "any"
+	}
+}
+
 // PhaseSpec describes the configuration for a single workflow phase (plan, execute, or verify).
 type PhaseSpec struct {
 	Name         string
@@ -57,6 +116,20 @@ type PhaseSpec struct {
 	Sandbox      bool
 	ReadOnly          bool   // if true, runner uses read-only sandbox and review profile
 	CompletionPromise string // statement agent must include in output to prove task completion; empty means no promise required
+
+	// Determinism declares the phase's reproducibility contract.
+	// Default DeterminismSemantic preserves existing behavior. Phases
+	// known to be bit-exact (compile, lint, test, deterministic patch
+	// apply) should opt into DeterminismBitExact in a follow-up sweep
+	// so the replay player can verify them strictly.
+	Determinism DeterminismCategory
+
+	// Affinity declares the phase's preferred compute substrate.
+	// Default ComputeAny preserves existing behavior. The scheduler
+	// reads this as a routing hint, not a hard constraint — labeling
+	// today buys optionality when probabilistic / neuromorphic
+	// substrates become available without forcing a codebase sweep.
+	Affinity ComputeAffinity
 }
 
 // PreparedCommand holds the fully resolved binary, arguments, environment, and working directory for an engine invocation.

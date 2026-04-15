@@ -39,6 +39,28 @@ type Finding struct {
 	Message     string   `json:"message"`
 	Suggestion  string   `json:"suggestion,omitempty"`
 	Rule        string   `json:"rule,omitempty"`
+
+	// EvidenceRefs are content-addressed pointers to the artifacts the
+	// critic actually examined when producing this finding. Replay
+	// auditors use these to fetch the exact same bytes the critic saw
+	// and verify the finding is reproducible. Optional but strongly
+	// encouraged for new code paths — without refs a replay sees only
+	// prose, which is non-verifiable. See docs/anti-deception-matrix.md
+	// row "critic evidence."
+	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
+}
+
+// EvidenceRef is a content-addressed pointer into the ledger / log /
+// diff store. Kind discriminates the ref space; Hash is the lookup key.
+//
+//	Kind        Hash format                   Resolves to
+//	"artifact"  "sha256:<hex>"                file content in ledger
+//	"log"       "log:<span-id>"               structured log span
+//	"diff"      "sha256:<hex>"                unified-diff blob
+//	"ledger_node" "ledger:<node-id>"          named ledger graph node
+type EvidenceRef struct {
+	Kind string `json:"kind"`
+	Hash string `json:"hash"`
 }
 
 // Verdict is the critic's overall assessment.

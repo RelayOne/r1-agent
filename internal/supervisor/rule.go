@@ -35,6 +35,25 @@ type Rule interface {
 	Rationale() string
 }
 
+// PayloadSchemaProvider is an OPTIONAL interface a Rule may implement
+// to declare the JSON Schema its emitted Action payloads must satisfy.
+// The supervisor checks for this interface at dispatch time via a type
+// assertion — rules that don't implement it remain schemaless. New
+// rules SHOULD implement it: a payload with a missing required field
+// fails silently at replay because the consumer has no schema to
+// validate against. See docs/anti-deception-matrix.md row "supervisor
+// payloads."
+//
+// The schema is returned as a raw JSON-encoded byte slice (e.g. from
+// `json.Marshal` of a JSON Schema document, or an embed of a .json
+// file). Returning nil or an empty slice means "no schema declared" —
+// equivalent to not implementing the interface at all. Validation
+// itself is performed by internal/schemaval which already exists for
+// phase-contract validation.
+type PayloadSchemaProvider interface {
+	PayloadSchema() []byte
+}
+
 // ConfigSchema describes wizard-tunable knobs for a rule.
 type ConfigSchema struct {
 	Disableable bool                   `json:"disableable"`

@@ -319,6 +319,24 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		// last iteration so continuations actually get dispatched.
 		sessions, order = rebuildMaps()
 		dag = BuildSessionDAG(ss.sow)
+		// Deadlock watchdog: any session promoted via AppendSession
+		// that has been pending past PromotedDispatchSLA without
+		// dispatch is almost certainly deadlocked behind its parent
+		// in the DAG. Print a loud banner so the operator sees the
+		// condition instead of trusting heartbeats. Force-clear the
+		// stalled entry from promotedAt to suppress repeat banners
+		// while we wait for the operator to intervene.
+		stateMu.Lock()
+		if stalled := ss.CheckPromotedDispatch(started, done); len(stalled) > 0 {
+			fmt.Printf("\n  ⚠️  DEADLOCK WATCHDOG: %d promoted session(s) undispatched > %s — likely DAG cycle or unresolved parent dep:\n", len(stalled), PromotedDispatchSLA)
+			for _, id := range stalled {
+				deps := dag.Deps[id]
+				fmt.Printf("       %s — deps: %v (clear them or set Preempt=true)\n", id, deps)
+				// Suppress repeat banners: drop from promotedAt.
+				delete(ss.promotedAt, id)
+			}
+		}
+		stateMu.Unlock()
 		progress := false
 		// Collect blocked-but-not-dispatched sessions whose upstream failed
 		// AND we can't continue-on-failure. Mark them as blocked and

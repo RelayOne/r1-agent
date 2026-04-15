@@ -73,6 +73,12 @@ type SessionScheduler struct {
 	// Lets the TUI flip the session to "running" before tasks execute.
 	// May be nil.
 	OnSessionStart func(sessionID string, attempt int)
+
+	// promotedAt tracks when each AppendSession-promoted session was
+	// queued. Used by CheckPromotedDispatch to detect deadlocks where a
+	// promoted session sits in the queue long past PromotedDispatchSLA.
+	// Map is lazily initialized on first AppendSession call.
+	promotedAt map[string]time.Time
 }
 
 // SessionResult is the outcome of executing one session.
@@ -146,6 +152,46 @@ func (ss *SessionScheduler) AppendSession(session Session) {
 		})
 		_ = SaveSOWState(ss.projectRoot, ss.state)
 	}
+	// Track promotion time for deadlock detection. The scheduler's
+	// dispatch loop checks ss.promotedAt periodically and prints a
+	// loud banner if a promoted session has been sitting undispatched
+	// for >promotedDispatchSLA. Without this, a fix session that
+	// silently never starts looks identical to one that's just
+	// queued behind real work.
+	if ss.promotedAt == nil {
+		ss.promotedAt = map[string]time.Time{}
+	}
+	ss.promotedAt[session.ID] = time.Now()
+}
+
+// PromotedDispatchSLA is the time after which an appended session
+// that has not been dispatched is treated as a deadlock signal. Set
+// generously so legitimately queued sessions (waiting on real
+// upstream deps) don't trigger false alarms.
+const PromotedDispatchSLA = 5 * time.Minute
+
+// CheckPromotedDispatch returns the IDs of any sessions appended via
+// AppendSession that have been pending longer than PromotedDispatchSLA
+// without entering the started set. Callers (the dispatch loop) print
+// a deadlock banner and may force-promote (e.g. set Preempt=true) as
+// a self-heal. Closes anti-deception matrix gap B5: scheduler silently
+// failing to make progress while heartbeats keep firing.
+func (ss *SessionScheduler) CheckPromotedDispatch(started map[string]bool, done map[string]bool) []string {
+	if ss.promotedAt == nil {
+		return nil
+	}
+	now := time.Now()
+	var stalled []string
+	for id, at := range ss.promotedAt {
+		if started[id] || done[id] {
+			delete(ss.promotedAt, id)
+			continue
+		}
+		if now.Sub(at) > PromotedDispatchSLA {
+			stalled = append(stalled, id)
+		}
+	}
+	return stalled
 }
 
 // Run executes all sessions in order. For each session:
