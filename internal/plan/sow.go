@@ -263,14 +263,15 @@ func ValidateSOW(sow *SOW) []string {
 			if ac.Description == "" {
 				errs = append(errs, fmt.Sprintf("session %s criterion %s has no description", s.ID, ac.ID))
 			}
-			// Empty-File content_match is the tolerated bare-string
-			// JSON parse artifact. Reject at validation so SOWs
-			// loaded from disk surface the issue BEFORE any session
-			// runs work that would deterministically fail at the
-			// acceptance gate.
-			if ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) == "" {
-				errs = append(errs, fmt.Sprintf("session %s criterion %s has content_match with no file (malformed; remove or repair)", s.ID, ac.ID))
-			}
+			// NB: empty-file content_match is intentionally NOT
+			// flagged here. ContentMatchCriterion.UnmarshalJSON
+			// tolerates the bare-string form by leaving a zero-value
+			// struct so the convert / critique / refine passes can
+			// repair the AC instead of aborting the whole pipeline
+			// on one bad criterion. The acceptance executor handles
+			// the malformed case explicitly (MALFORMED-AC failure
+			// in checkOneCriterion, non-overridable in
+			// CheckAcceptanceCriteriaWithJudge).
 		}
 
 		// Validate infra references
