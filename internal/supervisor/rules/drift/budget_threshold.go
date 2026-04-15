@@ -8,7 +8,6 @@ import (
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	"github.com/ericmacdougall/stoke/internal/schemaval"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // BudgetThreshold monitors mission cost against configurable thresholds and
@@ -137,10 +136,10 @@ func (r *BudgetThreshold) Action(_ context.Context, evt bus.Event, b *bus.Bus) e
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema returns nil — this rule emits mixed: emits worker.paused + supervisor.spawn.requested on different paths; no single shape fits,
+// for which no shared schema exists in internal/supervisor/schemas.go
+// yet. Equivalent to not implementing PayloadSchemaProvider.
+// Tightening pass: add the specific schema + wire ValidatePayload.
 func (r *BudgetThreshold) PayloadSchema() *schemaval.Schema {
-	return supervisor.SpawnRequestedSchema()
+	return nil
 }

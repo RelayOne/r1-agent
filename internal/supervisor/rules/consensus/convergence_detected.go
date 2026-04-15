@@ -118,10 +118,8 @@ func (r *ConvergenceDetected) Action(ctx context.Context, evt bus.Event, b *bus.
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema declares the shape for this rule's primary emitted
+// event: consensus.loop.state.changed — convergence reached.
 func (r *ConvergenceDetected) PayloadSchema() *schemaval.Schema {
-	return supervisor.SpawnRequestedSchema()
+	return supervisor.ConsensusLoopStateSchema()
 }

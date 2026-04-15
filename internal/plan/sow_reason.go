@@ -3,6 +3,7 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -404,21 +405,35 @@ func runJudgeSynthesis(ctx context.Context, prov provider.Provider, model, share
 
 // --- Helpers ---------------------------------------------------------------
 
+// ExcerptOmittedKey is the sentinel key under which CollectCodeExcerpts
+// consolidates the list of declared paths that exist but whose content
+// was not loaded due to the maxFiles cap. Aggregating under a single
+// key (rather than one synthetic entry per omitted path) keeps the
+// prompt size bounded while still informing the reviewer the files
+// exist — without this the reviewer was hallucinating missing files.
+const ExcerptOmittedKey = "__excerpt_cap__"
+
 // CollectCodeExcerpts reads the contents of up to maxFiles files from
 // the given paths. Files that exceed maxBytesPerFile are truncated.
 //
-// CRITICAL for reviewer correctness: every path is recorded in the
-// output map whether or not content is loaded. When a file exists
-// but the excerpt cap hits it, the value is a "(file exists at N
-// bytes — excerpt omitted due to cap)" sentinel so the reviewer
-// doesn't hallucinate the file as missing. When a file genuinely
-// doesn't exist on disk, the value is "(file does not exist at
-// <path>)" so the reviewer can distinguish missing vs omitted.
+// CRITICAL for reviewer correctness: every path's status is
+// discoverable in the output map, but the map is size-bounded:
+//   - Up to maxFiles path entries carry real content.
+//   - The ExcerptOmittedKey entry consolidates the remaining
+//     existing-but-cap-omitted files as a single line listing each
+//     path + size.
+//   - Missing / wrong-kind / unreadable files each get their own
+//     entry with a sentinel value distinguishing the failure class.
 //
-// The pre-fix behavior (silently dropping files past maxFiles + also
-// silently dropping Stat-failing files) caused the reviewer to see
-// no entry for cap-omitted files and claim "missing" — that's what
-// TRULY BLOCKED T3 in sentinel run 11 on a file that existed.
+// Sentinel values (per-path, machine-readable prefix):
+//   "(file does not exist at <path>)"              — ENOENT
+//   "(file stat error: <err>)"                     — permission / broken path
+//   "(path is a directory, not a file: <path>)"    — wrong kind
+//   "(file exists but read failed: <err>)"         — read error
+//
+// Pre-fix behavior silently dropped post-cap files, causing the
+// reviewer to hallucinate them as missing (the run-11 T3 TRULY
+// BLOCKED bug).
 func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerFile int) map[string]string {
 	if maxFiles <= 0 {
 		maxFiles = 8
@@ -428,6 +443,7 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 	}
 	out := map[string]string{}
 	loaded := 0
+	var omitted []string // (path, size) pairs formatted inline
 	for _, p := range paths {
 		if strings.TrimSpace(p) == "" {
 			continue
@@ -438,10 +454,16 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
-			// File genuinely doesn't exist. Record the sentinel so
-			// the reviewer correctly reports it as missing instead
-			// of silently omitting it.
-			out[p] = fmt.Sprintf("(file does not exist at %s)", abs)
+			// Distinguish genuine missing (ENOENT) from other stat
+			// failures (permission, broken path, etc.). Conflating
+			// them tells the reviewer "file missing" when it might
+			// actually exist — and drives the repair loop toward the
+			// wrong fix.
+			if errors.Is(err, os.ErrNotExist) {
+				out[p] = fmt.Sprintf("(file does not exist at %s)", abs)
+			} else {
+				out[p] = fmt.Sprintf("(file stat error: %v)", err)
+			}
 			continue
 		}
 		if info.IsDir() {
@@ -449,11 +471,12 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 			continue
 		}
 		if loaded >= maxFiles {
-			// Excerpt cap hit. Tell the reviewer the file exists but
-			// the content is not shown — without this, the reviewer
-			// hallucinates the file as missing. (Fix for run-11 T3
-			// TRULY BLOCKED bug.)
-			out[p] = fmt.Sprintf("(file exists at %d bytes — excerpt omitted due to cap)", info.Size())
+			// Accumulate under a single sentinel key so the prompt
+			// stays size-bounded. Without the aggregate, large
+			// task file-lists (25+ declared files) would produce
+			// dozens of `--- path ---` blocks and blow out context
+			// limits in downstream reasoning/review prompts.
+			omitted = append(omitted, fmt.Sprintf("%s (%d bytes)", p, info.Size()))
 			continue
 		}
 		data, err := os.ReadFile(abs)
@@ -467,6 +490,10 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 			data = append(data, []byte("\n... (truncated)\n")...)
 		}
 		out[p] = string(data)
+	}
+	if len(omitted) > 0 {
+		out[ExcerptOmittedKey] = fmt.Sprintf("(%d additional declared files exist — excerpt omitted due to cap of %d): %s",
+			len(omitted), maxFiles, strings.Join(omitted, ", "))
 	}
 	return out
 }

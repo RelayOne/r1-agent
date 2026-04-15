@@ -115,12 +115,16 @@ func (r *UserEscalation) Action(ctx context.Context, evt bus.Event, b *bus.Bus) 
 			return fmt.Errorf("publish user message: %w", err)
 		}
 
-		// Pause work. WorkerID falls back to the event emitter when
-		// the escalation event didn't carry one explicitly — schema
-		// A3 requires a worker_id so consumers can attribute the
-		// pause.
+		// Pause work. Prefer the worker_id carried in the forwarded
+		// escalation payload (set by EscalationForwardsUpward.Action).
+		// evt.EmitterID is typically empty on forwarded events, so
+		// falling back to it alone broke interactive mode (codex P1).
+		workerID := ep.WorkerID
+		if workerID == "" {
+			workerID = evt.EmitterID
+		}
 		pauseMap := map[string]any{
-			"worker_id": evt.EmitterID,
+			"worker_id": workerID,
 			"reason":    "awaiting_user_decision",
 		}
 		if vErr := supervisor.ValidatePayload(r, pauseMap); vErr != nil {

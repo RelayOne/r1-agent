@@ -9,7 +9,6 @@ import (
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	"github.com/ericmacdougall/stoke/internal/schemaval"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // Timeout handles researcher timeout events. If the researcher has not yet
@@ -124,10 +123,10 @@ func (r *Timeout) Action(_ context.Context, evt bus.Event, b *bus.Bus) error {
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema returns nil — this rule emits mixed: emits worker.terminated, worker.research.completed, or spawn depending on branch,
+// for which no shared schema exists in internal/supervisor/schemas.go
+// yet. Equivalent to not implementing PayloadSchemaProvider.
+// Tightening pass: add the specific schema + wire ValidatePayload.
 func (r *Timeout) PayloadSchema() *schemaval.Schema {
-	return supervisor.SpawnRequestedSchema()
+	return nil
 }

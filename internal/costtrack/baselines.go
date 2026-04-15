@@ -62,6 +62,54 @@ func LoadBaselines(path string) (map[string]AmplificationBudget, error) {
 	return out, nil
 }
 
+// LoadBaselinesFromSearchPaths walks a standard set of locations
+// looking for the named baseline file and loads the first match. CI
+// gates, dev environments, and deployed binaries all have different
+// layouts; a single relative path only works in the source checkout.
+// Order:
+//
+//  1. Env override: $STOKE_BASELINES_PATH (full path to the file).
+//  2. Relative to the current working directory:
+//     bench/baselines/<filename> — matches the source checkout.
+//  3. Relative to the stoke binary: ../bench/baselines/<filename>.
+//  4. $HOME/.stoke/baselines/<filename> — user-level override.
+//  5. /etc/stoke/baselines/<filename> — system-level deployment.
+//
+// Returns (nil, nil) when no file matches so callers can treat
+// missing baselines as "enforcement disabled" rather than fatal.
+func LoadBaselinesFromSearchPaths(filename string) (map[string]AmplificationBudget, error) {
+	candidates := []string{}
+	if p := os.Getenv("STOKE_BASELINES_PATH"); p != "" {
+		candidates = append(candidates, p)
+	}
+	candidates = append(candidates, fmt.Sprintf("bench/baselines/%s", filename))
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, fmt.Sprintf("%s/../bench/baselines/%s", filepathDir(exe), filename))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, fmt.Sprintf("%s/.stoke/baselines/%s", home, filename))
+	}
+	candidates = append(candidates, fmt.Sprintf("/etc/stoke/baselines/%s", filename))
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		return LoadBaselines(path)
+	}
+	return nil, nil // no file found; caller treats as disabled
+}
+
+// filepathDir is a tiny inline helper so baselines.go doesn't need a
+// path/filepath import; the dir-extraction is trivial.
+func filepathDir(p string) string {
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' {
+			return p[:i]
+		}
+	}
+	return "."
+}
+
 // BudgetForClass returns the AmplificationBudget for the named task
 // class, or a zero-value disabled budget when no entry exists.
 // Useful when callers want a single lookup-with-fallback rather than

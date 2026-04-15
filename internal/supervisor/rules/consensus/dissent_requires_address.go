@@ -82,10 +82,8 @@ func (r *DissentRequiresAddress) Action(ctx context.Context, evt bus.Event, b *b
 
 	return nil
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema declares the shape for this rule's primary emitted
+// event: consensus.loop.state.changed — primary; also emits consensus.dissent.notification.
 func (r *DissentRequiresAddress) PayloadSchema() *schemaval.Schema {
-	return supervisor.SpawnRequestedSchema()
+	return supervisor.ConsensusLoopStateSchema()
 }

@@ -192,10 +192,8 @@ func (r *JudgeScheduled) Action(_ context.Context, evt bus.Event, b *bus.Bus) er
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema declares the shape for this rule's primary emitted
+// event: supervisor.spawn.requested — scheduled judge.
 func (r *JudgeScheduled) PayloadSchema() *schemaval.Schema {
 	return supervisor.SpawnRequestedSchema()
 }

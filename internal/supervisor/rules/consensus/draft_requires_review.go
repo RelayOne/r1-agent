@@ -88,10 +88,8 @@ func (r *DraftRequiresReview) Action(ctx context.Context, evt bus.Event, b *bus.
 
 	return nil
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema declares the shape for this rule's primary emitted
+// event: supervisor.spawn.requested — reviewer dispatch.
 func (r *DraftRequiresReview) PayloadSchema() *schemaval.Schema {
 	return supervisor.SpawnRequestedSchema()
 }

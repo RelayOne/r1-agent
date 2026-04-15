@@ -110,10 +110,8 @@ func (r *IterationThreshold) Action(ctx context.Context, evt bus.Event, b *bus.B
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema declares the shape for this rule's primary emitted
+// event: supervisor.spawn.requested — iteration trigger.
 func (r *IterationThreshold) PayloadSchema() *schemaval.Schema {
 	return supervisor.SpawnRequestedSchema()
 }

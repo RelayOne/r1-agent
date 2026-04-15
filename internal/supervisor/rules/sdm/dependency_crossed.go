@@ -8,7 +8,6 @@ import (
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
 	"github.com/ericmacdougall/stoke/internal/schemaval"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // DependencyCrossed detects when task dependencies span branches, which may
@@ -117,10 +116,10 @@ func (r *DependencyCrossed) Action(_ context.Context, evt bus.Event, b *bus.Bus)
 		CausalRef: evt.ID,
 	})
 }
-
-// PayloadSchema declares the supervisor.spawn.requested shape for
-// this rule's primary emitted event (lenient default — most fields
-// optional). Closes A3 for this rule.
+// PayloadSchema returns nil — this rule emits sdm.dependency.crossed — SDM-specific shape,
+// for which no shared schema exists in internal/supervisor/schemas.go
+// yet. Equivalent to not implementing PayloadSchemaProvider.
+// Tightening pass: add the specific schema + wire ValidatePayload.
 func (r *DependencyCrossed) PayloadSchema() *schemaval.Schema {
-	return supervisor.SpawnRequestedSchema()
+	return nil
 }

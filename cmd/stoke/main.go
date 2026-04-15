@@ -302,7 +302,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// inferred from the work at the workflow layer; here we default
 	// to "feature_add" as the most common sow shape. Unknown classes
 	// get a zero-value (disabled) budget.
-	if baselines, bErr := costtrack.LoadBaselines("bench/baselines/token-baselines-2026-Q2.json"); bErr == nil {
+	if baselines, bErr := costtrack.LoadBaselinesFromSearchPaths("token-baselines-2026-Q2.json"); bErr == nil {
 		budget := costtrack.BudgetForClass(baselines, "feature_add")
 		amp := costtrack.NewAmplificationTracker(budget)
 		amp.OnTransition = func(prev, curr costtrack.AmplificationStatus, mult float64) {
