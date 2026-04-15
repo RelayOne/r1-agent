@@ -185,6 +185,11 @@ func agenticReviewTools() []provider.ToolDef {
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 		},
 		{
+			Name:        "read_sow_metadata",
+			Description: "Read the top-level SOW metadata that ISN'T per-session: SOW id/name/version, the declared tech Stack (frameworks, languages, runtimes), Infra requirements (env vars, services, mocks-allowed flag), and any other SOW-wide fields. Use to verify framework/language/env-var declarations needed for feasibility judgment.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		},
+		{
 			Name:        "read_session",
 			Description: "Read a single session by id. include controls verbosity: 'summary' (id+title+counts), 'tasks' (full tasks list), 'acs' (full ACs), 'full' (everything). Default 'full'.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"Session id (e.g. S5)."},"include":{"type":"string","enum":["summary","tasks","acs","full"],"description":"Verbosity."}},"required":["id"]}`),
@@ -257,6 +262,17 @@ func buildAgenticReviewHandler(prose string, sections *proseIndex, sow *SOW, pro
 			return grepProse(prose, args.Pattern), nil
 		case "list_sessions":
 			return jsonCompact(summarizeSOW(sow))
+		case "read_sow_metadata":
+			// Sessions field is excluded — that's covered by
+			// list_sessions / read_session. Stack and its nested
+			// Infra slice carry the framework + env-var declarations
+			// the reviewer needs for feasibility judgment.
+			return jsonCompact(map[string]any{
+				"id":            sow.ID,
+				"name":          sow.Name,
+				"stack":         sow.Stack,
+				"session_count": len(sow.Sessions),
+			})
 		case "read_session":
 			var args struct {
 				ID      string `json:"id"`
@@ -316,6 +332,12 @@ func buildAgenticReviewHandler(prose string, sections *proseIndex, sow *SOW, pro
 
 type proseSection struct {
 	Name      string `json:"name"`
+	// Path is the unique addressable name for the section. When the
+	// raw heading text repeats (markdown commonly has multiple
+	// "Overview" / "API" sections), Path disambiguates by appending
+	// "#N" for the Nth occurrence. read_prose_section accepts
+	// either Path (always unique) or Name (first match wins).
+	Path      string `json:"path"`
 	Level     int    `json:"level"`
 	LineStart int    `json:"line_start"`
 	LineEnd   int    `json:"line_end"`
@@ -340,17 +362,35 @@ func (p *proseIndex) summary() []proseSection {
 }
 
 func (p *proseIndex) read(prose, name string) (string, bool) {
+	// Try Path first (always unique). Then fall back to Name (first
+	// match wins, OK when the heading is unique). Final fallback:
+	// case-insensitive. Clamp to len(prose) to avoid panics on
+	// inputs that don't end with a trailing newline (the indexer
+	// over-counts byteOffset by 1 on the synthetic final newline,
+	// so the last section's byteEnd can exceed len(prose) by 1).
+	clamp := func(start, end int) string {
+		if end > len(prose) {
+			end = len(prose)
+		}
+		if start > end {
+			start = end
+		}
+		return prose[start:end]
+	}
 	for _, s := range p.sections {
-		if s.Name == name {
-			return prose[s.byteStart:s.byteEnd], true
+		if s.Path == name {
+			return clamp(s.byteStart, s.byteEnd), true
 		}
 	}
-	// Case-insensitive fallback so the reviewer doesn't get blocked
-	// by minor capitalization drift.
+	for _, s := range p.sections {
+		if s.Name == name {
+			return clamp(s.byteStart, s.byteEnd), true
+		}
+	}
 	low := strings.ToLower(name)
 	for _, s := range p.sections {
-		if strings.ToLower(s.Name) == low {
-			return prose[s.byteStart:s.byteEnd], true
+		if strings.ToLower(s.Path) == low || strings.ToLower(s.Name) == low {
+			return clamp(s.byteStart, s.byteEnd), true
 		}
 	}
 	return "", false
@@ -372,7 +412,6 @@ func indexProseSections(prose string) *proseIndex {
 	for i, line := range lines {
 		if m := headerRE.FindStringSubmatch(line); m != nil {
 			if open != nil {
-				// Close previous.
 				idx.sections = append(idx.sections, proseSection{
 					Name:      open.name,
 					Level:     open.level,
@@ -404,7 +443,6 @@ func indexProseSections(prose string) *proseIndex {
 		})
 	}
 	if len(idx.sections) == 0 {
-		// Plain text fallback: one section "(whole file)".
 		idx.sections = append(idx.sections, proseSection{
 			Name:      "(whole file)",
 			Level:     0,
@@ -414,6 +452,20 @@ func indexProseSections(prose string) *proseIndex {
 			byteStart: 0,
 			byteEnd:   len(prose),
 		})
+	}
+	// Assign unique Path values so duplicate headings remain
+	// individually addressable. First occurrence keeps the bare
+	// name; subsequent occurrences get "name#N" (1-indexed by
+	// duplicate count).
+	counts := map[string]int{}
+	for i := range idx.sections {
+		name := idx.sections[i].Name
+		counts[name]++
+		if counts[name] == 1 {
+			idx.sections[i].Path = name
+		} else {
+			idx.sections[i].Path = fmt.Sprintf("%s#%d", name, counts[name])
+		}
 	}
 	return idx
 }
