@@ -353,9 +353,18 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			// reject is terminal — reviewer says the SOW is structurally
 			// unfit and no refinement will recover it.
 			if verdict.Decision == "reject" {
-				return out, nil, fmt.Errorf("final plan approval: reject — %d concern(s); SOW not fit for dispatch", len(verdict.Concerns))
+				return out, nil, &TerminalApprovalError{
+					Reason: fmt.Sprintf("final plan approval: reject — %d concern(s); SOW not fit for dispatch", len(verdict.Concerns)),
+				}
 			}
-			if verdict.Decision == "approve" || len(verdict.Concerns) == 0 {
+			// Defense-in-depth against inconsistent model output: an
+			// approve decision with blocking concerns is malformed —
+			// trust the severity, not the decision label, and treat
+			// as request_changes so refine still runs.
+			if verdict.HasBlocking() {
+				// Fall through to the request_changes refine path
+				// below (round-cap check + refine attempt).
+			} else if verdict.Decision == "approve" || len(verdict.Concerns) == 0 {
 				out.ChunkedConvertApproved = true
 				break
 			}
@@ -370,7 +379,9 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			// remain, halt with the operator-facing concern list.
 			if round >= maxRefineRounds {
 				if verdict.HasBlocking() {
-					return out, nil, fmt.Errorf("final plan approval: %d blocking concern(s) remain after %d refine round(s); SOW not fit for dispatch", len(verdict.Concerns), maxRefineRounds)
+					return out, nil, &TerminalApprovalError{
+						Reason: fmt.Sprintf("final plan approval: %d blocking concern(s) remain after %d refine round(s); SOW not fit for dispatch", len(verdict.Concerns), maxRefineRounds),
+					}
 				}
 				fmt.Printf("  ⚠ refine cap (%d rounds) reached — proceeding with %d unaddressed non-blocking concern(s)\n", maxRefineRounds, len(verdict.Concerns))
 				out.ChunkedConvertApproved = true
@@ -389,7 +400,17 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			}
 			refined, rerr := RefineSOWFromConcerns(ctx, prose, out, verdict.Concerns, prov, model)
 			if rerr != nil {
-				fmt.Printf("  ⚠ refine pass failed (%v); proceeding with current SOW\n", rerr)
+				if blockingCount > 0 {
+					// Refine pass couldn't run AND we had blocking
+					// concerns. Don't mark approved — that would
+					// silently dispatch a SOW the reviewer said was
+					// unfit. Surface as terminal failure so the
+					// operator sees the gap.
+					return out, nil, &TerminalApprovalError{
+						Reason: fmt.Sprintf("refine pass failed (%v) with %d blocking concern(s) outstanding; SOW not fit for dispatch", rerr, blockingCount),
+					}
+				}
+				fmt.Printf("  ⚠ refine pass failed (%v); proceeding with current SOW (no blocking concerns)\n", rerr)
 				out.ChunkedConvertApproved = true
 				break
 			}
@@ -1097,6 +1118,23 @@ func checkChunkedConsistency(sow *SOW) []string {
 
 	return issues
 }
+
+// TerminalApprovalError signals that the chunked convert path
+// produced a SOW the CTO reviewer flagged as terminally unfit
+// (reject decision, OR blocking concerns that survived the refine
+// loop, OR refine itself failed with blocking concerns
+// outstanding). ConvertProseToSOW recognizes this error and does
+// NOT fall back to the monolithic single-call convert — falling
+// back would discard the reviewer verdict and produce a fresh
+// unreviewed SOW that's strictly worse than surfacing the failure
+// to the operator.
+//
+// Use errors.As to detect this from caller code.
+type TerminalApprovalError struct {
+	Reason string
+}
+
+func (e *TerminalApprovalError) Error() string { return e.Reason }
 
 // coverageReviewPrompt asks the model to compare a reassembled SOW
 // against the original prose and flag deliverables the prose

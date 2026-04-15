@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -338,12 +339,20 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 	}
 
 	// Try chunked path first. Per-call timeouts inside it bound wall
-	// clock; failures fall through to the monolith below.
+	// clock; transient failures fall through to the monolith below.
+	// TerminalApprovalError is NOT a fall-through case — the CTO
+	// reviewer explicitly flagged the SOW as unfit (reject or
+	// surviving blocking concerns), and a fresh unreviewed
+	// monolithic convert would discard that verdict.
 	chunkedCtx, chunkedCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer chunkedCancel()
 	if sow, raw, err := ConvertProseToSOWChunked(chunkedCtx, prose, prov, model, 4); err == nil {
 		return sow, raw, nil
 	} else {
+		var terminal *TerminalApprovalError
+		if errors.As(err, &terminal) {
+			return nil, nil, fmt.Errorf("chunked convert reached terminal verdict: %w", err)
+		}
 		fmt.Printf("  ⚠ chunked convert failed (%v) — falling back to single-call convert\n", err)
 	}
 
