@@ -120,20 +120,55 @@ func ExtractJSONObject(raw string) (json.RawMessage, error) {
 func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 	blob, err := ExtractJSONObject(raw)
 	if err != nil {
-		return nil, err
+		// ExtractJSONObject ran its own repair chain over the
+		// cleaned input but doesn't include the deep mid-array bare-
+		// object repairs. Fall through so we can attempt those passes
+		// against the cleaned-but-not-balanced raw input — the
+		// findBalancedObject step inside ExtractJSONObject only tracks
+		// `{`/`}` and ignores `[`/`]`, so a stray `}` from an
+		// unwrapped object literal inside an array can fool it into
+		// truncating early. Setting blob to the cleaned raw lets the
+		// loop below try the deep repairs against the full input.
+		blob = []byte(normalizeSmartQuotes(cleanLLMJSON(raw)))
 	}
 	if uErr := json.Unmarshal(blob, out); uErr != nil {
-		// Two common LLM JSON quirks:
-		//   1. Missing comma between `]`/`}`/`"` and next key.
-		//   2. Missing `{` wrappers around object literals inside
-		//      arrays — produces '"id":' as an array element which
-		//      fails as "invalid character ':' after array element".
-		// Run both repair passes; apply the first that parses.
-		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth, repairUnquotedKeys, repairAll, repairBareKeyValueObjectsInArray, repairAllPlusBare} {
+		repairFns := []func([]byte) []byte{
+			repairMissingCommas, repairMissingBraces, repairBoth,
+			repairUnquotedKeys, repairAll,
+			repairBareKeyValueObjectsInArray, repairAllPlusBare,
+			repairMidArrayBareObjects, repairMidArrayPlusAll,
+		}
+		// First pass: run repairs over the (possibly truncated) blob
+		// returned by ExtractJSONObject.
+		for _, repairFn := range repairFns {
 			rep := repairFn(blob)
 			if bytes.Equal(rep, blob) {
 				continue
 			}
+			if uErr2 := json.Unmarshal(rep, out); uErr2 == nil {
+				return rep, nil
+			}
+		}
+		// Second pass: ExtractJSONObject's findBalancedObject only
+		// tracks `{`/`}` braces and ignores `[`/`]`, so a rogue
+		// unwrapped object literal closing a stray `}` inside an
+		// array can fool it into truncating the blob early. Retry
+		// the deep repairs against the FULL cleaned raw input so
+		// the mid-array fixers see the rogue `}` and insert the
+		// missing `{`. We still strip markdown fences via cleanLLMJSON
+		// + smart quotes via normalizeSmartQuotes for consistency.
+		fullBlob := []byte(normalizeSmartQuotes(cleanLLMJSON(raw)))
+		if !bytes.Equal(fullBlob, blob) {
+			for _, repairFn := range repairFns {
+				rep := repairFn(fullBlob)
+				if uErr2 := json.Unmarshal(rep, out); uErr2 == nil {
+					return rep, nil
+				}
+			}
+			// Also try running the deeper passes WITHOUT the cheap
+			// repair-then-unmarshal short-circuit so a blob that
+			// needs both insertion AND comma fixes parses.
+			rep := repairMidArrayPlusAll(fullBlob)
 			if uErr2 := json.Unmarshal(rep, out); uErr2 == nil {
 				return rep, nil
 			}
@@ -158,6 +193,15 @@ func repairBoth(blob []byte) []byte {
 // comma, so blobs of that shape need this pass.
 func repairAllPlusBare(blob []byte) []byte {
 	return repairMissingCommas(repairMissingBraces(repairUnquotedKeys(repairBareKeyValueObjectsInArray(blob))))
+}
+
+// repairMidArrayPlusAll applies the mid-array bare-object pass first
+// (it inserts the missing `{` characters that other passes assume
+// are already there) and then composes the standard repair chain
+// over the result. Catches blobs with mid-array drops AND missing
+// commas / unquoted keys in the same shot.
+func repairMidArrayPlusAll(blob []byte) []byte {
+	return repairMissingCommas(repairMissingBraces(repairUnquotedKeys(repairMidArrayBareObjects(blob))))
 }
 
 // repairBareKeyValueObjectsInArray fixes the case where an array
@@ -236,6 +280,140 @@ func repairBareKeyValueObjectsInArray(blob []byte) []byte {
 		i = end + 1
 	}
 	return out
+}
+
+// repairMidArrayBareObjects fixes the LLM shape where a mid-array
+// element drops its `{` but keeps the closing `}`:
+//
+//	[{"id":"A1",...}, "id":"A2","description":"x","command":"y"}, {"id":"A3",...}]
+//	                  ^^^^^^^^^^ unwrapped, but trailing `}` is present
+//
+// Strategy: walk depth-aware. After every `,` inside an array, if the
+// next non-whitespace char is `"` followed by a key:value pattern,
+// walk forward tracking a fresh depth counter (NOT the parent array
+// depth). When that fresh counter goes negative on a `}`, that `}`
+// is the unwrapped element's intended close — insert `{` after the
+// comma to balance it. Idempotent: once the `{` is inserted, the
+// next pass sees a properly wrapped element and skips it.
+//
+// repairMissingBraces handles the related "first array element is
+// unwrapped" case but its findElementEnd stops at the first comma,
+// so mid-element commas (separating the dropped object's own keys)
+// trip it. This pass is the complement.
+func repairMidArrayBareObjects(blob []byte) []byte {
+	out := make([]byte, 0, len(blob)+64)
+	n := len(blob)
+	type ctx struct{ isArray bool }
+	stack := []ctx{}
+	inString := false
+	escape := false
+	atElementStart := false // just after `[` or `,` inside an array
+	i := 0
+	for i < n {
+		c := blob[i]
+		if inString {
+			out = append(out, c)
+			if escape {
+				escape = false
+			} else if c == '\\' {
+				escape = true
+			} else if c == '"' {
+				inString = false
+			}
+			i++
+			continue
+		}
+		switch c {
+		case '"':
+			if atElementStart && len(stack) > 0 && stack[len(stack)-1].isArray &&
+				looksLikeUnwrappedObjectStart(blob[i:]) &&
+				findsImpliedClose(blob, i) {
+				// Insert `{` AND push a synthetic object onto the
+				// stack so commas inside the unwrapped element are
+				// not misread as array-element boundaries. The
+				// implied `}` we encounter later pops it naturally.
+				out = append(out, '{')
+				stack = append(stack, ctx{isArray: false})
+			}
+			out = append(out, c)
+			inString = true
+			atElementStart = false
+		case '{':
+			out = append(out, c)
+			stack = append(stack, ctx{isArray: false})
+			atElementStart = false
+		case '[':
+			out = append(out, c)
+			stack = append(stack, ctx{isArray: true})
+			atElementStart = true
+		case '}':
+			out = append(out, c)
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			atElementStart = false
+		case ']':
+			out = append(out, c)
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			atElementStart = false
+		case ',':
+			out = append(out, c)
+			atElementStart = len(stack) > 0 && stack[len(stack)-1].isArray
+		case ' ', '\t', '\n', '\r':
+			out = append(out, c)
+			// whitespace doesn't end element-start state
+		default:
+			out = append(out, c)
+			atElementStart = false
+		}
+		i++
+	}
+	return out
+}
+
+// findsImpliedClose returns true when, starting at position i (which
+// is the `"` of a suspected unwrapped key:value object), there is a
+// `}` reachable at element depth (fresh counter) before the array
+// itself ends. Used to confirm the element really IS an unwrapped
+// object literal that needs `{` inserted.
+func findsImpliedClose(blob []byte, i int) bool {
+	depth := 0
+	inString := false
+	escape := false
+	for j := i; j < len(blob); j++ {
+		c := blob[j]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			if c == '\\' {
+				escape = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}':
+			if depth == 0 {
+				return true
+			}
+			depth--
+		case ']':
+			if depth == 0 {
+				return false // hit array end before finding `}`
+			}
+			depth--
+		}
+	}
+	return false
 }
 
 // findArrayClose returns the index of the `]` that matches the `[`
@@ -1055,3 +1233,4 @@ func removeTrailingCommas(s string) string {
 	}
 	return b.String()
 }
+
