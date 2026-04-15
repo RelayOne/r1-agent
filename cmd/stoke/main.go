@@ -1550,10 +1550,21 @@ func sowCmd(args []string) {
 		// existing contract); normal runs exit 1 too with a clear
 		// pointer to fix the SOW.
 		fmt.Fprintln(os.Stderr, "\nSOW is not fit for dispatch — fix the errors above or pass --force to bypass strict validation.")
-		if *validate || !*forceFeasibility {
+		// Non-executing modes (--dry-run, --dump-task-prompts,
+		// --validate) should still surface the errors but otherwise
+		// be allowed to do their read-only work — they never
+		// dispatch, so the wasted-work concern doesn't apply.
+		// --validate keeps its existing exit-1 contract.
+		nonDispatching := *dryRun || *dumpPrompts
+		if *validate {
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr, "  (--force set; proceeding despite strict-validation errors)")
+		if !nonDispatching && !*forceFeasibility {
+			os.Exit(1)
+		}
+		if *forceFeasibility {
+			fmt.Fprintln(os.Stderr, "  (--force set; proceeding despite strict-validation errors)")
+		}
 	} else if *validate {
 		fmt.Println("SOW is valid.")
 		return
