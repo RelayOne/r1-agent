@@ -371,28 +371,37 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 				out.ChunkedConvertApproved = true
 				break
 			}
-			// Re-run the same deterministic cleanup pipeline the
-			// initial chunked convert applied: consistency repair
-			// (file-claim arbitration + DAG fix-ups), input
-			// canonicalization (producer-name matching), infra
-			// auto-add, then ValidateSOW. Without this, a refiner
-			// that introduced a duplicate file claim, a dangling
-			// input, or a missing infra reference would land
-			// unchecked and reach dispatch.
-			for i := 0; i < 2; i++ {
-				fd, _, id := repairChunkedConsistency(refined)
+			// Re-run the SAME deterministic cleanup pipeline the
+			// initial chunked convert applied so a refinement that
+			// introduces a duplicate file claim, dangling input,
+			// missing infra ref, output rename collision, missing
+			// AC field, or dangling task dep doesn't slip past
+			// validation. Convergence check includes outputRenames
+			// because a rename can create a second-order collision
+			// with a session whose output now matches the prefixed
+			// name — needs another repair pass to settle.
+			for i := 0; i < 4; i++ {
+				fd, or, id := repairChunkedConsistency(refined)
 				cr := canonicalizeSessionInputs(refined)
-				if fd == 0 && id == 0 && cr == 0 {
+				if fd == 0 && or == 0 && id == 0 && cr == 0 {
 					break
 				}
 			}
+			autoFillMissingACFields(refined)
+			autoCleanTaskDeps(refined)
 			autoAddMissingInfra(refined)
 			if vErrs := ValidateSOW(refined); len(vErrs) > 0 {
-				fmt.Printf("  ⚠ refined SOW failed validation — preserving previous SOW. errors:\n")
+				// Refined SOW is structurally broken AND the cleanup
+				// helpers couldn't repair it. Preserve the previous
+				// SOW and DO NOT mark it approved — the prior
+				// verdict was request_changes, so it still has
+				// concerns that should fall through to the legacy
+				// CritiqueAndRefine fallback in main.go rather than
+				// dispatching unchanged.
+				fmt.Printf("  ⚠ refined SOW failed validation — preserving previous SOW (concerns remain). errors:\n")
 				for _, e := range vErrs {
 					fmt.Printf("       - %s\n", e)
 				}
-				out.ChunkedConvertApproved = true
 				break
 			}
 			out = refined
