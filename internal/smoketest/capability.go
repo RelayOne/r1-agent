@@ -115,8 +115,14 @@ func DetectCapability(session plan.Session, repoRoot string) Runtime {
 	}
 
 	// Mobile (iOS / Android / React Native) — always static on Linux.
-	if anyFile("apps/caregiver/") || anyFile("apps/installer/") ||
-		anyFile("app.json") && (anyFile("expo") || anyFile("react-native")) {
+	// Only classify as mobile when the session touches actual source
+	// code (.ts/.tsx/.js/.jsx in the mobile app), not just
+	// config-only files (eas.json, app.json, app.config.js). A
+	// session that scaffolds an eas.json inside apps/caregiver/ has
+	// zero mobile source to typecheck; running `pnpm typecheck`
+	// against uninstalled mobile deps just fires a false-positive
+	// smoke failure and spins the session into retry (run 14 bug).
+	if (anyFile("apps/caregiver/") || anyFile("apps/installer/")) && hasMobileSource(lowerFiles) {
 		return Runtime{
 			Capability:     CapabilityMobileRNExpo,
 			Runnable:       false,
@@ -238,6 +244,26 @@ func collectLowerFiles(session plan.Session) map[string]struct{} {
 func hasFileWithExt(files map[string]struct{}, ext string) bool {
 	for f := range files {
 		if strings.HasSuffix(f, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMobileSource returns true when the session touches actual
+// React Native / Expo SOURCE code (.ts/.tsx/.js/.jsx inside the
+// mobile app dirs), not just config files like eas.json /
+// app.json / app.config.js. A session that only scaffolds config
+// has no source to typecheck and mobile-rn-expo smoke gating on
+// it produces false failures while the shared packages the mobile
+// app depends on are still being built in parallel sessions.
+func hasMobileSource(files map[string]struct{}) bool {
+	for f := range files {
+		if !strings.Contains(f, "apps/caregiver/") && !strings.Contains(f, "apps/installer/") {
+			continue
+		}
+		if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") ||
+			strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
 			return true
 		}
 	}
