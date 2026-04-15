@@ -238,9 +238,9 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		// Deterministic repair FIRST — fixes file-ownership conflicts
 		// and drops dangling inputs in-place. Then re-run the check
 		// to see what remains after the auto-repair.
-		fd, id := repairChunkedConsistency(out)
-		if fd > 0 || id > 0 {
-			fmt.Printf("  🔧 chunked convert consistency round %d auto-repair: %d file-claim drop(s), %d input drop(s)\n", round, fd, id)
+		fd, or, id := repairChunkedConsistency(out)
+		if fd > 0 || or > 0 || id > 0 {
+			fmt.Printf("  🔧 chunked convert consistency round %d auto-repair: %d file-claim drop(s), %d output rename(s), %d input drop(s)\n", round, fd, or, id)
 		}
 		issues := checkChunkedConsistency(out)
 		added := 0
@@ -269,7 +269,7 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		// nothing to fix this round. Residual consistency issues
 		// that survive auto-repair are edge cases the execution
 		// layer handles via the fuzzy DAG.
-		if added == 0 && fd == 0 && id == 0 {
+		if added == 0 && fd == 0 && or == 0 && id == 0 {
 			if round > 1 {
 				fmt.Printf("  ✓ chunked convert converged after %d review round(s)\n", round)
 			}
@@ -412,38 +412,138 @@ func callChatWithCtx(ctx context.Context, prov provider.Provider, req provider.C
 	}
 }
 
-// repairChunkedConsistency auto-fixes the most common cross-session
-// issues: (1) file ownership conflicts — when N sessions list the
-// same file in task.Files, keep the earliest session's claim and
-// drop the file from later sessions' tasks. (2) dangling inputs —
-// when session.Inputs references a producer that doesn't exist,
-// drop the input.
+// scoreSessionOwnership scores how well a session "fits" as the
+// owner of a given file path. Higher = better fit. Used by the
+// semantic merger to resolve file-claim conflicts when multiple
+// sessions declare the same file in task.Files.
 //
-// Returns the count of (file-claim drops, input drops) so callers
-// can log/verify the repair. Mutates the SOW in place.
-func repairChunkedConsistency(sow *SOW) (fileDrops, inputDrops int) {
-	if sow == nil {
-		return 0, 0
-	}
-	// Pass 1: file ownership. For each file, find the earliest
-	// session that declares it. Remove it from every later
-	// session's task.Files.
-	earliestOwner := map[string]int{}
-	for i, s := range sow.Sessions {
-		_ = s
-		for ti, t := range sow.Sessions[i].Tasks {
-			_ = ti
-			for _, f := range t.Files {
-				key := strings.TrimSpace(f)
-				if key == "" {
-					continue
-				}
-				if _, seen := earliestOwner[key]; !seen {
-					earliestOwner[key] = i
+// Scoring:
+//   - Full session-output phrase appears as substring in file → +3
+//   - Any path segment shares a word with any session output → +2
+//   - Any path segment appears in session title/description → +1
+//   - Session ID appears as substring in file (rare) → +1
+//
+// Ties are broken by declaration order (lower session index wins).
+// The result: apps/web/tailwind.config.ts goes to the session
+// whose outputs say "web app" or whose title is "Web Application
+// Foundation", not whichever session happened to emit first.
+func scoreSessionOwnership(file string, s Session) float64 {
+	fileLower := strings.ToLower(file)
+	pathParts := strings.Split(strings.Trim(fileLower, "/"), "/")
+	score := 0.0
+
+	for _, out := range s.Outputs {
+		outLower := strings.ToLower(strings.TrimSpace(out))
+		if outLower == "" {
+			continue
+		}
+		if strings.Contains(fileLower, outLower) {
+			score += 3.0
+			continue
+		}
+		// Token-level overlap: any word of the output matches any
+		// path segment.
+		outWords := strings.Fields(outLower)
+		for _, w := range outWords {
+			if len(w) < 3 {
+				continue // skip stopwords ("a", "of", etc.)
+			}
+			for _, part := range pathParts {
+				if part == w || strings.Contains(part, w) || strings.Contains(w, part) {
+					score += 2.0
+					break
 				}
 			}
 		}
 	}
+
+	titleDesc := strings.ToLower(s.Title + " " + s.Description)
+	for _, part := range pathParts {
+		if len(part) < 3 {
+			continue
+		}
+		if strings.Contains(titleDesc, part) {
+			score += 1.0
+		}
+	}
+
+	if strings.Contains(fileLower, strings.ToLower(s.ID)) {
+		score += 1.0
+	}
+
+	return score
+}
+
+// repairChunkedConsistency is the semantic merger: it runs AFTER
+// all session expanders return proposals and BEFORE
+// ValidateSOW/dispatch. Git-shaped flow —
+//
+//   1. Collect every claim: which session put which file in its
+//      task.Files; which output-artifact name which session emits.
+//   2. For each CONFLICTED file (N > 1 claimants), pick the
+//      winner by scoreSessionOwnership. Remove the file from the
+//      losers' task.Files (they can still READ the file, they
+//      just don't own/declare scope over it).
+//   3. For each CONFLICTED output name (N > 1 producers), pick
+//      winner by scoreSessionOwnership applied to the output name
+//      as if it were a path. Losers keep the output entry but
+//      prefixed with their session id to disambiguate
+//      (downstream consumers via fuzzy match still resolve).
+//   4. Drop dangling session.Inputs entries that don't match any
+//      producer (even after output renames) — the DAG can't use
+//      them anyway.
+//
+// Returns counts (fileDrops, outputRenames, inputDrops) for log
+// rendering. Mutates the SOW in place.
+func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops int) {
+	if sow == nil {
+		return 0, 0, 0
+	}
+
+	// --- Pass 1: file ownership via semantic scoring. ---
+	// Collect every claim: file → []sessionIndex.
+	fileClaims := map[string][]int{}
+	for i := range sow.Sessions {
+		for ti := range sow.Sessions[i].Tasks {
+			for _, f := range sow.Sessions[i].Tasks[ti].Files {
+				key := strings.TrimSpace(f)
+				if key == "" {
+					continue
+				}
+				fileClaims[key] = append(fileClaims[key], i)
+			}
+		}
+	}
+	// Dedup per-file claim list (same session with multiple tasks
+	// touching the same file is not a conflict).
+	fileOwner := map[string]int{}
+	for file, claims := range fileClaims {
+		seen := map[int]bool{}
+		unique := []int{}
+		for _, idx := range claims {
+			if !seen[idx] {
+				seen[idx] = true
+				unique = append(unique, idx)
+			}
+		}
+		if len(unique) == 1 {
+			fileOwner[file] = unique[0]
+			continue
+		}
+		// Conflicted — score each claimant.
+		bestIdx := unique[0]
+		bestScore := scoreSessionOwnership(file, sow.Sessions[bestIdx])
+		for _, idx := range unique[1:] {
+			sc := scoreSessionOwnership(file, sow.Sessions[idx])
+			if sc > bestScore {
+				bestScore = sc
+				bestIdx = idx
+			}
+			// Tie-break: lower index wins (first declared).
+		}
+		fileOwner[file] = bestIdx
+	}
+	// Apply: drop file from any session that isn't the winner.
 	for i := range sow.Sessions {
 		s := &sow.Sessions[i]
 		for ti := range s.Tasks {
@@ -454,13 +554,56 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, inputDrops int) {
 				if key == "" {
 					continue
 				}
-				if owner, ok := earliestOwner[key]; ok && owner < i {
+				if owner, ok := fileOwner[key]; ok && owner != i {
 					fileDrops++
-					continue // earlier session owns this file
+					continue
 				}
 				kept = append(kept, f)
 			}
 			t.Files = kept
+		}
+	}
+
+	// --- Pass 2: output-name collisions. ---
+	// Two sessions emitting "web dashboard" = the DAG can't tell
+	// which one produces it. Keep the highest-scoring session's
+	// claim, rename the loser's entry to "<sessionID> <name>" so
+	// it's still visible (the fuzzy DAG resolver can still match
+	// fragments).
+	outClaims := map[string][]int{}
+	for i := range sow.Sessions {
+		for _, out := range sow.Sessions[i].Outputs {
+			key := strings.ToLower(strings.TrimSpace(out))
+			if key == "" {
+				continue
+			}
+			outClaims[key] = append(outClaims[key], i)
+		}
+	}
+	for out, claims := range outClaims {
+		if len(claims) < 2 {
+			continue
+		}
+		bestIdx := claims[0]
+		bestScore := scoreSessionOwnership(out, sow.Sessions[bestIdx])
+		for _, idx := range claims[1:] {
+			sc := scoreSessionOwnership(out, sow.Sessions[idx])
+			if sc > bestScore {
+				bestScore = sc
+				bestIdx = idx
+			}
+		}
+		for _, idx := range claims {
+			if idx == bestIdx {
+				continue
+			}
+			s := &sow.Sessions[idx]
+			for oi := range s.Outputs {
+				if strings.EqualFold(strings.TrimSpace(s.Outputs[oi]), out) {
+					s.Outputs[oi] = s.ID + " " + s.Outputs[oi]
+					outputRenames++
+				}
+			}
 		}
 	}
 	// Pass 2: dangling inputs. Rebuild producer set from outputs
@@ -499,7 +642,7 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, inputDrops int) {
 		}
 		s.Inputs = kept
 	}
-	return fileDrops, inputDrops
+	return fileDrops, outputRenames, inputDrops
 }
 
 // checkChunkedConsistency validates cross-session contracts after
