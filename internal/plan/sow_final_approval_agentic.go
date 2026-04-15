@@ -455,17 +455,38 @@ func indexProseSections(prose string) *proseIndex {
 	}
 	// Assign unique Path values so duplicate headings remain
 	// individually addressable. First occurrence keeps the bare
-	// name; subsequent occurrences get "name#N" (1-indexed by
-	// duplicate count).
+	// name; subsequent occurrences get "name [2]", "name [3]", etc.
+	// We pre-collect every literal heading text to avoid colliding
+	// the synthetic suffix with a real heading that already happens
+	// to look like one ("Intro [2]" appearing literally in the
+	// prose, however unlikely). On collision the suffix increments
+	// until it finds an unused value. The "[N]" form was chosen
+	// over "#N" because real markdown headings often contain `#`
+	// (e.g. cross-references) but rarely "name [N]" verbatim.
+	taken := map[string]struct{}{}
+	for i := range idx.sections {
+		taken[idx.sections[i].Name] = struct{}{}
+	}
 	counts := map[string]int{}
 	for i := range idx.sections {
 		name := idx.sections[i].Name
 		counts[name]++
 		if counts[name] == 1 {
 			idx.sections[i].Path = name
-		} else {
-			idx.sections[i].Path = fmt.Sprintf("%s#%d", name, counts[name])
+			continue
 		}
+		// Find an unused "name [N]" suffix.
+		n := counts[name]
+		var candidate string
+		for {
+			candidate = fmt.Sprintf("%s [%d]", name, n)
+			if _, dup := taken[candidate]; !dup {
+				break
+			}
+			n++
+		}
+		idx.sections[i].Path = candidate
+		taken[candidate] = struct{}{}
 	}
 	return idx
 }
