@@ -92,10 +92,14 @@ func (r *ProblemRequiresSecondOpinion) Action(ctx context.Context, evt bus.Event
 		workerID = evt.EmitterID
 	}
 
-	pausePayload, _ := json.Marshal(map[string]string{
+	pauseMap := map[string]any{
 		"worker_id": workerID,
 		"reason":    "awaiting_escalation_review",
-	})
+	}
+	if vErr := supervisor.ValidatePayload(r, pauseMap); vErr != nil {
+		return fmt.Errorf("payload schema violation on worker.paused: %w", vErr)
+	}
+	pausePayload, _ := json.Marshal(pauseMap)
 	if err := b.Publish(bus.Event{
 		Type:      bus.EvtWorkerPaused,
 		Scope:     evt.Scope,

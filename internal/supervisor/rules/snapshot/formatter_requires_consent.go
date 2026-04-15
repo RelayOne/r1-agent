@@ -105,10 +105,14 @@ func (r *FormatterRequiresConsent) Action(ctx context.Context, evt bus.Event, b 
 		workerID = evt.EmitterID
 	}
 
-	pausePayload, _ := json.Marshal(map[string]string{
+	pauseMap := map[string]any{
 		"worker_id": workerID,
 		"reason":    "awaiting_cto_approval_formatter",
-	})
+	}
+	if vErr := supervisor.ValidatePayload(r, pauseMap); vErr != nil {
+		return fmt.Errorf("payload schema violation on worker.paused: %w", vErr)
+	}
+	pausePayload, _ := json.Marshal(pauseMap)
 	if err := b.Publish(bus.Event{
 		Type:      bus.EvtWorkerPaused,
 		Scope:     evt.Scope,

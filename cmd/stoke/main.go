@@ -294,6 +294,23 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	tracker := costtrack.NewTracker(0, func(alert costtrack.Alert) {
 		ui.Event("_system", stream.Event{Type: "system", DeltaText: alert.Message})
 	})
+	// B2: attach the amplification-budget tracker. Load baselines
+	// from bench/baselines/token-baselines-2026-Q2.json when present.
+	// Missing file or parse failure leaves tracker.amp == nil and
+	// enforcement disabled — same as before B2 landed. Task class is
+	// inferred from the work at the workflow layer; here we default
+	// to "feature_add" as the most common sow shape. Unknown classes
+	// get a zero-value (disabled) budget.
+	if baselines, bErr := costtrack.LoadBaselines("bench/baselines/token-baselines-2026-Q2.json"); bErr == nil {
+		budget := costtrack.BudgetForClass(baselines, "feature_add")
+		amp := costtrack.NewAmplificationTracker(budget)
+		amp.OnTransition = func(prev, curr costtrack.AmplificationStatus, mult float64) {
+			if line := costtrack.FormatStatus(budget.TaskClass, curr, mult); line != "" {
+				fmt.Println(line)
+			}
+		}
+		tracker.AttachAmplification(amp)
+	}
 
 	// Dependency-aware test selection: build import graph once, reuse per task.
 	testGraph, testGraphErr := testselect.BuildGraph(absRepo)

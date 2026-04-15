@@ -70,10 +70,14 @@ func (r *RequestDispatchesResearchers) Action(_ context.Context, evt bus.Event, 
 	}
 
 	// Pause the requesting worker.
-	pausePayload, _ := json.Marshal(map[string]string{
+	pauseMap := map[string]any{
 		"worker_id": workerID,
 		"reason":    "awaiting_research",
-	})
+	}
+	if vErr := supervisor.ValidatePayload(r, pauseMap); vErr != nil {
+		return fmt.Errorf("payload schema violation on worker.paused: %w", vErr)
+	}
+	pausePayload, _ := json.Marshal(pauseMap)
 	if err := b.Publish(bus.Event{
 		Type:      bus.EvtWorkerPaused,
 		Scope:     evt.Scope,

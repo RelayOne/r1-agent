@@ -173,13 +173,20 @@ func cmdRun(args []string) {
 
 	// Variance regression export (B3). One JSON per harness in the
 	// slim shape bench/cmd/variance-regression consumes. Success rate
-	// is the mean of Verdict.Passed across reps for each task.
+	// is the mean of Verdict.Passed across reps for each task. A
+	// write failure here is fatal — callers that request the
+	// artifact need it, and silently exiting 0 without it breaks CI
+	// pipelines that don't notice the gap until the later
+	// variance-regression step fails on a missing file (codex P3).
 	if *varianceOut != "" {
 		label := *varianceLabel
 		if label == "" {
 			label = "HEAD"
 		}
-		writeVarianceReports(allResults, *varianceOut, label)
+		if err := writeVarianceReports(allResults, *varianceOut, label); err != nil {
+			fmt.Fprintf(os.Stderr, "variance-out: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Print summary
@@ -190,7 +197,7 @@ func cmdRun(args []string) {
 // variance-regression CLI expects: {label, tasks: [{task_id,
 // success_rate}]}. Path prefix + "-" + harness + ".json". Success
 // rate is mean Verdict.Passed (0 or 1) across reps for each task.
-func writeVarianceReports(results []BenchResult, pathPrefix, label string) {
+func writeVarianceReports(results []BenchResult, pathPrefix, label string) error {
 	type key struct{ harness, task string }
 	type agg struct{ passed, total int }
 	byHarness := map[string]map[string]*agg{}
@@ -228,11 +235,11 @@ func writeVarianceReports(results []BenchResult, pathPrefix, label string) {
 		data, _ := json.MarshalIndent(doc, "", "  ")
 		path := fmt.Sprintf("%s-%s.json", pathPrefix, harness)
 		if err := os.WriteFile(path, data, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "  variance-out %s: %v\n", path, err)
-			continue
+			return fmt.Errorf("write %s: %w", path, err)
 		}
 		fmt.Printf("variance-out saved: %s (%d tasks)\n", path, len(doc.Tasks))
 	}
+	return nil
 }
 
 func loadTasks(dir string) ([]judge.Task, error) {

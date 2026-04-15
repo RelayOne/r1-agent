@@ -128,8 +128,26 @@ func loadResults(path string) (*resultsFile, error) {
 // populations.
 func requireSameCorpus(b, c []metrics.TaskOutcome) error {
 	bSet := map[string]bool{}
+	bDup := []string{}
 	for _, t := range b {
+		if bSet[t.TaskID] {
+			bDup = append(bDup, t.TaskID)
+		}
 		bSet[t.TaskID] = true
+	}
+	if len(bDup) > 0 {
+		return fmt.Errorf("baseline has duplicate task_id(s): %v", bDup)
+	}
+	cSet := map[string]bool{}
+	cDup := []string{}
+	for _, t := range c {
+		if cSet[t.TaskID] {
+			cDup = append(cDup, t.TaskID)
+		}
+		cSet[t.TaskID] = true
+	}
+	if len(cDup) > 0 {
+		return fmt.Errorf("current has duplicate task_id(s): %v", cDup)
 	}
 	missing := []string{}
 	for _, t := range c {
@@ -139,6 +157,17 @@ func requireSameCorpus(b, c []metrics.TaskOutcome) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("current has %d tasks not in baseline: %v", len(missing), missing)
+	}
+	// Check the reverse direction too — baseline tasks missing from
+	// current means the regression would silently drop them.
+	extra := []string{}
+	for _, t := range b {
+		if !cSet[t.TaskID] {
+			extra = append(extra, t.TaskID)
+		}
+	}
+	if len(extra) > 0 {
+		return fmt.Errorf("baseline has %d tasks not in current: %v", len(extra), extra)
 	}
 	if len(b) != len(c) {
 		return fmt.Errorf("corpus size mismatch: baseline %d tasks, current %d tasks", len(b), len(c))

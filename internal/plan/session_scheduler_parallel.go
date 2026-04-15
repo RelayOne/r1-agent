@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // runParallel is the DAG-scheduled session runner. It:
@@ -45,6 +46,38 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 	dag := BuildSessionDAG(ss.sow)
 	fmt.Println(dag.Summary(ss.sow))
 	fmt.Printf("  🛣 parallel session runner active (max %d concurrent)\n", ss.ParallelSessions)
+
+	// Deadlock watchdog pulse. The main dispatch loop calls
+	// CheckPromotedDispatch once per iteration, but it drops into
+	// wg.Wait() when no new session is ready. If a parent session
+	// appends a promoted fix and then keeps running for >SLA without
+	// another completion, the loop never re-enters the check. This
+	// goroutine polls at SLA/2 so the banner fires even during long
+	// waits. It exits when watchdogCtx is canceled at function
+	// return. (codex P2 fix for 00e20fe.)
+	watchdogCtx, watchdogCancel := context.WithCancel(ctx)
+	defer watchdogCancel()
+	go func() {
+		t := time.NewTicker(PromotedDispatchSLA / 2)
+		defer t.Stop()
+		for {
+			select {
+			case <-watchdogCtx.Done():
+				return
+			case <-t.C:
+				// Watchdog only reads completion state; mutations go
+				// via ClearPromoted which has its own mutex.
+				stalled := ss.CheckPromotedDispatch(map[string]bool{}, map[string]bool{})
+				if len(stalled) > 0 {
+					fmt.Printf("\n  ⚠️  DEADLOCK WATCHDOG (pulse): %d promoted session(s) undispatched > %s\n", len(stalled), PromotedDispatchSLA)
+					for _, id := range stalled {
+						fmt.Printf("       %s (not dispatched after promotion)\n", id)
+						ss.ClearPromoted(id)
+					}
+				}
+			}
+		}
+	}()
 
 	// Everything below this point is concurrency-sensitive.
 	var (
@@ -327,16 +360,27 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		// stalled entry from promotedAt to suppress repeat banners
 		// while we wait for the operator to intervene.
 		stateMu.Lock()
-		if stalled := ss.CheckPromotedDispatch(started, done); len(stalled) > 0 {
+		stStart := map[string]bool{}
+		for k, v := range started {
+			stStart[k] = v
+		}
+		stDone := map[string]bool{}
+		for k, v := range done {
+			stDone[k] = v
+		}
+		stateMu.Unlock()
+		if stalled := ss.CheckPromotedDispatch(stStart, stDone); len(stalled) > 0 {
 			fmt.Printf("\n  ⚠️  DEADLOCK WATCHDOG: %d promoted session(s) undispatched > %s — likely DAG cycle or unresolved parent dep:\n", len(stalled), PromotedDispatchSLA)
 			for _, id := range stalled {
 				deps := dag.Deps[id]
 				fmt.Printf("       %s — deps: %v (clear them or set Preempt=true)\n", id, deps)
-				// Suppress repeat banners: drop from promotedAt.
-				delete(ss.promotedAt, id)
+				// Suppress repeat banners (codex P1: use exported
+				// ClearPromoted which takes the promotedMu properly;
+				// the previous direct map delete here could race with
+				// concurrent AppendSession writes).
+				ss.ClearPromoted(id)
 			}
 		}
-		stateMu.Unlock()
 		progress := false
 		// Collect blocked-but-not-dispatched sessions whose upstream failed
 		// AND we can't continue-on-failure. Mark them as blocked and

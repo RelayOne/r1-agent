@@ -115,10 +115,18 @@ func (r *UserEscalation) Action(ctx context.Context, evt bus.Event, b *bus.Bus) 
 			return fmt.Errorf("publish user message: %w", err)
 		}
 
-		// Pause work.
-		pausePayload, _ := json.Marshal(map[string]string{
-			"reason": "awaiting_user_decision",
-		})
+		// Pause work. WorkerID falls back to the event emitter when
+		// the escalation event didn't carry one explicitly — schema
+		// A3 requires a worker_id so consumers can attribute the
+		// pause.
+		pauseMap := map[string]any{
+			"worker_id": evt.EmitterID,
+			"reason":    "awaiting_user_decision",
+		}
+		if vErr := supervisor.ValidatePayload(r, pauseMap); vErr != nil {
+			return fmt.Errorf("payload schema violation on worker.paused: %w", vErr)
+		}
+		pausePayload, _ := json.Marshal(pauseMap)
 		return b.Publish(bus.Event{
 			Type:      bus.EvtWorkerPaused,
 			Scope:     evt.Scope,

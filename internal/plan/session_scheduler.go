@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -78,7 +79,14 @@ type SessionScheduler struct {
 	// queued. Used by CheckPromotedDispatch to detect deadlocks where a
 	// promoted session sits in the queue long past PromotedDispatchSLA.
 	// Map is lazily initialized on first AppendSession call.
+	//
+	// Access synchronized by promotedMu — AppendSession runs from
+	// worker goroutines (rule callbacks, OnTaskAbandon), while
+	// CheckPromotedDispatch runs in the parallel runner's main
+	// dispatch loop. Without the mutex, Go's race detector + runtime
+	// would crash on concurrent map iteration + write.
 	promotedAt map[string]time.Time
+	promotedMu sync.Mutex
 }
 
 // SessionResult is the outcome of executing one session.
@@ -157,11 +165,14 @@ func (ss *SessionScheduler) AppendSession(session Session) {
 	// loud banner if a promoted session has been sitting undispatched
 	// for >promotedDispatchSLA. Without this, a fix session that
 	// silently never starts looks identical to one that's just
-	// queued behind real work.
+	// queued behind real work. promotedMu protects against concurrent
+	// iteration in CheckPromotedDispatch (codex P1 fix).
+	ss.promotedMu.Lock()
 	if ss.promotedAt == nil {
 		ss.promotedAt = map[string]time.Time{}
 	}
 	ss.promotedAt[session.ID] = time.Now()
+	ss.promotedMu.Unlock()
 }
 
 // PromotedDispatchSLA is the time after which an appended session
@@ -177,6 +188,8 @@ const PromotedDispatchSLA = 5 * time.Minute
 // a self-heal. Closes anti-deception matrix gap B5: scheduler silently
 // failing to make progress while heartbeats keep firing.
 func (ss *SessionScheduler) CheckPromotedDispatch(started map[string]bool, done map[string]bool) []string {
+	ss.promotedMu.Lock()
+	defer ss.promotedMu.Unlock()
 	if ss.promotedAt == nil {
 		return nil
 	}
@@ -192,6 +205,16 @@ func (ss *SessionScheduler) CheckPromotedDispatch(started map[string]bool, done 
 		}
 	}
 	return stalled
+}
+
+// ClearPromoted removes a session from the promotedAt map. The
+// parallel runner calls this after logging a stalled session so the
+// watchdog doesn't print the same banner on every subsequent
+// dispatch iteration.
+func (ss *SessionScheduler) ClearPromoted(id string) {
+	ss.promotedMu.Lock()
+	defer ss.promotedMu.Unlock()
+	delete(ss.promotedAt, id)
 }
 
 // Run executes all sessions in order. For each session:
