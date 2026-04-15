@@ -377,8 +377,13 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		return result
 	}
 
-	// Content match check
-	if ac.ContentMatch != nil {
+	// Content match check. Skip when File is empty — that's the
+	// malformed shape critiqueAcceptanceCriteria already treats as
+	// non-runnable; running it here would always fail (ReadFile of
+	// projectRoot fails) and turn a malformed AC into a permanent
+	// session failure, which is worse than letting it fall through
+	// to the description-only manual-check branch below.
+	if ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) != "" {
 		path := ac.ContentMatch.File
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(projectRoot, path)
