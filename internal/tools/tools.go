@@ -350,6 +350,18 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 	// source with \\n and \\t double-escaped.)
 	args.Content = maybeUnescapeContent(args.Content)
 
+	// Pre-flight syntax check on code/data files: reject writes whose
+	// brackets, braces, parens, or string literals are unbalanced. The
+	// model gets a structured error and can retry with corrected
+	// content rather than the broken file landing on disk and tripping
+	// downstream tsc/eslint/build checks. Conservative — only checks
+	// obvious top-level imbalance for languages where {/}/[/]/(/) and
+	// "/' are the universal balancing tokens. Skips markdown, plain
+	// text, and unknown extensions.
+	if synErr := validateContentSyntax(args.Path, args.Content); synErr != nil {
+		return "", synErr
+	}
+
 	path, pathErr := r.resolvePath(args.Path)
 	if pathErr != nil {
 		return "", pathErr
@@ -695,4 +707,138 @@ func maybeUnescapeContent(content string) string {
 	out = strings.ReplaceAll(out, `\r`, "\r")
 	out = strings.ReplaceAll(out, `\\`, `\`)
 	return out
+}
+
+// validateContentSyntax performs a fast brace/bracket/paren/string
+// balance check on file content before it lands on disk. Returns a
+// non-nil error when the content is clearly broken (unclosed string,
+// negative depth, or non-zero depth at EOF) so the model retries
+// rather than committing a syntactically broken file. Returns nil
+// for file types where balance-checking is unsafe (markdown,
+// templated languages, plain text) or the content is well-formed.
+//
+// Only activates for: .go .ts .tsx .js .jsx .mjs .cjs .json .jsonc
+// .css .scss .less. Skips everything else conservatively.
+func validateContentSyntax(path, content string) error {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc", ".css", ".scss", ".less":
+	default:
+		return nil
+	}
+	// JSON files use a strict parse instead of balance counting —
+	// trailing commas, unquoted keys, etc. all matter for downstream
+	// tools. If content is empty, allow it.
+	if (ext == ".json" || ext == ".jsonc") && strings.TrimSpace(content) != "" {
+		var v interface{}
+		if err := json.Unmarshal([]byte(content), &v); err != nil {
+			return fmt.Errorf("write_file rejected: %s contains invalid JSON: %v — fix the content and retry", path, err)
+		}
+		return nil
+	}
+	// For Go/JS/TS/CSS: walk the content tracking bracket depth and
+	// string state. Skip line and block comments so commented-out
+	// braces don't trip the counter. Skip backtick template literals
+	// in JS/TS (they may legitimately contain unbalanced `{` inside
+	// `${...}` interpolation but those balance internally, so we
+	// just track the literal as a string-like region).
+	var (
+		depthCurly, depthSquare, depthParen int
+		inLine, inBlock                     bool
+		inStr                               byte // 0, '"', '\'', '`'
+		escape                              bool
+		isJSLike                            = ext != ".go"
+	)
+	n := len(content)
+	for i := 0; i < n; i++ {
+		c := content[i]
+		if inLine {
+			if c == '\n' {
+				inLine = false
+			}
+			continue
+		}
+		if inBlock {
+			if c == '*' && i+1 < n && content[i+1] == '/' {
+				inBlock = false
+				i++
+			}
+			continue
+		}
+		if inStr != 0 {
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == inStr {
+				inStr = 0
+			}
+			// Don't count braces inside strings; template literals
+			// with `${...}` would need recursive tracking but for a
+			// pre-flight check we accept the false-negative.
+			continue
+		}
+		// Outside strings/comments.
+		if c == '/' && i+1 < n {
+			if content[i+1] == '/' {
+				inLine = true
+				i++
+				continue
+			}
+			if content[i+1] == '*' {
+				inBlock = true
+				i++
+				continue
+			}
+		}
+		switch c {
+		case '"', '\'':
+			inStr = c
+		case '`':
+			if isJSLike {
+				inStr = c
+			}
+		case '{':
+			depthCurly++
+		case '}':
+			depthCurly--
+			if depthCurly < 0 {
+				return fmt.Errorf("write_file rejected: %s has unbalanced '}' (extra closer at byte %d) — fix and retry", path, i)
+			}
+		case '[':
+			depthSquare++
+		case ']':
+			depthSquare--
+			if depthSquare < 0 {
+				return fmt.Errorf("write_file rejected: %s has unbalanced ']' (extra closer at byte %d) — fix and retry", path, i)
+			}
+		case '(':
+			depthParen++
+		case ')':
+			depthParen--
+			if depthParen < 0 {
+				return fmt.Errorf("write_file rejected: %s has unbalanced ')' (extra closer at byte %d) — fix and retry", path, i)
+			}
+		}
+	}
+	if inStr != 0 {
+		return fmt.Errorf("write_file rejected: %s ends inside an unclosed %c string literal — fix and retry", path, inStr)
+	}
+	if inBlock {
+		return fmt.Errorf("write_file rejected: %s ends inside an unclosed /* ... */ block comment — fix and retry", path)
+	}
+	if depthCurly != 0 {
+		return fmt.Errorf("write_file rejected: %s has %d unclosed '{' (final depth %d) — fix and retry", path, depthCurly, depthCurly)
+	}
+	if depthSquare != 0 {
+		return fmt.Errorf("write_file rejected: %s has %d unclosed '[' (final depth %d) — fix and retry", path, depthSquare, depthSquare)
+	}
+	if depthParen != 0 {
+		return fmt.Errorf("write_file rejected: %s has %d unclosed '(' (final depth %d) — fix and retry", path, depthParen, depthParen)
+	}
+	return nil
 }

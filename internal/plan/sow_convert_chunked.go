@@ -286,7 +286,19 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		// nothing to fix this round. Residual consistency issues
 		// that survive auto-repair are edge cases the execution
 		// layer handles via the fuzzy DAG.
-		if added == 0 && fd == 0 && or == 0 && id == 0 {
+		// Canonicalize session inputs to match producer outputs
+		// exactly. Without this every expander's paraphrased input
+		// ("design-tokens package") fails to match the producer's
+		// actual output ("design tokens") and the DAG resolver
+		// falls back to declaration-order — serializing what
+		// should run in parallel. Runs every round because
+		// coverage-added sessions introduce new producers that
+		// earlier sessions' inputs may now be able to match.
+		cr := canonicalizeSessionInputs(out)
+		if cr > 0 {
+			fmt.Printf("  🧭 chunked convert canonicalized %d input(s) to producer-exact names (DAG will resolve them)\n", cr)
+		}
+		if added == 0 && fd == 0 && or == 0 && id == 0 && cr == 0 {
 			if round > 1 {
 				fmt.Printf("  ✓ chunked convert converged after %d review round(s)\n", round)
 			}
@@ -781,6 +793,100 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops in
 	}
 	return fileDrops, outputRenames, inputDrops
 }
+
+// canonicalizeSessionInputs rewrites every session.Inputs entry so
+// it matches the EXACT string a producer session declared in its
+// Outputs. Without this, per-session expanders (running
+// independently) emit paraphrased inputs like "design-tokens
+// package" when the producer declared "design tokens" — the fuzzy
+// DAG resolver only partially resolves these, falling back to
+// declaration-order for the rest and serializing everything.
+//
+// Post-canonicalization the DAG resolver finds every input in its
+// producer map (exact key match), so cross-session parallelism
+// actually works. Example from run 32:
+//
+//   BEFORE: S4.Inputs = ["design-tokens package"]
+//           S3-design-tokens.Outputs = ["design tokens"]
+//           → fuzzy resolver returns empty → declaration-order
+//             fallback serializes S4 behind S3-ui-mobile
+//
+//   AFTER:  S4.Inputs = ["design tokens"]
+//           → exact match → S4 is ready as soon as
+//             S3-design-tokens completes, even if S3-ui-mobile is
+//             still running
+//
+// Pass runs AFTER semantic-merger file/output reconciliation and
+// BEFORE ValidateSOW / DAG build. Returns count of rewrites for
+// the log.
+func canonicalizeSessionInputs(sow *SOW) int {
+	if sow == nil {
+		return 0
+	}
+	// Build producer-output-name index. Keys are normalized
+	// (lowercase, whitespace-collapsed) for matching; values are
+	// the ORIGINAL output strings to rewrite inputs to.
+	outputIndex := map[string]string{} // normKey → originalOutput
+	for _, s := range sow.Sessions {
+		for _, out := range s.Outputs {
+			trimmed := strings.TrimSpace(out)
+			if trimmed == "" {
+				continue
+			}
+			norm := normalizeArtifact(trimmed)
+			if _, seen := outputIndex[norm]; !seen {
+				outputIndex[norm] = trimmed
+			}
+		}
+	}
+	if len(outputIndex) == 0 {
+		return 0
+	}
+	rewrites := 0
+	for i := range sow.Sessions {
+		s := &sow.Sessions[i]
+		for j, in := range s.Inputs {
+			trimmed := strings.TrimSpace(in)
+			if trimmed == "" {
+				continue
+			}
+			inNorm := normalizeArtifact(trimmed)
+			// Exact normalized match: use the producer's original
+			// spelling.
+			if canonical, ok := outputIndex[inNorm]; ok {
+				if canonical != in {
+					s.Inputs[j] = canonical
+					rewrites++
+				}
+				continue
+			}
+			// Substring fuzzy: find the first producer output whose
+			// normalized form is contained in (or contains) the
+			// input. Prefer longer producer keys to avoid
+			// false-positives on common words like "app".
+			var bestMatch string
+			bestLen := 0
+			for pk, orig := range outputIndex {
+				if len(pk) <= bestLen {
+					continue
+				}
+				if strings.Contains(inNorm, pk) || strings.Contains(pk, inNorm) {
+					bestMatch = orig
+					bestLen = len(pk)
+				}
+			}
+			if bestMatch != "" && bestMatch != in {
+				s.Inputs[j] = bestMatch
+				rewrites++
+			}
+			// No match — leave as-is. repairChunkedConsistency's
+			// pass-2 dangling-input handler already drops/flags
+			// these.
+		}
+	}
+	return rewrites
+}
+
 
 // checkChunkedConsistency validates cross-session contracts after
 // chunked expansion:

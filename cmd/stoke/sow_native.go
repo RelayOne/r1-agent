@@ -3489,6 +3489,18 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		}
 		return
 	}
+	// Reclassify "file missing" gaps against on-disk reality.
+	// Reviewer LLM sometimes claims a declared file doesn't exist
+	// when it actually does — CollectCodeExcerpts already adds
+	// sentinel values distinguishing cap-omitted from missing, but
+	// reviewers can still hallucinate "missing" on real files.
+	// Before surfacing gaps, check each one that mentions a file
+	// path: if the file exists + non-empty on disk, rewrite the
+	// gap as "reviewer context drift" so the downstream follow-up
+	// doesn't try to "create" a file that's already there. Keeps
+	// the task progressing instead of burning cycles re-writing
+	// work.
+	verdict.GapsFound = reclassifyFileMissingGaps(verdict.GapsFound, cfg.RepoRoot, originalTask.Files)
 	fmt.Printf("    ✗ reviewer: %s has gaps at depth %d:\n", originalTask.ID, depth)
 	for _, gap := range verdict.GapsFound {
 		fmt.Printf("      - %s\n", gap)
@@ -3664,6 +3676,81 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		followupPreDirty := toSet(gitDirtyFiles(ctx, cfg.RepoRoot))
 		reviewAndFollowupRecursive(ctx, sowDoc, workingSession, originalTask, followup, runtimeDir, cfg, maxTurns, depth+1, nextPriorDirectives, followupPreDirty)
 	}
+}
+
+// reclassifyFileMissingGaps rewrites reviewer gaps that claim a
+// file doesn't exist when the file actually does exist on disk.
+// Reviewer LLMs occasionally hallucinate "missing file" verdicts
+// against files that were just written — the excerpt-cap sentinel
+// values help but don't catch every case. Without this, the task
+// loops re-writing files that are already correct.
+//
+// Strategy:
+//   - Scan each gap for file-path-like tokens (paths in task.Files
+//     that appear in the gap text).
+//   - For each mentioned file, stat it in repoRoot.
+//   - If the file exists + non-empty AND the gap wording suggests
+//     "does not exist" / "was not created" / "missing", rewrite
+//     the gap to a "reviewer-context-drift" note so the follow-up
+//     directive doesn't try to create-from-scratch.
+//
+// Gaps that don't reference real files in task.Files are left
+// untouched. Content-quality gaps ("stub markers", "placeholder
+// content") are NOT rewritten — those are legitimate regardless of
+// file existence.
+func reclassifyFileMissingGaps(gaps []string, repoRoot string, taskFiles []string) []string {
+	if len(gaps) == 0 || len(taskFiles) == 0 {
+		return gaps
+	}
+	missingKeywords := []string{
+		"does not exist", "doesn't exist", "is not created", "was not created",
+		"not found", "missing file", "file missing", "file does not exist",
+		"no such file", "not present", "cannot find", "wasn't created",
+	}
+	out := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		gapLower := strings.ToLower(gap)
+		looksLikeMissingClaim := false
+		for _, kw := range missingKeywords {
+			if strings.Contains(gapLower, kw) {
+				looksLikeMissingClaim = true
+				break
+			}
+		}
+		if !looksLikeMissingClaim {
+			out = append(out, gap)
+			continue
+		}
+		// Find which of the task's declared files the gap references.
+		var present []string
+		for _, f := range taskFiles {
+			f = strings.TrimSpace(f)
+			if f == "" || !strings.Contains(gap, f) {
+				continue
+			}
+			abs := f
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(repoRoot, f)
+			}
+			info, err := os.Stat(abs)
+			if err == nil && !info.IsDir() && info.Size() > 0 {
+				present = append(present, f)
+			}
+		}
+		if len(present) == 0 {
+			out = append(out, gap)
+			continue
+		}
+		// File(s) exist on disk despite reviewer's "missing" claim.
+		// Rewrite the gap so downstream directives understand this
+		// is a reviewer-context-drift, not a real missing file.
+		rewrite := fmt.Sprintf(
+			"REVIEWER CONTEXT DRIFT: file(s) reported missing but exist + non-empty on disk: %s. Original gap: %s — treat as 'verify content matches spec', NOT 'create from scratch'.",
+			strings.Join(present, ", "), gap,
+		)
+		out = append(out, rewrite)
+	}
+	return out
 }
 
 // collectFailingACs returns the subset of acceptance results that failed.

@@ -180,8 +180,14 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 
 	runOne := func(id string) {
 		defer wg.Done()
-		defer func() { <-sem }()
 		session := sessions[id]
+		// Preempt sessions skip the semaphore entirely (acquired
+		// nowhere, released nowhere) so a fix/promoted session can
+		// run even when all N regular slots are occupied by long-
+		// running parents.
+		if !session.Preempt {
+			defer func() { <-sem }()
+		}
 
 		// Infra env var preflight — reuses the existing classifier-
 		// filtered check so the parallel path behaves identically on
@@ -421,9 +427,22 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 				continue
 			}
 			started[id] = true
+			sess := sessions[id]
 			stateMu.Unlock()
-			sem <- struct{}{}
+			// Preempt priority: fix / promoted sessions bypass the
+			// regular parallelism semaphore — they always get a
+			// slot. Without this, a fix session appended while 4
+			// workers are running on long sessions waits forever
+			// behind them (observed in run 32: S12-deep-T222
+			// promoted, never dispatched, watchdog fired). A
+			// priority path means the fix runs concurrently with
+			// the blocked parent.
+			if !sess.Preempt {
+				sem <- struct{}{}
+			}
 			wg.Add(1)
+			// runOne handles its own sem release conditionally on
+			// session.Preempt — wrapper just spawns it.
 			go runOne(id)
 			progress = true
 		}

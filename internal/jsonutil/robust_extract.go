@@ -23,6 +23,10 @@ import (
 // prefer ExtractJSONInto for the common "extract and unmarshal" flow.
 func ExtractJSONObject(raw string) (json.RawMessage, error) {
 	cleaned := cleanLLMJSON(raw)
+	// Normalize Unicode quote drift (smart quotes → ASCII) before
+	// brace-balance scanning so curly-quoted strings are recognized
+	// as strings and the depth tracker doesn't miscount.
+	cleaned = normalizeSmartQuotes(cleaned)
 	start, end := findBalancedObject(cleaned)
 	if start < 0 {
 		return nil, &ExtractError{Raw: raw, Reason: "no balanced JSON object found"}
@@ -125,7 +129,7 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 		//      arrays — produces '"id":' as an array element which
 		//      fails as "invalid character ':' after array element".
 		// Run both repair passes; apply the first that parses.
-		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth} {
+		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth, repairUnquotedKeys, repairAll} {
 			rep := repairFn(blob)
 			if bytes.Equal(rep, blob) {
 				continue
@@ -143,6 +147,121 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 // missing-commas AND missing-braces can be fixed in one round-trip.
 func repairBoth(blob []byte) []byte {
 	return repairMissingCommas(repairMissingBraces(blob))
+}
+
+// repairAll composes every byte-level repair pass for blobs that
+// drifted in multiple ways at once (unquoted keys + missing commas
+// + missing braces). Order matters: keys first so the comma scanner
+// sees normalized `"key":` shapes.
+func repairAll(blob []byte) []byte {
+	return repairMissingCommas(repairMissingBraces(repairUnquotedKeys(blob)))
+}
+
+// normalizeSmartQuotes rewrites Unicode "smart" quotation marks to
+// their ASCII equivalents. LLMs occasionally emit curly quotes when
+// they slip into prose mode mid-JSON; the resulting blob is invalid
+// JSON but trivially recoverable by quote substitution. Operates on
+// the full string (no quote-state tracking — smart quotes inside a
+// JSON string would break parsing anyway and substitution is safe).
+//
+// Mapped chars: U+201C/D (double curly), U+2018/9 (single curly),
+// U+201A/E (low-9 quote), U+00AB/BB (guillemets), U+2032/3 (primes).
+func normalizeSmartQuotes(s string) string {
+	if !strings.ContainsAny(s, "\u201c\u201d\u2018\u2019\u201a\u201e\u00ab\u00bb\u2032\u2033") {
+		return s
+	}
+	r := strings.NewReplacer(
+		"\u201c", `"`, "\u201d", `"`,
+		"\u201e", `"`, "\u2033", `"`,
+		"\u00ab", `"`, "\u00bb", `"`,
+		"\u2018", `'`, "\u2019", `'`,
+		"\u201a", `'`, "\u2032", `'`,
+	)
+	return r.Replace(s)
+}
+
+// repairUnquotedKeys wraps bare-identifier object keys in double
+// quotes. LLM drift produces JS-object-literal shapes like:
+//
+//	{ id: "T1", description: "..." }
+//
+// instead of valid JSON `{"id": "T1", ...}`. Heuristic: when we're
+// inside an object (not a string, not an array), and we see an
+// identifier-shaped token followed by `:`, quote it. Conservative:
+// requires the token to start at a position right after `{`, `,`,
+// or whitespace following one of those.
+func repairUnquotedKeys(blob []byte) []byte {
+	out := make([]byte, 0, len(blob)+32)
+	n := len(blob)
+	inString := false
+	escape := false
+	type ctx struct{ isArray bool }
+	stack := []ctx{}
+	atKeyPos := false // just after `{` or `,` inside an object
+	for i := 0; i < n; i++ {
+		b := blob[i]
+		if escape {
+			out = append(out, b)
+			escape = false
+			continue
+		}
+		if inString {
+			out = append(out, b)
+			if b == '\\' {
+				escape = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			out = append(out, b)
+			inString = true
+			atKeyPos = false
+		case '{':
+			out = append(out, b)
+			stack = append(stack, ctx{isArray: false})
+			atKeyPos = true
+		case '[':
+			out = append(out, b)
+			stack = append(stack, ctx{isArray: true})
+			atKeyPos = false
+		case '}', ']':
+			out = append(out, b)
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			atKeyPos = false
+		case ',':
+			out = append(out, b)
+			atKeyPos = len(stack) > 0 && !stack[len(stack)-1].isArray
+		case ' ', '\t', '\n', '\r':
+			out = append(out, b)
+		default:
+			if atKeyPos && isIdentStart(b) && len(stack) > 0 && !stack[len(stack)-1].isArray {
+				end := i
+				for end < n && isIdentPart(blob[end]) {
+					end++
+				}
+				j := end
+				for j < n && (blob[j] == ' ' || blob[j] == '\t' || blob[j] == '\n' || blob[j] == '\r') {
+					j++
+				}
+				if j < n && blob[j] == ':' {
+					out = append(out, '"')
+					out = append(out, blob[i:end]...)
+					out = append(out, '"')
+					i = end - 1
+					atKeyPos = false
+					continue
+				}
+			}
+			out = append(out, b)
+			atKeyPos = false
+		}
+	}
+	return out
 }
 
 // repairMissingBraces looks for object literals inside JSON arrays
