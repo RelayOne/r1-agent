@@ -204,6 +204,18 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 	return tasks, acs
 }
 
+// cmHasContent reports whether a ContentMatchCriterion carries a
+// runnable check (both file and pattern non-empty). The tolerated
+// string-form JSON unmarshal can leave a non-nil zero-value struct
+// behind; we treat those as malformed (refiner is allowed to
+// repair them) rather than locked.
+func cmHasContent(cm *ContentMatchCriterion) bool {
+	if cm == nil {
+		return false
+	}
+	return strings.TrimSpace(cm.File) != "" && strings.TrimSpace(cm.Pattern) != ""
+}
+
 // refineGateRegressions returns "" when the refined SOW does not
 // weaken any original AC's verifier, and a non-empty reason string
 // otherwise. The rules below are the result of iterated review and
@@ -253,8 +265,15 @@ func refineGateRegressions(original, refined *SOW) string {
 			description: strings.TrimSpace(ac.Description),
 		}
 		if ac.ContentMatch != nil {
-			b, _ := json.Marshal(ac.ContentMatch)
-			st.contentMatch = string(b)
+			// Only lock content_match payloads that are MEANINGFUL.
+			// The tolerated string-form parse leaves a non-nil
+			// zero-value struct (no file, no pattern) — that's a
+			// known-malformed shape the refiner SHOULD repair,
+			// not something we should preserve as immutable.
+			if cmHasContent(ac.ContentMatch) {
+				b, _ := json.Marshal(ac.ContentMatch)
+				st.contentMatch = string(b)
+			}
 		}
 		st.hasAnyGate = st.hasCommand || st.fileExists != "" || st.contentMatch != ""
 		return st
@@ -281,14 +300,32 @@ func refineGateRegressions(original, refined *SOW) string {
 			if before.hasCommand && !after.hasCommand {
 				return fmt.Sprintf("AC %s lost its command verifier", a.ID)
 			}
-			// file_exists — locked: path IS the intent.
-			if before.fileExists != "" && before.fileExists != after.fileExists {
-				return fmt.Sprintf("AC %s file_exists path changed (was %q, now %q) — refine cannot retarget what a file_exists gate proves",
-					a.ID, before.fileExists, after.fileExists)
+			// file_exists — locked: path IS the intent. Also block
+			// shadowing: checkOneCriterion runs Command first, so
+			// adding a Command to a previously file_exists-only AC
+			// silently changes what the gate proves.
+			if before.fileExists != "" {
+				if before.fileExists != after.fileExists {
+					return fmt.Sprintf("AC %s file_exists path changed (was %q, now %q) — refine cannot retarget what a file_exists gate proves",
+						a.ID, before.fileExists, after.fileExists)
+				}
+				if !before.hasCommand && after.hasCommand {
+					return fmt.Sprintf("AC %s added a command that shadows the locked file_exists gate", a.ID)
+				}
 			}
 			// content_match — locked: (file, pattern) IS the intent.
-			if before.contentMatch != "" && before.contentMatch != after.contentMatch {
-				return fmt.Sprintf("AC %s content_match payload changed — refine cannot retarget what a content_match gate proves", a.ID)
+			// Same shadowing concern: adding command or file_exists
+			// to a content_match-only AC bypasses the original.
+			if before.contentMatch != "" {
+				if before.contentMatch != after.contentMatch {
+					return fmt.Sprintf("AC %s content_match payload changed — refine cannot retarget what a content_match gate proves", a.ID)
+				}
+				if !before.hasCommand && after.hasCommand {
+					return fmt.Sprintf("AC %s added a command that shadows the locked content_match gate", a.ID)
+				}
+				if before.fileExists == "" && after.fileExists != "" {
+					return fmt.Sprintf("AC %s added a file_exists that shadows the locked content_match gate", a.ID)
+				}
 			}
 			// description-only AC — cannot lose its description.
 			if !before.hasAnyGate && before.description != "" && after.description == "" {
