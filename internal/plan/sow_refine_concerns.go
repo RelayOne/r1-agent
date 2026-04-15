@@ -204,51 +204,70 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 	return tasks, acs
 }
 
-// refineGateRegressions returns "" when the refined SOW preserves
-// every original AC's verifier exactly, and a non-empty reason
-// string otherwise. The refiner is allowed to MOVE an AC between
-// sessions (concerns often request reassignment) but must NOT
-// change the verifier — the gate strength has a strict ordering:
+// refineGateRegressions returns "" when the refined SOW does not
+// DOWNGRADE any original AC's verifier, and a non-empty reason
+// string otherwise. The refiner is allowed to:
 //
-//	command > content_match > file_exists > description-only
+//   - Move an AC between sessions (concerns often request reassignment)
+//   - Rewrite an AC's verifier to fix a real defect the reviewer flagged
+//     (generic command, malformed content_match, etc.) AS LONG AS the
+//     new verifier is at least as strong as the original
+//   - Strengthen an AC (file_exists → content_match → command, or add
+//     a verifier where none existed)
 //
-// A refinement that swaps a `command` gate for a `file_exists`
-// gate, or downgrades a strong content_match to a weak one, has
-// silently weakened the verification surface even though the AC
-// id and "having a gate" flag are both preserved. We require the
-// (Command, FileExists, ContentMatch) tuple to compare equal
-// modulo whitespace; description changes are also rejected
-// because the description carries the manual-check intent when
-// no automated verifier is configured.
+// What it CAN'T do:
+//
+//   - Replace a strong gate with a weaker one (command → file_exists is
+//     a silent weakening even though "some gate exists")
+//   - Drop a verifier entirely (command → description-only)
+//   - Clear the description on an AC that had no automated verifier
+//     (turns a real manual check into a pass-by-default empty AC)
+//
+// Strength ordering: command (3) > content_match (2) > file_exists (1)
+// > description-only (0). The refiner can move sideways within a kind
+// (e.g. rewriting a command to fix a flaw) — that's the reviewer-
+// directed change codex flagged as legitimate. Within-kind weakenings
+// (e.g. command: "npm test" → command: "true") are caught by the
+// existing AC-command scrubber in cmd/stoke that strips fake/bypass
+// patterns before dispatch.
 func refineGateRegressions(original, refined *SOW) string {
-	type acFields struct {
-		desc            string
-		command         string
-		fileExists      string
-		contentMatchSig string
-	}
-	signatureOf := func(ac AcceptanceCriterion) acFields {
-		cms := ""
+	strengthOf := func(ac AcceptanceCriterion) int {
+		if strings.TrimSpace(ac.Command) != "" {
+			return 3
+		}
 		if ac.ContentMatch != nil {
-			// Marshal to compact JSON for a stable signature; small
-			// struct so cost is negligible.
-			b, _ := json.Marshal(ac.ContentMatch)
-			cms = string(b)
+			return 2
 		}
-		return acFields{
-			desc:            strings.TrimSpace(ac.Description),
-			command:         strings.TrimSpace(ac.Command),
-			fileExists:      strings.TrimSpace(ac.FileExists),
-			contentMatchSig: cms,
+		if strings.TrimSpace(ac.FileExists) != "" {
+			return 1
 		}
+		return 0
 	}
-	originalACs := map[string]acFields{}
+	kindName := func(level int) string {
+		switch level {
+		case 3:
+			return "command"
+		case 2:
+			return "content_match"
+		case 1:
+			return "file_exists"
+		}
+		return "description-only"
+	}
+	type acState struct {
+		strength int
+		desc     string
+	}
+	originalACs := map[string]acState{}
 	for _, s := range original.Sessions {
 		for _, a := range s.AcceptanceCriteria {
 			if a.ID == "" {
 				continue
 			}
-			originalACs[a.ID] = signatureOf(a)
+			originalACs[a.ID] = acState{
+				strength: strengthOf(a),
+				desc:     strings.TrimSpace(a.Description),
+			}
 		}
 	}
 	for _, s := range refined.Sessions {
@@ -257,18 +276,18 @@ func refineGateRegressions(original, refined *SOW) string {
 			if !ok {
 				continue // newly added AC; allowed
 			}
-			after := signatureOf(a)
-			if before.command != after.command {
-				return fmt.Sprintf("AC %s `command` field changed (was %q, now %q)", a.ID, before.command, after.command)
+			afterStrength := strengthOf(a)
+			if afterStrength < before.strength {
+				return fmt.Sprintf("AC %s downgraded from %s to %s",
+					a.ID, kindName(before.strength), kindName(afterStrength))
 			}
-			if before.fileExists != after.fileExists {
-				return fmt.Sprintf("AC %s `file_exists` field changed", a.ID)
-			}
-			if before.contentMatchSig != after.contentMatchSig {
-				return fmt.Sprintf("AC %s `content_match` field changed", a.ID)
-			}
-			if before.desc != after.desc {
-				return fmt.Sprintf("AC %s description changed (refine must preserve verifier text)", a.ID)
+			// Description-only ACs (strength 0) carry their semantics
+			// in the description text; clearing it turns a real
+			// manual check into an empty pass-by-default. Block
+			// that specifically.
+			if before.strength == 0 && before.desc != "" &&
+				afterStrength == 0 && strings.TrimSpace(a.Description) == "" {
+				return fmt.Sprintf("AC %s lost its description (description-only AC)", a.ID)
 			}
 		}
 	}
