@@ -387,21 +387,23 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 					break
 				}
 			}
-			// Cleanup helpers can mutate the SOW in ways that bypass
-			// the conservation check RefineSOWFromConcerns already
-			// did: autoFillMissingACFields synthesizes descriptions
-			// for ACs that lack them (turning a malformed AC into a
-			// pass-by-default manual check); autoCleanTaskDeps can
-			// delete an entire task whose description is empty.
-			// Snapshot before / after and reject the refinement if
-			// the helpers caused conservation to regress.
-			beforeT, beforeA := collectIDs(refined)
-			autoFillMissingACFields(refined)
-			autoCleanTaskDeps(refined)
+			// On the refine path we are STRICT: the refiner was
+			// explicitly told to preserve every task + every AC,
+			// and we already verified ID conservation. We do NOT
+			// run autoFillMissingACFields here because it would
+			// synthesize a generic description for an AC whose
+			// real description was cleared (turning a real gate
+			// into a pass-by-default manual check). We do NOT run
+			// autoCleanTaskDeps here because it can delete a task
+			// whose description was cleared. Instead, we run only
+			// the structural-only helper (autoAddMissingInfra) and
+			// pre-check that no AC has lost its description or its
+			// verifier — those are gate-weakening regressions that
+			// must reject the refinement and fall through to the
+			// legacy critique path.
 			autoAddMissingInfra(refined)
-			afterT, afterA := collectIDs(refined)
-			if len(diff(beforeT, afterT)) > 0 || len(diff(beforeA, afterA)) > 0 {
-				fmt.Printf("  ⚠ post-refine cleanup dropped task(s) or AC(s) — preserving previous SOW (concerns remain)\n")
+			if reason := refineGateRegressions(out, refined); reason != "" {
+				fmt.Printf("  ⚠ refine weakens an acceptance gate — preserving previous SOW: %s\n", reason)
 				break
 			}
 			if vErrs := ValidateSOW(refined); len(vErrs) > 0 {

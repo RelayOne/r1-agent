@@ -181,19 +181,71 @@ func RefineSOWFromConcerns(ctx context.Context, prose string, sow *SOW, concerns
 
 // collectIDs returns (taskIDs, acIDs) for every session in the SOW.
 // Used by the conservation check so dropped tasks AND dropped ACs
-// are both detected — earlier versions only checked tasks.
+// are both detected — earlier versions only checked tasks. Empty
+// IDs are filtered out: they aren't valid identifiers and would
+// otherwise cause the diff to misclassify newly-IDed criteria as
+// drops (an AC repaired from id="" to id="AC42" would show up as
+// a drop of the "" key).
 func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 	tasks := map[string]bool{}
 	acs := map[string]bool{}
 	for _, s := range sow.Sessions {
 		for _, t := range s.Tasks {
-			tasks[t.ID] = true
+			if t.ID != "" {
+				tasks[t.ID] = true
+			}
 		}
 		for _, a := range s.AcceptanceCriteria {
-			acs[a.ID] = true
+			if a.ID != "" {
+				acs[a.ID] = true
+			}
 		}
 	}
 	return tasks, acs
+}
+
+// refineGateRegressions returns "" when the refined SOW preserves
+// every original AC's verifier (description + at least one of
+// command/file_exists/content_match), and a non-empty reason string
+// otherwise. Catches the case where the refiner kept an AC's id but
+// cleared its description or verifier — autoFillMissingACFields
+// would otherwise turn that into a pass-by-default manual check.
+func refineGateRegressions(original, refined *SOW) string {
+	type acGate struct {
+		desc       string
+		hasGate    bool
+	}
+	gateOf := func(ac AcceptanceCriterion) acGate {
+		hg := strings.TrimSpace(ac.Command) != "" ||
+			strings.TrimSpace(ac.FileExists) != "" ||
+			ac.ContentMatch != nil
+		return acGate{desc: strings.TrimSpace(ac.Description), hasGate: hg}
+	}
+	originalACs := map[string]acGate{}
+	for _, s := range original.Sessions {
+		for _, a := range s.AcceptanceCriteria {
+			if a.ID == "" {
+				continue
+			}
+			originalACs[a.ID] = gateOf(a)
+		}
+	}
+	for _, s := range refined.Sessions {
+		for _, a := range s.AcceptanceCriteria {
+			before, ok := originalACs[a.ID]
+			if !ok {
+				continue // newly added AC; allowed
+			}
+			after := gateOf(a)
+			if before.desc != "" && after.desc == "" {
+				return fmt.Sprintf("AC %s lost its description", a.ID)
+			}
+			if before.hasGate && !after.hasGate {
+				return fmt.Sprintf("AC %s lost its verifier (command/file_exists/content_match)", a.ID)
+			}
+		}
+	}
+	return ""
 }
 
 // diff returns the keys present in a but missing from b.
