@@ -129,7 +129,7 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 		//      arrays — produces '"id":' as an array element which
 		//      fails as "invalid character ':' after array element".
 		// Run both repair passes; apply the first that parses.
-		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth, repairUnquotedKeys, repairAll} {
+		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth, repairUnquotedKeys, repairAll, repairBareKeyValueObjectsInArray, repairAllPlusBare} {
 			rep := repairFn(blob)
 			if bytes.Equal(rep, blob) {
 				continue
@@ -147,6 +147,133 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 // missing-commas AND missing-braces can be fixed in one round-trip.
 func repairBoth(blob []byte) []byte {
 	return repairMissingCommas(repairMissingBraces(blob))
+}
+
+// repairAllPlusBare adds the wrap-array-bare-keys pass to the
+// composed repair chain. Catches the common LLM shape where an
+// array element's `{` is dropped and the unwrapped keys span
+// MULTIPLE comma-separated key:value pairs across the rest of
+// the array — repairMissingBraces only wrapped one key:value pair
+// per element start because findElementEnd stops at the first
+// comma, so blobs of that shape need this pass.
+func repairAllPlusBare(blob []byte) []byte {
+	return repairMissingCommas(repairMissingBraces(repairUnquotedKeys(repairBareKeyValueObjectsInArray(blob))))
+}
+
+// repairBareKeyValueObjectsInArray fixes the case where an array
+// element starts with `"key":` (unwrapped object literal) and the
+// unwrapped run extends across MULTIPLE key:value pairs separated by
+// commas, all the way to the array's closing `]`. The narrower
+// repairMissingBraces handles only the single-key-pair case (its
+// findElementEnd returns at the first comma). When the LLM dropped
+// the `{` AND the unwrapped object had several keys, that repair
+// wraps only the first pair and leaves the rest as bare top-level
+// `"key":` syntax, which still fails to parse.
+//
+// This pass walks the blob with depth-aware string skipping, finds
+// any array whose first content character (after `[` and whitespace)
+// is a `"` followed by `:`, and rewrites the array as
+// `[ {<original contents>} ]`. The wrapping is conservative: if
+// the original contents are already a valid JSON object or array,
+// re-running this pass is idempotent because the first content
+// character would not be a quoted-key-then-colon pattern.
+func repairBareKeyValueObjectsInArray(blob []byte) []byte {
+	out := make([]byte, 0, len(blob)+64)
+	n := len(blob)
+	inString := false
+	escape := false
+	i := 0
+	for i < n {
+		c := blob[i]
+		if inString {
+			out = append(out, c)
+			if escape {
+				escape = false
+			} else if c == '\\' {
+				escape = true
+			} else if c == '"' {
+				inString = false
+			}
+			i++
+			continue
+		}
+		if c == '"' {
+			out = append(out, c)
+			inString = true
+			i++
+			continue
+		}
+		if c != '[' {
+			out = append(out, c)
+			i++
+			continue
+		}
+		// Found '['. Skip ahead past whitespace and check whether
+		// the first content character is a `"key":` pattern.
+		j := i + 1
+		for j < n && (blob[j] == ' ' || blob[j] == '\t' || blob[j] == '\n' || blob[j] == '\r') {
+			j++
+		}
+		if j >= n || blob[j] != '"' || !looksLikeUnwrappedObjectStart(blob[j:]) {
+			out = append(out, c)
+			i++
+			continue
+		}
+		// Find the matching `]` at the array's depth, skipping
+		// nested arrays/objects and string literals.
+		end := findArrayClose(blob, i)
+		if end < 0 {
+			out = append(out, c)
+			i++
+			continue
+		}
+		// Emit `[{...}]` wrapping.
+		out = append(out, '[', '{')
+		// Copy the array's interior verbatim (between the opening
+		// '[' at i and the closing ']' at end).
+		out = append(out, blob[i+1:end]...)
+		out = append(out, '}', ']')
+		i = end + 1
+	}
+	return out
+}
+
+// findArrayClose returns the index of the `]` that matches the `[`
+// at start. Skips strings, nested arrays, and nested objects.
+// Returns -1 if no match.
+func findArrayClose(blob []byte, start int) int {
+	depth := 0
+	inString := false
+	escape := false
+	for j := start; j < len(blob); j++ {
+		c := blob[j]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			if c == '\\' {
+				escape = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '[', '{':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		case '}':
+			depth--
+		}
+	}
+	return -1
 }
 
 // repairAll composes every byte-level repair pass for blobs that

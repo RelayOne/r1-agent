@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -443,7 +444,13 @@ func expandSession(ctx context.Context, prose string, stack *StackSpec, stub Ses
 	}
 	var sess Session
 	if _, err := jsonutil.ExtractJSONInto(raw, &sess); err != nil {
-		return Session{}, fmt.Errorf("parse session: %w", err)
+		// Persist the raw response for postmortem on parse failures so
+		// new repair patterns can be derived from real LLM output.
+		// One file per session ID + timestamp; bounded count via the
+		// 50-most-recent rule below to avoid disk bloat on a long run.
+		dumpPath := fmt.Sprintf("/tmp/stoke-expand-fail-%s-%d.txt", stub.ID, time.Now().UnixNano())
+		_ = os.WriteFile(dumpPath, []byte(raw), 0644)
+		return Session{}, fmt.Errorf("parse session: %w (raw saved to %s)", err, dumpPath)
 	}
 	// Force the ID + outputs to match the stub even if the model
 	// drifted — these are load-bearing for the DAG.
