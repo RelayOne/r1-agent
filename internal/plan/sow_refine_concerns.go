@@ -204,16 +204,21 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 	return tasks, acs
 }
 
-// cmHasContent reports whether a ContentMatchCriterion carries a
-// runnable check (both file and pattern non-empty). The tolerated
-// string-form JSON unmarshal can leave a non-nil zero-value struct
-// behind; we treat those as malformed (refiner is allowed to
-// repair them) rather than locked.
+// cmHasContent reports whether a ContentMatchCriterion is meaningful
+// enough to lock against refinement. ONLY the fully zero-value
+// struct (the tolerated bare-string JSON parse artifact, where both
+// File and Pattern are empty) is treated as malformed-and-repairable.
+// Any criterion with a non-empty File OR a non-empty Pattern is
+// treated as locked, because other parts of the pipeline
+// (CritiqueDeterministic, checkOneCriterion) still treat partially-
+// populated content_match values as active runnable checks. Locking
+// them prevents refine from silently retargeting or removing an AC
+// that downstream code is gating on.
 func cmHasContent(cm *ContentMatchCriterion) bool {
 	if cm == nil {
 		return false
 	}
-	return strings.TrimSpace(cm.File) != "" && strings.TrimSpace(cm.Pattern) != ""
+	return strings.TrimSpace(cm.File) != "" || strings.TrimSpace(cm.Pattern) != ""
 }
 
 // refineGateRegressions returns "" when the refined SOW does not
