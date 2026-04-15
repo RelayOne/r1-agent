@@ -6,6 +6,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // IntentAlignmentCheck spawns a fresh-context Judge at every task milestone to
@@ -47,4 +49,11 @@ func (r *IntentAlignmentCheck) Action(_ context.Context, evt bus.Event, b *bus.B
 		Payload:   payload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *IntentAlignmentCheck) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }

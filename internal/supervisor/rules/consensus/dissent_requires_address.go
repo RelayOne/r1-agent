@@ -8,6 +8,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // DissentRequiresAddress transitions the loop to "resolving_dissents" when a
@@ -79,4 +81,11 @@ func (r *DissentRequiresAddress) Action(ctx context.Context, evt bus.Event, b *b
 	}
 
 	return nil
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *DissentRequiresAddress) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }

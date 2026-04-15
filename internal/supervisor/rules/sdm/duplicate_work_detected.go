@@ -6,6 +6,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // DuplicateWorkDetected checks for overlapping work across branches by
@@ -183,4 +185,11 @@ func (r *DuplicateWorkDetected) Action(_ context.Context, evt bus.Event, b *bus.
 		Payload:   payload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *DuplicateWorkDetected) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }

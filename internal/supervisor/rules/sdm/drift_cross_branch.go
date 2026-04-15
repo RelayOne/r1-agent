@@ -6,6 +6,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // DriftCrossBranch detects when interface, schema, or contract definitions
@@ -169,4 +171,11 @@ func (r *DriftCrossBranch) Action(_ context.Context, evt bus.Event, b *bus.Bus) 
 		Payload:   payload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *DriftCrossBranch) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }

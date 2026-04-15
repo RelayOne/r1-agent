@@ -8,6 +8,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // DefaultThresholds maps artifact types to their maximum iteration counts.
@@ -107,4 +109,11 @@ func (r *IterationThreshold) Action(ctx context.Context, evt bus.Event, b *bus.B
 		Payload:   spawnPayload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *IterationThreshold) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }

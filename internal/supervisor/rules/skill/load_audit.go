@@ -6,6 +6,8 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/ericmacdougall/stoke/internal/supervisor"
 )
 
 // LoadAudit records every skill load in the supervisor's audit trail.
@@ -45,4 +47,11 @@ func (r *LoadAudit) Action(_ context.Context, evt bus.Event, b *bus.Bus) error {
 		Payload:   payload,
 		CausalRef: evt.ID,
 	})
+}
+
+// PayloadSchema declares the supervisor.spawn.requested shape for
+// this rule's primary emitted event (lenient default — most fields
+// optional). Closes A3 for this rule.
+func (r *LoadAudit) PayloadSchema() *schemaval.Schema {
+	return supervisor.SpawnRequestedSchema()
 }
