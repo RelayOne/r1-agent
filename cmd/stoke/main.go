@@ -1538,35 +1538,24 @@ func sowCmd(args []string) {
 	// after the session does work that would deterministically
 	// fail at the gate. Lenient ValidateSOW is reserved for
 	// intermediate convert/refine pipeline calls.
-	// Compute base + strict errors separately so we can halt
-	// inspection modes on STRUCTURAL problems (missing/duplicate
-	// IDs that would corrupt --dump-task-prompts output) while
-	// still letting them through on strict-only issues
-	// (empty-file content_match — informational for inspection,
-	// blocks dispatch).
-	baseErrs := plan.ValidateSOW(sow)
-	strictErrs := plan.ValidateSOWStrict(sow)
-	if len(strictErrs) > 0 {
+	if validationErrs := plan.ValidateSOWStrict(sow); len(validationErrs) > 0 {
 		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
-		for _, e := range strictErrs {
+		for _, e := range validationErrs {
 			fmt.Fprintf(os.Stderr, "  - %s\n", e)
 		}
 		fmt.Fprintln(os.Stderr, "\nSOW is not fit for dispatch — fix the errors above or pass --force to bypass strict validation.")
-
-		// --validate keeps its existing exit-1 contract.
+		// --validate exits 1 (its existing contract).
+		// --dry-run and --dump-task-prompts are inspection modes
+		// that don't dispatch; they print the errors above and
+		// continue to their read-only work. Output may look weird
+		// for malformed SOWs, but that's the entire point of
+		// inspection mode — let the operator see it.
+		// Other modes halt unless --force is set.
+		nonDispatching := *dryRun || *dumpPrompts
 		if *validate {
 			os.Exit(1)
 		}
-		// --dry-run and --dump-task-prompts get the bypass ONLY for
-		// strict-only issues. Base errors (missing IDs, duplicate
-		// IDs, no tasks/ACs) cause file-name collisions or
-		// truncated output in dump mode, so they still halt.
-		nonDispatching := *dryRun || *dumpPrompts
 		if !nonDispatching && !*forceFeasibility {
-			os.Exit(1)
-		}
-		if nonDispatching && len(baseErrs) > 0 {
-			fmt.Fprintln(os.Stderr, "  (refusing to continue: structural errors above would corrupt inspection output)")
 			os.Exit(1)
 		}
 		if *forceFeasibility {
