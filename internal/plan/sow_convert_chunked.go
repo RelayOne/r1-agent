@@ -387,9 +387,23 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 					break
 				}
 			}
+			// Cleanup helpers can mutate the SOW in ways that bypass
+			// the conservation check RefineSOWFromConcerns already
+			// did: autoFillMissingACFields synthesizes descriptions
+			// for ACs that lack them (turning a malformed AC into a
+			// pass-by-default manual check); autoCleanTaskDeps can
+			// delete an entire task whose description is empty.
+			// Snapshot before / after and reject the refinement if
+			// the helpers caused conservation to regress.
+			beforeT, beforeA := collectIDs(refined)
 			autoFillMissingACFields(refined)
 			autoCleanTaskDeps(refined)
 			autoAddMissingInfra(refined)
+			afterT, afterA := collectIDs(refined)
+			if len(diff(beforeT, afterT)) > 0 || len(diff(beforeA, afterA)) > 0 {
+				fmt.Printf("  ⚠ post-refine cleanup dropped task(s) or AC(s) — preserving previous SOW (concerns remain)\n")
+				break
+			}
 			if vErrs := ValidateSOW(refined); len(vErrs) > 0 {
 				// Refined SOW is structurally broken AND the cleanup
 				// helpers couldn't repair it. Preserve the previous
