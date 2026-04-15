@@ -36,46 +36,53 @@ func synthIntegrityFixSession(projectRoot string, src Session, report *Integrity
 		title = fmt.Sprintf("integrity fix from %s", src.ID)
 	}
 
+	// Drive synthesis from structured Issues (which know the correct
+	// TargetFile per category) rather than parsing directive text.
+	// Falls back to Directives when no Issues exist (belt-and-
+	// suspenders for ecosystems that only populated Directives).
 	var tasks []Task
-	for i, d := range report.Directives {
-		tid := fmt.Sprintf("%s-I%d", src.ID, i+1)
-		// Reuse the source's file set as the task's declared files
-		// so the worker reads them for context. Per-directive files
-		// are embedded in the directive text itself (the gate's
-		// directive shape includes the file path).
-		tasks = append(tasks, Task{
-			ID:          tid,
-			Description: d,
-			Files:       extractFilesFromDirective(d, src),
-		})
-	}
-
-	// Per-task AC: the target file's content hash must DIFFER from
-	// the pre-fix snapshot we capture right now. `test -s <file>`
-	// would be a tautology — the file already exists (the source
-	// session just wrote it), so the worker could exit without
-	// touching anything and still pass. Hash-diff forces a real
-	// mutation (or deletion, which also changes the hash result).
-	//
-	// Missing files are snapshotted as "(absent)"; any post-fix
-	// state (file created, or still missing) differs from that
-	// sentinel when real work happens. When the file can't be
-	// read for any other reason we fall back to a repo-level
-	// `git diff` gate so the session still can't pass no-op.
 	var acs []AcceptanceCriterion
-	for i, t := range tasks {
-		for _, f := range t.Files {
-			before := snapshotHash(projectRoot, f)
+	if len(report.Issues) > 0 {
+		for i, iss := range report.Issues {
+			tid := fmt.Sprintf("%s-I%d", src.ID, i+1)
+			target := iss.TargetFile
+			if target == "" {
+				target = iss.SourceFile
+			}
+			desc := fmt.Sprintf("[%s/%s] %s — edit %s. %s",
+				iss.Ecosystem, iss.Category, iss.Detail, target, iss.Fix)
+			tasks = append(tasks, Task{
+				ID:          tid,
+				Description: desc,
+				Files:       []string{target},
+			})
+			before := snapshotHash(projectRoot, target)
+			preview := before
+			if len(preview) > 12 {
+				preview = preview[:12]
+			}
 			acs = append(acs, AcceptanceCriterion{
 				ID:          fmt.Sprintf("%s-ac-%d", id, i+1),
-				Description: fmt.Sprintf("file %s changed after integrity fix (pre-hash %s)", f, before[:min(12, len(before))]),
-				Command:     fmt.Sprintf(`h="$( (sha256sum -- %q 2>/dev/null || echo '(absent)') | awk '{print $1}')"; [ "$h" != %q ]`, f, before),
+				Description: fmt.Sprintf("%s changed after integrity fix (pre-hash %s)", target, preview),
+				// Portable SHA-256: sha256sum (Linux/coreutils),
+				// shasum -a 256 (macOS), openssl dgst (universal).
+				Command: fmt.Sprintf(
+					`h="$( { sha256sum -- %q 2>/dev/null || shasum -a 256 -- %q 2>/dev/null || openssl dgst -sha256 %q 2>/dev/null; } | awk '{for(i=1;i<=NF;i++) if(length($i)==64) {print $i; exit}}' )"; [ -z "$h" ] && h='(absent)'; [ "$h" != %q ]`,
+					target, target, target, before),
 			})
-			break // one AC per task (first file)
+		}
+	} else {
+		for i, d := range report.Directives {
+			tid := fmt.Sprintf("%s-I%d", src.ID, i+1)
+			tasks = append(tasks, Task{
+				ID:          tid,
+				Description: d,
+				Files:       extractFilesFromDirective(d, src),
+			})
 		}
 	}
 	if len(acs) == 0 {
-		// No declared files — fall back to a repo-diff check so the
+		// No structured issues — fall back to a repo-diff gate so the
 		// session cannot pass without writing SOMETHING.
 		acs = append(acs, AcceptanceCriterion{
 			ID:          fmt.Sprintf("%s-ac-diff", id),

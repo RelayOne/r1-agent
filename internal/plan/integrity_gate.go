@@ -68,7 +68,15 @@ type IntegrityReport struct {
 type IntegrityIssue struct {
 	Ecosystem  string // e.g., "typescript", "go", "rust", "python"
 	Category   string
-	SourceFile string // repo-relative
+	SourceFile string // repo-relative file that surfaced the issue
+	// TargetFile is the file whose CONTENT the fix session must
+	// modify to resolve the issue. Differs from SourceFile for
+	// manifest-import (target = manifest like package.json / go.mod)
+	// and public-surface (target = barrel / mod file), matches
+	// SourceFile for compile-regression. Used by the fix-session
+	// AC synthesis so hash-change verification targets the file
+	// that should actually change.
+	TargetFile string
 	Detail     string // ecosystem-specific detail (symbol name, error code, etc.)
 	Fix        string // suggested remediation (single sentence)
 }
@@ -222,6 +230,7 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 					Ecosystem:  name,
 					Category:   "manifest-import",
 					SourceFile: m.SourceFile,
+					TargetFile: m.Manifest, // edit the manifest, not the source
 					Detail:     m.ImportPath,
 					Fix:        fix,
 				})
@@ -243,6 +252,7 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 					Ecosystem:  name,
 					Category:   "public-surface",
 					SourceFile: m.SourceFile,
+					TargetFile: m.TargetFile, // edit the barrel/mod file
 					Detail:     m.FixLine,
 					Fix:        fmt.Sprintf("insert `%s` into %s", m.FixLine, m.TargetFile),
 				})
@@ -284,6 +294,7 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 					Ecosystem:  name,
 					Category:   "compile-regression",
 					SourceFile: f,
+					TargetFile: f, // the file with the error IS what to edit
 					Detail:     fmt.Sprintf("%d new error(s)", len(errs)),
 					Fix:        "resolve new errors introduced in this session",
 				})

@@ -42,8 +42,27 @@ import (
 //     recordSessionFailure read+write ss.state and flush to disk.
 //     We take stateMu around each call so concurrent record calls
 //     serialize cleanly.
+// safeBuildDAG takes sessionsMu and builds the DAG off a snapshot,
+// preventing races against concurrent AppendSession /
+// InsertSessionAfter / SpliceIntegrityFixDep writes that now touch
+// ss.sow.Sessions + sess.Inputs from worker goroutines.
+func (ss *SessionScheduler) safeBuildDAG() *SessionDAG {
+	ss.sessionsMu.Lock()
+	defer ss.sessionsMu.Unlock()
+	// Snapshot into a temporary *SOW so BuildSessionDAG operates on
+	// a consistent view even if another goroutine writes afterward.
+	snapshot := &SOW{ID: ss.sow.ID, Name: ss.sow.Name}
+	snapshot.Sessions = make([]Session, len(ss.sow.Sessions))
+	for i, sess := range ss.sow.Sessions {
+		sess.Inputs = append([]string(nil), sess.Inputs...)
+		sess.Outputs = append([]string(nil), sess.Outputs...)
+		snapshot.Sessions[i] = sess
+	}
+	return BuildSessionDAG(snapshot)
+}
+
 func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecuteFunc) ([]SessionResult, error) {
-	dag := BuildSessionDAG(ss.sow)
+	dag := ss.safeBuildDAG()
 	fmt.Println(dag.Summary(ss.sow))
 	fmt.Printf("  🛣 parallel session runner active (max %d concurrent)\n", ss.ParallelSessions)
 
@@ -96,9 +115,20 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 	// the live list each iteration so newly appended sessions get
 	// picked up — sessions / order / dag are also rebuilt on demand.
 	rebuildMaps := func() (map[string]Session, []string) {
+		// Take sessionsMu so concurrent AppendSession /
+		// InsertSessionAfter / SpliceIntegrityFixDep writes can't
+		// race our read of ss.sow.Sessions + each session's Inputs
+		// slice. Without this the -race detector would flag the
+		// mutation path the integrity gate introduced.
+		ss.sessionsMu.Lock()
+		defer ss.sessionsMu.Unlock()
 		s := make(map[string]Session, len(ss.sow.Sessions))
 		o := make([]string, 0, len(ss.sow.Sessions))
 		for _, sess := range ss.sow.Sessions {
+			// Deep-copy Inputs so a later splice can't mutate the
+			// snapshot the dispatch loop holds.
+			inputs := append([]string(nil), sess.Inputs...)
+			sess.Inputs = inputs
 			s[sess.ID] = sess
 			o = append(o, sess.ID)
 		}
@@ -397,7 +427,7 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		// Pick up any sessions appended via AppendSession since the
 		// last iteration so continuations actually get dispatched.
 		sessions, order = rebuildMaps()
-		dag = BuildSessionDAG(ss.sow)
+		dag = ss.safeBuildDAG()
 		// Deadlock watchdog: any session promoted via AppendSession
 		// that has been pending past PromotedDispatchSLA without
 		// dispatch is almost certainly deadlocked behind its parent
@@ -497,7 +527,7 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			// so any preempt fix sessions appended during the drain
 			// are DAG roots (no inferred deps) and become ready.
 			sessions, order = rebuildMaps()
-			dag = BuildSessionDAG(ss.sow)
+			dag = ss.safeBuildDAG()
 			stateMu.Lock()
 			anyLeft := false
 			for _, id := range order {

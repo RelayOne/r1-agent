@@ -192,6 +192,49 @@ func (ss *SessionScheduler) AppendSession(session Session) {
 	ss.promotedMu.Unlock()
 }
 
+// InsertSessionAfter splices `session` into ss.sow.Sessions at the
+// position immediately following the session with ID `afterID`. Used
+// by the sequential runner to slot a promoted integrity-fix session
+// ahead of the next original session — sequential Run() walks by
+// index and never consults Inputs, so order-of-execution is
+// determined solely by slice position.
+//
+// If afterID is not found, falls back to AppendSession semantics.
+// Also records the inserted session in state (matching AppendSession)
+// so resume works.
+func (ss *SessionScheduler) InsertSessionAfter(afterID string, session Session) {
+	ss.sessionsMu.Lock()
+	idx := -1
+	for i := range ss.sow.Sessions {
+		if ss.sow.Sessions[i].ID == afterID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		ss.sow.Sessions = append(ss.sow.Sessions, session)
+	} else {
+		ins := idx + 1
+		ss.sow.Sessions = append(ss.sow.Sessions[:ins],
+			append([]Session{session}, ss.sow.Sessions[ins:]...)...)
+	}
+	ss.sessionsMu.Unlock()
+	if ss.state != nil {
+		ss.state.Sessions = append(ss.state.Sessions, SessionRecord{
+			SessionID: session.ID,
+			Title:     session.Title,
+			Status:    "pending",
+		})
+		_ = SaveSOWState(ss.projectRoot, ss.state)
+	}
+	ss.promotedMu.Lock()
+	if ss.promotedAt == nil {
+		ss.promotedAt = map[string]time.Time{}
+	}
+	ss.promotedAt[session.ID] = time.Now()
+	ss.promotedMu.Unlock()
+}
+
 // SpliceIntegrityFixDep rewrites the Inputs of every session in the
 // scheduler's live session list that declares any artifact in
 // src.Outputs as an input, adding fix.Outputs[0] (the synthetic
@@ -490,15 +533,22 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 		// Post-success integrity gate: run the manifest-import / public-
 		// surface / compile-regression / vendor-policy probes over this
 		// session's files, and promote findings as a Preempt fix
-		// session. Splices a DAG edge so any not-yet-started downstream
-		// session consuming this source's outputs now blocks on the
-		// fix too.
+		// session. In sequential mode we insert the fix at position
+		// i+1 so the very next loop iteration runs it BEFORE any
+		// subsequent session — the parallel path relies on Inputs
+		// edges via SpliceIntegrityFixDep to enforce ordering, but
+		// the sequential loop walks by index and doesn't consult
+		// Inputs, so we must physically slot the fix ahead of
+		// later work. We still run SpliceIntegrityFixDep so the
+		// shared fix-artifact entry is present on downstream Inputs
+		// (consumers outside this run benefit from the DAG edge
+		// being authoritative in sow-state).
 		if !ss.SkipIntegrityGate {
 			if report, err := RunIntegrityGate(ctx, ss.projectRoot, session, compileBaseline); err == nil && report != nil && len(report.Directives) > 0 {
 				fmt.Printf("\n  🛡 integrity gate: %d finding(s) in session %s\n", len(report.Directives), session.ID)
 				fixSession := synthIntegrityFixSession(ss.projectRoot, session, report)
 				ss.SpliceIntegrityFixDep(session, fixSession)
-				ss.AppendSession(fixSession)
+				ss.InsertSessionAfter(session.ID, fixSession)
 			}
 		}
 		ss.recordSessionSuccess(session, result)
