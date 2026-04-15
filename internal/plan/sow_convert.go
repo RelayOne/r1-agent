@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
@@ -320,12 +322,29 @@ PROSE INPUT:
 // returns a parsed SOW plus its raw JSON. Requires a provider and a model.
 // Used by sowCmd when the user passes a .txt or .md file instead of a
 // pre-structured SOW.
+//
+// Tries chunked conversion first (skeleton extraction → per-session
+// expansion in parallel) so large prose doesn't get stuck on one
+// monstrous LLM call that can hang for 20+ minutes. Falls back to
+// the original monolith path on chunked failure so behavior is
+// strictly additive — chunked successes win, chunked failures
+// retry via the legacy single-call route.
 func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW, []byte, error) {
 	if strings.TrimSpace(prose) == "" {
 		return nil, nil, fmt.Errorf("empty prose")
 	}
 	if prov == nil {
 		return nil, nil, fmt.Errorf("no provider configured (check --runner / --native-api-key)")
+	}
+
+	// Try chunked path first. Per-call timeouts inside it bound wall
+	// clock; failures fall through to the monolith below.
+	chunkedCtx, chunkedCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer chunkedCancel()
+	if sow, raw, err := ConvertProseToSOWChunked(chunkedCtx, prose, prov, model, 4); err == nil {
+		return sow, raw, nil
+	} else {
+		fmt.Printf("  ⚠ chunked convert failed (%v) — falling back to single-call convert\n", err)
 	}
 
 	fullPrompt := sowConversionPrompt + prose
