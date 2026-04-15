@@ -372,8 +372,11 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			// then loop once more to see if new sessions are ready.
 			wg.Wait()
 			// After draining, loop once more to pick up newly-ready
-			// sessions; if still none, we're done.
+			// sessions; if still none, we're done. Refresh DAG first
+			// so any preempt fix sessions appended during the drain
+			// are DAG roots (no inferred deps) and become ready.
 			sessions, order = rebuildMaps()
+			dag = BuildSessionDAG(ss.sow)
 			stateMu.Lock()
 			anyLeft := false
 			for _, id := range order {

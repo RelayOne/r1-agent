@@ -59,6 +59,18 @@ type Session struct {
 	Inputs             []string             `json:"inputs,omitempty" yaml:"inputs"`   // outputs from prior sessions this session needs
 	Outputs            []string             `json:"outputs,omitempty" yaml:"outputs"` // artifacts this session produces
 	InfraNeeded        []string             `json:"infra_needed,omitempty" yaml:"infra_needed"` // references to SOW.Stack.Infra by name
+
+	// Preempt marks a session as preemptive — it should run as soon as
+	// a scheduler slot is free, ignoring declaration-order and
+	// file-scope dependency inference. Set to true on fix sessions
+	// promoted by PlanFixDAG / OnTaskAbandon so they can run
+	// concurrently with (or immediately after) the parent session
+	// that triggered the escalation, instead of sitting behind the
+	// parent in the DAG. BuildSessionDAG honors this by not adding
+	// any inferred edges TO a preempt session. Explicit
+	// Inputs/Outputs still apply so a fix session can still declare
+	// real artifact deps if the planner knows them.
+	Preempt bool `json:"preempt,omitempty" yaml:"preempt"`
 }
 
 // AcceptanceCriterion is a verifiable gate condition at session boundaries.

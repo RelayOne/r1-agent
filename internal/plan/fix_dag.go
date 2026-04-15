@@ -501,6 +501,11 @@ func ApplyFixDAG(dag FixDAG, parentSessionID, parentSessionTitle string) (Sessio
 		ID:          parentSessionID + "-fix",
 		Title:       title,
 		Description: "root-cause fix DAG promoted after " + parentSessionID + " exhausted its repair cascade",
+		// Preempt so the scheduler treats this as a DAG root rather
+		// than a declaration-order child of the parent. Without this
+		// the fix session waits forever behind the very session whose
+		// failure triggered it — a classic deadlock.
+		Preempt: true,
 	}
 	// Namespace every FixDAGTask ID -> plan.Task ID and remap deps.
 	prefix := parentSessionID + "-fix-"

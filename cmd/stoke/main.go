@@ -1552,6 +1552,14 @@ func sowCmd(args []string) {
 	if *parallelSessions >= 2 {
 		ss.ParallelSessions = *parallelSessions
 		fmt.Printf("  parallel-sessions: ON (up to %d concurrent sessions via DAG scheduler)\n", *parallelSessions)
+	} else if *workers >= 2 {
+		// Implicit parallel-sessions when --workers >= 2. Without this,
+		// preempt fix sessions sit behind their parent in sequential
+		// Run() and the whole self-heal loop deadlocks. The explicit
+		// --parallel-sessions flag still wins when set; this is only a
+		// default for users who pass --workers alone.
+		ss.ParallelSessions = *workers
+		fmt.Printf("  parallel-sessions: ON (implicit from --workers=%d; preempt fix sessions require it)\n", *workers)
 	}
 	if *smokeEnabled {
 		// Smoke gate: environment-aware runtime verification after a

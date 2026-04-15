@@ -129,6 +129,28 @@ func BuildSessionDAG(sow *SOW) *SessionDAG {
 	}
 
 	for i, s := range sow.Sessions {
+		// Preempt sessions skip all INFERRED edges. Explicit
+		// Inputs/Outputs still apply — a preempt session that really
+		// does depend on a specific artifact can say so — but file-
+		// scope overlap and declaration-order fallback do not block
+		// it. This is how fix sessions promoted mid-run get to race
+		// their parents instead of waiting behind them.
+		if s.Preempt {
+			hasExplicitIO := len(s.Inputs) > 0
+			for _, in := range s.Inputs {
+				in = strings.TrimSpace(in)
+				if in == "" {
+					continue
+				}
+				if prodID, ok := producers[in]; ok {
+					if order[prodID] < order[s.ID] {
+						addEdge(prodID, s.ID, "Inputs["+in+"] → Outputs of "+prodID+" (preempt)")
+					}
+				}
+			}
+			_ = hasExplicitIO
+			continue
+		}
 		// Layer 1: explicit I/O edges.
 		hasExplicitIO := len(s.Inputs) > 0
 		for _, in := range s.Inputs {

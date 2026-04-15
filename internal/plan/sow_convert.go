@@ -148,6 +148,50 @@ RULES:
 3. Task IDs are unique across the entire SOW (T1, T2, ..., not restarting per session). Task.dependencies entries must ALL reference task IDs that exist somewhere in this SOW — never a stale or renamed ID.
 4. Session COUNT follows from the feature decomposition — typically one session per major deliverable or feature slice. Don't compress sessions for compression's sake. A SOW describing 10 deliverables naturally has ~10 sessions. A SOW describing 3 deliverables has ~3 sessions.
 5. Every task description must be a single specific sentence — no bullet lists inside.
+
+TASK-COUNT SCALING (CRITICAL — most SOWs fail because the planner undercounts tasks):
+
+   The total task count MUST scale with the size and ambition of the
+   input spec. A 200-line SOW describing a CLI tool might need 15-25
+   tasks. A 1000-line SOW describing a monorepo with web + mobile +
+   backend needs 80-150 tasks. A 2000-line enterprise SOW needs
+   150-300 tasks.
+
+   Rule of thumb: roughly ONE task per 10-20 lines of substantive
+   spec prose (excluding boilerplate like tables of contents and
+   style guides). If you emit a SOW with fewer tasks than that, you
+   are grouping too coarsely and the worker will skip surfaces.
+
+   SCAFFOLDING TASKS ARE NOT OPTIONAL. For every declared app or
+   deliverable surface, emit explicit scaffolding tasks BEFORE the
+   feature tasks:
+
+   - Next.js app → tasks for: app/layout.tsx, app/page.tsx,
+     app/globals.css, next.config.js, tailwind.config.ts,
+     middleware.ts (if auth), per-route folder + page.tsx for EACH
+     route the spec mentions.
+   - Expo / React Native app → tasks for: App.tsx (or index.ts
+     entry), navigation container + stack definition, per-screen
+     file for EACH screen the spec mentions, app.json, babel.config.js,
+     metro.config.js.
+   - Backend service → tasks for: server entry, route registration,
+     per-endpoint handler file, middleware, error handler, health
+     check route.
+   - Shared package → tasks for: package.json, tsconfig.json, src/
+     entry, exported API surface per responsibility.
+
+   NEVER emit a task like "implement the web app" or "build the
+   mobile app" as a single unit. Apps are never a single task — they
+   are dozens of small scaffolding + feature tasks. If the spec says
+   "a dashboard with 5 pages", that is AT LEAST 5 page-component
+   tasks plus routing + layout scaffolding.
+
+   VERIFICATION: before emitting, count the surfaces in the input
+   spec. For each declared app, count its mentioned routes/screens.
+   For each declared package, count its exported modules. The sum
+   plus scaffolding plus tests plus config should be roughly your
+   task count. If your task count is less than half of that sum, you
+   are undercounting — go back and split.
 6. Infer the stack from the prose. If the prose says "Rust" or mentions Cargo, set language="rust". If it says Next.js, set framework="next". If ambiguous, leave stack fields empty.
 7. If the prose mentions Postgres, Redis, or other services, add them to stack.infra with env_vars they need. Every name referenced in session.infra_needed MUST also appear in stack.infra.
 8. The first session must be foundational (repo layout, deps, config, one end-to-end 'hello world' build pass). The last session must be integration/acceptance.
