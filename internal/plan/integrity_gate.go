@@ -348,30 +348,53 @@ func CaptureCompileBaseline(ctx context.Context, projectRoot string, files []str
 }
 
 // isRealFilePath reports whether the given relative or absolute path
-// points at an actual file inside projectRoot. Used by the manifest-
-// import issue synthesis to reject prose labels ("SOW architecture
-// policy"), directory paths ("src-tauri/src/"), and path strings
-// with parenthetical clarifications ("src-tauri/src/main.rs
-// (invoke_handler)") — any of which would break the hash-based
-// acceptance check downstream.
+// is a plausible editable or creatable file inside projectRoot. Used
+// by the manifest-import issue synthesis to reject prose labels
+// ("SOW architecture policy"), directory paths ("src-tauri/src/"),
+// and path strings with parenthetical clarifications
+// ("src-tauri/src/main.rs (invoke_handler)"), while accepting:
+//   - files that exist on disk (obvious case)
+//   - paths with spaces in the filename ("My App/My App.csproj")
+//   - paths to files the fix is SUPPOSED to create (Podfile.lock
+//     before pod install runs, go.sum after go mod tidy, etc.) —
+//     requires the path to have a separator + extension so random
+//     prose that happens to lack parentheses doesn't slip through.
 func isRealFilePath(projectRoot, p string) bool {
 	if p == "" {
 		return false
 	}
-	// Parenthetical clarifications / whitespace mean not a clean
-	// file path. Similarly for backticks or other punctuation.
-	if strings.ContainsAny(p, "() \t`") {
+	// Parenthetical clarifications, backticks, tabs, newlines are
+	// the telltale sign of a prose-ish label ("main.rs
+	// (invoke_handler)"). Plain spaces are legal in filenames
+	// ("My App/My App.csproj") and are allowed.
+	if strings.ContainsAny(p, "()`\t\n\r") {
+		return false
+	}
+	// Trailing slash → directory-shaped, never a file target.
+	if strings.HasSuffix(p, "/") || strings.HasSuffix(p, string(os.PathSeparator)) {
 		return false
 	}
 	abs := p
 	if !filepath.IsAbs(abs) {
 		abs = filepath.Join(projectRoot, p)
 	}
-	info, err := os.Stat(abs)
-	if err != nil {
+	// Accept any path that exists as a file.
+	if info, err := os.Stat(abs); err == nil {
+		return !info.IsDir()
+	}
+	// Missing path: accept only when the shape is path-like — has a
+	// directory separator AND an extension on the basename. This
+	// rejects prose ("SOW architecture policy") while accepting
+	// creatable targets like "ios/Podfile.lock" or
+	// "src-tauri/Cargo.toml" that the fix worker will generate.
+	base := filepath.Base(p)
+	if !strings.ContainsRune(p, '/') && !strings.ContainsRune(p, os.PathSeparator) {
 		return false
 	}
-	return !info.IsDir()
+	if !strings.Contains(base, ".") {
+		return false
+	}
+	return true
 }
 
 // collectSessionFiles returns absolute paths of every file the
