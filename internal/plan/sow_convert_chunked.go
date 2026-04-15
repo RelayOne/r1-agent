@@ -226,6 +226,49 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// intra-session Dependencies via the oldID→newID map. AC IDs
 	// get the same treatment.
 	renumberTasksAndACsGlobally(out)
+
+	// Recursive consistency + coverage loop: run deterministic
+	// consistency + LLM coverage review. If either surfaces issues
+	// (missing sessions to add, dangling inputs, etc.) apply fixes
+	// and re-check. Cap at 3 rounds so a pathological case can't
+	// loop indefinitely. Converges when consistency is clean AND
+	// coverage review adds zero sessions.
+	const maxReviewRounds = 3
+	for round := 1; round <= maxReviewRounds; round++ {
+		issues := checkChunkedConsistency(out)
+		added := 0
+		if ctx.Err() == nil {
+			var cErr error
+			added, cErr = reviewCoverageAndPatch(ctx, prose, out, prov, model)
+			if cErr != nil {
+				fmt.Printf("  ⚠ chunked convert coverage review round %d skipped: %v\n", round, cErr)
+			}
+		}
+		if len(issues) > 0 {
+			fmt.Printf("  ⚠ chunked convert consistency round %d: %d issue(s)\n", round, len(issues))
+			for _, is := range issues {
+				fmt.Printf("     - %s\n", is)
+			}
+		}
+		if added > 0 {
+			fmt.Printf("  ✓ chunked convert coverage round %d added %d session(s)\n", round, added)
+			renumberTasksAndACsGlobally(out)
+		}
+		// Converged: no coverage gaps found. Consistency issues
+		// that remain after the LLM round are typically data-shape
+		// concerns the execution layer resolves via the fuzzy DAG,
+		// so we accept them with a warning rather than loop forever.
+		if added == 0 {
+			if round > 1 {
+				fmt.Printf("  ✓ chunked convert converged after %d review round(s)\n", round)
+			}
+			break
+		}
+		if round == maxReviewRounds {
+			fmt.Printf("  ⚠ chunked convert hit review cap (%d rounds) with %d coverage adds last round — proceeding\n", maxReviewRounds, added)
+		}
+	}
+
 	autoFillMissingACFields(out)
 	autoCleanTaskDeps(out)
 	autoAddMissingInfra(out)
@@ -356,6 +399,192 @@ func callChatWithCtx(ctx context.Context, prov provider.Provider, req provider.C
 	case r := <-ch:
 		return r.resp, r.err
 	}
+}
+
+// checkChunkedConsistency validates cross-session contracts after
+// chunked expansion:
+//
+//   1. Every session's Inputs must reference an Output declared by
+//      an earlier session. Per-session expanders emit Inputs
+//      speculatively based on the skeleton's cross-session hints;
+//      stale/typo'd names surface here.
+//   2. No two sessions declare ownership of the same file. When
+//      the per-session expander for S2 and S3 both list
+//      'packages/api-client/src/index.ts' in task.Files, they'll
+//      race at dispatch.
+//
+// Returns human-readable issue lines; caller logs but does not
+// abort (the execution layer's fuzzy DAG + session scheduler
+// handle a lot of this gracefully, so strict rejection would be
+// over-eager).
+func checkChunkedConsistency(sow *SOW) []string {
+	if sow == nil {
+		return nil
+	}
+	var issues []string
+
+	// Build producer map: normalized output-name → first session
+	// that declared it.
+	producers := map[string]string{}
+	for _, s := range sow.Sessions {
+		for _, out := range s.Outputs {
+			key := strings.ToLower(strings.TrimSpace(out))
+			if key == "" {
+				continue
+			}
+			if _, seen := producers[key]; !seen {
+				producers[key] = s.ID
+			}
+		}
+	}
+
+	// Inputs-resolve check.
+	for _, s := range sow.Sessions {
+		for _, in := range s.Inputs {
+			key := strings.ToLower(strings.TrimSpace(in))
+			if key == "" {
+				continue
+			}
+			// Accept exact match OR substring both ways (matches the
+			// fuzzy DAG resolver's semantics).
+			if _, ok := producers[key]; ok {
+				continue
+			}
+			matched := false
+			for pk := range producers {
+				if strings.Contains(key, pk) || strings.Contains(pk, key) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				issues = append(issues, fmt.Sprintf("session %s input %q has no matching producer in earlier sessions — likely typo or missing session", s.ID, in))
+			}
+		}
+	}
+
+	// File-ownership check.
+	fileOwners := map[string][]string{}
+	for _, s := range sow.Sessions {
+		for _, t := range s.Tasks {
+			for _, f := range t.Files {
+				f = strings.TrimSpace(f)
+				if f == "" {
+					continue
+				}
+				fileOwners[f] = append(fileOwners[f], s.ID)
+			}
+		}
+	}
+	for f, owners := range fileOwners {
+		if len(owners) < 2 {
+			continue
+		}
+		// Dedup session names (one session can have two tasks
+		// touching the same file — that's fine).
+		seen := map[string]bool{}
+		unique := []string{}
+		for _, o := range owners {
+			if !seen[o] {
+				seen[o] = true
+				unique = append(unique, o)
+			}
+		}
+		if len(unique) >= 2 {
+			issues = append(issues, fmt.Sprintf("file %q claimed by %d sessions: %s", f, len(unique), strings.Join(unique, ", ")))
+		}
+	}
+
+	return issues
+}
+
+// coverageReviewPrompt asks the model to compare a reassembled SOW
+// against the original prose and flag deliverables the prose
+// mentions that no session covers. Returns JSON with any missing
+// session stubs; zero-length missing list = full coverage.
+const coverageReviewPrompt = `You are auditing whether a Statement of Work SESSION LIST fully covers a free-form project specification. Your job: flag any deliverable the PROSE mentions that no listed session covers.
+
+Output ONLY the JSON object below — no prose, no markdown fences. Start with '{' and end with '}'.
+
+{
+  "missing": [
+    {
+      "id": "S99 — next unused ID after the provided sessions",
+      "phase": "foundation|core|integration",
+      "title": "string",
+      "description": "what this session delivers; tie back to the prose",
+      "outputs": ["short artifact names, 2-4 words each"]
+    }
+  ]
+}
+
+RULES:
+1. Only flag deliverables the prose EXPLICITLY describes. Don't invent scope.
+2. If the existing session list covers every deliverable, emit {"missing": []}.
+3. Descriptions in 'missing' should reference prose verbatim where possible so the next expansion pass knows what to generate.
+4. Keep the session.outputs terse (2-4 words); they form the DAG edges.
+
+EXISTING SESSION LIST (id, title, description, outputs):
+`
+
+// reviewCoverageAndPatch fires one LLM call comparing the expanded
+// SOW's session list against the original prose and appending any
+// missing session stubs to the SOW. Returns the count of sessions
+// added. Errors surface to the caller but aren't fatal — the run
+// proceeds with partial coverage rather than aborting.
+//
+// New sessions added here are STUBS (no tasks, no ACs). A follow-up
+// expansion call would be needed to fill them in — handled by the
+// next run of ConvertProseToSOWChunked or deferred to the operator.
+func reviewCoverageAndPatch(ctx context.Context, prose string, sow *SOW, prov provider.Provider, model string) (int, error) {
+	if sow == nil || prov == nil {
+		return 0, fmt.Errorf("nil sow or provider")
+	}
+	// Summarize existing sessions compactly.
+	var listBuf strings.Builder
+	for _, s := range sow.Sessions {
+		fmt.Fprintf(&listBuf, "- [%s %s] %s — outputs: %s\n",
+			s.ID, s.Phase, s.Title, strings.Join(s.Outputs, ", "))
+	}
+	userText := coverageReviewPrompt + listBuf.String() + "\n\nPROSE:\n" + prose
+	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
+
+	revCtx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer cancel()
+	resp, err := callChatWithCtx(revCtx, prov, provider.ChatRequest{
+		Model:     model,
+		MaxTokens: 16000,
+		Messages:  []provider.ChatMessage{{Role: "user", Content: userContent}},
+	})
+	if err != nil {
+		return 0, err
+	}
+	raw, _ := collectModelText(resp)
+	if strings.TrimSpace(raw) == "" {
+		return 0, fmt.Errorf("coverage review empty (stop_reason=%q)", resp.StopReason)
+	}
+	var verdict struct {
+		Missing []Session `json:"missing"`
+	}
+	if _, err := jsonutil.ExtractJSONInto(raw, &verdict); err != nil {
+		return 0, fmt.Errorf("parse coverage verdict: %w", err)
+	}
+	if len(verdict.Missing) == 0 {
+		return 0, nil
+	}
+	// Expand each missing session stub to full tasks + ACs using
+	// the existing per-session expander so the new sessions are
+	// first-class, not empty stubs. Skip on failure to keep
+	// coverage best-effort.
+	for _, stub := range verdict.Missing {
+		full, xerr := expandSessionWithRetry(ctx, prose, &sow.Stack, stub, prov, model)
+		if xerr != nil {
+			fmt.Printf("     ⚠ coverage-review session %s expand failed: %v (keeping stub)\n", stub.ID, xerr)
+			full = stub
+		}
+		sow.Sessions = append(sow.Sessions, full)
+	}
+	return len(verdict.Missing), nil
 }
 
 // renumberTasksAndACsGlobally assigns each task + AC a globally
