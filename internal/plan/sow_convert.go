@@ -135,8 +135,8 @@ Required JSON schema:
           "content_match": {"file": "path", "pattern": "string"}
         }
       ],
-      "inputs": ["names of outputs from prior sessions this session uses"],
-      "outputs": ["artifacts this session produces"],
+      "inputs": ["short artifact names — must match the producer session's outputs string-for-string for parallel scheduling to work, e.g. 'monorepo skeleton', NOT 'monorepo skeleton from S1'"],
+      "outputs": ["short artifact names other sessions can reference, e.g. 'monorepo skeleton', 'auth middleware', 'web dashboard'. Use 2-4 words. Do NOT include session IDs or descriptive sentences"],
       "infra_needed": ["names from stack.infra"]
     }
   ]

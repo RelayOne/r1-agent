@@ -72,21 +72,51 @@ func BuildSessionDAG(sow *SOW) *SessionDAG {
 		return g
 	}
 
-	// Index: artifact name → session that produces it.
+	// Index: artifact name → session that produces it. Keyed by the
+	// NORMALIZED form (lowercase, whitespace collapsed) so the
+	// resolver can fuzzy-match prose-y planner emissions like "Auth
+	// foundation from S2" against producer outputs like "auth
+	// foundation".
 	producers := map[string]string{}
+	producerKeys := []string{} // ordered for deterministic substring fallback
 	for _, s := range sow.Sessions {
 		for _, out := range s.Outputs {
-			out = strings.TrimSpace(out)
-			if out == "" {
+			key := normalizeArtifact(out)
+			if key == "" {
 				continue
 			}
-			// When two sessions claim to produce the same artifact,
-			// the FIRST one wins. Subsequent claims are ignored so a
-			// buggy planner duplicating Outputs doesn't create cycles.
-			if _, seen := producers[out]; !seen {
-				producers[out] = s.ID
+			if _, seen := producers[key]; !seen {
+				producers[key] = s.ID
+				producerKeys = append(producerKeys, key)
 			}
 		}
+	}
+
+	// resolveProducer returns the session that produces the named
+	// artifact. Tries (1) exact normalized match, (2) input fully
+	// CONTAINS some producer key (planner wrote "X from S2" where the
+	// producer emitted "X"), (3) producer key fully CONTAINS the input
+	// (planner wrote "auth" where producer emitted "auth foundation").
+	// Returns "" when no producer matches.
+	resolveProducer := func(in string) (string, string) {
+		key := normalizeArtifact(in)
+		if key == "" {
+			return "", ""
+		}
+		if id, ok := producers[key]; ok {
+			return id, key
+		}
+		for _, pk := range producerKeys {
+			if strings.Contains(key, pk) {
+				return producers[pk], pk
+			}
+		}
+		for _, pk := range producerKeys {
+			if strings.Contains(pk, key) {
+				return producers[pk], pk
+			}
+		}
+		return "", ""
 	}
 
 	// Index: session index by ID, used to enforce "earlier declared"
@@ -136,32 +166,26 @@ func BuildSessionDAG(sow *SOW) *SessionDAG {
 		// it. This is how fix sessions promoted mid-run get to race
 		// their parents instead of waiting behind them.
 		if s.Preempt {
-			hasExplicitIO := len(s.Inputs) > 0
 			for _, in := range s.Inputs {
-				in = strings.TrimSpace(in)
-				if in == "" {
+				prodID, matched := resolveProducer(in)
+				if prodID == "" {
 					continue
 				}
-				if prodID, ok := producers[in]; ok {
-					if order[prodID] < order[s.ID] {
-						addEdge(prodID, s.ID, "Inputs["+in+"] → Outputs of "+prodID+" (preempt)")
-					}
+				if order[prodID] < order[s.ID] {
+					addEdge(prodID, s.ID, "Inputs["+strings.TrimSpace(in)+"] → "+matched+" of "+prodID+" (preempt)")
 				}
 			}
-			_ = hasExplicitIO
 			continue
 		}
 		// Layer 1: explicit I/O edges.
 		hasExplicitIO := len(s.Inputs) > 0
 		for _, in := range s.Inputs {
-			in = strings.TrimSpace(in)
-			if in == "" {
+			prodID, matched := resolveProducer(in)
+			if prodID == "" {
 				continue
 			}
-			if prodID, ok := producers[in]; ok {
-				if order[prodID] < order[s.ID] {
-					addEdge(prodID, s.ID, "Inputs["+in+"] → Outputs of "+prodID)
-				}
+			if order[prodID] < order[s.ID] {
+				addEdge(prodID, s.ID, "Inputs["+strings.TrimSpace(in)+"] → "+matched+" of "+prodID)
 			}
 		}
 
@@ -225,6 +249,31 @@ func (g *SessionDAG) Summary(sow *SOW) string {
 			parts = append(parts, fmt.Sprintf("%s [%s]", d, reasons[d]))
 		}
 		fmt.Fprintf(&b, "  %s ← %s\n", s.ID, strings.Join(parts, ", "))
+	}
+	return b.String()
+}
+
+// normalizeArtifact lowercases + collapses internal whitespace so the
+// DAG resolver can treat "Auth foundation" and "auth   foundation\n"
+// as the same artifact name. Used for matching session Inputs against
+// session Outputs.
+func normalizeArtifact(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !prevSpace {
+				b.WriteByte(' ')
+				prevSpace = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		prevSpace = false
 	}
 	return b.String()
 }
