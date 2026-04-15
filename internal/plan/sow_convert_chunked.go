@@ -194,22 +194,39 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			full, err := expandSessionWithRetry(ctx, prose, &skel.Stack, stub, prov, model)
 			elapsed := time.Since(start).Round(time.Second)
 			if err != nil {
-				fmt.Printf("     ⚠ session %s expand failed (%s): %v\n", stub.ID, elapsed, err)
-				// Placeholder so reassembly stays consistent and the
-				// operator sees what failed.
-				full = stub
-				full.Description = stub.Description + " [EXPAND FAILED: " + err.Error() + "]"
-			} else {
-				fmt.Printf("     ✓ session %s expanded in %s (%d tasks, %d ACs)\n", stub.ID, elapsed, len(full.Tasks), len(full.AcceptanceCriteria))
+				fmt.Printf("     ⚠ session %s DROPPED after expand failure (%s): %v\n", stub.ID, elapsed, err)
+				fmt.Printf("       original scope: %s — %s\n", stub.Title, stub.Description)
+				fmt.Printf("       operator action: re-run OR add this session manually to the SOW\n")
+				results <- result{idx: i, err: err}
+				return
 			}
-			results <- result{idx: i, session: full, err: err}
+			fmt.Printf("     ✓ session %s expanded in %s (%d tasks, %d ACs)\n", stub.ID, elapsed, len(full.Tasks), len(full.AcceptanceCriteria))
+			results <- result{idx: i, session: full}
 		}(i, stub)
 	}
 	wg.Wait()
 	close(results)
+	expandFailed := make([]bool, len(skel.Sessions))
 	for r := range results {
+		if r.err != nil {
+			expandFailed[r.idx] = true
+			continue
+		}
 		expanded[r.idx] = r.session
 	}
+	// Filter out failed sessions — a stub with no tasks/ACs fails
+	// ValidateSOW downstream ('session X has no acceptance criteria')
+	// and forces the 20+ min monolith fallback. Dropping preserves
+	// partial coverage so the run proceeds; the warning above tells
+	// the operator exactly what was lost and how to recover.
+	kept := expanded[:0]
+	for i, s := range expanded {
+		if expandFailed[i] {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	expanded = kept
 
 	// Phase 3: reassemble + validate.
 	out := &SOW{
@@ -919,18 +936,24 @@ func reviewCoverageAndPatch(ctx context.Context, prose string, sow *SOW, prov pr
 		return 0, nil
 	}
 	// Expand each missing session stub to full tasks + ACs using
-	// the existing per-session expander so the new sessions are
-	// first-class, not empty stubs. Skip on failure to keep
-	// coverage best-effort.
+	// the existing per-session expander. Drop on failure rather
+	// than keeping a stub — tasks-less stubs fail ValidateSOW
+	// downstream ('session X has no acceptance criteria') and force
+	// a 20+ min monolith fallback. Coverage is best-effort; losing
+	// a session here is preferable to losing the entire chunked
+	// pipeline.
+	added := 0
 	for _, stub := range verdict.Missing {
 		full, xerr := expandSessionWithRetry(ctx, prose, &sow.Stack, stub, prov, model)
 		if xerr != nil {
-			fmt.Printf("     ⚠ coverage-review session %s expand failed: %v (keeping stub)\n", stub.ID, xerr)
-			full = stub
+			fmt.Printf("     ⚠ coverage-review session %s DROPPED after expand failure: %v\n", stub.ID, xerr)
+			fmt.Printf("       intended scope: %s — %s\n", stub.Title, stub.Description)
+			continue
 		}
 		sow.Sessions = append(sow.Sessions, full)
+		added++
 	}
-	return len(verdict.Missing), nil
+	return added, nil
 }
 
 // renumberTasksAndACsGlobally assigns each task + AC a globally

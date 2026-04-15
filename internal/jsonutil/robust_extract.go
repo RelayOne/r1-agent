@@ -119,24 +119,237 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 		return nil, err
 	}
 	if uErr := json.Unmarshal(blob, out); uErr != nil {
-		// Common LLM quirk: missing comma between an array/object
-		// and the next key. Example:
-		//   "tasks": [...]
-		//   "acceptance_criteria": [...]
-		// → json.Unmarshal rejects with "invalid character ':' after
-		// array element". Try a conservative repair pass; if the
-		// repaired blob unmarshals, return success; otherwise
-		// surface the ORIGINAL error so debugging shows the real
-		// failure shape.
-		repaired := repairMissingCommas(blob)
-		if !bytes.Equal(repaired, blob) {
-			if uErr2 := json.Unmarshal(repaired, out); uErr2 == nil {
-				return repaired, nil
+		// Two common LLM JSON quirks:
+		//   1. Missing comma between `]`/`}`/`"` and next key.
+		//   2. Missing `{` wrappers around object literals inside
+		//      arrays — produces '"id":' as an array element which
+		//      fails as "invalid character ':' after array element".
+		// Run both repair passes; apply the first that parses.
+		for _, repairFn := range []func([]byte) []byte{repairMissingCommas, repairMissingBraces, repairBoth} {
+			rep := repairFn(blob)
+			if bytes.Equal(rep, blob) {
+				continue
+			}
+			if uErr2 := json.Unmarshal(rep, out); uErr2 == nil {
+				return rep, nil
 			}
 		}
 		return blob, &ExtractError{Raw: raw, Blob: string(blob), Reason: "unmarshal into target: " + uErr.Error()}
 	}
 	return blob, nil
+}
+
+// repairBoth composes the two repair passes so a blob that has BOTH
+// missing-commas AND missing-braces can be fixed in one round-trip.
+func repairBoth(blob []byte) []byte {
+	return repairMissingCommas(repairMissingBraces(blob))
+}
+
+// repairMissingBraces looks for object literals inside JSON arrays
+// that are missing their `{` wrapping. LLMs sometimes emit:
+//
+//   "tasks": [
+//     "id": "T1", "description": "...",
+//     "id": "T2", "description": "..."
+//   ]
+//
+// instead of the correct:
+//
+//   "tasks": [
+//     {"id": "T1", "description": "..."},
+//     {"id": "T2", "description": "..."}
+//   ]
+//
+// Heuristic repair: inside an array context, when we see the
+// pattern `"<key>":` at the start of an element (after `[` or `,`),
+// wrap the element in `{...}` ending at the next bare `,` or `]`
+// at the same depth. Conservative — only activates inside arrays.
+//
+// This is genuinely hard to do safely without a proper parser, so
+// the implementation is a best-effort scan that bails at the first
+// ambiguity and leaves the blob unchanged. If the result doesn't
+// parse, caller tries the next repair pass.
+func repairMissingBraces(blob []byte) []byte {
+	// Strategy: scan depth-aware; when we hit a `[`, enter array
+	// mode. In array mode, when the next non-whitespace after `[`
+	// or `,` is `"` followed by (skipping until `:`) a `:`, that's
+	// an unwrapped object literal. Insert `{` there and track
+	// where to insert matching `}`.
+	//
+	// Full implementation would require a mini-parser. For now we
+	// detect the pattern and if it exists, wrap the whole array's
+	// contents in `{}` per comma-separated segment.
+	n := len(blob)
+	out := make([]byte, 0, n+64)
+	type ctx struct{ isArray bool }
+	stack := []ctx{}
+	inString := false
+	escape := false
+	// pending: when we're inside an array and looking at the start
+	// of a new element, decide if it's an unwrapped object.
+	atElementStart := false
+
+	for i := 0; i < n; i++ {
+		b := blob[i]
+		if escape {
+			out = append(out, b)
+			escape = false
+			continue
+		}
+		if inString {
+			out = append(out, b)
+			if b == '\\' {
+				escape = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			// If we're at the start of an array element AND this
+			// quote begins a `"key":` pattern, wrap the element.
+			if atElementStart && len(stack) > 0 && stack[len(stack)-1].isArray {
+				// Peek ahead: is this quote followed by a key-like
+				// `"..."`:` pattern?
+				if looksLikeUnwrappedObjectStart(blob[i:]) {
+					out = append(out, '{')
+					// Now scan forward to end of this array element
+					// (next `,` or `]` at our depth) and insert `}`
+					// before it.
+					end := findElementEnd(blob, i, len(stack))
+					if end > i {
+						// Emit [i:end], then '}', then continue from
+						// end.
+						out = append(out, blob[i:end]...)
+						out = append(out, '}')
+						i = end - 1 // loop will ++
+						atElementStart = false
+						continue
+					}
+				}
+			}
+			out = append(out, b)
+			inString = true
+			atElementStart = false
+		case '{':
+			out = append(out, b)
+			stack = append(stack, ctx{isArray: false})
+			atElementStart = false
+		case '[':
+			out = append(out, b)
+			stack = append(stack, ctx{isArray: true})
+			atElementStart = true
+		case '}':
+			out = append(out, b)
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			atElementStart = false
+		case ']':
+			out = append(out, b)
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+			atElementStart = false
+		case ',':
+			out = append(out, b)
+			if len(stack) > 0 && stack[len(stack)-1].isArray {
+				atElementStart = true
+			} else {
+				atElementStart = false
+			}
+		case ' ', '\t', '\n', '\r':
+			out = append(out, b)
+			// whitespace doesn't end element-start state
+		default:
+			out = append(out, b)
+			atElementStart = false
+		}
+	}
+	return out
+}
+
+// looksLikeUnwrappedObjectStart reports whether the bytes starting
+// at s begin with the pattern `"key":` (a quoted identifier
+// followed by a colon). Used by repairMissingBraces to detect
+// unwrapped object literals inside arrays.
+func looksLikeUnwrappedObjectStart(s []byte) bool {
+	if len(s) == 0 || s[0] != '"' {
+		return false
+	}
+	// Scan past the string literal.
+	escape := false
+	i := 1
+	for ; i < len(s); i++ {
+		if escape {
+			escape = false
+			continue
+		}
+		if s[i] == '\\' {
+			escape = true
+			continue
+		}
+		if s[i] == '"' {
+			i++
+			break
+		}
+	}
+	// Skip whitespace.
+	for ; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		return c == ':'
+	}
+	return false
+}
+
+// findElementEnd scans from i forward to the next `,` or `]` at
+// the current array depth (the depth represented by stackDepth).
+// Skips strings and nested objects/arrays. Returns the index of
+// the `,` or `]` (caller inserts `}` before that index).
+func findElementEnd(blob []byte, i int, stackDepth int) int {
+	depth := 0 // nested depth BELOW our array
+	inString := false
+	escape := false
+	for j := i; j < len(blob); j++ {
+		b := blob[j]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			if b == '\\' {
+				escape = true
+			} else if b == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ']':
+			if depth > 0 {
+				depth--
+				continue
+			}
+			return j // end of our array
+		case ',':
+			if depth == 0 {
+				return j // end of our element
+			}
+		}
+	}
+	return -1
 }
 
 // repairMissingCommas fixes the two most common LLM JSON typos:
