@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/convergence"
@@ -232,6 +233,23 @@ type sowNativeConfig struct {
 	// When nil, decomposer Abandon reverts to the legacy silent-skip
 	// behavior. Wired in main.go.
 	OnTaskAbandon func(originalTask plan.Task, fromSessionID string, abandonReason string) bool
+
+	// overflowBudget tracks tasks that have already triggered one
+	// decomp-overflow promotion during the current session. Once a
+	// task has overflowed, its remaining slice of work lives in a new
+	// session — re-running the reviewer on the same originalTask for
+	// sibling decomp directives just produces repeated "still has
+	// gaps" verdicts because the reviewer scope is the whole task,
+	// not the specific sibling branch. Without this guard, a task
+	// whose scope genuinely requires N > breadth-cap sub-fixes burns
+	// N × (review + decompose) cycles at depth 3 while making no
+	// marginal progress.
+	//
+	// sync.Map is used instead of a plain map + Mutex so cfg stays
+	// copy-safe (this struct is passed by value down the call tree).
+	// A raw Mutex in a value-passed struct would race when copied.
+	// Keys are originalTask.ID strings; values are struct{}{}.
+	overflowBudget *sync.Map
 
 	// --- Multi-session intelligence ---
 
@@ -3322,6 +3340,22 @@ const maxReviewDepth = 3
 // carries the trail of follow-up attempts so the decomposer knows
 // what's already been tried.
 func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSession plan.Session, originalTask plan.Task, currentTask plan.Task, runtimeDir string, cfg sowNativeConfig, maxTurns int, depth int, priorDirectives []string, preTaskDirty map[string]bool) {
+	// Overflow-budget short-circuit: once originalTask has triggered
+	// one decomp-overflow promotion this session, stop re-reviewing
+	// the same task for sibling decomp directives. The reviewer is
+	// task-scoped so each sibling branch produces another "task
+	// still has gaps" verdict, driving another overflow + another
+	// no-progress cycle. With the guard, the remaining review budget
+	// is spent on other tasks instead of grinding on a task whose
+	// leftover work already lives in a new session scope.
+	// Fix for run-11 T6 spiral (40+ min stuck at [6/15]).
+	if cfg.overflowBudget != nil {
+		if _, overflowed := cfg.overflowBudget.Load(originalTask.ID); overflowed {
+			fmt.Printf("    ⏩ skipping follow-up review for %s at depth %d: remaining work already promoted to a new session scope\n", originalTask.ID, depth)
+			return
+		}
+	}
+
 	// At-or-past-cap handling is implemented below (see atCap branch)
 	// — we still run the reviewer + decomposer at the cap boundary so
 	// productive sub-directives get promoted to first-class scope via
@@ -3541,6 +3575,16 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		if cfg.OnDecompOverflow != nil {
 			fmt.Printf("    ⬆ promoting %d decomp overflow directive(s) from %s at depth %d to new session scope\n", len(directivesToDispatch), originalTask.ID, depth)
 			cfg.OnDecompOverflow(originalTask.ID, workingSession.ID, directivesToDispatch)
+			// Mark the task as overflow-exhausted so subsequent
+			// sibling reviews short-circuit at function entry. Without
+			// this, the caller's for-loop keeps invoking this function
+			// for each sibling directive, each call re-runs the
+			// reviewer (which always rejects because the task scope
+			// is wider than any sibling branch), and each call
+			// overflows again — the run-11 T6 spiral.
+			if cfg.overflowBudget != nil {
+				cfg.overflowBudget.Store(originalTask.ID, struct{}{})
+			}
 			return
 		}
 		// No promotion hook — legacy behavior: cap and defer to ACs.

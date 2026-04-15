@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -2189,6 +2190,12 @@ func sowCmd(args []string) {
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
+			// Shared overflow budget: once a task has promoted its
+			// leftover scope to a new session, subsequent sibling
+			// reviews short-circuit. Prevents the T6-style spiral
+			// where the same reviewer-rejects-task cycle fires once
+			// per sibling directive at depth 3.
+			overflowBudget: &sync.Map{},
 			SOWDesc:           sow.Description,
 			RepoMap:           sowRepoMap,
 			RepoMapBudget:     *repomapBudget,
