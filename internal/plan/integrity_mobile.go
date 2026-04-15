@@ -66,6 +66,11 @@ func (mobileEcosystem) Owns(path string) bool {
 	return false
 }
 
+// AlwaysRun: Expo plugin / native-link checks are workspace-wide —
+// a session that touches just a .tsx screen can still need a plugin
+// entry in app.json or a pod in Podfile.lock.
+func (mobileEcosystem) AlwaysRun() bool { return true }
+
 func (mobileEcosystem) UnresolvedImports(projectRoot string, files []string) ([]ManifestMiss, error) {
 	if !mobileProjectDetected(projectRoot) {
 		return nil, nil

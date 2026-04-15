@@ -127,6 +127,17 @@ type CompileErr struct {
 	Message string
 }
 
+// AlwaysRunner is an optional companion interface: when an ecosystem
+// returns AlwaysRun()==true, the gate dispatches its probes even if
+// its Owns() never matches any file. Used by cross-cutting gates
+// (infra-policy, tauri cross-ecosystem contract check, mobile
+// plugin-requirement check) that scan workspace-wide rather than
+// claiming per-file ownership. The file list passed is the full
+// session file set, letting the probe decide its own scope.
+type AlwaysRunner interface {
+	AlwaysRun() bool
+}
+
 // ecosystemRegistry is the set of ecosystems the gate knows about.
 // Ordered by priority: more specific ecosystems first. New
 // ecosystems plug in via RegisterEcosystem (see integrity_ts.go,
@@ -158,6 +169,11 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 
 	// Bucket files by ecosystem. A file can be owned by at most one
 	// ecosystem; the first registered ecosystem that claims it wins.
+	// In addition, cross-cutting ecosystems (those that implement
+	// AlwaysRunner and return true) get dispatched once per session
+	// regardless of file attribution — infra-policy, tauri, and
+	// mobile-plugin checks span the whole workspace and can't be
+	// driven by per-file Owns().
 	byEco := map[string][]string{}
 	ecoLookup := map[string]Ecosystem{}
 	for _, f := range files {
@@ -168,6 +184,19 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 				break
 			}
 		}
+	}
+	for _, eco := range ecosystemRegistry {
+		ar, ok := eco.(AlwaysRunner)
+		if !ok || !ar.AlwaysRun() {
+			continue
+		}
+		if _, dup := ecoLookup[eco.Name()]; dup {
+			continue
+		}
+		// Cross-cutting probes accept the full session file set so
+		// they can decide what to scan themselves.
+		byEco[eco.Name()] = files
+		ecoLookup[eco.Name()] = eco
 	}
 
 	// Probe each ecosystem in deterministic order (by name) so

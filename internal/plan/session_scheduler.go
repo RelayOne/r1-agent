@@ -95,6 +95,13 @@ type SessionScheduler struct {
 	// would crash on concurrent map iteration + write.
 	promotedAt map[string]time.Time
 	promotedMu sync.Mutex
+	// sessionsMu guards mutations of ss.sow.Sessions after Run has
+	// started (AppendSession + SpliceIntegrityDep). Readers still
+	// snapshot the slice without the mutex (rebuildMaps); that
+	// unprotected read pattern predates this mutex and is preserved
+	// to avoid a wider refactor. Writers take the lock so concurrent
+	// AppendSession + splice calls don't interleave.
+	sessionsMu sync.Mutex
 }
 
 // SessionResult is the outcome of executing one session.
@@ -159,7 +166,9 @@ func (ss *SessionScheduler) State() *SOWState { return ss.state }
 // Appended sessions are recorded in SOWState so resume semantics still
 // apply to them.
 func (ss *SessionScheduler) AppendSession(session Session) {
+	ss.sessionsMu.Lock()
 	ss.sow.Sessions = append(ss.sow.Sessions, session)
+	ss.sessionsMu.Unlock()
 	if ss.state != nil {
 		ss.state.Sessions = append(ss.state.Sessions, SessionRecord{
 			SessionID: session.ID,
@@ -181,6 +190,65 @@ func (ss *SessionScheduler) AppendSession(session Session) {
 	}
 	ss.promotedAt[session.ID] = time.Now()
 	ss.promotedMu.Unlock()
+}
+
+// SpliceIntegrityFixDep rewrites the Inputs of every session in the
+// scheduler's live session list that declares any artifact in
+// src.Outputs as an input, adding fix.Outputs[0] (the synthetic
+// integrity-ok artifact) to their Inputs. The effect is that any
+// not-yet-started downstream session that was going to consume the
+// source session's outputs now also blocks on the integrity fix.
+//
+// Resumed / already-done sessions are left untouched — their work
+// already committed; re-running them isn't the goal. Same-ID self-
+// references are skipped. Idempotent: if the dep is already present
+// the call is a no-op for that session.
+func (ss *SessionScheduler) SpliceIntegrityFixDep(src Session, fix Session) {
+	if len(fix.Outputs) == 0 {
+		return
+	}
+	fixOutput := fix.Outputs[0]
+	srcOuts := map[string]struct{}{}
+	for _, o := range src.Outputs {
+		srcOuts[o] = struct{}{}
+	}
+	if len(srcOuts) == 0 {
+		return
+	}
+	ss.sessionsMu.Lock()
+	defer ss.sessionsMu.Unlock()
+	for i := range ss.sow.Sessions {
+		sess := &ss.sow.Sessions[i]
+		if sess.ID == src.ID || sess.ID == fix.ID {
+			continue
+		}
+		// Skip sessions already marked complete in state — no point
+		// rewriting their DAG edges; they won't be dispatched again.
+		if ss.state != nil && ss.state.IsSessionComplete(sess.ID) {
+			continue
+		}
+		consumesSrc := false
+		for _, in := range sess.Inputs {
+			if _, ok := srcOuts[in]; ok {
+				consumesSrc = true
+				break
+			}
+		}
+		if !consumesSrc {
+			continue
+		}
+		alreadyHasFix := false
+		for _, in := range sess.Inputs {
+			if in == fixOutput {
+				alreadyHasFix = true
+				break
+			}
+		}
+		if alreadyHasFix {
+			continue
+		}
+		sess.Inputs = append(sess.Inputs, fixOutput)
+	}
 }
 
 // PromotedDispatchSLA is the time after which an appended session
@@ -324,6 +392,14 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 		result.SessionID = session.ID
 		result.Title = session.Title
 
+		// Integrity-gate baseline for compile-regression diff. Captured
+		// once pre-dispatch so post-session "new errors" are correctly
+		// attributed to the work this session did.
+		var compileBaseline map[string][]CompileErr
+		if !ss.SkipIntegrityGate {
+			compileBaseline = CaptureCompileBaseline(ctx, ss.projectRoot, collectSessionFiles(ss.projectRoot, session))
+		}
+
 		for attempt := 1; attempt <= retries; attempt++ {
 			result.Attempts = attempt
 			ss.recordSessionStart(session, attempt)
@@ -410,6 +486,20 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 				return results, result.Error
 			}
 			continue
+		}
+		// Post-success integrity gate: run the manifest-import / public-
+		// surface / compile-regression / vendor-policy probes over this
+		// session's files, and promote findings as a Preempt fix
+		// session. Splices a DAG edge so any not-yet-started downstream
+		// session consuming this source's outputs now blocks on the
+		// fix too.
+		if !ss.SkipIntegrityGate {
+			if report, err := RunIntegrityGate(ctx, ss.projectRoot, session, compileBaseline); err == nil && report != nil && len(report.Directives) > 0 {
+				fmt.Printf("\n  🛡 integrity gate: %d finding(s) in session %s\n", len(report.Directives), session.ID)
+				fixSession := synthIntegrityFixSession(ss.projectRoot, session, report)
+				ss.SpliceIntegrityFixDep(session, fixSession)
+				ss.AppendSession(fixSession)
+			}
 		}
 		ss.recordSessionSuccess(session, result)
 		if ss.OnProgress != nil {

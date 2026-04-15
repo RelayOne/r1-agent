@@ -225,6 +225,15 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		result.SessionID = session.ID
 		result.Title = session.Title
 
+		// Capture pre-session compile-error baseline so the
+		// integrity gate can diff for NEW errors. Cheap pre-dispatch
+		// cost vs. the alternative (zero regression detection). Only
+		// fires when the gate is enabled.
+		var compileBaseline map[string][]CompileErr
+		if !ss.SkipIntegrityGate {
+			compileBaseline = CaptureCompileBaseline(ctx, ss.projectRoot, collectSessionFiles(ss.projectRoot, session))
+		}
+
 		for attempt := 1; attempt <= retries; attempt++ {
 			if ctx.Err() != nil {
 				break
@@ -305,7 +314,7 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 		// them. Skipped on failure (the session already has issues
 		// to address via the normal retry/escalation path).
 		if success && !ss.SkipIntegrityGate {
-			if report, err := RunIntegrityGate(ctx, ss.projectRoot, session, nil); err == nil && report != nil && len(report.Directives) > 0 {
+			if report, err := RunIntegrityGate(ctx, ss.projectRoot, session, compileBaseline); err == nil && report != nil && len(report.Directives) > 0 {
 				fmt.Printf("\n  🛡 integrity gate: %d finding(s) in session %s:\n", len(report.Directives), session.ID)
 				for _, d := range report.Directives {
 					first := d
@@ -317,7 +326,13 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 					}
 					fmt.Printf("     • %s\n", first)
 				}
-				fixSession := synthIntegrityFixSession(session, report)
+				fixSession := synthIntegrityFixSession(ss.projectRoot, session, report)
+				// DAG splice: any not-yet-started downstream session
+				// whose Inputs overlap this source session's Outputs
+				// must now also depend on the fix session's synthetic
+				// output artifact. Prevents a consumer from running
+				// against outputs the integrity gate has flagged.
+				ss.SpliceIntegrityFixDep(session, fixSession)
 				ss.AppendSession(fixSession)
 			}
 		}

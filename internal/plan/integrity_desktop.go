@@ -48,6 +48,11 @@ func (tauriEcosystem) Owns(path string) bool {
 	return filepath.Base(path) == "tauri.conf.json"
 }
 
+// AlwaysRun: the invoke/command contract probe is cross-ecosystem
+// (frontend TS calls must match Rust backend handlers), so we need
+// to run even when a session only touched one side.
+func (tauriEcosystem) AlwaysRun() bool { return true }
+
 // The interesting contract is cross-cutting: the probe doesn't care
 // about the specific files the session wrote; it runs if the project
 // has a Tauri structure.

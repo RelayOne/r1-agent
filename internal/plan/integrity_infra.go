@@ -61,6 +61,10 @@ func (infraEcosystem) Name() string { return "infra-policy" }
 // keeps the file ownership clean for the compile-regression flow.
 func (infraEcosystem) Owns(path string) bool { return false }
 
+// AlwaysRun: the infra-policy gate is cross-cutting and must run on
+// every session even when no file it owns is touched.
+func (infraEcosystem) AlwaysRun() bool { return true }
+
 func (infraEcosystem) UnresolvedImports(projectRoot string, files []string) ([]ManifestMiss, error) {
 	// The infra gate runs a workspace-wide scan because SDK imports
 	// introduced in any file (even a test or config) commit the
