@@ -1543,10 +1543,17 @@ func sowCmd(args []string) {
 		for _, e := range validationErrs {
 			fmt.Fprintf(os.Stderr, "  - %s\n", e)
 		}
-		if *validate {
+		// Strict-mode errors halt dispatch UNCONDITIONALLY at this
+		// point — they're things checkOneCriterion will hard-fail on
+		// later. Letting them through wastes session work for a
+		// deterministic gate failure. --validate exits 1 (its
+		// existing contract); normal runs exit 1 too with a clear
+		// pointer to fix the SOW.
+		fmt.Fprintln(os.Stderr, "\nSOW is not fit for dispatch — fix the errors above or pass --force to bypass strict validation.")
+		if *validate || !*forceFeasibility {
 			os.Exit(1)
 		}
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  (--force set; proceeding despite strict-validation errors)")
 	} else if *validate {
 		fmt.Println("SOW is valid.")
 		return

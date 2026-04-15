@@ -209,9 +209,21 @@ func ValidateSOWStrict(sow *SOW) []string {
 	errs := ValidateSOW(sow)
 	for _, s := range sow.Sessions {
 		for _, ac := range s.AcceptanceCriteria {
-			if ac.ContentMatch != nil && strings.TrimSpace(ac.ContentMatch.File) == "" {
-				errs = append(errs, fmt.Sprintf("session %s criterion %s has content_match with no file (refine path can repair this; --validate rejects it as unrunnable)", s.ID, ac.ID))
+			if ac.ContentMatch == nil || strings.TrimSpace(ac.ContentMatch.File) != "" {
+				continue
 			}
+			// Shadow check: checkOneCriterion executes Command first,
+			// then FileExists, then ContentMatch. If a higher-
+			// precedence verifier is present, the malformed
+			// content_match is dead weight (never executed) and
+			// shouldn't fail strict validation.
+			if strings.TrimSpace(ac.Command) != "" {
+				continue
+			}
+			if strings.TrimSpace(ac.FileExists) != "" {
+				continue
+			}
+			errs = append(errs, fmt.Sprintf("session %s criterion %s has content_match with no file and no shadowing verifier (refine path can repair this; --validate rejects it as unrunnable)", s.ID, ac.ID))
 		}
 	}
 	return errs
