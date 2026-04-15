@@ -326,7 +326,18 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// operator-facing concern list so the SOW gets fixed before
 	// dispatch.
 	if ctx.Err() == nil {
-		verdict, aerr := FinalPlanApproval(ctx, prose, out, prov, model)
+		// Try agentic reviewer first — tool-driven exploration of
+		// prose + SOW + workspace, dramatically faster than the
+		// monolithic dump-and-review on Sentinel-class SOWs.
+		// projectRoot is "" here for now (caller doesn't pipe it
+		// through the convert path yet); repo introspection tools
+		// degrade gracefully when disabled. Falls back to the
+		// monolithic reviewer on agentic loop failure.
+		verdict, aerr := FinalPlanApprovalAgentic(ctx, prose, out, prov, model, "")
+		if aerr != nil {
+			fmt.Printf("  ⚠ agentic final approval failed (%v); falling back to monolithic\n", aerr)
+			verdict, aerr = FinalPlanApproval(ctx, prose, out, prov, model)
+		}
 		if aerr != nil {
 			fmt.Printf("  ⚠ final plan approval skipped: %v\n", aerr)
 		} else {
