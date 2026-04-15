@@ -543,12 +543,20 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops in
 		}
 		fileOwner[file] = bestIdx
 	}
-	// Apply: drop file from any session that isn't the winner.
+	// Apply: drop file from any session that isn't the winner, BUT
+	// preserve the loser's intent. The loser wanted to work on that
+	// file for a reason (usually to extend/modify what the owner
+	// creates). Rewrite the loser's task description to reflect an
+	// EDIT relationship instead of a CREATE relationship, and add
+	// the winner session's id to the loser's session.Inputs so the
+	// DAG serializes correctly (winner-creates, loser-edits).
 	for i := range sow.Sessions {
 		s := &sow.Sessions[i]
+		addedInputs := map[string]bool{}
 		for ti := range s.Tasks {
 			t := &s.Tasks[ti]
 			kept := t.Files[:0]
+			var edits []string // filenames that shifted from create→edit
 			for _, f := range t.Files {
 				key := strings.TrimSpace(f)
 				if key == "" {
@@ -556,11 +564,31 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops in
 				}
 				if owner, ok := fileOwner[key]; ok && owner != i {
 					fileDrops++
+					edits = append(edits, key)
+					// Record the owner session's ID in this session's
+					// inputs so the DAG knows: owner produces, we
+					// edit. De-dup via addedInputs map.
+					ownerID := sow.Sessions[owner].ID
+					if !addedInputs[ownerID] {
+						s.Inputs = append(s.Inputs, ownerID+" artifact ownership")
+						addedInputs[ownerID] = true
+					}
 					continue
 				}
 				kept = append(kept, f)
 			}
 			t.Files = kept
+			// Annotate the task description so the worker treats the
+			// edit-list as "files already exist, modify in place" —
+			// not "create these from scratch". Without this the
+			// worker would see a reduced task.Files and might think
+			// its scope shrunk; with the annotation, the original
+			// intent (extend these files) is preserved in prose.
+			if len(edits) > 0 {
+				t.Description = strings.TrimSuffix(t.Description, ".") +
+					". NOTE: the following file(s) are created by another session — your work EXTENDS/MODIFIES them in place, does not recreate them: " +
+					strings.Join(edits, ", ") + "."
+			}
 		}
 	}
 
@@ -630,6 +658,41 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops in
 		}
 		return false
 	}
+	// Build fuzzy-rename map: for each dangling input, try to
+	// substring-match to an existing producer output. Rename when
+	// found (reconciles typo'd / paraphrased refs); only drop when
+	// truly unresolvable. Preserves intent over silent loss.
+	producerKeys := make([]string, 0, len(producers))
+	for k := range producers {
+		producerKeys = append(producerKeys, k)
+	}
+	closestProducer := func(in string) string {
+		key := strings.ToLower(strings.TrimSpace(in))
+		if key == "" {
+			return ""
+		}
+		for _, pk := range producerKeys {
+			if strings.Contains(key, pk) || strings.Contains(pk, key) {
+				return pk
+			}
+		}
+		// Word-overlap match: any 4+ char word shared.
+		inWords := strings.Fields(key)
+		for _, pk := range producerKeys {
+			pkWords := strings.Fields(pk)
+			for _, iw := range inWords {
+				if len(iw) < 4 {
+					continue
+				}
+				for _, pw := range pkWords {
+					if iw == pw {
+						return pk
+					}
+				}
+			}
+		}
+		return ""
+	}
 	for i := range sow.Sessions {
 		s := &sow.Sessions[i]
 		kept := s.Inputs[:0]
@@ -638,7 +701,21 @@ func repairChunkedConsistency(sow *SOW) (fileDrops, outputRenames, inputDrops in
 				kept = append(kept, in)
 				continue
 			}
+			// Try fuzzy rename before dropping.
+			if match := closestProducer(in); match != "" {
+				kept = append(kept, match)
+				continue
+			}
 			inputDrops++
+			// Preserve intent: record the unresolvable input in the
+			// session description so the operator + reviewer see
+			// what the per-session expander wanted but couldn't
+			// wire up. Without this, the intent evaporates.
+			if !strings.Contains(s.Description, "UNRESOLVED INPUT") {
+				s.Description = strings.TrimSuffix(s.Description, ".") + ". UNRESOLVED INPUTS (producer session missing): " + in
+			} else {
+				s.Description = strings.TrimSuffix(s.Description, ".") + ", " + in
+			}
 		}
 		s.Inputs = kept
 	}
