@@ -370,6 +370,14 @@ func isRealFilePath(projectRoot, p string) bool {
 	if strings.ContainsAny(p, "()`\t\n\r") {
 		return false
 	}
+	// " / " (space-slash-space) signals alternation
+	// ("Podfile / Package.swift"), which a real path never contains
+	// — POSIX / Windows paths separate segments with a bare slash
+	// or backslash, no surrounding spaces. Comma alternation too.
+	if strings.Contains(p, " / ") || strings.Contains(p, ", ") ||
+		strings.Contains(p, " or ") {
+		return false
+	}
 	// Trailing slash → directory-shaped, never a file target.
 	if strings.HasSuffix(p, "/") || strings.HasSuffix(p, string(os.PathSeparator)) {
 		return false
