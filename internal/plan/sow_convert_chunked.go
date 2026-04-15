@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -325,30 +326,53 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// advisory). A blocking verdict, however, halts with the
 	// operator-facing concern list so the SOW gets fixed before
 	// dispatch.
+	// CTO approval + refine loop. The agentic reviewer reads prose
+	// + SOW via tool calls and emits a structured verdict. On
+	// approve we mark the SOW chunked-approved and proceed. On
+	// request_changes we invoke the structured refine pass —
+	// rewrites the SOW addressing each concern — and re-review,
+	// up to maxRefineRounds (default 2). On reject or blocking
+	// verdict we halt. The refine path closes the gap where
+	// previously we just printed concerns and dispatched-with-
+	// known-bugs.
+	const maxRefineRounds = 2
 	if ctx.Err() == nil {
-		// Try agentic reviewer first — tool-driven exploration of
-		// prose + SOW + workspace, dramatically faster than the
-		// monolithic dump-and-review on Sentinel-class SOWs.
-		// projectRoot is "" here for now (caller doesn't pipe it
-		// through the convert path yet); repo introspection tools
-		// degrade gracefully when disabled. Falls back to the
-		// monolithic reviewer on agentic loop failure.
-		verdict, aerr := FinalPlanApprovalAgentic(ctx, prose, out, prov, model, "")
-		if aerr != nil {
-			fmt.Printf("  ⚠ agentic final approval failed (%v); falling back to monolithic\n", aerr)
-			verdict, aerr = FinalPlanApproval(ctx, prose, out, prov, model)
-		}
-		if aerr != nil {
-			fmt.Printf("  ⚠ final plan approval skipped: %v\n", aerr)
-		} else {
+		var verdict *FinalApprovalVerdict
+		var aerr error
+		for round := 0; round <= maxRefineRounds; round++ {
+			verdict, aerr = FinalPlanApprovalAgentic(ctx, prose, out, prov, model, "")
+			if aerr != nil {
+				fmt.Printf("  ⚠ agentic final approval failed (%v); falling back to monolithic\n", aerr)
+				verdict, aerr = FinalPlanApproval(ctx, prose, out, prov, model)
+			}
+			if aerr != nil {
+				fmt.Printf("  ⚠ final plan approval skipped: %v\n", aerr)
+				break
+			}
 			fmt.Print(FormatApprovalVerdict(verdict))
 			if verdict.Decision == "reject" || verdict.HasBlocking() {
 				return out, nil, fmt.Errorf("final plan approval: %s — %d blocking concern(s); SOW not fit for dispatch", verdict.Decision, len(verdict.Concerns))
 			}
-			// Mark the SOW as chunked-approved so the caller skips
-			// the legacy CritiqueAndRefine pass (redundant on a
-			// chunked-reviewed plan, adds 20-40 min of LLM calls).
-			out.ChunkedConvertApproved = true
+			if verdict.Decision == "approve" || len(verdict.Concerns) == 0 {
+				out.ChunkedConvertApproved = true
+				break
+			}
+			// request_changes with non-blocking concerns. Refine the
+			// SOW addressing each concern; loop back to re-review.
+			if round >= maxRefineRounds {
+				fmt.Printf("  ⚠ refine cap (%d rounds) reached — proceeding with %d unaddressed concern(s)\n", maxRefineRounds, len(verdict.Concerns))
+				out.ChunkedConvertApproved = true
+				break
+			}
+			fmt.Printf("  🔁 refine round %d: addressing %d concern(s) before dispatch\n", round+1, len(verdict.Concerns))
+			refined, rerr := RefineSOWFromConcerns(ctx, prose, out, verdict.Concerns, prov, model)
+			if rerr != nil {
+				fmt.Printf("  ⚠ refine pass failed (%v); proceeding with current SOW\n", rerr)
+				out.ChunkedConvertApproved = true
+				break
+			}
+			out = refined
+			fmt.Printf("  ✓ refine round %d applied — re-running CTO approval\n", round+1)
 		}
 	}
 
@@ -1014,7 +1038,7 @@ Output ONLY the JSON object below — no prose, no markdown fences. Start with '
 {
   "missing": [
     {
-      "id": "S99 — next unused ID after the provided sessions",
+      "id": "SNN",
       "phase": "foundation|core|integration",
       "title": "string",
       "description": "what this session delivers; tie back to the prose",
@@ -1028,6 +1052,7 @@ RULES:
 2. If the existing session list covers every deliverable, emit {"missing": []}.
 3. Descriptions in 'missing' should reference prose verbatim where possible so the next expansion pass knows what to generate.
 4. Keep the session.outputs terse (2-4 words); they form the DAG edges.
+5. The "id" MUST be a plain identifier matching the regex ^S\d+(-[a-z0-9-]+)?$ — examples: "S23", "S24-shared", "S99". Do NOT include prose, hyphens-with-spaces, parentheticals, or any other text in the id field. Use the next unused integer after the highest existing S<number> in the session list above.
 
 EXISTING SESSION LIST (id, title, description, outputs):
 `
@@ -1084,18 +1109,88 @@ func reviewCoverageAndPatch(ctx context.Context, prose string, sow *SOW, prov pr
 	// a 20+ min monolith fallback. Coverage is best-effort; losing
 	// a session here is preferable to losing the entire chunked
 	// pipeline.
+	// Sanitize stub IDs before expansion. The model occasionally
+	// embeds the prompt's example text into the id field
+	// ("S99 — next unused ID after the provided sessions"). Strip
+	// anything past the first whitespace / em-dash / parenthesis
+	// and validate against the canonical id shape; on invalid id,
+	// synthesize the next unused S<N> from the existing session
+	// IDs in the SOW.
+	used := map[string]bool{}
+	maxN := 0
+	for _, s := range sow.Sessions {
+		used[s.ID] = true
+		if n := parseSessionNumber(s.ID); n > maxN {
+			maxN = n
+		}
+	}
 	added := 0
 	for _, stub := range verdict.Missing {
+		clean := sanitizeSessionID(stub.ID)
+		if clean == "" || used[clean] {
+			maxN++
+			clean = fmt.Sprintf("S%d", maxN)
+		}
+		used[clean] = true
+		stub.ID = clean
 		full, xerr := expandSessionWithRetry(ctx, prose, &sow.Stack, stub, prov, model)
 		if xerr != nil {
 			fmt.Printf("     ⚠ coverage-review session %s DROPPED after expand failure: %v\n", stub.ID, xerr)
 			fmt.Printf("       intended scope: %s — %s\n", stub.Title, stub.Description)
 			continue
 		}
+		// expandSession may overwrite the ID from the model output;
+		// re-sanitize and re-pin to the planner's clean id so the
+		// model can't inject prose into the ID field on this pass
+		// either.
+		full.ID = clean
 		sow.Sessions = append(sow.Sessions, full)
 		added++
 	}
 	return added, nil
+}
+
+// sessionIDRE matches the canonical session ID shape used everywhere
+// in the SOW pipeline. Anchored so the matcher must consume from
+// the start; suffix is optional ("S23" or "S24-shared").
+var sessionIDRE = regexp.MustCompile(`^S\d+(?:-[A-Za-z0-9-]+)?`)
+
+// sanitizeSessionID extracts the canonical session ID from a possibly-
+// prose-contaminated string. Examples handled:
+//
+//	"S99"                                                → "S99"
+//	"S99 — next unused ID after the provided sessions"  → "S99"
+//	"S24-shared (mobile)"                                → "S24-shared"
+//	"  S15  "                                            → "S15"
+//	"random prose"                                       → ""
+//
+// Returns "" when no canonical prefix is present; caller should
+// synthesize a fresh id.
+func sanitizeSessionID(id string) string {
+	id = strings.TrimSpace(id)
+	if m := sessionIDRE.FindString(id); m != "" {
+		// Trim a trailing hyphen left over by suffix splitting.
+		return strings.TrimRight(m, "-")
+	}
+	return ""
+}
+
+// parseSessionNumber returns the integer N from "S<N>..." or 0 when
+// the id doesn't start with the canonical prefix.
+func parseSessionNumber(id string) int {
+	if !strings.HasPrefix(id, "S") {
+		return 0
+	}
+	end := 1
+	for end < len(id) && id[end] >= '0' && id[end] <= '9' {
+		end++
+	}
+	if end == 1 {
+		return 0
+	}
+	var n int
+	fmt.Sscanf(id[1:end], "%d", &n)
+	return n
 }
 
 // renumberTasksAndACsGlobally assigns each task + AC a globally
