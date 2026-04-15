@@ -1538,28 +1538,35 @@ func sowCmd(args []string) {
 	// after the session does work that would deterministically
 	// fail at the gate. Lenient ValidateSOW is reserved for
 	// intermediate convert/refine pipeline calls.
-	if validationErrs := plan.ValidateSOWStrict(sow); len(validationErrs) > 0 {
+	// Compute base + strict errors separately so we can halt
+	// inspection modes on STRUCTURAL problems (missing/duplicate
+	// IDs that would corrupt --dump-task-prompts output) while
+	// still letting them through on strict-only issues
+	// (empty-file content_match — informational for inspection,
+	// blocks dispatch).
+	baseErrs := plan.ValidateSOW(sow)
+	strictErrs := plan.ValidateSOWStrict(sow)
+	if len(strictErrs) > 0 {
 		fmt.Fprintf(os.Stderr, "SOW validation errors:\n")
-		for _, e := range validationErrs {
+		for _, e := range strictErrs {
 			fmt.Fprintf(os.Stderr, "  - %s\n", e)
 		}
-		// Strict-mode errors halt dispatch UNCONDITIONALLY at this
-		// point — they're things checkOneCriterion will hard-fail on
-		// later. Letting them through wastes session work for a
-		// deterministic gate failure. --validate exits 1 (its
-		// existing contract); normal runs exit 1 too with a clear
-		// pointer to fix the SOW.
 		fmt.Fprintln(os.Stderr, "\nSOW is not fit for dispatch — fix the errors above or pass --force to bypass strict validation.")
-		// Non-executing modes (--dry-run, --dump-task-prompts,
-		// --validate) should still surface the errors but otherwise
-		// be allowed to do their read-only work — they never
-		// dispatch, so the wasted-work concern doesn't apply.
+
 		// --validate keeps its existing exit-1 contract.
-		nonDispatching := *dryRun || *dumpPrompts
 		if *validate {
 			os.Exit(1)
 		}
+		// --dry-run and --dump-task-prompts get the bypass ONLY for
+		// strict-only issues. Base errors (missing IDs, duplicate
+		// IDs, no tasks/ACs) cause file-name collisions or
+		// truncated output in dump mode, so they still halt.
+		nonDispatching := *dryRun || *dumpPrompts
 		if !nonDispatching && !*forceFeasibility {
+			os.Exit(1)
+		}
+		if nonDispatching && len(baseErrs) > 0 {
+			fmt.Fprintln(os.Stderr, "  (refusing to continue: structural errors above would corrupt inspection output)")
 			os.Exit(1)
 		}
 		if *forceFeasibility {
