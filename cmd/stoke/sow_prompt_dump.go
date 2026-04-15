@@ -163,6 +163,33 @@ func renderSupervisorExpectations(sup *specSupervisorSpec) string {
 	return b.String()
 }
 
+// dumpPromptsCollisionRisk returns "" when the SOW's session+task
+// IDs are safe for --dump-task-prompts file naming, and a non-empty
+// reason string otherwise. dumpTaskPrompts writes
+// `<session.ID>-<task.ID>.txt` per task; empty IDs collapse to
+// "unknown" via sanitizeForFilename and duplicate (session, task)
+// pairs overwrite each other, so dumping a SOW with either pattern
+// silently loses prompts.
+func dumpPromptsCollisionRisk(sow *plan.SOW) string {
+	seen := map[string]bool{}
+	for _, s := range sow.Sessions {
+		if s.ID == "" {
+			return "session with empty ID"
+		}
+		for _, t := range s.Tasks {
+			if t.ID == "" {
+				return fmt.Sprintf("session %s has a task with empty ID", s.ID)
+			}
+			key := s.ID + "\x00" + t.ID
+			if seen[key] {
+				return fmt.Sprintf("duplicate (%s, %s) task pair", s.ID, t.ID)
+			}
+			seen[key] = true
+		}
+	}
+	return ""
+}
+
 // sanitizeForFilename strips characters that aren't safe on disk.
 // Preserves alphanumerics, dash, underscore, dot; replaces anything
 // else with underscore.

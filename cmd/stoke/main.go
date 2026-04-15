@@ -1555,6 +1555,17 @@ func sowCmd(args []string) {
 		if *validate {
 			os.Exit(1)
 		}
+		// --dump-task-prompts: also halt if any session/task has
+		// an empty ID or duplicate (session, task) pairing. Both
+		// collapse to a colliding output filename, so the dump
+		// would silently overwrite earlier prompt files. --dry-run
+		// doesn't write per-task files so it's safe to continue.
+		if *dumpPrompts {
+			if reason := dumpPromptsCollisionRisk(sow); reason != "" {
+				fmt.Fprintf(os.Stderr, "\n  refusing --dump-task-prompts: %s (would overwrite output files silently)\n", reason)
+				os.Exit(1)
+			}
+		}
 		if !nonDispatching && !*forceFeasibility {
 			os.Exit(1)
 		}
