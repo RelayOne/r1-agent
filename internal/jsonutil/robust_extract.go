@@ -1,6 +1,7 @@
 package jsonutil
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"unicode"
@@ -118,9 +119,84 @@ func ExtractJSONInto(raw string, out interface{}) ([]byte, error) {
 		return nil, err
 	}
 	if uErr := json.Unmarshal(blob, out); uErr != nil {
+		// Common LLM quirk: missing comma between an array/object
+		// and the next key. Example:
+		//   "tasks": [...]
+		//   "acceptance_criteria": [...]
+		// → json.Unmarshal rejects with "invalid character ':' after
+		// array element". Try a conservative repair pass; if the
+		// repaired blob unmarshals, return success; otherwise
+		// surface the ORIGINAL error so debugging shows the real
+		// failure shape.
+		repaired := repairMissingCommas(blob)
+		if !bytes.Equal(repaired, blob) {
+			if uErr2 := json.Unmarshal(repaired, out); uErr2 == nil {
+				return repaired, nil
+			}
+		}
 		return blob, &ExtractError{Raw: raw, Blob: string(blob), Reason: "unmarshal into target: " + uErr.Error()}
 	}
 	return blob, nil
+}
+
+// repairMissingCommas fixes the two most common LLM JSON typos:
+//
+//   1. `]\n  "key":` — array closes, next key but no comma → insert
+//   2. `}\n  "key":` — object closes, next key but no comma → insert
+//   3. `"value"\n  "key":` — string value, next key but no comma
+//
+// Operates on byte form with a tiny state machine so we don't insert
+// commas inside string literals. Conservative: if in doubt, leave
+// alone.
+func repairMissingCommas(blob []byte) []byte {
+	out := make([]byte, 0, len(blob)+16)
+	n := len(blob)
+	inString := false
+	escape := false
+	for i := 0; i < n; i++ {
+		b := blob[i]
+		out = append(out, b)
+		if escape {
+			escape = false
+			continue
+		}
+		if b == '\\' && inString {
+			escape = true
+			continue
+		}
+		if b == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		// Look for the closer → whitespace → quote pattern when we
+		// just appended ], }, or " (outside a string).
+		if b != ']' && b != '}' && b != '"' {
+			continue
+		}
+		// Scan forward past whitespace for the next meaningful byte.
+		j := i + 1
+		for j < n {
+			c := blob[j]
+			if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+				j++
+				continue
+			}
+			break
+		}
+		if j >= n {
+			continue
+		}
+		// If the next non-whitespace byte starts a key (quote) —
+		// that's the "missing comma" shape. Insert comma BEFORE the
+		// whitespace we'll emit next.
+		if blob[j] == '"' {
+			out = append(out, ',')
+		}
+	}
+	return out
 }
 
 // ExtractError wraps parse failures with enough context for callers to
