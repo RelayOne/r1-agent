@@ -1458,11 +1458,22 @@ func taskOutputsLookComplete(repoRoot string, t plan.Task) bool {
 // behavior — the exact "ships a fake, passes the gate" class the
 // user's #1 goal of zero-fake one-shot completion targets.
 var taskOutputStubMarkers = []string{
-	"todo", "fixme", "xxx",
-	"unimplemented!", "not implemented", "notimplementederror",
-	`panic("todo"`, `panic("not implemented"`,
-	"placeholder", "// stub", "# stub",
+	// Structural stub markers with explicit syntax — rarely appear
+	// in legitimate prose. Bare "todo"/"fixme"/"placeholder"/"xxx"
+	// (no prefix) were removed because they trigger on comments
+	// legitimately USING those words ("this is a placeholder that
+	// must be initialized...", "for non-JSON responses return
+	// null/undefined", etc.). Require the comment-prefix or
+	// function-call shape so we only catch actual stub syntax.
+	"// todo", "# todo", "/* todo",
+	"// fixme", "# fixme", "/* fixme",
+	"// xxx", "# xxx", "/* xxx",
+	"// stub", "# stub", "/* stub",
+	"// placeholder", "# placeholder",
 	"// removed", "# removed",
+	"todo!(", "unimplemented!(", "unreachable!(",
+	"not_implemented", "notimplementederror",
+	`panic("todo"`, `panic("not implemented"`, `panic("unimplemented"`,
 	// TS / JS stub bodies
 	"return null;\n", "return null\n",
 	"return [];\n", "return []\n",
