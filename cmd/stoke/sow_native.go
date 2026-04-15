@@ -1481,8 +1481,14 @@ var taskOutputStubMarkers = []string{
 	"} catch (_) {}", "} catch (_) { }",
 	"} catch (e) {}", "} catch (e) { }",
 	"} catch (err) {}", "} catch (err) { }",
-	// TS type-check bypasses
-	" as any", " as never", " as unknown",
+	// TS type-check bypasses. Only `as any` is an actual
+	// type-safety bypass — `as never` is an exhaustiveness pattern
+	// and `as unknown` is part of the safe `x as unknown as T`
+	// double-cast idiom that's PREFERRED over `as any`. Flagging
+	// the latter two produced false positives on legitimate code
+	// (run 13 T8 stuck on `return text as unknown as T` — a real
+	// generic-cast idiom in a fully-implemented API client).
+	" as any",
 	"// @ts-ignore", "// @ts-nocheck", "// @ts-expect-error",
 	"// eslint-disable",
 	// Python
