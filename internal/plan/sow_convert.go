@@ -571,12 +571,22 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 		return nil, result, err
 	}
 
-	// Persist the converted SOW + the source hash so rerunning with the
-	// same file hits the cache.
-	if mkErr := os.MkdirAll(stokeDir, 0o755); mkErr == nil {
-		if writeErr := writeProseCache(cachePath, data, jsonBlob); writeErr == nil {
-			result.ConvertedPath = cachePath
+	// Persist the converted SOW + the source hash so rerunning with
+	// the same file hits the cache. ONLY cache when the chunked
+	// path succeeded with CTO approval (sow.ChunkedConvertApproved
+	// == true). Monolithic-fallback results don't carry that flag
+	// and haven't been gated by the agentic reviewer; caching them
+	// as schema-v2 would let future reruns reuse an ungated SOW.
+	if sow != nil && sow.ChunkedConvertApproved {
+		if mkErr := os.MkdirAll(stokeDir, 0o755); mkErr == nil {
+			if writeErr := writeProseCache(cachePath, data, jsonBlob); writeErr == nil {
+				result.ConvertedPath = cachePath
+			}
 		}
+	} else {
+		// Surface to the operator that this run produced an
+		// ungated SOW so they know reruns will redo the convert.
+		fmt.Println("  ◉ skipping prose cache write: SOW did not pass chunked CTO approval (monolithic fallback or convert error path)")
 	}
 	result.Format = "prose"
 	return sow, result, nil
