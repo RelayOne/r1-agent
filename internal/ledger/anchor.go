@@ -341,29 +341,35 @@ func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart,
 // the composition for its declared SchemaVersion. Returns "" on
 // match, or a reason string describing the mismatch.
 //
-// Design note: we do NOT accept SchemaVersion==0 (unversioned).
-// The AnchorStore has never shipped to any production workload —
-// no anchor logs exist in the wild — so the only theoretical v0
-// records are from narrow uncommitted transitional builds. Rejecting
-// them here keeps schema_version tamper-evident: stripping the
-// field from a current v2 anchor flips SchemaVersion to 0 and
-// produces a clear violation rather than silently falling back to
-// a matching composition.
+// Design note on v0 handling: anchors with SchemaVersion==0 are
+// treated as v1 for backward compatibility with the initial
+// anchor-store commit (ff869d1) which predated the SchemaVersion
+// field. This preserves verification of any anchor logs produced
+// on that build. A v2 anchor that had its schema_version field
+// stripped (to flip to v0) would be recomputed with v1 composition
+// — that hash does NOT match the v2 input shape, so the
+// mismatch surfaces as a violation. Tamper-evidence is preserved:
+// only genuinely v1-shape v0 records pass, downgrades fail.
 func verifyAnchorHash(a Anchor) string {
-	if a.SchemaVersion < 1 {
-		return "anchor has no schema_version (field required; this build writes v2 and accepts v1+)"
+	version := a.SchemaVersion
+	if version == 0 {
+		version = 1
 	}
-	input := composeAnchorInput(a.SchemaVersion, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
+	input := composeAnchorInput(version, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
 	if input == "" {
 		return fmt.Sprintf("anchor uses unknown schema_version %d; this build supports v1 and v2", a.SchemaVersion)
 	}
 	sum := sha256.Sum256([]byte(input))
 	if hex.EncodeToString(sum[:]) != a.Hash {
 		shape := "prev||merkle||start||end (v2)"
-		if a.SchemaVersion == 1 {
+		if version == 1 {
 			shape = "prev||merkle||end (v1)"
 		}
-		return "anchor Hash does not match " + shape + " composition"
+		hint := ""
+		if a.SchemaVersion == 0 {
+			hint = " (anchor has no schema_version; verified as v1 for legacy compat — a stripped v2 anchor would fail here)"
+		}
+		return "anchor Hash does not match " + shape + " composition" + hint
 	}
 	return ""
 }
