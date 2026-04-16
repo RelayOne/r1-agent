@@ -492,7 +492,7 @@ func (r *Registry) InjectCatalogBudgeted(prompt string, tokenBudget int) (string
 	}
 	var sb strings.Builder
 	sb.WriteString("<skill_catalog>\n")
-	sb.WriteString("Available skills (call read_skill(name) to load the full body):\n\n")
+	sb.WriteString("Available skills (name: one-line purpose). Reference by name in your response if the full body would help.\n\n")
 	for _, sel := range selected {
 		sb.WriteString("- ")
 		sb.WriteString(sel.Skill.Name)
@@ -501,7 +501,7 @@ func (r *Registry) InjectCatalogBudgeted(prompt string, tokenBudget int) (string
 		sb.WriteString("\n")
 	}
 	if overflow > 0 {
-		fmt.Fprintf(&sb, "\n(+%d more skills not listed due to token budget — call list_skills to enumerate)\n", overflow)
+		fmt.Fprintf(&sb, "\n(+%d more skills not listed due to token budget)\n", overflow)
 	}
 	sb.WriteString("</skill_catalog>\n\n")
 	sb.WriteString(prompt)

@@ -1243,6 +1243,17 @@ func buildCmd(args []string) {
 
 // --- sow: execute a Statement of Work ---
 
+// streamjsonResult holds the terminal values a deferred result
+// emission needs. Populated as the SOW command progresses; emitted
+// once on function return when stream-json mode is enabled.
+type streamjsonResult struct {
+	subtype     string
+	cost        float64
+	turns       int
+	text        string
+	stokeFields map[string]any
+}
+
 func sowCmd(args []string) {
 	fs := flag.NewFlagSet("sow", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Git repository root")
@@ -1330,18 +1341,36 @@ func sowCmd(args []string) {
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
 	// subsequent stoke banners redirect to stderr and NDJSON events
 	// go to stdout. The Emitter is a no-op when disabled so the
-	// call sites below integrate without a branch.
+	// call sites below integrate without a branch. A defer emits
+	// the terminal result event so every return path (normal,
+	// error, os.Exit paths don't fire defer — but fatal() prints
+	// to stderr anyway) produces a parseable terminal record for
+	// Claude-Code-compatible consumers.
 	streamEmitter := streamjson.New(os.Stdout, *outputFormat == "stream-json")
+	streamResult := &streamjsonResult{subtype: "success", cost: 0, turns: 0, text: "ok"}
 	if streamEmitter.Enabled() {
-		// Route stdout banners to stderr to reserve stdout for NDJSON.
 		os.Stdout = os.Stderr
 		streamEmitter.EmitSystem("init", map[string]any{
-			"cwd":            *repo,
-			"model":          *nativeModel,
+			"cwd":             *repo,
+			"model":           *nativeModel,
 			"reasoning_model": *reasoningModel,
-			"stoke_version":  "v2",
+			"stoke_version":   "v2",
 		})
+		defer func() {
+			streamEmitter.EmitResult(streamResult.subtype, streamResult.cost, streamResult.turns, streamResult.text, streamResult.stokeFields)
+		}()
 	}
+	// Propagate panics to the result event so silent crashes still
+	// produce a visible NDJSON terminator for consumers.
+	defer func() {
+		if r := recover(); r != nil {
+			if streamEmitter.Enabled() {
+				streamResult.subtype = "error_during_execution"
+				streamResult.text = fmt.Sprintf("panic: %v", r)
+			}
+			panic(r) // re-raise so stack trace still prints on stderr
+		}
+	}()
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {
