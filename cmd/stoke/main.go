@@ -3499,10 +3499,12 @@ func cloudCmd(args []string) {
 	fs := flag.NewFlagSet("cloud", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
-		// Parse errors (unknown flags) fall through to
-		// print the overview; keep the binary helpful.
+		// Parse errors (unknown flags) surface the error +
+		// exit non-zero so shell scripts / CI don't treat
+		// bad invocations as success.
 		fmt.Fprintln(os.Stderr, err)
-		args = []string{"help"}
+		fmt.Fprintln(os.Stderr, "\nUsage: stoke cloud <subcommand>  (register | status | help)")
+		os.Exit(2)
 	}
 	sub := "help"
 	if fs.NArg() > 0 {

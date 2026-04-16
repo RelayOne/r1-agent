@@ -134,13 +134,25 @@ func (k KeywordValidator) Validate(_ context.Context, existing, incoming Item) (
 	return nil, nil
 }
 
-// extractNumbers pulls numeric tokens (integers + decimals,
-// including leading `-` when it looks like a sign) from s
-// and parses each as float64 so downstream comparison is
-// value-level, not string-level. "5" vs "5.0" → same; "-5"
-// vs "5" → different.
-func extractNumbers(s string) []float64 {
-	var out []float64
+// extractNumbers pulls numeric tokens from s and
+// normalizes each to a canonical string so downstream
+// comparison catches value-level equality AND preserves
+// dotted-numeric distinctions.
+//
+// Normalization ladder:
+//   - Multi-dot tokens (semver 1.2.3, IP 10.0.0.1, date
+//     2026.4.16) → kept verbatim. ParseFloat rejects
+//     these; dropping them would silently lose contradiction
+//     signal ("API version is 1.2.3" vs "1.2.4" would go
+//     unflagged).
+//   - Single-dot or no-dot tokens → round-tripped through
+//     ParseFloat + FormatFloat so "5" and "5.0" both
+//     canonicalize to "5".
+//   - Leading `-` only at a numeric boundary so hyphens
+//     inside words ("front-end-123") don't flip the
+//     trailing number negative.
+func extractNumbers(s string) []string {
+	var out []string
 	var cur strings.Builder
 	flush := func() {
 		if cur.Len() == 0 {
@@ -154,10 +166,20 @@ func extractNumbers(s string) []float64 {
 		if raw == "" || raw == "-" || raw == "." {
 			return
 		}
-		f, err := strconv.ParseFloat(raw, 64)
-		if err == nil {
-			out = append(out, f)
+		// Multi-dot → keep verbatim.
+		if strings.Count(raw, ".") >= 2 {
+			out = append(out, raw)
+			return
 		}
+		// Single-dot or no-dot → canonicalize.
+		f, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			// Filter should prevent this; preserve raw on
+			// the off chance so signal isn't lost.
+			out = append(out, raw)
+			return
+		}
+		out = append(out, strconv.FormatFloat(f, 'f', -1, 64))
 	}
 	for i, r := range s {
 		switch {
@@ -197,15 +219,17 @@ func isNumericBoundary(s string, i int) bool {
 		prev == ':' || prev == ';' || prev == '='
 }
 
-// numbersAgree reports whether the two float sets match by
-// VALUE. "5" and "5.0" extract to the same float and count
-// as agreement; "-5" and "5" are different values and count
-// as disagreement.
-func numbersAgree(a, b []float64) bool {
+// numbersAgree reports whether the two sets match after
+// canonicalization. Since extractNumbers now returns
+// canonical strings ("5" and "5.0" both land on "5",
+// semver "1.2.3" stays "1.2.3"), a plain string compare
+// gives the right value-level equality for floats AND the
+// right string equality for multi-dot tokens.
+func numbersAgree(a, b []string) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return true
 	}
-	has := func(set []float64, v float64) bool {
+	has := func(set []string, v string) bool {
 		for _, x := range set {
 			if x == v {
 				return true

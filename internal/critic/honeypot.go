@@ -301,18 +301,27 @@ func (s *PeriodicSnapshotter) Start(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	// If a prior loop is still shutting down, wait for it
-	// before allocating fresh state. Release the lock while
-	// waiting so Stop / loop can make progress.
+	if s.running {
+		// Live loop — documented no-op. Return without
+		// waiting; the caller doesn't expect Start to
+		// block on an already-running loop.
+		s.mu.Unlock()
+		return
+	}
+	// Not currently running. But a PREVIOUS loop whose
+	// Stop was called may still be shutting down — its
+	// done channel isn't closed yet. We need to wait for
+	// it before allocating new channels so its deferred
+	// running-clear doesn't race with our running=true
+	// set below.
 	priorDone := s.done
-	priorRunning := s.running
 	s.mu.Unlock()
-	if priorRunning && priorDone != nil {
+	if priorDone != nil {
 		<-priorDone
 	}
 	s.mu.Lock()
 	if s.running {
-		// Another Start won the race; we're a no-op.
+		// Lost the race: another Start won.
 		s.mu.Unlock()
 		return
 	}
