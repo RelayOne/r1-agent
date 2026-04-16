@@ -160,7 +160,10 @@ func TestHTTPServer_RPCRejectsUnknownMethod(t *testing.T) {
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.fabricate","params":{}}`)
-	resp, _ := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
 	defer resp.Body.Close()
 	var r struct {
 		Error *struct{ Code int } `json:"error"`
@@ -178,7 +181,10 @@ func TestHTTPServer_RPCAuthRequiredWhenTokenSet(t *testing.T) {
 
 	// Without bearer → unauthorized.
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.submit","params":{"prompt":{}}}`)
-	resp, _ := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
 	defer resp.Body.Close()
 	var r struct {
 		Error *struct{ Code int } `json:"error"`
