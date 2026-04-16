@@ -64,12 +64,47 @@ type EvidenceRef struct {
 }
 
 // Verdict is the critic's overall assessment.
+//
+// EvidenceRefs on the Verdict carry the aggregate pointer
+// set the critic examined across all findings — a replay
+// auditor can reconstruct exactly what the critic saw
+// without walking each Finding individually. Per-finding
+// EvidenceRefs still live on Finding for fine-grained
+// attribution; this top-level field covers the "what did
+// the whole verdict look at?" question directly.
 type Verdict struct {
-	Pass       bool      `json:"pass"`       // true if no blocking findings
-	Findings   []Finding `json:"findings"`
-	Score      float64   `json:"score"`      // 0-1 quality score
-	Summary    string    `json:"summary"`
-	Duration   time.Duration `json:"duration"`
+	Pass         bool          `json:"pass"`       // true if no blocking findings
+	Findings     []Finding     `json:"findings"`
+	Score        float64       `json:"score"`      // 0-1 quality score
+	Summary      string        `json:"summary"`
+	Duration     time.Duration `json:"duration"`
+	EvidenceRefs []EvidenceRef `json:"evidence_refs,omitempty"`
+}
+
+// AggregateEvidence walks the verdict's Findings and
+// returns a deduplicated union of their EvidenceRefs.
+// Used to populate Verdict.EvidenceRefs at emit time
+// without callers manually reconciling across findings.
+func (v Verdict) AggregateEvidence() []EvidenceRef {
+	seen := map[string]struct{}{}
+	var out []EvidenceRef
+	add := func(r EvidenceRef) {
+		key := r.Kind + "|" + r.Hash
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, r)
+	}
+	for _, r := range v.EvidenceRefs {
+		add(r)
+	}
+	for _, f := range v.Findings {
+		for _, r := range f.EvidenceRefs {
+			add(r)
+		}
+	}
+	return out
 }
 
 // Rule is a configurable check.
