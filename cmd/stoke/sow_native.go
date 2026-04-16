@@ -976,7 +976,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				fmt.Printf("  budget exhausted during repair — halting\n")
 				break
 			}
-			failureBlob := formatAcceptanceFailures(acceptance)
+			failureBlob := formatAcceptanceFailures(acceptance, workingSession)
 			// Prepend a sticky-warning block when any criterion has
 			// been failing across multiple attempts, so the repair
 			// prompt tells the model "the last attempt tried the
@@ -1144,7 +1144,8 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 						defer func() { <-sem }()
 						// Build a targeted failure blob for just this
 						// one criterion.
-						singleFailure := formatSingleACFailure(fac)
+						fcrit, _ := findCriterionByID(workingSession, fac.CriterionID)
+						singleFailure := formatSingleACFailure(fac, fcrit)
 						repairTask := plan.Task{
 							ID:          fmt.Sprintf("%s-repair-%d-%s", session.ID, attempt, fac.CriterionID),
 							Description: fmt.Sprintf("fix failing criterion %s: %s", fac.CriterionID, fac.Description),
@@ -2604,6 +2605,8 @@ func buildSOWNativePromptsWithOpts(sowDoc *plan.SOW, session plan.Session, task 
 		sys.WriteString("  - Test fails with 0 tests collected → the test runner isn't configured (missing vitest.config.ts / jest.config.js) OR the test files don't match the runner's glob pattern.\n")
 		sys.WriteString("  - Type errors reference missing @types → add the @types/<pkg> devDep and re-install.\n")
 		sys.WriteString("After you make each fix, re-run the exact failing command via bash and confirm exit 0 BEFORE moving to the next fix. Never end the repair without re-running every failing command at least once.\n\n")
+		sys.WriteString("TARGET-FILE DISCIPLINE (run 40 lesson): when an AC is `grep -q \"X\" FOO.json`, the fix belongs in FOO.json, not in README.md, .gitignore, .env.example, .prettierrc, or any adjacent config. Look at what the AC command actually reads — that's your edit target. ")
+		sys.WriteString("If the failure block below lists EDIT TARGET, open THAT file first, understand its current state (cat / read_file), and make the minimal change that will flip the AC from fail to pass. Editing surrounding files is how the repair loop burns 3 attempts without fixing anything.\n\n")
 	} else {
 		sys.WriteString("You are an autonomous coding agent working on a project defined by a Statement of Work (SOW). ")
 		sys.WriteString("Your job: implement the single task described in the user message by writing files directly to the project root. ")
@@ -4001,16 +4004,34 @@ func runForcedDecomposition(ctx context.Context, sowDoc *plan.SOW, workingSessio
 // failing criterion. Used by the per-criterion parallel repair path
 // so each worker gets a focused assignment instead of the full failure
 // blob.
-func formatSingleACFailure(ac plan.AcceptanceResult) string {
+//
+// When `criterion` carries the original AC's Command / FileExists /
+// ContentMatch, we surface an "EDIT TARGET" hint extracted from it —
+// the fix for run 40 S1 where the repair worker kept editing adjacent
+// config (`.env.example`, `.gitignore`, `.prettierrc`) instead of the
+// `package.json` block the AC `grep`s.
+func formatSingleACFailure(ac plan.AcceptanceResult, criterion plan.AcceptanceCriterion) string {
 	var b strings.Builder
 	b.WriteString("FAILING ACCEPTANCE CRITERION (fix THIS ONE criterion only):\n\n")
 	fmt.Fprintf(&b, "  [FAIL] %s: %s\n", ac.CriterionID, ac.Description)
+	if criterion.Command != "" {
+		fmt.Fprintf(&b, "         verified by: $ %s\n", criterion.Command)
+	} else if criterion.FileExists != "" {
+		fmt.Fprintf(&b, "         file must exist: %s\n", criterion.FileExists)
+	} else if criterion.ContentMatch != nil {
+		fmt.Fprintf(&b, "         file %s must contain: %s\n", criterion.ContentMatch.File, criterion.ContentMatch.Pattern)
+	}
 	if ac.Output != "" {
 		for _, line := range strings.Split(strings.TrimSpace(ac.Output), "\n") {
 			fmt.Fprintf(&b, "         %s\n", line)
 		}
 	}
-	b.WriteString("\nFix ONLY this criterion. Do not touch code unrelated to this specific failure. After your fix, re-run the exact failing command via bash and confirm exit 0.\n")
+	b.WriteString("\n")
+	if blurb := acTargetBlurb(criterion); blurb != "" {
+		b.WriteString(blurb)
+		b.WriteString("\n")
+	}
+	b.WriteString("Fix ONLY this criterion. Do not touch code unrelated to this specific failure. After your fix, re-run the exact failing command via bash and confirm exit 0.\n")
 	return b.String()
 }
 
@@ -4140,15 +4161,30 @@ fi`,
 
 // formatAcceptanceFailures builds a human/model-readable block describing
 // which criteria failed and why. Fed into repair prompts.
-func formatAcceptanceFailures(results []plan.AcceptanceResult) string {
+//
+// When `session` is non-zero we enrich each failure entry with an
+// "EDIT TARGET" hint derived from the matching AcceptanceCriterion's
+// Command / FileExists / ContentMatch — telling the worker which file
+// the AC literally inspects, so repair edits land on the right file
+// instead of adjacent config.
+func formatAcceptanceFailures(results []plan.AcceptanceResult, session plan.Session) string {
 	var b strings.Builder
 	for _, r := range results {
 		if r.Passed {
 			continue
 		}
 		fmt.Fprintf(&b, "- [%s] %s\n", r.CriterionID, r.Description)
+		if crit, ok := findCriterionByID(session, r.CriterionID); ok {
+			if crit.Command != "" {
+				fmt.Fprintf(&b, "    verified by: $ %s\n", crit.Command)
+			}
+			if blurb := acTargetBlurb(crit); blurb != "" {
+				for _, line := range strings.Split(strings.TrimRight(blurb, "\n"), "\n") {
+					fmt.Fprintf(&b, "    %s\n", line)
+				}
+			}
+		}
 		if r.Output != "" {
-			// Indent the output so it's visually separated.
 			lines := strings.Split(strings.TrimRight(r.Output, "\n"), "\n")
 			for _, line := range lines {
 				fmt.Fprintf(&b, "    %s\n", line)

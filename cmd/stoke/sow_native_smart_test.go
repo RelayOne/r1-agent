@@ -96,7 +96,7 @@ func TestFormatAcceptanceFailures_OnlyFailed(t *testing.T) {
 		{CriterionID: "AC2", Description: "test", Passed: false, Output: "FAIL: TestFoo\n  expected 1, got 2"},
 		{CriterionID: "AC3", Description: "lint", Passed: false, Output: "foo.go:3:1: undefined: bar"},
 	}
-	blob := formatAcceptanceFailures(results)
+	blob := formatAcceptanceFailures(results, plan.Session{})
 	if strings.Contains(blob, "[AC1]") {
 		t.Error("passing criteria should not appear in failure blob")
 	}
