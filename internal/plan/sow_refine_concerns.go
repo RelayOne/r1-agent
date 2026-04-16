@@ -217,14 +217,27 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 }
 
 // spliceDroppedIDs restores tasks/ACs the refiner omitted by
-// copying them back from the original SOW into whichever
-// session they came from. Preserves work while letting the
-// refiner's structural improvements elsewhere stand.
+// copying them back from the original SOW. Preserves work
+// while letting the refiner's structural improvements stand.
 //
-// If the original session no longer exists in the refined
-// SOW (refiner renamed or removed it), the dropped entries
-// are appended to the first session in the refined SOW — a
-// last-resort landing pad so the content isn't lost.
+// Target selection for each missing ID (most specific → least):
+//  1. Exact session-ID match (refined still has the original
+//     session under the same ID).
+//  2. Prefix match on the session ID (refiner split S5 into
+//     S5-api + S5-ui; we pick the first session starting with
+//     "S5").
+//  3. Sanitized-canonical match (sanitizeSessionID(orig) equals
+//     the refined's sanitized ID — catches refiner cosmetic
+//     renames like "S5 (api)" → "S5").
+//  4. Fallback: refined.Sessions[0] (no better home found).
+//
+// Rename-vs-drop guard: before appending, check whether the
+// refined SOW already carries a task/AC with the same
+// description (tasks) or same command/verifier payload (ACs)
+// anywhere in the SOW. If yes, the refiner renamed rather
+// than dropped — skip the splice so we don't duplicate
+// content with one stale ID + one fresh ID.
+//
 // Operators see the warning banner printed by the caller and
 // can re-run refine with explicit preserve directives if the
 // placement is wrong.
@@ -244,30 +257,129 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 	for _, id := range missingACs {
 		missingA[id] = true
 	}
-	// Build refined-session index by ID so we can target splices.
-	idx := map[string]int{}
-	for i, s := range refined.Sessions {
-		idx[s.ID] = i
-	}
-	// Walk original sessions; if a task/AC is in the missing
-	// set AND its original session is still present in refined,
-	// append it there. Otherwise fall back to refined.Sessions[0].
-	for _, origSess := range original.Sessions {
-		target := 0
-		if ri, ok := idx[origSess.ID]; ok {
-			target = ri
-		}
-		for _, t := range origSess.Tasks {
-			if missingT[t.ID] {
-				refined.Sessions[target].Tasks = append(refined.Sessions[target].Tasks, t)
+	// Pre-index refined content for rename detection.
+	refinedTaskDescs := map[string]bool{}
+	refinedACKeys := map[string]bool{}
+	for _, s := range refined.Sessions {
+		for _, t := range s.Tasks {
+			d := normalizeDesc(t.Description)
+			if d != "" {
+				refinedTaskDescs[d] = true
 			}
+		}
+		for _, a := range s.AcceptanceCriteria {
+			k := acPayloadKey(a)
+			if k != "" {
+				refinedACKeys[k] = true
+			}
+		}
+	}
+	// Build refined-session indices: exact, prefix-by-first-dash,
+	// sanitized-canonical. Each used in descending priority.
+	exact := map[string]int{}
+	sanitizedIdx := map[string]int{}
+	var prefixOrder []string // preserve iteration order for stable prefix pick
+	prefixMap := map[string]int{}
+	for i, s := range refined.Sessions {
+		exact[s.ID] = i
+		// Prefix: "S5-api" → prefix "S5" (first segment before '-').
+		head := s.ID
+		if dash := strings.IndexByte(head, '-'); dash > 0 {
+			head = head[:dash]
+		}
+		if head != "" {
+			if _, seen := prefixMap[head]; !seen {
+				prefixMap[head] = i
+				prefixOrder = append(prefixOrder, head)
+			}
+		}
+		if clean := sanitizeSessionID(s.ID); clean != "" {
+			if _, seen := sanitizedIdx[clean]; !seen {
+				sanitizedIdx[clean] = i
+			}
+		}
+	}
+	_ = prefixOrder // kept for future stable-ordering scenarios
+
+	findTarget := func(origID string) int {
+		if ri, ok := exact[origID]; ok {
+			return ri
+		}
+		// Prefix: try matching original ID's head to any refined
+		// session whose head matches.
+		head := origID
+		if dash := strings.IndexByte(head, '-'); dash > 0 {
+			head = head[:dash]
+		}
+		if ri, ok := prefixMap[head]; ok {
+			return ri
+		}
+		// Sanitized-canonical.
+		if clean := sanitizeSessionID(origID); clean != "" {
+			if ri, ok := sanitizedIdx[clean]; ok {
+				return ri
+			}
+		}
+		return 0
+	}
+
+	for _, origSess := range original.Sessions {
+		target := findTarget(origSess.ID)
+		for _, t := range origSess.Tasks {
+			if !missingT[t.ID] {
+				continue
+			}
+			// Rename detection: if the refined SOW carries a task
+			// with an equivalent description anywhere, the refiner
+			// renamed (not dropped) this task. Skip to avoid
+			// duplication.
+			if d := normalizeDesc(t.Description); d != "" && refinedTaskDescs[d] {
+				continue
+			}
+			refined.Sessions[target].Tasks = append(refined.Sessions[target].Tasks, t)
 		}
 		for _, a := range origSess.AcceptanceCriteria {
-			if missingA[a.ID] {
-				refined.Sessions[target].AcceptanceCriteria = append(refined.Sessions[target].AcceptanceCriteria, a)
+			if !missingA[a.ID] {
+				continue
 			}
+			if k := acPayloadKey(a); k != "" && refinedACKeys[k] {
+				continue
+			}
+			refined.Sessions[target].AcceptanceCriteria = append(refined.Sessions[target].AcceptanceCriteria, a)
 		}
 	}
+}
+
+// normalizeDesc collapses whitespace + lowercases a task
+// description so rename detection doesn't miss cases where the
+// refiner reformatted wording but preserved meaning. Returns
+// "" for descriptions that are too short to be a reliable
+// rename signal (under 8 chars) — falling back to ID-based
+// handling for those.
+func normalizeDesc(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if len(s) < 8 {
+		return ""
+	}
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// acPayloadKey returns a signature combining the AC's
+// verifier-relevant fields so two ACs with different IDs but
+// the same checking behavior map to the same key. Catches
+// the refiner's "renamed AC1 → AC9, kept same command".
+func acPayloadKey(a AcceptanceCriterion) string {
+	parts := []string{
+		strings.TrimSpace(a.Command),
+	}
+	if a.ContentMatch != nil {
+		parts = append(parts, a.ContentMatch.File, a.ContentMatch.Pattern)
+	}
+	sig := strings.Join(parts, "|")
+	if strings.Trim(sig, "|") == "" {
+		return ""
+	}
+	return sig
 }
 
 // cmHasContent reports whether a ContentMatchCriterion is meaningful
