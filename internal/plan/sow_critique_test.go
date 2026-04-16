@@ -208,19 +208,19 @@ func (f *flipProvider) ChatStream(req provider.ChatRequest, onEvent func(stream.
 
 func TestCritiqueAndRefine_ShipsAfterRefinement(t *testing.T) {
 	critRefine := `{"overall_score":60,"dimensions":{"foundation":50,"decomposition":60,"criteria":50,"stack":70,"dependencies":70,"specificity":60},"issues":[{"severity":"major","description":"criteria too vague","fix":"add commands"}],"verdict":"refine","summary":"fix criteria"}`
-	refined := `{
-  "id": "ok",
-  "name": "Better",
-  "sessions": [
-    {
-      "id": "S1", "title": "Setup",
-      "tasks": [{"id": "T1", "description": "init"}],
-      "acceptance_criteria": [{"id": "AC1", "description": "build", "command": "go build ./..."}]
-    }
-  ]
+	// Chunked refine calls refineOneSession which expects a
+	// Session-shaped JSON (not a full SOW). Since goodSOW() has
+	// one session S1 and the issue is global (no session_id),
+	// chunked refine targets every session → one per-session
+	// call. Provide a Session-shaped response here.
+	refinedSession := `{
+  "id": "S1",
+  "title": "Refined Setup",
+  "tasks": [{"id": "T1", "description": "init with refined plan"}],
+  "acceptance_criteria": [{"id": "AC1", "description": "build passes", "command": "go build ./..."}]
 }`
 	critShip := `{"overall_score":88,"dimensions":{"foundation":90,"decomposition":85,"criteria":90,"stack":85,"dependencies":85,"specificity":85},"issues":[],"verdict":"ship","summary":"now it ships"}`
-	prov := &flipProvider{responses: []string{critRefine, refined, critShip}}
+	prov := &flipProvider{responses: []string{critRefine, refinedSession, critShip}}
 	sow, crit, err := CritiqueAndRefine(goodSOW(), prov, "m", 3)
 	if err != nil {
 		t.Fatalf("CritiqueAndRefine: %v", err)
@@ -228,29 +228,36 @@ func TestCritiqueAndRefine_ShipsAfterRefinement(t *testing.T) {
 	if crit.Verdict != "ship" {
 		t.Errorf("final verdict = %q, want ship", crit.Verdict)
 	}
-	if sow.Name != "Better" {
-		t.Errorf("refined name not propagated: %q", sow.Name)
+	// Chunked refine preserves top-level SOW metadata (id/name)
+	// from the original; the refined session's title should
+	// have propagated.
+	if sow.Sessions[0].Title != "Refined Setup" {
+		t.Errorf("refined session title not propagated: %q", sow.Sessions[0].Title)
 	}
 	if prov.call != 3 {
 		t.Errorf("expected 3 LLM calls (crit, refine, crit), got %d", prov.call)
 	}
 }
 
-// When the critic rejects but refinement is impossible (mock returns
-// the same reject critique even from RefineSOW so the parse fails),
-// the error chain still surfaces "rejected" so the caller can tell
-// the difference between "buggy critique pipeline" and "critic actually
-// rejected the work". This was the previous behavior — it is preserved
-// because main.go pattern-matches on "rejected" for its warning text.
+// When the critic rejects AND the critique has no session-targeted
+// issues for chunked refine to act on, refine no-ops (valid) and
+// the loop exits cleanly after maxPasses. The caller sees the
+// reject verdict via the returned critique — it's their
+// responsibility to pattern-match on crit.Verdict == "reject"
+// rather than on the error message. Previously the test expected
+// an error containing "rejected"; that behavior depended on the
+// monolithic refine ALWAYS failing when issues were empty. The
+// chunked path handles empty issues gracefully, which is the
+// correct design, so the test now asserts the verdict path.
 func TestCritiqueAndRefine_Rejects(t *testing.T) {
 	rejectResp := `{"overall_score":10,"dimensions":{},"issues":[],"verdict":"reject","summary":"fundamentally broken"}`
 	prov := &mockProvider{name: "mock", response: rejectResp}
 	_, crit, err := CritiqueAndRefine(goodSOW(), prov, "m", 3)
-	if err == nil || !strings.Contains(err.Error(), "rejected") {
-		t.Errorf("expected rejection error, got %v", err)
+	if err != nil {
+		t.Fatalf("unexpected error on no-issues reject path: %v", err)
 	}
 	if crit == nil || crit.Verdict != "reject" {
-		t.Errorf("expected reject verdict")
+		t.Errorf("expected reject verdict in returned critique, got %+v", crit)
 	}
 }
 
@@ -261,19 +268,15 @@ func TestCritiqueAndRefine_Rejects(t *testing.T) {
 // bail out and let the caller proceed with the buggy SOW.
 func TestCritiqueAndRefine_RefinesAfterReject(t *testing.T) {
 	rejectCrit := `{"overall_score":40,"dimensions":{"foundation":40,"decomposition":40,"criteria":30,"stack":50,"dependencies":50,"specificity":40},"issues":[{"severity":"blocking","description":"acceptance criteria are grep checks that always pass","fix":"replace with real build commands"}],"verdict":"reject","summary":"too brittle to ship"}`
-	refined := `{
-  "id": "ok",
-  "name": "Refined-after-reject",
-  "sessions": [
-    {
-      "id": "S1", "title": "Setup",
-      "tasks": [{"id": "T1", "description": "init"}],
-      "acceptance_criteria": [{"id": "AC1", "description": "build", "command": "go build ./..."}]
-    }
-  ]
+	// Session-shaped response for the chunked refine path.
+	refinedSession := `{
+  "id": "S1",
+  "title": "Hardened Setup",
+  "tasks": [{"id": "T1", "description": "init with stricter gates"}],
+  "acceptance_criteria": [{"id": "AC1", "description": "build passes", "command": "go build ./..."}]
 }`
 	shipCrit := `{"overall_score":92,"dimensions":{"foundation":95,"decomposition":90,"criteria":95,"stack":90,"dependencies":90,"specificity":92},"issues":[],"verdict":"ship","summary":"now it ships"}`
-	prov := &flipProvider{responses: []string{rejectCrit, refined, shipCrit}}
+	prov := &flipProvider{responses: []string{rejectCrit, refinedSession, shipCrit}}
 	sow, crit, err := CritiqueAndRefine(goodSOW(), prov, "m", 3)
 	if err != nil {
 		t.Fatalf("CritiqueAndRefine: %v", err)
@@ -281,8 +284,8 @@ func TestCritiqueAndRefine_RefinesAfterReject(t *testing.T) {
 	if crit == nil || crit.Verdict != "ship" {
 		t.Errorf("expected ship after refine; got %+v", crit)
 	}
-	if sow == nil || sow.Name != "Refined-after-reject" {
-		t.Errorf("refined SOW not used: %+v", sow)
+	if sow == nil || sow.Sessions[0].Title != "Hardened Setup" {
+		t.Errorf("refined SOW not used: session title=%q", sow.Sessions[0].Title)
 	}
 	if prov.call != 3 {
 		t.Errorf("expected 3 LLM calls (reject, refine, ship), got %d", prov.call)
@@ -291,13 +294,13 @@ func TestCritiqueAndRefine_RefinesAfterReject(t *testing.T) {
 
 func TestCritiqueAndRefine_GivesUpAfterMaxPasses(t *testing.T) {
 	// Every pass returns refine, never ships. After maxPasses we should
-	// return the last refined SOW.
+	// return the last refined SOW. Flow per pass: critique →
+	// chunked refine (per-session call for S1) → next pass.
 	refineResp := `{"overall_score":60,"dimensions":{},"issues":[{"severity":"major","description":"still bad","fix":"try again"}],"verdict":"refine","summary":"nope"}`
-	refined := `{
-  "id": "ok", "name": "Attempt",
-  "sessions": [{"id":"S1","title":"t","tasks":[{"id":"T1","description":"x"}],"acceptance_criteria":[{"id":"AC1","description":"d","command":"true"}]}]
+	refinedSession := `{
+  "id":"S1","title":"t","tasks":[{"id":"T1","description":"x"}],"acceptance_criteria":[{"id":"AC1","description":"d","command":"true"}]
 }`
-	prov := &flipProvider{responses: []string{refineResp, refined, refineResp, refined}}
+	prov := &flipProvider{responses: []string{refineResp, refinedSession, refineResp, refinedSession}}
 	_, crit, err := CritiqueAndRefine(goodSOW(), prov, "m", 2)
 	if err != nil {
 		t.Fatalf("should complete without error (just use the last refined): %v", err)

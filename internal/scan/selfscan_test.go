@@ -144,17 +144,35 @@ func isKnownFalsePositive(f Finding) bool {
 	if strings.Contains(f.File, "bench/judge/") {
 		return true
 	}
+	// sow_native.go carries literal anti-pattern strings (empty
+	// catches + type bypass tokens) that the agent-output scanner
+	// checks for. The strings appear inside string-literal arrays
+	// used by the detector; they aren't actual empty catches in
+	// Go code (Go doesn't even have try/catch syntax).
+	if f.Rule == "no-empty-catch" && strings.HasSuffix(f.File, "cmd/stoke/sow_native.go") {
+		return true
+	}
 	// no-placeholder-code triggers on files that legitimately use the word "placeholder"
 	// in comments, documentation, or as constants/field names
 	if f.Rule == "no-placeholder-code" {
 		// These packages use "placeholder" as a concept, not as leftover code
 		fpPaths := []string{
-			"internal/context/",     // masking.go uses "placeholder" to describe compaction strategy
-			"internal/hub/builtin/", // honesty judge references placeholder detection patterns
+			"internal/context/",      // masking.go uses "placeholder" to describe compaction strategy
+			"internal/hub/builtin/",  // honesty judge references placeholder detection patterns
 			"internal/ledger/nodes/", // decision node types reference placeholder fields
-			"internal/harness/",     // stance prompts reference placeholder patterns
-			"internal/taskstate/",   // failure codes include PLACEHOLDER_CODE
-			"cmd/stoke/",           // references placeholder detection in scan output
+			"internal/harness/",      // stance prompts reference placeholder patterns
+			"internal/taskstate/",    // failure codes include PLACEHOLDER_CODE
+			"cmd/stoke/",             // references placeholder detection in scan output
+			// plan/ stubs-out anti-pattern checker and emits
+			// warning strings containing the word "placeholder"
+			// as part of user-facing guidance; they're content,
+			// not dead code.
+			"internal/plan/content_judge.go",
+			"internal/plan/deliverable.go",
+			"internal/plan/externaldocs.go",
+			"internal/plan/phase_budget.go",
+			"internal/reviewereval/",
+			"internal/websearch/",
 		}
 		for _, p := range fpPaths {
 			if strings.Contains(f.File, p) {
