@@ -379,3 +379,37 @@ func TestSpliceDroppedIDs_RenameInDifferentSessionNotSuppressed(t *testing.T) {
 		t.Error("cross-session description match must not suppress splice into target session")
 	}
 }
+
+// TestSpliceDroppedIDs_RenameInChildSessionSuppressed —
+// refiner split S5 into S5-api + S5-ui. The rename of S5's
+// T290 landed in S5-ui (not S5-api). Since S5-ui is a
+// CHILD of S5 (prefix-match), the unique-and-scoped rename
+// check should accept the rename and suppress restoration,
+// avoiding a duplicate T290 alongside the renamed copy.
+func TestSpliceDroppedIDs_RenameInChildSessionSuppressed(t *testing.T) {
+	desc := "implement refund webhook handler for the paygate integration"
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S5", Tasks: []Task{
+				{ID: "T290", Description: desc},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S5-api", Tasks: []Task{{ID: "T100", Description: "api split marker"}}},
+			// The renamed task lives in the UI child, not the
+			// one findTarget picks (first prefix match = S5-api).
+			{ID: "S5-ui", Tasks: []Task{{ID: "T290-new", Description: desc}}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T290"}, nil)
+
+	// S5-ui already has T290-new (the rename). Restoring T290
+	// to S5-api would create the duplicate the reviewer flagged.
+	// Total tasks across both children should stay at 2, not 3.
+	totalTasks := len(refined.Sessions[0].Tasks) + len(refined.Sessions[1].Tasks)
+	if totalTasks != 2 {
+		t.Errorf("rename in child should be detected; got %d tasks across split children", totalTasks)
+	}
+}

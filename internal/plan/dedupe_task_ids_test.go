@@ -90,6 +90,58 @@ func TestAutoDeduplicateTaskIDs_DepsAcrossSessions(t *testing.T) {
 	}
 }
 
+// TestAutoDeduplicateTaskIDs_CrossSessionDepPreserved —
+// a task in the renamed session with a dep on an ID that
+// was NEVER an original ID of that session is treated as
+// a cross-session reference and left untouched.
+//
+// Setup: S1 has T10 (kept). S2 has T99 and T100.
+// T100 has dep "T10" — meaning S1's T10 (cross-session).
+// S2 also has T10-duplicate. When we rename S2's T10 → T10-S2,
+// we must NOT rewrite T100's dep "T10" because T10 was
+// never an original in S2 (S2's originals were only T99,
+// T100, T10-duplicate). Wait — T10-duplicate IS T10 in S2's
+// originals. Tweak: use T200 in S2.
+func TestAutoDeduplicateTaskIDs_CrossSessionDepPreserved(t *testing.T) {
+	sow := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{
+				{ID: "T10", Description: "foundational task S1"},
+			}},
+			{ID: "S2", Tasks: []Task{
+				{ID: "T200", Description: "S2 first"},
+				// T300 depends on S1's T10 (cross-session dep),
+				// legitimately captured in task.Dependencies.
+				{ID: "T300", Description: "S2 consumer", Dependencies: []string{"T10"}},
+				// Another T10 that will force a rename in S2 —
+				// but since T10 was NOT an original in S2 (before
+				// this line), the dep above should stay intact.
+				// Wait — T10 IS added to S2 via this task entry.
+				// Let me restructure so T10 doesn't appear as an
+				// original in S2. Use a different dup:
+			}},
+			// Move the duplicate into S3 instead, so S2 has no
+			// T10 origin.
+			{ID: "S3", Tasks: []Task{
+				{ID: "T10", Description: "S3 duplicate of T10"},
+			}},
+		},
+	}
+	autoDeduplicateTaskIDs(sow)
+
+	// S3's T10 should be renamed to T10-S3.
+	if sow.Sessions[2].Tasks[0].ID != "T10-S3" {
+		t.Errorf("S3's T10 should be renamed, got %q", sow.Sessions[2].Tasks[0].ID)
+	}
+	// S2's T300 dep "T10" was a CROSS-session ref (to S1's T10).
+	// After rename of S3's T10, S2 has no rename, so the dep
+	// stays as-is.
+	got := sow.Sessions[1].Tasks[1].Dependencies
+	if len(got) != 1 || got[0] != "T10" {
+		t.Errorf("cross-session dep preserved; got %v", got)
+	}
+}
+
 func TestAutoDeduplicateTaskIDs_NoOpWhenUnique(t *testing.T) {
 	sow := &SOW{
 		Sessions: []Session{

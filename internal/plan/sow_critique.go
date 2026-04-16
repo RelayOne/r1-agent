@@ -376,20 +376,17 @@ func autoCleanTaskDeps(sow *SOW) {
 //   - If that suffix is also taken (very rare), append a numeric
 //     disambiguator: T398-S5-2, T398-S5-3, etc.
 //   - Intra-session task.Dependencies entries that pointed at the
-//     old ID get rewritten to the new ID. Rationale: in the SOW
-//     schema, task.Dependencies is conventionally an intra-session
-//     graph (cross-session handoffs flow through session-level
-//     Inputs/Outputs), so when a session renamed T10, any local
-//     task that depended on "T10" almost certainly meant the
-//     local copy that just got renamed. A prior version tried to
-//     preserve ambiguous cross-session references via a global
-//     idCounts guard — that guard was tautologically true for
-//     every renamed ID (the rename only fires when the original
-//     was duplicated, which forces the count ≥ 2), so it
-//     always skipped the rewrite and broke intra-session
-//     scheduling order. If a legitimate cross-session dep was
-//     captured in task.Dependencies (rare), autoCleanTaskDeps
-//     drops dangling refs after this rewrite.
+//     old ID get rewritten to the new ID ONLY WHEN the dep target
+//     was originally a task in the same session. Cross-session
+//     references to the surviving first-occurrence copy stay
+//     intact. Earlier versions either (a) always rewrote
+//     (corrupting cross-session deps) or (b) always skipped
+//     (breaking intra-session wiring via a tautological guard).
+//     The per-session-originals track catches exactly the case
+//     we want — a dep to "T10" inside session S5 where S5 had
+//     its own T10 that got renamed is obviously a local ref;
+//     a dep to "T10" inside session S5 where S5 never had a
+//     T10 must have meant another session's T10.
 //
 // Mutation is in place on the passed SOW.
 func autoDeduplicateTaskIDs(sow *SOW) {
@@ -397,6 +394,21 @@ func autoDeduplicateTaskIDs(sow *SOW) {
 		return
 	}
 	seen := map[string]bool{}
+	// Pre-compute each session's ORIGINAL task-ID set (the IDs
+	// present before we start renaming). Used below to decide
+	// whether a dep rewrite is local (safe) or cross-session
+	// (ambiguous — leave alone).
+	origBySession := make([]map[string]bool, len(sow.Sessions))
+	for si, s := range sow.Sessions {
+		ids := map[string]bool{}
+		for _, t := range s.Tasks {
+			id := strings.TrimSpace(t.ID)
+			if id != "" {
+				ids[id] = true
+			}
+		}
+		origBySession[si] = ids
+	}
 	for si := range sow.Sessions {
 		s := &sow.Sessions[si]
 		sessLabel := strings.TrimSpace(s.ID)
@@ -425,12 +437,23 @@ func autoDeduplicateTaskIDs(sow *SOW) {
 		if len(renames) == 0 {
 			continue
 		}
+		origs := origBySession[si]
 		for ti := range s.Tasks {
 			deps := s.Tasks[ti].Dependencies
 			for i, d := range deps {
-				if nd, ok := renames[strings.TrimSpace(d)]; ok {
-					deps[i] = nd
+				target := strings.TrimSpace(d)
+				nd, ok := renames[target]
+				if !ok {
+					continue
 				}
+				// Rewrite only when the dep target was a task in
+				// THIS session before rename. A dep to "T10" from
+				// a session whose originals never included "T10"
+				// must have been a cross-session reference.
+				if !origs[target] {
+					continue
+				}
+				deps[i] = nd
 			}
 		}
 	}

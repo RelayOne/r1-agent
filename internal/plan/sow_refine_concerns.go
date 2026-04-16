@@ -352,31 +352,58 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 		return 0
 	}
 
+	// Pre-compute the set of refined-session indices that are
+	// "children" of each original session ID — the target
+	// findTarget resolves to PLUS any other session whose ID
+	// shares the same prefix-head. Catches the split case
+	// where refiner took S5 and produced S5-api + S5-ui: the
+	// rename may have landed in either child, and the unique-
+	// and-local check must accept either.
+	childrenOf := func(origID string) map[int]bool {
+		out := map[int]bool{findTarget(origID): true}
+		head := origID
+		if dash := strings.IndexByte(head, '-'); dash > 0 {
+			head = head[:dash]
+		}
+		for i, s := range refined.Sessions {
+			rhead := s.ID
+			if dash := strings.IndexByte(rhead, '-'); dash > 0 {
+				rhead = rhead[:dash]
+			}
+			if rhead == head {
+				out[i] = true
+			}
+			// Also match sanitized-canonical equality.
+			if sanitizeSessionID(s.ID) == sanitizeSessionID(origID) {
+				out[i] = true
+			}
+		}
+		return out
+	}
+
 	// isRename reports whether a refined item with this
-	// signature looks like THE rename of the dropped original
-	// that lives in `target`. A legit rename = exactly one
-	// refined item matches the signature AND it lives in the
-	// same session we're splicing into. Anything weaker
-	// (common description across many tasks, same "go build"
-	// command in three sessions) falls through to "not a
-	// rename, do restore" — preserving gate strength at the
-	// cost of occasional duplication that autoCleanTaskDeps +
-	// autoDeduplicateTaskIDs can resolve downstream.
-	isRename := func(occ *sigOccurrence, target int) bool {
+	// signature looks like THE rename of the dropped original.
+	// A legit rename = exactly one refined item matches the
+	// signature AND it lives in one of the original session's
+	// children (target session OR any refined session whose ID
+	// prefix-matches the original). Anything weaker falls
+	// through to "restore" so gate strength is preserved.
+	isRename := func(occ *sigOccurrence, kids map[int]bool) bool {
 		if occ == nil {
 			return false
 		}
-		return occ.count == 1 && occ.sessIdx == target
+		return occ.count == 1 && kids[occ.sessIdx]
 	}
 
 	for _, origSess := range original.Sessions {
 		target := findTarget(origSess.ID)
+		kids := childrenOf(origSess.ID)
 		for _, t := range origSess.Tasks {
 			if !missingT[t.ID] {
 				continue
 			}
 			if d := normalizeDesc(t.Description); d != "" {
-				if isRename(refinedTaskBySig[d], target) {
+				if isRename(refinedTaskBySig[d], kids) {
 					continue
 				}
 			}
@@ -387,7 +414,7 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 				continue
 			}
 			if k := acPayloadKey(a); k != "" {
-				if isRename(refinedACBySig[k], target) {
+				if isRename(refinedACBySig[k], kids) {
 					continue
 				}
 			}
