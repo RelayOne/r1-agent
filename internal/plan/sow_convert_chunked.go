@@ -340,21 +340,22 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		var verdict *FinalApprovalVerdict
 		var aerr error
 		for round := 0; round <= maxRefineRounds; round++ {
-			// Give the CTO approval its own fresh context so a long
-			// expand + consistency + coverage phase can't starve it
-			// (observed in run 38: chunkedCtx expired during convert,
-			// approval called with -4s budget, both agentic and
-			// monolith timed out instantly, dispatch proceeded
-			// un-approved). 20-minute budget covers both agentic
-			// tool-driven exploration (typically 1-3 min) and the
-			// monolithic single-call fallback (up to ~10 min).
-			approvalCtx, approvalCancel := context.WithTimeout(context.Background(), 20*time.Minute)
-			verdict, aerr = FinalPlanApprovalAgentic(approvalCtx, prose, out, prov, model, "")
+			// Give EACH approval attempt its own fresh context —
+			// agentic and monolithic must not share a budget
+			// (otherwise a slow agentic failure leaves monolith with
+			// no time). Both detached from the chunked parent so
+			// they can't be starved by a long expand phase.
+			// Observed in run 38: chunkedCtx expired during convert
+			// → approval got -4s and failed instantly.
+			agenticCtx, agenticCancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			verdict, aerr = FinalPlanApprovalAgentic(agenticCtx, prose, out, prov, model, "")
+			agenticCancel()
 			if aerr != nil {
 				fmt.Printf("  ⚠ agentic final approval failed (%v); falling back to monolithic\n", aerr)
-				verdict, aerr = FinalPlanApproval(approvalCtx, prose, out, prov, model)
+				monolithicCtx, monolithicCancel := context.WithTimeout(context.Background(), 12*time.Minute)
+				verdict, aerr = FinalPlanApproval(monolithicCtx, prose, out, prov, model)
+				monolithicCancel()
 			}
-			approvalCancel()
 			if aerr != nil {
 				// Both agentic AND monolithic approval failed. This
 				// is a stronger signal than "approval skipped" —
@@ -418,7 +419,17 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			} else {
 				fmt.Printf("  🔁 refine round %d: addressing %d concern(s) before dispatch\n", round+1, len(verdict.Concerns))
 			}
-			refined, rerr := RefineSOWFromConcerns(ctx, prose, out, verdict.Concerns, prov, model)
+			// Refine also gets a fresh detached context for the same
+			// reason as the approval calls: if the approval call ran
+			// after the chunked parent expired, using ctx for refine
+			// would return context.DeadlineExceeded immediately,
+			// which the non-blocking branch below would then treat
+			// as a "refine failed, proceed with current SOW"
+			// approval — silently bypassing the request_changes
+			// verdict that just came back.
+			refineCtx, refineCancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			refined, rerr := RefineSOWFromConcerns(refineCtx, prose, out, verdict.Concerns, prov, model)
+			refineCancel()
 			if rerr != nil {
 				if blockingCount > 0 {
 					// Refine pass couldn't run AND we had blocking
