@@ -131,24 +131,40 @@ main() {
     info "Installing to ${INSTALL_DIR}..."
     tar -xzf "${tmp_dir}/${archive_name}" -C "${tmp_dir}"
 
-    # Find the binary in the extracted archive
-    local bin_path
-    bin_path="$(find "${tmp_dir}" -name stoke -type f -perm -u+x | head -1)"
-    if [ -z "${bin_path}" ]; then
-        bin_path="$(find "${tmp_dir}" -name stoke -type f | head -1)"
-    fi
-    [ -n "${bin_path}" ] || error "Could not find stoke binary in archive"
+    # Install both binaries from the release archive: the main
+    # stoke CLI and the stoke-acp Agent Client Protocol adapter
+    # (S-U-002). The ACP adapter is optional — older archives
+    # won't include it, so missing stoke-acp isn't a hard error.
+    install_one() {
+        local bin_name="$1"
+        local dest_name="$2"
+        local required="$3"
+        local found
+        found="$(find "${tmp_dir}" -name "${bin_name}" -type f -perm -u+x | head -1)"
+        if [ -z "${found}" ]; then
+            found="$(find "${tmp_dir}" -name "${bin_name}" -type f | head -1)"
+        fi
+        if [ -z "${found}" ]; then
+            if [ "${required}" = "required" ]; then
+                error "Could not find ${bin_name} binary in archive"
+            fi
+            info "Optional binary ${bin_name} not in this release archive; skipping."
+            return
+        fi
+        if [ -w "${INSTALL_DIR}" ]; then
+            cp "${found}" "${INSTALL_DIR}/${dest_name}"
+            chmod +x "${INSTALL_DIR}/${dest_name}"
+        else
+            info "Need sudo to install ${dest_name} to ${INSTALL_DIR}"
+            sudo cp "${found}" "${INSTALL_DIR}/${dest_name}"
+            sudo chmod +x "${INSTALL_DIR}/${dest_name}"
+        fi
+        info "Installed ${dest_name} ${version} to ${INSTALL_DIR}/${dest_name}"
+    }
 
-    if [ -w "${INSTALL_DIR}" ]; then
-        cp "${bin_path}" "${INSTALL_DIR}/${BINARY}"
-        chmod +x "${INSTALL_DIR}/${BINARY}"
-    else
-        info "Need sudo to install to ${INSTALL_DIR}"
-        sudo cp "${bin_path}" "${INSTALL_DIR}/${BINARY}"
-        sudo chmod +x "${INSTALL_DIR}/${BINARY}"
-    fi
+    install_one stoke "${BINARY}" required
+    install_one stoke-acp stoke-acp optional
 
-    info "Installed stoke ${version} to ${INSTALL_DIR}/${BINARY}"
     info "Run 'stoke doctor' to verify your setup."
 }
 

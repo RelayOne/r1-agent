@@ -91,6 +91,12 @@ const (
 // implementations as of early 2026.
 const acpProtocolVersion = "0.1.0"
 
+// version is the stoke-acp release version. Set via -ldflags
+// "-X main.version=<ver>" at build time (matches cmd/stoke
+// pattern). Defaults to "dev" for go build without ldflags so
+// local development can still identify builds unambiguously.
+var version = "dev"
+
 // Server holds the adapter's mutable state: sessions + a writer
 // mutex so concurrent notifications don't interleave on stdout.
 type Server struct {
@@ -217,8 +223,8 @@ func (s *Server) handleInitialize(req jsonRPCRequest) {
 			},
 		},
 		"serverInfo": map[string]any{
-			"name":    "stoke-acp",
-			"version": "0.1.0",
+			"name":             "stoke-acp",
+			"version":          version,
 			"_stoke.dev/phase": "1",
 			"_stoke.dev/note":  "Phase 1 transport + session lifecycle. session/prompt currently echoes; Phase 2 delegates to Stoke's mission runner.",
 		},
