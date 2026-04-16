@@ -156,7 +156,15 @@ func (SimpleEvaluator) EvaluateCriterion(_ context.Context, subject string, c ve
 // happens outside stoke-mcp — this primitive's job is to
 // audit the invocation, not to gate it on a manifest the
 // caller may have registered in a separate process.
-func (b *Backends) Invoke(capability string, input json.RawMessage, delegationID string) (map[string]any, error) {
+//
+// ctx: propagated to the ledger write so the RPC's cancel
+// / deadline flows through to audit persistence.
+// missionID: caller-supplied bucket for the audit node
+// (e.g., the mission/session ID the invocation belongs
+// to). Empty → "mcp-invoke" default so standalone callers
+// without a mission still land in a predictable bucket
+// they can query.
+func (b *Backends) Invoke(ctx context.Context, missionID, capability string, input json.RawMessage, delegationID string) (map[string]any, error) {
 	resp := map[string]any{
 		"capability":              capability,
 		"_stoke.dev/capability":   capability,
@@ -180,37 +188,51 @@ func (b *Backends) Invoke(capability string, input json.RawMessage, delegationID
 	// capabilities — callers should be able to reconstruct
 	// "who called what" from the ledger regardless of
 	// registration state).
-	content, _ := json.Marshal(map[string]any{
+	content, err := json.Marshal(map[string]any{
 		"kind":          "capability_invocation",
 		"capability":    capability,
 		"manifest_hash": resp["manifest_hash"],
 		"delegation_id": delegationID,
 		"input_bytes":   len(input),
 	})
-	nodeID, lerr := b.Ledger.AddNode(context.Background(), ledger.Node{
+	if err != nil {
+		return nil, fmt.Errorf("marshal invoke audit content: %w", err)
+	}
+	bucket := strings.TrimSpace(missionID)
+	if bucket == "" {
+		bucket = "mcp-invoke"
+	}
+	nodeID, lerr := b.Ledger.AddNode(ctx, ledger.Node{
 		Type:          "decision_internal",
 		SchemaVersion: 1,
 		CreatedAt:     time.Now().UTC(),
 		CreatedBy:     "stoke-mcp",
-		MissionID:     "mcp-invoke",
+		MissionID:     bucket,
 		Content:       content,
 	})
 	if lerr != nil {
-		resp["audit_write_error"] = lerr.Error()
-	} else {
-		resp["audit_node_id"] = string(nodeID)
+		// Audit persistence failure is a real problem — the
+		// invocation happened but the ledger didn't record it.
+		// Surface via RPC error so clients see the gap rather
+		// than hiding it inside a "success with audit_write_error
+		// field" response that many callers ignore. Operators
+		// wanting the legacy behavior can treat the error as
+		// non-fatal at the MCP layer.
+		return nil, fmt.Errorf("audit write: %w", lerr)
 	}
+	resp["audit_node_id"] = string(nodeID)
 	return resp, nil
 }
 
 // Verify runs a task-class rubric against the subject via
-// the SimpleEvaluator.
-func (b *Backends) Verify(taskClass verify.TaskClass, subject string) (map[string]any, error) {
+// the SimpleEvaluator. ctx propagates through to the
+// evaluator so RPC cancellation flows cleanly.
+func (b *Backends) Verify(ctx context.Context, taskClass verify.TaskClass, subject string) (map[string]any, error) {
 	rubric, ok := b.VerifyRegistry.Get(taskClass)
 	if !ok {
 		return nil, fmt.Errorf("no rubric registered for task class %q", taskClass)
 	}
-	result, err := verify.EvaluateRubric(context.Background(), subject, rubric, b.Evaluator)
+	result, err := verify.EvaluateRubric(ctx, subject, rubric, b.Evaluator)
 	if err != nil {
 		return nil, fmt.Errorf("evaluate rubric: %w", err)
 	}
@@ -232,8 +254,9 @@ func (b *Backends) Verify(taskClass verify.TaskClass, subject string) (map[strin
 }
 
 // Audit writes an audit node to the ledger and returns
-// its content-addressed ID.
-func (b *Backends) Audit(action string, evidenceRefs []string, subjectRef string) (map[string]any, error) {
+// its content-addressed ID. missionID buckets the audit
+// in the caller's mission context; empty → "mcp-audit".
+func (b *Backends) Audit(ctx context.Context, missionID, action string, evidenceRefs []string, subjectRef string) (map[string]any, error) {
 	content, err := json.Marshal(map[string]any{
 		"kind":          "audit_event",
 		"action":        action,
@@ -244,12 +267,16 @@ func (b *Backends) Audit(action string, evidenceRefs []string, subjectRef string
 	if err != nil {
 		return nil, fmt.Errorf("marshal audit content: %w", err)
 	}
-	nodeID, err := b.Ledger.AddNode(context.Background(), ledger.Node{
+	bucket := strings.TrimSpace(missionID)
+	if bucket == "" {
+		bucket = "mcp-audit"
+	}
+	nodeID, err := b.Ledger.AddNode(ctx, ledger.Node{
 		Type:          "decision_internal",
 		SchemaVersion: 1,
 		CreatedAt:     time.Now().UTC(),
 		CreatedBy:     "stoke-mcp",
-		MissionID:     "mcp-audit",
+		MissionID:     bucket,
 		Content:       content,
 	})
 	if err != nil {
@@ -264,12 +291,13 @@ func (b *Backends) Audit(action string, evidenceRefs []string, subjectRef string
 
 // Delegate issues a delegation token via the delegation
 // manager (which wraps the TrustPlane client). Records the
-// delegation creation in the ledger for audit.
-func (b *Backends) Delegate(toDID, bundleName string, expirySeconds int) (map[string]any, error) {
+// delegation creation in the ledger for audit. missionID
+// buckets the audit node; empty → "mcp-delegation".
+func (b *Backends) Delegate(ctx context.Context, missionID, toDID, bundleName string, expirySeconds int) (map[string]any, error) {
 	if expirySeconds <= 0 {
 		expirySeconds = 3600
 	}
-	d, err := b.Delegation.Delegate(context.Background(), delegation.Request{
+	d, err := b.Delegation.Delegate(ctx, delegation.Request{
 		FromDID:    "did:stoke:mcp",
 		ToDID:      toDID,
 		BundleName: bundleName,
@@ -279,20 +307,32 @@ func (b *Backends) Delegate(toDID, bundleName string, expirySeconds int) (map[st
 		return nil, fmt.Errorf("create delegation: %w", err)
 	}
 	// Audit the delegation creation.
-	auditContent, _ := json.Marshal(map[string]any{
+	auditContent, marshalErr := json.Marshal(map[string]any{
 		"kind":          "delegation_issued",
 		"delegation_id": d.ID,
 		"to_did":        toDID,
 		"bundle_name":   bundleName,
 	})
-	_, _ = b.Ledger.AddNode(context.Background(), ledger.Node{
-		Type:          "decision_internal",
-		SchemaVersion: 1,
-		CreatedAt:     time.Now().UTC(),
-		CreatedBy:     "stoke-mcp",
-		MissionID:     "mcp-delegation",
-		Content:       auditContent,
-	})
+	if marshalErr != nil {
+		// Delegation succeeded; log but don't fail the caller
+		// on a marshal error for the audit record.
+		fmt.Fprintln(os.Stderr, "stoke-mcp: delegate audit marshal:", marshalErr)
+	} else {
+		bucket := strings.TrimSpace(missionID)
+		if bucket == "" {
+			bucket = "mcp-delegation"
+		}
+		if _, lerr := b.Ledger.AddNode(ctx, ledger.Node{
+			Type:          "decision_internal",
+			SchemaVersion: 1,
+			CreatedAt:     time.Now().UTC(),
+			CreatedBy:     "stoke-mcp",
+			MissionID:     bucket,
+			Content:       auditContent,
+		}); lerr != nil {
+			fmt.Fprintln(os.Stderr, "stoke-mcp: delegate audit write:", lerr)
+		}
+	}
 	return map[string]any{
 		"delegation_id": d.ID,
 		"to_did":        toDID,

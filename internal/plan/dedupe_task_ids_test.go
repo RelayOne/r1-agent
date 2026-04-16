@@ -28,33 +28,70 @@ func TestAutoDeduplicateTaskIDs_RenamesDuplicates(t *testing.T) {
 	if sow.Sessions[0].Tasks[0].ID != "T398" {
 		t.Errorf("first occurrence should be kept, got %q", sow.Sessions[0].Tasks[0].ID)
 	}
-	if sow.Sessions[1].Tasks[0].ID != "T398-s5" {
+	if sow.Sessions[1].Tasks[0].ID != "T398-S5" {
 		t.Errorf("duplicate should be renamed, got %q", sow.Sessions[1].Tasks[0].ID)
 	}
-	if sow.Sessions[1].Tasks[1].ID != "T399-s5" {
+	if sow.Sessions[1].Tasks[1].ID != "T399-S5" {
 		t.Errorf("duplicate should be renamed, got %q", sow.Sessions[1].Tasks[1].ID)
 	}
 }
 
-func TestAutoDeduplicateTaskIDs_UpdatesIntraSessionDeps(t *testing.T) {
+// TestAutoDeduplicateTaskIDs_AmbiguousDepLeftAlone — when the
+// original ID exists in another session too (idCount > 1), the
+// dep could mean either "the local copy we renamed" or "the
+// first-occurrence we kept elsewhere." Rewriting would silently
+// redirect a cross-session reference, so we preserve the original
+// string and let autoCleanTaskDeps drop it only if it becomes
+// dangling.
+func TestAutoDeduplicateTaskIDs_AmbiguousDepLeftAlone(t *testing.T) {
 	sow := &SOW{
 		Sessions: []Session{
 			{ID: "S1", Tasks: []Task{
 				{ID: "T10", Description: "a"},
 			}},
 			{ID: "S2", Tasks: []Task{
-				{ID: "T10", Description: "b", Dependencies: []string{"T10"}}, // self-ref nonsense but still
-				{ID: "T11", Description: "c", Dependencies: []string{"T10"}}, // should rewrite to T10-s2
+				{ID: "T10", Description: "b"},
+				{ID: "T11", Description: "c", Dependencies: []string{"T10"}},
 			}},
 		},
 	}
 	autoDeduplicateTaskIDs(sow)
 
-	// T11 was unique; its dep "T10" should now point to the
-	// renamed T10-s2 (because T11 is in S2, where T10 got renamed).
 	got := sow.Sessions[1].Tasks[1].Dependencies
-	if len(got) != 1 || got[0] != "T10-s2" {
-		t.Errorf("dep not rewritten: got %v, want [T10-s2]", got)
+	if len(got) != 1 || got[0] != "T10" {
+		t.Errorf("ambiguous dep should be preserved, got %v", got)
+	}
+}
+
+// TestAutoDeduplicateTaskIDs_UnambiguousDepRewritten — when the
+// original ID appears ONLY in the session being renamed (no
+// first-occurrence elsewhere), the dep is unambiguously local
+// and gets rewritten to the new ID so intra-session wiring is
+// preserved.
+func TestAutoDeduplicateTaskIDs_UnambiguousDepRewritten(t *testing.T) {
+	sow := &SOW{
+		Sessions: []Session{
+			// First occurrence of T5 is kept.
+			{ID: "S1", Tasks: []Task{{ID: "T5", Description: "root"}}},
+			// S2 has a DIFFERENT ID (T10) which appears only in S2 but
+			// duplicated locally — first-dup becomes the kept copy;
+			// the second becomes the renamed copy.
+			{ID: "S2", Tasks: []Task{
+				{ID: "T10", Description: "first T10 here"},
+			}},
+			{ID: "S3", Tasks: []Task{
+				{ID: "T10", Description: "dup"},
+				{ID: "T99", Description: "ref", Dependencies: []string{"T10"}},
+			}},
+		},
+	}
+	autoDeduplicateTaskIDs(sow)
+
+	// T10 exists in S2 (kept) and S3 (renamed to T10-S3).
+	// idCounts[T10] = 2, so S3's T99 dep "T10" is ambiguous and
+	// stays pointing at the S2 copy.
+	if got := sow.Sessions[2].Tasks[1].Dependencies; len(got) != 1 || got[0] != "T10" {
+		t.Errorf("ambiguous dep: got %v want [T10]", got)
 	}
 }
 
@@ -93,24 +130,26 @@ func TestAutoDeduplicateTaskIDs_EmptySessionID(t *testing.T) {
 	}
 }
 
+// TestAutoDeduplicateTaskIDs_TripleCollision uses three distinct
+// session IDs (S1, S2, S3) so the SOW shape is valid — the test
+// exercises the third-occurrence disambiguator path without relying
+// on an invalid same-ID-session state that ValidateSOW would reject.
 func TestAutoDeduplicateTaskIDs_TripleCollision(t *testing.T) {
 	sow := &SOW{
 		Sessions: []Session{
 			{ID: "S1", Tasks: []Task{{ID: "T1", Description: "a"}}},
 			{ID: "S2", Tasks: []Task{{ID: "T1", Description: "b"}}},
-			{ID: "S2", Tasks: []Task{{ID: "T1", Description: "c"}}},
+			{ID: "S3", Tasks: []Task{{ID: "T1", Description: "c"}}},
 		},
 	}
 	autoDeduplicateTaskIDs(sow)
-	// S1 keeps T1, S2 (first) becomes T1-s2, S2 (second) conflicts
-	// with T1-s2 already seen, so it should disambiguate further.
-	// It's actually two different session entries both with ID=S2;
-	// the second dup gets T1-s2-2.
-	if sow.Sessions[1].Tasks[0].ID != "T1-s2" {
-		t.Errorf("second occurrence got %q want T1-s2", sow.Sessions[1].Tasks[0].ID)
+	// S1 keeps T1, S2 becomes T1-S2, S3 becomes T1-S3 (no
+	// disambiguator needed since the session IDs differ).
+	if sow.Sessions[1].Tasks[0].ID != "T1-S2" {
+		t.Errorf("S2 got %q want T1-S2", sow.Sessions[1].Tasks[0].ID)
 	}
-	if sow.Sessions[2].Tasks[0].ID != "T1-s2-2" {
-		t.Errorf("third occurrence got %q want T1-s2-2", sow.Sessions[2].Tasks[0].ID)
+	if sow.Sessions[2].Tasks[0].ID != "T1-S3" {
+		t.Errorf("S3 got %q want T1-S3", sow.Sessions[2].Tasks[0].ID)
 	}
 }
 

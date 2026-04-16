@@ -123,9 +123,10 @@ func (s *Skill) ToManifest() (skillmfr.Manifest, error) {
 
 // BackfillManifests registers a manifest for every skill in
 // the registry that the manifest registry doesn't already
-// have. Returns (registered, skipped, firstErr). The error
-// is non-nil only if a derivation failed; existing
-// manifests short-circuit without attempting re-registration.
+// have. Returns (registered, skipped, aggregatedErr).
+// aggregatedErr collects every per-skill failure (derivation
+// or registration) so callers see the full diagnostic set
+// rather than just the first one.
 //
 // Intended call sites:
 //   - cmd/stoke-mcp main() at startup — seeds the manifest
@@ -133,7 +134,7 @@ func (s *Skill) ToManifest() (skillmfr.Manifest, error) {
 //     any shipped skill name as registered
 //   - config.LoadSkills caller — batched backfill after
 //     Load so user-added skills also get manifests
-func BackfillManifests(sr *Registry, mr *skillmfr.Registry) (registered, skipped int, firstErr error) {
+func BackfillManifests(sr *Registry, mr *skillmfr.Registry) (registered, skipped int, aggErr error) {
 	if sr == nil || mr == nil {
 		return 0, 0, fmt.Errorf("skill: BackfillManifests: nil registry")
 	}
@@ -146,6 +147,7 @@ func BackfillManifests(sr *Registry, mr *skillmfr.Registry) (registered, skipped
 	}
 	sr.mu.RUnlock()
 
+	var failures []string
 	for _, sk := range skills {
 		if _, have := mr.Get(sk.Name); have {
 			skipped++
@@ -153,20 +155,38 @@ func BackfillManifests(sr *Registry, mr *skillmfr.Registry) (registered, skipped
 		}
 		m, err := sk.ToManifest()
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			failures = append(failures, fmt.Sprintf("derive %q: %v", sk.Name, err))
 			continue
 		}
 		if err := mr.Register(m); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("register %q: %w", sk.Name, err)
-			}
+			failures = append(failures, fmt.Sprintf("register %q: %v", sk.Name, err))
 			continue
 		}
 		registered++
 	}
-	return registered, skipped, firstErr
+	if len(failures) > 0 {
+		aggErr = fmt.Errorf("skill: BackfillManifests: %d skill(s) failed:\n  - %s",
+			len(failures), joinLines(failures))
+	}
+	return registered, skipped, aggErr
+}
+
+// joinLines is strings.Join with a per-line indent so
+// multi-error output renders readably in terminal logs.
+func joinLines(lines []string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0] + func() string {
+		if len(lines) == 1 {
+			return ""
+		}
+		out := ""
+		for _, l := range lines[1:] {
+			out += "\n  - " + l
+		}
+		return out
+	}()
 }
 
 // deriveWhenToUse concatenates a skill's Triggers + Keywords

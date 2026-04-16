@@ -1600,7 +1600,7 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	sb.WriteString("\nDO NOT:\n")
 	switch analysis.Class {
 	case failure.PolicyViolation:
-		sb.WriteString("  - Use ts" + "-" + "ignore, " + "as " + "any, or eslint" + "-disable\n")
+		sb.WriteString("  - Use @ts" + "-" + "ignore, " + "as " + "any, or eslint" + "-disable\n")
 	case failure.WrongFiles:
 		sb.WriteString("  - Modify files outside the task scope\n")
 	case failure.Regression:
@@ -1791,14 +1791,15 @@ func planPromptWithSkills(e Engine) string {
 }
 
 func executePromptWithContext(e Engine) string {
-	k := e.ToolRetrievalK
-	if e.ToolRetriever != nil && k == 0 {
-		k = 5
-	}
-	if k < 0 {
-		k = 0
-	}
-	prompt := executePromptWithRetriever(e.Task, e.TaskType, e.TaskVerification, e.ToolRetriever, k)
+	// Skill injection first (matches against the raw task /
+	// verification text ONLY). Running it AFTER Tool RAG would
+	// let retrieved capability terms like "postgres" or "docker"
+	// trigger keyword-matched skill injection for capabilities
+	// the task didn't actually request — pulling in irrelevant
+	// skill context. Build the base prompt, let skill injection
+	// bind to task intent, THEN append the RAG block as
+	// post-skill context.
+	basePrompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
 
 	// Inject matching built-in skills (keyword-triggered prompt augmentation).
 	// Use Engine's registry if available, otherwise auto-create from project root.
@@ -1807,7 +1808,23 @@ func executePromptWithContext(e Engine) string {
 		reg = skill.DefaultRegistry(e.RepoRoot)
 		_ = reg.Load()
 	}
-	prompt, _ = reg.InjectPromptBudgeted(prompt, e.StackMatches, 3000)
+	prompt, _ := reg.InjectPromptBudgeted(basePrompt, e.StackMatches, 3000)
+
+	// Append Tool RAG hits AFTER skill injection so the
+	// retrieval terms don't back-feed into skill keyword
+	// matching.
+	k := e.ToolRetrievalK
+	if e.ToolRetriever != nil && k == 0 {
+		k = 5
+	}
+	if k < 0 {
+		k = 0
+	}
+	if e.ToolRetriever != nil && k > 0 {
+		if block := stokeprompts.RenderRelevantTools(e.ToolRetriever, e.Task, k); block != "" {
+			prompt = prompt + "\n" + block
+		}
+	}
 
 	// Repository map is injected below via ctxpack (not here) to avoid
 	// duplication and to respect context window constraints.

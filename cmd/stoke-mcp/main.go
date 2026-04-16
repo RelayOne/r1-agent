@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -256,17 +257,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 	}
 	switch p.Name {
 	case "stoke_invoke":
-		s.handleInvoke(req, p.Arguments)
+		s.handleInvoke(ctx, req, p.Arguments)
 	case "stoke_verify":
-		s.handleVerify(req, p.Arguments)
+		s.handleVerify(ctx, req, p.Arguments)
 	case "stoke_audit":
-		s.handleAudit(req, p.Arguments)
+		s.handleAudit(ctx, req, p.Arguments)
 	case "stoke_delegate":
-		s.handleDelegate(req, p.Arguments)
+		s.handleDelegate(ctx, req, p.Arguments)
 	default:
 		s.respondErr(req.ID, errMethodMiss, "unknown tool: "+p.Name, nil)
 	}
-	_ = ctx
 }
 
 // --- Tool handlers ---
@@ -280,11 +280,12 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 // by the schema + response shape; the underlying engines are
 // already shipped in internal/ and get wired in a follow-up.
 
-func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
+func (s *Server) handleInvoke(ctx context.Context, req rpcRequest, args json.RawMessage) {
 	var a struct {
 		Capability   string          `json:"capability"`
 		Input        json.RawMessage `json:"input"`
 		DelegationID string          `json:"delegation_id"`
+		MissionID    string          `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: parse args: "+err.Error(), nil)
@@ -309,7 +310,7 @@ func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input must be a JSON object", nil)
 		return
 	}
-	result, err := s.backends.Invoke(a.Capability, a.Input, a.DelegationID)
+	result, err := s.backends.Invoke(ctx, a.MissionID, a.Capability, a.Input, a.DelegationID)
 	if err != nil {
 		s.respondErr(req.ID, errInternal, "stoke_invoke: "+err.Error(), nil)
 		return
@@ -332,13 +333,24 @@ func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
 	s.respondOK(req.ID, resp)
 }
 
-// validVerifyTaskClasses mirrors the OpenAPI spec enum
-// constraint: task_class must be one of these four values.
-var validVerifyTaskClasses = map[string]bool{
-	"code": true, "research": true, "writing": true, "scheduling": true,
-}
+// validVerifyTaskClasses mirrors the authoritative
+// verify.TaskClass enumeration. Populated at init from the
+// package-level constants so this list can't drift from the
+// typed constants if one is added/removed.
+var validVerifyTaskClasses = func() map[string]bool {
+	set := map[string]bool{}
+	for _, c := range []verify.TaskClass{
+		verify.TaskClassCode,
+		verify.TaskClassResearch,
+		verify.TaskClassWriting,
+		verify.TaskClassScheduling,
+	} {
+		set[string(c)] = true
+	}
+	return set
+}()
 
-func (s *Server) handleVerify(req rpcRequest, args json.RawMessage) {
+func (s *Server) handleVerify(ctx context.Context, req rpcRequest, args json.RawMessage) {
 	var a struct {
 		TaskClass string `json:"task_class"`
 		Subject   string `json:"subject"`
@@ -352,15 +364,22 @@ func (s *Server) handleVerify(req rpcRequest, args json.RawMessage) {
 		return
 	}
 	if !validVerifyTaskClasses[a.TaskClass] {
+		// Build the expected list from the authoritative set so
+		// the error message mirrors the live enum.
+		want := make([]string, 0, len(validVerifyTaskClasses))
+		for k := range validVerifyTaskClasses {
+			want = append(want, k)
+		}
+		sort.Strings(want)
 		s.respondErr(req.ID, errInvalidArgs,
-			"stoke_verify: task_class must be one of [code, research, writing, scheduling], got "+a.TaskClass, nil)
+			"stoke_verify: task_class must be one of ["+strings.Join(want, ", ")+"], got "+a.TaskClass, nil)
 		return
 	}
 	if a.Subject == "" {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: subject required", nil)
 		return
 	}
-	result, err := s.backends.Verify(verify.TaskClass(a.TaskClass), a.Subject)
+	result, err := s.backends.Verify(ctx, verify.TaskClass(a.TaskClass), a.Subject)
 	if err != nil {
 		s.respondErr(req.ID, errInternal, "stoke_verify: "+err.Error(), nil)
 		return
@@ -396,17 +415,18 @@ func countPassedOutcomes(v any) int {
 	return n
 }
 
-func (s *Server) handleAudit(req rpcRequest, args json.RawMessage) {
+func (s *Server) handleAudit(ctx context.Context, req rpcRequest, args json.RawMessage) {
 	var a struct {
 		Action       string   `json:"action"`
 		EvidenceRefs []string `json:"evidence_refs"`
 		SubjectRef   string   `json:"subject_ref"`
+		MissionID    string   `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || a.Action == "" {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_audit: action required", nil)
 		return
 	}
-	result, err := s.backends.Audit(a.Action, a.EvidenceRefs, a.SubjectRef)
+	result, err := s.backends.Audit(ctx, a.MissionID, a.Action, a.EvidenceRefs, a.SubjectRef)
 	if err != nil {
 		s.respondErr(req.ID, errInternal, "stoke_audit: "+err.Error(), nil)
 		return
@@ -425,17 +445,18 @@ func (s *Server) handleAudit(req rpcRequest, args json.RawMessage) {
 	s.respondOK(req.ID, resp)
 }
 
-func (s *Server) handleDelegate(req rpcRequest, args json.RawMessage) {
+func (s *Server) handleDelegate(ctx context.Context, req rpcRequest, args json.RawMessage) {
 	var a struct {
 		ToDID         string `json:"to_did"`
 		BundleName    string `json:"bundle_name"`
 		ExpirySeconds int    `json:"expiry_seconds"`
+		MissionID     string `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || a.ToDID == "" || a.BundleName == "" {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_delegate: to_did + bundle_name required", nil)
 		return
 	}
-	result, err := s.backends.Delegate(a.ToDID, a.BundleName, a.ExpirySeconds)
+	result, err := s.backends.Delegate(ctx, a.MissionID, a.ToDID, a.BundleName, a.ExpirySeconds)
 	if err != nil {
 		s.respondErr(req.ID, errInternal, "stoke_delegate: "+err.Error(), nil)
 		return
