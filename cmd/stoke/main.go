@@ -2311,7 +2311,7 @@ func sowCmd(args []string) {
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
-			ContentJudgeRejections: map[string]int{},
+			ContentJudgeRejections: &sync.Map{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling
 			// reviews short-circuit. Prevents the T6-style spiral
@@ -3483,8 +3483,27 @@ func doctorCmd(args []string) {
 // having been run.
 
 func cloudCmd(args []string) {
-	fs := flag.NewFlagSet("cloud", flag.ExitOnError)
-	fs.Parse(args)
+	// Intercept -h / --help / help ourselves so the custom
+	// overview reaches the user instead of being eaten by
+	// flag.ExitOnError printing an empty default usage.
+	// A bare `stoke cloud` also lands on the overview.
+	if len(args) == 0 {
+		args = []string{"help"}
+	}
+	for _, a := range args {
+		if a == "-h" || a == "--help" {
+			args = []string{"help"}
+			break
+		}
+	}
+	fs := flag.NewFlagSet("cloud", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	if err := fs.Parse(args); err != nil {
+		// Parse errors (unknown flags) fall through to
+		// print the overview; keep the binary helpful.
+		fmt.Fprintln(os.Stderr, err)
+		args = []string{"help"}
+	}
 	sub := "help"
 	if fs.NArg() > 0 {
 		sub = fs.Arg(0)

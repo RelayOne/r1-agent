@@ -27,6 +27,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -133,25 +134,49 @@ func (k KeywordValidator) Validate(_ context.Context, existing, incoming Item) (
 	return nil, nil
 }
 
-// extractNumbers pulls numeric tokens (integers + decimals)
-// from s. Used by the contradiction validator's tightened
-// factual-delta path so same-tag complementary facts
-// ("cache is fast" + "cache stores bytes") don't false-flag
-// but same-tag numeric-value facts ("TTL is 5" + "TTL is 10")
-// do.
-func extractNumbers(s string) []string {
-	var out []string
+// extractNumbers pulls numeric tokens (integers + decimals,
+// including leading `-` when it looks like a sign) from s
+// and parses each as float64 so downstream comparison is
+// value-level, not string-level. "5" vs "5.0" → same; "-5"
+// vs "5" → different.
+func extractNumbers(s string) []float64 {
+	var out []float64
 	var cur strings.Builder
 	flush := func() {
-		if cur.Len() > 0 {
-			out = append(out, cur.String())
-			cur.Reset()
+		if cur.Len() == 0 {
+			return
+		}
+		raw := cur.String()
+		cur.Reset()
+		for len(raw) > 0 && raw[len(raw)-1] == '.' {
+			raw = raw[:len(raw)-1]
+		}
+		if raw == "" || raw == "-" || raw == "." {
+			return
+		}
+		f, err := strconv.ParseFloat(raw, 64)
+		if err == nil {
+			out = append(out, f)
 		}
 	}
-	for _, r := range s {
-		if (r >= '0' && r <= '9') || r == '.' {
+	for i, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
 			cur.WriteRune(r)
-		} else {
+		case r == '.':
+			cur.WriteRune(r)
+		case r == '-':
+			// Treat `-` as sign only at a numeric boundary
+			// (start-of-string or preceded by whitespace /
+			// punctuation). Otherwise a hyphen inside a
+			// word like "front-end" shouldn't flip a
+			// trailing number negative.
+			if cur.Len() == 0 && isNumericBoundary(s, i) {
+				cur.WriteRune(r)
+			} else {
+				flush()
+			}
+		default:
 			flush()
 		}
 	}
@@ -159,31 +184,42 @@ func extractNumbers(s string) []string {
 	return out
 }
 
-// numbersAgree reports whether every number in a also
-// appears in b (and vice versa, modulo formatting).
-// Used by the contradiction detector to decide whether
-// shared-tag + differing-content is a numeric disagreement.
-func numbersAgree(a, b []string) bool {
+// isNumericBoundary reports whether byte position i in s is
+// the start of a numeric literal — start-of-string or
+// preceded by whitespace / punctuation.
+func isNumericBoundary(s string, i int) bool {
+	if i == 0 {
+		return true
+	}
+	prev := s[i-1]
+	return prev == ' ' || prev == '\t' || prev == '\n' ||
+		prev == '(' || prev == '[' || prev == ',' ||
+		prev == ':' || prev == ';' || prev == '='
+}
+
+// numbersAgree reports whether the two float sets match by
+// VALUE. "5" and "5.0" extract to the same float and count
+// as agreement; "-5" and "5" are different values and count
+// as disagreement.
+func numbersAgree(a, b []float64) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return true
 	}
-	asSet := map[string]bool{}
-	for _, n := range a {
-		asSet[n] = true
+	has := func(set []float64, v float64) bool {
+		for _, x := range set {
+			if x == v {
+				return true
+			}
+		}
+		return false
 	}
-	bsSet := map[string]bool{}
-	for _, n := range b {
-		bsSet[n] = true
-	}
-	// If at least one numeric appears in ONE set but not
-	// the other, the facts disagree.
-	for n := range asSet {
-		if !bsSet[n] {
+	for _, v := range a {
+		if !has(b, v) {
 			return false
 		}
 	}
-	for n := range bsSet {
-		if !asSet[n] {
+	for _, v := range b {
+		if !has(a, v) {
 			return false
 		}
 	}

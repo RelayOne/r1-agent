@@ -79,14 +79,21 @@ type PositionedTool struct {
 // before Sort/Render.
 func DefaultTier(name string) ToolTier {
 	lower := strings.ToLower(name)
-	for _, browserHint := range []string{"browser", "playwright", "puppeteer", "selenium", "webdriver"} {
-		if strings.Contains(lower, browserHint) {
-			return TierFallback
-		}
-	}
+	// Restricted hints checked FIRST. A tool name carrying
+	// both a browser-shaped and a restricted-shaped hint
+	// (e.g. `playwright_privileged_exec`) must classify as
+	// Restricted so the explicit-policy gate applies rather
+	// than the softer fallback treatment. Earlier version
+	// had these in the opposite order and returned
+	// TierFallback for such names.
 	for _, restrictedHint := range []string{"rm_rf", "sudo", "format_disk", "drop_table", "privileged"} {
 		if strings.Contains(lower, restrictedHint) {
 			return TierRestricted
+		}
+	}
+	for _, browserHint := range []string{"browser", "playwright", "puppeteer", "selenium", "webdriver"} {
+		if strings.Contains(lower, browserHint) {
+			return TierFallback
 		}
 	}
 	return TierPrimary

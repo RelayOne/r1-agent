@@ -222,10 +222,13 @@ type sowNativeConfig struct {
 	// prompt — verbatim SOW excerpt + explicit anti-barrel-
 	// file language + enumerated deliverables — instead of
 	// re-dispatching the same prompt that already failed
-	// twice. Prevents the T16-style loop observed on run 40
-	// where a worker produced the same barrel file 4+
-	// consecutive times.
-	ContentJudgeRejections map[string]int
+	// twice.
+	//
+	// Stored as *sync.Map rather than map[string]int because
+	// --workers > 1 dispatches multiple tasks concurrently and
+	// a plain map would panic on concurrent writes. Keys are
+	// task IDs; values are int rejection counts.
+	ContentJudgeRejections *sync.Map
 
 	// OnTaskAbandon is called when the decomposer returns Abandon=true
 	// for an individual task. The previous behavior was to print a
@@ -3577,12 +3580,30 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			// getting rejected 4+ times with the same
 			// reasoning because the retry prompt repeated
 			// the same guidance verbatim.
-			prev := cfg.ContentJudgeRejections[originalTask.ID]
-			cfg.ContentJudgeRejections[originalTask.ID] = prev + 1
+			// Atomic load-and-increment via sync.Map LoadOrStore
+			// + compare-and-swap loop so parallel-worker
+			// dispatch doesn't race.
+			var prev int
+			if cfg.ContentJudgeRejections != nil {
+				if v, ok := cfg.ContentJudgeRejections.Load(originalTask.ID); ok {
+					prev = v.(int)
+				}
+				cfg.ContentJudgeRejections.Store(originalTask.ID, prev+1)
+			}
 			judgeGap := fmt.Sprintf("content-faithfulness judge flagged declared file(s) as placeholder rather than real implementation: %s (file: %s). Rewrite with a real implementation of the task's required behavior per the SOW spec.", cj.Reason, who)
 			verdict.GapsFound = append([]string{judgeGap}, verdict.GapsFound...)
-			if strings.TrimSpace(verdict.FollowupDirective) == "" || prev >= 1 {
+			// Escalation ladder:
+			//   prev == 0 (first rejection): use the soft
+			//   followup directive if the reviewer didn't
+			//   supply one. Don't jump to the 4k-char hard
+			//   prompt — that's reserved for REPEATED
+			//   rejections, not the first miss.
+			//   prev >= 1 (second or later): hard-escalate
+			//   with verbatim SOW + anti-pattern list.
+			if prev >= 1 {
 				verdict.FollowupDirective = buildHardContentRetryDirective(originalTask, cj, sowExcerpt, prev+1)
+			} else if strings.TrimSpace(verdict.FollowupDirective) == "" {
+				verdict.FollowupDirective = fmt.Sprintf("Rewrite the declared files with a real implementation of the task's required behavior. The current content reads as placeholder per the content-faithfulness judge: %s. Files: %s", cj.Reason, strings.Join(originalTask.Files, ", "))
 			}
 		}
 	}

@@ -246,19 +246,20 @@ func removeString(s []string, id string) []string {
 // randomized cadence. Used to take work-in-progress
 // captures for audit + deception detection.
 //
-// Concurrency model: the loop goroutine uses the OWN
-// stop channel it was started with (captured at Start
-// time); Stop closes that specific channel. A subsequent
-// Start allocates a fresh one. This prevents the prior
-// race where Stop closed the shared field and Start
-// overwrote it, leaving the loop goroutine blocked on
-// the fresh (unclosed) channel.
+// Concurrency model: the loop goroutine owns a per-run
+// stopChan (captured at Start time); Stop closes that
+// specific channel. A subsequent Start waits for the
+// prior loop's exit (doneCh) before allocating new
+// channels + starting a new loop, so we can never have
+// two concurrent loops OR a stale prior-loop goroutine
+// that races the new loop's running=false defer.
 type PeriodicSnapshotter struct {
 	mu       sync.Mutex
 	base     time.Duration
 	jitter   time.Duration // +/- from base
 	snapshot func(ctx context.Context) error
 	stop     chan struct{}
+	done     chan struct{} // loop goroutine closes on exit
 	running  bool
 	rng      func() uint64
 }
@@ -286,26 +287,48 @@ func (s *PeriodicSnapshotter) SetRNG(rng func() uint64) {
 }
 
 // Start begins firing snapshots. Idempotent — calling Start
-// on an already-running snapshotter is a no-op. Allocates a
-// FRESH stop channel each time so repeated Start/Stop
-// cycles work without leaking the old channel's state.
+// on an already-running snapshotter is a no-op.
+//
+// Restart safety: if a prior loop is still in the process of
+// exiting (ctx canceled but the goroutine hasn't returned
+// yet), Start blocks on that done channel before allocating
+// new channels. This prevents the race where the prior
+// loop's running=false defer fires AFTER the new loop has
+// set running=true.
 func (s *PeriodicSnapshotter) Start(ctx context.Context) {
 	s.mu.Lock()
-	if s.running || s.base == 0 {
+	if s.base == 0 {
+		s.mu.Unlock()
+		return
+	}
+	// If a prior loop is still shutting down, wait for it
+	// before allocating fresh state. Release the lock while
+	// waiting so Stop / loop can make progress.
+	priorDone := s.done
+	priorRunning := s.running
+	s.mu.Unlock()
+	if priorRunning && priorDone != nil {
+		<-priorDone
+	}
+	s.mu.Lock()
+	if s.running {
+		// Another Start won the race; we're a no-op.
 		s.mu.Unlock()
 		return
 	}
 	s.running = true
 	s.stop = make(chan struct{})
-	// Capture the channel reference for the loop so that a
-	// later Stop (which allocates a NEW channel) can't
-	// accidentally re-close this one.
+	s.done = make(chan struct{})
 	stopCh := s.stop
+	doneCh := s.done
 	s.mu.Unlock()
-	go s.loop(ctx, stopCh)
+	go s.loop(ctx, stopCh, doneCh)
 }
 
-// Stop halts the snapshotter. Idempotent.
+// Stop halts the snapshotter. Idempotent. Returns after
+// sending the close signal but does NOT block on the loop
+// goroutine's exit — the next Start will wait for the done
+// channel if needed.
 func (s *PeriodicSnapshotter) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -316,15 +339,19 @@ func (s *PeriodicSnapshotter) Stop() {
 	close(s.stop)
 }
 
-func (s *PeriodicSnapshotter) loop(ctx context.Context, stop <-chan struct{}) {
+func (s *PeriodicSnapshotter) loop(ctx context.Context, stop <-chan struct{}, done chan struct{}) {
+	defer close(done)
 	defer func() {
 		// Clear the running flag when the loop exits for
-		// ANY reason (explicit Stop or ctx cancel). Prior
-		// version left running=true after ctx cancellation,
-		// so a subsequent Start with a fresh context became
-		// a permanent no-op.
+		// ANY reason (explicit Stop or ctx cancel) — but
+		// ONLY if this goroutine's done channel still
+		// matches s.done. A concurrent Start that already
+		// raced past our wait would have swapped s.done,
+		// and we must not trample its running=true.
 		s.mu.Lock()
-		s.running = false
+		if s.done == done {
+			s.running = false
+		}
 		s.mu.Unlock()
 	}()
 	for {
