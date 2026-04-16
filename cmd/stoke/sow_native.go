@@ -905,6 +905,10 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			var judge plan.SemanticEvaluator
 			if cfg.ReasoningProvider != nil {
 				judge = func(jctx context.Context, ac plan.AcceptanceCriterion, failureOutput string) (bool, string, error) {
+					// 2-min per-AC timeout so a hung LLM can't stall
+					// the whole acceptance loop (run 47 symptom).
+					jctx, jcancel := context.WithTimeout(jctx, 2*time.Minute)
+					defer jcancel()
 					// Pick a relevant task description to feed the judge.
 					taskDesc := workingSession.Title
 					var taskFiles []string
@@ -3195,7 +3199,17 @@ func runReasoningForStuckCriteria(
 		if block := cfg.UniversalContext.PromptBlock(); strings.TrimSpace(block) != "" {
 			fmt.Printf("    🧭 universal context injected (reasoning): %s\n", cfg.UniversalContext.ShortSources())
 		}
-		verdict, rerr := plan.ReasonAboutFailure(ctx, cfg.ReasoningProvider, reasoningModel, plan.ReasoningInput{
+		// Bound the multi-analyst reasoning call to 3 minutes.
+		// ReasonAboutFailure makes several sequential non-streaming
+		// Chat calls; without a tight per-call deadline a hung LLM
+		// provider stalls the entire session (run 47 symptom: AC2
+		// reasoning hung indefinitely, S1 never completed, promoted
+		// sessions deadlocked). 3 min is generous for a consensus
+		// call that normally takes 30-90s. If it times out, the
+		// acceptance loop proceeds without the reasoning verdict
+		// and the next repair pass retries with fresh state.
+		reasonCtx, reasonCancel := context.WithTimeout(ctx, 3*time.Minute)
+		verdict, rerr := plan.ReasonAboutFailure(reasonCtx, cfg.ReasoningProvider, reasoningModel, plan.ReasoningInput{
 			SessionID:            session.ID,
 			SessionTitle:         session.Title,
 			TaskDescription:      taskDesc,
@@ -3206,6 +3220,7 @@ func runReasoningForStuckCriteria(
 			RepoRoot:             cfg.RepoRoot,
 			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("reasoning-judge-synthesis", "2-repair-loop", &session, 1)),
 		})
+		reasonCancel()
 		close(reasonPulseStop)
 		reasoningApplied[ac.CriterionID] = true
 		if rerr != nil {
