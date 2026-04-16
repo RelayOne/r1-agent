@@ -14,22 +14,22 @@ Stoke's architecture responds to this evidence with two load-bearing decisions:
 
 1. **One strong implementer per task.** The primary model (currently Claude 4.6 or the configured builder) writes the code. There is no "planner agent + coder agent + tester agent" ceremony around it. The implementer has full context, full tool access within its authorized scope, and explicit completion responsibility.
 
-2. **An adversarial reviewer, different model family.** Stoke's `internal/modelsource/` ships a two-role surface (Builder vs. Reviewer) with independent routing. The reviewer model is explicitly constrained to be a different family than the builder (Codex reviews Claude's work, or vice versa). Cross-family disagreement is the signal that something is wrong — not intra-family consensus among clones.
+2. **An adversarial reviewer, separate routing.** Stoke's `internal/modelsource/` ships a two-role surface (Builder vs. Reviewer) with independent routing — operators select the reviewer model via `--reviewer-model` or `REVIEWER_MODEL` independently of the builder. The recommended configuration is cross-family (Codex reviews Claude's work, or vice versa); when no reviewer is explicitly configured, the reviewer defaults to the same family as the builder. Same-family review still catches mechanical errors but loses the cross-family disagreement signal — operators running in that default should be aware of the trade-off.
 
 This composition sidesteps the failure modes MAST cataloged:
 
 | MAST failure mode | Why Stoke dodges it |
 |---|---|
-| Premature termination (21.3%) | Single implementer owns completion; no handoff boundary to fail. |
-| Specification drift across agents | One context, one spec, one writer. |
-| Agent collusion / confirmation bias | Reviewer is a different model family; required by modelsource routing. |
-| Observability black holes | Every phase transition writes a ledger node; `internal/taskstate/` records 22+ structured failure codes. |
+| Premature termination (21.3%) | Phase transitions are deterministic (state machine, not agent-to-agent handoff). Completion claims pass through an AC gate, not an LLM judgment. |
+| Specification drift across agents | One implementer per phase, one spec, structured verdict on transition. |
+| Agent collusion / confirmation bias | Reviewer is routed separately via `internal/modelsource/`; cross-family configuration is recommended but not auto-enforced — operators who leave reviewer unconfigured get same-family review as a fallback. |
+| Observability black holes | `internal/taskstate/` records 20 structured failure codes with fingerprints for deception patterns; phase transitions are captured in-memory via `TaskState.Advance()` and surfaced to reports. Full ledger-node wiring for every transition is a known gap (see `docs/anti-deception-matrix.md`). |
 | Infinite reasoning loops | 30-task default session cap + step-count circuit breakers + deadlock watchdog. |
 | Silent skill degradation | `internal/reviewereval/` measurement harness can run any (builder, reviewer) pair against ground truth and surface FP/FN rates. |
 
 ## What Stoke does NOT do
 
-- Stoke does not run "planner + coder + tester" as separate agents. Planning, execution, and verification are phases in one agent's loop, gated by deterministic rules (`internal/workflow/` PLAN → EXECUTE → VERIFY → COMMIT).
+- Stoke does not run "planner + coder + tester" as separate coordinating agents. Planning, execution, and verification ARE separate phase invocations (each starts with a fresh context window — see `docs/harness-architecture.md`), but the transitions are deterministic and gated by `internal/workflow/`'s state machine, not by agent-to-agent negotiation. There is no hand-off-by-natural-language; every transition is driven by a structured verdict (task state, AC pass/fail, critic decision).
 - Stoke does not use "multi-agent voting" to resolve ambiguity. Ambiguous acceptance criteria fail the integrity gate and surface to the operator.
 - Stoke does not spawn sub-agents to "handle edge cases." Edge cases either fit in the single implementer's context (by design — Stoke's context packer is relevance-weighted) or are decomposed deterministically by the scheduler into smaller tasks of the same shape.
 
@@ -39,7 +39,7 @@ Stoke uses multiple models in three specific places, none of which are "agents c
 
 1. **Cross-model review.** A second model reviews the first's output. Not cooperation — adversarial. The two never share state beyond the diff under review.
 
-2. **Provider fallback chain.** Anthropic → OpenAI → OpenRouter → lint-only. A chain of alternates, not a parallel committee. Each tier runs only when the prior tier is exhausted.
+2. **Provider fallback chain.** `internal/model.Routes` defines task-type-specific primaries (some tasks prefer Claude, some prefer Codex) with fallbacks through Anthropic, Codex, OpenRouter, the direct provider API, and finally lint-only escape hatches. A chain of alternates per task type, not a parallel committee. Each tier runs only when the prior tier is exhausted. See `internal/model/router.go` for the per-task-type routing table.
 
 3. **Cross-stance governance (`internal/stance*` + `internal/supervisor/`).** Different stance personas (CTO, Dev, Reviewer, QA Lead, etc.) evaluate output from their own perspective at specific gates. Not agents interacting with each other — each stance reads the ledger and emits a structured verdict.
 
@@ -51,5 +51,5 @@ None of these are multi-agent systems in the MAST sense. They are single-agent s
 - `docs/architecture/v2-overview.md` — full stance + supervisor architecture.
 - `internal/modelsource/` — Builder vs Reviewer role routing implementation.
 - `internal/reviewereval/` — measurement harness for (builder, reviewer) pair accuracy.
-- `internal/taskstate/` — 22+ structured failure codes covering the deception patterns MAST found.
+- `internal/taskstate/` — 20 structured failure codes with fingerprint dedup covering the deception patterns MAST found.
 - The SWE-bench Pro paper (Scale AI, 2026) — shows scaffold engineering contributes ~15 points of variance on top of model choice, reinforcing that one strong scaffold beats many weak agents.
