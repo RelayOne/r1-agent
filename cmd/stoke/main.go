@@ -1254,6 +1254,18 @@ type streamjsonResult struct {
 	stokeFields map[string]any
 }
 
+// exitWithStreamResult emits the terminal NDJSON result event (if
+// streamjson mode is enabled) and calls os.Exit(code). Needed
+// because os.Exit does NOT fire deferred functions, so the normal
+// defer EmitResult path doesn't cover error-exit paths inside
+// sowCmd. Use at every os.Exit site inside sowCmd.
+func exitWithStreamResult(em *streamjson.Emitter, code int, subtype, text string) {
+	if em.Enabled() {
+		em.EmitResult(subtype, 0, 0, text, nil)
+	}
+	os.Exit(code)
+}
+
 func sowCmd(args []string) {
 	fs := flag.NewFlagSet("sow", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Git repository root")
@@ -1600,7 +1612,7 @@ func sowCmd(args []string) {
 		// Other modes halt unless --force is set.
 		nonDispatching := *dryRun || *dumpPrompts
 		if *validate {
-			os.Exit(1)
+			exitWithStreamResult(streamEmitter, 1, "error_during_execution", "validation failed")
 		}
 		// --dump-task-prompts: also halt if any session/task has
 		// an empty ID or duplicate (session, task) pairing. Both
@@ -1610,11 +1622,11 @@ func sowCmd(args []string) {
 		if *dumpPrompts {
 			if reason := dumpPromptsCollisionRisk(sow); reason != "" {
 				fmt.Fprintf(os.Stderr, "\n  refusing --dump-task-prompts: %s (would overwrite output files silently)\n", reason)
-				os.Exit(1)
+				exitWithStreamResult(streamEmitter, 1, "error_during_execution", fmt.Sprintf("dump-task-prompts collision risk: %s", reason))
 			}
 		}
 		if !nonDispatching && !*forceFeasibility {
-			os.Exit(1)
+			exitWithStreamResult(streamEmitter, 1, "error_during_execution", "strict validation failed")
 		}
 		if *forceFeasibility {
 			fmt.Fprintln(os.Stderr, "  (--force set; proceeding despite strict-validation errors)")
@@ -2891,15 +2903,24 @@ func sowCmd(args []string) {
 		// surface the error verbatim so the user can see what
 		// happened.
 		fmt.Fprintf(os.Stderr, "\nSOW execution failed: %v\n", err)
-		os.Exit(1)
+		streamResult.subtype = "error_during_execution"
+		streamResult.text = err.Error()
+		streamResult.turns = passed + failed
+		exitWithStreamResult(streamEmitter, 1, streamResult.subtype, streamResult.text)
 	case failed > 0:
 		fmt.Fprintf(os.Stderr, "\nSOW finished with %d failed session(s).\n", failed)
 		if passed > 0 {
 			fmt.Fprintf(os.Stderr, "  %d session(s) passed; rerun with --resume to skip them.\n", passed)
 		}
-		os.Exit(1)
+		streamResult.subtype = "error_during_execution"
+		streamResult.text = fmt.Sprintf("SOW finished with %d failed session(s); %d passed", failed, passed)
+		streamResult.turns = passed + failed
+		exitWithStreamResult(streamEmitter, 1, streamResult.subtype, streamResult.text)
 	default:
 		fmt.Println("\nSOW completed successfully.")
+		streamResult.subtype = "success"
+		streamResult.text = fmt.Sprintf("%d session(s) passed", passed)
+		streamResult.turns = passed
 	}
 }
 
