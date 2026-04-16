@@ -99,17 +99,19 @@ var (
 		`(?i)(type|typedef|schema|interface)s?\s*(?:\(([^)]+)\)|:\s*([^.;\n]+))`)
 
 	// "including X, Y, and Z" / "such as X, Y".
-	// The item-body captures up to 2 words per list item
-	// (so "data table" survives but "handlers for session
-	// management" does not). Requires at least one comma
-	// to avoid matching "including login handling" as a
-	// single-item list with trailing prose.
+	// Items accept 1-6 words so multi-word deliverables
+	// like "final production deployment" or "web building
+	// settings" survive. Terminates at the first period /
+	// semicolon / newline so trailing prose after the last
+	// item doesn't get absorbed. Per-item prose-tail
+	// filtering happens in splitList (preposition-starting
+	// items rejected).
 	inclusionRe = regexp.MustCompile(
-		`(?i)(?:including|such as|like)\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?){1,})`)
+		`(?i)(?:including|such as|like)\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*){0,5}(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*){0,5}){1,})`)
 
 	// "implement X, Y, and Z" — imperative verbs.
 	implementListRe = regexp.MustCompile(
-		`(?i)(?:implement|provide|ship|deliver|expose)s?\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?){1,})`)
+		`(?i)(?:implement|provide|ship|deliver|expose)s?\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*){0,5}(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*){0,5}){1,})`)
 )
 
 // ExtractDeliverables scans text (task description + SOW
@@ -227,8 +229,21 @@ func isValidDeliverable(s string) bool {
 	}
 	// Length cap: very long strings are usually prose
 	// that got caught by the regex, not a deliverable.
-	if len(s) > 50 {
+	if len(s) > 60 {
 		return false
+	}
+	// Reject items that START with a preposition — those
+	// are prose fragments captured by the regex's tail
+	// (e.g. "for session management" after "refresh
+	// handlers for session management").
+	lowPrefix := strings.ToLower(s)
+	for _, p := range []string{
+		"for ", "of ", "with ", "in ", "on ", "to ", "by ",
+		"at ", "as ", "from ", "per ", "via ",
+	} {
+		if strings.HasPrefix(lowPrefix, p) {
+			return false
+		}
 	}
 	// Reject common noise tokens. These are nouns that
 	// frequently appear in SOW prose as list items but don't
@@ -294,7 +309,12 @@ func RenderChecklist(ds []Deliverable) string {
 			componentLike++
 		}
 	}
-	oneFilePerItem := componentLike*2 >= len(ds) // majority rule
+	// STRICT majority: component-class must OUTWEIGH the
+	// rest, not just tie. A 50/50 split means the set is
+	// mixed; default to the softer "may share files"
+	// wording so the worker isn't steered to over-split a
+	// router/controller/schema file.
+	oneFilePerItem := componentLike*2 > len(ds)
 
 	var b strings.Builder
 	if oneFilePerItem {
