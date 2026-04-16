@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -34,8 +35,45 @@ func readFirstLine(b []byte) ([]byte, []byte) {
 	return b, nil
 }
 
+// newTestServer constructs a Server with LIVE backends
+// pointed at a per-test-run temp-dir ledger. Each test
+// gets its own ledger so writes don't leak across tests
+// and parallel runs don't race.
+//
+// Unlike the scaffold era where newTestServer returned a
+// Server with no backends (handlers returned synthetic
+// text), the backend-wired handlers deref s.backends
+// directly — tests that skip backend construction would
+// nil-pointer immediately.
 func newTestServer() *Server {
-	return &Server{out: &bytes.Buffer{}}
+	t := testBackendsTempDir
+	if t == "" {
+		dir, err := os.MkdirTemp("", "stoke-mcp-test-")
+		if err != nil {
+			panic("newTestServer: MkdirTemp: " + err.Error())
+		}
+		t = dir
+	}
+	backends, err := NewBackends(t)
+	if err != nil {
+		panic("newTestServer: NewBackends: " + err.Error())
+	}
+	return &Server{out: &bytes.Buffer{}, backends: backends}
+}
+
+// testBackendsTempDir is overridable per-test for suites
+// that want to inspect ledger contents after a call. Empty
+// string → auto-generate a unique dir.
+var testBackendsTempDir = ""
+
+// newAuthTestServer returns a Server configured with auth
+// AND real backends, so auth-flow tests that proceed past
+// the auth gate don't nil-deref on backend handlers.
+func newAuthTestServer(apiKey string) *Server {
+	srv := newTestServer()
+	srv.apiKey = apiKey
+	srv.requireKey = true
+	return srv
 }
 
 func TestInitialize_AnnouncesToolsCapability(t *testing.T) {
@@ -151,7 +189,7 @@ func TestToolsCall_UnknownToolErrors(t *testing.T) {
 }
 
 func TestAuth_RejectsWrongKey(t *testing.T) {
-	srv := &Server{out: &bytes.Buffer{}, apiKey: "expected-key", requireKey: true}
+	srv := newAuthTestServer("expected-key")
 	req := `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"apiKey":"wrong","name":"stoke_invoke","arguments":{"capability":"x","input":{}}}}`
 	resp := rpcCall(t, srv, req)
 	err, _ := resp["error"].(map[string]any)
@@ -164,7 +202,7 @@ func TestAuth_RejectsWrongKey(t *testing.T) {
 }
 
 func TestAuth_AcceptsCorrectKey(t *testing.T) {
-	srv := &Server{out: &bytes.Buffer{}, apiKey: "expected-key", requireKey: true}
+	srv := newAuthTestServer("expected-key")
 	req := `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"apiKey":"expected-key","name":"stoke_invoke","arguments":{"capability":"x","input":{}}}}`
 	resp := rpcCall(t, srv, req)
 	if _, ok := resp["result"].(map[string]any); !ok {
@@ -173,7 +211,7 @@ func TestAuth_AcceptsCorrectKey(t *testing.T) {
 }
 
 func TestAuth_AcceptsBearerInMeta(t *testing.T) {
-	srv := &Server{out: &bytes.Buffer{}, apiKey: "expected-key", requireKey: true}
+	srv := newAuthTestServer("expected-key")
 	req := `{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"_meta":{"authorization":"Bearer expected-key"},"name":"stoke_invoke","arguments":{"capability":"x","input":{}}}}`
 	resp := rpcCall(t, srv, req)
 	if _, ok := resp["result"].(map[string]any); !ok {
@@ -182,7 +220,7 @@ func TestAuth_AcceptsBearerInMeta(t *testing.T) {
 }
 
 func TestAuth_MissingKeyRejected(t *testing.T) {
-	srv := &Server{out: &bytes.Buffer{}, apiKey: "expected-key", requireKey: true}
+	srv := newAuthTestServer("expected-key")
 	req := `{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"stoke_invoke","arguments":{"capability":"x","input":{}}}}`
 	resp := rpcCall(t, srv, req)
 	if _, ok := resp["error"].(map[string]any); !ok {
@@ -213,7 +251,7 @@ func TestParseError(t *testing.T) {
 // blocked by API key, otherwise standard MCP clients can't
 // enumerate the tool surface.
 func TestToolsList_NoAuthRequired(t *testing.T) {
-	srv := &Server{out: nil, apiKey: "secret-key", requireKey: true}
+	srv := newAuthTestServer("secret-key")
 	resp := rpcCall(t, srv,
 		`{"jsonrpc":"2.0","id":20,"method":"tools/list","params":{}}`)
 	if _, ok := resp["error"].(map[string]any); ok {

@@ -27,7 +27,8 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/ericmacdougall/stoke/internal/verify"
 )
 
 const (
@@ -75,18 +76,27 @@ const (
 // Server holds the server's mutable state. Thread-safe; a
 // single writer mutex serializes stdout frames.
 type Server struct {
-	out      io.Writer
-	writeMu  sync.Mutex
-	apiKey   string // empty = no auth
+	out        io.Writer
+	writeMu    sync.Mutex
+	apiKey     string // empty = no auth
 	requireKey bool
+	backends   *Backends
 }
 
 func main() {
 	apiKey := os.Getenv("STOKE_MCP_KEY")
+	ledgerDir := os.Getenv("STOKE_MCP_LEDGER_DIR")
+	backends, err := NewBackends(ledgerDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stoke-mcp: init backends:", err)
+		os.Exit(1)
+	}
+	defer backends.Close()
 	srv := &Server{
 		out:        os.Stdout,
 		apiKey:     apiKey,
 		requireKey: apiKey != "",
+		backends:   backends,
 	}
 	if err := srv.serve(os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, "stoke-mcp:", err)
@@ -297,16 +307,27 @@ func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input must be a JSON object", nil)
 		return
 	}
-	s.respondOK(req.ID, map[string]any{
+	result, err := s.backends.Invoke(a.Capability, a.Input, a.DelegationID)
+	if err != nil {
+		s.respondErr(req.ID, errInternal, "stoke_invoke: "+err.Error(), nil)
+		return
+	}
+	// Return the backend's structured result + a content
+	// array so the MCP client sees both machine-parseable
+	// fields AND a human-readable summary.
+	text := fmt.Sprintf("invoked %q (manifest hash %v)", a.Capability, result["manifest_hash"])
+	if nid, ok := result["audit_node_id"]; ok {
+		text += fmt.Sprintf(" — audited as ledger node %v", nid)
+	}
+	resp := map[string]any{
 		"content": []any{
-			map[string]any{
-				"type": "text",
-				"text": fmt.Sprintf("stoke_invoke stub: capability=%q (requires wiring into internal/skillmfr registry + dispatcher — shipped as scaffolding)", a.Capability),
-			},
+			map[string]any{"type": "text", "text": text},
 		},
-		"_stoke.dev/capability":    a.Capability,
-		"_stoke.dev/delegation_id": a.DelegationID,
-	})
+	}
+	for k, v := range result {
+		resp[k] = v
+	}
+	s.respondOK(req.ID, resp)
 }
 
 // validVerifyTaskClasses mirrors the OpenAPI spec enum
@@ -337,16 +358,40 @@ func (s *Server) handleVerify(req rpcRequest, args json.RawMessage) {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: subject required", nil)
 		return
 	}
-	s.respondOK(req.ID, map[string]any{
-		"content": []any{
-			map[string]any{
-				"type": "text",
-				"text": fmt.Sprintf("stoke_verify stub: task_class=%q — rubric execution pending Evaluator wiring (rubrics shipped in internal/verify/)", a.TaskClass),
-			},
-		},
-		"_stoke.dev/task_class": a.TaskClass,
-		"_stoke.dev/scaffold":   true,
-	})
+	result, err := s.backends.Verify(verify.TaskClass(a.TaskClass), a.Subject)
+	if err != nil {
+		s.respondErr(req.ID, errInternal, "stoke_verify: "+err.Error(), nil)
+		return
+	}
+	summary := fmt.Sprintf("verify %s: %d/%d criteria passed (weighted %.2f)",
+		a.TaskClass,
+		countPassedOutcomes(result["outcomes"]),
+		len(result["outcomes"].([]map[string]any)),
+		result["weighted_score"])
+	resp := map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": summary}},
+	}
+	for k, v := range result {
+		resp[k] = v
+	}
+	s.respondOK(req.ID, resp)
+}
+
+// countPassedOutcomes counts RubricResult entries marked
+// Passed=true. Tolerates the untyped-slice shape the
+// backend returns.
+func countPassedOutcomes(v any) int {
+	os, ok := v.([]map[string]any)
+	if !ok {
+		return 0
+	}
+	n := 0
+	for _, o := range os {
+		if p, ok := o["passed"].(bool); ok && p {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Server) handleAudit(req rpcRequest, args json.RawMessage) {
@@ -359,22 +404,23 @@ func (s *Server) handleAudit(req rpcRequest, args json.RawMessage) {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_audit: action required", nil)
 		return
 	}
-	// Synthetic ledger node ID — real implementation calls
-	// into internal/ledger/.
-	nodeID := fmt.Sprintf("audit-%d-%s", time.Now().UnixNano(), shortHash(a.Action))
-	s.respondOK(req.ID, map[string]any{
+	result, err := s.backends.Audit(a.Action, a.EvidenceRefs, a.SubjectRef)
+	if err != nil {
+		s.respondErr(req.ID, errInternal, "stoke_audit: "+err.Error(), nil)
+		return
+	}
+	resp := map[string]any{
 		"content": []any{
 			map[string]any{
 				"type": "text",
-				"text": fmt.Sprintf("audit recorded: %s (node %s)", a.Action, nodeID),
+				"text": fmt.Sprintf("audit recorded: %s (node %v)", a.Action, result["node_id"]),
 			},
 		},
-		"node_id":          nodeID,
-		"action":           a.Action,
-		"evidence_refs":    a.EvidenceRefs,
-		"subject_ref":      a.SubjectRef,
-		"_stoke.dev/scaffold": true,
-	})
+	}
+	for k, v := range result {
+		resp[k] = v
+	}
+	s.respondOK(req.ID, resp)
 }
 
 func (s *Server) handleDelegate(req rpcRequest, args json.RawMessage) {
@@ -387,27 +433,24 @@ func (s *Server) handleDelegate(req rpcRequest, args json.RawMessage) {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_delegate: to_did + bundle_name required", nil)
 		return
 	}
-	if a.ExpirySeconds <= 0 {
-		a.ExpirySeconds = 3600
+	result, err := s.backends.Delegate(a.ToDID, a.BundleName, a.ExpirySeconds)
+	if err != nil {
+		s.respondErr(req.ID, errInternal, "stoke_delegate: "+err.Error(), nil)
+		return
 	}
-	// Synthetic token — real implementation calls
-	// delegation.Manager.Delegate which routes through
-	// TrustPlane.
-	tokenID := fmt.Sprintf("del-%d", time.Now().UnixNano())
-	expiresAt := time.Now().Add(time.Duration(a.ExpirySeconds) * time.Second).UTC()
-	s.respondOK(req.ID, map[string]any{
+	resp := map[string]any{
 		"content": []any{
 			map[string]any{
 				"type": "text",
-				"text": fmt.Sprintf("delegation %s issued to %s (bundle %s, expires %s)", tokenID, a.ToDID, a.BundleName, expiresAt.Format(time.RFC3339)),
+				"text": fmt.Sprintf("delegation %v issued to %s (bundle %s, expires %v)",
+					result["delegation_id"], a.ToDID, a.BundleName, result["expires_at"]),
 			},
 		},
-		"delegation_id": tokenID,
-		"to_did":        a.ToDID,
-		"bundle_name":   a.BundleName,
-		"expires_at":    expiresAt.Format(time.RFC3339),
-		"_stoke.dev/scaffold": true,
-	})
+	}
+	for k, v := range result {
+		resp[k] = v
+	}
+	s.respondOK(req.ID, resp)
 }
 
 // checkAuth verifies the API key when one is configured. When
