@@ -431,6 +431,97 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 			refined.Sessions[target].AcceptanceCriteria = append(refined.Sessions[target].AcceptanceCriteria, a)
 		}
 	}
+
+	// Post-pass: when the refiner SPLITS a session into
+	// multiple children (S1 → S1-1 + S1-2), all restored
+	// ACs landed in findTarget's first prefix match. The
+	// sibling children end up with zero ACs, which
+	// ValidateSOW rejects. Detect zero-AC sibling children
+	// and mirror the first-child's ACs into them so the
+	// gate covers every split child. Duplicate coverage is
+	// preferred over a rejected refinement — the gate still
+	// fires, the downstream intersection just has more
+	// assertions than strictly needed.
+	ensureSplitChildACsCovered(original, refined)
+}
+
+// ensureSplitChildACsCovered mirrors ACs from one sibling
+// split-child into any empty-AC sibling of the same original
+// session. Run after spliceDroppedIDs so every zero-AC
+// split child has at least one AC to satisfy ValidateSOW.
+//
+// Rationale: the refiner may apply a concern like "split
+// this oversized session" by creating S1-1 and S1-2, and
+// the LLM often puts all existing ACs under S1-1 and
+// leaves S1-2 without any. Rather than reject the
+// refinement outright (forcing a fallback to the unrefined
+// SOW with the original concerns intact), copy the
+// sibling's AC list into the empty child. That preserves
+// refiner work + keeps gate coverage.
+//
+// No-op when no zero-AC split children exist.
+func ensureSplitChildACsCovered(original, refined *SOW) {
+	if original == nil || refined == nil {
+		return
+	}
+	// Group refined sessions by which original they descend
+	// from (prefix or sanitized-canonical match).
+	for _, origSess := range original.Sessions {
+		origID := origSess.ID
+		if origID == "" {
+			continue
+		}
+		// Gather all refined sessions that are children of origID.
+		var childIdx []int
+		hasOrigSuffix := strings.Contains(origID, "-")
+		for i, s := range refined.Sessions {
+			if s.ID == origID {
+				childIdx = append(childIdx, i)
+				continue
+			}
+			if sanitizeSessionID(s.ID) == sanitizeSessionID(origID) && sanitizeSessionID(origID) != "" {
+				childIdx = append(childIdx, i)
+				continue
+			}
+			if !hasOrigSuffix && strings.HasPrefix(s.ID, origID+"-") {
+				childIdx = append(childIdx, i)
+			}
+		}
+		if len(childIdx) < 2 {
+			// Not a split — single child (or no match); no
+			// mirroring needed.
+			continue
+		}
+		// Find the first child with non-empty ACs.
+		donor := -1
+		for _, i := range childIdx {
+			if len(refined.Sessions[i].AcceptanceCriteria) > 0 {
+				donor = i
+				break
+			}
+		}
+		if donor < 0 {
+			// None of the children have ACs; nothing to
+			// mirror. Upstream validation will reject this
+			// case (as it should — we can't synthesize real
+			// gates from nothing).
+			continue
+		}
+		donorACs := refined.Sessions[donor].AcceptanceCriteria
+		for _, i := range childIdx {
+			if i == donor {
+				continue
+			}
+			if len(refined.Sessions[i].AcceptanceCriteria) == 0 {
+				// Deep-copy the donor's AC slice so
+				// subsequent mutation of one child doesn't
+				// reach the other.
+				cp := make([]AcceptanceCriterion, len(donorACs))
+				copy(cp, donorACs)
+				refined.Sessions[i].AcceptanceCriteria = cp
+			}
+		}
+	}
 }
 
 // normalizeDesc collapses whitespace + lowercases a task

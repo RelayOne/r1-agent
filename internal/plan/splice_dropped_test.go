@@ -419,6 +419,67 @@ func TestSpliceDroppedIDs_SuffixedOrigIDDoesNotMatchSiblings(t *testing.T) {
 	}
 }
 
+// TestSpliceDroppedIDs_SplitChildACsMirrored — refiner
+// splits S1 into S1-1 + S1-2. All original ACs are
+// restored into S1-1 (findTarget's first prefix match).
+// ensureSplitChildACsCovered then mirrors S1-1's ACs into
+// the empty S1-2 so every split child has ≥1 AC and
+// ValidateSOW passes. Reproduces run-45's exact failure:
+// "session S1-2 has no acceptance criteria".
+func TestSpliceDroppedIDs_SplitChildACsMirrored(t *testing.T) {
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{
+				{ID: "T1", Description: "foundation task A"},
+				{ID: "T2", Description: "foundation task B"},
+			}, AcceptanceCriteria: []AcceptanceCriterion{
+				{ID: "AC1", Description: "build passes", Command: "go build ./..."},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S1-1", Tasks: []Task{{ID: "T1-keep", Description: "foundation task A keep"}}},
+			{ID: "S1-2", Tasks: []Task{{ID: "T2-keep", Description: "foundation task B keep"}}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T1", "T2"}, []string{"AC1"})
+
+	if len(refined.Sessions[0].AcceptanceCriteria) < 1 {
+		t.Errorf("S1-1 should have at least 1 AC after splice, got 0")
+	}
+	if len(refined.Sessions[1].AcceptanceCriteria) < 1 {
+		t.Errorf("S1-2 should have ACs mirrored from sibling S1-1, got 0 — reproduces run-45")
+	}
+	// Mirror should be independent copies: mutating S1-1's
+	// AC must not affect S1-2's.
+	refined.Sessions[0].AcceptanceCriteria[0].Description = "mutated"
+	if refined.Sessions[1].AcceptanceCriteria[0].Description == "mutated" {
+		t.Error("AC slices must be deep-copied so children diverge safely")
+	}
+}
+
+// TestEnsureSplitChildACsCovered_NoOpWhenSingleChild: when
+// the original session wasn't split (one-to-one match in
+// refined), the helper does nothing.
+func TestEnsureSplitChildACsCovered_NoOpWhenSingleChild(t *testing.T) {
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S1", AcceptanceCriteria: []AcceptanceCriterion{{ID: "AC1", Command: "go build"}}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S1", AcceptanceCriteria: []AcceptanceCriterion{{ID: "AC99", Command: "go test"}}},
+		},
+	}
+	ensureSplitChildACsCovered(original, refined)
+	// Should still have exactly 1 AC (no mirroring).
+	if len(refined.Sessions[0].AcceptanceCriteria) != 1 {
+		t.Errorf("single-child: expected 1 AC, got %d", len(refined.Sessions[0].AcceptanceCriteria))
+	}
+}
+
 // TestSpliceDroppedIDs_RenameInChildSessionSuppressed —
 // refiner split S5 into S5-api + S5-ui. The rename of S5's
 // T290 landed in S5-ui (not S5-api). Since S5-ui is a
