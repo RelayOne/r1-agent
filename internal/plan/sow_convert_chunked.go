@@ -595,6 +595,24 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			// the first place.
 			autoAddMissingInfra(refined)
 			autoDeduplicateTaskIDs(refined)
+			// Prune dangling task.Dependencies: the splice step
+			// inside RefineSOWFromConcerns restores dropped tasks
+			// verbatim, but some of those tasks may carry deps on
+			// OTHER dropped tasks that weren't restored (splice's
+			// rename detection suppressed them, or the refiner
+			// renamed-in-place via a different path the detection
+			// didn't catch). Without this prune, ValidateSOW
+			// rejects the whole refinement on broken task deps —
+			// which is exactly how run 44 died at 31min (T394's
+			// dep on T313 was the fatal blocker).
+			//
+			// Safe on the strict path because CleanTaskDependencies
+			// doesn't touch task descriptions or ACs; it only
+			// drops empty-ID/empty-desc tasks (shouldn't happen
+			// post-splice) and trims Dependencies arrays. Any
+			// legitimate cross-session ordering info survives via
+			// session-level Inputs/Outputs.
+			autoCleanTaskDeps(refined)
 			if reason := refineGateRegressions(out, refined); reason != "" {
 				fmt.Printf("  ⚠ refine weakens an acceptance gate — preserving previous SOW: %s\n", reason)
 				break
