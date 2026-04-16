@@ -141,7 +141,6 @@ Use the tools to read the specific prose sections and SOW sessions you need to r
 		return nil, fmt.Errorf("agentic review loop: %w", err)
 	}
 	return nil, fmt.Errorf("agentic review loop ended without emit_verdict call")
-	}
 }
 
 const agenticReviewSystemPrompt = `You are a senior engineering reviewer (VP-eng / CTO role) giving final sign-off on a sprint plan before the team starts building.
