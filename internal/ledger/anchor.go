@@ -318,21 +318,58 @@ func ComputeAnchor(seq int, intervalStart, intervalEnd time.Time, leafDigests []
 // for the given schema version. Kept as a single function so
 // ComputeAnchor and VerifyChain stay in lockstep.
 //
-//	v1 (legacy): PrevHash || MerkleRoot || IntervalEnd
-//	v2 (current): PrevHash || MerkleRoot || IntervalStart || IntervalEnd
+//	v1: PrevHash || MerkleRoot || IntervalEnd
+//	v2: PrevHash || MerkleRoot || IntervalStart || IntervalEnd
 //
-// Version 0 is treated as v1 for backward compatibility with
-// anchors written by the original implementation that predated
-// the SchemaVersion field.
+// Unknown versions return the empty string — callers should
+// recognize that as "unsupported schema" and surface a violation
+// rather than accepting a bogus hash.
 func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart, intervalEnd time.Time) string {
 	end := intervalEnd.UTC().Format(time.RFC3339Nano)
 	start := intervalStart.UTC().Format(time.RFC3339Nano)
 	switch version {
-	case 0, 1:
+	case 1:
 		return prevHash + merkleRoot + end
-	default:
+	case 2:
 		return prevHash + merkleRoot + start + end
+	default:
+		return ""
 	}
+}
+
+// verifyAnchorHash checks whether the anchor's stored Hash matches
+// one of the supported compositions. Returns "" on match, or a
+// reason string describing the mismatch. Anchors with
+// SchemaVersion==0 are unversioned (pre-SchemaVersion field) and
+// accept EITHER v1 or v2 composition — the previous uncommitted
+// code path transiently wrote v2 shape without stamping a version,
+// so we can't safely assume v0 means v1.
+func verifyAnchorHash(a Anchor) string {
+	candidates := []int{a.SchemaVersion}
+	if a.SchemaVersion == 0 {
+		candidates = []int{1, 2}
+	}
+	for _, v := range candidates {
+		input := composeAnchorInput(v, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
+		if input == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(input))
+		if hex.EncodeToString(sum[:]) == a.Hash {
+			return ""
+		}
+	}
+	if a.SchemaVersion != 0 && a.SchemaVersion != 1 && a.SchemaVersion != 2 {
+		return fmt.Sprintf("anchor uses unknown schema_version %d; this build supports v1 and v2", a.SchemaVersion)
+	}
+	if a.SchemaVersion == 0 {
+		return "unversioned anchor Hash does not match v1 (prev||merkle||end) or v2 (prev||merkle||start||end) composition"
+	}
+	shape := "prev||merkle||start||end (v2)"
+	if a.SchemaVersion == 1 {
+		shape = "prev||merkle||end (v1)"
+	}
+	return "anchor Hash does not match " + shape + " composition"
 }
 
 // merkleRootOfLeaves computes a binary Merkle root over hex-SHA-256
@@ -419,8 +456,6 @@ func (s *AnchorStore) VerifyChain() []string {
 		if a.PrevHash != expectedPrev {
 			violations = append(violations, fmt.Sprintf("anchor %d PrevHash=%q expected %q", i, a.PrevHash, expectedPrev))
 		}
-		// Verify with the anchor's own schema version so anchors
-		// persisted under v1 continue to pass after the v2 bump.
 		if a.NodeCount == 0 {
 			emptyInput := fmt.Sprintf(EmptyIntervalTemplate, a.IntervalEnd.UTC().Format(time.RFC3339Nano))
 			emptySum := sha256.Sum256([]byte(emptyInput))
@@ -429,14 +464,8 @@ func (s *AnchorStore) VerifyChain() []string {
 				violations = append(violations, fmt.Sprintf("anchor %d NodeCount=0 but MerkleRoot does not match empty-interval commitment for intervalEnd %s", i, a.IntervalEnd.Format(time.RFC3339Nano)))
 			}
 		}
-		anchorInput := composeAnchorInput(a.SchemaVersion, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
-		sum := sha256.Sum256([]byte(anchorInput))
-		if hex.EncodeToString(sum[:]) != a.Hash {
-			shape := "PrevHash || MerkleRoot || IntervalStart || IntervalEnd (v2)"
-			if a.SchemaVersion == 0 || a.SchemaVersion == 1 {
-				shape = "PrevHash || MerkleRoot || IntervalEnd (v1)"
-			}
-			violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid — expected %s", i, shape))
+		if reason := verifyAnchorHash(a); reason != "" {
+			violations = append(violations, fmt.Sprintf("anchor %d: %s", i, reason))
 		}
 	}
 	return violations
