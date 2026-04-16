@@ -380,6 +380,45 @@ func TestSpliceDroppedIDs_RenameInDifferentSessionNotSuppressed(t *testing.T) {
 	}
 }
 
+// TestSpliceDroppedIDs_SuffixedOrigIDDoesNotMatchSiblings —
+// when the ORIGINAL session is itself suffixed (e.g.,
+// S2-types), the childrenOf set must NOT include siblings
+// like S2-api or S2-client just because they share the
+// "S2" head. Those are separate sessions, and treating a
+// unique description in S2-api as the rename of a task
+// dropped from S2-types would silently delete work.
+func TestSpliceDroppedIDs_SuffixedOrigIDDoesNotMatchSiblings(t *testing.T) {
+	desc := "publish typed request/response structures for the internal RPC layer"
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S2-types", Tasks: []Task{
+				{ID: "T50", Description: desc},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S2-types", Tasks: []Task{{ID: "T60", Description: "other"}}},
+			// SIBLING, not a child of S2-types.
+			{ID: "S2-api", Tasks: []Task{{ID: "T70", Description: desc}}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T50"}, nil)
+
+	// The unique description in S2-api must NOT suppress the
+	// restore — it's in a SIBLING, not a child of S2-types.
+	// T50 should come back to S2-types.
+	found := false
+	for _, tk := range refined.Sessions[0].Tasks {
+		if tk.ID == "T50" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("T50 should be restored to S2-types; sibling S2-api's match must not count as a rename")
+	}
+}
+
 // TestSpliceDroppedIDs_RenameInChildSessionSuppressed —
 // refiner split S5 into S5-api + S5-ui. The rename of S5's
 // T290 landed in S5-ui (not S5-api). Since S5-ui is a

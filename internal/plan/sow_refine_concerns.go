@@ -353,28 +353,38 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 	}
 
 	// Pre-compute the set of refined-session indices that are
-	// "children" of each original session ID — the target
-	// findTarget resolves to PLUS any other session whose ID
-	// shares the same prefix-head. Catches the split case
-	// where refiner took S5 and produced S5-api + S5-ui: the
-	// rename may have landed in either child, and the unique-
-	// and-local check must accept either.
+	// "children" of each original session ID. Rules:
+	//
+	//  - Always include findTarget (the best primary pick).
+	//  - Include any refined session with exactly the same ID.
+	//  - Include any refined session whose sanitized-canonical
+	//    equals the original's sanitized-canonical (catches
+	//    cosmetic renames like "S5 (api)" → "S5").
+	//  - Segment-prefix matching (S5 → S5-api + S5-ui) is ONLY
+	//    applied when origID has NO suffix itself. A suffixed
+	//    origID like "S2-types" must NOT match siblings
+	//    "S2-api" or "S2-client" — those are separate sessions
+	//    that happened to share a common head, not children
+	//    of the same original.
 	childrenOf := func(origID string) map[int]bool {
 		out := map[int]bool{findTarget(origID): true}
-		head := origID
-		if dash := strings.IndexByte(head, '-'); dash > 0 {
-			head = head[:dash]
-		}
+		origCanon := sanitizeSessionID(origID)
+		hasSuffix := strings.Contains(origID, "-")
 		for i, s := range refined.Sessions {
-			rhead := s.ID
-			if dash := strings.IndexByte(rhead, '-'); dash > 0 {
-				rhead = rhead[:dash]
-			}
-			if rhead == head {
+			if s.ID == origID {
 				out[i] = true
+				continue
 			}
-			// Also match sanitized-canonical equality.
-			if sanitizeSessionID(s.ID) == sanitizeSessionID(origID) {
+			if origCanon != "" && sanitizeSessionID(s.ID) == origCanon {
+				out[i] = true
+				continue
+			}
+			if hasSuffix {
+				continue
+			}
+			// Only unsuffixed origIDs engage the prefix-match
+			// rule. Refined session must start with "<origID>-".
+			if strings.HasPrefix(s.ID, origID+"-") {
 				out[i] = true
 			}
 		}
