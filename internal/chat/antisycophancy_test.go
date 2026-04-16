@@ -88,15 +88,28 @@ func TestLiteralChecker_ExactMatch(t *testing.T) {
 	}
 }
 
-// TestLiteralChecker_BareYesNoFlipNotFlagged: bare "Yes" vs
-// "No" on its own could be a polarity-inverted probe asking
-// about the same claim. LiteralChecker can't disambiguate,
-// so it does NOT flag — defers to an LLM-backed checker.
-// Content-level differences still flag (see next test).
-func TestLiteralChecker_BareYesNoFlipNotFlagged(t *testing.T) {
+// TestLiteralChecker_BareYesNoFlagsUnderSymmetricInvariant:
+// under the PROBE-SYMMETRY INVARIANT, a bare "Yes" vs "No"
+// IS a real disagreement — the neutral answer affirms, the
+// leading answer negates. Callers using asymmetric
+// polarity-inverted probes must supply their own
+// LLM-backed checker (LiteralChecker can't disambiguate
+// there).
+func TestLiteralChecker_BareYesNoFlagsUnderSymmetricInvariant(t *testing.T) {
 	d, expl, _ := LiteralChecker{}.Disagree(context.Background(), "Yes.", "No.")
-	if d {
-		t.Errorf("bare yes/no should NOT flag (polarity ambiguous); got explanation=%q", expl)
+	if !d {
+		t.Errorf("bare yes/no flip SHOULD flag under symmetric-probe invariant; got explanation=%q", expl)
+	}
+}
+
+// TestLiteralChecker_SameTailYesNoFlagsAsDisagreement:
+// Yes/No with same tail still flags because the yes vs no
+// IS the disagreement signal — the "X holds" tail is
+// consistent across both but the polarity is opposite.
+func TestLiteralChecker_SameTailYesNoFlagsAsDisagreement(t *testing.T) {
+	d, _, _ := LiteralChecker{}.Disagree(context.Background(), "Yes, X holds.", "No, X holds.")
+	if !d {
+		t.Error("same-tail polarity flip should flag under symmetric-probe invariant")
 	}
 }
 

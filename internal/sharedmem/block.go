@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -42,6 +43,78 @@ var (
 	jsonMarshal   = json.Marshal
 	jsonUnmarshal = json.Unmarshal
 )
+
+// Reflect helpers — thin wrappers so reflectDeepCopy reads
+// cleanly at the call site. Kept in this file (rather than
+// a helpers package) so the single deepCopy implementation
+// stays self-contained.
+
+var (
+	reflectKindSlice  = reflect.Slice
+	reflectKindMap    = reflect.Map
+	reflectKindArray  = reflect.Array
+	reflectKindPtr    = reflect.Ptr
+	reflectKindStruct = reflect.Struct
+)
+
+func reflectValueOf(v any) reflect.Value      { return reflect.ValueOf(v) }
+func reflectMakeSlice(t reflect.Type, l, c int) reflect.Value {
+	return reflect.MakeSlice(t, l, c)
+}
+func reflectMakeMap(t reflect.Type) reflect.Value { return reflect.MakeMapWithSize(t, 0) }
+func reflectNew(t reflect.Type) reflect.Value     { return reflect.New(t) }
+
+func reflectSetIndex(container reflect.Value, i int, value any) {
+	elem := container.Index(i)
+	if value == nil {
+		elem.Set(reflect.Zero(elem.Type()))
+		return
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Type().AssignableTo(elem.Type()) {
+		elem.Set(rv)
+	} else if rv.Type().ConvertibleTo(elem.Type()) {
+		elem.Set(rv.Convert(elem.Type()))
+	}
+	// else: type mismatch — leave zero; downstream callers
+	// that mutate get a valid zero value rather than a panic.
+}
+
+func reflectSetMapIndex(m reflect.Value, k, v any) {
+	kRv := reflect.ValueOf(k)
+	vRv := reflect.ValueOf(v)
+	mt := m.Type()
+	if !kRv.IsValid() || !kRv.Type().AssignableTo(mt.Key()) {
+		if kRv.IsValid() && kRv.Type().ConvertibleTo(mt.Key()) {
+			kRv = kRv.Convert(mt.Key())
+		} else {
+			return
+		}
+	}
+	if !vRv.IsValid() {
+		vRv = reflect.Zero(mt.Elem())
+	} else if !vRv.Type().AssignableTo(mt.Elem()) {
+		if vRv.Type().ConvertibleTo(mt.Elem()) {
+			vRv = vRv.Convert(mt.Elem())
+		} else {
+			return
+		}
+	}
+	m.SetMapIndex(kRv, vRv)
+}
+
+func reflectSetValue(dst reflect.Value, src any) {
+	if src == nil {
+		dst.Set(reflect.Zero(dst.Type()))
+		return
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Type().AssignableTo(dst.Type()) {
+		dst.Set(rv)
+	} else if rv.Type().ConvertibleTo(dst.Type()) {
+		dst.Set(rv.Convert(dst.Type()))
+	}
+}
 
 // BlockID is the stable identifier for a block. Typically a
 // content hash derived from (Type, Label, initial value) at
@@ -402,11 +475,22 @@ func cloneBlock(b *Block) *Block {
 	return &out
 }
 
-// deepCopyAny handles the common shapes stored as Block.Value:
-// []any lists, map[string]any objects, scalars (strings /
-// numbers / bools / nil). Other types fall through to JSON
-// marshal+unmarshal. Callers with non-JSON-serializable Value
-// types should encode themselves before storing.
+// deepCopyAny handles the common shapes stored as Block.Value
+// and preserves the ORIGINAL Go type whenever possible —
+// `[]string` stays `[]string`, `map[string]int` stays
+// `map[string]int`, etc. Without this type-preservation,
+// downstream callers that typed-assert on `Value` would
+// break after the first store/retrieve round-trip (the P1
+// codex flagged).
+//
+// Strategy:
+//   1. Fast paths for the most common shapes + scalars.
+//   2. Reflect-based copy for typed slices/maps/arrays of
+//      arbitrary element type.
+//   3. JSON round-trip as the last resort for structs the
+//      reflect path can't handle safely (private fields,
+//      un-exported types). Callers with such types should
+//      pre-encode.
 func deepCopyAny(v any) any {
 	switch x := v.(type) {
 	case nil:
@@ -426,20 +510,82 @@ func deepCopyAny(v any) any {
 	case string, bool, int, int8, int16, int32, int64,
 		uint, uint8, uint16, uint32, uint64, float32, float64:
 		return x
-	default:
-		// Fallback: JSON round-trip. Good enough for
-		// exported-field structs; callers with private-
-		// field types should pre-encode.
-		b, err := jsonMarshal(x)
-		if err != nil {
-			return v // couldn't marshal — return as-is and hope the caller doesn't mutate
+	}
+	return reflectDeepCopy(v)
+}
+
+// reflectDeepCopy handles typed slices / maps / arrays /
+// pointers using reflect so the original element types are
+// preserved. Falls back to JSON round-trip for everything
+// else.
+func reflectDeepCopy(v any) any {
+	rv := reflectValueOf(v)
+	if !rv.IsValid() {
+		return v
+	}
+	kind := rv.Kind()
+	switch kind {
+	case reflectKindSlice:
+		out := reflectMakeSlice(rv.Type(), rv.Len(), rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			elem := rv.Index(i).Interface()
+			copied := deepCopyAny(elem)
+			if copied != nil {
+				reflectSetIndex(out, i, copied)
+			}
 		}
-		var out any
-		if err := jsonUnmarshal(b, &out); err != nil {
+		return out.Interface()
+	case reflectKindMap:
+		out := reflectMakeMap(rv.Type())
+		iter := rv.MapRange()
+		for iter.Next() {
+			kCopy := deepCopyAny(iter.Key().Interface())
+			vCopy := deepCopyAny(iter.Value().Interface())
+			reflectSetMapIndex(out, kCopy, vCopy)
+		}
+		return out.Interface()
+	case reflectKindArray:
+		// Arrays are fixed-size; Go copies on assignment so
+		// a simple value-copy gives us a distinct instance.
+		// Nested pointer/slice elements still need deep
+		// copy though — walk index by index.
+		out := reflectNew(rv.Type()).Elem()
+		for i := 0; i < rv.Len(); i++ {
+			elem := rv.Index(i).Interface()
+			copied := deepCopyAny(elem)
+			if copied != nil {
+				reflectSetIndex(out, i, copied)
+			}
+		}
+		return out.Interface()
+	case reflectKindPtr:
+		if rv.IsNil() {
 			return v
 		}
-		return out
+		elem := deepCopyAny(rv.Elem().Interface())
+		ptr := reflectNew(rv.Type().Elem())
+		reflectSetValue(ptr.Elem(), elem)
+		return ptr.Interface()
 	}
+	// Struct / interface / channel / func / other: JSON
+	// round-trip as the last resort. Structs with exported
+	// fields round-trip fine; everything else returns as-is
+	// and hopes the caller treats Value as read-only (the
+	// invariant documented on cloneBlock).
+	if kind == reflectKindStruct {
+		b, err := jsonMarshal(v)
+		if err != nil {
+			return v
+		}
+		// Unmarshal back into a fresh instance of the SAME
+		// struct type so type preservation holds.
+		outPtr := reflectNew(rv.Type())
+		if err := jsonUnmarshal(b, outPtr.Interface()); err != nil {
+			return v
+		}
+		return outPtr.Elem().Interface()
+	}
+	return v
 }
 
 // deepCopyProvenance clones the nested slice + map fields on

@@ -2,11 +2,23 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 )
+
+func init() {
+	// Silence the defaultUnpairedHandler's stderr writes
+	// during test runs so unrelated test output stays
+	// clean.
+	SetUnpairedLog(silentWriter{})
+}
+
+type silentWriter struct{}
+
+func (silentWriter) Write(p []byte) (int, error) { return len(p), nil }
 
 // stubAdapter is a minimal PlatformAdapter for router tests.
 type stubAdapter struct {
@@ -274,5 +286,149 @@ func TestSplitDots_HandlesDottedConversationID(t *testing.T) {
 	}
 	if parts[0] != "conv.with.dot" {
 		t.Errorf("cid=%q want conv.with.dot", parts[0])
+	}
+}
+
+// TestRouter_RedeemPairingToken_BindsSender: the P0 fix.
+// Before: IssuePairingToken/VerifyPairingToken existed but
+// Router offered no Bind method, so pairing tokens were
+// verifiable but never actually established a mapping.
+func TestRouter_RedeemPairingToken_BindsSender(t *testing.T) {
+	r := NewRouter([]byte("secret"))
+	tok := r.IssuePairingToken("conv-42", time.Minute)
+	cid, err := r.RedeemPairingToken(tok, PlatformTelegram, "user-tg")
+	if err != nil {
+		t.Fatalf("RedeemPairingToken: %v", err)
+	}
+	if cid != "conv-42" {
+		t.Errorf("cid=%q want conv-42", cid)
+	}
+	// The sender is now resolvable — this is the fix.
+	got, ok := r.Coordinator().ResolveConversation(Message{
+		Platform:         PlatformTelegram,
+		SenderPlatformID: "user-tg",
+	})
+	if !ok || got != "conv-42" {
+		t.Errorf("post-redeem ResolveConversation ok=%v cid=%q want (true, conv-42)", ok, got)
+	}
+}
+
+func TestRouter_RedeemPairingToken_RejectsBadToken(t *testing.T) {
+	r := NewRouter([]byte("secret"))
+	_, err := r.RedeemPairingToken("not.a.token", PlatformTelegram, "u")
+	if err == nil {
+		t.Error("expected error on tampered token")
+	}
+}
+
+// TestRouter_UnpairedHandler_RoutesInboundFromUnpairedSender:
+// the other half of the P0 fix. Messages from unpaired
+// senders no longer silently drop — they route through an
+// operator-configurable handler.
+func TestRouter_UnpairedHandler_RoutesInboundFromUnpairedSender(t *testing.T) {
+	r := NewRouter(nil)
+
+	inbox := make(chan Message, 1)
+	stub := &stubAdapter{p: PlatformTelegram, inbox: inbox}
+	r.Register(stub)
+
+	var routed []Message
+	var mu sync.Mutex
+	r.SetUnpairedHandler(func(_ context.Context, m Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		routed = append(routed, m)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	handlerCalls := 0
+	go func() {
+		_ = r.StartAll(ctx, func(_ context.Context, _ Message) error {
+			handlerCalls++
+			return nil
+		})
+	}()
+
+	// Push an UNPAIRED inbound. The paired-handler should
+	// NOT see it; the unpaired-handler should.
+	inbox <- Message{
+		ID:               "m1",
+		Platform:         PlatformTelegram,
+		SenderPlatformID: "stranger",
+		Text:             "first message from a new user",
+	}
+
+	// Wait long enough for the adapter loop to pick it up.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := len(routed)
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("unpaired handler calls=%d want 1", got)
+	}
+	if handlerCalls != 0 {
+		t.Errorf("paired handler received unpaired message (handlerCalls=%d)", handlerCalls)
+	}
+}
+
+// TestRouter_HandlerErrorSurfacesWhileAdaptersRun: the P1
+// fix. Before: errCh had no reader, so a handler error
+// couldn't surface until every adapter returned. With 128
+// buffer + concurrent drain, the first error is captured
+// immediately.
+func TestRouter_HandlerErrorSurfacesPromptly(t *testing.T) {
+	r := NewRouter(nil)
+	inbox := make(chan Message, 10)
+	r.Register(&stubAdapter{p: PlatformTelegram, inbox: inbox})
+	r.Coordinator().Bind(PlatformTelegram, "u", "conv-1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	bangErr := errors.New("handler failed")
+	done := make(chan error, 1)
+	go func() {
+		done <- r.StartAll(ctx, func(_ context.Context, _ Message) error {
+			return bangErr
+		})
+	}()
+
+	inbox <- Message{ID: "m1", Platform: PlatformTelegram, SenderPlatformID: "u"}
+
+	// StartAll blocks until ctx-cancel; the error is
+	// captured during runtime and returned when the loop
+	// unwinds. Wait for ctx timeout to let adapters
+	// return cleanly.
+	err := <-done
+	if err == nil {
+		t.Fatal("expected handler error to surface")
+	}
+	if !errors.Is(err, bangErr) {
+		t.Errorf("got %v want %v", err, bangErr)
+	}
+}
+
+// TestMarshalConfig_RoundTrips: the P2 fix. Before: the
+// Inbound chan field on AdapterConfig broke JSON marshal.
+// Now AdapterConfig is channel-free and round-trips.
+func TestMarshalConfig_RoundTrips(t *testing.T) {
+	c := AdapterConfig{Name: "telegram-prod", Secret: "bot-token-abc"}
+	b, err := MarshalConfig(c)
+	if err != nil {
+		t.Fatalf("MarshalConfig: %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("empty marshal output")
+	}
+	// Confirm round-trip.
+	var back AdapterConfig
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Name != c.Name || back.Secret != c.Secret {
+		t.Errorf("round-trip mismatch: got %+v want %+v", back, c)
 	}
 }

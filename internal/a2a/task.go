@@ -143,10 +143,18 @@ var ErrInvalidTaskTransition = errors.New("a2a: invalid task status transition")
 var ErrTaskNotFound = errors.New("a2a: task not found")
 
 // TaskStore holds tasks + enforces the transition table.
+//
+// Complete + Fail are atomic transition + payload writes —
+// use them in preference to Transition-then-SetResult so A2A
+// peers never observe a terminal task with a missing
+// payload (the documented invariant that terminal tasks
+// carry exactly one of Result / Error).
 type TaskStore interface {
 	Submit(ctx context.Context, prompt json.RawMessage) (Task, error)
 	Get(ctx context.Context, id string) (Task, error)
 	Transition(ctx context.Context, id string, to TaskStatus, message string) (Task, error)
+	Complete(ctx context.Context, id string, result json.RawMessage, message string) (Task, error)
+	Fail(ctx context.Context, id string, errMsg, message string) (Task, error)
 	AppendArtifact(ctx context.Context, id string, artifact json.RawMessage) (Task, error)
 	SetResult(ctx context.Context, id string, result json.RawMessage) (Task, error)
 	SetError(ctx context.Context, id string, errMsg string) (Task, error)
@@ -249,6 +257,70 @@ func (s *InMemoryTaskStore) Transition(_ context.Context, id string, to TaskStat
 // Submitted task carrying a Result, a Completed task carrying
 // an Error, etc.) to A2A peers polling via HandleStatus.
 var ErrInvalidTaskStateForField = errors.New("a2a: task status disallows this field")
+
+// Complete atomically transitions to TaskCompleted AND
+// writes the result payload under the same lock. Peers
+// polling via Get/HandleStatus will NEVER observe the
+// intermediate (status=completed, result=nil) state that
+// Transition-then-SetResult exposes. The documented
+// invariant — terminal tasks carry exactly one of
+// Result / Error — is enforced structurally.
+func (s *InMemoryTaskStore) Complete(_ context.Context, id string, result json.RawMessage, message string) (Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return Task{}, ErrTaskNotFound
+	}
+	edges, ok := taskTransitions[t.Status]
+	if !ok {
+		return Task{}, fmt.Errorf("%w: unknown from-state %q", ErrInvalidTaskTransition, t.Status)
+	}
+	if !edges[TaskCompleted] {
+		return Task{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTaskTransition, t.Status, TaskCompleted)
+	}
+	now := s.now()
+	t.Status = TaskCompleted
+	t.Result = copyRaw(result)
+	t.Error = ""
+	t.UpdatedAt = now
+	t.History = append(t.History, TaskUpdate{Status: TaskCompleted, At: now, Message: message})
+	if len(t.History) > MaxHistoryEntries {
+		drop := len(t.History) - MaxHistoryEntries
+		t.History = t.History[drop:]
+	}
+	return cloneTask(t), nil
+}
+
+// Fail atomically transitions to TaskFailed AND writes the
+// error message under the same lock. Mirror of Complete for
+// the failure path.
+func (s *InMemoryTaskStore) Fail(_ context.Context, id string, errMsg, message string) (Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return Task{}, ErrTaskNotFound
+	}
+	edges, ok := taskTransitions[t.Status]
+	if !ok {
+		return Task{}, fmt.Errorf("%w: unknown from-state %q", ErrInvalidTaskTransition, t.Status)
+	}
+	if !edges[TaskFailed] {
+		return Task{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTaskTransition, t.Status, TaskFailed)
+	}
+	now := s.now()
+	t.Status = TaskFailed
+	t.Error = errMsg
+	t.Result = nil
+	t.UpdatedAt = now
+	t.History = append(t.History, TaskUpdate{Status: TaskFailed, At: now, Message: message})
+	if len(t.History) > MaxHistoryEntries {
+		drop := len(t.History) - MaxHistoryEntries
+		t.History = t.History[drop:]
+	}
+	return cloneTask(t), nil
+}
 
 // AppendArtifact attaches an opaque artifact blob to the task.
 // The artifact bytes are COPIED into the store so later

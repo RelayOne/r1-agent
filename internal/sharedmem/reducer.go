@@ -172,19 +172,37 @@ func asSlice(v any, name string) ([]any, error) {
 	return s, nil
 }
 
-// toFloat coerces common numeric types to float64 for MaxReducer.
+// toFloat coerces common numeric types to float64 for
+// MaxReducer's mixed-type fallback path. Must accept every
+// type toInt64 accepts so a `MaxReducer(int16(1), 1.5)`
+// call (which falls through to the float path when one side
+// isn't integral) doesn't erroneously report "not numeric".
 func toFloat(v any) (float64, bool) {
 	switch x := v.(type) {
 	case int:
 		return float64(x), true
-	case int64:
+	case int8:
+		return float64(x), true
+	case int16:
 		return float64(x), true
 	case int32:
 		return float64(x), true
-	case float64:
-		return x, true
+	case int64:
+		return float64(x), true
+	case uint:
+		return float64(x), true
+	case uint8:
+		return float64(x), true
+	case uint16:
+		return float64(x), true
+	case uint32:
+		return float64(x), true
+	case uint64:
+		return float64(x), true
 	case float32:
 		return float64(x), true
+	case float64:
+		return x, true
 	default:
 		return 0, false
 	}

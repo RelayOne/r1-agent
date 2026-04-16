@@ -144,7 +144,10 @@ func (s *Saga) Register(unit *workunit.WorkUnit, anchor workunit.AuditAnchor, co
 
 // Deregister removes a WorkUnit from the saga's book. Called
 // by callers once a unit completes or fails (reaches terminal
-// state through non-revocation paths).
+// state through non-revocation paths). Also drops the
+// per-delegation mutex once the delegation has no remaining
+// tracked units so long-lived subscribers don't leak
+// `*sync.Mutex` per historical delegation ID.
 func (s *Saga) Deregister(unitID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -157,6 +160,7 @@ func (s *Saga) Deregister(unitID string) {
 		delete(set, unitID)
 		if len(set) == 0 {
 			delete(s.byDelegation, entry.unit.DelegationID)
+			delete(s.perDelegationMu, entry.unit.DelegationID)
 		}
 	}
 }
@@ -235,13 +239,26 @@ func (s *Saga) OnRevocation(ctx context.Context, delegationID string) Settlement
 		settledIDs[id] = struct{}{}
 		delete(s.workUnits, id)
 	}
+	remainingDelegation := false
 	if remaining, ok := s.byDelegation[delegationID]; ok {
 		for id := range settledIDs {
 			delete(remaining, id)
 		}
 		if len(remaining) == 0 {
 			delete(s.byDelegation, delegationID)
+		} else {
+			remainingDelegation = true
 		}
+	}
+	// Drop the per-delegation mutex when the delegation
+	// has no remaining tracked units — otherwise the map
+	// grows monotonically over time and leaks one lock per
+	// lifetime delegation ID. Keeping the mutex only while
+	// units are live means a subsequent OnRevocation for
+	// the same ID just re-creates a fresh mutex (safe
+	// because there's no in-flight caller by definition).
+	if !remainingDelegation {
+		delete(s.perDelegationMu, delegationID)
 	}
 	return report
 }

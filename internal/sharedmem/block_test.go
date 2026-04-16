@@ -321,6 +321,58 @@ func TestMaxReducer_MixedIntAndFloat(t *testing.T) {
 	}
 }
 
+// TestMaxReducer_MixedNarrowIntsAndFloat: the P2 codex
+// finding — MaxReducer claimed to accept int8/int16/uint*
+// but toFloat only handled int/int32/int64, so mixed-type
+// calls incorrectly returned "not numeric".
+func TestMaxReducer_MixedNarrowIntsAndFloat(t *testing.T) {
+	cases := []struct {
+		a, b any
+		want float64
+	}{
+		{int8(1), 1.5, 1.5},
+		{int16(1), 1.5, 1.5},
+		{uint8(1), 1.5, 1.5},
+		{uint16(3), 2.0, 3.0},
+		{uint32(7), 6.5, 7.0},
+	}
+	for _, c := range cases {
+		out, err := MaxReducer(c.a, c.b)
+		if err != nil {
+			t.Errorf("MaxReducer(%v, %v): %v", c.a, c.b, err)
+			continue
+		}
+		// Accept either int-typed or float-typed result
+		// depending on which side won.
+		switch x := out.(type) {
+		case float64:
+			if x != c.want {
+				t.Errorf("MaxReducer(%v, %v)=%v want %v", c.a, c.b, x, c.want)
+			}
+		case int8:
+			if float64(x) != c.want {
+				t.Errorf("int8 result %v want %v", x, c.want)
+			}
+		case int16:
+			if float64(x) != c.want {
+				t.Errorf("int16 result %v want %v", x, c.want)
+			}
+		case uint8:
+			if float64(x) != c.want {
+				t.Errorf("uint8 result %v want %v", x, c.want)
+			}
+		case uint16:
+			if float64(x) != c.want {
+				t.Errorf("uint16 result %v want %v", x, c.want)
+			}
+		case uint32:
+			if float64(x) != c.want {
+				t.Errorf("uint32 result %v want %v", x, c.want)
+			}
+		}
+	}
+}
+
 func TestCloneBlock_DeepCopiesValue(t *testing.T) {
 	// Caller mutating the returned Value slice must NOT
 	// affect the stored block.
@@ -364,6 +416,57 @@ func TestCloneBlock_DeepCopiesMapValue(t *testing.T) {
 	m2 := got2.Value.(map[string]any)
 	if m2["k"] == "TAMPERED" {
 		t.Errorf("map aliasing leaked: %v", m2)
+	}
+}
+
+// TestCloneBlock_PreservesTypedSliceValue: the P1 fix.
+// Before: []string stored as Value was rewritten to []any
+// by the JSON fallback. Now the reflect-based deep copy
+// preserves the original element type so type assertions
+// keep working.
+func TestCloneBlock_PreservesTypedSliceValue(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	original := []string{"a", "b", "c"}
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "typed-list",
+		Value:      original,
+		Provenance: []ProvenanceEntry{baseProv("agent")},
+	})
+	got, _ := s.Get(ctx, "b1")
+	// Type-assert as []string — must not panic and must
+	// return the expected values.
+	ss, ok := got.Value.([]string)
+	if !ok {
+		t.Fatalf("Value type=%T want []string (deep-copy preserved type)", got.Value)
+	}
+	if len(ss) != 3 || ss[0] != "a" || ss[2] != "c" {
+		t.Errorf("content mismatch: %v", ss)
+	}
+	// Mutation independence.
+	ss[0] = "TAMPERED"
+	got2, _ := s.Get(ctx, "b1")
+	ss2 := got2.Value.([]string)
+	if ss2[0] == "TAMPERED" {
+		t.Error("mutation leaked through to store")
+	}
+}
+
+func TestCloneBlock_PreservesTypedMapValue(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "typed-map",
+		Value:      map[string]int{"a": 1, "b": 2},
+		Provenance: []ProvenanceEntry{baseProv("agent")},
+	})
+	got, _ := s.Get(ctx, "b1")
+	m, ok := got.Value.(map[string]int)
+	if !ok {
+		t.Fatalf("Value type=%T want map[string]int", got.Value)
+	}
+	if m["a"] != 1 || m["b"] != 2 {
+		t.Errorf("content mismatch: %v", m)
 	}
 }
 

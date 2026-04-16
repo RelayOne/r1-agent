@@ -322,6 +322,66 @@ func TestSetError_RejectsNonFailedStatus(t *testing.T) {
 	}
 }
 
+// TestComplete_AtomicTransitionAndPayload: the P2 fix —
+// Complete combines TaskWorking→TaskCompleted + SetResult
+// under a single lock so peers can never observe the
+// intermediate (status=completed, result=nil) state.
+func TestComplete_AtomicTransitionAndPayload(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil)
+	_, _ = store.Transition(context.Background(), task.ID, TaskWorking, "")
+
+	got, err := store.Complete(context.Background(), task.ID, json.RawMessage(`"final-output"`), "task done")
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if got.Status != TaskCompleted {
+		t.Errorf("status=%q want completed", got.Status)
+	}
+	if string(got.Result) != `"final-output"` {
+		t.Errorf("result=%s want \"final-output\"", got.Result)
+	}
+	if got.Error != "" {
+		t.Errorf("error should be empty on complete, got %q", got.Error)
+	}
+	// Re-read confirms persistence.
+	re, _ := store.Get(context.Background(), task.ID)
+	if re.Status != TaskCompleted || string(re.Result) != `"final-output"` {
+		t.Errorf("post-Complete Get inconsistent: status=%q result=%s", re.Status, re.Result)
+	}
+}
+
+func TestComplete_RejectsInvalidTransition(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil) // Submitted cannot → Completed directly
+	_, err := store.Complete(context.Background(), task.ID, json.RawMessage(`"x"`), "")
+	if err == nil {
+		t.Error("expected invalid transition error")
+	}
+}
+
+// TestFail_AtomicTransitionAndPayload: mirror of Complete
+// for the failure path.
+func TestFail_AtomicTransitionAndPayload(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil)
+	_, _ = store.Transition(context.Background(), task.ID, TaskWorking, "")
+
+	got, err := store.Fail(context.Background(), task.ID, "boom", "task failed")
+	if err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if got.Status != TaskFailed {
+		t.Errorf("status=%q want failed", got.Status)
+	}
+	if got.Error != "boom" {
+		t.Errorf("error=%q want boom", got.Error)
+	}
+	if got.Result != nil {
+		t.Errorf("result should be nil on fail, got %s", got.Result)
+	}
+}
+
 // TestSetResult_ClearsError: mutual exclusion.
 func TestSetResult_ClearsError(t *testing.T) {
 	store := NewInMemoryTaskStore()

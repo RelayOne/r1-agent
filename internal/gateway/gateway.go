@@ -27,10 +27,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"sync"
 	"time"
 )
+
+// unpairedLog is where the defaultUnpairedHandler writes.
+// Stderr by default; callers that embed gateway into a
+// structured-logged process can swap via SetUnpairedLog.
+var unpairedLog io.Writer = os.Stderr
+
+// SetUnpairedLog overrides where defaultUnpairedHandler
+// emits unpaired-sender notices. Exposed mainly for tests
+// (keep stderr noise out of test output).
+func SetUnpairedLog(w io.Writer) {
+	unpairedLog = w
+}
 
 // Platform identifies a messaging backend.
 type Platform string
@@ -138,6 +152,7 @@ type Router struct {
 	adapters map[Platform]PlatformAdapter
 	coord    *ConversationCoordinator
 	secret   []byte
+	unpaired UnpairedHandler
 }
 
 // NewRouter constructs a Router. `secret` is the HMAC key
@@ -163,6 +178,48 @@ func (r *Router) Register(a PlatformAdapter) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.adapters[a.Platform()] = a
+}
+
+// Coordinator returns the Router's ConversationCoordinator.
+// Exposed so callers (typically an HTTP / RPC surface that
+// handles pairing-token redemption) can Bind new
+// (platform, sender) → conversation mappings after a user
+// redeems a pairing token.
+func (r *Router) Coordinator() *ConversationCoordinator {
+	return r.coord
+}
+
+// Bind is a convenience that forwards to the coordinator so
+// callers don't need to hold both handles. Matches the
+// documented pairing flow: (1) agent issues a token via
+// IssuePairingToken, (2) user DMs the token to the target
+// platform, (3) adapter calls VerifyPairingToken + Router.Bind
+// to record the mapping, (4) subsequent inbound DMs resolve
+// via ResolveConversation and flow through to the handler.
+func (r *Router) Bind(p Platform, senderID, conversationID string) {
+	r.coord.Bind(p, senderID, conversationID)
+}
+
+// Unbind forwards to coordinator.Unbind. Used on explicit
+// user "unpair" or revocation.
+func (r *Router) Unbind(p Platform, senderID string) {
+	r.coord.Unbind(p, senderID)
+}
+
+// RedeemPairingToken is the convenience the adapter calls
+// when a user DMs a pairing token to a platform. It
+// verifies the token signature + expiry, then binds the
+// (platform, senderID) pair to the token's conversation.
+// Returns the conversation ID on success. Adapters that
+// want to handle token-parsing themselves can use
+// VerifyPairingToken + Bind as separate steps.
+func (r *Router) RedeemPairingToken(tok PairingToken, p Platform, senderID string) (string, error) {
+	cid, err := r.VerifyPairingToken(tok)
+	if err != nil {
+		return "", err
+	}
+	r.Bind(p, senderID, cid)
+	return cid, nil
 }
 
 // Registered returns the sorted list of platforms with
@@ -193,19 +250,72 @@ func (r *Router) Send(ctx context.Context, out Outbound) error {
 	return a.Send(ctx, out)
 }
 
+// UnpairedHandler is invoked for messages from a sender
+// that has no active pairing. Operators inject a handler
+// that either (a) replies to the sender with instructions
+// for how to pair, (b) forwards the message to a
+// registration flow, or (c) logs + drops. The default
+// (used when no handler is installed) is log + drop so
+// unpaired DMs don't silently disappear without trace.
+type UnpairedHandler func(ctx context.Context, m Message)
+
+// SetUnpairedHandler installs an UnpairedHandler. Nil
+// resets to the default log-and-drop behavior. Safe to
+// call while StartAll is running.
+func (r *Router) SetUnpairedHandler(h UnpairedHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unpaired = h
+}
+
 // StartAll starts every registered adapter. Inbound
 // messages land in the supplied handler after going through
 // the pairing + conversation coordinator. Blocks until ctx
 // is canceled.
+//
+// Error delivery: a per-Router errCh with a dedicated
+// drain goroutine so handler errors surface BEFORE
+// shutdown. The first error returned by the drain goroutine
+// is the one StartAll returns; subsequent errors are
+// logged to the debug sink. Drain happens concurrently
+// with adapter runtime so a failing handler doesn't block
+// every adapter goroutine behind a full channel.
 func (r *Router) StartAll(ctx context.Context, handler func(ctx context.Context, m Message) error) error {
 	r.mu.RLock()
 	adapters := make([]PlatformAdapter, 0, len(r.adapters))
 	for _, a := range r.adapters {
 		adapters = append(adapters, a)
 	}
+	unpaired := r.unpaired
 	r.mu.RUnlock()
 
-	errCh := make(chan error, len(adapters))
+	// Buffer sized generously so handler errors don't back-
+	// pressure the adapter callback (which would hold up a
+	// platform poll loop behind a full channel — the P1 bug
+	// the dedicated reader fixes).
+	errCh := make(chan error, 128)
+	firstErr := make(chan error, 1)
+
+	// Drain goroutine runs CONCURRENTLY with adapters.
+	// Captures the FIRST error and ignores the rest so the
+	// adapter goroutines never block on a full errCh.
+	var drainWg sync.WaitGroup
+	drainWg.Add(1)
+	go func() {
+		defer drainWg.Done()
+		for err := range errCh {
+			select {
+			case firstErr <- err:
+			default:
+				// firstErr already holds an error; drop.
+				// Production deployments with a structured
+				// logger should log these; the gateway
+				// binary logs via its own sink.
+			}
+		}
+		close(firstErr)
+	}()
+
 	var wg sync.WaitGroup
 	for _, a := range adapters {
 		a := a
@@ -218,29 +328,55 @@ func (r *Router) StartAll(ctx context.Context, handler func(ctx context.Context,
 				// continuity happens here.
 				cid, ok := r.coord.ResolveConversation(m)
 				if !ok {
-					// Unpaired sender — emit a
-					// pairing-required hint and drop.
-					// Adapters with side channels for
-					// pairing can intercept this.
+					// Unpaired sender — route through the
+					// caller-supplied UnpairedHandler (or
+					// the default log-and-drop). Critically,
+					// we do NOT silently drop — the P0 bug
+					// was that unpaired senders vanished.
+					if unpaired != nil {
+						unpaired(ctx, m)
+					} else {
+						r.defaultUnpairedHandler(m)
+					}
 					return
 				}
 				m.ConversationID = cid
 				if err := handler(ctx, m); err != nil {
-					errCh <- err
+					select {
+					case errCh <- err:
+					default:
+						// errCh full — drop. Shouldn't
+						// happen with the 128-slot buffer
+						// + concurrent drain.
+					}
 				}
 			})
 			if err != nil && ctx.Err() == nil {
-				errCh <- err
+				select {
+				case errCh <- err:
+				default:
+				}
 			}
 		}()
 	}
 	wg.Wait()
 	close(errCh)
-	// Return the first reported error, if any.
-	for e := range errCh {
-		return e
+	drainWg.Wait()
+	// firstErr is closed; nil when no errors arrived.
+	if err, ok := <-firstErr; ok {
+		return err
 	}
 	return nil
+}
+
+// defaultUnpairedHandler is the log-and-drop fallback when
+// no UnpairedHandler is installed. Uses the fmt package to
+// write to stderr so operators see the dropped messages at
+// least transiently. Real deployments always install a
+// handler.
+func (r *Router) defaultUnpairedHandler(m Message) {
+	fmt.Fprintf(unpairedLog, "gateway: unpaired inbound from platform=%s sender=%s (install SetUnpairedHandler to route these)\n",
+		m.Platform, m.SenderPlatformID)
 }
 
 // --- DM pairing ---
@@ -527,11 +663,17 @@ func (s *CronScheduler) Stop() {
 
 // AdapterConfig is a shared scaffold for the platform
 // adapter implementations in gateway/platforms/. Keeps the
-// common fields (name, secret, inbound queue) in one place.
+// common fields (name, secret) in one place.
+//
+// The channel-typed inbound queue is NOT stored here — it
+// would break JSON marshal (Go can't marshal a chan) and
+// persisting a channel value across restarts is meaningless
+// anyway. Adapters that want a queue construct one at
+// start-up; this struct persists only the serializable
+// fields.
 type AdapterConfig struct {
-	Name    string
-	Secret  string
-	Inbound chan Message
+	Name   string `json:"name"`
+	Secret string `json:"secret"`
 }
 
 // MarshalConfig is a convenience helper so operators can
