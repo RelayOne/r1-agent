@@ -146,15 +146,26 @@ func RefineSOWFromConcerns(ctx context.Context, prose string, sow *SOW, concerns
 	}
 
 	// Conservation: every original task AND acceptance criterion ID
-	// must appear in the refined SOW. Verifying tasks alone lets a
-	// refiner silently drop ACs while still leaving each session
-	// with at least one — the dispatcher would then run weakened
-	// gates on exactly the plans serious enough to need refinement.
+	// must appear in the refined SOW. Previous behavior hard-errored
+	// on any drop, which trapped the planner in a refine loop when
+	// the refiner legitimately improved other parts of the SOW but
+	// accidentally forgot one task (run 42 symptom: refiner dropped
+	// T290 while fixing 4 blocking concerns, whole refine rejected).
+	//
+	// New behavior: splice dropped tasks/ACs back into their original
+	// sessions (preserving all user-authored content) AND keep the
+	// refiner's improvements elsewhere. If the splice creates a
+	// duplicate task ID (e.g., refiner renamed T290 → T290-new and
+	// we re-add T290 from the original), autoDeduplicateTaskIDs
+	// further upstream will resolve the collision. Operators see a
+	// "spliced N dropped ID(s)" warning so silent repairs aren't
+	// hidden.
 	originalTasks, originalACs := collectIDs(sow)
 	refinedTasks, refinedACs := collectIDs(&refined)
 	missingT := diff(originalTasks, refinedTasks)
 	missingA := diff(originalACs, refinedACs)
 	if len(missingT) > 0 || len(missingA) > 0 {
+		spliceDroppedIDs(sow, &refined, missingT, missingA)
 		var details []string
 		if len(missingT) > 0 {
 			preview := missingT
@@ -170,7 +181,8 @@ func RefineSOWFromConcerns(ctx context.Context, prose string, sow *SOW, concerns
 			}
 			details = append(details, fmt.Sprintf("%d acceptance criterion (e.g. %s)", len(missingA), strings.Join(preview, ", ")))
 		}
-		return nil, fmt.Errorf("refine dropped %s — preserving original SOW", strings.Join(details, " and "))
+		fmt.Printf("  ⚠ refine dropped %s — spliced back into original sessions to preserve work\n",
+			strings.Join(details, " and "))
 	}
 
 	// Preserve transient flag (refine output won't have it).
@@ -202,6 +214,60 @@ func collectIDs(sow *SOW) (map[string]bool, map[string]bool) {
 		}
 	}
 	return tasks, acs
+}
+
+// spliceDroppedIDs restores tasks/ACs the refiner omitted by
+// copying them back from the original SOW into whichever
+// session they came from. Preserves work while letting the
+// refiner's structural improvements elsewhere stand.
+//
+// If the original session no longer exists in the refined
+// SOW (refiner renamed or removed it), the dropped entries
+// are appended to the first session in the refined SOW — a
+// last-resort landing pad so the content isn't lost.
+// Operators see the warning banner printed by the caller and
+// can re-run refine with explicit preserve directives if the
+// placement is wrong.
+func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string) {
+	if original == nil || refined == nil {
+		return
+	}
+	if len(refined.Sessions) == 0 {
+		// Refiner left no sessions to splice into; nothing to do.
+		return
+	}
+	missingT := map[string]bool{}
+	for _, id := range missingTasks {
+		missingT[id] = true
+	}
+	missingA := map[string]bool{}
+	for _, id := range missingACs {
+		missingA[id] = true
+	}
+	// Build refined-session index by ID so we can target splices.
+	idx := map[string]int{}
+	for i, s := range refined.Sessions {
+		idx[s.ID] = i
+	}
+	// Walk original sessions; if a task/AC is in the missing
+	// set AND its original session is still present in refined,
+	// append it there. Otherwise fall back to refined.Sessions[0].
+	for _, origSess := range original.Sessions {
+		target := 0
+		if ri, ok := idx[origSess.ID]; ok {
+			target = ri
+		}
+		for _, t := range origSess.Tasks {
+			if missingT[t.ID] {
+				refined.Sessions[target].Tasks = append(refined.Sessions[target].Tasks, t)
+			}
+		}
+		for _, a := range origSess.AcceptanceCriteria {
+			if missingA[a.ID] {
+				refined.Sessions[target].AcceptanceCriteria = append(refined.Sessions[target].AcceptanceCriteria, a)
+			}
+		}
+	}
 }
 
 // cmHasContent reports whether a ContentMatchCriterion is meaningful
