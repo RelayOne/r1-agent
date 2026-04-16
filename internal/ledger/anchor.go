@@ -74,10 +74,22 @@ const AnchorSchemaVersion = 2
 // `MerkleRoot`, which changes every subsequent `Hash`.
 type Anchor struct {
 	// SchemaVersion records the Hash composition this anchor was
-	// computed with. Zero is treated as version 1 for
-	// backward-compat with pre-versioned anchors. New anchors
-	// always use AnchorSchemaVersion.
+	// computed with. NEW anchors always set this to
+	// AnchorSchemaVersion. Anchors with SchemaVersion==0 from
+	// disk are TREATED AS LEGACY v1 for backward-compat with
+	// the initial ff869d1 build, but only when the JSON row
+	// genuinely lacks the field — stripped schema_version on an
+	// originally-versioned row is detected via schemaVersionPresent
+	// (populated by UnmarshalJSON) and surfaces as a violation.
 	SchemaVersion int `json:"schema_version,omitempty"`
+
+	// schemaVersionPresent is set by UnmarshalJSON when the raw
+	// JSON contained a schema_version key. Used by verifyAnchorHash
+	// to distinguish "legacy v1 anchor (field absent)" from
+	// "versioned anchor whose schema_version field was stripped"
+	// — the latter must surface as a tamper violation even though
+	// both deserialize as SchemaVersion==0.
+	schemaVersionPresent bool `json:"-"`
 
 	// Seq is the zero-indexed anchor number in this chain. Useful
 	// for verifier diagnostics; NOT part of the hash composition
@@ -114,6 +126,44 @@ type Anchor struct {
 	//   sha256(PrevHash || MerkleRoot || IntervalEnd.Format(time.RFC3339Nano))
 	// The next anchor's PrevHash must equal this.
 	Hash string `json:"hash"`
+}
+
+// UnmarshalJSON captures whether the raw JSON actually contained a
+// `schema_version` key so verifyAnchorHash can distinguish a legacy
+// v1 anchor (field genuinely absent) from a tampered versioned
+// anchor (field explicitly stripped to 0). Without this marker,
+// both paths produce SchemaVersion==0 and the v0→v1 legacy-compat
+// fallback silently accepts the tampered record.
+func (a *Anchor) UnmarshalJSON(data []byte) error {
+	type anchorJSON struct {
+		SchemaVersion *int            `json:"schema_version,omitempty"`
+		Seq           int             `json:"seq"`
+		IntervalStart time.Time       `json:"interval_start"`
+		IntervalEnd   time.Time       `json:"interval_end"`
+		NodeCount     int             `json:"node_count"`
+		MerkleRoot    string          `json:"merkle_root"`
+		PrevHash      string          `json:"prev_hash"`
+		Hash          string          `json:"hash"`
+	}
+	var raw anchorJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	a.Seq = raw.Seq
+	a.IntervalStart = raw.IntervalStart
+	a.IntervalEnd = raw.IntervalEnd
+	a.NodeCount = raw.NodeCount
+	a.MerkleRoot = raw.MerkleRoot
+	a.PrevHash = raw.PrevHash
+	a.Hash = raw.Hash
+	if raw.SchemaVersion != nil {
+		a.SchemaVersion = *raw.SchemaVersion
+		a.schemaVersionPresent = true
+	} else {
+		a.SchemaVersion = 0
+		a.schemaVersionPresent = false
+	}
+	return nil
 }
 
 // AnchorStore persists anchors to disk alongside the ledger. One
@@ -351,8 +401,15 @@ func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart,
 // mismatch surfaces as a violation. Tamper-evidence is preserved:
 // only genuinely v1-shape v0 records pass, downgrades fail.
 func verifyAnchorHash(a Anchor) string {
+	// An anchor whose JSON row genuinely omits schema_version is a
+	// legacy v1 record (ff869d1 shape). An anchor whose JSON row
+	// explicitly contains schema_version==0 is a tampered versioned
+	// record — refuse it so schema_version stays load-bearing.
 	version := a.SchemaVersion
 	if version == 0 {
+		if a.schemaVersionPresent {
+			return "anchor has explicit schema_version=0 (field set but invalid); this build writes v2 and accepts v1+"
+		}
 		version = 1
 	}
 	input := composeAnchorInput(version, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
@@ -366,7 +423,7 @@ func verifyAnchorHash(a Anchor) string {
 			shape = "prev||merkle||end (v1)"
 		}
 		hint := ""
-		if a.SchemaVersion == 0 {
+		if !a.schemaVersionPresent {
 			hint = " (anchor has no schema_version; verified as v1 for legacy compat — a stripped v2 anchor would fail here)"
 		}
 		return "anchor Hash does not match " + shape + " composition" + hint
