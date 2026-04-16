@@ -336,9 +336,69 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// previously we just printed concerns and dispatched-with-
 	// known-bugs.
 	const maxRefineRounds = 2
+	// cloneSOW takes a deep copy via JSON round-trip so the
+	// best-snapshot can't be mutated by a subsequent refine
+	// iteration. The SOW is large-ish (~30k bytes for a
+	// Sentinel-class plan) so this runs at most 3 times total
+	// (once per approval round).
+	cloneSOW := func(s *SOW) *SOW {
+		if s == nil {
+			return nil
+		}
+		b, err := json.Marshal(s)
+		if err != nil {
+			return s // best-effort fallback; marshal failures here are vanishingly rare
+		}
+		var copy SOW
+		if err := json.Unmarshal(b, &copy); err != nil {
+			return s
+		}
+		return &copy
+	}
 	if ctx.Err() == nil {
 		var verdict *FinalApprovalVerdict
 		var aerr error
+		// Best-SOW tracker: refine rounds can REGRESS (run 43
+		// symptom — round 2 dropped fidelity 88→85 and added 4
+		// blocking concerns while "addressing" 3 from round 1).
+		// Keep the best scoring SOW+verdict across rounds so a
+		// regression at the cap can roll back to the better
+		// earlier state instead of surfacing a strictly-worse
+		// terminal failure. Scoring: fewest blocking > highest
+		// (fidelity + feasibility) > earliest round (stable).
+		type refineSnapshot struct {
+			sow     *SOW
+			verdict *FinalApprovalVerdict
+			round   int
+		}
+		var best *refineSnapshot
+		isBetter := func(a, b *refineSnapshot) bool {
+			if b == nil {
+				return true
+			}
+			aBlock := 0
+			for _, c := range a.verdict.Concerns {
+				if c.Severity == "blocking" {
+					aBlock++
+				}
+			}
+			bBlock := 0
+			for _, c := range b.verdict.Concerns {
+				if c.Severity == "blocking" {
+					bBlock++
+				}
+			}
+			if aBlock != bBlock {
+				return aBlock < bBlock
+			}
+			aScore := a.verdict.FidelityScore + a.verdict.FeasibilityScore
+			bScore := b.verdict.FidelityScore + b.verdict.FeasibilityScore
+			if aScore != bScore {
+				return aScore > bScore
+			}
+			// Tie: prefer the earlier (stabler) round.
+			return a.round < b.round
+		}
 		for round := 0; round <= maxRefineRounds; round++ {
 			// Give EACH approval attempt its own fresh context —
 			// agentic and monolithic must not share a budget
@@ -371,6 +431,12 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 				}
 			}
 			fmt.Print(FormatApprovalVerdict(verdict))
+			// Snapshot the current (SOW, verdict) pair so a
+			// later regression can roll back to this one.
+			cur := &refineSnapshot{sow: cloneSOW(out), verdict: verdict, round: round}
+			if isBetter(cur, best) {
+				best = cur
+			}
 			// reject — reviewer says the SOW is structurally broken.
 			// BUT: the concerns often have actionable fix directives
 			// ("merge S3+S21", "change S37 path"). Attempt ONE refine
@@ -414,6 +480,35 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			// remain, halt with the operator-facing concern list.
 			if round >= maxRefineRounds {
 				if verdict.HasBlocking() {
+					// Before surfacing a terminal failure, check
+					// whether an EARLIER round produced a better
+					// SOW (fewer blocking concerns or higher
+					// combined score). If so, roll back — the
+					// refiner regressed, but the prior state may
+					// still be dispatchable (if blocking count
+					// dropped to zero in that earlier round) OR
+					// at least shows a cleaner plan than what
+					// terminal would dispatch nothing for.
+					if best != nil && best.round < round && isBetter(best, cur) {
+						rb := 0
+						for _, c := range best.verdict.Concerns {
+							if c.Severity == "blocking" {
+								rb++
+							}
+						}
+						fmt.Printf("  ⚠ refine round %d regressed (blocking: %d → %d); rolling back to round %d snapshot\n",
+							round, len(cur.verdict.Concerns), len(best.verdict.Concerns), best.round)
+						out = best.sow
+						verdict = best.verdict
+						if !verdict.HasBlocking() {
+							fmt.Printf("  ✓ rollback snapshot has no blocking concerns; proceeding to dispatch\n")
+							out.ChunkedConvertApproved = true
+							break
+						}
+						return out, nil, &TerminalApprovalError{
+							Reason: fmt.Sprintf("final plan approval: %d blocking concern(s) remain after %d refine round(s) (best-of rolled back to round %d); SOW not fit for dispatch", rb, maxRefineRounds, best.round),
+						}
+					}
 					return out, nil, &TerminalApprovalError{
 						Reason: fmt.Sprintf("final plan approval: %d blocking concern(s) remain after %d refine round(s); SOW not fit for dispatch", len(verdict.Concerns), maxRefineRounds),
 					}
