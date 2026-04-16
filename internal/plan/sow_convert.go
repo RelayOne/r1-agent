@@ -344,7 +344,13 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 	// reviewer explicitly flagged the SOW as unfit (reject or
 	// surviving blocking concerns), and a fresh unreviewed
 	// monolithic convert would discard that verdict.
-	chunkedCtx, chunkedCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// 60-minute budget. Sentinel-scale SOWs (1400+ lines, 20+ sessions
+	// after coverage expansion) can consume 30-45 minutes in the
+	// expand + consistency repair + coverage loop before CTO approval
+	// even starts, exhausting a 30-minute parent context. The CTO
+	// approval step uses its own fresh context (see below) to avoid
+	// being starved by a long expand phase.
+	chunkedCtx, chunkedCancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer chunkedCancel()
 	if sow, raw, err := ConvertProseToSOWChunked(chunkedCtx, prose, prov, model, 4); err == nil {
 		return sow, raw, nil

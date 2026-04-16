@@ -340,14 +340,34 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		var verdict *FinalApprovalVerdict
 		var aerr error
 		for round := 0; round <= maxRefineRounds; round++ {
-			verdict, aerr = FinalPlanApprovalAgentic(ctx, prose, out, prov, model, "")
+			// Give the CTO approval its own fresh context so a long
+			// expand + consistency + coverage phase can't starve it
+			// (observed in run 38: chunkedCtx expired during convert,
+			// approval called with -4s budget, both agentic and
+			// monolith timed out instantly, dispatch proceeded
+			// un-approved). 20-minute budget covers both agentic
+			// tool-driven exploration (typically 1-3 min) and the
+			// monolithic single-call fallback (up to ~10 min).
+			approvalCtx, approvalCancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			verdict, aerr = FinalPlanApprovalAgentic(approvalCtx, prose, out, prov, model, "")
 			if aerr != nil {
 				fmt.Printf("  ⚠ agentic final approval failed (%v); falling back to monolithic\n", aerr)
-				verdict, aerr = FinalPlanApproval(ctx, prose, out, prov, model)
+				verdict, aerr = FinalPlanApproval(approvalCtx, prose, out, prov, model)
 			}
+			approvalCancel()
 			if aerr != nil {
-				fmt.Printf("  ⚠ final plan approval skipped: %v\n", aerr)
-				break
+				// Both agentic AND monolithic approval failed. This
+				// is a stronger signal than "approval skipped" —
+				// without review, we have no idea whether the
+				// merged SOW is structurally sound or full of
+				// cross-session conflicts. Previously we just
+				// logged and dispatched; now we surface as a
+				// terminal failure so the operator sees the gap
+				// and can retry with more provider budget or
+				// investigate what made approval unreachable.
+				return out, nil, &TerminalApprovalError{
+					Reason: fmt.Sprintf("final plan approval failed (both agentic and monolithic): %v — SOW unreviewed, NOT dispatching", aerr),
+				}
 			}
 			fmt.Print(FormatApprovalVerdict(verdict))
 			// reject is terminal — reviewer says the SOW is structurally
