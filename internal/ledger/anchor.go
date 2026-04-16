@@ -338,38 +338,34 @@ func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart,
 }
 
 // verifyAnchorHash checks whether the anchor's stored Hash matches
-// one of the supported compositions. Returns "" on match, or a
-// reason string describing the mismatch. Anchors with
-// SchemaVersion==0 are unversioned (pre-SchemaVersion field) and
-// accept EITHER v1 or v2 composition — the previous uncommitted
-// code path transiently wrote v2 shape without stamping a version,
-// so we can't safely assume v0 means v1.
+// the composition for its declared SchemaVersion. Returns "" on
+// match, or a reason string describing the mismatch.
+//
+// Design note: we do NOT accept SchemaVersion==0 (unversioned).
+// The AnchorStore has never shipped to any production workload —
+// no anchor logs exist in the wild — so the only theoretical v0
+// records are from narrow uncommitted transitional builds. Rejecting
+// them here keeps schema_version tamper-evident: stripping the
+// field from a current v2 anchor flips SchemaVersion to 0 and
+// produces a clear violation rather than silently falling back to
+// a matching composition.
 func verifyAnchorHash(a Anchor) string {
-	candidates := []int{a.SchemaVersion}
-	if a.SchemaVersion == 0 {
-		candidates = []int{1, 2}
+	if a.SchemaVersion < 1 {
+		return "anchor has no schema_version (field required; this build writes v2 and accepts v1+)"
 	}
-	for _, v := range candidates {
-		input := composeAnchorInput(v, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
-		if input == "" {
-			continue
-		}
-		sum := sha256.Sum256([]byte(input))
-		if hex.EncodeToString(sum[:]) == a.Hash {
-			return ""
-		}
-	}
-	if a.SchemaVersion != 0 && a.SchemaVersion != 1 && a.SchemaVersion != 2 {
+	input := composeAnchorInput(a.SchemaVersion, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
+	if input == "" {
 		return fmt.Sprintf("anchor uses unknown schema_version %d; this build supports v1 and v2", a.SchemaVersion)
 	}
-	if a.SchemaVersion == 0 {
-		return "unversioned anchor Hash does not match v1 (prev||merkle||end) or v2 (prev||merkle||start||end) composition"
+	sum := sha256.Sum256([]byte(input))
+	if hex.EncodeToString(sum[:]) != a.Hash {
+		shape := "prev||merkle||start||end (v2)"
+		if a.SchemaVersion == 1 {
+			shape = "prev||merkle||end (v1)"
+		}
+		return "anchor Hash does not match " + shape + " composition"
 	}
-	shape := "prev||merkle||start||end (v2)"
-	if a.SchemaVersion == 1 {
-		shape = "prev||merkle||end (v1)"
-	}
-	return "anchor Hash does not match " + shape + " composition"
+	return ""
 }
 
 // merkleRootOfLeaves computes a binary Merkle root over hex-SHA-256
