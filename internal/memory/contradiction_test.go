@@ -27,22 +27,52 @@ func TestKeywordValidator_NegationFlip(t *testing.T) {
 	}
 }
 
-func TestKeywordValidator_FactualDelta(t *testing.T) {
+func TestKeywordValidator_FactualDelta_NumericDisagreement(t *testing.T) {
+	// The tightened validator only flags same-tag pairs
+	// with NUMERIC disagreement (since LiteralChecker
+	// cannot reliably distinguish substantive content
+	// disagreement from complementary updates). Numeric
+	// signal is unambiguous.
 	existing := Item{
-		ID: "i1", Tier: TierSemantic, Tags: []string{"capitals"},
-		Content: "capital of France is Paris",
+		ID: "i1", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis cache TTL is 5 minutes",
 	}
 	incoming := Item{
-		ID: "i2", Tier: TierSemantic, Tags: []string{"capitals"},
-		Content: "capital of France is Lyon",
+		ID: "i2", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis cache TTL is 10 minutes",
 	}
 	v := KeywordValidator{}
 	c, _ := v.Validate(context.Background(), existing, incoming)
 	if c == nil {
-		t.Fatal("expected contradiction")
+		t.Fatal("expected contradiction on numeric disagreement")
 	}
 	if c.Kind != KindFactualDelta {
 		t.Errorf("kind=%q want factual_delta", c.Kind)
+	}
+}
+
+func TestKeywordValidator_SameTagDifferentContent_NoFalsePositive(t *testing.T) {
+	// Complementary same-tag facts should NOT flag as
+	// contradictions. "Paris vs Lyon" IS a real
+	// contradiction but LiteralChecker cannot distinguish
+	// it from complementary updates ("stores session
+	// tokens" + "uses JWT format") without substructure.
+	// Policy: LiteralChecker defers ambiguous same-tag
+	// cases to an LLM-backed validator rather than
+	// false-flagging complementary writes. The numeric-
+	// disagreement test above covers what we DO flag.
+	existing := Item{
+		ID: "i1", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis cache stores session tokens",
+	}
+	incoming := Item{
+		ID: "i2", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis cache uses JWT format for session data",
+	}
+	v := KeywordValidator{}
+	c, _ := v.Validate(context.Background(), existing, incoming)
+	if c != nil {
+		t.Errorf("complementary same-tag facts should NOT flag; got %+v", c)
 	}
 }
 
@@ -104,30 +134,59 @@ func TestKeywordValidator_MinSharedTokensGuard(t *testing.T) {
 	}
 }
 
-func TestDetectContradictions_FindsFactualDeltaInStore(t *testing.T) {
+func TestDetectContradictions_FindsNumericDeltaInStore(t *testing.T) {
 	router := NewRouter()
 	router.Register(TierSemantic, NewInMemoryStorage())
 	ctx := context.Background()
 
 	existing := Item{
-		ID: "i1", Tier: TierSemantic, Tags: []string{"capitals"},
-		Content: "capital of France is Paris",
+		ID: "i1", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis TTL is 5 minutes",
 	}
 	_ = router.Put(ctx, existing)
 
 	incoming := Item{
-		ID: "i2", Tier: TierSemantic, Tags: []string{"capitals"},
-		Content: "capital of France is Lyon",
+		ID: "i2", Tier: TierSemantic, Tags: []string{"cache"},
+		Content: "Redis TTL is 10 minutes",
 	}
 	cs, err := DetectContradictions(ctx, router, TierSemantic, incoming, KeywordValidator{})
 	if err != nil {
 		t.Fatalf("DetectContradictions: %v", err)
 	}
 	if len(cs) != 1 {
-		t.Fatalf("expected 1 contradiction, got %d", len(cs))
+		t.Fatalf("expected 1 contradiction on numeric delta, got %d", len(cs))
 	}
 	if cs[0].Kind != KindFactualDelta {
 		t.Errorf("kind=%q want factual_delta", cs[0].Kind)
+	}
+}
+
+// TestDetectContradictions_WalksAllIncomingTags: P2 fix —
+// a contradiction on the incoming item's SECOND tag must
+// be found. Prior version only queried Tags[0].
+func TestDetectContradictions_WalksAllIncomingTags(t *testing.T) {
+	router := NewRouter()
+	router.Register(TierSemantic, NewInMemoryStorage())
+	ctx := context.Background()
+
+	// Existing item is only tagged "jwt".
+	_ = router.Put(ctx, Item{
+		ID: "i1", Tier: TierSemantic, Tags: []string{"jwt"},
+		Content: "JWT expiry is 15 minutes",
+	})
+	// Incoming item has "auth" as first tag, "jwt" as
+	// second tag. Prior version would never find the i1
+	// candidate because it only queried "auth".
+	incoming := Item{
+		ID: "i2", Tier: TierSemantic, Tags: []string{"auth", "jwt"},
+		Content: "JWT expiry is 30 minutes",
+	}
+	cs, err := DetectContradictions(ctx, router, TierSemantic, incoming, KeywordValidator{})
+	if err != nil {
+		t.Fatalf("DetectContradictions: %v", err)
+	}
+	if len(cs) != 1 {
+		t.Fatalf("contradiction on second tag should be found, got %d", len(cs))
 	}
 }
 

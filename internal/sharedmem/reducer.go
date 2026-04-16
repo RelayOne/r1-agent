@@ -88,17 +88,37 @@ func UnionReducer(existing, incoming any) (any, error) {
 // float32 / float64. Mixed types fall through to float64
 // comparison.
 //
-// Integer vs integer comparison uses int64 arithmetic — not
-// float64 — so values above 2^53 compare correctly. A prior
-// version that float-promoted every input collapsed large
-// int64 values (e.g. nanosecond timestamps) into the same
-// float, causing newer writes to be treated as equal and the
+// Integer vs integer comparison uses int64 / uint64
+// arithmetic — not float64 — so values above 2^53 compare
+// correctly. A prior version that float-promoted every
+// input collapsed large integers into the same float,
+// causing newer writes to be treated as equal and the
 // older value kept.
+//
+// Precision ladder:
+//  1. Both values fit in int64        → int64 comparison
+//  2. Both values fit in uint64       → uint64 comparison
+//     (handles very large unsigned
+//      values beyond int64 max)
+//  3. Otherwise                       → float64 fallback
+//     (lossy for values > 2^53 but
+//      better than erroring)
 func MaxReducer(existing, incoming any) (any, error) {
 	ei, eiOK := toInt64(existing)
 	ii, iiOK := toInt64(incoming)
 	if eiOK && iiOK {
 		if ei >= ii {
+			return existing, nil
+		}
+		return incoming, nil
+	}
+	// Both values may be large unsigned types that don't
+	// fit in int64 — compare as uint64 exactly rather than
+	// losing precision through float64.
+	eu, euOK := toUint64(existing)
+	iu, iuOK := toUint64(incoming)
+	if euOK && iuOK {
+		if eu >= iu {
 			return existing, nil
 		}
 		return incoming, nil
@@ -115,6 +135,26 @@ func MaxReducer(existing, incoming any) (any, error) {
 		return existing, nil
 	}
 	return incoming, nil
+}
+
+// toUint64 coerces unsigned integer types to uint64 for
+// MaxReducer's precise-comparison fast path on values
+// beyond int64 max.
+func toUint64(v any) (uint64, bool) {
+	switch x := v.(type) {
+	case uint:
+		return uint64(x), true
+	case uint8:
+		return uint64(x), true
+	case uint16:
+		return uint64(x), true
+	case uint32:
+		return uint64(x), true
+	case uint64:
+		return x, true
+	default:
+		return 0, false
+	}
 }
 
 // toInt64 coerces integral types to int64 for precise

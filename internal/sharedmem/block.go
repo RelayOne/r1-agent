@@ -518,6 +518,12 @@ func deepCopyAny(v any) any {
 // pointers using reflect so the original element types are
 // preserved. Falls back to JSON round-trip for everything
 // else.
+//
+// Nil-preservation: a typed nil slice/map (e.g. []string(nil)
+// or map[string]int(nil)) returns as the same typed nil
+// rather than being rewritten as an empty allocation —
+// preserving JSON-marshal semantics (nil → "null") and
+// nil-check behavior callers rely on.
 func reflectDeepCopy(v any) any {
 	rv := reflectValueOf(v)
 	if !rv.IsValid() {
@@ -526,6 +532,9 @@ func reflectDeepCopy(v any) any {
 	kind := rv.Kind()
 	switch kind {
 	case reflectKindSlice:
+		if rv.IsNil() {
+			return v
+		}
 		out := reflectMakeSlice(rv.Type(), rv.Len(), rv.Len())
 		for i := 0; i < rv.Len(); i++ {
 			elem := rv.Index(i).Interface()
@@ -536,6 +545,9 @@ func reflectDeepCopy(v any) any {
 		}
 		return out.Interface()
 	case reflectKindMap:
+		if rv.IsNil() {
+			return v
+		}
 		out := reflectMakeMap(rv.Type())
 		iter := rv.MapRange()
 		for iter.Next() {

@@ -286,8 +286,12 @@ func (r *Router) StartAll(ctx context.Context, handler func(ctx context.Context,
 	for _, a := range r.adapters {
 		adapters = append(adapters, a)
 	}
-	unpaired := r.unpaired
 	r.mu.RUnlock()
+	// NOTE: we deliberately do NOT snapshot r.unpaired here.
+	// The callback below reads it under r.mu.RLock() on each
+	// inbound message so that a runtime SetUnpairedHandler
+	// call (which the setter's docstring promises works while
+	// StartAll is running) takes effect immediately.
 
 	// Buffer sized generously so handler errors don't back-
 	// pressure the adapter callback (which would hold up a
@@ -333,8 +337,14 @@ func (r *Router) StartAll(ctx context.Context, handler func(ctx context.Context,
 					// the default log-and-drop). Critically,
 					// we do NOT silently drop — the P0 bug
 					// was that unpaired senders vanished.
-					if unpaired != nil {
-						unpaired(ctx, m)
+					// Read r.unpaired LIVE so runtime
+					// SetUnpairedHandler calls take effect
+					// without restarting StartAll.
+					r.mu.RLock()
+					handler := r.unpaired
+					r.mu.RUnlock()
+					if handler != nil {
+						handler(ctx, m)
 					} else {
 						r.defaultUnpairedHandler(m)
 					}

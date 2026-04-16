@@ -116,10 +116,17 @@ func (p *HoneypotPool) Classes() []string {
 // given class. Used by the injector at injection time.
 // seed is caller-supplied so tests are reproducible; pass
 // crypto-random for production.
+//
+// Concurrency: the lock is held across BOTH the class-index
+// read AND the byID dereference so a concurrent Add/Remove
+// can't swap the map mid-pick. A prior version dropped the
+// lock between the two lookups which allowed `concurrent
+// map read and map write` panics under admin-goroutine
+// refresh load.
 func (p *HoneypotPool) Pick(class string, seed uint64) (Honeypot, bool) {
 	p.mu.RLock()
+	defer p.mu.RUnlock()
 	ids := p.byCls[class]
-	p.mu.RUnlock()
 	if len(ids) == 0 {
 		return Honeypot{}, false
 	}
@@ -238,14 +245,22 @@ func removeString(s []string, id string) []string {
 // PeriodicSnapshotter fires Snapshot callbacks at a
 // randomized cadence. Used to take work-in-progress
 // captures for audit + deception detection.
+//
+// Concurrency model: the loop goroutine uses the OWN
+// stop channel it was started with (captured at Start
+// time); Stop closes that specific channel. A subsequent
+// Start allocates a fresh one. This prevents the prior
+// race where Stop closed the shared field and Start
+// overwrote it, leaving the loop goroutine blocked on
+// the fresh (unclosed) channel.
 type PeriodicSnapshotter struct {
-	mu        sync.Mutex
-	base      time.Duration
-	jitter    time.Duration // +/- from base
-	snapshot  func(ctx context.Context) error
-	stop      chan struct{}
-	running   bool
-	rng       func() uint64
+	mu       sync.Mutex
+	base     time.Duration
+	jitter   time.Duration // +/- from base
+	snapshot func(ctx context.Context) error
+	stop     chan struct{}
+	running  bool
+	rng      func() uint64
 }
 
 // NewPeriodicSnapshotter returns a snapshotter firing
@@ -270,7 +285,10 @@ func (s *PeriodicSnapshotter) SetRNG(rng func() uint64) {
 	s.rng = rng
 }
 
-// Start begins firing snapshots. Idempotent.
+// Start begins firing snapshots. Idempotent — calling Start
+// on an already-running snapshotter is a no-op. Allocates a
+// FRESH stop channel each time so repeated Start/Stop
+// cycles work without leaking the old channel's state.
 func (s *PeriodicSnapshotter) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.running || s.base == 0 {
@@ -278,11 +296,16 @@ func (s *PeriodicSnapshotter) Start(ctx context.Context) {
 		return
 	}
 	s.running = true
+	s.stop = make(chan struct{})
+	// Capture the channel reference for the loop so that a
+	// later Stop (which allocates a NEW channel) can't
+	// accidentally re-close this one.
+	stopCh := s.stop
 	s.mu.Unlock()
-	go s.loop(ctx)
+	go s.loop(ctx, stopCh)
 }
 
-// Stop halts the snapshotter.
+// Stop halts the snapshotter. Idempotent.
 func (s *PeriodicSnapshotter) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -291,18 +314,25 @@ func (s *PeriodicSnapshotter) Stop() {
 	}
 	s.running = false
 	close(s.stop)
-	// Recreate stop channel so Start is idempotent (a
-	// Stop+Start cycle works).
-	s.stop = make(chan struct{})
 }
 
-func (s *PeriodicSnapshotter) loop(ctx context.Context) {
+func (s *PeriodicSnapshotter) loop(ctx context.Context, stop <-chan struct{}) {
+	defer func() {
+		// Clear the running flag when the loop exits for
+		// ANY reason (explicit Stop or ctx cancel). Prior
+		// version left running=true after ctx cancellation,
+		// so a subsequent Start with a fresh context became
+		// a permanent no-op.
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
 	for {
 		d := s.nextDelay()
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.stop:
+		case <-stop:
 			return
 		case <-time.After(d):
 			_ = s.snapshot(ctx)

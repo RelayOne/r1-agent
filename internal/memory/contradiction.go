@@ -102,47 +102,139 @@ func (k KeywordValidator) Validate(_ context.Context, existing, incoming Item) (
 			Explanation: fmt.Sprintf("shared tokens [%s] but negation-present in exactly one", joinTop(overlap, 3)),
 		}, nil
 	}
-	// Shared tags + different content that's NOT a negation
-	// flip — likely factual delta. Only flag when tags align
-	// (otherwise coincidental token overlap is too noisy).
-	if tagsOverlap(existing.Tags, incoming.Tags) && existing.Content != incoming.Content {
-		return &Contradiction{
-			Existing:    existing,
-			New:         incoming,
-			Kind:        KindFactualDelta,
-			Explanation: fmt.Sprintf("same tags [%s]; content differs", strings.Join(commonTags(existing.Tags, incoming.Tags), ", ")),
-		}, nil
+	// Same-tag different-content is NOT automatically a
+	// contradiction — complementary updates ("JWT tokens
+	// expire after 15m" + "JWT tokens store a kid claim")
+	// aren't disagreements. LiteralChecker can only
+	// positively identify contradictions when the text
+	// shape explicitly disagrees (numeric values that
+	// differ on the same attribute, boolean flips). Anything
+	// weaker is an LLM-backed validator's job.
+	//
+	// Concrete signal we still flag here: the two facts
+	// share a tag AND both contain a numeric token referring
+	// to the same subject but with different values. E.g.
+	// "cache TTL is 5 minutes" vs "cache TTL is 10 minutes"
+	// share the "cache" + "ttl" tokens and both have
+	// numerics — 5 vs 10 disagree.
+	if tagsOverlap(existing.Tags, incoming.Tags) {
+		eNums := extractNumbers(existing.Content)
+		iNums := extractNumbers(incoming.Content)
+		if len(eNums) > 0 && len(iNums) > 0 && !numbersAgree(eNums, iNums) {
+			return &Contradiction{
+				Existing:    existing,
+				New:         incoming,
+				Kind:        KindFactualDelta,
+				Explanation: fmt.Sprintf("same tags [%s]; numeric values differ (%v vs %v)",
+					strings.Join(commonTags(existing.Tags, incoming.Tags), ", "), eNums, iNums),
+			}, nil
+		}
 	}
 	return nil, nil
 }
 
-// DetectContradictions runs `validator.Validate` against
-// every existing fact in the specified tier matching a
-// coarse query. Returns all contradictions (caller decides
-// whether to reject the write, warn the operator, or accept
-// with a low-confidence provenance tag).
-func DetectContradictions(ctx context.Context, router *Router, tier Tier, incoming Item, validator SemanticValidator) ([]Contradiction, error) {
-	// Query the tier for candidates. We narrow by tag where
-	// possible so the validator isn't run against every
-	// stored fact — O(n) over the tier would be too much
-	// at any reasonable scale.
-	var query Query
-	query.Tier = tier
-	if len(incoming.Tags) > 0 {
-		query.Text = incoming.Tags[0] // coarse pre-filter
-	} else {
-		query.Text = incoming.Content
-	}
-	query.Limit = 50 // bounded scan to keep this cheap
-	candidates, err := router.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("memory: contradiction candidate query: %w", err)
-	}
-	var out []Contradiction
-	for _, cand := range candidates {
-		if cand.ID == incoming.ID {
-			continue
+// extractNumbers pulls numeric tokens (integers + decimals)
+// from s. Used by the contradiction validator's tightened
+// factual-delta path so same-tag complementary facts
+// ("cache is fast" + "cache stores bytes") don't false-flag
+// but same-tag numeric-value facts ("TTL is 5" + "TTL is 10")
+// do.
+func extractNumbers(s string) []string {
+	var out []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+			cur.Reset()
 		}
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || r == '.' {
+			cur.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// numbersAgree reports whether every number in a also
+// appears in b (and vice versa, modulo formatting).
+// Used by the contradiction detector to decide whether
+// shared-tag + differing-content is a numeric disagreement.
+func numbersAgree(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	asSet := map[string]bool{}
+	for _, n := range a {
+		asSet[n] = true
+	}
+	bsSet := map[string]bool{}
+	for _, n := range b {
+		bsSet[n] = true
+	}
+	// If at least one numeric appears in ONE set but not
+	// the other, the facts disagree.
+	for n := range asSet {
+		if !bsSet[n] {
+			return false
+		}
+	}
+	for n := range bsSet {
+		if !asSet[n] {
+			return false
+		}
+	}
+	return true
+}
+
+// DetectContradictions runs `validator.Validate` against
+// every existing fact in the specified tier matching ANY
+// of the incoming item's tags (not just Tags[0]). Returns
+// all contradictions (caller decides whether to reject the
+// write, warn the operator, or accept with a low-confidence
+// provenance tag).
+//
+// Tag iteration: a contradiction whose only shared tag is
+// the incoming item's 3rd or 7th tag would have been missed
+// by prior versions that only pre-filtered on Tags[0].
+// We now run one query per tag (deduplicating by candidate
+// ID) so detection isn't dependent on tag ordering.
+func DetectContradictions(ctx context.Context, router *Router, tier Tier, incoming Item, validator SemanticValidator) ([]Contradiction, error) {
+	seen := map[string]Item{}
+	queryOne := func(text string) error {
+		candidates, err := router.Query(ctx, Query{
+			Tier:  tier,
+			Text:  text,
+			Limit: 50,
+		})
+		if err != nil {
+			return fmt.Errorf("memory: contradiction candidate query: %w", err)
+		}
+		for _, c := range candidates {
+			if c.ID == incoming.ID {
+				continue
+			}
+			seen[c.ID] = c
+		}
+		return nil
+	}
+	if len(incoming.Tags) == 0 {
+		if err := queryOne(incoming.Content); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, tag := range incoming.Tags {
+			if err := queryOne(tag); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	var out []Contradiction
+	for _, cand := range seen {
 		c, err := validator.Validate(ctx, cand, incoming)
 		if err != nil {
 			return nil, fmt.Errorf("memory: validator: %w", err)
