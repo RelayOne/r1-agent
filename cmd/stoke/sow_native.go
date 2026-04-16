@@ -2028,6 +2028,45 @@ func containsExplicitStubMarkers(repoRoot string, t plan.Task) bool {
 	return false
 }
 
+// findSuspiciouslySmallFiles returns declared files that
+// exist on disk but fall below plan.FileMinBytes. These
+// are typically barrel files like `export { cn } from '...'`
+// that satisfy file-exists checks but carry no substantive
+// implementation. Run 40 observed dozens of these. Skips
+// config-shaped file extensions (.json/.yaml/.toml/.md)
+// where tiny files are legitimate.
+//
+// Returns (offending files, true) when any are too small;
+// (nil, false) when everything passes. The TSX/JSX/TS/JS
+// threshold is deliberately generous (256 bytes) so a
+// legitimate one-line prop-type file + exports doesn't
+// trip it, but a stub barrel with a comment trips reliably.
+func findSuspiciouslySmallFiles(repoRoot string, t plan.Task) []string {
+	if len(t.Files) == 0 {
+		return nil
+	}
+	var small []string
+	for _, rel := range t.Files {
+		full := filepath.Join(repoRoot, rel)
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(rel))
+		// Config / data / docs files legitimately can be
+		// small; don't flag them.
+		if ext == ".json" || ext == ".yaml" || ext == ".yml" ||
+			ext == ".toml" || ext == ".md" || ext == ".txt" ||
+			ext == ".env" || ext == ".gitignore" {
+			continue
+		}
+		if info.Size() < plan.FileMinBytes {
+			small = append(small, rel)
+		}
+	}
+	return small
+}
+
 // classifyZombie inspects post-dispatch state and returns one of the
 // three verdicts above. missingOrEmpty lists the declared files that
 // are missing or empty on disk (populated only for ZombieMissing).
@@ -2932,15 +2971,37 @@ exit 0 before you end.
 		// crate names, and identifiers from the task. This is the
 		// fix for "tiny task description + 32k buried SOW = model
 		// invents plausible names".
+		var specExcerptForPrompt string
 		if opts.RawSOW != "" {
-			excerpt := extractTaskSpecExcerpt(opts.RawSOW, session, task, specExcerptConfig{})
-			if excerpt != "" {
+			specExcerptForPrompt = extractTaskSpecExcerpt(opts.RawSOW, session, task, specExcerptConfig{})
+			if specExcerptForPrompt != "" {
 				usr.WriteString("SPEC EXCERPT (authoritative — the task header above is just a summary):\n")
 				usr.WriteString("----- BEGIN SPEC -----\n")
-				usr.WriteString(excerpt)
+				usr.WriteString(specExcerptForPrompt)
 				usr.WriteString("\n----- END SPEC -----\n\n")
 				usr.WriteString("Read the SPEC EXCERPT above carefully before writing any code. If the spec defines a specific struct, function signature, or field layout, implement it EXACTLY as written — no interpretation, no generic alternatives, no \"plausible\" fill-ins. Exact identifiers from the spec must appear verbatim in your code.\n\n")
 			}
+		}
+
+		// 3.5. Deliverable checklist — the DEEPER anti-stub fix.
+		// Scan the task description + spec excerpt for enumerated
+		// deliverables ("components (data table, date picker,
+		// multi-select, modal)", "including X, Y, Z") and render
+		// them as a MANDATORY checklist. Forces workers to see each
+		// spec-level deliverable as a concrete file-level ask
+		// rather than interpreting "scaffold components" as "write
+		// a barrel file with a comment."
+		//
+		// Empty checklist (nothing enumerated in the task or spec)
+		// → no injection, no prompt bloat.
+		deliverableSource := task.Description
+		if specExcerptForPrompt != "" {
+			deliverableSource = deliverableSource + "\n" + specExcerptForPrompt
+		}
+		deliverables := plan.ExtractDeliverables(deliverableSource)
+		if checklist := plan.RenderChecklist(deliverables); checklist != "" {
+			usr.WriteString(checklist)
+			usr.WriteString("\n")
 		}
 
 		// Live build-watcher snapshot. When present, the worker sees
@@ -3477,6 +3538,25 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			verdict.GapsFound = append([]string{stubGap}, verdict.GapsFound...)
 			if strings.TrimSpace(verdict.FollowupDirective) == "" {
 				verdict.FollowupDirective = fmt.Sprintf("Replace the stub/placeholder content in %s with a real implementation of the task's required behavior per the SOW spec. Remove any TODO / FIXME / return null / as any / empty catch / @ts-ignore markers; produce working logic that satisfies the spec.", strings.Join(originalTask.Files, ", "))
+			}
+		}
+	}
+
+	// Size-floor integrity gate (the deeper anti-stub fix).
+	// Even when the stub-marker regex finds nothing, a
+	// declared source file under plan.FileMinBytes is almost
+	// always a barrel / one-line re-export / empty interface
+	// with no substantive implementation. Runs BEFORE the
+	// (more expensive) content-judge LLM call so obvious
+	// stubs fail cheap.
+	if verdict.Complete && len(originalTask.Files) > 0 {
+		if small := findSuspiciouslySmallFiles(cfg.RepoRoot, originalTask); len(small) > 0 {
+			fmt.Printf("    ⛔ task %s: declared file(s) suspiciously small (<%d bytes) — probable stub: %s\n", originalTask.ID, plan.FileMinBytes, strings.Join(small, ", "))
+			verdict.Complete = false
+			sizeGap := fmt.Sprintf("declared files fall below the %d-byte substance floor: %s. Files this small are almost always barrel re-exports, empty interfaces, or one-line scaffolding with no working implementation. Write real code satisfying the task spec.", plan.FileMinBytes, strings.Join(small, ", "))
+			verdict.GapsFound = append([]string{sizeGap}, verdict.GapsFound...)
+			if strings.TrimSpace(verdict.FollowupDirective) == "" {
+				verdict.FollowupDirective = fmt.Sprintf("Expand the following files with substantive implementation — each is currently below the %d-byte substance floor: %s. The SOW's spec excerpt + MANDATORY DELIVERABLES checklist enumerates what each file must contain; do not ship barrel re-exports or single-line placeholders.", plan.FileMinBytes, strings.Join(small, ", "))
 			}
 		}
 	}
