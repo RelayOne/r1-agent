@@ -249,3 +249,133 @@ func TestSpliceDroppedIDs_ShortDescNotTreatedAsRename(t *testing.T) {
 			len(refined.Sessions[0].Tasks))
 	}
 }
+
+// TestSpliceDroppedIDs_CommonDescDoesNotSuppressRestore —
+// when multiple refined tasks share the same description,
+// the splice should NOT treat that as a rename signal
+// (description isn't unique enough). Restores the dropped
+// original so content isn't lost.
+func TestSpliceDroppedIDs_CommonDescDoesNotSuppressRestore(t *testing.T) {
+	const common = "implement pagination helper for the list endpoint"
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{
+				{ID: "T10", Description: common},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{
+				// Two other tasks share the description — not
+				// a unique rename signal.
+				{ID: "T20", Description: common},
+				{ID: "T21", Description: common},
+			}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T10"}, nil)
+
+	if len(refined.Sessions[0].Tasks) != 3 {
+		t.Errorf("common desc (count>1) must not suppress restore; got %d tasks",
+			len(refined.Sessions[0].Tasks))
+	}
+}
+
+// TestSpliceDroppedIDs_CommonCommandDoesNotSuppressACRestore —
+// "go build ./..." is ubiquitous as an AC command; two
+// sessions with the same command must not cause a dropped
+// AC to be suppressed. Otherwise dropped acceptance gates
+// get silently weakened.
+func TestSpliceDroppedIDs_CommonCommandDoesNotSuppressACRestore(t *testing.T) {
+	cmd := "go build ./..."
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S1", AcceptanceCriteria: []AcceptanceCriterion{
+				{ID: "AC1", Description: "s1 build", Command: cmd},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S1", AcceptanceCriteria: []AcceptanceCriterion{
+				{ID: "AC100", Description: "s1 refined build", Command: cmd},
+			}},
+			{ID: "S2", AcceptanceCriteria: []AcceptanceCriterion{
+				{ID: "AC200", Description: "s2 build", Command: cmd},
+			}},
+		},
+	}
+	spliceDroppedIDs(original, refined, nil, []string{"AC1"})
+
+	// S1 still has AC100; we should restore AC1 too because
+	// the command is ambiguous (S2 also has it). Result: 2 ACs
+	// in S1 (AC100 original + AC1 restored).
+	if len(refined.Sessions[0].AcceptanceCriteria) != 2 {
+		t.Errorf("common command must not suppress AC restore; got %d ACs in S1",
+			len(refined.Sessions[0].AcceptanceCriteria))
+	}
+}
+
+// TestSpliceDroppedIDs_UniqueAndLocalRenameSuppresses —
+// exact rename signal: ONE refined task matches, AND it's
+// in the target session. Suppress the restore.
+func TestSpliceDroppedIDs_UniqueAndLocalRenameSuppresses(t *testing.T) {
+	desc := "implement unique refund webhook handler with retries"
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S5", Tasks: []Task{
+				{ID: "T290", Description: desc},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S5", Tasks: []Task{
+				{ID: "T290-refined", Description: desc}, // unique + local
+			}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T290"}, nil)
+
+	if len(refined.Sessions[0].Tasks) != 1 {
+		t.Errorf("unique+local rename must suppress restore; got %d tasks",
+			len(refined.Sessions[0].Tasks))
+	}
+}
+
+// TestSpliceDroppedIDs_RenameInDifferentSessionNotSuppressed —
+// even a UNIQUE match doesn't count as a rename if it's not
+// in the target session we're splicing into. The original
+// work belongs in session X; a unique task with the same
+// description in session Y is probably a coincidence.
+func TestSpliceDroppedIDs_RenameInDifferentSessionNotSuppressed(t *testing.T) {
+	desc := "set up initial database connection pool with proper timeout"
+	original := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{
+				{ID: "T1", Description: desc},
+			}},
+		},
+	}
+	refined := &SOW{
+		Sessions: []Session{
+			{ID: "S1", Tasks: []Task{{ID: "T2", Description: "something else"}}},
+			{ID: "S2", Tasks: []Task{{ID: "T50", Description: desc}}},
+		},
+	}
+	spliceDroppedIDs(original, refined, []string{"T1"}, nil)
+
+	// Splice target is S1 (exact ID match). The unique desc
+	// match is in S2. We should NOT suppress — S1 gets T1
+	// restored.
+	found := false
+	for _, tk := range refined.Sessions[0].Tasks {
+		if tk.ID == "T1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("cross-session description match must not suppress splice into target session")
+	}
+}

@@ -257,20 +257,49 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 	for _, id := range missingACs {
 		missingA[id] = true
 	}
-	// Pre-index refined content for rename detection.
-	refinedTaskDescs := map[string]bool{}
-	refinedACKeys := map[string]bool{}
-	for _, s := range refined.Sessions {
+	// Pre-index refined content for rename detection. We track
+	// (session-index, count) per signature so we can require
+	// UNIQUE and SESSION-SCOPED matches before declaring a
+	// rename — otherwise a common description ("implement
+	// pagination") or common command ("go build ./...") would
+	// suppress splicing every dropped item that shares the
+	// signature. That's how the previous version silently
+	// weakened session gates by treating any dropped AC with
+	// a "go build" command as a rename.
+	type sigOccurrence struct {
+		sessIdx int
+		count   int
+	}
+	refinedTaskBySig := map[string]*sigOccurrence{}
+	refinedACBySig := map[string]*sigOccurrence{}
+	for si, s := range refined.Sessions {
 		for _, t := range s.Tasks {
 			d := normalizeDesc(t.Description)
-			if d != "" {
-				refinedTaskDescs[d] = true
+			if d == "" {
+				continue
+			}
+			if cur, ok := refinedTaskBySig[d]; ok {
+				cur.count++
+				// Distinct session → mark sessIdx ambiguous (-1).
+				if cur.sessIdx != si {
+					cur.sessIdx = -1
+				}
+			} else {
+				refinedTaskBySig[d] = &sigOccurrence{sessIdx: si, count: 1}
 			}
 		}
 		for _, a := range s.AcceptanceCriteria {
 			k := acPayloadKey(a)
-			if k != "" {
-				refinedACKeys[k] = true
+			if k == "" {
+				continue
+			}
+			if cur, ok := refinedACBySig[k]; ok {
+				cur.count++
+				if cur.sessIdx != si {
+					cur.sessIdx = -1
+				}
+			} else {
+				refinedACBySig[k] = &sigOccurrence{sessIdx: si, count: 1}
 			}
 		}
 	}
@@ -323,18 +352,33 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 		return 0
 	}
 
+	// isRename reports whether a refined item with this
+	// signature looks like THE rename of the dropped original
+	// that lives in `target`. A legit rename = exactly one
+	// refined item matches the signature AND it lives in the
+	// same session we're splicing into. Anything weaker
+	// (common description across many tasks, same "go build"
+	// command in three sessions) falls through to "not a
+	// rename, do restore" — preserving gate strength at the
+	// cost of occasional duplication that autoCleanTaskDeps +
+	// autoDeduplicateTaskIDs can resolve downstream.
+	isRename := func(occ *sigOccurrence, target int) bool {
+		if occ == nil {
+			return false
+		}
+		return occ.count == 1 && occ.sessIdx == target
+	}
+
 	for _, origSess := range original.Sessions {
 		target := findTarget(origSess.ID)
 		for _, t := range origSess.Tasks {
 			if !missingT[t.ID] {
 				continue
 			}
-			// Rename detection: if the refined SOW carries a task
-			// with an equivalent description anywhere, the refiner
-			// renamed (not dropped) this task. Skip to avoid
-			// duplication.
-			if d := normalizeDesc(t.Description); d != "" && refinedTaskDescs[d] {
-				continue
+			if d := normalizeDesc(t.Description); d != "" {
+				if isRename(refinedTaskBySig[d], target) {
+					continue
+				}
 			}
 			refined.Sessions[target].Tasks = append(refined.Sessions[target].Tasks, t)
 		}
@@ -342,8 +386,10 @@ func spliceDroppedIDs(original, refined *SOW, missingTasks, missingACs []string)
 			if !missingA[a.ID] {
 				continue
 			}
-			if k := acPayloadKey(a); k != "" && refinedACKeys[k] {
-				continue
+			if k := acPayloadKey(a); k != "" {
+				if isRename(refinedACBySig[k], target) {
+					continue
+				}
 			}
 			refined.Sessions[target].AcceptanceCriteria = append(refined.Sessions[target].AcceptanceCriteria, a)
 		}
