@@ -84,12 +84,17 @@ type Anchor struct {
 	SchemaVersion int `json:"schema_version,omitempty"`
 
 	// schemaVersionPresent is set by UnmarshalJSON when the raw
-	// JSON contained a schema_version key. Used by verifyAnchorHash
-	// to distinguish "legacy v1 anchor (field absent)" from
-	// "versioned anchor whose schema_version field was stripped"
-	// — the latter must surface as a tamper violation even though
-	// both deserialize as SchemaVersion==0.
+	// JSON contained a schema_version key (including when the
+	// value is explicit null). Used by verifyAnchorHash to
+	// distinguish "legacy v1 anchor (field absent)" from
+	// "versioned anchor whose schema_version field was stripped
+	// or nulled" — the latter must surface as a tamper violation
+	// even though both deserialize as SchemaVersion==0.
 	schemaVersionPresent bool `json:"-"`
+
+	// schemaVersionNull distinguishes "schema_version":null
+	// (explicit null, tampered) from a numeric value.
+	schemaVersionNull bool `json:"-"`
 
 	// Seq is the zero-indexed anchor number in this chain. Useful
 	// for verifier diagnostics; NOT part of the hash composition
@@ -135,8 +140,18 @@ type Anchor struct {
 // both paths produce SchemaVersion==0 and the v0→v1 legacy-compat
 // fallback silently accepts the tampered record.
 func (a *Anchor) UnmarshalJSON(data []byte) error {
+	// Use json.RawMessage for schema_version so we can distinguish
+	// three cases json.Unmarshal collapses to the same *int nil:
+	//
+	//   1. key absent         → raw is zero-value RawMessage (len 0)
+	//   2. "schema_version":null → raw == "null" (4 bytes)
+	//   3. "schema_version":N    → raw == "N"
+	//
+	// Case 1 is the legacy ff869d1 shape. Cases 2 and 3 are
+	// modern records — null is a tampered modern record (used to
+	// be a number, now null) and must surface as a violation.
 	type anchorJSON struct {
-		SchemaVersion *int            `json:"schema_version,omitempty"`
+		SchemaVersion json.RawMessage `json:"schema_version,omitempty"`
 		Seq           int             `json:"seq"`
 		IntervalStart time.Time       `json:"interval_start"`
 		IntervalEnd   time.Time       `json:"interval_end"`
@@ -156,12 +171,23 @@ func (a *Anchor) UnmarshalJSON(data []byte) error {
 	a.MerkleRoot = raw.MerkleRoot
 	a.PrevHash = raw.PrevHash
 	a.Hash = raw.Hash
-	if raw.SchemaVersion != nil {
-		a.SchemaVersion = *raw.SchemaVersion
-		a.schemaVersionPresent = true
-	} else {
+	a.schemaVersionNull = false
+	trimmed := strings.TrimSpace(string(raw.SchemaVersion))
+	switch {
+	case len(raw.SchemaVersion) == 0:
+		// Field genuinely absent → legacy ff869d1 anchor.
 		a.SchemaVersion = 0
 		a.schemaVersionPresent = false
+	case trimmed == "null":
+		// Explicit null — tampered modern record.
+		a.SchemaVersion = 0
+		a.schemaVersionPresent = true
+		a.schemaVersionNull = true
+	default:
+		if err := json.Unmarshal(raw.SchemaVersion, &a.SchemaVersion); err != nil {
+			return fmt.Errorf("schema_version: %w", err)
+		}
+		a.schemaVersionPresent = true
 	}
 	return nil
 }
@@ -401,10 +427,16 @@ func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart,
 // mismatch surfaces as a violation. Tamper-evidence is preserved:
 // only genuinely v1-shape v0 records pass, downgrades fail.
 func verifyAnchorHash(a Anchor) string {
-	// An anchor whose JSON row genuinely omits schema_version is a
-	// legacy v1 record (ff869d1 shape). An anchor whose JSON row
-	// explicitly contains schema_version==0 is a tampered versioned
-	// record — refuse it so schema_version stays load-bearing.
+	// Three rejection cases for non-legacy anchors where
+	// schema_version should be load-bearing:
+	//   - explicit null: tampered (was numeric, now null)
+	//   - explicit 0: tampered (field present with invalid value)
+	//   - explicit unknown value: rejected by composeAnchorInput
+	// A genuinely absent field (legacy ff869d1 shape) is the only
+	// case that falls through to v1 recompute.
+	if a.schemaVersionNull {
+		return "anchor has schema_version=null (tampered: field was numeric, now null); this build writes v2 and accepts v1+"
+	}
 	version := a.SchemaVersion
 	if version == 0 {
 		if a.schemaVersionPresent {
