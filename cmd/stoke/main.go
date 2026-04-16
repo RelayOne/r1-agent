@@ -26,6 +26,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/metrics"
 	"github.com/ericmacdougall/stoke/internal/audit"
+	"github.com/ericmacdougall/stoke/internal/cloud"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
 	"github.com/ericmacdougall/stoke/internal/convergence"
@@ -3512,26 +3513,9 @@ func cloudCmd(args []string) {
 	}
 	switch sub {
 	case "register":
-		fmt.Println("stoke cloud register")
-		fmt.Println()
-		fmt.Println("Managed-cloud registration is OPT-IN and is not required for")
-		fmt.Println("any Stoke functionality. Per STEWARDSHIP.md, every feature")
-		fmt.Println("available in the self-hosted binary remains available in the")
-		fmt.Println("self-hosted binary, with or without cloud linkage.")
-		fmt.Println()
-		fmt.Println("When managed cloud is ready, this subcommand will:")
-		fmt.Println("  - prompt for a one-time operator token (from")
-		fmt.Println("    https://stoke.dev/account/link)")
-		fmt.Println("  - exchange the token for a persistent device credential")
-		fmt.Println("  - write ~/.stoke/cloud.json with the endpoint + credential")
-		fmt.Println("  - enable hosted session state + centralized audit + identity anchoring")
-		fmt.Println()
-		fmt.Println("No data is transmitted today. The stub exists so callers can")
-		fmt.Println("wire cloud-aware code paths behind a feature check without")
-		fmt.Println("introducing a hard dependency on the cloud being live.")
+		cloudRegisterCmd()
 	case "status":
-		fmt.Println("Cloud linkage: NOT configured (self-hosted mode).")
-		fmt.Println("Run `stoke cloud register` to opt into managed cloud.")
+		cloudStatusCmd()
 	case "", "help", "--help", "-h":
 		fmt.Println("stoke cloud <subcommand>")
 		fmt.Println()
@@ -3546,6 +3530,83 @@ func cloudCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "unknown cloud subcommand: %q\n", sub)
 		os.Exit(2)
 	}
+}
+
+// cloudRegisterCmd implements Contract H4 POST /v1/auth/register
+// and persists the resulting credential at ~/.stoke/cloud.json.
+//
+// Inputs:
+//   - STOKE_CLOUD_API_KEY env var: the one-time bootstrap key
+//     the operator pastes from https://stoke.dev/account/link.
+//     Using an env var keeps the terminal paste out of shell
+//     history and avoids an interactive TTY dependency for
+//     CI/headless deployments.
+//   - STOKE_CLOUD_ENDPOINT env var (optional): override the
+//     default cloud endpoint for self-hosted Stoke Cloud.
+//
+// Exit codes:
+//   0 on success (credentials written)
+//   1 on any register/save failure
+//   2 on missing STOKE_CLOUD_API_KEY
+//
+// Honors the "un-managed-first" commitment: every feature
+// continues to work without this command having been run.
+func cloudRegisterCmd() {
+	apiKey := strings.TrimSpace(os.Getenv("STOKE_CLOUD_API_KEY"))
+	endpoint := strings.TrimSpace(os.Getenv("STOKE_CLOUD_ENDPOINT"))
+	if endpoint == "" {
+		endpoint = cloud.DefaultEndpoint
+	}
+	if apiKey == "" {
+		fmt.Fprintln(os.Stderr, "stoke cloud register: STOKE_CLOUD_API_KEY not set")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Get a one-time key at https://stoke.dev/account/link and run:")
+		fmt.Fprintln(os.Stderr, "    STOKE_CLOUD_API_KEY=<key> stoke cloud register")
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "Cloud registration is OPT-IN. Stoke works fully self-hosted")
+		fmt.Fprintln(os.Stderr, "without this command.")
+		os.Exit(2)
+	}
+
+	client := cloud.New(endpoint, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := client.Register(ctx, apiKey)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stoke cloud register:", err)
+		os.Exit(1)
+	}
+	cfg := &cloud.ConfigFile{
+		Endpoint: endpoint,
+		APIKey:   apiKey,
+		UserID:   resp.UserID,
+		OrgID:    resp.OrgID,
+		Status:   resp.Status,
+	}
+	if err := cloud.Save(cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "stoke cloud register: save config:", err)
+		os.Exit(1)
+	}
+	path, _ := cloud.ConfigPath()
+	fmt.Printf("stoke cloud: linked %s (org %s, status %s)\n  config saved to %s\n",
+		resp.UserID, resp.OrgID, resp.Status, path)
+}
+
+// cloudStatusCmd reads ~/.stoke/cloud.json (if present) and
+// prints the current linkage state.
+func cloudStatusCmd() {
+	cfg, err := cloud.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stoke cloud status:", err)
+		os.Exit(1)
+	}
+	if cfg == nil || strings.TrimSpace(cfg.APIKey) == "" {
+		fmt.Println("Cloud linkage: NOT configured (self-hosted mode).")
+		fmt.Println("Run `STOKE_CLOUD_API_KEY=<key> stoke cloud register` to opt in.")
+		return
+	}
+	fmt.Printf("Cloud linkage: LINKED\n  endpoint: %s\n  user:     %s\n  org:      %s\n  status:   %s\n",
+		cfg.Endpoint, cfg.UserID, cfg.OrgID, cfg.Status)
 }
 
 // --- yolo: interactive Claude Code with full Stoke guards ---
