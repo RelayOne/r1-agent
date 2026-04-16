@@ -56,12 +56,29 @@ const GenesisPrevHash = "STOKE_ANCHOR_GENESIS"
 // which the verifier knows independently from the anchor chain.
 const EmptyIntervalTemplate = "STOKE_EMPTY_INTERVAL:%s"
 
+// AnchorSchemaVersion records which Hash composition was used to
+// persist an Anchor. Incremented when the composition changes so
+// verifiers can recompute old anchors with their original shape.
+//
+// Versions:
+//
+//	1: sha256(PrevHash || MerkleRoot || IntervalEnd)
+//	2: sha256(PrevHash || MerkleRoot || IntervalStart || IntervalEnd)
+//	   (IntervalStart added so log proves its claimed lower bound)
+const AnchorSchemaVersion = 2
+
 // Anchor is one row in the anchor log. Hashes are hex-encoded
 // SHA-256 digests. The chain is `PrevHash -> MerkleRoot -> Hash`
-// via compose(prev || merkle_root || interval_end_rfc3339) so any
-// insertion, deletion, or reordering of nodes within an interval
-// changes `MerkleRoot`, which changes every subsequent `Hash`.
+// via a schema-version-specific composition so any insertion,
+// deletion, or reordering of nodes within an interval changes
+// `MerkleRoot`, which changes every subsequent `Hash`.
 type Anchor struct {
+	// SchemaVersion records the Hash composition this anchor was
+	// computed with. Zero is treated as version 1 for
+	// backward-compat with pre-versioned anchors. New anchors
+	// always use AnchorSchemaVersion.
+	SchemaVersion int `json:"schema_version,omitempty"`
+
 	// Seq is the zero-indexed anchor number in this chain. Useful
 	// for verifier diagnostics; NOT part of the hash composition
 	// (which uses timestamp + prev-hash) so the chain stays valid
@@ -283,11 +300,10 @@ func ComputeAnchor(seq int, intervalStart, intervalEnd time.Time, leafDigests []
 	} else {
 		merkleRoot = merkleRootOfLeaves(leafDigests)
 	}
-	anchorInput := prevHash + merkleRoot +
-		intervalStart.UTC().Format(time.RFC3339Nano) +
-		intervalEnd.UTC().Format(time.RFC3339Nano)
+	anchorInput := composeAnchorInput(AnchorSchemaVersion, prevHash, merkleRoot, intervalStart, intervalEnd)
 	sum := sha256.Sum256([]byte(anchorInput))
 	return Anchor{
+		SchemaVersion: AnchorSchemaVersion,
 		Seq:           seq,
 		IntervalStart: intervalStart.UTC(),
 		IntervalEnd:   intervalEnd.UTC(),
@@ -295,6 +311,27 @@ func ComputeAnchor(seq int, intervalStart, intervalEnd time.Time, leafDigests []
 		MerkleRoot:    merkleRoot,
 		PrevHash:      prevHash,
 		Hash:          hex.EncodeToString(sum[:]),
+	}
+}
+
+// composeAnchorInput returns the string the Hash is SHA-256'd over
+// for the given schema version. Kept as a single function so
+// ComputeAnchor and VerifyChain stay in lockstep.
+//
+//	v1 (legacy): PrevHash || MerkleRoot || IntervalEnd
+//	v2 (current): PrevHash || MerkleRoot || IntervalStart || IntervalEnd
+//
+// Version 0 is treated as v1 for backward compatibility with
+// anchors written by the original implementation that predated
+// the SchemaVersion field.
+func composeAnchorInput(version int, prevHash, merkleRoot string, intervalStart, intervalEnd time.Time) string {
+	end := intervalEnd.UTC().Format(time.RFC3339Nano)
+	start := intervalStart.UTC().Format(time.RFC3339Nano)
+	switch version {
+	case 0, 1:
+		return prevHash + merkleRoot + end
+	default:
+		return prevHash + merkleRoot + start + end
 	}
 }
 
@@ -382,30 +419,24 @@ func (s *AnchorStore) VerifyChain() []string {
 		if a.PrevHash != expectedPrev {
 			violations = append(violations, fmt.Sprintf("anchor %d PrevHash=%q expected %q", i, a.PrevHash, expectedPrev))
 		}
+		// Verify with the anchor's own schema version so anchors
+		// persisted under v1 continue to pass after the v2 bump.
 		if a.NodeCount == 0 {
-			// Verify the empty-interval MerkleRoot is the canonical
-			// value derived from IntervalEnd. An adversary who
-			// rewrites IntervalStart would keep MerkleRoot valid but
-			// break the Hash composition (which includes both
-			// boundaries) — the composition check below catches it.
-			recomputed := ComputeAnchor(a.Seq, a.IntervalStart, a.IntervalEnd, nil, a.PrevHash)
-			if a.MerkleRoot != recomputed.MerkleRoot {
+			emptyInput := fmt.Sprintf(EmptyIntervalTemplate, a.IntervalEnd.UTC().Format(time.RFC3339Nano))
+			emptySum := sha256.Sum256([]byte(emptyInput))
+			expectedRoot := hex.EncodeToString(emptySum[:])
+			if a.MerkleRoot != expectedRoot {
 				violations = append(violations, fmt.Sprintf("anchor %d NodeCount=0 but MerkleRoot does not match empty-interval commitment for intervalEnd %s", i, a.IntervalEnd.Format(time.RFC3339Nano)))
 			}
-			if a.Hash != recomputed.Hash {
-				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid (PrevHash / MerkleRoot / IntervalStart / IntervalEnd)", i))
+		}
+		anchorInput := composeAnchorInput(a.SchemaVersion, a.PrevHash, a.MerkleRoot, a.IntervalStart, a.IntervalEnd)
+		sum := sha256.Sum256([]byte(anchorInput))
+		if hex.EncodeToString(sum[:]) != a.Hash {
+			shape := "PrevHash || MerkleRoot || IntervalStart || IntervalEnd (v2)"
+			if a.SchemaVersion == 0 || a.SchemaVersion == 1 {
+				shape = "PrevHash || MerkleRoot || IntervalEnd (v1)"
 			}
-		} else {
-			// Non-empty: re-verify the full Hash composition shape
-			// using the stored MerkleRoot. IntervalStart is now part
-			// of the composition so rewriting it breaks the chain.
-			anchorInput := a.PrevHash + a.MerkleRoot +
-				a.IntervalStart.UTC().Format(time.RFC3339Nano) +
-				a.IntervalEnd.UTC().Format(time.RFC3339Nano)
-			sum := sha256.Sum256([]byte(anchorInput))
-			if hex.EncodeToString(sum[:]) != a.Hash {
-				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid for stored MerkleRoot (PrevHash / MerkleRoot / IntervalStart / IntervalEnd)", i))
-			}
+			violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid — expected %s", i, shape))
 		}
 	}
 	return violations
