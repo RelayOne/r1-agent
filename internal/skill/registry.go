@@ -82,10 +82,24 @@ func DefaultRegistry(projectRoot string) *Registry {
 		filepath.Join(projectRoot, ".stoke", "skills"), // project (highest priority)
 	}
 	if home != "" {
-		dirs = append(dirs, filepath.Join(home, ".stoke", "skills")) // user
+		// Cross-tool agentskills.io discovery paths (S-U-001).
+		// Stoke reads skills from every major tool's skill directory
+		// so operator skills are portable without manual copying.
+		// Priority: project > user-stoke > user-claude > user-codex
+		// > user-cursor. Existing dedup (project > user > builtin)
+		// handles precedence when the same skill name appears in
+		// multiple paths.
+		dirs = append(dirs,
+			filepath.Join(home, ".stoke", "skills"),
+			filepath.Join(projectRoot, ".claude", "skills"),
+			filepath.Join(home, ".claude", "skills"),
+			filepath.Join(projectRoot, ".codex", "skills"),
+			filepath.Join(home, ".codex", "skills"),
+			filepath.Join(projectRoot, ".cursor", "skills"),
+			filepath.Join(home, ".cursor", "skills"),
+		)
 	}
 	r := NewRegistry(dirs...)
-	// Load embedded built-in skills (lowest priority, won't overwrite project/user).
 	_ = r.LoadBuiltins()
 	return r
 }
@@ -155,6 +169,26 @@ func (r *Registry) Load() error {
 							if data, err := os.ReadFile(refPath); err == nil {
 								key := strings.TrimSuffix(ref.Name(), ".md")
 								r.skills[name].References[key] = string(scanUserContent(data, source, refPath))
+							}
+						}
+					}
+				}
+				// Load scripts/ and assets/ directories per agentskills.io
+				// spec (S-U-001). Scripts are executable helpers the skill
+				// can invoke; assets are static resources. Both are passed
+				// through as file inventories — the skill body can reference
+				// them by relative path.
+				for _, subdir := range []string{"scripts", "assets"} {
+					subPath := filepath.Join(dir, name, subdir)
+					if subEntries, subErr := os.ReadDir(subPath); subErr == nil {
+						for _, se := range subEntries {
+							if se.IsDir() {
+								continue
+							}
+							fullPath := filepath.Join(subPath, se.Name())
+							key := subdir + "/" + se.Name()
+							if data, err := os.ReadFile(fullPath); err == nil {
+								r.skills[name].References[key] = string(data)
 							}
 						}
 					}
