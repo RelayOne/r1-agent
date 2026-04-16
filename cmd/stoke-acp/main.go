@@ -165,8 +165,28 @@ func (s *Server) dispatch(ctx context.Context, req jsonRPCRequest) {
 	case "notifications/initialized", "initialized":
 		// No response for notifications.
 	default:
+		// JSON-RPC notifications (no id) are fire-and-forget; a
+		// server that replies to them is protocol-invalid. Silently
+		// drop unknown notifications so future ACP versions or
+		// vendor-specific notifications don't confuse clients.
+		if len(req.ID) == 0 {
+			return
+		}
 		s.respondError(req.ID, rpcMethodNotFound, "method not found: "+req.Method)
 	}
+}
+
+// unmarshalParams tolerates a completely absent params field on
+// the RPC request. Clients commonly elide `params` when the method
+// takes only optional arguments; json.Unmarshal(nil, &dst) returns
+// EOF which would make the adapter reject otherwise-valid requests.
+// This helper converts nil/empty input to an empty JSON object so
+// the destination struct keeps its zero values for all fields.
+func unmarshalParams(raw json.RawMessage, dst any) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return json.Unmarshal([]byte(`{}`), dst)
+	}
+	return json.Unmarshal(raw, dst)
 }
 
 // --- Handlers ---
@@ -209,7 +229,7 @@ func (s *Server) handleSessionNew(req jsonRPCRequest) {
 	var params struct {
 		Cwd string `json:"cwd"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := unmarshalParams(req.Params, &params); err != nil {
 		s.respondError(req.ID, rpcInvalidParams, "session/new params: "+err.Error())
 		return
 	}
@@ -246,7 +266,7 @@ func (s *Server) handleSessionLoad(req jsonRPCRequest) {
 	var params struct {
 		SessionID string `json:"sessionId"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := unmarshalParams(req.Params, &params); err != nil {
 		s.respondError(req.ID, rpcInvalidParams, "session/load params: "+err.Error())
 		return
 	}
@@ -273,7 +293,7 @@ func (s *Server) handleSessionPrompt(ctx context.Context, req jsonRPCRequest) {
 			Text string `json:"text"`
 		} `json:"prompt"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := unmarshalParams(req.Params, &params); err != nil {
 		s.respondError(req.ID, rpcInvalidParams, "session/prompt params: "+err.Error())
 		return
 	}
@@ -309,13 +329,22 @@ func (s *Server) handleSessionPrompt(ctx context.Context, req jsonRPCRequest) {
 	// streaming progress. Then emit a terminal result. This is
 	// the ACP event vocabulary editors already parse for Claude
 	// Code / Hermes / Goose.
+	// Stream the actual prompt text back so clients can validate
+	// their rendering pipeline end-to-end. A canned char-count
+	// message would defeat the point of the echo mode since
+	// client UIs that render agent_message_chunk would not see
+	// the prompt's content round-trip correctly.
+	// Prefixed with a phase marker so operators watching logs
+	// see immediately that this is the echo mode, not the
+	// Phase 2 mission runner output.
+	echoText := "[stoke-acp Phase 1 echo — Phase 2 delegates to mission runner]\n\n" + fullPrompt
 	s.sendNotification("session/update", map[string]any{
 		"sessionId": sess.ID,
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
 			"content": map[string]any{
 				"type": "text",
-				"text": fmt.Sprintf("stoke-acp Phase 1 echo: received %d chars. Phase 2 will delegate to Stoke's mission runner; this build returns without executing tools.", len(fullPrompt)),
+				"text": echoText,
 			},
 		},
 	})
@@ -330,7 +359,7 @@ func (s *Server) handleSessionCancel(req jsonRPCRequest) {
 	var params struct {
 		SessionID string `json:"sessionId"`
 	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
+	if err := unmarshalParams(req.Params, &params); err != nil {
 		s.respondError(req.ID, rpcInvalidParams, "session/cancel params: "+err.Error())
 		return
 	}

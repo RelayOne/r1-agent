@@ -54,15 +54,22 @@ build_from_source() {
 
     info "Building..."
     (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-bin" ./cmd/stoke)
+    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
 
-    if [ -w "${INSTALL_DIR}" ]; then
-        cp "${tmp_dir}/stoke-bin" "${INSTALL_DIR}/${BINARY}"
-    else
-        sudo cp "${tmp_dir}/stoke-bin" "${INSTALL_DIR}/${BINARY}"
-    fi
-    chmod +x "${INSTALL_DIR}/${BINARY}"
+    for pair in "${tmp_dir}/stoke-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp"; do
+        src="${pair%%:*}"
+        dst_name="${pair##*:}"
+        dst="${INSTALL_DIR}/${dst_name}"
+        if [ -w "${INSTALL_DIR}" ]; then
+            cp "${src}" "${dst}"
+        else
+            sudo cp "${src}" "${dst}"
+        fi
+        chmod +x "${dst}"
+    done
 
     info "Built and installed stoke to ${INSTALL_DIR}/${BINARY}"
+    info "Built and installed stoke-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/stoke-acp"
     info "Run 'stoke doctor' to verify your setup."
 }
 

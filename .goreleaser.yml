@@ -9,7 +9,8 @@ before:
     - go test ./... -count=1 -timeout=120s
 
 builds:
-  - main: ./cmd/stoke
+  - id: stoke
+    main: ./cmd/stoke
     binary: stoke
     env:
       - CGO_ENABLED=1
@@ -40,6 +41,24 @@ builds:
         goarch: arm64
         env:
           - CC=o64-clang
+  - id: stoke-acp
+    # Agent Client Protocol adapter (S-U-002). Pure-Go JSON-RPC
+    # stdio transport; no CGO dependency unlike the main stoke
+    # binary, so cross-compiles without the gcc overrides.
+    main: ./cmd/stoke-acp
+    binary: stoke-acp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
 
 archives:
   - format: tar.gz

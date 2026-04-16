@@ -3,9 +3,12 @@
 # Default: run the CI gate
 all: build test vet
 
-# Build the stoke binary
+# Build all binaries. Primary is ./cmd/stoke; ./cmd/stoke-acp is
+# the Agent Client Protocol adapter (S-U-002). Both land in the
+# repo root so `./stoke` and `./stoke-acp` work after `make build`.
 build:
 	go build ./cmd/stoke
+	go build ./cmd/stoke-acp
 
 # Run all tests
 test:
@@ -33,7 +36,7 @@ release:
 
 # Clean build artifacts
 clean:
-	rm -f stoke
+	rm -f stoke stoke-acp
 	rm -rf dist/
 	rm -f coverage.out
 
