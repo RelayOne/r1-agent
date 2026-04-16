@@ -120,12 +120,47 @@ func NewAnchorStore(rootDir string) (*AnchorStore, error) {
 	return &AnchorStore{rootDir: rootDir}, nil
 }
 
-// Append writes a new anchor and updates the index. Callers should
-// derive the anchor via ComputeAnchor to ensure chain integrity.
+// Append writes a new anchor to the index AND a per-anchor JSON
+// file. To stay crash-consistent, the index.jsonl append happens
+// FIRST with fsync (it's the authoritative source of chain state
+// — LastAnchor / ReadChain / VerifyChain all read index.jsonl),
+// and the per-anchor pretty-printed file is written second as a
+// debugging / inspection aid. A crash between the two leaves the
+// chain complete in index.jsonl; at most the pretty-print file is
+// missing, which doesn't affect verification.
+//
+// Callers should derive the anchor via ComputeAnchor to ensure
+// chain integrity.
 func (s *AnchorStore) Append(a Anchor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	dir := filepath.Join(s.rootDir, "anchors")
+	indexPath := filepath.Join(dir, "index.jsonl")
+
+	// 1. Append to index.jsonl with fsync so the chain survives
+	//    a crash between the index write and the pretty-print file.
+	f, err := os.OpenFile(indexPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	line, _ := json.Marshal(a)
+	line = append(line, '\n')
+	if _, err := f.Write(line); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	// 2. Write the pretty-printed per-anchor inspection file. A
+	//    failure here does NOT corrupt the chain — index.jsonl is
+	//    already committed. Log via return value so operators see
+	//    the partial state.
 	prefix := a.Hash
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
@@ -133,22 +168,14 @@ func (s *AnchorStore) Append(a Anchor) error {
 	fname := fmt.Sprintf("%06d-%s.json", a.Seq, prefix)
 	body, err := json.MarshalIndent(a, "", "  ")
 	if err != nil {
-		return err
+		// index already committed; surface the inspection-file
+		// failure as a non-fatal diagnostic.
+		return fmt.Errorf("anchor seq %d persisted to index.jsonl but inspection file marshal failed: %w", a.Seq, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, fname), body, 0o644); err != nil {
-		return err
+		return fmt.Errorf("anchor seq %d persisted to index.jsonl but inspection file write failed: %w", a.Seq, err)
 	}
-	// Append to the index (one anchor per line JSON for streaming reads).
-	indexPath := filepath.Join(dir, "index.jsonl")
-	f, err := os.OpenFile(indexPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	line, _ := json.Marshal(a)
-	line = append(line, '\n')
-	_, err = f.Write(line)
-	return err
+	return nil
 }
 
 // LastAnchor returns the most recently appended anchor, or (Anchor{},
@@ -206,56 +233,83 @@ func (s *AnchorStore) ReadChain() ([]Anchor, error) {
 	return out, nil
 }
 
+// LeafDigestForNode returns the canonical SHA-256 over the full node
+// JSON that callers must use to compute Merkle leaves. Hashing
+// node.ID alone would NOT commit to node content (the ledger's
+// computeID truncates to 8 hex chars and Store.ReadNode does not
+// re-hash on read), so a tampered node body could keep the same
+// ID and go undetected. This helper hashes the canonical JSON
+// marshal of the full Node struct so any content change breaks
+// the Merkle root — which breaks every subsequent anchor.
+func LeafDigestForNode(n Node) (string, error) {
+	blob, err := json.Marshal(n)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(blob)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // ComputeAnchor derives an anchor for the given interval over the
-// node IDs. nodeIDs MUST be the set of all node IDs with
-// CreatedAt in [intervalStart, intervalEnd); the caller retrieves
-// them from the ledger store. prevHash comes from the prior
-// anchor's Hash (or GenesisPrevHash for the first).
+// leaf digests. Each leaf MUST be hex-SHA-256 of a full node's
+// canonical JSON (use LeafDigestForNode). The caller's
+// responsibility to collect nodes with CreatedAt in
+// [intervalStart, intervalEnd) and hash each one. prevHash comes
+// from the prior anchor's Hash (or GenesisPrevHash for the first).
 //
-// For empty intervals (nodeIDs is empty), MerkleRoot is the
-// canonical empty-interval commitment:
+// For empty intervals, MerkleRoot is the canonical empty-interval
+// commitment:
 //
 //	sha256(fmt.Sprintf(EmptyIntervalTemplate, intervalEnd.UTC().Format(time.RFC3339Nano)))
 //
 // so a verifier can reproduce the value knowing only intervalEnd.
-func ComputeAnchor(seq int, intervalStart, intervalEnd time.Time, nodeIDs []string, prevHash string) Anchor {
+//
+// IntervalStart is included in the anchor Hash composition so the
+// log proves the claimed lower bound — rewriting interval_start
+// after the fact breaks the chain. Composition:
+//
+//	Hash = sha256(PrevHash || MerkleRoot || IntervalStart || IntervalEnd)
+//
+// where IntervalStart and IntervalEnd are RFC3339Nano UTC.
+func ComputeAnchor(seq int, intervalStart, intervalEnd time.Time, leafDigests []string, prevHash string) Anchor {
 	if prevHash == "" {
 		prevHash = GenesisPrevHash
 	}
 	var merkleRoot string
-	if len(nodeIDs) == 0 {
+	if len(leafDigests) == 0 {
 		input := fmt.Sprintf(EmptyIntervalTemplate, intervalEnd.UTC().Format(time.RFC3339Nano))
 		sum := sha256.Sum256([]byte(input))
 		merkleRoot = hex.EncodeToString(sum[:])
 	} else {
-		merkleRoot = merkleRootOfIDs(nodeIDs)
+		merkleRoot = merkleRootOfLeaves(leafDigests)
 	}
-	anchorInput := prevHash + merkleRoot + intervalEnd.UTC().Format(time.RFC3339Nano)
+	anchorInput := prevHash + merkleRoot +
+		intervalStart.UTC().Format(time.RFC3339Nano) +
+		intervalEnd.UTC().Format(time.RFC3339Nano)
 	sum := sha256.Sum256([]byte(anchorInput))
 	return Anchor{
 		Seq:           seq,
 		IntervalStart: intervalStart.UTC(),
 		IntervalEnd:   intervalEnd.UTC(),
-		NodeCount:     len(nodeIDs),
+		NodeCount:     len(leafDigests),
 		MerkleRoot:    merkleRoot,
 		PrevHash:      prevHash,
 		Hash:          hex.EncodeToString(sum[:]),
 	}
 }
 
-// merkleRootOfIDs computes a binary Merkle root over SHA-256 leaves
-// of the node IDs in ascending order. Duplicates are dropped before
-// hashing — a node ID uniquely identifies one node in the ledger
-// (content-addressed), so duplicates can only arise from caller
-// bugs. Odd-count levels duplicate the last leaf (Bitcoin-style).
-func merkleRootOfIDs(ids []string) string {
-	if len(ids) == 0 {
+// merkleRootOfLeaves computes a binary Merkle root over hex-SHA-256
+// leaves in ascending order. Duplicates are dropped — a content
+// hash uniquely identifies one node's body, so duplicates can only
+// arise from caller bugs. Odd-count levels duplicate the last leaf
+// (Bitcoin-style).
+func merkleRootOfLeaves(hexLeaves []string) string {
+	if len(hexLeaves) == 0 {
 		return ""
 	}
-	sorted := make([]string, len(ids))
-	copy(sorted, ids)
+	sorted := make([]string, len(hexLeaves))
+	copy(sorted, hexLeaves)
 	sort.Strings(sorted)
-	// Dedup.
 	j := 0
 	for i := 0; i < len(sorted); i++ {
 		if i == 0 || sorted[i] != sorted[i-1] {
@@ -266,9 +320,17 @@ func merkleRootOfIDs(ids []string) string {
 	sorted = sorted[:j]
 
 	leaves := make([][]byte, len(sorted))
-	for i, id := range sorted {
-		sum := sha256.Sum256([]byte(id))
-		leaves[i] = sum[:]
+	for i, hx := range sorted {
+		b, err := hex.DecodeString(hx)
+		if err != nil {
+			// Caller passed a non-hex leaf; fall back to hashing the
+			// raw string so the anchor still commits to SOMETHING
+			// rather than silently skipping.
+			sum := sha256.Sum256([]byte(hx))
+			leaves[i] = sum[:]
+			continue
+		}
+		leaves[i] = b
 	}
 	for len(leaves) > 1 {
 		if len(leaves)%2 == 1 {
@@ -320,24 +382,29 @@ func (s *AnchorStore) VerifyChain() []string {
 		if a.PrevHash != expectedPrev {
 			violations = append(violations, fmt.Sprintf("anchor %d PrevHash=%q expected %q", i, a.PrevHash, expectedPrev))
 		}
-		recomputed := ComputeAnchor(a.Seq, a.IntervalStart, a.IntervalEnd, nil, a.PrevHash)
-		// Recomputed uses empty-interval commitment because we don't
-		// re-fetch nodes; so only verify the Hash composition shape
-		// for empty-interval anchors.
 		if a.NodeCount == 0 {
+			// Verify the empty-interval MerkleRoot is the canonical
+			// value derived from IntervalEnd. An adversary who
+			// rewrites IntervalStart would keep MerkleRoot valid but
+			// break the Hash composition (which includes both
+			// boundaries) — the composition check below catches it.
+			recomputed := ComputeAnchor(a.Seq, a.IntervalStart, a.IntervalEnd, nil, a.PrevHash)
 			if a.MerkleRoot != recomputed.MerkleRoot {
 				violations = append(violations, fmt.Sprintf("anchor %d NodeCount=0 but MerkleRoot does not match empty-interval commitment for intervalEnd %s", i, a.IntervalEnd.Format(time.RFC3339Nano)))
 			}
 			if a.Hash != recomputed.Hash {
-				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid", i))
+				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid (PrevHash / MerkleRoot / IntervalStart / IntervalEnd)", i))
 			}
 		} else {
-			// Non-empty: at least verify the hash composition shape
-			// by recomputing with the stored MerkleRoot value.
-			anchorInput := a.PrevHash + a.MerkleRoot + a.IntervalEnd.UTC().Format(time.RFC3339Nano)
+			// Non-empty: re-verify the full Hash composition shape
+			// using the stored MerkleRoot. IntervalStart is now part
+			// of the composition so rewriting it breaks the chain.
+			anchorInput := a.PrevHash + a.MerkleRoot +
+				a.IntervalStart.UTC().Format(time.RFC3339Nano) +
+				a.IntervalEnd.UTC().Format(time.RFC3339Nano)
 			sum := sha256.Sum256([]byte(anchorInput))
 			if hex.EncodeToString(sum[:]) != a.Hash {
-				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid for stored MerkleRoot", i))
+				violations = append(violations, fmt.Sprintf("anchor %d Hash composition invalid for stored MerkleRoot (PrevHash / MerkleRoot / IntervalStart / IntervalEnd)", i))
 			}
 		}
 	}
