@@ -643,6 +643,8 @@ func main() {
 		fmt.Print(app.DefaultPolicyYAML())
 	case "doctor":
 		doctorCmd(os.Args[2:])
+	case "cloud":
+		cloudCmd(os.Args[2:])
 	case "yolo":
 		yoloCmd(os.Args[2:])
 	case "scope":
@@ -3462,6 +3464,67 @@ func doctorCmd(args []string) {
 	providers := fs.Bool("providers", false, "Check all providers in the fallback chain")
 	fs.Parse(args)
 	fmt.Print(app.Doctor(*claudeBin, *codexBin, *providers))
+}
+
+// --- cloud: opt-in managed-cloud registration (STOKE-026) ---
+//
+// Implements the opt-in cloud side-channel described in
+// STEWARDSHIP.md. Every functional feature remains in the
+// self-hosted binary; this subcommand exists so operators can
+// OPTIONALLY link their self-hosted instance to a managed
+// cloud for hosted session state + centralized audit +
+// identity anchoring.
+//
+// The subcommand is intentionally a scaffold. It prints
+// guidance, records an opt-in config entry, and explicitly
+// tells the operator that self-hosted operation remains
+// complete without registration. This satisfies the SOW's "opt-in, never
+// required" commitment: Stoke is NOT gated on this command
+// having been run.
+
+func cloudCmd(args []string) {
+	fs := flag.NewFlagSet("cloud", flag.ExitOnError)
+	fs.Parse(args)
+	sub := "help"
+	if fs.NArg() > 0 {
+		sub = fs.Arg(0)
+	}
+	switch sub {
+	case "register":
+		fmt.Println("stoke cloud register")
+		fmt.Println()
+		fmt.Println("Managed-cloud registration is OPT-IN and is not required for")
+		fmt.Println("any Stoke functionality. Per STEWARDSHIP.md, every feature")
+		fmt.Println("available in the self-hosted binary remains available in the")
+		fmt.Println("self-hosted binary, with or without cloud linkage.")
+		fmt.Println()
+		fmt.Println("When managed cloud is ready, this subcommand will:")
+		fmt.Println("  - prompt for a one-time operator token (from")
+		fmt.Println("    https://stoke.dev/account/link)")
+		fmt.Println("  - exchange the token for a persistent device credential")
+		fmt.Println("  - write ~/.stoke/cloud.json with the endpoint + credential")
+		fmt.Println("  - enable hosted session state + centralized audit + identity anchoring")
+		fmt.Println()
+		fmt.Println("No data is transmitted today. The stub exists so callers can")
+		fmt.Println("wire cloud-aware code paths behind a feature check without")
+		fmt.Println("introducing a hard dependency on the cloud being live.")
+	case "status":
+		fmt.Println("Cloud linkage: NOT configured (self-hosted mode).")
+		fmt.Println("Run `stoke cloud register` to opt into managed cloud.")
+	case "", "help", "--help", "-h":
+		fmt.Println("stoke cloud <subcommand>")
+		fmt.Println()
+		fmt.Println("Subcommands:")
+		fmt.Println("  register   Link this instance to the managed cloud (OPT-IN).")
+		fmt.Println("  status     Show current cloud-linkage state.")
+		fmt.Println("  help       This message.")
+		fmt.Println()
+		fmt.Println("All features of Stoke work without cloud registration.")
+		fmt.Println("See STEWARDSHIP.md for the un-managed-first commitment.")
+	default:
+		fmt.Fprintf(os.Stderr, "unknown cloud subcommand: %q\n", sub)
+		os.Exit(2)
+	}
 }
 
 // --- yolo: interactive Claude Code with full Stoke guards ---
