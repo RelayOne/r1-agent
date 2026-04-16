@@ -571,30 +571,25 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 		return nil, result, err
 	}
 
-	// Persistence policy:
-	//
-	//  - CTO-approved chunked SOWs go into the reusable cache
-	//    (.stoke/sow-from-prose.json) — future reruns skip the
-	//    convert pipeline entirely on a source-hash match.
-	//
-	//  - Monolithic-fallback SOWs go into a snapshot
-	//    (.stoke/sow-fallback-snapshot.json) — NOT used by
-	//    loadProseCache (gated convert always re-runs), but
-	//    available for resume's MergeSOW so completed sessions
-	//    aren't orphaned by nondeterministic re-conversion.
+	// Persistence policy: only CTO-approved chunked SOWs reach the
+	// reusable cache. Monolithic-fallback SOWs are NOT cached and
+	// NOT snapshotted — they don't carry the gates' provenance and
+	// silently persisting them would either let an ungated SOW
+	// flow back through future reruns (bad) or create a separate
+	// snapshot file the load path doesn't read (incomplete, see
+	// codex review of 931825a). The honest operator-facing
+	// behavior: the next run redoes the convert from scratch.
+	// Resume of a fallback run is NOT supported — surface that
+	// loudly so the operator knows.
 	if mkErr := os.MkdirAll(stokeDir, 0o755); mkErr == nil {
 		if sow != nil && sow.ChunkedConvertApproved {
 			if writeErr := writeProseCache(cachePath, data, jsonBlob, true); writeErr == nil {
 				result.ConvertedPath = cachePath
 			}
 		} else {
-			snapshotPath := filepath.Join(stokeDir, "sow-fallback-snapshot.json")
-			if writeErr := os.WriteFile(snapshotPath, jsonBlob, 0o600); writeErr == nil {
-				fmt.Printf("  ◉ saved ungated SOW snapshot to %s for resume continuity (NOT used as cache; gated convert re-runs)\n", snapshotPath)
-				result.ConvertedPath = snapshotPath
-			} else {
-				fmt.Println("  ◉ skipping prose cache write: SOW did not pass chunked CTO approval (monolithic fallback)")
-			}
+			fmt.Println("  ⚠ this run used the monolithic-fallback convert path; the SOW will NOT be cached.")
+			fmt.Println("    consequences: (a) next run re-converts the prose; (b) --resume is not supported on this run; (c) re-converted SOW may have different session IDs.")
+			fmt.Println("    to enable caching/resume: ensure the chunked path completes successfully (CTO approval).")
 		}
 	}
 	result.Format = "prose"
