@@ -588,8 +588,21 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 			}
 		} else {
 			fmt.Println("  ⚠ this run used the monolithic-fallback convert path; the SOW will NOT be cached.")
-			fmt.Println("    consequences: (a) next run re-converts the prose; (b) --resume is not supported on this run; (c) re-converted SOW may have different session IDs.")
-			fmt.Println("    to enable caching/resume: ensure the chunked path completes successfully (CTO approval).")
+			fmt.Println("    consequences: (a) next run re-converts the prose; (b) re-converted SOW may have different session IDs.")
+			fmt.Println("    to enable caching: ensure the chunked path completes successfully (CTO approval).")
+			// Delete stale .stoke/sow-state.json from a prior run so
+			// --resume on a subsequent invocation can't silently skip
+			// sessions whose IDs happen to match the newly
+			// re-converted SOW (which may be structurally different).
+			statePath := filepath.Join(stokeDir, "sow-state.json")
+			if _, statErr := os.Stat(statePath); statErr == nil {
+				if rmErr := os.Remove(statePath); rmErr == nil {
+					fmt.Printf("    cleared stale %s to prevent silent-skip on --resume\n", statePath)
+				}
+			}
+			// Set a sentinel ConvertedPath so the CLI banner doesn't
+			// print an empty pathname.
+			result.ConvertedPath = "(monolithic fallback; not cached)"
 		}
 	}
 	result.Format = "prose"
