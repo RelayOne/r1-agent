@@ -1608,6 +1608,21 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 	default:
 		sb.WriteString("  - Repeat the same approach that just failed\n")
 	}
+	// Retry-specific reinforcement: a failed attempt is the
+	// strongest signal the previous GROUND TRUTH MAP was
+	// incomplete or wrong. Force a fresh mapping pass so
+	// the second attempt doesn't inherit the busted
+	// assumption from the first.
+	sb.WriteString(`
+BEFORE retrying, RE-DO the Phase 0 GROUND TRUTH MAP from scratch —
+your previous attempt failed, which means at least one assumption in
+that map was wrong. Re-read the files, re-grep the symbols, and
+identify WHAT specifically about the previous map was incorrect. Emit
+a NEW ## GROUND TRUTH MAP block with a "Previous-attempt error" line
+that states what was miswritten (e.g., "assumed foo.Bar() took 2 args
+— it takes 3", "wrote to apps/web/... but repo uses packages/web/..."),
+then proceed with the fix.
+`)
 	return sb.String()
 }
 

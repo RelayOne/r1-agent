@@ -302,7 +302,66 @@ func BuildExecutePrompt(task, taskVerification string, priorContext string) stri
 		b.WriteString("\n\n")
 	}
 
-	b.WriteString(`## Rules
+	b.WriteString(`## Phase 0 — MANDATORY GROUND-TRUTH MAPPING (do this BEFORE any Edit/Write)
+
+You will NOT produce a single edit until you have mapped the ground truth of
+this codebase for this task. This is not a suggestion — it is the SINGLE
+biggest cause of rework-loops on this harness: workers assume an API shape
+from training data that does not match the real code, or write to a path
+the repo does not use, or import a type that was renamed, and the content
+judge rejects every resulting output.
+
+Complete these steps AND emit the map BEFORE your first Edit/Write call:
+
+1. FILE SURVEY. For each file your task will create or modify:
+   - Read the target file if it exists; note its current length, imports,
+     key types/functions.
+   - If the file does not exist, list the SIBLING files in the same
+     directory (so you inherit naming conventions, import style, test
+     layout).
+
+2. TYPE + API RESOLUTION. For every external symbol you intend to call
+   (package function, type, method, constant, config key), prove it exists:
+   - grep or read the declaring file. Copy its signature verbatim.
+   - If it's a third-party dep, check go.mod / package.json / Cargo.toml
+     for the installed version, then check the installed source under
+     vendor/ or node_modules/ to confirm the API matches the version.
+   - Do NOT guess an API from training data. If you cannot find a symbol,
+     it does not exist in this codebase — plan an alternative.
+
+3. TEST MAP. Find tests that will validate your work:
+   - grep for existing tests that touch the files/types in scope.
+   - Read those tests so your implementation matches the contract they
+     assert.
+   - If no tests exist for the scope, NOTE that explicitly — the critic
+     will treat zero-coverage work more strictly.
+
+4. CONVENTION SCAN. Read at least one nearby file in the same package for:
+   - Import grouping (stdlib / third-party / internal).
+   - Error wrapping style (fmt.Errorf with %w / errors.Join / custom).
+   - Logging idiom (slog / zap / print).
+   - Table-driven vs single-case test style.
+
+5. EMIT THE MAP. Before your first edit, emit a fenced block:
+
+   ` + "```" + `
+   ## GROUND TRUTH MAP
+   Files in scope:
+     - <path>: <status: exists | new>, <notes>
+   External symbols used:
+     - <pkg.Symbol>: <signature> — verified at <file:line>
+   Tests that will validate this:
+     - <path>: <assertions>
+   Conventions to match:
+     - <bullet list of 2-5 items>
+   Unknown / ambiguous:
+     - <bullet list of anything you couldn't resolve>
+   ` + "```" + `
+
+   If the map shows UNKNOWNS, do more reads. Do not start editing with
+   unresolved questions — that is exactly when content-judge rejections fire.
+
+## Rules
 - Implement the task fully. No stubs, no TODOs, no placeholders.
 - Stoke will run build/test/lint independently after you finish. You MAY run
   them to check your work, but the harness is the final authority. Focus on
@@ -319,6 +378,10 @@ Before using any API, library function, or framework pattern:
 2. Verify function signatures against the real imports
 3. Do not assume API shapes — read the interface definitions
 If you are unsure about an API, read the code. Do not guess.
+
+The Phase 0 GROUND TRUTH MAP is how you operationalize this rule. Skipping
+the map is the single failure mode that causes 80%+ of the content-judge
+rejections on this harness. Emit it.
 
 ## When done
 Do NOT commit your changes. Stoke will commit after cross-model review.
