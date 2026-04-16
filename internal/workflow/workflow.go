@@ -50,6 +50,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/testgen"
 	"github.com/ericmacdougall/stoke/internal/testselect"
 	"github.com/ericmacdougall/stoke/internal/tokenest"
+	"github.com/ericmacdougall/stoke/internal/vecindex"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/wisdom"
 	"github.com/ericmacdougall/stoke/internal/worktree"
@@ -134,6 +135,19 @@ type Engine struct {
 	RunnerMode       string                 // runner selection: "claude", "codex", "native", "hybrid" (default: "claude")
 	Environ          env.Environment        // execution environment backend (nil = run on host)
 	EnvHandle        *env.Handle            // provisioned environment handle (nil = run on host)
+	// ToolRetriever is the STOKE-022 Tool RAG layer. When
+	// non-nil AND ToolRetrievalK > 0, executePrompt queries
+	// the retriever with the task description and prepends
+	// the top-K capability hits to priorContext. Lets the
+	// LLM see the most-relevant few tools instead of the
+	// full registered surface. Nil = disabled.
+	ToolRetriever    vecindex.Retriever
+	// ToolRetrievalK caps how many tool hits ToolRetriever
+	// returns per execute prompt. 0 resolves to the default
+	// of 5 when ToolRetriever is non-nil. Set to -1 to
+	// disable retrieval even with a non-nil retriever (used
+	// by tests).
+	ToolRetrievalK   int
 }
 
 // Result captures the outcome of a complete workflow execution, including steps, verification, and cost.
@@ -1777,7 +1791,14 @@ func planPromptWithSkills(e Engine) string {
 }
 
 func executePromptWithContext(e Engine) string {
-	prompt := executePrompt(e.Task, e.TaskType, e.TaskVerification)
+	k := e.ToolRetrievalK
+	if e.ToolRetriever != nil && k == 0 {
+		k = 5
+	}
+	if k < 0 {
+		k = 0
+	}
+	prompt := executePromptWithRetriever(e.Task, e.TaskType, e.TaskVerification, e.ToolRetriever, k)
 
 	// Inject matching built-in skills (keyword-triggered prompt augmentation).
 	// Use Engine's registry if available, otherwise auto-create from project root.
@@ -1852,11 +1873,29 @@ func executePromptWithContext(e Engine) string {
 }
 
 func executePrompt(task string, taskType model.TaskType, verification []string) string {
+	return executePromptWithRetriever(task, taskType, verification, nil, 0)
+}
+
+// executePromptWithRetriever is executePrompt extended with
+// STOKE-022 Tool RAG. When retriever is non-nil and k>0, the
+// top-K capability hits are rendered as a "Relevant
+// capabilities" block and prepended to priorContext so the
+// LLM sees the narrowed set rather than discovering from a
+// bloated tool surface.
+//
+// Signature kept separate from executePrompt so existing
+// call sites that don't have a retriever can continue using
+// the zero-arg form without passing nils.
+func executePromptWithRetriever(task string, taskType model.TaskType, verification []string, retriever vecindex.Retriever, k int) string {
 	verificationStr := ""
 	if len(verification) > 0 {
 		verificationStr = strings.Join(verification, "\n")
 	}
-	return stokeprompts.BuildExecutePrompt(task, verificationStr, "")
+	priorContext := ""
+	if retriever != nil && k > 0 {
+		priorContext = stokeprompts.RenderRelevantTools(retriever, task, k)
+	}
+	return stokeprompts.BuildExecutePrompt(task, verificationStr, priorContext)
 }
 
 // reviewVerdict is the parsed output of a cross-model review.

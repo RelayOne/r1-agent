@@ -10,7 +10,42 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/prompt"
+	"github.com/ericmacdougall/stoke/internal/vecindex"
 )
+
+// RenderRelevantTools produces a formatted "Relevant
+// capabilities" block from a Retriever's top-K hits for a
+// query. Used by the workflow to inject STOKE-022 Tool RAG
+// context into execute prompts — when the registered tool
+// set exceeds what fits comfortably in the prompt, the
+// retriever narrows down to the few that match the task.
+//
+// Returns "" when the retriever produces no hits (so
+// callers can safely concatenate without adding a dangling
+// header). Score is formatted to two decimals so the LLM
+// sees ranking signal without noise. Budget: ~400 tokens
+// worth when k ≤ 5; callers cap k accordingly.
+func RenderRelevantTools(retriever vecindex.Retriever, query string, k int) string {
+	if retriever == nil || strings.TrimSpace(query) == "" || k <= 0 {
+		return ""
+	}
+	hits := retriever.Retrieve(query, k)
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Relevant capabilities\n")
+	b.WriteString("The following capabilities were pre-selected as most relevant to this task (via STOKE-022 Tool RAG). Prefer them over discovery when a fit exists:\n\n")
+	for _, h := range hits {
+		fmt.Fprintf(&b, "- **%s** (score %.2f): %s\n",
+			h.Descriptor.Name, h.Score, h.Descriptor.Description)
+		if len(h.Descriptor.Tags) > 0 {
+			fmt.Fprintf(&b, "  tags: %s\n", strings.Join(h.Descriptor.Tags, ", "))
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
 
 // --- SCOPE WORKFLOW ---
 // The scope workflow is a multi-phase self-reflective loop:
