@@ -259,7 +259,8 @@ type PeriodicSnapshotter struct {
 	jitter   time.Duration // +/- from base
 	snapshot func(ctx context.Context) error
 	stop     chan struct{}
-	done     chan struct{} // loop goroutine closes on exit
+	done     chan struct{}      // loop goroutine closes on exit
+	cancel   context.CancelFunc // cancels the in-flight snapshot on Stop
 	running  bool
 	rng      func() uint64
 }
@@ -328,14 +329,24 @@ func (s *PeriodicSnapshotter) Start(ctx context.Context) {
 	s.running = true
 	s.stop = make(chan struct{})
 	s.done = make(chan struct{})
+	// Derive a cancelable context so Stop can interrupt the
+	// IN-FLIGHT snapshot call — not just the between-call
+	// wait. Without this, a snapshot that blocks on I/O or
+	// reads ctx.Done() will keep running after Stop, and a
+	// subsequent Start has to wait on s.done → effective
+	// restart deadlock.
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	s.cancel = cancelLoop
 	stopCh := s.stop
 	doneCh := s.done
 	s.mu.Unlock()
-	go s.loop(ctx, stopCh, doneCh)
+	go s.loop(loopCtx, stopCh, doneCh)
 }
 
-// Stop halts the snapshotter. Idempotent. Returns after
-// sending the close signal but does NOT block on the loop
+// Stop halts the snapshotter. Idempotent. Cancels the
+// derived loop context so any in-flight snapshot unwinds
+// via ctx.Done(), then closes the stop channel so the loop
+// exits at its next select. Does NOT block on the loop
 // goroutine's exit — the next Start will wait for the done
 // channel if needed.
 func (s *PeriodicSnapshotter) Stop() {
@@ -345,6 +356,10 @@ func (s *PeriodicSnapshotter) Stop() {
 		return
 	}
 	s.running = false
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 	close(s.stop)
 }
 

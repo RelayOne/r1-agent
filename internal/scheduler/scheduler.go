@@ -103,7 +103,20 @@ func New(maxWorkers int) *Scheduler {
 // Run executes all tasks in the plan. Calls execFn for each task.
 // Tasks with StatusDone are skipped (resume support).
 // Returns results for all tasks.
+//
+// Previous Scheduler state (completed/failed/running/fileLocks) is
+// cleared at the start of each Run so the same Scheduler instance
+// can be reused without stale entries from a prior plan leaking in
+// — a subsequent Run would otherwise see old task IDs as
+// "already completed" and skip them outright.
 func (s *Scheduler) Run(ctx context.Context, p *plan.Plan, execFn ExecuteFunc) ([]TaskResult, error) {
+	s.stateMu.Lock()
+	s.completed = make(map[string]bool)
+	s.failed = make(map[string]bool)
+	s.running = make(map[string]bool)
+	s.fileLocks = make(map[string]string)
+	s.stateMu.Unlock()
+
 	tasks := s.priority()(p.Tasks)
 	results := make(chan TaskResult, len(tasks))
 	var allResults []TaskResult
@@ -316,6 +329,14 @@ func (s *Scheduler) findDispatchable(tasks []plan.Task) []plan.Task {
 }
 
 // sortByGRPW returns tasks sorted by Greatest Rank Positional Weight.
+//
+// Cycle-safe: the recursive weight computation tracks a
+// `visiting` set so a dependency cycle returns `weight=1`
+// for the revisited ID instead of unbounded-recursing into
+// a stack overflow. Production SOWs validate DAG acyclicity
+// upstream, but the default priority runs against unvalidated
+// task lists too, and the old implementation would hang the
+// whole run on a cyclic plan.
 func sortByGRPW(tasks []plan.Task) []plan.Task {
 	sorted := make([]plan.Task, len(tasks))
 	copy(sorted, tasks)
@@ -328,15 +349,30 @@ func sortByGRPW(tasks []plan.Task) []plan.Task {
 	}
 
 	weights := map[string]int{}
+	visiting := map[string]bool{}
 	var weight func(string) int
 	weight = func(id string) int {
-		if w, ok := weights[id]; ok { return w }
+		if w, ok := weights[id]; ok {
+			return w
+		}
+		if visiting[id] {
+			// Cycle detected at `id`; short-circuit to 1 so
+			// the caller's sum stays bounded. The memoization
+			// entry is set AFTER the fan-out finishes.
+			return 1
+		}
+		visiting[id] = true
 		w := 1
-		for _, d := range dependents[id] { w += weight(d) }
+		for _, d := range dependents[id] {
+			w += weight(d)
+		}
+		delete(visiting, id)
 		weights[id] = w
 		return w
 	}
-	for _, t := range sorted { weight(t.ID) }
+	for _, t := range sorted {
+		weight(t.ID)
+	}
 
 	for i := 1; i < len(sorted); i++ {
 		for j := i; j > 0 && weights[sorted[j].ID] > weights[sorted[j-1].ID]; j-- {

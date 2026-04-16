@@ -135,17 +135,39 @@ func (m Manifest) Validate() error {
 	if m.Description == "" {
 		return fmt.Errorf("%w: description required", ErrIncompleteManifest)
 	}
-	if len(m.InputSchema) == 0 || string(m.InputSchema) == "null" {
-		return fmt.Errorf("%w: inputSchema required", ErrIncompleteManifest)
+	if err := validateSchemaBytes("inputSchema", m.InputSchema); err != nil {
+		return err
 	}
-	if len(m.OutputSchema) == 0 || string(m.OutputSchema) == "null" {
-		return fmt.Errorf("%w: outputSchema required", ErrIncompleteManifest)
+	if err := validateSchemaBytes("outputSchema", m.OutputSchema); err != nil {
+		return err
 	}
 	if len(m.WhenToUse) < 1 {
 		return fmt.Errorf("%w: whenToUse needs at least 1 entry", ErrIncompleteManifest)
 	}
 	if len(m.WhenNotToUse) < 2 {
 		return fmt.Errorf("%w: whenNotToUse needs at least 2 entries", ErrIncompleteManifest)
+	}
+	return nil
+}
+
+// validateSchemaBytes enforces that InputSchema/OutputSchema
+// are (a) non-empty, (b) not the literal "null", and (c)
+// actual valid JSON. Previous behavior accepted arbitrary
+// bytes like `not-json-at-all` through Validate and only
+// failed later at the first json.Unmarshal site in a consumer
+// — where the error was blamed on the consumer instead of
+// the registration that let the broken manifest in.
+func validateSchemaBytes(field string, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("%w: %s required", ErrIncompleteManifest, field)
+	}
+	trimmed := string(raw)
+	if trimmed == "null" {
+		return fmt.Errorf("%w: %s required", ErrIncompleteManifest, field)
+	}
+	var anyVal interface{}
+	if err := json.Unmarshal(raw, &anyVal); err != nil {
+		return fmt.Errorf("%w: %s must be valid JSON: %v", ErrIncompleteManifest, field, err)
 	}
 	return nil
 }

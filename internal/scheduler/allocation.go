@@ -123,25 +123,32 @@ func ScoreAllocation(worker Worker, task plan.Task, weights AllocationWeights) A
 
 // BestWorker finds the best worker for a task from available workers.
 // Returns the worker ID with the highest allocation score.
+//
+// Tie-break correctness: pair each score with its source
+// worker's ActiveLoad up front so the permutation in
+// sort.Slice doesn't desync the tie-break lookup. The
+// previous implementation read workers[i]/workers[j] after
+// sorting `scores`, which picked unrelated workers' loads
+// as the tiebreaker.
 func BestWorker(workers []Worker, task plan.Task, weights AllocationWeights) (string, AllocationScore) {
 	if len(workers) == 0 {
 		return "", AllocationScore{}
 	}
-
-	scores := make([]AllocationScore, len(workers))
-	for i, w := range workers {
-		scores[i] = ScoreAllocation(w, task, weights)
+	type scored struct {
+		s    AllocationScore
+		load int
 	}
-
-	sort.Slice(scores, func(i, j int) bool {
-		if scores[i].Score != scores[j].Score {
-			return scores[i].Score > scores[j].Score
+	rows := make([]scored, len(workers))
+	for i, w := range workers {
+		rows[i] = scored{s: ScoreAllocation(w, task, weights), load: w.ActiveLoad}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].s.Score != rows[j].s.Score {
+			return rows[i].s.Score > rows[j].s.Score
 		}
-		// Tiebreak: prefer less loaded workers
-		return workers[i].ActiveLoad < workers[j].ActiveLoad
+		return rows[i].load < rows[j].load
 	})
-
-	return scores[0].WorkerID, scores[0]
+	return rows[0].s.WorkerID, rows[0].s
 }
 
 // AssignTasks assigns a batch of tasks to workers optimally.
