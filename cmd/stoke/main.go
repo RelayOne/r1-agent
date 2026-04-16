@@ -1254,14 +1254,42 @@ type streamjsonResult struct {
 	stokeFields map[string]any
 }
 
+// sowFatal is a fatal() variant that emits a terminal NDJSON
+// result event when stream-json mode is active, THEN calls the
+// shared fatal (which prints to stderr and exits 1). Replaces
+// bare fatal() calls inside sowCmd so Claude-Code-compatible
+// consumers see a terminator record on catastrophic failures
+// (bad SOW load, missing credentials, malformed config).
+func sowFatal(em *streamjson.Emitter, r *streamjsonResult, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if em.Enabled() {
+		cost, turns, fields := 0.0, 0, map[string]any(nil)
+		if r != nil {
+			cost = r.cost
+			turns = r.turns
+			fields = r.stokeFields
+		}
+		em.EmitResult("error_during_execution", cost, turns, msg, fields)
+	}
+	fatal("%s", msg)
+}
+
 // exitWithStreamResult emits the terminal NDJSON result event (if
 // streamjson mode is enabled) and calls os.Exit(code). Needed
 // because os.Exit does NOT fire deferred functions, so the normal
 // defer EmitResult path doesn't cover error-exit paths inside
-// sowCmd. Use at every os.Exit site inside sowCmd.
-func exitWithStreamResult(em *streamjson.Emitter, code int, subtype, text string) {
+// sowCmd. Reads cost / turns from the result struct so callers
+// can accumulate real values during the run and have them land
+// on the terminal event.
+func exitWithStreamResult(em *streamjson.Emitter, code int, r *streamjsonResult, subtype, text string) {
 	if em.Enabled() {
-		em.EmitResult(subtype, 0, 0, text, nil)
+		cost, turns, fields := 0.0, 0, map[string]any(nil)
+		if r != nil {
+			cost = r.cost
+			turns = r.turns
+			fields = r.stokeFields
+		}
+		em.EmitResult(subtype, cost, turns, text, fields)
 	}
 	os.Exit(code)
 }
@@ -1386,7 +1414,7 @@ func sowCmd(args []string) {
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {
-		fatal("resolve repo: %v", err)
+		sowFatal(streamEmitter, streamResult, "resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
 
@@ -1480,7 +1508,7 @@ func sowCmd(args []string) {
 		prov, modelName := buildProseProvider(*runnerMode, *nativeAPIKey, *nativeBaseURL, *nativeModel)
 		loaded, result, loadErr := plan.LoadSOWFile(*sowFile, absRepo, prov, modelName)
 		if loadErr != nil {
-			fatal("load SOW: %v", loadErr)
+			sowFatal(streamEmitter, streamResult, "load SOW: %v", loadErr)
 		}
 		sow = loaded
 		// Deterministic AC command scrub: runs BEFORE the critique
@@ -1572,7 +1600,7 @@ func sowCmd(args []string) {
 		sow, err = plan.LoadSOWFromDir(absRepo)
 	}
 	if err != nil {
-		fatal("load SOW: %v", err)
+		sowFatal(streamEmitter, streamResult, "load SOW: %v", err)
 	}
 
 	// Auto-repair dangling task dependencies and empty-task slots
@@ -1612,7 +1640,7 @@ func sowCmd(args []string) {
 		// Other modes halt unless --force is set.
 		nonDispatching := *dryRun || *dumpPrompts
 		if *validate {
-			exitWithStreamResult(streamEmitter, 1, "error_during_execution", "validation failed")
+			exitWithStreamResult(streamEmitter, 1, streamResult, "error_during_execution", "validation failed")
 		}
 		// --dump-task-prompts: also halt if any session/task has
 		// an empty ID or duplicate (session, task) pairing. Both
@@ -1622,11 +1650,11 @@ func sowCmd(args []string) {
 		if *dumpPrompts {
 			if reason := dumpPromptsCollisionRisk(sow); reason != "" {
 				fmt.Fprintf(os.Stderr, "\n  refusing --dump-task-prompts: %s (would overwrite output files silently)\n", reason)
-				exitWithStreamResult(streamEmitter, 1, "error_during_execution", fmt.Sprintf("dump-task-prompts collision risk: %s", reason))
+				exitWithStreamResult(streamEmitter, 1, streamResult, "error_during_execution", fmt.Sprintf("dump-task-prompts collision risk: %s", reason))
 			}
 		}
 		if !nonDispatching && !*forceFeasibility {
-			exitWithStreamResult(streamEmitter, 1, "error_during_execution", "strict validation failed")
+			exitWithStreamResult(streamEmitter, 1, streamResult, "error_during_execution", "strict validation failed")
 		}
 		if *forceFeasibility {
 			fmt.Fprintln(os.Stderr, "  (--force set; proceeding despite strict-validation errors)")
@@ -1965,7 +1993,7 @@ func sowCmd(args []string) {
 			nativeKey = provider.LocalLiteLLMStub
 		}
 		if nativeKey == "" {
-			fatal("SOW fast path requires a native API key: set --native-api-key or one of LITELLM_API_KEY/LITELLM_MASTER_KEY/ANTHROPIC_API_KEY")
+			sowFatal(streamEmitter, streamResult, "SOW fast path requires a native API key: set --native-api-key or one of LITELLM_API_KEY/LITELLM_MASTER_KEY/ANTHROPIC_API_KEY")
 		}
 		nativeModelName := *nativeModel
 		if nativeModelName == "" {
@@ -2003,7 +2031,7 @@ func sowCmd(args []string) {
 		if br, changed, err := modelsource.ResolveRole(modelsource.RoleBuilder,
 			*builderModelFlag, *builderSourceFlag, *builderURLFlag, *builderAPIKeyFlag,
 			nativeModelName, *nativeBaseURL, nativeKey); err != nil {
-			fatal("builder model-source: %v", err)
+			sowFatal(streamEmitter, streamResult, "builder model-source: %v", err)
 		} else if changed && br != nil {
 			fmt.Printf("  🧩 builder via modelsource: %s @ %s (source=%s)\n", br.Model, br.Endpoint, br.Source)
 			if br.Model != "" {
@@ -2040,7 +2068,7 @@ func sowCmd(args []string) {
 		if rr, changed, err := modelsource.ResolveRole(modelsource.RoleReviewer,
 			*reviewerModelFlag, *reviewerSourceFlag, *reviewerURLFlag, *reviewerAPIKeyFlag,
 			reasoningModelChoice, reasoningURL, reasoningKey); err != nil {
-			fatal("reviewer model-source: %v", err)
+			sowFatal(streamEmitter, streamResult, "reviewer model-source: %v", err)
 		} else if changed && rr != nil {
 			fmt.Printf("  🧩 reviewer via modelsource: %s @ %s (source=%s)\n", rr.Model, rr.Endpoint, rr.Source)
 			reasoningProv = rr.Provider
@@ -2641,7 +2669,7 @@ func sowCmd(args []string) {
 	if *dumpPrompts {
 		count, dumpErr := dumpTaskPrompts(absRepo, sow, loadRawSOWText(*sowFile, sow))
 		if dumpErr != nil {
-			fatal("dump task prompts: %v", dumpErr)
+			sowFatal(streamEmitter, streamResult, "dump task prompts: %v", dumpErr)
 		}
 		fmt.Printf("\nWrote %d task prompt file(s) to %s\n", count, filepath.Join(absRepo, ".stoke", "prompt-dump"))
 		fmt.Println("Inspect them to verify spec extraction, canonical identifiers, and task framing before a real run.")
@@ -2724,7 +2752,7 @@ func sowCmd(args []string) {
 		if !fRep.AllShippable {
 			fmt.Fprintln(os.Stderr, "  Run aborted by feasibility gate. See reasons above.")
 			fmt.Fprintln(os.Stderr, "  Pass --force to proceed anyway (no mocks will be synthesized).")
-			os.Exit(3)
+			exitWithStreamResult(streamEmitter, 3, streamResult, "error_during_execution", "feasibility gate aborted run (external service docs missing; pass --force to override)")
 		}
 		// Stash fetched docs so they get injected into task briefings.
 		// We do this by writing them to .stoke/external-docs/<service>.md
@@ -2906,7 +2934,7 @@ func sowCmd(args []string) {
 		streamResult.subtype = "error_during_execution"
 		streamResult.text = err.Error()
 		streamResult.turns = passed + failed
-		exitWithStreamResult(streamEmitter, 1, streamResult.subtype, streamResult.text)
+		exitWithStreamResult(streamEmitter, 1, streamResult, streamResult.subtype, streamResult.text)
 	case failed > 0:
 		fmt.Fprintf(os.Stderr, "\nSOW finished with %d failed session(s).\n", failed)
 		if passed > 0 {
@@ -2915,7 +2943,7 @@ func sowCmd(args []string) {
 		streamResult.subtype = "error_during_execution"
 		streamResult.text = fmt.Sprintf("SOW finished with %d failed session(s); %d passed", failed, passed)
 		streamResult.turns = passed + failed
-		exitWithStreamResult(streamEmitter, 1, streamResult.subtype, streamResult.text)
+		exitWithStreamResult(streamEmitter, 1, streamResult, streamResult.subtype, streamResult.text)
 	default:
 		fmt.Println("\nSOW completed successfully.")
 		streamResult.subtype = "success"
