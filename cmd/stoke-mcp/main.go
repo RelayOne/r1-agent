@@ -184,7 +184,8 @@ var tools = []Tool{
 			"properties": {
 				"capability": {"type": "string", "description": "Capability name as registered in skillmfr.Registry"},
 				"input": {"type": "object", "description": "Capability-specific input matching its declared input schema"},
-				"delegation_id": {"type": "string", "description": "Optional delegation token authorizing this invocation"}
+				"delegation_id": {"type": "string", "description": "Optional delegation token authorizing this invocation"},
+				"mission_id": {"type": "string", "description": "Optional mission/session bucket for the audit node; defaults to 'mcp-invoke'"}
 			},
 			"required": ["capability", "input"]
 		}`),
@@ -209,7 +210,8 @@ var tools = []Tool{
 			"properties": {
 				"action": {"type": "string", "description": "Short description of what the caller did"},
 				"evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "Content IDs (ledger nodes, file hashes, URLs) backing the action"},
-				"subject_ref": {"type": "string", "description": "Optional: the entity being audited"}
+				"subject_ref": {"type": "string", "description": "Optional: the entity being audited"},
+				"mission_id": {"type": "string", "description": "Optional mission/session bucket for the audit node; defaults to 'mcp-audit'"}
 			},
 			"required": ["action"]
 		}`),
@@ -222,7 +224,8 @@ var tools = []Tool{
 			"properties": {
 				"to_did": {"type": "string", "description": "The delegatee's DID"},
 				"bundle_name": {"type": "string", "description": "Named Cedar bundle (read-only-calendar / send-on-behalf-of / etc.)"},
-				"expiry_seconds": {"type": "integer", "description": "How long the delegation lasts (default 3600)"}
+				"expiry_seconds": {"type": "integer", "description": "How long the delegation lasts (default 3600)"},
+				"mission_id": {"type": "string", "description": "Optional mission/session bucket for the audit node; defaults to 'mcp-delegation'"}
 			},
 			"required": ["to_did", "bundle_name"]
 		}`),

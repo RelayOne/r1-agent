@@ -376,15 +376,20 @@ func autoCleanTaskDeps(sow *SOW) {
 //   - If that suffix is also taken (very rare), append a numeric
 //     disambiguator: T398-S5-2, T398-S5-3, etc.
 //   - Intra-session task.Dependencies entries that pointed at the
-//     old ID get rewritten to the new ID BUT ONLY when the original
-//     string would no longer resolve globally (i.e., no other task
-//     in the SOW has that ID). When the original ID is still in use
-//     elsewhere (e.g. the first-occurrence kept in an earlier
-//     session), the dep string is ambiguous — either "local copy we
-//     just renamed" or "cross-session reference to the surviving
-//     copy" — so we leave it alone and let the caller's
-//     autoCleanTaskDeps + the scheduler's retry logic sort it out
-//     rather than silently redirecting a cross-session reference.
+//     old ID get rewritten to the new ID. Rationale: in the SOW
+//     schema, task.Dependencies is conventionally an intra-session
+//     graph (cross-session handoffs flow through session-level
+//     Inputs/Outputs), so when a session renamed T10, any local
+//     task that depended on "T10" almost certainly meant the
+//     local copy that just got renamed. A prior version tried to
+//     preserve ambiguous cross-session references via a global
+//     idCounts guard — that guard was tautologically true for
+//     every renamed ID (the rename only fires when the original
+//     was duplicated, which forces the count ≥ 2), so it
+//     always skipped the rewrite and broke intra-session
+//     scheduling order. If a legitimate cross-session dep was
+//     captured in task.Dependencies (rare), autoCleanTaskDeps
+//     drops dangling refs after this rewrite.
 //
 // Mutation is in place on the passed SOW.
 func autoDeduplicateTaskIDs(sow *SOW) {
@@ -392,19 +397,6 @@ func autoDeduplicateTaskIDs(sow *SOW) {
 		return
 	}
 	seen := map[string]bool{}
-	// Pre-scan: record EVERY original ID that appears more than once
-	// anywhere in the SOW, so the per-session rewrite pass can tell
-	// ambiguous deps apart from unambiguous ones.
-	idCounts := map[string]int{}
-	for _, s := range sow.Sessions {
-		for _, t := range s.Tasks {
-			id := strings.TrimSpace(t.ID)
-			if id == "" {
-				continue
-			}
-			idCounts[id]++
-		}
-	}
 	for si := range sow.Sessions {
 		s := &sow.Sessions[si]
 		sessLabel := strings.TrimSpace(s.ID)
@@ -436,20 +428,9 @@ func autoDeduplicateTaskIDs(sow *SOW) {
 		for ti := range s.Tasks {
 			deps := s.Tasks[ti].Dependencies
 			for i, d := range deps {
-				target := strings.TrimSpace(d)
-				nd, ok := renames[target]
-				if !ok {
-					continue
+				if nd, ok := renames[strings.TrimSpace(d)]; ok {
+					deps[i] = nd
 				}
-				// Only rewrite when the original ID is unambiguous
-				// at the SOW level — i.e., it doesn't also exist
-				// elsewhere in an un-renamed first-occurrence copy.
-				// Otherwise the dep may have meant the surviving
-				// first-occurrence, not our local rename.
-				if idCounts[target] > 1 {
-					continue
-				}
-				deps[i] = nd
 			}
 		}
 	}

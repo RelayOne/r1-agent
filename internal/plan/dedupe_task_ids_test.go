@@ -36,14 +36,14 @@ func TestAutoDeduplicateTaskIDs_RenamesDuplicates(t *testing.T) {
 	}
 }
 
-// TestAutoDeduplicateTaskIDs_AmbiguousDepLeftAlone — when the
-// original ID exists in another session too (idCount > 1), the
-// dep could mean either "the local copy we renamed" or "the
-// first-occurrence we kept elsewhere." Rewriting would silently
-// redirect a cross-session reference, so we preserve the original
-// string and let autoCleanTaskDeps drop it only if it becomes
-// dangling.
-func TestAutoDeduplicateTaskIDs_AmbiguousDepLeftAlone(t *testing.T) {
+// TestAutoDeduplicateTaskIDs_IntraSessionDepRewritten —
+// when a session renames T10 → T10-S2, any task in that same
+// session with a dep "T10" gets its dep rewritten to T10-S2
+// because task.Dependencies is conventionally intra-session.
+// Cross-session handoffs use session-level Inputs/Outputs,
+// not task.Dependencies, so preserving local wiring is the
+// right default.
+func TestAutoDeduplicateTaskIDs_IntraSessionDepRewritten(t *testing.T) {
 	sow := &SOW{
 		Sessions: []Session{
 			{ID: "S1", Tasks: []Task{
@@ -57,41 +57,36 @@ func TestAutoDeduplicateTaskIDs_AmbiguousDepLeftAlone(t *testing.T) {
 	}
 	autoDeduplicateTaskIDs(sow)
 
+	// S2's T11 depended on its local T10 (now T10-S2). Rewrite
+	// preserves the intra-session graph.
 	got := sow.Sessions[1].Tasks[1].Dependencies
-	if len(got) != 1 || got[0] != "T10" {
-		t.Errorf("ambiguous dep should be preserved, got %v", got)
+	if len(got) != 1 || got[0] != "T10-S2" {
+		t.Errorf("intra-session dep should rewrite to renamed ID, got %v", got)
 	}
 }
 
-// TestAutoDeduplicateTaskIDs_UnambiguousDepRewritten — when the
-// original ID appears ONLY in the session being renamed (no
-// first-occurrence elsewhere), the dep is unambiguously local
-// and gets rewritten to the new ID so intra-session wiring is
-// preserved.
-func TestAutoDeduplicateTaskIDs_UnambiguousDepRewritten(t *testing.T) {
+// TestAutoDeduplicateTaskIDs_DepsAcrossSessions — deps
+// in a DIFFERENT session (not the one where the rename
+// happened) stay untouched.
+func TestAutoDeduplicateTaskIDs_DepsAcrossSessions(t *testing.T) {
 	sow := &SOW{
 		Sessions: []Session{
-			// First occurrence of T5 is kept.
-			{ID: "S1", Tasks: []Task{{ID: "T5", Description: "root"}}},
-			// S2 has a DIFFERENT ID (T10) which appears only in S2 but
-			// duplicated locally — first-dup becomes the kept copy;
-			// the second becomes the renamed copy.
-			{ID: "S2", Tasks: []Task{
-				{ID: "T10", Description: "first T10 here"},
+			{ID: "S1", Tasks: []Task{
+				{ID: "T10", Description: "a"},
+				{ID: "T11", Description: "uses T10", Dependencies: []string{"T10"}},
 			}},
-			{ID: "S3", Tasks: []Task{
-				{ID: "T10", Description: "dup"},
-				{ID: "T99", Description: "ref", Dependencies: []string{"T10"}},
+			{ID: "S2", Tasks: []Task{
+				{ID: "T10", Description: "b"}, // will be renamed to T10-S2
 			}},
 		},
 	}
 	autoDeduplicateTaskIDs(sow)
 
-	// T10 exists in S2 (kept) and S3 (renamed to T10-S3).
-	// idCounts[T10] = 2, so S3's T99 dep "T10" is ambiguous and
-	// stays pointing at the S2 copy.
-	if got := sow.Sessions[2].Tasks[1].Dependencies; len(got) != 1 || got[0] != "T10" {
-		t.Errorf("ambiguous dep: got %v want [T10]", got)
+	// S1's T11 dep "T10" refers to S1's T10 (which wasn't
+	// renamed, so idrenames in S1 is empty). Dep stays "T10".
+	got := sow.Sessions[0].Tasks[1].Dependencies
+	if len(got) != 1 || got[0] != "T10" {
+		t.Errorf("S1's dep should stay untouched (no renames in S1), got %v", got)
 	}
 }
 
