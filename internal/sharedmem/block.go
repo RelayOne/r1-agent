@@ -28,10 +28,19 @@ package sharedmem
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
+)
+
+// jsonMarshal / jsonUnmarshal aliased so cloneBlock's
+// fallback path doesn't shadow the package-level encoder when
+// a future refactor swaps JSON for something else.
+var (
+	jsonMarshal   = json.Marshal
+	jsonUnmarshal = json.Unmarshal
 )
 
 // BlockID is the stable identifier for a block. Typically a
@@ -368,15 +377,82 @@ func (s *MemoryStore) emitUpdate(b *Block) {
 	}
 }
 
-// cloneBlock returns a shallow copy of b with Provenance slice
-// copied so callers mutating the returned Block don't touch the
-// stored one. Value is left as-is (any type) since deep-copying
-// arbitrary any values is impractical without reflection; callers
-// treating Value as read-only is the invariant.
+// cloneBlock returns a deep copy of b. Every mutable nested
+// field (Value, Provenance + its Sources/ReplayValue, Tags,
+// Artifacts if present) is copied so a caller mutating the
+// returned block cannot rewrite the stored one without going
+// through a versioned write — the core auditability guarantee.
+//
+// Unknown `any` shapes (custom structs passed as Value) fall
+// back to JSON round-trip copy via encoding/json so the
+// common cases ([]any, map[string]any, scalars) deep-copy
+// correctly without a reflect dance. JSON round-trip loses
+// private fields and unexported types; callers that need
+// bit-exact struct preservation for Value should encode
+// themselves before storing.
 func cloneBlock(b *Block) *Block {
 	out := *b
+	out.Value = deepCopyAny(b.Value)
 	if len(b.Provenance) > 0 {
-		out.Provenance = append([]ProvenanceEntry(nil), b.Provenance...)
+		out.Provenance = make([]ProvenanceEntry, len(b.Provenance))
+		for i, p := range b.Provenance {
+			out.Provenance[i] = deepCopyProvenance(p)
+		}
 	}
 	return &out
+}
+
+// deepCopyAny handles the common shapes stored as Block.Value:
+// []any lists, map[string]any objects, scalars (strings /
+// numbers / bools / nil). Other types fall through to JSON
+// marshal+unmarshal. Callers with non-JSON-serializable Value
+// types should encode themselves before storing.
+func deepCopyAny(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []any:
+		out := make([]any, len(x))
+		for i, el := range x {
+			out[i] = deepCopyAny(el)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, el := range x {
+			out[k] = deepCopyAny(el)
+		}
+		return out
+	case string, bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64, float32, float64:
+		return x
+	default:
+		// Fallback: JSON round-trip. Good enough for
+		// exported-field structs; callers with private-
+		// field types should pre-encode.
+		b, err := jsonMarshal(x)
+		if err != nil {
+			return v // couldn't marshal — return as-is and hope the caller doesn't mutate
+		}
+		var out any
+		if err := jsonUnmarshal(b, &out); err != nil {
+			return v
+		}
+		return out
+	}
+}
+
+// deepCopyProvenance clones the nested slice + map fields on
+// a ProvenanceEntry. Sources is a string slice so the copy is
+// cheap; ReplayValue can carry any type so it rides the
+// same deepCopyAny path.
+func deepCopyProvenance(p ProvenanceEntry) ProvenanceEntry {
+	out := p
+	if len(p.Sources) > 0 {
+		out.Sources = append([]string(nil), p.Sources...)
+	}
+	if p.ReplayValue != nil {
+		out.ReplayValue = deepCopyAny(p.ReplayValue)
+	}
+	return out
 }

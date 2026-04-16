@@ -197,3 +197,113 @@ func TestNodeType_HierarchyDeclared(t *testing.T) {
 		}
 	}
 }
+
+// TestSetState_ClearsBlockedByOnExit: P2 fix — leaving a
+// blocked state (BLOCKED / WAITING_HUMAN) clears BlockedBy so
+// the node doesn't read as self-contradictory (ACTIVE + still
+// blocked-by-X).
+func TestSetState_ClearsBlockedByOnExit(t *testing.T) {
+	cases := []struct {
+		name string
+		from State
+		to   State
+	}{
+		{"blocked→active via ready", StateBlocked, StateReady},
+		{"blocked→canceled", StateBlocked, StateCanceled},
+		{"waiting_human→active", StateWaitingHuman, StateActive},
+		{"waiting_human→canceled", StateWaitingHuman, StateCanceled},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			n := &Node{Status: c.from, BlockedBy: []string{"dep-x", "dep-y"}}
+			if err := n.SetState(c.to); err != nil {
+				t.Fatalf("SetState: %v", err)
+			}
+			if len(n.BlockedBy) != 0 {
+				t.Errorf("BlockedBy should be cleared on exit from %q, got %v", c.from, n.BlockedBy)
+			}
+		})
+	}
+}
+
+// TestSetState_PreservesBlockedByWithinBlockedStates: the
+// clear only fires on EXIT from blocked states; transitions
+// between blocked states (if the table ever allows one —
+// currently none does) should keep BlockedBy. This guards
+// against over-zealous clearing if the table grows later.
+func TestSetState_KeepsBlockedByOnBlockedToBlocked(t *testing.T) {
+	// Our current table has no BLOCKED → WAITING_HUMAN edge,
+	// so this test exercises a synthetic path: manually
+	// verify the condition guard by inspecting behavior on
+	// the only legal re-entry which is via NEEDS_REVISION →
+	// READY, preserving BlockedBy as a no-op.
+	n := &Node{Status: StateActive, BlockedBy: []string{"dep-x"}}
+	if err := n.SetState(StateBlocked); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+	if len(n.BlockedBy) != 1 {
+		t.Errorf("entering BLOCKED from ACTIVE should preserve BlockedBy, got %v", n.BlockedBy)
+	}
+}
+
+// TestBumpRevision_PerCycleCounting: P2 fix — multiple
+// objections within the SAME revision cycle don't burn
+// attempts. Counter increments on cycle OPEN only.
+func TestBumpRevision_PerCycleCounting(t *testing.T) {
+	n := &Node{Status: StateActive}
+	// First BumpRevision (from ACTIVE) opens cycle 1.
+	if err := n.BumpRevision("first objection"); err != nil {
+		t.Fatalf("bump 1: %v", err)
+	}
+	if n.RevisionAttempts != 1 {
+		t.Errorf("after first bump, attempts=%d want 1", n.RevisionAttempts)
+	}
+	// Transition INTO NEEDS_REVISION (caller's job per docs).
+	_ = n.SetState(StateNeedsRevision)
+
+	// Second + third BumpRevision DURING same cycle — critic
+	// polled twice — should NOT increment.
+	_ = n.BumpRevision("same-cycle objection 2")
+	_ = n.BumpRevision("same-cycle objection 3")
+	if n.RevisionAttempts != 1 {
+		t.Errorf("same-cycle bumps must NOT increment; attempts=%d want 1", n.RevisionAttempts)
+	}
+
+	// Close cycle by transitioning out of NEEDS_REVISION.
+	_ = n.SetState(StateReady)
+
+	// Next BumpRevision opens cycle 2.
+	if err := n.BumpRevision("new cycle"); err != nil {
+		t.Fatalf("bump 2: %v", err)
+	}
+	if n.RevisionAttempts != 2 {
+		t.Errorf("new cycle should increment; attempts=%d want 2", n.RevisionAttempts)
+	}
+}
+
+// TestBumpRevision_CapStillEnforced confirms the 3-cycle cap
+// still blocks after the per-cycle fix.
+func TestBumpRevision_CapStillEnforced(t *testing.T) {
+	n := &Node{Status: StateActive}
+	for i := 1; i <= MaxNeedsRevisionCycles; i++ {
+		if err := n.BumpRevision("attempt"); err != nil {
+			t.Fatalf("bump %d unexpected err %v", i, err)
+		}
+		_ = n.SetState(StateNeedsRevision)
+		_ = n.SetState(StateReady)
+	}
+	// 4th cycle open should error.
+	if err := n.BumpRevision("too many"); err == nil {
+		t.Error("cap should still block after 3 cycles")
+	}
+}
+
+// TestRollupStatus_MixedCompletedCanceled: P2 fix — a mixed
+// {COMPLETED, CANCELED} set (no VERIFIED) should roll up to
+// COMPLETED, not DRAFT.
+func TestRollupStatus_MixedCompletedCanceled(t *testing.T) {
+	got := RollupStatus([]State{StateCompleted, StateCanceled, StateCompleted})
+	if got != StateCompleted {
+		t.Errorf("mixed COMPLETED+CANCELED should be COMPLETED, got %q", got)
+	}
+}

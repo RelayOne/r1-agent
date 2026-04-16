@@ -78,6 +78,13 @@ type Saga struct {
 	mu           sync.Mutex
 	workUnits    map[string]*sagaEntry // keyed by WorkUnit ID
 	byDelegation map[string]map[string]struct{} // delegationID -> set of workUnitIDs
+
+	// perDelegationMu serializes OnRevocation calls for the
+	// same delegation ID so duplicate NATS deliveries don't
+	// run comp txns + snapshot hooks twice. Entries live
+	// under mu for creation; the per-ID mutex is held for
+	// the duration of the settlement.
+	perDelegationMu map[string]*sync.Mutex
 }
 
 // sagaEntry is the per-WorkUnit bookkeeping the saga keeps.
@@ -93,9 +100,10 @@ type sagaEntry struct {
 // Manager.
 func NewSaga(mgr *Manager) *Saga {
 	return &Saga{
-		mgr:          mgr,
-		workUnits:    map[string]*sagaEntry{},
-		byDelegation: map[string]map[string]struct{}{},
+		mgr:             mgr,
+		workUnits:       map[string]*sagaEntry{},
+		byDelegation:    map[string]map[string]struct{}{},
+		perDelegationMu: map[string]*sync.Mutex{},
 	}
 }
 
@@ -158,15 +166,49 @@ func (s *Saga) Deregister(unitID string) {
 // WorkUnit registered under delegationID and applies its
 // settlement policy. Safe to call with an unknown delegationID
 // (no-op). Idempotent against duplicate events.
+//
+// Concurrency: a per-delegation mutex serializes duplicate
+// events for the same delegation so comp txns + snapshot hooks
+// run at most once per unit. Events for DIFFERENT delegations
+// still run in parallel.
+//
+// Mid-settlement registrations: if Register() adds a NEW
+// WorkUnit under the same delegation while settlement is in
+// flight, the post-settlement cleanup is scoped to only the
+// IDs we snapshotted at the start. Late arrivals stay in the
+// book so a subsequent revocation event (or a manual
+// OnRevocation retry) settles them correctly — they're never
+// orphaned.
 func (s *Saga) OnRevocation(ctx context.Context, delegationID string) SettlementReport {
+	// Acquire (or create) the per-delegation mutex under the
+	// top-level lock, then release the top-level lock before
+	// acquiring the per-delegation one so other delegations
+	// aren't blocked.
+	s.mu.Lock()
+	perMu, ok := s.perDelegationMu[delegationID]
+	if !ok {
+		perMu = &sync.Mutex{}
+		s.perDelegationMu[delegationID] = perMu
+	}
+	s.mu.Unlock()
+
+	perMu.Lock()
+	defer perMu.Unlock()
+
 	s.mu.Lock()
 	set, ok := s.byDelegation[delegationID]
 	if !ok {
+		// Could mean "unknown delegation" OR "earlier
+		// duplicate event already settled this one". Either
+		// way: no work to do.
 		s.mu.Unlock()
 		return SettlementReport{DelegationID: delegationID}
 	}
 	// Snapshot the unit IDs so we can release the lock before
-	// running (potentially long) settlement actions.
+	// running (potentially long) settlement actions, AND so
+	// mid-settlement Register() arrivals under this delegation
+	// don't end up in our settle loop (they'll be picked up by
+	// the next revocation event or a manual retry).
 	unitIDs := make([]string, 0, len(set))
 	for id := range set {
 		unitIDs = append(unitIDs, id)
@@ -182,13 +224,25 @@ func (s *Saga) OnRevocation(ctx context.Context, delegationID string) Settlement
 		outcome := s.settle(ctx, e)
 		report.Outcomes = append(report.Outcomes, outcome)
 	}
-	// Tidy up: revoked units leave the book after settlement.
+	// Tidy up: only the units we actually settled leave the
+	// book. Late arrivals registered during settlement stay
+	// in byDelegation + workUnits so they survive to the
+	// next revocation event instead of being orphaned.
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	settledIDs := make(map[string]struct{}, len(unitIDs))
 	for _, id := range unitIDs {
+		settledIDs[id] = struct{}{}
 		delete(s.workUnits, id)
 	}
-	delete(s.byDelegation, delegationID)
+	if remaining, ok := s.byDelegation[delegationID]; ok {
+		for id := range settledIDs {
+			delete(remaining, id)
+		}
+		if len(remaining) == 0 {
+			delete(s.byDelegation, delegationID)
+		}
+	}
 	return report
 }
 
@@ -201,23 +255,32 @@ type SettlementReport struct {
 }
 
 // SettlementOutcome is one WorkUnit's settlement result.
+// All error fields are strings (not Go `error` values) so
+// JSON marshaling round-trips correctly — `error` marshals
+// to `{}` and operators watching the report channel would
+// otherwise see empty objects instead of failure text.
 type SettlementOutcome struct {
 	WorkUnitID string
 	Policy     SettlementKind
 	// FinalStatus is the WorkUnitStatus the unit ended on
 	// after settlement — typically WorkUnitRevoked.
 	FinalStatus workunit.WorkUnitStatus
-	// CompensatingTxnErrors holds any errors from individual
-	// compensating transactions. Non-nil entries are logged
-	// but don't abort settlement — the unit is still marked
-	// Revoked so operators can see the mixed state.
-	CompensatingTxnErrors []error
+	// CompensatingTxnErrors holds any messages from individual
+	// compensating transactions. Non-empty entries are
+	// logged but don't abort settlement — the unit is still
+	// marked Revoked so operators can see the mixed state.
+	CompensatingTxnErrors []string
 	// Checkpoint is the captured state (only for
 	// SettleCheckpointAndRevoke).
 	Checkpoint Checkpoint
-	// SnapshotError is the error from the caller-supplied
-	// snapshot function, if any.
-	SnapshotError error
+	// SnapshotError is the error message from the caller-
+	// supplied snapshot function, if any.
+	SnapshotError string
+	// AuditAnchorError is the message from writing the
+	// `revoked` audit event, if any. Non-empty indicates the
+	// WorkUnit reached Revoked state but the audit anchor
+	// failed to record it.
+	AuditAnchorError string
 }
 
 // settle applies the per-entry settlement policy. Called by
@@ -241,21 +304,25 @@ func (s *Saga) settle(ctx context.Context, e *sagaEntry) SettlementOutcome {
 		// reverts first so nested operations unwind cleanly.
 		for i := len(e.comps) - 1; i >= 0; i-- {
 			if err := e.comps[i](ctx); err != nil {
-				out.CompensatingTxnErrors = append(out.CompensatingTxnErrors, fmt.Errorf("comp[%d]: %w", i, err))
+				out.CompensatingTxnErrors = append(out.CompensatingTxnErrors, fmt.Sprintf("comp[%d]: %v", i, err))
 			}
 		}
-		_ = e.unit.Revoke(ctx, nil)
+		if err := e.unit.Revoke(ctx, e.anchor); err != nil {
+			out.AuditAnchorError = err.Error()
+		}
 
 	case SettleCheckpointAndRevoke:
 		if e.snapshot != nil {
 			ck, err := e.snapshot(ctx)
 			if err != nil {
-				out.SnapshotError = err
+				out.SnapshotError = err.Error()
 			} else {
 				out.Checkpoint = ck
 			}
 		}
-		_ = e.unit.Revoke(ctx, nil)
+		if err := e.unit.Revoke(ctx, e.anchor); err != nil {
+			out.AuditAnchorError = err.Error()
+		}
 
 	case SettleCompleteThenRevoke:
 		// v2 shape: the unit is allowed to finish its
@@ -267,17 +334,21 @@ func (s *Saga) settle(ctx context.Context, e *sagaEntry) SettlementOutcome {
 		// expose in a follow-up. For now the unit reaches
 		// Revoked via the same path as rollback-immediately
 		// but no compensating txns run.
-		_ = e.unit.Revoke(ctx, nil)
+		if err := e.unit.Revoke(ctx, e.anchor); err != nil {
+			out.AuditAnchorError = err.Error()
+		}
 
 	default:
 		// Unknown policy: safest fallback is rollback-
 		// immediately.
 		for i := len(e.comps) - 1; i >= 0; i-- {
 			if err := e.comps[i](ctx); err != nil {
-				out.CompensatingTxnErrors = append(out.CompensatingTxnErrors, fmt.Errorf("comp[%d]: %w", i, err))
+				out.CompensatingTxnErrors = append(out.CompensatingTxnErrors, fmt.Sprintf("comp[%d]: %v", i, err))
 			}
 		}
-		_ = e.unit.Revoke(ctx, nil)
+		if err := e.unit.Revoke(ctx, e.anchor); err != nil {
+			out.AuditAnchorError = err.Error()
+		}
 	}
 
 	out.FinalStatus = e.unit.Status

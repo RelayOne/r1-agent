@@ -208,3 +208,67 @@ func TestParseError(t *testing.T) {
 		t.Errorf("code=%v want %d", err["code"], errParse)
 	}
 }
+
+// TestToolsList_NoAuthRequired: discovery must NEVER be
+// blocked by API key, otherwise standard MCP clients can't
+// enumerate the tool surface.
+func TestToolsList_NoAuthRequired(t *testing.T) {
+	srv := &Server{out: nil, apiKey: "secret-key", requireKey: true}
+	resp := rpcCall(t, srv,
+		`{"jsonrpc":"2.0","id":20,"method":"tools/list","params":{}}`)
+	if _, ok := resp["error"].(map[string]any); ok {
+		t.Fatalf("tools/list should work without auth, got error: %+v", resp)
+	}
+	if _, ok := resp["result"].(map[string]any); !ok {
+		t.Errorf("expected result, got %+v", resp)
+	}
+}
+
+// TestInvoke_RejectsMissingInput: P2 fix — input is declared
+// required + object in the schema, and a missing or null
+// input must produce -32602.
+func TestInvoke_RejectsMissingInput(t *testing.T) {
+	srv := newTestServer()
+	req := `{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"stoke_invoke","arguments":{"capability":"x"}}}`
+	resp := rpcCall(t, srv, req)
+	err, _ := resp["error"].(map[string]any)
+	if err == nil {
+		t.Fatal("expected error on missing input")
+	}
+	if int(err["code"].(float64)) != errInvalidArgs {
+		t.Errorf("code=%v want %d", err["code"], errInvalidArgs)
+	}
+}
+
+func TestInvoke_RejectsNonObjectInput(t *testing.T) {
+	srv := newTestServer()
+	req := `{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"stoke_invoke","arguments":{"capability":"x","input":[1,2,3]}}}`
+	resp := rpcCall(t, srv, req)
+	err, _ := resp["error"].(map[string]any)
+	if err == nil {
+		t.Fatal("expected error on array input (schema requires object)")
+	}
+}
+
+// TestVerify_RejectsBadTaskClass: P2 fix — task_class is
+// constrained to the 4 enums by the schema; reject anything
+// else with -32602.
+func TestVerify_RejectsBadTaskClass(t *testing.T) {
+	srv := newTestServer()
+	req := `{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"stoke_verify","arguments":{"task_class":"metaphysics","subject":"x"}}}`
+	resp := rpcCall(t, srv, req)
+	err, _ := resp["error"].(map[string]any)
+	if err == nil {
+		t.Fatal("expected error on unknown task_class")
+	}
+}
+
+func TestVerify_RejectsMissingSubject(t *testing.T) {
+	srv := newTestServer()
+	req := `{"jsonrpc":"2.0","id":24,"method":"tools/call","params":{"name":"stoke_verify","arguments":{"task_class":"code"}}}`
+	resp := rpcCall(t, srv, req)
+	err, _ := resp["error"].(map[string]any)
+	if err == nil {
+		t.Fatal("expected error on missing subject")
+	}
+}

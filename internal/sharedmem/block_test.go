@@ -277,6 +277,116 @@ func TestMaxReducer_RejectsNonNumeric(t *testing.T) {
 	}
 }
 
+func TestMaxReducer_LargeInt64Precision(t *testing.T) {
+	// Values above 2^53 can't all be distinguished as
+	// float64. Without int64 fast-path, (A, A+1) where both
+	// are > 2^53 would compare as equal. Test two timestamps
+	// that differ by 1 ns and make sure MaxReducer picks
+	// the larger.
+	a := int64(1_744_704_000_000_000_000) // 2026-04-15T12:00:00Z in ns
+	b := a + 1
+	out, err := MaxReducer(a, b)
+	if err != nil {
+		t.Fatalf("MaxReducer: %v", err)
+	}
+	if out.(int64) != b {
+		t.Errorf("MaxReducer picked %v want %v (int64 precision regression)", out, b)
+	}
+	// Reverse order.
+	out2, _ := MaxReducer(b, a)
+	if out2.(int64) != b {
+		t.Errorf("MaxReducer reverse picked %v want %v", out2, b)
+	}
+}
+
+func TestMaxReducer_MixedIntTypes(t *testing.T) {
+	// Accept mixed integer types via toInt64.
+	out, err := MaxReducer(int32(5), int64(10))
+	if err != nil {
+		t.Fatalf("MaxReducer: %v", err)
+	}
+	if out.(int64) != 10 {
+		t.Errorf("got %v want 10", out)
+	}
+}
+
+func TestMaxReducer_MixedIntAndFloat(t *testing.T) {
+	// int-vs-float falls through to float comparison.
+	out, err := MaxReducer(3, 5.5)
+	if err != nil {
+		t.Fatalf("MaxReducer: %v", err)
+	}
+	if out.(float64) != 5.5 {
+		t.Errorf("got %v want 5.5", out)
+	}
+}
+
+func TestCloneBlock_DeepCopiesValue(t *testing.T) {
+	// Caller mutating the returned Value slice must NOT
+	// affect the stored block.
+	s := NewMemoryStore()
+	ctx := context.Background()
+	s.RegisterReducer("list", AddReducer)
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "list",
+		Value:      []any{"a", "b"},
+		Provenance: []ProvenanceEntry{baseProv("agent-a")},
+	})
+
+	got, err := s.Get(ctx, "b1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Tamper with the returned slice.
+	val := got.Value.([]any)
+	val[0] = "TAMPERED"
+
+	// Re-read — the store's copy should be unaffected.
+	got2, _ := s.Get(ctx, "b1")
+	val2 := got2.Value.([]any)
+	if val2[0] == "TAMPERED" {
+		t.Errorf("store leaked Value aliasing: %v", val2)
+	}
+}
+
+func TestCloneBlock_DeepCopiesMapValue(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "map",
+		Value:      map[string]any{"k": "v"},
+		Provenance: []ProvenanceEntry{baseProv("agent-a")},
+	})
+	got, _ := s.Get(ctx, "b1")
+	m := got.Value.(map[string]any)
+	m["k"] = "TAMPERED"
+	got2, _ := s.Get(ctx, "b1")
+	m2 := got2.Value.(map[string]any)
+	if m2["k"] == "TAMPERED" {
+		t.Errorf("map aliasing leaked: %v", m2)
+	}
+}
+
+func TestCloneBlock_DeepCopiesProvenanceSources(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	prov := ProvenanceEntry{
+		AgentID: "a", Action: "create", Timestamp: ts(),
+		Sources: []string{"src-1", "src-2"},
+	}
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "scalar", Value: "x",
+		Provenance: []ProvenanceEntry{prov},
+	})
+	got, _ := s.Get(ctx, "b1")
+	got.Provenance[0].Sources[0] = "TAMPERED"
+
+	got2, _ := s.Get(ctx, "b1")
+	if got2.Provenance[0].Sources[0] == "TAMPERED" {
+		t.Errorf("provenance.Sources aliasing leaked: %v", got2.Provenance[0].Sources)
+	}
+}
+
 func TestProv_Validation(t *testing.T) {
 	if err := validateProvEntry(ProvenanceEntry{}); err == nil {
 		t.Error("empty prov should fail")

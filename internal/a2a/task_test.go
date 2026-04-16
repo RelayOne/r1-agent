@@ -244,3 +244,98 @@ func TestHandleCancel_JSONRPC(t *testing.T) {
 		t.Errorf("status=%q want canceled", got.Status)
 	}
 }
+
+// TestPromptDeepCopy: caller mutating its prompt buffer after
+// Submit must NOT affect the stored task's Prompt.
+func TestPromptDeepCopy(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	prompt := json.RawMessage(`{"text":"original"}`)
+	task, err := store.Submit(context.Background(), prompt)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	// Scribble over the original.
+	for i := range prompt {
+		prompt[i] = 'X'
+	}
+	got, _ := store.Get(context.Background(), task.ID)
+	if string(got.Prompt) != `{"text":"original"}` {
+		t.Errorf("prompt leaked caller mutation: %s", got.Prompt)
+	}
+}
+
+// TestArtifactDeepCopy: caller mutating its artifact after
+// AppendArtifact must NOT alter the stored bytes.
+func TestArtifactDeepCopy(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil)
+	artifact := json.RawMessage(`{"file":"original.txt"}`)
+	_, err := store.AppendArtifact(context.Background(), task.ID, artifact)
+	if err != nil {
+		t.Fatalf("AppendArtifact: %v", err)
+	}
+	for i := range artifact {
+		artifact[i] = 'X'
+	}
+	got, _ := store.Get(context.Background(), task.ID)
+	if string(got.Artifacts[0]) != `{"file":"original.txt"}` {
+		t.Errorf("artifact leaked: %s", got.Artifacts[0])
+	}
+}
+
+// TestReturnedTaskDeepCopy: mutating the returned Task's
+// Prompt / Artifacts must NOT feed back into the store.
+func TestReturnedTaskDeepCopy(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	prompt := json.RawMessage(`{"text":"original"}`)
+	task, _ := store.Submit(context.Background(), prompt)
+	// Tamper with the returned Prompt.
+	for i := range task.Prompt {
+		task.Prompt[i] = 'X'
+	}
+	got, _ := store.Get(context.Background(), task.ID)
+	if string(got.Prompt) != `{"text":"original"}` {
+		t.Errorf("store leaked to returned value: %s", got.Prompt)
+	}
+}
+
+// TestSetResult_RejectsNonCompletedStatus: the P2 status-gate.
+func TestSetResult_RejectsNonCompletedStatus(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil) // Submitted
+	_, err := store.SetResult(context.Background(), task.ID, json.RawMessage(`"x"`))
+	if !errors.Is(err, ErrInvalidTaskStateForField) {
+		t.Errorf("want ErrInvalidTaskStateForField, got %v", err)
+	}
+}
+
+// TestSetError_RejectsNonFailedStatus: the P2 status-gate.
+func TestSetError_RejectsNonFailedStatus(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil)
+	_, _ = store.Transition(context.Background(), task.ID, TaskWorking, "")
+	_, _ = store.Transition(context.Background(), task.ID, TaskCompleted, "")
+	// SetError on a Completed (not Failed) task must reject.
+	_, err := store.SetError(context.Background(), task.ID, "should fail")
+	if !errors.Is(err, ErrInvalidTaskStateForField) {
+		t.Errorf("want ErrInvalidTaskStateForField, got %v", err)
+	}
+}
+
+// TestSetResult_ClearsError: mutual exclusion.
+func TestSetResult_ClearsError(t *testing.T) {
+	store := NewInMemoryTaskStore()
+	task, _ := store.Submit(context.Background(), nil)
+	_, _ = store.Transition(context.Background(), task.ID, TaskWorking, "")
+	_, _ = store.Transition(context.Background(), task.ID, TaskFailed, "")
+	_, _ = store.SetError(context.Background(), task.ID, "oops")
+	// Now complete a fresh task and set result — its Error
+	// field should stay clear. (Can't transition failed → completed.)
+	task2, _ := store.Submit(context.Background(), nil)
+	_, _ = store.Transition(context.Background(), task2.ID, TaskWorking, "")
+	_, _ = store.Transition(context.Background(), task2.ID, TaskCompleted, "")
+	got, _ := store.SetResult(context.Background(), task2.ID, json.RawMessage(`"done"`))
+	if got.Error != "" {
+		t.Errorf("Completed task with Result should have empty Error, got %q", got.Error)
+	}
+}

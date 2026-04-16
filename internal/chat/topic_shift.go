@@ -54,11 +54,17 @@ func NewShiftDetector() *ShiftDetector {
 
 // SetWindowSize / SetThreshold / SetStreak allow operators
 // to tune without reconstructing.
+//
+// Window size is clamped to >=2. A window of 1 would make
+// the rolling aggregate always equal the most-recent turn,
+// which in turn would always produce similarity=1 in
+// Observe's compare step — the detector could never fire.
+// Clamping prevents that silent disable.
 func (d *ShiftDetector) SetWindowSize(n int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if n < 1 {
-		n = 1
+	if n < 2 {
+		n = 2
 	}
 	d.windowSize = n
 }
@@ -211,7 +217,11 @@ func (d *ShiftDetector) Observe(userTurn string) bool {
 		d.belowStreak++
 	} else {
 		d.belowStreak = 0
-		d.fired = false
+		// NOTE: do NOT clear d.fired here. Once fired, the
+		// detector stays latched until the caller calls
+		// Reset — per the documented contract. Clearing on
+		// similarity rebound would re-fire the same shift
+		// and violate the one-signal-per-event invariant.
 	}
 
 	if d.belowStreak >= d.streakNeeded && !d.fired {

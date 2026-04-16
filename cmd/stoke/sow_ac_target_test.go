@@ -65,14 +65,31 @@ func TestExtractACTargets_ChainedGrep(t *testing.T) {
 	}
 }
 
-func TestExtractACTargets_PnpmFilter(t *testing.T) {
+func TestExtractACTargets_PnpmFilter_NoFalseTarget(t *testing.T) {
+	// pnpm --filter <selector> can't be resolved to an
+	// on-disk path without the workspace manifest — the
+	// selector is a package name, not a path. Emitting
+	// "@scope/foo/package.json" as an EDIT TARGET steers
+	// repair at a path that doesn't exist, so we emit nothing.
 	crit := plan.AcceptanceCriterion{
 		Command: `pnpm install && pnpm --filter @sentinel/design-tokens build`,
 	}
-	got := extractACTargets(crit)
-	want := []string{"@sentinel/design-tokens/package.json"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v, want %v", got, want)
+	if got := extractACTargets(crit); len(got) != 0 {
+		t.Errorf("pnpm --filter should NOT produce a path target, got %v", got)
+	}
+}
+
+func TestExtractACTargets_DirCheckNotATarget(t *testing.T) {
+	// test -d is a DIRECTORY-EXISTS check; the AC wants the
+	// directory to exist, not for the worker to edit it. node_
+	// modules in particular would be wrong — it's generated.
+	crit := plan.AcceptanceCriterion{Command: `test -d node_modules`}
+	if got := extractACTargets(crit); len(got) != 0 {
+		t.Errorf("test -d should not produce edit target, got %v", got)
+	}
+	crit2 := plan.AcceptanceCriterion{Command: `[ -d packages/types ]`}
+	if got := extractACTargets(crit2); len(got) != 0 {
+		t.Errorf("[ -d ] should not produce edit target, got %v", got)
 	}
 }
 

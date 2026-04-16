@@ -84,21 +84,76 @@ func UnionReducer(existing, incoming any) (any, error) {
 }
 
 // MaxReducer keeps the larger of two numeric values. Accepts
-// int, int64, float64 (and uses float promotion when mixed).
-// Returns an error if either value isn't numeric.
+// int / int8 / int16 / int32 / int64 / uint variants /
+// float32 / float64. Mixed types fall through to float64
+// comparison.
+//
+// Integer vs integer comparison uses int64 arithmetic — not
+// float64 — so values above 2^53 compare correctly. A prior
+// version that float-promoted every input collapsed large
+// int64 values (e.g. nanosecond timestamps) into the same
+// float, causing newer writes to be treated as equal and the
+// older value kept.
 func MaxReducer(existing, incoming any) (any, error) {
-	ef, ok1 := toFloat(existing)
-	inf, ok2 := toFloat(incoming)
-	if !ok1 {
+	ei, eiOK := toInt64(existing)
+	ii, iiOK := toInt64(incoming)
+	if eiOK && iiOK {
+		if ei >= ii {
+			return existing, nil
+		}
+		return incoming, nil
+	}
+	ef, efOK := toFloat(existing)
+	inf, ifOK := toFloat(incoming)
+	if !efOK {
 		return nil, fmt.Errorf("sharedmem: MaxReducer existing not numeric: %T", existing)
 	}
-	if !ok2 {
+	if !ifOK {
 		return nil, fmt.Errorf("sharedmem: MaxReducer incoming not numeric: %T", incoming)
 	}
 	if ef >= inf {
 		return existing, nil
 	}
 	return incoming, nil
+}
+
+// toInt64 coerces integral types to int64 for precise
+// comparison. Explicitly does NOT accept float types — the
+// caller has to fall through to toFloat for mixed or
+// floating-point comparisons so we don't silently round a
+// 1.5 down to 1.
+func toInt64(v any) (int64, bool) {
+	switch x := v.(type) {
+	case int:
+		return int64(x), true
+	case int8:
+		return int64(x), true
+	case int16:
+		return int64(x), true
+	case int32:
+		return int64(x), true
+	case int64:
+		return x, true
+	case uint:
+		// uint can exceed int64 max; only accept when it fits.
+		if uint64(x) <= uint64(1<<63-1) {
+			return int64(x), true
+		}
+		return 0, false
+	case uint8:
+		return int64(x), true
+	case uint16:
+		return int64(x), true
+	case uint32:
+		return int64(x), true
+	case uint64:
+		if x <= uint64(1<<63-1) {
+			return int64(x), true
+		}
+		return 0, false
+	default:
+		return 0, false
+	}
 }
 
 // asSlice coerces v into []any. Accepts []any directly and

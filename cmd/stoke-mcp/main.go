@@ -216,11 +216,16 @@ var tools = []Tool{
 	},
 }
 
+// handleToolsList is intentionally EXEMPT from API-key auth.
+// MCP clients must discover the tool surface before they can
+// format an authenticated tools/call — and a standard MCP
+// stdio client (e.g. the one shipped in internal/mcp/) sends
+// tools/list with empty params, so there's no way for it to
+// inject an apiKey field even if it has one configured.
+// Keeping tools/list open is safe because the tool
+// DEFINITIONS are public information; only the INVOCATIONS
+// need auth.
 func (s *Server) handleToolsList(req rpcRequest) {
-	if err := s.checkAuth(req); err != nil {
-		s.respondErr(req.ID, errUnauthorized, err.Error(), nil)
-		return
-	}
 	s.respondOK(req.ID, map[string]any{"tools": tools})
 }
 
@@ -269,8 +274,27 @@ func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
 		Input        json.RawMessage `json:"input"`
 		DelegationID string          `json:"delegation_id"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil || a.Capability == "" {
+	if err := json.Unmarshal(args, &a); err != nil {
+		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: parse args: "+err.Error(), nil)
+		return
+	}
+	if a.Capability == "" {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: capability required", nil)
+		return
+	}
+	// Schema declares `input` as required + object. Empty
+	// bytes OR a literal "null" both fail the required-object
+	// check.
+	if len(a.Input) == 0 || string(a.Input) == "null" {
+		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input required (must be an object)", nil)
+		return
+	}
+	// Ensure the input is at least a JSON object (not an
+	// array or a scalar) — the schema constrains it to
+	// `type: object` so a ["foo"] input is a client bug.
+	trimmed := strings.TrimSpace(string(a.Input))
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input must be a JSON object", nil)
 		return
 	}
 	s.respondOK(req.ID, map[string]any{
@@ -285,13 +309,32 @@ func (s *Server) handleInvoke(req rpcRequest, args json.RawMessage) {
 	})
 }
 
+// validVerifyTaskClasses mirrors the OpenAPI spec enum
+// constraint: task_class must be one of these four values.
+var validVerifyTaskClasses = map[string]bool{
+	"code": true, "research": true, "writing": true, "scheduling": true,
+}
+
 func (s *Server) handleVerify(req rpcRequest, args json.RawMessage) {
 	var a struct {
 		TaskClass string `json:"task_class"`
 		Subject   string `json:"subject"`
 	}
-	if err := json.Unmarshal(args, &a); err != nil || a.TaskClass == "" {
+	if err := json.Unmarshal(args, &a); err != nil {
+		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: parse args: "+err.Error(), nil)
+		return
+	}
+	if a.TaskClass == "" {
 		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: task_class required", nil)
+		return
+	}
+	if !validVerifyTaskClasses[a.TaskClass] {
+		s.respondErr(req.ID, errInvalidArgs,
+			"stoke_verify: task_class must be one of [code, research, writing, scheduling], got "+a.TaskClass, nil)
+		return
+	}
+	if a.Subject == "" {
+		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: subject required", nil)
 		return
 	}
 	s.respondOK(req.ID, map[string]any{

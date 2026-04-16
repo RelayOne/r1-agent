@@ -316,6 +316,13 @@ func AllowedNextStates(from State) []State { return allowedNextStates(from) }
 // Does NOT update n.UpdatedAt; callers that want wall-clock
 // tracking should set that field after a successful transition.
 // Kept pure so it's safely callable from replay + simulation.
+//
+// Side effect: when transitioning OUT of a blocked state
+// (BLOCKED / WAITING_HUMAN), BlockedBy is cleared — the
+// blocker references are no longer meaningful once the
+// node is running or settled. Nodes entering ACTIVE with a
+// non-empty BlockedBy would otherwise read as self-
+// contradictory in audit reports.
 func (n *Node) SetState(next State) error {
 	if _, ok := transitions[n.Status]; !ok {
 		return fmt.Errorf("%w: unknown from-state %q", ErrInvalidTransition, n.Status)
@@ -323,8 +330,27 @@ func (n *Node) SetState(next State) error {
 	if !transitions[n.Status][next] {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, n.Status, next)
 	}
+	prev := n.Status
 	n.Status = next
+	if (prev == StateBlocked || prev == StateWaitingHuman) &&
+		next != StateBlocked && next != StateWaitingHuman {
+		n.BlockedBy = nil
+	}
 	return nil
+}
+
+// RevisionCycleOpen is set by BumpRevision when a revision
+// cycle begins; cleared by SetState when transitioning out of
+// NEEDS_REVISION or by ResetRevisionCycle. Used so that
+// repeated BumpRevision calls within the SAME cycle (e.g. a
+// second critic objecting to the same revision pass) don't
+// burn additional attempts.
+//
+// Exposed as a method rather than a struct field so adding
+// this doesn't break JSON round-trips with v1 Node records
+// that don't have the field set.
+func (n *Node) revisionCycleOpen() bool {
+	return n.Status == StateNeedsRevision
 }
 
 // BumpRevision records a new NEEDS_REVISION cycle and enforces
@@ -336,14 +362,28 @@ func (n *Node) SetState(next State) error {
 // Does NOT change Status — callers pair BumpRevision with
 // SetState(StateNeedsRevision) when both are needed. Separating
 // the two lets callers bump the counter without re-entering the
-// state (for instance, recording that a second critic objected to
-// the same revision pass).
+// state.
+//
+// Per-cycle counting: if the node is ALREADY in NEEDS_REVISION
+// when BumpRevision is called, the counter is NOT incremented
+// — additional objections during the same revision pass don't
+// burn attempts. The counter increments when a fresh cycle
+// opens (node transitioned out of NEEDS_REVISION and back in)
+// OR when the node is in any other status and BumpRevision is
+// called to start a new cycle. This prevents the failure mode
+// codex flagged: a single revision pass running the cap (3×)
+// because the critic was polled multiple times.
 func (n *Node) BumpRevision(reason string) error {
+	n.RevisionReason = reason
+	if n.revisionCycleOpen() {
+		// Already inside a revision pass — reason update is
+		// the only mutation.
+		return nil
+	}
 	if n.RevisionAttempts+1 > MaxNeedsRevisionCycles {
 		return ErrRevisionCapReached
 	}
 	n.RevisionAttempts++
-	n.RevisionReason = reason
 	return nil
 }
 
@@ -433,7 +473,15 @@ func RollupStatus(children []State) State {
 	if counts[StateVerified]+counts[StateCanceled] == total && counts[StateVerified] > 0 {
 		return StateVerified
 	}
-	if counts[StateCompleted]+counts[StateVerified] == total {
+	// Canceled children should roll up the same way under both
+	// the VERIFIED and COMPLETED branches — a mixed
+	// {COMPLETED, CANCELED, VERIFIED} set means the non-canceled
+	// work finished successfully, so the parent is COMPLETED
+	// (awaiting final review). Without this branch the caller
+	// falls through to DRAFT, contradicting the other terminal
+	// rollup rules.
+	if counts[StateCompleted]+counts[StateVerified]+counts[StateCanceled] == total &&
+		(counts[StateCompleted] > 0 || counts[StateVerified] > 0) {
 		return StateCompleted
 	}
 	if counts[StateCanceled] == total {

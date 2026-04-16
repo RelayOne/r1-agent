@@ -75,9 +75,19 @@ type Rubric struct {
 	Criteria []Criterion
 }
 
-// Validate checks the rubric shape: every criterion has an
-// ID + Name + non-empty Description, and weights are >= 0.
+// Validate checks the rubric shape: non-empty Criteria list,
+// every criterion has an ID + Name + non-empty Description,
+// and weights are >= 0.
+//
+// Empty Criteria is REJECTED. A rubric without criteria would
+// silently pass every artifact (EvaluateRubric returns
+// Passed=true with zero evaluator calls on an empty slice),
+// which is exactly the failure mode structured verification
+// exists to prevent.
 func (r Rubric) Validate() error {
+	if len(r.Criteria) == 0 {
+		return fmt.Errorf("verify: rubric for class %q has no criteria (would silently pass every artifact)", r.Class)
+	}
 	seenID := map[string]bool{}
 	for i, c := range r.Criteria {
 		if c.ID == "" {

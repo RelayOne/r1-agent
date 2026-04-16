@@ -109,13 +109,26 @@ func splitCommandChunks(cmd string) []string {
 
 // grepCmdRe matches grep/egrep/fgrep/rg invocations. We grab the tail
 // tokens after the pattern and treat them as file args.
+//
+// testCmdRe / bracketFileRe deliberately accept ONLY file-focused
+// flags (-f, -e, -r for readable). Directory checks (-d) are NOT
+// an edit target because the AC is verifying a directory EXISTS,
+// not its contents — pointing the repair worker at e.g.
+// `node_modules` as an "EDIT TARGET" is actively misleading.
 var (
-	grepHeadRe   = regexp.MustCompile(`(?i)^\s*(?:e|f)?grep\b|^\s*rg\b`)
-	testCmdRe    = regexp.MustCompile(`(?i)\btest\s+-[efdr]\s+(\S+)`)
-	bracketFileRe = regexp.MustCompile(`\[\s+-[efdr]\s+(\S+)\s+\]`)
+	grepHeadRe    = regexp.MustCompile(`(?i)^\s*(?:e|f)?grep\b|^\s*rg\b`)
+	testCmdRe     = regexp.MustCompile(`(?i)\btest\s+-[efr]\s+(\S+)`)
+	bracketFileRe = regexp.MustCompile(`\[\s+-[efr]\s+(\S+)\s+\]`)
+	catHeadRe     = regexp.MustCompile(`(?i)^\s*(?:cat|head|tail|wc|file)\s+(\S+)`)
+	jqHeadRe      = regexp.MustCompile(`(?i)^\s*jq\s+(?:-[a-zA-Z]+\s+)*'[^']*'\s+(\S+)`)
+
+	// pnpmFilterRe uses FindAllStringSubmatch to pick up
+	// every --filter occurrence when a command stacks
+	// multiple (e.g. `pnpm -F @scope/a -F @scope/b build`).
+	// A single filter only catches the first package, biasing
+	// repair toward the wrong package when the ACs fail on
+	// the second.
 	pnpmFilterRe = regexp.MustCompile(`pnpm\s+(?:--filter|-F)\s+([^\s]+)`)
-	catHeadRe    = regexp.MustCompile(`(?i)^\s*(?:cat|head|tail|wc|file)\s+(\S+)`)
-	jqHeadRe     = regexp.MustCompile(`(?i)^\s*jq\s+(?:-[a-zA-Z]+\s+)*'[^']*'\s+(\S+)`)
 )
 
 // extractPathsFromChunk inspects a single sub-command and returns any
@@ -142,20 +155,20 @@ func extractPathsFromChunk(chunk string) []string {
 		return extractGrepFiles(chunk)
 	}
 
-	// pnpm --filter @scope/pkg build  →  @scope/pkg/package.json
-	// This is a useful hint even if imperfect: the most common AC
-	// failure when pnpm commands are the verification harness is a
-	// missing script or dep in THAT package's package.json.
-	if m := pnpmFilterRe.FindStringSubmatch(chunk); len(m) > 1 {
-		pkg := strings.Trim(m[1], "'\"")
-		// Drop scoped prefix for path heuristic — we can't resolve
-		// @scope/name to an on-disk path without the workspace map,
-		// but the package.json filename hint still nudges the worker
-		// to the right file-TYPE.
-		if pkg != "" {
-			return []string{pkg + "/package.json"}
-		}
-	}
+	// pnpm --filter <SELECTOR> is a PACKAGE SELECTOR, not a
+	// repo path — it can be a bare name ("ui"), a scoped
+	// name ("@scope/app"), or a glob. Without the workspace
+	// manifest we can't resolve it to an on-disk path, and
+	// emitting "@scope/app/package.json" as an EDIT TARGET
+	// steers repair at a path that doesn't exist. Better to
+	// emit nothing and let the worker consult the workspace
+	// manifest itself.
+	//
+	// We still walk every match (FindAllStringSubmatch, not
+	// FindStringSubmatch) so a future refactor that gets
+	// access to the workspace map can translate the list in
+	// one pass rather than only seeing the first filter.
+	_ = pnpmFilterRe.FindAllStringSubmatch(chunk, -1)
 
 	// cat FILE, head FILE, etc.
 	if m := catHeadRe.FindStringSubmatch(chunk); len(m) > 1 {

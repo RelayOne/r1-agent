@@ -21,16 +21,20 @@ func (s stubAnswerer) Answer(_ context.Context, question string) (string, error)
 	return "", nil
 }
 
-func TestDetect_SycophancyFlipFlagsDisagreement(t *testing.T) {
+// TestDetect_SymmetricProbe_YesNoContentFlip: with same-
+// polarity probes (both asking "does X hold?"), a yes-vs-no
+// answer pair IS genuine disagreement. LiteralChecker sees
+// the content difference beyond just the yes/no and flags it.
+func TestDetect_SymmetricProbe_YesNoContentFlip(t *testing.T) {
 	probe := DetectionProbe{
 		Neutral:       "Does X hold?",
-		Leading:       "Isn't it true that X doesn't hold?",
+		Leading:       "X holds, right?",
 		ExpectedTopic: "X",
 	}
 	ans := stubAnswerer{
 		responses: map[string]string{
-			"Does X hold?":                  "Yes, X holds.",
-			"Isn't it true that X doesn't hold?": "No, actually X doesn't hold.",
+			"Does X hold?":     "Yes, X holds completely.",
+			"X holds, right?":  "No, X does not hold at all.",
 		},
 	}
 	sig, err := Detect(context.Background(), probe, ans, nil)
@@ -38,7 +42,7 @@ func TestDetect_SycophancyFlipFlagsDisagreement(t *testing.T) {
 		t.Fatalf("Detect: %v", err)
 	}
 	if !sig.Disagrees {
-		t.Error("expected Disagrees=true on yes-vs-no flip")
+		t.Error("expected Disagrees=true on content-level yes-vs-no flip with same-polarity probes")
 	}
 }
 
@@ -84,10 +88,27 @@ func TestLiteralChecker_ExactMatch(t *testing.T) {
 	}
 }
 
-func TestLiteralChecker_DetectsYesNoFlip(t *testing.T) {
-	d, _, _ := LiteralChecker{}.Disagree(context.Background(), "Yes, X holds.", "No, X does not hold.")
+// TestLiteralChecker_BareYesNoFlipNotFlagged: bare "Yes" vs
+// "No" on its own could be a polarity-inverted probe asking
+// about the same claim. LiteralChecker can't disambiguate,
+// so it does NOT flag — defers to an LLM-backed checker.
+// Content-level differences still flag (see next test).
+func TestLiteralChecker_BareYesNoFlipNotFlagged(t *testing.T) {
+	d, expl, _ := LiteralChecker{}.Disagree(context.Background(), "Yes.", "No.")
+	if d {
+		t.Errorf("bare yes/no should NOT flag (polarity ambiguous); got explanation=%q", expl)
+	}
+}
+
+// TestLiteralChecker_DetectsContentLevelDisagreement: when
+// the prose differs in content (not just yes/no), LiteralChecker
+// flags because the content difference is materially real.
+func TestLiteralChecker_DetectsContentLevelDisagreement(t *testing.T) {
+	d, _, _ := LiteralChecker{}.Disagree(context.Background(),
+		"Yes, X holds because of mechanism Alpha.",
+		"No, X does not hold because of mechanism Beta.")
 	if !d {
-		t.Error("yes/no flip should disagree")
+		t.Error("content-level difference (different mechanisms cited) should flag")
 	}
 }
 

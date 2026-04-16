@@ -178,6 +178,12 @@ func (s *InMemoryTaskStore) SetClock(clock func() time.Time) {
 }
 
 // Submit creates a new task in the Submitted state.
+//
+// The caller-provided `prompt` bytes are COPIED into the
+// store — a caller that mutates its original buffer after
+// Submit cannot alter the stored prompt. The returned Task
+// is also deep-copied so the caller can freely mutate its
+// copy.
 func (s *InMemoryTaskStore) Submit(_ context.Context, prompt json.RawMessage) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,7 +192,7 @@ func (s *InMemoryTaskStore) Submit(_ context.Context, prompt json.RawMessage) (T
 	t := &Task{
 		ID:        id,
 		Status:    TaskSubmitted,
-		Prompt:    prompt,
+		Prompt:    copyRaw(prompt),
 		CreatedAt: now,
 		UpdatedAt: now,
 		History: []TaskUpdate{
@@ -194,7 +200,7 @@ func (s *InMemoryTaskStore) Submit(_ context.Context, prompt json.RawMessage) (T
 		},
 	}
 	s.tasks[id] = t
-	return *t, nil
+	return cloneTask(t), nil
 }
 
 // Get returns a clone of the task so callers can't mutate the
@@ -237,7 +243,16 @@ func (s *InMemoryTaskStore) Transition(_ context.Context, id string, to TaskStat
 	return cloneTask(t), nil
 }
 
+// ErrInvalidTaskStateForField is returned by SetResult /
+// SetError when the task's current status doesn't match what
+// the field expects. Prevents exposing contradictions (a
+// Submitted task carrying a Result, a Completed task carrying
+// an Error, etc.) to A2A peers polling via HandleStatus.
+var ErrInvalidTaskStateForField = errors.New("a2a: task status disallows this field")
+
 // AppendArtifact attaches an opaque artifact blob to the task.
+// The artifact bytes are COPIED into the store so later
+// caller-side mutations don't leak through.
 func (s *InMemoryTaskStore) AppendArtifact(_ context.Context, id string, artifact json.RawMessage) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,13 +260,18 @@ func (s *InMemoryTaskStore) AppendArtifact(_ context.Context, id string, artifac
 	if !ok {
 		return Task{}, ErrTaskNotFound
 	}
-	t.Artifacts = append(t.Artifacts, artifact)
+	t.Artifacts = append(t.Artifacts, copyRaw(artifact))
 	t.UpdatedAt = s.now()
 	return cloneTask(t), nil
 }
 
-// SetResult populates the result field. Only valid on tasks
-// that have reached TaskCompleted.
+// SetResult populates the result field. Only valid on
+// TaskCompleted tasks — any other status returns
+// ErrInvalidTaskStateForField so A2A peers never observe a
+// Submitted/Working/Failed task carrying a Result (the
+// documented lifecycle guarantees Result implies Completed).
+// Clears any pre-existing Error on the task — the two fields
+// are mutually exclusive on terminal state.
 func (s *InMemoryTaskStore) SetResult(_ context.Context, id string, result json.RawMessage) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -259,13 +279,19 @@ func (s *InMemoryTaskStore) SetResult(_ context.Context, id string, result json.
 	if !ok {
 		return Task{}, ErrTaskNotFound
 	}
-	t.Result = result
+	if t.Status != TaskCompleted {
+		return Task{}, fmt.Errorf("%w: SetResult requires status=%q, got %q", ErrInvalidTaskStateForField, TaskCompleted, t.Status)
+	}
+	t.Result = copyRaw(result)
+	t.Error = "" // mutual exclusion
 	t.UpdatedAt = s.now()
 	return cloneTask(t), nil
 }
 
-// SetError populates the error field. Only valid on tasks that
-// have reached TaskFailed.
+// SetError populates the error field. Only valid on
+// TaskFailed tasks. Rejects any other status with
+// ErrInvalidTaskStateForField. Clears any pre-existing Result
+// — the two fields are mutually exclusive.
 func (s *InMemoryTaskStore) SetError(_ context.Context, id string, errMsg string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,7 +299,11 @@ func (s *InMemoryTaskStore) SetError(_ context.Context, id string, errMsg string
 	if !ok {
 		return Task{}, ErrTaskNotFound
 	}
+	if t.Status != TaskFailed {
+		return Task{}, fmt.Errorf("%w: SetError requires status=%q, got %q", ErrInvalidTaskStateForField, TaskFailed, t.Status)
+	}
 	t.Error = errMsg
+	t.Result = nil // mutual exclusion
 	t.UpdatedAt = s.now()
 	return cloneTask(t), nil
 }
@@ -294,13 +324,33 @@ func (s *InMemoryTaskStore) List(_ context.Context) ([]Task, error) {
 	return out, nil
 }
 
+// copyRaw returns a deep copy of a json.RawMessage so
+// aliasing between the caller's buffer and the store's
+// stored bytes can't leak mutations in either direction.
+// nil input round-trips as nil output (no zero-length
+// allocation).
+func copyRaw(r json.RawMessage) json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	out := make(json.RawMessage, len(r))
+	copy(out, r)
+	return out
+}
+
 func cloneTask(t *Task) Task {
 	out := *t
+	out.Prompt = copyRaw(t.Prompt)
+	out.Result = copyRaw(t.Result)
+	out.Error = t.Error
 	if len(t.History) > 0 {
 		out.History = append([]TaskUpdate(nil), t.History...)
 	}
 	if len(t.Artifacts) > 0 {
-		out.Artifacts = append([]json.RawMessage(nil), t.Artifacts...)
+		out.Artifacts = make([]json.RawMessage, len(t.Artifacts))
+		for i, a := range t.Artifacts {
+			out.Artifacts[i] = copyRaw(a)
+		}
 	}
 	return out
 }
