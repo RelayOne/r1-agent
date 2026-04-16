@@ -331,11 +331,20 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// approve we mark the SOW chunked-approved and proceed. On
 	// request_changes we invoke the structured refine pass —
 	// rewrites the SOW addressing each concern — and re-review,
-	// up to maxRefineRounds (default 2). On reject or blocking
+	// up to maxRefineRounds (default 4). On reject or blocking
 	// verdict we halt. The refine path closes the gap where
 	// previously we just printed concerns and dispatched-with-
 	// known-bugs.
-	const maxRefineRounds = 2
+	// maxRefineRounds raised from 2 to 4 after run 47 showed:
+	//   round 0: fidelity 62, feasibility 72
+	//   round 1: fidelity 78, feasibility 82 (big jump)
+	//   round 2: proceeded with residual non-blocking concerns
+	// Each round materially improves the plan when the refiner
+	// has concrete fix directives, and the best-of snapshot
+	// tracker protects against regressions — so allowing 2
+	// additional rounds trades planning time for higher-quality
+	// plans without adding rollback risk.
+	const maxRefineRounds = 4
 	// cloneSOW takes a deep copy via JSON round-trip so the
 	// best-snapshot can't be mutated by a subsequent refine
 	// iteration. The SOW is large-ish (~30k bytes for a
