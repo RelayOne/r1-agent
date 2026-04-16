@@ -4,6 +4,8 @@ An AI coding orchestrator that drives Claude Code and Codex CLI as execution eng
 
 **The thesis:** SWE-bench Pro shows the same model jumps ~15 points when you optimize the scaffold. The harness is the product. (Stoke reports deltas on SWE-bench Pro, SWE-rebench, and Terminal-Bench — not contaminated Verified numbers. See [docs/benchmark-stance.md](docs/benchmark-stance.md).)
 
+**Stoke is a single-strong-agent + adversarial-reviewer system, not a multi-agent committee.** The published MAST data (41-86.7% failure rates in real multi-agent deployments; 70% accuracy degradation from blind agent-adding) says the prevailing "many cooperating agents" pattern is how you lose. Stoke runs one strong implementer per task and pairs it with a cross-family adversarial reviewer. Rationale in [docs/architecture/single-strong-agent-stance.md](docs/architecture/single-strong-agent-stance.md).
+
 ## Quick start
 
 ```bash
