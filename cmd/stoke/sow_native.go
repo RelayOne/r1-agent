@@ -215,6 +215,18 @@ type sowNativeConfig struct {
 	// behavior. Wired in main.go to SessionScheduler.AppendSession.
 	OnDecompOverflow func(fromTaskID string, fromSessionID string, subDirectives []string)
 
+	// ContentJudgeRejections tracks how many consecutive times
+	// the content-faithfulness judge has rejected a task's
+	// declared files as placeholder across retries. When the
+	// counter reaches 2+, the harness escalates the repair
+	// prompt — verbatim SOW excerpt + explicit anti-barrel-
+	// file language + enumerated deliverables — instead of
+	// re-dispatching the same prompt that already failed
+	// twice. Prevents the T16-style loop observed on run 40
+	// where a worker produced the same barrel file 4+
+	// consecutive times.
+	ContentJudgeRejections map[string]int
+
 	// OnTaskAbandon is called when the decomposer returns Abandon=true
 	// for an individual task. The previous behavior was to print a
 	// "BLOCKED" line and silently move on — effectively shipping a
@@ -3477,10 +3489,20 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			}
 			fmt.Printf("    ⛔ task %s: content judge verdict FAKE — %s (file: %s). Overriding to incomplete.\n", originalTask.ID, truncateForLog(cj.Reason, 180), who)
 			verdict.Complete = false
+			// Track CONSECUTIVE content-judge rejections for
+			// this task across retries. After 2+, escalate
+			// the prompt: verbatim SOW excerpt + explicit
+			// anti-barrel-file + enumerated deliverables.
+			// Without this, run 40 observed the same task
+			// getting rejected 4+ times with the same
+			// reasoning because the retry prompt repeated
+			// the same guidance verbatim.
+			prev := cfg.ContentJudgeRejections[originalTask.ID]
+			cfg.ContentJudgeRejections[originalTask.ID] = prev + 1
 			judgeGap := fmt.Sprintf("content-faithfulness judge flagged declared file(s) as placeholder rather than real implementation: %s (file: %s). Rewrite with a real implementation of the task's required behavior per the SOW spec.", cj.Reason, who)
 			verdict.GapsFound = append([]string{judgeGap}, verdict.GapsFound...)
-			if strings.TrimSpace(verdict.FollowupDirective) == "" {
-				verdict.FollowupDirective = fmt.Sprintf("Rewrite the declared files with a real implementation of the task's required behavior. The current content reads as placeholder per the content-faithfulness judge: %s. Files: %s", cj.Reason, strings.Join(originalTask.Files, ", "))
+			if strings.TrimSpace(verdict.FollowupDirective) == "" || prev >= 1 {
+				verdict.FollowupDirective = buildHardContentRetryDirective(originalTask, cj, sowExcerpt, prev+1)
 			}
 		}
 	}
@@ -3998,6 +4020,77 @@ func runForcedDecomposition(ctx context.Context, sowDoc *plan.SOW, workingSessio
 		dispatched = true
 	}
 	return dispatched
+}
+
+// buildHardContentRetryDirective constructs an escalated
+// repair directive when the content-faithfulness judge has
+// rejected a task's output for the 2nd (or later) time with
+// the same "placeholder / barrel file" verdict. The escalated
+// directive is aggressively explicit about:
+//
+//   - the VERBATIM SOW excerpt for the task's scope
+//   - forbidden anti-patterns (barrel file + comment
+//     promising components "later", re-export of a single
+//     utility, file-exists-but-empty, mock returns)
+//   - the specific rejection count so the worker sees it's
+//     already failed twice and is expected to change tactics
+//
+// Run 40 hit this: T16 was rejected 4+ times with the same
+// barrel-file pattern because every retry used the same
+// soft directive. The escalated version forces a different
+// kind of prompt entry on the 2nd+ retry.
+func buildHardContentRetryDirective(task plan.Task, cj *plan.ContentJudgeVerdict, sowExcerpt string, rejectionCount int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "🚨 CONTENT-FAITHFULNESS REJECTION #%d — this task has now failed the content judge %d times. ", rejectionCount, rejectionCount)
+	b.WriteString("The previous attempts produced placeholder / barrel-file content that does NOT implement the SOW's declared behavior. ")
+	b.WriteString("Change tactics. Do NOT produce the same shape again.\n\n")
+
+	fmt.Fprintf(&b, "PRIOR JUDGE VERDICT: %s\n", strings.TrimSpace(cj.Reason))
+	if cj.FakeFile != "" {
+		fmt.Fprintf(&b, "FILE FLAGGED AS FAKE: %s\n", cj.FakeFile)
+	}
+	b.WriteString("\n")
+
+	b.WriteString("FORBIDDEN ANTI-PATTERNS (do not ship these):\n")
+	b.WriteString("  - Barrel files like `export { cn } from '...';` with a comment saying \"components will be added here later\".\n")
+	b.WriteString("  - Single re-export of a utility function pretending to be a component library.\n")
+	b.WriteString("  - TODO / FIXME / NotImplementedError / return null / return {} / throw new Error('not implemented') in any declared file.\n")
+	b.WriteString("  - Files that exist but are <10 lines or contain only imports / empty interfaces.\n")
+	b.WriteString("  - A config file alone (package.json / tsconfig.json / components.json) is NOT the deliverable — it's scaffolding. The deliverable is the LOGIC the SOW spec enumerates.\n")
+	b.WriteString("\n")
+
+	b.WriteString("MANDATORY: for each deliverable the SOW spec mentions by name, produce a DEDICATED FILE with real implementation. ")
+	b.WriteString("If the SOW says \"data table, date picker, multi-select, modal\", you must write data-table.tsx, date-picker.tsx, multi-select.tsx, modal.tsx each with working TSX / component code — not a single index.tsx with a comment.\n\n")
+
+	if task.Description != "" {
+		b.WriteString("TASK DESCRIPTION (verbatim):\n")
+		b.WriteString(strings.TrimSpace(task.Description))
+		b.WriteString("\n\n")
+	}
+	if len(task.Files) > 0 {
+		b.WriteString("DECLARED FILES (each must exist AND carry substantive implementation, not stubs):\n")
+		for _, f := range task.Files {
+			fmt.Fprintf(&b, "  - %s\n", f)
+		}
+		b.WriteString("\n")
+	}
+	if strings.TrimSpace(sowExcerpt) != "" {
+		// Cap to keep prompt reasonable but explicit.
+		excerpt := sowExcerpt
+		const cap = 4000
+		if len(excerpt) > cap {
+			excerpt = excerpt[:cap] + "\n... (excerpt truncated at " + strconv.Itoa(cap) + " chars)"
+		}
+		b.WriteString("SOW EXCERPT (verbatim — cross-reference this for the deliverable list):\n")
+		b.WriteString("---BEGIN SOW EXCERPT---\n")
+		b.WriteString(excerpt)
+		if !strings.HasSuffix(excerpt, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("---END SOW EXCERPT---\n\n")
+	}
+	b.WriteString("Produce real implementation this round. Running the acceptance command should show the substance, not just a successful build of empty scaffolding.\n")
+	return b.String()
 }
 
 // formatSingleACFailure builds a repair prompt block for exactly ONE

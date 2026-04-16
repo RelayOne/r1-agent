@@ -2309,6 +2309,7 @@ func sowCmd(args []string) {
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
+			ContentJudgeRejections: map[string]int{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling
 			// reviews short-circuit. Prevents the T6-style spiral
