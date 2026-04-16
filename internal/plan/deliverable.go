@@ -84,25 +84,32 @@ const (
 // least-specific so an item that matches multiple patterns
 // gets the sharpest kind assignment.
 var (
-	// "components (X, Y, Z)" with component-specific lead.
+	// Each "list" pattern supports BOTH paren-delimited
+	// ("components (X, Y, Z)") AND colon-delimited
+	// ("components: X, Y, Z") forms. Colon form closes at
+	// the first `.`, `;`, or end-of-line so the regex
+	// doesn't greedily swallow the next prose sentence.
 	componentListRe = regexp.MustCompile(
-		`(?i)(component|widget|control)s?\s*[:\(]\s*([^)]+)\)`)
+		`(?i)(component|widget|control)s?\s*(?:\(([^)]+)\)|:\s*([^.;\n]+))`)
 
-	// "tools (A, B, C)" or "APIs (A, B, C)".
 	toolListRe = regexp.MustCompile(
-		`(?i)(tool|utility|utilities|api|apis|helper|helpers)s?\s*[:\(]\s*([^)]+)\)`)
+		`(?i)(tool|utility|utilities|api|apis|helper|helpers)s?\s*(?:\(([^)]+)\)|:\s*([^.;\n]+))`)
 
-	// "types (A, B, C)".
 	typeListRe = regexp.MustCompile(
-		`(?i)(type|typedef|schema|interface)s?\s*[:\(]\s*([^)]+)\)`)
+		`(?i)(type|typedef|schema|interface)s?\s*(?:\(([^)]+)\)|:\s*([^.;\n]+))`)
 
-	// "including X, Y, and Z" or "such as X, Y".
+	// "including X, Y, and Z" / "such as X, Y".
+	// The item-body captures up to 2 words per list item
+	// (so "data table" survives but "handlers for session
+	// management" does not). Requires at least one comma
+	// to avoid matching "including login handling" as a
+	// single-item list with trailing prose.
 	inclusionRe = regexp.MustCompile(
-		`(?i)(?:including|such as|like)\s+((?:[a-z][a-z\-\s]*,\s*)+(?:and\s+)?[a-z][a-z\-\s]*)`)
+		`(?i)(?:including|such as|like)\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?){1,})`)
 
-	// "implement X, Y, and Z" — pattern for imperative lists.
+	// "implement X, Y, and Z" — imperative verbs.
 	implementListRe = regexp.MustCompile(
-		`(?i)(?:implement|provide|ship|deliver|expose)s?\s+((?:[a-z][a-z\-\s]*,\s*)+(?:and\s+)?[a-z][a-z\-\s]*)`)
+		`(?i)(?:implement|provide|ship|deliver|expose)s?\s+([a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?(?:\s*,\s*(?:and\s+)?[a-z][a-z\-]*(?:\s+[a-z][a-z\-]*)?){1,})`)
 )
 
 // ExtractDeliverables scans text (task description + SOW
@@ -117,10 +124,27 @@ func ExtractDeliverables(text string) []Deliverable {
 
 	addMatches := func(re *regexp.Regexp, kind DeliverableKind) {
 		for _, m := range re.FindAllStringSubmatch(text, -1) {
-			// Different regexes have different group shapes;
-			// take the LAST group as the list body so we
-			// handle both "kind: list" and "list only" shapes.
-			body := m[len(m)-1]
+			// Paren-form + colon-form share a regex via two
+			// alternative capture groups. Pick the first
+			// non-empty one as the list body; falls back to
+			// the last group for simple single-body regexes
+			// (inclusion / implement).
+			body := ""
+			for i := 1; i < len(m); i++ {
+				if strings.TrimSpace(m[i]) != "" {
+					body = m[i]
+					// For the branched "kind prefix + list"
+					// regexes, group 1 is the prefix — skip
+					// it when a later group has content.
+					if i == 1 && len(m) > 2 {
+						continue
+					}
+					break
+				}
+			}
+			if body == "" {
+				body = m[len(m)-1]
+			}
 			for _, name := range splitList(body) {
 				name = normalizeDeliverableName(name)
 				if !isValidDeliverable(name) {
@@ -251,12 +275,33 @@ func kindRank(k DeliverableKind) int {
 // RenderChecklist produces a prompt-ready checklist block
 // for the worker. Empty list → empty string so the caller
 // can skip injection when nothing was extractable.
+//
+// Wording is SHAPED BY KIND: component/type items typically
+// merit their own file; function/command/unknown items may
+// legitimately live together in a router or schema file.
+// The anti-barrel language only applies when most items are
+// component-class, so callers don't get told to split HTTP
+// methods (get/post/put/delete) into four separate files.
 func RenderChecklist(ds []Deliverable) string {
 	if len(ds) == 0 {
 		return ""
 	}
+	// Count component-class items to decide whether the
+	// per-file language is appropriate.
+	componentLike := 0
+	for _, d := range ds {
+		if d.Kind == KindComponent || d.Kind == KindType {
+			componentLike++
+		}
+	}
+	oneFilePerItem := componentLike*2 >= len(ds) // majority rule
+
 	var b strings.Builder
-	b.WriteString("MANDATORY DELIVERABLES (each must exist as a dedicated file with real implementation — NOT a single barrel file with a comment promising them later):\n")
+	if oneFilePerItem {
+		b.WriteString("MANDATORY DELIVERABLES (each must exist as a dedicated source file with real implementation — NOT a single barrel file with a comment promising them later):\n")
+	} else {
+		b.WriteString("MANDATORY DELIVERABLES (each must be implemented with real, working code — may share files where the SOW's shape suggests it, but all must exist):\n")
+	}
 	for i, d := range ds {
 		fmt.Fprintf(&b, "  %d. %s", i+1, d.Name)
 		if d.Kind != KindUnknown {
@@ -264,7 +309,12 @@ func RenderChecklist(ds []Deliverable) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("\nA single file that re-exports a stub or contains a comment like 'components will be added later' DOES NOT SATISFY this checklist. Each item above requires its own source file with working implementation code.\n")
+	b.WriteString("\n")
+	if oneFilePerItem {
+		b.WriteString("A single file that re-exports a stub or contains a comment like 'components will be added later' DOES NOT SATISFY this checklist. Each item above requires its own source file with working implementation code.\n")
+	} else {
+		b.WriteString("A barrel file that only re-exports a stub or contains placeholders does NOT SATISFY this checklist. Follow the SOW's specified file layout — one file per item when the spec implies that, or shared files when the spec shows them grouped (e.g. HTTP methods sharing a controller, types in one schema module).\n")
+	}
 	return b.String()
 }
 

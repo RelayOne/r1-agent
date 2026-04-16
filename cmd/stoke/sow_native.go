@@ -2032,20 +2032,35 @@ func containsExplicitStubMarkers(repoRoot string, t plan.Task) bool {
 }
 
 // findSuspiciouslySmallFiles returns declared files that
-// exist on disk but fall below plan.FileMinBytes. These
-// are typically barrel files like `export { cn } from '...'`
-// that satisfy file-exists checks but carry no substantive
-// implementation. Run 40 observed dozens of these. Skips
-// config-shaped file extensions (.json/.yaml/.toml/.md)
-// where tiny files are legitimate.
+// fall below plan.FileMinBytes AND are EXPECTED to carry
+// substantive implementation per the task's own shape.
 //
-// Returns (offending files, true) when any are too small;
-// (nil, false) when everything passes. The TSX/JSX/TS/JS
-// threshold is deliberately generous (256 bytes) so a
-// legitimate one-line prop-type file + exports doesn't
-// trip it, but a stub barrel with a comment trips reliably.
+// Philosophy: raw size alone isn't a reliable stub signal —
+// legitimate small files exist (barrel `index.ts`, thin
+// wrappers, `.d.ts` shims, short `Dockerfile`s, a single
+// re-export that's all the task asked for). This gate
+// ONLY fires when all three conditions hold:
+//
+//   1. The extension suggests source code with substantive
+//      logic — NOT .json/.yaml/.toml/.md/.d.ts/.gitignore/
+//      etc. Type-declaration shims (.d.ts) legitimately
+//      stay small.
+//   2. The BASENAME isn't a known barrel convention
+//      (index.*, mod.rs, lib.rs, main.rs, __init__.py,
+//      Dockerfile, Makefile). Those files legitimately
+//      re-export and stay small.
+//   3. The task declared MORE THAN ONE file. A single-file
+//      task that wrote a small file is plausibly a thin
+//      wrapper — the content judge handles that case. The
+//      multi-file-with-one-tiny-sibling pattern is the
+//      classic partial-stub shape run 40 repeatedly
+//      produced.
+//
+// Returns the offending files (empty slice when everything
+// passes). The content-judge LLM pass runs AFTER this for
+// the deeper check on edge cases this heuristic misses.
 func findSuspiciouslySmallFiles(repoRoot string, t plan.Task) []string {
-	if len(t.Files) == 0 {
+	if len(t.Files) <= 1 {
 		return nil
 	}
 	var small []string
@@ -2056,11 +2071,21 @@ func findSuspiciouslySmallFiles(repoRoot string, t plan.Task) []string {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(rel))
-		// Config / data / docs files legitimately can be
-		// small; don't flag them.
-		if ext == ".json" || ext == ".yaml" || ext == ".yml" ||
-			ext == ".toml" || ext == ".md" || ext == ".txt" ||
-			ext == ".env" || ext == ".gitignore" {
+		switch ext {
+		case ".json", ".yaml", ".yml", ".toml", ".md", ".txt",
+			".env", ".gitignore", ".editorconfig", ".npmrc",
+			".prettierrc", ".lock", ".log":
+			continue
+		}
+		// .d.ts type-declaration shims are legitimately small.
+		if strings.HasSuffix(strings.ToLower(rel), ".d.ts") {
+			continue
+		}
+		base := strings.ToLower(filepath.Base(rel))
+		switch base {
+		case "index.ts", "index.tsx", "index.js", "index.jsx",
+			"mod.rs", "main.rs", "lib.rs", "__init__.py",
+			"dockerfile", "makefile":
 			continue
 		}
 		if info.Size() < plan.FileMinBytes {
