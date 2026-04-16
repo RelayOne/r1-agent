@@ -22,6 +22,19 @@ import (
 type NodeID = string
 
 // Node is an immutable entry in the ledger graph.
+//
+// ParentHash links a new node to the SHA256 content hash
+// of the previous node in the same mission/stance context,
+// forming a Merkle chain per STOKE-002. Empty for:
+//   - the first node in a mission (no predecessor exists)
+//   - legacy nodes from before the Merkle-chain migration
+//     (the migration tool backfills ParentHash by walking
+//     creation-order within each mission context)
+//
+// New nodes written after the migration always set
+// ParentHash. Readers validate the chain by comparing each
+// node's ParentHash against the SHA256 hash of its
+// predecessor's canonical JSON.
 type Node struct {
 	ID            NodeID          `json:"id"`
 	Type          string          `json:"type"`
@@ -30,6 +43,7 @@ type Node struct {
 	CreatedBy     string          `json:"created_by"`
 	MissionID     string          `json:"mission_id,omitempty"`
 	Content       json.RawMessage `json:"content"`
+	ParentHash    string          `json:"parent_hash,omitempty"`
 }
 
 // EdgeType defines the relationship between two nodes.
@@ -167,10 +181,23 @@ func (l *Ledger) AddNode(_ context.Context, node Node) (NodeID, error) {
 		node.CreatedAt = time.Now().UTC()
 	}
 
-	node.ID = computeID(node)
-
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// STOKE-002 Merkle-chain linkage: if the caller didn't
+	// supply a ParentHash, auto-fill it with the SHA256 of
+	// the most recent node in the same mission context.
+	// First-in-mission nodes legitimately have no
+	// predecessor, so ParentHash stays empty.
+	if node.ParentHash == "" {
+		if prev := l.latestInMissionUnlocked(node.MissionID); prev != nil {
+			if h, err := hashNodeForChain(*prev); err == nil {
+				node.ParentHash = h
+			}
+		}
+	}
+
+	node.ID = computeID(node)
 
 	if err := l.store.WriteNode(node); err != nil {
 		return "", fmt.Errorf("ledger: write node: %w", err)
@@ -179,6 +206,42 @@ func (l *Ledger) AddNode(_ context.Context, node Node) (NodeID, error) {
 		return "", fmt.Errorf("ledger: index node: %w", err)
 	}
 	return node.ID, nil
+}
+
+// latestInMissionUnlocked returns the most-recently-created
+// node in the mission, or nil when none exist. Caller must
+// hold l.mu. Uses the index's QueryNodes + resolveUnlocked
+// chain so we don't scan the store from disk on every
+// AddNode call.
+func (l *Ledger) latestInMissionUnlocked(missionID string) *Node {
+	ids, err := l.index.QueryNodes(QueryFilter{MissionID: missionID})
+	if err != nil || len(ids) == 0 {
+		return nil
+	}
+	var latest *Node
+	for _, id := range ids {
+		n, err := l.resolveUnlocked(id)
+		if err != nil || n == nil {
+			continue
+		}
+		if n.MissionID != missionID {
+			continue
+		}
+		if latest == nil || n.CreatedAt.After(latest.CreatedAt) {
+			latest = n
+		}
+	}
+	return latest
+}
+
+// hashNodeForChain matches the migration tool's hashNode:
+// canonical JSON with ParentHash stripped, SHA256, hex.
+// Kept here (rather than imported from migrate.go) so
+// AddNode doesn't pull the migration package into the hot
+// path — in Go both functions in the same package resolve
+// directly without import cost.
+func hashNodeForChain(n Node) (string, error) {
+	return hashNode(n)
 }
 
 // AddEdge attaches a new edge between two existing nodes.
