@@ -707,9 +707,30 @@ func RefineSOWChunked(original *SOW, crit *SOWCritique, prov provider.Provider, 
 	}
 
 	// Deep-copy the original so we don't mutate caller state if a
-	// per-session call fails midway.
+	// per-session call fails midway. The outer Sessions slice is
+	// copied, and every NESTED slice (Tasks, AcceptanceCriteria,
+	// Inputs, Outputs, InfraNeeded, per-Task Dependencies/Files/
+	// Verification) is also copied so downstream cleanup passes
+	// that mutate refined.Sessions[i].Tasks[j].Dependencies don't
+	// reach into the caller's original SOW.
 	refined := *original
-	refined.Sessions = append([]Session(nil), original.Sessions...)
+	refined.Sessions = make([]Session, len(original.Sessions))
+	for i, s := range original.Sessions {
+		cs := s
+		cs.Tasks = make([]Task, len(s.Tasks))
+		for j, t := range s.Tasks {
+			ct := t
+			ct.Dependencies = append([]string(nil), t.Dependencies...)
+			ct.Files = append([]string(nil), t.Files...)
+			ct.Verification = append([]string(nil), t.Verification...)
+			cs.Tasks[j] = ct
+		}
+		cs.AcceptanceCriteria = append([]AcceptanceCriterion(nil), s.AcceptanceCriteria...)
+		cs.Inputs = append([]string(nil), s.Inputs...)
+		cs.Outputs = append([]string(nil), s.Outputs...)
+		cs.InfraNeeded = append([]string(nil), s.InfraNeeded...)
+		refined.Sessions[i] = cs
+	}
 
 	// Identify sessions that need refine: those with session-specific
 	// issues. When there are ZERO session-specific issues but global
