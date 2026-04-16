@@ -16,6 +16,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -315,7 +316,12 @@ func patternCheck(rule Rule, file, content string) []Finding {
 }
 
 var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(api[_-]?key|secret[_-]?key|password|token)\s*[:=]\s*["'][^"']{8,}["']`),
+	// Assignment operators: `=`, `:=`, `:`. Previous regex
+	// only caught `=` / `:`; Go short-declaration `:=` slipped
+	// through, so `apiKey := "ghp_.........."` wasn't flagged
+	// even though the tagged OpenAI/GitHub patterns below
+	// would still match that specific token.
+	regexp.MustCompile(`(?i)(api[_-]?key|secret[_-]?key|password|token)\s*(?::=|:|=)\s*["'][^"']{8,}["']`),
 	regexp.MustCompile(`(?i)AKIA[0-9A-Z]{16}`),                            // AWS access key
 	regexp.MustCompile(`sk-[a-zA-Z0-9]{20,}`),                             // OpenAI key
 	regexp.MustCompile(`ghp_[a-zA-Z0-9]{36}`),                             // GitHub token
@@ -373,7 +379,12 @@ func checkDebugPrints(file, content string) []Finding {
 }
 
 func checkPanics(file, content string) []Finding {
-	if strings.HasSuffix(file, "_test.go") || strings.HasSuffix(file, "main.go") {
+	// Exact-basename check so files like domain.go and
+	// subdomain.go aren't exempted by the previous broader
+	// HasSuffix("main.go") match, which let real library
+	// panics slip through in those filenames.
+	base := filepath.Base(file)
+	if strings.HasSuffix(file, "_test.go") || base == "main.go" {
 		return nil
 	}
 
@@ -396,7 +407,15 @@ func checkPanics(file, content string) []Finding {
 	return findings
 }
 
-var uncheckedErrRe = regexp.MustCompile(`^\s*[a-zA-Z_]\w*\.(Close|Write|Read|Flush)\(\)$`)
+// uncheckedErrRe matches bare receiver.Method(...) calls
+// for commonly-error-returning I/O methods on a statement
+// line. Previously this only matched zero-arg calls like
+// `f.Close()`, so `dst.Write(buf)` and `enc.Encode(x)`
+// slipped through. Now matches any arg list (balanced
+// parens) followed by end-of-line, and expands the method
+// set to include the rest of the io.Writer/Reader/Closer +
+// json.Encoder/Decoder surface the codebase uses.
+var uncheckedErrRe = regexp.MustCompile(`^\s*[a-zA-Z_]\w*\.(Close|Write|WriteString|Read|ReadAll|Flush|Sync|Encode|Decode)\([^)]*\)$`)
 
 func checkUncheckedErrors(file, content string) []Finding {
 	if !strings.HasSuffix(file, ".go") {

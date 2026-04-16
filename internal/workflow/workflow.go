@@ -416,6 +416,13 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 	planResult, err := planEngine.Run(execCtx, planSpec, e.OnEvent)
 	if err != nil {
 		_ = e.advanceState(taskstate.Failed, "plan phase failed: "+err.Error())
+		// Clean up the prepared worktree so failed-plan runs
+		// don't leak .stoke/worktrees/<name> directories + git
+		// worktree metadata. Other error paths in this function
+		// already do this; the plan-phase path missed it.
+		if !e.DryRun && e.Worktrees != nil {
+			e.Worktrees.Cleanup(ctx, handle)
+		}
 		return result, fmt.Errorf("plan phase: %w", err)
 	}
 	result.Steps = append(result.Steps, StepResult{Phase: "plan", Engine: planRunner, Command: planResult.Prepared})
