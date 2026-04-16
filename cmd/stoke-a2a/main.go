@@ -28,11 +28,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ericmacdougall/stoke/internal/a2a"
 )
@@ -65,19 +69,20 @@ func main() {
 	fmt.Fprintf(os.Stderr, "stoke-a2a: listening on %s (capabilities=%d, auth=%t)\n",
 		addr, len(caps), token != "")
 
-	// Graceful shutdown on SIGINT/SIGTERM so container
-	// orchestrators get a clean exit code instead of a
-	// SIGKILL-style abort. ListenAndServe blocks; the
-	// signal handler calls os.Exit so operators see the
-	// sidelong log entry.
+	// Own the http.Server directly so SIGINT/SIGTERM can
+	// trigger a graceful Shutdown (drain in-flight requests)
+	// instead of killing the process mid-response.
+	hs := &http.Server{Addr: addr, Handler: srv.Handler()}
 	go func() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
-		fmt.Fprintln(os.Stderr, "stoke-a2a: shutdown signal, exiting")
-		os.Exit(0)
+		fmt.Fprintln(os.Stderr, "stoke-a2a: shutdown signal, draining")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(shutCtx)
 	}()
-	if err := srv.ListenAndServe(addr); err != nil {
+	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintln(os.Stderr, "stoke-a2a:", err)
 		os.Exit(1)
 	}

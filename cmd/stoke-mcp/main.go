@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -129,7 +130,23 @@ func (s *Server) serve(in io.Reader) error {
 		}
 		s.dispatch(ctx, req)
 	}
-	return scanner.Err()
+	// Oversize-request handling: bufio.Scanner returns
+	// bufio.ErrTooLong if a single line exceeds the 16 MiB
+	// buffer cap. Previously that tore the whole server
+	// down — a single malformed or inflated request killed
+	// every subsequent tool call. Instead emit an RPC error
+	// for the bad input and keep serving.
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			s.respondErr(nil, errInvalidReq, "request exceeds 16 MiB line limit", nil)
+			// Continue serving by re-entering the loop with
+			// a fresh scanner — the underlying reader is
+			// still live after ErrTooLong.
+			return s.serve(in)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Server) dispatch(ctx context.Context, req rpcRequest) {

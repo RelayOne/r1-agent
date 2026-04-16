@@ -282,8 +282,30 @@ func DetectContradictions(ctx context.Context, router *Router, tier Tier, incomi
 		return nil
 	}
 	if len(incoming.Tags) == 0 {
-		if err := queryOne(incoming.Content); err != nil {
-			return nil, err
+		// No tags → we can't pre-filter on Tags, so query on
+		// the individual content tokens instead of the full
+		// sentence. Backends treating Query.Text as a literal
+		// match (InMemoryStorage, tag-based indexes) would miss
+		// obvious contradictions like "JWT tokens expire after
+		// 15 minutes" vs "JWT tokens do NOT expire after 15
+		// minutes" because the full-sentence key never matches.
+		// Union across top-k tokens by content-length so the
+		// most-discriminative tokens are tried first.
+		tokens := extractContentTokens(incoming.Content)
+		if len(tokens) == 0 {
+			// Fallback: the content had no indexable tokens
+			// (all-punctuation or stopword-only). Use the raw
+			// content as a last-resort literal key so callers
+			// with text-search backends still see candidates.
+			if err := queryOne(incoming.Content); err != nil {
+				return nil, err
+			}
+		} else {
+			for t := range tokens {
+				if err := queryOne(t); err != nil {
+					return nil, err
+				}
+			}
 		}
 	} else {
 		for _, tag := range incoming.Tags {

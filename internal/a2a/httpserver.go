@@ -133,46 +133,79 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Decode into a map first so we can detect whether `id`
+	// was actually present (JSON-RPC notifications have no
+	// id and MUST NOT receive a response).
+	var raw map[string]json.RawMessage
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&raw); err != nil {
+		writeRPCError(w, nil, RPCParseError, "parse error: "+err.Error())
+		return
+	}
+	// Reject trailing tokens after the first JSON value so
+	// garbage like `{...}junk` can't slip through as a valid
+	// request.
+	if dec.More() {
+		writeRPCError(w, nil, RPCParseError, "trailing content after JSON request")
+		return
+	}
 	var req struct {
 		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id,omitempty"`
 		Method  string          `json:"method"`
 		Params  json.RawMessage `json:"params,omitempty"`
 	}
-	dec := json.NewDecoder(r.Body)
-	if err := dec.Decode(&req); err != nil {
-		writeRPCError(w, nil, RPCParseError, "parse error: "+err.Error())
-		return
+	// Re-marshal/unmarshal through the typed struct for
+	// type-strictness on known fields.
+	if b, _ := json.Marshal(raw); len(b) > 0 {
+		_ = json.Unmarshal(b, &req)
 	}
+	_, hasID := raw["id"]
 	if req.JSONRPC != "2.0" {
-		writeRPCError(w, req.ID, RPCInvalidRequest, "jsonrpc must be 2.0")
+		if hasID {
+			writeRPCError(w, req.ID, RPCInvalidRequest, "jsonrpc must be 2.0")
+		}
 		return
 	}
 	ctx := r.Context()
+	// writeOK / writeErr are scoped so notifications (no id)
+	// produce NO response, per JSON-RPC 2.0.
+	writeOK := func(result any) {
+		if !hasID {
+			return
+		}
+		writeRPCResult(w, req.ID, result)
+	}
+	writeErr := func(code int, msg string) {
+		if !hasID {
+			return
+		}
+		writeRPCError(w, req.ID, code, msg)
+	}
 	switch req.Method {
 	case "a2a.task.submit":
 		t, err := HandleSubmit(ctx, s.store, req.Params)
 		if err != nil {
-			writeRPCError(w, req.ID, RPCInvalidParams, err.Error())
+			writeErr(RPCInvalidParams, err.Error())
 			return
 		}
-		writeRPCResult(w, req.ID, t)
+		writeOK(t)
 	case "a2a.task.status":
 		t, err := HandleStatus(ctx, s.store, req.Params)
 		if err != nil {
-			writeRPCError(w, req.ID, RPCInvalidParams, err.Error())
+			writeErr(RPCInvalidParams, err.Error())
 			return
 		}
-		writeRPCResult(w, req.ID, t)
+		writeOK(t)
 	case "a2a.task.cancel":
 		t, err := HandleCancel(ctx, s.store, req.Params)
 		if err != nil {
-			writeRPCError(w, req.ID, RPCInvalidParams, err.Error())
+			writeErr(RPCInvalidParams, err.Error())
 			return
 		}
-		writeRPCResult(w, req.ID, t)
+		writeOK(t)
 	default:
-		writeRPCError(w, req.ID, RPCMethodNotFound, "unknown method: "+req.Method)
+		writeErr(RPCMethodNotFound, "unknown method: "+req.Method)
 	}
 }
 

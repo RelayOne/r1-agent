@@ -161,6 +161,16 @@ func Build(opts Options) AgentCard {
 	if len(opts.DefaultOutputModes) == 0 {
 		opts.DefaultOutputModes = []string{"text/plain", "application/json"}
 	}
+	// A2A spec requires `capabilities` to be an array. A nil
+	// slice marshals to `"capabilities": null`, which strict
+	// consumers reject — and the standalone stoke-a2a binary
+	// leaves the slice nil when STOKE_A2A_CAPABILITIES is
+	// unset. Normalize to empty slice so the wire shape is
+	// always `[]`.
+	caps := opts.Capabilities
+	if caps == nil {
+		caps = []CapabilityRef{}
+	}
 	return AgentCard{
 		ProtocolVersion:    ProtocolVersion,
 		Name:               opts.Name,
@@ -169,7 +179,7 @@ func Build(opts Options) AgentCard {
 		URL:                opts.URL,
 		Provider:           opts.Provider,
 		Identity:           opts.Identity,
-		Capabilities:       opts.Capabilities,
+		Capabilities:       caps,
 		Skills:             opts.Skills,
 		Endpoints:          opts.Endpoints,
 		DefaultInputModes:  opts.DefaultInputModes,
