@@ -371,11 +371,25 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 				}
 			}
 			fmt.Print(FormatApprovalVerdict(verdict))
-			// reject is terminal — reviewer says the SOW is structurally
-			// unfit and no refinement will recover it.
+			// reject — reviewer says the SOW is structurally broken.
+			// BUT: the concerns often have actionable fix directives
+			// ("merge S3+S21", "change S37 path"). Attempt ONE refine
+			// pass before halting. If re-review still rejects after
+			// refine, THEN it's terminal. This closes the gap where
+			// run 39's reviewer produced 12 fixable concerns but we
+			// bailed instantly without trying.
 			if verdict.Decision == "reject" {
-				return out, nil, &TerminalApprovalError{
-					Reason: fmt.Sprintf("final plan approval: reject — %d concern(s); SOW not fit for dispatch", len(verdict.Concerns)),
+				if round < maxRefineRounds {
+					fmt.Printf("  🔁 reject-repair round %d: attempting refine on %d concern(s) before giving up\n", round+1, len(verdict.Concerns))
+					// Let the refine loop handle this — fall through to
+					// the refine block below. The "reject" decision
+					// doesn't short-circuit anymore on the FIRST round;
+					// if refine can't fix it, the re-review will reject
+					// again and we'll halt on the SECOND round.
+				} else {
+					return out, nil, &TerminalApprovalError{
+						Reason: fmt.Sprintf("final plan approval: reject after %d refine attempt(s) — %d concern(s); SOW not fit for dispatch", round, len(verdict.Concerns)),
+					}
 				}
 			}
 			// Defense-in-depth against inconsistent model output: an
@@ -1190,9 +1204,11 @@ Output ONLY the JSON object below — no prose, no markdown fences. Start with '
 RULES:
 1. Only flag deliverables the prose EXPLICITLY describes. Don't invent scope.
 2. If the existing session list covers every deliverable, emit {"missing": []}.
-3. Descriptions in 'missing' should reference prose verbatim where possible so the next expansion pass knows what to generate.
-4. Keep the session.outputs terse (2-4 words); they form the DAG edges.
-5. The "id" MUST be a plain identifier matching the regex ^S\d+(-[a-z0-9-]+)?$ — examples: "S23", "S24-shared", "S99". Do NOT include prose, hyphens-with-spaces, parentheticals, or any other text in the id field. Use the next unused integer after the highest existing S<number> in the session list above.
+3. CRITICAL: Before adding a session, verify that NO existing session already covers the same deliverable — even partially, under a different title, or with different file paths. If an existing session covers 60%+ of a deliverable, it is NOT missing. Example: if S3 already implements "auth login flow", do NOT add a new session for "authentication and login". This is the #1 source of scope duplication and structural failure in the merged SOW.
+4. Maximum 3 sessions per response. If you believe more than 3 are genuinely missing, list only the 3 most critical. The next coverage round will catch the rest.
+5. Descriptions in 'missing' should reference prose verbatim where possible so the next expansion pass knows what to generate.
+6. Keep the session.outputs terse (2-4 words); they form the DAG edges.
+7. The "id" MUST be a plain identifier matching the regex ^S\d+(-[a-z0-9-]+)?$ — examples: "S23", "S24-shared", "S99". Do NOT include prose, hyphens-with-spaces, parentheticals, or any other text in the id field. Use the next unused integer after the highest existing S<number> in the session list above.
 
 EXISTING SESSION LIST (id, title, description, outputs):
 `
@@ -1241,6 +1257,17 @@ func reviewCoverageAndPatch(ctx context.Context, prose string, sow *SOW, prov pr
 	}
 	if len(verdict.Missing) == 0 {
 		return 0, nil
+	}
+	// Hard cap: even if the model lists 15 missing sessions
+	// (ignoring the "max 3" prompt rule), we only process the first
+	// 3 per round. Remaining genuine gaps will be caught in the next
+	// coverage iteration. This prevents the scope-balloon effect
+	// (run 39: 20→33→38 sessions → reject) where each round's
+	// additions duplicate existing scope.
+	const maxCoveragePerRound = 3
+	if len(verdict.Missing) > maxCoveragePerRound {
+		fmt.Printf("     ⚠ coverage reviewer flagged %d missing session(s); capping at %d per round\n", len(verdict.Missing), maxCoveragePerRound)
+		verdict.Missing = verdict.Missing[:maxCoveragePerRound]
 	}
 	// Expand each missing session stub to full tasks + ACs using
 	// the existing per-session expander. Drop on failure rather
