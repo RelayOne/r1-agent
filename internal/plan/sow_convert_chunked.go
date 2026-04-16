@@ -484,12 +484,22 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 			// into a pass-by-default manual check). We do NOT run
 			// autoCleanTaskDeps here because it can delete a task
 			// whose description was cleared. Instead, we run only
-			// the structural-only helper (autoAddMissingInfra) and
-			// pre-check that no AC has lost its description or its
-			// verifier — those are gate-weakening regressions that
-			// must reject the refinement and fall through to the
-			// legacy critique path.
+			// structural-only helpers (autoAddMissingInfra +
+			// autoDeduplicateTaskIDs) and pre-check that no AC
+			// has lost its description or its verifier — those
+			// are gate-weakening regressions that must reject
+			// the refinement and fall through to the legacy
+			// critique path.
+			//
+			// autoDeduplicateTaskIDs is safe on the strict path:
+			// renaming a collided ID doesn't weaken a gate, and
+			// without it the refiner's per-session counter bug
+			// (observed run 41) would bounce every refinement
+			// into "preserving previous SOW" and leave the plan
+			// stuck with the concerns that triggered refine in
+			// the first place.
 			autoAddMissingInfra(refined)
+			autoDeduplicateTaskIDs(refined)
 			if reason := refineGateRegressions(out, refined); reason != "" {
 				fmt.Printf("  ⚠ refine weakens an acceptance gate — preserving previous SOW: %s\n", reason)
 				break

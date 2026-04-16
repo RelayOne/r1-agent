@@ -288,6 +288,13 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	// oversight in the refined output (single missing stack entry)
 	// would nuke the entire refinement pass.
 	autoAddMissingInfra(refined)
+	// Task-ID uniqueness: refine passes occasionally emit the same
+	// task ID in two sessions (counter reset bug in the refiner's
+	// session-by-session rewrite). ValidateSOW rejects any SOW with
+	// duplicates, which nuked the whole refinement pass. Deduplicate
+	// BEFORE the dep-cleanup so intra-session dep references get
+	// rewritten to the renamed IDs rather than dropped.
+	autoDeduplicateTaskIDs(refined)
 	// Dependency cleanup: drop any task.Dependencies entry pointing at
 	// a task ID that no longer exists in the refined SOW. Refinement
 	// can collapse/rename tasks without updating every downstream
@@ -351,6 +358,76 @@ func autoAddMissingInfra(sow *SOW) {
 // Mutation is in place on the passed SOW.
 func autoCleanTaskDeps(sow *SOW) {
 	_ = CleanTaskDependencies(sow)
+}
+
+// autoDeduplicateTaskIDs ensures every task ID is unique across the
+// whole SOW. The refiner occasionally emits the same counter-style ID
+// (T398, T399, ...) in two sessions because its per-session rewrite
+// loses track of the global namespace. ValidateSOW rejects any such
+// duplicate outright, which previously nuked the entire refinement
+// pass and left the planner stuck in a refine loop (run 41 symptom).
+//
+// Rename strategy:
+//   - First occurrence of an ID wins (kept as-is).
+//   - Subsequent occurrences are renamed to `<origID>-<sessionID>`
+//     (lowercased), e.g. T398 in S5 becomes T398-s5.
+//   - If that suffix is also taken (very rare), append a numeric
+//     disambiguator: T398-s5-2, T398-s5-3, etc.
+//   - Every task.Dependencies entry in the SAME session that
+//     referred to the old ID is rewritten to the new ID — so
+//     intra-session deps stay wired.
+//   - Cross-session deps pointing at the old ID are NOT rewritten
+//     (we can't tell which copy the dep meant). autoCleanTaskDeps
+//     will drop any that no longer resolve, which preserves
+//     per-session progress and falls through to the scheduler's
+//     own retry path if the lost dep matters.
+//
+// Mutation is in place on the passed SOW.
+func autoDeduplicateTaskIDs(sow *SOW) {
+	if sow == nil {
+		return
+	}
+	seen := map[string]bool{}
+	for si := range sow.Sessions {
+		s := &sow.Sessions[si]
+		sessLower := strings.ToLower(strings.TrimSpace(s.ID))
+		if sessLower == "" {
+			sessLower = fmt.Sprintf("sess%d", si)
+		}
+		// renames within this session's dep graph — applied after
+		// the rename loop so we don't rewrite a dep to a new ID
+		// that collides with yet-to-be-renamed downstream ID.
+		renames := map[string]string{}
+		for ti := range s.Tasks {
+			t := &s.Tasks[ti]
+			orig := strings.TrimSpace(t.ID)
+			if orig == "" {
+				continue
+			}
+			if !seen[orig] {
+				seen[orig] = true
+				continue
+			}
+			candidate := orig + "-" + sessLower
+			for n := 2; seen[candidate]; n++ {
+				candidate = fmt.Sprintf("%s-%s-%d", orig, sessLower, n)
+			}
+			renames[orig] = candidate
+			t.ID = candidate
+			seen[candidate] = true
+		}
+		if len(renames) == 0 {
+			continue
+		}
+		for ti := range s.Tasks {
+			deps := s.Tasks[ti].Dependencies
+			for i, d := range deps {
+				if nd, ok := renames[strings.TrimSpace(d)]; ok {
+					deps[i] = nd
+				}
+			}
+		}
+	}
 }
 
 // DroppedDep describes one auto-repair action performed on a SOW:
@@ -638,6 +715,7 @@ func RefineSOWChunked(original *SOW, crit *SOWCritique, prov provider.Provider, 
 	// ValidateSOW chain so chunked + monolith produce the same
 	// downstream shape.
 	autoAddMissingInfra(&refined)
+	autoDeduplicateTaskIDs(&refined)
 	autoCleanTaskDeps(&refined)
 	autoFillMissingACFields(&refined)
 	if errs := ValidateSOW(&refined); len(errs) > 0 {
