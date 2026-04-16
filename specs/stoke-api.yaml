@@ -1,0 +1,262 @@
+openapi: 3.1.0
+info:
+  title: Stoke Platform API
+  description: |
+    Normative specification for the Stoke platform surface.
+    Two transports expose this surface today:
+
+      - `stoke-mcp` (MCP over JSON-RPC stdio) — the primary
+        consumer surface for editor + framework integrations.
+      - The HTTP API shown below — reserved for future
+        programmatic access when the MCP transport isn't
+        suitable (no stdin, batch workloads, etc.).
+
+    SDKs for Python / TypeScript / Go are generated from this
+    spec via Stainless; framework wrappers (@stoke/langgraph,
+    @stoke/ai-sdk, @stoke/crewai) are thin adapters over the
+    generated SDKs.
+  version: 0.1.0
+  contact:
+    name: Stoke maintainers
+    url: https://github.com/ericmacdougall/Stoke
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://stoke.local
+    description: Local self-hosted (Mode 1)
+  - url: https://api.stoke.dev
+    description: Managed cloud (opt-in, per STEWARDSHIP.md)
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /v1/invoke:
+    post:
+      summary: Invoke a registered capability
+      description: |
+        Dispatches to a tool / skill / hired agent registered in the
+        Stoke capability manifest. Input is validated against the
+        capability's declared input schema before dispatch.
+      operationId: invoke
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvokeRequest'
+      responses:
+        '200':
+          description: Capability completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvokeResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/verify:
+    post:
+      summary: Run a structured verification rubric
+      description: |
+        Evaluates an artifact against the rubric registered for the
+        declared task class. Each criterion is evaluated in a
+        separate LLM call; failures surface per-criterion, not as a
+        composite score only.
+      operationId: verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '200':
+          description: Verification complete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/audit:
+    post:
+      summary: Write an audit entry to the ledger
+      description: |
+        Records an action + evidence references as a content-
+        addressed ledger node. Returns the node ID.
+      operationId: audit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditRequest'
+      responses:
+        '200':
+          description: Audit entry written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/delegations:
+    post:
+      summary: Create a delegation token
+      description: |
+        Issues a delegation via the TrustPlane SDK. Scopes are
+        derived from a named Cedar bundle (read-only-calendar,
+        send-on-behalf-of, etc.) plus any caller-supplied extras.
+      operationId: delegate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegateRequest'
+      responses:
+        '200':
+          description: Delegation issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegateResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Stoke-Api-Key
+
+  schemas:
+    InvokeRequest:
+      type: object
+      required: [capability, input]
+      properties:
+        capability:
+          type: string
+          description: Capability name as registered in skillmfr
+        input:
+          type: object
+          additionalProperties: true
+          description: Capability-specific input matching its declared schema
+        delegation_id:
+          type: string
+          description: Optional delegation token authorizing this invocation
+
+    InvokeResponse:
+      type: object
+      required: [output]
+      properties:
+        output:
+          type: object
+          additionalProperties: true
+        audit_node_id:
+          type: string
+          description: Ledger node ID recording the invocation
+
+    VerifyRequest:
+      type: object
+      required: [task_class, subject]
+      properties:
+        task_class:
+          type: string
+          enum: [code, research, writing, scheduling]
+        subject:
+          type: string
+          description: Artifact to be verified
+
+    VerifyResponse:
+      type: object
+      properties:
+        passed:
+          type: boolean
+        weighted_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        outcomes:
+          type: array
+          items:
+            type: object
+            properties:
+              criterion_id: { type: string }
+              score:        { type: number }
+              passed:       { type: boolean }
+              explanation:  { type: string }
+
+    AuditRequest:
+      type: object
+      required: [action]
+      properties:
+        action:       { type: string }
+        evidence_refs:
+          type: array
+          items: { type: string }
+        subject_ref:  { type: string }
+
+    AuditResponse:
+      type: object
+      required: [node_id]
+      properties:
+        node_id: { type: string }
+
+    DelegateRequest:
+      type: object
+      required: [to_did, bundle_name]
+      properties:
+        to_did:         { type: string }
+        bundle_name:    { type: string }
+        extra_scopes:
+          type: array
+          items: { type: string }
+        expiry_seconds:
+          type: integer
+          minimum: 1
+          default: 3600
+
+    DelegateResponse:
+      type: object
+      required: [delegation_id]
+      properties:
+        delegation_id: { type: string }
+        to_did:        { type: string }
+        bundle_name:   { type: string }
+        expires_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: API key missing or invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Policy denied
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
