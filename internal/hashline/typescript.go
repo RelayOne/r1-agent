@@ -95,117 +95,32 @@ func TagFileForPath(path string) (*TaggedFile, error) {
 	return tf, nil
 }
 
-// tsNormalizeLine trims and collapses a TS/JS source line while
-// preserving string literal contents verbatim. Applied before
-// hashing so formatter-only edits (adding / removing optional
-// trailing semicolons, collapsing double spaces, trimming
-// end-of-line whitespace) don't perturb the line's hash.
+// tsNormalizeLine normalizes a TS/JS source line before hashing.
+// Scope: ONLY trailing-whitespace trim. Anything more aggressive
+// introduces false-equal hashes:
 //
-// What's normalized:
-//   - Trailing whitespace removed.
-//   - Runs of 2+ spaces OUTSIDE strings collapsed to single space.
-//     Leading indentation is NOT collapsed (preserves column-sensitive
-//     diff tooling and reads).
-//   - A single trailing semicolon (outside a string) is stripped.
-//     This is the main semi-vs-no-semi drift source on Prettier-
-//     formatted projects.
+//   - Collapsing internal spaces inside multi-line template
+//     literals (SQL/HTML/GraphQL templates) would equate
+//     "  select  *" with "  select *" even though both are
+//     string data with different rendered output.
+//   - Collapsing inside regex literals (`/a  b/`) changes what
+//     the regex matches.
+//   - Collapsing inside JSX text (`<pre>a  b</pre>`) changes
+//     what the browser renders.
+//   - Stripping a trailing `;` collapses empty statements like
+//     `while (ready);` with `while (ready)` — different control
+//     flow.
 //
-// What's NOT normalized (deliberately):
-//   - Quote style (single ↔ double). Prettier projects typically
-//     enforce one; normalizing would mask real edits that switch
-//     quote style for a reason (e.g., JSX attribute values).
-//   - Trailing commas in arrays / objects. Can be load-bearing
-//     for some bundler configs.
-//   - Indent character / width. Changing tabs↔spaces is a real
-//     edit operators should see.
-//   - JSX content. Whitespace inside JSX text is often meaningful
-//     (e.g., the space between {foo}{bar} controls rendering).
+// All of those would silently lose edits that
+// ComputeTagForPath/TagFileForPath is supposed to detect. An
+// accurate broader normalization requires a real JS parser;
+// until Stoke ships one (or shells out to Prettier --check),
+// trailing-whitespace trim is the safe subset.
 //
-// Implementation is a small state machine so string / template
-// contents skip the collapse pass cleanly. Backslash escapes
-// inside strings are honored (so `\"` inside a double-quoted
-// string doesn't end the string).
+// Trailing-whitespace trim alone still catches the most common
+// formatter-only churn source: editors that strip end-of-line
+// whitespace on save (a near-universal default) would otherwise
+// re-hash every unchanged line on any touched file.
 func tsNormalizeLine(line string) string {
-	line = strings.TrimRight(line, " \t\r\n")
-
-	// If the entire line is just whitespace, trimming already
-	// produced "". Bail before the state machine to avoid any
-	// subtle empty-string branching.
-	if line == "" {
-		return line
-	}
-
-	// First pass: collapse runs of 2+ internal spaces outside
-	// strings. Preserve leading indentation by scanning past it
-	// before entering the state machine.
-	indentEnd := 0
-	for indentEnd < len(line) {
-		c := line[indentEnd]
-		if c != ' ' && c != '\t' {
-			break
-		}
-		indentEnd++
-	}
-	indent := line[:indentEnd]
-	body := line[indentEnd:]
-
-	var out strings.Builder
-	out.Grow(len(body))
-	out.WriteString(indent)
-
-	inStr := byte(0) // 0 when outside string, else opening quote char
-	escape := false
-	prevSpace := false
-	for i := 0; i < len(body); i++ {
-		c := body[i]
-		if inStr != 0 {
-			out.WriteByte(c)
-			if escape {
-				escape = false
-				continue
-			}
-			if c == '\\' {
-				escape = true
-				continue
-			}
-			if c == inStr {
-				inStr = 0
-			}
-			prevSpace = false
-			continue
-		}
-		switch c {
-		case '"', '\'', '`':
-			inStr = c
-			out.WriteByte(c)
-			prevSpace = false
-			continue
-		case ' ':
-			if prevSpace {
-				continue // drop collapsed duplicate
-			}
-			prevSpace = true
-			out.WriteByte(c)
-			continue
-		default:
-			prevSpace = false
-			out.WriteByte(c)
-		}
-	}
-
-	normalized := out.String()
-
-	// Second pass: strip a single trailing semicolon outside a
-	// string. We can reuse the state tracked above; after the
-	// loop if inStr != 0 the line is an unterminated string
-	// literal (common on template-string continuation lines),
-	// and the ; we might see is inside the string — leave it.
-	if inStr == 0 && strings.HasSuffix(normalized, ";") {
-		normalized = normalized[:len(normalized)-1]
-		// Re-trim whitespace that may now be trailing (e.g.
-		// "foo ;" -> "foo ").
-		normalized = strings.TrimRight(normalized, " \t")
-	}
-
-	return normalized
+	return strings.TrimRight(line, " \t\r\n")
 }
