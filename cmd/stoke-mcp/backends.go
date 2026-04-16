@@ -36,6 +36,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/delegation"
 	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/skillmfr"
 	"github.com/ericmacdougall/stoke/internal/trustplane"
 	"github.com/ericmacdougall/stoke/internal/verify"
@@ -90,6 +91,27 @@ func (b *Backends) Close() error {
 		return nil
 	}
 	return b.Ledger.Close()
+}
+
+// SeedBuiltinSkillManifests loads the embedded builtin skill
+// library and registers a derived manifest for each one. Run
+// at startup so stoke_invoke recognizes every shipped skill
+// name as a registered capability without operator setup.
+// Returns (registered, skipped). Errors from individual skill
+// derivation are swallowed — we log to stderr but the
+// backfill SHOULDN'T take the server down if one skill
+// happens to have a malformed frontmatter.
+func (b *Backends) SeedBuiltinSkillManifests() (int, int) {
+	sr := skill.NewRegistry()
+	if err := sr.LoadBuiltins(); err != nil {
+		fmt.Fprintln(os.Stderr, "stoke-mcp: load builtin skills:", err)
+		return 0, 0
+	}
+	registered, skipped, err := skill.BackfillManifests(sr, b.ManifestRegistry)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stoke-mcp: backfill manifest:", err)
+	}
+	return registered, skipped
 }
 
 // SimpleEvaluator is a deterministic verify.Evaluator used

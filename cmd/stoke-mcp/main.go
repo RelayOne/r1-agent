@@ -92,6 +92,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer backends.Close()
+	registered, skipped := backends.SeedBuiltinSkillManifests()
+	fmt.Fprintf(os.Stderr, "stoke-mcp: seeded %d builtin skill manifests (%d already registered)\n", registered, skipped)
 	srv := &Server{
 		out:        os.Stdout,
 		apiKey:     apiKey,
