@@ -67,6 +67,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/wizard"
 	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/ericmacdougall/stoke/internal/streamjson"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
 	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/testselect"
@@ -1323,7 +1324,24 @@ func sowCmd(args []string) {
 	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
 	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
+	outputFormat := fs.String("output-format", "", "Output mode. Empty (default): human-readable TUI + stoke banners on stdout. 'stream-json': emit Claude Code-compatible NDJSON events to stdout (S-U-020); logs route to stderr. Consumed by Multica, OpenACP, and other orchestrators that speak Claude Code's schema.")
 	fs.Parse(args)
+
+	// S-U-020: stream-json emitter. When --output-format=stream-json,
+	// subsequent stoke banners redirect to stderr and NDJSON events
+	// go to stdout. The Emitter is a no-op when disabled so the
+	// call sites below integrate without a branch.
+	streamEmitter := streamjson.New(os.Stdout, *outputFormat == "stream-json")
+	if streamEmitter.Enabled() {
+		// Route stdout banners to stderr to reserve stdout for NDJSON.
+		os.Stdout = os.Stderr
+		streamEmitter.EmitSystem("init", map[string]any{
+			"cwd":            *repo,
+			"model":          *nativeModel,
+			"reasoning_model": *reasoningModel,
+			"stoke_version":  "v2",
+		})
+	}
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {

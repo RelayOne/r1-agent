@@ -437,6 +437,112 @@ func (r *Registry) InjectPromptBudgeted(prompt string, stackMatches []string, to
 	return sb.String(), selected
 }
 
+// InjectCatalogBudgeted emits a compact level-0 catalog of ALL
+// registered skills (TierName shape — just name + description),
+// wrapped in <skill_catalog>...</skill_catalog> XML tags. Implements
+// S-U-011 progressive disclosure: ships only metadata (~30-60 tokens
+// per skill) so the model knows what's available, then loads full
+// body on demand via ReadSkill().
+//
+// When tokenBudget is exceeded, skills are sorted by Priority and
+// the tail is truncated with a "(+N more — call read_skill to
+// discover)" trailer.
+//
+// Returns the original prompt unchanged when no skills are loaded.
+// Use alongside InjectPromptBudgeted: catalog for discovery, budgeted
+// for explicit always-on + repo-stack pre-expansion.
+func (r *Registry) InjectCatalogBudgeted(prompt string, tokenBudget int) (string, []SkillSelection) {
+	if tokenBudget <= 0 {
+		tokenBudget = 3000
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.skills) == 0 {
+		return prompt, nil
+	}
+
+	ordered := make([]*Skill, 0, len(r.skills))
+	for _, s := range r.skills {
+		ordered = append(ordered, s)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Priority != ordered[j].Priority {
+			return ordered[i].Priority > ordered[j].Priority
+		}
+		return ordered[i].Name < ordered[j].Name
+	})
+
+	used := 0
+	var selected []SkillSelection
+	overflow := 0
+	for _, s := range ordered {
+		cost := (len(s.Name) + len(s.Description)) / 4
+		if cost < 1 {
+			cost = 1
+		}
+		if used+cost > tokenBudget {
+			overflow++
+			continue
+		}
+		used += cost
+		selected = append(selected, SkillSelection{Skill: s, Tier: TierName, Reason: "catalog"})
+	}
+	if len(selected) == 0 {
+		return prompt, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("<skill_catalog>\n")
+	sb.WriteString("Available skills (call read_skill(name) to load the full body):\n\n")
+	for _, sel := range selected {
+		sb.WriteString("- ")
+		sb.WriteString(sel.Skill.Name)
+		sb.WriteString(": ")
+		sb.WriteString(sel.Skill.Description)
+		sb.WriteString("\n")
+	}
+	if overflow > 0 {
+		fmt.Fprintf(&sb, "\n(+%d more skills not listed due to token budget — call list_skills to enumerate)\n", overflow)
+	}
+	sb.WriteString("</skill_catalog>\n\n")
+	sb.WriteString(prompt)
+	return sb.String(), selected
+}
+
+// ReadSkill returns the full markdown body of a skill by name, or
+// empty string when not found. Used by the read_skill tool to
+// satisfy on-demand body loads triggered by the catalog injection.
+func (r *Registry) ReadSkill(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if s, ok := r.skills[name]; ok {
+		return s.Content
+	}
+	return ""
+}
+
+// ListSkillNames returns every registered skill's name in
+// Priority-then-alphabetical order. Used by the list_skills tool
+// when the catalog overflows the budget.
+func (r *Registry) ListSkillNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*Skill, 0, len(r.skills))
+	for _, s := range r.skills {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority > out[j].Priority
+		}
+		return out[i].Name < out[j].Name
+	})
+	names := make([]string, len(out))
+	for i, s := range out {
+		names[i] = s.Name
+	}
+	return names
+}
+
 // matchInternal is the unlocked version of Match. Caller must hold r.mu.RLock().
 func (r *Registry) matchInternal(text string) []*Skill {
 	lower := strings.ToLower(text)
