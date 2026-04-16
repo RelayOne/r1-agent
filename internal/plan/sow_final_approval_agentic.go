@@ -106,27 +106,41 @@ Use the tools to read the specific prose sections and SOW sessions you need to r
 		MaxTokens:    16000,
 		SystemPrompt: system,
 		Timeout:      6 * time.Minute,
+		// Near-limit reminder: when the model is 5 turns from the
+		// cap, inject a supervisor note telling it to call
+		// emit_verdict NOW. Without this the model can spend all
+		// turns reading sections and never emit the verdict.
+		MidturnCheckFn: func(msgs []agentloop.Message, turn int) string {
+			if turn >= 45 {
+				return "URGENT: You are about to hit the turn limit. Call emit_verdict NOW with your current assessment. Do NOT write the verdict as prose — it MUST come through the emit_verdict tool call."
+			}
+			return ""
+		},
 	}
 	loop := agentloop.New(prov, loopCfg, tools, handler)
 
 	loopCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	if _, err := loop.Run(loopCtx, initial); err != nil {
-		// If a verdict was already captured before the error, prefer
-		// returning that; reviewer ran out of turns or hit a timeout
-		// AFTER emitting useful conclusions.
-		select {
-		case v := <-verdictCh:
-			return v, nil
-		default:
-			return nil, fmt.Errorf("agentic review loop: %w", err)
-		}
-	}
+	result, err := loop.Run(loopCtx, initial)
+	// Check for verdict in channel first (from emit_verdict tool call).
 	select {
 	case v := <-verdictCh:
 		return v, nil
 	default:
-		return nil, fmt.Errorf("agentic review loop ended without emit_verdict call")
+	}
+	// No tool-call verdict. Try to parse one from the model's final
+	// text output — Claude often writes the verdict as prose JSON
+	// instead of calling the tool, especially near the turn limit
+	// or when the system prompt is complex.
+	if result != nil && result.FinalText != "" {
+		if v := tryParseVerdictFromText(result.FinalText); v != nil {
+			return v, nil
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agentic review loop: %w", err)
+	}
+	return nil, fmt.Errorf("agentic review loop ended without emit_verdict call")
 	}
 }
 
@@ -158,7 +172,8 @@ FEASIBILITY checks:
   - Are ACs achievable in the runtime (no browser E2E on Linux, no long-running servers, no unset env vars)?
   - Are task descriptions specific enough for an agent to execute without creative leaps?
 
-When done, call emit_verdict with: decision, reasoning, concerns (each with severity + optional session_id + description + fix), fidelity_score (0-100), feasibility_score (0-100). Do not narrate the verdict in plain text — emit it through the tool only.`
+CRITICAL INSTRUCTION FOR VERDICT DELIVERY:
+When done, you MUST call the emit_verdict tool. Do NOT write the verdict as prose text. Do NOT write a JSON block in your response. The ONLY way to deliver your verdict is through the emit_verdict tool call. If you write the verdict as text instead of calling the tool, the system will fail to capture it and your entire review will be wasted. Call emit_verdict with: decision, reasoning, concerns array, fidelity_score, feasibility_score.`
 
 // agenticReviewTools returns the tool definitions the reviewer can
 // call. Each handler is implemented in buildAgenticReviewHandler.
@@ -733,6 +748,26 @@ func grepRepo(projectRoot, pattern string) string {
 		return "no matches"
 	}
 	return strings.Join(hits, "\n")
+}
+
+// tryParseVerdictFromText attempts to extract a FinalApprovalVerdict
+// from the model's free-text output. Claude frequently writes the
+// verdict as a JSON block in prose rather than calling emit_verdict —
+// especially when the model is near the turn limit, confused by the
+// tool schema, or just being Claude. This fallback prevents the
+// entire agentic review from failing over something recoverable.
+func tryParseVerdictFromText(text string) *FinalApprovalVerdict {
+	if text == "" {
+		return nil
+	}
+	var v FinalApprovalVerdict
+	if _, err := jsonutil.ExtractJSONInto(text, &v); err != nil {
+		return nil
+	}
+	if v.Decision == "" {
+		return nil
+	}
+	return &v
 }
 
 // jsonCompact marshals v as the smallest valid JSON (no indentation,
