@@ -298,8 +298,19 @@ func simpleLoopCmd(args []string) {
 							}
 						}
 						if len(cleanChanged) > 0 {
-							qual := plan.RunQualitySweep(absRepo, cleanChanged)
-							if qual != nil && len(qual.Findings) > 0 {
+							// Pass the SOW prose as a synthetic SOW so the
+							// SOW-scoped experimental gates (sow-endpoints,
+							// sow-structural, package-scripts) can fire when
+							// enabled via STOKE_QS_ENABLE. Without this, only
+							// file-scoped scanners fire on per-commit watch.
+							syntheticSOW := &plan.SOW{Description: currentProse}
+							qual := plan.RunQualitySweepForSOW(absRepo, cleanChanged, syntheticSOW)
+							if qual != nil {
+								// Always log a summary so telemetry can
+								// distinguish "ran and passed" from "didn't
+								// run". Previously we only logged when there
+								// were findings, making grep-based counts
+								// misleading.
 								fmt.Printf("  🕵 quality sweep on diff: %s\n", qual.Summary())
 								if qual.Blocking() {
 									qualityAddendum = plan.FormatQualityReport(qual)

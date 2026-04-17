@@ -1040,9 +1040,11 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					// default-off; enable via STOKE_QS_ENABLE env var.
 					scopedSOW := &plan.SOW{Sessions: []plan.Session{session}}
 					qual := plan.RunQualitySweepForSOW(cfg.RepoRoot, sessionFiles, scopedSOW)
-					if qual != nil && len(qual.Findings) > 0 {
+					if qual != nil {
+						// Always log summary (clean + findings) so telemetry
+						// can distinguish "ran and passed" from "didn't run".
 						fmt.Printf("  🕵 quality sweep: %s\n", qual.Summary())
-						if qual.Blocking() {
+						if len(qual.Findings) > 0 && qual.Blocking() {
 							qualityGapText = plan.FormatQualityReport(qual)
 							if len(qualityGapText) > 4000 {
 								qualityGapText = qualityGapText[:4000] + "\n... (truncated)"
