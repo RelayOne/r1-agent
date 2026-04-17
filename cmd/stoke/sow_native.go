@@ -3606,7 +3606,7 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		// No verdict = reviewer failed. Fall through to stub
 		// scan + size floor + content judge which are
 		// deterministic and don't depend on the reviewer.
-		verdict = &plan.TaskReviewVerdict{Complete: true, Reasoning: "reviewer unavailable — deterministic checks only"}
+		verdict = &plan.TaskWorkVerdict{Complete: true, Reasoning: "reviewer unavailable — deterministic checks only"}
 	}
 	if verdict.Complete {
 		// Structural check first: classify zombie for the
