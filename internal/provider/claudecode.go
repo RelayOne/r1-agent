@@ -72,8 +72,6 @@ func (p *ClaudeCodeProvider) Name() string { return "claude-code" }
 // the response. System prompt + user messages are
 // concatenated into a single prompt string for --print mode.
 func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
-	prompt := buildClaudeCodePrompt(req)
-
 	// Split: system prompt (instructions) as the CLI argument,
 	// user content (the actual data — SOW prose, task spec,
 	// etc.) piped via stdin. Claude Code treats stdin as
