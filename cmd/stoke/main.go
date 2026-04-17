@@ -1301,12 +1301,30 @@ func exitWithStreamResult(em *streamjson.Emitter, code int, r *streamjsonResult,
 }
 
 // newProviderForURL returns the right Provider based on the
-// base URL. If url is "claude-code://" it returns a
-// ClaudeCodeProvider; otherwise the standard Anthropic/
-// OpenAI-compatible HTTP provider.
+// base URL. Auto-detects the API format:
+//
+//   claude-code://          → ClaudeCodeProvider (local CLI)
+//   openrouter.ai           → OpenAI-compatible (OR speaks OpenAI format)
+//   api.openai.com          → OpenAI-compatible
+//   *minimax*               → Anthropic format (MiniMax speaks Anthropic)
+//   localhost / 127.0.0.1   → Anthropic format (litellm proxy)
+//   api.anthropic.com       → Anthropic format
+//   everything else         → try Anthropic first (most common via litellm)
+//
+// This makes stoke polyglot: operators can point --native-base-url
+// at ANY provider without litellm as a format translator.
 func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
 	if strings.HasPrefix(url, "claude-code://") || url == "claude-code" {
 		return provider.NewClaudeCodeProvider("claude", repoRoot, "")
+	}
+	lower := strings.ToLower(url)
+	if strings.Contains(lower, "openrouter.ai") ||
+		strings.Contains(lower, "api.openai.com") ||
+		strings.Contains(lower, "api.together.xyz") ||
+		strings.Contains(lower, "api.fireworks.ai") ||
+		strings.Contains(lower, "api.deepseek.com") ||
+		strings.Contains(lower, "generativelanguage.googleapis.com") {
+		return provider.NewOpenAICompatProvider("openai-compat", apiKey, url)
 	}
 	return provider.NewAnthropicProvider(apiKey, url)
 }
@@ -5780,10 +5798,7 @@ func buildProseProvider(runnerMode, apiKey, baseURL, model string) (provider.Pro
 	if apiKey == "" {
 		return nil, ""
 	}
-	if strings.HasPrefix(baseURL, "claude-code") {
-		return provider.NewClaudeCodeProvider("claude", "", ""), model
-	}
-	return provider.NewAnthropicProvider(apiKey, baseURL), model
+	return newProviderForURL(apiKey, baseURL, ""), model
 }
 
 // readDocsDir concatenates every .md / .txt file under dir into one

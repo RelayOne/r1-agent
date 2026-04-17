@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/agentloop"
@@ -57,12 +58,24 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	start := time.Now()
 
 	// Create the provider — use override if set (claude-code://),
-	// otherwise standard Anthropic/OpenAI-compatible HTTP.
+	// otherwise auto-detect format from the URL. OpenRouter and
+	// OpenAI endpoints get the OpenAI-compatible provider;
+	// everything else (litellm, MiniMax, Anthropic) gets the
+	// Anthropic Messages API provider.
 	var p provider.Provider
 	if n.ProviderOverride != nil {
 		p = n.ProviderOverride
 	} else {
-		p = provider.NewAnthropicProvider(n.apiKey, n.BaseURL)
+		lower := strings.ToLower(n.BaseURL)
+		if strings.Contains(lower, "openrouter.ai") ||
+			strings.Contains(lower, "api.openai.com") ||
+			strings.Contains(lower, "api.together.xyz") ||
+			strings.Contains(lower, "api.fireworks.ai") ||
+			strings.Contains(lower, "api.deepseek.com") {
+			p = provider.NewOpenAICompatProvider("openai-compat", n.apiKey, n.BaseURL)
+		} else {
+			p = provider.NewAnthropicProvider(n.apiKey, n.BaseURL)
+		}
 	}
 
 	// Create the tool registry
