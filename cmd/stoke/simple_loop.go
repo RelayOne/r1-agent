@@ -253,7 +253,15 @@ func codexCall(bin, dir, prompt string) string {
 		fmt.Fprintf(os.Stderr, "  codex error: %v\n", err)
 		return ""
 	}
-	data, _ := os.ReadFile(tmpOut)
+	// Retry read — codex may flush file after process exits
+	var data []byte
+	for i := 0; i < 10; i++ {
+		data, _ = os.ReadFile(tmpOut)
+		if len(data) > 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	os.Remove(tmpOut)
 	return strings.TrimSpace(string(data))
 }

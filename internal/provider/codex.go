@@ -103,11 +103,19 @@ func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	}
 output:
 
-	// Read output from temp file (codex writes last message there)
-	outData, readErr := os.ReadFile(tmpOut)
+	// Read output from temp file. Codex may flush the file
+	// slightly after the process exits — retry a few times
+	// to avoid the 0-byte race condition.
+	var outData []byte
+	for i := 0; i < 10; i++ {
+		outData, _ = os.ReadFile(tmpOut)
+		if len(outData) > 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 	os.Remove(tmpOut)
-	if readErr != nil {
-		// Fallback to stdout if file wasn't created
+	if len(outData) == 0 {
 		outData = stdout.Bytes()
 	}
 	text := strings.TrimSpace(string(outData))
