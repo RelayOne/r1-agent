@@ -82,10 +82,14 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	// limits and ensures Claude Code sees the instructions
 	// as a TASK, not a conversation.
 	cliPrompt, stdinContent := splitForClaudeCode(req)
-	// Debug: log prompt sizes so we can diagnose skeleton
-	// extraction failures. Remove after confirmed working.
-	fmt.Fprintf(os.Stderr, "[claude-code] cli=%d bytes, stdin=%d bytes, system=%d bytes, msgs=%d\n",
-		len(cliPrompt), len(stdinContent), len(req.System), len(req.Messages))
+	fmt.Fprintf(os.Stderr, "[claude-code] cli=%d bytes, stdin=%d bytes\n",
+		len(cliPrompt), len(stdinContent))
+	// When there's no CLI prompt (all content is large and
+	// went to stdin), provide a default instruction so Claude
+	// Code knows what to do with the piped data.
+	if cliPrompt == "" && stdinContent != "" {
+		cliPrompt = "Process the input piped via stdin and produce the requested output. Output ONLY the requested format (typically JSON) — no prose, no markdown fences."
+	}
 	args := []string{"--print", cliPrompt}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
