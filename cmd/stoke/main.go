@@ -1317,6 +1317,9 @@ func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
 	if strings.HasPrefix(url, "claude-code://") || url == "claude-code" {
 		return provider.NewClaudeCodeProvider("claude", repoRoot, "")
 	}
+	if strings.HasPrefix(url, "codex://") || url == "codex" {
+		return provider.NewCodexProvider("codex", repoRoot, "")
+	}
 	lower := strings.ToLower(url)
 	if strings.Contains(lower, "openrouter.ai") ||
 		strings.Contains(lower, "api.openai.com") ||
@@ -2187,6 +2190,8 @@ func sowCmd(args []string) {
 		runner.BaseURL = nativeBaseURLForRunner
 		if strings.HasPrefix(*nativeBaseURL, "claude-code") {
 			runner.ProviderOverride = provider.NewClaudeCodeProvider("claude", absRepo, "")
+		} else if strings.HasPrefix(*nativeBaseURL, "codex") {
+			runner.ProviderOverride = provider.NewCodexProvider("codex", absRepo, "")
 		}
 
 		// Build a repo map once so every task prompt can inject the
