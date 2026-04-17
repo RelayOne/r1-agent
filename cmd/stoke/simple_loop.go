@@ -39,6 +39,8 @@ func simpleLoopCmd(args []string) {
 	claudeModel := fs.String("claude-model", "", "Claude Code worker model (sonnet, opus, etc)")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
 	reviewer := fs.String("reviewer", "codex", "Reviewer backend: codex | cc-opus | cc-sonnet")
+	fixMode := fs.String("fix-mode", "sequential", "How to deliver reviewer findings to CC: sequential (one big prompt, iterate until clean) | parallel (split into chunks, run N workers concurrently)")
+	fixWorkers := fs.Int("fix-workers", 3, "Max concurrent CC fix workers when --fix-mode=parallel")
 	fs.Parse(args)
 
 	if *sowFile == "" {
@@ -63,6 +65,12 @@ func simpleLoopCmd(args []string) {
 	globalReviewer = *reviewer
 	globalClaudeBin = *claudeBin
 	globalCodexBin = *codexBin
+	globalFixMode = *fixMode
+	globalFixWorkers = *fixWorkers
+	if globalFixWorkers < 1 {
+		globalFixWorkers = 1
+	}
+	fmt.Printf("   fix-mode: %s (workers: %d)\n", globalFixMode, globalFixWorkers)
 	currentProse := string(prose)
 
 	for round := 1; round <= *maxRounds; round++ {
@@ -114,62 +122,43 @@ func simpleLoopCmd(args []string) {
 			buildDone <- result
 		}()
 
-		// Step 4: Watch for commits and review each one
-		fmt.Println("👀 Step 4: Watching for commits...")
+		// Step 4: Watch for commits; queue reviewer feedback.
+		// DO NOT deliver feedback mid-build — that would interrupt
+		// CC's build goroutine. Instead accumulate findings into
+		// pendingReviews; when the build phase completes (Step 5),
+		// we iterate-until-clean: send all queued feedback to CC,
+		// wait for fix commits, re-review, repeat until approved.
+		fmt.Println("👀 Step 4: Watching for commits, queueing reviewer feedback...")
 		lastReviewedHead := headBefore
 		reviewRound := 0
-		const maxReviewRounds = 10
+		const maxReviewRounds = 20
+		var pendingReviews []string
 
 	commitWatch:
 		for reviewRound < maxReviewRounds {
 			select {
 			case <-buildDone:
 				fmt.Println("  📦 Claude Code build phase complete")
-				// Do one final review of any remaining commits
-				currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
-				if currentHead != lastReviewedHead && currentHead != headBefore {
-					diff := shellCmd(absRepo, "git diff "+lastReviewedHead+"..HEAD --stat 2>/dev/null")
-					if diff != "" {
-						reviewRound++
-						fmt.Printf("  🔍 Final review (round %d, via %s)...\n", reviewRound, *reviewer)
-						codeReview := reviewCall(absRepo,
-							"Review ALL recent changes. Check for: compilation errors, "+
-								"missing imports, broken tests, stub code. Be specific.\n\n"+
-								"CHANGES:\n"+diff)
-						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
-							!strings.Contains(strings.ToLower(codeReview), "lgtm") &&
-							!strings.Contains(strings.ToLower(codeReview), "looks good") {
-							fmt.Printf("  ✗ reviewer found issues (round %d), sending to CC...\n", reviewRound)
-							claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-								"The reviewer flagged issues in your code. Fix ALL of them. "+
-									"Run the build after each fix. Commit fixes.\n\nREVIEW:\n%s",
-								codeReview))
-						} else {
-							fmt.Printf("  ✓ reviewer approved (round %d)\n", reviewRound)
-						}
-					}
-				}
 				break commitWatch
 
 			case <-time.After(30 * time.Second):
-				// Check for new commits
 				currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
 				if currentHead != lastReviewedHead && currentHead != headBefore {
 					diff := shellCmd(absRepo, "git diff "+lastReviewedHead+".."+currentHead+" --stat 2>/dev/null")
 					commitMsg := shellCmd(absRepo, "git log --oneline "+lastReviewedHead+".."+currentHead+" 2>/dev/null")
 					if diff != "" {
 						reviewRound++
-						fmt.Printf("  📝 New commits detected (round %d):\n%s\n", reviewRound, indent(commitMsg, "    "))
+						fmt.Printf("  📝 New commits (round %d):\n%s\n", reviewRound, indent(commitMsg, "    "))
 						fmt.Printf("  🔍 %s reviewing...\n", *reviewer)
 						codeReview := reviewCall(absRepo,
 							"Review these specific changes. Check for: compilation errors, "+
 								"missing imports, stub code. Be specific about what to fix.\n\n"+
 								"COMMITS:\n"+commitMsg+"\n\nDIFF STAT:\n"+diff)
-						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
-							!strings.Contains(strings.ToLower(codeReview), "lgtm") {
-							fmt.Printf("  ✗ reviewer found issues, queuing fix for CC...\n")
-							// Don't interrupt CC mid-build — queue the feedback
-							// CC will get it in the final review round
+						if len(codeReview) > 100 && !approvedReview(codeReview) {
+							pendingReviews = append(pendingReviews,
+								fmt.Sprintf("Commits reviewed:\n%s\n\nFindings:\n%s",
+									commitMsg, codeReview))
+							fmt.Printf("  ✗ reviewer found issues — queued (%d pending)\n", len(pendingReviews))
 						} else {
 							fmt.Printf("  ✓ reviewer approved commits\n")
 						}
@@ -179,6 +168,54 @@ func simpleLoopCmd(args []string) {
 					fmt.Printf("  ⏳ waiting for commits... (%ds)\n", (reviewRound+1)*30)
 				}
 			}
+		}
+
+		// Step 4b: Iterate-until-clean. Deliver queued findings +
+		// do a fresh final review over the full diff. If the
+		// reviewer approves, we're done. Otherwise send to CC for
+		// fix, wait for those fix commits, re-review. Repeat up
+		// to maxFixRounds. This is the gate that makes simple-loop
+		// actually enforce reviewer sign-off instead of shipping
+		// unreviewed code.
+		const maxFixRounds = 5
+		for fixRound := 1; fixRound <= maxFixRounds; fixRound++ {
+			currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
+			if currentHead == headBefore {
+				fmt.Println("  (no commits produced — skipping fix loop)")
+				break
+			}
+			fullDiff := shellCmd(absRepo, "git diff "+headBefore+"..HEAD --stat 2>/dev/null")
+			fmt.Printf("  🔍 Final review %d/%d (via %s)...\n", fixRound, maxFixRounds, *reviewer)
+			finalPrompt := "Review ALL changes in this branch. Check for: " +
+				"compilation errors, missing imports, broken tests, incomplete " +
+				"functions that only return mock data, unimplemented markers, " +
+				"and anything that would fail a typecheck. " +
+				"Respond with 'NO ISSUES' or 'LGTM' only if genuinely clean.\n\n" +
+				"FULL DIFF STAT:\n" + fullDiff
+			if len(pendingReviews) > 0 {
+				finalPrompt += "\n\nPREVIOUSLY FLAGGED ISSUES (must be verified fixed):\n" +
+					strings.Join(pendingReviews, "\n\n---\n\n")
+			}
+			finalReview := reviewCall(absRepo, finalPrompt)
+			if len(finalReview) < 100 || approvedReview(finalReview) {
+				fmt.Printf("  ✅ reviewer approved (round %d) — build sign-off obtained\n", fixRound)
+				pendingReviews = nil
+				break
+			}
+			fmt.Printf("  ✗ reviewer still finding issues (round %d, mode=%s)\n", fixRound, globalFixMode)
+			fixHeadBefore := currentHead
+			if globalFixMode == "parallel" {
+				dispatchParallelFix(*claudeBin, absRepo, finalReview, globalFixWorkers)
+			} else {
+				dispatchSequentialFix(*claudeBin, absRepo, finalReview)
+			}
+			pendingReviews = nil
+			postFixHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
+			if postFixHead == fixHeadBefore {
+				fmt.Printf("  ⚠ CC made no fix commits — exiting fix loop\n")
+				break
+			}
+			fmt.Printf("  📝 CC produced fix commits; re-reviewing...\n")
 		}
 
 		// Step 5: Build verification
@@ -228,7 +265,66 @@ var (
 	globalReviewer    string // "codex", "cc-opus", "cc-sonnet"
 	globalClaudeBin   string // resolved claude binary path
 	globalCodexBin    string // resolved codex binary path
+	globalFixMode     string // "sequential" or "parallel"
+	globalFixWorkers  int    // concurrency for parallel fix mode
 )
+
+// approvedReview returns true when the reviewer text looks
+// like sign-off. Treats "no issues", "lgtm", "looks good",
+// "approved" as approval. A short (<100 char) response is
+// considered ambiguous and NOT approval — forces iteration.
+func approvedReview(text string) bool {
+	t := strings.ToLower(text)
+	for _, marker := range []string{"no issues", "lgtm", "looks good", "approved", "no changes needed"} {
+		if strings.Contains(t, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitReviewIntoIssues breaks a reviewer's response into
+// discrete actionable findings. Heuristic: lines starting with
+// "-", "*", digit+dot, or "Issue:". When the reviewer writes
+// free prose, returns the whole text as one issue. Returns at
+// most maxChunks issues; extras are merged into the last chunk.
+func splitReviewIntoIssues(text string, maxChunks int) []string {
+	if maxChunks < 1 {
+		maxChunks = 1
+	}
+	var issues []string
+	var cur strings.Builder
+	flush := func() {
+		s := strings.TrimSpace(cur.String())
+		if s != "" {
+			issues = append(issues, s)
+		}
+		cur.Reset()
+	}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		isNew := strings.HasPrefix(trimmed, "- ") ||
+			strings.HasPrefix(trimmed, "* ") ||
+			strings.HasPrefix(strings.ToLower(trimmed), "issue:") ||
+			(len(trimmed) > 2 && trimmed[0] >= '0' && trimmed[0] <= '9' && (trimmed[1] == '.' || trimmed[1] == ')'))
+		if isNew && cur.Len() > 0 {
+			flush()
+		}
+		cur.WriteString(line)
+		cur.WriteByte('\n')
+	}
+	flush()
+	if len(issues) <= 1 {
+		return []string{strings.TrimSpace(text)}
+	}
+	if len(issues) > maxChunks {
+		// Collapse overflow into the last chunk so nothing is dropped.
+		head := issues[:maxChunks-1]
+		tail := strings.Join(issues[maxChunks-1:], "\n\n")
+		issues = append(head, tail)
+	}
+	return issues
+}
 
 // reviewCall dispatches the plan/code-review call to the
 // configured reviewer backend. Reviewers run in TEXT-ONLY mode
@@ -476,4 +572,59 @@ func detectSimpleBuildCmd(dir string) string {
 		return "go build ./... 2>&1"
 	}
 	return "echo 'no build detected'"
+}
+
+// dispatchSequentialFix sends the entire reviewer feedback as
+// one prompt to a single CC worker. Simple, no concurrency, no
+// git conflicts. One fat claudeCall; the worker iterates through
+// every flagged item within its --max-turns budget.
+func dispatchSequentialFix(bin, dir, feedback string) {
+	fmt.Println("    → sequential: 1 CC worker fixing the full feedback")
+	claudeCall(bin, dir, fmt.Sprintf(
+		"The reviewer has flagged specific issues in your code. "+
+			"Fix EVERY single one. Read each affected file carefully. "+
+			"After each fix run the build (tsc --noEmit or the project's "+
+			"build command). Commit each fix with a descriptive message. "+
+			"Only fix what the reviewer flagged — do not add features.\n\n"+
+			"REVIEWER FEEDBACK:\n%s", feedback))
+}
+
+// dispatchParallelFix splits the reviewer feedback into discrete
+// issues and launches up to `workers` CC workers concurrently.
+// Each worker owns one chunk. Git state is shared across
+// workers — concurrent writes to different files are fine; the
+// real contention is on commit. We do NOT serialize commits
+// ourselves because `git commit` is atomic in the index and CC
+// workers naturally stagger by processing different issues.
+// On rare conflicts CC re-resolves via the build step. Returns
+// once all workers finish.
+func dispatchParallelFix(bin, dir, feedback string, workers int) {
+	issues := splitReviewIntoIssues(feedback, workers)
+	fmt.Printf("    → parallel: %d issue chunk(s) across up to %d worker(s)\n",
+		len(issues), workers)
+	if len(issues) == 0 {
+		return
+	}
+	sem := make(chan struct{}, workers)
+	done := make(chan struct{}, len(issues))
+	for i, issue := range issues {
+		go func(idx int, text string) {
+			sem <- struct{}{}
+			defer func() { <-sem; done <- struct{}{} }()
+			fmt.Printf("    [worker %d/%d] starting\n", idx+1, len(issues))
+			claudeCall(bin, dir, fmt.Sprintf(
+				"You are one of %d parallel fix workers. Another worker "+
+					"may be editing different files at the same time. "+
+					"Do NOT edit files outside what your issue requires. "+
+					"Run the build after your fix. Commit with a message "+
+					"that identifies which issue you fixed. Do not add "+
+					"features — only fix what is flagged below.\n\n"+
+					"YOUR ASSIGNED ISSUE (%d of %d):\n%s",
+				len(issues), idx+1, len(issues), text))
+			fmt.Printf("    [worker %d/%d] done\n", idx+1, len(issues))
+		}(i, issue)
+	}
+	for range issues {
+		<-done
+	}
 }
