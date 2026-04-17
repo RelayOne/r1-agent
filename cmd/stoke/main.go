@@ -1322,6 +1322,14 @@ func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
 	if strings.HasPrefix(url, "codex://") || url == "codex" {
 		return provider.NewCodexProvider("codex", repoRoot, "")
 	}
+	// gemini:// — direct Google Gemini API, no LiteLLM needed.
+	// Reviewer-only (text in, text out). Use --reasoning-model to
+	// name the Gemini model (e.g. gemini-3.1-pro-preview,
+	// gemini-2.5-pro, gemini-3-flash-preview). API key comes from
+	// apiKey arg, else GEMINI_API_KEY env.
+	if strings.HasPrefix(url, "gemini://") || url == "gemini" {
+		return provider.NewGeminiProvider(apiKey, "")
+	}
 	lower := strings.ToLower(url)
 	if strings.Contains(lower, "openrouter.ai") ||
 		strings.Contains(lower, "api.openai.com") ||
@@ -2139,6 +2147,9 @@ func sowCmd(args []string) {
 		}
 		if cxp, ok := reasoningProv.(*provider.CodexProvider); ok && reasoningModelChoice != "" {
 			cxp.Model = reasoningModelChoice
+		}
+		if gp, ok := reasoningProv.(*provider.GeminiProvider); ok && reasoningModelChoice != "" {
+			gp.Model = reasoningModelChoice
 		}
 
 		// Resolve BUILDER_* first so nativeKey / nativeBaseURL /
