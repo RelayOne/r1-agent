@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -149,6 +152,40 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		SystemPrompt:       systemPrompt,
 	}
 
+	// Pre-end-turn build verification (Cline/Aider pattern).
+	// When the model says "done", run the project's build
+	// command. If it fails, inject errors and force the model
+	// to fix them in the same conversation turn — preserving
+	// full context of what was just written. This eliminates
+	// the repair-loop spiral where a separate worker gets
+	// the error but has lost the context of the original code.
+	if spec.WorktreeDir != "" {
+		buildChecked := false // only check once per task
+		cfg.PreEndTurnCheckFn = func(_ []agentloop.Message) string {
+			if buildChecked {
+				return "" // already checked this task
+			}
+			buildChecked = true
+			// Detect build command from project structure
+			buildCmd := detectBuildCommand(spec.WorktreeDir)
+			if buildCmd == "" {
+				return ""
+			}
+			cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd)
+			cmd.Dir = spec.WorktreeDir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				// Build failed — return errors for injection
+				output := string(out)
+				if len(output) > 4000 {
+					output = output[len(output)-4000:]
+				}
+				return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
+			}
+			return "" // build passed, allow end_turn
+		}
+	}
+
 	// Progressive context compaction. When RunSpec.CompactThreshold is
 	// set, hook a cache-preserving compactor into the agentloop so long
 	// tasks don't blow past the context window. The compactor keeps the
@@ -245,4 +282,33 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	}
 
 	return runResult, nil
+}
+
+// detectBuildCommand returns the right build/typecheck
+// command for the project at dir, or "" if none detected.
+func detectBuildCommand(dir string) string {
+	// TypeScript / Node
+	if _, err := os.Stat(filepath.Join(dir, "tsconfig.json")); err == nil {
+		// Prefer pnpm if workspace
+		if _, err := os.Stat(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
+			return "pnpm tsc --noEmit 2>&1 || npx tsc --noEmit 2>&1"
+		}
+		return "npx tsc --noEmit 2>&1"
+	}
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+		return "npx tsc --noEmit 2>&1 || true" // no tsconfig = JS project, skip
+	}
+	// Go
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		return "go build ./... 2>&1"
+	}
+	// Rust
+	if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
+		return "cargo check 2>&1"
+	}
+	// Python
+	if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+		return "python -m py_compile $(find . -name '*.py' -not -path '*/venv/*' | head -20) 2>&1"
+	}
+	return ""
 }

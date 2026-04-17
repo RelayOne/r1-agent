@@ -60,6 +60,22 @@ type Config struct {
 	//
 	// nil = no midturn checks (default).
 	MidturnCheckFn MidturnCheckFunc
+
+	// PreEndTurnCheckFn runs when the model attempts end_turn.
+	// If it returns a non-empty string (build errors), the loop
+	// injects the errors and forces another turn instead of
+	// exiting. This is the Cline/Aider pattern: build errors
+	// must be fixed in the SAME conversation turn while the
+	// model has full context of what it just wrote.
+	//
+	// Returns "" to allow end_turn, or an error message to
+	// force continuation. The check typically runs the project's
+	// build command (tsc --noEmit, go build, cargo check) and
+	// returns any compile errors found.
+	//
+	// nil = no pre-end-turn check (default — all end_turns
+	// are accepted immediately).
+	PreEndTurnCheckFn func(messages []Message) string
 }
 
 // MidturnCheckFunc is the signature for the between-turn supervisor
@@ -294,8 +310,31 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		assistantMsg := Message{Role: "assistant", Content: assistantBlocks}
 		messages = append(messages, assistantMsg)
 
-		// Check stop reason
+		// Check stop reason — but INTERCEPT end_turn when a
+		// pre-completion check fails (Cline pattern: build
+		// errors must be fixed in the SAME turn, not a
+		// separate repair dispatch).
 		if resp.StopReason != "tool_use" {
+			// Pre-end-turn verification: run the build check
+			// and force another turn if it fails. This is the
+			// single biggest quality improvement — the model
+			// sees tsc errors while it still has full context
+			// of what it just wrote.
+			if l.config.PreEndTurnCheckFn != nil && turn < l.config.MaxTurns-1 {
+				if errMsg := l.config.PreEndTurnCheckFn(messages); errMsg != "" {
+					// Build failed — inject errors and continue
+					// the loop instead of exiting. The model
+					// gets one more chance to fix in-context.
+					messages = append(messages, Message{
+						Role: "user",
+						Content: []ContentBlock{{
+							Type: "text",
+							Text: "[BUILD VERIFICATION FAILED — fix before completing]\n\n" + errMsg + "\n\nFix these errors now. Do NOT end your turn until the build passes.",
+						}},
+					})
+					continue // back to top of loop for another turn
+				}
+			}
 			result.StopReason = resp.StopReason
 			result.Turns = turn + 1
 			result.FinalText = extractText(assistantBlocks)

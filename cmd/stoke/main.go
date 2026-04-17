@@ -1412,6 +1412,7 @@ func sowCmd(args []string) {
 	repomapBudget := fs.Int("repomap-tokens", 3000, "Max characters of repo map to inject into task prompts (0 = disable)")
 	enableWisdom := fs.Bool("wisdom", true, "Capture per-session learnings (patterns/decisions/gotchas) and inject them into later sessions")
 	enableCrossReview := fs.Bool("cross-review", true, "After each successful session, run a cross-model code review over the git diff before accepting the session")
+	noSelfReview := fs.Bool("no-self-review", false, "Skip per-task LLM review when worker and reviewer use the same model. Deterministic checks (stub scan, size floor, content judge, build verification) still run. Use when no separate reviewer model is configured to avoid false-positive review loops.")
 	reviewModel := fs.String("review-model", "", "Model name used for cross-model review (default: same as --native-model)")
 	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
 	verboseStream := fs.Bool("verbose-stream", false, "Print raw model streaming output (DeltaText) to stdout. Default off — structural events (tool names, completions, warnings) still print. Useful for debugging, noisy in normal runs.")
@@ -2601,7 +2602,19 @@ func sowCmd(args []string) {
 			SOWID:             sow.ID,
 			ReviewProvider:    reviewProv,
 			ReviewModel:       reviewModelName,
-			ReasoningProvider: reasoningProv,
+			ReasoningProvider: func() provider.Provider {
+				// --no-self-review: when worker and reviewer are
+				// the same model AND no separate reasoning provider
+				// was configured, set to nil so per-task LLM review
+				// is skipped. Deterministic checks still run.
+				if *noSelfReview && reasoningProv != nil &&
+					reasoningProv.Name() == "anthropic" &&
+					strings.TrimSpace(*reasoningBaseURL) == "" {
+					// Same model reviewing itself — skip LLM review
+					return nil
+				}
+				return reasoningProv
+			}(),
 			ReasoningModel:    reasoningModelChoice,
 			BriefingProvider:  briefingProv,
 			BriefingModel:     nativeModelName,
