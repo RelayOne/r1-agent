@@ -524,17 +524,21 @@ func claudeReviewCall(bin, dir, prompt, model string) string {
 }
 
 func claudeCall(bin, dir, prompt string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	// Hard cap 40 min; previous 30-min was tight for big fix calls.
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
-	// Use -p (interactive prompt) NOT --print (text-only).
-	// --print can't write files or use tools.
-	// --dangerously-skip-permissions auto-approves file writes.
-	// --output-format json gives us structured result with
-	// the final text in .result field.
+	// stream-json gives us live line-by-line tool-use events — we
+	// scan its growth as the progress signal for the watchdog.
+	// Without stream-json, the ONLY output is a single final JSON
+	// blob at exit, which makes every long CC call look identical
+	// to a hang. With stream-json, each tool call emits a line
+	// immediately, so the watchdog can distinguish "CC is doing
+	// work" from "CC is wedged".
 	args := []string{
 		"-p", prompt,
 		"--dangerously-skip-permissions",
-		"--output-format", "json",
+		"--output-format", "stream-json",
+		"--verbose",
 		"--no-session-persistence",
 		"--max-turns", "100",
 	}
@@ -546,19 +550,74 @@ func claudeCall(bin, dir, prompt string) string {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  claude error: %v\n", err)
+
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "  claude start error: %v\n", err)
+		return ""
 	}
-	// Parse the JSON output to get the result text
+	go func() { done <- cmd.Wait() }()
+
+	// Watchdog: 30-s ticker, 5 min of zero growth = hung.
+	// This is the same pattern the provider package uses for
+	// long-running CLI invocations (internal/provider/claudecode.go).
+	watchdog := time.NewTicker(30 * time.Second)
+	defer watchdog.Stop()
+	lastSize := 0
+	stale := 0
+	const maxStale = 10 // 10 × 30s = 5 min of silence
+	running := true
+	var runErr error
+	for running {
+		select {
+		case err := <-done:
+			runErr = err
+			running = false
+		case <-watchdog.C:
+			cur := out.Len()
+			if cur == lastSize {
+				stale++
+				if stale >= maxStale {
+					fmt.Fprintf(os.Stderr, "  ⛔ claude: no stream output for %ds — killing\n", maxStale*30)
+					if cmd.Process != nil {
+						cmd.Process.Kill()
+					}
+					running = false
+				}
+			} else {
+				stale = 0
+				lastSize = cur
+			}
+		}
+	}
+	if runErr != nil && !strings.Contains(runErr.Error(), "killed") {
+		fmt.Fprintf(os.Stderr, "  claude error: %v\n", runErr)
+	}
+
+	// stream-json emits one JSON object per line. The final line
+	// is a `result` event with the .result + usage. Scan backward
+	// to find it. If we don't find one (watchdog kill / truncation),
+	// fall back to the raw bytes so the caller still has something.
 	raw := out.Bytes()
-	var result struct {
-		Result   string `json:"result"`
-		NumTurns int    `json:"num_turns"`
-		Cost     float64 `json:"total_cost_usd"`
-	}
-	if json.Unmarshal(raw, &result) == nil {
-		fmt.Printf("  [CC: %d turns, $%.4f]\n", result.NumTurns, result.Cost)
-		return result.Result
+	lines := strings.Split(string(raw), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || line[0] != '{' {
+			continue
+		}
+		var result struct {
+			Type     string  `json:"type"`
+			Result   string  `json:"result"`
+			NumTurns int     `json:"num_turns"`
+			Cost     float64 `json:"total_cost_usd"`
+		}
+		if json.Unmarshal([]byte(line), &result) != nil {
+			continue
+		}
+		if result.Type == "result" || result.Result != "" {
+			fmt.Printf("  [CC: %d turns, $%.4f]\n", result.NumTurns, result.Cost)
+			return result.Result
+		}
 	}
 	return strings.TrimSpace(string(raw))
 }
