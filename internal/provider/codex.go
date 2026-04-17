@@ -7,9 +7,7 @@ package provider
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
