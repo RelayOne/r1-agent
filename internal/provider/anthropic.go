@@ -141,7 +141,11 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	const maxAttempts = 3
+	// Connection-level failures (litellm restart, port change)
+	// get more attempts + longer backoff than API-level errors.
+	// A litellm restart takes ~5-10s; we retry for up to 2 min
+	// so a brief outage doesn't corrupt the run.
+	const maxAttempts = 6
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		chatResp, err := p.chatOnce(data)
@@ -153,10 +157,14 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 			return nil, err
 		}
 		if attempt < maxAttempts {
-			// Exponential backoff: 5s, 15s, 45s. The goal is to let
-			// a contended LiteLLM proxy drain its queue before we
-			// retry; aggressive retry just piles on.
-			wait := time.Duration(5*intPow(3, attempt-1)) * time.Second
+			// Exponential backoff capped at 30s:
+			// 5s, 10s, 20s, 30s, 30s. Gives litellm time
+			// to come back after a restart without burning
+			// 2 min of wall time on a hard failure.
+			wait := time.Duration(5*intPow(2, attempt-1)) * time.Second
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
 			time.Sleep(wait)
 		}
 	}
@@ -204,6 +212,10 @@ func isRetriableProviderError(err error) bool {
 		"Client.Timeout exceeded",
 		"i/o timeout",
 		"connection reset",
+		"connection refused",   // litellm down / restarting
+		"dial tcp",             // port unreachable
+		"no such host",         // DNS failure
+		"ECONNREFUSED",         // explicit connection refused
 		"EOF",
 		"broken pipe",
 		"Anthropic API error 429",
@@ -242,23 +254,44 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/messages", bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	p.setHeaders(httpReq)
-	httpReq.Header.Set("Accept", "text/event-stream")
+	// Retry connection-level failures (litellm restart, port
+	// change) just like Chat does. Streaming calls are the
+	// workhorse — every task dispatch goes through here — so
+	// a brief litellm outage without retry kills the entire run.
+	const maxConnAttempts = 6
+	var resp *http.Response
+	for attempt := 1; attempt <= maxConnAttempts; attempt++ {
+		httpReq, reqErr := http.NewRequest("POST", p.baseURL+"/v1/messages", bytes.NewReader(data))
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		p.setHeaders(httpReq)
+		httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("API request: %w", err)
+		resp, err = p.httpClient.Do(httpReq)
+		if err == nil && resp.StatusCode == 200 {
+			break
+		}
+		connErr := err
+		if connErr == nil && resp != nil {
+			errBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			connErr = fmt.Errorf("Anthropic API error %d: %s", resp.StatusCode, string(errBody))
+		}
+		if !isRetriableProviderError(connErr) {
+			return nil, connErr
+		}
+		if attempt < maxConnAttempts {
+			wait := time.Duration(5*intPow(2, attempt-1)) * time.Second
+			if wait > 30*time.Second {
+				wait = 30 * time.Second
+			}
+			time.Sleep(wait)
+		} else {
+			return nil, fmt.Errorf("ChatStream failed after %d attempts: %w", maxConnAttempts, connErr)
+		}
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		errBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Anthropic API error %d: %s", resp.StatusCode, string(errBody))
-	}
 
 	// Parse SSE stream using our SSEParser
 	parser := stream.NewSSEParser()
