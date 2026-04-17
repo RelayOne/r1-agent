@@ -8,6 +8,7 @@ package provider
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -42,8 +43,13 @@ func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		cliPrompt = "Process the input piped via stdin and produce the requested output. Output ONLY the requested format — no prose wrapper."
 	}
 
-	args := []string{"exec", "--print", cliPrompt,
-		"--dangerously-bypass-approvals-and-sandbox"}
+	// codex exec doesn't have --print. Use -o to write
+	// the last message to a temp file, then read it back.
+	tmpOut := fmt.Sprintf("/tmp/codex-out-%d.txt", time.Now().UnixNano())
+	args := []string{"exec",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-o", tmpOut,
+		cliPrompt}
 	if p.Model != "" {
 		args = append(args, "-m", p.Model)
 	}
@@ -80,7 +86,14 @@ func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		return nil, fmt.Errorf("codex: timed out after %s", timeout)
 	}
 
-	text := strings.TrimSpace(stdout.String())
+	// Read output from temp file (codex writes last message there)
+	outData, readErr := os.ReadFile(tmpOut)
+	os.Remove(tmpOut)
+	if readErr != nil {
+		// Fallback to stdout if file wasn't created
+		outData = stdout.Bytes()
+	}
+	text := strings.TrimSpace(string(outData))
 	text = stripMarkdownFences(text)
 	return &ChatResponse{
 		Content: []ResponseContent{{Type: "text", Text: text}},
