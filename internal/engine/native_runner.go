@@ -286,17 +286,29 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 // detectBuildCommand returns the right build/typecheck
 // command for the project at dir, or "" if none detected.
+// IMPORTANT: pnpm workspaces are checked BEFORE root-tsconfig
+// because per-package tsconfigs (not a root tsconfig) are the
+// norm — a monorepo with no root tsconfig but broken per-package
+// typecheck scripts used to escape the gate via the `|| true`
+// JS-project fallthrough. Now we run workspace-wide build or
+// typecheck so every package's script is actually exercised.
 func detectBuildCommand(dir string) string {
-	// TypeScript / Node
+	// pnpm monorepo — highest priority. Run the project's own
+	// scripts across all packages so broken per-package scripts
+	// (missing tsconfig, malformed typecheck, etc.) surface.
+	if _, err := os.Stat(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
+		return "pnpm -r build 2>&1 || pnpm -r typecheck 2>&1 || pnpm -r tsc --noEmit 2>&1"
+	}
+	// yarn / npm workspaces
+	if pkgHasWorkspaces(dir) {
+		return "(pnpm -r build 2>&1 || yarn workspaces run build 2>&1 || npm run build --workspaces 2>&1)"
+	}
+	// Single-package TypeScript / Node
 	if _, err := os.Stat(filepath.Join(dir, "tsconfig.json")); err == nil {
-		// Prefer pnpm if workspace
-		if _, err := os.Stat(filepath.Join(dir, "pnpm-workspace.yaml")); err == nil {
-			return "pnpm tsc --noEmit 2>&1 || npx tsc --noEmit 2>&1"
-		}
 		return "npx tsc --noEmit 2>&1"
 	}
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
-		return "npx tsc --noEmit 2>&1 || true" // no tsconfig = JS project, skip
+		return "npx tsc --noEmit 2>&1 || true" // JS project, no tsconfig, skip
 	}
 	// Go
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -311,4 +323,19 @@ func detectBuildCommand(dir string) string {
 		return "python -m py_compile $(find . -name '*.py' -not -path '*/venv/*' | head -20) 2>&1"
 	}
 	return ""
+}
+
+// pkgHasWorkspaces returns true when the root package.json
+// declares a `workspaces` array (npm/yarn monorepo).
+func pkgHasWorkspaces(dir string) bool {
+	pj, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return false
+	}
+	// minimal parse — just detect the presence of the "workspaces"
+	// key at the top level without pulling in json deps here.
+	// We're OK with a false positive in edge cases (a `"workspaces"`
+	// string inside a description); the resulting command is still
+	// a safe fallback.
+	return strings.Contains(string(pj), "\"workspaces\"")
 }
