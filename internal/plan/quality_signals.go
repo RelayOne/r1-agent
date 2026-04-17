@@ -332,6 +332,36 @@ func RunQualitySweepWithConfig(repoRoot string, files []string, sow *SOW, cfg Qu
 		}
 	}
 
+	// Cap findings at 50 per scanner+file combination to avoid
+	// spamming review prompts when a single file has dozens of
+	// hits of the same kind (e.g. a test file with 40 `.skip()`
+	// calls). Downstream consumers can still see the count but
+	// not the full payload for the overflow.
+	const maxFindingsPerKind = 50
+	counter := map[string]int{}
+	var capped []QualityFinding
+	var overflow int
+	for _, f := range r.Findings {
+		key := f.Kind + "|" + f.File
+		counter[key]++
+		if counter[key] <= maxFindingsPerKind {
+			capped = append(capped, f)
+		} else {
+			overflow++
+		}
+	}
+	if overflow > 0 {
+		capped = append(capped, QualityFinding{
+			Severity: SevAdvisory,
+			Kind:     "findings-truncated",
+			File:     "(cap)",
+			Line:     0,
+			Detail: fmt.Sprintf(
+				"%d additional findings suppressed (cap: %d per kind+file). Full results available by re-running with STOKE_QS_DISABLE specific kinds.",
+				overflow, maxFindingsPerKind),
+		})
+	}
+	r.Findings = capped
 	for _, f := range r.Findings {
 		switch f.Severity {
 		case SevBlocking:

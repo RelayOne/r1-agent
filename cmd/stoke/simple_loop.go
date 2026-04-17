@@ -73,6 +73,12 @@ func simpleLoopCmd(args []string) {
 		globalFixWorkers = 1
 	}
 	fmt.Printf("   fix-mode: %s (workers: %d)\n", globalFixMode, globalFixWorkers)
+	// Show which quality-signal gates are active so the operator can
+	// visually confirm feature-gate env vars were honored. Printed
+	// once at startup; experimentals are marked so their absence is
+	// obvious when STOKE_QS_ENABLE wasn't set.
+	qsCfg := plan.LoadQualityConfigFromEnv()
+	fmt.Printf("   quality gates: %s\n", strings.Join(qsCfg.Enabled(), ", "))
 	currentProse := string(prose)
 
 	for round := 1; round <= *maxRounds; round++ {
