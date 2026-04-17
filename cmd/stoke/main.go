@@ -1384,6 +1384,7 @@ func sowCmd(args []string) {
 	outputFormat := fs.String("output-format", "", "Output mode. Empty (default): human-readable TUI + stoke banners on stdout. 'stream-json': emit Claude Code-compatible NDJSON events to stdout (S-U-020); logs route to stderr. Consumed by Multica, OpenACP, and other orchestrators that speak Claude Code's schema.")
 	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
 	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
+	exportSOW := fs.String("export-sow", "", "After planning completes, export the structured SOW JSON to this file and exit. Pass the exported file back via --file on future runs to skip the entire 30-min planning phase.")
 	fs.Parse(args)
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
@@ -1643,6 +1644,23 @@ func sowCmd(args []string) {
 	}
 	if err != nil {
 		sowFatal(streamEmitter, streamResult, "load SOW: %v", err)
+	}
+
+	// --export-sow: write the planned SOW to a file and exit.
+	// This lets operators capture the output of a 30-min planning
+	// phase and re-use it via `--file <exported.json>` on all
+	// subsequent runs — turning 30 min into 0 for every iteration.
+	if *exportSOW != "" && sow != nil {
+		b, err := json.MarshalIndent(sow, "", "  ")
+		if err != nil {
+			sowFatal(streamEmitter, streamResult, "export SOW: %v", err)
+		}
+		if err := os.WriteFile(*exportSOW, b, 0o644); err != nil {
+			sowFatal(streamEmitter, streamResult, "write exported SOW: %v", err)
+		}
+		fmt.Printf("  ✓ exported SOW to %s (%d sessions, %d bytes)\n", *exportSOW, len(sow.Sessions), len(b))
+		fmt.Println("  Re-use: stoke sow --file", *exportSOW, "...")
+		os.Exit(0)
 	}
 
 	// Auto-repair dangling task dependencies and empty-task slots
