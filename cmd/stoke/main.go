@@ -1375,6 +1375,13 @@ func sowCmd(args []string) {
 	// (e.g. claude-opus, gpt-5) to break out of that ceiling. Empty =
 	// fall back to --native-model (current behavior, backward compatible).
 	reasoningModel := fs.String("reasoning-model", "", "Override the model used for judges/reviewers/decomposers (defaults to --native-model). Recommended: a stronger model than the worker — research shows convergence depends on critic > generator.")
+	// Option B: per-task worktree + merge-on-approval. Default off
+	// until validated; opt in to test the isolated-task dispatch +
+	// reviewed-merge flow. When on, each task runs in <repo>.worktrees/<S>-<T>
+	// on branch task-<S>-<T>, commits there, and merges back to
+	// the main repo only if tr.Success. Fallback to Option A
+	// (direct commit to main) when worktree creation fails.
+	perTaskWorktree := fs.Bool("per-task-worktree", false, "Option B: run each sow task in its own git worktree and merge back to main on success. Default off — opt in for isolated per-task dispatch.")
 	reasoningBaseURL := fs.String("reasoning-base-url", "", "Override the base URL for the reasoning provider (defaults to --native-base-url).")
 	reasoningAPIKey := fs.String("reasoning-api-key", "", "Override the API key for the reasoning provider (defaults to --native-api-key).")
 	// Model-source flags: the BUILDER/REVIEWER x MODEL/SOURCE/URL/API_KEY
@@ -2453,6 +2460,7 @@ func sowCmd(args []string) {
 
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
+			PerTaskWorktree:   *perTaskWorktree,
 			Runner:            runner,
 			EventBus:          sowBus,
 			MaxTurns:          100,

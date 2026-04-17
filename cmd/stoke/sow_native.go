@@ -102,7 +102,18 @@ func encodeTextMessage(text string) (json.RawMessage, error) {
 // flag pointer.
 type sowNativeConfig struct {
 	RepoRoot string
-	Runner   *engine.NativeRunner
+	// PerTaskWorktree enables Option B: every task runs in its own
+	// git worktree, commits there, and merges back to the main repo
+	// on reviewer approval. When false (default), tasks run directly
+	// against RepoRoot with per-task commits (Option A).
+	//
+	// Isolation: each task sees a clean view of prior tasks' merged
+	// work but cannot see concurrent tasks' in-progress changes
+	// (there are none — sequential for now). Protects main from
+	// mid-task corruption; enables future parallelism once the
+	// scheduler emits non-conflicting task sets.
+	PerTaskWorktree bool
+	Runner          *engine.NativeRunner
 	EventBus *hub.Bus
 	// MaxTurns is the turn budget per task. Default 100.
 	MaxTurns int
@@ -2049,6 +2060,7 @@ func runSessionPhase1(ctx context.Context, session plan.Session, workingSession 
 
 func runSessionPhase1Sequential(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
 	results := make([]plan.TaskExecResult, 0, len(session.Tasks))
+	mainRepoRoot := cfg.RepoRoot // preserved for worktree merges
 	for i, task := range session.Tasks {
 		if ctx.Err() != nil {
 			return results
@@ -2064,49 +2076,91 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		}
 		fmt.Printf("  [%d/%d] %s: %s\n", i+1, len(session.Tasks), task.ID, task.Description)
 
+		// OPTION B: per-task worktree. When enabled, create a fresh
+		// git worktree at HEAD of the main repo on a branch named
+		// task-<session>-<task>, run this task against the worktree,
+		// then merge back to main on success. This isolates in-
+		// progress work from main, enables per-commit review on a
+		// stable base, and is the prerequisite for parallel task
+		// dispatch. When disabled, falls through to Option A
+		// (direct-against-main commit-per-task, shipped a73f53e).
+		//
+		// Scope: `taskCfg` is a value-copy with its RepoRoot swapped
+		// to the worktree path. Pointer fields (RepoMap, Wisdom,
+		// BuildWatcher, spent) still share the underlying state
+		// across tasks — that's intentional (repomap context
+		// remains consistent; cost accounting aggregates).
+		taskCfg := cfg
+		var wtPath, wtBranch string
+		if cfg.PerTaskWorktree {
+			wtBranch = fmt.Sprintf("task-%s-%s", session.ID, task.ID)
+			wtPath = filepath.Join(mainRepoRoot+".worktrees", fmt.Sprintf("%s-%s", session.ID, task.ID))
+			if err := setupTaskWorktree(ctx, mainRepoRoot, wtPath, wtBranch); err != nil {
+				fmt.Printf("    ⚠ %s: worktree create failed: %v — falling back to main repo\n", task.ID, err)
+				wtPath = "" // fall back to Option A for this task
+			} else {
+				taskCfg.RepoRoot = wtPath
+				fmt.Printf("    🌲 %s: running in worktree %s (branch %s)\n", task.ID, wtPath, wtBranch)
+			}
+		}
+
 		// Per-task file-drift snapshot: capture dirty tree BEFORE the
 		// worker runs so we can diff afterward and detect (a) zombie
 		// tasks that claim success but wrote no files, and (b) silent
 		// scope creep where the worker edits files not in task.Files.
 		// This is a superset of the wave-level collision check used
 		// by the parallel path — it runs per-task regardless of mode.
-		preTaskDirty := gitDirtyFiles(ctx, cfg.RepoRoot)
+		preTaskDirty := gitDirtyFiles(ctx, taskCfg.RepoRoot)
 		preTaskDirtySet := make(map[string]bool, len(preTaskDirty))
 		for _, f := range preTaskDirty {
 			preTaskDirtySet[f] = true
 		}
 
 		sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
-			RepoMap:              cfg.RepoMap,
-			RepoMapBudget:        cfg.RepoMapBudget,
-			Wisdom:               cfg.Wisdom,
-			RawSOW:               cfg.RawSOWText,
-			RepoRoot:             cfg.RepoRoot,
-			Briefing:             cfg.Briefings[task.ID],
-			LiveBuildState:       liveBuildStateFor(cfg),
-			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
+			RepoMap:              taskCfg.RepoMap,
+			RepoMapBudget:        taskCfg.RepoMapBudget,
+			Wisdom:               taskCfg.Wisdom,
+			RawSOW:               taskCfg.RawSOWText,
+			RepoRoot:             taskCfg.RepoRoot,
+			Briefing:             taskCfg.Briefings[task.ID],
+			LiveBuildState:       liveBuildStateFor(taskCfg),
+			UniversalPromptBlock: taskCfg.combinedPromptBlock(taskCfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 		})
-		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
-		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		sup := toEngineSupervisor(autoExtractTaskSupervisor(taskCfg.RepoRoot, taskCfg.RawSOWText, workingSession, task, 3))
+		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
 		// Per-task reviewer: catch gaps at task scope before
 		// cascading into session AC failures. Bounded at 1
 		// follow-up max per task to cap cost and prevent loops.
 		// preTaskDirtySet is passed in so the reviewer can
 		// deterministically verify the task wrote its declared
 		// files — closes the zombie-task false-complete hole.
-		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns, preTaskDirtySet)
+		reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, taskCfg, maxTurns, preTaskDirtySet)
 
 		// Post-task diff: what did THIS task actually touch?
-		reportPerTaskFileDrift(ctx, cfg.RepoRoot, task, preTaskDirtySet, tr.Success)
+		reportPerTaskFileDrift(ctx, taskCfg.RepoRoot, task, preTaskDirtySet, tr.Success)
 
-		// OPTION A: per-task commit. Sow previously commit'd once at
-		// session end, accumulating 200+ uncommitted files — prevented
-		// per-commit review and made failures hard to bisect. Now every
-		// successful task gets its own commit with a structured message.
-		// A task that wrote nothing silently no-ops (git commit --quiet
-		// exits 0 only when staging is empty).
+		// OPTION A: per-task commit in the active tree (main or
+		// worktree). A task that wrote nothing silently no-ops.
 		if tr.Success {
-			commitPerTask(ctx, cfg.RepoRoot, session.ID, task)
+			commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task)
+		}
+
+		// OPTION B: worktree merge-or-cleanup. On success, merge the
+		// task branch back to main via --ff-only (preferred) or
+		// --no-ff fallback. On failure or merge conflict, abandon the
+		// branch (kept for forensics, not merged). Worktree is always
+		// removed at the end.
+		if wtPath != "" {
+			if tr.Success {
+				if mergeTaskWorktree(ctx, mainRepoRoot, wtBranch, task.ID) {
+					fmt.Printf("    🔀 %s: merged %s to main\n", task.ID, wtBranch)
+				} else {
+					fmt.Printf("    💥 %s: merge failed — abandoning %s (not merged)\n", task.ID, wtBranch)
+				}
+			} else {
+				fmt.Printf("    ⚠ %s: task failed — abandoning worktree %s (not merging)\n", task.ID, wtBranch)
+			}
+			cleanupTaskWorktree(ctx, mainRepoRoot, wtPath, wtBranch, tr.Success)
 		}
 
 		results = append(results, tr)
@@ -2160,6 +2214,65 @@ func truncateSow(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// setupTaskWorktree creates a fresh worktree at HEAD of mainRepo on
+// the given branch. Cleans up any stale worktree + branch from a
+// prior failed run with the same name so we never stall on EEXIST.
+func setupTaskWorktree(ctx context.Context, mainRepo, wtPath, wtBranch string) error {
+	// Clean up any stale state from a prior run — worktree remove is
+	// idempotent with --force, branch -D fails quietly if not-exists.
+	_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "worktree", "remove", "--force", wtPath).Run()
+	_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "branch", "-D", wtBranch).Run()
+	_ = os.RemoveAll(wtPath)
+	// Ensure parent directory exists (e.g. .worktrees/).
+	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+	// Create the worktree on a new branch rooted at HEAD.
+	cmd := exec.CommandContext(ctx, "git", "-C", mainRepo,
+		"worktree", "add", "-b", wtBranch, wtPath, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// mergeTaskWorktree merges the named branch into mainRepo's current
+// HEAD. Tries --ff-only first (fast-forward when main hasn't moved,
+// which is always true under sequential dispatch). Falls back to
+// --no-ff merge commit if fast-forward isn't possible. On conflict,
+// aborts + returns false. Returns true iff the merge landed.
+func mergeTaskWorktree(ctx context.Context, mainRepo, wtBranch, taskID string) bool {
+	ffCmd := exec.CommandContext(ctx, "git", "-C", mainRepo, "merge", "--ff-only", wtBranch)
+	if out, err := ffCmd.CombinedOutput(); err == nil && !strings.Contains(string(out), "fatal") {
+		return true
+	}
+	msg := fmt.Sprintf("merge task %s (reviewer-approved via worktree)", taskID)
+	nfCmd := exec.CommandContext(ctx, "git", "-C", mainRepo,
+		"merge", "--no-ff", "-m", msg, wtBranch)
+	out, err := nfCmd.CombinedOutput()
+	if err != nil || strings.Contains(string(out), "CONFLICT") ||
+		strings.Contains(string(out), "Automatic merge failed") {
+		fmt.Printf("    💥 %s: merge conflict on %s — aborting\n    %s\n",
+			taskID, wtBranch, truncateSow(strings.TrimSpace(string(out)), 300))
+		_ = exec.CommandContext(ctx, "git", "-C", mainRepo, "merge", "--abort").Run()
+		return false
+	}
+	return true
+}
+
+// cleanupTaskWorktree removes the worktree directory + git metadata.
+// Keeps the branch if the worktree was successfully merged (history);
+// deletes the branch if abandoned so it doesn't clutter.
+func cleanupTaskWorktree(ctx context.Context, mainRepo, wtPath, wtBranch string, merged bool) {
+	_ = exec.CommandContext(ctx, "git", "-C", mainRepo,
+		"worktree", "remove", "--force", wtPath).Run()
+	if !merged {
+		_ = exec.CommandContext(ctx, "git", "-C", mainRepo,
+			"branch", "-D", wtBranch).Run()
+	}
+	_ = os.RemoveAll(wtPath)
 }
 
 // ZombieVerdict distinguishes three post-dispatch states for a task:

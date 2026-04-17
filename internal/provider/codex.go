@@ -55,6 +55,37 @@ func NewCodexWorker(binary, workDir, model string) *CodexProvider {
 func (p *CodexProvider) Name() string { return "codex" }
 
 func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
+	// Retry up to 3 times when codex exits with "no last agent
+	// message" — a known codex-CLI failure mode where the agent
+	// session ends without emitting a final message. The failure
+	// is transient on codex's side (we observed 78 consecutive
+	// hits on a single run); simply re-invoking usually succeeds.
+	// Other errors (hung process, non-zero-for-other-reasons)
+	// still return immediately.
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		resp, err := p.chatOnce(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		// Only retry on the specific "no last agent message"
+		// failure. Other errors (hangs, real codex errors,
+		// context-cancelled) return immediately.
+		if !strings.Contains(err.Error(), "no last agent message") &&
+			!strings.Contains(err.Error(), "wrote empty content") {
+			return nil, err
+		}
+		if attempt < maxRetries {
+			// Brief backoff lets codex's back-end settle.
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+	}
+	return nil, fmt.Errorf("codex: %d retries exhausted: %w", maxRetries, lastErr)
+}
+
+func (p *CodexProvider) chatOnce(req ChatRequest) (*ChatResponse, error) {
 	cliPrompt, stdinContent := splitCodexPrompt(req)
 	if cliPrompt == "" && stdinContent != "" {
 		cliPrompt = "Process the input piped via stdin and produce the requested output. Output ONLY the requested format — no prose wrapper."
@@ -108,7 +139,13 @@ func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		select {
 		case err := <-done:
 			if err != nil {
-				return nil, fmt.Errorf("codex: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+				// Surface the "no last agent message" marker in the
+				// error so the outer retry loop in Chat() can detect
+				// it. The stderr line from codex ends with "wrote
+				// empty content"; include both so either pattern can
+				// match.
+				stderrStr := strings.TrimSpace(stderr.String())
+				return nil, fmt.Errorf("codex: %w (stderr: %s)", err, stderrStr)
 			}
 			goto output
 		case <-watchdog.C:
