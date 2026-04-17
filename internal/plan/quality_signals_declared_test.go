@@ -145,6 +145,114 @@ func TestPathVariants_CurlyToSquare(t *testing.T) {
 	}
 }
 
+func TestExtractDeclaredFiles_ExplicitPaths(t *testing.T) {
+	// SOW prose with 3 distinct explicit paths inline. All three
+	// should surface.
+	prose := "We need to write app/api/v1/users/route.ts and " +
+		"packages/ui/src/Button.tsx plus cmd/stoke/main.go to " +
+		"complete this."
+	got := ExtractDeclaredFiles(prose)
+	want := []string{
+		"app/api/v1/users/route.ts",
+		"packages/ui/src/Button.tsx",
+		"cmd/stoke/main.go",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d paths, want %d: %v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestExtractDeclaredFiles_BulletList(t *testing.T) {
+	prose := `The deliverables are:
+- app/api/v1/alarms/{id}/acknowledge/route.ts
+- app/api/v1/alarms/{id}/resolve/route.ts
+- packages/api-client/src/index.ts
+Done.`
+	got := ExtractDeclaredFiles(prose)
+	want := map[string]bool{
+		"app/api/v1/alarms/{id}/acknowledge/route.ts": true,
+		"app/api/v1/alarms/{id}/resolve/route.ts":     true,
+		"packages/api-client/src/index.ts":            true,
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d paths, want 3: %v", len(got), got)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected path: %q", p)
+		}
+	}
+}
+
+func TestExtractDeclaredFiles_InsideCodeFence(t *testing.T) {
+	prose := "Create these files:\n" +
+		"```\n" +
+		"app/api/v1/health/route.ts\n" +
+		"packages/ui/src/Card.tsx\n" +
+		"```\n" +
+		"And wire them in."
+	got := ExtractDeclaredFiles(prose)
+	if len(got) != 2 {
+		t.Fatalf("got %d paths, want 2: %v", len(got), got)
+	}
+	want := map[string]bool{
+		"app/api/v1/health/route.ts": true,
+		"packages/ui/src/Card.tsx":   true,
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected path: %q", p)
+		}
+	}
+}
+
+func TestExtractDeclaredFiles_NoPaths(t *testing.T) {
+	prose := "We should refactor the authentication flow and improve " +
+		"the UX for the settings page. Ship by Friday."
+	got := ExtractDeclaredFiles(prose)
+	if len(got) != 0 {
+		t.Errorf("expected 0 paths, got %d: %v", len(got), got)
+	}
+}
+
+func TestExtractDeclaredFiles_FiltersURLsAndNonPaths(t *testing.T) {
+	prose := "See https://example.com/api/v1/foo.json for schema. " +
+		"Also http://docs.site.io/guide.md has more info. " +
+		"Absolute path /etc/hosts.yaml is irrelevant. " +
+		"A bare file README.md should NOT match either. " +
+		"But src/app/config.yaml SHOULD match."
+	got := ExtractDeclaredFiles(prose)
+	if len(got) != 1 {
+		t.Fatalf("got %d paths, want 1 (src/app/config.yaml): %v", len(got), got)
+	}
+	if got[0] != "src/app/config.yaml" {
+		t.Errorf("got %q, want src/app/config.yaml", got[0])
+	}
+}
+
+func TestExtractDeclaredFiles_Dedups(t *testing.T) {
+	prose := "Edit app/api/v1/users/route.ts. Again edit " +
+		"app/api/v1/users/route.ts for the POST handler."
+	got := ExtractDeclaredFiles(prose)
+	if len(got) != 1 {
+		t.Errorf("expected 1 deduplicated path, got %d: %v", len(got), got)
+	}
+}
+
+func TestExtractDeclaredFiles_EmptyInput(t *testing.T) {
+	if got := ExtractDeclaredFiles(""); got != nil {
+		t.Errorf("empty prose should return nil, got %v", got)
+	}
+	if got := ExtractDeclaredFiles("   \n\t  "); got != nil {
+		t.Errorf("whitespace-only prose should return nil, got %v", got)
+	}
+}
+
 func TestPathVariants_MultipleBrackets(t *testing.T) {
 	// nested dynamic segments (e.g. buildings/[buildingId]/devices/[deviceId])
 	got := pathVariants("app/api/v1/buildings/{buildingId}/devices/{deviceId}/route.ts")

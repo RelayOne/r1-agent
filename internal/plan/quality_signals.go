@@ -1621,6 +1621,113 @@ func ScanDeclaredFilesNotCreated(repoRoot string, declared []string) []QualityFi
 	return findings
 }
 
+// declaredFileRe matches file-path-shaped tokens in free-form SOW
+// prose. Conservative by design — false positives here cause
+// ScanDeclaredFilesNotCreated to flag a nonexistent "declared" file,
+// which blocks a clean commit. Design constraints:
+//
+//   - Anchor on a whitelisted extension so we don't treat every
+//     slash-containing identifier as a path (e.g. "src/app" alone
+//     is ambiguous; "src/app/page.tsx" is not).
+//   - Require the token to contain at least one `/` so single-word
+//     filenames like "README.md" in running prose don't match.
+//     The SOW idiom when referring to a top-level file is to write
+//     its full repo path — and losing those to a false negative is
+//     much better than matching every ".md" mentioned in a sentence.
+//   - Reject URLs (http://, https://, git://, ssh://, //, file://).
+//   - Reject absolute OS paths (leading `/` before the first
+//     directory) — SOWs always express repo-relative paths.
+//
+// Extensions mirror the H-8 spec: TS/JS/JSX/TSX, Python, Go,
+// Markdown, YAML, JSON, SQL. Uses \b word-boundary anchors (zero-
+// width) so consecutive matches on successive lines both fire
+// without the first match consuming the separator the second one
+// needs. Matches that start/end with `/` or `://` are rejected
+// post-extraction in ExtractDeclaredFiles.
+var declaredFileRe = regexp.MustCompile(
+	`\b([A-Za-z0-9_.@][A-Za-z0-9_./@\-\[\]{}]*` +
+		`/[A-Za-z0-9_./@\-\[\]{}]*?` +
+		`\.(?:tsx?|jsx?|py|go|md|ya?ml|json|sql))\b`)
+
+// ExtractDeclaredFiles scans SOW prose for explicit repo-relative
+// file paths. Returns the path list in first-occurrence order (no
+// de-dup across calls beyond this function's internal seen-map).
+// Empty slice when the prose contains no path-shaped tokens — the
+// caller should silently skip the H-2 sweep in that case.
+//
+// Contract: O(n) over prose length. Caps extraction at 100 entries
+// so a pathological SOW (e.g. a pasted `git ls-files` dump) can't
+// turn this into a quadratic gate over a giant declared list.
+//
+// Rejections applied:
+//   - URLs (http/https/ssh/git/file/etc.)
+//   - Absolute OS paths (leading slash)
+//   - Bare filenames with no `/` (too ambiguous in prose)
+//   - Paths with whitespace (regex can't capture those anyway)
+//
+// This is the simple-loop counterpart to per-task task.Files: SOW
+// prose describes files to create, and we want the same H-2
+// "declared-file-not-created" gate to fire when they don't.
+func ExtractDeclaredFiles(sowProse string) []string {
+	if strings.TrimSpace(sowProse) == "" {
+		return nil
+	}
+	const maxPaths = 100
+	seen := make(map[string]struct{}, 16)
+	var out []string
+	// Use SubmatchIndex so we know where the match starts in the
+	// original prose — needed to look at the preceding byte and
+	// reject URLs (the regex match captures `example.com/a/b.json`
+	// out of `https://example.com/a/b.json`; only by checking the
+	// char before the match can we tell the `/` it sits under is a
+	// URL slash rather than a path separator).
+	for _, idx := range declaredFileRe.FindAllStringSubmatchIndex(sowProse, -1) {
+		if len(idx) < 4 {
+			continue
+		}
+		start, end := idx[2], idx[3]
+		if start < 0 || end <= start {
+			continue
+		}
+		p := sowProse[start:end]
+		// Look behind: if the match is preceded by `/` or `:/`,
+		// it's part of a URL like `http://site/path.json`.
+		if start > 0 {
+			prev := sowProse[start-1]
+			if prev == '/' || prev == ':' {
+				continue
+			}
+		}
+		// Strip surrounding punctuation defensively.
+		p = strings.Trim(p, ".,;:!?)]}")
+		if p == "" {
+			continue
+		}
+		// Reject URLs (scheme embedded in the match) and absolute
+		// OS paths (leading `/`).
+		lower := strings.ToLower(p)
+		if strings.Contains(lower, "://") ||
+			strings.HasPrefix(lower, "//") ||
+			strings.HasPrefix(p, "/") {
+			continue
+		}
+		// Require at least one `/` (the regex already enforces
+		// this; verify after trim).
+		if !strings.Contains(p, "/") {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+		if len(out) >= maxPaths {
+			break
+		}
+	}
+	return out
+}
+
 // fileExistsVariant returns true when repoRoot contains a file at rel
 // OR at any of its common path-equivalent variants. Handles three
 // real-world mismatches observed in the SOW cohort:

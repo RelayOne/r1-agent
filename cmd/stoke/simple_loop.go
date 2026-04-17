@@ -18,6 +18,64 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
+// step8RegressionCap bounds how many consecutive outer rounds may
+// end with "Step 8 audit says gaps remain AND the compliance sweep
+// also found stubs/missing" before simple-loop bails out. This is a
+// token-burn circuit breaker for the failure mode observed in
+// D-opus-full (H-6, 2026-04-17) where Step 8 kept kicking the worker
+// back to the builder for round after round without ever achieving
+// a clean compliance pass.
+//
+// Counter semantics:
+//   - incremented when an outer round completes with compliance-NOT-
+//     clean (i.e. gaps truly remain, either a real audit-says-gaps
+//     or a CC-claims-done-but-compliance-overrode-to-gaps);
+//   - reset to zero the first time an outer round's compliance sweep
+//     comes back clean (meaning we actually closed the gaps);
+//   - when the counter reaches step8RegressionCap we print the
+//     regression banner and terminate the simple-loop without
+//     starting another builder call.
+//
+// Default is 2: a single failed closure is fine (the builder wasn't
+// given a useful gap list the first time); two consecutive failures
+// is evidence the audit/compliance feedback is not converging and
+// further rounds will just burn tokens.
+const step8RegressionCap = 2
+
+// step8RegressionTracker counts consecutive outer rounds that ended
+// with compliance NOT clean (i.e. Step 8 rejected the round and is
+// about to kick us back to another builder call). See
+// step8RegressionCap for the policy. Safe for single-goroutine use;
+// the simple-loop is sequential per invocation.
+type step8RegressionTracker struct {
+	cap      int
+	cycles   int
+	lastGaps []string
+}
+
+// Observe reports one outer round's compliance outcome. `gaps` is
+// the human-readable list of MISSING/STUB items (empty when
+// compliance is clean). Returns true when the cap has been reached
+// and the caller MUST abort the loop.
+func (t *step8RegressionTracker) Observe(complianceClean bool, gaps []string) bool {
+	if complianceClean {
+		t.cycles = 0
+		t.lastGaps = nil
+		return false
+	}
+	t.cycles++
+	t.lastGaps = gaps
+	return t.cycles >= t.cap
+}
+
+// Cycles returns the current consecutive-failure count. Exposed for
+// the final run summary and for tests.
+func (t *step8RegressionTracker) Cycles() int { return t.cycles }
+
+// LastGaps returns the gap list from the most recent failing round.
+// Exposed for the final run summary and for the abort-banner log.
+func (t *step8RegressionTracker) LastGaps() []string { return t.lastGaps }
+
 // ccPipeSilenceThreshold caps how long Claude Code's stdout pipe
 // is allowed to sit idle before we assume the subprocess is wedged
 // and SIGKILL its process group. This is STRICTER than the existing
@@ -150,6 +208,13 @@ func simpleLoopCmd(args []string) {
 	qsCfg := plan.LoadQualityConfigFromEnv()
 	fmt.Printf("   quality gates: %s\n", strings.Join(qsCfg.Enabled(), ", "))
 	currentProse := string(prose)
+
+	// Step-8 regression guard — see step8RegressionCap. Tracks how
+	// many consecutive outer rounds ended with compliance NOT clean;
+	// aborts the loop once the cap is hit so we don't burn tokens
+	// oscillating between audit + builder without convergence.
+	step8Tracker := &step8RegressionTracker{cap: step8RegressionCap}
+	var step8Aborted bool
 
 	for round := 1; round <= *maxRounds; round++ {
 		fmt.Printf("═══════════════════════════════════════\n")
@@ -385,6 +450,30 @@ func simpleLoopCmd(args []string) {
 							// file-scoped scanners fire on per-commit watch.
 							syntheticSOW := &plan.SOW{Description: currentProse}
 							qual := plan.RunQualitySweepForSOW(absRepo, cleanChanged, syntheticSOW)
+							// H-2 (declared-file-not-created) in
+							// simple-loop: task.Files doesn't exist here,
+							// so we extract explicit file paths from the
+							// SOW prose and cross-check them against the
+							// repo. Only fires when extraction finds at
+							// least one candidate — silent otherwise to
+							// avoid noise on SOWs that only talk in
+							// narratives.
+							if declared := plan.ExtractDeclaredFiles(currentProse); len(declared) > 0 {
+								missing := plan.ScanDeclaredFilesNotCreated(absRepo, declared)
+								if len(missing) > 0 {
+									paths := make([]string, len(missing))
+									for i, m := range missing {
+										paths[i] = m.File
+									}
+									fmt.Printf("  ⛔ [gate-hit] declared-file-not-created on %d file(s): %s\n",
+										len(paths), strings.Join(paths, ", "))
+									if qual == nil {
+										qual = &plan.QualityReport{}
+									}
+									qual.Findings = append(qual.Findings, missing...)
+									qual.BlockingN += len(missing)
+								}
+							}
 							if qual != nil {
 								// Always log a summary so telemetry can
 								// distinguish "ran and passed" from "didn't
@@ -573,19 +662,20 @@ func simpleLoopCmd(args []string) {
 		// Step 9: Check if done — BOTH gates must agree
 		if ccSaysDone && complianceClean {
 			fmt.Printf("\n✅ ROUND %d: All deliverables complete (CC audit + compliance sweep both clean)\n", round)
+			// Reset the regression tracker on clean pass — future
+			// rounds (if any) start from zero.
+			step8Tracker.Observe(true, nil)
 			break
 		}
 		if ccSaysDone && !complianceClean {
 			fmt.Printf("\n⚠ ROUND %d: CC claimed complete but compliance sweep found stubs/missing — overriding to gaps-remain\n", round)
 		}
 
-		// Extract remaining work as new prose for next round.
-		// If compliance found specific missing/stub items, prepend
-		// those to the audit text so the next round gets concrete
-		// targets instead of vague CC-self-assessment.
-		nextProse := audit
+		// Build the gap list now so the regression tracker, the
+		// abort banner, and the next-round prose all see the same
+		// canonical list.
+		var gaps []string
 		if compReport != nil && !complianceClean {
-			var gaps []string
 			for _, f := range compReport.Findings {
 				if f.Verdict == plan.VerdictMissing {
 					gaps = append(gaps, fmt.Sprintf("MISSING: %s", f.Deliverable.Name))
@@ -593,10 +683,26 @@ func simpleLoopCmd(args []string) {
 					gaps = append(gaps, fmt.Sprintf("STUB (must implement real logic): %s", f.Deliverable.Name))
 				}
 			}
-			if len(gaps) > 0 {
-				nextProse = "COMPLIANCE GATE FOUND THE FOLLOWING GAPS — IMPLEMENT THEM FULLY (no scaffolds, no mocks, no filler values):\n\n" +
-					strings.Join(gaps, "\n") + "\n\n---\n\nADDITIONAL CC AUDIT NOTES:\n" + audit
-			}
+		}
+
+		// Step-8 regression guard — observe this round's outcome.
+		// If the tracker says we've hit the cap, emit the banner and
+		// bail out of the whole outer loop.
+		if step8Tracker.Observe(complianceClean, gaps) {
+			fmt.Printf("\n⛔ Step-8 regression guard: %d consecutive cycles ended with gaps remaining after audit. Stopping to avoid token burn. Last gaps: %s.\n",
+				step8Tracker.Cycles(), formatGapList(step8Tracker.LastGaps()))
+			step8Aborted = true
+			break
+		}
+
+		// Extract remaining work as new prose for next round.
+		// If compliance found specific missing/stub items, prepend
+		// those to the audit text so the next round gets concrete
+		// targets instead of vague CC-self-assessment.
+		nextProse := audit
+		if len(gaps) > 0 {
+			nextProse = "COMPLIANCE GATE FOUND THE FOLLOWING GAPS — IMPLEMENT THEM FULLY (no scaffolds, no mocks, no filler values):\n\n" +
+				strings.Join(gaps, "\n") + "\n\n---\n\nADDITIONAL CC AUDIT NOTES:\n" + audit
 		}
 
 		// Auto-extend rounds if we've hit the cap but compliance
@@ -616,10 +722,42 @@ func simpleLoopCmd(args []string) {
 
 	// Final summary
 	fmt.Println("\n═══════════════════════════════════════")
-	fmt.Println("  SIMPLE LOOP COMPLETE")
-	fmt.Printf("  repo: %s\n", absRepo)
-	fmt.Println("  run 'stoke sessions status' to see results")
+	if step8Aborted {
+		fmt.Println("  SIMPLE LOOP ABORTED — Step-8 regression cap reached")
+		fmt.Printf("  repo: %s\n", absRepo)
+		fmt.Printf("  consecutive gap-closure failures: %d (cap %d)\n",
+			step8Tracker.Cycles(), step8RegressionCap)
+		fmt.Printf("  last unresolved gaps: %s\n",
+			formatGapList(step8Tracker.LastGaps()))
+		fmt.Println("  next step: relaunch stoke simple-loop OR extend the SOW")
+		fmt.Println("  to give the builder a materially different prompt.")
+	} else {
+		fmt.Println("  SIMPLE LOOP COMPLETE")
+		fmt.Printf("  repo: %s\n", absRepo)
+		fmt.Println("  run 'stoke sessions status' to see results")
+	}
 	fmt.Println("═══════════════════════════════════════")
+	if step8Aborted {
+		// Non-zero exit so outer orchestrators (CI, other stoke
+		// commands) can detect the regression-cap abort without
+		// having to scrape stdout.
+		os.Exit(3)
+	}
+}
+
+// formatGapList renders a gap list for human-readable log lines.
+// Truncates to 5 entries for the banner; the full list is already
+// in the preceding compliance-sweep log output.
+func formatGapList(gaps []string) string {
+	if len(gaps) == 0 {
+		return "(none recorded)"
+	}
+	const maxInline = 5
+	if len(gaps) <= maxInline {
+		return strings.Join(gaps, "; ")
+	}
+	return strings.Join(gaps[:maxInline], "; ") +
+		fmt.Sprintf(" (+%d more)", len(gaps)-maxInline)
 }
 
 var (
@@ -692,6 +830,12 @@ func splitReviewIntoIssues(text string, maxChunks int) []string {
 // configured reviewer backend. Reviewers run in TEXT-ONLY mode
 // — no filesystem tools, no commits. The caller hands in a
 // fully-formed prompt; we return the review text.
+//
+// For the codex reviewer, this function also gates the call through
+// codexBackoff (H-7): when the rolling 5-min error rate exceeds
+// 1/min, the NEXT call is delayed by 2x/4x/8x. A successful call
+// resets the multiplier. This prevents tight loops of 429/turn.failed
+// errors from wedging the final-review phase the way MS-full wedged.
 func reviewCall(dir, prompt string) string {
 	switch globalReviewer {
 	case "cc-opus":
@@ -702,7 +846,22 @@ func reviewCall(dir, prompt string) string {
 		// Generic "claude code as reviewer" — uses its default model.
 		return claudeReviewCall(globalClaudeBin, dir, prompt, "")
 	default:
-		return codexCall(globalCodexBin, dir, prompt)
+		// Codex path — apply rate-based backoff BEFORE the call,
+		// then record the outcome. We treat an empty return as an
+		// error (covers turn.failed, 429, watchdog-kill, crash) and
+		// a non-empty return as success.
+		applyCodexBackoff()
+		out := codexCall(globalCodexBin, dir, prompt)
+		if strings.TrimSpace(out) == "" {
+			if codexBackoff.RecordError() {
+				fmt.Fprintf(os.Stderr,
+					"  ⏸ codex backoff activated: %dx next call (codex errors: %d in last 5min)\n",
+					codexBackoff.Multiplier(), codexBackoff.ErrorCount())
+			}
+		} else {
+			codexBackoff.RecordSuccess()
+		}
+		return out
 	}
 }
 
