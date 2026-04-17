@@ -12,6 +12,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/agentloop"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/tools"
@@ -153,20 +154,37 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	}
 
 	// Pre-end-turn build verification (Cline/Aider pattern).
-	// When the model says "done", run the project's build
-	// command. If it fails, inject errors and force the model
-	// to fix them in the same conversation turn — preserving
-	// full context of what was just written. This eliminates
-	// the repair-loop spiral where a separate worker gets
-	// the error but has lost the context of the original code.
+	// When the model says "done", verify the project compiles.
+	// If it doesn't, inject the errors and force the model to
+	// fix them in the same conversation turn — preserving full
+	// context of what was just written.
+	//
+	// Strategy:
+	//   1. Try the Ecosystem registry (internal/plan) — proper
+	//      per-language, per-package compile check (TS runs
+	//      tsc in each modified file's package dir, Go runs
+	//      `go vet`/`go build`, C# runs dotnet, etc.). This is
+	//      correct for monorepos because it resolves each
+	//      file's owning package rather than a single root
+	//      command. Extensible: every Ecosystem implementation
+	//      (integrity_ts.go, integrity_go.go, integrity_csharp.go,
+	//      …) participates automatically.
+	//   2. Fall back to detectBuildCommand's bash heuristic if
+	//      no ecosystem claims any modified file (generic text
+	//      projects, etc.).
 	if spec.WorktreeDir != "" {
-		buildChecked := false // only check once per task
+		buildChecked := false
 		cfg.PreEndTurnCheckFn = func(_ []agentloop.Message) string {
 			if buildChecked {
-				return "" // already checked this task
+				return ""
 			}
 			buildChecked = true
-			// Detect build command from project structure
+			if msg := runEcosystemGate(ctx, spec.WorktreeDir); msg != "" {
+				return msg
+			}
+			// No ecosystem match or no errors — fall back to
+			// the bash-command build gate for cases where the
+			// ecosystem registry doesn't cover the repo shape.
 			buildCmd := detectBuildCommand(spec.WorktreeDir)
 			if buildCmd == "" {
 				return ""
@@ -175,14 +193,13 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			cmd.Dir = spec.WorktreeDir
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				// Build failed — return errors for injection
 				output := string(out)
 				if len(output) > 4000 {
 					output = output[len(output)-4000:]
 				}
 				return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
 			}
-			return "" // build passed, allow end_turn
+			return ""
 		}
 	}
 
@@ -284,6 +301,105 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	return runResult, nil
 }
 
+// runEcosystemGate discovers recently-modified files via git,
+// groups them by registered Ecosystem (plan package), and runs
+// each ecosystem's CompileErrors() over its claimed files. The
+// result is a concatenated error message (truncated to 4 KB)
+// suitable for injection into the agentloop, or "" if no
+// errors were found or no ecosystem claimed any file.
+//
+// Per-language checks come from internal/plan/integrity_*.go —
+// each file self-registers via RegisterEcosystem() in its init.
+// The TS ecosystem, for example, finds each file's owning
+// package and runs `pnpm exec tsc --noEmit` in THAT directory,
+// so per-package tsconfigs are respected in monorepos — a case
+// the old flat-bash build command used to miss.
+func runEcosystemGate(ctx context.Context, repoDir string) string {
+	// Discover modified files. We prefer `git status --porcelain`
+	// because it includes both staged and unstaged changes as
+	// well as untracked files — all of which the worker may
+	// have just produced.
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusCmd.Dir = repoDir
+	out, err := statusCmd.Output()
+	if err != nil {
+		return "" // not a git repo or git unavailable
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		// porcelain v1: XY filename (XY is 2 chars + space)
+		path := strings.TrimSpace(line[3:])
+		// Strip rename arrows: "old -> new"
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = strings.TrimSpace(path[idx+4:])
+		}
+		// Strip surrounding quotes for paths with special chars
+		path = strings.Trim(path, `"`)
+		if path == "" {
+			continue
+		}
+		absPath := filepath.Join(repoDir, path)
+		if st, err := os.Stat(absPath); err != nil || st.IsDir() {
+			continue
+		}
+		files = append(files, absPath)
+	}
+	if len(files) == 0 {
+		return ""
+	}
+
+	// Bucket files by ecosystem (first match wins).
+	byEco := map[string][]string{}
+	ecoLookup := map[string]plan.Ecosystem{}
+	for _, f := range files {
+		eco := plan.EcosystemFor(f)
+		if eco == nil {
+			continue
+		}
+		byEco[eco.Name()] = append(byEco[eco.Name()], f)
+		ecoLookup[eco.Name()] = eco
+	}
+	if len(byEco) == 0 {
+		return ""
+	}
+
+	// Run each ecosystem's CompileErrors and concatenate.
+	var sb strings.Builder
+	for name, ecoFiles := range byEco {
+		eco := ecoLookup[name]
+		errs, err := eco.CompileErrors(ctx, repoDir, ecoFiles)
+		if err != nil {
+			// Gate itself failed (e.g. tsc missing). Surface as
+			// hint but do not block — other ecosystems still run.
+			sb.WriteString(fmt.Sprintf("\n[%s] gate error: %v\n", name, err))
+			continue
+		}
+		if len(errs) == 0 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("\n[%s] compile errors (%d):\n", name, len(errs)))
+		for i, e := range errs {
+			if i >= 30 {
+				sb.WriteString(fmt.Sprintf("  … and %d more\n", len(errs)-30))
+				break
+			}
+			sb.WriteString(fmt.Sprintf("  %s:%d:%d %s %s\n",
+				e.File, e.Line, e.Column, e.Code, e.Message))
+		}
+	}
+	msg := sb.String()
+	if msg == "" {
+		return ""
+	}
+	if len(msg) > 4000 {
+		msg = msg[:4000] + "\n… (truncated)"
+	}
+	return "Build gate failed — the following compile errors must be fixed before ending the turn:\n" + msg
+}
+
 // detectBuildCommand returns the right build/typecheck
 // command for the project at dir, or "" if none detected.
 // IMPORTANT: pnpm workspaces are checked BEFORE root-tsconfig
@@ -321,6 +437,35 @@ func detectBuildCommand(dir string) string {
 	// Python
 	if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
 		return "python -m py_compile $(find . -name '*.py' -not -path '*/venv/*' | head -20) 2>&1"
+	}
+	// C# / .NET — solution or project files
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*.sln")); len(matches) > 0 {
+		return "dotnet build --nologo 2>&1"
+	}
+	if matches, _ := filepath.Glob(filepath.Join(dir, "*.csproj")); len(matches) > 0 {
+		return "dotnet build --nologo 2>&1"
+	}
+	// Java / Kotlin — pom.xml or Gradle
+	if _, err := os.Stat(filepath.Join(dir, "pom.xml")); err == nil {
+		return "mvn -q compile 2>&1"
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build.gradle")); err == nil {
+		return "./gradlew compileJava compileKotlin 2>&1 || gradle compileJava compileKotlin 2>&1"
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build.gradle.kts")); err == nil {
+		return "./gradlew compileJava compileKotlin 2>&1 || gradle compileJava compileKotlin 2>&1"
+	}
+	// Elixir
+	if _, err := os.Stat(filepath.Join(dir, "mix.exs")); err == nil {
+		return "mix compile --warnings-as-errors 2>&1"
+	}
+	// Swift (SwiftPM) — Xcode projects have their own build system
+	if _, err := os.Stat(filepath.Join(dir, "Package.swift")); err == nil {
+		return "swift build 2>&1"
+	}
+	// Ruby — bundler + ruby -c syntax sweep
+	if _, err := os.Stat(filepath.Join(dir, "Gemfile")); err == nil {
+		return "bundle exec ruby -c $(find . -name '*.rb' -not -path '*/vendor/*' | head -50) 2>&1"
 	}
 	return ""
 }

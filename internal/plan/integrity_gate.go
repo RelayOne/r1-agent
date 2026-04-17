@@ -160,6 +160,31 @@ func RegisterEcosystem(e Ecosystem) {
 	ecosystemRegistry = append(ecosystemRegistry, e)
 }
 
+// Ecosystems returns a snapshot of the currently registered
+// ecosystems. Consumers outside the plan package need this when
+// they want to drive ecosystem-specific checks (e.g. the native
+// runner's pre-end-turn build gate) without constructing a full
+// Session. The returned slice is a copy — mutating it does not
+// affect the registry.
+func Ecosystems() []Ecosystem {
+	out := make([]Ecosystem, len(ecosystemRegistry))
+	copy(out, ecosystemRegistry)
+	return out
+}
+
+// EcosystemFor returns the first registered ecosystem that claims
+// ownership of the given file, or nil if none does. File can be
+// absolute or repo-relative; ecosystems decide based on extension
+// and/or sibling manifest files.
+func EcosystemFor(absPath string) Ecosystem {
+	for _, eco := range ecosystemRegistry {
+		if eco.Owns(absPath) {
+			return eco
+		}
+	}
+	return nil
+}
+
 // RunIntegrityGate runs the three scenarios across every ecosystem
 // that owns any of the session's declared files. The baseline
 // argument maps ecosystem name → pre-session compile errors; passing
