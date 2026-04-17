@@ -74,12 +74,17 @@ func (p *ClaudeCodeProvider) Name() string { return "claude-code" }
 func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	prompt := buildClaudeCodePrompt(req)
 
-	args := []string{"--print", "-p", prompt}
+	// Pipe prompt via stdin instead of -p flag. Large prompts
+	// (55KB+ prose SOWs) hit arg-length limits or cause Claude
+	// Code to misinterpret the input as a conversation when
+	// passed inline. Stdin piping handles any size cleanly.
+	args := []string{"--print"}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
 	}
 
 	cmd := exec.Command(p.Binary, args...)
+	cmd.Stdin = strings.NewReader(prompt)
 	if p.WorkDir != "" {
 		cmd.Dir = p.WorkDir
 	}
@@ -109,9 +114,33 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	}
 
 	text := strings.TrimSpace(stdout.String())
+	// Strip markdown fences — Claude Code often wraps JSON
+	// output in ```json ... ``` blocks even when asked not to.
+	text = stripMarkdownFences(text)
 	return &ChatResponse{
 		Content: []ResponseContent{{Type: "text", Text: text}},
 	}, nil
+}
+
+// stripMarkdownFences removes ```lang\n...\n``` wrappers
+// from Claude Code output so downstream JSON parsers see
+// clean content.
+func stripMarkdownFences(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Find the end of the opening fence line.
+	nl := strings.IndexByte(s, '\n')
+	if nl < 0 {
+		return s
+	}
+	s = s[nl+1:]
+	// Strip trailing fence.
+	if idx := strings.LastIndex(s, "```"); idx >= 0 {
+		s = s[:idx]
+	}
+	return strings.TrimSpace(s)
 }
 
 // ChatStream is the same as Chat for Claude Code — there's
