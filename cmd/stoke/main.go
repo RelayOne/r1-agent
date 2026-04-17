@@ -2161,6 +2161,9 @@ func sowCmd(args []string) {
 
 		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
 		runner.BaseURL = nativeBaseURLForRunner
+		if strings.HasPrefix(*nativeBaseURL, "claude-code") {
+			runner.ProviderOverride = provider.NewClaudeCodeProvider("claude", absRepo, "")
+		}
 
 		// Build a repo map once so every task prompt can inject the
 		// ranked codebase view. If this fails we proceed without it.

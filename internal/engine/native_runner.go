@@ -17,9 +17,13 @@ import (
 // the Anthropic Messages API directly. No Claude Code CLI needed.
 type NativeRunner struct {
 	apiKey   string
-	BaseURL  string   // empty = default Anthropic URL; set for LiteLLM or custom proxy
-	model    string   // e.g. "claude-sonnet-4-5"
-	EventBus *hub.Bus // optional: publishes tool use events
+	BaseURL  string             // empty = default Anthropic URL; set for LiteLLM or custom proxy
+	model    string             // e.g. "claude-sonnet-4-5"
+	EventBus *hub.Bus           // optional: publishes tool use events
+	// ProviderOverride, when set, is used instead of
+	// constructing an AnthropicProvider from apiKey/BaseURL.
+	// Used for claude-code:// mode.
+	ProviderOverride provider.Provider
 }
 
 // NewNativeRunner creates a native runner using the Anthropic API directly.
@@ -52,8 +56,14 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	start := time.Now()
 
-	// Create the Anthropic provider
-	p := provider.NewAnthropicProvider(n.apiKey, n.BaseURL)
+	// Create the provider — use override if set (claude-code://),
+	// otherwise standard Anthropic/OpenAI-compatible HTTP.
+	var p provider.Provider
+	if n.ProviderOverride != nil {
+		p = n.ProviderOverride
+	} else {
+		p = provider.NewAnthropicProvider(n.apiKey, n.BaseURL)
+	}
 
 	// Create the tool registry
 	toolRegistry := tools.NewRegistry(spec.WorktreeDir)
