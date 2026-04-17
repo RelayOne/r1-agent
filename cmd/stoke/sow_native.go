@@ -3594,8 +3594,19 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		LiveCompileErrors:    liveErrs,
 		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-task-reviewer", "1-task-dispatch", &workingSession, 1)),
 	})
-	if err != nil || verdict == nil {
-		return
+	if err != nil {
+		// Previously this silently returned, making tasks
+		// pass without ANY review when the reviewer crashed.
+		// Run 56 had 99 tasks "pass" with zero reviews because
+		// Claude Code's ReviewTaskWork calls all errored out.
+		// Now we log + continue to deterministic checks below.
+		fmt.Printf("    ⚠ reviewer error for %s: %v (proceeding to deterministic checks)\n", originalTask.ID, err)
+	}
+	if verdict == nil {
+		// No verdict = reviewer failed. Fall through to stub
+		// scan + size floor + content judge which are
+		// deterministic and don't depend on the reviewer.
+		verdict = &plan.TaskReviewVerdict{Complete: true, Reasoning: "reviewer unavailable — deterministic checks only"}
 	}
 	if verdict.Complete {
 		// Structural check first: classify zombie for the
