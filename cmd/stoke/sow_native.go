@@ -2989,7 +2989,19 @@ exit 0 before you end.
 
 		// 3. Task header — short, because the spec excerpt below
 		// does the heavy lifting.
-		fmt.Fprintf(&usr, "TASK %s: %s\n", task.ID, task.Description)
+		//
+		// Sanitize contradictory wording: when the SOW says "Add
+		// placeholder dashboard page", the worker writes a placeholder,
+		// the content judge rejects it as FAKE, the worker rewrites...
+		// loop. The word "placeholder" in task descriptions is ALWAYS
+		// contradictory with the harness's anti-stub rules. Replace it
+		// with "initial" which has the same architectural intent
+		// ("put something there for now") without triggering the
+		// content-faithfulness loop.
+		taskDesc := task.Description
+		taskDesc = strings.ReplaceAll(taskDesc, "placeholder", "initial")
+		taskDesc = strings.ReplaceAll(taskDesc, "Placeholder", "Initial")
+		fmt.Fprintf(&usr, "TASK %s: %s\n", task.ID, taskDesc)
 		if len(task.Files) > 0 {
 			fmt.Fprintf(&usr, "  expected files: %s\n", strings.Join(task.Files, ", "))
 		}
