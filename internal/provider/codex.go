@@ -31,7 +31,7 @@ func NewCodexProvider(binary, workDir, model string) *CodexProvider {
 		Binary:  binary,
 		WorkDir: workDir,
 		Model:   model,
-		Timeout: 10 * time.Minute,
+		Timeout: 20 * time.Minute,
 	}
 }
 

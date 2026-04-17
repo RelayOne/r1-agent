@@ -1422,7 +1422,7 @@ func sowCmd(args []string) {
 	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
 	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
 	exportSOW := fs.String("export-sow", "", "After planning completes, export the structured SOW JSON to this file and exit. Pass the exported file back via --file on future runs to skip the entire 30-min planning phase.")
-	deepPlan := fs.Bool("deep-plan", false, "Run full CTO approval + refine loop during planning (~30 min instead of ~5 min). Produces higher-fidelity plans but 6x slower. Default is fast planning — the execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught.")
+	deepPlan := fs.Bool("deep-plan", false, "[EXPERIMENTAL — often degrades plan quality] Run full CTO approval + refine loop during planning (~30 min instead of ~5 min). Produces higher-fidelity plans but 6x slower. Default is fast planning — the execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught.")
 	fs.Parse(args)
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
