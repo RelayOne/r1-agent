@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 // simpleLoopCmd implements the "just let claude code build it"
@@ -80,25 +82,25 @@ func simpleLoopCmd(args []string) {
 
 		// Step 1: Claude Code plans
 		fmt.Println("📋 Step 1: Claude Code planning...")
-		plan := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
+		planText := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
 			"Read this project specification and create a detailed implementation plan. "+
 				"List every file you need to create/modify, in order, with what each file should contain. "+
 				"Be specific — exact file paths, exact exports, exact dependencies. "+
 				"Output the plan as a numbered list.\n\nSPECIFICATION:\n%s\n\n"+
 				"CURRENT REPO STATE: check what already exists with ls/find before planning.",
 			currentProse))
-		if plan == "" {
+		if planText == "" {
 			fmt.Println("  ⚠ Claude Code planning failed, retrying...")
 			continue
 		}
-		fmt.Printf("  ✓ plan: %d chars\n", len(plan))
+		fmt.Printf("  ✓ plan: %d chars\n", len(planText))
 
 		// Step 2: Reviewer reviews the plan
 		fmt.Printf("📝 Step 2: %s reviewing plan...\n", *reviewer)
 		codexReview := reviewCall(absRepo,
 			"Review this implementation plan for a software project. "+
 				"Flag any issues: missing files, wrong dependencies, unrealistic steps, "+
-				"ordering problems. Suggest improvements. Be specific.\n\nPLAN:\n"+plan)
+				"ordering problems. Suggest improvements. Be specific.\n\nPLAN:\n"+planText)
 		fmt.Printf("  ✓ review: %d chars\n", len(codexReview))
 
 		// Step 3: Claude Code builds (background) while we watch commits
@@ -184,7 +186,7 @@ func simpleLoopCmd(args []string) {
 							"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
 							"SPECIFICATION:\n%s\n\n"+
 							"START BUILDING NOW.%s",
-						plan, codexReview, currentProse, bigWorkerExtra)
+						planText, codexReview, currentProse, bigWorkerExtra)
 				} else {
 					// Continuation prompt — show what's been done, ask
 					// CC to diff against the SOW and keep going from
@@ -339,11 +341,18 @@ func simpleLoopCmd(args []string) {
 			}
 			fullDiff := shellCmd(absRepo, "git diff "+headBefore+"..HEAD --stat 2>/dev/null")
 			fmt.Printf("  🔍 Final review %d/%d (via %s)...\n", fixRound, maxFixRounds, *reviewer)
-			finalPrompt := "Review ALL changes in this branch. Check for: " +
-				"compilation errors, missing imports, broken tests, incomplete " +
-				"functions that only return mock data, unimplemented markers, " +
-				"and anything that would fail a typecheck. " +
-				"Respond with 'NO ISSUES' or 'LGTM' only if genuinely clean.\n\n" +
+			finalPrompt := "Review ALL changes in this branch for PRODUCTION READINESS. " +
+				"REJECT (do NOT say 'NO ISSUES' or 'LGTM') if ANY of these are present:\n" +
+				"  • skeleton functions: body is a scaffold-marker, empty body, bare return of nil/undefined, or unresolved TODO\n" +
+				"  • scaffold-only files: declared but no real body, or body is just mocked/hard-coded values\n" +
+				"  • fake returns: hard-coded scaffold values that pretend a feature works without real logic\n" +
+				"  • mock-only implementations where the SOW asked for real behavior\n" +
+				"  • empty request handlers, empty event handlers, empty callbacks\n" +
+				"  • functions that throw 'not implemented' style errors\n" +
+				"  • compilation errors, missing imports, broken tests\n" +
+				"  • anything that would fail a typecheck\n" +
+				"You MUST look INSIDE the changed files — a diff that adds a file whose body is scaffolding is NOT acceptable. " +
+				"Only respond with 'NO ISSUES' or 'LGTM' if every change is a genuine, complete, working implementation.\n\n" +
 				"FULL DIFF STAT:\n" + fullDiff
 			if len(pendingReviews) > 0 {
 				finalPrompt += "\n\nPREVIOUSLY FLAGGED ISSUES (must be verified fixed):\n" +
@@ -388,21 +397,84 @@ func simpleLoopCmd(args []string) {
 		audit := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
 			"Compare the current state of this repository against the original specification. "+
 				"For EACH deliverable in the spec, state whether it's: DONE, PARTIAL, or MISSING. "+
-				"Be brutally honest. If something is a stub or doesn't actually work, say so.\n\n"+
+				"BE BRUTALLY HONEST. A deliverable is NOT DONE if it is any of: "+
+				"skeleton function body; hard-coded fake returns; empty handler/callback; "+
+				"mock-only implementation where SOW asked for real behavior; file exists but logic is missing. "+
+				"Report PARTIAL or MISSING for anything that is scaffolding only.\n\n"+
 				"Then answer: IS THERE MORE WORK TO DO? If yes, describe EXACTLY what remains "+
-				"as a new specification for the next round. If no, say 'ALL DELIVERABLES COMPLETE'.\n\n"+
+				"(list each stub/missing item by name) as a new specification for the next round. "+
+				"If no, say 'ALL DELIVERABLES COMPLETE'.\n\n"+
 				"ORIGINAL SPECIFICATION:\n%s", currentProse))
 		fmt.Printf("  audit: %d chars\n", len(audit))
 
-		// Step 9: Check if done
-		if strings.Contains(strings.ToUpper(audit), "ALL DELIVERABLES COMPLETE") {
-			fmt.Printf("\n✅ ROUND %d: All deliverables complete!\n", round)
-			break
+		// Step 8b: Deterministic compliance sweep — anti-rubber-stamp
+		// The CC audit above is circular (CC grading CC's work). This
+		// sweep walks the SOW prose for named deliverables and checks
+		// each against the actual repo via filename+content-definition
+		// match + 80-byte + body-line thresholds. Authoritative: if
+		// compliance finds stubs/missing, we override any "ALL
+		// DELIVERABLES COMPLETE" claim from CC.
+		ccSaysDone := strings.Contains(strings.ToUpper(audit), "ALL DELIVERABLES COMPLETE")
+		tmpSOW := &plan.SOW{Description: currentProse}
+		compReport := plan.RunSOWCompliance(absRepo, tmpSOW)
+		complianceClean := compReport != nil && compReport.Passed()
+		if compReport != nil && len(compReport.Findings) > 0 {
+			fmt.Printf("  🕵 compliance sweep: %s\n", compReport.Summary())
+			if !complianceClean {
+				// Show what's missing/stub so CC has concrete feedback
+				// for the next round's prose.
+				shortReport := plan.FormatComplianceReport(compReport)
+				if len(shortReport) > 4000 {
+					shortReport = shortReport[:4000] + "\n... (truncated)"
+				}
+				fmt.Println(shortReport)
+			}
+		} else {
+			fmt.Printf("  🕵 compliance sweep: no extractable deliverables from prose\n")
 		}
 
-		// Extract remaining work as new prose for next round
+		// Step 9: Check if done — BOTH gates must agree
+		if ccSaysDone && complianceClean {
+			fmt.Printf("\n✅ ROUND %d: All deliverables complete (CC audit + compliance sweep both clean)\n", round)
+			break
+		}
+		if ccSaysDone && !complianceClean {
+			fmt.Printf("\n⚠ ROUND %d: CC claimed complete but compliance sweep found stubs/missing — overriding to gaps-remain\n", round)
+		}
+
+		// Extract remaining work as new prose for next round.
+		// If compliance found specific missing/stub items, prepend
+		// those to the audit text so the next round gets concrete
+		// targets instead of vague CC-self-assessment.
+		nextProse := audit
+		if compReport != nil && !complianceClean {
+			var gaps []string
+			for _, f := range compReport.Findings {
+				if f.Verdict == plan.VerdictMissing {
+					gaps = append(gaps, fmt.Sprintf("MISSING: %s", f.Deliverable.Name))
+				} else if f.Verdict == plan.VerdictFoundStub {
+					gaps = append(gaps, fmt.Sprintf("STUB (must implement real logic): %s", f.Deliverable.Name))
+				}
+			}
+			if len(gaps) > 0 {
+				nextProse = "COMPLIANCE GATE FOUND THE FOLLOWING GAPS — IMPLEMENT THEM FULLY (no scaffolds, no mocks, no filler values):\n\n" +
+					strings.Join(gaps, "\n") + "\n\n---\n\nADDITIONAL CC AUDIT NOTES:\n" + audit
+			}
+		}
+
+		// Auto-extend rounds if we've hit the cap but compliance
+		// still says gaps remain. One-time extension to avoid the
+		// MS failure mode (exited at max-rounds with gaps). Logs
+		// a loud warning so the user sees it.
+		if round == *maxRounds && !complianceClean {
+			newCap := *maxRounds + 3
+			fmt.Printf("\n⚠ ROUND %d = max but compliance still failing — auto-extending max-rounds to %d (one-time)\n",
+				round, newCap)
+			*maxRounds = newCap
+		}
+
 		fmt.Printf("\n🔄 ROUND %d: gaps remain — extracting remaining work for next round\n", round)
-		currentProse = audit // the audit becomes the next round's input
+		currentProse = nextProse // next round's input
 	}
 
 	// Final summary
