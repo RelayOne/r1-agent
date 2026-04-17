@@ -2553,6 +2553,14 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 	}
 	results := make([]plan.TaskExecResult, len(session.Tasks))
 	completed := 0
+	mainRepoRoot := cfg.RepoRoot // preserved for worktree merges
+	// gitMu serializes worktree-add + merge against the main repo.
+	// Concurrent `git worktree add` is not safe, and serial merges
+	// are required anyway (each must see the HEAD the prior
+	// merge advanced to). Parallel execution happens WITHIN the
+	// worktrees themselves (independent clones of HEAD), not on
+	// the main repo's index.
+	var gitMu sync.Mutex
 	for waveIdx, wave := range waves {
 		if ctx.Err() != nil {
 			return results[:completed]
@@ -2593,18 +2601,45 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					return
 				}
 				fmt.Printf("  ▶ %s: %s\n", task.ID, task.Description)
+
+				// OPTION B: per-task worktree in parallel waves.
+				// Each task gets its own worktree spawned from the
+				// main repo's current HEAD. Creation is serialized
+				// via gitMu (git worktree add is not concurrent-
+				// safe). The task itself runs in parallel; merge-
+				// back at the end is again serialized. When the
+				// feature is off, falls through to Option A
+				// (direct-against-main per-task commit).
+				taskCfg := cfg
+				var wtPath, wtBranch string
+				if cfg.PerTaskWorktree {
+					wtBranch = fmt.Sprintf("task-%s-%s", session.ID, task.ID)
+					wtPath = filepath.Join(mainRepoRoot+".worktrees",
+						fmt.Sprintf("%s-%s", session.ID, task.ID))
+					gitMu.Lock()
+					err := setupTaskWorktree(ctx, mainRepoRoot, wtPath, wtBranch)
+					gitMu.Unlock()
+					if err != nil {
+						fmt.Printf("    ⚠ %s: worktree create failed: %v — falling back to main\n", task.ID, err)
+						wtPath = ""
+					} else {
+						taskCfg.RepoRoot = wtPath
+						fmt.Printf("    🌲 %s: running in worktree %s (branch %s)\n", task.ID, wtPath, wtBranch)
+					}
+				}
+
 				sysP, usrP := buildSOWNativePromptsWithOpts(sowDoc, workingSession, task, promptOpts{
-					RepoMap:              cfg.RepoMap,
-					RepoMapBudget:        cfg.RepoMapBudget,
-					Wisdom:               cfg.Wisdom,
-					RawSOW:               cfg.RawSOWText,
-					RepoRoot:             cfg.RepoRoot,
-					Briefing:             cfg.Briefings[task.ID],
-					LiveBuildState:       liveBuildStateFor(cfg),
-					UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
+					RepoMap:              taskCfg.RepoMap,
+					RepoMapBudget:        taskCfg.RepoMapBudget,
+					Wisdom:               taskCfg.Wisdom,
+					RawSOW:               taskCfg.RawSOWText,
+					RepoRoot:             taskCfg.RepoRoot,
+					Briefing:             taskCfg.Briefings[task.ID],
+					LiveBuildState:       liveBuildStateFor(taskCfg),
+					UniversalPromptBlock: taskCfg.combinedPromptBlock(taskCfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 				})
-				sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, task, 3))
-				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+				sup := toEngineSupervisor(autoExtractTaskSupervisor(taskCfg.RepoRoot, taskCfg.RawSOWText, workingSession, task, 3))
+				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
 				// Per-task reviewer (bounded follow-up) runs in
 				// each worker goroutine so parallel review + fix
 				// happens per-task without serializing the wave.
@@ -2615,7 +2650,32 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// before the wave started — enough to catch the
 				// pure zombie case (declared files, zero writes in
 				// the whole wave).
-				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, cfg, maxTurns, preWaveDirty)
+				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, taskCfg, maxTurns, preWaveDirty)
+
+				// Per-task commit (Option A) + worktree merge
+				// (Option B). Commit runs in the task-scoped tree
+				// (worktree path when B enabled, main repo when not).
+				if tr.Success {
+					commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task)
+				}
+				if wtPath != "" {
+					if tr.Success {
+						gitMu.Lock()
+						ok := mergeTaskWorktree(ctx, mainRepoRoot, wtBranch, task.ID)
+						gitMu.Unlock()
+						if ok {
+							fmt.Printf("    🔀 %s: merged %s to main\n", task.ID, wtBranch)
+						} else {
+							fmt.Printf("    💥 %s: merge failed — %s abandoned\n", task.ID, wtBranch)
+						}
+					} else {
+						fmt.Printf("    ⚠ %s: task failed — abandoning worktree %s\n", task.ID, wtBranch)
+					}
+					gitMu.Lock()
+					cleanupTaskWorktree(ctx, mainRepoRoot, wtPath, wtBranch, tr.Success)
+					gitMu.Unlock()
+				}
+
 				resCh <- indexed{idx: ti, res: tr}
 			}()
 		}
