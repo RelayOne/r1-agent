@@ -87,12 +87,62 @@ type Session struct {
 type AcceptanceCriterion struct {
 	ID          string `json:"id" yaml:"id"`
 	Description string `json:"description" yaml:"description"`
-	// Command, if set, is a shell command that must exit 0 for the criterion to pass.
+	// Command, if set, is a shell command that must exit 0.
 	Command string `json:"command,omitempty" yaml:"command"`
 	// FileExists, if set, checks that the path exists in the repo.
 	FileExists string `json:"file_exists,omitempty" yaml:"file_exists"`
 	// ContentMatch checks that a file contains a specific string.
 	ContentMatch *ContentMatchCriterion `json:"content_match,omitempty" yaml:"content_match"`
+}
+
+// UnmarshalJSON on AcceptanceCriterion handles LLMs that
+// emit command as an object instead of a string:
+//   {"command": {"file_exists": "path"}} → normalize to
+//   {"command": "test -f path", "file_exists": "path"}
+//
+// This prevents session expansion from failing on a single
+// malformed AC (run-57 parse error).
+func (ac *AcceptanceCriterion) UnmarshalJSON(data []byte) error {
+	// Alias to avoid infinite recursion.
+	type alias AcceptanceCriterion
+	var raw struct {
+		alias
+		RawCommand json.RawMessage `json:"command,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*ac = AcceptanceCriterion(raw.alias)
+
+	if len(raw.RawCommand) == 0 || string(raw.RawCommand) == "null" {
+		return nil
+	}
+	// Try string (normal case).
+	var s string
+	if json.Unmarshal(raw.RawCommand, &s) == nil {
+		ac.Command = s
+		return nil
+	}
+	// Try object — extract known shapes.
+	var obj map[string]interface{}
+	if json.Unmarshal(raw.RawCommand, &obj) == nil {
+		if fe, ok := obj["file_exists"].(string); ok {
+			ac.Command = "test -f " + fe + " || test -d " + fe
+			if ac.FileExists == "" {
+				ac.FileExists = fe
+			}
+			return nil
+		}
+		if t, ok := obj["test"].(string); ok {
+			ac.Command = "test " + t
+			return nil
+		}
+		// Unknown object → stringify as fallback.
+		b, _ := json.Marshal(obj)
+		ac.Command = string(b)
+		return nil
+	}
+	return nil
 }
 
 // ContentMatchCriterion checks that a file contains expected content.
