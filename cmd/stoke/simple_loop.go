@@ -36,6 +36,7 @@ func simpleLoopCmd(args []string) {
 	sowFile := fs.String("file", "", "SOW prose file")
 	maxRounds := fs.Int("max-rounds", 5, "Max outer loops (plan→build→audit)")
 	claudeBin := fs.String("claude-bin", "claude", "Claude Code binary")
+	claudeModel := fs.String("claude-model", "", "Claude Code model (sonnet, opus, etc)")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
 	fs.Parse(args)
 
@@ -52,9 +53,11 @@ func simpleLoopCmd(args []string) {
 
 	fmt.Printf("🔄 simple-loop: %s (%d bytes prose)\n", *sowFile, len(prose))
 	fmt.Printf("   repo: %s\n", absRepo)
-	fmt.Printf("   claude: %s, codex: %s\n", *claudeBin, *codexBin)
+	claudeModelArg := *claudeModel
+	fmt.Printf("   claude: %s (model: %s), codex: %s\n", *claudeBin, func() string { if claudeModelArg == "" { return "default" }; return claudeModelArg }(), *codexBin)
 	fmt.Printf("   max rounds: %d\n\n", *maxRounds)
 
+	globalClaudeModel = claudeModelArg
 	currentProse := string(prose)
 
 	for round := 1; round <= *maxRounds; round++ {
@@ -215,10 +218,17 @@ func simpleLoopCmd(args []string) {
 	fmt.Println("═══════════════════════════════════════")
 }
 
+var globalClaudeModel string // set by simpleLoopCmd
+
 func claudeCall(bin, dir, prompt string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "--print", "--no-session-persistence", prompt)
+	args := []string{"--print", "--no-session-persistence"}
+	if globalClaudeModel != "" {
+		args = append(args, "--model", globalClaudeModel)
+	}
+	args = append(args, prompt)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	var out bytes.Buffer
 	cmd.Stdout = &out
