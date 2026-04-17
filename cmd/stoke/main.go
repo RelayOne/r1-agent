@@ -645,6 +645,8 @@ func main() {
 		fmt.Print(app.DefaultPolicyYAML())
 	case "doctor":
 		doctorCmd(os.Args[2:])
+	case "sessions":
+		sessionsCmd(os.Args[2:])
 	case "cloud":
 		cloudCmd(os.Args[2:])
 	case "yolo":
