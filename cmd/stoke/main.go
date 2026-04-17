@@ -1385,6 +1385,7 @@ func sowCmd(args []string) {
 	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
 	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
 	exportSOW := fs.String("export-sow", "", "After planning completes, export the structured SOW JSON to this file and exit. Pass the exported file back via --file on future runs to skip the entire 30-min planning phase.")
+	fastPlan := fs.Bool("fast-plan", false, "Skip CTO approval + refine loop during planning (~5 min instead of ~30 min). The execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught. Recommended for iteration; use full planning for final production runs.")
 	fs.Parse(args)
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
@@ -1459,6 +1460,11 @@ func sowCmd(args []string) {
 			rs.CheckpointID, rs.Label, len(rs.CompletedSessions), rs.CostUSD)
 		// Force resume mode so the session scheduler picks up markers.
 		*resume = true
+	}
+
+	// --fast-plan: skip CTO approval + refine loop.
+	if *fastPlan {
+		plan.SkipRefine = true
 	}
 
 	// --fresh: clear cached SOW state BEFORE anything loads. Deletes

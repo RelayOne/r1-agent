@@ -365,7 +365,13 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 	if ac.Command != "" {
 		cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", ac.Command)
+		// Inject file_exists as a bash function so ACs that
+		// use `file_exists <path>` work. The SOW expansion
+		// prompt tells models to use the file_exists field,
+		// but many still emit it as a command. Rather than
+		// fighting every model, just make it work.
+		wrappedCmd := `file_exists() { test -f "$1" || test -d "$1"; }; ` + ac.Command
+		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", wrappedCmd)
 		cmd.Dir = projectRoot
 		cmd.Env = acceptanceCommandEnv(projectRoot)
 		out, err := cmd.CombinedOutput()

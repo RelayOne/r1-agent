@@ -78,6 +78,8 @@ RULES:
 4. Session.outputs are the critical glue: downstream sessions reference these as Inputs to form the dependency DAG. Use 2-4 word artifact names.
 5. Infer the stack from the prose. If TypeScript+Next.js, set language and framework. If Postgres mentioned, add to stack.infra with the env vars it needs.
 6. If the spec is huge, prefer MORE sessions (each smaller) over FEWER sessions (each larger). The execution layer will further split anything too big.
+7. EXCLUSIVE OWNERSHIP: each prose deliverable must be assigned to EXACTLY ONE session. If the prose says "Alert Rules Editor", that scope belongs to one session — not two sessions that both build alert-rules components. Overlap = guaranteed merge conflict.
+8. Also emit Inputs for each session — the artifact names from EARLIER sessions this session consumes. This builds the dependency DAG at the skeleton level so the expansion phase can enforce ordering. A session with no inputs is a root session.
 
 PROSE INPUT:
 `
@@ -125,13 +127,16 @@ RULES (follow these or this session's tasks will fail at execution):
   c. ACCEPTANCE CRITERIA hygiene:
      - Commands run in current working directory; no '$REPO_URL', no 'mktemp', no 'git clone'
      - No '|| echo ok' / '|| true' fallbacks (turn failures into lies)
+     - No '2>/dev/null' (hides errors)
      - No long-running processes ('next dev', 'expo start', 'vitest' without 'run')
      - No Playwright / Cypress / Puppeteer (no browser binaries available)
      - Prefer 'pnpm --filter <pkg> <script>' over 'cd dir && cmd'
      - Prefer direct binaries ('tsc', 'vitest run') over 'npx'
-     - file_exists OK for config artifacts (package.json, ci.yml) but pair with build/test for source files
+     - FILE EXISTENCE CHECK: use the "file_exists" JSON field (NOT the "command" field). "file_exists" is a struct field the harness evaluates natively. Putting the string "file_exists path" in the "command" field runs it as a shell command which fails with exit 127 because file_exists is not a bash builtin. For config artifacts: {"file_exists": "path/to/file.json"}. For source files: pair with a build/test command in "command".
      - 3-5 ACs per session is the sweet spot; the FIRST AC should be a build/test that catches compilation
      - If an AC uses a tool, that tool must be in package.json or stack.infra
+
+  c2. SCOPE EXCLUSIVITY: This session's deliverables are EXCLUSIVE — if the skeleton assigned "Alert Rules Editor" to this session, no other session should create alert-rules files. If you see that another session's skeleton description overlaps, do NOT duplicate its work. Only create tasks for deliverables in THIS session's description and outputs.
 
   d. DEPENDENCIES: only reference task IDs in EARLIER sessions (per the session.inputs hints) or earlier tasks IN THIS session. Forward references break the DAG.
 
@@ -156,6 +161,15 @@ SESSION TO EXPAND (id, title, description, outputs are FIXED; you are filling in
 // what failed rather than aborting the whole conversion.
 //
 // Returns the parsed SOW + raw JSON of the assembled result.
+// SkipRefine can be set to true by callers who want the
+// chunked convert to produce a SOW without running the CTO
+// approval + refine loop. Trades plan quality for speed:
+// ~5 min instead of ~30 min. The harness's execution-time
+// quality gates (AC checks, content judge, repair loops)
+// catch what the refine loop would have caught, just at a
+// higher per-session cost.
+var SkipRefine bool
+
 func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.Provider, model string, maxParallel int) (*SOW, []byte, error) {
 	if strings.TrimSpace(prose) == "" {
 		return nil, nil, fmt.Errorf("empty prose")
@@ -326,6 +340,18 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 	// advisory). A blocking verdict, however, halts with the
 	// operator-facing concern list so the SOW gets fixed before
 	// dispatch.
+	// SkipRefine: bypass the entire CTO approval + refine loop.
+	// The SOW goes straight from chunked convert to dispatch.
+	// Cuts planning from ~30 min to ~5 min. The harness's
+	// execution-time gates (AC checks, content judge, repair
+	// loops) handle what refine would have caught.
+	if SkipRefine {
+		fmt.Println("  ⚡ --fast-plan: skipping CTO approval + refine loop (saves ~25 min)")
+		out.ChunkedConvertApproved = true
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		return out, raw, nil
+	}
+
 	// CTO approval + refine loop. The agentic reviewer reads prose
 	// + SOW via tool calls and emits a structured verdict. On
 	// approve we mark the SOW chunked-approved and proceed. On
