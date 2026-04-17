@@ -184,6 +184,12 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/engine/gemini.go") {
 		return true
 	}
+	// critic.go defines the secret-detection regex patterns themselves
+	// (sk-..., ghp_..., AKIA...) — these look like secrets to the
+	// scanner but they're the DEFINITION of what constitutes a secret.
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/critic/critic.go") {
+		return true
+	}
 	// no-tautological-test: failures.go defines TAUTOLOGICAL_TEST as a constant string
 	if f.Rule == "no-tautological-test" && strings.HasSuffix(f.File, "internal/taskstate/failures.go") {
 		return true
