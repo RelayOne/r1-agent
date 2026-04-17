@@ -6,14 +6,84 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/plan"
 )
+
+// ccPipeSilenceThreshold caps how long Claude Code's stdout pipe
+// is allowed to sit idle before we assume the subprocess is wedged
+// and SIGKILL its process group. This is STRICTER than the existing
+// buffer-growth watchdog because it tracks activity on the pipe
+// itself rather than the accumulated buffer length, which means the
+// outer driver can't defeat it by touching unrelated log files.
+// See H-4 (2026-04-17) — MS-full was stuck 17+ min with the old
+// mtime-based watchdog because outer-loop heartbeats kept the file
+// fresh even though the child process had gone silent.
+const ccPipeSilenceThreshold = 5 * time.Minute
+
+// pipeWatcher wraps an io.Writer and records the timestamp of the
+// most recent non-empty Write. Call SilenceDuration() to ask "how
+// long has it been since bytes last flowed through?". Safe for
+// concurrent Write() + SilenceDuration() — the underlying writer
+// is assumed to be concurrent-safe with itself (bytes.Buffer is
+// NOT, but a single goroutine writes to it via cmd.Stdout so that's
+// fine here; the mutex guards only the timestamp).
+type pipeWatcher struct {
+	mu    sync.Mutex
+	last  time.Time
+	inner io.Writer
+}
+
+func newPipeWatcher(w io.Writer) *pipeWatcher {
+	return &pipeWatcher{inner: w, last: time.Now()}
+}
+
+func (p *pipeWatcher) Write(b []byte) (int, error) {
+	n, err := p.inner.Write(b)
+	if n > 0 {
+		p.mu.Lock()
+		p.last = time.Now()
+		p.mu.Unlock()
+	}
+	return n, err
+}
+
+// SilenceDuration returns how long it has been since the last
+// non-empty Write. Monotonic-clock based.
+func (p *pipeWatcher) SilenceDuration() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return time.Since(p.last)
+}
+
+// killChildProcessGroup sends SIGTERM to the process group, waits
+// gracePeriod, then SIGKILLs any survivors. Mirrors the pattern in
+// internal/engine/claude.go killProcessGroup but with a tunable
+// grace so tests can run fast. Returns true if the process was
+// definitely signalled (pgid lookup succeeded).
+func killChildProcessGroup(cmd *exec.Cmd, gracePeriod time.Duration) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		// Fall back to direct kill; Setpgid might have failed.
+		_ = cmd.Process.Kill()
+		return false
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	time.Sleep(gracePeriod)
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	return true
+}
 
 // simpleLoopCmd implements the "just let claude code build it"
 // approach. No chunked SOW planning, no session scheduler, no
@@ -686,8 +756,20 @@ func claudeCall(bin, dir, prompt string) string {
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	// Process-group isolation lets the pipe-silence watchdog kill
+	// the entire CC subtree (including any node/claude forks) via
+	// `kill -PGID` when stdout goes silent. Without this, a SIGKILL
+	// to the parent can leave orphans that keep writing to the log
+	// and confuse the outer loop's mtime-based watchdog.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var out bytes.Buffer
-	cmd.Stdout = &out
+	// pipeWatcher wraps the buffer so every byte that arrives on
+	// CC's stdout updates the lastActivity timestamp. The silence
+	// watchdog below reads that timestamp — NOT the buffer length
+	// or any file mtime — so outer-loop heartbeat writes cannot
+	// defeat it (see H-4, 2026-04-17).
+	pipeW := newPipeWatcher(&out)
+	cmd.Stdout = pipeW
 	cmd.Stderr = os.Stderr
 
 	done := make(chan error, 1)
@@ -700,6 +782,11 @@ func claudeCall(bin, dir, prompt string) string {
 	// Watchdog: 30-s ticker, 5 min of zero growth = hung.
 	// This is the same pattern the provider package uses for
 	// long-running CLI invocations (internal/provider/claudecode.go).
+	// We keep it as a fallback — it catches modes the pipe-silence
+	// watchdog can't (e.g. the buffer grew earlier but then nothing
+	// further arrives even though Write was called recently with
+	// empty bytes). Both watchdogs are additive; whichever trips
+	// first kills the process.
 	watchdog := time.NewTicker(30 * time.Second)
 	defer watchdog.Stop()
 	lastSize := 0
@@ -713,14 +800,23 @@ func claudeCall(bin, dir, prompt string) string {
 			runErr = err
 			running = false
 		case <-watchdog.C:
+			// Pipe-silence watchdog (primary): operates on the
+			// stdout pipe directly, independent of any log file.
+			if silence := pipeW.SilenceDuration(); silence >= ccPipeSilenceThreshold {
+				fmt.Fprintf(os.Stderr,
+					"  ⏱ CC pipe silence watchdog: %d min of no stdout → SIGKILL\n",
+					int(silence/time.Minute))
+				killChildProcessGroup(cmd, 2*time.Second)
+				running = false
+				break
+			}
+			// Buffer-growth watchdog (fallback).
 			cur := out.Len()
 			if cur == lastSize {
 				stale++
 				if stale >= maxStale {
 					fmt.Fprintf(os.Stderr, "  ⛔ claude: no stream output for %ds — killing\n", maxStale*30)
-					if cmd.Process != nil {
-						cmd.Process.Kill()
-					}
+					killChildProcessGroup(cmd, 2*time.Second)
 					running = false
 				}
 			} else {
