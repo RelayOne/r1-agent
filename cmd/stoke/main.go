@@ -5780,6 +5780,9 @@ func buildProseProvider(runnerMode, apiKey, baseURL, model string) (provider.Pro
 	if apiKey == "" {
 		return nil, ""
 	}
+	if strings.HasPrefix(baseURL, "claude-code") {
+		return provider.NewClaudeCodeProvider("claude", "", ""), model
+	}
 	return provider.NewAnthropicProvider(apiKey, baseURL), model
 }
 
