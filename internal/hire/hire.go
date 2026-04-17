@@ -153,17 +153,20 @@ type trustplaneDiscoverer struct {
 }
 
 // NewDiscoverer wraps a trustplane.Client as a Discoverer.
-// Currently this is a thin adapter; when the TrustPlane SDK
-// exposes a richer discovery shape (filters by locality,
-// SLA tier, etc.) this is where that translation lives.
+// Currently this is a thin adapter; when the TrustPlane
+// gateway exposes a richer discovery shape (filters by
+// locality, SLA tier, etc.) this is where that translation
+// lives. The RealClient implementation speaks to the gateway
+// over HTTP against the vendored OpenAPI spec — no Go SDK.
 func NewDiscoverer(tp trustplane.Client) Discoverer {
 	return &trustplaneDiscoverer{tp: tp}
 }
 
 // Discover calls LookupReputation for a synthetic set of
 // well-known marketplace agents and shapes the results as
-// Candidates. Real implementation swaps in a TrustPlane
-// discovery RPC once the SDK exposes one.
+// Candidates. Real implementation will swap in a TrustPlane
+// discovery endpoint once the gateway's OpenAPI spec exposes
+// one (hand-written HTTP call, not a Go SDK).
 func (d *trustplaneDiscoverer) Discover(ctx context.Context, capability string) ([]Candidate, error) {
 	// The current TrustPlane stub doesn't expose a discovery
 	// list, so this implementation returns zero candidates —

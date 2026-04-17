@@ -235,7 +235,7 @@ var tools = []Tool{
 	},
 	{
 		Name:        "stoke_delegate",
-		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via the TrustPlane SDK when available; falls back to a stub token for local dev.",
+		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via trustplane.Client. Currently the stoke-mcp binary ships StubClient only; SOW task B-5 will add a NewFromEnv factory that swaps in RealClient (hand-written HTTP against the TrustPlane gateway, no Go SDK) when STOKE_TRUSTPLANE_MODE=real.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -292,7 +292,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 // --- Tool handlers ---
 //
 // Each handler validates the shape and returns a synthetic
-// response for now. When the TrustPlane SDK + capability
+// response for now. When the TrustPlane RealClient + capability
 // registry + verify pipeline are wired into the binary, these
 // become thin adapters over the real engines.
 //

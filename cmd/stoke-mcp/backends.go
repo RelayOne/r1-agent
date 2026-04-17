@@ -16,13 +16,13 @@
 //                      a real audit node to disk
 //   stoke_delegate →  internal/delegation.Manager.Delegate
 //                      via the TrustPlane stub client
-//                      (swap for real TP SDK when shipped)
+//                      (swap for RealClient in prod)
 //
 // The Server owns one instance of each backing package.
-// Handlers call the instance methods directly; when the
-// real TrustPlane Go SDK lands, operators swap the stub
-// client via a new constructor parameter without touching
-// handler code.
+// Handlers call the instance methods directly; swapping
+// StubClient for RealClient (hand-written HTTP against the
+// vendored TrustPlane OpenAPI spec) is a single constructor
+// change without touching handler code.
 package main
 
 import (
@@ -73,6 +73,12 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stoke-mcp: init ledger: %w", err)
 	}
+	// trustplane.Client selection: StubClient (always, for now) until
+	// SOW task B-5 adds a NewFromEnv factory that reads
+	// STOKE_TRUSTPLANE_MODE=stub|real. Until then the stoke-mcp binary
+	// ships with Stub only — this is intentional per the SOW's
+	// "default mode remains stub; switching to real requires explicit
+	// env var" principle.
 	tp := trustplane.NewStubClient()
 	delMgr := delegation.NewManager(tp)
 	return &Backends{

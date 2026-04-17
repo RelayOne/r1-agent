@@ -23,7 +23,8 @@
 //
 // Cedar policy enforcement is out of scope here — the Store takes
 // a PolicyEnforcer interface so callers inject whatever evaluator
-// they have (TrustPlane SDK in production; a mock in tests).
+// they have (trustplane.RealClient.EvaluatePolicy in production,
+// which calls the TrustPlane gateway over HTTP; a mock in tests).
 package sharedmem
 
 import (

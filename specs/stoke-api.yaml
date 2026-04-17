@@ -109,9 +109,15 @@ paths:
     post:
       summary: Create a delegation token
       description: |
-        Issues a delegation via the TrustPlane SDK. Scopes are
-        derived from a named Cedar bundle (read-only-calendar,
-        send-on-behalf-of, etc.) plus any caller-supplied extras.
+        Stoke API's create-delegation endpoint. Internally the
+        handler calls trustplane.Client.CreateDelegation.
+        Currently stoke-mcp ships StubClient only; SOW task B-5
+        will add a NewFromEnv factory that swaps in RealClient
+        (hand-written HTTP POST /v1/delegation against the TrustPlane
+        gateway, no Go SDK dependency) when STOKE_TRUSTPLANE_MODE=real.
+        Scopes are derived from a named Cedar bundle
+        (read-only-calendar, send-on-behalf-of, etc.) plus any
+        caller-supplied extras.
       operationId: delegate
       requestBody:
         required: true

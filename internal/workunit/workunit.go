@@ -13,9 +13,10 @@
 //
 // Scope of this initial implementation: the WorkUnit struct, its
 // lifecycle helpers, and validation. The delegation validity check
-// (TrustPlane SDK) and the ledger-writer (bridge adapter) are
-// plumbed through interface slots so this package has no outbound
-// dependency on either — both can be injected by the caller.
+// (trustplane.Client — stub or RealClient HTTP) and the
+// ledger-writer (bridge adapter) are plumbed through interface
+// slots so this package has no outbound dependency on either —
+// both can be injected by the caller.
 package workunit
 
 import (
@@ -117,7 +118,8 @@ const (
 // DelegationVerifier is implemented by whatever subsystem can
 // answer "is this delegation currently valid for this
 // delegatee?". In production this is the internal/delegation/
-// wrapper over the TrustPlane SDK; in tests it's a mock.
+// wrapper over trustplane.RealClient (hand-written HTTP against
+// the vendored OpenAPI spec); in tests it's a mock.
 type DelegationVerifier interface {
 	VerifyDelegation(ctx context.Context, delegationID, delegateeID string) error
 }

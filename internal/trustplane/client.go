@@ -1,12 +1,15 @@
-// Package trustplane wraps the TrustPlane Go SDK so the rest of
-// Stoke consumes a single internal interface (STOKE-011). The
-// real TrustPlane SDK isn't yet a direct dependency here; this
-// file ships the interface + a stub implementation so downstream
-// packages can wire against the shape now. When the TrustPlane
-// Go SDK lands in go.mod, a `real.go` sibling will implement
-// Client backed by the SDK without touching any caller.
+// Package trustplane is Stoke's internal view of the TrustPlane
+// gateway (STOKE-011). This interface does not match any TrustPlane
+// Go type exactly. Translation to TrustPlane's wire format will
+// happen inside RealClient (real.go), which is scheduled by the
+// TrustPlane implementation SOW but not yet present in this
+// package. We deliberately do NOT import any TrustPlane Go module —
+// the only coupling will be a vendored OpenAPI spec added under
+// internal/trustplane/openapi/ by SOW task B-2 (also not yet
+// present), which is used for hand-writing HTTP calls, not code
+// generation.
 //
-// Scope consumed per the SOW's TrustPlane consumer contract:
+// Scope consumed:
 //
 //   - identity registration (per-stance SVID minting on spawn)
 //   - audit anchoring (ledger graph roots → TrustPlane audit
@@ -14,11 +17,19 @@
 //   - HITL routing (approval flows → TrustPlane HITL service)
 //   - reputation reads + writes (discovery + post-invoke)
 //   - delegation create / verify / revoke (via DelegationToken)
-//   - policy evaluation (Cedar-backed, via tp-policy-cedar SDK)
+//   - policy evaluation (Cedar-backed, evaluated TrustPlane-side)
+//
+// Implementations:
+//
+//   - StubClient (this file): always-pass, in-memory, no network.
+//     Default for local-dev and the zero-configuration startup path.
+//   - MockClient (test-only): assertion-capable, test fixtures.
+//   - RealClient (real.go): production HTTP client against the
+//     TrustPlane gateway. Hand-written against the vendored OpenAPI
+//     spec. No Go SDK dependency.
 //
 // Every method in this file is an interface declaration; the
-// Client is intentionally small so implementations (stub,
-// mock, real SDK) stay readable.
+// Client is intentionally small so implementations stay readable.
 package trustplane
 
 import (
@@ -31,8 +42,9 @@ import (
 
 // Client is the narrow facade the rest of Stoke consumes.
 // Implementations: StubClient (this file, always-pass for
-// local dev), MockClient (test-only, assertions), and the
-// upcoming RealClient (TrustPlane Go SDK).
+// local dev), MockClient (test-only, assertions), and
+// RealClient (real.go — hand-written HTTP against the vendored
+// TrustPlane OpenAPI spec, no Go SDK dependency).
 type Client interface {
 	// RegisterIdentity mints a SPIFFE SVID (or equivalent) for
 	// the given agent and returns the identity's DID. Stores
@@ -62,8 +74,9 @@ type Client interface {
 	RecordReputation(ctx context.Context, entry ReputationEntry) error
 
 	// CreateDelegation issues a new DelegationToken via the
-	// TrustPlane SDK. Attenuation + Ed25519 signing + ActClaim
-	// chain are TrustPlane-side concerns; Stoke only calls in.
+	// TrustPlane gateway (POST /v1/delegation). Attenuation +
+	// Ed25519 signing + ActClaim chain are TrustPlane-side
+	// concerns; Stoke only calls in over HTTP.
 	CreateDelegation(ctx context.Context, req DelegationRequest) (Delegation, error)
 
 	// VerifyDelegation checks the current validity of a
@@ -310,9 +323,11 @@ func (s *StubClient) RevokeDelegation(_ context.Context, delegationID string) er
 
 func (s *StubClient) EvaluatePolicy(_ context.Context, req PolicyRequest) error {
 	// Stub evaluator is deliberately permissive for local dev.
-	// Real evaluator lives in tp-policy-cedar via the TrustPlane
-	// SDK. Policy bundles that don't exist trigger a denial so
-	// callers test the deny path.
+	// Real evaluation happens TrustPlane-side (Cedar engine
+	// behind POST /v1/authorize-settlement or /v1/policy/evaluate);
+	// RealClient calls it over HTTP, no Go SDK involved. Policy
+	// bundles that don't exist trigger a denial so callers test
+	// the deny path.
 	if req.PolicyBundle == "" {
 		return fmt.Errorf("%w: empty bundle", ErrPolicyDenied)
 	}

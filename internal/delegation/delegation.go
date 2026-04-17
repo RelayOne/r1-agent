@@ -1,17 +1,20 @@
 // Package delegation implements STOKE-014: a thin Stoke-side
-// wrapper over the TrustPlane delegation SDK. All cryptographic
-// primitives (Ed25519 signing, ActClaim chain walking,
-// attenuation enforcement, offline verification, revocation
-// registry) live in TrustPlane; this package exposes the
-// Stoke-flavored API (Delegate / Verify / Revoke) and attaches
-// Stoke-specific metadata (default policy bundles from
-// configs/policies/, session context, audit anchoring).
+// wrapper over trustplane.Client. In production the wrapped
+// client is trustplane.RealClient, which speaks to the TrustPlane
+// gateway over HTTP against a vendored OpenAPI spec — there is no
+// Go SDK dependency anywhere in this call path. All cryptographic
+// primitives (Ed25519 signing, ActClaim chain walking, attenuation
+// enforcement, offline verification, revocation registry) live
+// TrustPlane-side; this package exposes the Stoke-flavored API
+// (Delegate / Verify / Revoke) and attaches Stoke-specific
+// metadata (default policy bundles from configs/policies/,
+// session context, audit anchoring).
 //
 // Scope of this file:
 //
-//   - Delegate(from, to, scope, expiry, parent?) wraps the
-//     TrustPlane Client.CreateDelegation
-//   - Verify / Revoke wrap the matching TrustPlane calls
+//   - Delegate(from, to, scope, expiry, parent?) calls
+//     trustplane.Client.CreateDelegation
+//   - Verify / Revoke call the matching trustplane.Client methods
 //   - Policy template registry: maps bundle names → scope sets
 //     so callers can say "I want read-only-calendar scope"
 //     without enumerating every Cedar action name
