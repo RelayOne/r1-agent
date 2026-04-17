@@ -1324,7 +1324,12 @@ func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
 		strings.Contains(lower, "api.fireworks.ai") ||
 		strings.Contains(lower, "api.deepseek.com") ||
 		strings.Contains(lower, "generativelanguage.googleapis.com") {
-		return provider.NewOpenAICompatProvider("openai-compat", apiKey, url)
+		// Strip trailing /v1 from the base URL so the provider's
+		// default path (/v1/chat/completions) doesn't double it.
+		// OpenRouter URLs are typically .../api/v1 already.
+		base := strings.TrimRight(url, "/")
+		base = strings.TrimSuffix(base, "/v1")
+		return provider.NewOpenAICompatProvider("openai-compat", apiKey, base)
 	}
 	return provider.NewAnthropicProvider(apiKey, url)
 }
@@ -1414,7 +1419,7 @@ func sowCmd(args []string) {
 	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
 	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
 	exportSOW := fs.String("export-sow", "", "After planning completes, export the structured SOW JSON to this file and exit. Pass the exported file back via --file on future runs to skip the entire 30-min planning phase.")
-	fastPlan := fs.Bool("fast-plan", false, "Skip CTO approval + refine loop during planning (~5 min instead of ~30 min). The execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught. Recommended for iteration; use full planning for final production runs.")
+	deepPlan := fs.Bool("deep-plan", false, "Run full CTO approval + refine loop during planning (~30 min instead of ~5 min). Produces higher-fidelity plans but 6x slower. Default is fast planning — the execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught.")
 	fs.Parse(args)
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
@@ -1491,8 +1496,9 @@ func sowCmd(args []string) {
 		*resume = true
 	}
 
-	// --fast-plan: skip CTO approval + refine loop.
-	if *fastPlan {
+	// Fast planning is the default (skip CTO approval + refine).
+	// --deep-plan enables the full refine loop for production runs.
+	if !*deepPlan {
 		plan.SkipRefine = true
 	}
 

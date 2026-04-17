@@ -72,7 +72,9 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			strings.Contains(lower, "api.together.xyz") ||
 			strings.Contains(lower, "api.fireworks.ai") ||
 			strings.Contains(lower, "api.deepseek.com") {
-			p = provider.NewOpenAICompatProvider("openai-compat", n.apiKey, n.BaseURL)
+			base := strings.TrimRight(n.BaseURL, "/")
+			base = strings.TrimSuffix(base, "/v1")
+			p = provider.NewOpenAICompatProvider("openai-compat", n.apiKey, base)
 		} else {
 			p = provider.NewAnthropicProvider(n.apiKey, n.BaseURL)
 		}
