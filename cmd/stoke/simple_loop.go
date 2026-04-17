@@ -223,11 +223,21 @@ var globalClaudeModel string // set by simpleLoopCmd
 func claudeCall(bin, dir, prompt string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	args := []string{"--print", "--no-session-persistence"}
+	// Use -p (interactive prompt) NOT --print (text-only).
+	// --print can't write files or use tools.
+	// --dangerously-skip-permissions auto-approves file writes.
+	// --output-format json gives us structured result with
+	// the final text in .result field.
+	args := []string{
+		"-p", prompt,
+		"--dangerously-skip-permissions",
+		"--output-format", "json",
+		"--no-session-persistence",
+		"--max-turns", "100",
+	}
 	if globalClaudeModel != "" {
 		args = append(args, "--model", globalClaudeModel)
 	}
-	args = append(args, prompt)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	var out bytes.Buffer
@@ -235,9 +245,19 @@ func claudeCall(bin, dir, prompt string) string {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  claude error: %v\n", err)
-		return ""
 	}
-	return strings.TrimSpace(out.String())
+	// Parse the JSON output to get the result text
+	raw := out.Bytes()
+	var result struct {
+		Result   string `json:"result"`
+		NumTurns int    `json:"num_turns"`
+		Cost     float64 `json:"total_cost_usd"`
+	}
+	if json.Unmarshal(raw, &result) == nil {
+		fmt.Printf("  [CC: %d turns, $%.4f]\n", result.NumTurns, result.Cost)
+		return result.Result
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func codexCall(bin, dir, prompt string) string {
