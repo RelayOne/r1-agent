@@ -2149,23 +2149,63 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		// Post-task diff: what did THIS task actually touch?
 		reportPerTaskFileDrift(ctx, taskCfg.RepoRoot, task, preTaskDirtySet, tr.Success)
 
-		// OPTION A: per-task commit in the active tree (main or
-		// worktree). A task that wrote nothing silently no-ops.
+		// H-2 gate: declared-file-not-created. After the worker +
+		// reviewer reported success, verify every task.Files entry
+		// actually resolves to a file on disk (path-normalized —
+		// {id}↔[id], .ts↔.tsx). Blocking: if a declared file is
+		// missing, the worker edited around it rather than creating
+		// it (the D-opus-full pattern where the same 5 sow-endpoints
+		// stayed unfixed for 2+ hours despite review feedback).
+		// Overrides tr.Success to false + populates a repair
+		// directive so the next review iteration is pointed at the
+		// specific missing paths.
 		if tr.Success {
-			commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task)
+			missing := plan.ScanDeclaredFilesNotCreated(taskCfg.RepoRoot, task.Files)
+			if len(missing) > 0 {
+				paths := make([]string, len(missing))
+				for i, m := range missing {
+					paths[i] = m.File
+				}
+				fmt.Printf("    ⛔ task %s: [gate-hit] declared-file-not-created on %d file(s): %s\n",
+					task.ID, len(paths), strings.Join(paths, ", "))
+				tr.Success = false
+				if tr.Error == nil {
+					tr.Error = fmt.Errorf("declared-file-not-created: %s", strings.Join(paths, ", "))
+				}
+			}
+		}
+
+		// OPTION A: per-task commit in the active tree (main or
+		// worktree). A task that wrote nothing silently no-ops. A
+		// commit error, however, flips tr.Success=false so the session
+		// sees the real verdict — we'd rather fail loud than leave a
+		// half-committed tree claiming success downstream.
+		if tr.Success {
+			if _, err := commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task); err != nil {
+				tr.Success = false
+				if tr.Error == nil {
+					tr.Error = fmt.Errorf("commit failed for %s: %w", task.ID, err)
+				}
+			}
 		}
 
 		// OPTION B: worktree merge-or-cleanup. On success, merge the
 		// task branch back to main via --ff-only (preferred) or
 		// --no-ff fallback. On failure or merge conflict, abandon the
-		// branch (kept for forensics, not merged). Worktree is always
-		// removed at the end.
+		// branch (kept for forensics, not merged) AND flip
+		// tr.Success=false — code that never reached main is not a
+		// successful task even if the worker + reviewer both said OK.
+		// Worktree is always removed at the end.
 		if wtPath != "" {
 			if tr.Success {
 				if mergeTaskWorktree(ctx, mainRepoRoot, wtBranch, task.ID) {
 					fmt.Printf("    🔀 %s: merged %s to main\n", task.ID, wtBranch)
 				} else {
 					fmt.Printf("    💥 %s: merge failed — abandoning %s (not merged)\n", task.ID, wtBranch)
+					tr.Success = false
+					if tr.Error == nil {
+						tr.Error = fmt.Errorf("worktree merge failed for %s on branch %s", task.ID, wtBranch)
+					}
 				}
 			} else {
 				fmt.Printf("    ⚠ %s: task failed — abandoning worktree %s (not merging)\n", task.ID, wtBranch)
@@ -2181,23 +2221,47 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 // commitPerTask stages + commits dirty/untracked files in the repo
 // with a message like "sow(S1/T14): <short desc>". Uses shell git
 // (sow already shells out for gitDirtyFiles / reportPerTaskFileDrift
-// — dependency pattern already set). Silent no-op when nothing is
-// staged (task wrote no files or only ignored files).
-func commitPerTask(ctx context.Context, repoRoot, sessionID string, task plan.Task) {
+// — dependency pattern already set).
+//
+// Return values:
+//
+//	(committed bool, err error)
+//
+//   - committed=true, err=nil → a commit landed (or the staged tree was
+//     already committed by some upstream hook — either way the task's
+//     work is durably in the branch).
+//   - committed=false, err=nil → tree was clean, nothing to commit.
+//     This is a distinct signal from "commit failed" because a zombie
+//     task that wrote zero files still "succeeded" as far as the worker
+//     is concerned; callers handle that via the pre/post dirty-set
+//     drift detector, not via this error channel.
+//   - committed=false, err != nil → git add or git commit errored. The
+//     caller MUST treat the task as unsuccessful — its code did not
+//     land, so tr.Success=true would be a false positive downstream.
+//
+// Prior to this change commitPerTask returned no values and only
+// printed to stdout, which meant commit failures were silently
+// swallowed: tr.Success stayed true, the session's success counter
+// incremented, and the "merge" step would then either merge nothing
+// (Option B) or the pre-task state would silently diverge from the
+// commit ledger (Option A). v6 codex review flagged this as a
+// robustness hole worth closing even though the live M2x-OPTB v4 run
+// had 18 clean merges and never surfaced the bug.
+func commitPerTask(ctx context.Context, repoRoot, sessionID string, task plan.Task) (bool, error) {
 	if repoRoot == "" {
-		return
+		return false, nil
 	}
 	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
 	addCmd.Dir = repoRoot
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Printf("    ⚠ %s: git add failed: %v (%s)\n", task.ID, err, truncateSow(string(out), 120))
-		return
+		return false, fmt.Errorf("git add: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	checkCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
 	checkCmd.Dir = repoRoot
 	if err := checkCmd.Run(); err == nil {
 		// Exit 0 = no staged changes → task wrote nothing. Silent.
-		return
+		return false, nil
 	}
 	shortDesc := strings.TrimSpace(task.Description)
 	if len(shortDesc) > 80 {
@@ -2211,12 +2275,13 @@ func commitPerTask(ctx context.Context, repoRoot, sessionID string, task plan.Ta
 	commitCmd.Dir = repoRoot
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		fmt.Printf("    ⚠ %s: git commit failed: %v (%s)\n", task.ID, err, truncateSow(string(out), 200))
-		return
+		return false, fmt.Errorf("git commit: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	shaCmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
 	shaCmd.Dir = repoRoot
 	sha, _ := shaCmd.Output()
 	fmt.Printf("    📦 %s committed: %s %s\n", task.ID, strings.TrimSpace(string(sha)), msg)
+	return true, nil
 }
 
 func truncateSow(s string, n int) string {
@@ -2715,6 +2780,25 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// the whole wave).
 				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, taskCfg, maxTurns, preWaveDirty)
 
+				// H-2 gate: declared-file-not-created (parallel path).
+				// Same correctness check as the sequential branch:
+				// every task.Files entry must resolve on disk.
+				if tr.Success {
+					missing := plan.ScanDeclaredFilesNotCreated(taskCfg.RepoRoot, task.Files)
+					if len(missing) > 0 {
+						paths := make([]string, len(missing))
+						for i, m := range missing {
+							paths[i] = m.File
+						}
+						fmt.Printf("    ⛔ task %s: [gate-hit] declared-file-not-created on %d file(s): %s\n",
+							task.ID, len(paths), strings.Join(paths, ", "))
+						tr.Success = false
+						if tr.Error == nil {
+							tr.Error = fmt.Errorf("declared-file-not-created: %s", strings.Join(paths, ", "))
+						}
+					}
+				}
+
 				// Per-task commit (Option A) + worktree merge
 				// (Option B). Commit runs in the task-scoped tree
 				// (worktree path when B enabled, main repo when not).
@@ -2722,7 +2806,12 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// merge-or-not and record taskSucceeded for cleanup
 				// to consult.
 				if tr.Success {
-					commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task)
+					if _, err := commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task); err != nil {
+						tr.Success = false
+						if tr.Error == nil {
+							tr.Error = fmt.Errorf("commit failed for %s: %w", task.ID, err)
+						}
+					}
 				}
 				if wtPath != "" {
 					if tr.Success {
@@ -2734,6 +2823,10 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 							taskSucceeded = true
 						} else {
 							fmt.Printf("    💥 %s: merge failed — %s abandoned\n", task.ID, wtBranch)
+							tr.Success = false
+							if tr.Error == nil {
+								tr.Error = fmt.Errorf("worktree merge failed for %s on branch %s", task.ID, wtBranch)
+							}
 						}
 					} else {
 						fmt.Printf("    ⚠ %s: task failed — abandoning worktree %s\n", task.ID, wtBranch)

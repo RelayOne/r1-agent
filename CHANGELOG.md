@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### TrustPlane Integration (SOW B-1..B-7)
+- `trustplane.RealClient` — hand-written HTTP implementation of the 8-method
+  `Client` interface, talking to the TrustPlane gateway per the vendored
+  OpenAPI spec at `internal/trustplane/openapi/gateway.yaml`. Zero Go-module
+  coupling to TrustPlane; stdlib-only DPoP signing.
+- `trustplane/dpop` — RFC 9449 proof-of-possession signer over Ed25519 using
+  `crypto/ed25519` + `encoding/base64`. No `go-jose` dependency.
+- `trustplane.NewFromEnv` factory — selects Stub (default) or Real based on
+  `STOKE_TRUSTPLANE_MODE`; resolves the Ed25519 key via
+  `STOKE_TRUSTPLANE_PRIVKEY` / `STOKE_TRUSTPLANE_PRIVKEY_FILE` through the
+  `internal/secrets` helper.
+- `stoke-mcp` now uses `trustplane.NewFromEnv` at startup; swap-in is a single
+  env var change with no handler code touched.
+- `internal/secrets` helper — inline → env → `*_FILE` resolution with
+  whitespace trimming, used for every secret in-tree (TrustPlane key, future
+  API tokens).
+- `docs/trustplane-integration.md` — architecture overview, env var table,
+  key-generation recipe, error taxonomy, and spec-update workflow.
+
+#### SOW Worktree Correctness (Option B v2)
+- Per-task commit / worktree merge failures now flip `tr.Success=false` and
+  populate `tr.Error`. Previously these paths only logged to stdout, which
+  meant a task whose code never reached `main` could still be counted
+  successful downstream. Closes the v6 codex review finding.
+
 #### V2 Governance Layer
 - Append-only content-addressed ledger with 13+ node types and 7 edge types
 - Durable WAL-backed event bus with 30+ event types, hooks, and delayed events

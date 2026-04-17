@@ -46,6 +46,14 @@ type QualityConfig struct {
 	SOWStructural  bool // sow-claim-missing
 	PackageScripts bool // package-script-missing
 	RuntimeSmoke   bool // runtime-smoke (requires subprocess, expensive)
+
+	// Post-commit integrity gate. Fires when a task declared a file
+	// (task.Files) but the file doesn't exist on disk after the
+	// worker+reviewer reported success. Catches the D-opus pattern
+	// where the worker edits an adjacent file ("route.ts" for slug
+	// `[id]`) instead of creating the SOW-declared one (`{id}`), then
+	// the reviewer rubber-stamps. Default-on, blocking.
+	DeclaredFileNotCreated bool // declared-file-not-created
 }
 
 // DefaultQualityConfig returns the production default: all validated
@@ -74,6 +82,11 @@ func DefaultQualityConfig() QualityConfig {
 		// Still off by default — not yet observed firing in production:
 		SOWStructural: false,
 		RuntimeSmoke:  false,
+		// Default-on. The gate body is task-scoped and only fires
+		// through ScanDeclaredFilesNotCreated, not RunQualitySweep —
+		// so leaving the flag on is free when the caller doesn't have
+		// task.Files handy.
+		DeclaredFileNotCreated: true,
 	}
 }
 
@@ -93,8 +106,9 @@ func gateNameMap(cfg *QualityConfig) map[string]*bool {
 		"orphan-file":     &cfg.OrphanReferences,
 		"sow-endpoints":   &cfg.SOWEndpoints,
 		"sow-structural":  &cfg.SOWStructural,
-		"package-scripts": &cfg.PackageScripts,
-		"runtime-smoke":   &cfg.RuntimeSmoke,
+		"package-scripts":            &cfg.PackageScripts,
+		"runtime-smoke":              &cfg.RuntimeSmoke,
+		"declared-file-not-created":  &cfg.DeclaredFileNotCreated,
 	}
 }
 
@@ -1557,4 +1571,114 @@ func scanPackageScripts(repoRoot, sowText string) []QualityFinding {
 		}
 	}
 	return findings
+}
+
+// ScanDeclaredFilesNotCreated fires after a task's worker+reviewer
+// have reported success. For each declared file (task.Files entry)
+// that does NOT exist on disk, emits one blocking finding. Catches
+// the D-opus-full pattern where the worker edits an adjacent file
+// (Next-slug mismatch, trailing-slash mismatch, or just the wrong
+// path entirely) instead of creating the SOW-declared file, and the
+// LLM reviewer rubber-stamps because the edits "look right" in the
+// diff.
+//
+// Design notes:
+//
+//   - Task-scoped, not repo-scoped. RunQualitySweep* walk files that
+//     exist; this walks files that were PROMISED. Different axis.
+//   - Path-normalize before the existence check. Many SOWs write
+//     `{id}` but Next.js requires `[id]`; a literal path check would
+//     miss the real correctness question ("is the route handler
+//     there at all?"). The normalizer resolves common variants;
+//     callers that want strict matching can pass the raw path.
+//   - Blocking. A missing declared file is the clearest rubber-stamp
+//     signal in the toolkit — the worker literally promised a file
+//     and didn't produce it.
+//
+// repoRoot is the task's working tree (worktree for Option B,
+// main repo for Option A). declared is task.Files as-declared.
+func ScanDeclaredFilesNotCreated(repoRoot string, declared []string) []QualityFinding {
+	if repoRoot == "" || len(declared) == 0 {
+		return nil
+	}
+	var findings []QualityFinding
+	for _, rel := range declared {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		if fileExistsVariant(repoRoot, rel) {
+			continue
+		}
+		findings = append(findings, QualityFinding{
+			Severity: SevBlocking,
+			Kind:     "declared-file-not-created",
+			File:     rel,
+			Line:     1,
+			Detail: "task declared this file but no file at this path (or any path-normalized variant — {id}↔[id], .ts↔.tsx, with/without trailing slash) exists after commit. Worker may be editing an adjacent file instead of creating the declared one; reviewer rubber-stamped.",
+		})
+	}
+	return findings
+}
+
+// fileExistsVariant returns true when repoRoot contains a file at rel
+// OR at any of its common path-equivalent variants. Handles three
+// real-world mismatches observed in the SOW cohort:
+//
+//  1. Next.js dynamic segments: SOW prose writes `{id}`, Next's file
+//     system convention is `[id]`. Same URL, different file path.
+//  2. Extension swap: `.ts` vs `.tsx` for route handlers (Next 13+
+//     accepts both in some positions).
+//  3. Trailing slash and leading slash noise.
+//
+// Order: check the exact path first (cheapest), then generate a
+// small set of variants only when needed. Symlinks are followed via
+// os.Stat (we only care that SOMETHING resolves at the path).
+func fileExistsVariant(repoRoot, rel string) bool {
+	clean := strings.TrimPrefix(strings.TrimSuffix(rel, "/"), "/")
+	if clean == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, clean)); err == nil {
+		return true
+	}
+	for _, v := range pathVariants(clean) {
+		if v == clean {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, v)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// pathVariants returns common equivalents for a SOW-declared path.
+// Output includes the input for caller convenience. Keeps the set
+// small — we're de-noising, not fuzz-matching; too many variants
+// make the gate useless.
+func pathVariants(p string) []string {
+	out := []string{p}
+	// {id} ↔ [id], {slug} ↔ [slug], any {word} ↔ [word]. Emit BOTH
+	// directions so the scanner matches whichever convention the
+	// worker actually used.
+	curly := regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	square := regexp.MustCompile(`\[([A-Za-z_][A-Za-z0-9_]*)\]`)
+	if curly.MatchString(p) {
+		out = append(out, curly.ReplaceAllString(p, "[$1]"))
+	}
+	if square.MatchString(p) {
+		out = append(out, square.ReplaceAllString(p, "{$1}"))
+	}
+	// .ts ↔ .tsx swap for route / component files. Cheap and catches
+	// Next.js file-extension drift (route.ts vs route.tsx, page.tsx
+	// vs page.ts for pages that only export metadata).
+	for _, variant := range append([]string(nil), out...) {
+		if strings.HasSuffix(variant, ".ts") {
+			out = append(out, strings.TrimSuffix(variant, ".ts")+".tsx")
+		} else if strings.HasSuffix(variant, ".tsx") {
+			out = append(out, strings.TrimSuffix(variant, ".tsx")+".ts")
+		}
+	}
+	return out
 }
