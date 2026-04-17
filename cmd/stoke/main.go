@@ -2935,6 +2935,106 @@ func sowCmd(args []string) {
 
 	runStart := time.Now()
 	results, err := ss.Run(ctx, sessionExecFn)
+
+	// SOW compliance sweep — iterative. After all sessions complete,
+	// walk the SOW prose for named deliverables and cross-check each
+	// against repo state. Any MISSING or INSUFFICIENT finding dispatches
+	// a new repair session via AppendSession + re-runs the scheduler.
+	// Loops until compliance passes OR we hit maxComplianceRounds (5)
+	// OR a round makes zero progress (same missing set as prior round).
+	//
+	// This is the final anti-scaffold gate: existence guards and stub
+	// scans catch per-file laziness; this catches "SOW named 6 things,
+	// we built 5 and declared done" gaps.
+	const maxComplianceRounds = 5
+	var priorMissingSet string
+	for round := 1; round <= maxComplianceRounds; round++ {
+		compReport := plan.RunSOWCompliance(absRepo, sow)
+		if compReport == nil || len(compReport.Findings) == 0 {
+			fmt.Printf("\n🕵 SOW compliance sweep: no extractable deliverables — skipping gate\n")
+			break
+		}
+		fmt.Printf("\n🕵 SOW compliance sweep (round %d/%d): %s\n",
+			round, maxComplianceRounds, compReport.Summary())
+		if compReport.Passed() {
+			fmt.Printf("  ✅ all %d extracted deliverables found nontrivial — compliance gate passes\n",
+				compReport.OkCount)
+			break
+		}
+		formatted := plan.FormatComplianceReport(compReport)
+		fmt.Println(formatted)
+
+		// Progress check: are we seeing a NEW missing set vs prior round?
+		// If not, we're stuck — repair session isn't closing gaps. Break
+		// to avoid an infinite loop on untriggerable items.
+		var curMissing []string
+		for _, f := range compReport.Findings {
+			if f.Verdict == plan.VerdictMissing || f.Verdict == plan.VerdictFoundStub {
+				curMissing = append(curMissing, f.Deliverable.Name)
+			}
+		}
+		curMissingSet := strings.Join(curMissing, "|")
+		if round > 1 && curMissingSet == priorMissingSet {
+			fmt.Printf("  ⚠ compliance round %d produced no progress (same %d gaps as last round) — exiting loop\n",
+				round, len(curMissing))
+			break
+		}
+		priorMissingSet = curMissingSet
+
+		if round == maxComplianceRounds {
+			fmt.Printf("  ⚠ compliance still failing after %d rounds — surfacing to user as partial completion\n",
+				maxComplianceRounds)
+			break
+		}
+
+		// Build a repair session. One task per MISSING/STUB finding,
+		// synthesizing expected file paths from Kind hints. Each task
+		// gets the SOW Source fragment so the worker knows exactly
+		// which SOW sentence it's satisfying.
+		repairTasks := make([]plan.Task, 0, len(curMissing))
+		for idx, f := range compReport.SortedFindings() {
+			if f.Verdict == plan.VerdictFoundNontrivial {
+				continue
+			}
+			taskID := fmt.Sprintf("compliance-r%d-t%d", round, idx+1)
+			desc := fmt.Sprintf(
+				"SOW-compliance repair: deliverable %q is %s. "+
+					"SOW source fragment: %q. "+
+					"Evidence on disk: %v. "+
+					"Build a nontrivial implementation that satisfies the SOW's description of this item. "+
+					"Commit it with a descriptive message. The compliance gate will re-scan after this repair session completes.",
+				f.Deliverable.Name,
+				f.Verdict,
+				f.Deliverable.Source,
+				f.Evidence,
+			)
+			repairTasks = append(repairTasks, plan.Task{
+				ID:          taskID,
+				Description: desc,
+			})
+		}
+		if len(repairTasks) == 0 {
+			break
+		}
+		repairSession := plan.Session{
+			ID:          fmt.Sprintf("compliance-repair-round-%d", round),
+			Title:       fmt.Sprintf("SOW compliance repair round %d (%d gaps)", round, len(repairTasks)),
+			Description: "Iterative repair dispatched by the SOW compliance gate. Each task targets one missing/scaffold deliverable named in the SOW.",
+			Tasks:       repairTasks,
+			Preempt:     true,
+		}
+		ss.AppendSession(repairSession)
+		fmt.Printf("  ↻ dispatching compliance-repair-round-%d with %d gap task(s) — re-running scheduler\n",
+			round, len(repairTasks))
+		// Re-run the scheduler. It will execute only the newly-appended
+		// session (prior sessions are marked complete in ss state).
+		newResults, rerr := ss.Run(ctx, sessionExecFn)
+		if rerr != nil {
+			fmt.Printf("  ⚠ compliance-repair scheduler error: %v\n", rerr)
+		}
+		results = append(results, newResults...)
+	}
+
 	runElapsed := time.Since(runStart)
 
 	// Tally pass/fail/skipped counts up front so a 13-session build

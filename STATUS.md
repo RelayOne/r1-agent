@@ -1,6 +1,6 @@
 # Session Status — resume point
 
-Last updated: 2026-04-17 03:10 PDT
+Last updated: 2026-04-17 03:22 PDT
 
 ## Where we are (executive summary)
 
@@ -13,6 +13,8 @@ The two real missions (not just "find the best way"):
 ## Branch: `feat/smart-chat-mode`
 
 Recent relevant commits (newest first):
+- `edbd5ef` fix(provider/gemini): 32K output floor so thinking models can actually emit text (Gemini 3.x was silently returning empty — thinking tokens ate the whole budget before output text)
+- `20738f2` feat(provider): native Gemini provider — text-only reviewer, no LiteLLM. `gemini://` URL scheme, uses `x-goog-api-key` header against `:generateContent` endpoint. `cmd/stoke/main.go:1331` routes it; reasoning-model propagation added in the existing type-assertion block.
 - `ab3a296` fix(simple-loop): commit cadence = logical units of work, not time slices
 - `70c711a` feat(simple-loop): builder continuations + tighter commit cadence (6 × 100-turn budget; detects SOW-completion text / stall)
 - `cae3560` feat(engine): route build-gate through plan.Ecosystem registry (multi-language)
@@ -40,8 +42,8 @@ Recent relevant commits (newest first):
 | A | 333361 | sentinel-build-verify | LiteLLM/MiniMax | — | Mission 1 baseline no-review, 2h10m elapsed (OLD binary) |
 | M1c | 476901 | sentinel-cc-sonnet-opus | LiteLLM | LiteLLM | **Mission 1 complete** (pure-native) |
 | M2x | 476902 | sentinel-simple-opus | LiteLLM | **Codex (GPT-5)** | Mission 2 gold — current compile leader |
-| M2g | 544980 | sentinel-mm-cc-buildverify | LiteLLM | **Gemini 2.5 Pro** | Mission 2 cheap-reviewer variant (via LiteLLM:21621) |
-| M2g-3 | 552626 | sentinel-mm-gem3 | LiteLLM | **Gemini 3.1 Pro Preview** | Mission 2 newest-cheap variant (via LiteLLM:21622) |
+| M2g | 572293 | sentinel-mm-cc-buildverify | LiteLLM | **Gemini 2.5 Pro (native, no LiteLLM)** | Mission 2 cheap-reviewer; `--reasoning-base-url gemini://` |
+| M2g-3 | 572294 | sentinel-mm-gem3 | LiteLLM | **Gemini 3.1 Pro Preview (native)** | Mission 2 newest-cheap; same path |
 | D1 | 518491 | sentinel-simple-loop | CC-sonnet | Codex | simple-loop SEQ fix + builder continuations |
 | D2 | 518492 | sentinel-simple-sonnet | CC-sonnet | Codex | simple-loop CONC fix + builder continuations |
 | MS | 518493 | sentinel-mm-simple | CC→LiteLLM (MiniMax) | Codex | simple-loop CC tool-use against MiniMax via env-redirect |
@@ -64,18 +66,22 @@ D1/D2/MS were kill+reset+relaunched at ~02:54 with builder continuations + logic
 - **Codex sizer/env-var classifier both failed during M2x startup** — "no last agent message; wrote empty content" — the 0-byte race the `--output-last-message` + retry tried to fix. Harmless (sessions proceeded at default size) but worth investigating.
 - **MS (MiniMax via CC env-redirect) DOES work** — after fix with `ANTHROPIC_AUTH_TOKEN=Bearer <key>` + empty `ANTHROPIC_API_KEY` (copied from `./runclaude --litellm` env). At 03:00 MS has 40 files in 6 min (6.88/min), producing real TS. The prior "doesn't work" finding was a config bug, not an architectural one.
 - **D2 (concurrent fix mode + continuations + logical-commit-unit prompt) is accelerating**: 77 files + 4 real commits in 6 min post-relaunch = 13.28 files/min, double earlier runs. The new commit-cadence prompt ("logical units, not time slices") appears to be producing faster + more-reviewable output.
-- **M2x remains Mission 2 leader** — 26 min in Session S1, 134 files, 5 substantive commits, ~5 files/min sustained. No AC gate hit yet; no build-gate fires yet.
+- **M2x remains Mission 2 leader** — 41+ min in Session S1, 160 files, 5 substantive commits, ~4 files/min sustained. No AC gate hit yet; no build-gate fires yet.
+- **Simple-loop continuations are firing correctly**: at 03:22 D1/D2/MS all on continuation 2. D2 dispatched 2 fix-workers (d:2 m:0 a:0). Continuation loop works end-to-end.
+- **Architectural review finding (03:20 conversation)**: user flagged 3 concerns — continuation cap 6 is arbitrary (true, should be progress-signal-based); reviewer only reviews commits (true, but feature/milestone tiers likely overengineering before compliance gate lands); reviewer tool-calls (unnecessary — chunked scope already handles it). Compliance gate first, then progress-signal continuations, defer tier hierarchy.
+- **Existing anti-slop infrastructure is RICH**: `plan.ExtractDeliverables` at `internal/plan/deliverable.go:121` already pulls "components (X,Y,Z)" / "including X,Y,Z" / "implement X,Y,Z" from SOW prose. `scanPlaceholderStubs` at `cmd/stoke/sow_spec_guard.go:169` catches 12 stub patterns. `checkSpecFaithfulness` at line 258 enforces declared-file existence + placeholder scan pre-AC. Zombie-task override at `sow_native.go:3618` flips "reviewer approved" → "incomplete" when zero files written. **The gap**: `ExtractDeliverables` output is injected per-task but never cross-checked against final repo at mission-end. SOW says "6 shared packages"; extractor knows; no final gate verifies all 6 exist as nontrivial implementations.
+- **Gemini 3.x reasoning models silently return empty on short `maxOutputTokens`** — thinking tokens consume the whole budget before text output. Confirmed via smoke test (`stop=MAX_TOKENS tokens=in:8,out:0 text=""`). Fixed in `edbd5ef` with a 32 K floor. M2g/M2g3 relaunched at 03:15 via native `gemini://` path (no LiteLLM proxy) — clean cache, 0 min elapsed.
+- **Killed extraneous LiteLLM instances** on ports 4000, 21621, 21622 (spawned during earlier Gemini-via-LiteLLM experiments). Only :4001 remains — the shared worker proxy used by A, M1c, M2x, M2g, M2g3.
+- **The scaffold/slop/lies problem is now the explicit target** (user's framing): Cline/Aider/Copilot routinely ship LLM-generated scaffolds that pretend to satisfy the ask. We need gates that cannot be bypassed. Existing gates: existence ("claimed success wrote 0 files"), spec-faithfulness (pattern match on declared files), Ecosystem compile gate (new). Missing: **SOW-compliance gate** that walks the SOW prose for named deliverables and verifies each is nontrivially implemented. An audit subagent is running (in-flight) to map the existing infrastructure before we build on it.
 
 ## Open decisions / next moves
 
-1. Port the `fixOrchestrator` pattern (worktree + commit-review + merge-on-approval) into the **sow command** so the harness gets commit-level review gates instead of declared-file-list review gates. (User's architectural ask. Not started.)
-2. When the 26m-old variants M1c/M2x finish their first session (or hit their first AC gate), compare:
-   - Does the new Ecosystem build-gate catch the missing-tsconfig pathology? Watch for "Build gate failed" in M1c/M2x logs.
-   - Do the fresh commits compile? Run compile tests once they reach `apps/` scaffolding.
-3. When D1/D2/MS hit their 100-turn budget, verify the continuation prompt fires (`🔧 Step 3 builder call 2/6...`) and that the new builder correctly resumes where the prior left off.
-4. Consider a "SOW compliance gate" — separate from compile. Compares the deliverables the SOW explicitly names against what's present on disk. Would catch "SOW says 6 shared packages; we built 5" gaps. Currently no layer does this.
-5. User-asked improvements still open: stratified reviewer (cheap lint pass first, expensive semantic only when lint-clean), review caching (don't re-review unchanged diffs across convergence rounds), trivial-task bypass (auto-approve tasks where declared files are tiny config text), cheap reviewer ladder (fallback-on-failure escalation).
-6. Strategic question from user: *can native harness be made good enough to ship, or is CC the only viable backbone?* Current read — M2x's LiteLLM-worker + Codex-reviewer config is the most promising answer ("cheap worker + slightly-smarter reviewer"). Pure-native (M1c) is unproven until we see its reviewer actually catch a bug.
+1. **Build the SOW-compliance gate** (TOP PRIORITY, anti-scaffold/anti-slop/anti-lie). Audit subagent is mapping existing infrastructure (existence guard, spec-faithfulness, AC gates, convergence audit, 17 personas). Design will extract SOW-declared deliverables, cross-check against repo with file-size floor + stub-signature detection + test presence, and block mission completion on any "scaffold/missing" verdict. Report due when subagent returns.
+2. Port the `fixOrchestrator` pattern (worktree + commit-review + merge-on-approval) into the **sow command** so the harness gets commit-level review gates instead of declared-file-list review gates. User's architectural ask; deferred while we solve #1.
+3. When M1c/M2x hit their first AC gate, check: does the new Ecosystem build-gate catch the missing-tsconfig pathology? Watch for "Build gate failed" in their logs.
+4. Compare Gemini 2.5 Pro vs Gemini 3.1 Pro Preview as reviewers once M2g/M2g3 have produced comparable plan reviews (~10 min from relaunch).
+5. User-asked improvements still open: stratified reviewer (cheap lint first, semantic only when lint-clean), review caching, trivial-task bypass, cheap-reviewer ladder.
+6. Strategic question from user: *can native harness be made good enough to ship, or is CC the only viable backbone?* Current read — M2x's LiteLLM-worker + Codex-reviewer config is the most promising answer. M2g/M2g3 are the cheap-reviewer stress tests for this thesis.
 
 ## Non-obvious resume instructions
 

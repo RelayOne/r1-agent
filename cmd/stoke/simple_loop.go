@@ -136,10 +136,26 @@ func simpleLoopCmd(args []string) {
 		// (c) maxBuildContinuations reached.
 		buildDone := make(chan string, 1)
 		go func() {
-			const maxBuildContinuations = 6 // 6 × 100 turns = ~600 turn budget
+			// Builder continuation is PROGRESS-SIGNAL BOUNDED, not
+			// count-bounded. We loop as long as:
+			//   - each continuation produces at least 1 new commit
+			//   - the worker has not explicitly reported completion
+			// We stop when:
+			//   (a) 2 CONSECUTIVE continuations produced zero new
+			//       commits (worker is stuck — spinning on the same
+			//       problem without making progress);
+			//   (b) CC signals "ALL DELIVERABLES COMPLETE" in its
+			//       final text;
+			//   (c) absoluteCap rounds have fired — escape hatch so
+			//       a truly pathological SOW can't run forever.
+			// absoluteCap is deliberately high so normal big SOWs
+			// are bounded by real progress, not an arbitrary counter.
+			const absoluteCap = 40 // ~4000 turns — hard ceiling
 			priorCommits := shellCmd(absRepo, "git rev-list --count HEAD 2>/dev/null")
+			consecutiveStalls := 0
 			var finalResult string
-			for cont := 0; cont < maxBuildContinuations; cont++ {
+			cont := 0
+			for cont < absoluteCap {
 				var prompt string
 				if cont == 0 {
 					prompt = fmt.Sprintf(
@@ -176,9 +192,11 @@ func simpleLoopCmd(args []string) {
 					doneLog := shellCmd(absRepo, "git log --oneline "+headBefore+"..HEAD 2>/dev/null | head -40")
 					tree := shellCmd(absRepo, "ls -la 2>/dev/null; echo ---; find . -maxdepth 3 -type d -not -path './node_modules*' -not -path './.git*' 2>/dev/null | sort")
 					prompt = fmt.Sprintf(
-						"CONTINUATION BUILDER %d/%d — the prior builder call has exited "+
-							"(either cleanly or at the 100-turn budget). The SOW is large; "+
-							"we're continuing where you left off.\n\n"+
+						"CONTINUATION BUILDER (call %d, %d stalls so far) — the prior builder "+
+							"call has exited (either cleanly or at the 100-turn budget). "+
+							"The SOW is large; we're continuing where you left off. The "+
+							"harness will keep spawning continuations AS LONG AS each one "+
+							"produces new commits, so take your turn budget fully.\n\n"+
 							"COMMITTED SO FAR (%d prior commits in this build phase):\n%s\n\n"+
 							"CURRENT DIRECTORY TREE:\n%s\n\n"+
 							"YOUR JOB:\n"+
@@ -187,20 +205,27 @@ func simpleLoopCmd(args []string) {
 							"  3. KEEP BUILDING from there. Do NOT duplicate work already committed.\n"+
 							"  4. Fix any compile/typecheck errors you encounter along the way.\n"+
 							"  5. Commit on LOGICAL-UNIT-OF-WORK boundaries (completed tasks/features/modules, "+
-						"not time chunks). Each commit must compile and represent something the reviewer "+
-						"can evaluate as a standalone unit.\n"+
+							"not time chunks). Each commit must compile and represent something the reviewer "+
+							"can evaluate as a standalone unit.\n"+
 							"  6. If you genuinely finish everything, end your last message with the "+
 							"phrase 'ALL DELIVERABLES COMPLETE'. Otherwise we'll spawn another continuation.\n\n"+
 							"ORIGINAL SPECIFICATION:\n%s%s",
-						cont+1, maxBuildContinuations, cont, doneLog, tree, currentProse, bigWorkerExtra)
+						cont+1, consecutiveStalls, cont, doneLog, tree, currentProse, bigWorkerExtra)
 				}
-				fmt.Printf("🔧 Step 3 builder call %d/%d...\n", cont+1, maxBuildContinuations)
+				fmt.Printf("🔧 Step 3 builder call %d (absoluteCap=%d, stalls=%d/2)...\n",
+					cont+1, absoluteCap, consecutiveStalls)
 				finalResult = claudeCall(*claudeBin, absRepo, prompt)
 
 				curCommits := shellCmd(absRepo, "git rev-list --count HEAD 2>/dev/null")
-				if curCommits == priorCommits && cont > 0 {
-					fmt.Printf("  ⚠ builder %d made no new commits — stopping build phase (stuck or stalled)\n", cont+1)
-					break
+				if curCommits == priorCommits {
+					consecutiveStalls++
+					fmt.Printf("  ⚠ builder %d made no new commits (stall %d/2)\n", cont+1, consecutiveStalls)
+					if consecutiveStalls >= 2 {
+						fmt.Printf("  ⛔ 2 consecutive stalled continuations — stopping build phase\n")
+						break
+					}
+				} else {
+					consecutiveStalls = 0
 				}
 				priorCommits = curCommits
 
@@ -211,6 +236,10 @@ func simpleLoopCmd(args []string) {
 					fmt.Printf("  ✓ builder %d reports completion — ending build phase\n", cont+1)
 					break
 				}
+				cont++
+			}
+			if cont >= absoluteCap {
+				fmt.Printf("  ⛔ hit absoluteCap=%d continuations — stopping (unusual, investigate)\n", absoluteCap)
 			}
 			buildDone <- finalResult
 		}()
