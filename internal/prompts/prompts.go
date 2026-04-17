@@ -363,9 +363,14 @@ Complete these steps AND emit the map BEFORE your first Edit/Write call:
 
 ## Rules
 - Implement the task fully. No stubs, no TODOs, no placeholders.
-- Stoke will run build/test/lint independently after you finish. You MAY run
-  them to check your work, but the harness is the final authority. Focus on
-  implementation quality rather than debugging build output.
+- BEFORE declaring done, you MUST run a build/typecheck command and verify it passes:
+  - TypeScript: `tsc --noEmit` or `pnpm build` or `npx tsc --noEmit`
+  - Go: `go build ./...`
+  - Rust: `cargo check`
+  - Python: `python -c "import <your_module>"`
+  If the build fails, FIX the errors before declaring done. Do NOT declare done
+  with build errors — the harness will reject your work and you'll be called
+  back to fix the same thing, wasting everyone's time. Fix it NOW in this turn.
 - If you encounter a blocker, say BLOCKED with the specific reason.
 - Do NOT classify failures as "pre-existing" or "out of scope."
 - Do NOT weaken existing tests to make them pass.
