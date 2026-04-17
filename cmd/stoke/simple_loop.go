@@ -39,7 +39,7 @@ func simpleLoopCmd(args []string) {
 	claudeModel := fs.String("claude-model", "", "Claude Code worker model (sonnet, opus, etc)")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
 	reviewer := fs.String("reviewer", "codex", "Reviewer backend: codex | cc-opus | cc-sonnet")
-	fixMode := fs.String("fix-mode", "sequential", "How to deliver reviewer findings to CC: sequential (one big prompt, iterate until clean) | parallel (split into chunks, run N workers concurrently)")
+	fixMode := fs.String("fix-mode", "sequential", "How to deliver reviewer findings to CC: sequential (one big prompt, iterate until clean post-build) | parallel (split into chunks, N workers concurrently post-build) | concurrent (reviewer-approved worktree merges fire while big worker still building — Level 2)")
 	fixWorkers := fs.Int("fix-workers", 3, "Max concurrent CC fix workers when --fix-mode=parallel")
 	fs.Parse(args)
 
@@ -105,6 +105,26 @@ func simpleLoopCmd(args []string) {
 		fmt.Println("🔧 Step 3: Claude Code building (watching commits)...")
 		headBefore := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null || echo none")
 
+		// In concurrent mode, a fixOrchestrator runs alongside the
+		// big worker: flagged commits spawn fix-workers in git
+		// worktrees that merge back only on reviewer approval.
+		var orch *fixOrchestrator
+		bigWorkerExtra := ""
+		if globalFixMode == "concurrent" {
+			orch = newFixOrchestrator(absRepo, *claudeBin, *reviewer)
+			bigWorkerExtra = "\n\n⚠️ IMPORTANT — CONCURRENT FIX PIPELINE ACTIVE:\n" +
+				"A reviewer is watching every commit you make. When it finds issues, " +
+				"a parallel fix worker is spawned in a separate git worktree to repair " +
+				"them; once the reviewer approves those fixes, they are MERGED INTO YOUR " +
+				"BRANCH automatically. Before every Edit or Write:\n" +
+				"  • Run `git status` and `git log --oneline -10` to see fix-worker merges.\n" +
+				"  • Re-Read the file you're about to modify (someone may have just fixed it).\n" +
+				"  • If a conflict appears after `git status`, run `git diff` and reconcile — " +
+				"do NOT blow away merged fixes.\n" +
+				"Never assume your in-memory view of a file is up-to-date. The merge " +
+				"orchestrator is silent; only `git log` reveals its work."
+		}
+
 		// Launch Claude Code build in background
 		buildDone := make(chan string, 1)
 		go func() {
@@ -117,18 +137,23 @@ func simpleLoopCmd(args []string) {
 					"Commit your work with descriptive messages as you complete each chunk.\n\n"+
 					"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
 					"SPECIFICATION:\n%s\n\n"+
-					"START BUILDING NOW.",
-				plan, codexReview, currentProse))
+					"START BUILDING NOW.%s",
+				plan, codexReview, currentProse, bigWorkerExtra))
 			buildDone <- result
 		}()
 
-		// Step 4: Watch for commits; queue reviewer feedback.
-		// DO NOT deliver feedback mid-build — that would interrupt
-		// CC's build goroutine. Instead accumulate findings into
-		// pendingReviews; when the build phase completes (Step 5),
-		// we iterate-until-clean: send all queued feedback to CC,
-		// wait for fix commits, re-review, repeat until approved.
-		fmt.Println("👀 Step 4: Watching for commits, queueing reviewer feedback...")
+		// Step 4: Watch commits. Two behaviors:
+		//   - sequential/parallel fix-modes: accumulate findings
+		//     into pendingReviews; deliver in Step 4b after big
+		//     worker finishes.
+		//   - concurrent fix-mode: dispatch findings IMMEDIATELY
+		//     to the orchestrator (worktree + CC fix worker + auto
+		//     merge-on-approval). Big worker keeps running.
+		if globalFixMode == "concurrent" {
+			fmt.Println("👀 Step 4: Watching commits, dispatching fix workers concurrently...")
+		} else {
+			fmt.Println("👀 Step 4: Watching for commits, queueing reviewer feedback...")
+		}
 		lastReviewedHead := headBefore
 		reviewRound := 0
 		const maxReviewRounds = 20
@@ -155,10 +180,19 @@ func simpleLoopCmd(args []string) {
 								"missing imports, stub code. Be specific about what to fix.\n\n"+
 								"COMMITS:\n"+commitMsg+"\n\nDIFF STAT:\n"+diff)
 						if len(codeReview) > 100 && !approvedReview(codeReview) {
-							pendingReviews = append(pendingReviews,
-								fmt.Sprintf("Commits reviewed:\n%s\n\nFindings:\n%s",
-									commitMsg, codeReview))
-							fmt.Printf("  ✗ reviewer found issues — queued (%d pending)\n", len(pendingReviews))
+							if orch != nil {
+								id := orch.dispatch(currentHead,
+									fmt.Sprintf("Commits reviewed:\n%s\n\nFindings:\n%s",
+										commitMsg, codeReview))
+								active, merged, abandoned := orch.stats()
+								fmt.Printf("  🚀 dispatched fix-%d concurrently (active:%d merged:%d abandoned:%d)\n",
+									id, active, merged, abandoned)
+							} else {
+								pendingReviews = append(pendingReviews,
+									fmt.Sprintf("Commits reviewed:\n%s\n\nFindings:\n%s",
+										commitMsg, codeReview))
+								fmt.Printf("  ✗ reviewer found issues — queued (%d pending)\n", len(pendingReviews))
+							}
 						} else {
 							fmt.Printf("  ✓ reviewer approved commits\n")
 						}
@@ -168,6 +202,23 @@ func simpleLoopCmd(args []string) {
 					fmt.Printf("  ⏳ waiting for commits... (%ds)\n", (reviewRound+1)*30)
 				}
 			}
+		}
+
+		// Concurrent mode: drain the orchestrator before Step 4b.
+		// Any still-in-flight fix attempts get up to 10 min to
+		// complete their merge-or-abandon cycle. After that, if
+		// they haven't reached an approved merge they stay
+		// abandoned on their fix branches (not merged to main).
+		if orch != nil {
+			active, merged, abandoned := orch.stats()
+			if active > 0 {
+				fmt.Printf("  ⏳ draining %d in-flight fix attempts (merged:%d abandoned:%d so far)\n",
+					active, merged, abandoned)
+				orch.waitIdle(10 * time.Minute)
+			}
+			_, merged, abandoned = orch.stats()
+			fmt.Printf("  🛠️  concurrent fix pipeline final: merged=%d abandoned=%d\n",
+				merged, abandoned)
 		}
 
 		// Step 4b: Iterate-until-clean. Deliver queued findings +
