@@ -21,6 +21,152 @@ import (
 	"strings"
 )
 
+// QualityConfig is the feature-gate for the deterministic scanners.
+// Each bool toggles one scanner. This exists so operators can A/B
+// individual gates and switch to whatever shape works best against
+// the observed cohort — "all gates on" is the default but may be
+// too noisy for some SOWs.
+//
+// Overlay via env var STOKE_QS_DISABLE="orphan-file,duplicate-body"
+// (comma-separated gate names) or STOKE_QS_ENABLE_ONLY="hollow-shell,
+// skipped-test" (exclusive list — everything else off).
+type QualityConfig struct {
+	HollowShells     bool // hollow-arrow / hollow-body / empty-jsx / empty-route
+	SkippedTests     bool // skipped-test / todo-test / pending-test
+	WeakAssertions   bool // tautology-assertion / trivial-truthy / assert-literal / empty-test-body
+	SilentCatches    bool // silent-catch
+	MockData         bool // mock-data-in-prod (advisory)
+	IdenticalBodies  bool // duplicate-body
+	NoExports        bool // no-exports
+	GitActivity      bool // git-no-real-activity
+	OrphanReferences bool // orphan-file
+
+	// Experimental — default off until validated. Opt-in via env.
+	SOWEndpoints   bool // sow-endpoint-missing
+	SOWStructural  bool // sow-claim-missing
+	PackageScripts bool // package-script-missing
+	RuntimeSmoke   bool // runtime-smoke (requires subprocess, expensive)
+}
+
+// DefaultQualityConfig returns the production default: all validated
+// scanners on, experimentals off. Callers that want everything-on
+// should explicitly set the experimental fields.
+func DefaultQualityConfig() QualityConfig {
+	return QualityConfig{
+		HollowShells:     true,
+		SkippedTests:     true,
+		WeakAssertions:   true,
+		SilentCatches:    true,
+		MockData:         true,
+		IdenticalBodies:  true,
+		NoExports:        true,
+		GitActivity:      true,
+		OrphanReferences: true,
+		// Experimental — off by default:
+		SOWEndpoints:   false,
+		SOWStructural:  false,
+		PackageScripts: false,
+		RuntimeSmoke:   false,
+	}
+}
+
+// gateNameMap maps canonical gate IDs (stable, documented) to the
+// pointer in QualityConfig that controls them. Used by env-var
+// overlay and CLI flag parsing.
+func gateNameMap(cfg *QualityConfig) map[string]*bool {
+	return map[string]*bool{
+		"hollow-shell":    &cfg.HollowShells,
+		"skipped-test":    &cfg.SkippedTests,
+		"weak-assertion":  &cfg.WeakAssertions,
+		"silent-catch":    &cfg.SilentCatches,
+		"mock-data":       &cfg.MockData,
+		"duplicate-body":  &cfg.IdenticalBodies,
+		"no-exports":      &cfg.NoExports,
+		"git-activity":    &cfg.GitActivity,
+		"orphan-file":     &cfg.OrphanReferences,
+		"sow-endpoints":   &cfg.SOWEndpoints,
+		"sow-structural":  &cfg.SOWStructural,
+		"package-scripts": &cfg.PackageScripts,
+		"runtime-smoke":   &cfg.RuntimeSmoke,
+	}
+}
+
+// GateNames returns all known gate IDs in stable order. Useful for
+// CLI help text and observability logs.
+func GateNames() []string {
+	dummy := QualityConfig{}
+	m := gateNameMap(&dummy)
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// LoadQualityConfigFromEnv returns the default config overlaid with
+// env-var switches. Precedence:
+//  1. STOKE_QS_ENABLE_ONLY="a,b,c" — everything off except the named
+//     gates. Highest-priority override.
+//  2. STOKE_QS_DISABLE="a,b" — start from default, turn off named
+//     gates.
+//  3. STOKE_QS_ENABLE="a,b" — start from default, turn ON named gates
+//     (useful for opting into experimentals).
+//
+// Unknown names in any of these lists are logged to stderr and
+// ignored (not fatal — we don't want a typo in an env var to break
+// the harness).
+func LoadQualityConfigFromEnv() QualityConfig {
+	cfg := DefaultQualityConfig()
+	m := gateNameMap(&cfg)
+
+	apply := func(raw string, val bool, onUnknown string) {
+		if raw == "" {
+			return
+		}
+		for _, name := range strings.Split(raw, ",") {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			p, ok := m[name]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "quality-signals: %s: unknown gate %q (known: %s)\n",
+					onUnknown, name, strings.Join(GateNames(), ", "))
+				continue
+			}
+			*p = val
+		}
+	}
+
+	if only := os.Getenv("STOKE_QS_ENABLE_ONLY"); only != "" {
+		for _, p := range m {
+			*p = false
+		}
+		apply(only, true, "STOKE_QS_ENABLE_ONLY")
+		return cfg
+	}
+	apply(os.Getenv("STOKE_QS_DISABLE"), false, "STOKE_QS_DISABLE")
+	apply(os.Getenv("STOKE_QS_ENABLE"), true, "STOKE_QS_ENABLE")
+	return cfg
+}
+
+// Enabled returns the list of gate IDs that are currently on, for
+// logging.
+func (c QualityConfig) Enabled() []string {
+	// Copy c so we can iterate with the name map without mutating.
+	cc := c
+	m := gateNameMap(&cc)
+	var out []string
+	for name, p := range m {
+		if *p {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // QualitySeverity classifies a finding's actionability.
 type QualitySeverity int
 
@@ -79,15 +225,31 @@ func (r *QualityReport) Summary() string {
 		r.FilesScanned, r.BlockingN, r.AdvisoryN)
 }
 
-// RunQualitySweep runs every deterministic scanner against the given
-// files (paths relative to repoRoot). Non-existent / unreadable files
-// are silently skipped (not flagged — existence is handled elsewhere).
-//
-// Each scanner is independent and fast. Expected runtime on a 1000-
-// file repo: <200ms.
+// RunQualitySweep runs every scanner enabled by the env-loaded config.
+// Equivalent to RunQualitySweepWithConfig(repoRoot, files, nil, LoadQualityConfigFromEnv()).
+// Callers with explicit config should use the With variant.
 func RunQualitySweep(repoRoot string, files []string) *QualityReport {
+	return RunQualitySweepWithConfig(repoRoot, files, nil, LoadQualityConfigFromEnv())
+}
+
+// RunQualitySweepForSOW is the full-power entry point: runs all enabled
+// scanners INCLUDING the SOW-scoped ones (endpoints, structural claims,
+// package scripts) that require the SOW prose to operate. When sow is
+// nil, behaves like RunQualitySweep (no SOW-scoped scanners fire).
+func RunQualitySweepForSOW(repoRoot string, files []string, sow *SOW) *QualityReport {
+	return RunQualitySweepWithConfig(repoRoot, files, sow, LoadQualityConfigFromEnv())
+}
+
+// RunQualitySweepWithConfig is the explicit-config entry point. Each
+// scanner only fires if its gate is on in cfg. This is where A/B
+// testing different gate combinations happens — write the QualityConfig,
+// pass it in, compare results across runs.
+//
+// Non-existent / unreadable files are silently skipped.
+// Expected runtime on a 1000-file repo: <500ms including SOW scanners.
+func RunQualitySweepWithConfig(repoRoot string, files []string, sow *SOW, cfg QualityConfig) *QualityReport {
 	r := &QualityReport{}
-	if len(files) == 0 {
+	if len(files) == 0 && sow == nil {
 		return r
 	}
 
@@ -115,28 +277,60 @@ func RunQualitySweep(repoRoot string, files []string) *QualityReport {
 	r.FilesScanned = len(blobs)
 
 	for _, b := range blobs {
-		r.Findings = append(r.Findings, scanHollowShells(b.rel, b.content, b.lines)...)
-		r.Findings = append(r.Findings, scanSkippedTests(b.rel, b.lines)...)
-		r.Findings = append(r.Findings, scanWeakAssertions(b.rel, b.lines)...)
-		r.Findings = append(r.Findings, scanSilentCatches(b.rel, b.lines)...)
-		r.Findings = append(r.Findings, scanMockData(b.rel, b.content, b.lines)...)
-		r.Findings = append(r.Findings, scanNoExports(b.rel, b.content)...)
-		r.Findings = append(r.Findings, scanGitActivity(repoRoot, b.rel)...)
+		if cfg.HollowShells {
+			r.Findings = append(r.Findings, scanHollowShells(b.rel, b.content, b.lines)...)
+		}
+		if cfg.SkippedTests {
+			r.Findings = append(r.Findings, scanSkippedTests(b.rel, b.lines)...)
+		}
+		if cfg.WeakAssertions {
+			r.Findings = append(r.Findings, scanWeakAssertions(b.rel, b.lines)...)
+		}
+		if cfg.SilentCatches {
+			r.Findings = append(r.Findings, scanSilentCatches(b.rel, b.lines)...)
+		}
+		if cfg.MockData {
+			r.Findings = append(r.Findings, scanMockData(b.rel, b.content, b.lines)...)
+		}
+		if cfg.NoExports {
+			r.Findings = append(r.Findings, scanNoExports(b.rel, b.content)...)
+		}
+		if cfg.GitActivity {
+			r.Findings = append(r.Findings, scanGitActivity(repoRoot, b.rel)...)
+		}
 	}
 
-	// Cross-file: identical function bodies (copy-paste scaffolds).
-	pathToContent := make(map[string]string, len(blobs))
-	for _, b := range blobs {
-		pathToContent[b.rel] = b.content
+	if cfg.IdenticalBodies {
+		pathToContent := make(map[string]string, len(blobs))
+		for _, b := range blobs {
+			pathToContent[b.rel] = b.content
+		}
+		r.Findings = append(r.Findings, scanIdenticalBodies(pathToContent)...)
 	}
-	r.Findings = append(r.Findings, scanIdenticalBodies(pathToContent)...)
 
-	// Cross-repo: orphan declared files (reference-count via grep).
-	declaredPaths := make([]string, 0, len(blobs))
-	for _, b := range blobs {
-		declaredPaths = append(declaredPaths, b.rel)
+	if cfg.OrphanReferences {
+		declaredPaths := make([]string, 0, len(blobs))
+		for _, b := range blobs {
+			declaredPaths = append(declaredPaths, b.rel)
+		}
+		r.Findings = append(r.Findings, scanOrphanReferences(repoRoot, declaredPaths)...)
 	}
-	r.Findings = append(r.Findings, scanOrphanReferences(repoRoot, declaredPaths)...)
+
+	// SOW-scoped scanners (endpoint contracts, structural claims,
+	// package scripts). These read the SOW prose and require it to
+	// be non-empty. Experimental — off by default.
+	if sow != nil {
+		sowText := collectSOWText(sow)
+		if cfg.SOWEndpoints && sowText != "" {
+			r.Findings = append(r.Findings, scanSOWEndpointContracts(repoRoot, sowText)...)
+		}
+		if cfg.SOWStructural && sowText != "" {
+			r.Findings = append(r.Findings, scanSOWStructuralClaims(repoRoot, sowText)...)
+		}
+		if cfg.PackageScripts && sowText != "" {
+			r.Findings = append(r.Findings, scanPackageScripts(repoRoot, sowText)...)
+		}
+	}
 
 	for _, f := range r.Findings {
 		switch f.Severity {
@@ -911,4 +1105,408 @@ func isGeneratedFile(rel, content string) bool {
 	return strings.Contains(low, "autogenerated") ||
 		strings.Contains(low, "auto-generated") ||
 		strings.Contains(low, "do not edit")
+}
+
+// ───────────────── experimental SOW-scoped scanners ─────────────────
+
+// collectSOWText concatenates every prose field of a SOW into a
+// single haystack for regex scanning.
+func collectSOWText(sow *SOW) string {
+	if sow == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(sow.Description)
+	b.WriteString("\n")
+	for _, s := range sow.Sessions {
+		b.WriteString(s.Title)
+		b.WriteString("\n")
+		b.WriteString(s.Description)
+		b.WriteString("\n")
+		for _, t := range s.Tasks {
+			b.WriteString(t.Description)
+			b.WriteString("\n")
+		}
+		for _, ac := range s.AcceptanceCriteria {
+			b.WriteString(ac.Description)
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// scanSOWEndpointContracts: extract HTTP endpoint declarations from
+// the SOW prose (patterns like "POST /api/login", "GET /api/residents"),
+// then verify that a route file exists for each at a plausible path.
+//
+// Matches Next.js app-router (`app/api/<path>/route.ts`), Next.js
+// pages-router (`pages/api/<path>.ts`), Express-ish (`routes/<path>.ts`,
+// `handlers/<path>.ts`), and Hono/Fastify (files mentioning the path
+// as a route literal).
+//
+// Experimental — default off. False-positive risk: SOW prose uses
+// "GET /api/X" in a figurative sense, or the project uses a
+// framework with non-standard routing.
+func scanSOWEndpointContracts(repoRoot, sowText string) []QualityFinding {
+	// Pattern: word-boundary HTTP verb, whitespace, /path
+	// Verbs: GET|POST|PUT|PATCH|DELETE
+	endpointRx := regexp.MustCompile(
+		`\b(GET|POST|PUT|PATCH|DELETE)\s+(/\S+)`)
+	matches := endpointRx.FindAllStringSubmatch(sowText, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	// De-dup: endpoint = METHOD + path, strip trailing punctuation.
+	type ep struct{ method, path string }
+	seen := map[ep]bool{}
+	endpoints := make([]ep, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+		path := strings.TrimRight(m[2], ".,;:`)*)\"'")
+		// Skip obvious non-endpoints: /usr/, /tmp/, /home/, /etc/.
+		if strings.HasPrefix(path, "/usr/") || strings.HasPrefix(path, "/tmp/") ||
+			strings.HasPrefix(path, "/home/") || strings.HasPrefix(path, "/etc/") ||
+			strings.HasPrefix(path, "/bin/") {
+			continue
+		}
+		key := ep{method: m[1], path: path}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		endpoints = append(endpoints, key)
+	}
+
+	var out []QualityFinding
+	for _, e := range endpoints {
+		if routeFileExists(repoRoot, e.path) {
+			continue
+		}
+		out = append(out, QualityFinding{
+			Severity: SevBlocking,
+			Kind:     "sow-endpoint-missing",
+			File:     inferEndpointFile(e.path),
+			Line:     1,
+			Detail: fmt.Sprintf(
+				"SOW declares %s %s — no route file found at app/api%s/route.*, pages/api%s.*, or equivalent. Endpoint is promised but not implemented.",
+				e.method, e.path, e.path, e.path),
+		})
+	}
+	return out
+}
+
+// routeFileExists: best-effort check for a route file at any of
+// the conventional framework locations. Also checks whether the
+// path literal appears in any file whose name contains "route",
+// "handler", or "server" (catches Express/Fastify centralized
+// router files).
+func routeFileExists(repoRoot, httpPath string) bool {
+	// Normalize: strip leading slash; collapse trailing slash.
+	p := strings.TrimPrefix(httpPath, "/")
+	p = strings.TrimSuffix(p, "/")
+	if p == "" {
+		p = "index"
+	}
+	// Strip dynamic segments: /api/users/[id] → /api/users for dir check.
+	cleanPath := regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(p, "X")
+	cleanPath = regexp.MustCompile(`:[a-zA-Z_][a-zA-Z0-9_]*`).ReplaceAllString(cleanPath, "X")
+
+	// Walk possible prefixes (monorepo or single-app layout) and check
+	// for a file existing there.
+	prefixes := []string{
+		"", "apps/web/", "apps/api/", "apps/server/",
+		"packages/api/", "packages/server/", "server/", "api/",
+	}
+	// Candidate patterns:
+	//   <prefix>app/<path>/route.(ts|tsx|js)
+	//   <prefix>app/(anything)/<path>/route.*  -- skip (too loose)
+	//   <prefix>pages/<path>.(ts|tsx|js)
+	//   <prefix>src/app/<path>/route.*
+	//   <prefix>src/routes/<path>.*
+	for _, pfx := range prefixes {
+		candidates := []string{
+			pfx + "app/" + cleanPath + "/route.ts",
+			pfx + "app/" + cleanPath + "/route.tsx",
+			pfx + "app/" + cleanPath + "/route.js",
+			pfx + "pages/" + cleanPath + ".ts",
+			pfx + "pages/" + cleanPath + ".tsx",
+			pfx + "pages/" + cleanPath + ".js",
+			pfx + "src/app/" + cleanPath + "/route.ts",
+			pfx + "src/routes/" + cleanPath + ".ts",
+			pfx + "src/routes/" + cleanPath + ".tsx",
+			pfx + "routes/" + cleanPath + ".ts",
+			pfx + "handlers/" + cleanPath + ".ts",
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(filepath.Join(repoRoot, c)); err == nil {
+				return true
+			}
+		}
+	}
+	// Last resort: grep for the literal path in any route/handler/server
+	// file. Catches centralized routers (Express app.get(...)).
+	literalPath := httpPath
+	// Git grep the literal, filter to route-ish files.
+	out, _ := runGit(repoRoot, "grep", "-l", "-F", "--", literalPath)
+	for _, line := range strings.Split(out, "\n") {
+		lineL := strings.ToLower(line)
+		if strings.Contains(lineL, "route") || strings.Contains(lineL, "handler") ||
+			strings.Contains(lineL, "server") || strings.Contains(lineL, "/api/") {
+			return true
+		}
+	}
+	return false
+}
+
+func inferEndpointFile(httpPath string) string {
+	p := strings.TrimPrefix(httpPath, "/")
+	return "app/" + p + "/route.ts"
+}
+
+// scanSOWStructuralClaims: extract structural tuple claims from SOW
+// prose and verify the named items appear somewhere plausible in
+// the repo. Patterns recognized:
+//
+//   "columns: a, b, c"            — data-table column list
+//   "fields: a, b, c"             — schema / form fields
+//   "exports { a, b, c }"         — module exports
+//   "props: a, b, c"              — component props
+//
+// For each tuple, we try to find a file whose name relates to the
+// noun (e.g. a claim near "AlarmTable" expects to find AlarmTable.*
+// or alarm-table.*), then grep for every listed item in that file.
+// Missing items become findings.
+//
+// Experimental — default off. Heuristic noun-to-file matching is
+// imperfect; expect some false positives.
+func scanSOWStructuralClaims(repoRoot, sowText string) []QualityFinding {
+	// Reduce noise: only operate on sentences that look like declarations.
+	// Pattern: <noun-capitalized> ... (columns|fields|props|exports):? (bracketed or listed items)
+	claimRx := regexp.MustCompile(
+		`(?i)\b([A-Z]\w{2,}(?:Table|List|Card|Panel|Editor|Form|View|Page|Screen|Component|Modal)?)\b[^.\n]{0,80}?\b(columns?|fields?|props?|exports?|methods?|items?)\s*[:=]?\s*[\[\{]?([^.\n\]\}]+)[\]\}]?`)
+	matches := claimRx.FindAllStringSubmatch(sowText, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	var out []QualityFinding
+	for _, m := range matches {
+		if len(m) < 4 {
+			continue
+		}
+		noun := strings.TrimSpace(m[1])
+		kind := strings.ToLower(strings.TrimSpace(m[2]))
+		listRaw := m[3]
+		// Split on commas / "and" / newlines
+		items := splitClaimList(listRaw)
+		if len(items) < 2 {
+			continue
+		}
+		// Heuristic: require at least 3 items to avoid matching
+		// generic English ("The page fields are name and age").
+		if len(items) < 3 {
+			continue
+		}
+		file := findCandidateFile(repoRoot, noun)
+		if file == "" {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(repoRoot, file))
+		if err != nil {
+			continue
+		}
+		body := string(content)
+		var missing []string
+		for _, it := range items {
+			// Normalize: lowercase compare, alphanumeric only.
+			needle := strings.TrimSpace(it)
+			if needle == "" {
+				continue
+			}
+			if !strings.Contains(strings.ToLower(body), strings.ToLower(needle)) {
+				missing = append(missing, it)
+			}
+		}
+		if len(missing) > 0 && len(missing) < len(items) {
+			// At least one item found → the file is the right target,
+			// but some items are missing. Flag the specific misses.
+			out = append(out, QualityFinding{
+				Severity: SevBlocking,
+				Kind:     "sow-claim-missing",
+				File:     file,
+				Line:     1,
+				Detail: fmt.Sprintf(
+					"SOW declares %s %s=[%s]; %s missing from %s — claim is partially unfulfilled.",
+					noun, kind, strings.Join(items, ", "),
+					strings.Join(missing, ", "), file),
+			})
+		}
+	}
+	return out
+}
+
+// splitClaimList: extract identifier-like tokens from a prose list.
+// Handles comma-separated, "and"-joined, bracketed, or tagged lists.
+func splitClaimList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	// Normalize " and " → ", "
+	raw = regexp.MustCompile(`\s+and\s+`).ReplaceAllString(raw, ", ")
+	// Split on comma / pipe / newline.
+	parts := regexp.MustCompile(`[,|\n]+`).Split(raw, -1)
+	identRx := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
+	var out []string
+	for _, p := range parts {
+		p = strings.Trim(p, " \t\"'`()[]{}*")
+		if p == "" || len(p) > 40 {
+			continue
+		}
+		// Accept single-word identifiers or simple kebab/snake case.
+		first := strings.Fields(p)
+		if len(first) == 0 {
+			continue
+		}
+		cand := first[0]
+		if identRx.MatchString(cand) {
+			out = append(out, cand)
+		}
+	}
+	return out
+}
+
+// findCandidateFile: search the repo for a source file whose name
+// matches a noun, case-insensitively. Returns the first hit. Cheap
+// git grep on filenames.
+func findCandidateFile(repoRoot, noun string) string {
+	if noun == "" {
+		return ""
+	}
+	// Try PascalCase exact match (AlarmTable.tsx), then kebab-case
+	// (alarm-table.tsx), then component-folder index.
+	patterns := []string{
+		noun + ".tsx", noun + ".ts", noun + ".jsx", noun + ".js",
+		pascalToKebab(noun) + ".tsx",
+		pascalToKebab(noun) + ".ts",
+	}
+	for _, pat := range patterns {
+		out, _ := runGit(repoRoot, "ls-files", "--", "**/"+pat, pat)
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if strings.Contains(line, "node_modules") ||
+				strings.Contains(line, "/dist/") {
+				continue
+			}
+			return line
+		}
+	}
+	return ""
+}
+
+func pascalToKebab(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('-')
+		}
+		if r >= 'A' && r <= 'Z' {
+			b.WriteRune(r + 32) // lowercase
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// scanPackageScripts: if the SOW promises any of {test, build,
+// typecheck, dev, start, lint}, verify each app's package.json has
+// a script entry for it. Catches the "the SOW said we'd have tests
+// but nothing is wired into `npm test`" failure mode.
+//
+// Default on once validated; shipping default-off as experimental.
+func scanPackageScripts(repoRoot, sowText string) []QualityFinding {
+	// Detect which scripts the SOW promises. We look for literal
+	// mentions of command names — this is coarse but deterministic.
+	promised := map[string]bool{}
+	textLow := strings.ToLower(sowText)
+	for _, name := range []string{"test", "build", "typecheck", "type-check",
+		"dev", "start", "lint", "format"} {
+		// Need whole-word boundary to avoid "restart" matching "start".
+		rx := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
+		if rx.MatchString(textLow) {
+			promised[name] = true
+		}
+	}
+	if len(promised) == 0 {
+		return nil
+	}
+	// Find every package.json in the repo (excluding node_modules).
+	out, err := runGit(repoRoot, "ls-files", "--", "**/package.json", "package.json")
+	if err != nil {
+		return nil
+	}
+	pkgFiles := strings.Split(strings.TrimSpace(out), "\n")
+	if len(pkgFiles) == 0 || pkgFiles[0] == "" {
+		return nil
+	}
+	// Top-level package.json only for now (monorepo root + app roots).
+	// Avoid inspecting nested package.jsons that are artifacts of
+	// vendored tooling.
+	var findings []QualityFinding
+	for _, pkg := range pkgFiles {
+		if strings.Count(pkg, "/") > 3 {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(repoRoot, pkg))
+		if err != nil {
+			continue
+		}
+		body := strings.ToLower(string(data))
+		// Parse scripts block cheaply: look for `"scripts": { ... }`
+		// and grep for each promised name inside it.
+		scriptsIdx := strings.Index(body, `"scripts"`)
+		if scriptsIdx < 0 {
+			continue
+		}
+		// Take the next 2000 bytes as the scripts scope (imprecise
+		// but fine for presence checks).
+		scope := body[scriptsIdx:]
+		if len(scope) > 2000 {
+			scope = scope[:2000]
+		}
+		for name := range promised {
+			// Typecheck / type-check / tsc variants
+			variants := []string{`"` + name + `"`}
+			if name == "typecheck" {
+				variants = append(variants, `"type-check"`, `"tsc"`)
+			}
+			if name == "type-check" {
+				variants = append(variants, `"typecheck"`, `"tsc"`)
+			}
+			found := false
+			for _, v := range variants {
+				if strings.Contains(scope, v) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				findings = append(findings, QualityFinding{
+					Severity: SevBlocking,
+					Kind:     "package-script-missing",
+					File:     pkg,
+					Line:     1,
+					Detail: fmt.Sprintf(
+						"SOW promises a %q script; %s scripts block has no such entry. Anything invoking `npm run %s` will fail.",
+						name, pkg, name),
+				})
+			}
+		}
+	}
+	return findings
 }

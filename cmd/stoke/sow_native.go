@@ -1034,7 +1034,12 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					}
 				}
 				if len(sessionFiles) > 0 {
-					qual := plan.RunQualitySweep(cfg.RepoRoot, sessionFiles)
+					// Pass the session-scoped SOW so the SOW-aware gates
+					// (endpoint contracts, structural claims, package
+					// scripts) fire when enabled. Experimentals are
+					// default-off; enable via STOKE_QS_ENABLE env var.
+					scopedSOW := &plan.SOW{Sessions: []plan.Session{session}}
+					qual := plan.RunQualitySweepForSOW(cfg.RepoRoot, sessionFiles, scopedSOW)
 					if qual != nil && len(qual.Findings) > 0 {
 						fmt.Printf("  🕵 quality sweep: %s\n", qual.Summary())
 						if qual.Blocking() {
