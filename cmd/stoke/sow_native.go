@@ -2099,9 +2099,67 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 		// Post-task diff: what did THIS task actually touch?
 		reportPerTaskFileDrift(ctx, cfg.RepoRoot, task, preTaskDirtySet, tr.Success)
 
+		// OPTION A: per-task commit. Sow previously commit'd once at
+		// session end, accumulating 200+ uncommitted files — prevented
+		// per-commit review and made failures hard to bisect. Now every
+		// successful task gets its own commit with a structured message.
+		// A task that wrote nothing silently no-ops (git commit --quiet
+		// exits 0 only when staging is empty).
+		if tr.Success {
+			commitPerTask(ctx, cfg.RepoRoot, session.ID, task)
+		}
+
 		results = append(results, tr)
 	}
 	return results
+}
+
+// commitPerTask stages + commits dirty/untracked files in the repo
+// with a message like "sow(S1/T14): <short desc>". Uses shell git
+// (sow already shells out for gitDirtyFiles / reportPerTaskFileDrift
+// — dependency pattern already set). Silent no-op when nothing is
+// staged (task wrote no files or only ignored files).
+func commitPerTask(ctx context.Context, repoRoot, sessionID string, task plan.Task) {
+	if repoRoot == "" {
+		return
+	}
+	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+	addCmd.Dir = repoRoot
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		fmt.Printf("    ⚠ %s: git add failed: %v (%s)\n", task.ID, err, truncateSow(string(out), 120))
+		return
+	}
+	checkCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
+	checkCmd.Dir = repoRoot
+	if err := checkCmd.Run(); err == nil {
+		// Exit 0 = no staged changes → task wrote nothing. Silent.
+		return
+	}
+	shortDesc := strings.TrimSpace(task.Description)
+	if len(shortDesc) > 80 {
+		shortDesc = shortDesc[:77] + "..."
+	}
+	msg := fmt.Sprintf("sow(%s/%s): %s", sessionID, task.ID, shortDesc)
+	commitCmd := exec.CommandContext(ctx, "git", "commit",
+		"-m", msg,
+		"--no-verify",
+	)
+	commitCmd.Dir = repoRoot
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		fmt.Printf("    ⚠ %s: git commit failed: %v (%s)\n", task.ID, err, truncateSow(string(out), 200))
+		return
+	}
+	shaCmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
+	shaCmd.Dir = repoRoot
+	sha, _ := shaCmd.Output()
+	fmt.Printf("    📦 %s committed: %s %s\n", task.ID, strings.TrimSpace(string(sha)), msg)
+}
+
+func truncateSow(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // ZombieVerdict distinguishes three post-dispatch states for a task:
