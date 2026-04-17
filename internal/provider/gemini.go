@@ -147,11 +147,22 @@ func (p *GeminiProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 			Parts: []geminiPart{{Text: req.System}},
 		}
 	}
-	if req.MaxTokens > 0 || req.Temperature != nil {
-		body.GenerationConfig = &geminiGenCfg{
-			MaxOutputTokens: req.MaxTokens,
-			Temperature:     req.Temperature,
-		}
+	// Gemini 3.x Pro models are reasoning models — they spend output
+	// tokens on internal "thinking" BEFORE emitting any visible text.
+	// A stoke reviewer call asking for 50 tokens of verdict on a
+	// 50 KB plan will silently return empty because thinking eats
+	// the whole budget. Floor the output ceiling high enough that
+	// at least several KB of review text can land after thinking.
+	// Callers that want a specific cap can still set req.MaxTokens
+	// above this floor.
+	const geminiReviewerFloor = 32000
+	max := req.MaxTokens
+	if max < geminiReviewerFloor {
+		max = geminiReviewerFloor
+	}
+	body.GenerationConfig = &geminiGenCfg{
+		MaxOutputTokens: max,
+		Temperature:     req.Temperature,
 	}
 
 	payload, err := json.Marshal(body)
