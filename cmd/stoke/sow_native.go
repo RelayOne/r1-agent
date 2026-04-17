@@ -2610,8 +2610,15 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// back at the end is again serialized. When the
 				// feature is off, falls through to Option A
 				// (direct-against-main per-task commit).
+				//
+				// Cleanup is deferred so it always fires, even if
+				// execNativeTask panics or ctx cancels mid-task.
+				// The deferred closure captures trSuccess by
+				// pointer so it can see the final verdict set
+				// post-review.
 				taskCfg := cfg
 				var wtPath, wtBranch string
+				taskSucceeded := false
 				if cfg.PerTaskWorktree {
 					wtBranch = fmt.Sprintf("task-%s-%s", session.ID, task.ID)
 					wtPath = filepath.Join(mainRepoRoot+".worktrees",
@@ -2625,6 +2632,15 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 					} else {
 						taskCfg.RepoRoot = wtPath
 						fmt.Printf("    🌲 %s: running in worktree %s (branch %s)\n", task.ID, wtPath, wtBranch)
+						// Panic-safe cleanup. Runs even if
+						// execNativeTask/reviewAndFollowup panics.
+						// taskSucceeded reflects the final verdict;
+						// branch is kept iff merged (for history).
+						defer func(path, branch string) {
+							gitMu.Lock()
+							cleanupTaskWorktree(ctx, mainRepoRoot, path, branch, taskSucceeded)
+							gitMu.Unlock()
+						}(wtPath, wtBranch)
 					}
 				}
 
@@ -2655,6 +2671,9 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				// Per-task commit (Option A) + worktree merge
 				// (Option B). Commit runs in the task-scoped tree
 				// (worktree path when B enabled, main repo when not).
+				// Cleanup is deferred above; here we just decide
+				// merge-or-not and record taskSucceeded for cleanup
+				// to consult.
 				if tr.Success {
 					commitPerTask(ctx, taskCfg.RepoRoot, session.ID, task)
 				}
@@ -2665,15 +2684,13 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 						gitMu.Unlock()
 						if ok {
 							fmt.Printf("    🔀 %s: merged %s to main\n", task.ID, wtBranch)
+							taskSucceeded = true
 						} else {
 							fmt.Printf("    💥 %s: merge failed — %s abandoned\n", task.ID, wtBranch)
 						}
 					} else {
 						fmt.Printf("    ⚠ %s: task failed — abandoning worktree %s\n", task.ID, wtBranch)
 					}
-					gitMu.Lock()
-					cleanupTaskWorktree(ctx, mainRepoRoot, wtPath, wtBranch, tr.Success)
-					gitMu.Unlock()
 				}
 
 				resCh <- indexed{idx: ti, res: tr}
