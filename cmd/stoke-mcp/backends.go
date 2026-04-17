@@ -73,13 +73,19 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stoke-mcp: init ledger: %w", err)
 	}
-	// trustplane.Client selection: StubClient (always, for now) until
-	// SOW task B-5 adds a NewFromEnv factory that reads
-	// STOKE_TRUSTPLANE_MODE=stub|real. Until then the stoke-mcp binary
-	// ships with Stub only — this is intentional per the SOW's
-	// "default mode remains stub; switching to real requires explicit
-	// env var" principle.
-	tp := trustplane.NewStubClient()
+	// trustplane.Client selection via the NewFromEnv factory
+	// (SOW task B-5). Resolution:
+	//   - STOKE_TRUSTPLANE_MODE unset or =stub → StubClient (default
+	//     for local dev + zero-config startup).
+	//   - STOKE_TRUSTPLANE_MODE=real → RealClient talking to the
+	//     TrustPlane gateway at STOKE_TRUSTPLANE_URL with Ed25519
+	//     private key resolved from STOKE_TRUSTPLANE_PRIVKEY /
+	//     STOKE_TRUSTPLANE_PRIVKEY_FILE. Fatal on misconfiguration
+	//     so operators see the problem at startup, not at first RPC.
+	tp, err := trustplane.NewFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("stoke-mcp: build trustplane client: %w", err)
+	}
 	delMgr := delegation.NewManager(tp)
 	return &Backends{
 		ManifestRegistry: skillmfr.NewRegistry(),

@@ -1,0 +1,445 @@
+openapi: 3.1.0
+info:
+  title: TrustPlane Gateway API
+  description: |
+    Vendored slice of the TrustPlane gateway API, scoped to the endpoints
+    Stoke's RealClient calls. This spec is hand-maintained in-tree so
+    Stoke has zero Go-module coupling to the TrustPlane source. Any time
+    TrustPlane adds / changes a gateway endpoint Stoke consumes, update
+    this file AND the matching method on RealClient (internal/trustplane/real.go).
+
+    Scope limited to: identity registration, audit anchoring, HITL
+    approvals, reputation read/write, delegation create/verify/revoke,
+    policy evaluation. Everything else on the real TrustPlane gateway
+    (billing, discovery, admin) is intentionally omitted — we only
+    document what Stoke calls.
+
+    Auth: every request carries a DPoP (RFC 9449) proof-of-possession
+    header bound to the caller's Ed25519 key registered at identity
+    creation. The gateway rejects any request with a missing, malformed,
+    or replay-observed DPoP header.
+  version: 0.1.0
+  contact:
+    name: Stoke maintainers (vendored copy)
+    url: https://github.com/ericmacdougall/Stoke
+
+servers:
+  - url: https://trustplane.local
+    description: Local dev TrustPlane
+  - url: https://gateway.trustplane.dev
+    description: Managed TrustPlane gateway
+
+security:
+  - DPoPAuth: []
+
+paths:
+  /v1/identity:
+    post:
+      summary: Register a new agent identity (SPIFFE SVID mint)
+      description: |
+        First call for any new Stoke stance. Mints an SVID for the
+        supplied public key, assigns a DID of the form
+        `did:tp:<issuer>-<uuid>`, and stores the public key bytes
+        server-side. Subsequent DPoP proofs must be signed with the
+        private half of this key.
+      operationId: registerIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityRequest'
+      responses:
+        '200':
+          description: Identity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/audit/anchor:
+    post:
+      summary: Anchor a ledger graph root
+      description: |
+        Submits a root-hash + emitting-ledger descriptor to the
+        TrustPlane audit pipeline. Response returns the opaque anchor
+        ID so the emitting ledger can cross-reference the anchor in its
+        own metadata.
+      operationId: anchorAudit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditAnchorRequest'
+      responses:
+        '200':
+          description: Anchor created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditAnchorResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/hitl/request:
+    post:
+      summary: Open a human-in-the-loop approval flow
+      description: |
+        Creates an HITL decision ticket. Blocks up to `deadline_seconds`
+        server-side; returns `decision=pending` if the deadline elapses
+        so the caller can re-poll or surface a pending state. Reasoning
+        + responder ID are populated when a human actually decides.
+      operationId: requestHITL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HITLRequest'
+      responses:
+        '200':
+          description: HITL decision (approved/rejected/modified/pending/timed_out)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HITLResponse'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/reputation/{agent_did}:
+    get:
+      summary: Look up an agent's reputation score
+      description: |
+        Returns the current reputation snapshot for the agent.
+        Unknown agents return `score=0.5, total_hires=0` — a
+        never-seen agent is NOT an error, it is a first-time quote.
+      operationId: lookupReputation
+      parameters:
+        - name: agent_did
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reputation snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reputation'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/reputation:
+    post:
+      summary: Record a reputation entry
+      description: |
+        Writes a post-hire rating delta. Idempotency is enforced on
+        `(agent_did, hire_id)` — repeated writes from retries land as
+        one entry, not N.
+      operationId: recordReputation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReputationEntry'
+      responses:
+        '204':
+          description: Entry recorded
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/delegation:
+    post:
+      summary: Create a delegation token
+      description: |
+        TrustPlane-side: attenuates scopes, signs with the issuing
+        agent's Ed25519 key, walks the ActClaim parent chain, returns
+        the opaque token. Stoke never sees the raw signing key; all
+        crypto is TrustPlane-side.
+      operationId: createDelegation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegationRequest'
+      responses:
+        '200':
+          description: Delegation issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Delegation'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/delegation/{delegation_id}/verify:
+    post:
+      summary: Verify a delegation for a delegatee
+      description: |
+        Returns 204 on valid. Returns 403 when revoked / expired /
+        over-scoped with error body explaining which check failed.
+      operationId: verifyDelegation
+      parameters:
+        - name: delegation_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delegatee_did]
+              properties:
+                delegatee_did: { type: string }
+      responses:
+        '204':
+          description: Valid
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Delegation revoked, expired, or over-scoped
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/delegation/{delegation_id}/revoke:
+    post:
+      summary: Revoke a delegation (cascade walk TrustPlane-side)
+      description: |
+        Triggers fanout revocation on TrustPlane. Returns 204 once the
+        root is marked revoked; child invalidation happens
+        asynchronously on the TrustPlane side via their FanoutDelegator.
+      operationId: revokeDelegation
+      parameters:
+        - name: delegation_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Revocation accepted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/policy/evaluate:
+    post:
+      summary: Evaluate a Cedar policy decision
+      description: |
+        TrustPlane runs its Cedar engine against the named bundle with
+        the supplied principal/action/resource. Returns 204 on allow,
+        403 with an error body on deny. Bundles are referenced by name
+        (e.g. "personal-assistant") and are deployed via TrustPlane's
+        policy admin surface — Stoke never ships Cedar ASTs.
+      operationId: evaluatePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRequest'
+      responses:
+        '204':
+          description: Allow
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Deny
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  securitySchemes:
+    DPoPAuth:
+      type: http
+      scheme: DPoP
+      description: |
+        RFC 9449 proof-of-possession. Each request carries a DPoP
+        header: a JWT signed with the caller's Ed25519 private key,
+        embedding the caller's public JWK, the HTTP method, the full
+        request URI, and a cryptographically unique jti nonce. The
+        gateway rejects replays (seen-jti cache, 5-minute window).
+
+  schemas:
+    IdentityRequest:
+      type: object
+      required: [agent_id, stance_role, public_key]
+      properties:
+        agent_id:
+          type: string
+          description: Stoke-internal agent identifier (not globally unique)
+        stance_role:
+          type: string
+          description: "\"reviewer\" | \"dev\" | \"po\" | \"cto\" | …"
+        public_key:
+          type: string
+          description: PEM-encoded Ed25519 public key
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+
+    IdentityResponse:
+      type: object
+      required: [did, registered_at]
+      properties:
+        did:
+          type: string
+          description: "did:tp:<issuer>-<uuid>"
+        svid_bytes:
+          type: string
+          format: byte
+          description: Optional SPIFFE SVID (base64); may be empty in dev
+        registered_at:
+          type: string
+          format: date-time
+
+    AuditAnchorRequest:
+      type: object
+      required: [ledger_id, root_hash, emitted_at]
+      properties:
+        ledger_id:  { type: string }
+        root_hash:  { type: string, description: "hex or base64" }
+        emitted_at: { type: string, format: date-time }
+        meta:
+          type: object
+          additionalProperties: { type: string }
+
+    AuditAnchorResponse:
+      type: object
+      required: [anchor_id, anchored_at]
+      properties:
+        anchor_id:       { type: string }
+        anchored_at:     { type: string, format: date-time }
+        trustplane_ref:  { type: string, description: "opaque URI back to TrustPlane audit UI" }
+
+    HITLRequest:
+      type: object
+      required: [agent_did, question, deadline_seconds]
+      properties:
+        agent_did:        { type: string }
+        question:         { type: string }
+        context:
+          type: array
+          items: { type: string, description: "ledger node IDs" }
+        deadline_seconds:
+          type: integer
+          minimum: 1
+          default: 300
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+
+    HITLResponse:
+      type: object
+      required: [decision, decided_at]
+      properties:
+        decision:
+          type: string
+          enum: [approved, rejected, modified, pending, timed_out]
+        reasoning:     { type: string }
+        responder_id:  { type: string }
+        decided_at:    { type: string, format: date-time }
+
+    Reputation:
+      type: object
+      required: [agent_did, score]
+      properties:
+        agent_did:         { type: string }
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        total_hires:       { type: integer }
+        successful_hires:  { type: integer }
+        last_recorded_at:  { type: string, format: date-time }
+
+    ReputationEntry:
+      type: object
+      required: [agent_did, outcome, rating_delta, recorded_at]
+      properties:
+        agent_did:     { type: string }
+        hire_id:
+          type: string
+          description: Stoke-side hire ID — used for idempotency
+        outcome:
+          type: string
+          enum: [success, failure, partial]
+        rating_delta: { type: number }
+        note:         { type: string }
+        recorded_at:  { type: string, format: date-time }
+
+    DelegationRequest:
+      type: object
+      required: [from_did, to_did, scopes, expiry_seconds]
+      properties:
+        from_did:  { type: string }
+        to_did:    { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        expiry_seconds:
+          type: integer
+          minimum: 1
+        parent_id:
+          type: string
+          description: "ActClaim chain parent delegation ID; empty for root"
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+
+    Delegation:
+      type: object
+      required: [delegation_id, token, expires_at]
+      properties:
+        delegation_id: { type: string }
+        token:
+          type: string
+          description: Opaque JWS carrying the attenuation + ActClaim chain
+        expires_at:    { type: string, format: date-time }
+
+    PolicyRequest:
+      type: object
+      required: [policy_bundle, principal, action]
+      properties:
+        policy_bundle:
+          type: string
+          description: "bundle name (e.g. \"personal-assistant\")"
+        delegation_id:
+          type: string
+          description: Optional — include when the action is delegation-scoped
+        principal:
+          type: string
+          description: Acting agent DID
+        action:
+          type: string
+          description: "e.g. \"calendar_create_event\", \"send_email\""
+        resource:
+          type: object
+          additionalProperties: true
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: DPoP missing / invalid / replayed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Policy denied or delegation invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
