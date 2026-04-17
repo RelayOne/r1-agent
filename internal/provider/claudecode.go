@@ -52,10 +52,21 @@ type ClaudeCodeProvider struct {
 
 	// Timeout per call. Default 10 min.
 	Timeout time.Duration
+
+	// WorkerMode controls invocation mode.
+	//   false (default) → reviewer: `--print` text-only, no tools.
+	//     Fast, cheap, can't edit files — correct for judges,
+	//     reviewers, plan critics, classifiers.
+	//   true → worker: `-p <prompt> --dangerously-skip-permissions
+	//     --output-format json --max-turns 100`. CC uses its full
+	//     tool suite (Read, Edit, Write, Bash, etc.) and produces
+	//     a structured JSON result. Correct for tasks that need
+	//     to create/modify files or run builds.
+	WorkerMode bool
 }
 
-// NewClaudeCodeProvider returns a provider backed by the
-// local Claude Code CLI.
+// NewClaudeCodeProvider returns a reviewer-mode provider
+// (text-only --print). For worker-mode use NewClaudeCodeWorker.
 func NewClaudeCodeProvider(binary, workDir, model string) *ClaudeCodeProvider {
 	if binary == "" {
 		binary = "claude"
@@ -66,6 +77,14 @@ func NewClaudeCodeProvider(binary, workDir, model string) *ClaudeCodeProvider {
 		Model:   model,
 		Timeout: 20 * time.Minute,
 	}
+}
+
+// NewClaudeCodeWorker returns a worker-mode provider that
+// invokes CC with tool access + JSON output.
+func NewClaudeCodeWorker(binary, workDir, model string) *ClaudeCodeProvider {
+	p := NewClaudeCodeProvider(binary, workDir, model)
+	p.WorkerMode = true
+	return p
 }
 
 func (p *ClaudeCodeProvider) Name() string { return "claude-code" }
@@ -123,10 +142,24 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		}
 		cliPrompt = firstLine + "\n\n" + cliPrompt
 	}
-	args := []string{
-		"--print",
-		"--no-session-persistence", // don't inherit session hooks
-		cliPrompt,
+	var args []string
+	if p.WorkerMode {
+		// Worker: full tool access + JSON-structured output so
+		// we can extract the final text from .result.
+		args = []string{
+			"-p", cliPrompt,
+			"--dangerously-skip-permissions",
+			"--output-format", "json",
+			"--no-session-persistence",
+			"--max-turns", "100",
+		}
+	} else {
+		// Reviewer: text-only, no tools, no permissions.
+		args = []string{
+			"--print",
+			"--no-session-persistence",
+			cliPrompt,
+		}
 	}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
@@ -183,6 +216,18 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 output:
 
 	text := strings.TrimSpace(stdout.String())
+	if p.WorkerMode {
+		// Worker mode: output is a JSON object with .result
+		// holding the final assistant text.
+		var r struct {
+			Result   string  `json:"result"`
+			NumTurns int     `json:"num_turns"`
+			Cost     float64 `json:"total_cost_usd"`
+		}
+		if json.Unmarshal([]byte(text), &r) == nil && r.Result != "" {
+			text = r.Result
+		}
+	}
 	// Strip markdown fences — Claude Code often wraps JSON
 	// output in ```json ... ``` blocks even when asked not to.
 	text = stripMarkdownFences(text)

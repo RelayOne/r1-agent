@@ -2131,6 +2131,15 @@ func sowCmd(args []string) {
 		if reasoningModelChoice == "" {
 			reasoningModelChoice = nativeModelName
 		}
+		// Propagate the reasoning-model choice into the provider
+		// itself. Without this, CC/Codex providers ignore the
+		// --reasoning-model flag and use their own defaults.
+		if ccp, ok := reasoningProv.(*provider.ClaudeCodeProvider); ok && reasoningModelChoice != "" {
+			ccp.Model = reasoningModelChoice
+		}
+		if cxp, ok := reasoningProv.(*provider.CodexProvider); ok && reasoningModelChoice != "" {
+			cxp.Model = reasoningModelChoice
+		}
 
 		// Resolve BUILDER_* first so nativeKey / nativeBaseURL /
 		// nativeModelName are correct by the time we build the runner.
@@ -2192,7 +2201,11 @@ func sowCmd(args []string) {
 		runner := engine.NewNativeRunner(nativeKey, nativeModelName)
 		runner.BaseURL = nativeBaseURLForRunner
 		if strings.HasPrefix(*nativeBaseURL, "claude-code") {
-			runner.ProviderOverride = provider.NewClaudeCodeProvider("claude", absRepo, "")
+			// Native runner = worker: CC needs tools + write
+			// permissions. Pass --native-model through (e.g.
+			// "sonnet", "opus") so claude-code picks up the right
+			// model when the caller specifies one.
+			runner.ProviderOverride = provider.NewClaudeCodeWorker("claude", absRepo, nativeModelName)
 		} else if strings.HasPrefix(*nativeBaseURL, "codex") {
 			runner.ProviderOverride = provider.NewCodexProvider("codex", absRepo, "")
 		}

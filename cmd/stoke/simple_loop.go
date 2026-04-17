@@ -36,8 +36,9 @@ func simpleLoopCmd(args []string) {
 	sowFile := fs.String("file", "", "SOW prose file")
 	maxRounds := fs.Int("max-rounds", 5, "Max outer loops (plan→build→audit)")
 	claudeBin := fs.String("claude-bin", "claude", "Claude Code binary")
-	claudeModel := fs.String("claude-model", "", "Claude Code model (sonnet, opus, etc)")
+	claudeModel := fs.String("claude-model", "", "Claude Code worker model (sonnet, opus, etc)")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	reviewer := fs.String("reviewer", "codex", "Reviewer backend: codex | cc-opus | cc-sonnet")
 	fs.Parse(args)
 
 	if *sowFile == "" {
@@ -54,10 +55,14 @@ func simpleLoopCmd(args []string) {
 	fmt.Printf("🔄 simple-loop: %s (%d bytes prose)\n", *sowFile, len(prose))
 	fmt.Printf("   repo: %s\n", absRepo)
 	claudeModelArg := *claudeModel
-	fmt.Printf("   claude: %s (model: %s), codex: %s\n", *claudeBin, func() string { if claudeModelArg == "" { return "default" }; return claudeModelArg }(), *codexBin)
+	fmt.Printf("   claude worker: %s (model: %s)\n", *claudeBin, func() string { if claudeModelArg == "" { return "default" }; return claudeModelArg }())
+	fmt.Printf("   reviewer: %s\n", *reviewer)
 	fmt.Printf("   max rounds: %d\n\n", *maxRounds)
 
 	globalClaudeModel = claudeModelArg
+	globalReviewer = *reviewer
+	globalClaudeBin = *claudeBin
+	globalCodexBin = *codexBin
 	currentProse := string(prose)
 
 	for round := 1; round <= *maxRounds; round++ {
@@ -80,13 +85,13 @@ func simpleLoopCmd(args []string) {
 		}
 		fmt.Printf("  ✓ plan: %d chars\n", len(plan))
 
-		// Step 2: Codex reviews the plan
-		fmt.Println("📝 Step 2: Codex reviewing plan...")
-		codexReview := codexCall(*codexBin, absRepo,
+		// Step 2: Reviewer reviews the plan
+		fmt.Printf("📝 Step 2: %s reviewing plan...\n", *reviewer)
+		codexReview := reviewCall(absRepo,
 			"Review this implementation plan for a software project. "+
 				"Flag any issues: missing files, wrong dependencies, unrealistic steps, "+
 				"ordering problems. Suggest improvements. Be specific.\n\nPLAN:\n"+plan)
-		fmt.Printf("  ✓ codex review: %d chars\n", len(codexReview))
+		fmt.Printf("  ✓ review: %d chars\n", len(codexReview))
 
 		// Step 3: Claude Code builds (background) while we watch commits
 		fmt.Println("🔧 Step 3: Claude Code building (watching commits)...")
@@ -126,21 +131,21 @@ func simpleLoopCmd(args []string) {
 					diff := shellCmd(absRepo, "git diff "+lastReviewedHead+"..HEAD --stat 2>/dev/null")
 					if diff != "" {
 						reviewRound++
-						fmt.Printf("  🔍 Final review (round %d)...\n", reviewRound)
-						codeReview := codexCall(*codexBin, absRepo,
+						fmt.Printf("  🔍 Final review (round %d, via %s)...\n", reviewRound, *reviewer)
+						codeReview := reviewCall(absRepo,
 							"Review ALL recent changes. Check for: compilation errors, "+
 								"missing imports, broken tests, stub code. Be specific.\n\n"+
 								"CHANGES:\n"+diff)
 						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
 							!strings.Contains(strings.ToLower(codeReview), "lgtm") &&
 							!strings.Contains(strings.ToLower(codeReview), "looks good") {
-							fmt.Printf("  ✗ codex found issues (round %d), sending to CC...\n", reviewRound)
+							fmt.Printf("  ✗ reviewer found issues (round %d), sending to CC...\n", reviewRound)
 							claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-								"Codex reviewed your code and found issues. Fix ALL of them. "+
-									"Run the build after each fix. Commit fixes.\n\nCODEX REVIEW:\n%s",
+								"The reviewer flagged issues in your code. Fix ALL of them. "+
+									"Run the build after each fix. Commit fixes.\n\nREVIEW:\n%s",
 								codeReview))
 						} else {
-							fmt.Printf("  ✓ codex approved (round %d)\n", reviewRound)
+							fmt.Printf("  ✓ reviewer approved (round %d)\n", reviewRound)
 						}
 					}
 				}
@@ -155,18 +160,18 @@ func simpleLoopCmd(args []string) {
 					if diff != "" {
 						reviewRound++
 						fmt.Printf("  📝 New commits detected (round %d):\n%s\n", reviewRound, indent(commitMsg, "    "))
-						fmt.Printf("  🔍 Codex reviewing...\n")
-						codeReview := codexCall(*codexBin, absRepo,
+						fmt.Printf("  🔍 %s reviewing...\n", *reviewer)
+						codeReview := reviewCall(absRepo,
 							"Review these specific changes. Check for: compilation errors, "+
 								"missing imports, stub code. Be specific about what to fix.\n\n"+
 								"COMMITS:\n"+commitMsg+"\n\nDIFF STAT:\n"+diff)
 						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
 							!strings.Contains(strings.ToLower(codeReview), "lgtm") {
-							fmt.Printf("  ✗ codex found issues, queuing fix for CC...\n")
+							fmt.Printf("  ✗ reviewer found issues, queuing fix for CC...\n")
 							// Don't interrupt CC mid-build — queue the feedback
 							// CC will get it in the final review round
 						} else {
-							fmt.Printf("  ✓ codex approved commits\n")
+							fmt.Printf("  ✓ reviewer approved commits\n")
 						}
 						lastReviewedHead = currentHead
 					}
@@ -218,7 +223,56 @@ func simpleLoopCmd(args []string) {
 	fmt.Println("═══════════════════════════════════════")
 }
 
-var globalClaudeModel string // set by simpleLoopCmd
+var (
+	globalClaudeModel string // worker model override
+	globalReviewer    string // "codex", "cc-opus", "cc-sonnet"
+	globalClaudeBin   string // resolved claude binary path
+	globalCodexBin    string // resolved codex binary path
+)
+
+// reviewCall dispatches the plan/code-review call to the
+// configured reviewer backend. Reviewers run in TEXT-ONLY mode
+// — no filesystem tools, no commits. The caller hands in a
+// fully-formed prompt; we return the review text.
+func reviewCall(dir, prompt string) string {
+	switch globalReviewer {
+	case "cc-opus":
+		return claudeReviewCall(globalClaudeBin, dir, prompt, "opus")
+	case "cc-sonnet":
+		return claudeReviewCall(globalClaudeBin, dir, prompt, "sonnet")
+	case "cc", "claude":
+		// Generic "claude code as reviewer" — uses its default model.
+		return claudeReviewCall(globalClaudeBin, dir, prompt, "")
+	default:
+		return codexCall(globalCodexBin, dir, prompt)
+	}
+}
+
+// claudeReviewCall invokes Claude Code in text-only mode for
+// review purposes. No --dangerously-skip-permissions, no tools,
+// no JSON wrapping — just --print with optional model override.
+func claudeReviewCall(bin, dir, prompt, model string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	args := []string{
+		"--print",
+		"--no-session-persistence",
+		prompt,
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "  claude-reviewer error: %v\n", err)
+		return ""
+	}
+	return strings.TrimSpace(out.String())
+}
 
 func claudeCall(bin, dir, prompt string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -260,30 +314,129 @@ func claudeCall(bin, dir, prompt string) string {
 	return strings.TrimSpace(string(raw))
 }
 
+// codexCall invokes `codex exec` with JSONL output (so we can
+// detect turn.completed/turn.failed inline) plus an output-growth
+// watchdog that kills the process if stdout goes silent for 5 min.
+// Reviewer calls are --sandbox read-only; codex has no business
+// editing files when we ask it to review.
 func codexCall(bin, dir, prompt string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	tmpOut := fmt.Sprintf("/tmp/codex-simple-%d.txt", time.Now().UnixNano())
-	cmd := exec.CommandContext(ctx, bin, "exec",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-o", tmpOut, prompt)
-	cmd.Dir = dir
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "  codex error: %v\n", err)
-		return ""
+	lastMsg := fmt.Sprintf("/tmp/codex-simple-%d.txt", time.Now().UnixNano())
+	defer os.Remove(lastMsg)
+	args := []string{"exec",
+		"--json",
+		"--sandbox", "read-only",
+		"--skip-git-repo-check",
+		"--output-last-message", lastMsg,
+		prompt,
 	}
-	// Retry read — codex may flush file after process exits
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+
+	watchdog := time.NewTicker(30 * time.Second)
+	defer watchdog.Stop()
+	lastSize := 0
+	stale := 0
+	const maxStale = 10 // 10 × 30s = 5 min of silence
+
+	turnFailed := false
+	for running := true; running; {
+		select {
+		case err := <-done:
+			running = false
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  codex error: %v (stderr: %s)\n",
+					err, strings.TrimSpace(stderr.String()))
+			}
+		case <-watchdog.C:
+			cur := stdout.Len() + stderr.Len()
+			if cur == lastSize {
+				stale++
+				if stale >= maxStale {
+					fmt.Fprintf(os.Stderr, "  codex: no output for %ds — killing\n", maxStale*30)
+					if cmd.Process != nil {
+						cmd.Process.Kill()
+					}
+					running = false
+				}
+			} else {
+				stale = 0
+				lastSize = cur
+			}
+			// Scan new JSONL events for turn.failed / usage_limit / 429
+			for _, line := range strings.Split(stdout.String(), "\n") {
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(line, "{") {
+					continue
+				}
+				var ev struct{ Type string `json:"type"` }
+				if json.Unmarshal([]byte(line), &ev) == nil {
+					if ev.Type == "turn.failed" {
+						turnFailed = true
+					}
+				}
+			}
+			if strings.Contains(stderr.String(), "429") ||
+				strings.Contains(stderr.String(), "usage limit") {
+				fmt.Fprintf(os.Stderr, "  codex rate-limited (stderr contains 429/usage-limit)\n")
+			}
+		}
+	}
+
+	if turnFailed {
+		fmt.Fprintf(os.Stderr, "  codex reported turn.failed\n")
+	}
+
+	// Prefer the output-last-message file (clean final text).
+	// Retry briefly — codex flushes the file slightly after exit.
 	var data []byte
 	for i := 0; i < 10; i++ {
-		data, _ = os.ReadFile(tmpOut)
+		data, _ = os.ReadFile(lastMsg)
 		if len(data) > 0 {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	os.Remove(tmpOut)
+	if len(data) == 0 {
+		// Fallback: extract final agent_message from JSONL stream.
+		data = []byte(extractCodexFinalMessage(stdout.String()))
+	}
 	return strings.TrimSpace(string(data))
+}
+
+// extractCodexFinalMessage parses codex JSONL stdout and returns
+// the text of the last `item.completed` event with type
+// `agent_message`. Used as a fallback when --output-last-message
+// hasn't flushed yet.
+func extractCodexFinalMessage(jsonl string) string {
+	var last string
+	for _, line := range strings.Split(jsonl, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var ev struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
+		}
+		if json.Unmarshal([]byte(line), &ev) != nil {
+			continue
+		}
+		if ev.Type == "item.completed" && ev.Item.Type == "agent_message" && ev.Item.Text != "" {
+			last = ev.Item.Text
+		}
+	}
+	return last
 }
 
 func shellCmd(dir, cmd string) string {

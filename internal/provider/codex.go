@@ -21,8 +21,17 @@ type CodexProvider struct {
 	WorkDir string
 	Model   string
 	Timeout time.Duration
+
+	// WorkerMode controls sandbox and approval behavior.
+	//   false (default) → reviewer: --sandbox read-only.
+	//     Safe for plan-critic, code-review, judge calls.
+	//   true → worker: --sandbox workspace-write + bypass
+	//     approvals. For codex-as-builder tasks.
+	WorkerMode bool
 }
 
+// NewCodexProvider returns a reviewer-mode provider (read-only).
+// For worker mode use NewCodexWorker.
 func NewCodexProvider(binary, workDir, model string) *CodexProvider {
 	if binary == "" {
 		binary = "codex"
@@ -35,6 +44,14 @@ func NewCodexProvider(binary, workDir, model string) *CodexProvider {
 	}
 }
 
+// NewCodexWorker returns a worker-mode codex provider that can
+// write to the workspace.
+func NewCodexWorker(binary, workDir, model string) *CodexProvider {
+	p := NewCodexProvider(binary, workDir, model)
+	p.WorkerMode = true
+	return p
+}
+
 func (p *CodexProvider) Name() string { return "codex" }
 
 func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
@@ -43,12 +60,21 @@ func (p *CodexProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		cliPrompt = "Process the input piped via stdin and produce the requested output. Output ONLY the requested format — no prose wrapper."
 	}
 
-	// codex exec doesn't have --print. Use -o to write
-	// the last message to a temp file, then read it back.
-	tmpOut := fmt.Sprintf("/tmp/codex-out-%d.txt", time.Now().UnixNano())
+	// Use --json so codex emits a clean JSONL event stream
+	// on stdout; --output-last-message writes the final agent
+	// text to a file we read back. This combo avoids the
+	// 0-byte race seen with `-o` alone because the stream
+	// ends with a `turn.completed` event before exit.
+	lastMsg := fmt.Sprintf("/tmp/codex-out-%d.txt", time.Now().UnixNano())
+	sandbox := "read-only"
+	if p.WorkerMode {
+		sandbox = "workspace-write"
+	}
 	args := []string{"exec",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-o", tmpOut,
+		"--json",
+		"--sandbox", sandbox,
+		"--skip-git-repo-check",
+		"--output-last-message", lastMsg,
 		cliPrompt}
 	if p.Model != "" {
 		args = append(args, "-m", p.Model)
@@ -108,13 +134,13 @@ output:
 	// to avoid the 0-byte race condition.
 	var outData []byte
 	for i := 0; i < 10; i++ {
-		outData, _ = os.ReadFile(tmpOut)
+		outData, _ = os.ReadFile(lastMsg)
 		if len(outData) > 0 {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	os.Remove(tmpOut)
+	os.Remove(lastMsg)
 	if len(outData) == 0 {
 		outData = stdout.Bytes()
 	}
