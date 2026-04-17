@@ -120,6 +120,8 @@ func RunQualitySweep(repoRoot string, files []string) *QualityReport {
 		r.Findings = append(r.Findings, scanWeakAssertions(b.rel, b.lines)...)
 		r.Findings = append(r.Findings, scanSilentCatches(b.rel, b.lines)...)
 		r.Findings = append(r.Findings, scanMockData(b.rel, b.content, b.lines)...)
+		r.Findings = append(r.Findings, scanNoExports(b.rel, b.content)...)
+		r.Findings = append(r.Findings, scanGitActivity(repoRoot, b.rel)...)
 	}
 
 	// Cross-file: identical function bodies (copy-paste scaffolds).
@@ -128,6 +130,13 @@ func RunQualitySweep(repoRoot string, files []string) *QualityReport {
 		pathToContent[b.rel] = b.content
 	}
 	r.Findings = append(r.Findings, scanIdenticalBodies(pathToContent)...)
+
+	// Cross-repo: orphan declared files (reference-count via grep).
+	declaredPaths := make([]string, 0, len(blobs))
+	for _, b := range blobs {
+		declaredPaths = append(declaredPaths, b.rel)
+	}
+	r.Findings = append(r.Findings, scanOrphanReferences(repoRoot, declaredPaths)...)
 
 	for _, f := range r.Findings {
 		switch f.Severity {
@@ -571,6 +580,260 @@ func scanIdenticalBodies(paths map[string]string) []QualityFinding {
 	}
 	return out
 }
+
+// scanNoExports: flag declared production files whose body has code
+// but no named/default export at all. A "file exists" check is
+// satisfied but anything importing the declared name will fail.
+// This is the "worker forgot to actually export the thing" pattern.
+//
+// Skips files that are entry points (index.ts at app root, route.tsx
+// handler conventions in Next.js which allow HTTP-method exports
+// only), test files, fixtures, and type-defs.
+func scanNoExports(rel, content string) []QualityFinding {
+	if !looksLikeCode(rel) || isTestFile(rel) || isFixtureFile(rel) ||
+		isStorybookFile(rel) || isTypeDefFile(rel) || isGeneratedFile(rel, content) {
+		return nil
+	}
+	// File must have real content (>80 bytes excluding whitespace)
+	// to warrant an export check — tiny files are caught elsewhere.
+	dense := strings.Join(strings.Fields(content), "")
+	if len(dense) < 80 {
+		return nil
+	}
+	// Accept any form of export: `export foo`, `export { ... }`,
+	// `export default`, `module.exports =`, `exports.foo =`,
+	// `export * from`, CommonJS patterns.
+	exportRx := regexp.MustCompile(
+		`(?m)(?:^|\s)(?:export\s+(?:default|const|let|var|function|async\s+function|class|type|interface|enum|\*|\{)|module\.exports\s*=|exports\.\w+\s*=)`,
+	)
+	if exportRx.MatchString(content) {
+		return nil
+	}
+	return []QualityFinding{{
+		Severity: SevBlocking,
+		Kind:     "no-exports",
+		File:     rel,
+		Line:     1,
+		Detail: "file has real code (>80 non-whitespace bytes) but no named/default/CommonJS export — nothing can import from this file. Likely a declared-but-never-wired scaffold.",
+	}}
+}
+
+// scanGitActivity: flag declared files that exist on disk but have
+// never been touched in a real commit (only appear in an initial
+// bulk-scaffold commit). A file whose only git history is "add
+// scaffold" has zero real implementation investment.
+//
+// Rule: file must have at least 2 commits touching it OR 1 commit
+// that isn't the very first commit in the repo. Skips test files
+// (tests legitimately land once and never change).
+func scanGitActivity(repoRoot, rel string) []QualityFinding {
+	if isTestFile(rel) || isFixtureFile(rel) || isStorybookFile(rel) ||
+		isTypeDefFile(rel) || !looksLikeCode(rel) {
+		return nil
+	}
+	// `git log --format=%H -- <path>` gives one line per commit.
+	out, err := runGit(repoRoot, "log", "--format=%H", "--", rel)
+	if err != nil {
+		return nil
+	}
+	commits := strings.Split(strings.TrimSpace(out), "\n")
+	if len(commits) == 0 || commits[0] == "" {
+		// File is untracked — can't judge activity yet; likely the
+		// worker just wrote it in this session. Don't flag.
+		return nil
+	}
+	if len(commits) >= 2 {
+		return nil // multiple touches → real activity
+	}
+	// Only one commit touched this file. Check whether that commit
+	// is the repo's very first commit (scaffold seed). If so, flag.
+	firstCommit, err := runGit(repoRoot, "rev-list", "--max-parents=0", "HEAD")
+	if err != nil {
+		return nil
+	}
+	firstCommit = strings.TrimSpace(firstCommit)
+	if strings.TrimSpace(commits[0]) == firstCommit {
+		return []QualityFinding{{
+			Severity: SevBlocking,
+			Kind:     "git-no-real-activity",
+			File:     rel,
+			Line:     1,
+			Detail:   "file's only commit is the initial scaffold. No subsequent real work has edited it — worker declared it and moved on.",
+		}}
+	}
+	return nil
+}
+
+// scanOrphanReferences: flag declared files whose default/named
+// exports are never imported or referenced anywhere else in the
+// repo. Uses a cheap grep heuristic:
+//
+//  1. For each declared file, extract its exported identifier names.
+//  2. Grep the rest of the repo for any of those names.
+//  3. If zero hits across all non-declared .ts/.tsx/.js/.jsx files,
+//     the file is orphaned (declared but never wired).
+//
+// Skips index files, main/entry files, .d.ts, test files.
+func scanOrphanReferences(repoRoot string, declaredFiles []string) []QualityFinding {
+	if len(declaredFiles) == 0 {
+		return nil
+	}
+	declaredSet := make(map[string]bool, len(declaredFiles))
+	for _, d := range declaredFiles {
+		declaredSet[d] = true
+	}
+	var out []QualityFinding
+	for _, rel := range declaredFiles {
+		if !looksLikeCode(rel) || isTestFile(rel) || isFixtureFile(rel) ||
+			isStorybookFile(rel) || isTypeDefFile(rel) || isEntryFile(rel) {
+			continue
+		}
+		abs := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			continue
+		}
+		names := extractExportNames(string(data))
+		if len(names) == 0 {
+			// no-exports handles this separately; nothing to grep for.
+			continue
+		}
+		// Grep each name across the repo (excluding the file itself
+		// and excluding node_modules / build / dist / .git).
+		referenced := false
+		for _, name := range names {
+			if len(name) < 3 {
+				continue // too generic to safely grep
+			}
+			if hasExternalReference(repoRoot, name, rel) {
+				referenced = true
+				break
+			}
+		}
+		if !referenced {
+			out = append(out, QualityFinding{
+				Severity: SevBlocking,
+				Kind:     "orphan-file",
+				File:     rel,
+				Line:     1,
+				Detail: fmt.Sprintf(
+					"exports (%s) are not imported or referenced anywhere else in the repo. Declared but never wired in.",
+					strings.Join(names, ", ")),
+			})
+		}
+	}
+	return out
+}
+
+// extractExportNames: pull named/default/const/function export
+// identifiers from a TS/JS source. Heuristic — not a real parser.
+// Returns unique names, trimmed.
+func extractExportNames(content string) []string {
+	named := regexp.MustCompile(
+		`(?m)export\s+(?:default\s+)?(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+(\w+)`)
+	defaultFunc := regexp.MustCompile(
+		`(?m)export\s+default\s+(?:async\s+)?function\s*(\w+)?`)
+	braceExport := regexp.MustCompile(
+		`(?m)export\s*\{\s*([^}]+)\}`)
+	set := map[string]bool{}
+	for _, m := range named.FindAllStringSubmatch(content, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			set[m[1]] = true
+		}
+	}
+	for _, m := range defaultFunc.FindAllStringSubmatch(content, -1) {
+		if len(m) >= 2 && m[1] != "" {
+			set[m[1]] = true
+		}
+	}
+	for _, m := range braceExport.FindAllStringSubmatch(content, -1) {
+		if len(m) < 2 {
+			continue
+		}
+		for _, part := range strings.Split(m[1], ",") {
+			// Handle "foo as bar" — the external name is "bar".
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if idx := strings.Index(part, " as "); idx >= 0 {
+				part = strings.TrimSpace(part[idx+4:])
+			}
+			if part != "" {
+				set[part] = true
+			}
+		}
+	}
+	var out []string
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// hasExternalReference: grep repo for `name`, excluding the file
+// itself, node_modules, build output, git dir. Uses `git grep`
+// which is MUCH faster than `grep -r` and respects .gitignore.
+func hasExternalReference(repoRoot, name, selfPath string) bool {
+	// git grep -l -F -w "name" -- ':(exclude)selfPath'
+	// The exclusion pathspec avoids matching the declaration line
+	// in the file's own source.
+	out, _ := runGit(repoRoot, "grep", "-l", "-F", "-w", "--", name,
+		":(exclude)"+selfPath)
+	hits := strings.TrimSpace(out)
+	if hits == "" {
+		return false
+	}
+	// Filter out node_modules / dist / build hits — git grep should
+	// already have ignored them, but double-check for repos that
+	// accidentally track node_modules.
+	for _, line := range strings.Split(hits, "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "node_modules/") ||
+			strings.Contains(line, "/dist/") ||
+			strings.Contains(line, "/build/") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// isEntryFile: filenames that are conventionally entry points and
+// should NOT be flagged as orphans (they're imported by tooling, not
+// by other source files).
+func isEntryFile(rel string) bool {
+	base := filepath.Base(rel)
+	low := strings.ToLower(base)
+	switch low {
+	case "index.ts", "index.tsx", "index.js", "index.jsx",
+		"main.ts", "main.tsx", "main.js", "main.jsx",
+		"_app.tsx", "_app.js", "_document.tsx", "app.tsx",
+		"layout.tsx", "page.tsx", "route.ts", "route.tsx",
+		"middleware.ts", "next.config.js", "next.config.mjs",
+		"vite.config.ts", "vite.config.js",
+		"tailwind.config.js", "tailwind.config.ts",
+		"postcss.config.js", "metro.config.js", "babel.config.js",
+		"jest.config.js", "jest.config.ts",
+		"vitest.config.ts", "vitest.config.js",
+		"playwright.config.ts", "playwright.config.js":
+		return true
+	}
+	// Next.js app-router convention: any file named route.ts / page.tsx
+	// / layout.tsx / loading.tsx / not-found.tsx at any depth.
+	if strings.HasSuffix(low, "/page.tsx") || strings.HasSuffix(low, "/page.ts") ||
+		strings.HasSuffix(low, "/layout.tsx") || strings.HasSuffix(low, "/route.ts") ||
+		strings.HasSuffix(low, "/route.tsx") || strings.HasSuffix(low, "/loading.tsx") ||
+		strings.HasSuffix(low, "/not-found.tsx") || strings.HasSuffix(low, "/error.tsx") {
+		return true
+	}
+	return false
+}
+
+// (runGit is provided by gitcontext.go in this package.)
 
 // ───────────────────────── helpers ─────────────────────────
 
