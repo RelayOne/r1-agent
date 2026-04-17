@@ -85,12 +85,49 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	fmt.Fprintf(os.Stderr, "[claude-code] cli=%d bytes, stdin=%d bytes\n",
 		len(cliPrompt), len(stdinContent))
 	// When there's no CLI prompt (all content is large and
-	// went to stdin), provide a default instruction so Claude
-	// Code knows what to do with the piped data.
+	// went to stdin), synthesize an instruction from the
+	// content so Claude Code knows what to do. A generic
+	// "process stdin" causes CC to refuse ("no code provided,
+	// won't rubber-stamp"). Instead, tell CC exactly what
+	// the stdin contains and what output format is expected.
 	if cliPrompt == "" && stdinContent != "" {
-		cliPrompt = "Process the input piped via stdin and produce the requested output. Output ONLY the requested format (typically JSON) — no prose, no markdown fences."
+		// Detect the task type from the content and tailor
+		// the instruction accordingly.
+		lower := strings.ToLower(stdinContent[:min(len(stdinContent), 2000)])
+		switch {
+		case strings.Contains(lower, "review") && strings.Contains(lower, "task"):
+			cliPrompt = "You are reviewing code for a specific task. The full review request (task spec, code excerpts, acceptance criteria) is piped via stdin. Read it carefully and output ONLY a JSON verdict matching the schema described in the input. No prose outside the JSON."
+		case strings.Contains(lower, "skeleton") || strings.Contains(lower, "statement of work"):
+			cliPrompt = "You are converting a project specification into a structured JSON document. The full specification is piped via stdin. Read it and output ONLY the JSON — no prose, no markdown fences. Start with { and end with }."
+		case strings.Contains(lower, "decompose") || strings.Contains(lower, "sub-directive"):
+			cliPrompt = "You are decomposing a task gap into sub-directives. The full context is piped via stdin. Output ONLY JSON matching the schema in the input."
+		case strings.Contains(lower, "briefing") || strings.Contains(lower, "lead-dev"):
+			cliPrompt = "You are a lead developer producing per-task briefings. The full session context is piped via stdin. Output ONLY JSON matching the schema in the input."
+		case strings.Contains(lower, "judge") || strings.Contains(lower, "verdict"):
+			cliPrompt = "You are an expert judge evaluating code or acceptance criteria. The full evaluation context is piped via stdin. Output ONLY JSON matching the schema in the input."
+		default:
+			cliPrompt = "The full prompt is piped via stdin. Read it completely, then produce ONLY the output format it requests (typically JSON). No commentary outside the requested format."
+		}
 	}
-	args := []string{"--print", cliPrompt}
+
+	// Also: if stdin content has the system prompt embedded
+	// (common when system is empty but the user message
+	// contains instructions), extract the first sentence
+	// as a CLI hint so CC has immediate context.
+	if len(cliPrompt) < 50 && len(stdinContent) > 100 {
+		firstLine := stdinContent
+		if nl := strings.IndexByte(firstLine, '\n'); nl > 0 && nl < 200 {
+			firstLine = firstLine[:nl]
+		} else if len(firstLine) > 200 {
+			firstLine = firstLine[:200]
+		}
+		cliPrompt = firstLine + "\n\n" + cliPrompt
+	}
+	args := []string{
+		"--print",
+		"--no-session-persistence", // don't inherit session hooks
+		cliPrompt,
+	}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
 	}
