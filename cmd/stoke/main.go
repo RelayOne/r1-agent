@@ -1380,6 +1380,8 @@ func sowCmd(args []string) {
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
 	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
 	outputFormat := fs.String("output-format", "", "Output mode. Empty (default): human-readable TUI + stoke banners on stdout. 'stream-json': emit Claude Code-compatible NDJSON events to stdout (S-U-020); logs route to stderr. Consumed by Multica, OpenACP, and other orchestrators that speak Claude Code's schema.")
+	resumeFrom := fs.String("resume-from", "", "Resume from a specific checkpoint ID (e.g. CP-042). Lists checkpoints: --list-checkpoints. Skips completed sessions, re-runs the checkpoint's active session with the new binary. Incompatible with --fresh.")
+	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
 	fs.Parse(args)
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
@@ -1421,6 +1423,40 @@ func sowCmd(args []string) {
 		sowFatal(streamEmitter, streamResult, "resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// --list-checkpoints: print the timeline and exit.
+	if *listCheckpoints {
+		entries, err := checkpoint.ListCheckpoints(absRepo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list checkpoints: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(checkpoint.FormatCheckpointList(entries))
+		os.Exit(0)
+	}
+
+	// --resume-from: restore state from a specific checkpoint.
+	var resumeState *checkpoint.ResumeState
+	if *resumeFrom != "" {
+		if *fresh {
+			fmt.Fprintln(os.Stderr, "--resume-from is incompatible with --fresh")
+			os.Exit(2)
+		}
+		rs, err := checkpoint.RestoreFromCheckpoint(absRepo, *resumeFrom)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "resume-from: %v\n", err)
+			os.Exit(1)
+		}
+		// Prune the timeline so new checkpoints don't mix with stale post-CP entries.
+		if err := checkpoint.PruneTimelineAfter(absRepo, *resumeFrom); err != nil {
+			fmt.Fprintf(os.Stderr, "resume-from: prune timeline: %v\n", err)
+		}
+		resumeState = rs
+		fmt.Printf("📌 resuming from %s (%s) — %d sessions skipped, cost offset $%.2f\n",
+			rs.CheckpointID, rs.Label, len(rs.CompletedSessions), rs.CostUSD)
+		// Force resume mode so the session scheduler picks up markers.
+		*resume = true
+	}
 
 	// --fresh: clear cached SOW state BEFORE anything loads. Deletes
 	// session completion markers, scheduler state, cached prose→JSON
@@ -2313,6 +2349,12 @@ func sowCmd(args []string) {
 			defer sowTimeline.Close()
 		}
 
+		// Checkpoint: SOW planning complete, about to dispatch.
+		if sowTimeline != nil {
+			cpID, _ := sowTimeline.Checkpoint("sow-converted", "", nil, 0, 0, "", map[string]any{"sessions": len(sow.Sessions)})
+			fmt.Printf("  📌 checkpoint %s (sow-converted, %d sessions)\n", cpID, len(sow.Sessions))
+		}
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			Runner:            runner,
@@ -2322,6 +2364,7 @@ func sowCmd(args []string) {
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
 			Timeline:          sowTimeline,
+			ResumeState:       resumeState,
 			ContentJudgeRejections: &sync.Map{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling

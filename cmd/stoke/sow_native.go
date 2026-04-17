@@ -172,6 +172,11 @@ type sowNativeConfig struct {
 	// nil = no checkpointing (default until --checkpoints flag).
 	Timeline *checkpoint.Timeline
 
+	// ResumeState is non-nil when --resume-from was used. The
+	// session scheduler checks ResumeState.Skip(sessionID)
+	// before dispatching each session.
+	ResumeState *checkpoint.ResumeState
+
 	// --- Override / continuation hooks (post-repair) ---
 
 	// OverrideJudge is the VP Eng → CTO judge invoked when the self-
@@ -454,6 +459,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	if cfg.RepoRoot == "" {
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
+	}
+
+	// --resume-from skip: if this session was completed before
+	// the checkpoint, skip it entirely. The marker is already
+	// on disk (RestoreFromCheckpoint preserved it).
+	if cfg.ResumeState != nil && cfg.ResumeState.Skip(session.ID) {
+		fmt.Printf("  ⏭ session %s skipped (completed before checkpoint %s)\n", session.ID, cfg.ResumeState.CheckpointID)
+		return nil, nil
 	}
 
 	// Emit a checkpoint at session-start so --resume-from can
@@ -1400,6 +1413,16 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			fmt.Printf("  ✓ wrote completion marker for session %s (%d files)\n", session.ID, len(changed))
 		} else {
 			fmt.Printf("  ✓ wrote spec-only marker for session %s\n", session.ID)
+		}
+		if cfg.Timeline != nil {
+			var completed []string
+			markers, _ := filepath.Glob(filepath.Join(cfg.RepoRoot, ".stoke", "sow-state-markers", "*.json"))
+			for _, m := range markers {
+				completed = append(completed, strings.TrimSuffix(filepath.Base(m), ".json"))
+			}
+			cost := 0.0
+			if cfg.spent != nil { cost = *cfg.spent }
+			cfg.Timeline.Checkpoint("session-done:"+session.ID, "", completed, cost, len(results), session.ID, map[string]any{"passed": finalPassed})
 		}
 	}
 
