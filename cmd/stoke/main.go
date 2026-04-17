@@ -1300,6 +1300,17 @@ func exitWithStreamResult(em *streamjson.Emitter, code int, r *streamjsonResult,
 	os.Exit(code)
 }
 
+// newProviderForURL returns the right Provider based on the
+// base URL. If url is "claude-code://" it returns a
+// ClaudeCodeProvider; otherwise the standard Anthropic/
+// OpenAI-compatible HTTP provider.
+func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
+	if strings.HasPrefix(url, "claude-code://") || url == "claude-code" {
+		return provider.NewClaudeCodeProvider("claude", repoRoot, "")
+	}
+	return provider.NewAnthropicProvider(apiKey, url)
+}
+
 func sowCmd(args []string) {
 	fs := flag.NewFlagSet("sow", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Git repository root")
@@ -2082,9 +2093,9 @@ func sowCmd(args []string) {
 		}
 		var reasoningProv provider.Provider
 		if reasoningURL != *nativeBaseURL || reasoningKey != nativeKey {
-			reasoningProv = provider.NewAnthropicProvider(reasoningKey, reasoningURL)
+			reasoningProv = newProviderForURL(reasoningKey, reasoningURL, absRepo)
 		} else {
-			reasoningProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+			reasoningProv = newProviderForURL(nativeKey, *nativeBaseURL, absRepo)
 		}
 		reasoningModelChoice := *reasoningModel
 		if reasoningModelChoice == "" {
@@ -2181,7 +2192,7 @@ func sowCmd(args []string) {
 		// runner is using. When it's unavailable, the override flow is
 		// skipped gracefully.
 		var overrideJudge convergence.OverrideJudge
-		if prov := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL); prov != nil {
+		if prov := newProviderForURL(nativeKey, *nativeBaseURL, absRepo); prov != nil {
 			overrideJudge = &convergence.LLMOverrideJudge{
 				Provider: prov,
 				Model:    nativeModelName,
@@ -2328,7 +2339,7 @@ func sowCmd(args []string) {
 			}
 			// Share the same provider as the build runner — usually
 			// the same key + base URL works for the extraction call.
-			wisdomProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+			wisdomProv = newProviderForURL(nativeKey, *nativeBaseURL, absRepo)
 		}
 
 		// Cross-model reviewer: use the configured --review-model if
@@ -2337,7 +2348,7 @@ func sowCmd(args []string) {
 		// can differ (future: lower temperature, different max tokens).
 		var reviewProv provider.Provider
 		if *enableCrossReview {
-			reviewProv = provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+			reviewProv = newProviderForURL(nativeKey, *nativeBaseURL, absRepo)
 		}
 		reviewModelName := *reviewModel
 		if reviewModelName == "" {
@@ -2349,7 +2360,7 @@ func sowCmd(args []string) {
 		// pool. Always constructed. The briefing pass runs once per
 		// session before any task dispatches, so cost is bounded at
 		// 1 extra LLM call per session.
-		briefingProv := provider.NewAnthropicProvider(nativeKey, *nativeBaseURL)
+		briefingProv := newProviderForURL(nativeKey, *nativeBaseURL, absRepo)
 
 		// Load the raw SOW text — prose source if the original was
 		// prose, marshaled JSON otherwise. This gets injected into
