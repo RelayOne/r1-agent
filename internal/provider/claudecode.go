@@ -26,7 +26,9 @@ package provider
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -80,6 +82,10 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	// limits and ensures Claude Code sees the instructions
 	// as a TASK, not a conversation.
 	cliPrompt, stdinContent := splitForClaudeCode(req)
+	// Debug: log prompt sizes so we can diagnose skeleton
+	// extraction failures. Remove after confirmed working.
+	fmt.Fprintf(os.Stderr, "[claude-code] cli=%d bytes, stdin=%d bytes, system=%d bytes, msgs=%d\n",
+		len(cliPrompt), len(stdinContent), len(req.System), len(req.Messages))
 	args := []string{"--print", cliPrompt}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
@@ -218,53 +224,35 @@ func buildClaudeCodePrompt(req ChatRequest) string {
 
 // extractTextFromContent pulls text from either a plain
 // string or a JSON-encoded array of content blocks.
+// Uses proper JSON unmarshaling to handle escaped quotes,
+// newlines, and other special characters in large content
+// (e.g., 55KB SOW prose).
 func extractTextFromContent(raw []byte) string {
-	s := strings.TrimSpace(string(raw))
+	s := bytes.TrimSpace(raw)
 	if len(s) == 0 {
 		return ""
 	}
-	// If it starts with [, it's a JSON array of content blocks.
+	// Try JSON array of content blocks first.
 	if s[0] == '[' {
-		// Quick extraction: find "text":"..." values.
-		var texts []string
-		for {
-			idx := strings.Index(s, `"text":"`)
-			if idx < 0 {
-				idx = strings.Index(s, `"text": "`)
-				if idx < 0 {
-					break
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(s, &blocks); err == nil {
+			var texts []string
+			for _, b := range blocks {
+				if b.Text != "" {
+					texts = append(texts, b.Text)
 				}
-				idx += 9
-			} else {
-				idx += 8
 			}
-			s = s[idx:]
-			end := strings.Index(s, `"`)
-			if end < 0 {
-				// Find the end allowing escaped quotes
-				end = findUnescapedQuote(s)
-			}
-			if end > 0 {
-				texts = append(texts, s[:end])
-				s = s[end:]
-			} else {
-				break
-			}
-		}
-		return strings.Join(texts, "\n")
-	}
-	// Plain string (possibly JSON-quoted).
-	if s[0] == '"' {
-		s = strings.Trim(s, `"`)
-	}
-	return s
-}
-
-func findUnescapedQuote(s string) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' && (i == 0 || s[i-1] != '\\') {
-			return i
+			return strings.Join(texts, "\n")
 		}
 	}
-	return -1
+	// Try JSON string.
+	var str string
+	if json.Unmarshal(s, &str) == nil {
+		return str
+	}
+	// Fallback: raw text.
+	return string(s)
 }
