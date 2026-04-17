@@ -26,6 +26,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/logging"
 	"github.com/ericmacdougall/stoke/internal/metrics"
 	"github.com/ericmacdougall/stoke/internal/audit"
+	"github.com/ericmacdougall/stoke/internal/checkpoint"
 	"github.com/ericmacdougall/stoke/internal/cloud"
 	"github.com/ericmacdougall/stoke/internal/config"
 	stokeCtx "github.com/ericmacdougall/stoke/internal/context"
@@ -2304,6 +2305,14 @@ func sowCmd(args []string) {
 		reconciler := hubbuiltin.NewWorkspaceReconciler(absRepo)
 		reconciler.Register(sowBus)
 
+		// Checkpoint timeline for deterministic resume.
+		sowTimeline, tlErr := checkpoint.NewTimeline(absRepo, time.Now().UTC().Format("20060102-150405"))
+		if tlErr != nil {
+			fmt.Fprintf(os.Stderr, "  checkpoint timeline: %v (checkpointing disabled)\n", tlErr)
+		} else {
+			defer sowTimeline.Close()
+		}
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			Runner:            runner,
@@ -2312,6 +2321,7 @@ func sowCmd(args []string) {
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
+			Timeline:          sowTimeline,
 			ContentJudgeRejections: &sync.Map{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling

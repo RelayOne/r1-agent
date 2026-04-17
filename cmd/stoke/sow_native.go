@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/checkpoint"
 	"github.com/ericmacdougall/stoke/internal/convergence"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hub"
@@ -164,6 +165,12 @@ type sowNativeConfig struct {
 	// skip tasks whose declared output files already exist with
 	// substantive content (saves $1-3 per skipped task on retry).
 	SessionAttempt int
+
+	// Timeline is the checkpoint WAL for deterministic resume.
+	// When non-nil, runSessionNative emits checkpoints at
+	// session-start, AC-attempt, and session-done boundaries.
+	// nil = no checkpointing (default until --checkpoints flag).
+	Timeline *checkpoint.Timeline
 
 	// --- Override / continuation hooks (post-repair) ---
 
@@ -447,6 +454,23 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	if cfg.RepoRoot == "" {
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
+	}
+
+	// Emit a checkpoint at session-start so --resume-from can
+	// re-enter at exactly this point after a code fix.
+	if cfg.Timeline != nil {
+		var completed []string
+		markers, _ := filepath.Glob(filepath.Join(cfg.RepoRoot, ".stoke", "sow-state-markers", "*.json"))
+		for _, m := range markers {
+			completed = append(completed, strings.TrimSuffix(filepath.Base(m), ".json"))
+		}
+		cost := 0.0
+		if cfg.spent != nil {
+			cost = *cfg.spent
+		}
+		cpID, _ := cfg.Timeline.Checkpoint(
+			"session-start:"+session.ID, "", completed, cost, 0, session.ID, nil)
+		fmt.Printf("  📌 checkpoint %s (session-start:%s)\n", cpID, session.ID)
 	}
 
 	// Session-level PROGRESS watchdog: cancels the session's ctx
@@ -959,6 +983,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				}
 			}
 			fmt.Printf("  acceptance check attempt %d: %d/%d passed\n", attempt, passedCount, len(acceptance))
+			if cfg.Timeline != nil {
+				cfg.Timeline.Checkpoint(
+					fmt.Sprintf("ac-attempt:%s:%d", session.ID, attempt), "", nil,
+					func() float64 { if cfg.spent != nil { return *cfg.spent }; return 0 }(),
+					0, session.ID,
+					map[string]any{"passed": passedCount, "total": len(acceptance)})
+			}
 			watchdog.Pulse()
 			for _, ac := range acceptance {
 				mark := "✓"
