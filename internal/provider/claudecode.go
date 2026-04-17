@@ -74,17 +74,23 @@ func (p *ClaudeCodeProvider) Name() string { return "claude-code" }
 func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	prompt := buildClaudeCodePrompt(req)
 
-	// Pipe prompt via stdin instead of -p flag. Large prompts
-	// (55KB+ prose SOWs) hit arg-length limits or cause Claude
-	// Code to misinterpret the input as a conversation when
-	// passed inline. Stdin piping handles any size cleanly.
-	args := []string{"--print"}
+	// Split: system prompt (instructions) as the CLI argument,
+	// user content (the actual data — SOW prose, task spec,
+	// etc.) piped via stdin. Claude Code treats stdin as
+	// additional context appended to the prompt argument.
+	// This handles 55KB+ prose without hitting arg-length
+	// limits and ensures Claude Code sees the instructions
+	// as a TASK, not a conversation.
+	cliPrompt, stdinContent := splitForClaudeCode(req)
+	args := []string{"--print", cliPrompt}
 	if p.Model != "" {
 		args = append(args, "--model", p.Model)
 	}
 
 	cmd := exec.Command(p.Binary, args...)
-	cmd.Stdin = strings.NewReader(prompt)
+	if stdinContent != "" {
+		cmd.Stdin = strings.NewReader(stdinContent)
+	}
 	if p.WorkDir != "" {
 		cmd.Dir = p.WorkDir
 	}
@@ -159,8 +165,39 @@ func (p *ClaudeCodeProvider) ChatStream(req ChatRequest, onEvent func(stream.Eve
 	return resp, nil
 }
 
+// splitForClaudeCode separates the request into a CLI prompt
+// argument (system prompt + instructions) and stdin content
+// (the bulk data — SOW prose, task spec, code excerpts).
+// The CLI argument is capped at ~8KB to avoid arg-length
+// limits; everything else goes via stdin.
+func splitForClaudeCode(req ChatRequest) (cliPrompt, stdinContent string) {
+	var cli, stdin strings.Builder
+	if req.System != "" {
+		cli.WriteString(req.System)
+		cli.WriteString("\n\n")
+	}
+	for _, msg := range req.Messages {
+		if msg.Role == "user" {
+			text := extractTextFromContent(msg.Content)
+			if text == "" {
+				continue
+			}
+			// If the text is large (>4KB), route it to stdin.
+			// Small messages stay in the CLI prompt for context.
+			if len(text) > 4096 {
+				stdin.WriteString(text)
+				stdin.WriteString("\n\n")
+			} else {
+				cli.WriteString(text)
+				cli.WriteString("\n\n")
+			}
+		}
+	}
+	return strings.TrimSpace(cli.String()), strings.TrimSpace(stdin.String())
+}
+
 // buildClaudeCodePrompt concatenates system + user messages
-// into a single string for --print mode.
+// into a single string for --print mode. Used by ChatStream.
 func buildClaudeCodePrompt(req ChatRequest) string {
 	var b strings.Builder
 	if req.System != "" {
