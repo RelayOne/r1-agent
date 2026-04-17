@@ -85,58 +85,102 @@ func simpleLoopCmd(args []string) {
 				"ordering problems. Suggest improvements. Be specific.\n\nPLAN:\n"+plan)
 		fmt.Printf("  ✓ codex review: %d chars\n", len(codexReview))
 
-		// Step 3: Claude Code refines with codex feedback
-		fmt.Println("🔧 Step 3: Claude Code refining plan with codex feedback...")
-		refinedPlan := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-			"Here's your implementation plan and codex's review of it. "+
-				"Refine the plan addressing codex's feedback, then START BUILDING. "+
-				"Implement the plan step by step. After each logical chunk (2-3 files), "+
-				"run the build command to verify it compiles. Fix any errors before moving on. "+
-				"Commit your work with descriptive messages as you complete each chunk.\n\n"+
-				"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
-				"SPECIFICATION:\n%s\n\n"+
-				"START BUILDING NOW. Use tools to create files, run builds, and commit.",
-			plan, codexReview, currentProse))
-		fmt.Printf("  ✓ build phase done: %d chars response\n", len(refinedPlan))
+		// Step 3: Claude Code builds (background) while we watch commits
+		fmt.Println("🔧 Step 3: Claude Code building (watching commits)...")
+		headBefore := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null || echo none")
 
-		// Step 4: Get list of new commits
-		fmt.Println("📊 Step 4: Checking commits...")
-		commitsOut := shellCmd(absRepo, "git log --oneline -20")
-		fmt.Printf("  commits:\n%s\n", indent(commitsOut, "    "))
+		// Launch Claude Code build in background
+		buildDone := make(chan string, 1)
+		go func() {
+			result := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
+				"Here's your implementation plan and codex's review. "+
+					"Refine the plan addressing codex's feedback, then START BUILDING. "+
+					"Implement step by step. After each logical chunk (2-3 files), "+
+					"run tsc --noEmit (or the project's build command) to verify. "+
+					"Fix any errors before moving on. "+
+					"Commit your work with descriptive messages as you complete each chunk.\n\n"+
+					"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
+					"SPECIFICATION:\n%s\n\n"+
+					"START BUILDING NOW.",
+				plan, codexReview, currentProse))
+			buildDone <- result
+		}()
 
-		// Step 5: Codex reviews the code
-		fmt.Println("🔍 Step 5: Codex reviewing code...")
-		diff := shellCmd(absRepo, "git diff HEAD~5..HEAD --stat 2>/dev/null || git diff --stat")
-		codeReview := codexCall(*codexBin, absRepo,
-			"Review the recent changes to this repository. "+
-				"Check for: compilation errors, missing imports, broken tests, "+
-				"stub code, incomplete implementations. Be specific about what to fix.\n\n"+
-				"RECENT CHANGES:\n"+diff)
-		fmt.Printf("  ✓ code review: %d chars\n", len(codeReview))
+		// Step 4: Watch for commits and review each one
+		fmt.Println("👀 Step 4: Watching for commits...")
+		lastReviewedHead := headBefore
+		reviewRound := 0
+		const maxReviewRounds = 10
 
-		// Step 6: If codex found issues, send back to Claude Code
-		if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") {
-			fmt.Println("🔧 Step 6: Claude Code fixing codex review issues...")
-			claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-				"Codex reviewed your code and found issues. Fix ALL of them. "+
-					"Run the build after each fix to verify. Commit fixes.\n\n"+
-					"CODEX REVIEW:\n%s\n\n"+
-					"Fix these issues now. Use tools to edit files, run builds, commit.",
-				codeReview))
-			fmt.Println("  ✓ fixes applied")
-		} else {
-			fmt.Println("  ✓ codex approved — no issues found")
+	commitWatch:
+		for reviewRound < maxReviewRounds {
+			select {
+			case <-buildDone:
+				fmt.Println("  📦 Claude Code build phase complete")
+				// Do one final review of any remaining commits
+				currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
+				if currentHead != lastReviewedHead && currentHead != headBefore {
+					diff := shellCmd(absRepo, "git diff "+lastReviewedHead+"..HEAD --stat 2>/dev/null")
+					if diff != "" {
+						reviewRound++
+						fmt.Printf("  🔍 Final review (round %d)...\n", reviewRound)
+						codeReview := codexCall(*codexBin, absRepo,
+							"Review ALL recent changes. Check for: compilation errors, "+
+								"missing imports, broken tests, stub code. Be specific.\n\n"+
+								"CHANGES:\n"+diff)
+						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
+							!strings.Contains(strings.ToLower(codeReview), "lgtm") &&
+							!strings.Contains(strings.ToLower(codeReview), "looks good") {
+							fmt.Printf("  ✗ codex found issues (round %d), sending to CC...\n", reviewRound)
+							claudeCall(*claudeBin, absRepo, fmt.Sprintf(
+								"Codex reviewed your code and found issues. Fix ALL of them. "+
+									"Run the build after each fix. Commit fixes.\n\nCODEX REVIEW:\n%s",
+								codeReview))
+						} else {
+							fmt.Printf("  ✓ codex approved (round %d)\n", reviewRound)
+						}
+					}
+				}
+				break commitWatch
+
+			case <-time.After(30 * time.Second):
+				// Check for new commits
+				currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
+				if currentHead != lastReviewedHead && currentHead != headBefore {
+					diff := shellCmd(absRepo, "git diff "+lastReviewedHead+".."+currentHead+" --stat 2>/dev/null")
+					commitMsg := shellCmd(absRepo, "git log --oneline "+lastReviewedHead+".."+currentHead+" 2>/dev/null")
+					if diff != "" {
+						reviewRound++
+						fmt.Printf("  📝 New commits detected (round %d):\n%s\n", reviewRound, indent(commitMsg, "    "))
+						fmt.Printf("  🔍 Codex reviewing...\n")
+						codeReview := codexCall(*codexBin, absRepo,
+							"Review these specific changes. Check for: compilation errors, "+
+								"missing imports, stub code. Be specific about what to fix.\n\n"+
+								"COMMITS:\n"+commitMsg+"\n\nDIFF STAT:\n"+diff)
+						if len(codeReview) > 100 && !strings.Contains(strings.ToLower(codeReview), "no issues") &&
+							!strings.Contains(strings.ToLower(codeReview), "lgtm") {
+							fmt.Printf("  ✗ codex found issues, queuing fix for CC...\n")
+							// Don't interrupt CC mid-build — queue the feedback
+							// CC will get it in the final review round
+						} else {
+							fmt.Printf("  ✓ codex approved commits\n")
+						}
+						lastReviewedHead = currentHead
+					}
+				} else {
+					fmt.Printf("  ⏳ waiting for commits... (%ds)\n", (reviewRound+1)*30)
+				}
+			}
 		}
 
-		// Step 7: Build verification
-		fmt.Println("🏗️  Step 7: Build verification...")
+		// Step 5: Build verification
+		fmt.Println("🏗️  Step 5: Build verification...")
 		buildResult := shellCmd(absRepo, detectSimpleBuildCmd(absRepo))
 		buildPassed := !strings.Contains(buildResult, "error") || strings.Contains(buildResult, "0 errors")
 		if buildPassed {
 			fmt.Println("  ✓ build passes")
 		} else {
-			fmt.Printf("  ✗ build failed:\n%s\n", indent(buildResult, "    "))
-			fmt.Println("  → sending build errors to Claude Code...")
+			fmt.Printf("  ✗ build failed, sending to CC...\n")
 			claudeCall(*claudeBin, absRepo, fmt.Sprintf(
 				"The build failed. Fix these errors and commit:\n\n%s", buildResult))
 		}
