@@ -62,11 +62,18 @@ func DefaultQualityConfig() QualityConfig {
 		NoExports:        true,
 		GitActivity:      true,
 		OrphanReferences: true,
-		// Experimental — off by default:
-		SOWEndpoints:   false,
-		SOWStructural:  false,
-		PackageScripts: false,
-		RuntimeSmoke:   false,
+		// Promoted to default-ON after 14:02 live validation:
+		// - sow-endpoints caught 6 real SOW-declared endpoints with
+		//   no route files on D-opus-full v4 (POST /api/v1/alarms/{id}/
+		//   acknowledge, /resolve, /alert-rules/{id}/preview, etc.)
+		// - package-scripts caught 6+ real missing scripts in
+		//   packages/api-client/package.json + packages/design-tokens/
+		//   package.json. Zero false positives observed.
+		SOWEndpoints:   true,
+		PackageScripts: true,
+		// Still off by default — not yet observed firing in production:
+		SOWStructural: false,
+		RuntimeSmoke:  false,
 	}
 }
 
@@ -1218,14 +1225,21 @@ func scanSOWEndpointContracts(repoRoot, sowText string) []QualityFinding {
 		if routeFileExists(repoRoot, e.path) {
 			continue
 		}
+		// Strip leading /api prefix for the suggestion message so it
+		// doesn't print as `app/api/api/v1/...` when the SOW path
+		// already starts with /api. The detection logic in
+		// routeFileExists handles the prefix correctly regardless;
+		// only the suggested location string was malformed.
+		suggestPath := strings.TrimPrefix(e.path, "/api")
+		suggestPath = strings.TrimPrefix(suggestPath, "/")
 		out = append(out, QualityFinding{
 			Severity: SevBlocking,
 			Kind:     "sow-endpoint-missing",
 			File:     inferEndpointFile(e.path),
 			Line:     1,
 			Detail: fmt.Sprintf(
-				"SOW declares %s %s — no route file found at app/api%s/route.*, pages/api%s.*, or equivalent. Endpoint is promised but not implemented.",
-				e.method, e.path, e.path, e.path),
+				"SOW declares %s %s — no route file found at app/api/%s/route.*, pages/api/%s.*, or equivalent. Endpoint is promised but not implemented.",
+				e.method, e.path, suggestPath, suggestPath),
 		})
 	}
 	return out
