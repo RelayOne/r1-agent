@@ -146,15 +146,25 @@ func simpleLoopCmd(args []string) {
 						"Here's your implementation plan and codex's review. "+
 							"Refine the plan addressing codex's feedback, then START BUILDING. "+
 							"Implement step by step.\n\n"+
-							"COMMIT CADENCE (critical):\n"+
-							"  • Commit after EVERY 2-3 file changes. Not 5. Not 10. Every 2-3.\n"+
-							"  • Run `git status` frequently to verify you're committing, not just writing to disk.\n"+
-							"  • The reviewer watches commits in real time — frequent commits mean faster feedback "+
-							"and faster convergence.\n"+
-							"  • After each commit, run tsc --noEmit (or the project's build command) and "+
-							"fix any errors before moving on.\n"+
-							"  • Your turn budget is 100 — do not try to finish the whole SOW in one call. "+
-							"Get as much done as you can cleanly; a continuation builder will pick up where you leave off.\n\n"+
+							"COMMIT CADENCE — commit on LOGICAL-UNIT-OF-WORK boundaries:\n"+
+							"  • Commit when you FINISH something coherent a reviewer can evaluate as a "+
+							"unit — a planned task, a fully-wired feature (e.g. 'login flow end-to-end'), "+
+							"a completed module (e.g. 'packages/types Zod schemas'), a working refactor.\n"+
+							"  • Each commit should compile + pass its local build at the boundary. "+
+							"Run the relevant typecheck/build BEFORE committing; fix failures first.\n"+
+							"  • DO NOT commit mid-function, mid-feature, or in a broken state — the "+
+							"reviewer will reject unreviewable 'wip' commits.\n"+
+							"  • DO NOT batch several unrelated features into one commit — if ANY piece "+
+							"is wrong the whole commit has to be rejected or split. Keep scope tight.\n"+
+							"  • Commit message should answer 'what unit of work did I just complete?' — "+
+							"'feat(api-client): residents + alarms modules' IS a unit; 'wip: more stuff' "+
+							"is NOT.\n"+
+							"  • Aim for commits small enough that each one is a clean, standalone win — "+
+							"not a time-sliced chunk. Multiple small commits beat one monster commit "+
+							"every time.\n"+
+							"  • Your turn budget is 100. Do not try to finish the whole SOW in one call. "+
+							"Get as many COMPLETE units in cleanly as possible; a continuation builder "+
+							"will pick up from your last good commit.\n\n"+
 							"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
 							"SPECIFICATION:\n%s\n\n"+
 							"START BUILDING NOW.%s",
@@ -176,7 +186,9 @@ func simpleLoopCmd(args []string) {
 							"  2. Read the SOW below and identify what's missing or incomplete.\n"+
 							"  3. KEEP BUILDING from there. Do NOT duplicate work already committed.\n"+
 							"  4. Fix any compile/typecheck errors you encounter along the way.\n"+
-							"  5. Commit every 2-3 files — same cadence rule as before.\n"+
+							"  5. Commit on LOGICAL-UNIT-OF-WORK boundaries (completed tasks/features/modules, "+
+						"not time chunks). Each commit must compile and represent something the reviewer "+
+						"can evaluate as a standalone unit.\n"+
 							"  6. If you genuinely finish everything, end your last message with the "+
 							"phrase 'ALL DELIVERABLES COMPLETE'. Otherwise we'll spawn another continuation.\n\n"+
 							"ORIGINAL SPECIFICATION:\n%s%s",
