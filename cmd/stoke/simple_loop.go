@@ -613,14 +613,27 @@ func dispatchParallelFix(bin, dir, feedback string, workers int) {
 			defer func() { <-sem; done <- struct{}{} }()
 			fmt.Printf("    [worker %d/%d] starting\n", idx+1, len(issues))
 			claudeCall(bin, dir, fmt.Sprintf(
-				"You are one of %d parallel fix workers. Another worker "+
-					"may be editing different files at the same time. "+
-					"Do NOT edit files outside what your issue requires. "+
-					"Run the build after your fix. Commit with a message "+
-					"that identifies which issue you fixed. Do not add "+
-					"features — only fix what is flagged below.\n\n"+
+				"You are parallel worker %d of %d, all running concurrently on the same repo. "+
+					"Other workers may be editing different files RIGHT NOW and committing "+
+					"between your tool calls. Follow these rules exactly:\n"+
+					"  1. BEFORE editing any file, read it fresh (Read tool) to see the latest state.\n"+
+					"  2. BEFORE reading, run `git status` and `git log --oneline -10` to see what "+
+					"other workers have committed since you started.\n"+
+					"  3. If a file you planned to edit was just changed, re-read it and reconcile — "+
+					"do NOT overwrite another worker's fix.\n"+
+					"  4. Keep edits small and committed one at a time. After each commit run "+
+					"`git pull --rebase origin HEAD 2>/dev/null || true` (no-op in single-branch "+
+					"repos but safe to run).\n"+
+					"  5. Stick strictly to files required by YOUR assigned issue. Do not touch "+
+					"files you cannot justify from the issue description.\n"+
+					"  6. Run the build (tsc --noEmit or project build) after each fix. If the "+
+					"build breaks because of something NOT in your issue, that's another "+
+					"worker's in-flight change — wait 30s and retry once before giving up.\n"+
+					"  7. Commit with a message that starts with `fix(parallel-%d):` so humans can "+
+					"see which worker made which change.\n"+
+					"  8. Do not add new features. Only fix what the reviewer flagged below.\n\n"+
 					"YOUR ASSIGNED ISSUE (%d of %d):\n%s",
-				len(issues), idx+1, len(issues), text))
+				idx+1, len(issues), idx+1, idx+1, len(issues), text))
 			fmt.Printf("    [worker %d/%d] done\n", idx+1, len(issues))
 		}(i, issue)
 	}
