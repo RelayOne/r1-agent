@@ -399,7 +399,11 @@ func FormatQualityReport(r *QualityReport) string {
 		})
 		fmt.Fprintf(&b, "\n[%s] %d finding(s):\n", sev, len(items))
 		for _, f := range items {
-			fmt.Fprintf(&b, "  %s:%d  %s — %s\n", f.File, f.Line, f.Kind, f.Detail)
+			// Prefix each finding with [gate-hit] so grep can
+			// distinguish real scanner fires from the startup
+			// banner's `quality gates: ...` list (which also
+			// mentions gate names). Makes telemetry greppable.
+			fmt.Fprintf(&b, "  [gate-hit] %s:%d  %s — %s\n", f.File, f.Line, f.Kind, f.Detail)
 		}
 	}
 	return b.String()

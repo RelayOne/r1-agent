@@ -89,11 +89,15 @@ func simpleLoopCmd(args []string) {
 		// Step 1: Claude Code plans
 		fmt.Println("📋 Step 1: Claude Code planning...")
 		planText := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-			"Read this project specification and create a detailed implementation plan. "+
-				"List every file you need to create/modify, in order, with what each file should contain. "+
-				"Be specific — exact file paths, exact exports, exact dependencies. "+
-				"Output the plan as a numbered list.\n\nSPECIFICATION:\n%s\n\n"+
-				"CURRENT REPO STATE: check what already exists with ls/find before planning.",
+			"Read this project specification and create a CONCISE implementation plan. "+
+				"List every file you need to create/modify, in order.\n\n"+
+				"PLAN FORMAT (strict):\n"+
+				"  - Use the compact form `path/to/file.ts: one-line description of exports + key behavior`\n"+
+				"  - NO paragraphs, NO prose explanations, NO file-content snippets\n"+
+				"  - Target <20KB total. A larger plan slows the reviewer significantly.\n"+
+				"  - Group by phase but keep each entry to ONE line\n\n"+
+				"SPECIFICATION:\n%s\n\n"+
+				"CURRENT REPO STATE: quickly list existing top-level dirs with `ls` before planning, don't recurse.",
 			currentProse))
 		if planText == "" {
 			fmt.Println("  ⚠ Claude Code planning failed, retrying...")
@@ -333,7 +337,7 @@ func simpleLoopCmd(args []string) {
 							"missing imports, skeleton code. Be specific about what to fix.\n\n" +
 							"COMMITS:\n" + commitMsg + "\n\nDIFF STAT:\n" + diff
 						if qualityAddendum != "" {
-							reviewPrompt = "DETERMINISTIC QUALITY SWEEP FLAGGED THE FOLLOWING — fixing these is MANDATORY regardless of your other findings:\n\n" +
+							reviewPrompt = "DETERMINISTIC QUALITY SWEEP FLAGGED THE FOLLOWING — fixing these is MANDATORY regardless of your other findings.\n\nIMPORTANT: Each finding is ONE example. The same issue likely exists in sibling files (the worker often copy-pastes patterns). When you fix a finding, ALSO grep the repo for the same pattern across all related files (e.g. if `apps/web/e2e/alert-rules.spec.ts` has `.skip(` at line 6, also check every `apps/web/e2e/*.spec.ts` file for `.skip(` and fix them too). One-shot fix-all-matches prevents the rescan from surfacing the same issue in the next round.\n\n" +
 								qualityAddendum + "\n\n---\n\n" + reviewPrompt
 						}
 						codeReview := reviewCall(absRepo, reviewPrompt)
