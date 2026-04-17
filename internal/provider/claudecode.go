@@ -107,25 +107,43 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	timeout := p.Timeout
-	if timeout == 0 {
-		timeout = 10 * time.Minute
-	}
-
+	// No hard timeout — CLI providers can legitimately take
+	// 15+ min on large SOW conversions. Instead, monitor
+	// stdout growth: if no output for 5 min, the process
+	// is hung (codex is known to hang). Kill and return error.
 	done := make(chan error, 1)
 	go func() { done <- cmd.Run() }()
 
-	select {
-	case err := <-done:
-		if err != nil {
-			return nil, fmt.Errorf("claude-code: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	watchdog := time.NewTicker(30 * time.Second)
+	defer watchdog.Stop()
+	lastSize := 0
+	staleChecks := 0
+	const maxStale = 10 // 10 × 30s = 5 min of no output
+
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				return nil, fmt.Errorf("claude-code: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+			}
+			goto output
+		case <-watchdog.C:
+			cur := stdout.Len() + stderr.Len()
+			if cur == lastSize {
+				staleChecks++
+				if staleChecks >= maxStale {
+					if cmd.Process != nil {
+						cmd.Process.Kill()
+					}
+					return nil, fmt.Errorf("claude-code: process hung (no output for %ds)", maxStale*30)
+				}
+			} else {
+				staleChecks = 0
+				lastSize = cur
+			}
 		}
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		return nil, fmt.Errorf("claude-code: timed out after %s", timeout)
 	}
+output:
 
 	text := strings.TrimSpace(stdout.String())
 	// Strip markdown fences — Claude Code often wraps JSON
