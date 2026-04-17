@@ -125,21 +125,82 @@ func simpleLoopCmd(args []string) {
 				"orchestrator is silent; only `git log` reveals its work."
 		}
 
-		// Launch Claude Code build in background
+		// Launch Claude Code build in background — with continuation
+		// support. A single CC call is capped at 100 turns; the SOW
+		// is too big to fit in 100 turns. When the builder exits
+		// (clean finish OR max-turns), we inspect git + disk state,
+		// and if the SOW isn't obviously done we spawn a continuation
+		// builder with "here's what's committed, keep going". Loop
+		// terminates when: (a) CC signals completion in its result,
+		// (b) a continuation made ZERO new commits (stuck), or
+		// (c) maxBuildContinuations reached.
 		buildDone := make(chan string, 1)
 		go func() {
-			result := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
-				"Here's your implementation plan and codex's review. "+
-					"Refine the plan addressing codex's feedback, then START BUILDING. "+
-					"Implement step by step. After each logical chunk (2-3 files), "+
-					"run tsc --noEmit (or the project's build command) to verify. "+
-					"Fix any errors before moving on. "+
-					"Commit your work with descriptive messages as you complete each chunk.\n\n"+
-					"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
-					"SPECIFICATION:\n%s\n\n"+
-					"START BUILDING NOW.%s",
-				plan, codexReview, currentProse, bigWorkerExtra))
-			buildDone <- result
+			const maxBuildContinuations = 6 // 6 × 100 turns = ~600 turn budget
+			priorCommits := shellCmd(absRepo, "git rev-list --count HEAD 2>/dev/null")
+			var finalResult string
+			for cont := 0; cont < maxBuildContinuations; cont++ {
+				var prompt string
+				if cont == 0 {
+					prompt = fmt.Sprintf(
+						"Here's your implementation plan and codex's review. "+
+							"Refine the plan addressing codex's feedback, then START BUILDING. "+
+							"Implement step by step.\n\n"+
+							"COMMIT CADENCE (critical):\n"+
+							"  • Commit after EVERY 2-3 file changes. Not 5. Not 10. Every 2-3.\n"+
+							"  • Run `git status` frequently to verify you're committing, not just writing to disk.\n"+
+							"  • The reviewer watches commits in real time — frequent commits mean faster feedback "+
+							"and faster convergence.\n"+
+							"  • After each commit, run tsc --noEmit (or the project's build command) and "+
+							"fix any errors before moving on.\n"+
+							"  • Your turn budget is 100 — do not try to finish the whole SOW in one call. "+
+							"Get as much done as you can cleanly; a continuation builder will pick up where you leave off.\n\n"+
+							"YOUR PLAN:\n%s\n\nCODEX REVIEW:\n%s\n\n"+
+							"SPECIFICATION:\n%s\n\n"+
+							"START BUILDING NOW.%s",
+						plan, codexReview, currentProse, bigWorkerExtra)
+				} else {
+					// Continuation prompt — show what's been done, ask
+					// CC to diff against the SOW and keep going from
+					// wherever the previous builder left off.
+					doneLog := shellCmd(absRepo, "git log --oneline "+headBefore+"..HEAD 2>/dev/null | head -40")
+					tree := shellCmd(absRepo, "ls -la 2>/dev/null; echo ---; find . -maxdepth 3 -type d -not -path './node_modules*' -not -path './.git*' 2>/dev/null | sort")
+					prompt = fmt.Sprintf(
+						"CONTINUATION BUILDER %d/%d — the prior builder call has exited "+
+							"(either cleanly or at the 100-turn budget). The SOW is large; "+
+							"we're continuing where you left off.\n\n"+
+							"COMMITTED SO FAR (%d prior commits in this build phase):\n%s\n\n"+
+							"CURRENT DIRECTORY TREE:\n%s\n\n"+
+							"YOUR JOB:\n"+
+							"  1. Run `git log --oneline -20` and `git status` first to see the latest state.\n"+
+							"  2. Read the SOW below and identify what's missing or incomplete.\n"+
+							"  3. KEEP BUILDING from there. Do NOT duplicate work already committed.\n"+
+							"  4. Fix any compile/typecheck errors you encounter along the way.\n"+
+							"  5. Commit every 2-3 files — same cadence rule as before.\n"+
+							"  6. If you genuinely finish everything, end your last message with the "+
+							"phrase 'ALL DELIVERABLES COMPLETE'. Otherwise we'll spawn another continuation.\n\n"+
+							"ORIGINAL SPECIFICATION:\n%s%s",
+						cont+1, maxBuildContinuations, cont, doneLog, tree, currentProse, bigWorkerExtra)
+				}
+				fmt.Printf("🔧 Step 3 builder call %d/%d...\n", cont+1, maxBuildContinuations)
+				finalResult = claudeCall(*claudeBin, absRepo, prompt)
+
+				curCommits := shellCmd(absRepo, "git rev-list --count HEAD 2>/dev/null")
+				if curCommits == priorCommits && cont > 0 {
+					fmt.Printf("  ⚠ builder %d made no new commits — stopping build phase (stuck or stalled)\n", cont+1)
+					break
+				}
+				priorCommits = curCommits
+
+				lower := strings.ToLower(finalResult)
+				if strings.Contains(lower, "all deliverables complete") ||
+					strings.Contains(lower, "sow complete") ||
+					strings.Contains(lower, "nothing left to build") {
+					fmt.Printf("  ✓ builder %d reports completion — ending build phase\n", cont+1)
+					break
+				}
+			}
+			buildDone <- finalResult
 		}()
 
 		// Step 4: Watch commits. Two behaviors:
