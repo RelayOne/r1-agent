@@ -2061,6 +2061,16 @@ func runSessionPhase1(ctx context.Context, session plan.Session, workingSession 
 func runSessionPhase1Sequential(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
 	results := make([]plan.TaskExecResult, 0, len(session.Tasks))
 	mainRepoRoot := cfg.RepoRoot // preserved for worktree merges
+	// OPTION B precondition: main repo must have a clean working
+	// tree so worktree merges can succeed. Pre-seeded scaffolds or
+	// prior-run dirty state will cause `git merge` to refuse (observed
+	// on M2x-OPTB v3: T1 added files that overwrote untracked main
+	// files → merge conflict → all tasks abandoned). Commit any
+	// existing dirty state as a baseline before the first task
+	// dispatches.
+	if cfg.PerTaskWorktree {
+		commitBaselineForOptionB(ctx, mainRepoRoot, session.ID)
+	}
 	for i, task := range session.Tasks {
 		if ctx.Err() != nil {
 			return results
@@ -2260,6 +2270,37 @@ func mergeTaskWorktree(ctx context.Context, mainRepo, wtBranch, taskID string) b
 		return false
 	}
 	return true
+}
+
+// commitBaselineForOptionB commits any pre-existing dirty/untracked
+// state in the main repo as a "baseline" commit. Required before
+// Option B's worktree dispatch: git merge refuses to overwrite
+// untracked files, so a dirty main tree makes every task's merge
+// fail with "untracked working tree files would be overwritten".
+// Silent no-op when the tree is clean.
+func commitBaselineForOptionB(ctx context.Context, repoRoot, sessionID string) {
+	if repoRoot == "" {
+		return
+	}
+	addCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "add", "-A")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		fmt.Printf("  ⚠ Option B baseline: git add failed: %v (%s)\n", err, truncateSow(string(out), 120))
+		return
+	}
+	// Nothing staged = tree was already clean.
+	checkCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "--cached", "--quiet")
+	if err := checkCmd.Run(); err == nil {
+		return
+	}
+	msg := fmt.Sprintf("sow(%s): baseline pre-Option-B working tree", sessionID)
+	commitCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "commit", "-m", msg)
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		fmt.Printf("  ⚠ Option B baseline: git commit failed: %v (%s)\n", err, truncateSow(string(out), 200))
+		return
+	}
+	shaCmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--short", "HEAD")
+	sha, _ := shaCmd.Output()
+	fmt.Printf("  🧹 Option B baseline committed: %s %s\n", strings.TrimSpace(string(sha)), msg)
 }
 
 // cleanupTaskWorktree removes the worktree directory + git metadata.
@@ -2546,6 +2587,12 @@ func reportPerTaskFileDrift(ctx context.Context, repoRoot string, task plan.Task
 // way the operator sees it clearly and can tighten the SOW.
 func runSessionPhase1Parallel(ctx context.Context, session plan.Session, workingSession plan.Session, sowDoc *plan.SOW, runtimeDir string, cfg sowNativeConfig, maxTurns int) []plan.TaskExecResult {
 	waves := buildParallelWaves(session.Tasks)
+	// OPTION B precondition (see runSessionPhase1Sequential comment):
+	// clean the main repo working tree before worktree dispatch
+	// so subsequent merges don't refuse.
+	if cfg.PerTaskWorktree {
+		commitBaselineForOptionB(ctx, cfg.RepoRoot, session.ID)
+	}
 
 	type indexed struct {
 		idx int
