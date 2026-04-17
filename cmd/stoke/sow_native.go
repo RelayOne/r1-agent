@@ -985,6 +985,33 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			}
 			acceptance, allPassed := plan.CheckAcceptanceCriteriaWithJudge(ctx, cfg.RepoRoot, effectiveCriteria, judge)
 			finalAcceptance, finalPassed = acceptance, allPassed
+
+			// Deterministic per-session compliance sweep — anti-rubber-stamp
+			// gate. The AC judges are LLM-driven and can rubber-stamp a
+			// session whose deliverables are scaffold-only. This sweep
+			// walks the session's declared deliverables (title + desc +
+			// task descriptions + AC descriptions) and checks each
+			// against the actual repo via filename+content-definition +
+			// byte/body-line thresholds. If it finds stubs/missing,
+			// override allPassed so the repair loop continues instead
+			// of signing the session off as complete.
+			var complianceGapText string
+			if allPassed {
+				sessionSOW := &plan.SOW{Sessions: []plan.Session{session}}
+				sessionComp := plan.RunSOWCompliance(cfg.RepoRoot, sessionSOW)
+				if sessionComp != nil && len(sessionComp.Findings) > 0 && !sessionComp.Passed() {
+					fmt.Printf("  🕵 per-session compliance sweep: %s — overriding AC pass\n",
+						sessionComp.Summary())
+					reportText := plan.FormatComplianceReport(sessionComp)
+					if len(reportText) > 4000 {
+						reportText = reportText[:4000] + "\n... (truncated)"
+					}
+					fmt.Println(reportText)
+					allPassed = false
+					finalPassed = false
+					complianceGapText = reportText
+				}
+			}
 			// Observability: log pass/fail per criterion on every
 			// acceptance check. Without this, the operator has no
 			// idea which criteria passed vs failed until the very
@@ -1040,6 +1067,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 				break
 			}
 			failureBlob := formatAcceptanceFailures(acceptance, workingSession)
+			// If the per-session compliance sweep flagged scaffolds/
+			// missing deliverables, prepend that concrete gap list to
+			// the failure blob so the repair worker gets named targets
+			// (not just vague AC-judge failures).
+			if complianceGapText != "" {
+				failureBlob = "COMPLIANCE GATE FAILURES (deterministic sweep — AC judge accepted but these deliverables are skeleton or missing):\n\n" +
+					complianceGapText + "\n\n---\n\nAC JUDGE FAILURES:\n" + failureBlob
+			}
 			// Prepend a sticky-warning block when any criterion has
 			// been failing across multiple attempts, so the repair
 			// prompt tells the model "the last attempt tried the
