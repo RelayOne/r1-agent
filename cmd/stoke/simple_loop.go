@@ -278,11 +278,57 @@ func simpleLoopCmd(args []string) {
 					if diff != "" {
 						reviewRound++
 						fmt.Printf("  📝 New commits (round %d):\n%s\n", reviewRound, indent(commitMsg, "    "))
+
+						// Deterministic per-commit quality sweep — earliest-
+						// fire gate. Before the LLM reviewer even looks at
+						// the diff, we scan the changed files for hollow
+						// bodies, skipped tests, tautology assertions,
+						// duplicate scaffolds, silent catches. Blocking
+						// findings are prepended to the review feedback so
+						// the fixer gets concrete file:line targets.
+						var qualityAddendum string
+						changedFiles := strings.Split(strings.TrimSpace(
+							shellCmd(absRepo, "git diff --name-only "+lastReviewedHead+".."+currentHead+" 2>/dev/null")),
+							"\n")
+						var cleanChanged []string
+						for _, f := range changedFiles {
+							f = strings.TrimSpace(f)
+							if f != "" {
+								cleanChanged = append(cleanChanged, f)
+							}
+						}
+						if len(cleanChanged) > 0 {
+							qual := plan.RunQualitySweep(absRepo, cleanChanged)
+							if qual != nil && len(qual.Findings) > 0 {
+								fmt.Printf("  🕵 quality sweep on diff: %s\n", qual.Summary())
+								if qual.Blocking() {
+									qualityAddendum = plan.FormatQualityReport(qual)
+									if len(qualityAddendum) > 3000 {
+										qualityAddendum = qualityAddendum[:3000] + "\n... (truncated)"
+									}
+									fmt.Println(qualityAddendum)
+								}
+							}
+						}
+
 						fmt.Printf("  🔍 %s reviewing...\n", *reviewer)
-						codeReview := reviewCall(absRepo,
-							"Review these specific changes. Check for: compilation errors, "+
-								"missing imports, stub code. Be specific about what to fix.\n\n"+
-								"COMMITS:\n"+commitMsg+"\n\nDIFF STAT:\n"+diff)
+						reviewPrompt := "Review these specific changes. Check for: compilation errors, " +
+							"missing imports, skeleton code. Be specific about what to fix.\n\n" +
+							"COMMITS:\n" + commitMsg + "\n\nDIFF STAT:\n" + diff
+						if qualityAddendum != "" {
+							reviewPrompt = "DETERMINISTIC QUALITY SWEEP FLAGGED THE FOLLOWING — fixing these is MANDATORY regardless of your other findings:\n\n" +
+								qualityAddendum + "\n\n---\n\n" + reviewPrompt
+						}
+						codeReview := reviewCall(absRepo, reviewPrompt)
+						// If the quality sweep found blocking issues, the
+						// reviewer's verdict doesn't get to approve — we
+						// force feedback into the pending-reviews queue
+						// with the concrete gap list so the fixer addresses
+						// them even if the LLM tries to rubber-stamp.
+						if qualityAddendum != "" && (approvedReview(codeReview) || len(codeReview) < 100) {
+							codeReview = "QUALITY SWEEP BLOCKING SIGNALS (reviewer attempted to approve but deterministic scan found these):\n\n" +
+								qualityAddendum
+						}
 						if len(codeReview) > 100 && !approvedReview(codeReview) {
 							if orch != nil {
 								id := orch.dispatch(currentHead,

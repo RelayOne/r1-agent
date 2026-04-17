@@ -1012,6 +1012,46 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					complianceGapText = reportText
 				}
 			}
+
+			// Deterministic quality sweep — catches rubber-stamp signals
+			// that the compliance gate misses because the file exists
+			// and has real bytes but is hollow: trivial returns, empty
+			// JSX, skipped tests, tautology assertions, swallow-catch,
+			// duplicate function bodies. Fires on every session whether
+			// or not AC passed — a session with fake-passing tests is
+			// as broken as one with missing files.
+			var qualityGapText string
+			{
+				var sessionFiles []string
+				seen := map[string]bool{}
+				for _, t := range session.Tasks {
+					for _, f := range t.Files {
+						if f == "" || seen[f] {
+							continue
+						}
+						seen[f] = true
+						sessionFiles = append(sessionFiles, f)
+					}
+				}
+				if len(sessionFiles) > 0 {
+					qual := plan.RunQualitySweep(cfg.RepoRoot, sessionFiles)
+					if qual != nil && len(qual.Findings) > 0 {
+						fmt.Printf("  🕵 quality sweep: %s\n", qual.Summary())
+						if qual.Blocking() {
+							qualityGapText = plan.FormatQualityReport(qual)
+							if len(qualityGapText) > 4000 {
+								qualityGapText = qualityGapText[:4000] + "\n... (truncated)"
+							}
+							fmt.Println(qualityGapText)
+							if allPassed {
+								fmt.Println("  ⛔ quality sweep found blocking signals — overriding AC pass")
+								allPassed = false
+								finalPassed = false
+							}
+						}
+					}
+				}
+			}
 			// Observability: log pass/fail per criterion on every
 			// acceptance check. Without this, the operator has no
 			// idea which criteria passed vs failed until the very
@@ -1074,6 +1114,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			if complianceGapText != "" {
 				failureBlob = "COMPLIANCE GATE FAILURES (deterministic sweep — AC judge accepted but these deliverables are skeleton or missing):\n\n" +
 					complianceGapText + "\n\n---\n\nAC JUDGE FAILURES:\n" + failureBlob
+			}
+			// Same for quality-sweep findings (hollow shells, empty
+			// JSX, tautology assertions, etc.) — these are concrete
+			// file:line items the worker can fix directly.
+			if qualityGapText != "" {
+				failureBlob = "QUALITY SWEEP BLOCKING SIGNALS (deterministic — each must be fixed with real logic, not reorganized):\n\n" +
+					qualityGapText + "\n\n---\n\n" + failureBlob
 			}
 			// Prepend a sticky-warning block when any criterion has
 			// been failing across multiple attempts, so the repair
