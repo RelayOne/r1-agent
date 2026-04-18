@@ -27,6 +27,32 @@ import (
 // matching is a planned follow-up once name-level catches the
 // bulk of the problem.
 
+// init wires the regex extractor as the fallback for H-28's
+// tree-sitter path so non-TS/JS/Python files still contribute
+// symbols when tree-sitter is enabled. Avoids an import cycle by
+// keeping the extraction helper package-private and exposed via
+// ExtractDeclaredSymbolsFallback function-var in the H-28 file.
+func init() {
+	ExtractDeclaredSymbolsFallback = extractSymbolsViaSymindex
+}
+
+// extractSymbolsViaSymindex returns symbol names for files that the
+// H-28 tree-sitter path can't handle (Rust, Kotlin, Swift, Ruby,
+// etc.). Delegates to symindex which already covers those via regex.
+func extractSymbolsViaSymindex(repoRoot string, files []string) []string {
+	idx, err := symindex.BuildFromFiles(repoRoot, files)
+	if err != nil || idx == nil {
+		return nil
+	}
+	names := make([]string, 0, 64)
+	for _, sym := range idx.AllSymbols() {
+		if sym.Name != "" {
+			names = append(names, sym.Name)
+		}
+	}
+	return names
+}
+
 // ScanDeclaredSymbolsNotImplemented walks SOW prose for named
 // deliverables and verifies each appears as a defined symbol in
 // repoRoot's changed source files.

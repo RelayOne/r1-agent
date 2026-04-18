@@ -366,15 +366,24 @@ func RunQualitySweepWithConfig(repoRoot string, files []string, sow *SOW, cfg Qu
 		if cfg.PackageScripts && sowText != "" {
 			r.Findings = append(r.Findings, scanPackageScripts(repoRoot, sowText)...)
 		}
-		// H-27: declared-symbol-not-implemented. Catches the H1-v2
-		// failure where the worker creates the declared FILE but
-		// leaves it as a stub without the named handler/class/type.
+		// H-27 / H-28: declared-symbol-not-implemented. Catches the
+		// H1-v2 failure where the worker creates the declared FILE
+		// but leaves it as a stub without the named handler/class/
+		// type. Two extractor variants ship in the same binary:
+		//   - H-27 (regex): default, covers 11 languages via symindex
+		//   - H-28 (tree-sitter): opt-in via STOKE_H27_TREESITTER=1,
+		//     higher precision on TS/JS/Python, falls through to
+		//     regex for other languages.
 		if cfg.DeclaredSymbolNotImplemented && sowText != "" && len(blobs) > 0 {
 			changed := make([]string, 0, len(blobs))
 			for _, b := range blobs {
 				changed = append(changed, b.rel)
 			}
-			r.Findings = append(r.Findings, ScanDeclaredSymbolsNotImplemented(repoRoot, sowText, changed)...)
+			if treeSitterEnabled() {
+				r.Findings = append(r.Findings, ScanDeclaredSymbolsNotImplementedTreeSitter(repoRoot, sowText, changed)...)
+			} else {
+				r.Findings = append(r.Findings, ScanDeclaredSymbolsNotImplemented(repoRoot, sowText, changed)...)
+			}
 		}
 	}
 
