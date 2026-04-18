@@ -29,6 +29,18 @@ VARIANTS=(
   "E9|/home/eric/repos/e9-sentinel-slice"
 )
 
+# Scope-suite rungs live in /home/eric/repos/scope-suite-runs/ with
+# timestamped names. Pick the most recent directory per rung and add
+# it as a dynamic variant so the monitor shows progressive ladder
+# progress alongside the free-form E* experiments.
+while IFS= read -r rung_dir; do
+  [[ -n "$rung_dir" ]] || continue
+  rung_name=$(basename "$rung_dir" | cut -d- -f1)
+  VARIANTS+=( "$rung_name|$rung_dir" )
+done < <(find /home/eric/repos/scope-suite-runs -maxdepth 1 -mindepth 1 -type d 2>/dev/null \
+          | sort | awk -F/ '{ split($NF,a,"-"); print a[1]"|"$0 }' \
+          | awk -F'|' '!seen[$1]++{print $2}')
+
 NOW_ISO=$(date -Iseconds)
 NOW_EPOCH=$(date +%s)
 
