@@ -78,6 +78,105 @@ func TestStep8RegressionTracker_ResetAllowsAdditionalCycles(t *testing.T) {
 	}
 }
 
+// TestStep8RegressionTracker_AuditDidNotRun covers the H-6 fix:
+// ObserveAuditResult(auditRan=false, ...) MUST NOT increment the
+// counter and MUST NOT trip the cap, no matter what complianceClean
+// or gaps say. This is the "claude rate-limited, audit couldn't
+// produce a verdict" case observed in H1-sonnet / H2-opus-full.
+func TestStep8RegressionTracker_AuditDidNotRun(t *testing.T) {
+	tr := &step8RegressionTracker{cap: 2}
+
+	for i := 0; i < 5; i++ {
+		if tr.ObserveAuditResult(false, false, nil) {
+			t.Fatalf("errored audit %d must not trip cap", i+1)
+		}
+	}
+	if tr.Cycles() != 0 {
+		t.Fatalf("errored audits must not bump cycles; got %d", tr.Cycles())
+	}
+}
+
+// TestStep8RegressionTracker_AuditRanFoundGaps covers the normal
+// "real regression" case: auditRan=true + complianceClean=false
+// must increment the counter just like the old Observe() did.
+func TestStep8RegressionTracker_AuditRanFoundGaps(t *testing.T) {
+	tr := &step8RegressionTracker{cap: 3}
+
+	if tr.ObserveAuditResult(true, false, []string{"gap-a"}) {
+		t.Fatalf("first real regression must not trip cap=3")
+	}
+	if tr.Cycles() != 1 {
+		t.Fatalf("cycles=1 expected after one real regression, got %d", tr.Cycles())
+	}
+	if tr.ObserveAuditResult(true, false, []string{"gap-b"}) {
+		t.Fatalf("second real regression must not trip cap=3")
+	}
+	if tr.Cycles() != 2 {
+		t.Fatalf("cycles=2 expected, got %d", tr.Cycles())
+	}
+}
+
+// TestStep8RegressionTracker_AuditRanClean covers the reset path:
+// auditRan=true + complianceClean=true must zero the counter.
+func TestStep8RegressionTracker_AuditRanClean(t *testing.T) {
+	tr := &step8RegressionTracker{cap: 2}
+
+	tr.ObserveAuditResult(true, false, []string{"gap-a"}) // cycles=1
+	if tripped := tr.ObserveAuditResult(true, true, nil); tripped {
+		t.Fatalf("clean pass must never trip cap")
+	}
+	if tr.Cycles() != 0 {
+		t.Fatalf("clean pass must reset cycles, got %d", tr.Cycles())
+	}
+	if len(tr.LastGaps()) != 0 {
+		t.Fatalf("clean pass must reset lastGaps, got %v", tr.LastGaps())
+	}
+}
+
+// TestStep8RegressionTracker_ErroredAuditsInterspersedWithRealRegressions
+// is the headline scenario from the H-6 bug report: 3 errored audits
+// (audit didn't run) followed by 2 real regressions must leave the
+// counter at exactly 2 — the errored audits don't pollute the count.
+// With cap=3 this means we're still NOT tripped; the old Observe()
+// would have tripped after the 3rd errored audit.
+func TestStep8RegressionTracker_ErroredAuditsInterspersedWithRealRegressions(t *testing.T) {
+	tr := &step8RegressionTracker{cap: 3}
+
+	// 3 errored audits — counter stays at 0.
+	for i := 0; i < 3; i++ {
+		if tr.ObserveAuditResult(false, false, nil) {
+			t.Fatalf("errored audit %d must not trip", i+1)
+		}
+	}
+	if tr.Cycles() != 0 {
+		t.Fatalf("cycles must stay 0 after 3 errored audits, got %d", tr.Cycles())
+	}
+	// 2 real regressions — counter becomes 2, still under cap=3.
+	if tr.ObserveAuditResult(true, false, []string{"real-a"}) {
+		t.Fatalf("first real regression tripped unexpectedly")
+	}
+	if tripped := tr.ObserveAuditResult(true, false, []string{"real-b"}); tripped {
+		t.Fatalf("second real regression tripped unexpectedly (cap=3)")
+	}
+	if tr.Cycles() != 2 {
+		t.Fatalf("cycles=2 expected (errored audits must NOT contribute), got %d", tr.Cycles())
+	}
+}
+
+// TestStep8RegressionTracker_ObserveStillWorks makes sure the legacy
+// Observe() wrapper still behaves exactly like before — it delegates
+// to ObserveAuditResult(true, ...).
+func TestStep8RegressionTracker_ObserveStillWorks(t *testing.T) {
+	tr := &step8RegressionTracker{cap: 2}
+
+	if tr.Observe(false, []string{"x"}) {
+		t.Fatalf("one failure must not trip cap=2")
+	}
+	if !tr.Observe(false, []string{"y"}) {
+		t.Fatalf("two failures must trip cap=2")
+	}
+}
+
 // TestFormatGapList covers the gap-list pretty-printer used in the
 // banner and final summary.
 func TestFormatGapList(t *testing.T) {

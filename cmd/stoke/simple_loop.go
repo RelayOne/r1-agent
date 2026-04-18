@@ -57,7 +57,42 @@ type step8RegressionTracker struct {
 // the human-readable list of MISSING/STUB items (empty when
 // compliance is clean). Returns true when the cap has been reached
 // and the caller MUST abort the loop.
+//
+// Kept for backward compatibility with existing tests/callers; new
+// call sites that need to distinguish "audit didn't actually run"
+// from "audit ran and found gaps" should prefer ObserveAuditResult.
 func (t *step8RegressionTracker) Observe(complianceClean bool, gaps []string) bool {
+	return t.ObserveAuditResult(true, complianceClean, gaps)
+}
+
+// ObserveAuditResult reports one outer round's compliance outcome
+// WITH an explicit signal for whether the upstream audit call
+// actually produced a usable verdict. Three cases:
+//
+//   - auditRan=true,  complianceClean=true  → reset counter (no regression)
+//   - auditRan=true,  complianceClean=false → increment counter (real regression)
+//   - auditRan=false                        → skip increment, do NOT reset,
+//                                             return false (don't terminate
+//                                             on upstream infrastructure
+//                                             failures like Claude rate-limit
+//                                             or network blips)
+//
+// gaps is used only when auditRan=true && !complianceClean.
+//
+// Rationale (H-6 fix, 2026-04-17): in the hardened cohort, both
+// H1-sonnet and H2-opus-full were killed by this guard at ~2h even
+// though no REAL regression was happening — the claude CLI was
+// rate-limited and every audit call returned an empty 55-char body,
+// which the old Observe() counted as "not clean". The fix teaches
+// the tracker the difference between "audit said gaps remain" and
+// "audit couldn't run at all".
+func (t *step8RegressionTracker) ObserveAuditResult(auditRan bool, complianceClean bool, gaps []string) bool {
+	if !auditRan {
+		// Upstream failure — leave the counter where it is. Don't
+		// reset either (we don't KNOW the state is clean), and don't
+		// increment (we don't KNOW it regressed).
+		return false
+	}
 	if complianceClean {
 		t.cycles = 0
 		t.lastGaps = nil
@@ -659,12 +694,29 @@ func simpleLoopCmd(args []string) {
 			fmt.Printf("  🕵 compliance sweep: no extractable deliverables from prose\n")
 		}
 
+		// Step 8c: H-6 audit-ran heuristic. The Step-8 `claude` call
+		// above can fail silently when the CLI is rate-limited or the
+		// account is cut off — every call returns `claude error: exit
+		// status 1` after 1 turn at $0.0000 and produces a short
+		// (<200 char) body. If that happens, counting the empty audit
+		// as a compliance regression would kill a healthy run (see
+		// H1-sonnet / H2-opus-full 2026-04-17). Heuristic: we consider
+		// the audit to have actually RUN only when the output is long
+		// enough to contain a real verdict AND does NOT contain the
+		// "claude error" marker.
+		auditRan := len(strings.TrimSpace(audit)) >= 200 && !strings.Contains(audit, "claude error")
+		if !auditRan {
+			fmt.Fprintf(os.Stderr,
+				"  ⚠ Step-8 audit output looks incomplete (len=%d); not counting toward regression cap (upstream failure suspected)\n",
+				len(strings.TrimSpace(audit)))
+		}
+
 		// Step 9: Check if done — BOTH gates must agree
 		if ccSaysDone && complianceClean {
 			fmt.Printf("\n✅ ROUND %d: All deliverables complete (CC audit + compliance sweep both clean)\n", round)
 			// Reset the regression tracker on clean pass — future
 			// rounds (if any) start from zero.
-			step8Tracker.Observe(true, nil)
+			step8Tracker.ObserveAuditResult(true, true, nil)
 			break
 		}
 		if ccSaysDone && !complianceClean {
@@ -688,7 +740,7 @@ func simpleLoopCmd(args []string) {
 		// Step-8 regression guard — observe this round's outcome.
 		// If the tracker says we've hit the cap, emit the banner and
 		// bail out of the whole outer loop.
-		if step8Tracker.Observe(complianceClean, gaps) {
+		if step8Tracker.ObserveAuditResult(auditRan, complianceClean, gaps) {
 			fmt.Printf("\n⛔ Step-8 regression guard: %d consecutive cycles ended with gaps remaining after audit. Stopping to avoid token burn. Last gaps: %s.\n",
 				step8Tracker.Cycles(), formatGapList(step8Tracker.LastGaps()))
 			step8Aborted = true
@@ -869,6 +921,8 @@ func reviewCall(dir, prompt string) string {
 // review purposes. No --dangerously-skip-permissions, no tools,
 // no JSON wrapping — just --print with optional model override.
 func claudeReviewCall(bin, dir, prompt, model string) string {
+	// H-10: gate through the rate-limit detector just like claudeCall.
+	claudeBackoff.WaitIfPaused()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	args := []string{
@@ -886,12 +940,25 @@ func claudeReviewCall(bin, dir, prompt, model string) string {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "  claude-reviewer error: %v\n", err)
+		// Feed the error marker into the detector. --print mode has no
+		// turns/cost metadata, so we pass (1, 0) to match the rate-
+		// limit signature (turns<=1 && cost==0 && "claude error").
+		claudeBackoff.RecordResult(fmt.Sprintf("claude error: %v", err), 1, 0)
 		return ""
 	}
-	return strings.TrimSpace(out.String())
+	body := strings.TrimSpace(out.String())
+	// Non-empty review body = success from the detector's perspective.
+	// Pass turns=2 to cross the >1 bar; cost isn't known here.
+	if body != "" {
+		claudeBackoff.RecordResult(body, 2, 0)
+	}
+	return body
 }
 
 func claudeCall(bin, dir, prompt string) string {
+	// H-10: Block if the rate-limit detector is in Active pause. No-op
+	// in Normal/Suspected states, so this is cheap to call every time.
+	claudeBackoff.WaitIfPaused()
 	// Hard cap 40 min; previous 30-min was tight for big fix calls.
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
@@ -984,8 +1051,14 @@ func claudeCall(bin, dir, prompt string) string {
 			}
 		}
 	}
+	// Capture any run error in a form RecordResult can classify.
+	// The production rate-limit signature is literally the bytes
+	// `claude error: exit status 1`, so we roll that string into the
+	// effective output when cmd.Wait returned non-nil.
+	var errMarker string
 	if runErr != nil && !strings.Contains(runErr.Error(), "killed") {
 		fmt.Fprintf(os.Stderr, "  claude error: %v\n", runErr)
+		errMarker = fmt.Sprintf("claude error: %v", runErr)
 	}
 
 	// stream-json emits one JSON object per line. The final line
@@ -1010,10 +1083,26 @@ func claudeCall(bin, dir, prompt string) string {
 		}
 		if result.Type == "result" || result.Result != "" {
 			fmt.Printf("  [CC: %d turns, $%.4f]\n", result.NumTurns, result.Cost)
+			// H-10: classify outcome. If cmd errored, the errMarker
+			// string is passed so the detector sees the "claude error"
+			// signature; otherwise the result body is used.
+			classifyOutput := result.Result
+			if errMarker != "" {
+				classifyOutput = errMarker + "\n" + classifyOutput
+			}
+			claudeBackoff.RecordResult(classifyOutput, result.NumTurns, result.Cost)
 			return result.Result
 		}
 	}
-	return strings.TrimSpace(string(raw))
+	// No parseable result line. Feed the raw bytes + error marker so
+	// the rate-limit detector can still classify, with turns=0 cost=0.
+	rawOut := strings.TrimSpace(string(raw))
+	classifyOutput := rawOut
+	if errMarker != "" {
+		classifyOutput = errMarker + "\n" + rawOut
+	}
+	claudeBackoff.RecordResult(classifyOutput, 0, 0)
+	return rawOut
 }
 
 // codexCall invokes `codex exec` with JSONL output (so we can
