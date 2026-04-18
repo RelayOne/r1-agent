@@ -204,9 +204,14 @@ run_one() {
       # because the reviewer was checking main while the worker wrote
       # to an isolated worktree — trivially-sized SOWs don't benefit
       # from the isolation and pay its coordination cost.
+      # Small rungs: serial (--parallel 1), no per-task-worktree.
+      # With parallel>1, the harness's `preflight: git-clean` check
+      # fails every task that runs after one already modified the
+      # working tree — they race on the same cwd. Serial sidesteps it.
+      # Big rungs: per-task-worktree + parallel to earn back speed.
       local sow_flags=""
       case "$rung" in
-        R01|R02|R03|R04) sow_flags="";;
+        R01|R02|R03|R04) sow_flags="--parallel 1";;
         *) sow_flags="--per-task-worktree --parallel 2";;
       esac
       # Sow uses Claude CLI as the writer (matches strict/lenient). The
