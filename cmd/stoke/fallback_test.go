@@ -147,28 +147,62 @@ func TestFallbackPair_PrimaryRateLimitsSwapsToSecondary(t *testing.T) {
 	}
 }
 
-// TestFallbackPair_BothRateLimit_ReturnsError: when both primary
-// and secondary rate-limit, Call must return a non-nil error so
-// the caller can decide what to do. Pair stays on secondary (the
-// primary is still toxic, so we don't swap back until the health
-// check clears it).
-func TestFallbackPair_BothRateLimit_ReturnsError(t *testing.T) {
+// TestFallbackPair_BothRateLimit_CtxDeadlineAborts: when both roles
+// are down AND the ctx deadline fires before either recovers, Call
+// must return a non-nil error so the caller sees the failure instead
+// of hanging forever. Per user-requested spec: "both down → ping
+// both until one works"; the ctx deadline is the outer escape hatch.
+func TestFallbackPair_BothRateLimit_CtxDeadlineAborts(t *testing.T) {
 	p := newFakeRole("claude", "")
 	p.queue("claude error: exit status 1", errors.New("exit status 1"))
 	s := newFakeRole("codex", "")
 	s.queue("", errors.New("no last agent message"))
 	clk := newMockClock(time.Now())
 	fp := newTestPair("writer", p, s, clk)
+	// Both pings always fail in this test — recovery never happens,
+	// only the ctx deadline can end the call.
+	fp.healthPing = func(role ModelRole) (string, error) {
+		return "", errors.New("still paused")
+	}
 
-	_, err := fp.Call(context.Background(), "hi")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := fp.Call(ctx, "hi")
 	if err == nil {
-		t.Fatalf("expected error when both rate-limit, got nil")
+		t.Fatalf("expected ctx-deadline error when neither role recovers")
 	}
-	if p.Calls() != 1 || s.Calls() != 1 {
-		t.Fatalf("each role must be tried once, got p=%d s=%d", p.Calls(), s.Calls())
+}
+
+// TestFallbackPair_BothRateLimit_RetriesUntilRecovery: when primary
+// and secondary both rate-limit on the first try, Call keeps probing
+// both; as soon as one returns a non-empty health ping, the original
+// prompt is retried on the recovered role.
+func TestFallbackPair_BothRateLimit_RetriesUntilRecovery(t *testing.T) {
+	p := newFakeRole("claude", "")
+	p.queue("claude error: exit status 1", errors.New("exit status 1"))
+	p.queue("real prompt reply", nil) // retry after recovery
+	s := newFakeRole("codex", "")
+	s.queue("", errors.New("no last agent message"))
+	clk := newMockClock(time.Now())
+	fp := newTestPair("writer", p, s, clk)
+
+	// Ping returns non-empty for claude (primary) on the first call,
+	// simulating the primary recovering first.
+	fp.healthPing = func(role ModelRole) (string, error) {
+		if role.Name() == "claude" {
+			return "pong", nil
+		}
+		return "", errors.New("still paused")
 	}
-	if !fp.OnSecondary() {
-		t.Fatalf("pair should be pinned to secondary when primary still toxic")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := fp.Call(ctx, "hi")
+	if err != nil {
+		t.Fatalf("expected recovery path to succeed, got err=%v", err)
+	}
+	if out != "real prompt reply" {
+		t.Errorf("expected retry on recovered primary, got %q", out)
 	}
 }
 

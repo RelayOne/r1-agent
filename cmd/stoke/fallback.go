@@ -310,11 +310,15 @@ func (fp *FallbackPair) pingRole(parent context.Context, role ModelRole) (string
 }
 
 // Call executes the prompt on the active role, swapping and
-// retrying ONCE on a rate-limit signature. If both roles rate-
-// limit, returns the second error so the caller sees a real signal
-// instead of an empty success. Thread-safe: concurrent Call()
-// invocations may race on the swap, but each invocation sees a
-// consistent active role via the lock-free .active() read.
+// retrying on a rate-limit signature. When BOTH roles are rate-
+// limited simultaneously, keep pinging both on a 30-second cycle
+// until one responds, then retry the prompt on the recovered role.
+// Bounded by ctx timeout so a truly-dead provider pair eventually
+// gives up instead of looping forever.
+//
+// Thread-safe: concurrent Call() invocations may race on the swap,
+// but each invocation sees a consistent active role via the lock-
+// free .active() read.
 func (fp *FallbackPair) Call(ctx context.Context, prompt string) (string, error) {
 	fp.maybeHealthCheck(ctx)
 
@@ -330,18 +334,79 @@ func (fp *FallbackPair) Call(ctx context.Context, prompt string) (string, error)
 		fp.role, active.Name(), other.Name(), fp.role)
 
 	out2, err2 := other.Call(ctx, prompt)
-	if fp.isRateLimit(other, out2, err2) {
-		// Both rate-limited. Return the secondary's error so the
-		// caller can decide what to do. Do NOT swap back — we want
-		// the primary to stay on the bench until the health check
-		// confirms it's recovered.
-		if err2 != nil {
-			return out2, err2
-		}
-		return out2, fmt.Errorf("both %s roles rate-limited (primary=%s secondary=%s)",
-			fp.role, fp.primary.Name(), fp.secondary.Name())
+	if !fp.isRateLimit(other, out2, err2) {
+		return out2, err2
 	}
-	return out2, err2
+
+	// Both roles failed. Keep pinging both on a 30s cycle until one
+	// recovers — then retry the prompt on the recovered role. Exits
+	// on ctx cancellation / deadline.
+	fmt.Fprintf(os.Stderr,
+		"⚠ both %s roles rate-limited (primary=%s secondary=%s) — pinging until recovery\n",
+		fp.role, fp.primary.Name(), fp.secondary.Name())
+	recovered, rerr := fp.waitForRecovery(ctx)
+	if rerr != nil {
+		// Context cancelled or deadline; return the last call's result.
+		return out2, rerr
+	}
+	fmt.Fprintf(os.Stderr,
+		"▶ %s %s recovered, retrying the original prompt\n",
+		fp.role, recovered.Name())
+	return recovered.Call(ctx, prompt)
+}
+
+// waitForRecovery pings both roles on a 30-second cycle until one
+// responds to a lightweight health ping. Returns the first recovered
+// role, or (nil, ctx.Err()) when the context is cancelled / deadlined.
+//
+// Alternates primary/secondary ping order per tick so neither role
+// gets preferentially probed. The same pingRole helper is used, so
+// cc/codex short-circuits are bypassed — the ping is the liveness
+// probe, not a backoff-gated call.
+func (fp *FallbackPair) waitForRecovery(ctx context.Context) (ModelRole, error) {
+	const pingEvery = 30 * time.Second
+	ticker := time.NewTicker(pingEvery)
+	defer ticker.Stop()
+	// Probe immediately once so callers don't wait for the first tick.
+	if role, ok := fp.probeForRecovery(ctx); ok {
+		return role, nil
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if role, ok := fp.probeForRecovery(ctx); ok {
+				return role, nil
+			}
+		}
+	}
+}
+
+// probeForRecovery tries both primary and secondary via pingRole.
+// Returns the first role that answers with a non-empty body; if both
+// fail, returns (nil, false). Picks primary first, since restoring
+// to primary is the preferred steady state.
+func (fp *FallbackPair) probeForRecovery(ctx context.Context) (ModelRole, bool) {
+	if out, err := fp.pingRole(ctx, fp.primary); err == nil && strings.TrimSpace(out) != "" {
+		// Primary recovered — restore it as active if we were on
+		// secondary, so subsequent calls don't need another swap.
+		if fp.currentPrimary.Load() == 1 {
+			fp.restorePrimary()
+		}
+		return fp.primary, true
+	}
+	if out, err := fp.pingRole(ctx, fp.secondary); err == nil && strings.TrimSpace(out) != "" {
+		// Secondary came back first — leave it as active; the
+		// background pinger will restore primary later.
+		if fp.currentPrimary.Load() == 0 {
+			// We were on primary but primary's failing. Swap so the
+			// caller's retry lands on the working role.
+			fp.swap()
+		}
+		return fp.secondary, true
+	}
+	return nil, false
 }
 
 // ActiveName returns the name of the currently-active role. For
