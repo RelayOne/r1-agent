@@ -16,6 +16,21 @@ set -euo pipefail
 STOKE=/home/eric/repos/stoke/stoke
 REPOS=/home/eric/repos
 
+# SAFETY — refuse to launch when any existing e1..e4 dir has a live
+# stoke process. This prevents an accidental rerun from nuking a
+# running experiment out from under itself (the issue at 11:47 today:
+# launcher's rm -rf deleted /home/eric/repos/e3-relayone-feat while
+# E3 was mid-round, losing ~15 commits of E1 progress and orphaning
+# E3's PID against a deleted tree).
+for name in e1-sentinel-simple e2-sentinel-sow e3-relayone-feat e4-actium-scan; do
+  if pgrep -f "stoke .*$name" >/dev/null 2>&1; then
+    echo "❌ REFUSED: $name is alive (PID $(pgrep -f "stoke .*$name"))."
+    echo "   Kill it first, or rename this script invocation to launch a single slot."
+    echo "   To launch only E2 (typical single-slot case): inline the E2 block of this script."
+    exit 2
+  fi
+done
+
 if [[ ! -x "$STOKE" ]]; then
   echo "❌ $STOKE missing or not executable — run: (cd /home/eric/repos/stoke && go build -o stoke ./cmd/stoke)"
   exit 1
@@ -57,12 +72,14 @@ rm -rf "$E2_DIR"
 git clone "$REPOS/sentinel-simple-opus" "$E2_DIR"
 rm -rf "$E2_DIR/.stoke"
 cp "$SENTINEL_SOW" "$E2_DIR/SOW.md"
+LITELLM_PORT=$(cat "$HOME/.litellm/proxy.port" 2>/dev/null || echo 4000)
+LITELLM_KEY=$(grep '^LITELLM_MASTER_KEY=' "$HOME/.litellm/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'")
 nohup $STOKE sow \
   --repo "$E2_DIR" \
   --file "$E2_DIR/SOW.md" \
-  --native-base-url http://localhost:4000 \
-  --native-api-key sk-litellm \
-  --native-model minimax-m2 \
+  --native-base-url "http://localhost:$LITELLM_PORT" \
+  --native-api-key "$LITELLM_KEY" \
+  --native-model claude-sonnet-4-6 \
   --reviewer-source codex \
   --per-task-worktree \
   --parallel 2 \
