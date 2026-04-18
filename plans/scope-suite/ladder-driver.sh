@@ -199,13 +199,23 @@ run_one() {
       local port key
       port=$(cat ~/.litellm/proxy.port 2>/dev/null || echo 4000)
       key=$(grep '^LITELLM_MASTER_KEY=' ~/.litellm/.env 2>/dev/null | cut -d= -f2- | tr -d '"'"'")
+      # Small rungs (R01-R04) run without per-task worktrees + parallel.
+      # Per-task-worktree caused REVIEW_REJECTED / NO_DIFF on tiny SOWs
+      # because the reviewer was checking main while the worker wrote
+      # to an isolated worktree — trivially-sized SOWs don't benefit
+      # from the isolation and pay its coordination cost.
+      local sow_flags=""
+      case "$rung" in
+        R01|R02|R03|R04) sow_flags="";;
+        *) sow_flags="--per-task-worktree --parallel 2";;
+      esac
       timeout "$to" "$STOKE" sow \
         --repo "$dir" --file "$dir/SOW.md" \
         --native-base-url "http://localhost:$port" \
         --native-api-key "$key" \
         --native-model claude-sonnet-4-6 \
         --reviewer-source codex \
-        --per-task-worktree --parallel 2 --fresh \
+        $sow_flags --fresh \
         > "$log" 2>&1
       exit_code=$?
       ;;
