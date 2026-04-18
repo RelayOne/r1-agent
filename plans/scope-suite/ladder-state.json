@@ -1,0 +1,20 @@
+{
+  "strict": {
+    "next_rung": "R02",
+    "last_result": "passed",
+    "last_run_dir": "/home/eric/repos/scope-suite-runs/R01-20260418T133705",
+    "blocked_reason": null
+  },
+  "lenient": {
+    "next_rung": "R03",
+    "last_result": "passed",
+    "last_run_dir": "/home/eric/repos/scope-suite-runs/R02-lenient-20260418T135039",
+    "blocked_reason": null
+  },
+  "sow": {
+    "next_rung": "R01",
+    "last_result": "failed-task",
+    "last_run_dir": "/home/eric/repos/scope-suite-runs/R01-20260418T141322",
+    "blocked_reason": null
+  }
+}
