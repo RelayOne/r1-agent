@@ -206,6 +206,12 @@ func simpleLoopCmd(args []string) {
 	reviewer := fs.String("reviewer", "codex", "Reviewer backend: codex | cc-opus | cc-sonnet")
 	fixMode := fs.String("fix-mode", "sequential", "How to deliver reviewer findings to CC: sequential (one big prompt, iterate until clean post-build) | parallel (split into chunks, N workers concurrently post-build) | concurrent (reviewer-approved worktree merges fire while big worker still building — Level 2)")
 	fixWorkers := fs.Int("fix-workers", 3, "Max concurrent CC fix workers when --fix-mode=parallel")
+	// H-19: TIER filter flags. The filter engages after `tierFilterAfter`
+	// consecutive Final-review rounds fail to converge; set to 0 to
+	// disable entirely. `tierFilterThreshold` is the TIER-3 dominance
+	// share required to drop noise (0.7 = 70% of gaps must be TIER 3).
+	tierFilterAfter := fs.Int("tier-filter-after", 5, "Final-review rounds before TIER filter engages (0 = disabled)")
+	tierFilterThreshold := fs.Float64("tier-filter-threshold", 0.7, "TIER-3 dominance share required to drop noise")
 	fs.Parse(args)
 
 	if *sowFile == "" {
@@ -602,6 +608,15 @@ func simpleLoopCmd(args []string) {
 		// actually enforce reviewer sign-off instead of shipping
 		// unreviewed code.
 		const maxFixRounds = 5
+		// H-19: track prior rounds' gaps so the TIER filter can measure
+		// recurrence. Each entry is the extracted gap list from one
+		// Final-review iteration — reset each outer round because the
+		// codebase composition has changed.
+		var priorRoundsGaps [][]string
+		// tierFilterComplete is set when applyTierFilter declares
+		// drop-tier3-complete, breaking out of the fix loop as a clean
+		// sign-off. Handled the same as approvedReview(finalReview).
+		tierFilterComplete := false
 		for fixRound := 1; fixRound <= maxFixRounds; fixRound++ {
 			currentHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
 			if currentHead == headBefore {
@@ -634,11 +649,69 @@ func simpleLoopCmd(args []string) {
 				break
 			}
 			fmt.Printf("  ✗ reviewer still finding issues (round %d, mode=%s)\n", fixRound, globalFixMode)
+
+			// H-19: Extract gap list from this round's reviewer output,
+			// archive it for future recurrence detection, then — if
+			// we've hit the tier-filter-after threshold — route the
+			// reviewer through applyTierFilter. The filter may drop
+			// recurring TIER-3 noise and even declare the loop
+			// complete; otherwise the normal fix worker dispatches.
+			currentGaps := extractGapsFromReview(finalReview)
+			priorRoundsGaps = append(priorRoundsGaps, currentGaps)
+
+			fixFeedback := finalReview
+			if *tierFilterAfter > 0 && fixRound >= *tierFilterAfter {
+				fmt.Printf("  🎚 TIER filter engaging (fixRound=%d >= %d)\n",
+					fixRound, *tierFilterAfter)
+				tierCtx, tierCancel := context.WithTimeout(context.Background(), 20*time.Minute)
+				review := func(ctx context.Context, prompt string) string {
+					return reviewCall(absRepo, prompt)
+				}
+				// priorRoundsGaps[:len-1] excludes the current round
+				// (we just appended it) so the filter measures
+				// recurrence against TRULY prior data, not itself.
+				priorOnly := priorRoundsGaps
+				if len(priorOnly) > 0 {
+					priorOnly = priorOnly[:len(priorOnly)-1]
+				}
+				tfResult, tfErr := applyTierFilter(
+					tierCtx, review, currentGaps, priorOnly, fixRound, *tierFilterThreshold)
+				tierCancel()
+				if tfErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"  ↻ TIER-3 filter: error, continuing normally: %v\n", tfErr)
+				}
+				switch tfResult.Decision {
+				case "drop-tier3-complete":
+					fmt.Printf("  ✓ TIER-3 drop: all remaining gaps were TIER-3 noise; declaring SIMPLE LOOP COMPLETE (dropped %d gaps: %s)\n",
+						len(tfResult.Tier3Dropped),
+						formatGapList(tfResult.Tier3Dropped))
+					pendingReviews = nil
+					tierFilterComplete = true
+				case "drop-tier3-continue":
+					fmt.Printf("  ⏭ TIER-3 drop: %d gaps dropped (recurring noise); continuing with %d TIER-1/2 gaps\n",
+						len(tfResult.Tier3Dropped), len(tfResult.RemainingGaps))
+					fmt.Printf("     dropped: %s\n", formatGapList(tfResult.Tier3Dropped))
+					fmt.Printf("     remaining: %s\n", formatGapList(tfResult.RemainingGaps))
+					// Replace reviewer feedback with ONLY the TIER-1/2
+					// gaps so the fix worker focuses on real defects.
+					fixFeedback = "REAL DEFECTS REMAINING (TIER-3 noise filtered out by convergence guard):\n\n" +
+						strings.Join(tfResult.RemainingGaps, "\n")
+				default:
+					fmt.Printf("  ↻ TIER-3 filter: continue (tier1=%d tier2=%d tier3=%d, recurring=%v)\n",
+						tfResult.Tier1Count, tfResult.Tier2Count,
+						tfResult.Tier3Count, tfResult.Recurring)
+				}
+				if tierFilterComplete {
+					break
+				}
+			}
+
 			fixHeadBefore := currentHead
 			if globalFixMode == "parallel" {
-				dispatchParallelFix(*claudeBin, absRepo, finalReview, globalFixWorkers)
+				dispatchParallelFix(*claudeBin, absRepo, fixFeedback, globalFixWorkers)
 			} else {
-				dispatchSequentialFix(*claudeBin, absRepo, finalReview)
+				dispatchSequentialFix(*claudeBin, absRepo, fixFeedback)
 			}
 			pendingReviews = nil
 			postFixHead := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null")
@@ -648,6 +721,7 @@ func simpleLoopCmd(args []string) {
 			}
 			fmt.Printf("  📝 CC produced fix commits; re-reviewing...\n")
 		}
+		_ = tierFilterComplete // referenced inside the loop; nothing to do here
 
 		// Step 5: Build verification
 		fmt.Println("🏗️  Step 5: Build verification...")
