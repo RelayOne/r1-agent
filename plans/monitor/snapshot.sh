@@ -26,6 +26,7 @@ VARIANTS=(
   "E6|/home/eric/repos/e6-sentinel-sow-h27"
   "E7|/home/eric/repos/e7-sentinel-h28"
   "E8|/home/eric/repos/e8-sentinel-sow-h28"
+  "E9|/home/eric/repos/e9-sentinel-slice"
 )
 
 NOW_ISO=$(date -Iseconds)
