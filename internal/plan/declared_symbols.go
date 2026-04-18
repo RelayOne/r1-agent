@@ -263,51 +263,55 @@ func validDeclaredSymbol(s string) bool {
 	return hasInternalSignal
 }
 
-// declaredSymbolBlocklist is English nouns/adjectives that commonly
-// appear in the "the X Y" construction where X looks like a single-
-// word identifier but isn't. Populated from observation + common
-// REST/frontend vocabulary.
+// declaredSymbolBlocklist is English nouns/adjectives + common
+// configuration-key identifiers that look like camelCase/snake_case
+// code but aren't deliverable symbols. Populated from observation +
+// live-cohort false positives (E5 surfaced the tsconfig-option
+// pattern).
 var declaredSymbolBlocklist = map[string]struct{}{
-	"request":        {},
-	"response":       {},
-	"error":          {},
-	"event":          {},
-	"user":           {},
-	"admin":          {},
-	"client":         {},
-	"server":         {},
-	"database":       {},
-	"api":            {},
-	"route":          {},
-	"page":           {},
-	"form":           {},
-	"input":          {},
-	"output":         {},
-	"file":           {},
-	"folder":         {},
-	"directory":      {},
-	"package":        {},
-	"module":         {},
-	"library":        {},
-	"framework":      {},
-	"the":            {},
-	"this":           {},
-	"that":           {},
-	"main":           {},
-	"test":           {},
-	"example":        {},
-	"sample":         {},
-	"default":        {},
-	"custom":         {},
-	"standard":       {},
-	"basic":          {},
-	"simple":         {},
-	"advanced":       {},
-	"login":          {},
-	"logout":         {},
-	"signin":         {},
-	"signup":         {},
-	"auth":           {},
+	// English nouns / common prose
+	"request": {}, "response": {}, "error": {}, "event": {},
+	"user": {}, "admin": {}, "client": {}, "server": {},
+	"database": {}, "api": {}, "route": {}, "page": {},
+	"form": {}, "input": {}, "output": {}, "file": {},
+	"folder": {}, "directory": {}, "package": {}, "module": {},
+	"library": {}, "framework": {},
+	"the": {}, "this": {}, "that": {}, "main": {},
+	"test": {}, "example": {}, "sample": {}, "default": {},
+	"custom": {}, "standard": {}, "basic": {}, "simple": {}, "advanced": {},
+	"login": {}, "logout": {}, "signin": {}, "signup": {}, "auth": {},
+
+	// TypeScript compiler options (strict, module system, tooling).
+	// Caught in E5's first 26 min: `strictNullChecks`, `noImplicitAny`,
+	// `exactOptionalPropertyTypes` all flagged as missing symbols when
+	// the SOW merely asked for them in tsconfig. These are CONFIG KEYS,
+	// not code identifiers.
+	"strict": {}, "strictnullchecks": {}, "strictfunctiontypes": {},
+	"strictbindcallapply": {}, "strictpropertyinitialization": {},
+	"noimplicitany": {}, "noimplicitthis": {}, "noimplicitreturns": {},
+	"alwaysstrict": {}, "exactoptionalpropertytypes": {},
+	"nouncheckedindexedaccess": {}, "noimplicitoverride": {},
+	"nopropertyaccessfromindexsignature": {}, "useunknownincatchvariables": {},
+	"allowjs": {}, "checkjs": {}, "declaration": {}, "sourcemap": {},
+	"esmoduleinterop": {}, "allowsyntheticdefaultimports": {},
+	"forceconsistentcasinginfilenames": {}, "isolatedmodules": {},
+	"resolvejsonmodule": {}, "jsx": {}, "jsximportsource": {},
+	"target": {}, "lib": {}, "moduleresolution": {},
+	"baseurl": {}, "paths": {}, "rootdir": {}, "outdir": {},
+	"skiplibcheck": {}, "downleveliteration": {},
+	"experimentaldecorators": {}, "emitdecoratormetadata": {},
+
+	// ESLint / Prettier / build-tool config keys that trigger PascalCase
+	// or camelCase detection but are config, not deliverables.
+	"rules": {}, "parser": {}, "parseroptions": {}, "plugins": {},
+	"extends": {}, "overrides": {}, "env": {}, "settings": {},
+	"ignorepatterns": {}, "root": {}, "globals": {},
+
+	// Package.json + workspace keys ("main" already covered above
+	// in the English-prose section).
+	"dependencies": {}, "devdependencies": {}, "peerdependencies": {},
+	"scripts": {}, "workspaces": {}, "private": {},
+	"types": {}, "exports": {}, "imports": {},
 }
 
 // looksLikeSource returns true when filename has an extension the

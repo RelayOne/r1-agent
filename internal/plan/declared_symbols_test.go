@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +66,41 @@ func TestExtractDeclaredSymbols_RejectsAllUppercaseAcronyms(t *testing.T) {
 	got := ExtractDeclaredSymbols(prose)
 	if len(got) != 0 {
 		t.Errorf("all-uppercase acronyms should not be treated as identifiers, got %v", got)
+	}
+}
+
+func TestExtractDeclaredSymbols_RejectsTsconfigCompilerOptions(t *testing.T) {
+	// Real false positives caught on E5 at 12:36: SOW prose mentions
+	// tsconfig compiler options (`strictNullChecks`, `noImplicitAny`,
+	// `exactOptionalPropertyTypes`) which look like camelCase code
+	// identifiers but are configuration keys, not deliverables.
+	prose := `
+Enable TypeScript strict mode by setting strictNullChecks to true.
+Also configure noImplicitAny, noImplicitReturns, and
+exactOptionalPropertyTypes in tsconfig.json. Don't forget about
+esModuleInterop for CommonJS compatibility.`
+	got := ExtractDeclaredSymbols(prose)
+	for _, sym := range got {
+		switch strings.ToLower(sym) {
+		case "strictnullchecks", "noimplicitany", "noimplicitreturns",
+			"exactoptionalpropertytypes", "esmoduleinterop":
+			t.Errorf("tsconfig compiler option %q should be blocklisted, got in: %v", sym, got)
+		}
+	}
+}
+
+func TestExtractDeclaredSymbols_RejectsConfigFileKeys(t *testing.T) {
+	prose := `
+The package.json has scripts, dependencies, devDependencies blocks.
+The .eslintrc configures parserOptions and ignorePatterns for the
+monorepo.`
+	got := ExtractDeclaredSymbols(prose)
+	for _, sym := range got {
+		switch strings.ToLower(sym) {
+		case "scripts", "dependencies", "devdependencies",
+			"parseroptions", "ignorepatterns":
+			t.Errorf("config file key %q should be blocklisted, got in: %v", sym, got)
+		}
 	}
 }
 
