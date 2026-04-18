@@ -18,4 +18,6 @@ monitor-log.md
 plans/monitor/state.json
 plans/monitor/history.json
 plans/monitor/manage-decisions.log
+plans/scope-suite/results.jsonl
+plans/scope-suite/*-driver.log
 STATUS.md
