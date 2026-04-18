@@ -111,6 +111,20 @@ func (t *step8RegressionTracker) Cycles() int { return t.cycles }
 // Exposed for the final run summary and for the abort-banner log.
 func (t *step8RegressionTracker) LastGaps() []string { return t.lastGaps }
 
+// Load restores prior tracker state. Used by H-25 simple-loop resume
+// so the H-6 regression counter survives a crash — otherwise a
+// resume with cycles=1 would reset to 0 and give the builder an
+// unearned extra chance, defeating the regression cap.
+func (t *step8RegressionTracker) Load(cycles int, lastGaps []string) {
+	if cycles < 0 {
+		cycles = 0
+	}
+	t.cycles = cycles
+	if lastGaps != nil {
+		t.lastGaps = append([]string{}, lastGaps...)
+	}
+}
+
 // ccPipeSilenceThreshold caps how long Claude Code's stdout pipe
 // is allowed to sit idle before we assume the subprocess is wedged
 // and SIGKILL its process group. This is STRICTER than the existing
@@ -222,6 +236,14 @@ func simpleLoopCmd(args []string) {
 	// share required to drop noise (0.7 = 70% of gaps must be TIER 3).
 	tierFilterAfter := fs.Int("tier-filter-after", 5, "Final-review rounds before TIER filter engages (0 = disabled)")
 	tierFilterThreshold := fs.Float64("tier-filter-threshold", 0.7, "TIER-3 dominance share required to drop noise")
+	// H-25: resume from a prior run's .stoke/simple-loop-state.json.
+	// Resume is opt-in (default OFF) because a crashed run with
+	// unclean state is safer to restart fresh than to silently pick
+	// up mid-round with a stale H-6 counter. --fresh clears any
+	// stored state before starting so a relaunch after an aborted
+	// run always produces a clean slate.
+	resume := fs.Bool("resume", false, "Resume from prior .stoke/simple-loop-state.json (skips completed rounds, preserves H-6 counter). Refuses to resume on SOW/reviewer/fix-mode mismatch or prior regression-cap abort.")
+	fresh := fs.Bool("fresh", false, "Clear .stoke/simple-loop-state.json before starting. Use after a crash or when relaunching a new SOW. Incompatible with --resume.")
 	fs.Parse(args)
 
 	if *sowFile == "" {
@@ -274,7 +296,71 @@ func simpleLoopCmd(args []string) {
 	step8Tracker := &step8RegressionTracker{cap: step8RegressionCap}
 	var step8Aborted bool
 
-	for round := 1; round <= *maxRounds; round++ {
+	// H-25: resume / fresh handling. --fresh wins over --resume with
+	// a warning so an ambiguous operator command can't silently resume
+	// into pre-crash state. The state file is written at the top of
+	// every round below so a crash after round N+1 starts resumes at
+	// round N+1 (the round we were about to execute), not N.
+	proseHash := hashProse(currentProse)
+	startRound := 1
+	if *fresh && *resume {
+		fmt.Fprintln(os.Stderr, "  ⚠ --fresh overrides --resume: clearing cached state, starting from round 1")
+		*resume = false
+	}
+	if *fresh {
+		if err := ClearSimpleLoopState(absRepo); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ --fresh: could not remove simple-loop-state.json: %v\n", err)
+		} else {
+			fmt.Println("  🧹 --fresh: cleared simple-loop-state.json")
+		}
+	}
+	if *resume {
+		stored, err := LoadSimpleLoopState(absRepo)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "  ⚠ --resume: could not load state (%v) — starting fresh\n", err)
+		case stored == nil:
+			fmt.Fprintln(os.Stderr, "  ⚠ --resume: no saved state found — starting fresh")
+		default:
+			ok, reason := validateResumeCompat(stored, absRepo, proseHash, *reviewer, globalFixMode)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "  ⚠ --resume refused: %s — starting fresh\n", reason)
+			} else {
+				startRound = stored.CurrentRound
+				currentProse = stored.CurrentProse
+				*maxRounds = stored.MaxRounds
+				step8Tracker.Load(stored.Step8Cycles, stored.LastGaps)
+				fmt.Printf("  🔁 resumed at round %d/%d (H-6 counter=%d, prior gaps=%d)\n",
+					startRound, *maxRounds, stored.Step8Cycles, len(stored.LastGaps))
+			}
+		}
+	}
+
+	for round := startRound; round <= *maxRounds; round++ {
+		// Persist the round we're ABOUT TO EXECUTE before doing
+		// anything expensive. A crash before the save-point means
+		// we lose the round that never started (fine). A crash
+		// after means resume re-runs the round (idempotent — plan
+		// + review + build are re-entrant; duplicate commits from
+		// a partial builder remain in git and are treated as prior
+		// progress by the continuation builder).
+		if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
+			SOWHash:      proseHash,
+			CurrentRound: round,
+			MaxRounds:    *maxRounds,
+			Reviewer:     *reviewer,
+			FixMode:      globalFixMode,
+			CurrentProse: currentProse,
+			Step8Cycles:  step8Tracker.Cycles(),
+			LastGaps:     step8Tracker.LastGaps(),
+			RepoHead:     currentRepoHead(absRepo),
+		}); err != nil {
+			// Non-fatal: resume is a convenience, not a correctness
+			// property. Log and continue so a locked .stoke/ doesn't
+			// kill an otherwise-healthy run.
+			fmt.Fprintf(os.Stderr, "  ⚠ could not save simple-loop-state.json: %v\n", err)
+		}
+
 		fmt.Printf("═══════════════════════════════════════\n")
 		fmt.Printf("  ROUND %d/%d\n", round, *maxRounds)
 		fmt.Printf("═══════════════════════════════════════\n\n")
@@ -810,6 +896,13 @@ func simpleLoopCmd(args []string) {
 			// Reset the regression tracker on clean pass — future
 			// rounds (if any) start from zero.
 			step8Tracker.ObserveAuditResult(true, true, nil)
+			// H-25 (codex P2-2): clear resume state BEFORE the break.
+			// A kill between `break` and the post-loop save would
+			// otherwise leave the round-start snapshot on disk and
+			// cause --resume to re-run a round that already completed.
+			if err := ClearSimpleLoopState(absRepo); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ could not clear simple-loop-state.json on clean pass: %v\n", err)
+			}
 			break
 		}
 		if ccSaysDone && !complianceClean {
@@ -850,6 +943,11 @@ func simpleLoopCmd(args []string) {
 				absRepo, gaps, *tierFilterAfter, *tierFilterThreshold, step8Tracker)
 			if rescueComplete {
 				fmt.Printf("\n✅ ROUND %d: TIER filter declared drop-tier3-complete before H-6 cap — all remaining gaps were TIER-3 noise\n", round)
+				// H-25 (codex P2-2): clear resume state BEFORE the
+				// short-circuit break, matching the Step 9 clean-pass path.
+				if err := ClearSimpleLoopState(absRepo); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ could not clear simple-loop-state.json on TIER-3 drop-complete: %v\n", err)
+				}
 				// Short-circuit the whole outer loop as a clean pass.
 				break
 			}
@@ -870,6 +968,26 @@ func simpleLoopCmd(args []string) {
 				fmt.Printf("\n⛔ Step-8 regression guard: %d consecutive cycles ended with gaps remaining after audit. Stopping to avoid token burn. Last gaps: %s.\n",
 					step8Tracker.Cycles(), formatGapList(step8Tracker.LastGaps()))
 				step8Aborted = true
+				// H-25 (codex P2-2): mark the on-disk state as Aborted
+				// BEFORE the break. Without this, a kill between the
+				// break and the post-loop save would leave the round-
+				// start snapshot (Aborted=false) as the last written
+				// state; --resume would then happily continue past the
+				// regression cap. Mark-then-break forecloses that.
+				if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
+					SOWHash:      proseHash,
+					CurrentRound: round,
+					MaxRounds:    *maxRounds,
+					Reviewer:     *reviewer,
+					FixMode:      globalFixMode,
+					CurrentProse: currentProse,
+					Step8Cycles:  step8Tracker.Cycles(),
+					LastGaps:     step8Tracker.LastGaps(),
+					Aborted:      true,
+					RepoHead:     currentRepoHead(absRepo),
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ could not mark simple-loop state as aborted before break: %v\n", err)
+				}
 				break
 			}
 		}
@@ -897,6 +1015,55 @@ func simpleLoopCmd(args []string) {
 
 		fmt.Printf("\n🔄 ROUND %d: gaps remain — extracting remaining work for next round\n", round)
 		currentProse = nextProse // next round's input
+
+		// H-25 (codex P2-3): save state at END of round too, after we've
+		// committed to the next-round prose + absorbed this round's
+		// step8-tracker result. A crash in the gap between this save and
+		// the top-of-loop save of round+1 would otherwise leave the
+		// round-N snapshot on disk; resume would replay round N with
+		// stale prose/counters. With this end-of-round save, the last
+		// persisted state always reflects the most recent completed
+		// round: resume correctly starts at round+1.
+		if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
+			SOWHash:      proseHash,
+			CurrentRound: round + 1,
+			MaxRounds:    *maxRounds,
+			Reviewer:     *reviewer,
+			FixMode:      globalFixMode,
+			CurrentProse: currentProse,
+			Step8Cycles:  step8Tracker.Cycles(),
+			LastGaps:     step8Tracker.LastGaps(),
+			RepoHead:     currentRepoHead(absRepo),
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ could not save end-of-round state: %v\n", err)
+		}
+	}
+
+	// H-25: persist terminal state so a subsequent --resume does the
+	// right thing. On clean completion we delete the state file (nothing
+	// left to resume). On regression abort we mark the state file
+	// Aborted=true so --resume refuses until the operator explicitly
+	// passes --fresh or extends the SOW (otherwise relaunching just
+	// reproduces the same abort).
+	if step8Aborted {
+		if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
+			SOWHash:      proseHash,
+			CurrentRound: *maxRounds,
+			MaxRounds:    *maxRounds,
+			Reviewer:     *reviewer,
+			FixMode:      globalFixMode,
+			CurrentProse: currentProse,
+			Step8Cycles:  step8Tracker.Cycles(),
+			LastGaps:     step8Tracker.LastGaps(),
+			Aborted:      true,
+			RepoHead:     currentRepoHead(absRepo),
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ could not mark simple-loop state as aborted: %v\n", err)
+		}
+	} else {
+		if err := ClearSimpleLoopState(absRepo); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ could not clear simple-loop-state.json on completion: %v\n", err)
+		}
 	}
 
 	// Final summary

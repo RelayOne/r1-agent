@@ -129,6 +129,190 @@ func TestScanDeclaredFilesNotCreated_MultipleMissing(t *testing.T) {
 	}
 }
 
+// H-24 regression tests — monorepo-prefix normalizer. H1-v2 + H2-v2
+// each logged 200+ gate-hits on the same 8 findings over 6h+ because
+// SOW said `app/api/foo/route.ts` but the worker wrote
+// `apps/web/src/app/api/foo/route.ts`. fileExistsVariant now checks
+// under each `apps/*` and `packages/*` workspace (with and without
+// `src/`), so the gate correctly sees the file the worker produced.
+
+func TestScanDeclaredFilesNotCreated_MonorepoAppsSrc(t *testing.T) {
+	// Most common pnpm-monorepo Next.js layout: apps/web/src/app/...
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/src/app/api/v1/users/route.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"app/api/v1/users/route.ts",
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (apps/web/src prefix), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_MonorepoAppsNoSrc(t *testing.T) {
+	// Turborepo default: apps/web/app/... (no src/ layer).
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/app/api/v1/users/route.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"app/api/v1/users/route.ts",
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (apps/web no-src prefix), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_MonorepoPackagesSrc(t *testing.T) {
+	// Workspace package: packages/api-client/src/... . Declared must
+	// be multi-segment (`src/index.ts`) or the narrowing fires — a
+	// bare `index.ts` is correctly treated as a root-only declaration.
+	root := t.TempDir()
+	mkfile(t, root, "packages/api-client/src/client.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"src/client.ts", // multi-segment: narrowing lets it hit the workspace search
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (packages/<name>/src), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_MonorepoWithCurlyVariant(t *testing.T) {
+	// The actual D-opus / H1 / H2 failure pattern: SOW uses `{id}`,
+	// worker writes `[id]` under apps/web/src. Both normalizers must
+	// chain (monorepo prefix + curly-to-square), so the file is found.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/src/app/api/v1/alarms/[id]/acknowledge/route.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"app/api/v1/alarms/{id}/acknowledge/route.ts",
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (apps/web/src + {id}→[id]), got %d: %+v", len(got), got)
+	}
+}
+
+// Codex P2-1 regression: narrowing the monorepo fallback so a
+// workspace's package.json (or README, docker-compose, etc.) does
+// not silently satisfy a missing root-level file of the same name.
+
+func TestScanDeclaredFilesNotCreated_RootPackageJsonMissingFallbackStaysOff(t *testing.T) {
+	// Declared: package.json at repo root. Worker populated workspace
+	// package.jsons but never created the root one. This must still
+	// flag — pre-narrowing, `apps/web/package.json` would falsely
+	// satisfy the check.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/package.json")
+	mkfile(t, root, "apps/api/package.json")
+	mkfile(t, root, "packages/shared/package.json")
+	got := ScanDeclaredFilesNotCreated(root, []string{"package.json"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (root package.json missing), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_RootReadmeMissingStaysFlagged(t *testing.T) {
+	// Same pattern for README.md — single-segment root doc.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/README.md")
+	got := ScanDeclaredFilesNotCreated(root, []string{"README.md"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (root README missing), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_AppsPrefixedDeclaredIsLiteral(t *testing.T) {
+	// If the SOW already says `apps/web/...`, the path is literal.
+	// Fallback must not re-prefix and produce `apps/web/apps/web/...`
+	// spurious matches.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/page.tsx") // different filename than declared
+	got := ScanDeclaredFilesNotCreated(root, []string{"apps/web/notpresent.tsx"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (apps/-prefixed literal, miss), got %d: %+v", len(got), got)
+	}
+}
+
+func TestMonorepoFallbackEligible(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"package.json", false},             // root config, single segment
+		{"README.md", false},                // root doc
+		{"tsconfig.json", false},            // root config
+		{"apps/web/page.tsx", false},        // already workspace-prefixed
+		{"packages/shared/x.ts", false},     // already workspace-prefixed
+		{".github/workflows/ci.yml", false}, // unambiguously root-only
+		{".vscode/settings.json", false},    // editor config
+		// Codex P2-4: these used to be rejected; they're actually valid
+		// workspace-internal paths in monorepos and must fall through.
+		{"docs/architecture.md", true},      // pkg-local docs
+		{"tests/login.test.ts", true},       // pkg-local tests
+		{"e2e/checkout.spec.ts", true},      // pkg-local e2e
+		{"scripts/build.sh", true},          // pkg-local scripts (apps/*/scripts)
+		{"examples/basic.ts", true},         // pkg-local examples
+		{"app/api/v1/users/route.ts", true}, // Next.js workspace-internal
+		{"src/index.ts", true},              // library-style workspace entry
+		{"components/Button.tsx", true},     // React component, workspace-internal
+		{"lib/client.ts", true},             // common workspace helper dir
+		{"types/index.d.ts", true},          // shared types, typically per-workspace
+	}
+	for _, tc := range cases {
+		if got := monorepoFallbackEligible(tc.in); got != tc.want {
+			t.Errorf("monorepoFallbackEligible(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// Codex P2-4: directly assert a workspace-local docs/tests/e2e path is
+// found by the fallback instead of being rejected as root-only.
+func TestScanDeclaredFilesNotCreated_WorkspaceLocalDocsFound(t *testing.T) {
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/docs/architecture.md")
+	mkfile(t, root, "apps/web/tests/login.test.ts")
+	mkfile(t, root, "packages/ui/e2e/button.spec.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"docs/architecture.md",
+		"tests/login.test.ts",
+		"e2e/button.spec.ts",
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (workspace-local docs/tests/e2e), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_NotAMonorepoStillMisses(t *testing.T) {
+	// Ensure the fix does not turn into a false-negative factory: a
+	// genuinely missing file in a polyrepo must still flag.
+	root := t.TempDir()
+	mkfile(t, root, "app/api/v1/users/route.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"app/api/v1/alarms/[id]/acknowledge/route.ts", // genuinely missing
+	})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding for genuinely-missing file, got %d: %+v", len(got), got)
+	}
+	if got[0].Kind != "declared-file-not-created" {
+		t.Errorf("kind = %s", got[0].Kind)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_MonorepoMultipleApps(t *testing.T) {
+	// Real pnpm workspace: file could be under apps/web, apps/installer,
+	// apps/caregiver, packages/api-client, etc. Scanner must find the
+	// file regardless of which workspace it lives in. Both paths here
+	// are multi-segment so P2-1 narrowing lets them hit the fallback.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/src/app/page.tsx")
+	mkfile(t, root, "apps/installer/app/page.tsx")
+	mkfile(t, root, "apps/caregiver/src/app/page.tsx")
+	mkfile(t, root, "packages/shared/src/helpers.ts")
+	got := ScanDeclaredFilesNotCreated(root, []string{
+		"app/page.tsx",   // matches apps/web/src (and/or others)
+		"src/helpers.ts", // multi-segment: matches packages/shared/src via workspace search
+	})
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (multiple-workspace lookup), got %d: %+v", len(got), got)
+	}
+}
+
 func TestPathVariants_CurlyToSquare(t *testing.T) {
 	got := pathVariants("app/api/v1/users/{id}/route.ts")
 	want := map[string]bool{

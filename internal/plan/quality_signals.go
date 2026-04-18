@@ -1729,7 +1729,7 @@ func ExtractDeclaredFiles(sowProse string) []string {
 }
 
 // fileExistsVariant returns true when repoRoot contains a file at rel
-// OR at any of its common path-equivalent variants. Handles three
+// OR at any of its common path-equivalent variants. Handles four
 // real-world mismatches observed in the SOW cohort:
 //
 //  1. Next.js dynamic segments: SOW prose writes `{id}`, Next's file
@@ -1737,27 +1737,114 @@ func ExtractDeclaredFiles(sowProse string) []string {
 //  2. Extension swap: `.ts` vs `.tsx` for route handlers (Next 13+
 //     accepts both in some positions).
 //  3. Trailing slash and leading slash noise.
+//  4. Monorepo prefix: SOW declares `app/api/foo/route.ts` but the
+//     worker writes it to `apps/web/src/app/api/foo/route.ts` (or
+//     `packages/<name>/[src/]<rel>`). Covered by globbing `apps/*`
+//     and `packages/*` when a bare-rel match fails. H-24 fix —
+//     without this, H1-v2 and H2-v2 accumulated 200+ gate-hits on
+//     the same 8 findings over 6h+ because the declared-file gate
+//     couldn't see files the worker had actually produced.
 //
-// Order: check the exact path first (cheapest), then generate a
-// small set of variants only when needed. Symlinks are followed via
-// os.Stat (we only care that SOMETHING resolves at the path).
+// Order: check the exact path first (cheapest), then path-token
+// variants, then monorepo-prefix variants (a glob per call). Symlinks
+// are followed via os.Stat (we only care that SOMETHING resolves at
+// the path).
 func fileExistsVariant(repoRoot, rel string) bool {
 	clean := strings.TrimPrefix(strings.TrimSuffix(rel, "/"), "/")
 	if clean == "" {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, clean)); err == nil {
-		return true
-	}
-	for _, v := range pathVariants(clean) {
-		if v == clean {
-			continue
-		}
+	variants := pathVariants(clean)
+	for _, v := range variants {
 		if _, err := os.Stat(filepath.Join(repoRoot, v)); err == nil {
 			return true
 		}
 	}
+	// Monorepo fallback (H-24). Only fires when the straight-root
+	// check above fails AND the declared path looks workspace-internal
+	// (not a top-level config like package.json / README.md — otherwise
+	// a workspace's copy would falsely satisfy a missing root file).
+	// The filesystem work is lazy — monorepoBases returns empty for
+	// non-monorepo repos so polyrepos pay zero cost here.
+	if monorepoFallbackEligible(clean) {
+		for _, base := range monorepoBases(repoRoot) {
+			for _, v := range variants {
+				if _, err := os.Stat(filepath.Join(base, v)); err == nil {
+					return true
+				}
+				if _, err := os.Stat(filepath.Join(base, "src", v)); err == nil {
+					return true
+				}
+			}
+		}
+	}
 	return false
+}
+
+// monorepoFallbackEligible narrows the H-24 workspace-search to paths
+// that look like they belong *inside* a workspace, not at repo root.
+// Without this gate, declared `package.json` (missing at root) would
+// be silently satisfied by any workspace's own `apps/<name>/package.json`
+// — codex review P2-1. Rules:
+//
+//  1. Reject single-segment paths ("foo.md"): those are always root-
+//     level configs or docs.
+//  2. Reject paths already prefixed with apps/ or packages/: the
+//     declared path is literal; fallback would re-prefix producing
+//     nonsense like apps/web/apps/web/src/app/....
+//  3. Reject paths whose top segment is a known repo-root-only dir
+//     (`.github`, `docs`, `scripts`, `tooling`, etc.) — those never
+//     live inside workspaces.
+//
+// Accepts everything else: `app/...`, `api/...`, `components/...`,
+// `src/index.ts`, etc. — all of which are plausibly under a workspace
+// in a pnpm/turborepo layout.
+func monorepoFallbackEligible(clean string) bool {
+	if !strings.Contains(clean, "/") {
+		return false
+	}
+	first := clean
+	if i := strings.Index(clean, "/"); i >= 0 {
+		first = clean[:i]
+	}
+	if first == "apps" || first == "packages" {
+		return false
+	}
+	// Codex P2-4: only list things that are UNAMBIGUOUSLY root-only.
+	// `docs/`, `tests/`, `e2e/`, `scripts/`, `build/`, `dist/`,
+	// `examples/` all legitimately appear inside workspaces in real
+	// pnpm monorepos (e.g. `apps/web/e2e/login.spec.ts`,
+	// `packages/shared/docs/README.md`). Excluding them turns valid
+	// workspace declarations into blocking false positives. What stays
+	// on the list: tooling dotfiles that only make sense at repo root.
+	rootOnly := map[string]struct{}{
+		".github": {}, ".vscode": {}, ".idea": {}, ".husky": {},
+	}
+	if _, ok := rootOnly[first]; ok {
+		return false
+	}
+	return true
+}
+
+// monorepoBases returns subdirectories of repoRoot that look like
+// pnpm/yarn/turbo workspace packages. Today that means children of
+// `apps/` and `packages/` — the convention shared by Next.js,
+// Turborepo, Nx, and every SOW we've run. Returns empty for a
+// polyrepo so the caller's loop is a no-op.
+func monorepoBases(repoRoot string) []string {
+	var bases []string
+	for _, parent := range []string{"apps", "packages"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, parent, "*"))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			if info, statErr := os.Stat(m); statErr == nil && info.IsDir() {
+				bases = append(bases, m)
+			}
+		}
+	}
+	return bases
 }
 
 // pathVariants returns common equivalents for a SOW-declared path.

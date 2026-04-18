@@ -194,5 +194,13 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-tautological-test" && strings.HasSuffix(f.File, "internal/taskstate/failures.go") {
 		return true
 	}
+	// no-tautological-test: quality_signals.go's scanWeakAssertions docstring
+	// enumerates the very patterns the rule detects (expect(true).toBe(true),
+	// assert(true)) as documentation of what the scanner catches. They're
+	// comment prose, not test code, and live in the SOURCE of the tautology
+	// detector's sibling rule. Same class of self-reference as scan.go.
+	if f.Rule == "no-tautological-test" && strings.HasSuffix(f.File, "internal/plan/quality_signals.go") {
+		return true
+	}
 	return false
 }
