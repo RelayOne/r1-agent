@@ -54,6 +54,19 @@ type QualityConfig struct {
 	// `[id]`) instead of creating the SOW-declared one (`{id}`), then
 	// the reviewer rubber-stamps. Default-on, blocking.
 	DeclaredFileNotCreated bool // declared-file-not-created
+
+	// H-27: AST-level symbol matcher. SOW prose declares named
+	// deliverables ("acknowledgeAlarm handler", "AlarmSchema class",
+	// "AuthContext provider"). Post-commit, this gate extracts
+	// symbols from every changed source file (via symindex, which
+	// covers 11 languages) and reports a BLOCKING finding for any
+	// SOW-declared name that does not appear as a defined function,
+	// class, type, interface, or exported const in the code. Catches
+	// the H1-v2 pattern: worker creates the declared FILE but leaves
+	// it as a stub with none of the named deliverables implemented.
+	// Default-on, blocking. Language-agnostic matching by name;
+	// signature matching is a planned follow-up.
+	DeclaredSymbolNotImplemented bool // declared-symbol-not-implemented
 }
 
 // DefaultQualityConfig returns the production default: all validated
@@ -86,7 +99,8 @@ func DefaultQualityConfig() QualityConfig {
 		// through ScanDeclaredFilesNotCreated, not RunQualitySweep —
 		// so leaving the flag on is free when the caller doesn't have
 		// task.Files handy.
-		DeclaredFileNotCreated: true,
+		DeclaredFileNotCreated:       true,
+		DeclaredSymbolNotImplemented: true,
 	}
 }
 
@@ -108,7 +122,8 @@ func gateNameMap(cfg *QualityConfig) map[string]*bool {
 		"sow-structural":  &cfg.SOWStructural,
 		"package-scripts":            &cfg.PackageScripts,
 		"runtime-smoke":              &cfg.RuntimeSmoke,
-		"declared-file-not-created":  &cfg.DeclaredFileNotCreated,
+		"declared-file-not-created":      &cfg.DeclaredFileNotCreated,
+		"declared-symbol-not-implemented": &cfg.DeclaredSymbolNotImplemented,
 	}
 }
 
@@ -350,6 +365,16 @@ func RunQualitySweepWithConfig(repoRoot string, files []string, sow *SOW, cfg Qu
 		}
 		if cfg.PackageScripts && sowText != "" {
 			r.Findings = append(r.Findings, scanPackageScripts(repoRoot, sowText)...)
+		}
+		// H-27: declared-symbol-not-implemented. Catches the H1-v2
+		// failure where the worker creates the declared FILE but
+		// leaves it as a stub without the named handler/class/type.
+		if cfg.DeclaredSymbolNotImplemented && sowText != "" && len(blobs) > 0 {
+			changed := make([]string, 0, len(blobs))
+			for _, b := range blobs {
+				changed = append(changed, b.rel)
+			}
+			r.Findings = append(r.Findings, ScanDeclaredSymbolsNotImplemented(repoRoot, sowText, changed)...)
 		}
 	}
 

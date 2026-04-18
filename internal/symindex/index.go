@@ -131,6 +131,93 @@ var languages = []langPattern{
 			{Kind: KindMethod, Regex: regexp.MustCompile(`(?:public|private|protected)\s+\w+\s+(\w+)\s*\(`), Name: 1},
 		},
 	},
+	// H-27 language expansion — declared-symbol matching needs wide
+	// coverage because SOWs commonly target arbitrary stacks. Regex-
+	// based extraction matches the existing philosophy (no deps);
+	// upgrade to tree-sitter later if precision becomes the bottleneck.
+	{
+		Extensions: []string{".kt", ".kts"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^(?:public|private|internal|protected)?\s*(?:suspend\s+)?fun\s+(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^(?:public|private|internal|protected)?\s*(?:data\s+|sealed\s+|abstract\s+|open\s+)?class\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^(?:public|private|internal|protected)?\s*interface\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^(?:public|private|internal|protected)?\s*typealias\s+(\w+)`), Name: 1},
+			{Kind: KindConstant, Regex: regexp.MustCompile(`^(?:public|private|internal|protected)?\s*(?:const\s+)?val\s+(\w+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".swift"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^(?:public|private|internal|fileprivate|open)?\s*func\s+(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^(?:public|private|internal|fileprivate|open)?\s*(?:final\s+)?class\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^(?:public|private|internal|fileprivate|open)?\s*struct\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^(?:public|private|internal|fileprivate|open)?\s*protocol\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^(?:public|private|internal|fileprivate|open)?\s*enum\s+(\w+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".rb"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^\s*def\s+(?:self\.)?(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^\s*class\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^\s*module\s+(\w+)`), Name: 1},
+			{Kind: KindConstant, Regex: regexp.MustCompile(`^\s*([A-Z]\w*)\s*=`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".php"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^(?:public|private|protected)?\s*(?:static\s+)?function\s+(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^(?:abstract\s+|final\s+)?class\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^interface\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^trait\s+(\w+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".cs"},
+		Patterns: []symbolPattern{
+			{Kind: KindClass, Regex: regexp.MustCompile(`(?:public|private|protected|internal)?\s*(?:abstract\s+|sealed\s+|static\s+)?class\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`(?:public|private|protected|internal)?\s*interface\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`(?:public|private|protected|internal)?\s*(?:readonly\s+)?struct\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`(?:public|private|protected|internal)?\s*(?:record)\s+(\w+)`), Name: 1},
+			{Kind: KindMethod, Regex: regexp.MustCompile(`(?:public|private|protected|internal)\s+(?:static\s+|async\s+|virtual\s+|override\s+)?[\w<>,\s]+\s+(\w+)\s*\(`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".ex", ".exs"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^\s*def(?:p)?\s+(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^\s*defmodule\s+([\w.]+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^\s*defprotocol\s+([\w.]+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".c", ".h"},
+		Patterns: []symbolPattern{
+			// C: match function definitions at column 0 with an opening brace later.
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^(?:static\s+|extern\s+)?[\w*\s]+\s+(\w+)\s*\([^;]*$`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^(?:typedef\s+)?struct\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^(?:typedef\s+)?enum\s+(\w+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".cpp", ".cc", ".hpp", ".hxx"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^(?:static\s+|inline\s+|virtual\s+)?[\w*:<>,\s]+\s+(\w+)\s*\([^;]*$`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^(?:template\s*<[^>]*>\s*)?class\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^struct\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^namespace\s+(\w+)`), Name: 1},
+		},
+	},
+	{
+		Extensions: []string{".scala", ".sc"},
+		Patterns: []symbolPattern{
+			{Kind: KindFunction, Regex: regexp.MustCompile(`^\s*def\s+(\w+)`), Name: 1},
+			{Kind: KindClass, Regex: regexp.MustCompile(`^\s*(?:case\s+|sealed\s+|abstract\s+)?class\s+(\w+)`), Name: 1},
+			{Kind: KindInterface, Regex: regexp.MustCompile(`^\s*trait\s+(\w+)`), Name: 1},
+			{Kind: KindType, Regex: regexp.MustCompile(`^\s*object\s+(\w+)`), Name: 1},
+		},
+	},
 }
 
 // Build creates a symbol index for the directory tree.
