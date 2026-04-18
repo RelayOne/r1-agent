@@ -125,6 +125,81 @@ func (t *step8RegressionTracker) Load(cycles int, lastGaps []string) {
 	}
 }
 
+// gapCountProgressTracker implements H-29: progress-based termination.
+//
+// Problem observed on 2026-04-18 cohort: the sow harness and simple-
+// loop kept iterating rounds even when the worker couldn't narrow the
+// gap list. Round N: 36 gaps. Round N+1: 42 gaps. Round N+2: 54 gaps.
+// Each round burns tokens; progress runs backward. H-6 catches the
+// terminal case (2 consecutive non-clean), but often the loop limps
+// along with flat gap count + no clean exit — burning hours without
+// convergence.
+//
+// H-29 adds a lower bar: if the gap count doesn't DECREASE by the
+// minimum delta for `window` consecutive rounds, declare "plateau"
+// and exit with PARTIAL-SUCCESS status. Commits produced so far are
+// preserved; the operator gets a clean report showing what landed vs
+// what's still missing.
+//
+// Policy tuning:
+//   - window=3: three plateau rounds before exit. Gives room for
+//     one round to go sideways (worker got confused) before killing.
+//   - minDelta=1: any gap reduction counts as progress. More nuanced
+//     tunings could require percentage reduction, but 1 is the easiest
+//     defensible bar and matches how humans think about "is this
+//     moving forward."
+type gapCountProgressTracker struct {
+	window   int
+	minDelta int
+	history  []int // gap count observed at the end of each round
+}
+
+// Observe records the gap count at end of a round. Returns true when
+// the tracker has seen `window` consecutive rounds without a minDelta
+// drop — the caller MUST exit with PARTIAL-SUCCESS in that case.
+// Clean rounds (gapCount == 0) reset the history since "done" beats
+// "plateau" trivially.
+func (g *gapCountProgressTracker) Observe(gapCount int) bool {
+	if gapCount == 0 {
+		g.history = nil
+		return false
+	}
+	g.history = append(g.history, gapCount)
+	if len(g.history) <= g.window {
+		return false
+	}
+	// Check the last `window+1` entries: did any drop by at least
+	// minDelta vs the one before it? If yes, we're progressing.
+	tail := g.history[len(g.history)-g.window-1:]
+	for i := 1; i < len(tail); i++ {
+		if tail[i-1]-tail[i] >= g.minDelta {
+			return false
+		}
+	}
+	return true
+}
+
+// Best returns the lowest gap count ever observed — used in the
+// PARTIAL-SUCCESS banner to show the high-water mark of progress.
+func (g *gapCountProgressTracker) Best() int {
+	if len(g.history) == 0 {
+		return 0
+	}
+	best := g.history[0]
+	for _, n := range g.history[1:] {
+		if n < best {
+			best = n
+		}
+	}
+	return best
+}
+
+// History returns the full per-round gap count sequence. Used in the
+// PARTIAL-SUCCESS banner + tests.
+func (g *gapCountProgressTracker) History() []int {
+	return append([]int{}, g.history...)
+}
+
 // ccPipeSilenceThreshold caps how long Claude Code's stdout pipe
 // is allowed to sit idle before we assume the subprocess is wedged
 // and SIGKILL its process group. This is STRICTER than the existing
@@ -294,7 +369,13 @@ func simpleLoopCmd(args []string) {
 	// aborts the loop once the cap is hit so we don't burn tokens
 	// oscillating between audit + builder without convergence.
 	step8Tracker := &step8RegressionTracker{cap: step8RegressionCap}
+	// H-29 plateau tracker: 3 rounds without gap-count reduction → partial exit.
+	// Sized conservatively so a 5-round run has 2 rounds of "real" tries before
+	// the plateau check can fire; the H-6 regression cap still catches the
+	// extreme "counter-productive" shape (gaps grow) in 2 rounds.
+	gapProgress := &gapCountProgressTracker{window: 3, minDelta: 1}
 	var step8Aborted bool
+	var plateauAborted bool
 
 	// H-25: resume / fresh handling. --fresh wins over --resume with
 	// a warning so an ambiguous operator command can't silently resume
@@ -1013,6 +1094,33 @@ func simpleLoopCmd(args []string) {
 			*maxRounds = newCap
 		}
 
+		// H-29 plateau check — record this round's gap count and, if
+		// 3 consecutive rounds failed to drop the count by >= 1, exit
+		// with PARTIAL-SUCCESS status instead of burning another
+		// round. Commits landed so far are preserved; the operator
+		// gets a concrete report of what's still missing.
+		if gapProgress.Observe(len(gaps)) {
+			hist := gapProgress.History()
+			fmt.Printf("\n⏸  ROUND %d: gap count plateau (%v over %d rounds, best=%d) — exiting with PARTIAL-SUCCESS to avoid burning tokens on non-convergent loop.\n",
+				round, hist, len(hist), gapProgress.Best())
+			plateauAborted = true
+			if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
+				SOWHash:      proseHash,
+				CurrentRound: round,
+				MaxRounds:    *maxRounds,
+				Reviewer:     *reviewer,
+				FixMode:      globalFixMode,
+				CurrentProse: currentProse,
+				Step8Cycles:  step8Tracker.Cycles(),
+				LastGaps:     step8Tracker.LastGaps(),
+				Aborted:      true,
+				RepoHead:     currentRepoHead(absRepo),
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ could not persist plateau state: %v\n", err)
+			}
+			break
+		}
+
 		fmt.Printf("\n🔄 ROUND %d: gaps remain — extracting remaining work for next round\n", round)
 		currentProse = nextProse // next round's input
 
@@ -1044,8 +1152,9 @@ func simpleLoopCmd(args []string) {
 	// left to resume). On regression abort we mark the state file
 	// Aborted=true so --resume refuses until the operator explicitly
 	// passes --fresh or extends the SOW (otherwise relaunching just
-	// reproduces the same abort).
-	if step8Aborted {
+	// reproduces the same abort). Plateau aborts also mark Aborted=true
+	// so --resume refuses; operator must re-scope or --fresh.
+	if step8Aborted || plateauAborted {
 		if err := SaveSimpleLoopState(absRepo, &simpleLoopState{
 			SOWHash:      proseHash,
 			CurrentRound: *maxRounds,
@@ -1068,7 +1177,17 @@ func simpleLoopCmd(args []string) {
 
 	// Final summary
 	fmt.Println("\n═══════════════════════════════════════")
-	if step8Aborted {
+	if plateauAborted {
+		fmt.Println("  SIMPLE LOOP PARTIAL-SUCCESS — plateau reached")
+		fmt.Printf("  repo: %s\n", absRepo)
+		fmt.Printf("  gap-count trajectory: %v (best=%d)\n",
+			gapProgress.History(), gapProgress.Best())
+		fmt.Printf("  remaining gaps at exit: %s\n",
+			formatGapList(step8Tracker.LastGaps()))
+		fmt.Println("  real code shipped to main; run `git log --oneline` to audit.")
+		fmt.Println("  next step: review the diff, merge what's good, re-scope the")
+		fmt.Println("  remaining gaps into a tighter SOW, and relaunch.")
+	} else if step8Aborted {
 		fmt.Println("  SIMPLE LOOP ABORTED — Step-8 regression cap reached")
 		fmt.Printf("  repo: %s\n", absRepo)
 		fmt.Printf("  consecutive gap-closure failures: %d (cap %d)\n",
@@ -1088,6 +1207,14 @@ func simpleLoopCmd(args []string) {
 		// commands) can detect the regression-cap abort without
 		// having to scrape stdout.
 		os.Exit(3)
+	}
+	if plateauAborted {
+		// Distinct exit code from the regression-cap abort so outer
+		// orchestrators can tell "ran a long time and bailed from
+		// non-convergence" from "bailed quickly after obvious
+		// regression". Both are PARTIAL-SUCCESS in the sense that
+		// committed work still landed; only the exit signal differs.
+		os.Exit(4)
 	}
 }
 
