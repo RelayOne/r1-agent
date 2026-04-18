@@ -94,6 +94,33 @@ func NewFallbackPair(role string, primary, secondary ModelRole) *FallbackPair {
 	return fp
 }
 
+// StartBackgroundPinger spawns a goroutine that runs maybeHealthCheck
+// at the configured interval regardless of caller traffic. Without
+// this, a run that fell back to secondary and is completing jobs
+// happily will never re-probe the primary — the restoration path
+// only fires when Call() is invoked, and a long builder call may
+// keep the loop pinned to secondary for 30+ min at a time.
+//
+// Safe to call multiple times; subsequent calls replace the previous
+// ticker. Pass a cancelled context to stop.
+func (fp *FallbackPair) StartBackgroundPinger(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(fp.healthCheckEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// maybeHealthCheck is guarded by its own interval
+				// check, so a separate caller-driven invocation
+				// + this background tick won't double-fire.
+				fp.maybeHealthCheck(ctx)
+			}
+		}
+	}()
+}
+
 // active returns the currently-active ModelRole. Cheap, lock-free.
 func (fp *FallbackPair) active() ModelRole {
 	if fp.currentPrimary.Load() == 0 {
@@ -181,6 +208,20 @@ func (fp *FallbackPair) isRateLimit(role ModelRole, output string, err error) bo
 				return true
 			}
 		}
+		// Claude-specific rate-limit / empty-output signals. The
+		// ccRole.Call adapter synthesizes "claude returned empty
+		// output" when claudeCall bubbled up a rate-limit that
+		// WaitIfPaused already consumed — match that explicitly
+		// so the pair swaps to codex instead of waiting out another
+		// 15-min exponential backoff. Without this branch the swap
+		// never fires on a saturated Claude account.
+		if name == "claude" {
+			if strings.Contains(emsg, "returned empty output") ||
+				strings.Contains(emsg, "rate-limit") ||
+				strings.Contains(emsg, "rate limit") {
+				return true
+			}
+		}
 		if name == "claude" && len(output) < 200 {
 			return true
 		}
@@ -245,6 +286,26 @@ func (fp *FallbackPair) pingRole(parent context.Context, role ModelRole) (string
 	}
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
+	// Health check must bypass the backoff short-circuits in
+	// ccRole.Call / codexRole.Call — otherwise when a provider is
+	// paused (which is exactly why health checks exist), the ping
+	// always "fails" without actually probing, and the primary is
+	// never restored. Both ccRole and codexRole are bypassed
+	// symmetrically here.
+	if _, ok := role.(ccRole); ok {
+		out := claudeCall(globalClaudeBin, globalRepoRoot, fp.healthPingPrompt)
+		if strings.TrimSpace(out) == "" {
+			return "", fmt.Errorf("claude ping returned empty")
+		}
+		return out, nil
+	}
+	if _, ok := role.(codexRole); ok {
+		out := codexCall(globalCodexBin, globalRepoRoot, fp.healthPingPrompt)
+		if strings.TrimSpace(out) == "" {
+			return "", fmt.Errorf("codex ping returned empty")
+		}
+		return out, nil
+	}
 	return role.Call(ctx, fp.healthPingPrompt)
 }
 
@@ -310,6 +371,16 @@ func (ccRole) Call(ctx context.Context, prompt string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	// If the rate-limit detector has already entered Active pause,
+	// fail FAST so FallbackPair swaps to the secondary instead of
+	// blocking for a 15-minute backoff. Without this short-circuit
+	// writerPair sees claudeCall as "slow but working" and never
+	// gets a chance to try codex. This is the observed bug from
+	// the live cohort: 3 Claude rate-limit events → 15m pause →
+	// writer loop wastes the pause window instead of using codex.
+	if claudeBackoff.State() == claudeBackoffActive {
+		return "", fmt.Errorf("claude rate-limit pause active (H-10)")
+	}
 	dir := globalRepoRoot
 	if dir == "" {
 		dir = "."
@@ -339,6 +410,16 @@ func (codexRole) Name() string { return "codex" }
 func (codexRole) Call(ctx context.Context, prompt string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	// Symmetric short-circuit with ccRole: if codex's own backoff
+	// (H-7) has piled up multiple-x delays, fail fast so the pair
+	// swaps to the Claude secondary rather than waiting out the
+	// backoff on every call. Both directions now cover: codex freezes
+	// → use claude; claude freezes → use codex. When each recovers
+	// the background pinger restores it as primary.
+	if codexBackoff.Multiplier() >= 4 {
+		return "", fmt.Errorf("codex rate-limit backoff active (%dx, H-7)",
+			codexBackoff.Multiplier())
 	}
 	dir := globalRepoRoot
 	if dir == "" {
@@ -371,13 +452,28 @@ var (
 // root have been resolved. Idempotent.
 func initFallbackPairs(repoRoot string) {
 	globalRepoRoot = repoRoot
+	// Background pingers use a package-level cancel so a second
+	// initFallbackPairs call (e.g. tests) doesn't spawn duplicates.
+	if fallbackPingerCancel != nil {
+		fallbackPingerCancel()
+	}
+	pingerCtx, cancel := context.WithCancel(context.Background())
+	fallbackPingerCancel = cancel
+
 	if writerPair == nil {
 		writerPair = NewFallbackPair("writer", ccRole{}, codexRole{})
 	}
+	writerPair.StartBackgroundPinger(pingerCtx)
+
 	if reviewerPair == nil {
 		reviewerPair = NewFallbackPair("reviewer", codexRole{}, ccRole{})
 	}
+	reviewerPair.StartBackgroundPinger(pingerCtx)
 }
+
+// fallbackPingerCancel cancels the pinger goroutines from a previous
+// initFallbackPairs call so re-init doesn't leak duplicates.
+var fallbackPingerCancel context.CancelFunc
 
 // writerCall routes a writer prompt through the writerPair when it
 // is wired, falling back to direct claudeCall for backward compat
