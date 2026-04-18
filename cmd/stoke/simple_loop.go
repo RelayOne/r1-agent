@@ -319,6 +319,14 @@ func simpleLoopCmd(args []string) {
 	// run always produces a clean slate.
 	resume := fs.Bool("resume", false, "Resume from prior .stoke/simple-loop-state.json (skips completed rounds, preserves H-6 counter). Refuses to resume on SOW/reviewer/fix-mode mismatch or prior regression-cap abort.")
 	fresh := fs.Bool("fresh", false, "Clear .stoke/simple-loop-state.json before starting. Use after a crash or when relaunching a new SOW. Incompatible with --resume.")
+	// H-30: lenient compliance. Changes the success criterion from
+	// "compliance gate clean" to "CC audit says ALL DELIVERABLES
+	// COMPLETE + at least 1 commit landed + build-verify didn't
+	// reject". Lets small-scope runs (R01/R02/R03) exit cleanly when
+	// the compliance gate is merely finding residual regex false
+	// positives or SOW prose the worker legitimately deferred. The
+	// strict default still holds when this flag is off.
+	lenient := fs.Bool("lenient-compliance", false, "Exit on CC-says-done + commits-landed, even if compliance gate still has minor findings. For small-scope proofs where the strict gate can falsely block convergence.")
 	fs.Parse(args)
 
 	if *sowFile == "" {
@@ -971,7 +979,25 @@ func simpleLoopCmd(args []string) {
 				len(strings.TrimSpace(audit)))
 		}
 
-		// Step 9: Check if done — BOTH gates must agree
+		// Step 9: Check if done.
+		// Default (strict): BOTH gates must agree — CC says complete
+		// AND compliance sweep is clean.
+		// H-30 lenient mode: CC says complete + at least 1 commit
+		// landed this round is sufficient; compliance findings become
+		// advisory, not blocking. Lets small-scope runs exit cleanly
+		// when the regex-based compliance gate surfaces residual
+		// false positives that don't correspond to real gaps.
+		headAfterRound := shellCmd(absRepo, "git rev-parse HEAD 2>/dev/null || echo none")
+		commitsLanded := headAfterRound != "none" && headAfterRound != headBefore
+		if *lenient && ccSaysDone && commitsLanded {
+			fmt.Printf("\n✅ ROUND %d: Lenient mode — CC reports complete + %d commits landed; residual compliance findings logged as advisory.\n",
+				round, reviewRound)
+			step8Tracker.ObserveAuditResult(true, true, nil)
+			if err := ClearSimpleLoopState(absRepo); err != nil {
+				fmt.Fprintf(os.Stderr, "  ⚠ could not clear simple-loop-state.json on lenient pass: %v\n", err)
+			}
+			break
+		}
 		if ccSaysDone && complianceClean {
 			fmt.Printf("\n✅ ROUND %d: All deliverables complete (CC audit + compliance sweep both clean)\n", round)
 			// Reset the regression tracker on clean pass — future
