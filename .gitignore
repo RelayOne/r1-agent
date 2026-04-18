@@ -20,4 +20,6 @@ plans/monitor/history.json
 plans/monitor/manage-decisions.log
 plans/scope-suite/results.jsonl
 plans/scope-suite/*-driver.log
+plans/scope-suite/ladder-driver.log
+plans/scope-suite/ladder-state.json
 STATUS.md
