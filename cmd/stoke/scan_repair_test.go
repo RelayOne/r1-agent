@@ -449,23 +449,37 @@ func TestEndToEnd_SmokeAllPhases(t *testing.T) {
 	var reviewerCalls int64
 	var phase4Calls int64
 	cfg := &scanRepairConfig{
-		Repo:         repo,
-		WorkerModel:  "sonnet",
-		Reviewer:     "codex",
-		Mode:         "sow",
-		MaxSections:  5,
-		MaxPatterns:  5,
-		Workers:      2,
-		ClaudeBin:    "claude",
-		CodexBin:    "codex",
-		SemanticFile: filepath.Join(repo, ".claude", "scripts", "semantic-patterns.md"),
-		phase1Runner: fakePh1,
+		Repo:                repo,
+		WorkerModel:         "sonnet",
+		Reviewer:            "codex",
+		Mode:                "sow",
+		MaxSections:         5,
+		MaxPatterns:         5,
+		Workers:             2,
+		ClaudeBin:           "claude",
+		CodexBin:            "codex",
+		SemanticFile:        filepath.Join(repo, ".claude", "scripts", "semantic-patterns.md"),
+		// H-17: skip the new Phase 2b/2c/2d sub-phases in this smoke
+		// test — they each have their own dedicated tests.
+		SkipSecurityVectors: true,
+		SkipPersonas:        true,
+		SkipCodexReview:     true,
+		phase1Runner:        fakePh1,
 		semanticCaller: func(ctx context.Context, dir, prompt string) string {
-			return "- src/main.ts:1 — placeholder comment\n"
+			return "- [CRITICAL] src/main.ts:1 — body comment — fix: remove stray line\n"
 		},
 		reviewerCaller: func(ctx context.Context, dir, prompt string) string {
 			atomic.AddInt64(&reviewerCalls, 1)
-			return "# Fix SOW\n\n## critical\n\n- [ ] T1: remove placeholder in src/main.ts\n"
+			// Reviewer fires for dedupe (3b), TIER filter (3c), AND per-
+			// section fix-tasks (3d). Detect which is which by substring.
+			switch {
+			case strings.Contains(prompt, "## TIER 1"):
+				return "## TIER 1\n\n- [CRITICAL] src/main.ts:1 — body comment — fix: remove stray line\n\n## TIER 2 (small/medium effort)\n\n## TIER 3 (dropped)\n"
+			case strings.Contains(prompt, "De-duplicate"):
+				return "- [CRITICAL] src/main.ts:1 — body comment — fix: remove stray line\n"
+			default:
+				return "- [ ] FIX-src-1: remove stray line in src/main.ts\n"
+			}
 		},
 		phase4Runner: func(ctx context.Context, cfg *scanRepairConfig, sowPath string) error {
 			atomic.AddInt64(&phase4Calls, 1)
@@ -475,16 +489,18 @@ func TestEndToEnd_SmokeAllPhases(t *testing.T) {
 	if err := runScanRepair(context.Background(), cfg); err != nil {
 		t.Fatalf("runScanRepair: %v", err)
 	}
-	// FIX_SOW.md should exist and contain the reviewer's output.
+	// FIX_SOW.md should exist and contain the fix-task output from 3d.
 	data, err := os.ReadFile(filepath.Join(repo, "FIX_SOW.md"))
 	if err != nil {
 		t.Fatalf("FIX_SOW.md not created: %v", err)
 	}
-	if !strings.Contains(string(data), "T1: remove placeholder in src/main.ts") {
-		t.Errorf("FIX_SOW.md missing reviewer content: %s", data)
+	if !strings.Contains(string(data), "FIX-src-1: remove stray line in src/main.ts") {
+		t.Errorf("FIX_SOW.md missing fix-task content: %s", data)
 	}
-	if atomic.LoadInt64(&reviewerCalls) != 1 {
-		t.Errorf("reviewer should be called exactly once, got %d", reviewerCalls)
+	// Reviewer fires at least twice (dedupe + TIER) plus once per
+	// section for 3d fix-tasks.
+	if atomic.LoadInt64(&reviewerCalls) < 2 {
+		t.Errorf("reviewer should be called >=2 times (dedupe+TIER), got %d", reviewerCalls)
 	}
 	if atomic.LoadInt64(&phase4Calls) != 1 {
 		t.Errorf("phase4 should be called exactly once, got %d", phase4Calls)
@@ -505,12 +521,17 @@ func TestEndToEnd_EarlyExitOnZeroFindings(t *testing.T) {
 	var reviewerCalls int64
 	var phase4Calls int64
 	cfg := &scanRepairConfig{
-		Repo:         repo,
-		Mode:         "sow",
-		MaxSections:  5,
-		MaxPatterns:  5,
-		Workers:      2,
-		SemanticFile: filepath.Join(repo, ".claude", "scripts", "semantic-patterns.md"),
+		Repo:                repo,
+		Mode:                "sow",
+		MaxSections:         5,
+		MaxPatterns:         5,
+		Workers:             2,
+		SemanticFile:        filepath.Join(repo, ".claude", "scripts", "semantic-patterns.md"),
+		// H-17: skip the new 2b/2c/2d sub-phases for this clean-audit
+		// scenario — covered by dedicated tests below.
+		SkipSecurityVectors: true,
+		SkipPersonas:        true,
+		SkipCodexReview:     true,
 		phase1Runner: func(ctx context.Context, cfg *scanRepairConfig) (*phase1Result, error) {
 			_ = os.MkdirAll(filepath.Join(cfg.Repo, "audit"), 0755)
 			_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "deterministic-report.md"),
@@ -525,7 +546,9 @@ func TestEndToEnd_EarlyExitOnZeroFindings(t *testing.T) {
 		},
 		reviewerCaller: func(ctx context.Context, dir, prompt string) string {
 			atomic.AddInt64(&reviewerCalls, 1)
-			return "SHOULD_NOT_CALL"
+			// If reviewer does get called, return something that
+			// reduces to zero findings so 3e short-circuits.
+			return "None."
 		},
 		phase4Runner: func(ctx context.Context, cfg *scanRepairConfig, sowPath string) error {
 			atomic.AddInt64(&phase4Calls, 1)
@@ -535,15 +558,18 @@ func TestEndToEnd_EarlyExitOnZeroFindings(t *testing.T) {
 	if err := runScanRepair(context.Background(), cfg); err != nil {
 		t.Fatalf("runScanRepair: %v", err)
 	}
-	if reviewerCalls != 0 {
-		t.Errorf("reviewer called %d times on clean audit; want 0", reviewerCalls)
-	}
+	// Phase 4 must not fire when approved == 0.
 	if phase4Calls != 0 {
 		t.Errorf("phase4 fired %d times on clean audit; want 0", phase4Calls)
 	}
+	// FIX_SOW.md should exist with the no-issues banner.
 	data, _ := os.ReadFile(filepath.Join(repo, "FIX_SOW.md"))
-	if !strings.Contains(string(data), "no issues") {
-		t.Errorf("FIX_SOW.md should contain 'no issues', got: %s", data)
+	if !strings.Contains(string(data), "no high-impact issues") {
+		t.Errorf("FIX_SOW.md should mention 'no high-impact issues', got: %s", data)
+	}
+	// Also audit/scan-complete.md should be written by Phase 3e.
+	if _, err := os.Stat(filepath.Join(repo, "audit", "scan-complete.md")); err != nil {
+		t.Errorf("audit/scan-complete.md not written: %v", err)
 	}
 }
 

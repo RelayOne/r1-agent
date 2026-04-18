@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // scan-repair: H-15
@@ -64,12 +68,50 @@ type scanRepairConfig struct {
 	StokeBin     string // absolute path to the stoke binary (auto-detected)
 	SemanticFile string // path to semantic-patterns.md (resolved from .claude/scripts)
 
+	// H-17/H-18 additions.
+	Interactive         bool   // --interactive; auto-detected from isatty(stdin)
+	InteractiveExplicit bool   // true when operator passed --interactive=... explicitly
+	MaxSectionsExplicit bool   // true when operator passed --max-sections=... explicitly
+	MaxPatternsExplicit bool   // true when operator passed --max-patterns=... explicitly
+	SkipSecurityVectors bool   // --skip-security-vectors
+	SkipPersonas        bool   // --skip-personas
+	SkipCodexReview     bool   // --skip-codex-review
+	PersonasSelection   string // --personas: "all" | "core" | comma list
+	OpusBin             string // --opus-bin: optional alternate binary for opus-preferred calls
+
 	// Hooks used in tests to short-circuit real subprocesses.
 	// In production these are left nil and the real shellers are used.
-	semanticCaller func(ctx context.Context, dir, prompt string) string                                                  // test override for the semantic-scan worker
-	reviewerCaller func(ctx context.Context, dir, prompt string) string                                                  // test override for the reviewer
-	phase1Runner   func(ctx context.Context, cfg *scanRepairConfig) (*phase1Result, error)                               // test override for Phase 1 shell-out
-	phase4Runner   func(ctx context.Context, cfg *scanRepairConfig, sowPath string) error                                // test override for Phase 4 runner dispatch
+	semanticCaller func(ctx context.Context, dir, prompt string) string                          // test override for the semantic-scan worker
+	reviewerCaller func(ctx context.Context, dir, prompt string) string                          // test override for the reviewer
+	phase1Runner   func(ctx context.Context, cfg *scanRepairConfig) (*phase1Result, error)       // test override for Phase 1 shell-out
+	phase4Runner   func(ctx context.Context, cfg *scanRepairConfig, sowPath string) error        // test override for Phase 4 runner dispatch
+	vectorCaller   func(ctx context.Context, dir, prompt string, preferOpus bool) string         // test override for Phase 2b vector worker
+	personaCaller  func(ctx context.Context, dir, prompt string, preferOpus bool) string         // test override for Phase 2c persona worker
+	codexCaller    func(ctx context.Context, dir string) ([]byte, error)                         // test override for Phase 2d codex shell-out
+	fixTaskCaller  func(ctx context.Context, dir, prompt string) string                          // test override for Phase 3d fix-task generation
+
+	// Stdin source for interactive prompts. Tests inject a strings.Reader;
+	// production defers to os.Stdin. The field is typed as io.Reader via
+	// any concrete reader so we can keep the struct dependency-light.
+	interactiveIn interface {
+		Read(p []byte) (int, error)
+	}
+}
+
+// isHeadless returns true when the process appears to be running
+// non-interactively. The check is:
+//
+//  1. If the operator explicitly passed --interactive=..., honor that
+//     (cfg.Interactive reflects the explicit value).
+//  2. Otherwise, detect TTY on stdin via golang.org/x/term.
+//
+// Headless mode triggers the "full depth, no caps" behavior from H-18.
+func isHeadless(cfg *scanRepairConfig) bool {
+	if cfg.InteractiveExplicit {
+		return !cfg.Interactive
+	}
+	// Default auto-detect: no TTY on stdin → headless.
+	return !term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // scanRepairCmd is the cmd/stoke/main.go dispatcher entry point. It
@@ -83,13 +125,37 @@ func scanRepairCmd(args []string) {
 	workerModel := fs.String("worker-model", "claude-sonnet-4-6", "Model for Phase 2 semantic scan calls")
 	reviewer := fs.String("reviewer", "codex", "Reviewer backend for Phase 3: codex | cc-opus | cc-sonnet | claude")
 	mode := fs.String("mode", "sow", "Phase 4 execution mode: sow | simple-loop")
-	maxSections := fs.Int("max-sections", 20, "Cap on sections scanned in Phase 2")
-	maxPatterns := fs.Int("max-patterns", 5, "Cap on patterns per section in Phase 2")
+	maxSections := fs.Int("max-sections", 20, "Cap on sections scanned in Phase 2 (unlimited in headless mode unless set)")
+	maxPatterns := fs.Int("max-patterns", 5, "Cap on patterns per section in Phase 2 (unlimited in headless mode unless set)")
 	workers := fs.Int("workers", 4, "Phase 2 concurrency (default 4 concurrent semantic calls)")
 	fresh := fs.Bool("fresh", false, "Clear any prior audit/ artifacts before running")
 	claudeBin := fs.String("claude-bin", "claude", "Claude Code binary")
 	codexBin := fs.String("codex-bin", "codex", "Codex binary")
+	// H-17/H-18 flags.
+	interactive := fs.Bool("interactive", false, "Interactive mode (prompts between phases). Default: auto-detect isatty(stdin).")
+	skipSecVec := fs.Bool("skip-security-vectors", false, "Skip Phase 2b security-vector scan")
+	skipPersonas := fs.Bool("skip-personas", false, "Skip Phase 2c 17-persona audit")
+	skipCodex := fs.Bool("skip-codex-review", false, "Skip Phase 2d codex deep review")
+	personas := fs.String("personas", "all", "Persona selection: all | core | comma,list,of,slugs")
+	opusBin := fs.String("opus-bin", "", "Path to opus-capable binary for security-critical audits; empty = use worker-model")
 	fs.Parse(args)
+
+	// Detect whether the operator passed certain flags explicitly. We
+	// can't use flag.Visit to mutate the *int afterward, so we scan
+	// fs.Visit and flip the *Explicit booleans.
+	interactiveSet := false
+	maxSectionsSet := false
+	maxPatternsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "interactive":
+			interactiveSet = true
+		case "max-sections":
+			maxSectionsSet = true
+		case "max-patterns":
+			maxPatternsSet = true
+		}
+	})
 
 	if *repo == "" {
 		fmt.Fprintln(os.Stderr, "usage: stoke scan-repair --repo <path> [flags]")
@@ -114,16 +180,25 @@ func scanRepairCmd(args []string) {
 	}
 
 	cfg := &scanRepairConfig{
-		Repo:        absRepo,
-		WorkerModel: *workerModel,
-		Reviewer:    *reviewer,
-		Mode:        *mode,
-		MaxSections: *maxSections,
-		MaxPatterns: *maxPatterns,
-		Workers:     *workers,
-		Fresh:       *fresh,
-		ClaudeBin:   *claudeBin,
-		CodexBin:    *codexBin,
+		Repo:                absRepo,
+		WorkerModel:         *workerModel,
+		Reviewer:            *reviewer,
+		Mode:                *mode,
+		MaxSections:         *maxSections,
+		MaxPatterns:         *maxPatterns,
+		Workers:             *workers,
+		Fresh:               *fresh,
+		ClaudeBin:           *claudeBin,
+		CodexBin:            *codexBin,
+		Interactive:         *interactive,
+		InteractiveExplicit: interactiveSet,
+		MaxSectionsExplicit: maxSectionsSet,
+		MaxPatternsExplicit: maxPatternsSet,
+		SkipSecurityVectors: *skipSecVec,
+		SkipPersonas:        *skipPersonas,
+		SkipCodexReview:     *skipCodex,
+		PersonasSelection:   *personas,
+		OpusBin:             *opusBin,
 	}
 	// Locate the stoke binary so Phase 4 can re-invoke it without
 	// relying on $PATH resolution. Errors on either os.Executable or
@@ -152,15 +227,32 @@ func scanRepairCmd(args []string) {
 // mocked phase runners (cfg.phase1Runner / cfg.semanticCaller / etc.)
 // without touching flag parsing or os.Exit.
 func runScanRepair(ctx context.Context, cfg *scanRepairConfig) error {
+	// H-18: apply headless-mode cap overrides BEFORE printing so the
+	// banner shows the effective values. Headless ∧ caps-at-default →
+	// unlimited (0). If the operator explicitly set --max-sections or
+	// --max-patterns, we respect their value even in headless mode.
+	headless := isHeadless(cfg)
+	if headless {
+		if !cfg.MaxSectionsExplicit && cfg.MaxSections == 20 {
+			cfg.MaxSections = 0
+		}
+		if !cfg.MaxPatternsExplicit && cfg.MaxPatterns == 5 {
+			cfg.MaxPatterns = 0
+		}
+	}
+
 	fmt.Printf("stoke scan-repair\n")
 	fmt.Printf("  repo:         %s\n", cfg.Repo)
 	fmt.Printf("  worker:       %s\n", cfg.WorkerModel)
 	fmt.Printf("  reviewer:     %s\n", cfg.Reviewer)
 	fmt.Printf("  mode:         %s\n", cfg.Mode)
-	fmt.Printf("  max sections: %d\n", cfg.MaxSections)
-	fmt.Printf("  max patterns: %d\n", cfg.MaxPatterns)
+	fmt.Printf("  max sections: %s\n", capDisplay(cfg.MaxSections))
+	fmt.Printf("  max patterns: %s\n", capDisplay(cfg.MaxPatterns))
 	fmt.Printf("  workers:      %d\n", cfg.Workers)
-	fmt.Printf("  fresh:        %v\n\n", cfg.Fresh)
+	fmt.Printf("  fresh:        %v\n", cfg.Fresh)
+	fmt.Printf("  headless:     %v\n", headless)
+	fmt.Printf("  personas:     %s\n", cfg.PersonasSelection)
+	fmt.Printf("  skip vec/per/codex: %v/%v/%v\n\n", cfg.SkipSecurityVectors, cfg.SkipPersonas, cfg.SkipCodexReview)
 
 	// --fresh: wipe prior audit/* + FIX_SOW.md before Phase 1 so we
 	// aren't confused by stale findings from a previous run.
@@ -191,7 +283,12 @@ func runScanRepair(ctx context.Context, cfg *scanRepairConfig) error {
 	fmt.Printf("  Phase 1 complete: %d sections, %d deterministic findings, %d security findings\n\n",
 		p1.NumSections, p1.DeterministicFindings, p1.SecurityFindings)
 
-	// === Phase 2 ===
+	// H-18 interactive prompt: after Phase 1, ask the operator what
+	// scope they want. In headless mode this is a no-op that returns
+	// "A" (full scope) silently.
+	promptPhase1Scope(cfg, p1)
+
+	// === Phase 2a: semantic scan ===
 	fmt.Println("─── Phase 2: Semantic scan ───")
 	p2, err := runPhase2(ctx, cfg, p1)
 	if err != nil {
@@ -202,29 +299,67 @@ func runScanRepair(ctx context.Context, cfg *scanRepairConfig) error {
 	fmt.Printf("  Phase 2 complete: %d calls, %d findings, %d timeouts\n\n",
 		p2.CallsMade, p2.FindingsCount, p2.Timeouts)
 
-	// Early-exit: if phases 1+2 found absolutely nothing, skip the
-	// reviewer + execution phases. "Nothing broken" is a valid
-	// outcome — don't waste reviewer tokens inventing work.
-	if p1.DeterministicFindings == 0 && p1.SecurityFindings == 0 && p2.FindingsCount == 0 {
-		fmt.Println("  audit found no issues — skipping Phase 3 + 4")
-		noFindingsPath := filepath.Join(cfg.Repo, "FIX_SOW.md")
-		if err := os.WriteFile(noFindingsPath,
-			[]byte("# Fix SOW\n\nAudit found no issues. No tasks generated.\n"), 0644); err != nil {
-			// Non-fatal: clean-audit marker is informational. Surface
-			// the error so operators know the file wasn't written,
-			// but don't fail the run — nothing is broken.
-			fmt.Fprintf(os.Stderr, "  [scan-repair] write %s: %v\n", noFindingsPath, err)
+	// === Phase 2b: security vector scan ===
+	if !cfg.SkipSecurityVectors && promptPhase2bScope(cfg) {
+		fmt.Println("─── Phase 2b: Security vector scan ───")
+		if err := runPhase2bSecurityVectors(ctx, cfg, p1); err != nil {
+			fmt.Fprintf(os.Stderr, "  [Phase 2b] non-fatal: %v\n", err)
 		}
-		return nil
+	} else {
+		fmt.Println("  Phase 2b skipped (--skip-security-vectors or operator choice)")
 	}
 
-	// === Phase 3 ===
-	fmt.Println("─── Phase 3: Fix-SOW generation ───")
-	sowPath, err := runPhase3(ctx, cfg, p1, p2)
+	// === Phase 2c: 17-persona audit ===
+	if !cfg.SkipPersonas && promptPhase2cScope(cfg) {
+		fmt.Println("─── Phase 2c: 17-persona audit ───")
+		if err := runPhase2cPersonas(ctx, cfg, p1); err != nil {
+			fmt.Fprintf(os.Stderr, "  [Phase 2c] non-fatal: %v\n", err)
+		}
+	} else {
+		fmt.Println("  Phase 2c skipped (--skip-personas or operator choice)")
+	}
+
+	// === Phase 2d: codex deep review ===
+	if !cfg.SkipCodexReview {
+		fmt.Println("─── Phase 2d: Codex deep review ───")
+		if err := runPhase2dCodexReview(ctx, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "  [Phase 2d] non-fatal: %v\n", err)
+		}
+	} else {
+		fmt.Println("  Phase 2d skipped (--skip-codex-review)")
+	}
+
+	// === Phase 3: aggregate → dedupe → TIER filter → fix-tasks ===
+	fmt.Println("─── Phase 3: Aggregate, dedupe, tier-filter, fix-tasks ───")
+	ph3, err := runPhase3Full(ctx, cfg, p1, p2)
 	if err != nil {
 		return fmt.Errorf("phase 3: %w", err)
 	}
-	fmt.Printf("  Phase 3 complete: wrote %s\n\n", sowPath)
+
+	// === Phase 3e: zero-findings clean exit ===
+	if ph3.Approved == 0 {
+		msg := fmt.Sprintf(
+			"# Scan Complete\n\nNo high-impact issues found across %d sections.\n\n"+
+				"[DROPPED] %d low-impact findings filtered to audit/findings-dropped.md.\n",
+			p1.NumSections, ph3.Dropped)
+		completePath := filepath.Join(cfg.Repo, "audit", "scan-complete.md")
+		if err := os.WriteFile(completePath, []byte(msg), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "  [scan-repair] write %s: %v\n", completePath, err)
+		}
+		// Also write a trivial FIX_SOW.md so downstream tools that
+		// blindly look for it don't blow up.
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "FIX_SOW.md"),
+			[]byte("# Fix SOW\n\nAudit found no high-impact issues. No tasks generated.\n"), 0644)
+		fmt.Printf("🎯 Phase 3c TIER: APPROVED=0 DEFERRED=%d DROPPED=%d — skipping Phase 4\n",
+			ph3.Deferred, ph3.Dropped)
+		return nil
+	}
+
+	// Interactive choice between Phases 3 and 4.
+	if !promptPhase3cChoice(cfg, ph3) {
+		fmt.Println("  operator chose to skip Phase 4.")
+		return nil
+	}
 
 	// === Phase 4 ===
 	fmt.Printf("─── Phase 4: Execute FIX_SOW (mode=%s) ───\n", cfg.Mode)
@@ -232,11 +367,19 @@ func runScanRepair(ctx context.Context, cfg *scanRepairConfig) error {
 	if ph4Runner == nil {
 		ph4Runner = runPhase4
 	}
-	if err := ph4Runner(ctx, cfg, sowPath); err != nil {
+	if err := ph4Runner(ctx, cfg, ph3.SOWPath); err != nil {
 		return fmt.Errorf("phase 4: %w", err)
 	}
 	fmt.Println("scan-repair: done.")
 	return nil
+}
+
+// capDisplay renders a Phase 2 cap. 0 → "unlimited" for readability.
+func capDisplay(n int) string {
+	if n <= 0 {
+		return "unlimited"
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // ------------------------------------------------------------------
@@ -421,4 +564,146 @@ func writeDeterministicReport(auditDir string, res *phase1Result) error {
 	}
 
 	return os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), buf.Bytes(), 0644)
+}
+
+// ------------------------------------------------------------------
+// Interactive prompt helpers (H-18).
+// ------------------------------------------------------------------
+
+// readInteractiveChoice reads one line from cfg.interactiveIn (falling
+// back to os.Stdin). Returns the first non-whitespace letter, uppercased.
+// On EOF/error or blank line, returns the default letter.
+func readInteractiveChoice(cfg *scanRepairConfig, def byte) byte {
+	var r io.Reader = cfg.interactiveIn
+	if r == nil {
+		r = os.Stdin
+	}
+	br := bufio.NewReader(r)
+	line, err := br.ReadString('\n')
+	if err != nil && line == "" {
+		return def
+	}
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		if c >= 'a' && c <= 'z' {
+			c = c - 'a' + 'A'
+		}
+		return c
+	}
+	return def
+}
+
+// promptPhase1Scope is invoked between Phase 1 and Phase 2a. In
+// headless mode it is a no-op. In interactive mode it asks the
+// operator which semantic-scan scope they want. Any choice other
+// than B/C/D/E is treated as "A — proceed with full scope".
+func promptPhase1Scope(cfg *scanRepairConfig, p1 *phase1Result) {
+	if isHeadless(cfg) {
+		return
+	}
+	fmt.Printf(interactivePhase1PromptTemplate, p1.DeterministicFindings, p1.SecurityFindings)
+	c := readInteractiveChoice(cfg, 'A')
+	switch c {
+	case 'B':
+		// Quality only: keep semantic, skip security + personas.
+		cfg.SkipSecurityVectors = true
+		cfg.SkipPersonas = true
+	case 'C':
+		// Security only: skip semantic → cap to zero, skip personas.
+		cfg.MaxSections = 0
+		cfg.MaxPatterns = 0
+		cfg.MaxSectionsExplicit = true
+		cfg.MaxPatternsExplicit = true
+		cfg.SkipPersonas = true
+	case 'D':
+		// Flagged only: skip semantic, run security + personas.
+		cfg.MaxSections = 0
+		cfg.MaxPatterns = 0
+		cfg.MaxSectionsExplicit = true
+		cfg.MaxPatternsExplicit = true
+	case 'E':
+		// Skip semantic entirely → set caps to 0 so Phase 2a
+		// dispatches nothing.
+		cfg.MaxSections = 0
+		cfg.MaxPatterns = 0
+		cfg.MaxSectionsExplicit = true
+		cfg.MaxPatternsExplicit = true
+		cfg.SkipSecurityVectors = true
+		cfg.SkipPersonas = true
+	default:
+		// A (default): run full scope.
+	}
+}
+
+// promptPhase2bScope returns true when Phase 2b should run. In
+// headless mode returns !SkipSecurityVectors. In interactive mode
+// asks A (run all) or B (skip).
+func promptPhase2bScope(cfg *scanRepairConfig) bool {
+	if isHeadless(cfg) {
+		return true
+	}
+	// Approximate vector count for the prompt; the real count comes
+	// from vectors.md. 10 is the current fixture.
+	fmt.Printf(interactivePhase2bPromptTemplate, 10)
+	c := readInteractiveChoice(cfg, 'A')
+	return c != 'B'
+}
+
+// promptPhase2cScope returns true when Phase 2c should run and
+// (possibly) mutates cfg.PersonasSelection. Headless: pass-through.
+// Interactive: A=all, B=core, C=pick (comma list on stdin), D=skip.
+func promptPhase2cScope(cfg *scanRepairConfig) bool {
+	if isHeadless(cfg) {
+		return true
+	}
+	fmt.Print(interactivePhase2cPromptTemplate)
+	c := readInteractiveChoice(cfg, 'A')
+	switch c {
+	case 'B':
+		cfg.PersonasSelection = "core"
+		return true
+	case 'C':
+		fmt.Print("  Comma-separated persona slugs: ")
+		var r io.Reader = cfg.interactiveIn
+		if r == nil {
+			r = os.Stdin
+		}
+		br := bufio.NewReader(r)
+		line, _ := br.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "" {
+			cfg.PersonasSelection = "all"
+		} else {
+			cfg.PersonasSelection = line
+		}
+		return true
+	case 'D':
+		return false
+	default:
+		cfg.PersonasSelection = "all"
+		return true
+	}
+}
+
+// promptPhase3cChoice returns true when Phase 4 should proceed. In
+// headless mode always returns true. In interactive mode asks A
+// (build now), B (open FIX_SOW.md), C/D (skip build).
+func promptPhase3cChoice(cfg *scanRepairConfig, ph3 *phase3Result) bool {
+	// Always log the tier summary for operators.
+	fmt.Printf("🎯 Phase 3c TIER: APPROVED=%d DEFERRED=%d DROPPED=%d\n",
+		ph3.Approved, ph3.Deferred, ph3.Dropped)
+	if isHeadless(cfg) {
+		return true
+	}
+	fmt.Printf(interactivePhase3cPromptTemplate, ph3.Approved, ph3.Deferred, ph3.Dropped)
+	c := readInteractiveChoice(cfg, 'A')
+	switch c {
+	case 'B', 'C', 'D':
+		return false
+	default:
+		return true
+	}
 }
