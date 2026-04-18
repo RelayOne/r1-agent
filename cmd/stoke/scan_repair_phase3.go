@@ -56,6 +56,23 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 	}
 	fmt.Printf("  Phase 3a aggregate: %d total finding lines from all sources\n", res.Aggregated)
 
+	// H-21: on big repos the aggregate buffer can balloon past the
+	// OS argv limit (ARG_MAX ~= 128 KiB on Linux) AND past the point
+	// where the reviewer can usefully reason about the whole set in
+	// one turn. Pre-prioritize by severity and cap total input to a
+	// sane upper bound. CRITICAL + HIGH + MEDIUM are kept before any
+	// LOW-severity findings are considered for drop; within a tier
+	// we preserve aggregation order (deterministic → semantic →
+	// security → perspectives → codex). The reviewer downstream also
+	// uses stdin piping (see argMaxStdinThreshold), so this cap is
+	// about prompt-sanity for the LLM rather than ARG_MAX alone.
+	if trimmed, droppedByTier := prioritizeAggregatedFindings(agg, phase3MaxAggregateChars); trimmed != agg {
+		fmt.Printf("  Phase 3a prioritize: %d → %d chars (%s)\n",
+			len(agg), len(trimmed), describeDropped(droppedByTier))
+		agg = trimmed
+		res.Aggregated = countAggregateLines(agg)
+	}
+
 	if res.Aggregated == 0 {
 		// Nothing to dedupe/filter — write empty files and let the
 		// orchestrator take the zero-findings clean exit.
@@ -240,6 +257,155 @@ func aggregatePhase3Findings(repo string) string {
 	}
 
 	return buf.String()
+}
+
+// phase3MaxAggregateChars caps the character-count of the aggregate
+// buffer passed to Phase 3b/3c. Empirically picked at 100 KiB: large
+// enough for thousands of findings, small enough to fit comfortably
+// below ARG_MAX on kernels with conservative limits AND to keep the
+// reviewer's attention focused on the most impactful subset. See
+// H-21 (R-deep 31K+ security findings crashed Phase 3 with
+// "argument list too long").
+const phase3MaxAggregateChars = 100 * 1024
+
+// severityRank orders the severity tokens we see in aggregate
+// finding lines. Lower rank = keep first. Unknown severities are
+// treated as medium so they don't get dropped before real low-sev.
+var severityRank = map[string]int{
+	"CRITICAL": 0,
+	"HIGH":     1,
+	"MEDIUM":   2,
+	"LOW":      3,
+	"INFO":     4,
+}
+
+// severityLineRE extracts the "[SEVERITY]" token from the first
+// finding-line prefix. Matches both `- [SEVERITY]` and
+// `- [x] [SEVERITY]` shapes produced across the phase-2* sources.
+var severityLineRE = regexp.MustCompile(`(?i)^-\s*(?:\[[ xX]\]\s*)?\[([A-Za-z]+)\]`)
+
+// prioritizeAggregatedFindings trims `agg` so its character-count fits
+// under `maxChars`. Keeps CRITICAL > HIGH > MEDIUM > LOW > INFO. Lines
+// that don't match the finding format (section headers, prose) are
+// ALWAYS kept as long as they fit — they're structural context that
+// the reviewer needs to understand which block a finding came from.
+//
+// Returns the possibly-trimmed buffer plus a map of severity → dropped
+// count so the caller can surface an informative log line. If `agg`
+// already fits, returns the original string untouched and an empty
+// drop map (the `trimmed == agg` check in the caller short-circuits
+// the log).
+func prioritizeAggregatedFindings(agg string, maxChars int) (string, map[string]int) {
+	dropped := map[string]int{}
+	if len(agg) <= maxChars {
+		return agg, dropped
+	}
+	// Classify every line. Structural lines (headers / prose) retain
+	// their original order so the reviewer sees a coherent document.
+	// Findings are binned by severity for tiered drop.
+	type entry struct {
+		text     string // the line + its trailing "\n"
+		sevRank  int    // 0..4 for known sevs, -1 for structural/prose
+		severity string // "CRITICAL" / "HIGH" / ... or "" for structural
+		idx      int    // original position (stable ordering within rank)
+	}
+	lines := strings.SplitAfter(agg, "\n")
+	var entries []entry
+	for i, l := range lines {
+		if l == "" {
+			continue
+		}
+		m := severityLineRE.FindStringSubmatch(l)
+		if m == nil {
+			// Structural/prose — always retained.
+			entries = append(entries, entry{text: l, sevRank: -1, idx: i})
+			continue
+		}
+		sev := strings.ToUpper(m[1])
+		rank, ok := severityRank[sev]
+		if !ok {
+			// Unknown severity — park at MEDIUM rank so a bespoke
+			// severity like "WARN" doesn't get dropped before LOW.
+			rank = severityRank["MEDIUM"]
+			sev = "MEDIUM"
+		}
+		entries = append(entries, entry{
+			text: l, sevRank: rank, severity: sev, idx: i,
+		})
+	}
+	// Compute the total size if we dropped nothing, then iteratively
+	// drop lowest-rank findings until we fit. Structural lines (rank
+	// = -1) are never dropped. Within a rank we drop from the TAIL so
+	// earlier (higher-signal) findings survive.
+	total := 0
+	for _, e := range entries {
+		total += len(e.text)
+	}
+	// Collect indices of droppable entries sorted by descending
+	// severity rank (drop LOW first, then MEDIUM, etc.) and within
+	// the same rank by descending index (later findings drop first).
+	dropOrder := make([]int, 0, len(entries))
+	for i, e := range entries {
+		if e.sevRank >= 0 {
+			dropOrder = append(dropOrder, i)
+		}
+	}
+	sort.Slice(dropOrder, func(i, j int) bool {
+		ai, bi := dropOrder[i], dropOrder[j]
+		if entries[ai].sevRank != entries[bi].sevRank {
+			return entries[ai].sevRank > entries[bi].sevRank
+		}
+		return entries[ai].idx > entries[bi].idx
+	})
+	droppedIdx := map[int]bool{}
+	for _, di := range dropOrder {
+		if total <= maxChars {
+			break
+		}
+		droppedIdx[di] = true
+		total -= len(entries[di].text)
+		dropped[entries[di].severity]++
+	}
+	// Reassemble in original order, skipping dropped entries.
+	var buf strings.Builder
+	for i, e := range entries {
+		if droppedIdx[i] {
+			continue
+		}
+		buf.WriteString(e.text)
+	}
+	// If we still don't fit (pathological: structural prose alone
+	// blows the budget), hard-truncate at maxChars. This preserves
+	// the guarantee that no caller will ever blow ARG_MAX.
+	out := buf.String()
+	if len(out) > maxChars {
+		out = out[:maxChars] + "\n\n... (truncated to fit prompt cap)\n"
+	}
+	return out, dropped
+}
+
+// describeDropped formats the severity→count map for the Phase 3a
+// prioritize log line. Returns a compact "LOW=123 MEDIUM=4" string.
+func describeDropped(dropped map[string]int) string {
+	if len(dropped) == 0 {
+		return "within cap"
+	}
+	// Deterministic ordering: walk severityRank by rank.
+	type kv struct {
+		sev   string
+		count int
+		rank  int
+	}
+	var items []kv
+	for sev, c := range dropped {
+		items = append(items, kv{sev: sev, count: c, rank: severityRank[sev]})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].rank > items[j].rank })
+	var parts []string
+	for _, it := range items {
+		parts = append(parts, fmt.Sprintf("dropped %s=%d", it.sev, it.count))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // countAggregateLines counts all lines matching the shared finding

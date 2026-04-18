@@ -79,6 +79,25 @@ type scanRepairConfig struct {
 	PersonasSelection   string // --personas: "all" | "core" | comma list
 	OpusBin             string // --opus-bin: optional alternate binary for opus-preferred calls
 
+	// H-22: provider + runner passthroughs for Phase 4 sub-invocation.
+	// The parent `stoke scan-repair` is launched WITH these flags when
+	// the operator is running against a LiteLLM gateway or similar
+	// proxy; Phase 4's `stoke sow` / `stoke simple-loop` child needs
+	// them too or it dies with "no provider configured".
+	Runner           string // --runner for sow mode (claude|codex|native|hybrid)
+	NativeAPIKey     string // --native-api-key
+	NativeBaseURL    string // --native-base-url
+	NativeModel      string // --native-model (for sow mode)
+	ReasoningAPIKey  string // --reasoning-api-key
+	ReasoningBaseURL string // --reasoning-base-url
+	ReasoningModel   string // --reasoning-model
+	// Simple-loop passthroughs.
+	ClaudeModel       string // --claude-model (simple-loop worker)
+	FixMode           string // --fix-mode (sequential|parallel|concurrent)
+	MaxRounds         int    // --max-rounds for simple-loop
+	TierFilterAfter   int    // --tier-filter-after for simple-loop
+	TierFilterThresh  float64 // --tier-filter-threshold for simple-loop
+
 	// Hooks used in tests to short-circuit real subprocesses.
 	// In production these are left nil and the real shellers are used.
 	semanticCaller func(ctx context.Context, dir, prompt string) string                          // test override for the semantic-scan worker
@@ -138,6 +157,22 @@ func scanRepairCmd(args []string) {
 	skipCodex := fs.Bool("skip-codex-review", false, "Skip Phase 2d codex deep review")
 	personas := fs.String("personas", "all", "Persona selection: all | core | comma,list,of,slugs")
 	opusBin := fs.String("opus-bin", "", "Path to opus-capable binary for security-critical audits; empty = use worker-model")
+	// H-22 passthrough flags for Phase 4. Declared but not consumed
+	// inside scan-repair itself — forwarded to `stoke sow` /
+	// `stoke simple-loop` by buildPhase4Args. Empty values are NOT
+	// forwarded (the child uses its own defaults).
+	runnerFlag := fs.String("runner", "", "Phase 4 sow mode: runner (claude|codex|native|hybrid); forwarded to sow")
+	nativeAPIKey := fs.String("native-api-key", "", "Phase 4 sow mode: native runner API key (forwarded)")
+	nativeBaseURL := fs.String("native-base-url", "", "Phase 4 sow mode: native runner base URL (forwarded)")
+	nativeModel := fs.String("native-model", "", "Phase 4 sow mode: native model name (forwarded)")
+	reasoningAPIKey := fs.String("reasoning-api-key", "", "Phase 4 sow mode: reasoning-tier API key (forwarded)")
+	reasoningBaseURL := fs.String("reasoning-base-url", "", "Phase 4 sow mode: reasoning-tier base URL (forwarded)")
+	reasoningModel := fs.String("reasoning-model", "", "Phase 4 sow mode: reasoning-tier model (forwarded)")
+	claudeModel := fs.String("claude-model", "", "Phase 4 simple-loop mode: claude worker model (sonnet|opus|...)")
+	fixMode := fs.String("fix-mode", "", "Phase 4 simple-loop mode: fix-mode (sequential|parallel|concurrent)")
+	srMaxRounds := fs.Int("max-rounds", 0, "Phase 4 simple-loop mode: max outer rounds (0 = use simple-loop default)")
+	srTierFilterAfter := fs.Int("tier-filter-after", -1, "Phase 4 simple-loop mode: tier-filter-after (-1 = use simple-loop default)")
+	srTierFilterThresh := fs.Float64("tier-filter-threshold", -1, "Phase 4 simple-loop mode: tier-filter-threshold (-1 = use default)")
 	fs.Parse(args)
 
 	// Detect whether the operator passed certain flags explicitly. We
@@ -199,6 +234,19 @@ func scanRepairCmd(args []string) {
 		SkipCodexReview:     *skipCodex,
 		PersonasSelection:   *personas,
 		OpusBin:             *opusBin,
+		// H-22 passthroughs.
+		Runner:           *runnerFlag,
+		NativeAPIKey:     *nativeAPIKey,
+		NativeBaseURL:    *nativeBaseURL,
+		NativeModel:      *nativeModel,
+		ReasoningAPIKey:  *reasoningAPIKey,
+		ReasoningBaseURL: *reasoningBaseURL,
+		ReasoningModel:   *reasoningModel,
+		ClaudeModel:      *claudeModel,
+		FixMode:          *fixMode,
+		MaxRounds:        *srMaxRounds,
+		TierFilterAfter:  *srTierFilterAfter,
+		TierFilterThresh: *srTierFilterThresh,
 	}
 	// Locate the stoke binary so Phase 4 can re-invoke it without
 	// relying on $PATH resolution. Errors on either os.Executable or

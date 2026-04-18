@@ -547,6 +547,13 @@ func runPhase4(ctx context.Context, cfg *scanRepairConfig, sowPath string) error
 // based on cfg.Mode. Extracted from runPhase4 so the mode-routing
 // logic is testable without spawning a subprocess. Returns nil for
 // an unknown mode so the caller can surface a clear error.
+//
+// H-22: forwards provider flags (--native-*, --reasoning-*, --runner,
+// --workers) to sow mode so a LiteLLM / native-API run of scan-repair
+// doesn't die with "no provider configured" the moment it reaches the
+// sub-invocation. Forwards simple-loop-specific flags (--claude-model,
+// --reviewer, --fix-mode, --max-rounds, --tier-filter-*) to simple-
+// loop mode for the same reason.
 func buildPhase4Args(cfg *scanRepairConfig, sowPath string) []string {
 	switch cfg.Mode {
 	case "sow":
@@ -555,8 +562,37 @@ func buildPhase4Args(cfg *scanRepairConfig, sowPath string) []string {
 			"--file", sowPath,
 			"--per-task-worktree",
 		}
-		if cfg.WorkerModel != "" {
-			args = append(args, "--native-model", cfg.WorkerModel)
+		// H-22: forward provider plumbing. `--native-model` is the
+		// old positional flag for the sow runner; prefer the
+		// explicit `cfg.NativeModel` if the operator set it and
+		// fall back to `cfg.WorkerModel` for backward compat.
+		nativeModel := cfg.NativeModel
+		if nativeModel == "" {
+			nativeModel = cfg.WorkerModel
+		}
+		if nativeModel != "" {
+			args = append(args, "--native-model", nativeModel)
+		}
+		if cfg.Runner != "" {
+			args = append(args, "--runner", cfg.Runner)
+		}
+		if cfg.NativeAPIKey != "" {
+			args = append(args, "--native-api-key", cfg.NativeAPIKey)
+		}
+		if cfg.NativeBaseURL != "" {
+			args = append(args, "--native-base-url", cfg.NativeBaseURL)
+		}
+		if cfg.ReasoningAPIKey != "" {
+			args = append(args, "--reasoning-api-key", cfg.ReasoningAPIKey)
+		}
+		if cfg.ReasoningBaseURL != "" {
+			args = append(args, "--reasoning-base-url", cfg.ReasoningBaseURL)
+		}
+		if cfg.ReasoningModel != "" {
+			args = append(args, "--reasoning-model", cfg.ReasoningModel)
+		}
+		if cfg.Workers > 0 {
+			args = append(args, "--workers", fmt.Sprintf("%d", cfg.Workers))
 		}
 		return args
 	case "simple-loop":
@@ -570,9 +606,30 @@ func buildPhase4Args(cfg *scanRepairConfig, sowPath string) []string {
 		// The simple-loop worker model override is documented as
 		// "sonnet/opus"; pass it through only when it looks like a
 		// simple alias (no "/" path separator that would imply a
-		// full model ID meant for LiteLLM routing).
-		if cfg.WorkerModel != "" && !strings.Contains(cfg.WorkerModel, "/") {
-			args = append(args, "--claude-model", cfg.WorkerModel)
+		// full model ID meant for LiteLLM routing). An explicit
+		// --claude-model at the scan-repair layer wins over the
+		// auto-derived --worker-model.
+		claudeModel := cfg.ClaudeModel
+		if claudeModel == "" && cfg.WorkerModel != "" && !strings.Contains(cfg.WorkerModel, "/") {
+			claudeModel = cfg.WorkerModel
+		}
+		if claudeModel != "" {
+			args = append(args, "--claude-model", claudeModel)
+		}
+		// H-22: simple-loop-specific passthroughs. Only forward when
+		// set — simple-loop's defaults are sensible and we don't
+		// want to override unless the operator explicitly chose.
+		if cfg.FixMode != "" {
+			args = append(args, "--fix-mode", cfg.FixMode)
+		}
+		if cfg.MaxRounds > 0 {
+			args = append(args, "--max-rounds", fmt.Sprintf("%d", cfg.MaxRounds))
+		}
+		if cfg.TierFilterAfter >= 0 {
+			args = append(args, "--tier-filter-after", fmt.Sprintf("%d", cfg.TierFilterAfter))
+		}
+		if cfg.TierFilterThresh >= 0 {
+			args = append(args, "--tier-filter-threshold", fmt.Sprintf("%g", cfg.TierFilterThresh))
 		}
 		return args
 	default:

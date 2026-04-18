@@ -406,6 +406,184 @@ func TestCleanAuditArtifacts(t *testing.T) {
 	}
 }
 
+// TestPrioritizeAggregatedFindings_UnderCapIsNoOp asserts the
+// prioritizer returns the input unchanged when already below the
+// character cap. No dropping, no copying — cheap path on small runs.
+func TestPrioritizeAggregatedFindings_UnderCapIsNoOp(t *testing.T) {
+	agg := "## Section\n\n- [CRITICAL] a.go:1 — issue — fix: do x\n- [HIGH] b.go:2 — issue — fix: do y\n"
+	out, dropped := prioritizeAggregatedFindings(agg, 10*1024)
+	if out != agg {
+		t.Fatalf("prioritizer mutated input under cap: got %q want %q", out, agg)
+	}
+	if len(dropped) != 0 {
+		t.Fatalf("dropped=%v; want empty under cap", dropped)
+	}
+}
+
+// TestPrioritizeAggregatedFindings_DropsLowFirst asserts that when
+// truncation is needed, LOW severities go first, MEDIUM last, and
+// CRITICAL/HIGH are preserved. Recovers the H-21 guarantee: the
+// reviewer should never see LOW-severity noise at the cost of a
+// CRITICAL finding.
+func TestPrioritizeAggregatedFindings_DropsLowFirst(t *testing.T) {
+	// Build a large buffer: 1 CRITICAL + 1 HIGH + many LOW + many MEDIUM
+	// so we're forced to drop. Each LOW line is ~80 chars; we want the
+	// total to exceed the cap.
+	var buf strings.Builder
+	buf.WriteString("## Deterministic\n\n")
+	buf.WriteString("- [CRITICAL] core.go:1 — secret leak — fix: rotate the key now\n")
+	buf.WriteString("- [HIGH] auth.go:2 — bypass — fix: enforce check\n")
+	for i := 0; i < 200; i++ {
+		buf.WriteString("- [LOW] trivial.go:42 — style nit — fix: rename local variable here\n")
+	}
+	for i := 0; i < 50; i++ {
+		buf.WriteString("- [MEDIUM] mid.go:10 — error handling — fix: wrap errors with context\n")
+	}
+	// Cap at 4 KiB — forces substantial drops.
+	out, dropped := prioritizeAggregatedFindings(buf.String(), 4*1024)
+	if len(out) > 4*1024+200 { // leave small slack for the truncation banner
+		t.Fatalf("out len=%d exceeds cap+slack", len(out))
+	}
+	// CRITICAL and HIGH must survive.
+	if !strings.Contains(out, "core.go:1") {
+		t.Fatalf("CRITICAL finding dropped; output: %s", out)
+	}
+	if !strings.Contains(out, "auth.go:2") {
+		t.Fatalf("HIGH finding dropped; output: %s", out)
+	}
+	// LOW should be dropped before MEDIUM.
+	if dropped["LOW"] == 0 {
+		t.Fatalf("expected LOW to be dropped; dropped=%v", dropped)
+	}
+	// We should have dropped ALL low findings (200) before starting on
+	// medium. Sanity check: low drop count >= medium drop count.
+	if dropped["LOW"] < dropped["MEDIUM"] {
+		t.Fatalf("LOW(%d) should drop before MEDIUM(%d); dropped=%v",
+			dropped["LOW"], dropped["MEDIUM"], dropped)
+	}
+}
+
+// TestPrioritizeAggregatedFindings_RDeepScale simulates the R-deep
+// failure mode: 40K LOW + MEDIUM finding lines that would otherwise
+// blow ARG_MAX (~128 KiB). With the H-21 cap the output MUST be
+// under the cap AND MUST preserve any CRITICAL/HIGH that exist.
+func TestPrioritizeAggregatedFindings_RDeepScale(t *testing.T) {
+	var buf strings.Builder
+	buf.WriteString("## Security vectors\n\n")
+	buf.WriteString("- [CRITICAL] api.go:5 — SQL injection — fix: parameterize query\n")
+	for i := 0; i < 40_000; i++ {
+		buf.WriteString("- [LOW] x.go:1 — trivial — fix: cleanup\n")
+	}
+	cap := 100 * 1024
+	out, _ := prioritizeAggregatedFindings(buf.String(), cap)
+	if len(out) > cap+256 {
+		t.Fatalf("out len=%d exceeds cap+256; H-21 cap not enforced", len(out))
+	}
+	if !strings.Contains(out, "SQL injection") {
+		t.Fatalf("CRITICAL dropped on R-deep-scale input; output head: %s", safeHead(out, 500))
+	}
+}
+
+// safeHead returns the first n chars of s for error messages.
+func safeHead(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// TestBuildPhase4Args_ForwardsProviderFlags asserts the H-22
+// passthroughs: when --native-base-url / --native-api-key / etc. are
+// set on the scanRepairConfig they reach the sow sub-invocation.
+func TestBuildPhase4Args_ForwardsProviderFlags(t *testing.T) {
+	cfg := &scanRepairConfig{
+		Repo:             "/tmp/fake",
+		Mode:             "sow",
+		WorkerModel:      "claude-sonnet-4-6",
+		Runner:           "native",
+		NativeBaseURL:    "http://localhost:8000",
+		NativeAPIKey:     "sk-test",
+		ReasoningBaseURL: "http://localhost:8001",
+		ReasoningAPIKey:  "sk-reasoning",
+		ReasoningModel:   "opus",
+		Workers:          8,
+	}
+	args := buildPhase4Args(cfg, "/tmp/fake/FIX_SOW.md")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--runner native",
+		"--native-base-url http://localhost:8000",
+		"--native-api-key sk-test",
+		"--native-model claude-sonnet-4-6",
+		"--reasoning-base-url http://localhost:8001",
+		"--reasoning-api-key sk-reasoning",
+		"--reasoning-model opus",
+		"--workers 8",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("sow args missing %q; got: %s", want, joined)
+		}
+	}
+}
+
+// TestBuildPhase4Args_SimpleLoopForwardsFlags covers the
+// simple-loop passthroughs (--claude-model, --fix-mode, --max-rounds,
+// --tier-filter-*). Without these, H-22 reports that scan-repair
+// Phase 4 runs with defaults that mismatch the parent invocation.
+func TestBuildPhase4Args_SimpleLoopForwardsFlags(t *testing.T) {
+	cfg := &scanRepairConfig{
+		Repo:             "/tmp/fake",
+		Mode:             "simple-loop",
+		ClaudeBin:        "claude",
+		CodexBin:         "codex",
+		Reviewer:         "codex",
+		ClaudeModel:      "opus",
+		FixMode:          "parallel",
+		MaxRounds:        7,
+		TierFilterAfter:  3,
+		TierFilterThresh: 0.8,
+	}
+	args := buildPhase4Args(cfg, "/tmp/fake/FIX_SOW.md")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--claude-model opus",
+		"--fix-mode parallel",
+		"--max-rounds 7",
+		"--tier-filter-after 3",
+		"--tier-filter-threshold 0.8",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("simple-loop args missing %q; got: %s", want, joined)
+		}
+	}
+}
+
+// TestBuildPhase4Args_OmitsEmptyFlags asserts we don't forward
+// flags that weren't set on the parent. Passing bogus empty --runner
+// / --native-api-key to the child would mask its own defaults.
+func TestBuildPhase4Args_OmitsEmptyFlags(t *testing.T) {
+	cfg := &scanRepairConfig{
+		Repo:        "/tmp/fake",
+		Mode:        "sow",
+		WorkerModel: "sonnet",
+		// No runner / native-* / reasoning-* / workers set.
+		// Workers=0 should also be skipped.
+	}
+	args := buildPhase4Args(cfg, "/tmp/fake/FIX_SOW.md")
+	joined := strings.Join(args, " ")
+	for _, notWant := range []string{"--runner", "--native-api-key",
+		"--native-base-url", "--reasoning-api-key", "--reasoning-base-url",
+		"--reasoning-model", "--workers"} {
+		if strings.Contains(joined, notWant) {
+			t.Errorf("unset flag %q leaked into sow args: %s", notWant, joined)
+		}
+	}
+	// --native-model should still appear (derived from WorkerModel).
+	if !strings.Contains(joined, "--native-model sonnet") {
+		t.Errorf("expected --native-model derived from WorkerModel; got: %s", joined)
+	}
+}
+
 // TestSlugify covers the common shapes we get from pattern names.
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{

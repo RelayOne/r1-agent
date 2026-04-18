@@ -122,6 +122,16 @@ func (t *step8RegressionTracker) LastGaps() []string { return t.lastGaps }
 // fresh even though the child process had gone silent.
 const ccPipeSilenceThreshold = 5 * time.Minute
 
+// argMaxStdinThreshold is the prompt-length cutoff above which we
+// switch from passing the prompt on the command line to piping it
+// through stdin. Linux's ARG_MAX is typically ~128 KiB (conservative
+// kernels as low as 32 KiB); 64 KiB leaves a generous safety margin
+// while still letting the common case use the faster arg path. See
+// H-21 (2026-04-17) — R-deep scan-repair Phase 3 crashed with
+// "argument list too long" when 31K+ security findings were
+// concatenated into one codex prompt.
+const argMaxStdinThreshold = 64 * 1024
+
 // pipeWatcher wraps an io.Writer and records the timestamp of the
 // most recent non-empty Write. Call SilenceDuration() to ask "how
 // long has it been since bytes last flowed through?". Safe for
@@ -824,10 +834,44 @@ func simpleLoopCmd(args []string) {
 		// If the tracker says we've hit the cap, emit the banner and
 		// bail out of the whole outer loop.
 		if step8Tracker.ObserveAuditResult(auditRan, complianceClean, gaps) {
-			fmt.Printf("\n⛔ Step-8 regression guard: %d consecutive cycles ended with gaps remaining after audit. Stopping to avoid token burn. Last gaps: %s.\n",
-				step8Tracker.Cycles(), formatGapList(step8Tracker.LastGaps()))
-			step8Aborted = true
-			break
+			// H-20: before killing the run, give the TIER filter one
+			// last chance to rescue us. The H-6 cap counts OUTER ROUNDs
+			// (plan→build→audit cycles), whereas H-19's `tierFilterAfter`
+			// counts INNER Final-review rounds; on fast cycles the outer
+			// cap can fire before the inner filter has any chance to
+			// engage. If the operator enabled the filter (tierFilterAfter
+			// > 0) AND the filter says the remaining gaps are TIER-3
+			// noise, we either declare complete (all noise) or reset the
+			// regression counter with only real gaps remaining. On filter
+			// error / decision="continue" we fall through to the original
+			// H-6 termination — fail-open so an unavailable filter never
+			// silently swallows a real regression.
+			rescued, rescueComplete := tierFilterRescueBeforeH6Cap(
+				absRepo, gaps, *tierFilterAfter, *tierFilterThreshold, step8Tracker)
+			if rescueComplete {
+				fmt.Printf("\n✅ ROUND %d: TIER filter declared drop-tier3-complete before H-6 cap — all remaining gaps were TIER-3 noise\n", round)
+				// Short-circuit the whole outer loop as a clean pass.
+				break
+			}
+			if rescued {
+				fmt.Printf("\n🛟 H-20 rescue: TIER filter dropped TIER-3 noise; regression counter reset, continuing with real gaps only\n")
+				// Counter reset happened inside the rescue helper.
+				// Fall through to the "gaps remain, iterate next round"
+				// path below so the next round's prose gets the
+				// filtered gap list.
+				filtered := step8Tracker.LastGaps()
+				if len(filtered) > 0 {
+					// Replace the gap list used to build next-round prose
+					// so the builder focuses on real defects.
+					gaps = append([]string{}, filtered...)
+				}
+				// NB: do NOT break; we want another outer round.
+			} else {
+				fmt.Printf("\n⛔ Step-8 regression guard: %d consecutive cycles ended with gaps remaining after audit. Stopping to avoid token burn. Last gaps: %s.\n",
+					step8Tracker.Cycles(), formatGapList(step8Tracker.LastGaps()))
+				step8Aborted = true
+				break
+			}
 		}
 
 		// Extract remaining work as new prose for next round.
@@ -877,6 +921,125 @@ func simpleLoopCmd(args []string) {
 		// commands) can detect the regression-cap abort without
 		// having to scrape stdout.
 		os.Exit(3)
+	}
+}
+
+// tierFilterRescueBeforeH6Cap is the H-20 last-chance hook. Called
+// when step8RegressionTracker says we're about to abort but the TIER
+// filter is enabled (tierFilterAfter > 0). It re-applies the H-19
+// classifier to the current gap list so TIER-3 noise dominating the
+// outer regression loop can be filtered instead of terminating the run.
+//
+// Return values:
+//
+//	rescued=false, complete=false → filter declined / errored / real
+//	    gaps remain; caller falls through to the H-6 abort banner.
+//	rescued=true,  complete=false → TIER-3 noise filtered out; caller
+//	    should reset the regression counter and loop another round with
+//	    the TIER-1/2 gaps. The counter is reset INSIDE this helper so the
+//	    caller doesn't need to know the implementation.
+//	rescued=true,  complete=true  → every remaining gap was TIER-3; the
+//	    caller should break out of the outer loop as a clean sign-off.
+//
+// Fail-open: any reviewer error, malformed JSON, unknown decision, or
+// panic returns (false, false) so the outer H-6 termination still
+// fires. Dropping real gaps on a filter failure would silently swallow
+// a real regression.
+func tierFilterRescueBeforeH6Cap(
+	repoDir string,
+	gaps []string,
+	tierFilterAfter int,
+	tierFilterThreshold float64,
+	step8Tracker *step8RegressionTracker,
+) (rescued bool, complete bool) {
+	// Default reviewer = the production reviewCall routed through the
+	// configured fallback pair. Tests inject via the exported *ForTest
+	// variant below; production calls reach this thin wrapper.
+	review := func(ctx context.Context, prompt string) string {
+		return reviewCall(repoDir, prompt)
+	}
+	return tierFilterRescueBeforeH6CapWithReview(
+		review, gaps, tierFilterAfter, tierFilterThreshold, step8Tracker)
+}
+
+// tierFilterRescueBeforeH6CapWithReview is the testable core of the
+// H-20 rescue. Exposes the reviewer as a parameter so tests can stub
+// it without spawning a real codex/CC subprocess. Production callers
+// go through tierFilterRescueBeforeH6Cap, which plugs in the real
+// reviewCall routed via reviewerPair.
+func tierFilterRescueBeforeH6CapWithReview(
+	review tierFilterReviewFunc,
+	gaps []string,
+	tierFilterAfter int,
+	tierFilterThreshold float64,
+	step8Tracker *step8RegressionTracker,
+) (rescued bool, complete bool) {
+	if tierFilterAfter <= 0 {
+		// Filter disabled — nothing to do.
+		return false, false
+	}
+	if len(gaps) == 0 {
+		// No gaps means compliance passed; shouldn't reach here, but
+		// treat as complete for safety.
+		return true, true
+	}
+	// Guard the whole call with a panic recover so a bug in the filter
+	// plumbing can never take down the outer loop. Fail-open to the
+	// H-6 abort path.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ H-20 rescue panic: %v — falling through to H-6 abort\n", r)
+			rescued = false
+			complete = false
+		}
+	}()
+
+	fmt.Printf("  🛟 H-20: TIER filter pre-H6-cap check (gaps=%d, threshold=%.2f)\n",
+		len(gaps), tierFilterThreshold)
+
+	// 20-minute ceiling matches the H-19 inline invocation.
+	tierCtx, tierCancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer tierCancel()
+
+	// No prior-rounds signal available at this layer — the H-6 cap is
+	// an OUTER-loop counter and doesn't carry the inner-round gap
+	// history. Pass the current gaps as a synthetic prior round so the
+	// recurrence gate can fire (if the gaps repeat they'll match
+	// themselves) without forcing a stricter dominance check. The
+	// dominanceThreshold gate still has to pass on the raw reviewer
+	// classification, so this doesn't weaken the safety bar.
+	priorRounds := [][]string{append([]string{}, gaps...)}
+
+	tfResult, tfErr := applyTierFilter(
+		tierCtx, review, gaps, priorRounds, 0, tierFilterThreshold)
+	if tfErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"  ↻ H-20 rescue: filter error, falling through to H-6 abort: %v\n", tfErr)
+		return false, false
+	}
+	switch tfResult.Decision {
+	case "drop-tier3-complete":
+		fmt.Printf("  ✓ H-20 rescue: TIER filter declared complete (dropped %d TIER-3 gaps: %s)\n",
+			len(tfResult.Tier3Dropped), formatGapList(tfResult.Tier3Dropped))
+		// Reset the tracker so if the outer loop continues for any
+		// reason, the counter starts fresh.
+		step8Tracker.ObserveAuditResult(true, true, nil)
+		return true, true
+	case "drop-tier3-continue":
+		fmt.Printf("  ⏭ H-20 rescue: TIER filter dropped %d TIER-3 gaps; %d real gaps remain: %s\n",
+			len(tfResult.Tier3Dropped), len(tfResult.RemainingGaps),
+			formatGapList(tfResult.RemainingGaps))
+		// Reset the regression counter and update lastGaps to the
+		// filtered list so the next-round prose focuses on real
+		// defects.
+		step8Tracker.cycles = 0
+		step8Tracker.lastGaps = append([]string{}, tfResult.RemainingGaps...)
+		return true, false
+	default:
+		// "continue" or any unexpected value — fail-open to H-6 cap.
+		fmt.Printf("  ↻ H-20 rescue: filter decision=%q (tier1=%d tier2=%d tier3=%d); falling through to H-6 abort\n",
+			tfResult.Decision, tfResult.Tier1Count, tfResult.Tier2Count, tfResult.Tier3Count)
+		return false, false
 	}
 }
 
@@ -1019,16 +1182,25 @@ func claudeReviewCall(bin, dir, prompt, model string) string {
 	claudeBackoff.WaitIfPaused()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
+	// H-21: same ARG_MAX switch as codexCall. Claude's `-p` reads from
+	// stdin when no prompt argument is supplied, so we simply drop the
+	// positional arg and pipe via cmd.Stdin for oversized prompts.
 	args := []string{
 		"--print",
 		"--no-session-persistence",
-		prompt,
+	}
+	useStdin := len(prompt) > argMaxStdinThreshold
+	if !useStdin {
+		args = append(args, prompt)
 	}
 	if model != "" {
 		args = append(args, "--model", model)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	if useStdin {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
@@ -1209,15 +1381,29 @@ func codexCall(bin, dir, prompt string) string {
 	defer cancel()
 	lastMsg := fmt.Sprintf("/tmp/codex-simple-%d.txt", time.Now().UnixNano())
 	defer os.Remove(lastMsg)
+	// H-21: on large repos, the aggregate findings can exceed ARG_MAX
+	// (~128KB on Linux) when passed as a command-line arg. Switch to
+	// stdin via codex's "-" sentinel whenever the prompt is over 64KB —
+	// plenty of headroom below ARG_MAX while still using the faster
+	// arg-path for the common case. Also see argMaxStdinThreshold in
+	// this file.
 	args := []string{"exec",
 		"--json",
 		"--sandbox", "read-only",
 		"--skip-git-repo-check",
 		"--output-last-message", lastMsg,
-		prompt,
+	}
+	useStdin := len(prompt) > argMaxStdinThreshold
+	if useStdin {
+		args = append(args, "-")
+	} else {
+		args = append(args, prompt)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	if useStdin {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

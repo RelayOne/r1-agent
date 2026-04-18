@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -174,6 +175,156 @@ func TestStep8RegressionTracker_ObserveStillWorks(t *testing.T) {
 	}
 	if !tr.Observe(false, []string{"y"}) {
 		t.Fatalf("two failures must trip cap=2")
+	}
+}
+
+// TestTierFilterRescue_TierFilterDisabled verifies the rescue helper
+// returns (false, false) when the operator disabled the filter
+// (--tier-filter-after=0). That's a pass-through: H-6 cap must fire
+// normally if the filter isn't active.
+func TestTierFilterRescue_TierFilterDisabled(t *testing.T) {
+	tracker := &step8RegressionTracker{cap: 2, cycles: 2, lastGaps: []string{"gap-a"}}
+	review := func(_ context.Context, _ string) string {
+		t.Fatalf("reviewer should NOT be called when tier-filter-after <= 0")
+		return ""
+	}
+	rescued, complete := tierFilterRescueBeforeH6CapWithReview(
+		review, []string{"gap-a"}, 0 /* disabled */, 0.7, tracker)
+	if rescued || complete {
+		t.Fatalf("rescued=%v complete=%v; want (false,false) when filter disabled",
+			rescued, complete)
+	}
+	// Tracker state must be untouched.
+	if tracker.cycles != 2 {
+		t.Fatalf("tracker cycles mutated: %d (want 2 preserved)", tracker.cycles)
+	}
+}
+
+// TestTierFilterRescue_DropAllCompleteExits covers the scenario where
+// the filter declares every remaining gap to be TIER-3 noise. The
+// rescue must return complete=true so the outer loop exits as SIMPLE
+// LOOP COMPLETE rather than firing the H-6 abort banner.
+func TestTierFilterRescue_DropAllCompleteExits(t *testing.T) {
+	tracker := &step8RegressionTracker{cap: 2, cycles: 2, lastGaps: []string{"naming", "naming-2"}}
+	reviewBody := `{
+  "tier1": [],
+  "tier2": [],
+  "tier3": ["style preference on naming", "style preference on naming-2"],
+  "recurring": true,
+  "decision": "drop-tier3-complete",
+  "rationale": "all noise"
+}`
+	review := func(_ context.Context, _ string) string { return reviewBody }
+	rescued, complete := tierFilterRescueBeforeH6CapWithReview(
+		review,
+		[]string{"style preference on naming", "style preference on naming-2"},
+		5, 0.7, tracker)
+	if !rescued || !complete {
+		t.Fatalf("rescued=%v complete=%v; want (true,true) for drop-tier3-complete",
+			rescued, complete)
+	}
+	// Tracker must be reset so a subsequent call doesn't fire the cap.
+	if tracker.Cycles() != 0 {
+		t.Fatalf("tracker cycles not reset on complete: %d", tracker.Cycles())
+	}
+}
+
+// TestTierFilterRescue_DropContinueResetsCounter covers the H-20
+// headline case from the task spec: the outer H-6 cap was about to
+// fire, the filter says drop-tier3-continue leaving TIER-1 gaps. The
+// rescue must reset the regression counter (so the loop keeps going)
+// and leave the filtered gap list in lastGaps.
+func TestTierFilterRescue_DropContinueResetsCounter(t *testing.T) {
+	tracker := &step8RegressionTracker{
+		cap: 2, cycles: 2,
+		lastGaps: []string{
+			"MISSING: auth bypass on /admin",
+			"missing docstring on foo",
+			"missing docstring on bar",
+			"missing docstring on baz",
+			"missing docstring on qux",
+		},
+	}
+	gaps := []string{
+		"MISSING: auth bypass on /admin",
+		"missing docstring on foo",
+		"missing docstring on bar",
+		"missing docstring on baz",
+		"missing docstring on qux",
+	}
+	// Reviewer JSON: 1 TIER-1 (real defect), 4 TIER-3 (noise),
+	// dominance share = 4/5 = 80% (above 0.7). Recurrence passes
+	// because the synthetic priorRounds from the rescue helper is the
+	// current gaps themselves.
+	reviewBody := `{
+  "tier1": ["MISSING: auth bypass on /admin"],
+  "tier2": [],
+  "tier3": [
+    "missing docstring on foo",
+    "missing docstring on bar",
+    "missing docstring on baz",
+    "missing docstring on qux"
+  ],
+  "recurring": true,
+  "decision": "drop-tier3-continue",
+  "rationale": "4/5 are docstring noise"
+}`
+	review := func(_ context.Context, _ string) string { return reviewBody }
+	rescued, complete := tierFilterRescueBeforeH6CapWithReview(
+		review, gaps, 5, 0.7, tracker)
+	if !rescued || complete {
+		t.Fatalf("rescued=%v complete=%v; want (true,false) for drop-tier3-continue",
+			rescued, complete)
+	}
+	if tracker.Cycles() != 0 {
+		t.Fatalf("tracker cycles not reset on drop-tier3-continue: %d", tracker.Cycles())
+	}
+	got := tracker.LastGaps()
+	if len(got) != 1 || !strings.Contains(got[0], "auth bypass") {
+		t.Fatalf("tracker.LastGaps not filtered to TIER-1 only: %v", got)
+	}
+}
+
+// TestTierFilterRescue_ContinueDecisionFallsThrough is the H-20
+// safety contract: if the filter's decision is "continue" (real
+// defects dominate), the rescue MUST return (false, false) so the
+// original H-6 termination fires. We must NEVER silently skip a real
+// regression just because the filter engaged.
+func TestTierFilterRescue_ContinueDecisionFallsThrough(t *testing.T) {
+	tracker := &step8RegressionTracker{cap: 2, cycles: 2, lastGaps: []string{"real-defect"}}
+	reviewBody := `{
+  "tier1": ["real-defect"],
+  "tier2": [],
+  "tier3": [],
+  "recurring": false,
+  "decision": "continue",
+  "rationale": "no noise"
+}`
+	review := func(_ context.Context, _ string) string { return reviewBody }
+	rescued, complete := tierFilterRescueBeforeH6CapWithReview(
+		review, []string{"real-defect"}, 5, 0.7, tracker)
+	if rescued || complete {
+		t.Fatalf("rescued=%v complete=%v; want (false,false) for decision=continue",
+			rescued, complete)
+	}
+	// Counter MUST be unchanged — we're about to fire the abort.
+	if tracker.Cycles() != 2 {
+		t.Fatalf("counter mutated on fall-through: %d (want 2)", tracker.Cycles())
+	}
+}
+
+// TestTierFilterRescue_ReviewerErrorFailsOpen covers the spec's
+// "fail-open on H-20" clause: a reviewer that returns empty / errored
+// output must NOT rescue, so the H-6 abort runs. Dropping real gaps
+// on a filter failure would silently swallow a real regression.
+func TestTierFilterRescue_ReviewerErrorFailsOpen(t *testing.T) {
+	tracker := &step8RegressionTracker{cap: 2, cycles: 2, lastGaps: []string{"gap-a"}}
+	review := func(_ context.Context, _ string) string { return "" } // empty = error
+	rescued, complete := tierFilterRescueBeforeH6CapWithReview(
+		review, []string{"gap-a"}, 5, 0.7, tracker)
+	if rescued || complete {
+		t.Fatalf("rescued=%v complete=%v; want (false,false) on reviewer error (fail-open)",
+			rescued, complete)
 	}
 }
 
