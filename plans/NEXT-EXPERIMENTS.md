@@ -25,13 +25,25 @@ Each answers one open question. No filler.
 - **Expected outcome**: H-24 fires on the first commit's `apps/web/src/app/...` file and *doesn't re-fire next round*. Total gate-hits on the run should be small (bounded by gaps the worker actually didn't create, not the monorepo-prefix mismatch). Must reach SIMPLE LOOP COMPLETE or hit a different termination class (max-rounds, compliance pass). If it dies by H-6 regression cap on the same gates H1-v2 died on, H-24 didn't land.
 - **Kill condition**: 6h wall-clock, OR H-6 abort.
 
-### E2 — Does the winner config produce clean SOW completion? (sow shippability)
+### E2 — BLOCKED 10:54 — LiteLLM/MiniMax proxy (:4001) down after session crash
 
-- **Repo**: fresh clone of Sentinel (`/home/eric/repos/e2-sentinel-sow`).
-- **Config**: `stoke sow --file SOW.md --native-base-url http://localhost:4000 --native-api-key sk-... --native-model minimax-m2 --reviewer-source codex --per-task-worktree --parallel 2`.
-- **Binary**: same fresh build.
-- **Expected outcome**: sow mission-end compliance gate passes OR terminates with concrete missing-deliverable list. This is the budget-dev pitch — cheap worker, frontier reviewer, per-task worktree commits.
-- **Kill condition**: 8h wall-clock, OR 30 min with no git-rev-count growth.
+Launched successfully, died ~30s in with `connection reset by peer` to
+`http://localhost:4000/v1/messages`. LiteLLM on :4000 serves only
+`gemini-3-pro-preview` (cline-vertex-proxy config); the MiniMax
+LiteLLM formerly on :4001 (per STATUS.md "run via `./runclaude --litellm`")
+is gone — it was session-lifetime and did not survive yesterday's crash.
+
+Re-launch path: operator brings MiniMax LiteLLM back up on :4001 (or
+points E2 at :4000 if a MiniMax model becomes available there), then:
+
+```bash
+rm -rf /home/eric/repos/e2-sentinel-sow
+bash /home/eric/repos/stoke/plans/LAUNCH-E1-E4.sh  # relaunches E2
+```
+
+Cohort continues without E2 — signal from E1 (H-24 shippability), E3
+(real-world simple-loop), and E4 (scan-repair) is still the primary
+evidence we set out to gather.
 
 ### E3 — Does the real-world simple-loop finish this time? (R1F-feat replay)
 

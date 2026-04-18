@@ -63,8 +63,13 @@ for entry in "${VARIANTS[@]}"; do
   fi
 
   if [[ -f "$log" ]]; then
-    gate_hits=$(grep -c "^\[gate-hit\]" "$log" 2>/dev/null || echo 0)
-    cerr=$(grep -c "claude error: exit status" "$log" 2>/dev/null || echo 0)
+    # Pipe through tr -d to collapse any trailing newline + `|| echo 0`
+    # produced a double-0 before. `2>/dev/null` handles missing-file;
+    # `|| true` keeps the pipeline alive when grep finds nothing.
+    gate_hits=$({ grep -c "^\[gate-hit\]" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
+    gate_hits=${gate_hits:-0}
+    cerr=$({ grep -c "claude error: exit status" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
+    cerr=${cerr:-0}
     phase=$(grep -E "^(📋 Step |🔧 Step |📝 Step |🏗️ |👀 Step |📦 |💡 Final review|  ROUND )" "$log" 2>/dev/null | tail -1 | head -c 120)
     phase=${phase:-"(no phase-banner yet)"}
     log_mtime=$(stat -c %Y "$log" 2>/dev/null || echo 0)

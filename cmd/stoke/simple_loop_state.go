@@ -74,6 +74,21 @@ func currentRepoHead(repoRoot string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// repoTreeIsDirty returns true when repoRoot has staged, unstaged, or
+// untracked changes — i.e. a build that half-wrote files before the
+// crash. Codex P1-1: resume must refuse on a dirty tree, otherwise the
+// saved CurrentProse replays on top of partial edits that HEAD doesn't
+// reflect. Returns (false, err) on git failure so the caller can treat
+// "couldn't verify" as refuse-to-resume.
+func repoTreeIsDirty(repoRoot string) (bool, error) {
+	cmd := exec.Command("git", "-C", repoRoot, "status", "--porcelain=v1")
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
 // repoHeadIsAncestor reports whether savedHead is an ancestor of (or
 // equal to) currentHead in repoRoot. Returns (false, err) on any git
 // error so the caller can surface the reason. Used by validateResumeCompat
@@ -205,6 +220,22 @@ func validateResumeCompat(state *simpleLoopState, repoRoot, proseHash, reviewer,
 	}
 	if state.CurrentRound < 1 {
 		return false, fmt.Sprintf("state has invalid round %d", state.CurrentRound)
+	}
+	// Codex P1-1: reject resume when the working tree is dirty. A
+	// mid-round crash leaves HEAD unchanged but the working tree with
+	// partial builder edits; resuming would replay the saved prose on
+	// top of those half-written files and likely corrupt the run. The
+	// operator must either commit the partials (advancing HEAD — which
+	// the fast-forward check below then accepts) or `git stash`/reset
+	// before resuming. --fresh always bypasses this path.
+	if repoRoot != "" {
+		dirty, dirtyErr := repoTreeIsDirty(repoRoot)
+		if dirtyErr != nil {
+			return false, fmt.Sprintf("could not read git working-tree state (%v); refusing to resume without verification", dirtyErr)
+		}
+		if dirty {
+			return false, "working tree has uncommitted changes since the last save; commit/stash/reset then retry --resume, or relaunch --fresh"
+		}
 	}
 	// Codex P2-5: reject resume when the repo has diverged from the
 	// save point. Fast-forward progress (worker committed between

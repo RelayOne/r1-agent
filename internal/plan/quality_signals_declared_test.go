@@ -241,13 +241,19 @@ func TestMonorepoFallbackEligible(t *testing.T) {
 		{"packages/shared/x.ts", false},     // already workspace-prefixed
 		{".github/workflows/ci.yml", false}, // unambiguously root-only
 		{".vscode/settings.json", false},    // editor config
-		// Codex P2-4: these used to be rejected; they're actually valid
-		// workspace-internal paths in monorepos and must fall through.
-		{"docs/architecture.md", true},      // pkg-local docs
-		{"tests/login.test.ts", true},       // pkg-local tests
-		{"e2e/checkout.spec.ts", true},      // pkg-local e2e
-		{"scripts/build.sh", true},          // pkg-local scripts (apps/*/scripts)
-		{"examples/basic.ts", true},         // pkg-local examples
+		{"tooling/eslint/index.cjs", false}, // monorepo tooling, root
+		{"infra/terraform/main.tf", false},  // infra
+		// Codex P2-6: docs/ and scripts/ go back on the deny-list.
+		// Masking a missing repo-root docs/scripts file with an
+		// accidentally-same-named workspace copy is a worse failure
+		// than missing a workspace-local docs false-negative.
+		{"docs/architecture.md", false}, // root docs
+		{"scripts/build.sh", false},     // root scripts
+		// Codex P2-4: tests/ e2e/ examples/ stay workspace-accessible.
+		// Real monorepos keep these per-package as much as per-repo.
+		{"tests/login.test.ts", true},       // workspace-local tests
+		{"e2e/checkout.spec.ts", true},      // workspace-local e2e
+		{"examples/basic.ts", true},         // workspace-local examples
 		{"app/api/v1/users/route.ts", true}, // Next.js workspace-internal
 		{"src/index.ts", true},              // library-style workspace entry
 		{"components/Button.tsx", true},     // React component, workspace-internal
@@ -261,20 +267,41 @@ func TestMonorepoFallbackEligible(t *testing.T) {
 	}
 }
 
-// Codex P2-4: directly assert a workspace-local docs/tests/e2e path is
-// found by the fallback instead of being rejected as root-only.
-func TestScanDeclaredFilesNotCreated_WorkspaceLocalDocsFound(t *testing.T) {
+// Codex P2-4 / P2-6 combined: tests/e2e/examples stay workspace-searchable;
+// docs/scripts do NOT (keeping root-level declarations safe from silent
+// workspace-copy masking).
+func TestScanDeclaredFilesNotCreated_WorkspaceLocalTestsFound(t *testing.T) {
 	root := t.TempDir()
-	mkfile(t, root, "apps/web/docs/architecture.md")
 	mkfile(t, root, "apps/web/tests/login.test.ts")
 	mkfile(t, root, "packages/ui/e2e/button.spec.ts")
+	mkfile(t, root, "apps/web/examples/basic.ts")
 	got := ScanDeclaredFilesNotCreated(root, []string{
-		"docs/architecture.md",
 		"tests/login.test.ts",
 		"e2e/button.spec.ts",
+		"examples/basic.ts",
 	})
 	if len(got) != 0 {
-		t.Errorf("expected 0 findings (workspace-local docs/tests/e2e), got %d: %+v", len(got), got)
+		t.Errorf("expected 0 findings (workspace-local tests/e2e/examples), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_RootDocsNotMaskedByWorkspaceCopy(t *testing.T) {
+	// Codex P2-6 regression: declared `docs/architecture.md` means ROOT
+	// architecture doc. A workspace's copy must NOT satisfy the check.
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/docs/architecture.md") // workspace copy
+	got := ScanDeclaredFilesNotCreated(root, []string{"docs/architecture.md"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (root docs missing), got %d: %+v", len(got), got)
+	}
+}
+
+func TestScanDeclaredFilesNotCreated_RootScriptsNotMaskedByWorkspaceCopy(t *testing.T) {
+	root := t.TempDir()
+	mkfile(t, root, "apps/web/scripts/build.sh") // workspace copy
+	got := ScanDeclaredFilesNotCreated(root, []string{"scripts/build.sh"})
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (root scripts missing), got %d: %+v", len(got), got)
 	}
 }
 

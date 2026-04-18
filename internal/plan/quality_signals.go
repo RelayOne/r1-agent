@@ -1810,15 +1810,25 @@ func monorepoFallbackEligible(clean string) bool {
 	if first == "apps" || first == "packages" {
 		return false
 	}
-	// Codex P2-4: only list things that are UNAMBIGUOUSLY root-only.
-	// `docs/`, `tests/`, `e2e/`, `scripts/`, `build/`, `dist/`,
-	// `examples/` all legitimately appear inside workspaces in real
-	// pnpm monorepos (e.g. `apps/web/e2e/login.spec.ts`,
-	// `packages/shared/docs/README.md`). Excluding them turns valid
-	// workspace declarations into blocking false positives. What stays
-	// on the list: tooling dotfiles that only make sense at repo root.
+	// Dir classification (codex P2-4 and P2-6 together):
+	//   - ROOT-ONLY: tooling dotfiles + things that are ambiguous
+	//     enough between "root meta" and "workspace-local" that the
+	//     BLOCKING concern (a declared repo-root `docs/architecture.md`
+	//     or `scripts/build.sh` being silently satisfied by a workspace
+	//     copy) outweighs the false-negative cost (a declared
+	//     workspace-local doc not hitting the fallback). docs/scripts
+	//     are almost always root-scoped when they show up in a SOW;
+	//     the fallback shouldn't guess around that.
+	//   - WORKSPACE-OK: everything else (app/, api/, components/,
+	//     src/, lib/, hooks/, types/, utils/, pages/, tests/, e2e/,
+	//     examples/, styles/, server/, routes/, store(s)/, mobile/,
+	//     fixtures/, stories/, etc). Tests and e2e do appear
+	//     workspace-locally in real monorepos.
 	rootOnly := map[string]struct{}{
 		".github": {}, ".vscode": {}, ".idea": {}, ".husky": {},
+		"docs":    {}, // codex P2-6: root-level docs common in SOWs
+		"scripts": {}, // codex P2-6: root-level scripts common in SOWs
+		"tooling": {}, "infra": {}, "deploy": {}, "ci": {},
 	}
 	if _, ok := rootOnly[first]; ok {
 		return false

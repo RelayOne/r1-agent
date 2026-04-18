@@ -406,6 +406,103 @@ func TestValidateResumeCompat_EmptyRepoHeadBackCompat(t *testing.T) {
 	}
 }
 
+// Codex P1-1 regression: resume must refuse when the working tree has
+// uncommitted changes (staged, unstaged, or untracked). A crash mid-
+// builder leaves HEAD unchanged + partial writes in the tree; resuming
+// would apply saved prose on top of garbage.
+
+func TestValidateResumeCompat_DirtyTreeRefuses(t *testing.T) {
+	repo := t.TempDir()
+	head := initGitRepoWithCommit(t, repo, "c1")
+	// Introduce dirt — an untracked file is enough.
+	if err := os.WriteFile(filepath.Join(repo, "half-written.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := hashProse("spec A")
+	state := &simpleLoopState{
+		SOWHash:      h,
+		Reviewer:     "codex",
+		FixMode:      "sequential",
+		CurrentRound: 2,
+		RepoHead:     head,
+	}
+	ok, reason := validateResumeCompat(state, repo, h, "codex", "sequential")
+	if ok {
+		t.Error("dirty tree must refuse resume (codex P1-1)")
+	}
+	if reason == "" {
+		t.Error("refusal reason must be populated so the operator knows to stash/commit")
+	}
+}
+
+func TestValidateResumeCompat_CleanTreeAccepts(t *testing.T) {
+	repo := t.TempDir()
+	head := initGitRepoWithCommit(t, repo, "c1")
+	h := hashProse("spec A")
+	state := &simpleLoopState{
+		SOWHash:      h,
+		Reviewer:     "codex",
+		FixMode:      "sequential",
+		CurrentRound: 2,
+		RepoHead:     head,
+	}
+	ok, reason := validateResumeCompat(state, repo, h, "codex", "sequential")
+	if !ok {
+		t.Errorf("clean tree should accept resume, rejected: %s", reason)
+	}
+}
+
+func TestRepoTreeIsDirty_CleanRepoFalse(t *testing.T) {
+	repo := t.TempDir()
+	_ = initGitRepoWithCommit(t, repo, "c1")
+	dirty, err := repoTreeIsDirty(repo)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if dirty {
+		t.Error("fresh-commit repo should be clean")
+	}
+}
+
+func TestRepoTreeIsDirty_StagedChangeTrue(t *testing.T) {
+	repo := t.TempDir()
+	_ = initGitRepoWithCommit(t, repo, "c1")
+	_ = appendCommit(t, repo, "a.ts", "c2") // establish baseline
+	// Stage a modification without committing.
+	if err := os.WriteFile(filepath.Join(repo, "a.ts"), []byte("modified"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", repo, "add", "a.ts")
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stage: %v: %s", err, out)
+	}
+	dirty, err := repoTreeIsDirty(repo)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !dirty {
+		t.Error("staged change must be reported as dirty")
+	}
+}
+
+func TestRepoTreeIsDirty_UntrackedFileTrue(t *testing.T) {
+	repo := t.TempDir()
+	_ = initGitRepoWithCommit(t, repo, "c1")
+	if err := os.WriteFile(filepath.Join(repo, "new.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err := repoTreeIsDirty(repo)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !dirty {
+		t.Error("untracked file must be reported as dirty")
+	}
+}
+
 func TestCurrentRepoHead_NonRepoReturnsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if got := currentRepoHead(dir); got != "" {
