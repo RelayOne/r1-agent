@@ -14,3 +14,6 @@ runclaude
 runloop
 setup.sh
 monitor-log.md
+plans/monitor/state.json
+plans/monitor/history.json
+plans/monitor/manage-decisions.log

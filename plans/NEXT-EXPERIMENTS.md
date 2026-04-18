@@ -80,4 +80,4 @@ evidence we set out to gather.
 - [x] Launch E3 — PID 272018, alive, Step 2 codex-review plan
 - [x] Launch E4 — PID 278559, alive, Phase 1 deterministic scan
 - [x] Re-arm monitor crons — 3 Claude Code scheduled triggers active (snapshot every 5min, refresh-status every 5min +2, manage every 15min +7)
-- [ ] First evidence checkpoint: 30 min post-launch (E1 launched 10:48; checkpoint ~11:18)
+- [x] First evidence checkpoint: E1 +5 commits, E3 +1 commit, E4 in Phase 2 semantic scan (3100 calls, 4 child workers CPU-active); all 3 healthy at 11:13 probe

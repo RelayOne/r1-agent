@@ -29,9 +29,13 @@ if [[ ! -f "$STATE_FILE" ]]; then
   exit 0
 fi
 
-# Wedge thresholds (minutes).
-LOG_STALE_THRESHOLD=20
-COMMIT_STALE_THRESHOLD=30
+# Wedge thresholds (minutes). Raised so scan-repair's Phase 2/3
+# semantic-scan windows (no commits, child processes doing work,
+# outer log mostly quiet) don't trip the auto-kill. Yesterday's
+# dormant-variant pattern was 15h+ stale — 60 min still catches
+# real wedges with plenty of margin.
+LOG_STALE_THRESHOLD=60
+COMMIT_STALE_THRESHOLD=90
 
 NOW=$(date +%s)
 NOW_ISO=$(date -Iseconds)
