@@ -647,6 +647,8 @@ func main() {
 		doctorCmd(os.Args[2:])
 	case "simple-loop":
 		simpleLoopCmd(os.Args[2:])
+	case "scan-repair":
+		scanRepairCmd(os.Args[2:])
 	case "sessions":
 		sessionsCmd(os.Args[2:])
 	case "cloud":
@@ -2415,6 +2417,15 @@ func sowCmd(args []string) {
 		var reviewProv provider.Provider
 		if *enableCrossReview {
 			reviewProv = newProviderForURL(nativeKey, *nativeBaseURL, absRepo)
+			// H-13: when the reviewer is codex, wrap the provider in
+			// a FallbackProvider whose secondary is Claude Code. This
+			// transparently routes sow-harness reviewer calls through
+			// CC-sonnet when codex hits a transient failure (no last
+			// agent message, empty content, hung process). See
+			// fallback_provider.go for the swap + health-check logic.
+			// No-op when the primary isn't codex or when CC isn't
+			// available — see fallbackReviewProviderFromFlags.
+			reviewProv = fallbackReviewProviderFromFlags(reviewProv, *claudeBin, absRepo)
 		}
 		reviewModelName := *reviewModel
 		if reviewModelName == "" {
