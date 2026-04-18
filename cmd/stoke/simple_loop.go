@@ -235,7 +235,14 @@ func simpleLoopCmd(args []string) {
 	if globalFixWorkers < 1 {
 		globalFixWorkers = 1
 	}
+	// Wire the CC↔Codex fallback pairs so rate-limits on one
+	// provider automatically route traffic through the other while
+	// the primary recovers (see cmd/stoke/fallback.go).
+	initFallbackPairs(absRepo)
 	fmt.Printf("   fix-mode: %s (workers: %d)\n", globalFixMode, globalFixWorkers)
+	fmt.Printf("   fallback: writer primary=%s secondary=%s; reviewer primary=%s secondary=%s\n",
+		writerPair.primary.Name(), writerPair.secondary.Name(),
+		reviewerPair.primary.Name(), reviewerPair.secondary.Name())
 	// Show which quality-signal gates are active so the operator can
 	// visually confirm feature-gate env vars were honored. Printed
 	// once at startup; experimentals are marked so their absence is
@@ -256,9 +263,10 @@ func simpleLoopCmd(args []string) {
 		fmt.Printf("  ROUND %d/%d\n", round, *maxRounds)
 		fmt.Printf("═══════════════════════════════════════\n\n")
 
-		// Step 1: Claude Code plans
+		// Step 1: Claude Code plans (prose-only; route through
+		// writerPair so a CC rate-limit falls back to codex).
 		fmt.Println("📋 Step 1: Claude Code planning...")
-		planText := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
+		planText := writerCall(absRepo, fmt.Sprintf(
 			"Read this project specification and create a CONCISE implementation plan. "+
 				"List every file you need to create/modify, in order.\n\n"+
 				"PLAN FORMAT (strict):\n"+
@@ -653,9 +661,10 @@ func simpleLoopCmd(args []string) {
 				"The build failed. Fix these errors and commit:\n\n%s", buildResult))
 		}
 
-		// Step 8: Self-audit against SOW
+		// Step 8: Self-audit against SOW (prose verdict; routed
+		// through writerPair so a CC rate-limit falls back to codex).
 		fmt.Println("📋 Step 8: Claude Code self-auditing against SOW...")
-		audit := claudeCall(*claudeBin, absRepo, fmt.Sprintf(
+		audit := writerCall(absRepo, fmt.Sprintf(
 			"Compare the current state of this repository against the original specification. "+
 				"For EACH deliverable in the spec, state whether it's: DONE, PARTIAL, or MISSING. "+
 				"BE BRUTALLY HONEST. A deliverable is NOT DONE if it is any of: "+
@@ -902,8 +911,19 @@ func reviewCall(dir, prompt string) string {
 		// then record the outcome. We treat an empty return as an
 		// error (covers turn.failed, 429, watchdog-kill, crash) and
 		// a non-empty return as success.
+		//
+		// The outer swap is done by reviewerPair (codex-primary,
+		// CC-sonnet-secondary). When reviewerPair is nil (tests),
+		// we fall back to calling codex directly. codexBackoff
+		// remains the INNER throttle that slows tight error loops
+		// while reviewerPair handles the whole-provider swap.
 		applyCodexBackoff()
-		out := codexCall(globalCodexBin, dir, prompt)
+		var out string
+		if reviewerPair != nil {
+			out = reviewerCallViaPair(dir, prompt)
+		} else {
+			out = codexCall(globalCodexBin, dir, prompt)
+		}
 		if strings.TrimSpace(out) == "" {
 			if codexBackoff.RecordError() {
 				fmt.Fprintf(os.Stderr,
