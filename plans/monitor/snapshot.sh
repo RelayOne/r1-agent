@@ -22,6 +22,7 @@ VARIANTS=(
   "E2|/home/eric/repos/e2-sentinel-sow"
   "E3|/home/eric/repos/e3-relayone-feat"
   "E4|/home/eric/repos/e4-actium-scan"
+  "E5|/home/eric/repos/e5-sentinel-h27"
 )
 
 NOW_ISO=$(date -Iseconds)
