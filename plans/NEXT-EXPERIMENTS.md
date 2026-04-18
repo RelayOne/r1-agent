@@ -69,15 +69,15 @@ evidence we set out to gather.
 - **Cron 2 — STATUS refresh** (re-arm): every 5 min offset +3, regenerate this file's "live state" section.
 - **Telemetry dashboard**: after 2h of running we want one look to tell us (per variant): phase, commits, TS, [gate-hit] count, last log activity. Same format as yesterday.
 
-## Launch checklist (execute after codex verification signs off)
+## Launch checklist
 
-- [ ] Codex review of H-24 + H-25 diff → no major/critical findings
-- [ ] `go build -o stoke ./cmd/stoke` fresh
-- [ ] Fresh clones of each target repo (E1-E4) — `git clone` from origin, wipe `.stoke/`
-- [ ] Copy canonical SOW prose to each target
-- [ ] Launch E1 (60s)
-- [ ] Launch E2 (60s)
-- [ ] Launch E3 (60s)
-- [ ] Launch E4
-- [ ] Re-arm monitor cron + STATUS refresh cron
-- [ ] First evidence checkpoint: 30 min post-launch
+- [x] Codex review of H-24 + H-25 diff → P2 findings (rounds 1+2+3) all addressed in commits 5fe6f7e and b792dd9
+- [x] `go build -o stoke ./cmd/stoke` fresh — binary at /home/eric/repos/stoke/stoke
+- [x] Fresh clones of each target repo (E1/E3/E4) — `git clone` from origin, `.stoke/` wiped
+- [x] Copy canonical SOW prose to each target — verified paths exist in LAUNCH-E1-E4.sh
+- [x] Launch E1 — PID 256191, alive, Step 2 codex-review plan
+- [x] Launch E2 — LAUNCHED then DIED (LiteLLM :4001 down post-session-crash; see E2 section above for relaunch path)
+- [x] Launch E3 — PID 272018, alive, Step 2 codex-review plan
+- [x] Launch E4 — PID 278559, alive, Phase 1 deterministic scan
+- [x] Re-arm monitor crons — 3 Claude Code scheduled triggers active (snapshot every 5min, refresh-status every 5min +2, manage every 15min +7)
+- [ ] First evidence checkpoint: 30 min post-launch (E1 launched 10:48; checkpoint ~11:18)
