@@ -31,8 +31,8 @@ NOW_EPOCH=$(date +%s)
 echo "" >> "$MONITOR_LOG"
 echo "## Check $NOW_ISO" >> "$MONITOR_LOG"
 echo "" >> "$MONITOR_LOG"
-echo "| Name | PID | Commits | TS | Gate-hits | cerr | Phase | LogAge |" >> "$MONITOR_LOG"
-echo "|---|---|---|---|---|---|---|---|" >> "$MONITOR_LOG"
+echo "| Name | PID | Commits | TS | Gates | H-27 | cerr | Phase | LogAge |" >> "$MONITOR_LOG"
+echo "|---|---|---|---|---|---|---|---|---|" >> "$MONITOR_LOG"
 
 echo "{" > "$STATE_FILE.tmp"
 echo "  \"snapshot_iso\": \"$NOW_ISO\"," >> "$STATE_FILE.tmp"
@@ -67,10 +67,16 @@ for entry in "${VARIANTS[@]}"; do
     # Pipe through tr -d to collapse any trailing newline + `|| echo 0`
     # produced a double-0 before. `2>/dev/null` handles missing-file;
     # `|| true` keeps the pipeline alive when grep finds nothing.
-    gate_hits=$({ grep -c "^\[gate-hit\]" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
+    # Gate-hit lines are emitted as `  [gate-hit] ...` with a leading
+    # indent, so anchor via `\[gate-hit\]` not `^\[`. Fixed 12:24.
+    gate_hits=$({ grep -cE "\[gate-hit\]" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
     gate_hits=${gate_hits:-0}
     cerr=$({ grep -c "claude error: exit status" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
     cerr=${cerr:-0}
+    # H-27 hits: `declared-symbol-not-implemented` — track separately
+    # so the live cohort table shows H-27 validation evidence.
+    h27_hits=$({ grep -cE "declared-symbol-not-implemented" "$log" 2>/dev/null || true; } | head -1 | tr -d '\n ')
+    h27_hits=${h27_hits:-0}
     phase=$(grep -E "^(📋 Step |🔧 Step |📝 Step |🏗️ |👀 Step |📦 |💡 Final review|  ROUND )" "$log" 2>/dev/null | tail -1 | head -c 120)
     phase=${phase:-"(no phase-banner yet)"}
     log_mtime=$(stat -c %Y "$log" 2>/dev/null || echo 0)
@@ -78,6 +84,7 @@ for entry in "${VARIANTS[@]}"; do
     log_age_min=$(( log_age_sec / 60 ))
   else
     gate_hits=0
+    h27_hits=0
     cerr=0
     phase="(no log yet)"
     log_age_min=-1
@@ -85,7 +92,7 @@ for entry in "${VARIANTS[@]}"; do
 
   # Markdown row — escape pipes in phase.
   phase_md=${phase//|/\\|}
-  echo "| $name | $pid | $commits | $ts_count | $gate_hits | $cerr | $phase_md | ${log_age_min}m |" >> "$MONITOR_LOG"
+  echo "| $name | $pid | $commits | $ts_count | $gate_hits | $h27_hits | $cerr | $phase_md | ${log_age_min}m |" >> "$MONITOR_LOG"
 
   [[ $first -eq 0 ]] && echo "," >> "$STATE_FILE.tmp"
   first=0
@@ -98,6 +105,7 @@ for entry in "${VARIANTS[@]}"; do
       "commits": $commits,
       "ts_count": $ts_count,
       "gate_hits": $gate_hits,
+      "h27_hits": $h27_hits,
       "cerr": $cerr,
       "phase": $(printf '%s' "$phase" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))' 2>/dev/null || echo "\"$phase\""),
       "log_age_min": $log_age_min
