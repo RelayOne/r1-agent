@@ -209,11 +209,12 @@ run_one() {
         R01|R02|R03|R04) sow_flags="";;
         *) sow_flags="--per-task-worktree --parallel 2";;
       esac
+      # Sow uses Claude CLI as the writer (matches strict/lenient). The
+      # --native-* flags below were being ignored by the harness and
+      # defaulting to Claude CLI anyway. Accepting that and running serial
+      # avoids the rate-limit cascade.
       timeout "$to" "$STOKE" sow \
         --repo "$dir" --file "$dir/SOW.md" \
-        --native-base-url "http://localhost:$port" \
-        --native-api-key "$key" \
-        --native-model claude-sonnet-4-6 \
         --reviewer-source codex \
         $sow_flags --fresh \
         > "$log" 2>&1
@@ -260,10 +261,20 @@ if [[ "${1:-}" == "--mode" ]]; then
   MODES_TO_RUN=("$2")
 fi
 
-for m in "${MODES_TO_RUN[@]}"; do
-  drive_mode "$m" &
-  echo "Driver started: $m (PID $!)"
-done
-
-wait
+# Serial mode: run lanes one-at-a-time to avoid saturating the shared
+# Claude CLI account. Three-lane parallel runs were hitting 15-min
+# rate-limit backoffs per call, timing out R03 on both strict+lenient.
+# --parallel flag restores the old behavior when needed.
+if [[ "${1:-}" == "--parallel" ]]; then
+  for m in "${MODES_TO_RUN[@]}"; do
+    drive_mode "$m" &
+    echo "Driver started: $m (PID $!)"
+  done
+  wait
+else
+  for m in "${MODES_TO_RUN[@]}"; do
+    echo "═══ Starting $m lane (serial) ═══"
+    drive_mode "$m"
+  done
+fi
 echo "All mode drivers finished."
