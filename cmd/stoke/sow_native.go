@@ -4141,6 +4141,14 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	// productive sub-directives get promoted to first-class scope via
 	// OnDecompOverflow rather than silently dropped.
 	atCap := depth >= maxReviewDepth
+	// H-37: when at cap AND overflow is disabled, the reviewer's
+	// verdict can't lead to new dispatches or new sessions. Skip
+	// the ~30s of reviewer + decomposer LLM calls and return — the
+	// session ACs are the next (and final) gate.
+	if atCap && cfg.OnDecompOverflow == nil {
+		fmt.Printf("    ⏹ %s at review cap (depth=%d) with no overflow hook — skipping reviewer + decomposer, deferring to session ACs\n", originalTask.ID, depth)
+		return
+	}
 	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, originalTask.Files, 8, 4000)
 	sowExcerpt := ""
 	if cfg.RawSOWText != "" {

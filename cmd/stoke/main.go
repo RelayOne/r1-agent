@@ -2619,12 +2619,26 @@ func sowCmd(args []string) {
 				}
 			},
 			OnDecompOverflow: func(fromTaskID, fromSessionID string, subDirectives []string) {
-				// Promote per-task decomp overflow to first-class scope.
-				// When reviewAndFollowupRecursive hits its depth cap but
-				// the decomposer still has productive sub-directives,
-				// make each one a task in a new session rather than
-				// dropping them. The new session gets briefing +
-				// scope-aware review + decomposition with a fresh budget.
+				// H-37: disabled by default. Perflog from sow-serial R03 +
+				// run-56 showed this callback was the primary source of
+				// runaway sessions: one capped task spawns a new session
+				// (briefing + N reviews + N decomps + AC check + cross-
+				// review), which itself can hit cap and spawn another.
+				// Worst case is quadratic. Session ACs are the correct
+				// final gate — if the task is genuinely broken, it'll
+				// fail there and surface to the operator. If it's
+				// "reviewer nitpick past 2 follow-ups", we've already
+				// decided that's not worth further compute.
+				//
+				// Override: STOKE_SOW_ENABLE_DECOMP_OVERFLOW=1 restores
+				// the old promote-to-new-session behavior for cases where
+				// the reviewer's gaps ARE real and the original task is
+				// structurally too big (rare; usually indicates the
+				// planner under-decomposed the SOW).
+				if os.Getenv("STOKE_SOW_ENABLE_DECOMP_OVERFLOW") == "" {
+					fmt.Printf("    ⏹ decomp overflow disabled — %d sub-directive(s) from %s deferred to session ACs\n", len(subDirectives), fromTaskID)
+					return
+				}
 				if len(subDirectives) == 0 {
 					return
 				}
