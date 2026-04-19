@@ -30,7 +30,7 @@ RESULTS=$SUITE/RESULTS.md
 STOKE=/home/eric/repos/stoke/stoke
 
 RUNGS=(R01 R02 R03 R04 R05 R06 R07 R08)
-MODES=(strict lenient sow)
+MODES=(strict lenient sow sow-serial)
 
 mkdir -p "$RUNS"
 
@@ -50,11 +50,22 @@ ensure_state() {
   if [[ ! -f "$STATE" ]]; then
     cat > "$STATE" <<EOF
 {
-  "strict":  {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null},
-  "lenient": {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null},
-  "sow":     {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null}
+  "strict":     {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null},
+  "lenient":    {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null},
+  "sow":        {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null},
+  "sow-serial": {"next_rung": "R01", "last_result": null, "last_run_dir": null, "blocked_reason": null}
 }
 EOF
+  fi
+  # Seed sow-serial in existing state files that predate the 4th lane.
+  if ! python3 -c "import json; exit(0 if 'sow-serial' in json.load(open('$STATE')) else 1)" 2>/dev/null; then
+    python3 <<PY
+import json
+p = '$STATE'
+s = json.load(open(p))
+s['sow-serial'] = {"next_rung": "R01", "last_result": None, "last_run_dir": None, "blocked_reason": None}
+json.dump(s, open(p,'w'), indent=2)
+PY
   fi
 }
 
@@ -230,6 +241,26 @@ run_one() {
         --native-model claude-sonnet-4-6 \
         --reviewer-source codex \
         $sow_flags --fresh \
+        > "$log" 2>&1
+      exit_code=$?
+      ;;
+    sow-serial)
+      # 4th matrix lane per user request: sow with --workflow=serial.
+      # Forces single-session + single-task-within-session + no
+      # per-task-worktree. Trades the sow harness's parallelism for
+      # simple-loop's convergence reliability. Flag set in the stoke
+      # binary collapses --parallel / --parallel-tasks / per-task-
+      # worktree to 1/1/false regardless of other sow_flags.
+      local port key
+      port=$(cat ~/.litellm/proxy.port 2>/dev/null || echo 4000)
+      key=$(grep '^LITELLM_MASTER_KEY=' ~/.litellm/.env 2>/dev/null | cut -d= -f2- | tr -d '"'"'")
+      timeout "$to" "$STOKE" sow \
+        --repo "$dir" --file "$dir/SOW.md" \
+        --native-base-url "http://localhost:$port" \
+        --native-api-key "$key" \
+        --native-model claude-sonnet-4-6 \
+        --reviewer-source codex \
+        --workflow serial --fresh \
         > "$log" 2>&1
       exit_code=$?
       ;;

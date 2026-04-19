@@ -1444,6 +1444,16 @@ func sowCmd(args []string) {
 	strictScope := fs.Bool("strict-scope", false, "Fail sessions that touched files outside the declared session.Outputs / task.Files set")
 	verboseStream := fs.Bool("verbose-stream", false, "Print raw model streaming output (DeltaText) to stdout. Default off — structural events (tool names, completions, warnings) still print. Useful for debugging, noisy in normal runs.")
 	parallelTasks := fs.Int("parallel-tasks", 1, "Concurrent tasks within a session when their file sets are disjoint (1 = sequential)")
+	// --workflow: preset bundling the sow complexity knobs. User request:
+	// 'make it capable of both modes and add as a matrix element'.
+	//   parallel (default) — whatever the operator's other flags say.
+	//   serial             — force the simplest shape: --parallel 1,
+	//                        --parallel-tasks 1, no per-task-worktree.
+	//                        Makes sow behave like simple-loop does:
+	//                        sequential tasks in RepoRoot, reviewer sees
+	//                        what worker wrote. Trades speed for
+	//                        convergence reliability.
+	workflowMode := fs.String("workflow", "parallel", "sow complexity preset: 'parallel' (existing behavior — per-task worktrees + intra-session parallelism) or 'serial' (single session at a time, one task at a time, InPlace — matches simple-loop's shape)")
 	compactThreshold := fs.Int("compact-threshold", 100000, "Progressive context compaction kicks in when a task's estimated input tokens exceed this (0 = disabled)")
 	dumpPrompts := fs.Bool("dump-task-prompts", false, "Write every task's system+user prompts to .stoke/prompt-dump/ and exit, without calling the LLM. Used to verify spec extraction before spending on a real run.")
 	outputFormat := fs.String("output-format", "", "Output mode. Empty (default): human-readable TUI + stoke banners on stdout. 'stream-json': emit Claude Code-compatible NDJSON events to stdout (S-U-020); logs route to stderr. Consumed by Multica, OpenACP, and other orchestrators that speak Claude Code's schema.")
@@ -1492,6 +1502,22 @@ func sowCmd(args []string) {
 		sowFatal(streamEmitter, streamResult, "resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// --workflow=serial — collapse all the parallelism/isolation knobs
+	// to the simplest shape. This matches the simple-loop convergence
+	// shape that reliably closes small SOWs. Operator-set values are
+	// overridden silently here; we log so the operator can see what
+	// was forced.
+	if *workflowMode == "serial" {
+		if *parallelSessions > 1 || *parallelTasks > 1 || *perTaskWorktree {
+			fmt.Printf("  🧩 --workflow=serial: forcing --parallel 1, --parallel-tasks 1, --per-task-worktree=false\n")
+		}
+		one := 1
+		parallelSessions = &one
+		parallelTasks = &one
+		falseVal := false
+		perTaskWorktree = &falseVal
+	}
 
 	// --list-checkpoints: print the timeline and exit.
 	if *listCheckpoints {
