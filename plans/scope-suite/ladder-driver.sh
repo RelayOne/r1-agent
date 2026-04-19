@@ -209,9 +209,15 @@ run_one() {
       # fails every task that runs after one already modified the
       # working tree — they race on the same cwd. Serial sidesteps it.
       # Big rungs: per-task-worktree + parallel to earn back speed.
+      # Force fully-sequential on small rungs:
+      #   --parallel 1         — one session at a time
+      #   --parallel-tasks 1   — one task at a time within a session
+      # Without --parallel-tasks, the harness runs N parallel task
+      # workers in the SAME cwd (InPlace mode) and every task flags
+      # the others' writes as "WRONG_FILES / PROTECTED_PATH_TOUCHED."
       local sow_flags=""
       case "$rung" in
-        R01|R02|R03|R04) sow_flags="--parallel 1";;
+        R01|R02|R03|R04) sow_flags="--parallel 1 --parallel-tasks 1";;
         *) sow_flags="--per-task-worktree --parallel 2";;
       esac
       # Sow REQUIRES a provider — 'load SOW: no provider configured'.
