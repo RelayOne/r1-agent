@@ -29,7 +29,7 @@ STATE=$SUITE/ladder-state.json
 RESULTS=$SUITE/RESULTS.md
 STOKE=/home/eric/repos/stoke/stoke
 
-RUNGS=(R01 R02 R03 R04 R05 R06 R07 R08)
+RUNGS=(R01 R02 R03 R04 R05 R06 R07 R08 R09 R10)
 MODES=(strict lenient sow sow-serial)
 
 mkdir -p "$RUNS"
@@ -52,6 +52,8 @@ timeout_for() {
       R05|R06) echo "120m";;
       R07)     echo "150m";;
       R08)     echo "240m";;
+      R09)     echo "150m";;
+      R10)     echo "180m";;
       *)       echo "90m";;
     esac
     return
@@ -62,6 +64,8 @@ timeout_for() {
     R05|R06) echo "60m";;
     R07) echo "90m";;
     R08) echo "180m";;
+    R09) echo "90m";;
+    R10) echo "120m";;
     *)   echo "45m";;
   esac
 }
