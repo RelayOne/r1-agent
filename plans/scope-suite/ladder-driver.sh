@@ -53,11 +53,16 @@ timeout_for() {
   # feedback inside an hour. If a rung legitimately needs longer, split
   # the SOW into smaller sessions — that's what the planner is for.
   if [[ "$mode" == "sow" || "$mode" == "sow-serial" ]]; then
+    # H-57: bumped R03/R04 from 60m to 90m. sow/R04 timed out cleanly
+    # at 60m with session still mid-flight (17 tasks × avg 60s worker
+    # + reviews/drain exceeds 60m on parallel session splits). 90m
+    # matches simple-loop's hardest-rung cap — still "under 2 hours"
+    # but lets sow multi-session plans converge.
     case "$rung" in
       R01|R02) echo "45m";;
-      R03|R04) echo "60m";;
-      R05|R06|R07|R08|R09|R10) echo "90m";;
-      *)       echo "60m";;
+      R03|R04) echo "90m";;
+      R05|R06|R07|R08|R09|R10) echo "120m";;
+      *)       echo "90m";;
     esac
     return
   fi

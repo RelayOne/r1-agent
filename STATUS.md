@@ -463,7 +463,7 @@ All 4 kill-cycles happened 11:06–11:45 as part of the "kill all / fix rubber-s
 - Old binaries of variants A and B are running — they don't have the Ecosystem build-gate fix. Kill+relaunch them to get the fix, OR leave them to demonstrate the old failure mode.
 
 <!-- LIVE-COHORT-BEGIN -->
-## Live cohort (auto-refreshed 2026-04-19T04:35:51-07:00)
+## Live cohort (auto-refreshed 2026-04-19T05:47:51-07:00)
 
 | Name | PID | Alive | Commits | TS | Gate-hits | cerr | Phase | LogAge |
 |---|---|---|---|---|---|---|---|---|
@@ -471,24 +471,24 @@ All 4 kill-cycles happened 11:06–11:45 as part of the "kill all / fix rubber-s
 | E2 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | E3 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | E4 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
-| E5 | 0 | 💀 | 226 | 534 | 51 | 69 | 📋 Step 8: Claude Code self-auditing against SOW... | 142m |
-| E6 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 892m |
-| E7 | 0 | 💀 | 6 | 47 | 0 | 6 | 🔧 Step 3 builder call 3 (absoluteCap=40, stalls=0/2)... | 893m |
-| E8 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 892m |
-| E9 | 0 | 💀 | 25 | 25 | 3 | 21 | 📋 Step 8: Claude Code self-auditing against SOW... | 640m |
-| ASYNC | 0 | 💀 | 9 | 3823 | 0 | 0 | (no phase-banner yet) | 34m |
+| E5 | 0 | 💀 | 226 | 534 | 51 | 69 | 📋 Step 8: Claude Code self-auditing against SOW... | 214m |
+| E6 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 964m |
+| E7 | 0 | 💀 | 6 | 47 | 0 | 6 | 🔧 Step 3 builder call 3 (absoluteCap=40, stalls=0/2)... | 965m |
+| E8 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 964m |
+| E9 | 0 | 💀 | 25 | 25 | 3 | 21 | 📋 Step 8: Claude Code self-auditing against SOW... | 712m |
+| ASYNC | 0 | 💀 | 9 | 3823 | 0 | 0 | (no phase-banner yet) | 106m |
 | PERFCOMP | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
-| PERFDATA | 0 | 💀 | 3 | 4 | 13 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 182m |
-| R01 | 0 | 💀 | 5 | 315 | 1 | 0 | (no phase-banner yet) | 410m |
-| R02 | 0 | 💀 | 10 | 377 | 0 | 0 | (no phase-banner yet) | 333m |
-| R03 | 0 | 💀 | 13 | 2 | 6 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 401m |
-| R04 | 0 | 💀 | 1 | 0 | 0 | 0 | 📝 Step 2: codex reviewing plan... | 388m |
-| R05 | 0 | 💀 | 4 | 10 | 4 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 352m |
-| R06 | 0 | 💀 | 5 | 14 | 19 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 319m |
-| R07 | 0 | 💀 | 7 | 10 | 14 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 275m |
-| R08 | 0 | 💀 | 39 | 232 | 80 | 14 | 🔧 Step 3 builder call 12 (absoluteCap=40, stalls=1/2)... | 100m |
-| R09 | 0 | 💀 | 8 | 25 | 53 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 56m |
-| R10 | 0 | 💀 | 9 | 21 | 59 | 1 | 📋 Step 8: Claude Code self-auditing against SOW... | 30m |
+| PERFDATA | 0 | 💀 | 3 | 4 | 13 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 254m |
+| R01 | 0 | 💀 | 5 | 315 | 1 | 0 | (no phase-banner yet) | 482m |
+| R02 | 0 | 💀 | 10 | 377 | 0 | 0 | (no phase-banner yet) | 405m |
+| R03 | 0 | 💀 | 13 | 2 | 6 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 473m |
+| R04 | 0 | 💀 | 1 | 0 | 0 | 0 | 📝 Step 2: codex reviewing plan... | 460m |
+| R05 | 0 | 💀 | 4 | 10 | 4 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 424m |
+| R06 | 0 | 💀 | 5 | 14 | 19 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 391m |
+| R07 | 0 | 💀 | 7 | 10 | 14 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 347m |
+| R08 | 0 | 💀 | 39 | 232 | 80 | 14 | 🔧 Step 3 builder call 12 (absoluteCap=40, stalls=1/2)... | 172m |
+| R09 | 0 | 💀 | 8 | 25 | 53 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 128m |
+| R10 | 0 | 💀 | 9 | 21 | 59 | 1 | 📋 Step 8: Claude Code self-auditing against SOW... | 102m |
 | REVMODE | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | REVMODE2 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | SOWPERF | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
