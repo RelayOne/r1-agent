@@ -672,7 +672,20 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// briefing call fails, we fall through to the old behavior
 	// (workers get the original context set) — briefings are a
 	// quality improvement, not a correctness gate.
-	if cfg.BriefingProvider != nil && len(session.Tasks) > 0 {
+	//
+	// H-35 small-session skip: for sessions with ≤5 tasks, the
+	// briefing pass's 60-90s fixed cost exceeds the worker-time it
+	// saves (~15s/task × 5 = 75s max). Perflog data from sow-serial
+	// R03 showed session→phase1 gap of 72s for a 13-task session;
+	// on 3-task sessions the briefing is pure overhead. Override
+	// via STOKE_SOW_FORCE_BRIEFING=1 to disable the skip.
+	smallSession := len(session.Tasks) <= 5 && os.Getenv("STOKE_SOW_FORCE_BRIEFING") == ""
+	if smallSession {
+		fmt.Printf("  briefing skipped: %d tasks ≤ 5 (STOKE_SOW_FORCE_BRIEFING=1 to override)\n", len(session.Tasks))
+	}
+	if cfg.BriefingProvider != nil && len(session.Tasks) > 0 && !smallSession {
+		briefingSpan := perflog.Start("phase0.briefing", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
+		defer briefingSpan.End()
 		briefingModel := cfg.BriefingModel
 		if briefingModel == "" {
 			briefingModel = cfg.Model
