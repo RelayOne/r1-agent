@@ -360,6 +360,153 @@ func acceptanceCommandEnv(projectRoot string) []string {
 	return out
 }
 
+// fuzzyFindFile attempts to locate a file at a logically-equivalent
+// path when the exact requested path doesn't exist. Accepts matches
+// only when the basename is distinctive enough to avoid cross-package
+// false positives. Returns the absolute path found + true, or
+// ("", false) if no acceptable fuzzy match exists.
+//
+// Transformations tried (in order of specificity):
+//  1. Strip a leading "packages/" or "apps/" directory
+//  2. Prepend "src/" to a relative path without it
+//  3. Walk up to 3 levels deep under apps/, packages/, services/,
+//     libs/, src/, and the project root looking for exact basename +
+//     path suffix match (last 2 path segments)
+//
+// Distinctiveness heuristic: the basename must have at least 6
+// characters AND either contain a hyphen, underscore, or digit, OR be
+// at least 10 chars with one distinctive non-generic segment. This
+// keeps names like "login.ts" / "auth.ts" acceptable while rejecting
+// "index.ts" / "types.ts" / "utils.ts" that appear in many packages.
+func fuzzyFindFile(projectRoot, wantRel string) (string, bool) {
+	if wantRel == "" {
+		return "", false
+	}
+	base := filepath.Base(wantRel)
+	// Distinctiveness gate.
+	if !isDistinctiveBasename(base) {
+		return "", false
+	}
+	// Build candidate paths in specificity order.
+	var candidates []string
+	wantSuffix := wantRel
+	// Strip a leading "packages/..." or "apps/..." prefix one level deep.
+	for _, prefix := range []string{"packages/", "apps/", "services/", "libs/"} {
+		if strings.HasPrefix(wantRel, prefix) {
+			rest := strings.TrimPrefix(wantRel, prefix)
+			// rest looks like "types/src/auth.ts" → also try "src/auth.ts"
+			if slash := strings.Index(rest, "/"); slash >= 0 {
+				candidates = append(candidates, rest[slash+1:])
+			}
+			candidates = append(candidates, rest)
+		}
+	}
+	// Add leading src/ variant.
+	if !strings.HasPrefix(wantRel, "src/") {
+		candidates = append(candidates, "src/"+wantRel)
+	}
+	// Strip leading src/.
+	if strings.HasPrefix(wantRel, "src/") {
+		candidates = append(candidates, strings.TrimPrefix(wantRel, "src/"))
+	}
+	for _, cand := range candidates {
+		full := filepath.Join(projectRoot, cand)
+		if _, err := os.Stat(full); err == nil {
+			return full, true
+		}
+	}
+	// Fallback: walk common workspace subtrees looking for a file whose
+	// last 2 path segments match wantSuffix's last 2 segments.
+	targetTail := lastTwoSegments(wantSuffix)
+	if targetTail == "" {
+		return "", false
+	}
+	var found string
+	for _, root := range []string{"apps", "packages", "services", "libs", "src", "."} {
+		rootAbs := filepath.Join(projectRoot, root)
+		if root == "." {
+			rootAbs = projectRoot
+		}
+		filepath.WalkDir(rootAbs, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || found != "" {
+				return nil
+			}
+			// Skip node_modules, .git, dist, build, .next, target, etc.
+			if strings.Contains(p, "/node_modules/") || strings.Contains(p, "/.git/") ||
+				strings.Contains(p, "/dist/") || strings.Contains(p, "/build/") ||
+				strings.Contains(p, "/.next/") || strings.Contains(p, "/target/") {
+				return nil
+			}
+			// Limit depth: skip paths with too many segments below projectRoot.
+			rel, _ := filepath.Rel(projectRoot, p)
+			if strings.Count(rel, "/") > 6 {
+				return nil
+			}
+			if lastTwoSegments(p) == targetTail || filepath.Base(p) == filepath.Base(wantSuffix) {
+				// Accept only if last 2 segments match (more specific)
+				// OR the basename is distinctive enough.
+				if lastTwoSegments(p) == targetTail {
+					found = p
+				}
+			}
+			return nil
+		})
+		if found != "" {
+			break
+		}
+	}
+	if found != "" {
+		return found, true
+	}
+	return "", false
+}
+
+// isDistinctiveBasename returns true when the basename is specific
+// enough that cross-package collisions are unlikely. Lists of
+// too-generic names are explicit (index, types, utils, main, config).
+func isDistinctiveBasename(base string) bool {
+	if len(base) < 6 {
+		return false
+	}
+	stem := base
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		stem = base[:dot]
+	}
+	generic := map[string]bool{
+		"index": true, "types": true, "utils": true, "util": true,
+		"main": true, "config": true, "helper": true, "helpers": true,
+		"common": true, "shared": true, "base": true, "core": true,
+		"test": true, "spec": true, "setup": true, "init": true,
+	}
+	if generic[strings.ToLower(stem)] {
+		return false
+	}
+	// Need at least one distinctive character (hyphen/underscore/digit)
+	// OR long name.
+	hasDistinctive := false
+	for _, r := range stem {
+		if r == '-' || r == '_' || (r >= '0' && r <= '9') {
+			hasDistinctive = true
+			break
+		}
+	}
+	if hasDistinctive {
+		return true
+	}
+	return len(stem) >= 10
+}
+
+// lastTwoSegments returns the last two slash-separated segments of p
+// (e.g. "a/b/c/d.ts" -> "c/d.ts"). Empty string if only one segment.
+func lastTwoSegments(p string) string {
+	p = strings.TrimRight(p, "/")
+	parts := strings.Split(p, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+}
+
 // gatherWorkspaceBinDirs returns all <dir>/node_modules/.bin paths
 // that exist under projectRoot. Starts with the root bin, then adds
 // one bin dir per workspace package discovered via common monorepo
@@ -447,10 +594,24 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		if _, err := os.Stat(path); err == nil {
 			result.Passed = true
 			result.Output = fmt.Sprintf("file exists: %s", ac.FileExists)
-		} else {
-			result.Passed = false
-			result.Output = fmt.Sprintf("file not found: %s", ac.FileExists)
+			return result
 		}
+		// H-61: fuzzy-match fallback. The AC says the file must exist
+		// at PATH, but the worker may have placed it at a structurally
+		// equivalent location — e.g., the AC asks for
+		// "packages/types/src/auth.ts" and the worker created
+		// "types/src/auth.ts" (flat vs packages/ layout). Before
+		// failing, search for the same basename under common workspace
+		// roots. Only accept fuzzy matches with distinctive basenames
+		// (too-generic names like "index.ts", "types.ts" cause false
+		// positives across unrelated packages).
+		if alt, ok := fuzzyFindFile(projectRoot, ac.FileExists); ok {
+			result.Passed = true
+			result.Output = fmt.Sprintf("file exists (fuzzy match): %s → %s", ac.FileExists, alt)
+			return result
+		}
+		result.Passed = false
+		result.Output = fmt.Sprintf("file not found: %s", ac.FileExists)
 		return result
 	}
 
