@@ -22,6 +22,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/taskstats"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/skill"
@@ -2254,9 +2255,30 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			UniversalPromptBlock: taskCfg.combinedPromptBlock(taskCfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(taskCfg.RepoRoot, taskCfg.RawSOWText, workingSession, task, 3))
+		// H-54: load historical timing for tasks with similar declared-
+		// file count and log expected duration before dispatching.
+		stats := taskstats.LoadRecent(500)
+		if avg, stdev, samples := taskstats.AvgForFileCount(stats, len(task.Files), 1); samples >= 3 {
+			fmt.Printf("    📊 %s: %s\n", task.ID, taskstats.FormatETA(avg, stdev, samples))
+		}
 		workerSpan := perflog.Start("worker.dispatch", "task="+task.ID, "files="+strconv.Itoa(len(task.Files)))
+		dispatchStart := time.Now()
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
 		workerSpan.End("success=" + strconv.FormatBool(tr.Success))
+		// H-54: persist observed timing. Key on file-count for future lookups.
+		sowID := ""
+		if sowDoc != nil {
+			sowID = sowDoc.ID
+		}
+		taskstats.Append(taskstats.Record{
+			ProjectSlug:       sowID,
+			SessionID:         session.ID,
+			TaskID:            task.ID,
+			DeclaredFileCount: len(task.Files),
+			DurationMs:        time.Since(dispatchStart).Milliseconds(),
+			Success:           tr.Success,
+			Mode:              "worker",
+		})
 		// Per-task reviewer: catch gaps at task scope before
 		// cascading into session AC failures. Bounded at 1
 		// follow-up max per task to cap cost and prevent loops.

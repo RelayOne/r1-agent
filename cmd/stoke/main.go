@@ -689,6 +689,8 @@ func main() {
 		mcpServeStokeCmd(os.Args[2:])
 	case "init", "wizard":
 		initCmd(os.Args[2:])
+	case "task-stats", "stats":
+		taskStatsCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
