@@ -1505,16 +1505,22 @@ func sowCmd(args []string) {
 
 	// --workflow=serial — collapse all the parallelism/isolation knobs
 	// to the simplest shape. This matches the simple-loop convergence
-	// shape that reliably closes small SOWs. Operator-set values are
-	// overridden silently here; we log so the operator can see what
-	// was forced.
+	// shape that reliably closes small SOWs. Forces:
+	//   --parallel 1          one session at a time
+	//   --parallel-tasks 1    one task at a time inside a session
+	//   --workers 1           sow's pool-size cap also needs to be 1,
+	//                         otherwise the parallel session runner
+	//                         fires multiple workers in the SAME cwd
+	//                         and they fail with WRONG_FILES /
+	//                         PROTECTED_PATH_TOUCHED (live-cohort
+	//                         observation at 17:45)
+	//   --per-task-worktree=false
 	if *workflowMode == "serial" {
-		if *parallelSessions > 1 || *parallelTasks > 1 || *perTaskWorktree {
-			fmt.Printf("  🧩 --workflow=serial: forcing --parallel 1, --parallel-tasks 1, --per-task-worktree=false\n")
-		}
+		fmt.Printf("  🧩 --workflow=serial: forcing --parallel 1, --parallel-tasks 1, --workers 1, --per-task-worktree=false\n")
 		one := 1
 		parallelSessions = &one
 		parallelTasks = &one
+		workers = &one
 		falseVal := false
 		perTaskWorktree = &falseVal
 	}
