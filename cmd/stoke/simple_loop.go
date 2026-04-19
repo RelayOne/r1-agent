@@ -810,29 +810,57 @@ func simpleLoopCmd(args []string) {
 			}
 			fullDiff := shellCmd(absRepo, "git diff "+headBefore+"..HEAD --stat 2>/dev/null")
 			fmt.Printf("  🔍 Final review %d/%d (via %s)...\n", fixRound, maxFixRounds, *reviewer)
-			// Adaptive prefix: the more rounds we've done, the higher the
-			// bar for rejection. The reviewer tends to find "one more
-			// polish item" on every round; by round 3+ we need it to
-			// only flag genuine blockers, and by round 5 we're either
-			// blocked by a real issue or in a loop.
+			// Adaptive prefix: self-aware reviewer. The first 3 rounds
+			// ALWAYS get a normal review — no prompt tweaking, no quality
+			// assessment, no auto-skip. Reviewer earns those rounds of
+			// full authority before the loop starts meta-questioning.
+			// After round 3, the bar progressively rises:
+			//   rounds 1-3: normal review (catch real defects + medium polish)
+			//   rounds 4-6: raise bar (blocking defects only)
+			//   rounds 7-12: "only would-break-in-prod" + loud warning
+			//   rounds 13-19: quality-layer skepticism ("are we still finding
+			//                real stuff, or polish?")
+			//   rounds 20+: auto-approve if prior findings have been
+			//               polish-only across the assessed window
+			qualityVerdict := assessPriorReviewQuality(priorRoundsGaps)
 			adaptivePreamble := ""
+			autoApprove := false
 			switch {
-			case fixRound >= 5:
-				adaptivePreamble = "⚠ This is ROUND " + fmt.Sprintf("%d", fixRound) + " of " + fmt.Sprintf("%d", maxFixRounds) +
-					". Prior rounds have already dispatched fix workers for " +
-					"everything you flagged. At this depth, almost every new 'finding' " +
-					"is polish disguised as a defect. RETURN 'LGTM' UNLESS you can " +
-					"cite a specific file:line where code that WAS passing now FAILS " +
-					"a build, test, or security check. A vague 'could be more robust' " +
-					"is NOT a blocker at round 5+. If you're tempted to fail this " +
-					"round, first ask: would a reasonable senior engineer actually " +
-					"block a PR on this finding? If no → LGTM.\n\n"
-			case fixRound >= 3:
-				adaptivePreamble = "Note: this is round " + fmt.Sprintf("%d", fixRound) + " of " + fmt.Sprintf("%d", maxFixRounds) +
-					". Earlier rounds have iterated on issues; raise the rejection bar. " +
-					"Only return pass=false for concrete BLOCKING defects (tests fail, " +
-					"build fails, declared file missing, security bug). Polish, style, " +
-					"or 'could also add' → pass=true with a low-severity finding.\n\n"
+			case fixRound >= 20 && qualityVerdict == "polish-only":
+				fmt.Printf("  🧠 review-quality: %d rounds, prior findings look polish-only — auto-approving\n", fixRound)
+				autoApprove = true
+			case fixRound >= 13:
+				adaptivePreamble = fmt.Sprintf(
+					"⚠⚠ ROUND %d of %d. Prior review quality so far: %s.\n\n"+
+						"Step back and ask yourself: are my findings actually making this "+
+						"code NOT WORK, or am I finding things I'd mention as a nit in code "+
+						"review but would still merge? If it's the latter, RETURN LGTM.\n\n"+
+						"The loop is losing confidence in the review layer. At 20 rounds "+
+						"of polish-only findings, the loop will auto-approve regardless.\n\n",
+					fixRound, maxFixRounds, qualityVerdict)
+			case fixRound >= 7:
+				adaptivePreamble = fmt.Sprintf(
+					"⚠ ROUND %d of %d. Prior review quality so far: %s.\n\n"+
+						"Prior rounds have dispatched fix workers for everything you flagged. "+
+						"At this depth, almost every new 'finding' is polish disguised as a defect. "+
+						"RETURN 'LGTM' UNLESS you can cite a specific file:line where code that "+
+						"WAS passing now FAILS a build, test, or security check. A vague 'could "+
+						"be more robust' is NOT a blocker at round 7+. Would a reasonable senior "+
+						"engineer actually block a PR on your finding? If no → LGTM.\n\n",
+					fixRound, maxFixRounds, qualityVerdict)
+			case fixRound >= 4:
+				adaptivePreamble = fmt.Sprintf(
+					"Note: round %d of %d. Earlier rounds have iterated on issues; raise "+
+						"the rejection bar. Only return pass=false for concrete BLOCKING defects "+
+						"(tests fail, build fails, declared file missing, security bug). Polish, "+
+						"style, or 'could also add' → pass=true with a low-severity finding.\n\n",
+					fixRound, maxFixRounds)
+			}
+
+			if autoApprove {
+				fmt.Printf("  ✅ reviewer bypassed (round %d) — quality layer judged prior findings polish-only, auto-approved\n", fixRound)
+				pendingReviews = nil
+				break
 			}
 			finalPrompt := adaptivePreamble +
 				"Review ALL changes in this branch for SHIPPABILITY. " +

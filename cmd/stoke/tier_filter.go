@@ -634,3 +634,80 @@ func extractGapsFromReview(review string) []string {
 	}
 	return out
 }
+
+// assessPriorReviewQuality returns a one-line verdict describing the
+// shape of findings the reviewer has produced across prior rounds. The
+// self-aware reviewer loop uses this verdict in its adaptive preamble —
+// "your reviews have been [X]" primes the reviewer to match the right
+// bar for this round.
+//
+// Possible verdicts:
+//   - "insufficient-data": fewer than 2 rounds observed
+//   - "polish-only":       every finding reads like polish (style, config
+//                          nits, could-also-add, naming, documentation)
+//   - "real-issues":       at least one finding in the window names a
+//                          blocker (build fail, test fail, crash, security)
+//   - "mixed":             both categories present in the window
+//
+// Window: looks at the most recent `assessWindow` rounds (default 3) so
+// a long run doesn't drown out recent quality signal.
+func assessPriorReviewQuality(priorRoundsGaps [][]string) string {
+	const assessWindow = 3
+	if len(priorRoundsGaps) < 2 {
+		return "insufficient-data"
+	}
+	start := len(priorRoundsGaps) - assessWindow
+	if start < 0 {
+		start = 0
+	}
+	window := priorRoundsGaps[start:]
+
+	// Polish markers — substrings that flag "style/nice-to-have" findings.
+	polishMarkers := []string{
+		"naming", "nit", "could also", "consider", "prefer", "minor",
+		"suggest", "idiomatic", "convention", "formatting", "style",
+		"could be more", "documentation", "docs", "comment", "typo",
+		"alias", "rename", "refactor to", "extract", "dry",
+	}
+	// Blocker markers — explicit "this breaks" language.
+	blockerMarkers := []string{
+		"fails", "broken", "crash", "throws", "error", "missing",
+		"does not exist", "doesn't exist", "not implemented",
+		"build fails", "tests fail", "test failure", "compile error",
+		"type error", "security", "injection", "bypass", "leak",
+		"segfault", "panic", "undefined behavior",
+	}
+
+	sawPolish, sawBlocker := false, false
+	for _, round := range window {
+		for _, finding := range round {
+			lower := strings.ToLower(finding)
+			for _, m := range blockerMarkers {
+				if strings.Contains(lower, m) {
+					sawBlocker = true
+					break
+				}
+			}
+			for _, m := range polishMarkers {
+				if strings.Contains(lower, m) {
+					sawPolish = true
+					break
+				}
+			}
+		}
+	}
+
+	switch {
+	case sawBlocker && sawPolish:
+		return "mixed"
+	case sawBlocker:
+		return "real-issues"
+	case sawPolish:
+		return "polish-only"
+	default:
+		// No markers matched — treat as "real" to be conservative.
+		// The default path where the reviewer is returning prose
+		// without recognizable keywords shouldn't auto-skip.
+		return "real-issues"
+	}
+}
