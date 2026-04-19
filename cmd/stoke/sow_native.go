@@ -1916,13 +1916,30 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 		diffOut []byte
 		err     error
 	)
+	// H-55: exclude lock files from cross-review diff. R03-sow
+	// crashed with 247k tokens requested (vs 163k max) because
+	// pnpm-lock.yaml added ~200k tokens of machine-generated content
+	// the reviewer has zero business auditing. Always exclude any
+	// *-lock.{yaml,json} file from the diff.
+	lockExcludes := []string{
+		":(exclude)pnpm-lock.yaml",
+		":(exclude)package-lock.json",
+		":(exclude)yarn.lock",
+		":(exclude)bun.lock",
+		":(exclude)Cargo.lock",
+		":(exclude)poetry.lock",
+		":(exclude)uv.lock",
+		":(exclude)go.sum",
+	}
 	if sessionStartCommit != "" {
-		cmd := exec.CommandContext(ctx, "git", "diff", sessionStartCommit)
+		args := append([]string{"diff", sessionStartCommit, "--"}, lockExcludes...)
+		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = cfg.RepoRoot
 		diffOut, err = cmd.Output()
 	}
 	if err != nil || len(diffOut) == 0 {
-		cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+		args := append([]string{"diff", "HEAD", "--"}, lockExcludes...)
+		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = cfg.RepoRoot
 		diffOut, err = cmd.Output()
 	}
