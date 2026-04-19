@@ -1810,10 +1810,60 @@ func checkScopeViolations(session plan.Session, touched []string) []string {
 	if len(declared) == 0 {
 		return nil
 	}
-	// Always allow changes inside .stoke/ (state files, caches, etc.)
+	// H-63: always allow build/tool caches + VCS state + dependency
+	// dirs. R03-serial failed with 53 "scope violations" on .turbo/
+	// cache/* files that turbo creates during typecheck runs — those
+	// aren't tasks' outputs, they're transient build artifacts. Same
+	// for .next/, node_modules/, etc. These never count as scope
+	// violations regardless of session declarations.
+	ignoredScopePrefixes := []string{
+		".stoke/",       // stoke's own state files
+		".git/",         // VCS
+		"node_modules/", // npm/pnpm/yarn deps
+		".turbo/",       // turbo cache
+		".next/",        // Next.js build
+		".nuxt/",        // Nuxt build
+		"dist/",         // generic build output
+		"build/",        // generic build output
+		"target/",       // Rust/Java build
+		".venv/",        // Python virtualenv
+		"venv/",         // Python virtualenv
+		"__pycache__/",  // Python bytecode
+		".pytest_cache/",
+		".mypy_cache/",
+		".ruff_cache/",
+		".vitest/",
+		".jest/",
+		".cache/",
+		".parcel-cache/",
+		".vite/",
+		"coverage/",
+	}
+	// Also allow specific filenames that tools auto-generate.
+	ignoredScopeFiles := map[string]bool{
+		"pnpm-lock.yaml":    true,
+		"package-lock.json": true,
+		"yarn.lock":         true,
+		"bun.lockb":         true,
+		"Cargo.lock":        true,
+		"poetry.lock":       true,
+		"uv.lock":           true,
+		"go.sum":            true,
+		"next-env.d.ts":     true,
+	}
 	var violations []string
 	for _, f := range touched {
-		if strings.HasPrefix(f, ".stoke/") {
+		skip := false
+		for _, prefix := range ignoredScopePrefixes {
+			if strings.HasPrefix(f, prefix) || strings.Contains(f, "/"+prefix) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		if ignoredScopeFiles[filepath.Base(f)] {
 			continue
 		}
 		if declared[normalizeScopePath(f)] {
