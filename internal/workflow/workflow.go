@@ -277,6 +277,14 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		}()
 	}
 	var handle worktree.Handle
+	// inPlacePreDirty: when running InPlace, the workflow engine shares
+	// its cwd with stoke's own runtime scaffolding (.stoke/ reports,
+	// boulder state, sow plan, history). Those files exist BEFORE the
+	// worker starts, so they must not count as "modified by the
+	// worker" when we run the protected/scope gates. We snapshot the
+	// dirty set (untracked + unstaged + staged) at task-entry time and
+	// subtract it from modifiedFiles before gate evaluation.
+	var inPlacePreDirty map[string]bool
 	if e.DryRun {
 		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-dryrun-"+name)
 		if err := fileutil.EnsureDir(runtimeDir, fileutil.DirPerms); err != nil {
@@ -314,6 +322,22 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		// cheap no-ops without edits. Prepare is never called in
 		// InPlace mode (the branch above synthesized the handle).
 		e.Worktrees = inPlaceWorktrees{}
+
+		// Snapshot files that are already dirty at task entry so the
+		// protected/scope gates don't blame the worker for stoke's own
+		// runtime scaffolding (.stoke/**, previous-task writes the
+		// caller hasn't committed yet, etc.). See inPlacePreDirty
+		// declaration above for the rationale.
+		if pre, preErr := worktree.ModifiedFiles(ctx, handle); preErr == nil {
+			inPlacePreDirty = make(map[string]bool, len(pre))
+			for _, f := range pre {
+				inPlacePreDirty[f] = true
+			}
+		} else {
+			// Best-effort: if we can't snapshot, gates run without the
+			// filter (conservative — matches prior behavior).
+			log.Warn("InPlace pre-task dirty snapshot failed", "error", preErr)
+		}
 	} else {
 		var err error
 		handle, err = e.Worktrees.Prepare(ctx, name)
@@ -777,6 +801,24 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				e.Worktrees.Cleanup(ctx, handle)
 				_ = e.advanceState(taskstate.Failed, "cannot enumerate modified files: "+modErr.Error())
 				return result, fmt.Errorf("modified files check failed: %w", modErr)
+			}
+
+			// InPlace mode: subtract files that were already dirty at task
+			// entry. Stoke's own runtime scaffolding (.stoke/**, sow plan,
+			// reports, boulder state) and any previous-task writes the
+			// caller hasn't committed yet live in the same cwd as the
+			// worker; without this filter the protected/scope gates blame
+			// the worker for state it never touched. Captured above at
+			// handle synthesis; nil when snapshot was unavailable (fail-
+			// open to prior behavior).
+			if e.InPlace && len(inPlacePreDirty) > 0 {
+				filtered := modifiedFiles[:0]
+				for _, f := range modifiedFiles {
+					if !inPlacePreDirty[f] {
+						filtered = append(filtered, f)
+					}
+				}
+				modifiedFiles = filtered
 			}
 
 			// --- BLAME ATTRIBUTION: annotate modified files with authorship impact ---
