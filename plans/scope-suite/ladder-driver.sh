@@ -46,15 +46,21 @@ mkdir -p "$RUNS"
 timeout_for() {
   local rung="$1" mode="${2:-}"
   if [[ "$mode" == "sow" || "$mode" == "sow-serial" ]]; then
+    # H-43: sow lane (non-serial) pays multi-session overhead that
+    # sow-serial collapses away — 3-session plan = 3× briefing +
+    # 3× integration-review + 3× cross-review. 60m was enough for
+    # sow-serial to pass R03 cleanly but sow timed out on R02 at
+    # 59m4s with 8 tasks completed + 0 AC failures. Match
+    # sow-serial budgets rung-for-rung.
     case "$rung" in
-      R01|R02) echo "60m";;
-      R03|R04) echo "90m";;
-      R05|R06) echo "120m";;
-      R07)     echo "150m";;
+      R01|R02) echo "90m";;
+      R03|R04) echo "120m";;
+      R05|R06) echo "150m";;
+      R07)     echo "180m";;
       R08)     echo "240m";;
-      R09)     echo "150m";;
-      R10)     echo "180m";;
-      *)       echo "90m";;
+      R09)     echo "180m";;
+      R10)     echo "210m";;
+      *)       echo "120m";;
     esac
     return
   fi
