@@ -5331,6 +5331,15 @@ func runIntegrationReviewPhase(ctx context.Context, cfg sowNativeConfig, sowDoc 
 	if cfg.ReasoningProvider == nil || cfg.RepoRoot == "" {
 		return
 	}
+	// H-52: skip integration review on small sessions. The per-task
+	// reviewer already covers cross-file consistency at small scale;
+	// integration review costs 4.5-8 min on R04+ SOWs and is
+	// redundant on ≤5-task sessions. STOKE_SOW_FORCE_INTEG=1 to
+	// always run regardless of task count.
+	if len(workingSession.Tasks) <= 5 && os.Getenv("STOKE_SOW_FORCE_INTEG") == "" {
+		fmt.Printf("  ⏩ integration review skipped: %d tasks ≤ 5 (STOKE_SOW_FORCE_INTEG=1 to override)\n", len(workingSession.Tasks))
+		return
+	}
 	model := cfg.ReasoningModel
 	if model == "" {
 		model = cfg.Model
