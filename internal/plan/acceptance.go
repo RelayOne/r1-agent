@@ -6,12 +6,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/depcheck"
 )
+
+// fileExistsColonForm matches `file_exists:<path>` — some models emit
+// this colon-delimited shape in AC commands. We normalize to
+// `file_exists <path>` so the injected bash function can take over.
+var fileExistsColonForm = regexp.MustCompile(`file_exists:([^\s;|&]+)`)
 
 // depcheckOnceMu / depcheckOnce dedup the multi-language registry
 // validation per projectRoot so we pay the HEAD cost once, not per AC.
@@ -370,7 +376,17 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		// prompt tells models to use the file_exists field,
 		// but many still emit it as a command. Rather than
 		// fighting every model, just make it work.
-		wrappedCmd := `file_exists() { test -f "$1" || test -d "$1"; }; ` + ac.Command
+		//
+		// Also handle the `file_exists:PATH` colon form that some
+		// models emit (the R01 sow run at 21:05 failed with
+		// `bash: line 1: file_exists:src/greet.ts: No such file or
+		// directory`). Rewrite it to the space-separated form
+		// before bash sees it.
+		cmdText := ac.Command
+		if strings.Contains(cmdText, "file_exists:") {
+			cmdText = fileExistsColonForm.ReplaceAllString(cmdText, "file_exists $1")
+		}
+		wrappedCmd := `file_exists() { test -f "$1" || test -d "$1"; }; ` + cmdText
 		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", wrappedCmd)
 		cmd.Dir = projectRoot
 		cmd.Env = acceptanceCommandEnv(projectRoot)

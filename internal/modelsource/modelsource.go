@@ -280,7 +280,13 @@ func expandModelAlias(in string) string {
 	case "gemini-3.1-flash-lite", "flash-lite-preview":
 		return "gemini-3.1-flash-lite-preview"
 	case "codex":
-		return "gpt-5-codex"
+		// 'codex' is an alias that historically mapped to the Codex
+		// CLI's `gpt-5-codex` model name. In the LLM-API path that
+		// identifier 400s with 'Invalid model name'. The OpenAI/
+		// OpenRouter equivalent is plain gpt-5; swapping here keeps
+		// the shorthand working for operators who typed --reviewer
+		// codex with --reviewer-source=direct|litellm.
+		return "gpt-5"
 	case "gpt", "gpt-5":
 		return "gpt-5"
 	case "litellm":
