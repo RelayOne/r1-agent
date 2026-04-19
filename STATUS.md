@@ -41,6 +41,30 @@ Last updated: 2026-04-19 01:35 PDT
 - `PERFDATA-R03-strict-h41-20260419T013316` (PID 3138020) — H-41 baseline measurement, started 01:33
 - Confirms codex reviewer drops from 307s → 79s with reasoning_effort=low
 
+**Later this session (02:00+) — additional fixes shipped:**
+| Commit | Code | Purpose |
+|---|---|---|
+| `6c4365b` | H-42 | declared-symbol blocklist adds React hooks + Next.js helpers |
+| `cca399d` | H-43 | sow lane timeouts match sow-serial (R01/R02 60→90m, R03/R04 90→120m) |
+| `8de4a8b` | H-44 | worker.followup + phase1_5.spec_faithfulness spans |
+| `78999fc` | H-45 | raise briefing-skip threshold 5→10 tasks |
+| `394704c` | H-46/H-47 | cross-session file scope for reviewer + planner parallelization restraint rule |
+| `09f2600` | H-48 | STOKE_SOW_REVIEW_MODE={eager,lazy,milestone} + review.decision perflog event |
+
+**Proposed larger architecture (user-requested 02:24, deferred):**
+1. Worker decides when it's hit a milestone, commits with `[milestone]` marker
+2. Milestone commit triggers ASYNC parallel review (reviewer runs in background, worker continues)
+3. Reviewer can spawn NEW followup workers (not block original)
+4. Original worker ends when IT decides done
+5. Session waits until ALL assigned workers (original + reviewer-spawned) complete before advancing
+6. Adaptive depth rules (maxReviewDepth) prevent infinite recursion
+
+**Why deferred:** Requires worker registry per session, async reviewer goroutines, join logic, rate limiting. Significant refactor of runSessionPhase1Sequential. H-48 lazy mode is the cheap substitute — "worker ends when it thinks done, session ACs gate."
+
+**Active experiments at 02:23 (REVMODE-20260419T022302):**
+- R02-eager (control), R02-lazy, R02-milestone (every=3), R03-lazy — all with deep perflog
+- Will compare wall clock, AC pass rate, code quality across modes
+
 **Resume: what to do on next session wake:**
 1. Check `/home/eric/repos/stoke/plans/scope-suite/ladder-state.json` for current lane positions
 2. Check `tail ~/repos/stoke/plans/scope-suite/ladder-driver*.log` for latest events
@@ -50,6 +74,9 @@ Last updated: 2026-04-19 01:35 PDT
 ```
 awk -F'\t' '/\.end/ {split($2,a,"="); split($3,b,"="); phase=a[2]; dur=b[2]; sub("ms","",dur); totals[phase]+=dur; counts[phase]++} END {for (p in totals) printf "%-32s %8d ms %3d x %6.0f ms\n", p, totals[p], counts[p], totals[p]/counts[p]}' /home/eric/repos/scope-suite-runs/DIR/perflog.txt | sort -k2 -rn
 ```
+6. Check revmode experiments for AC pass+code-quality comparison:
+   `ls /home/eric/repos/scope-suite-runs/REVMODE-*`  
+   `grep -E 'AC[0-9].*PASS|AC[0-9].*FAIL|SOW finished' */stoke-run.log`
 
 ---
 
@@ -421,7 +448,7 @@ All 4 kill-cycles happened 11:06–11:45 as part of the "kill all / fix rubber-s
 - Old binaries of variants A and B are running — they don't have the Ecosystem build-gate fix. Kill+relaunch them to get the fix, OR leave them to demonstrate the old failure mode.
 
 <!-- LIVE-COHORT-BEGIN -->
-## Live cohort (auto-refreshed 2026-04-19T02:16:32-07:00)
+## Live cohort (auto-refreshed 2026-04-19T02:24:06-07:00)
 
 | Name | PID | Alive | Commits | TS | Gate-hits | cerr | Phase | LogAge |
 |---|---|---|---|---|---|---|---|---|
@@ -429,21 +456,22 @@ All 4 kill-cycles happened 11:06–11:45 as part of the "kill all / fix rubber-s
 | E2 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | E3 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | E4 | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
-| E5 | 0 | 💀 | 226 | 534 | 51 | 69 | 📋 Step 8: Claude Code self-auditing against SOW... | 2m |
-| E6 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 753m |
-| E7 | 0 | 💀 | 6 | 47 | 0 | 6 | 🔧 Step 3 builder call 3 (absoluteCap=40, stalls=0/2)... | 754m |
-| E8 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 753m |
-| E9 | 0 | 💀 | 25 | 25 | 3 | 21 | 📋 Step 8: Claude Code self-auditing against SOW... | 501m |
+| E5 | 0 | 💀 | 226 | 534 | 51 | 69 | 📋 Step 8: Claude Code self-auditing against SOW... | 10m |
+| E6 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 761m |
+| E7 | 0 | 💀 | 6 | 47 | 0 | 6 | 🔧 Step 3 builder call 3 (absoluteCap=40, stalls=0/2)... | 761m |
+| E8 | 0 | 💀 | 1 | 0 | 0 | 0 | (no phase-banner yet) | 761m |
+| E9 | 0 | 💀 | 25 | 25 | 3 | 21 | 📋 Step 8: Claude Code self-auditing against SOW... | 508m |
 | PERFCOMP | 0 | 💀 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
-| PERFDATA | 0 | 💀 | 3 | 4 | 13 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 43m |
-| R01 | 0 | 💀 | 5 | 315 | 1 | 0 | (no phase-banner yet) | 271m |
-| R02 | 0 | 💀 | 10 | 377 | 0 | 0 | (no phase-banner yet) | 194m |
-| R03 | 0 | 💀 | 13 | 2 | 6 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 261m |
-| R04 | 0 | 💀 | 1 | 0 | 0 | 0 | 📝 Step 2: codex reviewing plan... | 249m |
-| R05 | 0 | 💀 | 4 | 10 | 4 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 212m |
-| R06 | 0 | 💀 | 5 | 14 | 19 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 179m |
-| R07 | 0 | 💀 | 7 | 10 | 14 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 136m |
-| R08 | 2278248 | 🟢 | 33 | 231 | 80 | 12 | 🔧 Step 3 builder call 12 (absoluteCap=40, stalls=1/2)... | 5m |
+| PERFDATA | 0 | 💀 | 3 | 4 | 13 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 50m |
+| R01 | 0 | 💀 | 5 | 315 | 1 | 0 | (no phase-banner yet) | 279m |
+| R02 | 0 | 💀 | 10 | 377 | 0 | 0 | (no phase-banner yet) | 201m |
+| R03 | 0 | 💀 | 13 | 2 | 6 | 0 | 🔧 Step 3 builder call 1 (absoluteCap=40, stalls=0/2)... | 269m |
+| R04 | 0 | 💀 | 1 | 0 | 0 | 0 | 📝 Step 2: codex reviewing plan... | 256m |
+| R05 | 0 | 💀 | 4 | 10 | 4 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 220m |
+| R06 | 0 | 💀 | 5 | 14 | 19 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 187m |
+| R07 | 0 | 💀 | 7 | 10 | 14 | 0 | 📋 Step 8: Claude Code self-auditing against SOW... | 143m |
+| R08 | 2278248 | 🟢 | 38 | 232 | 80 | 13 | 🔧 Step 3 builder call 12 (absoluteCap=40, stalls=1/2)... | 0m |
+| REVMODE | 3667009 | 🟢 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 | SOWPERF | 3518596 | 🟢 | 0 | 0 | 0 | 0 | (no log yet) | -1m |
 
 <!-- LIVE-COHORT-END -->
