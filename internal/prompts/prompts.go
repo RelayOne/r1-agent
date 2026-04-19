@@ -429,12 +429,45 @@ func BuildVerifyPrompt(task string, verification []string, changedFiles ...strin
 3. Look for:
    - Correctness: does the code actually do what the task says?
    - Completeness: are all verification items satisfied?
-   - Security: any new injection points, auth bypasses, data leaks?
-   - Quality: empty catches, type bypasses, weak tests, placeholder code?
+   - Security: real injection points, auth bypasses, data leaks (not theoretical)
    - Scope: did the change touch files it shouldn't have?
 
-IMPORTANT: This is a read-only review. Do NOT modify any files. Do NOT run git commands.
-Stoke has already enumerated changed files and will validate scope independently.
+## Bias HEAVILY toward pass=true.
+
+This is NOT a code quality review. It's a "does this code do the task"
+review. The session's acceptance criteria + downstream build/test gates
+catch the functional issues you might miss; your job is to catch
+BLOCKING defects, not polish.
+
+DO NOT return pass=false for any of the following:
+- Style preferences (naming, formatting, comment density)
+- "Could also add" suggestions for features not in the task description
+- Test-coverage opinions ("should also test edge case X") when the task
+  already has at least one passing test
+- Documentation that isn't required by the task
+- Configuration refinements (tsconfig target, eslint rule tweaks,
+  turbo pipeline optimizations) when the baseline config works
+- Type-signature stylistic preferences (inline vs aliased, etc.)
+- File/folder layout preferences when the declared files exist
+- "Could be more comprehensive" without a concrete failing test case
+- Anything you've flagged in a prior review round that the worker
+  addressed (do not re-raise the same issue twice with different wording)
+
+ONLY return pass=false when ONE of these is true:
+- Build or tests that the task requires would fail
+- A declared file is missing or effectively empty (< 5 non-trivial lines)
+- Security bug that can be exploited NOW with concrete steps
+- The code explicitly contradicts what the task description asked for
+- Scope violation: worker modified a file outside task.Files without
+  a necessary reason (e.g. editing unrelated config)
+
+When in doubt, pass=true. If you have a "nice to have" finding, emit
+it as a 'low' severity finding but set pass=true. The caller will log
+it as advisory.
+
+IMPORTANT: This is a read-only review. Do NOT modify any files. Do NOT
+run git commands. Stoke has already enumerated changed files and will
+validate scope independently.
 
 Return ONLY valid JSON:
 {
@@ -455,9 +488,10 @@ Return ONLY valid JSON:
 }
 
 Rules:
-- pass=false if ANY verification item fails
-- pass=false if any correctness, security, scope, or data-integrity issue exists
-- Do not return prose outside the JSON
+- Only pass=false for BLOCKING defects per the list above.
+- verification_results[].pass individual items CAN be false while
+  overall pass=true when the failing items are polish-only.
+- Do not return prose outside the JSON.
 `)
 	return b.String()
 }

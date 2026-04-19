@@ -810,22 +810,74 @@ func simpleLoopCmd(args []string) {
 			}
 			fullDiff := shellCmd(absRepo, "git diff "+headBefore+"..HEAD --stat 2>/dev/null")
 			fmt.Printf("  🔍 Final review %d/%d (via %s)...\n", fixRound, maxFixRounds, *reviewer)
-			finalPrompt := "Review ALL changes in this branch for PRODUCTION READINESS. " +
-				"REJECT (do NOT say 'NO ISSUES' or 'LGTM') if ANY of these are present:\n" +
-				"  • skeleton functions: body is a scaffold-marker, empty body, bare return of nil/undefined, or unresolved TODO\n" +
-				"  • scaffold-only files: declared but no real body, or body is just mocked/hard-coded values\n" +
-				"  • fake returns: hard-coded scaffold values that pretend a feature works without real logic\n" +
-				"  • mock-only implementations where the SOW asked for real behavior\n" +
-				"  • empty request handlers, empty event handlers, empty callbacks\n" +
-				"  • functions that throw 'not implemented' style errors\n" +
-				"  • compilation errors, missing imports, broken tests\n" +
-				"  • anything that would fail a typecheck\n" +
-				"You MUST look INSIDE the changed files — a diff that adds a file whose body is scaffolding is NOT acceptable. " +
-				"Only respond with 'NO ISSUES' or 'LGTM' if every change is a genuine, complete, working implementation.\n\n" +
+			// Adaptive prefix: the more rounds we've done, the higher the
+			// bar for rejection. The reviewer tends to find "one more
+			// polish item" on every round; by round 3+ we need it to
+			// only flag genuine blockers, and by round 5 we're either
+			// blocked by a real issue or in a loop.
+			adaptivePreamble := ""
+			switch {
+			case fixRound >= 5:
+				adaptivePreamble = "⚠ This is ROUND " + fmt.Sprintf("%d", fixRound) + " of " + fmt.Sprintf("%d", maxFixRounds) +
+					". Prior rounds have already dispatched fix workers for " +
+					"everything you flagged. At this depth, almost every new 'finding' " +
+					"is polish disguised as a defect. RETURN 'LGTM' UNLESS you can " +
+					"cite a specific file:line where code that WAS passing now FAILS " +
+					"a build, test, or security check. A vague 'could be more robust' " +
+					"is NOT a blocker at round 5+. If you're tempted to fail this " +
+					"round, first ask: would a reasonable senior engineer actually " +
+					"block a PR on this finding? If no → LGTM.\n\n"
+			case fixRound >= 3:
+				adaptivePreamble = "Note: this is round " + fmt.Sprintf("%d", fixRound) + " of " + fmt.Sprintf("%d", maxFixRounds) +
+					". Earlier rounds have iterated on issues; raise the rejection bar. " +
+					"Only return pass=false for concrete BLOCKING defects (tests fail, " +
+					"build fails, declared file missing, security bug). Polish, style, " +
+					"or 'could also add' → pass=true with a low-severity finding.\n\n"
+			}
+			finalPrompt := adaptivePreamble +
+				"Review ALL changes in this branch for SHIPPABILITY. " +
+				"Bias strongly toward LGTM — your job is to catch BLOCKING defects, " +
+				"not polish. Say 'NO ISSUES' or 'LGTM' when the code works and meets the SOW.\n\n" +
+				"REJECT ONLY for these blocking defects:\n" +
+				"  • Skeleton / scaffold-only files: body is empty, has unresolved TODO/FIXME, " +
+				"or is only mocked/hard-coded values where the SOW asked for real behavior\n" +
+				"  • Fake returns: hard-coded stub values that pretend a feature works without real logic\n" +
+				"  • Functions that throw 'not implemented' style errors\n" +
+				"  • Compilation errors, missing imports, broken tests\n" +
+				"  • Security bugs: actual injection, auth bypass, data leak\n" +
+				"  • Scope violation: files modified outside declared task scope WITHOUT a clear reason\n\n" +
+				"DO NOT reject for any of these (bias to pass):\n" +
+				"  • Style preferences (naming, formatting, comment density, config nits)\n" +
+				"  • 'Could also add X' suggestions for features not in the SOW\n" +
+				"  • Test-coverage opinions when at least one real passing test exists\n" +
+				"  • Documentation gaps unless the SOW required them\n" +
+				"  • TypeScript config refinements when the baseline compiles\n" +
+				"  • 'Could be more comprehensive' without a concrete failure case\n" +
+				"  • Anything you flagged in a PRIOR review round that the worker has addressed — " +
+				"do not re-raise the same issue twice with different wording\n\n" +
+				"You MUST look INSIDE the changed files using the Read tool — a diff that " +
+				"adds a file whose body is scaffolding IS rejectable; a diff that adds a file " +
+				"whose body works but lacks polish is NOT.\n\n" +
 				"FULL DIFF STAT:\n" + fullDiff
 			if len(pendingReviews) > 0 {
 				finalPrompt += "\n\nPREVIOUSLY FLAGGED ISSUES (must be verified fixed):\n" +
 					strings.Join(pendingReviews, "\n\n---\n\n")
+			}
+			// Anti-nitpick: surface prior-round findings so the reviewer
+			// can see what was already said and not re-raise the same
+			// issues with new wording. `priorRoundsGaps` accumulates
+			// gap lists from each Final-review round.
+			if len(priorRoundsGaps) > 0 {
+				var seen []string
+				for _, g := range priorRoundsGaps {
+					seen = append(seen, g...)
+				}
+				if len(seen) > 0 {
+					finalPrompt += "\n\nISSUES YOU OR A PRIOR REVIEWER RAISED IN EARLIER ROUNDS " +
+						"(do NOT re-raise these unless they are visibly still broken; " +
+						"the worker has had attempts to address them):\n  - " +
+						strings.Join(dedupStrings(seen), "\n  - ")
+				}
 			}
 			finalReview := reviewCall(absRepo, finalPrompt)
 			if len(finalReview) < 100 || approvedReview(finalReview) {
