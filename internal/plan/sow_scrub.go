@@ -43,6 +43,59 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 		sess := &sow.Sessions[si]
 		for ci := range sess.AcceptanceCriteria {
 			ac := &sess.AcceptanceCriteria[ci]
+
+			// H-59a: move "file_exists PATH" from the command field
+			// into the FileExists struct field. Planner keeps putting
+			// this string in command, which runs as shell (exit 127)
+			// because file_exists is not a bash builtin. Detect +
+			// promote.
+			if ac.Command != "" {
+				if m := scrubFileExistsCmd.FindStringSubmatch(ac.Command); m != nil {
+					path := m[1]
+					if ac.FileExists == "" {
+						ac.FileExists = path
+					}
+					ac.Command = ""
+					diag = append(diag, fmt.Sprintf("%s/%s: promoted \"file_exists %s\" from command string to FileExists field (avoids exit 127 shell run)", sess.ID, ac.ID, path))
+				}
+			}
+
+			// H-59b: strip "cd <dir> && " prefix. Planner uses it even
+			// when the dir is the repo root or when it could use
+			// pnpm --filter. Harness runs AC in repoRoot; a stray cd
+			// either fails or changes CWD unpredictably. The
+			// underlying command after && is what we want to run.
+			if ac.Command != "" {
+				if m := scrubCdAndPrefix.FindStringSubmatch(ac.Command); m != nil {
+					orig := ac.Command
+					ac.Command = strings.TrimSpace(m[1])
+					diag = append(diag, fmt.Sprintf("%s/%s: stripped \"cd <dir> && \" prefix (harness runs ACs in repo root): %q -> %q", sess.ID, ac.ID, orig, ac.Command))
+				}
+			}
+
+			// H-59c: rewrite malformed "pnpm --dir X <cmd>" to the
+			// correct pnpm filter syntax when a bin name follows
+			// instead of a script. Planner keeps producing "pnpm --dir
+			// app next build" which pnpm parses as "run a script named
+			// 'next' with args ['build']" — fails with "No such
+			// script: next". The right form is "pnpm --filter <pkg>
+			// exec <bin> <args>" OR running the bin via pnpm's
+			// --filter after cd. Rewrite to "npx <cmd>" which at least
+			// works when the bin is in node_modules/.bin (stoke
+			// prepends that). Then the npx stripper above runs.
+			if ac.Command != "" {
+				if m := scrubPnpmDirBin.FindStringSubmatch(ac.Command); m != nil {
+					orig := ac.Command
+					// m[1] = dir, m[2] = bin+args
+					ac.Command = fmt.Sprintf("cd %s && %s", m[1], strings.TrimSpace(m[2]))
+					diag = append(diag, fmt.Sprintf("%s/%s: rewrote malformed \"pnpm --dir <dir> <bin>\" to \"cd <dir> && <bin>\": %q -> %q", sess.ID, ac.ID, orig, ac.Command))
+					// Re-apply cd-prefix + npx cleanup on the rewritten value.
+					if m2 := scrubCdAndPrefix.FindStringSubmatch(ac.Command); m2 != nil {
+						ac.Command = strings.TrimSpace(m2[1])
+					}
+				}
+			}
+
 			if ac.Command == "" {
 				continue
 			}
@@ -58,6 +111,20 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 	}
 	return sow, diag
 }
+
+// scrubFileExistsCmd matches "file_exists PATH" at the start of a
+// command with optional "&& ..." suffix. If matched, the path is
+// captured and the command becomes empty + FileExists field set.
+var scrubFileExistsCmd = regexp.MustCompile(`^\s*file_exists\s+([^\s&]+)\s*(?:&&.*)?$`)
+
+// scrubCdAndPrefix strips "cd <dir> &&" when followed by more command.
+// Captures the remainder.
+var scrubCdAndPrefix = regexp.MustCompile(`^\s*cd\s+[^\s&]+\s*&&\s*(.+)$`)
+
+// scrubPnpmDirBin matches "pnpm --dir <dir> <something>" where the
+// something-that-follows is not a known pnpm subcommand. Rewrites to
+// "cd <dir> && <something>" which cd-prefix scrub then handles.
+var scrubPnpmDirBin = regexp.MustCompile(`^\s*pnpm\s+--dir\s+(\S+)\s+(\S+(?:\s+.+)?)$`)
 
 // Compiled regex set. Kept package-scope so repeated ScrubSOW calls
 // don't pay for re-compilation on every session.
