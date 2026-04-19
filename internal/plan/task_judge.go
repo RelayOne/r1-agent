@@ -282,6 +282,15 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	if _, err := jsonutil.ExtractJSONInto(raw, &verdict); err != nil {
 		return nil, fmt.Errorf("parse task reviewer verdict: %w", err)
 	}
+	// H-48 deep-verbose: emit a structured decision event so we can
+	// attribute followup churn to specific reviewer decisions.
+	perflog.Event("review.decision", "",
+		"task="+in.Task.ID,
+		"complete="+fmt.Sprintf("%v", verdict.Complete),
+		"gaps="+fmt.Sprintf("%d", len(verdict.GapsFound)),
+		"prompt_bytes="+fmt.Sprintf("%d", b.Len()),
+		"other_session_files="+fmt.Sprintf("%d", len(in.OtherSessionFiles)),
+	)
 	return &verdict, nil
 }
 

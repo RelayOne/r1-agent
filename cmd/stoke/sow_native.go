@@ -4085,6 +4085,43 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	if cfg.ReasoningProvider == nil || tr == nil || !tr.Success {
 		return
 	}
+	// H-48: STOKE_SOW_REVIEW_MODE controls per-task review strategy.
+	//   eager     (default) — review every task immediately; dispatch
+	//                          followup on gaps. Highest accuracy, highest cost.
+	//   lazy      — skip per-task review entirely; session ACs + spec-
+	//                faithfulness guard + quality sweep are the only
+	//                gates. Cheapest. Trust-the-worker bet.
+	//   milestone — review only every Nth task (via STOKE_SOW_REVIEW_EVERY,
+	//                default 3). Middle ground.
+	mode := os.Getenv("STOKE_SOW_REVIEW_MODE")
+	switch mode {
+	case "lazy":
+		perflog.Event("review.skip.lazy", "", "task="+task.ID)
+		fmt.Printf("    ⏩ %s: per-task review skipped (STOKE_SOW_REVIEW_MODE=lazy)\n", task.ID)
+		return
+	case "milestone":
+		every := 3
+		if v := os.Getenv("STOKE_SOW_REVIEW_EVERY"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				every = n
+			}
+		}
+		// Find this task's ordinal in the session. If not a multiple
+		// of `every` and not the last task, skip review.
+		idx := -1
+		for i, t := range workingSession.Tasks {
+			if t.ID == task.ID {
+				idx = i
+				break
+			}
+		}
+		isLast := idx == len(workingSession.Tasks)-1
+		if idx >= 0 && !isLast && (idx+1)%every != 0 {
+			perflog.Event("review.skip.milestone", "", "task="+task.ID, "idx="+strconv.Itoa(idx+1), "every="+strconv.Itoa(every))
+			fmt.Printf("    ⏩ %s: per-task review skipped (milestone every=%d, idx=%d)\n", task.ID, every, idx+1)
+			return
+		}
+	}
 	reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil, preTaskDirty)
 }
 
