@@ -873,10 +873,19 @@ func simpleLoopCmd(args []string) {
 					seen = append(seen, g...)
 				}
 				if len(seen) > 0 {
+					dedupSeen := make([]string, 0, len(seen))
+					seenMap := make(map[string]struct{}, len(seen))
+					for _, g := range seen {
+						if _, ok := seenMap[g]; ok {
+							continue
+						}
+						seenMap[g] = struct{}{}
+						dedupSeen = append(dedupSeen, g)
+					}
 					finalPrompt += "\n\nISSUES YOU OR A PRIOR REVIEWER RAISED IN EARLIER ROUNDS " +
 						"(do NOT re-raise these unless they are visibly still broken; " +
 						"the worker has had attempts to address them):\n  - " +
-						strings.Join(dedupStrings(seen), "\n  - ")
+						strings.Join(dedupSeen, "\n  - ")
 				}
 			}
 			finalReview := reviewCall(absRepo, finalPrompt)
