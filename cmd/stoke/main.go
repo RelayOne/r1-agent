@@ -1643,6 +1643,25 @@ func sowCmd(args []string) {
 		}
 	}
 
+	// Auto-upgrade runner mode to native when --native-* flags are
+	// explicitly set. See normalizeSowRunnerMode for rationale + test.
+	{
+		before := sowRunnerState{
+			RunnerMode:     *runnerMode,
+			NativeAPIKey:   *nativeAPIKey,
+			NativeBaseURL:  *nativeBaseURL,
+			ReviewerSource: *reviewerSourceFlag,
+			ReviewerModel:  *reviewerModelFlag,
+		}
+		after, messages := normalizeSowRunnerMode(before)
+		*runnerMode = after.RunnerMode
+		*reviewerSourceFlag = after.ReviewerSource
+		*reviewerModelFlag = after.ReviewerModel
+		for _, m := range messages {
+			fmt.Println(m)
+		}
+	}
+
 	// Load SOW. Supports three input formats:
 	//   - .json / .yaml / .yml → parsed directly
 	//   - .txt / .md / prose   → converted via LLM (needs a provider)
