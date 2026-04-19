@@ -673,13 +673,14 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// (workers get the original context set) — briefings are a
 	// quality improvement, not a correctness gate.
 	//
-	// H-35 small-session skip: for sessions with ≤5 tasks, the
-	// briefing pass's 60-90s fixed cost exceeds the worker-time it
-	// saves (~15s/task × 5 = 75s max). Perflog data from sow-serial
-	// R03 showed session→phase1 gap of 72s for a 13-task session;
-	// on 3-task sessions the briefing is pure overhead. Override
-	// via STOKE_SOW_FORCE_BRIEFING=1 to disable the skip.
-	smallSession := len(session.Tasks) <= 5 && os.Getenv("STOKE_SOW_FORCE_BRIEFING") == ""
+	// H-35 + H-45 small-session skip threshold: raised from 5 → 10
+	// after 4-way sow perfcomp showed briefing cost 60-130s per
+	// session AND 6-8 task sessions don't clearly benefit from the
+	// briefing vs just reading the SOW + repomap inline. Worker
+	// dispatch avg is 40-60s; briefing saves maybe 10-15s per task
+	// on context-rich sessions → break-even is around task count
+	// 7-10. Bump threshold to 10, retain env override.
+	smallSession := len(session.Tasks) <= 10 && os.Getenv("STOKE_SOW_FORCE_BRIEFING") == ""
 	if smallSession {
 		fmt.Printf("  briefing skipped: %d tasks ≤ 5 (STOKE_SOW_FORCE_BRIEFING=1 to override)\n", len(session.Tasks))
 	}
