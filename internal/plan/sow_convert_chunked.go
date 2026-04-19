@@ -72,7 +72,7 @@ Schema:
 }
 
 RULES:
-1. Session count scales with spec size. A 1500-line spec with 8 deliverable areas → 8-15 sessions. A small CLI spec → 2-4 sessions. Don't compress for compression's sake.
+1. Session count scales with spec size. A 1500-line spec with 8 deliverable areas → 8-15 sessions. A small CLI spec → 1-3 sessions. Don't compress for compression's sake — but also don't INFLATE. Each session pays a fixed ~60-120s briefing-pass cost + per-task review + integration-review + cross-review overhead. A trivial SOW split into 3 sessions pays that overhead 3× for zero parallel-work gain.
 2. The first session is foundation: monorepo skeleton, deps, config, hello-world build pass.
 3. The last session is integration / polish / docs / deployment configs.
 4. Session.outputs are the critical glue: downstream sessions reference these as Inputs to form the dependency DAG. Use 2-4 word artifact names.
@@ -80,6 +80,11 @@ RULES:
 6. If the spec is huge, prefer MORE sessions (each smaller) over FEWER sessions (each larger). The execution layer will further split anything too big.
 7. EXCLUSIVE OWNERSHIP: each prose deliverable must be assigned to EXACTLY ONE session. If the prose says "Alert Rules Editor", that scope belongs to one session — not two sessions that both build alert-rules components. Overlap = guaranteed merge conflict.
 8. Also emit Inputs for each session — the artifact names from EARLIER sessions this session consumes. This builds the dependency DAG at the skeleton level so the expansion phase can enforce ordering. A session with no inputs is a root session.
+9. PARALLELIZATION RESTRAINT — each session you create is a worker that will run briefing + per-task review + integration review + cross-review. That overhead is a fixed tax of roughly 3-6 minutes per session regardless of task count. Only create multiple sessions when:
+   (a) the work is genuinely long and the parallel wall-clock savings EXCEED the per-session overhead × extra session count, OR
+   (b) the work is structurally independent (different subtrees, different stacks, different runtimes) so one session's failure doesn't block the others, OR
+   (c) the work is large enough that a single session's review-recursion budget can't contain it.
+   A 7-task TS package or 12-task monorepo scaffold is NOT a case for parallelism — one session chews through that faster than two sessions racing, because two sessions pay ~10 min of review overhead for ~2 min of parallel-work gain. Err toward FEWER, larger sessions when sessions would be homogeneous and short.
 
 PROSE INPUT:
 `

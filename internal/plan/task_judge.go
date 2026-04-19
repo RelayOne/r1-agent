@@ -79,6 +79,21 @@ type TaskReviewInput struct {
 	// the injection code skips blank blocks. See internal/skill for
 	// the source of truth.
 	UniversalPromptBlock string
+
+	// OtherSessionFiles is the set of files planned in OTHER sessions
+	// of the same SOW. The reviewer uses this list to distinguish
+	// "missing because this task didn't do its job" from "missing
+	// because another session will create it." Without this, per-
+	// session reviewers on multi-session plans flag cross-session
+	// dependencies as in-scope gaps and trigger unnecessary followup
+	// worker dispatches — the 6x-followup pattern observed in the
+	// sow parallel-mode run vs serial-mode on the same R02 SOW.
+	OtherSessionFiles []string
+
+	// OtherSessionIDs parallels OtherSessionFiles for the prompt
+	// header so the reviewer can mention "session S3 owns file X" in
+	// its reasoning if useful.
+	OtherSessionIDs []string
 }
 
 // DecomposeInput asks the decomposer to split a single stuck gap into
@@ -171,6 +186,22 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 			fmt.Fprintf(&b, "  - [%s] %s\n", ac.ID, ac.Description)
 		}
 		b.WriteString("\n")
+	}
+
+	if len(in.OtherSessionFiles) > 0 {
+		b.WriteString("FILES PLANNED BY OTHER SESSIONS (NOT this task's responsibility — do NOT flag these as missing):\n")
+		for i, f := range in.OtherSessionFiles {
+			if i >= 40 {
+				fmt.Fprintf(&b, "  ... and %d more\n", len(in.OtherSessionFiles)-i)
+				break
+			}
+			if i < len(in.OtherSessionIDs) {
+				fmt.Fprintf(&b, "  - %s (owned by session %s)\n", f, in.OtherSessionIDs[i])
+			} else {
+				fmt.Fprintf(&b, "  - %s\n", f)
+			}
+		}
+		b.WriteString("If the SOW mentions any of these files in context of this task, it is for REFERENCE only — another session owns creating them. Mark complete=true and do NOT emit a followup_directive that asks for them.\n\n")
 	}
 
 	if strings.TrimSpace(in.WorkerSummary) != "" {

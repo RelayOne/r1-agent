@@ -4172,6 +4172,24 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	if cfg.BuildWatcher != nil {
 		liveErrs = cfg.BuildWatcher.FilterToFiles(originalTask.Files)
 	}
+	// H-46: collect files owned by OTHER sessions so the reviewer
+	// doesn't flag them as gaps in this task's scope. Fixes the 6x
+	// followup amplification seen on R02-parallel vs R02-serial.
+	var otherFiles []string
+	var otherIDs []string
+	if sowDoc != nil {
+		for _, s := range sowDoc.Sessions {
+			if s.ID == workingSession.ID {
+				continue
+			}
+			for _, t := range s.Tasks {
+				for _, f := range t.Files {
+					otherFiles = append(otherFiles, f)
+					otherIDs = append(otherIDs, s.ID)
+				}
+			}
+		}
+	}
 	verdict, err := plan.ReviewTaskWork(ctx, cfg.ReasoningProvider, reviewModel, plan.TaskReviewInput{
 		Task:                 originalTask,
 		SOWSpec:              sowExcerpt,
@@ -4181,6 +4199,8 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		PriorAttempts:        depth,
 		PriorGaps:            priorDirectives,
 		LiveCompileErrors:    liveErrs,
+		OtherSessionFiles:    otherFiles,
+		OtherSessionIDs:      otherIDs,
 		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-task-reviewer", "1-task-dispatch", &workingSession, 1)),
 	})
 	if err != nil {
