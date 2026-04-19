@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -98,7 +99,20 @@ func ScanDeclaredSymbolsNotImplemented(repoRoot, sowProse string, changedFiles [
 		return nil
 	}
 
-	idx, err := symindex.BuildFromFiles(repoRoot, src)
+	// H-51: scan the WHOLE repo's tracked source files for symbol
+	// presence, not just the diff. R09-lenient spammed 5+ false
+	// "UserError/UserListQuery/requireAdmin not implemented" gate-
+	// hits because those symbols were defined in earlier commits
+	// (packages/types/, apps/web/lib/session.ts) that the current
+	// commit didn't touch. A symbol is "not implemented" only if
+	// it's missing from the REPO, not missing from this commit.
+	repoSrc := gatherTrackedSourceFiles(repoRoot)
+	if len(repoSrc) == 0 {
+		// Fall back to changed-files-only so we still report
+		// something when git isn't available.
+		repoSrc = src
+	}
+	idx, err := symindex.BuildFromFiles(repoRoot, repoSrc)
 	if err != nil || idx == nil {
 		return nil
 	}
@@ -362,6 +376,30 @@ var declaredSymbolBlocklist = map[string]struct{}{
 	"process": {}, "buffer": {}, "promise": {}, "array": {},
 	"object": {}, "string": {}, "number": {}, "boolean": {}, "date": {},
 	"math": {}, "json": {}, "map": {}, "set": {}, "regexp": {},
+}
+
+// gatherTrackedSourceFiles returns git-tracked source files in the
+// repo, filtered to extensions the symindex understands. Used by
+// H-51 to scan the WHOLE repo for symbol presence instead of just
+// the commit's diff — avoids false-positive "symbol not implemented"
+// gate-hits on symbols defined in earlier commits.
+func gatherTrackedSourceFiles(repoRoot string) []string {
+	cmd := exec.Command("git", "ls-files", "-z")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var files []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f == "" {
+			continue
+		}
+		if looksLikeSource(f) {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // looksLikeSource returns true when filename has an extension the
