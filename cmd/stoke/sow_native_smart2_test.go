@@ -236,7 +236,7 @@ func TestUnmarshalCrossReview(t *testing.T) {
 
 func TestRunCrossModelReview_NoProvider_ReturnsNil(t *testing.T) {
 	cfg := sowNativeConfig{RepoRoot: t.TempDir()}
-	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1"}, cfg)
+	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1"}, cfg, "")
 	if result != nil {
 		t.Error("nil provider should yield nil result")
 	}
@@ -248,7 +248,7 @@ func TestRunCrossModelReview_NoDiff_ReturnsNil(t *testing.T) {
 	initEmptyGitRepo(t, dir)
 	prov := &mockChatProvider{response: `{"approved":true,"score":95,"summary":"fine","concerns":[]}`}
 	cfg := sowNativeConfig{RepoRoot: dir, ReviewProvider: prov, Model: "m"}
-	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1"}, cfg)
+	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1"}, cfg, "")
 	// Empty diff → nil result.
 	if result != nil {
 		t.Errorf("empty diff should yield nil result, got %+v", result)
@@ -267,7 +267,7 @@ func TestRunCrossModelReview_WithDiff_CallsProvider(t *testing.T) {
 
 	prov := &mockChatProvider{response: `{"approved":true,"score":90,"summary":"fine","concerns":[]}`}
 	cfg := sowNativeConfig{RepoRoot: dir, ReviewProvider: prov, Model: "m"}
-	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1", Title: "test"}, cfg)
+	result := runCrossModelReview(context.Background(), plan.Session{ID: "S1", Title: "test"}, cfg, "")
 	if result == nil {
 		t.Fatal("expected review result")
 	}

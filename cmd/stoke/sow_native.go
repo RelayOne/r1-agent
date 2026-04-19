@@ -819,6 +819,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	for _, f := range preSessionDirty {
 		preSessionDirtySet[f] = true
 	}
+	// HEAD at session start. runCrossModelReview uses this below to
+	// compute `git diff <sessionStartCommit>` so per-task commits
+	// made during the session are visible to the reviewer. Without
+	// this, sow/sow-serial commit per task and `git diff HEAD` is
+	// empty or near-empty — the reviewer then emits "no file diff
+	// shown" blockers for every task that passed, flipping PASS→FAIL.
+	sessionStartCommit := gitHeadSHA(cfg.RepoRoot)
 
 	// Phase 1: run tasks. When ParallelWorkers > 1 and we have tasks
 	// with disjoint file sets and no unsatisfied deps, execute them
@@ -1475,7 +1482,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// doesn't do what the task asked for" — which is invisible to
 	// command-based gates.
 	if cfg.ReviewProvider != nil && finalPassed {
-		reviewResult := runCrossModelReview(ctx, session, cfg)
+		reviewResult := runCrossModelReview(ctx, session, cfg, sessionStartCommit)
 		if reviewResult != nil && !reviewResult.Approved {
 			fmt.Printf("  ⚠ cross-review: reviewer blocked with %d concerns\n", len(reviewResult.Concerns))
 			for _, c := range reviewResult.Concerns {
@@ -1839,18 +1846,34 @@ SESSION + DIFF:
 // diff and returns a structured review. Returns nil when the review
 // can't be performed (no diff, no provider, or LLM error); the caller
 // treats nil as "no review, don't block".
-func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativeConfig) *crossReviewResult {
+//
+// sessionStartCommit is the HEAD SHA captured before the session ran
+// any tasks. When non-empty, the diff is computed as
+// `git diff <sessionStartCommit>` which covers BOTH committed and
+// uncommitted changes since the session began — essential for sow
+// modes that commit per task. When empty, falls back to
+// `git diff HEAD` (working tree vs current commit only).
+func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativeConfig, sessionStartCommit string) *crossReviewResult {
 	if cfg.ReviewProvider == nil {
 		return nil
 	}
-	// Capture the diff since the session started. We use `git diff HEAD`
-	// which covers working-tree changes the session just made against
-	// the last commit. If the session committed its own work we won't
-	// see it here — that's acceptable because native-mode sessions
-	// typically don't commit.
-	diffCmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
-	diffCmd.Dir = cfg.RepoRoot
-	diffOut, err := diffCmd.Output()
+	// Prefer `git diff <sessionStartCommit>` so per-task commits are
+	// included. If that fails or sessionStartCommit is empty, fall
+	// back to `git diff HEAD` (working-tree-only review).
+	var (
+		diffOut []byte
+		err     error
+	)
+	if sessionStartCommit != "" {
+		cmd := exec.CommandContext(ctx, "git", "diff", sessionStartCommit)
+		cmd.Dir = cfg.RepoRoot
+		diffOut, err = cmd.Output()
+	}
+	if err != nil || len(diffOut) == 0 {
+		cmd := exec.CommandContext(ctx, "git", "diff", "HEAD")
+		cmd.Dir = cfg.RepoRoot
+		diffOut, err = cmd.Output()
+	}
 	if err != nil || len(diffOut) == 0 {
 		return nil
 	}
@@ -1858,6 +1881,20 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 	// Cap the diff so a huge refactor doesn't blow the review budget.
 	if len(diff) > 50000 {
 		diff = diff[:50000] + "\n... (diff truncated)"
+	}
+
+	// Also capture a short commit log since session start so the
+	// reviewer sees WHAT was committed even when the diff is
+	// truncated. Without this, a large scaffold session can show
+	// 50KB of early-commit content and the reviewer concludes
+	// "no file diff shown" for later tasks.
+	var commitLog string
+	if sessionStartCommit != "" {
+		logCmd := exec.CommandContext(ctx, "git", "log", sessionStartCommit+"..HEAD", "--stat", "--oneline")
+		logCmd.Dir = cfg.RepoRoot
+		if logOut, lerr := logCmd.Output(); lerr == nil {
+			commitLog = strings.TrimSpace(string(logOut))
+		}
 	}
 
 	var b strings.Builder
@@ -1871,6 +1908,11 @@ func runCrossModelReview(ctx context.Context, session plan.Session, cfg sowNativ
 			fmt.Fprintf(&b, "- %s: %s\n", t.ID, t.Description)
 		}
 		b.WriteString("\n")
+	}
+	if commitLog != "" {
+		b.WriteString("COMMITS SINCE SESSION START (use this to attribute files that appear in the diff below):\n")
+		b.WriteString(commitLog)
+		b.WriteString("\n\n")
 	}
 	b.WriteString("DIFF:\n")
 	b.WriteString(diff)

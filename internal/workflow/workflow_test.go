@@ -13,6 +13,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/ericmacdougall/stoke/internal/taskstate"
 	"github.com/ericmacdougall/stoke/internal/verify"
 	"github.com/ericmacdougall/stoke/internal/worktree"
 )
@@ -242,6 +243,7 @@ func TestInPlaceHandleUsesRepoRoot(t *testing.T) {
 		Worktrees:    tracker,
 		Runners:      engine.Registry{Claude: engine.NewClaudeRunner("claude"), Codex: engine.NewCodexRunner("codex")},
 		Verifier:     verify.NewPipeline("", "", ""),
+		State:        taskstate.NewTaskState("inplace-task"),
 	}
 	// The run itself will fail at the plan phase because there's no
 	// real CLI binary available. That's fine — the InPlace branch
