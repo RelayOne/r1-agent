@@ -685,7 +685,6 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	if cfg.BriefingProvider != nil && len(session.Tasks) > 0 && !smallSession {
 		briefingSpan := perflog.Start("phase0.briefing", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
-		defer briefingSpan.End()
 		briefingModel := cfg.BriefingModel
 		if briefingModel == "" {
 			briefingModel = cfg.Model
@@ -799,6 +798,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			fmt.Printf("  briefings naming skills: %d/%d\n", withSkills, len(briefings))
 			cfg.Briefings = briefings
 		}
+		briefingSpan.End("briefed=" + strconv.Itoa(len(cfg.Briefings)))
 	}
 
 	// Phase 0.5: live build-watcher. Launch the stack's continuous
