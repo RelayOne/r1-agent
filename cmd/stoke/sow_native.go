@@ -4141,12 +4141,15 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	// productive sub-directives get promoted to first-class scope via
 	// OnDecompOverflow rather than silently dropped.
 	atCap := depth >= maxReviewDepth
-	// H-37: when at cap AND overflow is disabled, the reviewer's
-	// verdict can't lead to new dispatches or new sessions. Skip
-	// the ~30s of reviewer + decomposer LLM calls and return — the
-	// session ACs are the next (and final) gate.
-	if atCap && cfg.OnDecompOverflow == nil {
-		fmt.Printf("    ⏹ %s at review cap (depth=%d) with no overflow hook — skipping reviewer + decomposer, deferring to session ACs\n", originalTask.ID, depth)
+	// H-37 (+ H-39 env fix): when at cap AND overflow promotion is
+	// disabled, the reviewer's verdict can't lead to new dispatches
+	// or new sessions. Skip the ~30s of reviewer + decomposer LLM
+	// calls that would be pure waste. main.go always sets
+	// OnDecompOverflow (it no-ops internally when unset) so we must
+	// check the env var directly, not just the nil-ness of the cb.
+	overflowEnabled := cfg.OnDecompOverflow != nil && os.Getenv("STOKE_SOW_ENABLE_DECOMP_OVERFLOW") != ""
+	if atCap && !overflowEnabled {
+		fmt.Printf("    ⏹ %s at review cap (depth=%d) — skipping reviewer + decomposer, deferring to session ACs\n", originalTask.ID, depth)
 		return
 	}
 	excerpts := plan.CollectCodeExcerpts(cfg.RepoRoot, originalTask.Files, 8, 4000)
