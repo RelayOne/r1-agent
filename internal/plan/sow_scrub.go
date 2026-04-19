@@ -44,11 +44,14 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 		for ci := range sess.AcceptanceCriteria {
 			ac := &sess.AcceptanceCriteria[ci]
 
-			// H-59a: move "file_exists PATH" from the command field
-			// into the FileExists struct field. Planner keeps putting
-			// this string in command, which runs as shell (exit 127)
-			// because file_exists is not a bash builtin. Detect +
-			// promote.
+			// H-59a + H-62: move "file_exists PATH" from the command
+			// field into the FileExists struct field when it's the
+			// ONLY thing in the command. When there are MULTIPLE
+			// file_exists (compound like "file_exists A && file_exists
+			// B") we can't fold all of them into a single FileExists
+			// field, so instead rewrite "file_exists PATH" to
+			// "test -f PATH" which IS a bash builtin. Same intent,
+			// actually runs.
 			if ac.Command != "" {
 				if m := scrubFileExistsCmd.FindStringSubmatch(ac.Command); m != nil {
 					path := m[1]
@@ -57,6 +60,10 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 					}
 					ac.Command = ""
 					diag = append(diag, fmt.Sprintf("%s/%s: promoted \"file_exists %s\" from command string to FileExists field (avoids exit 127 shell run)", sess.ID, ac.ID, path))
+				} else if scrubFileExistsCompound.MatchString(ac.Command) {
+					orig := ac.Command
+					ac.Command = scrubFileExistsCompound.ReplaceAllString(ac.Command, "test -f $1")
+					diag = append(diag, fmt.Sprintf("%s/%s: rewrote \"file_exists X\" to \"test -f X\" (bash builtin) in compound command: %q -> %q", sess.ID, ac.ID, orig, ac.Command))
 				}
 			}
 
@@ -116,6 +123,14 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 // command with optional "&& ..." suffix. If matched, the path is
 // captured and the command becomes empty + FileExists field set.
 var scrubFileExistsCmd = regexp.MustCompile(`^\s*file_exists\s+([^\s&]+)\s*(?:&&.*)?$`)
+
+// scrubFileExistsCompound matches any occurrence of "file_exists PATH"
+// inside a command string (e.g. "file_exists A && file_exists B" or
+// "grep -q X && file_exists Y"). Rewrites each to "test -f PATH"
+// which is a real bash builtin. Used by the ScrubSOW loop when the
+// single-AC promotion can't apply (multiple file_exists in one
+// command cannot fold into a single FileExists struct field).
+var scrubFileExistsCompound = regexp.MustCompile(`\bfile_exists\s+([^\s&|;]+)`)
 
 // scrubCdAndPrefix strips "cd <dir> &&" when followed by more command.
 // Captures the remainder.
