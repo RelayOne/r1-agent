@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
+	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -91,6 +92,8 @@ func JudgeAC(ctx context.Context, prov provider.Provider, model string, in Seman
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
+	span := perflog.Start("llm.judge_ac", "ac="+in.Criterion.ID, "model="+model)
+	defer func() { span.End() }()
 
 	var body strings.Builder
 	body.WriteString(semanticJudgePrompt)

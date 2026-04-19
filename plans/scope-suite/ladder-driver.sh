@@ -268,6 +268,7 @@ run_one() {
       # Sow REQUIRES a provider — 'load SOW: no provider configured'.
       # Use LiteLLM-fronted claude-sonnet-4-6 as the writer; codex as
       # the reviewer.
+      STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
       timeout "$to" "$STOKE" sow \
         --repo "$dir" --file "$dir/SOW.md" \
         --native-base-url "http://localhost:$port" \
@@ -288,6 +289,7 @@ run_one() {
       local port key
       port=$(cat ~/.litellm/proxy.port 2>/dev/null || echo 4000)
       key=$(grep '^LITELLM_MASTER_KEY=' ~/.litellm/.env 2>/dev/null | cut -d= -f2- | tr -d '"'"'")
+      STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
       timeout "$to" "$STOKE" sow \
         --repo "$dir" --file "$dir/SOW.md" \
         --native-base-url "http://localhost:$port" \

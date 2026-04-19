@@ -20,6 +20,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
+	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/repomap"
@@ -471,6 +472,8 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	if cfg.RepoRoot == "" {
 		return nil, fmt.Errorf("runSessionNative: empty repo root")
 	}
+	sessionSpan := perflog.Start("session", "id="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
+	defer sessionSpan.End()
 
 	// --resume-from skip: if this session was completed before
 	// the checkpoint, skip it entirely. The marker is already
@@ -837,7 +840,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// success/failure must not leak into the scheduler's view
 	// (otherwise a successful repair looks like a session failure to
 	// the outer SessionScheduler and it halts the whole SOW).
+	phase1Span := perflog.Start("phase1.tasks", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
+	phase1Span.End("results="+strconv.Itoa(len(results)))
 
 	// Phase 1.4: integration review. Dispatch an LLM agent with real
 	// tool authority (read/grep/glob/bash) to sweep the repo for
@@ -848,7 +853,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// foundation sanity runs.
 	if cfg.RepoRoot != "" {
 		watchdog.Pulse()
+		integSpan := perflog.Start("phase1_4.integration_review", "session="+session.ID)
 		runIntegrationReviewPhase(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
+		integSpan.End()
 		watchdog.Pulse()
 	}
 
@@ -1482,7 +1489,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// doesn't do what the task asked for" — which is invisible to
 	// command-based gates.
 	if cfg.ReviewProvider != nil && finalPassed {
+		xrSpan := perflog.Start("phase5.cross_review", "session="+session.ID)
 		reviewResult := runCrossModelReview(ctx, session, cfg, sessionStartCommit)
+		xrSpan.End()
 		if reviewResult != nil && !reviewResult.Approved {
 			fmt.Printf("  ⚠ cross-review: reviewer blocked with %d concerns\n", len(reviewResult.Concerns))
 			for _, c := range reviewResult.Concerns {

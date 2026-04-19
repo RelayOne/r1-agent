@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
+	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
@@ -141,6 +142,8 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
+	span := perflog.Start("llm.review_task", "task="+in.Task.ID, "model="+model, "depth="+fmt.Sprintf("%d", in.PriorAttempts))
+	defer func() { span.End() }()
 
 	var b strings.Builder
 	b.WriteString(taskReviewPrompt)
@@ -264,6 +267,8 @@ func DecomposeTaskGap(ctx context.Context, prov provider.Provider, model string,
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
+	span := perflog.Start("llm.decompose", "task="+in.OriginalTask.ID, "model="+model, "prior_dirs="+fmt.Sprintf("%d", len(in.PriorDirectives)))
+	defer func() { span.End() }()
 
 	var b strings.Builder
 	b.WriteString(decomposePrompt)
