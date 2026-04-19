@@ -147,6 +147,22 @@ RULES (follow these or this session's tasks will fail at execution):
 
   e. SCAFFOLDING: every declared deliverable surface needs scaffolding tasks. Next.js app → app/layout.tsx, app/page.tsx, per-route page.tsx, next.config.js, tailwind.config.ts. Expo app → App.tsx, navigation, per-screen, app.json, metro.config.js. Backend → server entry, route registration, per-endpoint handler, middleware. Don't ship "implement the X app" as one task — apps are dozens of tasks.
 
+  f. SMOKE THE TOOLCHAIN BEFORE THE REAL WORK — a universal pattern that catches ecosystem pitfalls without hardcoding:
+
+     In the FIRST session (the foundation / setup session), add a task that:
+       1. Scaffolds the smallest possible hello-world for the chosen stack (single exported function, single trivial unit test, single entry point)
+       2. Runs the session's build AC command on that hello-world
+       3. Runs the session's test AC command on that hello-world
+       4. Confirms both exit 0 BEFORE any real deliverable code is written
+
+     This catches tooling misconfigurations (module-resolution traps, ESM/CJS incompatibilities, missing config files, path-aliasing bugs, test-runner version mismatches) on a trivial-to-fix 5-line surface rather than discovering them after 20 real tasks have shipped code that "works" but can't build.
+
+     The AC for this smoke-task is: "build + test commands both exit 0 on the minimal hello-world". When that AC fails, the failure message points directly at the tooling issue, not at real code. The repair dispatch targets configuration files (tsconfig, vitest config, package.json scripts, etc.) instead of trying to fix application code for a problem that's actually infrastructure.
+
+     Universal, stack-agnostic. Works for Go workspaces, Rust cargo workspaces, Python monorepos, JS/TS pnpm workspaces equally.
+
+  g. REPRODUCIBLE SCRIPTS: package-manager scripts should be deterministic — avoid watch modes, interactive prompts, wall-clock-dependent behavior in scripts an AC will call. Prefer `<toolname> run` or `<toolname> --once` flags over bare invocations. Separate `test` (exits on first result) from `test:watch` (interactive). Separate `dev` (long-running) from `build` (exits).
+
 SESSION TO EXPAND (id, title, description, outputs are FIXED; you are filling in tasks + ACs):
 `
 
