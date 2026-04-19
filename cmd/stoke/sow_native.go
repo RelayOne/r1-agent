@@ -888,7 +888,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// verify everything afterwards; the final acceptance state is
 	// what determines success, not whether the guard's repair pass
 	// itself ran cleanly.
+	specSpan := perflog.Start("phase1_5.spec_faithfulness", "session="+session.ID)
 	missing, suspicious := checkSpecFaithfulness(cfg.RepoRoot, session)
+	specSpan.End("missing="+strconv.Itoa(len(missing)), "suspicious="+strconv.Itoa(len(suspicious)))
 	if len(missing) > 0 || len(suspicious) > 0 {
 		fmt.Printf("  ⚠ spec-faithfulness guard: %d missing/empty file(s), %d placeholder stub(s)\n", len(missing), len(suspicious))
 		failureBlob := formatSpecFaithfulnessBlob(missing, suspicious)
@@ -4492,7 +4494,9 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext(followupAgent, "1-task-dispatch", &workingSession, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, followup, 3))
+		followupSpan := perflog.Start("worker.followup", "task="+followup.ID, "depth="+strconv.Itoa(depth+1), "parent="+originalTask.ID)
 		ftr := execNativeTask(ctx, followup.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		followupSpan.End("success=" + strconv.FormatBool(ftr.Success))
 		if !ftr.Success {
 			continue
 		}
