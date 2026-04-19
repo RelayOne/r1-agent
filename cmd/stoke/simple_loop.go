@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
@@ -425,7 +426,11 @@ func simpleLoopCmd(args []string) {
 		}
 	}
 
+	var roundSpan perflog.Closer
+	defer func() { roundSpan.End() }()
 	for round := startRound; round <= *maxRounds; round++ {
+		roundSpan.End() // close previous iteration's span (no-op on first)
+		roundSpan = perflog.Start("loop.round", fmt.Sprintf("round=%d", round), fmt.Sprintf("max=%d", *maxRounds))
 		// Persist the round we're ABOUT TO EXECUTE before doing
 		// anything expensive. A crash before the save-point means
 		// we lose the round that never started (fine). A crash
@@ -1631,6 +1636,8 @@ func claudeReviewCall(bin, dir, prompt, model string) string {
 }
 
 func claudeCall(bin, dir, prompt string) string {
+	span := perflog.Start("cc.claude_call", fmt.Sprintf("prompt_bytes=%d", len(prompt)))
+	defer func() { span.End() }()
 	// H-10: Block if the rate-limit detector is in Active pause. No-op
 	// in Normal/Suspected states, so this is cheap to call every time.
 	claudeBackoff.WaitIfPaused()
@@ -1786,6 +1793,8 @@ func claudeCall(bin, dir, prompt string) string {
 // Reviewer calls are --sandbox read-only; codex has no business
 // editing files when we ask it to review.
 func codexCall(bin, dir, prompt string) string {
+	span := perflog.Start("cc.codex_call", fmt.Sprintf("prompt_bytes=%d", len(prompt)))
+	defer func() { span.End() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	lastMsg := fmt.Sprintf("/tmp/codex-simple-%d.txt", time.Now().UnixNano())

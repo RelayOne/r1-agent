@@ -229,6 +229,7 @@ run_one() {
   local exit_code
   case $mode in
     strict)
+      STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
       timeout "$to" "$STOKE" simple-loop \
         --repo "$dir" --file "$dir/SOW.md" \
         --reviewer codex --max-rounds 5 \
@@ -237,6 +238,7 @@ run_one() {
       exit_code=$?
       ;;
     lenient)
+      STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
       timeout "$to" "$STOKE" simple-loop \
         --repo "$dir" --file "$dir/SOW.md" \
         --reviewer codex --max-rounds 3 \
