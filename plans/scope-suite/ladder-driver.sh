@@ -147,6 +147,20 @@ classify_run() {
     echo "passed"
   elif grep -qE "SOW finished with [0-9]+ failed" "$log" 2>/dev/null; then
     echo "failed-task"
+  # Sow's native fast path doesn't print 'SOW finished' — it prints
+  # [PASS] S<n> per session + [PASS] AC<n> per criterion. Count
+  # [PASS]/[FAIL] session markers directly. Only passes when:
+  #   - exit_code == 0 AND
+  #   - at least one [PASS] session line AND
+  #   - zero [FAIL] session lines
+  elif [[ "$exit_code" == "0" ]] && grep -qE "^  \[PASS\] S[0-9]" "$log" 2>/dev/null; then
+    if grep -qE "^  \[FAIL\] S[0-9]" "$log" 2>/dev/null; then
+      echo "failed-task"
+    else
+      echo "passed"
+    fi
+  elif grep -qE "^  \[FAIL\] S[0-9]" "$log" 2>/dev/null; then
+    echo "failed-task"
   elif [[ "$exit_code" == "124" ]]; then
     echo "timeout"
   else
