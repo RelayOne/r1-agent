@@ -112,6 +112,13 @@ type BuildConfig struct {
 	NativeModel     string // model for native runner
 	NativeBaseURL   string // base URL for native runner (e.g. LiteLLM proxy)
 	SchedulerAlgo   string // task priority algorithm: grpw (default) | plas | continuum
+	// InPlace forces the workflow engine to run worker + reviewer
+	// directly against RepoRoot instead of creating a per-task git
+	// worktree. Set to true only by the sow session-execFn bridge:
+	// sow owns per-task commits and session-level reviews, so a
+	// per-task worktree hides the worker's writes from the reviewer
+	// (which runs BEFORE the merge step that would synchronize them).
+	InPlace bool
 }
 
 // runBuild executes a build plan and returns the result.
@@ -386,6 +393,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			TaskVerification: task.Verification,
 			AllowedFiles:     task.Files,
 			DryRun:           false,
+			InPlace:          cfg.InPlace,
 			PlanOnly:         task.PlanOnly,
 			AuthMode:         app.AuthMode(cfg.AuthMode),
 			ClaudeBinary:     cfg.ClaudeBinary,
@@ -2784,7 +2792,13 @@ func sowCmd(args []string) {
 			Tasks:       session.Tasks,
 		}
 
-		// Use runBuild for the session's tasks
+		// Use runBuild for the session's tasks.
+		// InPlace=true: sow owns per-task commits and session-level
+		// review, so the workflow engine must NOT create a per-task
+		// worktree. Without this, the cross-model reviewer inspected
+		// the main repo while the worker wrote to
+		// .stoke/worktrees/<task>/, and the reviewer reported "file
+		// does not exist" on successful tasks.
 		sessionCfg := BuildConfig{
 			RepoRoot:        absRepo,
 			PolicyPath:      *policy,
@@ -2804,6 +2818,7 @@ func sowCmd(args []string) {
 			NativeAPIKey:    *nativeAPIKey,
 			NativeModel:     *nativeModel,
 			NativeBaseURL:   *nativeBaseURL,
+			InPlace:         true,
 		}
 
 		// Save the session plan temporarily

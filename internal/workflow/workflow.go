@@ -63,6 +63,19 @@ type WorktreeManager interface {
 	Cleanup(ctx context.Context, handle worktree.Handle) error
 }
 
+// inPlaceWorktrees is a no-op WorktreeManager used when Engine.InPlace
+// is set. It exists so the dozens of e.Worktrees.Cleanup / Merge call
+// sites in Run() don't need InPlace-specific branches — every op is a
+// harmless no-op that returns nil. Prepare is never called in InPlace
+// mode (Run() synthesizes the handle directly before swapping this in).
+type inPlaceWorktrees struct{}
+
+func (inPlaceWorktrees) Prepare(context.Context, string) (worktree.Handle, error) {
+	return worktree.Handle{}, fmt.Errorf("inPlaceWorktrees.Prepare called: InPlace mode should not reach worktree creation")
+}
+func (inPlaceWorktrees) Merge(context.Context, worktree.Handle, string) error { return nil }
+func (inPlaceWorktrees) Cleanup(context.Context, worktree.Handle) error       { return nil }
+
 // TaskHook is the plugin interface for extending the workflow lifecycle.
 // Dead packages become hooks: wisdom implements AfterTask/BeforeRetry,
 // costtrack implements AfterTask, critic implements BeforeRetry, etc.
@@ -92,6 +105,20 @@ type Engine struct {
 	AuthMode         engine.AuthMode
 	Policy           config.Policy
 	DryRun           bool
+	// InPlace makes Run() operate directly against RepoRoot instead of
+	// creating a per-task git worktree. When true: no Worktrees.Prepare,
+	// no branch creation, no end-of-run merge; the worker writes straight
+	// into the repo and the reviewer reads the same tree. Used by the
+	// sow-harness dispatch path — sow owns its own per-session commit/
+	// merge strategy (sow_native.commitPerTask + Option B) and cannot
+	// tolerate workflow.Engine silently routing every task into a
+	// per-task worktree that later phases can't see. Before this flag,
+	// sow's cross-model reviewer inspected the main repo while the
+	// worker had written to .stoke/worktrees/<task>/ and the two trees
+	// were never reconciled until merge — which happens AFTER review,
+	// so the reviewer reported "no files exist" on tasks that had
+	// actually succeeded.
+	InPlace          bool
 	Pools            *subscriptions.Manager
 	Worktrees        WorktreeManager
 	Runners          engine.Registry
@@ -261,6 +288,32 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			Path:       filepath.Join(e.RepoRoot, ".stoke", "worktrees", name),
 			RuntimeDir: runtimeDir,
 		}
+	} else if e.InPlace {
+		// In-place mode: no worktree, no branch. Worker and reviewer
+		// both operate on RepoRoot directly. RuntimeDir is still under
+		// os.TempDir() so harness control files stay outside the agent
+		// sandbox and survive between phases.
+		runtimeDir := filepath.Join(os.TempDir(), "stoke-runtime-inplace-"+name)
+		_ = os.RemoveAll(runtimeDir)
+		if err := fileutil.EnsureDir(runtimeDir, fileutil.DirPerms); err != nil {
+			return Result{}, fmt.Errorf("create runtime dir: %w", err)
+		}
+		handle = worktree.Handle{
+			Name:       name,
+			Branch:     "",
+			Path:       e.RepoRoot,
+			RuntimeDir: runtimeDir,
+			RepoRoot:   e.RepoRoot,
+			GitBinary:  "git",
+		}
+		if hookErr := hooks.Install(handle.RuntimeDir); hookErr != nil {
+			return Result{}, fmt.Errorf("hook install failed (safety boundary): %w", hookErr)
+		}
+		// Swap the worktree manager with a no-op wrapper so all the
+		// downstream e.Worktrees.Cleanup/Merge call sites become
+		// cheap no-ops without edits. Prepare is never called in
+		// InPlace mode (the branch above synthesized the handle).
+		e.Worktrees = inPlaceWorktrees{}
 	} else {
 		var err error
 		handle, err = e.Worktrees.Prepare(ctx, name)
@@ -1017,6 +1070,17 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			if !e.State.CanCommit() {
 				e.Worktrees.Cleanup(ctx, handle)
 				return result, fmt.Errorf("merge blocked: state not committable (phase=%s)", e.State.Phase())
+			}
+			// In-place mode: writes already landed in RepoRoot — the
+			// downstream caller (sow_native) owns commit/merge via its
+			// own per-task commitPerTask path. Skip the worktree-based
+			// CommitVerifiedTree + Worktrees.Merge entirely. Record the
+			// validated file set for callers, advance state, and break
+			// out of the attempt loop as if the merge succeeded.
+			if e.InPlace {
+				result.FilesChanged = postReviewFiles
+				_ = e.advanceState(taskstate.Committed, "in-place: caller owns commit/merge")
+				break
 			}
 			// --- COMMIT AND MERGE ---
 			// Take snapshot before merge for rollback on failure.

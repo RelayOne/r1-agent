@@ -103,6 +103,14 @@ type RunConfig struct {
 	NativeBaseURL    string                     // base URL for native runner (e.g. LiteLLM proxy)
 	Environ          env.Environment            // execution environment backend (nil = run on host)
 	EnvHandle        *env.Handle                // provisioned environment handle (nil = run on host)
+	// InPlace makes the workflow Engine skip the per-task git worktree
+	// and run worker + reviewer directly against RepoRoot. Used when
+	// the sow harness dispatches tasks through runBuild: sow already
+	// commits per-task into the main repo and does its own session-
+	// level review, so a per-task worktree is not only redundant but
+	// actively hides the worker's writes from the reviewer until the
+	// merge runs — which is AFTER review. See workflow.Engine.InPlace.
+	InPlace bool
 }
 
 // Orchestrator coordinates policy loading, engine selection, worktree management, and verification for a task.
@@ -317,6 +325,7 @@ func (o *Orchestrator) Run(ctx context.Context) (workflow.Result, error) {
 		RunnerMode:                 o.cfg.RunnerMode,
 		Environ:                    o.cfg.Environ,
 		EnvHandle:                  o.cfg.EnvHandle,
+		InPlace:                    o.cfg.InPlace,
 	}
 	// Auto-load the CTO-approved ignore list and repeat tracker from disk
 	// if the caller didn't supply them. This makes the override flow
