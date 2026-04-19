@@ -281,12 +281,15 @@ func expandModelAlias(in string) string {
 		return "gemini-3.1-flash-lite-preview"
 	case "codex":
 		// 'codex' is an alias that historically mapped to the Codex
-		// CLI's `gpt-5-codex` model name. In the LLM-API path that
-		// identifier 400s with 'Invalid model name'. The OpenAI/
-		// OpenRouter equivalent is plain gpt-5; swapping here keeps
-		// the shorthand working for operators who typed --reviewer
-		// codex with --reviewer-source=direct|litellm.
-		return "gpt-5"
+		// CLI's `gpt-5-codex` model name. For the LLM-API path
+		// (direct/litellm), the OpenAI `gpt-5` equivalent isn't
+		// uniformly available — the operator's LiteLLM gateway may
+		// only serve Claude/Gemini. `claude-sonnet-4-6` IS always in
+		// the default LiteLLM fleet and is competitive-quality as a
+		// task/integration reviewer. Keep the codex CLI subprocess
+		// path (engine/codex.go) separate; it uses `gpt-5-codex`
+		// directly, bypassing modelsource.
+		return "claude-sonnet-4-6"
 	case "gpt", "gpt-5":
 		return "gpt-5"
 	case "litellm":
