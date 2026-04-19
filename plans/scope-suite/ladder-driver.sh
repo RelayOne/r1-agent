@@ -35,8 +35,28 @@ MODES=(strict lenient sow sow-serial)
 mkdir -p "$RUNS"
 
 # Per-mode per-rung timeout. Grows with rung complexity.
+#
+# sow + sow-serial need more budget than simple-loop at every rung:
+# the harness plans a SOW (often multi-session), dispatches per-task
+# workers, runs per-task review, then cross-review at session end.
+# Each layer adds 3-5 minutes of deliberation the simple-loop doesn't
+# pay. Starving sow at 30m was a fixed cost we couldn't amortize; now
+# every rung gets enough wall-clock to actually converge if the logic
+# is sound. Failure at 90m means a real bug, not budget exhaustion.
 timeout_for() {
-  case "$1" in
+  local rung="$1" mode="${2:-}"
+  if [[ "$mode" == "sow" || "$mode" == "sow-serial" ]]; then
+    case "$rung" in
+      R01|R02) echo "60m";;
+      R03|R04) echo "90m";;
+      R05|R06) echo "120m";;
+      R07)     echo "150m";;
+      R08)     echo "240m";;
+      *)       echo "90m";;
+    esac
+    return
+  fi
+  case "$rung" in
     R01|R02) echo "30m";;
     R03|R04) echo "40m";;
     R05|R06) echo "60m";;
@@ -198,7 +218,7 @@ run_one() {
 
   local log="$dir/stoke-run.log"
   local to
-  to=$(timeout_for "$rung")
+  to=$(timeout_for "$rung" "$mode")
 
   echo "[$mode/$rung] starting (timeout=$to, dir=$(basename $dir))"
 
