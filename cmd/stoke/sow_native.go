@@ -880,7 +880,15 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-task-preac-repair", "1-5-spec-faithfulness", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
+		// Keepalive: execNativeTask pulses on every stream event, but
+		// the upstream provider can still stall inside a single non-
+		// streaming Chat retry (30min HTTP client ceiling) before any
+		// delta arrives. The keepalive guarantees the session-watchdog
+		// sees progress every 30s even when the runner is blocked.
+		stopPulse := startWatchdogKeepalive(cfg.Watchdog)
 		_ = execNativeTask(ctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+		stopPulse()
+		watchdog.Pulse()
 		// NOTE: deliberately not appended to results. The acceptance
 		// loop below verifies the final state.
 	}
@@ -898,7 +906,15 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// loop that was burning 3 repair attempts × 5 reasoning calls on
 	// something a single pnpm install would fix.
 	if cfg.RepoRoot != "" {
+		// Foundation sanity runs ScanAndAutoFix + AgentRepair (non-
+		// streaming Chat loop, 10-min cap) + install/build commands (3-
+		// and 2-min caps) + execNativeTask. Each step has an internal
+		// deadline but the aggregate window can span 15+ minutes of
+		// quiet-from-watchdog-view work. Keep the session alive during
+		// the whole phase.
+		stopPulse := startWatchdogKeepalive(cfg.Watchdog)
 		runFoundationSanityCheck(ctx, cfg, sowDoc, workingSession, runtimeDir, maxTurns)
+		stopPulse()
 		watchdog.Pulse()
 	}
 
@@ -972,6 +988,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 					if cfg.RawSOWText != "" {
 						sowExcerpt = extractTaskSpecExcerpt(cfg.RawSOWText, workingSession, plan.Task{ID: ac.ID, Description: ac.Description}, specExcerptConfig{})
 					}
+					// Keepalive: JudgeAC issues a non-streaming Chat
+					// call whose provider.Chat path does not thread
+					// jctx into http.NewRequest. A stuck HTTP keepalive
+					// can block past the 2-min jctx soft deadline
+					// (HTTP client ceiling is 10-30min). Pulse the
+					// session watchdog every 30s for the duration.
+					stopJudgePulse := startWatchdogKeepalive(cfg.Watchdog)
 					verdict, err := plan.JudgeAC(jctx, cfg.ReasoningProvider, cfg.ReasoningModel, plan.SemanticJudgeInput{
 						TaskDescription:      taskDesc,
 						SOWSpec:              sowExcerpt,
@@ -981,6 +1004,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 						RepoRoot:             cfg.RepoRoot,
 						UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-semantic-ac", "2-ac-check", &session, 1)),
 					})
+					stopJudgePulse()
 					if err != nil || verdict == nil {
 						return false, "", err
 					}
@@ -5073,6 +5097,42 @@ func applySessionSizerPass(ctx context.Context, sow *plan.SOW, prov provider.Pro
 	return len(out) != originalCount
 }
 
+// startWatchdogKeepalive spawns a goroutine that pulses the session
+// watchdog every 30s until the returned stop func is called. Returns
+// a no-op stop when wd is nil. Used to keep the watchdog happy across
+// phases whose LLM/shell calls are non-streaming (integration review,
+// spec-guard repair, foundation sanity) — those paths hit non-ctx-
+// threading provider.Chat clients with 10-30min HTTP timeouts, so a
+// single stuck request can blow past the session's quiet-window kill
+// threshold without the outer ctx firing. Pulsing keeps the session
+// alive while the ctx/provider internals race their own deadlines.
+//
+// The stop func is idempotent; call it once on exit (deferred or
+// inline). Always returns a non-nil stop so callers don't need a nil
+// check.
+func startWatchdogKeepalive(wd *plan.Watchdog) func() {
+	if wd == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				wd.Pulse()
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(stop) })
+	}
+}
+
 // runIntegrationReviewPhase dispatches the integration reviewer
 // after a session's parallel tasks complete. Each gap it returns
 // becomes a targeted follow-up dispatch so broken cross-file
@@ -5105,21 +5165,7 @@ func runIntegrationReviewPhase(ctx context.Context, cfg sowNativeConfig, sowDoc 
 	// 20-min session-watchdog to kill an actively-working session.
 	// A ticker goroutine pulses every 30s; stops when the review
 	// returns. Noop when no watchdog is attached.
-	pulseStop := make(chan struct{})
-	if cfg.Watchdog != nil {
-		go func() {
-			t := time.NewTicker(30 * time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-pulseStop:
-					return
-				case <-t.C:
-					cfg.Watchdog.Pulse()
-				}
-			}
-		}()
-	}
+	stopPulse := startWatchdogKeepalive(cfg.Watchdog)
 	if block := cfg.UniversalContext.PromptBlock(); strings.TrimSpace(block) != "" {
 		fmt.Printf("  🧭 universal context injected (integration review): %s\n", cfg.UniversalContext.ShortSources())
 	}
@@ -5129,7 +5175,7 @@ func runIntegrationReviewPhase(ctx context.Context, cfg sowNativeConfig, sowDoc 
 		SOWSpec:              sowSpec,
 		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-integration-reviewer-chunked", "1-4-integration-review", &workingSession, 1)),
 	}, 10*time.Minute)
-	close(pulseStop)
+	stopPulse()
 	if err != nil {
 		fmt.Printf("  ⚠ integration review: %v\n", err)
 		return
