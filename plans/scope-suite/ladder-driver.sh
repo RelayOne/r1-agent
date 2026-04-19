@@ -45,34 +45,28 @@ mkdir -p "$RUNS"
 # is sound. Failure at 90m means a real bug, not budget exhaustion.
 timeout_for() {
   local rung="$1" mode="${2:-}"
+  # H-53: hard cap 90m per rung regardless of lane or size.
+  # User feedback: "no real world case where I want a 3-hour timeout."
+  # If a SOW can't converge in 90min, it's broken, not "almost there."
+  # Previous budgets (180m, 240m) bought marginal R08-Sentinel data but
+  # normalized an ugly UX. Real users want "is it converging yes/no"
+  # feedback inside an hour. If a rung legitimately needs longer, split
+  # the SOW into smaller sessions — that's what the planner is for.
   if [[ "$mode" == "sow" || "$mode" == "sow-serial" ]]; then
-    # H-43: sow lane (non-serial) pays multi-session overhead that
-    # sow-serial collapses away — 3-session plan = 3× briefing +
-    # 3× integration-review + 3× cross-review. 60m was enough for
-    # sow-serial to pass R03 cleanly but sow timed out on R02 at
-    # 59m4s with 8 tasks completed + 0 AC failures. Match
-    # sow-serial budgets rung-for-rung.
     case "$rung" in
-      R01|R02) echo "90m";;
-      R03|R04) echo "120m";;
-      R05|R06) echo "150m";;
-      R07)     echo "180m";;
-      R08)     echo "240m";;
-      R09)     echo "180m";;
-      R10)     echo "210m";;
-      *)       echo "120m";;
+      R01|R02) echo "45m";;
+      R03|R04) echo "60m";;
+      R05|R06|R07|R08|R09|R10) echo "90m";;
+      *)       echo "60m";;
     esac
     return
   fi
   case "$rung" in
-    R01|R02) echo "30m";;
-    R03|R04) echo "40m";;
-    R05|R06) echo "60m";;
-    R07) echo "90m";;
-    R08) echo "180m";;
-    R09) echo "90m";;
-    R10) echo "120m";;
-    *)   echo "45m";;
+    R01|R02) echo "25m";;
+    R03|R04) echo "35m";;
+    R05|R06|R07) echo "60m";;
+    R08|R09|R10) echo "90m";;
+    *)   echo "40m";;
   esac
 }
 
