@@ -1805,11 +1805,22 @@ func codexCall(bin, dir, prompt string) string {
 	// plenty of headroom below ARG_MAX while still using the faster
 	// arg-path for the common case. Also see argMaxStdinThreshold in
 	// this file.
+	// H-41: codex reviewer defaults to `model_reasoning_effort=medium`
+	// which produces 5+ minute review calls on small plans (perfdata
+	// R03 strict: 307s for 1.8KB input). Drop to `low` — reviewers
+	// have a narrow job (is the plan/diff OK?) that doesn't need deep
+	// chain-of-thought. Can be overridden per-run via
+	// STOKE_CODEX_REASONING_EFFORT={low,medium,high}.
+	reasoningEffort := os.Getenv("STOKE_CODEX_REASONING_EFFORT")
+	if reasoningEffort == "" {
+		reasoningEffort = "low"
+	}
 	args := []string{"exec",
 		"--json",
 		"--sandbox", "read-only",
 		"--skip-git-repo-check",
 		"--output-last-message", lastMsg,
+		"-c", "model_reasoning_effort=\"" + reasoningEffort + "\"",
 	}
 	useStdin := len(prompt) > argMaxStdinThreshold
 	if useStdin {
