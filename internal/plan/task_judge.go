@@ -205,6 +205,29 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 		b.WriteString("\nSCOPE EXCEPTION: compile errors listed above are in files this task touched, so they ARE the task's responsibility — mark the task incomplete and emit a followup_directive that resolves every error in the list. Do NOT apply scope discipline to these.\n\n")
 	}
 
+	// Adaptive round-awareness (matches simple-loop's reviewer bar).
+	// The first 3 attempts always get normal review — reviewer earns
+	// full authority. After that, the bar rises progressively so the
+	// reviewer doesn't burn follow-up dispatches on polish findings.
+	if in.PriorAttempts > 0 {
+		fmt.Fprintf(&b, "PRIOR REVIEW ATTEMPTS ON THIS TASK: %d\n", in.PriorAttempts)
+		if len(in.PriorGaps) > 0 {
+			b.WriteString("Gaps flagged in prior attempts (do NOT re-raise unless visibly still broken):\n")
+			for _, g := range in.PriorGaps {
+				fmt.Fprintf(&b, "  - %s\n", g)
+			}
+		}
+		b.WriteString("\n")
+		switch {
+		case in.PriorAttempts >= 10:
+			b.WriteString("⚠⚠ This is attempt " + fmt.Sprintf("%d", in.PriorAttempts+1) + ". At this depth, the loop is ABOUT TO give up on reviewer feedback entirely. RETURN complete=true UNLESS you can cite a specific file:line where code fails build/test/security. Polish is NOT a reason to fail at this depth.\n\n")
+		case in.PriorAttempts >= 5:
+			b.WriteString("⚠ Raise the rejection bar — prior attempts have already tried to close everything you flagged. Return complete=true unless you can cite a concrete BLOCKING defect (build fail, test fail, missing file, security bug). 'Could be more robust' is NOT a blocker.\n\n")
+		case in.PriorAttempts >= 3:
+			b.WriteString("Note: this is attempt " + fmt.Sprintf("%d", in.PriorAttempts+1) + ". Raise the bar: only return complete=false for concrete blocking defects. Polish / style / could-also-add → complete=true with a note.\n\n")
+		}
+	}
+
 	b.WriteString("Output the JSON verdict described in the system prompt.")
 
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": b.String()}})
