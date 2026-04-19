@@ -338,6 +338,30 @@ var declaredSymbolBlocklist = map[string]struct{}{
 	"dependencies": {}, "devdependencies": {}, "peerdependencies": {},
 	"scripts": {}, "workspaces": {}, "private": {},
 	"types": {}, "exports": {}, "imports": {},
+
+	// H-42: React + Next.js imports that are NOT deliverables.
+	// Caught in PERFCOMP R05-medium: SOW mentions "useState" as part
+	// of describing a React client component, and the symbol check
+	// flagged it as a missing declaration — it's an import from
+	// react, not something the worker implements. Same class as the
+	// tsconfig-option blocklist added earlier.
+	"usestate": {}, "useeffect": {}, "usecallback": {}, "usememo": {},
+	"useref": {}, "usecontext": {}, "usereducer": {}, "uselayouteffect": {},
+	"useimperativehandle": {}, "usedebugvalue": {}, "usetransition": {},
+	"usedeferredvalue": {}, "useid": {}, "usesyncexternalstore": {},
+	"useinsertioneffect": {}, "useoptimistic": {}, "useformstatus": {},
+	"useformstate": {}, "useactionstate": {}, "userouter": {},
+	"usepathname": {}, "usesearchparams": {}, "useparams": {},
+	"useselectedlayoutsegment": {}, "useselectedlayoutsegments": {},
+	"useserverinsertedhtml": {},
+	// Next.js server helpers
+	"redirect": {}, "notfound": {}, "revalidatepath": {}, "revalidatetag": {},
+	"cookies": {}, "headers": {}, "draftmode": {},
+	// Common built-in globals that appear in prose
+	"fetch": {}, "window": {}, "document": {}, "console": {},
+	"process": {}, "buffer": {}, "promise": {}, "array": {},
+	"object": {}, "string": {}, "number": {}, "boolean": {}, "date": {},
+	"math": {}, "json": {}, "map": {}, "set": {}, "regexp": {},
 }
 
 // looksLikeSource returns true when filename has an extension the
