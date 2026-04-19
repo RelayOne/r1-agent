@@ -290,6 +290,14 @@ type sowNativeConfig struct {
 	// Keys are originalTask.ID strings; values are struct{}{}.
 	overflowBudget *sync.Map
 
+	// asyncReviewWg tracks in-flight background reviewers when
+	// STOKE_SOW_REVIEW_MODE=async. Caller (runSessionNative) should
+	// install a fresh WaitGroup at session start and Wait() before
+	// Phase 1.4 (integration review). Nil means async mode falls
+	// through to eager. Pointer so value-copy of the struct shares
+	// the same waitgroup instance across reviewAndFollowup calls.
+	asyncReviewWg *sync.WaitGroup
+
 	// --- Multi-session intelligence ---
 
 	// Wisdom is the cross-session learning store. After each session
@@ -474,6 +482,13 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	sessionSpan := perflog.Start("session", "id="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
 	defer sessionSpan.End()
+	// H-49: install async-review waitgroup when STOKE_SOW_REVIEW_MODE=async.
+	// reviewAndFollowup fires review goroutines and Add/Done on this wg.
+	// We Wait() after Phase 1 below so integration review + ACs see final
+	// state. Value-copy of cfg down the call tree shares the same pointer.
+	if os.Getenv("STOKE_SOW_REVIEW_MODE") == "async" && cfg.asyncReviewWg == nil {
+		cfg.asyncReviewWg = &sync.WaitGroup{}
+	}
 
 	// --resume-from skip: if this session was completed before
 	// the checkpoint, skip it entirely. The marker is already
@@ -857,6 +872,16 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	phase1Span := perflog.Start("phase1.tasks", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
 	results := runSessionPhase1(ctx, session, workingSession, sowDoc, runtimeDir, cfg, maxTurns)
 	phase1Span.End("results="+strconv.Itoa(len(results)))
+
+	// H-49 async mode: drain any in-flight background reviewers +
+	// their follow-up workers before Phase 1.4 runs. Integration
+	// review + spec-faithfulness + ACs must see the final state,
+	// not a race-in-progress.
+	if cfg.asyncReviewWg != nil {
+		drainSpan := perflog.Start("phase1.async_review_drain", "session="+session.ID)
+		cfg.asyncReviewWg.Wait()
+		drainSpan.End()
+	}
 
 	// Phase 1.4: integration review. Dispatch an LLM agent with real
 	// tool authority (read/grep/glob/bash) to sweep the repo for
@@ -4085,7 +4110,7 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	if cfg.ReasoningProvider == nil || tr == nil || !tr.Success {
 		return
 	}
-	// H-48: STOKE_SOW_REVIEW_MODE controls per-task review strategy.
+	// H-48 + H-49: STOKE_SOW_REVIEW_MODE controls per-task review strategy.
 	//   eager     (default) — review every task immediately; dispatch
 	//                          followup on gaps. Highest accuracy, highest cost.
 	//   lazy      — skip per-task review entirely; session ACs + spec-
@@ -4093,12 +4118,29 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	//                gates. Cheapest. Trust-the-worker bet.
 	//   milestone — review only every Nth task (via STOKE_SOW_REVIEW_EVERY,
 	//                default 3). Middle ground.
+	//   async     — fire reviewer LLM call in goroutine while main loop
+	//                continues to next task. Followup workers are queued
+	//                and drained synchronously at end of Phase 1. Trades
+	//                ~12s reviewer latency per task for at-end followup
+	//                cost. cfg.asyncReviewWg and cfg.pendingFollowups
+	//                must be wired up by the caller (runSessionNative).
 	mode := os.Getenv("STOKE_SOW_REVIEW_MODE")
 	switch mode {
 	case "lazy":
 		perflog.Event("review.skip.lazy", "", "task="+task.ID)
 		fmt.Printf("    ⏩ %s: per-task review skipped (STOKE_SOW_REVIEW_MODE=lazy)\n", task.ID)
 		return
+	case "async":
+		if cfg.asyncReviewWg != nil {
+			cfg.asyncReviewWg.Add(1)
+			perflog.Event("review.async.queued", "", "task="+task.ID)
+			go func() {
+				defer cfg.asyncReviewWg.Done()
+				reviewAndFollowupRecursive(ctx, sowDoc, workingSession, task, task, runtimeDir, cfg, maxTurns, 0, nil, preTaskDirty)
+			}()
+			return
+		}
+		// Fallback to eager if caller didn't wire the waitgroup.
 	case "milestone":
 		every := 3
 		if v := os.Getenv("STOKE_SOW_REVIEW_EVERY"); v != "" {
