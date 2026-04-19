@@ -482,11 +482,12 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	}
 	sessionSpan := perflog.Start("session", "id="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
 	defer sessionSpan.End()
-	// H-49: install async-review waitgroup when STOKE_SOW_REVIEW_MODE=async.
-	// reviewAndFollowup fires review goroutines and Add/Done on this wg.
-	// We Wait() after Phase 1 below so integration review + ACs see final
-	// state. Value-copy of cfg down the call tree shares the same pointer.
-	if os.Getenv("STOKE_SOW_REVIEW_MODE") == "async" && cfg.asyncReviewWg == nil {
+	// H-49 + H-50: async is now the default review mode.
+	// install async-review waitgroup unless the user explicitly chose a
+	// non-async mode. reviewAndFollowup fires review goroutines and
+	// Add/Done on this wg. We Wait() after Phase 1 so integration review
+	// + ACs see final state.
+	if envMode := os.Getenv("STOKE_SOW_REVIEW_MODE"); (envMode == "" || envMode == "async") && cfg.asyncReviewWg == nil {
 		cfg.asyncReviewWg = &sync.WaitGroup{}
 	}
 
@@ -4110,21 +4111,20 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	if cfg.ReasoningProvider == nil || tr == nil || !tr.Success {
 		return
 	}
-	// H-48 + H-49: STOKE_SOW_REVIEW_MODE controls per-task review strategy.
-	//   eager     (default) — review every task immediately; dispatch
-	//                          followup on gaps. Highest accuracy, highest cost.
+	// H-48 + H-49 + H-50: STOKE_SOW_REVIEW_MODE controls per-task review.
+	//   async     (default, H-50) — fire reviewer LLM call in goroutine while
+	//                main loop continues. WaitGroup drains before Phase 1.4.
+	//                Validated on R02 perfcomp: 4× faster phase1 than eager
+	//                with all ACs still passing and T7 gap correctly caught.
+	//   eager     — review every task inline; highest accuracy, highest cost.
 	//   lazy      — skip per-task review entirely; session ACs + spec-
-	//                faithfulness guard + quality sweep are the only
-	//                gates. Cheapest. Trust-the-worker bet.
+	//                faithfulness guard + quality sweep are the only gates.
 	//   milestone — review only every Nth task (via STOKE_SOW_REVIEW_EVERY,
 	//                default 3). Middle ground.
-	//   async     — fire reviewer LLM call in goroutine while main loop
-	//                continues to next task. Followup workers are queued
-	//                and drained synchronously at end of Phase 1. Trades
-	//                ~12s reviewer latency per task for at-end followup
-	//                cost. cfg.asyncReviewWg and cfg.pendingFollowups
-	//                must be wired up by the caller (runSessionNative).
 	mode := os.Getenv("STOKE_SOW_REVIEW_MODE")
+	if mode == "" {
+		mode = "async"
+	}
 	switch mode {
 	case "lazy":
 		perflog.Event("review.skip.lazy", "", "task="+task.ID)
