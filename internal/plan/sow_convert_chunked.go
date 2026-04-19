@@ -161,7 +161,7 @@ RULES (follow these or this session's tasks will fail at execution):
 
      Universal, stack-agnostic. Works for Go workspaces, Rust cargo workspaces, Python monorepos, JS/TS pnpm workspaces equally.
 
-  g. REPRODUCIBLE SCRIPTS: package-manager scripts should be deterministic — avoid watch modes, interactive prompts, wall-clock-dependent behavior in scripts an AC will call. Prefer `<toolname> run` or `<toolname> --once` flags over bare invocations. Separate `test` (exits on first result) from `test:watch` (interactive). Separate `dev` (long-running) from `build` (exits).
+  g. REPRODUCIBLE SCRIPTS: package-manager scripts should be deterministic — avoid watch modes, interactive prompts, wall-clock-dependent behavior in scripts an AC will call. Prefer explicit "run-once" flags over bare invocations (e.g. "vitest run" over "vitest", "pytest" over "pytest --watch"). Separate test (exits on first result) from test:watch (interactive). Separate dev (long-running) from build (exits).
 
 SESSION TO EXPAND (id, title, description, outputs are FIXED; you are filling in tasks + ACs):
 `
