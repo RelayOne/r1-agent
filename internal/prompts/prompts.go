@@ -418,6 +418,9 @@ func BuildVerifyPrompt(task string, verification []string, changedFiles ...strin
 			b.WriteString(f + "\n")
 		}
 		b.WriteString("\n")
+		b.WriteString("⚠ IMPORTANT: The reviewer MUST use the Read tool on each file above. " +
+			"Do NOT assume a file is missing because your internal 'search' didn't surface it. " +
+			"If Read returns the file contents, the file EXISTS — that is authoritative.\n\n")
 	}
 
 	b.WriteString(`## Your review process

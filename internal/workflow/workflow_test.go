@@ -201,6 +201,85 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }
 func (s stubManager) Cleanup(_ context.Context, _ worktree.Handle) error        { return nil }
 
+// trackingManager wraps stubManager to observe whether Prepare was
+// called. Used by TestInPlaceHandleUsesRepoRoot to confirm that
+// Engine.InPlace=true does NOT invoke the WorktreeManager.
+type trackingManager struct {
+	stubManager
+	prepareCalls int
+}
+
+func (t *trackingManager) Prepare(ctx context.Context, name string) (worktree.Handle, error) {
+	t.prepareCalls++
+	return t.stubManager.Prepare(ctx, name)
+}
+
+// TestInPlaceHandleUsesRepoRoot confirms the core contract of the
+// InPlace flag: when set, Run() synthesizes a worktree.Handle whose
+// Path equals RepoRoot instead of calling e.Worktrees.Prepare. This is
+// the exact behavior the sow dispatch path depends on — if the handle
+// Path diverged from RepoRoot, the reviewer would check an empty
+// worktree while the worker wrote to the main repo.
+func TestInPlaceHandleUsesRepoRoot(t *testing.T) {
+	repo := t.TempDir()
+	// Initialize a minimal git repo so downstream helpers don't fatal.
+	exec.Command("git", "-C", repo, "init", "-b", "main").Run()
+	exec.Command("git", "-C", repo, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", repo, "config", "user.name", "test").Run()
+	exec.Command("git", "-C", repo, "commit", "--allow-empty", "-m", "init").Run()
+
+	tracker := &trackingManager{stubManager: stubManager{repo: repo}}
+	wf := Engine{
+		RepoRoot:     repo,
+		Task:         "In-place dispatch",
+		TaskType:     model.TaskTypeDocs,
+		WorktreeName: "inplace-task",
+		AuthMode:     engine.AuthModeMode1,
+		Policy:       config.DefaultPolicy(),
+		DryRun:       false,
+		InPlace:      true,
+		Pools:        subscriptions.NewManager(nil),
+		Worktrees:    tracker,
+		Runners:      engine.Registry{Claude: engine.NewClaudeRunner("claude"), Codex: engine.NewCodexRunner("codex")},
+		Verifier:     verify.NewPipeline("", "", ""),
+	}
+	// The run itself will fail at the plan phase because there's no
+	// real CLI binary available. That's fine — the InPlace branch
+	// (handle synthesis + Worktrees swap) executes BEFORE plan, so we
+	// can still observe its effect via Result.WorktreePath and the
+	// Prepare call count on the tracker.
+	result, _ := wf.Run(context.Background())
+	if tracker.prepareCalls != 0 {
+		t.Errorf("InPlace=true: Prepare called %d times, want 0", tracker.prepareCalls)
+	}
+	if result.WorktreePath != repo {
+		t.Errorf("InPlace=true: WorktreePath=%q, want RepoRoot=%q", result.WorktreePath, repo)
+	}
+	if result.Branch != "" {
+		t.Errorf("InPlace=true: Branch=%q, want empty", result.Branch)
+	}
+}
+
+// TestInPlaceWorktreesNoOpMerge confirms that the inPlaceWorktrees
+// stub installed in InPlace mode treats Merge + Cleanup as no-ops —
+// required because the 40+ downstream call sites in Engine.Run can't
+// know they're running in InPlace mode, and any real merge/cleanup
+// against a RepoRoot-as-worktree handle would fail or corrupt state.
+func TestInPlaceWorktreesNoOpMerge(t *testing.T) {
+	w := inPlaceWorktrees{}
+	if err := w.Merge(context.Background(), worktree.Handle{}, "test"); err != nil {
+		t.Errorf("Merge should be no-op, got err: %v", err)
+	}
+	if err := w.Cleanup(context.Background(), worktree.Handle{}); err != nil {
+		t.Errorf("Cleanup should be no-op, got err: %v", err)
+	}
+	// Prepare must fail loudly — reaching it indicates the InPlace
+	// branch in Run() failed to synthesize the handle, which is a bug.
+	if _, err := w.Prepare(context.Background(), "x"); err == nil {
+		t.Error("Prepare should return error in InPlace mode")
+	}
+}
+
 func TestDryRunEmitsHubEvents(t *testing.T) {
 	repo := t.TempDir()
 	bus := hub.New()
