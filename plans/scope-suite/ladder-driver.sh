@@ -214,12 +214,14 @@ run_one() {
         R01|R02|R03|R04) sow_flags="--parallel 1";;
         *) sow_flags="--per-task-worktree --parallel 2";;
       esac
-      # Sow uses Claude CLI as the writer (matches strict/lenient). The
-      # --native-* flags below were being ignored by the harness and
-      # defaulting to Claude CLI anyway. Accepting that and running serial
-      # avoids the rate-limit cascade.
+      # Sow REQUIRES a provider — 'load SOW: no provider configured'.
+      # Use LiteLLM-fronted claude-sonnet-4-6 as the writer; codex as
+      # the reviewer.
       timeout "$to" "$STOKE" sow \
         --repo "$dir" --file "$dir/SOW.md" \
+        --native-base-url "http://localhost:$port" \
+        --native-api-key "$key" \
+        --native-model claude-sonnet-4-6 \
         --reviewer-source codex \
         $sow_flags --fresh \
         > "$log" 2>&1
