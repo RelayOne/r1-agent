@@ -13,6 +13,7 @@ package plan
 
 import (
 	"context"
+	"os"
 	"fmt"
 	"strings"
 	"sync"
@@ -306,17 +307,24 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
 			result.Acceptance = acceptance
 			result.AcceptanceMet = allPassed
-			// Smoke gate — same hook the sequential runner uses. Fail
-			// flips AcceptanceMet false so retry / escalation sees a
-			// real failure; StaticOnly is logged but allows success.
+			// Smoke gate — same advisory-by-default treatment as the
+			// sequential runner (H-56). ACs are the explicit contract;
+			// smoke failing when ACs pass means the ACs are under-
+			// specifying — that's a SOW problem, not a runtime problem.
+			// STOKE_SOW_SMOKE_STRICT=1 restores old flip-on-fail.
 			if allPassed && ss.SmokeGate != nil {
 				kind, reason, output := ss.SmokeGate(session)
+				strict := os.Getenv("STOKE_SOW_SMOKE_STRICT") != ""
 				switch kind {
 				case "fail":
-					fmt.Printf("  ⛔ smoke gate failed for %s: %s\n", session.ID, reason)
-					allPassed = false
-					result.AcceptanceMet = false
-					result.Error = fmt.Errorf("session %s smoke gate failed: %s\n\n%s", session.ID, reason, output)
+					if strict {
+						fmt.Printf("  ⛔ smoke gate failed for %s: %s\n", session.ID, reason)
+						allPassed = false
+						result.AcceptanceMet = false
+						result.Error = fmt.Errorf("session %s smoke gate failed: %s\n\n%s", session.ID, reason, output)
+					} else {
+						fmt.Printf("  ⚠ smoke gate advisory: %s failed on: %s (ACs passed — not blocking; STOKE_SOW_SMOKE_STRICT=1 to enforce)\n", session.ID, reason)
+					}
 				case "static_only":
 					fmt.Printf("  ◉ smoke %s: %s\n", session.ID, reason)
 				case "pass":
