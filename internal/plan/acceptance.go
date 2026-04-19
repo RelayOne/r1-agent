@@ -336,21 +336,60 @@ func ensureWorkspaceInstalled(ctx context.Context, projectRoot string) {
 // convention every Node workspace tool assumes.
 func acceptanceCommandEnv(projectRoot string) []string {
 	base := os.Environ()
-	localBin := filepath.Join(projectRoot, "node_modules", ".bin")
+	// H-60: also include workspace sub-package bin dirs. In pnpm
+	// workspaces, `tsc` may be installed in packages/*/node_modules/
+	// .bin/ rather than root/node_modules/.bin/ if only a sub-package
+	// declared typescript as a devDep. Without this, AC commands like
+	// `tsc --project packages/types/tsconfig.json` fail with exit 127
+	// "tsc: command not found" even though typescript is installed.
+	binDirs := gatherWorkspaceBinDirs(projectRoot)
+	prepend := strings.Join(binDirs, string(os.PathListSeparator))
 	out := make([]string, 0, len(base))
 	sawPath := false
 	for _, kv := range base {
 		if strings.HasPrefix(kv, "PATH=") {
 			sawPath = true
-			out = append(out, "PATH="+localBin+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
+			out = append(out, "PATH="+prepend+string(os.PathListSeparator)+strings.TrimPrefix(kv, "PATH="))
 			continue
 		}
 		out = append(out, kv)
 	}
 	if !sawPath {
-		out = append(out, "PATH="+localBin)
+		out = append(out, "PATH="+prepend)
 	}
 	return out
+}
+
+// gatherWorkspaceBinDirs returns all <dir>/node_modules/.bin paths
+// that exist under projectRoot. Starts with the root bin, then adds
+// one bin dir per workspace package discovered via common monorepo
+// patterns (apps/*, packages/*, services/*, libs/*). Only includes
+// dirs that actually exist on disk so the PATH doesn't grow
+// unbounded.
+func gatherWorkspaceBinDirs(projectRoot string) []string {
+	var dirs []string
+	rootBin := filepath.Join(projectRoot, "node_modules", ".bin")
+	if st, err := os.Stat(rootBin); err == nil && st.IsDir() {
+		dirs = append(dirs, rootBin)
+	}
+	// Walk common workspace subtrees up to 2 deep.
+	for _, sub := range []string{"apps", "packages", "services", "libs", "tools"} {
+		base := filepath.Join(projectRoot, sub)
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(base, entry.Name(), "node_modules", ".bin")
+			if st, err := os.Stat(candidate); err == nil && st.IsDir() {
+				dirs = append(dirs, candidate)
+			}
+		}
+	}
+	return dirs
 }
 
 func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCriterion) AcceptanceResult {
