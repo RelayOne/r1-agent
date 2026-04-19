@@ -2225,7 +2225,9 @@ func runSessionPhase1Sequential(ctx context.Context, session plan.Session, worki
 			UniversalPromptBlock: taskCfg.combinedPromptBlock(taskCfg.agentContext(workerAgentFor(session), "1-task-dispatch", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(taskCfg.RepoRoot, taskCfg.RawSOWText, workingSession, task, 3))
+		workerSpan := perflog.Start("worker.dispatch", "task="+task.ID, "files="+strconv.Itoa(len(task.Files)))
 		tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
+		workerSpan.End("success=" + strconv.FormatBool(tr.Success))
 		// Per-task reviewer: catch gaps at task scope before
 		// cascading into session AC failures. Bounded at 1
 		// follow-up max per task to cap cost and prevent loops.
@@ -4099,7 +4101,15 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 // solves genuine multi-file tasks, but escalates structurally
 // hard problems to the smarter planner via promote-overflow +
 // cascade path instead of burning compute on diminishing returns.
-const maxReviewDepth = 3
+// H-36: lowered from 3 to 2 after perflog data from sow-serial R03
+// showed single tasks burning 5+ minutes in the decomp spiral — one
+// task (T9) ran review depth=0 → worker → review depth=1 → decompose
+// → worker → review depth=2 with each iteration spending 45-60s on
+// the follow-up worker plus 10-20s on the LLM review. Three layers
+// of follow-up × 60s each = 3 minutes per depth, and decompose can
+// split into 5-9 sub-directives that each repeat. 2 lets a single
+// re-try close genuine gaps without runaway nesting.
+const maxReviewDepth = 2
 
 // reviewAndFollowupRecursive is the workhorse. currentTask is the
 // most recent worker's task (original task at depth 0, follow-up at
