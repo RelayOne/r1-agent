@@ -292,6 +292,144 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// PreflightFixModuleType is H-66: deterministic scrub for ESM/CJS
+// "type" mismatch in workspace package.json files.
+//
+// Background: meta-reports on 2026-04-19 flagged cross_package_contract
+// as a recurring R05 failure class — a types/utils package ships .ts
+// source with `import`/`export` syntax, but its package.json omits
+// `"type": "module"` (or sets `"type": "commonjs"`). Consumers then
+// fail with ERR_REQUIRE_ESM or "Cannot use import statement outside a
+// module" at tsc/vitest/node time.
+//
+// This is a static, deterministic mismatch: if a package's source
+// uses ES module syntax, its package.json should declare
+// `"type": "module"`. Walk every package.json (skipping the usual
+// build/cache/vendor dirs), and for any that doesn't already declare
+// module type, scan the package's src/ (or root, with the same
+// skip rules) for `.ts`/`.tsx`/`.js` files containing top-level
+// `import`/`export` statements. On match, set `"type": "module"`
+// and rewrite the file.
+//
+// Note: `.mjs` files are intentionally excluded from the trigger.
+// `.mjs` is already ESM regardless of package.json, so its presence
+// is not evidence the sibling `.js` files should also be ESM.
+//
+// Returns one diagnostic line per fix. Non-fatal on any intermediate
+// parse error — best-effort pre-flight.
+func PreflightFixModuleType(repoRoot string) []string {
+	if repoRoot == "" {
+		return nil
+	}
+	skipDirs := map[string]bool{
+		"node_modules": true, ".git": true, ".turbo": true, ".next": true,
+		"dist": true, "build": true, "target": true, ".venv": true, "venv": true,
+	}
+	var pkgPaths []string
+	_ = filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() && skipDirs[info.Name()] {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() && info.Name() == "package.json" {
+			pkgPaths = append(pkgPaths, path)
+		}
+		return nil
+	})
+	sort.Strings(pkgPaths)
+
+	var diag []string
+	for _, pkgPath := range pkgPaths {
+		d := fixOneModuleType(repoRoot, pkgPath, skipDirs)
+		if d != "" {
+			diag = append(diag, d)
+		}
+	}
+	return diag
+}
+
+// esmSyntaxRE matches a top-of-line `import …`, `export …`, or
+// `export {` — the three forms that force a file to be parsed as
+// an ES module. Multiline so each line is an anchor.
+var esmSyntaxRE = regexp.MustCompile(`(?m)^\s*(import\s+|export\s+|export\s*\{)`)
+
+func fixOneModuleType(repoRoot, pkgPath string, skipDirs map[string]bool) string {
+	b, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return ""
+	}
+	var pkg map[string]any
+	if err := json.Unmarshal(b, &pkg); err != nil {
+		return ""
+	}
+	prevType, _ := pkg["type"].(string)
+	if prevType == "module" {
+		return ""
+	}
+	pkgDir := filepath.Dir(pkgPath)
+	scanRoot := filepath.Join(pkgDir, "src")
+	if !fileExists(scanRoot) {
+		scanRoot = pkgDir
+	}
+	count := countESMFiles(scanRoot, skipDirs)
+	if count == 0 {
+		return ""
+	}
+	pkg["type"] = "module"
+	updated, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return ""
+	}
+	updated = append(updated, '\n')
+	if err := os.WriteFile(pkgPath, updated, 0644); err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(repoRoot, pkgPath)
+	if err != nil {
+		rel = pkgPath
+	}
+	prevDesc := "missing"
+	if prevType != "" {
+		prevDesc = fmt.Sprintf("%q", prevType)
+	}
+	return fmt.Sprintf(`%s: set "type":"module" (was %s; found ES module syntax in %d file(s))`, rel, prevDesc, count)
+}
+
+// countESMFiles walks scanRoot for .ts/.tsx/.js files containing
+// top-of-line ES module syntax. Honors the same skipDirs as the
+// outer package.json walk so we don't pick up generated CJS in a
+// package's local dist/ or vendored node_modules/.
+func countESMFiles(scanRoot string, skipDirs map[string]bool) int {
+	var count int
+	_ = filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if path != scanRoot && skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(info.Name()) {
+		case ".ts", ".tsx", ".js":
+		default:
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if esmSyntaxRE.Match(b) {
+			count++
+		}
+		return nil
+	})
+	return count
+}
+
 func tailLines(b []byte, n int) string {
 	s := string(b)
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
