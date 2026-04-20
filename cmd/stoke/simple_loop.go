@@ -1651,19 +1651,34 @@ func claudeCall(bin, dir, prompt string) string {
 	// to a hang. With stream-json, each tool call emits a line
 	// immediately, so the watchdog can distinguish "CC is doing
 	// work" from "CC is wedged".
+	// H-74: when the prompt is large enough that embedding it as a
+	// CLI arg risks hitting OS ARG_MAX (E2BIG), pipe it via stdin
+	// instead. Observed on rust R09/R10 simple-loop today where the
+	// multi-crate SOW + plan + review concatenation hit "argument
+	// list too long" and the builder never fired, causing a 3×
+	// consecutive stall + build-phase abort. Linux ARG_MAX is
+	// typically 2 MiB including env; keeping the threshold well
+	// below that leaves room for env vars and avoids the edge.
+	const stdinPromptThreshold = 100 * 1024
+	useStdin := len(prompt) > stdinPromptThreshold
 	args := []string{
-		"-p", prompt,
 		"--dangerously-skip-permissions",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--no-session-persistence",
 		"--max-turns", "100",
 	}
+	if !useStdin {
+		args = append([]string{"-p", prompt}, args...)
+	}
 	if globalClaudeModel != "" {
 		args = append(args, "--model", globalClaudeModel)
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	if useStdin {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	// Process-group isolation lets the pipe-silence watchdog kill
 	// the entire CC subtree (including any node/claude forks) via
 	// `kill -PGID` when stdout goes silent. Without this, a SIGKILL
