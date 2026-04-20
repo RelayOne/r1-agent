@@ -1949,6 +1949,70 @@ func normalizeScopePath(p string) string {
 	return strings.TrimPrefix(p, "./")
 }
 
+// H-72: shared scope-exemption predicate. Returns true if a touched
+// file should NOT be reported as a scope violation, regardless of
+// whether the session/task declared it. Centralizes the H-63/H-67
+// ignore rules (build caches, VCS dirs, node_modules, TS build
+// artifacts, barrel files, lock files) so both the session-level
+// checkScopeViolations and the per-task runTaskScopeDrift use the
+// same exemption set. Previously the per-task version only checked
+// declared[] + directory-prefix match, so every run showed
+// node_modules/.bin/*, .vite/, .tsbuildinfo, etc. as "drift" even
+// though the session-level gate correctly ignored them.
+func scopeIsExempt(f string, declared map[string]bool) bool {
+	ignoredPrefixes := []string{
+		".stoke/", ".git/", "node_modules/", ".turbo/", ".next/",
+		".nuxt/", "dist/", "build/", "target/", ".venv/", "venv/",
+		"__pycache__/", ".pytest_cache/", ".mypy_cache/",
+		".ruff_cache/", ".vitest/", ".jest/", ".cache/",
+		".parcel-cache/", ".vite/", "coverage/",
+	}
+	for _, p := range ignoredPrefixes {
+		if strings.HasPrefix(f, p) || strings.Contains(f, "/"+p) {
+			return true
+		}
+	}
+	ignoredFiles := map[string]bool{
+		"pnpm-lock.yaml":    true,
+		"package-lock.json": true,
+		"yarn.lock":         true,
+		"bun.lockb":         true,
+		"Cargo.lock":        true,
+		"poetry.lock":       true,
+		"uv.lock":           true,
+		"go.sum":            true,
+		"next-env.d.ts":     true,
+	}
+	if ignoredFiles[filepath.Base(f)] {
+		return true
+	}
+	for _, sfx := range []string{".tsbuildinfo", ".d.ts.map", ".js.map"} {
+		if strings.HasSuffix(f, sfx) {
+			return true
+		}
+	}
+	if strings.HasSuffix(f, ".d.ts") {
+		// .d.ts file emitted alongside a declared .ts source is
+		// always tsc output — not worker-authored.
+		if declared != nil && declared[normalizeScopePath(strings.TrimSuffix(f, ".d.ts")+".ts")] {
+			return true
+		}
+	}
+	barrels := map[string]bool{
+		"index.ts": true, "index.tsx": true, "index.js": true,
+		"index.jsx": true, "index.mjs": true,
+	}
+	if declared != nil && barrels[filepath.Base(f)] {
+		dir := filepath.Dir(f)
+		for d := range declared {
+			if filepath.Dir(d) == dir {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // crossReviewResult is the structured output of the review model's pass.
 type crossReviewResult struct {
 	Approved bool                `json:"approved"`
@@ -2880,6 +2944,13 @@ func reportPerTaskFileDrift(ctx context.Context, repoRoot string, task plan.Task
 	var drift []string
 	for _, f := range changed {
 		if declared[normalizeScopePath(f)] {
+			continue
+		}
+		// H-72: share the session-level exemption set — build
+		// caches, node_modules, TS emit artifacts, barrel files,
+		// etc. aren't drift even if the declared map doesn't list
+		// them literally.
+		if scopeIsExempt(f, declared) {
 			continue
 		}
 		matched := false
