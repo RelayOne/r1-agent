@@ -2023,6 +2023,55 @@ func fileExistsAt(p string) bool {
 	return err == nil
 }
 
+// H-89: detect reviewer gaps that boil down to "worker didn't prove
+// the command ran" — exactly the pattern the harness can resolve by
+// running the command itself. Matches phrases observed in decomposer
+// abandonment traces across R06/R07/R10 sow-serial + sow-parallel:
+//   - "no evidence of command execution"
+//   - "no proof that build ran"
+//   - "worker did not invoke <cmd>"
+//   - "run the build command and report exit code"
+//   - "no test execution output shown"
+//   - "command execution failure"
+func gapsAreCommandExecutionEvidence(gaps []string) bool {
+	if len(gaps) == 0 {
+		return false
+	}
+	phrases := []string{
+		"evidence of command",
+		"evidence of running",
+		"evidence of build",
+		"evidence of test",
+		"proof of command",
+		"proof of execution",
+		"proof that build",
+		"proof that test",
+		"did not run",
+		"did not execute",
+		"did not invoke",
+		"worker did not provide",
+		"no test execution",
+		"no build output",
+		"no shell execution evidence",
+		"command execution failure",
+		"report exit code",
+	}
+	matches := 0
+	for _, g := range gaps {
+		gl := strings.ToLower(g)
+		for _, p := range phrases {
+			if strings.Contains(gl, p) {
+				matches++
+				break
+			}
+		}
+	}
+	// Fire only when at least half the gaps are of this class. A
+	// single proof-of-execution gap mixed with unrelated gaps (type
+	// errors, missing files) isn't the scenario H-89 targets.
+	return matches*2 >= len(gaps)
+}
+
 // H-72: shared scope-exemption predicate. Returns true if a touched
 // file should NOT be reported as a scope violation, regardless of
 // whether the session/task declared it. Centralizes the H-63/H-67
@@ -4851,6 +4900,34 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	// the task progressing instead of burning cycles re-writing
 	// work.
 	verdict.GapsFound = reclassifyFileMissingGaps(verdict.GapsFound, cfg.RepoRoot, originalTask.Files)
+	// H-89: if the reviewer's gaps are dominated by "no evidence of
+	// command execution" patterns (worker was asked to run a build/
+	// test but didn't, reviewer refuses to accept without proof),
+	// run the harness build verify inline NOW and check the exit
+	// code. If the build passes, the gap is satisfied deterministically
+	// — don't send the worker around another loop just for the
+	// worker to run pnpm/cargo/go build. Supplements H-82 which only
+	// fires when the task description matches narrow keywords.
+	if harnessBuildOutput == "" && gapsAreCommandExecutionEvidence(verdict.GapsFound) {
+		retroOut := runHarnessBuildVerify(cfg.RepoRoot)
+		if retroOut != "" {
+			harnessBuildOutput = retroOut
+			fmt.Printf("    🛠️  H-89 retroactive build verify fired (task=%s, gap=command-execution-evidence, bytes=%d)\n", originalTask.ID, len(retroOut))
+			// If the build exit code is clearly 0, promote the
+			// verdict to complete. The "__EXIT__=" marker is
+			// appended by runHarnessBuildVerify.
+			if strings.Contains(retroOut, "__EXIT__=0") {
+				fmt.Printf("    ✅ H-89 build exit 0 — accepting %s despite reviewer's command-evidence gap\n", originalTask.ID)
+				verdict.Complete = true
+				verdict.GapsFound = nil
+				verdict.FollowupDirective = ""
+			}
+		}
+	}
+	if verdict.Complete {
+		// H-89 promoted the verdict; skip the gap-reporting path.
+		return
+	}
 	fmt.Printf("    ✗ reviewer: %s has gaps at depth %d:\n", originalTask.ID, depth)
 	for _, gap := range verdict.GapsFound {
 		fmt.Printf("      - %s\n", gap)
