@@ -304,6 +304,89 @@ func TestPreflightFixModuleType_InvalidPackageJSONIsNonFatal(t *testing.T) {
 	}
 }
 
+// Regression: a package whose only source is index.mjs must NOT be
+// rewritten. .mjs is already explicitly ESM regardless of the
+// package.json "type" field, so its presence is not evidence that
+// type should be flipped.
+func TestPreflightFixModuleType_SkipsWhenOnlySourceIsMjs(t *testing.T) {
+	root := t.TempDir()
+	pkg := filepath.Join(root, "package.json")
+	orig := `{"name":"x"}`
+	writeModuleTestFile(t, pkg, orig)
+	writeModuleTestFile(t, filepath.Join(root, "index.mjs"),
+		`import x from "y"
+export default x
+`)
+
+	diag := PreflightFixModuleType(root)
+	if len(diag) != 0 {
+		t.Fatalf("expected no diagnostic (only .mjs source — already ESM by extension), got %v", diag)
+	}
+	got, _ := readPkgType(t, pkg)
+	if got == "module" {
+		t.Fatalf(`package was flipped to "type":"module" based on .mjs alone — unsafe`)
+	}
+	b, _ := os.ReadFile(pkg)
+	if string(b) != orig {
+		t.Fatalf("file mutated unexpectedly:\nwant %q\ngot  %q", orig, string(b))
+	}
+}
+
+// Regression: same as above for .mts (TypeScript ESM extension).
+func TestPreflightFixModuleType_SkipsWhenOnlySourceIsMts(t *testing.T) {
+	root := t.TempDir()
+	pkg := filepath.Join(root, "package.json")
+	orig := `{"name":"x"}`
+	writeModuleTestFile(t, pkg, orig)
+	writeModuleTestFile(t, filepath.Join(root, "src", "index.mts"),
+		`import x from "y"
+export const a = 1
+`)
+
+	diag := PreflightFixModuleType(root)
+	if len(diag) != 0 {
+		t.Fatalf("expected no diagnostic (only .mts source — already ESM by extension), got %v", diag)
+	}
+	got, _ := readPkgType(t, pkg)
+	if got == "module" {
+		t.Fatalf(`package was flipped to "type":"module" based on .mts alone — unsafe`)
+	}
+	b, _ := os.ReadFile(pkg)
+	if string(b) != orig {
+		t.Fatalf("file mutated unexpectedly:\nwant %q\ngot  %q", orig, string(b))
+	}
+}
+
+// Regression: a package whose only source is index.cts (explicitly
+// CommonJS) must never be rewritten to "type":"module". .cts is
+// always CJS regardless of the package-level type field.
+func TestPreflightFixModuleType_SkipsWhenOnlySourceIsCts(t *testing.T) {
+	root := t.TempDir()
+	pkg := filepath.Join(root, "package.json")
+	orig := `{"name":"x"}`
+	writeModuleTestFile(t, pkg, orig)
+	// .cts is CJS. We still throw some import-looking text at it to
+	// ensure that even if someone accidentally matched it against
+	// the ESM regex, the extension-filter alone keeps it out.
+	writeModuleTestFile(t, filepath.Join(root, "src", "index.cts"),
+		`import x = require("y")
+export = x
+`)
+
+	diag := PreflightFixModuleType(root)
+	if len(diag) != 0 {
+		t.Fatalf("expected no diagnostic (only .cts source — explicitly CJS), got %v", diag)
+	}
+	got, _ := readPkgType(t, pkg)
+	if got == "module" {
+		t.Fatalf(`package with only .cts source was flipped to "type":"module" — unsafe`)
+	}
+	b, _ := os.ReadFile(pkg)
+	if string(b) != orig {
+		t.Fatalf("file mutated unexpectedly:\nwant %q\ngot  %q", orig, string(b))
+	}
+}
+
 func TestPreflightFixModuleType_PureCJSSourceUntouched(t *testing.T) {
 	root := t.TempDir()
 	pkg := filepath.Join(root, "package.json")

@@ -537,12 +537,21 @@ func tsconfigSaysCommonJS(pkgDir string) bool {
 var tsconfigModuleRE = regexp.MustCompile(`(?i)"module"\s*:\s*"commonjs"`)
 
 // scanForESMSyntax walks scanRoot and returns the relative paths of
-// every .ts/.tsx/.js/.mjs/.cts/.mts file that starts a line with
-// ESM-level import or export syntax. Stops descending into nested
-// package.json directories so nested workspaces aren't misread.
-// .mjs is included here (it IS an ESM signal) even though its
-// presence alone wouldn't normally prompt rewriting sibling .js —
-// the non-config check downstream still has to pass.
+// every ambiguous-extension source file (.ts/.tsx/.js/.jsx) that
+// starts a line with ESM-level import or export syntax. Stops
+// descending into nested package.json directories so nested
+// workspaces aren't misread.
+//
+// Extensions whose module format is already unambiguous from the
+// filename itself — .mjs/.mts (always ESM) and .cjs/.cts (always
+// CJS) — are deliberately NOT scanned. Their presence tells us
+// nothing about what "type" should be in package.json, because
+// Node and TypeScript honor those extensions regardless of the
+// package-level type field. Including them as positive matches
+// would cause packages that only ship e.g. index.mjs or index.mts
+// to be incorrectly flipped to "type":"module", and a package
+// shipping only index.cts (explicitly CJS) could also be flipped
+// if any other heuristic then matched.
 //
 // Only files directly owned by pkgDir's package are considered:
 // we refuse to scan into any subdirectory that declares its own
@@ -572,9 +581,13 @@ func scanForESMSyntax(scanRoot, pkgDir string, skipDirs map[string]bool) []strin
 		}
 		ext := strings.ToLower(filepath.Ext(info.Name()))
 		switch ext {
-		case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cts", ".mts":
-			// fall through
+		case ".ts", ".tsx", ".js", ".jsx":
+			// Ambiguous extensions whose module format is
+			// determined by package.json "type". Scan these.
 		default:
+			// .mjs/.mts are always ESM, .cjs/.cts are always CJS;
+			// their presence is not evidence the "type" field
+			// needs changing. Everything else is non-source.
 			return nil
 		}
 		b, err := os.ReadFile(path)
