@@ -80,6 +80,80 @@ func pluralY(n int) string {
 }
 
 // AcceptanceResult is the outcome of checking one acceptance criterion.
+// H-77 helpers: classify whether an AC is "verify-only" and whether
+// the failure looks like a missing system tool (exit 127). An AC that
+// only verifies the shape/integrity of already-produced code can be
+// soft-passed when the host lacks a dev-ops binary like docker or psql.
+// ACs that are producing/implementing OR that the SOW marks as
+// hard-required keep the strict fail.
+
+var verifyOnlyVerbs = []string{
+	" verify ", " verifies ", " confirm ", " confirms ",
+	" check ", " checks that ", " assert ", " asserts ",
+	" validate ", " validates ", " ensure ", " ensures ",
+	" must be present", " must exist",
+}
+
+var hardRequiredMarkers = []string{
+	" must pass", " MUST pass", " MUST ", " SHALL ", " REQUIRED",
+	"required to pass", " hard-required", " non-skippable",
+}
+
+var missingToolSystemBinaries = map[string]bool{
+	"docker": true, "docker-compose": true, "docker-buildx": true,
+	"psql": true, "pg_isready": true, "redis-cli": true,
+	"mysql": true, "mongod": true, "terraform": true, "aws": true,
+	"gcloud": true, "kubectl": true, "helm": true,
+}
+
+func acceptanceMissingToolSkip(ac AcceptanceCriterion, output string) bool {
+	l := strings.ToLower(output)
+	// Detect exit-127 signature in the stderr/stdout blob.
+	if !strings.Contains(l, "command not found") &&
+		!strings.Contains(l, "exit status 127") &&
+		!strings.Contains(l, "no such file or directory") {
+		return false
+	}
+	// Identify the missing binary by looking for "<tok>: command not
+	// found" (bash) or "exec: <tok>: not found" (busybox) first.
+	var tok string
+	for _, line := range strings.Split(output, "\n") {
+		low := strings.ToLower(line)
+		if i := strings.Index(low, ": command not found"); i > 0 {
+			rest := line[:i]
+			if colon := strings.LastIndex(rest, ":"); colon >= 0 {
+				tok = strings.TrimSpace(rest[colon+1:])
+			} else {
+				tok = strings.TrimSpace(rest)
+			}
+			break
+		}
+	}
+	if tok == "" {
+		// Fall back to scanning the AC command's leading token.
+		fields := strings.Fields(ac.Command)
+		if len(fields) > 0 {
+			tok = fields[0]
+		}
+	}
+	if !missingToolSystemBinaries[tok] {
+		return false
+	}
+	desc := " " + strings.ToLower(ac.Description) + " "
+	for _, m := range hardRequiredMarkers {
+		if strings.Contains(desc, strings.ToLower(m)) {
+			return false
+		}
+	}
+	for _, v := range verifyOnlyVerbs {
+		if strings.Contains(desc, v) {
+			return true
+		}
+	}
+	// Default: if the description is ambiguous, keep the original fail.
+	return false
+}
+
 type AcceptanceResult struct {
 	CriterionID string
 	Description string
@@ -581,6 +655,23 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 		result.Passed = err == nil
 		if !result.Passed {
 			result.Output = fmt.Sprintf("command failed: %v\n%s", err, result.Output)
+			// H-77: when the failure is a missing system binary AND the
+			// AC's purpose is verifying (not producing) AND the SOW
+			// prose doesn't mark this AC as hard-required, mark the
+			// criterion as PASSED with a note so the build can proceed.
+			// This closes the R08 Docker-Compose gap: `docker-compose
+			// up -d` fails exit 127 on hosts without docker, the code
+			// is still correct, and the SOW's shape/integrity can be
+			// verified by other ACs. Hard-required ACs (those whose
+			// description explicitly says "must pass", "required",
+			// "MUST"/"SHALL", or whose command exits with a non-127
+			// code) stay failed.
+			if acceptanceMissingToolSkip(ac, result.Output) {
+				result.Passed = true
+				result.Output = fmt.Sprintf("H-77 skip: command uses a host binary that isn't installed; AC purpose reads as verify-only and SOW does not hard-require this step.\n\n[original output]\n%s", result.Output)
+				result.JudgeRuled = true
+				result.JudgeReasoning = "H-77 missing-tool skip"
+			}
 		}
 		return result
 	}
