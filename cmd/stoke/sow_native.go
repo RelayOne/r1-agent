@@ -986,6 +986,25 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// directly (see the note on Phase 1.5).
 	var finalAcceptance []plan.AcceptanceResult
 	var finalPassed bool
+	// repairTrail accumulates a record per completed repair attempt
+	// so subsequent attempts see what earlier ones tried. Injected
+	// into the repair worker's prompt via PromptBlock() and consulted
+	// by the mid-loop meta-judge and the deterministic fingerprint
+	// gate. Also consumed by the Phase 3 override judge.
+	repairTrail := &plan.RepairTrail{SessionID: session.ID}
+
+	// Feature-flagged descent engine. When STOKE_DESCENT=1, the
+	// verification descent engine replaces the scattered soft-pass
+	// branches and manual sticky/reasoning/meta-judge chain with a
+	// single per-AC tiered resolution engine. The legacy path stays
+	// as default until bench suite proves parity.
+	if descentEnabled() && len(effectiveCriteria) > 0 {
+		fmt.Printf("  🔬 verification descent engine enabled (STOKE_DESCENT=1)\n")
+		finalAcceptance, finalPassed = runDescentRepairLoop(
+			ctx, sowDoc, session, workingSession, effectiveCriteria,
+			cfg, runtimeDir, maxTurns, maxRepairs,
+		)
+	} else if len(effectiveCriteria) > 0 {
 	// stickyFailures tracks which criterion IDs failed in EVERY prior
 	// repair attempt. Criteria that keep failing across attempts are
 	// likely either (a) structurally unsatisfiable (the AC command is
@@ -1011,19 +1030,12 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// correct by the multi-analyst pass; the AC command itself
 	// is the bug.
 	acBugCount := map[string]int{}
-	// repairTrail accumulates a record per completed repair attempt
-	// so subsequent attempts see what earlier ones tried. Injected
-	// into the repair worker's prompt via PromptBlock() and consulted
-	// by the mid-loop meta-judge and the deterministic fingerprint
-	// gate.
-	repairTrail := &plan.RepairTrail{SessionID: session.ID}
 	// seenFingerprints maps directive fingerprint -> attempt number
 	// of the earliest attempt that tried it. Populated after each
 	// dispatch; consulted BEFORE the next dispatch to short-circuit
 	// retry loops that would try the same fix twice.
 	seenFingerprints := map[string]int{}
 	_ = seenFingerprints // reserved for future fingerprint dedup gate
-	if len(effectiveCriteria) > 0 {
 		for attempt := 1; attempt <= maxRepairs; attempt++ {
 			if ctx.Err() != nil {
 				return results, ctx.Err()
