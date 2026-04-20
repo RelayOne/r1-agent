@@ -1720,6 +1720,20 @@ func sowCmd(args []string) {
 				fmt.Printf("    - %s\n", d)
 			}
 		}
+		// H-69 sysdep pre-flight: detect OS-level binaries referenced
+		// by ACs (docker, psql, redis-cli, jq, …) that aren't on
+		// $PATH. Auto-install via apt-get when STOKE_SYSDEP_INSTALL=1,
+		// else emit diagnostic so operator knows what's missing.
+		// R08-sentinel-full today had AC2 requiring docker-compose;
+		// worker looped 3x then escalated because docker isn't in the
+		// sandbox. H-69 detects that up-front and either installs or
+		// tells the operator to.
+		if sysDiag := plan.PreflightSystemDeps(sow); len(sysDiag) > 0 {
+			fmt.Printf("  sysdep pre-flight (H-69):\n")
+			for _, d := range sysDiag {
+				fmt.Printf("    - %s\n", d)
+			}
+		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
