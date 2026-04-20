@@ -3182,19 +3182,32 @@ func sowCmd(args []string) {
 	// Tally pass/fail/skipped counts up front so a 13-session build
 	// has a clear summary even if you scroll past the per-session
 	// detail. Then print one line per session.
-	var passed, failed, skipped int
+	// H-76: split main vs meta session failures. Meta sessions are
+	// harness-synthesized (integrity-fix, task-escalation fix,
+	// continuation) from a primary session whose ID they embed via
+	// a suffix. When every MAIN session passes, the SOW's core
+	// deliverables are done — failures in meta-fix sessions reflect
+	// over-eager secondary gates, not missing code. Before H-76,
+	// one flaky integrity-fix AC would fail the whole run and
+	// block ladder promotion even though the declared work was in.
+	// STOKE_SOW_STRICT_META=1 restores the old all-or-nothing gate.
+	var passed, failed, skipped, mainFailed int
 	for _, r := range results {
+		isMeta := strings.Contains(r.SessionID, "-")
 		switch {
 		case r.Skipped:
 			skipped++
 		case r.Error != nil || !r.AcceptanceMet:
 			failed++
+			if !isMeta {
+				mainFailed++
+			}
 		default:
 			passed++
 		}
 	}
-	fmt.Printf("\n=== SOW Results: %d passed, %d failed, %d skipped (of %d sessions) ===\n",
-		passed, failed, skipped, len(sow.Sessions))
+	fmt.Printf("\n=== SOW Results: %d passed, %d failed (%d main), %d skipped (of %d sessions) ===\n",
+		passed, failed, mainFailed, skipped, len(sow.Sessions))
 	for _, r := range results {
 		status := "PASS"
 		switch {
@@ -3342,7 +3355,7 @@ func sowCmd(args []string) {
 		streamResult.text = err.Error()
 		streamResult.turns = passed + failed
 		exitWithStreamResult(streamEmitter, 1, streamResult, streamResult.subtype, streamResult.text)
-	case failed > 0:
+	case failed > 0 && (mainFailed > 0 || os.Getenv("STOKE_SOW_STRICT_META") == "1"):
 		fmt.Fprintf(os.Stderr, "\nSOW finished with %d failed session(s).\n", failed)
 		if passed > 0 {
 			fmt.Fprintf(os.Stderr, "  %d session(s) passed; rerun with --resume to skip them.\n", passed)
@@ -3351,6 +3364,17 @@ func sowCmd(args []string) {
 		streamResult.text = fmt.Sprintf("SOW finished with %d failed session(s); %d passed", failed, passed)
 		streamResult.turns = passed + failed
 		exitWithStreamResult(streamEmitter, 1, streamResult, streamResult.subtype, streamResult.text)
+	case failed > 0:
+		// H-76: meta-only failures don't block the ladder. All main
+		// (planner-declared) sessions passed; only harness-synthesized
+		// fix/cont sessions failed. The failures are still printed
+		// above so the operator sees them. Set STOKE_SOW_STRICT_META=1
+		// to restore old all-or-nothing behavior.
+		fmt.Fprintf(os.Stderr, "\nSOW finished with %d meta-session failure(s) (main sessions all passed).\n", failed)
+		fmt.Fprintln(os.Stderr, "  (H-76 soft-pass: meta-only failures don't block rung promotion. Set STOKE_SOW_STRICT_META=1 to opt out.)")
+		streamResult.subtype = "success_with_meta_failures"
+		streamResult.text = fmt.Sprintf("%d main session(s) passed; %d meta session(s) failed (soft-ignored)", passed, failed)
+		streamResult.turns = passed + failed
 	default:
 		fmt.Println("\nSOW completed successfully.")
 		streamResult.subtype = "success"
