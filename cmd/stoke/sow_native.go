@@ -3931,6 +3931,26 @@ exit 0 before you end.
 		usr.WriteString("Begin implementing the task now. When you're done, your final message should briefly summarize what you changed, and you should run the acceptance command(s) yourself with bash to confirm the work is complete.\n")
 	}
 
+	// H-81: teach the worker the NOTES.txt escape hatch for
+	// untestable tool scenarios. When the AC demands a test that
+	// can't run in this environment (docker-compose absent, a paid
+	// API's real network, flaky browser e2e), the worker's choice
+	// set is usually (a) fail the AC, (b) mock the tool crudely,
+	// or (c) skip the test silently and lie about it. None of
+	// those work well. H-81 gives a fourth option: write the real
+	// test code, note in NOTES.txt why it can't execute here, and
+	// the reviewer / AC runner's H-77 skip logic will accept it
+	// without failing the session.
+	sys.WriteString("\n## NOTES.txt for environment-blocked tests\n\n")
+	sys.WriteString("If you write tests that CAN'T be executed in this environment (e.g., the AC requires docker-compose but the host lacks docker; the test hits a real external API without credentials; a browser e2e that can't headless here), DO NOT silently skip, mock, or delete them. Instead:\n")
+	sys.WriteString("  1. Keep the real test code in its declared file.\n")
+	sys.WriteString("  2. Create or append NOTES.txt at the project root with ONE line per affected test, format:\n")
+	sys.WriteString("       <path/to/test-file>: blocked-by=<tool-or-reason>; to-run=<exact command an operator could run when the tool IS available>\n")
+	sys.WriteString("  3. In your final summary, list each blocked test + the NOTES.txt line you wrote.\n")
+	sys.WriteString("Examples of valid blocked-by reasons: docker-compose-missing, psql-missing, redis-missing, no-network, browser-e2e-requires-display.\n")
+	sys.WriteString("The reviewer is instructed to read NOTES.txt; ACs whose purpose is verify-only and whose blocking tool is in the system-binary skip set (H-77) will be accepted.\n")
+	sys.WriteString("Do NOT use NOTES.txt to paper over tests that fail for OTHER reasons (real bugs, missing imports, failed assertions). It's strictly for tool/environment absence.\n\n")
+
 	// Append the universal context (coding-standards + known-gotchas)
 	// to the end of the system prompt, after every role-specific
 	// instruction and static context. Kept last so it lives inside
