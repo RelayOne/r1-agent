@@ -182,6 +182,13 @@ var (
 	// lookahead, so we capture greedily and filter reserved pnpm
 	// subcommands in scrubCommand before rewriting.
 	scrubPnpmFilterBin = regexp.MustCompile(`\bpnpm\s+--filter\s+(\S+)\s+([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
+	// H-75: matches `pnpm -r <script>` and `pnpm run -r <script>`
+	// WITHOUT an existing --if-present flag. We only care about
+	// recursive script invocations (they're the ones that fail
+	// ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL when one package lacks
+	// the script); non-recursive `pnpm <script>` either works or
+	// fails locally in a way the worker can fix.
+	scrubPnpmRecursiveScript = regexp.MustCompile(`\bpnpm\s+-r\s+(?:run\s+)?([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
 )
 
 // scrubCommand applies every scrub rule to a single command string and
@@ -223,6 +230,24 @@ func scrubCommand(cmd string) (string, []string) {
 	// no-op. Rewriting to `pnpm --filter X exec <bin>` forces the
 	// binary resolution. R06 S3 today lost 3 ACs (AC10-12) to this
 	// collision before the reasoning pass caught it per-AC.
+	// H-75: when `pnpm build` / `pnpm test` etc. are invoked on a
+	// package that doesn't define that script in package.json,
+	// pnpm fails with ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL instead
+	// of skipping gracefully. R06-sow-serial today lost 3 sessions
+	// to this because packages/types and packages/api-client had
+	// no `build` script. pnpm provides `--if-present` for exactly
+	// this case — scripts missing from a sub-package's
+	// package.json are silently skipped. Rewriting `pnpm run <script>`
+	// and `pnpm -r <script>` to include `--if-present` closes the
+	// gap; it does NOT affect commands that already have a matching
+	// script (they still run).
+	if scrubPnpmRecursiveScript.MatchString(fixed) {
+		before := fixed
+		fixed = scrubPnpmRecursiveScript.ReplaceAllString(fixed, `pnpm -r --if-present $1`)
+		if fixed != before {
+			changes = append(changes, `added --if-present to "pnpm -r <script>" (H-75: skip packages lacking the script instead of ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL)`)
+		}
+	}
 	if m := scrubPnpmFilterBin.FindStringSubmatchIndex(fixed); m != nil {
 		// m[4]..m[5] is the <bin> capture. Reserved pnpm
 		// subcommands get left alone; unknown words get the `exec`
