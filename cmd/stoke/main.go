@@ -1708,17 +1708,6 @@ func sowCmd(args []string) {
 				fmt.Printf("    - %s\n", d)
 			}
 		}
-		// H-66 module-type pre-flight: scrub package.json files where
-		// source uses ES module syntax but "type":"module" is missing
-		// (or set to "commonjs"). Addresses the cross_package_contract
-		// failure class where consumers hit ERR_REQUIRE_ESM at run
-		// time. Best-effort; non-fatal on parse errors.
-		if modDiag := plan.PreflightFixModuleType(absRepo); len(modDiag) > 0 {
-			fmt.Printf("  module-type pre-flight (H-66):\n")
-			for _, d := range modDiag {
-				fmt.Printf("    - %s\n", d)
-			}
-		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
