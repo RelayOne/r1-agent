@@ -3217,15 +3217,35 @@ func runSessionPhase1Parallel(ctx context.Context, session plan.Session, working
 				tr := execNativeTask(ctx, task.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
 				// Per-task reviewer (bounded follow-up) runs in
 				// each worker goroutine so parallel review + fix
-				// happens per-task without serializing the wave.
-				// We pass preWaveDirty as the pre-task baseline.
-				// In a parallel wave we can't cheaply isolate
-				// per-task writes, but preWaveDirty at least tells
-				// the reviewer which files were already on disk
-				// before the wave started — enough to catch the
-				// pure zombie case (declared files, zero writes in
-				// the whole wave).
-				reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, taskCfg, maxTurns, preWaveDirty)
+				// H-88: sow-parallel architecture fix. Previously
+				// each parallel worker fired reviewAndFollowup
+				// immediately on completion — which ran the LLM
+				// reviewer WHILE sibling workers were still
+				// producing the files this task depends on. The
+				// reviewer saw "declared file X is missing" even
+				// though sibling worker T14 was actively writing X
+				// in its own worktree. Cascading false-positives
+				// drove repair loops that blocked the session.
+				//
+				// New flow (mirrors how Claude Code uses subagents):
+				// each parallel worker just commits its own task.
+				// Worker-local checks — H-2 declared-file-not-
+				// created + H-82 harness build verify — still fire
+				// because those are self-contained. The LLM review
+				// layer that cross-checks session compliance is
+				// deferred to the session-level cross-model review
+				// pass (runCrossModelReview) which fires AFTER the
+				// whole wave + merges complete and sees the unified
+				// state.
+				//
+				// Sequential sow (ParallelWorkers=1) keeps the old
+				// per-task reviewer path because there are no
+				// concurrent siblings to worry about.
+				if cfg.ParallelWorkers <= 1 || !cfg.PerTaskWorktree {
+					reviewAndFollowup(ctx, sowDoc, workingSession, task, &tr, runtimeDir, taskCfg, maxTurns, preWaveDirty)
+				} else {
+					fmt.Printf("    ⚙ %s: H-88 deferred review (parallel mode — session-level review runs post-merge)\n", task.ID)
+				}
 
 				// H-2 gate: declared-file-not-created (parallel path).
 				// Same correctness check as the sequential branch:
