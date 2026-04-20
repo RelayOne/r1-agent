@@ -1693,6 +1693,21 @@ func sowCmd(args []string) {
 				fmt.Printf("    - %s\n", d)
 			}
 		}
+		// H-65 pre-flight devdep gate: scan every AC command for dev-tool
+		// binary references (tsc, vitest, next, eslint, …) and guarantee
+		// each one's npm package exists in some workspace package.json
+		// BEFORE any session runs. Addresses the dominant failure class
+		// across today's R05/R06 meta-reports (11/20 classified failures
+		// were "missing_devdep"). Writes additions to root package.json +
+		// runs a single workspace install. Non-fatal on any intermediate
+		// error — just prints a diagnostic so the user knows the gate
+		// attempted but couldn't guarantee.
+		if preDiag := plan.PreflightWorkspaceDevDeps(absRepo, sow); len(preDiag) > 0 {
+			fmt.Printf("  devdep pre-flight (H-65):\n")
+			for _, d := range preDiag {
+				fmt.Printf("    - %s\n", d)
+			}
+		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
