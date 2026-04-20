@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -134,15 +135,33 @@ func ScanDeclaredSymbolsNotImplemented(repoRoot, sowProse string, changedFiles [
 		if present[d] || present[strings.ToLower(d)] {
 			continue
 		}
+		// H-83: downgrade prose-extracted declared-symbol findings to
+		// advisory (Major, not Blocking). The extractor heuristic
+		// regularly false-positives on natural-language prose phrases
+		// like "Worker service", "components", "Zod schemas for Ticket"
+		// that look identifier-shaped but are English descriptions
+		// (R10-sow-serial today burned a whole session replaying the
+		// same 10 bogus "missing symbols" through the repair loop).
+		// Prose is NOT the authoritative deliverable list — task.Files
+		// and session.AcceptanceCriteria are. When the runner needs a
+		// strict gate on symbols, use the declared_files-not-created
+		// signal (H-2) which operates on task.Files, not prose.
+		// Operator can still escalate by setting
+		// STOKE_DECLARED_SYMBOL_BLOCKING=1.
+		sev := SevAdvisory
+		if os.Getenv("STOKE_DECLARED_SYMBOL_BLOCKING") == "1" {
+			sev = SevBlocking
+		}
 		out = append(out, QualityFinding{
-			Severity: SevBlocking,
+			Severity: sev,
 			Kind:     "declared-symbol-not-implemented",
 			File:     "(sow)",
 			Line:     1,
-			Detail: "SOW prose declares symbol `" + d + "` (handler/class/schema/component/function) " +
+			Detail: "SOW prose mentions `" + d + "` (extracted as a candidate deliverable) " +
 				"but no matching function, class, type, interface, or exported constant with that name exists " +
-				"in the changed source files. Worker may have created the file as a stub without implementing " +
-				"the named deliverable.",
+				"in the changed source files. ADVISORY: prose-extracted symbols can be false positives when the " +
+				"SOW uses natural-language descriptions. Verify against the task's declared files before treating " +
+				"as a real gap.",
 		})
 	}
 	return out

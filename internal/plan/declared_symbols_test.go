@@ -165,8 +165,12 @@ export const placeholder = "TODO";
 	if got[0].Kind != "declared-symbol-not-implemented" {
 		t.Errorf("kind = %s", got[0].Kind)
 	}
-	if got[0].Severity != SevBlocking {
-		t.Errorf("severity = %v, want blocking", got[0].Severity)
+	// H-83: prose-extracted declared-symbol findings default to
+	// advisory so false positives on natural-language prose don't
+	// block real completion. Set STOKE_DECLARED_SYMBOL_BLOCKING=1
+	// to restore strict behavior.
+	if got[0].Severity != SevAdvisory {
+		t.Errorf("severity = %v, want advisory (H-83)", got[0].Severity)
 	}
 }
 

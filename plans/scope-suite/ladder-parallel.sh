@@ -110,6 +110,40 @@ JSON
       '{ts:$ts, rung:$rung, mode:$mode, status:$status, dir:$dir}' \
       >> "$RESULTS" 2>/dev/null || \
       echo "{\"ts\":\"$ts\",\"rung\":\"$rung\",\"mode\":\"$MODE\",\"status\":\"$status\",\"dir\":\"$dir\"}" >> "$RESULTS"
+    # H-84: persist the result to ladder-state.json so supervisor.sh
+    # + subsequent ladder-driver.sh invocations can see the win. Prior
+    # behavior: ladder-parallel.sh wrote only to parallel-results.jsonl,
+    # so ladder-state.json stayed stale regardless of pass/fail. Now a
+    # rung that passes here advances the driver's view of the ladder,
+    # and a failure is recorded with a blocked_reason the supervisor's
+    # auto-unblock can see.
+    STATE=$SUITE/ladder-state.json
+    if [[ -f "$STATE" ]]; then
+      python3 - "$STATE" "$MODE" "$rung" "$status" "$dir" <<'PY'
+import json, sys
+p, mode, rung, status, dir_ = sys.argv[1:6]
+try:
+    d = json.load(open(p))
+except Exception:
+    sys.exit(0)
+if mode not in d:
+    sys.exit(0)
+d[mode]['last_result'] = status
+d[mode]['last_run_dir'] = dir_
+if status == 'passed':
+    # Advance to the next rung in the sequence if possible.
+    rungs = ["R01","R02","R03","R04","R05","R06","R07","R08","R09","R10"]
+    idx = rungs.index(rung) if rung in rungs else -1
+    if 0 <= idx < len(rungs) - 1:
+        d[mode]['next_rung'] = rungs[idx+1]
+    else:
+        d[mode]['next_rung'] = None
+    d[mode]['blocked_reason'] = None
+else:
+    d[mode]['blocked_reason'] = f"Rung {rung} in mode {mode} ended {status} via ladder-parallel."
+json.dump(d, open(p,'w'), indent=2)
+PY
+    fi
     echo "[parallel/$rung] result: $status (exit $rc)"
   ) &
 }
