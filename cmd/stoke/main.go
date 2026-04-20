@@ -1734,6 +1734,16 @@ func sowCmd(args []string) {
 				fmt.Printf("    - %s\n", d)
 			}
 		}
+		// H-79: remove self-recursive package.json scripts that
+		// collide with binary names (vitest, eslint, etc.). Workers
+		// keep writing "vitest": "vitest run" which causes pnpm to
+		// recurse into the script instead of calling the binary.
+		if scrDiag := plan.PreflightScriptRecursion(absRepo); len(scrDiag) > 0 {
+			fmt.Printf("  script-recursion pre-flight (H-79):\n")
+			for _, d := range scrDiag {
+				fmt.Printf("    - %s\n", d)
+			}
+		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)
