@@ -44,6 +44,19 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 		for ci := range sess.AcceptanceCriteria {
 			ac := &sess.AcceptanceCriteria[ci]
 
+			// H-64: planners sometimes emit JSON-object syntax
+			// {"file_exists": "PATH"} instead of the bare
+			// "file_exists PATH" token. bash can't parse this
+			// ({ at column 0 becomes a literal word, : makes it
+			// invalid) → exit 127. Normalize these to the bare
+			// form first so H-59a / H-62 handle them uniformly
+			// downstream.
+			if ac.Command != "" && scrubFileExistsJSON.MatchString(ac.Command) {
+				orig := ac.Command
+				ac.Command = scrubFileExistsJSON.ReplaceAllString(ac.Command, `file_exists $1`)
+				diag = append(diag, fmt.Sprintf("%s/%s: normalized JSON-object {\"file_exists\":\"…\"} to bare \"file_exists …\" form: %q -> %q", sess.ID, ac.ID, orig, ac.Command))
+			}
+
 			// H-59a + H-62: move "file_exists PATH" from the command
 			// field into the FileExists struct field when it's the
 			// ONLY thing in the command. When there are MULTIPLE
@@ -119,10 +132,24 @@ func ScrubSOW(sow *SOW) (*SOW, []string) {
 	return sow, diag
 }
 
-// scrubFileExistsCmd matches "file_exists PATH" at the start of a
-// command with optional "&& ..." suffix. If matched, the path is
-// captured and the command becomes empty + FileExists field set.
-var scrubFileExistsCmd = regexp.MustCompile(`^\s*file_exists\s+([^\s&]+)\s*(?:&&.*)?$`)
+// scrubFileExistsCmd matches "file_exists PATH" as the ENTIRE command
+// (no trailing && more-commands). When the command is exactly one
+// file_exists token it can be promoted to the FileExists struct field;
+// if it's a compound, fall through to scrubFileExistsCompound below so
+// each token is rewritten to "test -f PATH" and none are silently
+// dropped. (Earlier this pattern allowed a trailing "&&.*" which
+// greedily swallowed the rest of a compound command, effectively
+// discarding every file_exists after the first — H-64 tightened it.)
+var scrubFileExistsCmd = regexp.MustCompile(`^\s*file_exists\s+(\S+)\s*$`)
+
+// scrubFileExistsJSON matches JSON-object syntax {"file_exists": "PATH"}
+// that planners sometimes emit as a shell command. Each match is
+// rewritten to the bare "file_exists PATH" form so the single-AC
+// promotion + compound test -f rewrite below can handle it. Bash
+// cannot parse the JSON-object form directly (it fails at exit 127
+// with "command not found" on the leading { token), so without this
+// normalization the AC runs raw JSON through /bin/bash and blows up.
+var scrubFileExistsJSON = regexp.MustCompile(`\{\s*"file_exists"\s*:\s*"([^"]+)"\s*\}`)
 
 // scrubFileExistsCompound matches any occurrence of "file_exists PATH"
 // inside a command string (e.g. "file_exists A && file_exists B" or
