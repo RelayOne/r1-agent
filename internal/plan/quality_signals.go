@@ -1305,9 +1305,33 @@ func routeFileExists(repoRoot, httpPath string) bool {
 	if p == "" {
 		p = "index"
 	}
-	// Strip dynamic segments: /api/users/[id] → /api/users for dir check.
-	cleanPath := regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(p, "X")
-	cleanPath = regexp.MustCompile(`:[a-zA-Z_][a-zA-Z0-9_]*`).ReplaceAllString(cleanPath, "X")
+	// H-73: produce BOTH filesystem forms for dynamic segments.
+	// Next.js app-router preserves [id] literally in the path on
+	// disk, while other frameworks normalize to a genericDir
+	// directory. Previously we only generated the genericDir
+	// form, so Next.js routes like apps/web/app/api/tickets/[id]/
+	// route.ts were missed when the SOW declared
+	// "GET /api/tickets/[id]". R10-lenient/R10-strict both emitted
+	// sow-endpoint-missing on every bracketed route despite the
+	// file being on disk.
+	pathForms := []string{p}
+	if strings.Contains(p, "[") || strings.Contains(p, ":") {
+		genericDir := regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(p, "X")
+		genericDir = regexp.MustCompile(`:[a-zA-Z_][a-zA-Z0-9_]*`).ReplaceAllString(genericDir, "X")
+		if genericDir != p {
+			pathForms = append(pathForms, genericDir)
+		}
+		// Also try converting :id → [id] (Next.js → Next.js).
+		nextish := regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`).ReplaceAllString(p, `[$1]`)
+		if nextish != p && nextish != genericDir {
+			pathForms = append(pathForms, nextish)
+		}
+		// And [id] → :id (Express → Express).
+		expressish := regexp.MustCompile(`\[([^\]]+)\]`).ReplaceAllString(p, `:$1`)
+		if expressish != p && expressish != genericDir && expressish != nextish {
+			pathForms = append(pathForms, expressish)
+		}
+	}
 
 	// Walk possible prefixes (monorepo or single-app layout) and check
 	// for a file existing there.
@@ -1315,29 +1339,25 @@ func routeFileExists(repoRoot, httpPath string) bool {
 		"", "apps/web/", "apps/api/", "apps/server/",
 		"packages/api/", "packages/server/", "server/", "api/",
 	}
-	// Candidate patterns:
-	//   <prefix>app/<path>/route.(ts|tsx|js)
-	//   <prefix>app/(anything)/<path>/route.*  -- skip (too loose)
-	//   <prefix>pages/<path>.(ts|tsx|js)
-	//   <prefix>src/app/<path>/route.*
-	//   <prefix>src/routes/<path>.*
 	for _, pfx := range prefixes {
-		candidates := []string{
-			pfx + "app/" + cleanPath + "/route.ts",
-			pfx + "app/" + cleanPath + "/route.tsx",
-			pfx + "app/" + cleanPath + "/route.js",
-			pfx + "pages/" + cleanPath + ".ts",
-			pfx + "pages/" + cleanPath + ".tsx",
-			pfx + "pages/" + cleanPath + ".js",
-			pfx + "src/app/" + cleanPath + "/route.ts",
-			pfx + "src/routes/" + cleanPath + ".ts",
-			pfx + "src/routes/" + cleanPath + ".tsx",
-			pfx + "routes/" + cleanPath + ".ts",
-			pfx + "handlers/" + cleanPath + ".ts",
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(filepath.Join(repoRoot, c)); err == nil {
-				return true
+		for _, cleanPath := range pathForms {
+			candidates := []string{
+				pfx + "app/" + cleanPath + "/route.ts",
+				pfx + "app/" + cleanPath + "/route.tsx",
+				pfx + "app/" + cleanPath + "/route.js",
+				pfx + "pages/" + cleanPath + ".ts",
+				pfx + "pages/" + cleanPath + ".tsx",
+				pfx + "pages/" + cleanPath + ".js",
+				pfx + "src/app/" + cleanPath + "/route.ts",
+				pfx + "src/routes/" + cleanPath + ".ts",
+				pfx + "src/routes/" + cleanPath + ".tsx",
+				pfx + "routes/" + cleanPath + ".ts",
+				pfx + "handlers/" + cleanPath + ".ts",
+			}
+			for _, c := range candidates {
+				if _, err := os.Stat(filepath.Join(repoRoot, c)); err == nil {
+					return true
+				}
 			}
 		}
 	}

@@ -78,21 +78,43 @@ launch_rung() {
   git -C "$dir" -c user.email=x@x -c user.name=x commit -q -m "seed" 2>/dev/null || true
 
   local to=$(timeout_for "$rung")
-  local flags=""
-  case "$MODE" in
-    sow|sow-serial) flags="--workflow serial";;
-    *) echo "only sow-serial supported currently"; return 2;;
-  esac
   local log="$dir/stoke-run.log"
   echo "[$LANG/$rung] starting (mode=$MODE, timeout=$to, dir=${dir##*/})"
   (
-    STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
-      timeout "$to" "$STOKE" sow \
-      --repo "$dir" --file "$dir/SOW.md" \
-      --native-base-url "$BASE_URL" --native-api-key "$API_KEY" \
-      --native-model claude-sonnet-4-6 \
-      --reviewer-source codex $flags --fresh \
-      > "$log" 2>&1
+    # STOKE_SYSDEP_INSTALL=1 opts into H-69 apt-install preflight so
+    # ACs referencing docker/psql/redis-cli/etc. resolve before worker
+    # dispatch. Best-effort (no sudo → silent skip); successful
+    # installs make the difference between AC2-docker-compose passing
+    # and hitting exit 127.
+    export STOKE_SYSDEP_INSTALL=1
+    case "$MODE" in
+      sow|sow-serial)
+        STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
+          timeout "$to" "$STOKE" sow \
+          --repo "$dir" --file "$dir/SOW.md" \
+          --native-base-url "$BASE_URL" --native-api-key "$API_KEY" \
+          --native-model claude-sonnet-4-6 \
+          --reviewer-source codex --workflow serial --fresh \
+          > "$log" 2>&1
+        ;;
+      simple-loop|loop-strict)
+        STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
+          timeout "$to" "$STOKE" simple-loop \
+          --repo "$dir" --file "$dir/SOW.md" \
+          --reviewer codex --max-rounds 5 \
+          --fix-mode sequential --fresh \
+          > "$log" 2>&1
+        ;;
+      loop-lenient)
+        STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
+          timeout "$to" "$STOKE" simple-loop \
+          --repo "$dir" --file "$dir/SOW.md" \
+          --reviewer codex --max-rounds 3 \
+          --fix-mode sequential --fresh --lenient-compliance \
+          > "$log" 2>&1
+        ;;
+      *) echo "unsupported mode: $MODE"; exit 2;;
+    esac
     echo "[$LANG/$rung] exit=$?"
   )
 }
