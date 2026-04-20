@@ -182,13 +182,12 @@ var (
 	// lookahead, so we capture greedily and filter reserved pnpm
 	// subcommands in scrubCommand before rewriting.
 	scrubPnpmFilterBin = regexp.MustCompile(`\bpnpm\s+--filter\s+(\S+)\s+([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
-	// H-75: matches `pnpm -r <script>` and `pnpm run -r <script>`
-	// WITHOUT an existing --if-present flag. We only care about
-	// recursive script invocations (they're the ones that fail
-	// ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL when one package lacks
-	// the script); non-recursive `pnpm <script>` either works or
-	// fails locally in a way the worker can fix.
-	scrubPnpmRecursiveScript = regexp.MustCompile(`\bpnpm\s+-r\s+(?:run\s+)?([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
+	// H-75 + H-90: matches recursive/filter-all pnpm script invocations.
+	// Covers short form (-r), long form (--recursive), filter-all
+	// (-F '*' or --filter '*'). All of these trigger
+	// ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL when any package lacks the
+	// script. Adding --if-present lets pnpm silently skip those.
+	scrubPnpmRecursiveScript = regexp.MustCompile(`\bpnpm\s+(?:-r|--recursive|-F\s+['"]?\*['"]?|--filter\s+['"]?\*['"]?)\s+(?:run\s+)?([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
 )
 
 // scrubCommand applies every scrub rule to a single command string and
