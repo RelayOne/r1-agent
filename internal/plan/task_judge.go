@@ -114,6 +114,17 @@ type TaskReviewInput struct {
 	// prefer emitting a clarification directive rather than a
 	// strict "gap" verdict when a declared file isn't on disk.
 	ParallelWorkersActive bool
+
+	// H-82: HarnessBuildOutput is the combined stdout+stderr from
+	// a build/test command the HARNESS ran in repoRoot, plus the
+	// command's exit code. Populated only when the task prose
+	// obligates running a build/test and the worker's visible
+	// evidence doesn't show they ran it. Reviewer treats this as
+	// ground truth — workers repeatedly fail to invoke the command
+	// themselves, so running it in the harness + feeding output
+	// to the reviewer converts a stuck repair loop into a concrete
+	// pass-or-fix signal.
+	HarnessBuildOutput string
 }
 
 // DecomposeInput asks the decomposer to split a single stuck gap into
@@ -249,6 +260,20 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	// right sibling's responsibility and will arrive on merge.
 	if in.ParallelWorkersActive {
 		b.WriteString("PARALLEL WORKERS ACTIVE: other tasks in this session are running concurrently in separate worktrees. Files declared by THIS task should exist in this worktree; files declared by OTHER tasks in the session may be missing here (they live in their own worktrees until merge). When flagging a missing file, prefer a clarification directive ('verify this task actually wrote file X; if another task is responsible, that's cross-session scope') over a strict 'gap' verdict — a strict verdict blocks while the sibling worker is still producing.\n\n")
+	}
+
+	// H-82: harness-run build output. Authoritative — the harness
+	// invoked the build command the task's prose obligated the
+	// worker to run. Reviewer must NOT demand "show me the build
+	// output" when this block exists; the output IS shown below.
+	// If exit=0, the build passed — accept it regardless of
+	// whether the worker's visible evidence included a build log.
+	// If exit!=0, the errors are ground-truth gaps that the next
+	// followup must resolve.
+	if strings.TrimSpace(in.HarnessBuildOutput) != "" {
+		b.WriteString("HARNESS-RUN BUILD/TEST OUTPUT (AUTHORITATIVE — command executed by the harness itself, not the worker):\n")
+		b.WriteString(truncateForReasoning(in.HarnessBuildOutput, 3000))
+		b.WriteString("\nDo NOT emit a 'worker did not run the build' gap. The harness ran it; the output above is the result. Look for __EXIT__=N at the end — exit 0 means the build passed (task can close); non-zero means focus the followup on the concrete errors shown above.\n\n")
 	}
 
 	if strings.TrimSpace(in.WorkerSummary) != "" {

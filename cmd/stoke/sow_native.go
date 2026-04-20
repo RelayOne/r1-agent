@@ -1949,6 +1949,68 @@ func normalizeScopePath(p string) string {
 	return strings.TrimPrefix(p, "./")
 }
 
+// H-82: decide whether a task's prose obligates running a build/test
+// and then check whether the harness should run the command itself
+// because workers often claim completion without ever invoking the
+// build. R07-sow-serial T20 today abandoned with "workers repeatedly
+// fail to invoke 'pnpm turbo build'" — H-82 closes that loop by
+// running the build in the harness's controlled environment and
+// feeding the output (stdout+stderr, last ~2KB) to the reviewer.
+func taskNeedsBuildVerify(t plan.Task) bool {
+	desc := strings.ToLower(t.Description)
+	// Only fire when the task description clearly asks for a build
+	// or test invocation. Keyword set intentionally conservative so
+	// we don't run builds for pure scaffolding tasks.
+	triggers := []string{
+		" run the build ", " run build ", " invoke.*build",
+		" run .*tests", " test suite", " typecheck ", " type-check",
+		" pnpm.*build", " pnpm.*test", " cargo build", " cargo test",
+		" go build", " go test", " npm run build", " npm test",
+		" pytest", " jest ", " vitest",
+		"pnpm -r build", "pnpm -r test", "pnpm turbo build",
+	}
+	for _, t := range triggers {
+		if strings.Contains(desc, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// runHarnessBuildVerify runs a language-appropriate build/test
+// command in repoRoot with a hard 5-min ceiling, and returns the
+// last ~2KB of combined stdout+stderr prefixed with the exit status.
+// Empty string means no build command was detected for the project.
+func runHarnessBuildVerify(repoRoot string) string {
+	var cmdline string
+	switch {
+	case fileExistsAt(filepath.Join(repoRoot, "Cargo.toml")):
+		cmdline = "cargo build --quiet 2>&1 | tail -60; echo __EXIT__=$?"
+	case fileExistsAt(filepath.Join(repoRoot, "go.mod")):
+		cmdline = "go build ./... 2>&1 | tail -60; echo __EXIT__=$?"
+	case fileExistsAt(filepath.Join(repoRoot, "pnpm-workspace.yaml")),
+		fileExistsAt(filepath.Join(repoRoot, "pnpm-lock.yaml")):
+		cmdline = "pnpm -r --if-present build 2>&1 | tail -60; echo __EXIT__=$?"
+	case fileExistsAt(filepath.Join(repoRoot, "package.json")):
+		cmdline = "npm run --if-present build 2>&1 | tail -60; echo __EXIT__=$?"
+	case fileExistsAt(filepath.Join(repoRoot, "pyproject.toml")):
+		cmdline = "python -m pytest -x 2>&1 | tail -60; echo __EXIT__=$?"
+	default:
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdline)
+	cmd.Dir = repoRoot
+	out, _ := cmd.CombinedOutput()
+	return string(out)
+}
+
+func fileExistsAt(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // H-72: shared scope-exemption predicate. Returns true if a touched
 // file should NOT be reported as a scope violation, regardless of
 // whether the session/task declared it. Centralizes the H-63/H-67
@@ -4488,6 +4550,24 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	if cfg.BuildWatcher != nil {
 		liveErrs = cfg.BuildWatcher.FilterToFiles(originalTask.Files)
 	}
+	// H-82: when the task's prose obligates running a build/test and
+	// the worker's visible output so far doesn't show one, execute
+	// the verification ourselves and feed the output to the reviewer
+	// as authoritative. R07-sow-serial S1 T20 today abandoned after
+	// 2 repair rounds because the reviewer kept demanding "show me
+	// pnpm turbo build output" and the worker kept writing code but
+	// never running the command. Worker reluctance is the blocker;
+	// if the harness runs the build itself and gives the reviewer
+	// the real exit code + tail, the task either closes (build
+	// passes) or fails with concrete errors the next repair can fix.
+	var harnessBuildOutput string
+	if taskNeedsBuildVerify(originalTask) {
+		out := runHarnessBuildVerify(cfg.RepoRoot)
+		if strings.TrimSpace(out) != "" {
+			harnessBuildOutput = out
+			fmt.Printf("    🛠️  H-82 harness ran build verify (task=%s, bytes=%d)\n", originalTask.ID, len(out))
+		}
+	}
 	// H-46: collect files owned by OTHER sessions so the reviewer
 	// doesn't flag them as gaps in this task's scope. Fixes the 6x
 	// followup amplification seen on R02-parallel vs R02-serial.
@@ -4515,6 +4595,7 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		PriorAttempts:        depth,
 		PriorGaps:            priorDirectives,
 		LiveCompileErrors:    liveErrs,
+		HarnessBuildOutput:   harnessBuildOutput,
 		OtherSessionFiles:    otherFiles,
 		OtherSessionIDs:      otherIDs,
 		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-task-reviewer", "1-task-dispatch", &workingSession, 1)),
