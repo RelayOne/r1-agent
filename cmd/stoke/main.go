@@ -1708,6 +1708,18 @@ func sowCmd(args []string) {
 				fmt.Printf("    - %s\n", d)
 			}
 		}
+		// H-66 module-type pre-flight: flip package.json "type" to
+		// "module" ONLY when source is clearly ESM AND the package
+		// isn't declaring CJS emit (via main/exports/bin ending in
+		// .cjs, via tsconfig module:commonjs, or when the only ESM
+		// syntax lives in *.config.* tooling files). See
+		// PreflightFixModuleType doc for the full safety argument.
+		if modDiag := plan.PreflightFixModuleType(absRepo); len(modDiag) > 0 {
+			fmt.Printf("  module-type pre-flight (H-66):\n")
+			for _, d := range modDiag {
+				fmt.Printf("    - %s\n", d)
+			}
+		}
 		switch result.Format {
 		case "prose":
 			fmt.Printf("  converted prose SOW → %s\n", result.ConvertedPath)

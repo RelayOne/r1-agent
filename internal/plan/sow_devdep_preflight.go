@@ -300,3 +300,335 @@ func tailLines(b []byte, n int) string {
 	}
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
+
+// PreflightFixModuleType is H-66: the module-type scrubber.
+//
+// Problem: cross-package contract failures where a package's source
+// uses ESM syntax but the package.json does not declare
+// "type":"module" (or declares "commonjs"), and consumers hit
+// ERR_REQUIRE_ESM at runtime.
+//
+// Safety — this is the hard part. The previous iteration (dc05ee6,
+// reverted in 5ff5ca2) keyed purely on "source uses ESM syntax" and
+// silently broke packages that author ESM in source but ship CJS
+// via tsc/bundler emit. This version adds three negative signals
+// that cause the scrubber to LEAVE A PACKAGE ALONE even if its
+// source looks like ESM:
+//
+//  1. Declared CJS emit: main/exports/bin points to a .cjs file
+//     anywhere in its value → the package ships CommonJS. Don't
+//     rewrite.
+//  2. tsconfig says CommonJS: sibling tsconfig.json has
+//     compilerOptions.module == "commonjs" (case-insensitive) →
+//     the package emits CJS regardless of source syntax. Don't
+//     rewrite.
+//  3. Monorepo config file false positive: the only ESM-looking
+//     files in the scan are *.config.{ts,js,mjs,cts,mts} (vite,
+//     eslint, jest etc. configs at package root) → not a signal
+//     about the package's runtime shape. Don't rewrite.
+//
+// Traversal: walk a package's src/ tree (or package root if there
+// is no src/), stopping at any directory containing a nested
+// package.json so nested workspaces aren't mistaken for the parent
+// package's sources.
+//
+// JSON rewrite uses stdlib encoding/json. Original key order is
+// NOT preserved — output is alphabetical. This is an accepted
+// trade-off: preserving order with stdlib requires a token-stream
+// re-walk we don't want the maintenance cost of.
+func PreflightFixModuleType(repoRoot string) []string {
+	if repoRoot == "" {
+		return nil
+	}
+	if _, err := os.Stat(repoRoot); err != nil {
+		return nil
+	}
+	skipDirs := map[string]bool{
+		"node_modules": true, ".git": true, ".turbo": true, ".next": true,
+		"dist": true, "build": true, "target": true, ".venv": true, "venv": true,
+		"out": true, ".cache": true, ".pnpm-store": true,
+	}
+	var pkgPaths []string
+	_ = filepath.Walk(repoRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() && skipDirs[info.Name()] {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() && info.Name() == "package.json" {
+			pkgPaths = append(pkgPaths, path)
+		}
+		return nil
+	})
+	sort.Strings(pkgPaths)
+
+	var diag []string
+	for _, pkgPath := range pkgPaths {
+		rel, _ := filepath.Rel(repoRoot, pkgPath)
+		if rel == "" {
+			rel = pkgPath
+		}
+		line, err := fixOneModuleType(pkgPath, skipDirs)
+		if err != nil {
+			// Non-fatal (invalid package.json, permission error, …).
+			// Emit a single diagnostic then move on.
+			diag = append(diag, fmt.Sprintf("%s: skipped (%v)", rel, err))
+			continue
+		}
+		if line != "" {
+			diag = append(diag, fmt.Sprintf("%s: %s", rel, line))
+		}
+	}
+	return diag
+}
+
+// fixOneModuleType evaluates a single package.json. Returns:
+//   - ("", nil) if the package was left alone (no change warranted)
+//   - (description, nil) if the file was rewritten (description is
+//     the non-path part of the diagnostic line)
+//   - ("", err) if the file was unreadable/unparseable
+func fixOneModuleType(pkgPath string, skipDirs map[string]bool) (string, error) {
+	raw, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return "", err
+	}
+	var pkg map[string]any
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return "", fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	// Already a module package — nothing to do.
+	if t, ok := pkg["type"].(string); ok && t == "module" {
+		return "", nil
+	}
+
+	pkgDir := filepath.Dir(pkgPath)
+
+	// Negative signal 1: declared CJS emit via main/exports/bin.
+	if declaredCJSEmit(pkg) {
+		return "", nil
+	}
+	// Negative signal 2: tsconfig says CommonJS.
+	if tsconfigSaysCommonJS(pkgDir) {
+		return "", nil
+	}
+
+	// Pick the scan root. Prefer src/ if it exists; otherwise scan
+	// package root (applying skipDirs + nested-package-boundary
+	// rules so sibling nested workspaces don't leak in).
+	scanRoot := filepath.Join(pkgDir, "src")
+	if st, err := os.Stat(scanRoot); err != nil || !st.IsDir() {
+		scanRoot = pkgDir
+	}
+
+	matches := scanForESMSyntax(scanRoot, pkgDir, skipDirs)
+	// Negative signal 3: all matches are config files (vite.config.ts,
+	// eslint.config.js, jest.config.mjs, …) — don't rewrite based
+	// on build-tooling config syntax.
+	nonConfig := 0
+	for _, m := range matches {
+		if !isConfigFile(m) {
+			nonConfig++
+		}
+	}
+	if nonConfig == 0 {
+		return "", nil
+	}
+
+	// Rewrite. json.MarshalIndent produces alphabetically-ordered
+	// keys; we accept that trade-off vs. preserving original order.
+	prevType, _ := pkg["type"].(string)
+	pkg["type"] = "module"
+	updated, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	// Preserve trailing newline convention if the original had one.
+	if len(raw) > 0 && raw[len(raw)-1] == '\n' {
+		updated = append(updated, '\n')
+	}
+	if err := os.WriteFile(pkgPath, updated, 0644); err != nil {
+		return "", err
+	}
+	if prevType == "" {
+		return fmt.Sprintf(`set "type":"module" (found ES module syntax in %d source file(s))`, nonConfig), nil
+	}
+	return fmt.Sprintf(`upgraded "type":%q → "module" (found ES module syntax in %d source file(s))`, prevType, nonConfig), nil
+}
+
+// declaredCJSEmit returns true when the package declares CJS emit
+// via main/bin/exports pointing to a .cjs file. We walk exports as
+// an arbitrarily-nested map/string because exports maps commonly
+// look like {".": {"require": "./dist/x.cjs", "import": …}}.
+func declaredCJSEmit(pkg map[string]any) bool {
+	if main, ok := pkg["main"].(string); ok && strings.HasSuffix(main, ".cjs") {
+		return true
+	}
+	// bin may be a string or an object.
+	switch b := pkg["bin"].(type) {
+	case string:
+		if strings.HasSuffix(b, ".cjs") {
+			return true
+		}
+	case map[string]any:
+		for _, v := range b {
+			if s, ok := v.(string); ok && strings.HasSuffix(s, ".cjs") {
+				return true
+			}
+		}
+	}
+	if exp, ok := pkg["exports"]; ok && exportsHasCJS(exp) {
+		return true
+	}
+	return false
+}
+
+func exportsHasCJS(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return strings.HasSuffix(t, ".cjs")
+	case map[string]any:
+		for _, child := range t {
+			if exportsHasCJS(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if exportsHasCJS(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tsconfigSaysCommonJS returns true if a sibling tsconfig.json (or
+// tsconfig.build.json) has compilerOptions.module == "commonjs"
+// (case-insensitive). We don't follow `extends` — best-effort.
+func tsconfigSaysCommonJS(pkgDir string) bool {
+	for _, name := range []string{"tsconfig.json", "tsconfig.build.json"} {
+		p := filepath.Join(pkgDir, name)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		// tsconfig allows comments/trailing commas in practice. Try
+		// strict JSON first; if that fails, fall back to a regex
+		// on the raw text.
+		var cfg map[string]any
+		if err := json.Unmarshal(b, &cfg); err == nil {
+			co, _ := cfg["compilerOptions"].(map[string]any)
+			if m, ok := co["module"].(string); ok {
+				if strings.EqualFold(m, "commonjs") {
+					return true
+				}
+			}
+			continue
+		}
+		if tsconfigModuleRE.Match(b) {
+			return true
+		}
+	}
+	return false
+}
+
+var tsconfigModuleRE = regexp.MustCompile(`(?i)"module"\s*:\s*"commonjs"`)
+
+// scanForESMSyntax walks scanRoot and returns the relative paths of
+// every .ts/.tsx/.js/.mjs/.cts/.mts file that starts a line with
+// ESM-level import or export syntax. Stops descending into nested
+// package.json directories so nested workspaces aren't misread.
+// .mjs is included here (it IS an ESM signal) even though its
+// presence alone wouldn't normally prompt rewriting sibling .js —
+// the non-config check downstream still has to pass.
+//
+// Only files directly owned by pkgDir's package are considered:
+// we refuse to scan into any subdirectory that declares its own
+// package.json (unless the scanRoot itself is that directory).
+func scanForESMSyntax(scanRoot, pkgDir string, skipDirs map[string]bool) []string {
+	if scanRoot == "" {
+		return nil
+	}
+	var matches []string
+	_ = filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			// Stop at nested package.json boundaries. Exception:
+			// the scanRoot itself (which is either src/ or pkgDir)
+			// — its own package.json is the one we're evaluating.
+			if path != scanRoot && path != pkgDir {
+				if _, err := os.Stat(filepath.Join(path, "package.json")); err == nil {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(info.Name()))
+		switch ext {
+		case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cts", ".mts":
+			// fall through
+		default:
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if esmSyntaxRE.Match(b) {
+			rel, _ := filepath.Rel(pkgDir, path)
+			if rel == "" {
+				rel = path
+			}
+			matches = append(matches, rel)
+		}
+		return nil
+	})
+	return matches
+}
+
+// esmSyntaxRE matches top-of-line (after optional whitespace) ESM
+// import/export forms:
+//   import X from 'Y'
+//   import 'Y'
+//   import {…} from 'Y'
+//   export X / export { … } / export default / export * from …
+// Type-only imports/exports (import type, export type) are
+// intentionally matched — they compile away in CJS emit, but the
+// tsconfig/emit-target guard upstream is what's supposed to catch
+// the CJS-emit case.
+var esmSyntaxRE = regexp.MustCompile(`(?m)^\s*(import\s|import\{|export\s|export\{|export\*)`)
+
+// isConfigFile reports whether rel is a known build-tooling config
+// file whose ESM syntax shouldn't trigger a rewrite of the owning
+// package.json. Checks the filename only; directory doesn't matter
+// because the nested-package guard already scoped us to one package.
+func isConfigFile(rel string) bool {
+	base := filepath.Base(rel)
+	// *.config.{ts,tsx,js,jsx,mjs,cjs,cts,mts}
+	if strings.Contains(base, ".config.") {
+		return true
+	}
+	// A handful of conventional un-suffixed configs.
+	switch base {
+	case "vite.config.ts", "vite.config.js", "vite.config.mjs",
+		"vitest.config.ts", "vitest.config.js", "vitest.config.mjs",
+		"eslint.config.js", "eslint.config.mjs", "eslint.config.cjs",
+		"rollup.config.js", "rollup.config.mjs", "rollup.config.ts",
+		"webpack.config.js", "webpack.config.mjs",
+		"jest.config.js", "jest.config.mjs", "jest.config.ts",
+		"next.config.js", "next.config.mjs", "next.config.ts",
+		"svelte.config.js", "svelte.config.mjs",
+		"astro.config.js", "astro.config.mjs", "astro.config.ts",
+		"tailwind.config.js", "tailwind.config.mjs", "tailwind.config.ts",
+		"postcss.config.js", "postcss.config.mjs":
+		return true
+	}
+	return false
+}
