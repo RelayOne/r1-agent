@@ -1957,23 +1957,38 @@ func detectSimpleBuildCmd(dir string) string {
 		return "npx tsc --noEmit 2>&1 || echo 'tsc not available'"
 	}
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
-		// Check if there's a build script
+		// H-68: prefer build > typecheck > test > check script,
+		// in that order. Earlier logic fell through to
+		// "echo 'no build script'" when neither build nor typecheck
+		// existed — that reported "build passes" vacuously on repos
+		// whose only verification surface was a test script (React
+		// Native / Expo projects typically ship only `"test": "jest"`
+		// without a build script because Metro bundles at runtime).
+		// The false-positive masked a real jest failure on rn/R01.
+		// Adding test + check as fallbacks means every project with
+		// any scripted verification gets it; only truly script-less
+		// package.jsons fall to the no-op echo.
 		data, _ := os.ReadFile(filepath.Join(dir, "package.json"))
 		var pkg map[string]interface{}
 		if json.Unmarshal(data, &pkg) == nil {
 			if scripts, ok := pkg["scripts"].(map[string]interface{}); ok {
-				if _, ok := scripts["build"]; ok {
-					return "pnpm build 2>&1 || npm run build 2>&1"
-				}
-				if _, ok := scripts["typecheck"]; ok {
-					return "pnpm typecheck 2>&1"
+				for _, name := range []string{"build", "typecheck", "test", "check"} {
+					if _, ok := scripts[name]; ok {
+						return fmt.Sprintf("pnpm %s 2>&1 || npm run %s 2>&1", name, name)
+					}
 				}
 			}
 		}
-		return "echo 'no build script'"
+		return "echo 'no build/typecheck/test script'"
 	}
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-		return "go build ./... 2>&1"
+		return "go build ./... 2>&1 && go test ./... 2>&1"
+	}
+	if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
+		return "cargo build --release 2>&1 && cargo test 2>&1"
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+		return "python -m pytest 2>&1 || echo 'pytest not available'"
 	}
 	return "echo 'no build detected'"
 }
