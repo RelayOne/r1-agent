@@ -1555,6 +1555,16 @@ func scanPackageScripts(repoRoot, sowText string) []QualityFinding {
 	// vendored tooling.
 	var findings []QualityFinding
 	for _, pkg := range pkgFiles {
+		// H-70: never inspect third-party packages under
+		// node_modules/, even when they got accidentally git-tracked
+		// (which happens when the worker ran `pnpm install` and then
+		// `git add -A`). A SOW's "must have a test script" contract
+		// is about OUR packages, not about vitest's bundled deps.
+		// R06 today surfaced ~50 false-positive findings from
+		// node_modules/@vitest/utils/package.json, etc.
+		if strings.HasPrefix(pkg, "node_modules/") || strings.Contains(pkg, "/node_modules/") {
+			continue
+		}
 		if strings.Count(pkg, "/") > 3 {
 			continue
 		}
