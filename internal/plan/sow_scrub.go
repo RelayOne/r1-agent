@@ -171,13 +171,17 @@ var scrubPnpmDirBin = regexp.MustCompile(`^\s*pnpm\s+--dir\s+(\S+)\s+(\S+(?:\s+.
 // Compiled regex set. Kept package-scope so repeated ScrubSOW calls
 // don't pay for re-compilation on every session.
 var (
-	scrubGitClonePre  = regexp.MustCompile(`(?:cd\s+\$\(mktemp\s+-d\)\s*&&\s*)?git\s+clone\s+\$\{?REPO_URL\}?[^&;]*(?:&&\s*)?`)
-	scrubOrEchoOK     = regexp.MustCompile(`\s*\|\|\s*echo\s+(?:['"][^'"]*['"]|\w+)\s*`)
-	scrubOrTrue       = regexp.MustCompile(`\s*\|\|\s*true\s*`)
-	scrubNpx          = regexp.MustCompile(`\bnpx\s+`)
-	scrubPnpmExec     = regexp.MustCompile(`\bpnpm\s+exec\s+`)
-	scrubStderrNull   = regexp.MustCompile(`\s*2>/dev/null\s*`)
-	scrubPlaywright   = regexp.MustCompile(`\bplaywright\s+test\b[^;&|]*`)
+	scrubGitClonePre   = regexp.MustCompile(`(?:cd\s+\$\(mktemp\s+-d\)\s*&&\s*)?git\s+clone\s+\$\{?REPO_URL\}?[^&;]*(?:&&\s*)?`)
+	scrubOrEchoOK      = regexp.MustCompile(`\s*\|\|\s*echo\s+(?:['"][^'"]*['"]|\w+)\s*`)
+	scrubOrTrue        = regexp.MustCompile(`\s*\|\|\s*true\s*`)
+	scrubNpx           = regexp.MustCompile(`\bnpx\s+`)
+	scrubPnpmExec      = regexp.MustCompile(`\bpnpm\s+exec\s+`)
+	scrubStderrNull    = regexp.MustCompile(`\s*2>/dev/null\s*`)
+	scrubPlaywright    = regexp.MustCompile(`\bplaywright\s+test\b[^;&|]*`)
+	// H-71: matches `pnpm --filter <pkg> <word>`. Go regexp has no
+	// lookahead, so we capture greedily and filter reserved pnpm
+	// subcommands in scrubCommand before rewriting.
+	scrubPnpmFilterBin = regexp.MustCompile(`\bpnpm\s+--filter\s+(\S+)\s+([a-zA-Z][a-zA-Z0-9_.-]*)\b`)
 )
 
 // scrubCommand applies every scrub rule to a single command string and
@@ -207,6 +211,39 @@ func scrubCommand(cmd string) (string, []string) {
 		fixed = scrubOrTrue.ReplaceAllString(fixed, "")
 		if fixed != before {
 			changes = append(changes, `stripped "|| true" fallback (turns failures into false passes)`)
+		}
+	}
+	// H-71: `pnpm --filter X <bin>` resolves <bin> against the
+	// package.json scripts block FIRST, only falling through to
+	// node_modules/.bin if no script of that name exists. When the
+	// worker writes a package.json that happens to have a script
+	// named the same as the binary (common mistake: `"vitest": "vitest run"`),
+	// `pnpm --filter web vitest …` runs the script recursively
+	// instead of the binary, causing infinite recursion or silent
+	// no-op. Rewriting to `pnpm --filter X exec <bin>` forces the
+	// binary resolution. R06 S3 today lost 3 ACs (AC10-12) to this
+	// collision before the reasoning pass caught it per-AC.
+	if m := scrubPnpmFilterBin.FindStringSubmatchIndex(fixed); m != nil {
+		// m[4]..m[5] is the <bin> capture. Reserved pnpm
+		// subcommands get left alone; unknown words get the `exec`
+		// rewrite.
+		bin := fixed[m[4]:m[5]]
+		pnpmSubcmds := map[string]bool{
+			"exec": true, "run": true, "install": true, "i": true,
+			"add": true, "remove": true, "rm": true, "update": true,
+			"up": true, "publish": true, "pack": true, "unlink": true,
+			"link": true, "rebuild": true, "dlx": true, "create": true,
+			"import": true, "outdated": true, "prune": true, "init": true,
+			"audit": true, "licenses": true, "list": true, "ls": true,
+			"why": true, "store": true, "server": true, "recursive": true,
+			"root": true, "bin": true, "env": true,
+		}
+		if !pnpmSubcmds[bin] {
+			before := fixed
+			fixed = fixed[:m[4]] + "exec " + fixed[m[4]:]
+			if fixed != before {
+				changes = append(changes, `rewrote "pnpm --filter X <bin>" to "pnpm --filter X exec <bin>" (H-71: forces node_modules/.bin resolution, avoids same-named script recursion)`)
+			}
 		}
 	}
 	if scrubNpx.MatchString(fixed) {
