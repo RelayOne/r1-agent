@@ -87,6 +87,18 @@ launch_rung() {
     # installs make the difference between AC2-docker-compose passing
     # and hitting exit 127.
     export STOKE_SYSDEP_INSTALL=1
+    # H-86: prepend ~/.cargo/bin + pyenv shims so the run picks up
+    # rustup's current toolchain (1.95) instead of the system rustc
+    # (1.84 on Debian) which can't parse edition2024. R06/R07 rust
+    # sow-serial today lost AC2 to 'indexmap 2.14.0 requires
+    # edition2024' even though rustup had 1.95 available, because
+    # PATH resolved to /usr/bin/rustc first.
+    if [[ -d "$HOME/.cargo/bin" ]]; then
+      export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+    if [[ -d "$HOME/.pyenv/shims" ]]; then
+      export PATH="$HOME/.pyenv/shims:$PATH"
+    fi
     case "$MODE" in
       sow|sow-serial)
         STOKE_PERFLOG=1 STOKE_PERFLOG_FILE="$dir/perflog.txt" \
