@@ -2903,11 +2903,48 @@ func findSuspiciouslySmallFiles(repoRoot string, t plan.Task) []string {
 			"dockerfile", "makefile":
 			continue
 		}
+		// H-85: framework/build-tool config files are LEGITIMATELY
+		// small — next.config.js with 2 lines enabling reactStrictMode,
+		// metro.config.js with a one-line default export, tailwind
+		// config with a content glob, jest.config.js preset. R10-sow-
+		// serial today abandoned T13 because next.config.js came in
+		// under the 256-byte floor; decomposer correctly flagged
+		// "minimal boilerplate is valid here" but harness kept failing.
+		// Exempt the well-known config-file basenames.
+		if isFrameworkConfigBase(base) {
+			continue
+		}
 		if info.Size() < plan.FileMinBytes {
 			small = append(small, rel)
 		}
 	}
 	return small
+}
+
+// isFrameworkConfigBase returns true for well-known framework /
+// build-tool config filenames whose idiomatic content is a single
+// export / function call below the substance floor.
+func isFrameworkConfigBase(base string) bool {
+	switch base {
+	case "next.config.js", "next.config.mjs", "next.config.ts",
+		"metro.config.js", "metro.config.cjs",
+		"babel.config.js", "babel.config.json", "babel.config.cjs",
+		"tailwind.config.js", "tailwind.config.ts", "tailwind.config.cjs",
+		"postcss.config.js", "postcss.config.cjs",
+		"vite.config.js", "vite.config.ts", "vite.config.mjs",
+		"vitest.config.js", "vitest.config.ts",
+		"jest.config.js", "jest.config.ts",
+		"webpack.config.js", "webpack.config.cjs",
+		"rollup.config.js", "rollup.config.mjs",
+		"svelte.config.js", "astro.config.mjs",
+		"nuxt.config.ts", "nuxt.config.js",
+		"turbo.json", "rush.json",
+		"commitlint.config.js", "lint-staged.config.js",
+		".prettierrc.js", ".prettierrc.cjs",
+		"eslint.config.js", "eslint.config.cjs", "eslint.config.mjs":
+		return true
+	}
+	return false
 }
 
 // classifyZombie inspects post-dispatch state and returns one of the
