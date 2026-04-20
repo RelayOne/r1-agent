@@ -94,6 +94,26 @@ type TaskReviewInput struct {
 	// header so the reviewer can mention "session S3 owns file X" in
 	// its reasoning if useful.
 	OtherSessionIDs []string
+
+	// H-78: TouchedFiles is the set of files git sees this task
+	// actually modified during dispatch (staged + unstaged diff
+	// against the pre-task snapshot). Lets the reviewer compare
+	// "what the task was SUPPOSED to touch" (Task.Files) against
+	// "what it DID touch", catching both under-touch (declared
+	// files unmodified) and over-touch (files outside scope). The
+	// per-task scope-drift checker uses the same data but emits
+	// warnings after the fact; giving it to the reviewer lets it
+	// reason about the delta up front.
+	TouchedFiles []string
+
+	// H-78: ParallelWorkersActive signals the reviewer that other
+	// workers are running concurrently on sibling tasks in the same
+	// session. When true, the reviewer should be MORE tolerant of
+	// a declared file being missing (a sibling worker may create
+	// it in a worktree the reviewer can't see yet) and should
+	// prefer emitting a clarification directive rather than a
+	// strict "gap" verdict when a declared file isn't on disk.
+	ParallelWorkersActive bool
 }
 
 // DecomposeInput asks the decomposer to split a single stuck gap into
@@ -202,6 +222,33 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 			}
 		}
 		b.WriteString("If the SOW mentions any of these files in context of this task, it is for REFERENCE only — another session owns creating them. Mark complete=true and do NOT emit a followup_directive that asks for them.\n\n")
+	}
+
+	// H-78: expose the actual file-inventory the worker produced.
+	// Reviewer can compare it against Task.Files to catch under-touch
+	// (declared but unmodified) vs over-touch (surprise sibling
+	// files). Without this the reviewer only sees CodeExcerpts, which
+	// are truncated and may omit the list of DECLARED files the
+	// worker didn't actually touch.
+	if len(in.TouchedFiles) > 0 {
+		b.WriteString("FILES THIS WORKER ACTUALLY MODIFIED (git diff vs pre-task snapshot):\n")
+		for i, f := range in.TouchedFiles {
+			if i >= 60 {
+				fmt.Fprintf(&b, "  ... and %d more\n", len(in.TouchedFiles)-i)
+				break
+			}
+			fmt.Fprintf(&b, "  - %s\n", f)
+		}
+		b.WriteString("Compare this list against the 'expected files' above. A declared file missing from this list is a RED FLAG the worker didn't actually produce it. A file present here that wasn't declared may still be legitimate (barrel/index updates, shared config) but consider whether it indicates scope drift.\n\n")
+	}
+
+	// H-78: parallel-worker awareness. In sow parallel mode the
+	// reviewer sees task T1's view of the repo; sibling tasks T2,
+	// T3 are running in separate worktrees whose work hasn't merged
+	// back yet. A declared file missing at review time might be the
+	// right sibling's responsibility and will arrive on merge.
+	if in.ParallelWorkersActive {
+		b.WriteString("PARALLEL WORKERS ACTIVE: other tasks in this session are running concurrently in separate worktrees. Files declared by THIS task should exist in this worktree; files declared by OTHER tasks in the session may be missing here (they live in their own worktrees until merge). When flagging a missing file, prefer a clarification directive ('verify this task actually wrote file X; if another task is responsible, that's cross-session scope') over a strict 'gap' verdict — a strict verdict blocks while the sibling worker is still producing.\n\n")
 	}
 
 	if strings.TrimSpace(in.WorkerSummary) != "" {
