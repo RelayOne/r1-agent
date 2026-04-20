@@ -116,10 +116,29 @@ func synthIntegrityFixSession(projectRoot string, src Session, report *Integrity
 	// yet and appends the fix output to their Inputs when they
 	// declared any of src.Outputs.
 	fixOutput := fmt.Sprintf("%s-integrity-ok", src.ID)
+	// H-80: teach the integrity-fix worker that its ACs check hash
+	// deltas, NOT spec conformance. When the reviewer examines a
+	// flagged file, it should read the SOW's intent first; if the
+	// file's current content satisfies that intent (e.g., a barrel
+	// index.ts was modified to re-export a sibling's new module,
+	// which is the CORRECT behavior), the integrity-fix doesn't
+	// need to write a revert — it just produces a NOTES.txt line
+	// explaining why the change is legitimate. H-76 soft-passes
+	// meta-session failures, so documenting + not-reverting
+	// preserves rung promotion without breaking ladder forward
+	// progress on legitimate cross-session barrel updates.
+	description := "Resolve the integrity findings listed in the task descriptions. Do not expand scope.\n\n" +
+		"H-80 INTENT-FIRST RULE: before reverting or rewriting a flagged file, read the SOW's intent for it. " +
+		"If the current file content is CONSISTENT with SOW intent (e.g., barrel file re-exporting a sibling module that a later session legitimately added), DO NOT REVERT. " +
+		"Instead append one line to NOTES.txt at the project root:\n" +
+		"  <flagged-file>: integrity-fix-override; reason=<why this change is consistent with SOW intent>\n" +
+		"The integrity hash AC will still fail mechanically on that file — H-76 soft-passes meta-session failures so the ladder still promotes. " +
+		"Only revert when the flagged change actually violates SOW intent (accidental edits, scope drift, over-reach).\n\n" +
+		"When a worker is uncertain, prefer the NOTES.txt documentation route: an explained legitimate change is safer than an unexplained revert that regresses downstream sessions."
 	s := Session{
 		ID:                 id,
 		Title:              title,
-		Description:        "Resolve the integrity findings listed in the task descriptions. Do not expand scope.",
+		Description:        description,
 		Tasks:              tasks,
 		AcceptanceCriteria: acs,
 		Preempt:            true,
