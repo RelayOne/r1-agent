@@ -3580,6 +3580,14 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	clarifyResponder := resolveClarifyResponder(cfg)
 	clarifyTool := buildClarifyExtraTool(taskID, clarifyResponder, clarifyCounter, nil)
 
+	// Per-task worker log: deterministic JSONL record of every tool
+	// call. Lets reviewers verify build/test execution without
+	// depending on whether the worker wrote a final narrative summary
+	// (a common worker-side gap that previously timed out R06-serial).
+	workerLogDir := filepath.Join(cfg.RepoRoot, ".stoke", "worker-logs")
+	_ = os.MkdirAll(workerLogDir, 0o755)
+	workerLogPath := filepath.Join(workerLogDir, fmt.Sprintf("%s-%d.jsonl", taskID, time.Now().UnixNano()))
+
 	spec := engine.RunSpec{
 		Prompt:           userPrompt,
 		SystemPrompt:     systemPrompt,
@@ -3592,8 +3600,9 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 			MaxTurns: maxTurns,
 			ReadOnly: false,
 		},
-		Supervisor: supervisor,
-		ExtraTools: []engine.ExtraTool{clarifyTool},
+		Supervisor:    supervisor,
+		ExtraTools:    []engine.ExtraTool{clarifyTool},
+		WorkerLogPath: workerLogPath,
 	}
 
 	start := time.Now()
@@ -3626,7 +3635,7 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		*cfg.spent += result.CostUSD
 	}
 
-	tr := plan.TaskExecResult{TaskID: taskID, Success: !result.IsError && err == nil}
+	tr := plan.TaskExecResult{TaskID: taskID, Success: !result.IsError && err == nil, WorkerLogPath: workerLogPath}
 	// Observability: every task termination logs taskID + outcome +
 	// timing + cost. This is the only signal the operator gets
 	// between "task dispatched" and "session acceptance runs", so
@@ -4748,6 +4757,12 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			}
 		}
 	}
+	// H-91c: pull the most recent worker JSONL log for this task's
+	// dispatch so the reviewer sees ground-truth tool-call evidence
+	// (bash exit codes, build output, edits landed) instead of
+	// demanding a narrative summary the worker often skips.
+	workerLogPath := plan.LatestWorkerLogForTask(cfg.RepoRoot, currentTask.ID)
+	workerLogExcerpt := plan.LoadWorkerLogExcerpt(workerLogPath, 100)
 	verdict, err := plan.ReviewTaskWork(ctx, cfg.ReasoningProvider, reviewModel, plan.TaskReviewInput{
 		Task:                 originalTask,
 		SOWSpec:              sowExcerpt,
@@ -4761,6 +4776,8 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 		OtherSessionFiles:    otherFiles,
 		OtherSessionIDs:      otherIDs,
 		UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("judge-task-reviewer", "1-task-dispatch", &workingSession, 1)),
+		WorkerLogPath:        workerLogPath,
+		WorkerLogExcerpt:     workerLogExcerpt,
 	})
 	if err != nil {
 		// Previously this silently returned, making tasks

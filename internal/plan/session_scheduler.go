@@ -146,6 +146,16 @@ type TaskExecResult struct {
 	TaskID  string `json:"task_id"`
 	Success bool   `json:"success"`
 	Error   error  `json:"-"`
+
+	// H-91c: WorkerLogPath is the absolute path to the per-worker
+	// JSONL log that captured every tool call this task's worker
+	// made. Populated by execNativeTask and consumed by
+	// reviewAndFollowupRecursive to give the reviewer deterministic
+	// ground truth about builds/tests the worker actually ran —
+	// independent of whether the worker wrote a final narrative
+	// summary. Empty when no log was captured (CLI-backed runner,
+	// unit tests, etc.).
+	WorkerLogPath string `json:"worker_log_path,omitempty"`
 }
 
 // SessionExecuteFunc runs all tasks for a single session. The caller decides

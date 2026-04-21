@@ -125,6 +125,25 @@ type TaskReviewInput struct {
 	// to the reviewer converts a stuck repair loop into a concrete
 	// pass-or-fix signal.
 	HarnessBuildOutput string
+
+	// H-91c: WorkerLogPath, when non-empty, is the absolute path to
+	// a JSONL file that captured every tool call the worker made
+	// during dispatch: {ts, tool, input, result, duration_ms, err}.
+	// Reviewer uses this as ground truth for "did the worker actually
+	// run the build / tests / did the edit land / did that bash exit
+	// non-zero" — independent of whether the worker wrote a trailing
+	// narrative summary (workers routinely skip the summary, which
+	// previously left reviewers unable to verify and forced stuck
+	// descent loops on sow-serial R06). The log is injected into the
+	// reviewer prompt as a structured evidence appendix.
+	WorkerLogPath string
+
+	// H-91c: WorkerLogExcerpt is the rendered excerpt from WorkerLogPath
+	// (populated by callers via plan.LoadWorkerLogExcerpt) — typically
+	// the last ~100 tool calls with stdout/stderr snippets. Injected
+	// verbatim into the reviewer prompt. Empty when no log was captured
+	// or the file couldn't be read.
+	WorkerLogExcerpt string
 }
 
 // DecomposeInput asks the decomposer to split a single stuck gap into
@@ -279,6 +298,23 @@ func ReviewTaskWork(ctx context.Context, prov provider.Provider, model string, i
 	if strings.TrimSpace(in.WorkerSummary) != "" {
 		b.WriteString("WORKER'S FINAL SUMMARY (what the agent said it did):\n")
 		b.WriteString(truncateForReasoning(in.WorkerSummary, 2000))
+		b.WriteString("\n\n")
+	}
+
+	// H-91c: structured tool-call ground truth from the worker's
+	// dispatch log. Every bash, read, edit, write the worker ran is
+	// in this excerpt with exit codes, stdout/stderr snippets, and
+	// arguments. Reviewer uses this as AUTHORITATIVE evidence —
+	// workers often omit a final narrative summary after finishing
+	// tool use, and the summary-only review was the root cause of
+	// the sow-serial R06 timeout (worker ran builds + tests, never
+	// described them, reviewer demanded re-verification that never
+	// came). With this block present, the reviewer does NOT need
+	// the worker to narrate: grep the log for bash exit codes and
+	// tool names.
+	if strings.TrimSpace(in.WorkerLogExcerpt) != "" {
+		b.WriteString("WORKER TOOL-CALL LOG (AUTHORITATIVE — deterministic JSONL record of every tool call this worker made, captured by the harness at dispatch time. Each line: {ts, tool, input, result, duration_ms}. Treat this as ground truth for 'did the worker run command X', 'did the build pass', 'did the edit land' — do NOT demand re-verification if this log already shows the command ran with exit 0):\n")
+		b.WriteString(truncateForReasoning(in.WorkerLogExcerpt, 6000))
 		b.WriteString("\n\n")
 	}
 

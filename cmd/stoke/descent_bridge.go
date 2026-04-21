@@ -221,6 +221,13 @@ func buildDescentConfig(
 			reviewCtx, cancel := context.WithTimeout(ictx, 3*time.Minute)
 			defer cancel()
 
+			// H-91c: feed the descent intent-check the most recent
+			// worker log for this task's dispatch. Lets T1 confirm
+			// intent via deterministic tool-call evidence (bash ran,
+			// edit landed) rather than requiring a narrative summary
+			// the worker often skips.
+			descentWorkerLogPath := plan.LatestWorkerLogForTask(cfg.RepoRoot, relevantTask.ID)
+			descentWorkerLogExcerpt := plan.LoadWorkerLogExcerpt(descentWorkerLogPath, 100)
 			verdict, err := plan.ReviewTaskWork(reviewCtx, cfg.ReasoningProvider, reasoningModel, plan.TaskReviewInput{
 				Task:              relevantTask,
 				SOWSpec:           sowExcerpt,
@@ -230,6 +237,8 @@ func buildDescentConfig(
 				UniversalPromptBlock: cfg.combinedPromptBlock(
 					cfg.agentContext("descent-intent-check", "2-repair-loop", &session, 1),
 				),
+				WorkerLogPath:    descentWorkerLogPath,
+				WorkerLogExcerpt: descentWorkerLogExcerpt,
 			})
 			if err != nil {
 				// On error, conservatively assume intent confirmed

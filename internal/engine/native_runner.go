@@ -122,16 +122,62 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		allowedTools[td.Name] = true
 	}
 
+	// Open the worker log (append-only JSONL) if the caller requested
+	// one. Captures every tool call deterministically so reviewers
+	// can verify what actually ran without depending on the worker's
+	// trailing natural-language summary (which workers often omit).
+	var workerLog *os.File
+	if spec.WorkerLogPath != "" {
+		if f, ferr := os.OpenFile(spec.WorkerLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
+			workerLog = f
+			defer workerLog.Close()
+			// Header line: identifies the dispatch so a reviewer grep
+			// knows which file belongs to which worker attempt.
+			hdr, _ := json.Marshal(map[string]any{
+				"ts":    time.Now().UTC().Format(time.RFC3339Nano),
+				"type":  "dispatch_start",
+				"phase": spec.Phase.Name,
+				"dir":   spec.WorktreeDir,
+			})
+			fmt.Fprintln(workerLog, string(hdr))
+		}
+	}
+
 	// Create the tool handler that bridges tools.Registry → agentloop.ToolHandler
 	// and dispatches any ExtraTool calls to their attached handler.
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		if !allowedTools[name] {
 			return "", fmt.Errorf("tool %q not allowed in phase %q (read_only=%v)", name, spec.Phase.Name, spec.Phase.ReadOnly)
 		}
+		start := time.Now()
+		var result string
+		var err error
 		if h, ok := extraHandlers[name]; ok {
-			return h(ctx, input)
+			result, err = h(ctx, input)
+		} else {
+			result, err = toolRegistry.Handle(ctx, name, input)
 		}
-		return toolRegistry.Handle(ctx, name, input)
+		if workerLog != nil {
+			// Truncate result + input for log compactness; reviewer
+			// can still pattern-match exit codes, stderr snippets,
+			// filenames. 4 KB per field is plenty for "did build pass".
+			entry := map[string]any{
+				"ts":          start.UTC().Format(time.RFC3339Nano),
+				"tool":        name,
+				"input":       truncateForWorkerLog(string(input), 4096),
+				"duration_ms": time.Since(start).Milliseconds(),
+				"result_len":  len(result),
+			}
+			if err != nil {
+				entry["err"] = err.Error()
+			} else {
+				entry["result"] = truncateForWorkerLog(result, 4096)
+			}
+			if b, e := json.Marshal(entry); e == nil {
+				fmt.Fprintln(workerLog, string(b))
+			}
+		}
+		return result, err
 	}
 
 	// Configure the agentloop. SystemPrompt is the cacheable static
@@ -468,6 +514,15 @@ func detectBuildCommand(dir string) string {
 		return "bundle exec ruby -c $(find . -name '*.rb' -not -path '*/vendor/*' | head -50) 2>&1"
 	}
 	return ""
+}
+
+// truncateForWorkerLog shortens s to max bytes with a "... <truncated N bytes>"
+// marker so reviewers see that truncation happened without scanning for length.
+func truncateForWorkerLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + fmt.Sprintf("... <truncated %d bytes>", len(s)-max)
 }
 
 // pkgHasWorkspaces returns true when the root package.json

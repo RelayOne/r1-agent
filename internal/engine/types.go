@@ -221,6 +221,17 @@ type RunSpec struct {
 	// ignore this field — the CLI has its own tool set. Used today
 	// by the clarification round-trip to install request_clarification.
 	ExtraTools []ExtraTool
+
+	// WorkerLogPath, when set, is an absolute file path the native
+	// runner appends one JSONL record to per tool call: {ts, tool,
+	// input, result_snippet, duration_ms, err}. Gives reviewers a
+	// deterministic, grep-able record of what the worker actually did
+	// — independent of whether the worker wrote a trailing natural-
+	// language summary (which workers often skip, leaving reviewers
+	// unable to verify build/test execution from the final message
+	// alone). Callers create the file path (parent dir must exist)
+	// and are responsible for cleanup between dispatches.
+	WorkerLogPath string
 }
 
 // Validate checks that all required RunSpec fields are present.
