@@ -1,0 +1,4 @@
+{"ts":"2026-04-19T22:26:38-07:00","mode":"sow","rung":"R06","sha":"fccad9bdc96f2a31b6a3d70eaa55e5e70c46a5e1","reason":"timeout"}
+{"ts":"2026-04-20T00:28:37-07:00","mode":"sow","rung":"R06","sha":"2b2668d63a560404af75b76772050a2bc4641865","reason":"timeout"}
+{"ts":"2026-04-20T10:55:58-07:00","mode":"sow-serial","rung":"R05","sha":"e8b4187e1b92654edaf667eec086ac183f4064ae","reason":"timeout"}
+{"ts":"2026-04-20T13:55:00-07:00","mode":"sow","rung":"R04","sha":"40f638b58c6db3cd33cbd28918a8ffc1cba914ad","reason":"timeout"}

@@ -431,6 +431,20 @@ type sowNativeConfig struct {
 	// own ChatResponder before calling runSessionNative so the
 	// question surfaces to the user instead.
 	ClarifyResponder plan.ClarifyResponder
+
+	// H-91d: run-level correlation IDs + config snapshot stamped into
+	// every worker JSONL entry. RunID is generated once per `stoke
+	// sow` invocation; StokeBuild is the git commit the binary was
+	// built from (populated via BuildVersion() at startup); Model is
+	// the provider's primary model name for traceability. PID/PPID
+	// are captured at process start — NOT per dispatch — so grep
+	// can tie every log line back to this stoke instance even after
+	// the process exits.
+	RunID      string
+	StokeBuild string
+	Model      string
+	PID        int
+	PPID       int
 }
 
 // ContinuationContext is the diagnostic snapshot passed to
@@ -3580,13 +3594,21 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 	clarifyResponder := resolveClarifyResponder(cfg)
 	clarifyTool := buildClarifyExtraTool(taskID, clarifyResponder, clarifyCounter, nil)
 
-	// Per-task worker log: deterministic JSONL record of every tool
-	// call. Lets reviewers verify build/test execution without
-	// depending on whether the worker wrote a final narrative summary
-	// (a common worker-side gap that previously timed out R06-serial).
+	// H-91d: per-task worker log: deterministic JSONL of every tool
+	// call, stamped with full correlation IDs (run_id, dispatch_id,
+	// session_id, task_id, model, pid, etc.) so post-mortem grep can
+	// tie ANY command back to its provenance.
 	workerLogDir := filepath.Join(cfg.RepoRoot, ".stoke", "worker-logs")
 	_ = os.MkdirAll(workerLogDir, 0o755)
 	workerLogPath := filepath.Join(workerLogDir, fmt.Sprintf("%s-%d.jsonl", taskID, time.Now().UnixNano()))
+
+	// SOW snapshot per session: copy the SOW once into
+	// .stoke/sessions/<sessionID>/sow-snapshot.md and reference it
+	// from every JSONL entry. Gives reviewers (and post-mortem
+	// analysis) the exact spec the worker was executing against,
+	// even if the live SOW file changes later.
+	sessionID := cfg.sessionIDForTask(taskID)
+	sowSnapshotPath := maybeWriteSOWSnapshot(cfg, sessionID)
 
 	spec := engine.RunSpec{
 		Prompt:           userPrompt,
@@ -3603,6 +3625,17 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 		Supervisor:    supervisor,
 		ExtraTools:    []engine.ExtraTool{clarifyTool},
 		WorkerLogPath: workerLogPath,
+		WorkerLogContext: engine.WorkerLogContext{
+			RunID:      cfg.RunID,
+			SessionID:  sessionID,
+			TaskID:     taskID,
+			Model:      cfg.Model,
+			StokeBuild: cfg.StokeBuild,
+			SOWPath:    sowSnapshotPath,
+			PID:        cfg.PID,
+			PPID:       cfg.PPID,
+			PurposeTag: "worker",
+		},
 	}
 
 	start := time.Now()
@@ -4069,6 +4102,34 @@ exit 0 before you end.
 		taskDesc := task.Description
 		taskDesc = strings.ReplaceAll(taskDesc, "placeholder", "initial")
 		taskDesc = strings.ReplaceAll(taskDesc, "Placeholder", "Initial")
+		// H-91d: defensive fallback — the root-cause planner +
+		// descent repair paths have at least once produced a task
+		// with empty Description, yielding "TASK <id>: " in the
+		// prompt. The worker then had nothing to implement and the
+		// T1 intent check correctly rejected it as incomplete. When
+		// Description is empty, synthesize one from session context
+		// + task files + session AC descriptions so the worker at
+		// least knows WHAT files to create and WHICH ACs it must
+		// satisfy. Emit a WARN so we notice upstream callers that
+		// should have populated Description themselves.
+		if strings.TrimSpace(taskDesc) == "" {
+			var fb strings.Builder
+			fmt.Fprintf(&fb, "(no explicit task description provided; synthesized from session context)\n")
+			if strings.TrimSpace(session.Title) != "" {
+				fmt.Fprintf(&fb, "Session goal: %s\n", session.Title)
+			}
+			if len(task.Files) > 0 {
+				fmt.Fprintf(&fb, "Create or modify these files to satisfy the session's acceptance criteria: %s\n", strings.Join(task.Files, ", "))
+			}
+			if len(session.AcceptanceCriteria) > 0 {
+				fb.WriteString("Relevant session ACs:\n")
+				for _, ac := range session.AcceptanceCriteria {
+					fmt.Fprintf(&fb, "  - [%s] %s\n", ac.ID, ac.Description)
+				}
+			}
+			taskDesc = fb.String()
+			fmt.Printf("    ⚠ task %s: empty Description — synthesized fallback from session context\n", task.ID)
+		}
 		fmt.Fprintf(&usr, "TASK %s: %s\n", task.ID, taskDesc)
 		if len(task.Files) > 0 {
 			fmt.Fprintf(&usr, "  expected files: %s\n", strings.Join(task.Files, ", "))

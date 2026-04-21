@@ -126,20 +126,43 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// one. Captures every tool call deterministically so reviewers
 	// can verify what actually ran without depending on the worker's
 	// trailing natural-language summary (which workers often omit).
+	//
+	// Schema (every line): {type, ts, uuid, run_id, dispatch_id,
+	// session_id, task_id, attempt, depth, model, stoke_build, pid,
+	// ppid, purpose, phase, tool, input, result, duration_ms,
+	// result_len, err}. Empty correlation fields are elided so lines
+	// stay compact.
 	var workerLog *os.File
+	wlc := spec.WorkerLogContext
+	if wlc.DispatchID == "" {
+		wlc.DispatchID = newShortID("d")
+	}
 	if spec.WorkerLogPath != "" {
 		if f, ferr := os.OpenFile(spec.WorkerLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); ferr == nil {
 			workerLog = f
 			defer workerLog.Close()
-			// Header line: identifies the dispatch so a reviewer grep
-			// knows which file belongs to which worker attempt.
-			hdr, _ := json.Marshal(map[string]any{
-				"ts":    time.Now().UTC().Format(time.RFC3339Nano),
-				"type":  "dispatch_start",
-				"phase": spec.Phase.Name,
-				"dir":   spec.WorktreeDir,
-			})
-			fmt.Fprintln(workerLog, string(hdr))
+			// Header: dispatch_start carries the FULL config snapshot
+			// so a reviewer / post-mortem can reconstruct the run
+			// without cross-referencing other state.
+			hdr := map[string]any{
+				"type":              "dispatch_start",
+				"ts":                time.Now().UTC().Format(time.RFC3339Nano),
+				"dispatch_id":       wlc.DispatchID,
+				"phase":             spec.Phase.Name,
+				"worktree_dir":      spec.WorktreeDir,
+				"runtime_dir":       spec.RuntimeDir,
+				"max_turns":         spec.Phase.MaxTurns,
+				"read_only":         spec.Phase.ReadOnly,
+				"max_tokens":        16000,
+				"compact_threshold": spec.CompactThreshold,
+				"base_url":          n.BaseURL,
+				"system_prompt_len": len(spec.SystemPrompt),
+				"user_prompt_len":   len(spec.Prompt),
+			}
+			addCtx(hdr, &wlc)
+			if b, e := json.Marshal(hdr); e == nil {
+				fmt.Fprintln(workerLog, string(b))
+			}
 		}
 	}
 
@@ -158,16 +181,20 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			result, err = toolRegistry.Handle(ctx, name, input)
 		}
 		if workerLog != nil {
-			// Truncate result + input for log compactness; reviewer
-			// can still pattern-match exit codes, stderr snippets,
-			// filenames. 4 KB per field is plenty for "did build pass".
+			// Every tool call gets a unique ID so a reviewer can quote
+			// a specific action verbatim ("see call c-xxx") and a
+			// debugger can correlate across the Anthropic API log and
+			// our JSONL without guessing.
 			entry := map[string]any{
+				"type":        "tool_call",
+				"uuid":        newShortID("c"),
 				"ts":          start.UTC().Format(time.RFC3339Nano),
 				"tool":        name,
 				"input":       truncateForWorkerLog(string(input), 4096),
 				"duration_ms": time.Since(start).Milliseconds(),
 				"result_len":  len(result),
 			}
+			addCtx(entry, &wlc)
 			if err != nil {
 				entry["err"] = err.Error()
 			} else {
@@ -524,6 +551,68 @@ func truncateForWorkerLog(s string, max int) string {
 	}
 	return s[:max] + fmt.Sprintf("... <truncated %d bytes>", len(s)-max)
 }
+
+// addCtx stamps the non-empty correlation fields from wlc onto the
+// given JSONL entry map. Empty strings / zero ints are elided so
+// lines stay compact when a field isn't meaningful for the caller.
+func addCtx(entry map[string]any, wlc *WorkerLogContext) {
+	if wlc == nil {
+		return
+	}
+	if wlc.RunID != "" {
+		entry["run_id"] = wlc.RunID
+	}
+	if wlc.DispatchID != "" {
+		entry["dispatch_id"] = wlc.DispatchID
+	}
+	if wlc.SessionID != "" {
+		entry["session_id"] = wlc.SessionID
+	}
+	if wlc.TaskID != "" {
+		entry["task_id"] = wlc.TaskID
+	}
+	if wlc.Attempt > 0 {
+		entry["attempt"] = wlc.Attempt
+	}
+	if wlc.Depth > 0 {
+		entry["depth"] = wlc.Depth
+	}
+	if wlc.Model != "" {
+		entry["model"] = wlc.Model
+	}
+	if wlc.StokeBuild != "" {
+		entry["stoke_build"] = wlc.StokeBuild
+	}
+	if wlc.SOWPath != "" {
+		entry["sow_path"] = wlc.SOWPath
+	}
+	if wlc.PID > 0 {
+		entry["pid"] = wlc.PID
+	}
+	if wlc.PPID > 0 {
+		entry["ppid"] = wlc.PPID
+	}
+	if wlc.PurposeTag != "" {
+		entry["purpose"] = wlc.PurposeTag
+	}
+}
+
+// newShortID returns a compact probabilistically-unique ID with the
+// given prefix, used for run/dispatch/call correlation in the worker
+// JSONL log. Format: "<prefix>-<12 hex chars>" from crypto/rand.
+// Collision probability across a whole run is negligible.
+func newShortID(prefix string) string {
+	var buf [6]byte
+	if _, err := cryptoRandRead(buf[:]); err != nil {
+		// Fall back to time-based so we never write an empty ID.
+		return fmt.Sprintf("%s-t%x", prefix, time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%s-%x", prefix, buf[:])
+}
+
+// cryptoRandRead is a package-level indirection so tests can stub it.
+// Default implementation reads from crypto/rand.
+var cryptoRandRead = randReadImpl
 
 // pkgHasWorkspaces returns true when the root package.json
 // declares a `workspaces` array (npm/yarn monorepo).

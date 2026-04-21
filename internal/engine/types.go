@@ -224,14 +224,42 @@ type RunSpec struct {
 
 	// WorkerLogPath, when set, is an absolute file path the native
 	// runner appends one JSONL record to per tool call: {ts, tool,
-	// input, result_snippet, duration_ms, err}. Gives reviewers a
-	// deterministic, grep-able record of what the worker actually did
-	// — independent of whether the worker wrote a trailing natural-
-	// language summary (which workers often skip, leaving reviewers
-	// unable to verify build/test execution from the final message
-	// alone). Callers create the file path (parent dir must exist)
-	// and are responsible for cleanup between dispatches.
+	// input, result_snippet, duration_ms, err, uuid, ...}. Gives
+	// reviewers a deterministic, grep-able record of what the worker
+	// actually did — independent of whether the worker wrote a
+	// trailing natural-language summary (which workers often skip).
+	// Callers create the file path (parent dir must exist) and are
+	// responsible for cleanup between dispatches.
 	WorkerLogPath string
+
+	// WorkerLogContext carries correlation fields stamped onto every
+	// JSONL entry written via WorkerLogPath. These let a reviewer (or
+	// a post-mortem grep) tie a tool call back to its run, session,
+	// task, attempt, depth, phase, and process — without having to
+	// parse directory structure or cross-reference timestamps. All
+	// fields are optional; empty values are omitted from the JSONL.
+	WorkerLogContext WorkerLogContext
+}
+
+// WorkerLogContext groups correlation IDs and config snapshot data
+// stamped onto the per-dispatch JSONL log. Populated by the caller
+// when constructing a RunSpec with WorkerLogPath set; the native
+// runner embeds these into the dispatch_start header and every
+// subsequent tool_call record so grep/jq queries can trace any
+// command back to session/task/attempt/model provenance.
+type WorkerLogContext struct {
+	RunID       string // stable ID for the whole SOW run (one per `stoke sow` invocation)
+	DispatchID  string // unique ID for THIS worker dispatch (= this JSONL file)
+	SessionID   string // e.g. "S1", "S2-descent-repair-...", "S1-fix"
+	TaskID      string // task within the session
+	Attempt     int    // 1-based session retry attempt
+	Depth       int    // reviewer/decomposer recursion depth (0 = top-level)
+	Model       string // e.g. "claude-sonnet-4-6" — the backing model
+	StokeBuild  string // short git commit hash or build tag
+	SOWPath     string // absolute path to SOW snapshot for this session
+	PID         int    // this stoke process's PID
+	PPID        int    // parent process (so ladder-driver dispatch can be traced)
+	PurposeTag  string // free-form role tag, e.g. "worker", "repair", "judge", "intent-check"
 }
 
 // Validate checks that all required RunSpec fields are present.
