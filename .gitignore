@@ -1,5 +1,6 @@
 /stoke
 /stoke-mcp
+/stoke-server
 /chat-probe
 .stoke/
 *.tmp

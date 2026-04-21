@@ -2591,6 +2591,26 @@ func sowCmd(args []string) {
 			fmt.Printf("  📌 checkpoint %s (sow-converted, %d sessions)\n", cpID, len(sow.Sessions))
 		}
 
+		// H-91e: best-effort launch of stoke-server (singleton), then
+		// register this stoke invocation so the dashboard can see it.
+		// STOKE_NO_SERVER=1 disables. Non-fatal at every step.
+		ensureStokeServer()
+		sowRunID := newRunID()
+		sowStokeBuild := readStokeBuild()
+		runtrackStop := registerStokeInstance(
+			sowRunID,
+			"stoke sow",
+			os.Args,
+			absRepo,
+			filepath.Base(*sowFile),
+			"headless",
+			nativeModelName,
+			sowStokeBuild,
+			filepath.Join(absRepo, ".stoke", "worker-logs"),
+			filepath.Join(absRepo, "stoke-run.log"),
+		)
+		defer runtrackStop()
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			PerTaskWorktree:   *perTaskWorktree,
@@ -2607,9 +2627,11 @@ func sowCmd(args []string) {
 			// `stoke sow` invocation — the same RunID ties all
 			// dispatched workers across sessions/retries back to this
 			// specific ladder step so post-mortem grep can isolate
-			// the full chain.
-			RunID:      newRunID(),
-			StokeBuild: readStokeBuild(),
+			// the full chain. Same RunID used by runtrack manifest
+			// so stoke-server can correlate the dashboard entry with
+			// the JSONL logs.
+			RunID:      sowRunID,
+			StokeBuild: sowStokeBuild,
 			ModelTag:   nativeModelName,
 			PID:        os.Getpid(),
 			PPID:       os.Getppid(),
