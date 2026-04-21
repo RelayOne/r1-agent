@@ -304,7 +304,30 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			// ensureWorkspaceInstalled + runDepCheck inside this call
 			// are dedupe-safe against concurrent callers (see their
 			// once-set guards).
-			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
+			//
+			// AcceptanceOverride (when set) wins: lets the descent
+			// engine publish its own verdicts (including soft-passes)
+			// instead of the scheduler re-running commands descent
+			// already knows are broken.
+			var acceptance []AcceptanceResult
+			var allPassed bool
+			if ss.AcceptanceOverride != nil {
+				if r, ok := ss.AcceptanceOverride(session.ID, attempt); ok && len(r) > 0 {
+					acceptance = r
+					allPassed = true
+					for _, a := range r {
+						if !a.Passed {
+							allPassed = false
+							break
+						}
+					}
+					fmt.Printf("  ⚖ acceptance override: session %s (%d/%d passed)\n",
+						session.ID, countPassed(acceptance), len(acceptance))
+				}
+			}
+			if acceptance == nil {
+				acceptance, allPassed = CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
+			}
 			result.Acceptance = acceptance
 			result.AcceptanceMet = allPassed
 			// Smoke gate — same advisory-by-default treatment as the

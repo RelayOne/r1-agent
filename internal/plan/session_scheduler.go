@@ -21,6 +21,18 @@ import (
 // depcheck, and SOWState persistence so concurrent sessions don't
 // corrupt each other.
 
+// countPassed returns how many AcceptanceResults in rs have Passed=true.
+// Used for acceptance-override logging.
+func countPassed(rs []AcceptanceResult) int {
+	n := 0
+	for _, r := range rs {
+		if r.Passed {
+			n++
+		}
+	}
+	return n
+}
+
 // SessionScheduler orchestrates SOW execution by running sessions sequentially,
 // checking acceptance criteria at each session boundary. Within each session,
 // tasks are dispatched to the caller's execute function which can use Stoke's
@@ -82,6 +94,19 @@ type SessionScheduler struct {
 	// session execution without integrity-driven fix promotion
 	// (e.g., replay / regression harness).
 	SkipIntegrityGate bool
+
+	// AcceptanceOverride, if non-nil, is consulted BEFORE the scheduler
+	// runs its mechanical CheckAcceptanceCriteria re-check. If it
+	// returns (results, true), those results are used verbatim —
+	// letting an inner runner (verification descent) publish AC
+	// decisions (including T8 soft-passes) the fresh re-run would
+	// otherwise discard by executing the raw AC commands again.
+	//
+	// Without this hook, soft-passed ACs would fail the scheduler's
+	// re-check because the underlying command still exits non-zero
+	// (that's WHY descent soft-passed — the command is structurally
+	// broken, but intent is confirmed and the code is correct).
+	AcceptanceOverride func(sessionID string, attempt int) ([]AcceptanceResult, bool)
 
 	// promotedAt tracks when each AppendSession-promoted session was
 	// queued. Used by CheckPromotedDispatch to detect deadlocks where a
@@ -477,8 +502,29 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 				break
 			}
 
-			// Acceptance gate
-			acceptance, allPassed := CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
+			// Acceptance gate. An inner runner can publish pre-computed
+			// results (e.g., descent engine soft-passes) via
+			// AcceptanceOverride; if present, we use those verbatim
+			// instead of re-executing the raw AC commands.
+			var acceptance []AcceptanceResult
+			var allPassed bool
+			if ss.AcceptanceOverride != nil {
+				if r, ok := ss.AcceptanceOverride(session.ID, attempt); ok && len(r) > 0 {
+					acceptance = r
+					allPassed = true
+					for _, a := range r {
+						if !a.Passed {
+							allPassed = false
+							break
+						}
+					}
+					fmt.Printf("  ⚖ acceptance override: session %s (%d/%d passed)\n",
+						session.ID, countPassed(acceptance), len(acceptance))
+				}
+			}
+			if acceptance == nil {
+				acceptance, allPassed = CheckAcceptanceCriteria(ctx, ss.projectRoot, session.AcceptanceCriteria)
+			}
 			result.Acceptance = acceptance
 			result.AcceptanceMet = allPassed
 

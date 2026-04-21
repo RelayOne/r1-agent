@@ -1914,6 +1914,16 @@ func sowCmd(args []string) {
 
 	// Dry run: show summary
 	ss := plan.NewSessionScheduler(sow, absRepo)
+	// H-91b: route the descent engine's finalAcceptance through the
+	// scheduler's AcceptanceOverride hook. Without this, the scheduler
+	// re-runs AC commands fresh and discards T8 soft-passes (the raw
+	// commands still exit non-zero — that's WHY descent soft-passed).
+	// Clearing the cache here defends against stale data from prior
+	// invocations in the same process.
+	if descentEnabled() {
+		clearDescentCache()
+		ss.AcceptanceOverride = getDescentAcceptanceOverride
+	}
 	ss.Resume = *resume
 	// Resolve --continue-on-failure: explicit true/false overrides
 	// everything; otherwise auto = on for multi-session SOWs, off for

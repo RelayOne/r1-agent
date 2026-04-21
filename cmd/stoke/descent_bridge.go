@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/plan"
@@ -28,6 +29,31 @@ import (
 // parity with the legacy loop.
 func descentEnabled() bool {
 	return os.Getenv("STOKE_DESCENT") == "1"
+}
+
+// descentAcceptanceCache stashes finalAcceptance results from
+// runDescentRepairLoop so the SessionScheduler's AcceptanceOverride
+// hook can consume them instead of re-running raw AC commands (which
+// T6/T8 already determined are broken). Keyed by session ID; the
+// latest attempt overwrites — scheduler attempt numbering tracks
+// session-scheduler retries, not descent's inner repair attempts.
+var descentAcceptanceCache sync.Map // sessionID -> []plan.AcceptanceResult
+
+// getDescentAcceptanceOverride is the SessionScheduler.AcceptanceOverride
+// implementation. Installed by main.go after NewSessionScheduler.
+func getDescentAcceptanceOverride(sessionID string, _ int) ([]plan.AcceptanceResult, bool) {
+	if v, ok := descentAcceptanceCache.Load(sessionID); ok {
+		if r, ok := v.([]plan.AcceptanceResult); ok && len(r) > 0 {
+			return r, true
+		}
+	}
+	return nil, false
+}
+
+// clearDescentCache empties the override cache. Called between SOW
+// runs to prevent stale session data from leaking into a fresh run.
+func clearDescentCache() {
+	descentAcceptanceCache = sync.Map{}
 }
 
 // buildDescentConfig constructs a plan.DescentConfig from the native
@@ -450,6 +476,16 @@ func runDescentRepairLoop(
 				finalPassed = false
 			}
 		}
+	}
+
+	// Publish to the override cache so SessionScheduler's acceptance
+	// gate uses descent's verdicts (including soft-passes) instead of
+	// re-running the raw AC commands (which T6/T8 already determined
+	// are broken). Only cache on finalPassed to avoid masking genuine
+	// failures — a still-failing session must fall through to the
+	// legacy failure reporting path.
+	if finalPassed && len(finalAcceptance) > 0 {
+		descentAcceptanceCache.Store(session.ID, finalAcceptance)
 	}
 
 	return finalAcceptance, finalPassed
