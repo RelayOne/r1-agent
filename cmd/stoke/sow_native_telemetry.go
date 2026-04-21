@@ -18,35 +18,28 @@ var (
 	sessionSOWSnapshotPath = map[string]string{} // "<repoRoot>|<sessionID>" -> snapshot path
 )
 
-// sessionIDForTask resolves a task ID to its session ID by scanning
-// cfg.sowDocument (if available) for a session that declares this
-// task. Falls back to empty string if the task isn't in any known
-// session (e.g. synthetic repair tasks created by descent). Empty
-// return is fine — addCtx elides it from the JSONL entry.
+// sessionIDForTask derives a task's session ID from the task ID
+// pattern. Most dispatched task IDs have a structure that encodes
+// the owning session (descent-repair tasks, fix-DAG tasks,
+// continuation tasks). Primary task IDs (T1, T2, ...) don't carry
+// the session in the ID itself; for those, empty is returned and
+// the JSONL entry omits session_id — reviewers can still recover
+// session from the SOW snapshot and task_id.
 func (cfg sowNativeConfig) sessionIDForTask(taskID string) string {
-	if cfg.sowDocRef != nil {
-		for _, s := range cfg.sowDocRef.Sessions {
-			for _, t := range s.Tasks {
-				if t.ID == taskID {
-					return s.ID
-				}
-			}
-		}
-	}
-	// Heuristic: descent-repair tasks embed the session ID as a
-	// prefix (see descent_bridge.go RepairFunc). Recover it even
-	// when the task isn't in sowDocRef.Sessions.
+	// Descent-repair: "<sessionID>-descent-repair-<ms>"
 	if idx := strings.Index(taskID, "-descent-repair-"); idx > 0 {
 		return taskID[:idx]
 	}
-	// Fix-DAG promoted tasks follow "<sessionID>-fix-FIXn".
-	if strings.Contains(taskID, "-fix-") {
-		if idx := strings.Index(taskID, "-fix-"); idx > 0 {
-			return taskID[:idx]
-		}
+	// Fix-DAG promoted: "<sessionID>-fix-FIXn"
+	if idx := strings.Index(taskID, "-fix-"); idx > 0 {
+		return taskID[:idx]
 	}
-	// Continuation sessions: "<sessionID>-cont-tN".
+	// Continuation: "<sessionID>-cont-tN"
 	if idx := strings.Index(taskID, "-cont-"); idx > 0 {
+		return taskID[:idx]
+	}
+	// Integrity-fix: "<sessionID>-integrity-fix-..."
+	if idx := strings.Index(taskID, "-integrity-"); idx > 0 {
 		return taskID[:idx]
 	}
 	return ""

@@ -2602,6 +2602,17 @@ func sowCmd(args []string) {
 			SOWName:           sow.Name,
 			Timeline:          sowTimeline,
 			ResumeState:       resumeState,
+			// H-91d: correlation IDs stamped into every worker JSONL
+			// entry (via engine.WorkerLogContext). Generated once per
+			// `stoke sow` invocation — the same RunID ties all
+			// dispatched workers across sessions/retries back to this
+			// specific ladder step so post-mortem grep can isolate
+			// the full chain.
+			RunID:      newRunID(),
+			StokeBuild: readStokeBuild(),
+			ModelTag:   nativeModelName,
+			PID:        os.Getpid(),
+			PPID:       os.Getppid(),
 			ContentJudgeRejections: &sync.Map{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling

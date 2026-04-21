@@ -435,14 +435,15 @@ type sowNativeConfig struct {
 	// H-91d: run-level correlation IDs + config snapshot stamped into
 	// every worker JSONL entry. RunID is generated once per `stoke
 	// sow` invocation; StokeBuild is the git commit the binary was
-	// built from (populated via BuildVersion() at startup); Model is
-	// the provider's primary model name for traceability. PID/PPID
+	// built from (populated via BuildVersion() at startup); ModelTag
+	// is the provider's primary model name for traceability (Model
+	// is already used elsewhere for model-name resolution). PID/PPID
 	// are captured at process start — NOT per dispatch — so grep
 	// can tie every log line back to this stoke instance even after
 	// the process exits.
 	RunID      string
 	StokeBuild string
-	Model      string
+	ModelTag   string
 	PID        int
 	PPID       int
 }
@@ -3629,7 +3630,7 @@ func execNativeTask(ctx context.Context, taskID, systemPrompt, userPrompt, runti
 			RunID:      cfg.RunID,
 			SessionID:  sessionID,
 			TaskID:     taskID,
-			Model:      cfg.Model,
+			Model:      cfg.ModelTag,
 			StokeBuild: cfg.StokeBuild,
 			SOWPath:    sowSnapshotPath,
 			PID:        cfg.PID,
