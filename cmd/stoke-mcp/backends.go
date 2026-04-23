@@ -232,7 +232,7 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 		// non-fatal at the MCP layer.
 		return nil, fmt.Errorf("audit write: %w", lerr)
 	}
-	resp["audit_node_id"] = string(nodeID)
+	resp["audit_node_id"] = nodeID
 	return resp, nil
 }
 
@@ -295,7 +295,7 @@ func (b *Backends) Audit(ctx context.Context, missionID, action string, evidence
 		return nil, fmt.Errorf("ledger add: %w", err)
 	}
 	return map[string]any{
-		"node_id":       string(nodeID),
+		"node_id":       nodeID,
 		"action":        action,
 		"evidence_refs": evidenceRefs,
 	}, nil

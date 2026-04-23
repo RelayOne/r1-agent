@@ -41,7 +41,7 @@ type loopTerminalPayload struct {
 }
 
 func (r *ContradictsOutcome) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
-	switch bus.EventType(evt.Type) {
+	switch evt.Type {
 	case "loop.escalated":
 		// Check if outcome is negative.
 		var ltp loopTerminalPayload

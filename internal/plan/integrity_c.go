@@ -111,7 +111,7 @@ func (cEcosystem) CompileErrors(ctx context.Context, projectRoot string, files [
 		return nil, nil
 	}
 	// Prefer clang, then gcc.
-	bin := ""
+	var bin string
 	if _, err := exec.LookPath("clang"); err == nil {
 		bin = "clang"
 	} else if _, err := exec.LookPath("gcc"); err == nil {

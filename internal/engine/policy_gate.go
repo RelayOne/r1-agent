@@ -256,7 +256,7 @@ func describeMCPCall(name string, input json.RawMessage) (string, string, map[st
 	// "mcp_" prefix so server names without underscores round-trip
 	// cleanly. Tool names that themselves contain underscores keep
 	// them (common for e.g. mcp_linear_create_issue).
-	server, tool := "", ""
+	var server, tool string
 	rest := strings.TrimPrefix(name, "mcp_")
 	if idx := strings.Index(rest, "_"); idx > 0 {
 		server = rest[:idx]

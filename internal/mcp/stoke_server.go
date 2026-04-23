@@ -803,7 +803,7 @@ func (s *StokeServer) ServeStdio() error {
 				toolList = append(toolList, map[string]interface{}{
 					"name":        t.Name,
 					"description": t.Description,
-					"inputSchema": json.RawMessage(t.InputSchema),
+					"inputSchema": t.InputSchema,
 				})
 			}
 			writeJSONRPC(os.Stdout, req.ID, map[string]interface{}{"tools": toolList}, nil)

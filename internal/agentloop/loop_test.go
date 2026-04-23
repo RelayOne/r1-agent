@@ -322,7 +322,7 @@ func TestCostTrackerPricing(t *testing.T) {
 	cost := ct.TotalCostUSD("claude-sonnet-4-5")
 	expected := 3.0 + 1.5 + 1.875 + 0.6 // = 6.975
 	if cost < 6.97 || cost > 6.98 {
-		t.Errorf("sonnet cost=%.4f, want ~6.975", cost)
+		t.Errorf("sonnet cost=%.4f, want ~%.4f", cost, expected)
 	}
 
 	// Opus pricing: $5 input, $25 output, $6.25 cache write, $0.50 cache read

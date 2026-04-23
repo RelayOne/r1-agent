@@ -40,7 +40,7 @@ type escalationPayload struct {
 }
 
 func (r *ExtractionTrigger) Evaluate(_ context.Context, evt bus.Event, _ *ledger.Ledger) (bool, error) {
-	switch bus.EventType(evt.Type) {
+	switch evt.Type {
 	case "loop.converged":
 		return true, nil
 	case "loop.escalated":

@@ -356,7 +356,6 @@ func sowProvidesDocumentation(rawSOW, serviceName string) (bool, string) {
 	// Signal 3: schema hint — a code fence or tick-quoted field list
 	// near the service name
 	if i := strings.Index(lower, snameLower); i >= 0 {
-		window := rawSOW
 		start := i - 500
 		if start < 0 {
 			start = 0
@@ -365,7 +364,7 @@ func sowProvidesDocumentation(rawSOW, serviceName string) (bool, string) {
 		if end > len(rawSOW) {
 			end = len(rawSOW)
 		}
-		window = rawSOW[start:end]
+		window := rawSOW[start:end]
 		if strings.Contains(window, "```") || strings.Count(window, "`") >= 4 {
 			signals++
 			evidence = append(evidence, "schema fence near mention")

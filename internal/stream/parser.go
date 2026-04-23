@@ -145,7 +145,10 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 						if !json.Valid([]byte(line)) { continue }
 						ev := parseLine([]byte(line))
 						ch <- ev
-						if ev.Type == "result" { resultSeen = true }
+						// No resultSeen update here — the scanDone branch
+						// returns immediately after `drained:`, so a
+						// resultSeen flip would never reach the
+						// post-result timer check below.
 					default:
 						goto drained
 					}

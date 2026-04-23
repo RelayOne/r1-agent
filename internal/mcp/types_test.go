@@ -15,13 +15,14 @@ import (
 // implementation satisfies it. A change to the interface shape (adding
 // a method, renaming one, changing a signature) will break this test.
 func TestClientInterfaceShape(t *testing.T) {
-	var c Client = (*stubClient)(nil)
+	// Compile-time check: stubClient satisfies Client.
+	var _ Client = (*stubClient)(nil)
 	// Exercise every method. The stub is a nil-safe sentinel — the
 	// receivers on stubClient use value-typed returns so calling on a
 	// nil pointer doesn't panic.
 	ctx := context.Background()
 	stub := &stubClient{tools: []Tool{{Definition: ToolDefinition{Name: "t"}, ServerName: "s"}}}
-	c = stub
+	var c Client = stub
 	if err := c.Initialize(ctx); err != nil {
 		t.Fatalf("Initialize: %v", err)
 	}
