@@ -19,7 +19,10 @@ func captureLogger() (func(string, ...any), *[]string) {
 
 // roundTrip spins up an httptest server that replies with the requested
 // response headers, then returns the resulting *http.Response so each
-// test can hand it to ReadTierHeaders unmodified.
+// test can hand it to ReadTierHeaders unmodified. The body is closed
+// synchronously inside the helper — ReadTierHeaders only touches
+// resp.Header, so a closed body is fine, and closing here (rather
+// than via t.Cleanup on the caller) keeps the bodyclose linter happy.
 func roundTrip(t *testing.T, headers map[string]string) *http.Response {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,12 +37,12 @@ func roundTrip(t *testing.T, headers map[string]string) *http.Response {
 	if err != nil {
 		t.Fatalf("httptest Get: %v", err)
 	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
+	_ = resp.Body.Close()
 	return resp
 }
 
 func TestReadTierHeaders_BothPresent(t *testing.T) {
-	resp := roundTrip(t, map[string]string{
+	resp := roundTrip(t, map[string]string{ //nolint:bodyclose // closed inside roundTrip before return
 		"X-Model-Tier":     "reasoning",
 		"X-Model-Resolved": "claude-opus-4-7",
 	})
@@ -59,7 +62,7 @@ func TestReadTierHeaders_BothPresent(t *testing.T) {
 }
 
 func TestReadTierHeaders_NothingEmitted_WhenHeadersAbsent(t *testing.T) {
-	resp := roundTrip(t, nil)
+	resp := roundTrip(t, nil) //nolint:bodyclose // closed inside roundTrip before return
 
 	log, lines := captureLogger()
 	ReadTierHeaders(resp, "tier:reasoning", log)
@@ -70,7 +73,7 @@ func TestReadTierHeaders_NothingEmitted_WhenHeadersAbsent(t *testing.T) {
 }
 
 func TestReadTierHeaders_OnlyTier(t *testing.T) {
-	resp := roundTrip(t, map[string]string{
+	resp := roundTrip(t, map[string]string{ //nolint:bodyclose // closed inside roundTrip before return
 		"X-Model-Tier": "smart",
 	})
 
@@ -92,6 +95,7 @@ func TestReadTierHeaders_NilResponseAndNilLogger(t *testing.T) {
 		t.Fatalf("log should not be called when resp is nil")
 	})
 
+	//nolint:bodyclose // closed inside roundTrip before return
 	resp := roundTrip(t, map[string]string{"X-Model-Tier": "reasoning"})
 	ReadTierHeaders(resp, "x", nil) // must not panic
 }

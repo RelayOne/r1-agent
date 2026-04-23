@@ -856,6 +856,7 @@ func (s *Store) GetConvergenceStatus(missionID string, requiredConsensus int) (*
 				latest[model] = verdict
 			}
 		}
+		_ = rows.Err() // best-effort mission status; iterate-error is not actionable
 		for _, v := range latest {
 			if v == "complete" {
 				status.CompleteVotes++

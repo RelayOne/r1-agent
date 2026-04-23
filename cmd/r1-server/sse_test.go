@@ -198,7 +198,7 @@ func TestSSEEndpointLiveTailsNewEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new req: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:bodyclose // closed on line 205
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}

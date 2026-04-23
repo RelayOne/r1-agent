@@ -34,8 +34,13 @@ func TestHITLWireFormat_OutboundRequest_LocksShape(t *testing.T) {
 		File:         "foo/bar.go",
 		Context:      map[string]any{"tier": "T3"},
 	})
-	// Let the emit happen; the request will time out a moment later.
+	// Let the emit happen + request time out.
 	time.Sleep(50 * time.Millisecond)
+	// Drain waits for the TwoLane background goroutine to exit, so
+	// all writes to `out` complete before we read — required for
+	// race-detector cleanliness since bytes.Buffer is not safe for
+	// concurrent read/write.
+	tl.Drain(1 * time.Second)
 
 	line := firstLine(out.Bytes())
 	if len(line) == 0 {
@@ -81,6 +86,7 @@ func TestHITLWireFormat_OutboundRequest_OmitsEmptyOptionals(t *testing.T) {
 		ApprovalType: "soft_pass",
 	})
 	time.Sleep(50 * time.Millisecond)
+	tl.Drain(1 * time.Second)
 
 	line := firstLine(out.Bytes())
 	var got map[string]any

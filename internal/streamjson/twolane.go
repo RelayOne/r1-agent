@@ -54,6 +54,11 @@ type TwoLane struct {
 	observ   chan map[string]any
 	dropped  atomic.Uint64
 	done     chan struct{}
+	// stop is closed by Drain to signal the run goroutine + senders
+	// to exit. Using a separate stop channel (instead of closing
+	// tl.critical) avoids the race between sendCritical's `<-`
+	// receive on the closed channel and Drain's close call.
+	stop     chan struct{}
 	stopOnce sync.Once
 	stopped  atomic.Bool
 }
@@ -67,6 +72,7 @@ func NewTwoLane(w io.Writer, enabled bool) *TwoLane {
 		critical: make(chan map[string]any, 256),
 		observ:   make(chan map[string]any, 1024),
 		done:     make(chan struct{}),
+		stop:     make(chan struct{}),
 	}
 	go tl.run()
 	return tl
@@ -131,27 +137,39 @@ func (tl *TwoLane) EmitTopLevel(eventType string, extra map[string]any) {
 	tl.sendObserv(evt)
 }
 
-// sendCritical blocks until the critical lane accepts the event. A
-// full critical lane means CloudSwarm has stopped draining — stalling
-// here is intentional: Temporal's activity timeout will eventually
-// kill us, preferable to silently losing an hitl_required.
+// sendCritical blocks until the critical lane accepts the event OR
+// the TwoLane is shutting down. A full critical lane means CloudSwarm
+// has stopped draining — stalling here is intentional: Temporal's
+// activity timeout will eventually kill us, preferable to silently
+// losing an hitl_required. When Drain has signalled stop, the event
+// falls through to a direct synchronous write via the base emitter.
 func (tl *TwoLane) sendCritical(evt map[string]any) {
 	if tl.stopped.Load() {
 		tl.base.writeEvent(evt)
 		return
 	}
-	tl.critical <- evt
+	select {
+	case tl.critical <- evt:
+	case <-tl.stop:
+		tl.base.writeEvent(evt)
+	}
 }
 
 // sendObserv drops-oldest under back-pressure. A full observability
 // lane loses the oldest event to make room; a full-after-eviction
-// lane increments the drop counter and moves on.
+// lane increments the drop counter and moves on. Stop-signal takes
+// priority over lane sends — a late observability event after Drain
+// falls through to a direct synchronous write.
 func (tl *TwoLane) sendObserv(evt map[string]any) {
 	if tl.stopped.Load() {
 		tl.base.writeEvent(evt)
 		return
 	}
+	// Fast path: lane has room.
 	select {
+	case <-tl.stop:
+		tl.base.writeEvent(evt)
+		return
 	case tl.observ <- evt:
 		return
 	default:
@@ -162,6 +180,8 @@ func (tl *TwoLane) sendObserv(evt map[string]any) {
 	default:
 	}
 	select {
+	case <-tl.stop:
+		tl.base.writeEvent(evt)
 	case tl.observ <- evt:
 	default:
 		tl.dropped.Add(1)
@@ -177,16 +197,12 @@ func (tl *TwoLane) run() {
 	defer ticker.Stop()
 	for {
 		select {
-		case evt, ok := <-tl.critical:
-			if !ok {
-				tl.flushRemaining()
-				return
-			}
+		case <-tl.stop:
+			tl.flushRemaining()
+			return
+		case evt := <-tl.critical:
 			tl.base.writeEvent(evt)
-		case evt, ok := <-tl.observ:
-			if !ok {
-				continue
-			}
+		case evt := <-tl.observ:
 			tl.base.writeEvent(evt)
 		case <-ticker.C:
 			if n := tl.dropped.Swap(0); n > 0 {
@@ -198,15 +214,23 @@ func (tl *TwoLane) run() {
 	}
 }
 
-// flushRemaining drains any remaining observability events post-shutdown.
-// Called from run() after critical channel closes.
+// flushRemaining drains any remaining events on both lanes
+// post-shutdown. Called from run() after the stop signal fires so
+// events queued before shutdown still reach the writer.
 func (tl *TwoLane) flushRemaining() {
+	// Drain critical first — those are contract-level events.
 	for {
 		select {
-		case evt, ok := <-tl.observ:
-			if !ok {
-				return
-			}
+		case evt := <-tl.critical:
+			tl.base.writeEvent(evt)
+		default:
+			goto drainObserv
+		}
+	}
+drainObserv:
+	for {
+		select {
+		case evt := <-tl.observ:
 			tl.base.writeEvent(evt)
 		default:
 			return
@@ -217,10 +241,15 @@ func (tl *TwoLane) flushRemaining() {
 // Drain blocks up to timeout waiting for both lanes to empty and the
 // background goroutine to exit. Callers should invoke it before
 // os.Exit so pending events make it to stdout.
+//
+// Drain closes the tl.stop signal channel (not the lane channels)
+// so in-flight senders see the stop via their `select case <-tl.stop`
+// and fall back to a direct synchronous write instead of racing with
+// a close on the lane channel.
 func (tl *TwoLane) Drain(timeout time.Duration) {
 	tl.stopOnce.Do(func() {
 		tl.stopped.Store(true)
-		close(tl.critical)
+		close(tl.stop)
 	})
 	select {
 	case <-tl.done:

@@ -51,9 +51,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc
 
       - name: Test with race detector
-        # Pre-existing races in v2 substrate (agentloop, harness, mission, orchestrate)
-        # are tracked for follow-up. Core packages pass clean.
-        run: go test ./... -race -count=1 -timeout=300s || echo "::warning::Race detector found issues (see output above)"
+        # Race detector is green across the full repo as of the
+        # streamjson.TwoLane stop-channel fix. Any new race is a
+        # real regression — fail the job.
+        run: go test ./... -race -count=1 -timeout=300s
 
   lint:
     runs-on: ubuntu-latest

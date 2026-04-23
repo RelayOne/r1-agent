@@ -66,22 +66,53 @@ func TestTwoLaneCriticalAlwaysWins(t *testing.T) {
 
 // TestTwoLaneDropOldest verifies the drop-oldest behavior under
 // sustained observability pressure.
+//
+// Previously this test relied on the background drainer being slower
+// than the producer loop to observe drops — but on a fast CI runner
+// the drainer keeps up with the flood and no drops occur, making the
+// "len(lines) < 2500" assertion flaky.
+//
+// The deterministic fix wraps the underlying sink in a blockingWriter
+// that holds every Write until a latch is closed. That pins the
+// drainer on the first line while 2500 events queue; once the cap
+// (1024) is hit, sendObserv's drop-oldest path evicts the head and
+// appends — so at most 1024 events survive in the channel. When the
+// latch releases and Drain runs, only the surviving events plus the
+// first one (which the drainer was busy writing) reach the output.
 func TestTwoLaneDropOldest(t *testing.T) {
-	var buf bytes.Buffer
-	tl := NewTwoLane(&buf, true)
-	defer tl.Drain(time.Second)
-	// Flood beyond the 1024 observability cap.
+	bw := &blockingWriter{hold: make(chan struct{})}
+	tl := NewTwoLane(bw, true)
+	// Flood beyond the 1024 observability cap while the drainer is
+	// blocked inside blockingWriter.Write on line 0.
 	for i := 0; i < 2500; i++ {
 		tl.EmitSystem("progress", map[string]any{"_stoke.dev/i": i})
 	}
-	time.Sleep(100 * time.Millisecond)
+	close(bw.hold) // let the drainer proceed
 	tl.Drain(2 * time.Second)
-	out := buf.String()
-	lines := splitNonEmpty(out)
-	// We expect fewer than 2500 lines; exact count varies with timing.
+	bw.mu.Lock()
+	lines := splitNonEmpty(bw.buf.String())
+	bw.mu.Unlock()
+	// Hard upper bound: channel cap (1024) + the one line the drainer
+	// was mid-writing when the flood started + slack. If we see the
+	// full 2500, drop-oldest never fired.
 	if len(lines) >= 2500 {
 		t.Errorf("expected drops, got %d lines", len(lines))
 	}
+}
+
+// blockingWriter holds writes until hold is closed, then passes through.
+// Used to force the observ channel past capacity deterministically.
+type blockingWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	hold chan struct{}
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	<-w.hold
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
 }
 
 // TestTwoLaneConcurrentEmitAtomicity verifies 50 goroutines × 100

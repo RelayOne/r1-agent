@@ -38,7 +38,7 @@ func TestCancelTask_Running(t *testing.T) {
 
 	// Kick off the task from a goroutine — the POST blocks until the
 	// executor returns, which only happens after cancel fires.
-	postDone := make(chan *http.Response, 1)
+	postDone := make(chan struct{}, 1)
 	postErr := make(chan error, 1)
 	go func() {
 		body := strings.NewReader(`{"task_type":"research","query":"slow"}`)
@@ -47,7 +47,11 @@ func TestCancelTask_Running(t *testing.T) {
 			postErr <- err
 			return
 		}
-		postDone <- resp
+		// Close body inside the goroutine so bodyclose can track it;
+		// the test doesn't read any content from this response, just
+		// waits for it to return post-cancel.
+		resp.Body.Close()
+		postDone <- struct{}{}
 	}()
 
 	select {
@@ -90,8 +94,7 @@ func TestCancelTask_Running(t *testing.T) {
 
 	// Wait for the original POST to return before the test exits.
 	select {
-	case resp := <-postDone:
-		resp.Body.Close()
+	case <-postDone:
 	case <-time.After(3 * time.Second):
 		t.Fatal("original POST never returned")
 	}

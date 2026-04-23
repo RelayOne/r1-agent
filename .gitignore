@@ -25,3 +25,7 @@ plans/scope-suite/*-driver.log
 plans/scope-suite/ladder-driver.log
 plans/scope-suite/ladder-state.json
 STATUS.md
+
+# Marketing/positioning drafts dumped here by cross-repo scoping
+# agents; source of truth lives in goodventures-sites.
+.site/

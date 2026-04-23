@@ -210,6 +210,9 @@ func (s *SQLiteStore) Learnings() []Learning {
 		l.FailurePattern = fp
 		out = append(out, l)
 	}
+	if err := rows.Err(); err != nil {
+		return nil
+	}
 	return out
 }
 

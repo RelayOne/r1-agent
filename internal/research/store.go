@@ -509,6 +509,9 @@ func (s *Store) buildVectorIndex() {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return
+	}
 
 	if len(docs) == 0 {
 		return

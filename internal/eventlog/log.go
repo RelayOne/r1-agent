@@ -309,46 +309,53 @@ func (l *Log) ReadFrom(ctx context.Context, from uint64) iter.Seq2[bus.Event, er
 				yield(bus.Event{}, err)
 				return
 			}
-			rows, err := l.db.QueryContext(ctx, `
-				SELECT id, sequence, type, mission_id, task_id, loop_id,
-				       timestamp, emitter_id, payload, causal_ref
-				  FROM events
-				 WHERE sequence >= ?
-				 ORDER BY sequence ASC
-				 LIMIT 1000
-			`, cur)
+			lastSeq, any, stop, err := l.readFromPage(ctx, cur, yield)
 			if err != nil {
-				yield(bus.Event{}, fmt.Errorf("eventlog: query: %w", err))
+				yield(bus.Event{}, err)
 				return
 			}
-			any := false
-			lastSeq := cur
-			for rows.Next() {
-				any = true
-				ev, err := scanEvent(rows)
-				if err != nil {
-					rows.Close()
-					yield(bus.Event{}, err)
-					return
-				}
-				lastSeq = ev.Sequence
-				if !yield(ev, nil) {
-					rows.Close()
-					return
-				}
-			}
-			if err := rows.Err(); err != nil {
-				rows.Close()
-				yield(bus.Event{}, fmt.Errorf("eventlog: iterate: %w", err))
-				return
-			}
-			rows.Close()
-			if !any {
+			if stop || !any {
 				return
 			}
 			cur = lastSeq + 1
 		}
 	}
+}
+
+// readFromPage fetches one LIMIT-1000 page starting at cur, yielding
+// each event. Returns (lastSeq, any, stop, err) where stop=true means
+// the consumer returned false from yield (abort iteration).
+// Extracted so rows.Close() can live on a defer rather than needing
+// explicit close in every error branch (triggers sqlclosecheck).
+func (l *Log) readFromPage(ctx context.Context, cur uint64, yield func(bus.Event, error) bool) (lastSeq uint64, any bool, stop bool, err error) {
+	rows, err := l.db.QueryContext(ctx, `
+		SELECT id, sequence, type, mission_id, task_id, loop_id,
+		       timestamp, emitter_id, payload, causal_ref
+		  FROM events
+		 WHERE sequence >= ?
+		 ORDER BY sequence ASC
+		 LIMIT 1000
+	`, cur)
+	if err != nil {
+		return 0, false, false, fmt.Errorf("eventlog: query: %w", err)
+	}
+	defer rows.Close()
+	lastSeq = cur
+	for rows.Next() {
+		any = true
+		ev, scanErr := scanEvent(rows)
+		if scanErr != nil {
+			return 0, false, false, scanErr
+		}
+		lastSeq = ev.Sequence
+		if !yield(ev, nil) {
+			return lastSeq, any, true, nil
+		}
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return 0, false, false, fmt.Errorf("eventlog: iterate: %w", rerr)
+	}
+	return lastSeq, any, false, nil
 }
 
 // ReplaySession yields every event whose session_id, mission_id, task_id,
@@ -550,26 +557,34 @@ func (l *Log) ListSessions(ctx context.Context) (SessionIDs, error) {
 		{"loop_id", &out.Loops},
 	}
 	for _, c := range cols {
-		// #nosec G202 — column name is a constant literal from the
-		// struct above, not user input.
-		q := "SELECT DISTINCT " + c.col + " FROM events WHERE " + c.col + " IS NOT NULL AND " + c.col + " <> '' ORDER BY " + c.col + " ASC"
-		rows, err := l.db.QueryContext(ctx, q)
-		if err != nil {
-			return SessionIDs{}, fmt.Errorf("eventlog: list %s: %w", c.col, err)
+		if err := l.listDistinctInto(ctx, c.col, c.dst); err != nil {
+			return SessionIDs{}, err
 		}
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err != nil {
-				rows.Close()
-				return SessionIDs{}, fmt.Errorf("eventlog: scan %s: %w", c.col, err)
-			}
-			*c.dst = append(*c.dst, s)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return SessionIDs{}, fmt.Errorf("eventlog: iterate %s: %w", c.col, err)
-		}
-		rows.Close()
 	}
 	return out, nil
+}
+
+// listDistinctInto appends all distinct non-empty values of column
+// `col` into *dst. Extracted so rows.Close() can live on a defer and
+// satisfies sqlclosecheck.
+func (l *Log) listDistinctInto(ctx context.Context, col string, dst *[]string) error {
+	// #nosec G202 — column name is a constant literal from the
+	// caller's struct, not user input.
+	q := "SELECT DISTINCT " + col + " FROM events WHERE " + col + " IS NOT NULL AND " + col + " <> '' ORDER BY " + col + " ASC"
+	rows, err := l.db.QueryContext(ctx, q)
+	if err != nil {
+		return fmt.Errorf("eventlog: list %s: %w", col, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return fmt.Errorf("eventlog: scan %s: %w", col, err)
+		}
+		*dst = append(*dst, s)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("eventlog: iterate %s: %w", col, err)
+	}
+	return nil
 }

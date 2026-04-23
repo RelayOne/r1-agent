@@ -32,11 +32,17 @@ import (
 
 // postMemoryHelper wraps the JSON-encode + POST + status assertion
 // into one call so each acceptance-matrix case stays a short, readable
-// sequence. Returns the decoded response body as a map so callers can
-// fish out the autoincrement id. The passphrase argument is an empty
-// string for "no header set" (matches the 401 case); any non-empty
-// value sets the X-R1-Admin-Pass header verbatim.
-func postMemoryHelper(t *testing.T, baseURL string, req memoryWriteRequest, pass string) (*http.Response, map[string]any) {
+// sequence. Returns the status code + decoded response body as a map
+// so callers can fish out the autoincrement id. The passphrase
+// argument is an empty string for "no header set" (matches the 401
+// case); any non-empty value sets the X-R1-Admin-Pass header verbatim.
+//
+// Returning int+map (rather than *http.Response) means bodyclose sees
+// resp.Body.Close via defer in this function — satisfies the linter
+// and also guarantees the body is closed synchronously before the
+// helper returns, not on a t.Cleanup tick that may run during a
+// later test if the goroutine is slow.
+func postMemoryHelper(t *testing.T, baseURL string, req memoryWriteRequest, pass string) (int, map[string]any) {
 	t.Helper()
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -54,7 +60,7 @@ func postMemoryHelper(t *testing.T, baseURL string, req memoryWriteRequest, pass
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	t.Cleanup(func() { resp.Body.Close() })
+	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	var out map[string]any
 	// Empty / non-JSON error bodies are fine — the caller asserts on
@@ -62,7 +68,7 @@ func postMemoryHelper(t *testing.T, baseURL string, req memoryWriteRequest, pass
 	// path. We swallow decode errors on the error path so a 401 with a
 	// plain-text body doesn't fail the test before the status check.
 	_ = json.Unmarshal(raw, &out)
-	return resp, out
+	return resp.StatusCode, out
 }
 
 // TestMemoriesPOST_NormalScope_200 — a non-"always" scope (permanent)
@@ -74,14 +80,14 @@ func TestMemoriesPOST_NormalScope_200(t *testing.T) {
 	db := newTestDB(t)
 	s := newUIServerWithDB(t, db)
 
-	resp, body := postMemoryHelper(t, s.URL, memoryWriteRequest{
+	status, body := postMemoryHelper(t, s.URL, memoryWriteRequest{
 		Scope:      "permanent",
 		Key:        "t14-normal",
 		Content:    "non-always scope body",
 		MemoryType: "semantic",
 	}, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d, want 200 for non-always scope POST", resp.StatusCode)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d, want 200 for non-always scope POST", status)
 	}
 	if body["ok"] != true {
 		t.Errorf("ok=%v, want true", body["ok"])
@@ -103,13 +109,13 @@ func TestMemoriesPOST_ScopeAlways_MissingPass_401(t *testing.T) {
 	db := newTestDB(t)
 	s := newUIServerWithDB(t, db)
 
-	resp, _ := postMemoryHelper(t, s.URL, memoryWriteRequest{
+	status, _ := postMemoryHelper(t, s.URL, memoryWriteRequest{
 		Scope:   "always",
 		Key:     "t14-always-missing",
 		Content: "should not land",
 	}, "")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want 401 when X-R1-Admin-Pass missing", resp.StatusCode)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401 when X-R1-Admin-Pass missing", status)
 	}
 
 	// Row must not have landed in SQLite.
@@ -135,13 +141,13 @@ func TestMemoriesPOST_ScopeAlways_WrongPass_401(t *testing.T) {
 	db := newTestDB(t)
 	s := newUIServerWithDB(t, db)
 
-	resp, _ := postMemoryHelper(t, s.URL, memoryWriteRequest{
+	status, _ := postMemoryHelper(t, s.URL, memoryWriteRequest{
 		Scope:   "always",
 		Key:     "t14-always-wrong",
 		Content: "should not land",
 	}, "nope-wrong-value")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want 401 on wrong passphrase", resp.StatusCode)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status=%d, want 401 on wrong passphrase", status)
 	}
 
 	rows, err := db.ListMemories(0)
@@ -165,14 +171,14 @@ func TestMemoriesPOST_ScopeAlways_CorrectPass_200(t *testing.T) {
 	db := newTestDB(t)
 	s := newUIServerWithDB(t, db)
 
-	resp, body := postMemoryHelper(t, s.URL, memoryWriteRequest{
+	status, body := postMemoryHelper(t, s.URL, memoryWriteRequest{
 		Scope:      "always",
 		Key:        "t14-always-ok",
 		Content:    "admin-approved body",
 		MemoryType: "episodic",
 	}, "correct-horse-battery-staple")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d, want 200 on correct passphrase", resp.StatusCode)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d, want 200 on correct passphrase", status)
 	}
 	if body["ok"] != true {
 		t.Errorf("ok=%v, want true", body["ok"])
@@ -387,11 +393,11 @@ func seedMemoryForCRUD(t *testing.T, baseURL string, req memoryWriteRequest, pas
 	if req.Key == "" {
 		req.Key = "seed-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	}
-	resp, body := postMemoryHelper(t, baseURL, req, pass)
-	if resp.StatusCode != http.StatusOK {
+	status, body := postMemoryHelper(t, baseURL, req, pass)
+	if status != http.StatusOK {
 		// Surface the body for debugging — the helper already closed
 		// resp.Body but saved the decoded map.
-		t.Fatalf("seed POST status=%d body=%v", resp.StatusCode, body)
+		t.Fatalf("seed POST status=%d body=%v", status, body)
 	}
 	idFloat, ok := body["id"].(float64)
 	if !ok {

@@ -114,6 +114,9 @@ func TestEnforceOnSessionEndDeletesEphemeralForSession(t *testing.T) {
 		}
 		keys = append(keys, k)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows iterate: %v", err)
+	}
 	want := []string{"k2", "k3", "k4"}
 	if len(keys) != len(want) {
 		t.Fatalf("surviving keys = %v, want %v", keys, want)
