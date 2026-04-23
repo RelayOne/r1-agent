@@ -110,22 +110,29 @@ main() {
     (cd "${tmp_dir}" && grep "${archive_name}" checksums.txt | sha256sum -c --quiet) ||
         error "Checksum verification failed!"
 
-    # Verify cosign signature if cosign is available
+    # Verify cosign signature if cosign is available.
+    # Keyless verification (cosign v2+) requires pinning the signer
+    # identity to this repo's release workflow on a tag ref. The regex
+    # allows any tag under refs/tags/* so new releases verify without
+    # script edits, but blocks signers from other repos/workflows.
     if command -v cosign &>/dev/null; then
         local sig_url="${url}.sig"
         info "Verifying cosign signature..."
         if curl -fsSL -o "${tmp_dir}/${archive_name}.sig" "${sig_url}" 2>/dev/null; then
-            # Signature file downloaded — verification MUST pass
             if cosign verify-blob \
+                --certificate-identity-regexp "https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --signature "${tmp_dir}/${archive_name}.sig" \
-                "${tmp_dir}/${archive_name}" 2>/dev/null; then
-                info "Signature verified."
+                "${tmp_dir}/${archive_name}" 2>&1; then
+                info "Signature verified (keyless, pinned to release.yml)."
             else
                 error "Cosign signature verification FAILED. The binary may have been tampered with."
             fi
         else
             info "Signature file not available (pre-release?). Skipping signature verification."
         fi
+    else
+        info "cosign not installed; skipping signature verification. Install cosign to verify: https://docs.sigstore.dev/cosign/system_config/installation/"
     fi
 
     info "Installing to ${INSTALL_DIR}..."

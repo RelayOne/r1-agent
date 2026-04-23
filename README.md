@@ -236,10 +236,30 @@ Trust gating: `untrusted` workers can only invoke tools from `untrusted` servers
 ## Install
 
 ```bash
+# Homebrew (macOS + Linux) — published by goreleaser on each tag
+brew install ericmacdougall/stoke/stoke
+
+# One-line installer — verifies cosign signature (keyless OIDC) if
+# cosign is installed; falls back to building from source if no
+# prebuilt binary exists for your platform.
+curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+
+# Signed release tarball (Sigstore cosign; verify by running
+# `cosign verify-blob --certificate-identity-regexp \
+# 'https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*' \
+# --certificate-oidc-issuer https://token.actions.githubusercontent.com ...`)
+# See https://github.com/ericmacdougall/Stoke/releases
+
+# Docker (linux/amd64 + linux/arm64)
+docker pull ghcr.io/ericmacdougall/stoke:latest
+
 # From source (requires Go 1.22+)
 go build -o stoke ./cmd/stoke
 sudo mv stoke /usr/local/bin/
 ```
+
+Governance: see [GOVERNANCE.md](GOVERNANCE.md). Contributors: see
+[CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md).
 
 ## License
 

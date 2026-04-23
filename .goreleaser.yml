@@ -86,3 +86,23 @@ release:
     name: Stoke
   draft: false
   prerelease: auto
+
+brews:
+  - name: stoke
+    repository:
+      owner: ericmacdougall
+      name: homebrew-stoke
+      branch: main
+    directory: Formula
+    homepage: https://github.com/ericmacdougall/Stoke
+    description: "Stoke — agentic coding orchestrator (R1)"
+    license: "Apache-2.0"
+    install: |
+      bin.install "stoke"
+      bin.install "stoke-acp" if File.exist?("stoke-acp")
+    test: |
+      system "#{bin}/stoke", "--version"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore(brew): stoke {{ .Tag }}"
