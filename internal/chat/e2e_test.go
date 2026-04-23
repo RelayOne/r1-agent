@@ -3,13 +3,13 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestE2E_RealAnthropicProvider_Streaming stands up a mock HTTP server
@@ -161,12 +161,16 @@ func TestE2E_RealAnthropicProvider_Streaming(t *testing.T) {
 	}
 }
 
-// TestE2E_ProviderError_PropagatesThroughSession confirms that a 500
-// from the provider surfaces as a Send error without corrupting the
-// session history.
+// TestE2E_ProviderError_PropagatesThroughSession confirms that a
+// non-retriable error from the provider surfaces as a Send error
+// without corrupting the session history. Uses 401 (auth error) so
+// the provider fails fast without burning 95s on retry backoff
+// (Chat/ChatStream retry 5xx and 429 with 5/10/20/30/30s sleeps;
+// 4xx other than 429 are non-retriable per
+// isRetriableProviderError).
 func TestE2E_ProviderError_PropagatesThroughSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"type":"rate_limit_error","message":"too many"}}`, 429)
+		http.Error(w, `{"error":{"type":"authentication_error","message":"bad key"}}`, 401)
 	}))
 	defer server.Close()
 
@@ -175,10 +179,10 @@ func TestE2E_ProviderError_PropagatesThroughSession(t *testing.T) {
 
 	_, err := s.Send(context.Background(), "hi", nil, nil)
 	if err == nil {
-		t.Fatal("expected error for 429 response")
+		t.Fatal("expected error for 401 response")
 	}
-	if !strings.Contains(err.Error(), "429") && !strings.Contains(err.Error(), "rate_limit") {
-		t.Errorf("error does not mention 429/rate_limit: %v", err)
+	if !strings.Contains(err.Error(), "401") && !strings.Contains(err.Error(), "authentication") {
+		t.Errorf("error does not mention 401/authentication: %v", err)
 	}
 	if s.TurnCount() != 0 {
 		t.Errorf("failed turn should not pollute history, got %d messages", s.TurnCount())
@@ -188,6 +192,13 @@ func TestE2E_ProviderError_PropagatesThroughSession(t *testing.T) {
 // TestE2E_ServerConnectionRefused simulates a totally-down upstream.
 // The provider should return an error that Send wraps with chat-level
 // context.
+//
+// "connection refused" is classified as retriable by
+// isRetriableProviderError (to survive litellm restarts), so the
+// provider's ChatStream will retry with 5/10/20/30/30s backoff.
+// Session.Send watches ctx.Done() so we bail out early via a
+// short-deadline context; any non-nil error (ctx-cancelled or
+// connection-refused) counts as "error propagated through Send".
 func TestE2E_ServerConnectionRefused(t *testing.T) {
 	// Use a closed server: NewServer then Close gives us a URL that
 	// will fail to connect.
@@ -197,12 +208,12 @@ func TestE2E_ServerConnectionRefused(t *testing.T) {
 	p, _ := NewProviderFromOptions(ProviderOptions{BaseURL: server.URL, APIKey: "k"})
 	s, _ := NewSession(p, Config{Model: "m"})
 
-	_, err := s.Send(context.Background(), "hi", nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := s.Send(ctx, "hi", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for closed server")
-	}
-	if !errors.Is(err, err) { // just establishing it's not nil
-		t.Error("nil error chain")
 	}
 	if s.TurnCount() != 0 {
 		t.Errorf("failed turn should not pollute history, got %d", s.TurnCount())

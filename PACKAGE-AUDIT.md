@@ -118,8 +118,8 @@ Generated: 2026-04-06
 
 ## Summary
 
-- **Total internal packages**: 132 (includes sub-packages under concern/, env/, harness/, hub/, ledger/, supervisor/)
-- **Additional packages**: 1 cmd + 9 bench = 142 total
+- **Total internal packages**: 180 (includes sub-packages under concern/, env/, harness/, hub/, ledger/, supervisor/; grew from 132 as portfolio-alignment + OSS-hub + work-stoke seams landed)
+- **Additional packages**: 9 cmd + 10 bench = 199 total
 - **CORE**: 47 packages (32 v1 + 15 v2)
 - **HELPFUL**: 47 packages
 - **DEPRECATED**: 0 packages (13 removed in v2 cleanup)

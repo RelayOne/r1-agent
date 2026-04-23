@@ -547,6 +547,11 @@ func sanitizeID(s string) string {
 		}
 	}
 	out := b.String()
+	// Collapse consecutive dashes so runs of non-allowed chars (e.g.
+	// "//") don't produce double-dashes in the slug.
+	for strings.Contains(out, "--") {
+		out = strings.ReplaceAll(out, "--", "-")
+	}
 	// Trim leading/trailing dashes so path segments look clean.
 	out = strings.Trim(out, "-")
 	if len(out) > 64 {

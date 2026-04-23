@@ -56,7 +56,7 @@ security:
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
-	@expected=132; \
+	@expected=180; \
 	actual=$$(find . -path ./vendor -prune -o -name "*.go" -print | xargs grep -l "^package " | sed 's|/[^/]*$$||' | sort -u | grep "^./internal/" | wc -l | tr -d ' '); \
 	if [ "$$actual" != "$$expected" ]; then \
 		echo "ERROR: internal package count drifted: expected $$expected, got $$actual"; \

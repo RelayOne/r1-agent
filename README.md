@@ -178,7 +178,7 @@ internal/
   + 77 additional packages    (convergence, repomap, symindex, goast, plugins, remote, etc.)
 ```
 
-132 internal packages + 1 cmd + 9 bench = 142 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
+180 internal packages + 9 cmd + 10 bench = 199 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
 
 ## MCP servers
 

@@ -45,28 +45,67 @@ func TestRunOneShotCmd_UnknownVerbExits2(t *testing.T) {
 }
 
 func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
-	// Feed an input file containing a JSON payload; expect a
-	// scaffold response on stdout with Status=scaffold.
-	dir := t.TempDir()
-	inPath := filepath.Join(dir, "in.json")
-	if err := os.WriteFile(inPath, []byte(`{"task":"design a landing page"}`), 0o644); err != nil {
-		t.Fatalf("write input: %v", err)
-	}
-	var stdout, stderr bytes.Buffer
-	code := runOneShotCmd([]string{"decompose", "--input", inPath}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
-	}
-	var resp struct {
-		Verb   string `json:"verb"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
-		t.Fatalf("parse: %v (%s)", err, stdout.String())
-	}
-	if resp.Verb != "decompose" || resp.Status != "scaffold" {
-		t.Errorf("got verb=%q status=%q want decompose/scaffold", resp.Verb, resp.Status)
-	}
+	// Two paths now coexist: a real task hits the wired decomposer
+	// (Status=ok, real plan) and an empty task falls through to the
+	// legacy scaffold shape (Status=scaffold). Cover both so the
+	// CloudSwarm probe path and the real decomposition contract are
+	// both gated.
+
+	t.Run("real task returns ok with plan", func(t *testing.T) {
+		dir := t.TempDir()
+		inPath := filepath.Join(dir, "in.json")
+		if err := os.WriteFile(inPath, []byte(`{"task":"design a landing page"}`), 0o644); err != nil {
+			t.Fatalf("write input: %v", err)
+		}
+		var stdout, stderr bytes.Buffer
+		code := runOneShotCmd([]string{"decompose", "--input", inPath}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp struct {
+			Verb   string `json:"verb"`
+			Status string `json:"status"`
+			Data   struct {
+				Plan         json.RawMessage `json:"plan"`
+				StrategyUsed string          `json:"strategy_used"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("parse: %v (%s)", err, stdout.String())
+		}
+		if resp.Verb != "decompose" || resp.Status != "ok" {
+			t.Errorf("got verb=%q status=%q want decompose/ok", resp.Verb, resp.Status)
+		}
+		if len(resp.Data.Plan) == 0 {
+			t.Error("data.plan should be non-empty for a real task")
+		}
+		if resp.Data.StrategyUsed == "" {
+			t.Error("data.strategy_used should be populated")
+		}
+	})
+
+	t.Run("empty task falls through to scaffold", func(t *testing.T) {
+		dir := t.TempDir()
+		inPath := filepath.Join(dir, "in.json")
+		if err := os.WriteFile(inPath, []byte(`{}`), 0o644); err != nil {
+			t.Fatalf("write input: %v", err)
+		}
+		var stdout, stderr bytes.Buffer
+		code := runOneShotCmd([]string{"decompose", "--input", inPath}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var resp struct {
+			Verb   string `json:"verb"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+			t.Fatalf("parse: %v (%s)", err, stdout.String())
+		}
+		if resp.Verb != "decompose" || resp.Status != "scaffold" {
+			t.Errorf("got verb=%q status=%q want decompose/scaffold", resp.Verb, resp.Status)
+		}
+	})
 }
 
 func TestRunOneShotCmd_VerifyAndCritiqueAlsoScaffold(t *testing.T) {
