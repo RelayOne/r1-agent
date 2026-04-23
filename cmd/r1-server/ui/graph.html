@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>r1-server — Ledger Graph</title>
+  <link rel="stylesheet" href="/ui/style.css">
+  <link rel="stylesheet" href="/ui/graph.css">
+</head>
+<body class="graph-body">
+  <header>
+    <h1>
+      <a href="/" data-route="/">r1-server</a>
+      <span class="sep">/</span>
+      Session <code id="sess-id">…</code>
+      <span class="sep">/</span>
+      Ledger Graph
+    </h1>
+    <nav>
+      <a id="stream-link" href="#">[Stream]</a>
+      <span id="conn-status">…</span>
+    </nav>
+  </header>
+
+  <aside id="sidepanel" hidden>
+    <div class="panel-head">
+      <h2>Node detail</h2>
+      <button id="close-panel" type="button" aria-label="Close">close</button>
+    </div>
+    <dl id="node-detail"></dl>
+    <pre id="node-raw"></pre>
+  </aside>
+
+  <main>
+    <div id="graph"></div>
+    <div id="tooltip" hidden></div>
+    <div id="fallback" hidden>
+      <h2>3D graph disabled</h2>
+      <p id="fallback-reason">WebGL is unavailable in this browser.</p>
+      <p>
+        Open the <a id="fallback-stream" href="#">live-stream view</a> to follow
+        this session without the 3D visualizer, or use a WebGL-capable browser
+        (Firefox, Chrome, Safari 15+) to see the ledger graph.
+      </p>
+    </div>
+  </main>
+
+  <footer>
+    <div id="controls">
+      <fieldset>
+        <legend>Filter by type</legend>
+        <div id="type-filter"></div>
+      </fieldset>
+      <label class="control">
+        Search
+        <input type="search" id="search-box" placeholder="substring across raw JSON">
+      </label>
+      <label class="control">
+        Time <span id="time-label">100%</span>
+        <input type="range" id="time-scrubber" min="0" max="100" value="100" step="1">
+      </label>
+      <label class="control checkbox">
+        <input type="checkbox" id="cluster-by-mission" checked> cluster by mission
+      </label>
+      <button id="reset-cam" type="button">reset camera</button>
+    </div>
+  </footer>
+
+  <!--
+    Vendored pinned versions (work-stoke TASK 15 AC #6 — no CDN, works
+    offline). The blobs live under cmd/r1-server/ui/vendor/ and are
+    embedded into the binary via //go:embed ui/*. three-forcegraph
+    requires Three.js as a global (window.THREE); 3d-force-graph wraps
+    both with OrbitControls + raycasting. Load order matters: Three
+    then spritetext then 3d-force-graph.
+  -->
+  <script src="/ui/vendor/three.min.js"></script>
+  <script src="/ui/vendor/three-spritetext.min.js"></script>
+  <script src="/ui/vendor/3d-force-graph.min.js"></script>
+  <script src="/ui/graph.js"></script>
+</body>
+</html>

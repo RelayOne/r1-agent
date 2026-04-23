@@ -86,6 +86,20 @@ type Item struct {
 
 	// Working-memory expiry (zero = no expiry).
 	ExpiresAt time.Time
+
+	// Scope hierarchy (spec/memory-full-stack.md §5).
+	// HierScope is one of HierGlobal / HierRepo / HierTask.
+	// Zero-value HierScope ("") means "unscoped" and yields
+	// Specificity 0; callers that need hierarchy filtering
+	// should set this explicitly on Put. HierScopeID holds
+	// the repo hash for HierRepo and the task ID for
+	// HierTask (empty for HierGlobal). Distinct from the
+	// bus/visibility Scope field because a memory row has
+	// two orthogonal labels: which project/task bucket it
+	// belongs to (HierScope) and which workers can see it
+	// (bus Scope, wired by higher layers).
+	HierScope   HierScope
+	HierScopeID string
 }
 
 // Query parameterizes a retrieval.

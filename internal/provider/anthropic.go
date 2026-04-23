@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -148,7 +149,7 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	const maxAttempts = 6
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		chatResp, err := p.chatOnce(data)
+		chatResp, err := p.chatOnce(data, req.Metadata, req.Model)
 		if err == nil {
 			return chatResp, nil
 		}
@@ -173,18 +174,31 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 
 // chatOnce is the single-request path extracted from Chat so the retry
 // loop can reuse it cleanly.
-func (p *AnthropicProvider) chatOnce(data []byte) (*ChatResponse, error) {
+//
+// The metadata map carries portfolio-alignment correlation IDs:
+//   - stoke-session-id → X-Stoke-Session-ID outbound header
+//   - stoke-agent-id   → X-Stoke-Agent-ID
+//   - stoke-task-id    → X-Stoke-Task-ID
+// Empty / absent values skip the corresponding header entirely (no
+// empty-string headers). modelAlias is the caller-supplied model name
+// used for AL-2 resolved-alias logging.
+func (p *AnthropicProvider) chatOnce(data []byte, metadata map[string]string, modelAlias string) (*ChatResponse, error) {
 	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/messages", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 	p.setHeaders(httpReq)
+	applyStokeCorrelationHeaders(httpReq, metadata)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("API request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// AL-2: surface RelayGate's tier-alias response headers so operators
+	// can see "tier:reasoning" / "smart" resolve to a concrete model.
+	ReadTierHeaders(resp, modelAlias, log.Printf)
 
 	if resp.StatusCode != 200 {
 		errBody, _ := io.ReadAll(resp.Body)
@@ -195,6 +209,14 @@ func (p *AnthropicProvider) chatOnce(data []byte) (*ChatResponse, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
+
+	// CS-1: CloudSwarm-compatible per-LLM-call cost-event emission. The
+	// Anthropic response carries token usage; convert to a usd estimate
+	// using the existing cost tracker's per-model baselines (best-effort
+	// — if the model isn't in the cost table the event still goes out
+	// with usd=0 so CloudSwarm's parser sees the canonical shape).
+	emitAnthropicCostEvent(modelAlias, chatResp.Usage)
+
 	return &chatResp, nil
 }
 

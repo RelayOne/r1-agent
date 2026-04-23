@@ -336,6 +336,13 @@ func (n *Node) SetState(next State) error {
 		next != StateBlocked && next != StateWaitingHuman {
 		n.BlockedBy = nil
 	}
+	// CS-3 stdout-event hook — fires after the Status field has been
+	// updated so subscribers see the new value. Nil hook is a no-op.
+	fireStatusChangeHook(StatusChangeEvent{
+		NodeID: n.ID,
+		Status: string(next),
+		Title:  n.Title,
+	})
 	return nil
 }
 

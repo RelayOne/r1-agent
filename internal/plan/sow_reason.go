@@ -35,6 +35,13 @@ type ReasoningVerdict struct {
 	// is "code_bug" or "both".
 	CodeFix string `json:"code_fix,omitempty"`
 
+	// TargetFiles is the optional list of files the code fix is
+	// expected to touch. When populated, the descent engine uses it
+	// to enforce a per-file repair cap (spec-1 item 4). Leaving the
+	// field nil/empty falls back to stderr-path parsing and
+	// AcceptanceCriterion.ContentMatch.File.
+	TargetFiles []string `json:"target_files,omitempty"`
+
 	// ACRewrite, when non-empty, replaces the failing criterion's
 	// Command with this value. Populated when Category is "ac_bug"
 	// or "both".

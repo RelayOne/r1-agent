@@ -1,0 +1,4 @@
+mcp_servers:
+  - name: Bad_Name_With_Caps
+    transport: stdio
+    command: ./bin/server

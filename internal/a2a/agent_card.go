@@ -34,7 +34,14 @@ import (
 
 // ProtocolVersion is the A2A spec version this generator targets.
 // Bumped when the Agent Card schema evolves in a breaking way.
-const ProtocolVersion = "0.2.0"
+//
+// v1.0.0 (WORK-stoke T22) adds the skills[], securitySchemes,
+// preferredTransport, additionalInterfaces, and
+// supportsAuthenticatedExtendedCard fields, and migrates the
+// canonical path from `/.well-known/agent.json` to
+// `/.well-known/agent-card.json`. The legacy path keeps serving a
+// 308 Permanent Redirect for 30 days (sunset 2026-05-22).
+const ProtocolVersion = "1.0.0"
 
 // AgentCard is the canonical A2A /.well-known/agent.json document
 // shape. Field names and structure match the A2A spec so any
@@ -80,11 +87,55 @@ type AgentCard struct {
 	DefaultInputModes  []string `json:"defaultInputModes,omitempty"`
 	DefaultOutputModes []string `json:"defaultOutputModes,omitempty"`
 
+	// --- A2A v1.0.0 fields ---
+	//
+	// SupportsAuthenticatedExtendedCard indicates whether a
+	// richer card is available to authenticated clients at the
+	// same `/.well-known/agent-card.json` path when presenting
+	// credentials. Callers check this before retrying with auth.
+	SupportsAuthenticatedExtendedCard bool `json:"supportsAuthenticatedExtendedCard,omitempty"`
+
+	// SecuritySchemes maps scheme names (caller-chosen labels) to
+	// the auth method required to submit tasks. Follows the OpenAPI
+	// 3 `securitySchemes` shape so existing tooling can reuse
+	// parsers.
+	SecuritySchemes map[string]SecurityScheme `json:"securitySchemes,omitempty"`
+
+	// PreferredTransport is the transport a discovering peer
+	// should prefer when multiple are advertised. Typical values:
+	// "JSONRPC", "gRPC", "HTTP". Empty = no preference expressed.
+	PreferredTransport string `json:"preferredTransport,omitempty"`
+
+	// AdditionalInterfaces is the A2A v1.0 way of advertising
+	// supplementary transports alongside the canonical Endpoints
+	// block. Each entry pairs a URL with its transport label.
+	AdditionalInterfaces []InterfaceDesc `json:"additionalInterfaces,omitempty"`
+
 	// IssuedAt / ExpiresAt bound the card's freshness. Peers
 	// should re-fetch when ExpiresAt has passed; absent expiry
 	// means "fetch on every discovery round".
 	IssuedAt  time.Time  `json:"issuedAt"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+}
+
+// SecurityScheme describes one authentication method a peer must
+// use to submit tasks. Mirrors OpenAPI 3's Security Scheme Object
+// so existing spec tooling can parse the card. `Type` is one of
+// "apiKey", "http", "oauth2", or "openIdConnect".
+type SecurityScheme struct {
+	Type         string `json:"type"`
+	In           string `json:"in,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Scheme       string `json:"scheme,omitempty"`
+	BearerFormat string `json:"bearerFormat,omitempty"`
+}
+
+// InterfaceDesc advertises an additional transport (beyond the
+// canonical Endpoints block) the agent supports. Transport is one
+// of "gRPC", "WebSocket", "HTTP", or any A2A-registered label.
+type InterfaceDesc struct {
+	URL       string `json:"url"`
+	Transport string `json:"transport"`
 }
 
 // Provider identifies the organization operating the agent. A2A
@@ -172,20 +223,24 @@ func Build(opts Options) AgentCard {
 		caps = []CapabilityRef{}
 	}
 	return AgentCard{
-		ProtocolVersion:    ProtocolVersion,
-		Name:               opts.Name,
-		Description:        opts.Description,
-		Version:            opts.Version,
-		URL:                opts.URL,
-		Provider:           opts.Provider,
-		Identity:           opts.Identity,
-		Capabilities:       caps,
-		Skills:             opts.Skills,
-		Endpoints:          opts.Endpoints,
-		DefaultInputModes:  opts.DefaultInputModes,
-		DefaultOutputModes: opts.DefaultOutputModes,
-		IssuedAt:           now,
-		ExpiresAt:          exp,
+		ProtocolVersion:                   ProtocolVersion,
+		Name:                              opts.Name,
+		Description:                       opts.Description,
+		Version:                           opts.Version,
+		URL:                               opts.URL,
+		Provider:                          opts.Provider,
+		Identity:                          opts.Identity,
+		Capabilities:                      caps,
+		Skills:                            opts.Skills,
+		Endpoints:                         opts.Endpoints,
+		DefaultInputModes:                 opts.DefaultInputModes,
+		DefaultOutputModes:                opts.DefaultOutputModes,
+		SupportsAuthenticatedExtendedCard: opts.SupportsAuthenticatedExtendedCard,
+		SecuritySchemes:                   opts.SecuritySchemes,
+		PreferredTransport:                opts.PreferredTransport,
+		AdditionalInterfaces:              opts.AdditionalInterfaces,
+		IssuedAt:                          now,
+		ExpiresAt:                         exp,
 	}
 }
 
@@ -204,6 +259,13 @@ type Options struct {
 
 	DefaultInputModes  []string
 	DefaultOutputModes []string
+
+	// A2A v1.0.0 additions — all optional; zero values omit the
+	// corresponding JSON field.
+	SupportsAuthenticatedExtendedCard bool
+	SecuritySchemes                   map[string]SecurityScheme
+	PreferredTransport                string
+	AdditionalInterfaces              []InterfaceDesc
 
 	// IssuedAt defaults to time.Now().UTC() when zero.
 	IssuedAt time.Time

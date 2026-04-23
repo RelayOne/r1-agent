@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/ericmacdougall/stoke/internal/streamjson"
 	"github.com/ericmacdougall/stoke/internal/trustplane"
 )
 
@@ -210,12 +211,31 @@ func (h *tpHITL) ApproveHire(ctx context.Context, c Candidate) (bool, error) {
 // receipt. Constructed once per Stoke process; method calls
 // are safe from any goroutine (no mutable state on the
 // engine itself).
+//
+// The S-10 verify→settle additions (Settlement, Review,
+// Emitter) are nilable: zero-value Engine continues to
+// satisfy the legacy discover→hire→complete flow. When the
+// caller wants VerifyAndSettle, it populates these fields.
+// See verify_settle.go for the descent-style acceptance ladder.
 type Engine struct {
 	Discoverer Discoverer
 	HITL       HITLBroker
 	TP         trustplane.Client
 	Receipts   ReceiptWriter
 	Policy     Policy
+
+	// Settlement is the TrustPlane settle/dispute client used by
+	// VerifyAndSettle. Nil disables that entry point.
+	Settlement SettlementClient
+
+	// Review is the optional LLM hook for the delivery-matches-spec
+	// criterion. When nil, the deterministic fallback runs.
+	Review ReviewFunc
+
+	// Emitter is the optional streamjson output sink for
+	// stoke.delegation.{verify,settle,dispute} events. When nil,
+	// emission is skipped.
+	Emitter *streamjson.Emitter
 }
 
 // Hire runs the full hire flow for a capability. Returns the

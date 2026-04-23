@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: spec-2 (hitl for NDJSON Operator), spec-3 (router + eventlog + Executor), optional spec-4/5 -->
 <!-- BUILD_ORDER: 7 -->

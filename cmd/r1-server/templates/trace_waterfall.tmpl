@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r1-server trace — {{.InstanceID}}</title>
+<script src="/ui/vendor/htmx.min.js" defer></script>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --line: #30363d;
+    --bar-bg: #161b22;
+    --tier-t1: #58a6ff;
+    --tier-t2: #3fb950;
+    --tier-t3: #d29922;
+    --tier-t4: #f85149;
+    --tier-t5: #a371f7;
+    --tier-t6: #db6d28;
+    --tier-t7: #f778ba;
+    --tier-t8: #39c5cf;
+    --tier-unknown: #6e7681;
+  }
+  body { margin: 0; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header nav a { color: var(--muted); text-decoration: none; margin-right: 12px; }
+  header nav a.active { color: var(--fg); border-bottom: 2px solid var(--tier-t1); padding-bottom: 2px; }
+  main { padding: 16px 20px; }
+  .meta { color: var(--muted); margin-bottom: 12px; font-size: 12px; }
+  .empty { color: var(--muted); font-style: italic; padding: 40px 0; text-align: center; }
+  .legend { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; font-size: 11px; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                    vertical-align: middle; margin-right: 4px; }
+  .waterfall { display: grid; grid-template-columns: 280px 1fr; gap: 1px 16px;
+               background: var(--line); border: 1px solid var(--line); border-radius: 4px; }
+  .waterfall .row { display: contents; }
+  .waterfall .label, .waterfall .track {
+    background: var(--bg); padding: 6px 8px; min-height: 22px;
+  }
+  .waterfall .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .waterfall .label .tier { display: inline-block; width: 28px; text-align: center;
+                            border-radius: 2px; font-weight: 600; margin-right: 6px;
+                            color: #0b0f14; font-size: 11px; padding: 1px 0; }
+  .waterfall .label .name { color: var(--fg); }
+  .waterfall .label .sub { color: var(--muted); font-size: 11px; }
+  .waterfall .track { position: relative; background: var(--bar-bg); }
+  .waterfall .bar {
+    position: absolute; top: 4px; bottom: 4px;
+    border-radius: 2px; min-width: 2px;
+  }
+  .waterfall .bar-label {
+    position: absolute; top: 4px; left: 4px; font-size: 11px; color: var(--fg);
+    pointer-events: none; white-space: nowrap;
+  }
+  .tier-t1 { background: var(--tier-t1); }
+  .tier-t2 { background: var(--tier-t2); }
+  .tier-t3 { background: var(--tier-t3); }
+  .tier-t4 { background: var(--tier-t4); }
+  .tier-t5 { background: var(--tier-t5); }
+  .tier-t6 { background: var(--tier-t6); }
+  .tier-t7 { background: var(--tier-t7); }
+  .tier-t8 { background: var(--tier-t8); }
+  .tier-unknown { background: var(--tier-unknown); }
+  .header-row { background: var(--bar-bg); color: var(--muted); font-size: 11px;
+                padding: 4px 8px; }
+  .scale { display: grid; grid-template-columns: 280px 1fr; gap: 0 16px; margin-bottom: 4px; }
+  .scale .ticks { position: relative; height: 16px; font-size: 10px; color: var(--muted); }
+  .scale .tick { position: absolute; top: 0; transform: translateX(-50%); }
+</style>
+</head>
+<body>
+<header>
+  <h1>r1-server trace</h1>
+  <nav>
+    <a href="/session/{{.InstanceID}}" class="active">waterfall</a>
+    <a href="/session/{{.InstanceID}}/tree">tree</a>
+    <a href="/session/{{.InstanceID}}/graph">3D graph</a>
+  </nav>
+  <span class="meta">session <code>{{.InstanceID}}</code></span>
+</header>
+<main>
+  <p class="meta">
+    {{len .Spans}} span(s) &middot;
+    {{if .TotalDurationMs}}total {{.TotalDurationMs}} ms{{else}}duration n/a{{end}}
+    {{if .Stubbed}} &middot; <em>stub data (trace ingest not yet wired)</em>{{end}}
+  </p>
+  <div class="legend">
+    <span><span class="swatch tier-t1"></span>T1 intent</span>
+    <span><span class="swatch tier-t2"></span>T2 run-ac</span>
+    <span><span class="swatch tier-t3"></span>T3 classify</span>
+    <span><span class="swatch tier-t4"></span>T4 code-repair</span>
+    <span><span class="swatch tier-t5"></span>T5 env-fix</span>
+    <span><span class="swatch tier-t6"></span>T6 ac-rewrite</span>
+    <span><span class="swatch tier-t7"></span>T7 refactor</span>
+    <span><span class="swatch tier-t8"></span>T8 soft-pass</span>
+  </div>
+  {{if not .Spans}}
+    <p class="empty">No spans yet — this session has not emitted any descent-tier events.</p>
+  {{else}}
+    <div class="scale">
+      <div></div>
+      <div class="ticks">
+        <span class="tick" style="left: 0%">0ms</span>
+        <span class="tick" style="left: 25%">{{.QuarterMs}}ms</span>
+        <span class="tick" style="left: 50%">{{.HalfMs}}ms</span>
+        <span class="tick" style="left: 75%">{{.ThreeQuarterMs}}ms</span>
+        <span class="tick" style="left: 100%">{{.TotalDurationMs}}ms</span>
+      </div>
+    </div>
+    <div class="waterfall" role="table" aria-label="trace waterfall">
+      {{range .Spans}}
+        <div class="row" role="row">
+          <div class="label" role="cell" title="{{.Name}}">
+            <span class="tier {{tierColor .Tier}}">{{.Tier}}</span>
+            <span class="name">{{.Name}}</span>
+            {{if .ACID}}<div class="sub">AC {{.ACID}}</div>{{end}}
+          </div>
+          <div class="track" role="cell">
+            <div class="bar {{tierColor .Tier}}"
+                 style="left: {{.OffsetPct}}%; width: {{.WidthPct}}%;"
+                 title="{{.Name}} — {{.DurationMs}}ms (started {{formatTime .StartedAt}})"></div>
+            <div class="bar-label">{{.DurationMs}}ms</div>
+          </div>
+        </div>
+      {{end}}
+    </div>
+  {{end}}
+</main>
+</body>
+</html>

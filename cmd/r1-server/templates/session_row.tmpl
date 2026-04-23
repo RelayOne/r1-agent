@@ -1,0 +1,42 @@
+{{/*
+  session_row -- one card in the live-sessions grid.
+
+  Named template (define "session_row") so index.tmpl can {{template
+  "session_row" .}} over a range and the HTML-response branch of
+  /api/sessions can render the full list as a grid of these partials
+  swapped under #sessions by htmx.
+
+  Input: one SessionRow-derived view model (see indexSessionView in
+  cmd/r1-server/index.go). Fields:
+
+    .InstanceID  -- full instance id used in the link target
+    .ShortID     -- truncated display form (first 16 chars)
+    .Status      -- "running" | "ended" | "stale" (drives badge class)
+    .StatusClass -- CSS class for the status badge
+    .RepoRoot    -- absolute path of the repo being operated on
+    .RepoName    -- basename of RepoRoot for compact display
+    .SowName     -- optional SOW name
+    .Model       -- optional model identifier
+    .StartedAt   -- human-readable start timestamp
+    .Mode        -- sow | ship | run | ...
+*/}}
+{{define "session_row"}}
+<a class="card" href="/session/{{.InstanceID}}" hx-boost="true">
+  <div class="row-top">
+    <span class="status {{.StatusClass}}">{{.Status}}</span>
+    <span class="id" title="{{.InstanceID}}">{{.ShortID}}</span>
+  </div>
+  <div class="meta">
+    {{if .RepoName}}<code>{{.RepoName}}</code>{{end}}
+    {{if .Mode}} &middot; {{.Mode}}{{end}}
+    {{if .SowName}} &middot; {{.SowName}}{{end}}
+  </div>
+  {{if or .Model .StartedAt}}
+    <div class="meta">
+      {{if .Model}}{{.Model}}{{end}}
+      {{if and .Model .StartedAt}} &middot; {{end}}
+      {{if .StartedAt}}started {{.StartedAt}}{{end}}
+    </div>
+  {{end}}
+</a>
+{{end}}

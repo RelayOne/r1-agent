@@ -27,12 +27,13 @@ type ScanResult struct {
 
 // Rule defines a pattern to scan for.
 type Rule struct {
-	ID       string
-	Severity string
-	Pattern  *regexp.Regexp
-	Message  string
-	Fix      string
-	FileExts []string // only apply to these extensions (empty = all)
+	ID          string
+	Severity    string
+	Pattern     *regexp.Regexp
+	Message     string
+	Fix         string
+	FileExts    []string       // only apply to these extensions (empty = all)
+	PathPattern *regexp.Regexp // if set, only apply to files whose relative path matches this regex
 }
 
 // DefaultRules returns the built-in scan rules.
@@ -83,6 +84,9 @@ func DefaultRules() []Rule {
 
 		// AI deception: silently removed error handling
 		{ID: "no-blank-error", Severity: "critical", Pattern: regexp.MustCompile(`\w+,\s*_\s*:?=\s*\w+\.\w+\(`), Message: "Error return assigned to blank identifier — error silently discarded", Fix: "Handle the error: check and return or log it"},
+
+		// CI-config safety: MCP gate bypass must never land in shared infrastructure
+		{ID: "env_mcp_ungated", Severity: "critical", Pattern: regexp.MustCompile(`STOKE_MCP_UNGATED=1`), Message: "STOKE_MCP_UNGATED=1 in CI config disables MCP gating — do not use in shared infrastructure", Fix: "Remove STOKE_MCP_UNGATED=1 or confine it to ephemeral developer envs", PathPattern: regexp.MustCompile(`^(\.github/|scripts/ci/)`)},
 	}
 }
 
@@ -97,7 +101,7 @@ func ScanFiles(dir string, rules []Rule, modifiedOnly []string) (*ScanResult, er
 		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() { return nil }
 			rel, _ := filepath.Rel(dir, path)
-			if shouldScan(rel) {
+			if shouldScan(rel) || pathPatternMatches(rel, rules) {
 				filesToScan = append(filesToScan, rel)
 			}
 			return nil
@@ -130,6 +134,7 @@ func scanFile(fullPath, relPath string, rules []Rule) ([]Finding, error) {
 		line := scanner.Text()
 		for _, rule := range rules {
 			if !ruleApplies(rule, ext) { continue }
+			if rule.PathPattern != nil && !rule.PathPattern.MatchString(filepath.ToSlash(relPath)) { continue }
 			if rule.Pattern.MatchString(line) {
 				findings = append(findings, Finding{
 					Rule: rule.ID, Severity: rule.Severity,
@@ -140,6 +145,19 @@ func scanFile(fullPath, relPath string, rules []Rule) ([]Finding, error) {
 		}
 	}
 	return findings, scanner.Err()
+}
+
+// pathPatternMatches returns true if any rule's PathPattern matches the given relative path.
+// Used to include files in a full-directory walk even if the default extension/hidden-dir
+// filter would normally skip them (e.g. .github/workflows/*.yml).
+func pathPatternMatches(relPath string, rules []Rule) bool {
+	slash := filepath.ToSlash(relPath)
+	for _, r := range rules {
+		if r.PathPattern != nil && r.PathPattern.MatchString(slash) {
+			return true
+		}
+	}
+	return false
 }
 
 func ruleApplies(rule Rule, ext string) bool {

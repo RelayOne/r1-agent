@@ -1,0 +1,285 @@
+/* r1-server 3D ledger visualizer (RS-4 item 20)
+ *
+ * Full-viewport canvas with overlay header + footer controls + a
+ * slide-in side panel. Dark theme matches style.css; variables are
+ * re-used so any palette change there propagates here.
+ */
+
+html, body.graph-body {
+  height: 100%;
+  overflow: hidden; /* canvas handles its own scrolling (zoom) */
+}
+
+body.graph-body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 1fr;
+}
+
+body.graph-body header {
+  grid-row: 1;
+  z-index: 5;
+}
+
+body.graph-body header h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.graph-body header h1 .sep {
+  color: var(--fg-muted);
+  font-weight: 300;
+}
+
+body.graph-body header h1 code {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+body.graph-body header nav {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+body.graph-body header nav a {
+  color: var(--fg-muted);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+body.graph-body header nav a:hover { color: var(--accent); }
+
+body.graph-body main {
+  grid-row: 2;
+  position: relative;
+  padding: 0;
+  max-width: none;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#graph {
+  position: absolute;
+  inset: 0;
+}
+
+#graph canvas { display: block; }
+
+#tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: rgba(22, 25, 35, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--fg);
+  z-index: 10;
+  max-width: 320px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+#tooltip .tt-type {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#tooltip .tt-meta {
+  color: var(--fg-muted);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+#sidepanel {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 46vw);
+  background: var(--bg-alt);
+  border-left: 1px solid var(--border);
+  padding: 16px;
+  overflow: auto;
+  z-index: 8;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+}
+
+#sidepanel .panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+#sidepanel h2 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+#sidepanel #close-panel {
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+#sidepanel #close-panel:hover { color: var(--accent); border-color: var(--accent-dim); }
+
+#sidepanel dl {
+  margin: 0 0 12px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+#sidepanel dl dt { color: var(--fg-muted); }
+#sidepanel dl dd { margin: 0; color: var(--fg); word-break: break-all; }
+
+#sidepanel pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow: auto;
+  color: var(--fg);
+}
+
+body.graph-body footer {
+  grid-row: 3;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  padding: 10px 14px;
+  margin: 0;
+  z-index: 5;
+}
+
+#controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+}
+
+#controls fieldset {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: 0;
+  max-width: 60%;
+}
+
+#controls fieldset legend {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 4px;
+}
+
+#type-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-height: 60px;
+  overflow: auto;
+}
+
+#type-filter label {
+  font-size: 11px;
+  color: var(--fg);
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+#type-filter label .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.control.checkbox { color: var(--fg); }
+
+.control input[type="search"] {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  width: 240px;
+}
+
+.control input[type="range"] {
+  width: 200px;
+}
+
+#time-label {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  min-width: 4ch;
+  display: inline-block;
+  text-align: right;
+}
+
+#controls button {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+#controls button:hover { color: var(--accent); border-color: var(--accent-dim); }
+
+#fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  color: var(--fg);
+  background: var(--bg);
+  padding: 40px;
+}
+
+#fallback h2 {
+  color: var(--err);
+  margin: 0;
+  font-size: 18px;
+}
+
+#fallback p { margin: 0; max-width: 520px; color: var(--fg-muted); }
+#fallback a { color: var(--accent); }

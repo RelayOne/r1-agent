@@ -80,6 +80,21 @@ type Manifest struct {
 	// state, whether it requires network, preferred sandbox,
 	// etc.
 	BehaviorFlags BehaviorFlags `json:"behaviorFlags"`
+
+	// RecommendedFor is an optional list of capability tags
+	// used by catalog ranking. Downstream discovery UIs
+	// (CloudSwarm skill catalog, skillselect) use these tags
+	// to surface a skill for a given capability bucket
+	// (e.g. "landing-page", "cold-email", "fact-check")
+	// without having to grep WhenToUse strings.
+	//
+	// Backward-compatibility: omitted from JSON when empty
+	// via omitempty; existing manifests that predate this
+	// field unmarshal to a nil slice and continue to pass
+	// Validate unchanged (no floor — empty list is valid).
+	//
+	// Source: CLOUDSWARM-R1-INTEGRATION.md §2.9 / §5.6.
+	RecommendedFor []string `json:"recommendedFor,omitempty"`
 }
 
 // BehaviorFlags describes non-functional aspects the

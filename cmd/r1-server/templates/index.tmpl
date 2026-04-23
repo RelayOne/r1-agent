@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"defaultSwapStyle":"outerHTML"}'>
+<title>r1-server dashboard</title>
+<script src="/ui/vendor/htmx.min.js" defer></script>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --line: #30363d;
+    --card-bg: #161b22;
+    --accent: #58a6ff;
+    --running: #3fb950;
+    --ended: #8b949e;
+    --stale: #d29922;
+  }
+  body { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header h1 a { color: var(--fg); text-decoration: none; }
+  header nav { margin-left: auto; display: flex; gap: 12px; color: var(--muted); font-size: 12px; }
+  header nav a { color: var(--muted); text-decoration: none; }
+  header nav a:hover { color: var(--fg); }
+  header #conn { font-size: 11px; color: var(--muted); padding: 2px 6px;
+                 border: 1px solid var(--line); border-radius: 10px; }
+  header #conn.live { color: var(--running); border-color: var(--running); }
+  main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+  h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px 0;
+       color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+          gap: 10px; }
+  .card { background: var(--card-bg); border: 1px solid var(--line); border-radius: 5px;
+          padding: 10px 12px; display: block; color: var(--fg); text-decoration: none; }
+  .card:hover { border-color: var(--accent); }
+  .card .row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .card .status { font-size: 10px; padding: 1px 6px; border-radius: 3px;
+                  font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+                  color: #0b0f14; background: var(--ended); }
+  .card .status.running { background: var(--running); }
+  .card .status.ended   { background: var(--ended); }
+  .card .status.stale   { background: var(--stale); }
+  .card .id { font-weight: 600; color: var(--fg); flex: 1;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .card .meta code { color: var(--accent); }
+  .empty { color: var(--muted); font-style: italic; padding: 40px 0; text-align: center; }
+  .events { margin-top: 24px; }
+  .events-log { background: var(--card-bg); border: 1px solid var(--line);
+                border-radius: 5px; padding: 8px 12px; max-height: 240px; overflow: auto;
+                font-size: 11px; color: var(--muted); }
+  .events-log .ev { padding: 2px 0; border-bottom: 1px dotted var(--line); }
+  .events-log .ev:last-child { border-bottom: 0; }
+  .events-log .ev .t { color: var(--accent); margin-right: 6px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/">r1-server</a></h1>
+  <nav>
+    <a href="/memories">memories</a>
+    <a href="/settings">settings</a>
+  </nav>
+  <span id="conn" title="htmx SSE connection state">idle</span>
+</header>
+<main>
+  <h2>live sessions ({{len .Sessions}})</h2>
+
+  {{/*
+    Session list. hx-get polls /api/sessions every 2 seconds; the
+    server returns this same template fragment when Accept: text/html
+    is present, so htmx can swap the whole grid in place. hx-swap is
+    outerHTML (htmx-config default) so the replacement includes this
+    wrapper div + its hx-* attrs, keeping the polling loop alive
+    across swaps.
+  */}}
+  <div id="sessions"
+       hx-get="/api/sessions"
+       hx-trigger="every 2s"
+       hx-swap="outerHTML"
+       hx-headers='{"Accept":"text/html"}'>
+    {{if .Sessions}}
+      <div class="grid">
+        {{range .Sessions}}{{template "session_row" .}}{{end}}
+      </div>
+    {{else}}
+      <p class="empty">No sessions registered yet. Start a Stoke run and it will appear here.</p>
+    {{end}}
+  </div>
+
+  {{/*
+    Live event feed. hx-ext="sse" + sse-connect opens a single
+    EventSource to /api/events; sse-swap="message" appends each
+    frame's rendered HTML to the log. htmx's SSE extension handles
+    retry: + Last-Event-ID resume for us, so the 2s polling loop
+    above stays decoupled from the live stream.
+  */}}
+  <section class="events"
+           hx-ext="sse"
+           sse-connect="/api/events">
+    <h2>live event feed</h2>
+    <div id="events-log" class="events-log"
+         sse-swap="message"
+         hx-swap="afterbegin">
+      <div class="ev"><span class="t">waiting...</span> no events yet</div>
+    </div>
+    <p class="hint">SSE stream at <code>/api/events</code> &middot; htmx auto-reconnects on drop.</p>
+  </section>
+</main>
+<script>
+  // Tiny connection-state island: flips the header badge when htmx's
+  // SSE extension fires its open/close events. This is vanilla JS
+  // scoped to one DOM element -- the rest of the page is driven by
+  // hx-* attributes on the server-rendered markup.
+  (function () {
+    var badge = document.getElementById("conn");
+    if (!badge) { return; }
+    document.body.addEventListener("htmx:sseOpen", function () {
+      badge.textContent = "live";
+      badge.className = "live";
+    });
+    document.body.addEventListener("htmx:sseClose", function () {
+      badge.textContent = "reconnecting";
+      badge.className = "";
+    });
+    document.body.addEventListener("htmx:sseError", function () {
+      badge.textContent = "offline";
+      badge.className = "";
+    });
+  })();
+</script>
+</body>
+</html>

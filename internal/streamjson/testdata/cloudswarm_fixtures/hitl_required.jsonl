@@ -1,0 +1,1 @@
+{"type":"hitl_required","uuid":"018e0000-0000-0000-0000-000000000001","session_id":"018e0000-0000-0000-0000-000000000099","reason":"Soft-pass approval at T8","approval_type":"soft_pass","file":"internal/foo/bar.go","_stoke.dev/context":{"ac_id":"AC-03","tier":"T8","category":"acceptable_as_is"}}

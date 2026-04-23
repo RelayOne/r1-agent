@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: (none — builds on H-91) -->
 <!-- BUILD_ORDER: 1 -->

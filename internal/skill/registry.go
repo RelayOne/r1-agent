@@ -76,10 +76,27 @@ func NewRegistry(dirs ...string) *Registry {
 
 // DefaultRegistry creates a registry with project and user skill directories,
 // and loads built-in skills embedded in the binary.
+//
+// Priority order for the project-level skill dir:
+//  1. STOKE_SKILLS_DIR environment variable, when set non-empty.
+//     Enables CloudSwarm-managed skill directories (per
+//     CLOUDSWARM-R1-INTEGRATION §2.2 / §10.2) where the supervisor
+//     writes the session's unified-registry skills into an
+//     external path before spawning the stoke subprocess.
+//  2. Otherwise, `<projectRoot>/.stoke/skills` (the historical
+//     default).
+//
+// The user-level discovery paths (`~/.stoke/skills`, `.claude/skills`
+// cross-tool roots, etc.) are appended AFTER the project-level dir
+// so they still participate in discovery at lower priority.
 func DefaultRegistry(projectRoot string) *Registry {
 	home, _ := os.UserHomeDir()
+	projectSkillsDir := filepath.Join(projectRoot, ".stoke", "skills")
+	if v := strings.TrimSpace(os.Getenv("STOKE_SKILLS_DIR")); v != "" {
+		projectSkillsDir = v
+	}
 	dirs := []string{
-		filepath.Join(projectRoot, ".stoke", "skills"), // project (highest priority)
+		projectSkillsDir, // project (highest priority) — STOKE_SKILLS_DIR aware
 	}
 	if home != "" {
 		// Cross-tool agentskills.io discovery paths (S-U-001).

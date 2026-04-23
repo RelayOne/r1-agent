@@ -34,9 +34,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/fanout"
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
@@ -191,6 +191,32 @@ SESSION TO EXPAND (id, title, description, outputs are FIXED; you are filling in
 // higher per-session cost.
 var SkipRefine bool
 
+// expandTask is the fanout.Task adapter for per-session expansion.
+// One instance per session stub; Execute runs expandSessionWithRetry
+// and records its wall-clock duration (rounded to seconds, matching
+// the pre-migration log format) so the post-fanout loop can render
+// the same ✓/⚠ progress lines the hand-rolled dispatcher printed.
+type expandTask struct {
+	prose   string
+	stack   *StackSpec
+	stub    Session
+	prov    provider.Provider
+	model   string
+	elapsed time.Duration // populated by Execute; read after FanOut returns
+}
+
+func (e *expandTask) ID() string            { return e.stub.ID }
+func (e *expandTask) EstimateCost() float64 { return 0 }
+func (e *expandTask) Execute(ctx context.Context) (any, error) {
+	start := time.Now()
+	full, err := expandSessionWithRetry(ctx, e.prose, e.stack, e.stub, e.prov, e.model)
+	e.elapsed = time.Since(start).Round(time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return full, nil
+}
+
 func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.Provider, model string, maxParallel int) (*SOW, []byte, error) {
 	if strings.TrimSpace(prose) == "" {
 		return nil, nil, fmt.Errorf("empty prose")
@@ -211,45 +237,42 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 
 	// Phase 2: per-session expansion. Worker pool bounded by
 	// maxParallel; each worker runs expandSession with timeout +
-	// one retry.
-	type result struct {
-		idx     int
-		session Session
-		err     error
-	}
-	expanded := make([]Session, len(skel.Sessions))
-	results := make(chan result, len(skel.Sessions))
-	sem := make(chan struct{}, maxParallel)
-	var wg sync.WaitGroup
+	// one retry. Delegates parallel dispatch to the shared fanout
+	// primitive (internal/fanout) so concurrency bounds, result-
+	// ordering, and panic recovery come from one reviewed path
+	// instead of a hand-rolled WaitGroup + semaphore + channel
+	// trio. Behavior is deliberately identical: no fail-fast, no
+	// budget cap, no trust ceiling (expanders are peers), and
+	// results are walked in declaration order.
+	tasks := make([]*expandTask, len(skel.Sessions))
 	for i, stub := range skel.Sessions {
-		wg.Add(1)
-		go func(i int, stub Session) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			start := time.Now()
-			full, err := expandSessionWithRetry(ctx, prose, &skel.Stack, stub, prov, model)
-			elapsed := time.Since(start).Round(time.Second)
-			if err != nil {
-				fmt.Printf("     ⚠ session %s DROPPED after expand failure (%s): %v\n", stub.ID, elapsed, err)
-				fmt.Printf("       original scope: %s — %s\n", stub.Title, stub.Description)
-				fmt.Printf("       operator action: re-run OR add this session manually to the SOW\n")
-				results <- result{idx: i, err: err}
-				return
-			}
-			fmt.Printf("     ✓ session %s expanded in %s (%d tasks, %d ACs)\n", stub.ID, elapsed, len(full.Tasks), len(full.AcceptanceCriteria))
-			results <- result{idx: i, session: full}
-		}(i, stub)
+		tasks[i] = &expandTask{
+			prose: prose,
+			stack: &skel.Stack,
+			stub:  stub,
+			prov:  prov,
+			model: model,
+		}
 	}
-	wg.Wait()
-	close(results)
+	frs := fanout.FanOut[*expandTask](ctx, tasks, fanout.FanOutConfig{
+		MaxParallel:  maxParallel,
+		FailFast:     false,
+		TrustCeiling: -1, // inherit
+	})
+	expanded := make([]Session, len(skel.Sessions))
 	expandFailed := make([]bool, len(skel.Sessions))
-	for r := range results {
-		if r.err != nil {
-			expandFailed[r.idx] = true
+	for i, fr := range frs {
+		et := tasks[i]
+		if fr.Error != nil {
+			fmt.Printf("     ⚠ session %s DROPPED after expand failure (%s): %v\n", et.stub.ID, et.elapsed, fr.Error)
+			fmt.Printf("       original scope: %s — %s\n", et.stub.Title, et.stub.Description)
+			fmt.Printf("       operator action: re-run OR add this session manually to the SOW\n")
+			expandFailed[i] = true
 			continue
 		}
-		expanded[r.idx] = r.session
+		full, _ := fr.Value.(Session)
+		fmt.Printf("     ✓ session %s expanded in %s (%d tasks, %d ACs)\n", et.stub.ID, et.elapsed, len(full.Tasks), len(full.AcceptanceCriteria))
+		expanded[i] = full
 	}
 	// Filter out failed sessions — a stub with no tasks/ACs fails
 	// ValidateSOW downstream ('session X has no acceptance criteria')

@@ -17,6 +17,18 @@
 //
 // Connect via Claude Code's --mcp-config:
 //   { "mcpServers": { "stoke": { "command": "stoke", "args": ["mcp-serve-stoke"] } } }
+//
+// SECURITY (outbound sanitization policy):
+// The tool responses emitted by this server (mission IDs, build logs, SOW
+// echoes, status payloads) are NOT pre-sanitized for prompt-injection. This
+// is intentional:
+//   1. Non-LLM clients (CI runners, dashboards, scripts) consume these
+//      responses programmatically and would be broken by payload mutation.
+//   2. Different LLM clients apply different sanitization conventions; the
+//      MCP server cannot know which strategy its consumer wants.
+// Downstream MCP consumers that feed these payloads into an LLM prompt MUST
+// apply their own prompt-injection defenses. See docs/mcp-security.md for
+// the full responsibility boundary.
 package mcp
 
 import (

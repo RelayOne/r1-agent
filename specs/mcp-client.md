@@ -1,5 +1,7 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-04-20 -->
+<!-- BUILD_STARTED: 2026-04-21 -->
+<!-- BUILD_COMPLETED: 2026-04-21 -->
 <!-- DEPENDS_ON: spec-1 (truthfulness contract), spec-2 (event emission), spec-3 (executor tool layer) -->
 <!-- BUILD_ORDER: 8 -->
 

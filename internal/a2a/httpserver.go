@@ -9,10 +9,14 @@
 //
 // Routes:
 //
-//   GET  /.well-known/agent.json   → the Agent Card, JSON-encoded
-//   POST /a2a/rpc                  → JSON-RPC 2.0 dispatch to
-//                                    a2a.task.submit / .status / .cancel
-//   GET  /healthz                  → simple liveness check
+//   GET  /.well-known/agent-card.json  → the Agent Card, JSON-encoded (A2A v1.0 canonical)
+//   GET  /.well-known/agent.json       → HTTP 308 Permanent Redirect to the
+//                                         canonical path (legacy, kept alive
+//                                         for 30 days after v1.0 landing;
+//                                         sunset 2026-05-22)
+//   POST /a2a/rpc                      → JSON-RPC 2.0 dispatch to
+//                                         a2a.task.submit / .status / .cancel
+//   GET  /healthz                      → simple liveness check
 //
 // Auth: optional bearer token gate via `Authorization: Bearer
 // <token>` on the /a2a/rpc endpoint. The agent card is ALWAYS
@@ -54,6 +58,16 @@ type Server struct {
 	handlers http.Handler
 }
 
+// CanonicalCardPath is the A2A v1.0 canonical Agent Card URL.
+// Peers SHOULD fetch this path first; the legacy path below
+// 308-redirects here during the 30-day migration window.
+const CanonicalCardPath = "/.well-known/agent-card.json"
+
+// LegacyCardPath is the A2A v0.x Agent Card URL retained for 30
+// days after v1.0.0 lands. Returns HTTP 308 Permanent Redirect
+// to CanonicalCardPath. Removal target: 2026-05-22.
+const LegacyCardPath = "/.well-known/agent.json"
+
 // NewServer returns a Server with the given initial card +
 // task store. Auth token is optional; pass "" for open dev
 // mode.
@@ -65,7 +79,8 @@ type Server struct {
 func NewServer(card AgentCard, store TaskStore, token string) *Server {
 	s := &Server{card: card, store: store, token: token}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/agent.json", s.handleCard)
+	mux.HandleFunc(CanonicalCardPath, s.handleCard)
+	mux.HandleFunc(LegacyCardPath, s.handleLegacyCardRedirect)
 	mux.HandleFunc("/a2a/rpc", s.handleRPC)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -92,6 +107,34 @@ func (s *Server) SetCard(c AgentCard) {
 func (s *Server) ListenAndServe(addr string) error {
 	server := &http.Server{Addr: addr, Handler: s.handlers}
 	return server.ListenAndServe()
+}
+
+// handleLegacyCardRedirect serves a 308 Permanent Redirect from the
+// A2A v0.x path (`/.well-known/agent.json`) to the v1.0 canonical
+// path (`/.well-known/agent-card.json`). The `Deprecation` and
+// `Sunset` headers signal the 30-day removal window per RFC 8594 /
+// RFC 9745 so callers can log the deprecation in their own
+// observability.
+//
+// 308 is used instead of 301/302 because it MUST preserve the
+// request method (GET stays GET) and MUST NOT allow the client to
+// silently rewrite to GET on POST — here the card is GET-only but
+// the semantic is still correct: "this resource has permanently
+// moved, preserve the method".
+func (s *Server) handleLegacyCardRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// RFC 9745 Deprecation header = Unix timestamp of deprecation
+	// landing; RFC 8594 Sunset header = HTTP-date of removal.
+	// Deprecation: 2026-04-22T00:00:00Z (v1.0.0 landing).
+	// Sunset:      2026-05-22T00:00:00Z (30-day window).
+	w.Header().Set("Deprecation", `@1745280000`)
+	w.Header().Set("Sunset", "Fri, 22 May 2026 00:00:00 GMT")
+	w.Header().Set("Link", `<`+CanonicalCardPath+`>; rel="successor-version"`)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	http.Redirect(w, r, CanonicalCardPath, http.StatusPermanentRedirect)
 }
 
 // handleCard serves the Agent Card. Open access (no auth)

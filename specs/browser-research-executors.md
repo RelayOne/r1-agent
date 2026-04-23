@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: spec-3 (Executor interface, VerifyFunc, router) -->
 <!-- BUILD_ORDER: 4 -->

@@ -8,6 +8,7 @@ package ledger
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -44,6 +45,19 @@ type Node struct {
 	MissionID     string          `json:"mission_id,omitempty"`
 	Content       json.RawMessage `json:"content"`
 	ParentHash    string          `json:"parent_hash,omitempty"`
+
+	// Salt is a random 16-byte per-node nonce (hex-encoded) that blinds
+	// the content commitment. A crypto-shred (delete content/<id>.json)
+	// erases the salt along with the canonical content, so an attacker
+	// with only the chain tier cannot mount a dictionary attack against
+	// the ContentCommitment. AddNode generates Salt; callers MUST NOT
+	// set it manually.
+	Salt string `json:"salt,omitempty"`
+
+	// ContentCommitment = sha256(salt || canonical(content)), hex-encoded.
+	// Stamped into the chain tier; orthogonal to redaction of the content
+	// tier. AddNode computes this; callers MUST NOT set it manually.
+	ContentCommitment string `json:"content_commitment,omitempty"`
 }
 
 // EdgeType defines the relationship between two nodes.
@@ -145,20 +159,78 @@ func (l *Ledger) Close() error {
 	return l.index.Close()
 }
 
-// computeID produces a content-addressed NodeID from the node's content,
-// timestamp, and a nonce derived from the content length.
-func computeID(n Node) NodeID {
+// newSalt returns a fresh hex-encoded 16-byte random salt for blinding a
+// node's content commitment. Read-from-rand failures are extraordinarily
+// rare; we surface them as errors so AddNode can refuse to persist a
+// weakly-committed node rather than silently proceeding with a zero salt.
+func newSalt() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("ledger: generate salt: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// contentCommitment = sha256(salt || canonical(content)). The salt blinds
+// the commitment so an attacker who has only the chain tier cannot recover
+// the content via dictionary attack, and the commitment binds the chain
+// tier to the content tier so a swapped content blob is immediately
+// detectable.
+func contentCommitment(salt string, content json.RawMessage) string {
 	h := sha256.New()
-	h.Write(n.Content)
-	h.Write([]byte(n.CreatedAt.Format(time.RFC3339Nano)))
-	h.Write([]byte(n.CreatedBy))
-	h.Write([]byte(n.Type))
+	h.Write([]byte(salt))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// canonicalHeaderBytes returns the canonical JSON of the structural header
+// (everything except Content / Salt / ContentCommitment / ID / ParentHash).
+// ParentHash is excluded from the ID because a node's own ID cannot depend
+// on itself; ParentHash links the node to its predecessor but is not part
+// of the self-ID hash input.
+func canonicalHeaderBytes(n Node) ([]byte, error) {
+	// Minimal struct with deterministic field order — encoding/json writes
+	// struct fields in declaration order, giving stable canonical bytes
+	// without any third-party canonical-JSON library.
+	type headerOnly struct {
+		Type          string    `json:"type"`
+		SchemaVersion int       `json:"schema_version"`
+		CreatedAt     time.Time `json:"created_at"`
+		CreatedBy     string    `json:"created_by"`
+		MissionID     string    `json:"mission_id,omitempty"`
+	}
+	return json.Marshal(headerOnly{
+		Type:          n.Type,
+		SchemaVersion: n.SchemaVersion,
+		CreatedAt:     n.CreatedAt.UTC(),
+		CreatedBy:     n.CreatedBy,
+		MissionID:     n.MissionID,
+	})
+}
+
+// computeID derives a NodeID = sha256(canonical(header) || content_commitment).
+// The node MUST already have a valid ContentCommitment — callers typically
+// populate it immediately beforehand via contentCommitment(salt, content).
+// The returned ID is prefixed with the node Type so legacy string-prefix
+// assertions elsewhere in the codebase continue to pass.
+func computeID(n Node) NodeID {
+	hb, err := canonicalHeaderBytes(n)
+	if err != nil {
+		// canonical marshaling of a fixed struct with primitive fields only
+		// fails in pathological cases (extremely rare). Fall back to a
+		// deterministic string so the caller still gets a usable ID; any
+		// follow-up verification will surface the corruption.
+		hb = []byte(fmt.Sprintf("type=%s;sv=%d;at=%s;by=%s;m=%s",
+			n.Type, n.SchemaVersion, n.CreatedAt.UTC().Format(time.RFC3339Nano), n.CreatedBy, n.MissionID))
+	}
+	h := sha256.New()
+	h.Write(hb)
+	h.Write([]byte(n.ContentCommitment))
 	sum := hex.EncodeToString(h.Sum(nil))
 	prefix := n.Type
 	if prefix == "" {
 		prefix = "node"
 	}
-	// Use first 8 hex chars for the suffix.
 	if len(sum) > 8 {
 		sum = sum[:8]
 	}
@@ -197,6 +269,24 @@ func (l *Ledger) AddNode(_ context.Context, node Node) (NodeID, error) {
 		}
 	}
 
+	// T6 two-tier layout: generate a random salt, compute
+	// content_commitment = sha256(salt || canonical(content)),
+	// and derive node.ID = sha256(canonical(header) || content_commitment).
+	// Salt + Content live in the erasable content tier; the chain tier
+	// records only the commitment, so Store.Redact can crypto-shred by
+	// deleting the content file without breaking chain verification.
+	// A caller-supplied Salt/ContentCommitment is preserved (used by
+	// Batch to predict IDs for forward-referencing edges).
+	if node.Salt == "" {
+		salt, err := newSalt()
+		if err != nil {
+			return "", err
+		}
+		node.Salt = salt
+	}
+	if node.ContentCommitment == "" {
+		node.ContentCommitment = contentCommitment(node.Salt, node.Content)
+	}
 	node.ID = computeID(node)
 
 	if err := l.store.WriteNode(node); err != nil {
@@ -441,6 +531,21 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			}
 			if n.CreatedAt.IsZero() {
 				n.CreatedAt = time.Now().UTC()
+			}
+			// T6: generate salt + commitment if the caller didn't pre-supply
+			// them. Honouring caller-supplied Salt/ContentCommitment lets
+			// batches include forward edges that reference a
+			// pre-computed node ID — same pattern already used with
+			// caller-supplied ParentHash above.
+			if n.Salt == "" {
+				salt, err := newSalt()
+				if err != nil {
+					return fmt.Errorf("ledger: batch op %d: %w", i, err)
+				}
+				n.Salt = salt
+			}
+			if n.ContentCommitment == "" {
+				n.ContentCommitment = contentCommitment(n.Salt, n.Content)
 			}
 			n.ID = computeID(n)
 			items = append(items, prepared{node: &n})

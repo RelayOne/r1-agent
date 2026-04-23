@@ -77,6 +77,31 @@ const (
 	EvtBusHookInjectionFailed EventType = "bus.hook.injection_failed"
 )
 
+// Descent-hardening events (spec-1 item 8). These fire from the
+// verification descent engine and its bootstrap wrapper. Each event
+// mirrors onto streamjson as subtype:"stoke.descent.<kind>" via the
+// descent_bus_bridge subscriber. Payload shapes match the
+// specs/descent-hardening.md "Bus event payloads (new)" table.
+const (
+	EvtDescentFileCapExceeded      EventType = "descent.file_cap_exceeded"
+	EvtDescentGhostWriteDetected   EventType = "descent.ghost_write_detected"
+	EvtDescentBootstrapReinstalled EventType = "descent.bootstrap_reinstalled"
+	EvtDescentPreCompletionGateFailed EventType = "descent.pre_completion_gate_failed"
+	EvtWorkerEnvBlocked            EventType = "worker.env_blocked"
+)
+
+// DescentEventKinds is the canonical list of descent-hardening event
+// types emitted by plan/verification_descent.go and its harness. Used
+// by tests (TestDescentEventNames) and documentation generators to
+// verify every event the spec declares is discoverable.
+var DescentEventKinds = []EventType{
+	EvtDescentFileCapExceeded,
+	EvtDescentGhostWriteDetected,
+	EvtDescentBootstrapReinstalled,
+	EvtDescentPreCompletionGateFailed,
+	EvtWorkerEnvBlocked,
+}
+
 // Event is an immutable record published on the bus.
 type Event struct {
 	ID        string          `json:"id"`

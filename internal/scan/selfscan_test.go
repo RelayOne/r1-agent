@@ -184,10 +184,21 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/engine/gemini.go") {
 		return true
 	}
+	// policy/factory.go defines env var names (e.g. CLOUDSWARM_POLICY_TOKEN)
+	// as const strings; the literal is an env var identifier, not a credential.
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/policy/factory.go") {
+		return true
+	}
 	// critic.go defines the secret-detection regex patterns themselves
 	// (sk-..., ghp_..., AKIA...) — these look like secrets to the
 	// scanner but they're the DEFINITION of what constitutes a secret.
 	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/critic/critic.go") {
+		return true
+	}
+	// default_honeypots.go defines the STOKE_CANARY_DO_NOT_EMIT token
+	// used by the system-prompt-canary honeypot. Same rationale as
+	// critic.go: the literal is a DETECTOR, not a credential.
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/critic/default_honeypots.go") {
 		return true
 	}
 	// no-tautological-test: failures.go defines TAUTOLOGICAL_TEST as a constant string

@@ -1,0 +1,274 @@
+STOKE REPO — CLAIM VERIFICATION vs plans/WORK-stoke.md
+=======================================================
+Generated: 2026-04-21
+Branch:    feat/smart-chat-mode
+HEAD:      49abed3 feat(cmd/stoke): Task 18 resume subcommand (event-log replay)
+Total commits: 756
+Working tree: clean
+
+Note on WORK-stoke.md: the file in the repo (plans/WORK-stoke.md) is 56 lines
+and is itself a pointer to specs/ + PORTFOLIO-EXECUTION-INDEX.md; Tasks 1-24
+are described only by reference. Ordering was reconstructed from
+specs/reconciliation-report.md §1-§2 + PORTFOLIO-EXECUTION-INDEX.md items
+23-27 + git-log "Task N" / "S-N" subjects. No forge-spec-final.md exists
+under /home/eric/repos/stoke/ (grep -r returned zero hits).
+
+
+-----------------------------------------------------------------------
+1. POINT-BY-POINT VERIFICATION OF NUMBERED CLAIMS
+-----------------------------------------------------------------------
+
+CLAIM 1 — "streamEmitter construction at cmd/stoke/main.go:1476 is NOT
+           threaded into sowNativeConfig at cmd/stoke/sow_native.go:105
+           (EventBus field is present but StreamEmitter is not)."
+
+VERDICT: PARTIALLY CORRECT / WRONG LINE NUMBERS but SUBSTANTIVELY TRUE.
+
+Evidence:
+  - streamEmitter is actually constructed at cmd/stoke/main.go:1546:
+      1546: streamEmitter := streamjson.New(os.Stdout, *outputFormat == "stream-json")
+    (not 1476; file is now 6703 lines, struct header drifted.)
+  - sowNativeConfig is declared at cmd/stoke/sow_native.go:192:
+      192:  type sowNativeConfig struct {
+    (not 105.)
+  - The field on sowNativeConfig is named StreamJSON *streamjson.TwoLane,
+    sow_native.go:567. It IS present in the struct definition.
+  - The nativeCfg literal at cmd/stoke/main.go:2729 assigns EventBus:
+    sowBus (line 2733) but does NOT assign StreamJSON. grep across the
+    tree: only three assignments of `StreamJSON:` on a sowNativeConfig
+    exist, all in cmd/stoke/sow_native_streamjson_test.go (lines
+    35/62/77). Production code never plumbs the main-created
+    streamEmitter into the SOW runner.
+  - Downstream `cfg.StreamJSON` reads in
+    cmd/stoke/sow_native_streamjson.go (emitSessionStart/End,
+    emitTaskStart/End, emitACResult, emitPlanReady) therefore no-op
+    in production: they all guard on `cfg.StreamJSON == nil` first.
+
+Net: the S-0 "emitter threaded into sowNativeConfig" claim is
+structurally half-built — field declared + consumers coded, but the
+production call site still leaves the pointer nil.
+
+
+CLAIM 2 — "AcceptanceCriterion struct at internal/plan/sow.go:87 has no
+           VerifyFunc field (S-3 is not yet built)."
+
+VERDICT: REFUTED. S-3 IS built.
+
+Evidence:
+  - internal/plan/sow.go:87-119
+      87:  // AcceptanceCriterion is a verifiable gate condition ...
+      88:  type AcceptanceCriterion struct {
+      ...
+      118: VerifyFunc func(ctx context.Context) (passed bool, output string) `json:"-" yaml:"-"`
+  - Commit 4816edd `feat(plan): S-3 VerifyFunc on AcceptanceCriterion`
+    landed the field along with descent branch in
+    internal/plan/verification_descent.go:283 (comment "Populated by the
+    caller (sow_native.go) from its sowNativeConfig.") — the
+    short-circuit branch is live.
+  - Consumers already rely on it:
+      internal/executor/research.go (claim-gated AC builders)
+      internal/executor/browser.go  (fetch-and-match AC builders)
+      internal/executor/deploy.go   (health-probe AC builders)
+  - The WORK claim that S-3 is unbuilt is stale; shipped weeks ago
+    per git log.
+
+
+CLAIM 3 — "detectSmartDefaults() at cmd/stoke/main.go:5138 exists and is
+           the target for Task 9's smart-defaults hardening."
+
+VERDICT: FUNCTION EXISTS, WRONG LINE NUMBER.
+
+Evidence:
+  - cmd/stoke/main.go:5304 godoc:
+      "// detectSmartDefaults probes the local environment for the best default..."
+  - cmd/stoke/main.go:5313 declaration:
+      func detectSmartDefaults() SmartDefaults {
+  - Actual line is 5313, not 5138.
+  - Task 9 is descent-hardening items 3+4 (per-file repair cap + bootstrap
+    per descent cycle), NOT a detectSmartDefaults revamp.
+    Source: specs/reconciliation-report.md table row S-7/S-8 — "Task 9".
+    detectSmartDefaults() is instead a pre-existing probe that Task 12
+    (S-6 provider pool) sits in front of — see cmd/stoke/provider_pool.go:32
+    resolveSmartDefaultsWithPool, docs/provider-pool.md:3. Whoever wrote
+    the claim confused the target.
+
+
+CLAIM 4 — File sizes (lines)
+
+  File                                  Claimed   Actual   Verdict
+  internal/streamjson/emitter.go          187      335     WRONG (off by 148)
+  internal/trustplane/client.go           335      335     CORRECT
+  internal/trustplane/real.go             399      399     CORRECT
+  internal/hire/hire.go                   348      368     WRONG (off by 20)
+  internal/delegation/delegation.go       183      183     CORRECT
+  internal/wisdom/sqlite.go               142      467     WRONG (off by 325 —
+                                                           looks like claim
+                                                           refers to an older
+                                                           snapshot before
+                                                           S-9 memory-store work)
+
+Three out of six claimed sizes match; three are materially stale.
+
+
+CLAIM 5 — Per-task build status (Tasks 1-24). Full table below.
+
+
+-----------------------------------------------------------------------
+2. AGGREGATE REPO METRICS
+-----------------------------------------------------------------------
+
+Primary repo (excluding .claude/worktrees, external, vendor, .git):
+
+  Go source files (.go):   986
+  Test files (*_test.go):  393
+  Go LOC (raw, incl. comments/blank):  265,482
+  Internal packages:       139 (ls internal/ | wc -l)
+  cmd/stoke/main.go:       6,703 lines
+  cmd/stoke/sow_native.go: 6,272 lines
+
+(If worktree copies under .claude/worktrees/ are included, the naive
+counts balloon to 11,791 .go / 4,551 _test.go / 3.2M LOC because 12
+in-progress agent worktrees mirror the tree. Those are not production
+code; the numbers above are the canonical ones.)
+
+
+-----------------------------------------------------------------------
+3. TASK-BY-TASK STATUS — ALL 24 WORK-stoke ITEMS
+-----------------------------------------------------------------------
+Legend: LANDED (code + commit), PARTIAL (scaffolding, not fully wired),
+NOT LANDED (spec only, no code).
+
+| # | Claim in WORK file                                         | Current state | Evidence                                                                                           |
+|---|------------------------------------------------------------|---------------|----------------------------------------------------------------------------------------------------|
+| 1 | Track A: promptguard wired into 3 ingest paths             | LANDED        | commit 2b7830c; internal/workflow/workflow.go + internal/plan/feasibility.go + internal/convergence/judge.go; CHANGELOG.md §Prompt-injection hardening bullet 2 |
+| 2 | Track A: tool-output sanitization (agentloop)              | LANDED        | commit 9205194; internal/agentloop/sanitize.go (three-layer: size cap, chat-template scrub, promptguard annotation) |
+| 3 | Track A: honeypot.go wired into pre-end-turn gate          | LANDED        | commit 215f1b7; internal/critic/honeypot.go + agentloop.HoneypotCheckFn; 4 default rules (canary, md-image, chat-template leak, destructive-without-consent) |
+| 4 | Track A: websearch domain allowlist + body cap             | LANDED        | commit bf82c75; internal/websearch/websearch.go — empty allowlist = back-compat, default 100 KB body cap |
+| 5 | Track A: MCP sanitization audit                            | LANDED        | commit 3debf5e; docs/mcp-security.md + per-CallTool mcp-sanitization-audit: markers (docs-only deliverable per spec intent) |
+| 6 | Track A: red-team corpus                                   | LANDED        | commit 9cf2180; internal/redteam/corpus/ (OWASP LLM01, CL4R1T4S, SpAIware, Willison); 60 % detection threshold asserted in internal/redteam/corpus_test.go |
+| 7 | Track A: docs + CHANGELOG (prompt-injection)               | LANDED        | commit 864ef2d (labeled "Track A Task 25" in msg — same deliverable); docs/security/prompt-injection.md + CHANGELOG.md §Prompt-injection hardening |
+| 8 | S-4/S-5: anti-deception contract + pre-completion gate     | LANDED        | TRUTHFULNESS_CONTRACT and PRE_COMPLETION_GATE constants in cmd/stoke/sow_native.go; enforced by pre_end_turn check tested in internal/agentloop/pre_end_turn_test.go |
+| 9 | S-7/S-8: bootstrap + per-file repair cap (descent)         | LANDED        | FileRepairCounts map + MaxRepairsPerFile (default 3) in internal/plan/verification_descent.go; tested in verification_descent_cap_test.go |
+|10 | S-0: streamjson emitter threaded through sowNativeConfig   | PARTIAL       | StreamJSON *streamjson.TwoLane field declared at sow_native.go:567 + 6 `cfg.StreamJSON` consumers in sow_native_streamjson.go, BUT the production nativeCfg literal in main.go:2729 does NOT assign it. Only tests populate the field. Production still emits in no-op mode. |
+|11 | S-3: VerifyFunc on AcceptanceCriterion                     | LANDED        | internal/plan/sow.go:118 (see Claim 2 above); commit 4816edd |
+|12 | S-6: multi-provider pool (STOKE_PROVIDERS)                 | LANDED        | commits 88a249c + c0e711f; cmd/stoke/provider_pool.go; docs/provider-pool.md; sits in front of detectSmartDefaults() |
+|13 | S-1: TUI progress renderer                                 | LANDED        | commits d77ee69 + 0d92632 + 4376b4d; internal/tui/progress.go wired into the main event bus |
+|14 | S-11: local cost-dashboard TUI widget                      | NOT LANDED    | No cmd/stoke or internal/tui reference to CostDashboard; grep returns only spec files (reconciliation-report.md, operator-ux-memory.md, provider-pool.md). costtrack package still pre-dates the widget. |
+|15 | S-2: HITL soft-pass approval gate                          | PARTIAL       | SoftPassApprovalFunc field + enterprise branch live in internal/plan/verification_descent.go:392, 1122-1138; tested in verification_descent_softpass_test.go. `internal/hitl/` Service exists (230 lines). BUT sowNativeConfig.HITL field (line 573) is never assigned in the main nativeCfg literal — only internal/hire/ wires HITL. Descent hook works in tests and in hire flow; not plumbed through `stoke sow`/`stoke ship` yet. |
+|16 | S-9: memory store (FTS5 extension of wisdom)               | LANDED        | commits 0ec72f9 + 55a6857; internal/memory/ + internal/wisdom/sqlite.go (the spec-divergent, richer Part-D implementation — 467 lines; consolidation.go + tiers.go + contradiction.go companions) |
+|17 | S-10: hire verify-settle (delegation)                      | LANDED        | commits 0673fa7 + 733b1df; internal/hire/hire.go (368 lines) + internal/delegation/delegation.go (183 lines); HMAC + trust clamp + A2A card path |
+|18 | Event-log promotion (promote hub/bus.go as system)         | LANDED (divergent) | Task merged as "resume subcommand via event-log replay" — commit 49abed3; cmd/stoke/resume_cmd.go. No new internal/eventlog/ package; internal/bus/ WAL + internal/hub/ typed hub both remain. Per reconciliation-report §3 flag 3 the spec took reading (a) (complementary, not replacement). |
+|19 | Executor interface + router MVP                            | LANDED        | commits d79b3f1 + 20e57c2; internal/executor/executor.go (interface, EffortLevel, scaffold entries) + internal/router/router.go |
+|20 | Research executor (claim-gated)                            | LANDED        | commits 129a31e + df38d1b; internal/research/{research,fetch,store,verify}.go + internal/executor/research.go |
+|21 | Browser executor (fetch + verify) — part 1                 | LANDED (partial scope) | commit 9e3ab51 "Task 21 part 1"; internal/browser/browser.go + internal/executor/browser.go. Full spec calls for 4 agentloop tools + pool + auth predicate; current code is fetch+verify only. |
+|22 | Deploy executor (Fly.io MVP)                               | LANDED        | commit d4b11fb; internal/deploy/deploy.go + internal/executor/deploy.go; tests pass. Vercel/Cloudflare (deploy-phase2) intentionally deferred. |
+|23 | Delegate executor (A2A-backed)                             | PARTIAL       | delegation plumbing exists (hire.go, delegation.go, internal/a2a/{agent_card,httpserver,task}.go) and tests are green, but there is no DelegateExecutor struct satisfying executor.Executor in internal/executor/ — grep `DelegateExecutor` returns specs + scaffold.go only. The interface-satisfier that slots into router.Route has not landed. |
+|24 | Serve executor / hireable agent HTTP facade                | LANDED        | commit d9793f4; internal/agentserve/server.go (+ server_test.go). The `stoke serve` A2A endpoint referenced in delegation-a2a.md §7 is now the agentserve HTTP server. |
+
+Summary counts: 18 LANDED · 3 PARTIAL (10, 15, 23) · 1 LANDED-divergent (18) · 1 partial-scope (21) · 1 NOT LANDED (14).
+
+
+-----------------------------------------------------------------------
+4. ADDITIONAL QUESTIONS ANSWERED
+-----------------------------------------------------------------------
+
+Q: Is the Claude-pool + Codex-pool infrastructure built per
+   forge-spec-final.md?
+
+A: forge-spec-final.md DOES NOT EXIST in the stoke repo (grep/find
+   return zero hits under /home/eric/repos/stoke). Cannot verify
+   against that reference. What *is* built:
+
+   - BuildConfig.ClaudePoolDirs []string and CodexPoolDirs []string
+     (cmd/stoke/main.go:99-100).
+   - CLI flags:
+       --claude-pools <dirs> / --codex-pools <dirs>
+     (main.go:980-981, 3999, 4764-4765, usage block at 6474-6475).
+   - Per-pool directory sweep at main.go:151-165 (walks each dir,
+     loads session credentials).
+   - Round-robin pool manager in internal/pools/pools.go (657 lines +
+     271 test lines).
+   - shipCmd and sowCmd both thread pool dirs through to BuildConfig
+     (main.go:4754-4765; the same for sow path around the nativeCfg
+     build).
+   - Codex pool has safeEnvForCodexMode1 helper (internal/engine/env.go;
+     test env_test.go:90-98 asserts CODEX_HOME passthrough).
+
+   So multi-pool support is functional end-to-end, but I cannot match
+   this against a spec document that does not exist in-tree. If the
+   user has a forge-spec-final.md elsewhere, hand it over and I can
+   diff against it.
+
+Q: Is the `stoke ship` convergence loop real or spec-only?
+
+A: REAL. cmd/stoke/main.go:4621 (shipCmd) implements the loop at
+   main.go:4735-4739:
+
+       shipped := false
+       shipBlockedReason := "loop did not complete"
+       for round := 1; round <= *maxRounds; round++ {
+           ...
+       }
+
+   Per-round behaviour verified:
+     Step 1: runBuild(buildCfg) with pooled dirs (4754-4774).
+     Gate:   hard break if !buildReport.Success (4783-4788).
+     Step 2: load plan; pull ShipBlockers + CrossPhaseVerification
+             (4795-4797).
+     Step 3: reviewer pass (continues past the snippet I read; the
+             loop body runs through 4800+ to the `shipped = true`
+             exit).
+   Defaults: --max-rounds 5, --workers 2. The --dry-run branch
+   (4690-4698) prints the exact five-step description — confirms
+   the loop intent matches the documented contract.
+
+Q: Does HITL soft-pass approval (S-2) exist in code?
+
+A: YES, at the descent layer; NOT YET wired through sowNativeConfig
+   for `stoke sow` / `stoke ship`.
+
+   Code that exists today:
+     - internal/plan/verification_descent.go:383-392 — DescentConfig
+       field SoftPassApprovalFunc(ctx, ac, verdict) bool.
+     - internal/plan/verification_descent.go:1122-1138 — T8 gate
+       invokes approval func when non-nil; nil preserves
+       community-tier auto-grant (tested:
+       TestSoftPassApprovalFunc_NilPreservesLegacyBehavior).
+     - internal/plan/verification_descent_softpass_test.go — three
+       tests: Rejection, Approval, NilPreservesLegacy. All pass.
+     - internal/hitl/hitl.go (230 lines) — Service + Request + tests.
+     - internal/hire/hire.go — real consumer; wires HITL into
+       delegation settle path.
+     - sowNativeConfig has fields StreamJSON and HITL declared at
+       sow_native.go:567 + 573.
+
+   Gap: the main nativeCfg literal in cmd/stoke/main.go:2729 does
+   NOT populate HITL (same blind spot as StreamJSON / S-0). So the
+   enterprise-tier soft-pass path is reachable today only through
+   direct callers of DescentConfig.SoftPassApprovalFunc (hire.go,
+   tests) — not through the public `stoke sow` or `stoke ship` CLIs.
+
+   Recommendation for the next pass: add to the nativeCfg
+   construction in main.go the two missing assignments:
+     StreamJSON: streamEmitter.TwoLane(),   // wire S-0 end-to-end
+     HITL:       hitlSvc,                    // wire S-2 end-to-end
+   (one commit, ~6 lines, will flip both PARTIAL entries to LANDED).
+
+
+-----------------------------------------------------------------------
+5. THREE-ITEM SHORTLIST — WHAT'S ACTUALLY NOT DONE
+-----------------------------------------------------------------------
+
+1. Task 14 (S-11 cost dashboard TUI widget) — no implementation.
+2. Task 10 (S-0 emitter) + Task 15 (S-2 HITL) last-mile wiring —
+   field declared, consumer code written, CLI-level plumbing missing.
+   A single nativeCfg-literal edit unblocks both.
+3. Task 23 (Delegate executor) — supporting packages all exist
+   (delegation, hire, a2a), but no struct that implements
+   executor.Executor for the router.Route switch. Currently covered
+   by specs/delegation-a2a.md §Part 5 only.
+
+Everything else in Tasks 1-24 is in main and passing its own tests.
+
+-----------------------------------------------------------------------
+END OF REPORT

@@ -1,0 +1,5 @@
+mcp_servers:
+  - name: bad-timeout
+    transport: stdio
+    command: ./bin/server
+    timeout: forever

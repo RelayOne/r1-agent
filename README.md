@@ -180,6 +180,54 @@ internal/
 
 132 internal packages + 1 cmd + 9 bench = 142 packages. 55K lines source. 35K lines tests. 1,700+ test functions. 320+ Go files.
 
+## MCP servers
+
+Stoke can connect to Model Context Protocol (MCP) servers — GitHub, Linear, Slack, Postgres, or any custom server — and expose their tools to workers as `mcp_<server>_<tool>` calls.
+
+Configure in `stoke.policy.yaml`:
+
+```yaml
+mcp_servers:
+  - name: linear
+    transport: stdio
+    command: linear-mcp-server
+    auth_env: LINEAR_API_KEY
+    trust: untrusted
+    max_concurrent: 4
+  - name: github
+    transport: http
+    url: https://api.github.com/mcp
+    auth_env: GITHUB_TOKEN
+    trust: trusted
+    timeout: 30s
+  - name: docs
+    transport: sse
+    url: https://docs.example.com/mcp/events
+    trust: untrusted
+```
+
+Each server config supports `stdio` / `http` / `streamable-http` / `sse` transports, per-server trust label (`trusted` / `untrusted`), concurrency caps, and auth env vars. HTTP/HTTPS enforcement: non-localhost URLs must be `https://` unless the URL is `http://localhost:*` or `http://127.0.0.1:*`.
+
+CLI surface:
+
+```bash
+# List configured servers with their circuit state
+stoke mcp list-servers
+
+# List every tool across reachable servers (or one server with --server)
+stoke mcp list-tools --json
+
+# Initialize + list-tools + single trivial call against one server
+stoke mcp test linear
+
+# Invoke a specific tool with JSON arguments
+stoke mcp call linear create_issue --args-json '{"title":"demo"}'
+```
+
+Trust gating: `untrusted` workers can only invoke tools from `untrusted` servers; `trusted` workers see everything. The MCP gate pairs with a per-server circuit breaker (closed → open → half-open with exponential cooldown) and a redactor that registers every `auth_env` value so tokens never leak into log output.
+
+`STOKE_MCP_STRICT=1` upgrades MCP ghost-call detection (a worker claiming to have called a tool without a matching `<mcp_result>` trace) from advisory-logging to a hard failure.
+
 ## Docs
 
 - [Operator Guide](docs/operator-guide.md) -- Mode 1 vs 2, pool setup, macOS caveats, troubleshooting

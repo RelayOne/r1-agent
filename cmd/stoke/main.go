@@ -19,6 +19,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-isatty"
 
 	"github.com/ericmacdougall/stoke/internal/app"
 	"github.com/ericmacdougall/stoke/internal/boulder"
@@ -38,6 +39,7 @@ import (
 	envssh "github.com/ericmacdougall/stoke/internal/env/ssh"
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/flowtrack"
+	"github.com/ericmacdougall/stoke/internal/hitl"
 	"github.com/ericmacdougall/stoke/internal/hooks"
 	"github.com/ericmacdougall/stoke/internal/hub"
 	hubbuiltin "github.com/ericmacdougall/stoke/internal/hub/builtin"
@@ -291,6 +293,17 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 
 	// Unified event bus: shared across all tasks in this build session.
 	eventBus := hub.New()
+
+	// S-1 TUI progress renderer. Paints a live dashboard on stderr
+	// when the operator runs on an interactive terminal. Non-TTY
+	// runs (CI, redirected stderr, logger pipelines) get suppressed
+	// so the structured logs are the only output. In --output
+	// stream-json mode the NDJSON still goes to stdout; the renderer
+	// coexists on stderr.
+	if isatty.IsTerminal(os.Stderr.Fd()) && os.Getenv("STOKE_NO_TUI") != "1" {
+		progressRenderer := tui.New(os.Stderr, true, 0)
+		progressRenderer.Subscribe(eventBus)
+	}
 
 	// Flow tracking: infer development phase from action sequences.
 	flowTracker := flowtrack.NewTracker(flowtrack.Config{})
@@ -629,10 +642,17 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "--one-shot", "one-shot":
+		// CloudSwarm hero-skill bridge (spec §5.6.1). Dispatch a
+		// single R1 reasoning verb (decompose / verify / critique),
+		// read a JSON payload from --input (or stdin), write a JSON
+		// response to stdout, exit. Scaffold today; real impl lands
+		// when the R1 plan pipeline is lifted into one-shot mode.
+		os.Exit(runOneShotCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "tui", "--tui", "shell":
 		launchShell(os.Args[2:])
 	case "run":
-		runCmd(os.Args[2:])
+		runCmdDispatch(os.Args[2:])
 	case "build":
 		buildCmd(os.Args[2:])
 	case "plan":
@@ -645,7 +665,25 @@ func main() {
 		inspectCmd(os.Args[2:])
 	case "watch":
 		watchCmd(os.Args[2:])
-	case "status":
+	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
+		os.Exit(runCtlCmd(os.Args[1], os.Args[2:], os.Stdout, os.Stderr))
+	case "events":
+		// OPSUX-events: thin read-only operator surface for .stoke/events.db.
+		os.Exit(runEventsCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "tasks":
+		// OPSUX-tail: list tasks grouped from the eventlog.
+		os.Exit(runTasksCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "logs":
+		// OPSUX-tail: tail stream.jsonl (or eventlog fallback).
+		os.Exit(runLogsCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "cost":
+		// OPSUX-tail: aggregate cost_usd across eventlog events.
+		os.Exit(runCostCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "eventlog":
+		// EL-CLI: hash-chain verify + session/mission/loop listing
+		// over .stoke/events.db (spec event-log-proper.md §21-35).
+		eventlogCmd(os.Args[2:])
+	case "plan-status":
 		statusCmd(os.Args[2:])
 	case "pool":
 		poolCmd(os.Args[2:])
@@ -679,10 +717,21 @@ func main() {
 		removePoolCmd(os.Args[2:])
 	case "sow":
 		sowCmd(os.Args[2:])
+	case "task":
+		taskCmd(os.Args[2:])
+	case "deploy":
+		deployCmd(os.Args[2:])
 	case "mission":
 		missionCmd(os.Args[2:])
 	case "serve":
 		serveCmd(os.Args[2:])
+	case "verify":
+		// work-stoke T21: HTTP wrapper around plan.VerificationDescent.
+		// Invoked as `stoke verify --serve [--addr :9944]`; used by
+		// Truecom's LlmScreening runner.
+		verifyCmd(os.Args[2:])
+	case "mcp":
+		mcpCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
 	case "mcp-serve-stoke":
@@ -691,6 +740,22 @@ func main() {
 		initCmd(os.Args[2:])
 	case "task-stats", "stats":
 		taskStatsCmd(os.Args[2:])
+	case "research":
+		researchCmd(os.Args[2:])
+	case "browse":
+		browseCmd(os.Args[2:])
+	case "agent-serve":
+		agentServeCmd(os.Args[2:])
+	case "plan-resume":
+		resumeCmd(os.Args[2:])
+	case "policy":
+		policyCmd(os.Args[2:])
+	case "export":
+		// work-stoke T16: .tracebundle producer. --format tracebundle
+		// is today the only supported format; content-addressed
+		// filenames embed the Merkle root so two exports can never
+		// alias on disk.
+		exportCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -827,9 +892,16 @@ func runCmd(args []string) {
 	nativeAPIKey := fs.String("native-api-key", "", "Anthropic API key for native runner")
 	nativeModel := fs.String("native-model", "claude-sonnet-4-6", "Model for native runner")
 	nativeBaseURL := fs.String("native-base-url", "", "Base URL for native runner (e.g. http://localhost:8000 for LiteLLM)")
+	// Verbose cost dashboard: TASK 3 (work-stoke). When set, a live
+	// CostDashboard widget subscribes to the shared hub.Bus and renders
+	// a per-model cost table to stderr, coexisting with stdout output.
+	verbose := fs.Bool("v", false, "Verbose TUI: render a live per-model cost dashboard to stderr")
+	verboseLong := fs.Bool("verbose", false, "Alias for -v")
 	// No wall-clock timeout: supervisor (boulder) monitors liveness and restarts
 	// genuinely stuck workers. Use Ctrl-C to abort.
 	fs.Parse(args)
+
+	verboseEnabled := *verbose || *verboseLong
 
 	if strings.TrimSpace(*task) == "" {
 		fmt.Fprintln(os.Stderr, "--task is required")
@@ -842,6 +914,13 @@ func runCmd(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// CDC-15: stand up the operator-control socket so `stoke status /
+	// approve / pause / resume / inject / takeover` can target this
+	// session. Failure to bind is non-fatal.
+	if ctlSrv, _ := startSessionCtlServer("run", absRepo); ctlSrv != nil {
+		defer ctlSrv.Close()
+	}
 
 	// Auto-detect commands
 	detected := config.DetectCommands(absRepo)
@@ -880,6 +959,29 @@ func runCmd(args []string) {
 	// enabled so the task is monitored for liveness instead of timed out.
 	runBoulder := boulder.New(filepath.Join(absRepo, ".stoke", "boulder"), boulder.DefaultConfig())
 
+	// Shared hub.Bus for the run lifecycle. Both the orchestrator and
+	// the optional CostDashboard subscribe to it so they see the same
+	// hub.EventModelPostCall events (TASK 3).
+	runBus := newEventBus()
+
+	// Optional verbose cost dashboard (spec work-stoke TASK 3). Activated
+	// by -v / --verbose. Writes to stderr so it coexists with any
+	// stdout-only output modes.
+	var costDash *tui.CostDashboard
+	var dashCancel context.CancelFunc
+	if verboseEnabled {
+		costDash = tui.NewCostDashboard(runBus, os.Stderr)
+		var dashCtx context.Context
+		dashCtx, dashCancel = context.WithCancel(context.Background())
+		costDash.Start(dashCtx)
+		defer func() {
+			// Stop the ticker (prints Final() once) then emit the
+			// session total on a fresh line per AC #4.
+			dashCancel()
+			fmt.Fprintf(os.Stderr, "Total: $%0.2f\n", costDash.Snapshot().Total)
+		}()
+	}
+
 	cfg := app.RunConfig{
 		RepoRoot:        absRepo,
 		PolicyPath:      *policy,
@@ -904,7 +1006,7 @@ func runCmd(args []string) {
 		NativeAPIKey:    *nativeAPIKey,
 		NativeModel:     *nativeModel,
 		NativeBaseURL:   *nativeBaseURL,
-		EventBus:        newEventBus(),
+		EventBus:        runBus,
 		Recorder:        replay.NewRecorder("run-"+strconv.FormatInt(time.Now().UnixMilli(), 10), "run-task"),
 		OnEvent: func(ev stream.Event) {
 			ui.Event("task", ev)
@@ -1359,6 +1461,52 @@ func newProviderForURL(apiKey, url, repoRoot string) provider.Provider {
 	return provider.NewAnthropicProvider(apiKey, url)
 }
 
+// openStreamFile creates parent dirs and opens the r1-server stream
+// file for append. Used by r1-server (spec RS-1) to tail live NDJSON
+// events independently of stdout. Errors are returned, not logged —
+// caller decides whether to warn or swallow.
+func openStreamFile(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+}
+
+// ensureR1ServerRunning is the RS-5 auto-launch helper. If r1-server
+// is already healthy on localhost:3948, return immediately. Else
+// look up the binary on PATH and spawn it detached. If the binary
+// is absent, return silently — r1-server is optional. Disabled
+// entirely by STOKE_NO_R1_SERVER=1.
+func ensureR1ServerRunning() {
+	if os.Getenv("STOKE_NO_R1_SERVER") == "1" {
+		return
+	}
+	// Fast health check: if r1-server answers, do nothing.
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	if resp, err := client.Get("http://localhost:3948/api/health"); err == nil {
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return
+		}
+	}
+	bin, err := exec.LookPath("r1-server")
+	if err != nil {
+		return // not installed — zero-dep fallback
+	}
+	cmd := exec.Command(bin)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Stdin = nil
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	// Detach: don't Wait — the process is now independent. Sleep a
+	// hair so the subsequent health check has time to come up for
+	// downstream operations that hit it.
+	time.Sleep(500 * time.Millisecond)
+}
+
 func sowCmd(args []string) {
 	fs := flag.NewFlagSet("sow", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Git repository root")
@@ -1463,7 +1611,28 @@ func sowCmd(args []string) {
 	listCheckpoints := fs.Bool("list-checkpoints", false, "Print the checkpoint timeline and exit")
 	exportSOW := fs.String("export-sow", "", "After planning completes, export the structured SOW JSON to this file and exit. Pass the exported file back via --file on future runs to skip the entire 30-min planning phase.")
 	deepPlan := fs.Bool("deep-plan", false, "[EXPERIMENTAL — often degrades plan quality] Run full CTO approval + refine loop during planning (~30 min instead of ~5 min). Produces higher-fidelity plans but 6x slower. Default is fast planning — the execution-time quality gates (AC checks, content judge, repair loops) handle what refine would have caught.")
+	// work-stoke T10 (specs/retention-policies.md): override the
+	// per-session retention policy so every operator-configurable
+	// surface is pinned to retain_forever. Useful for audit / compliance
+	// runs where the full memory + stream + checkpoint trail must be
+	// preserved regardless of the default policy's TTLs. Stored via
+	// setRetentionPolicy (retention_policy.go) for downstream consumption
+	// by the retention enforcement hooks.
+	retentionPermanent := fs.Bool("retention-permanent", false, "Override the retention policy for this run so every surface is pinned to retain_forever. Useful for audit runs where the full memory + stream + checkpoint trail must be preserved.")
+	// CS-4 (work-stoke-alignment): preload the memory bus from a JSON
+	// snapshot before the main SOW loop. CloudSwarm's supervisor uses
+	// this to hand back per-task memory across sessions. Empty path =
+	// no preload. See cmd/stoke/memory_import.go for the snapshot
+	// schema.
+	importMemoryPath := fs.String("import-memory", "", "path to JSON memory snapshot to preload into the memory bus before the SOW loop starts")
 	fs.Parse(args)
+
+	// work-stoke T10: stash the per-run retention policy in the
+	// package-level register so the retention enforcement hooks read
+	// a single source of truth. Default is retention.Defaults();
+	// --retention-permanent flips every operator-configurable surface
+	// to RetainForever.
+	setRetentionPolicy(buildRetentionPolicy(*retentionPermanent))
 
 	// S-U-020: stream-json emitter. When --output-format=stream-json,
 	// subsequent stoke banners redirect to stderr and NDJSON events
@@ -1474,6 +1643,44 @@ func sowCmd(args []string) {
 	// to stderr anyway) produces a parseable terminal record for
 	// Claude-Code-compatible consumers.
 	streamEmitter := streamjson.New(os.Stdout, *outputFormat == "stream-json")
+
+	// CS-3 (work-stoke-alignment): bridge ledger.WriteNode + plan
+	// Node.SetState into the streamjson observability lane as
+	// stoke.ledger.appended / stoke.plan.node_updated events so
+	// CloudSwarm's workspace pane renders every ledger + plan tick
+	// in real time. Both hooks are global (atomic.Value under the
+	// hood) — the first stoke process to call them wins; sow/chat/run
+	// all share the same writer.
+	ledger.SetLedgerAppendHook(func(ev ledger.LedgerAppendEvent) {
+		if !streamEmitter.Enabled() {
+			return
+		}
+		streamEmitter.EmitSystem("stoke.ledger.appended", map[string]any{
+			"node_id":     ev.NodeID,
+			"type":        ev.Type,
+			"parent_hash": ev.ParentHash,
+		})
+	})
+	plan.SetStatusChangeHook(func(ev plan.StatusChangeEvent) {
+		if !streamEmitter.Enabled() {
+			return
+		}
+		streamEmitter.EmitSystem("stoke.plan.node_updated", map[string]any{
+			"node_id": ev.NodeID,
+			"status":  ev.Status,
+			"title":   ev.Title,
+		})
+	})
+
+	// S-0/S-2 (work-stoke T1): TwoLane emitter + HITL service wired into
+	// the sow-native config below. Bound to the real stdout BEFORE the
+	// redirect on the next branch so descent.tier / session.start /
+	// hitl_required lines land on the stream, not on stderr. Community-
+	// tier default: 1h HITL wait ceiling (matches run_cmd.go:146). The
+	// legacy nil-guards in sow_native_streamjson.go keep tests using
+	// zero-value cfg happy even though production now always sets these.
+	sowStreamJSON := streamjson.NewTwoLane(os.Stdout, *outputFormat == "stream-json")
+	sowHITL := hitl.New(sowStreamJSON, os.Stdin, time.Hour)
 	streamResult := &streamjsonResult{subtype: "success", cost: 0, turns: 0, text: "ok"}
 	if streamEmitter.Enabled() {
 		os.Stdout = os.Stderr
@@ -1504,6 +1711,51 @@ func sowCmd(args []string) {
 		sowFatal(streamEmitter, streamResult, "resolve repo: %v", err)
 	}
 	ensureGitRepoOrFatal(absRepo)
+
+	// r1-server signature + stream-to-file. RS-1 of spec r1-server.md:
+	// every running Stoke instance writes <repo>/.stoke/r1.session.json
+	// so r1-server can discover it, and tees NDJSON events to
+	// <repo>/.stoke/stream.jsonl so r1-server can tail them. Both are
+	// best-effort — failure to write the signature is logged to stderr
+	// but does not abort Stoke.
+	streamFilePath := filepath.Join(absRepo, ".stoke", "stream.jsonl")
+	ledgerDirPath := filepath.Join(absRepo, ".stoke", "ledger")
+	checkpointFilePath := filepath.Join(absRepo, ".stoke", "checkpoints", "timeline.jsonl")
+	busWALPath := filepath.Join(absRepo, ".stoke", "bus", "events.log")
+	if f, ferr := openStreamFile(streamFilePath); ferr == nil {
+		streamEmitter.AddWriter(f)
+		// Ensure events are flushed at exit; Close is a no-op on the
+		// underlying os.File so this is safe alongside explicit defers.
+		defer f.Close()
+	}
+	// RS-5: best-effort auto-launch of r1-server if not already running.
+	// Silent on missing binary or launch failure — r1-server is optional.
+	ensureR1ServerRunning()
+	sowName := ""
+	if sowFile != nil {
+		sowName = filepath.Base(*sowFile)
+	}
+	r1Sig, r1SigErr := session.WriteSignature(absRepo, session.SignatureConfig{
+		Mode:           "sow",
+		SowName:        sowName,
+		Model:          *nativeModel,
+		StreamFile:     streamFilePath,
+		LedgerDir:      ledgerDirPath,
+		CheckpointFile: checkpointFilePath,
+		BusWAL:         busWALPath,
+	})
+	if r1SigErr != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ r1-server signature: %v (continuing without it)\n", r1SigErr)
+	}
+	if r1Sig != nil {
+		defer func() {
+			status := "completed"
+			if streamResult != nil && strings.HasPrefix(streamResult.subtype, "error") {
+				status = "failed"
+			}
+			_ = r1Sig.Close(status)
+		}()
+	}
 
 	// --workflow=serial — collapse all the parallelism/isolation knobs
 	// to the simplest shape. This matches the simple-loop convergence
@@ -1538,13 +1790,29 @@ func sowCmd(args []string) {
 		os.Exit(0)
 	}
 
-	// --resume-from: restore state from a specific checkpoint.
+	// --resume-from: restore state from a specific checkpoint OR
+	// replay an eventlog session (spec event-log-proper.md item 24).
+	// Discriminator: values with the "CP-" prefix route to the
+	// checkpoint timeline; everything else is treated as a session
+	// ID and resolved against .stoke/events.db via DecideResume.
 	var resumeState *checkpoint.ResumeState
 	if *resumeFrom != "" {
 		if *fresh {
 			fmt.Fprintln(os.Stderr, "--resume-from is incompatible with --fresh")
 			os.Exit(2)
 		}
+		if !strings.HasPrefix(*resumeFrom, "CP-") {
+			mode, taskID, err := decideEventlogResume(absRepo, *resumeFrom)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "resume-from: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("📌 resuming session %s: mode=%s task=%s\n", *resumeFrom, mode, taskID)
+			*resume = true
+			*resumeFrom = ""
+		}
+	}
+	if *resumeFrom != "" {
 		rs, err := checkpoint.RestoreFromCheckpoint(absRepo, *resumeFrom)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "resume-from: %v\n", err)
@@ -2611,15 +2879,58 @@ func sowCmd(args []string) {
 		)
 		defer runtrackStop()
 
+		// CS-4 (work-stoke-alignment): open the persistent memory bus
+		// at <repo>/.stoke/memory.db so (a) --import-memory can
+		// preload snapshot rows before the SOW loop, and (b)
+		// emitSessionEnd can compute the session-end memory delta.
+		// Both paths are best-effort: failure to open the bus emits a
+		// warning on stderr and continues with a nil bus handle (the
+		// downstream consumers are nil-safe). Close happens on the
+		// deferred stack after the SOW loop returns.
+		memBusPath := filepath.Join(absRepo, ".stoke", "memory.db")
+		sowMemBus, sowMemDB, memBusErr := openMemoryBus(memBusPath, true)
+		if memBusErr != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ memory bus: %v (continuing without it)\n", memBusErr)
+		} else {
+			defer func() {
+				if sowMemBus != nil {
+					_ = sowMemBus.Close()
+				}
+				if sowMemDB != nil {
+					_ = sowMemDB.Close()
+				}
+			}()
+		}
+		if *importMemoryPath != "" {
+			if sowMemBus == nil {
+				sowFatal(streamEmitter, streamResult, "--import-memory: memory bus unavailable (%v)", memBusErr)
+			}
+			importCount, importErr := importMemoryFromFile(ctx, sowMemBus, *importMemoryPath)
+			if importErr != nil {
+				sowFatal(streamEmitter, streamResult, "--import-memory: %v", importErr)
+			}
+			fmt.Printf("  🧠 imported %d memory row(s) from %s\n", importCount, *importMemoryPath)
+		}
+
 		nativeCfg := sowNativeConfig{
 			RepoRoot:          absRepo,
 			PerTaskWorktree:   *perTaskWorktree,
 			Runner:            runner,
 			EventBus:          sowBus,
+			Bus:               sowMemBus,
 			MaxTurns:          100,
 			MaxRepairAttempts: *maxRepairAttempts,
 			Model:             nativeModelName,
 			SOWName:           sow.Name,
+			// S-0 / S-2 (work-stoke T1): wire CloudSwarm NDJSON emitter +
+			// HITL service into production. Constructed at the top of
+			// sowCmd (see streamEmitter block) so they're bound to the
+			// real stdout before it's redirected to stderr for human
+			// log output in stream-json mode. Both fields are nil-safe
+			// on every consumer site (sow_native_streamjson.go +
+			// descent_bridge_hitl.go).
+			StreamJSON: sowStreamJSON,
+			HITL:       sowHITL,
 			Timeline:          sowTimeline,
 			ResumeState:       resumeState,
 			// H-91d: correlation IDs stamped into every worker JSONL
@@ -4535,6 +4846,30 @@ func shipCmd(args []string) {
 	}
 	ensureGitRepoOrFatal(absRepo)
 
+	// CDC-15: stand up the operator-control socket so `stoke status /
+	// approve / pause / resume / inject / takeover` can target this
+	// session. Failure to bind is non-fatal.
+	if ctlSrv, _ := startSessionCtlServer("ship", absRepo); ctlSrv != nil {
+		defer ctlSrv.Close()
+	}
+
+	// RS-1 + RS-5: r1-server signature + optional auto-launch.
+	ensureR1ServerRunning()
+	shipSig, shipSigErr := session.WriteSignature(absRepo, session.SignatureConfig{
+		Mode:           "ship",
+		SowName:        *task,
+		StreamFile:     filepath.Join(absRepo, ".stoke", "stream.jsonl"),
+		LedgerDir:      filepath.Join(absRepo, ".stoke", "ledger"),
+		CheckpointFile: filepath.Join(absRepo, ".stoke", "checkpoints", "timeline.jsonl"),
+		BusWAL:         filepath.Join(absRepo, ".stoke", "bus", "events.log"),
+	})
+	if shipSigErr != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ r1-server signature: %v (continuing without it)\n", shipSigErr)
+	}
+	if shipSig != nil {
+		defer func() { _ = shipSig.Close("completed") }()
+	}
+
 	detected := config.DetectCommands(absRepo)
 	if *buildC == "" {
 		*buildC = detected.Build
@@ -5310,16 +5645,28 @@ func readPastedSOW(scanner *bufio.Scanner) string {
 func launchREPL() {
 	absRepo, _ := filepath.Abs(".")
 
+	// CDC-15: stand up the operator-control socket so `stoke status /
+	// approve / pause / resume / inject / takeover` can target this
+	// chat session. Failure to bind is non-fatal.
+	if ctlSrv, _ := startSessionCtlServer("chat", absRepo); ctlSrv != nil {
+		defer ctlSrv.Close()
+	}
+
 	// Smart defaults: detect LiteLLM, claude/codex binaries, API keys.
 	// User explicitly asked for "use all smart settings / use local litellm /
 	// use native executor" to be the zero-flag default.
-	defaults := detectSmartDefaults()
+	//
+	// S-6: resolveSmartDefaultsWithPool first checks STOKE_PROVIDERS —
+	// when set, the pool overrides SmartDefaults (worker-role entry
+	// fills the struct; reasoning/reviewer are served by smartPool
+	// at per-role sites). When unset, this is exactly detectSmartDefaults.
+	defaults := resolveSmartDefaultsWithPool()
 
 	// Stand up the chat session so free text becomes a real
 	// conversation instead of a /run dispatch. If no provider is
 	// available, chatSession is nil and the OnChat handler falls
 	// back to the legacy "run the text as a task" path with a note.
-	chatSession, chatErr := buildChatSession(defaults)
+	chatSession, chatErr := buildChatSession(defaults, absRepo)
 	dispatcher := &stokeDispatcher{absRepo: absRepo, defaults: defaults}
 
 	// Banner
@@ -5610,8 +5957,18 @@ func launchShell(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 
-	defaults := detectSmartDefaults()
-	chatSession, chatErr := buildChatSession(defaults)
+	// CDC-15: stand up the operator-control socket so `stoke status /
+	// approve / pause / resume / inject / takeover` can target this
+	// chat session. Failure to bind is non-fatal.
+	if ctlSrv, _ := startSessionCtlServer("chat", absRepo); ctlSrv != nil {
+		defer ctlSrv.Close()
+	}
+
+	// S-6: pool-first resolution. STOKE_PROVIDERS overrides the
+	// single-provider SmartDefaults path when set; unset env
+	// preserves pre-S-6 detectSmartDefaults behavior verbatim.
+	defaults := resolveSmartDefaultsWithPool()
+	chatSession, chatErr := buildChatSession(defaults, absRepo)
 	cfg := tui.ShellConfig{
 		RepoRoot:   absRepo,
 		Version:    version,
@@ -6305,14 +6662,28 @@ COMMANDS:
   doctor          Check tool dependencies
   version         Print version
 
-RUN FLAGS:
-  --task <prompt>      Task description (required)
+RUN FLAGS (legacy single-task mode):
+  --task <prompt>      Task description (required in legacy mode)
   --task-type <type>   Override inferred type
   --repo <path>        Repository root (default: .)
   --dry-run            Show commands without executing
   --build-cmd <cmd>    Build command (auto-detected)
   --test-cmd <cmd>     Test command (auto-detected)
   --lint-cmd <cmd>     Lint command (auto-detected)
+
+RUN FLAGS (CloudSwarm stream-json mode — activated by --output):
+  --output stream-json        Emit Claude-Code-compatible NDJSON events
+                              on stdout. Required to enter CloudSwarm mode.
+  --repo <url>                Repo URL (optional; clone to tmp before dispatch)
+  --branch <name>             Branch name to check out
+  --model <name>              Override primary model
+  --sow <path>                Path to SOW file; switches to SOW mode
+  --hitl-timeout <duration>   HITL wait override (default 1h community, 15m enterprise)
+  --governance-tier <tier>    community (default) | enterprise (HITL-gated soft-pass)
+  TASK_SPEC                   Positional free-text task (used when --sow absent)
+
+  Exit codes (stream-json mode): 0=pass, 1=AC failed, 2=budget/usage,
+  3=operator abort, 130=SIGINT, 143=SIGTERM.
 
 BUILD FLAGS:
   --plan <path>        Plan file (default: stoke-plan.json)

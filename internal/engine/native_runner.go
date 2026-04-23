@@ -12,11 +12,26 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/agentloop"
 	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/ericmacdougall/stoke/internal/mcp"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
 	"github.com/ericmacdougall/stoke/internal/stream"
 	"github.com/ericmacdougall/stoke/internal/tools"
 )
+
+// MCPRegistry is the minimal surface the native runner needs from
+// mcp.Registry to enumerate worker-visible tools and dispatch calls.
+// *mcp.Registry satisfies this interface directly; tests inject a
+// fake to avoid standing up transports or subprocesses.
+//
+// Kept intentionally narrow: only the two methods the wiring uses.
+// If a future caller needs more (Health, Close, etc.) they should
+// call the concrete type — this interface is the engine-side seam
+// for test injection only.
+type MCPRegistry interface {
+	AllToolsForTrust(ctx context.Context, workerTrust string) ([]mcp.Tool, error)
+	Call(ctx context.Context, fullName string, workerTrust string, args []byte) (mcp.ToolResult, error)
+}
 
 // NativeRunner implements CommandRunner using Stoke's own agentloop and
 // the Anthropic Messages API directly. No Claude Code CLI needed.
@@ -29,6 +44,14 @@ type NativeRunner struct {
 	// constructing an AnthropicProvider from apiKey/BaseURL.
 	// Used for claude-code:// mode.
 	ProviderOverride provider.Provider
+
+	// MCPRegistry, when non-nil, supplies MCP-backed tools to every
+	// dispatch that doesn't override via RunSpec.MCPRegistry. Per-run
+	// overrides take precedence so callers can scope tools per worker
+	// without rebuilding the runner. When both this field and the
+	// RunSpec field are nil the MCP integration is a no-op (backward
+	// compat with every existing call site).
+	MCPRegistry MCPRegistry
 }
 
 // NewNativeRunner creates a native runner using the Anthropic API directly.
@@ -116,6 +139,87 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		extraHandlers[et.Def.Name] = et.Handler
 	}
 
+	// Merge MCP-registry-backed tools into the advertised tool list.
+	// Resolution order: RunSpec.MCPRegistry (per-dispatch) wins over
+	// NativeRunner.MCPRegistry (process-wide). When neither is set the
+	// whole path is a no-op — no registry calls, no tool advertisements,
+	// no handler wiring — preserving backward compatibility with every
+	// existing NewNativeRunner caller.
+	//
+	// Each mcp.Tool becomes an ExtraTool whose handler routes back
+	// through the same registry's Call(ctx, fullName, workerTrust, args),
+	// wraps the resulting ToolResult in <mcp_result …>…</mcp_result>
+	// framing so the model can visually distinguish MCP output from
+	// native tool output, and propagates result.IsError as a Go error
+	// so the agentloop marks the tool_result with is_error=true (see
+	// agentloop/loop.go:533-540 for the translation).
+	//
+	// ListTools failure is NOT fatal: we log and proceed with an empty
+	// MCP tool set so a broken server doesn't take down the worker.
+	// The registry's internal circuit breaker will have tripped the
+	// offending servers open, so subsequent Call dispatches on any
+	// model-fabricated mcp_* names (should one leak through) short-
+	// circuit without transport load.
+	reg := spec.MCPRegistry
+	if reg == nil {
+		reg = n.MCPRegistry
+	}
+	if reg != nil {
+		workerTrust := spec.WorkerTrust
+		if workerTrust == "" {
+			workerTrust = "untrusted"
+		}
+		mcpTools, listErr := reg.AllToolsForTrust(ctx, workerTrust)
+		if listErr != nil {
+			// Non-fatal: log and fall through without MCP tools.
+			fmt.Fprintf(os.Stderr, "mcp: AllToolsForTrust(%s) failed: %v\n", workerTrust, listErr)
+		}
+		for _, t := range mcpTools {
+			server := t.ServerName
+			toolName := t.Definition.Name
+			if server == "" || toolName == "" {
+				continue
+			}
+			fullName := "mcp_" + server + "_" + toolName
+			schema := t.Definition.InputSchema
+			if len(schema) == 0 {
+				// agentloop / Anthropic require a non-empty JSON Schema;
+				// fall back to a permissive object schema so an MCP
+				// server that under-specifies its tool doesn't fail
+				// the whole dispatch.
+				schema = json.RawMessage(`{"type":"object"}`)
+			}
+			toolDefs = append(toolDefs, provider.ToolDef{
+				Name:        fullName,
+				Description: t.Definition.Description,
+				InputSchema: schema,
+			})
+			// Bind loop-vars for the closure.
+			srvLocal := server
+			toolLocal := toolName
+			fullLocal := fullName
+			extraHandlers[fullName] = func(ctx context.Context, input json.RawMessage) (string, error) {
+				result, err := reg.Call(ctx, fullLocal, workerTrust, []byte(input))
+				callID := extractCallID(result)
+				body := renderMCPContent(result)
+				wrapped := fmt.Sprintf(`<mcp_result server=%q tool=%q call_id=%q>%s</mcp_result>`, srvLocal, toolLocal, callID, body)
+				if err != nil {
+					// Transport / policy / circuit error: surface via Go
+					// error so the agentloop sets is_error=true. The
+					// wrapped tag is included in the error message so a
+					// reviewer can still see the server / tool / call_id.
+					return "", fmt.Errorf("%s: %w", wrapped, err)
+				}
+				if result.IsError {
+					// Server-declared error result: same disposition,
+					// wrapped payload carries the server's message.
+					return "", fmt.Errorf("%s", wrapped)
+				}
+				return wrapped, nil
+			}
+		}
+	}
+
 	// Build allowed tool set for handler enforcement.
 	allowedTools := make(map[string]bool, len(toolDefs))
 	for _, td := range toolDefs {
@@ -171,6 +275,17 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		if !allowedTools[name] {
 			return "", fmt.Errorf("tool %q not allowed in phase %q (read_only=%v)", name, spec.Phase.Name, spec.Phase.ReadOnly)
+		}
+		// POL-7: fail-closed policy gate. For bash / file_read /
+		// file_write / mcp_* tool names, consult the policy backend
+		// BEFORE invoking the underlying side effect. A Deny verdict,
+		// a client-level error, or an unavailable backend all route
+		// through the same error-return path so the agentloop marks
+		// the tool_result with is_error=true. Non-gated tools (grep,
+		// glob, env_*, etc.) short-circuit with Allowed=true so the
+		// hook is a strict subset rather than a blanket gate.
+		if gate := gateToolCall(ctx, name, input); !gate.Allowed {
+			return "", gate.Err
 		}
 		start := time.Now()
 		var result string
@@ -247,32 +362,57 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	//      projects, etc.).
 	if spec.WorktreeDir != "" {
 		buildChecked := false
-		cfg.PreEndTurnCheckFn = func(_ []agentloop.Message) string {
-			if buildChecked {
-				return ""
-			}
-			buildChecked = true
-			if msg := runEcosystemGate(ctx, spec.WorktreeDir); msg != "" {
-				return msg
-			}
-			// No ecosystem match or no errors — fall back to
-			// the bash-command build gate for cases where the
-			// ecosystem registry doesn't cover the repo shape.
-			buildCmd := detectBuildCommand(spec.WorktreeDir)
-			if buildCmd == "" {
-				return ""
-			}
-			cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd)
-			cmd.Dir = spec.WorktreeDir
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				output := string(out)
-				if len(output) > 4000 {
-					output = output[len(output)-4000:]
+		extraCheck := spec.ExtraPreEndTurnCheck
+		cfg.PreEndTurnCheckFn = func(messages []agentloop.Message) string {
+			// Run build gate once per dispatch so repeated retries
+			// don't hammer tsc/go-build.
+			if !buildChecked {
+				buildChecked = true
+				if msg := runEcosystemGate(ctx, spec.WorktreeDir); msg != "" {
+					return msg
 				}
-				return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
+				// No ecosystem match or no errors — fall back to
+				// the bash-command build gate for cases where the
+				// ecosystem registry doesn't cover the repo shape.
+				if buildCmd := detectBuildCommand(spec.WorktreeDir); buildCmd != "" {
+					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd)
+					cmd.Dir = spec.WorktreeDir
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						output := string(out)
+						if len(output) > 4000 {
+							output = output[len(output)-4000:]
+						}
+						return fmt.Sprintf("Build command failed: %s\n\nErrors:\n%s", buildCmd, output)
+					}
+				}
+			}
+			// Chain to caller-provided check (descent-hardening
+			// spec-1 item 3: pre_completion_gate parser). Only
+			// runs AFTER build passes, because a broken build is
+			// a superset signal that overrides any gate text.
+			if extraCheck != nil {
+				finalText := extractFinalAssistantText(messages)
+				if _, reason := extraCheck(finalText); reason != "" {
+					return reason
+				}
 			}
 			return ""
+		}
+	}
+
+	// Honeypot evaluation (Track A Task 3). Forwards the caller-
+	// supplied HoneypotCheckFn to the agentloop. The loop runs
+	// this AFTER PreEndTurnCheckFn succeeds, and — unlike build
+	// errors — a firing ABORTS the turn (StopReason="honeypot_
+	// fired") rather than retrying. The extractor re-uses the
+	// same "find the last assistant text" walker as the spec-1
+	// item 3 chain so the honeypot sees exactly the text the
+	// model is attempting to finalize.
+	if spec.HoneypotCheckFn != nil {
+		hpCheck := spec.HoneypotCheckFn
+		cfg.HoneypotCheckFn = func(messages []agentloop.Message) string {
+			return hpCheck(extractFinalAssistantText(messages))
 		}
 	}
 
@@ -291,9 +431,32 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	// write_file/edit_file tool calls and pushes a [SUPERVISOR NOTE]
 	// into the next user message if the code has drifted from the
 	// canonical identifiers in the SOW.
+	var supervisorFn agentloop.MidturnCheckFunc
 	if spec.Supervisor != nil {
-		if fn := BuildNativeSupervisor(*spec.Supervisor); fn != nil {
-			cfg.MidturnCheckFn = fn
+		supervisorFn = BuildNativeSupervisor(*spec.Supervisor)
+	}
+	// Spec-1 item 7 (ghost-write detection) and any future extra
+	// hooks chain AFTER the supervisor. Both notes are concatenated
+	// with a separator when both fire in the same turn.
+	if supervisorFn != nil || spec.ExtraMidturnCheck != nil {
+		extraCheck := spec.ExtraMidturnCheck
+		cfg.MidturnCheckFn = func(messages []agentloop.Message, turn int) string {
+			var notes []string
+			if supervisorFn != nil {
+				if n := supervisorFn(messages, turn); n != "" {
+					notes = append(notes, n)
+				}
+			}
+			if extraCheck != nil {
+				tools := extractLastAssistantToolCalls(messages)
+				if n := extraCheck(tools, turn); n != "" {
+					notes = append(notes, n)
+				}
+			}
+			if len(notes) == 0 {
+				return ""
+			}
+			return strings.Join(notes, "\n\n")
 		}
 	}
 
@@ -543,6 +706,56 @@ func detectBuildCommand(dir string) string {
 	return ""
 }
 
+// renderMCPContent flattens an mcp.ToolResult's content blocks into a
+// single string suitable for embedding in the <mcp_result> wrapper that
+// goes back to the model. Text blocks are appended verbatim; non-text
+// blocks (image / data) are summarized to a "[<type>:<mime>] N bytes"
+// marker so the wrapper shape stays text-friendly for the LLM without
+// losing provenance. An empty result yields "".
+func renderMCPContent(r mcp.ToolResult) string {
+	var sb strings.Builder
+	for i, c := range r.Content {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		if c.Type == "text" || c.Text != "" {
+			sb.WriteString(c.Text)
+			continue
+		}
+		if len(c.Data) > 0 {
+			mime := c.MIME
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			sb.WriteString(fmt.Sprintf("[%s:%s] %d bytes", c.Type, mime, len(c.Data)))
+		}
+	}
+	return sb.String()
+}
+
+// extractCallID is a best-effort scan for a call_id hint inside the
+// tool result. The mcp.ToolResult struct doesn't carry call_id in a
+// first-class field today (registry emits it on the bus, not in the
+// body), so this returns "" unless the server echoed it in a text
+// block with a conventional `call_id=...` prefix. Kept as a seam so
+// a future MCP-9 change (adding ToolResult.CallID) needs only one edit.
+func extractCallID(r mcp.ToolResult) string {
+	for _, c := range r.Content {
+		if c.Type != "text" {
+			continue
+		}
+		if idx := strings.Index(c.Text, "call_id="); idx >= 0 {
+			rest := c.Text[idx+len("call_id="):]
+			end := strings.IndexAny(rest, " \t\n\r,;")
+			if end < 0 {
+				return strings.TrimSpace(rest)
+			}
+			return strings.TrimSpace(rest[:end])
+		}
+	}
+	return ""
+}
+
 // truncateForWorkerLog shortens s to max bytes with a "... <truncated N bytes>"
 // marker so reviewers see that truncation happened without scanning for length.
 func truncateForWorkerLog(s string, max int) string {
@@ -613,6 +826,73 @@ func newShortID(prefix string) string {
 // cryptoRandRead is a package-level indirection so tests can stub it.
 // Default implementation reads from crypto/rand.
 var cryptoRandRead = randReadImpl
+
+// extractLastAssistantToolCalls returns the (tool_use, tool_result)
+// pairs from the most recent assistant turn. Used by ExtraMidturnCheck
+// hooks (descent-hardening spec-1 item 7) so the hook sees the tools
+// the model just called and can act on file_path inputs.
+//
+// Algorithm: walk from the tail backwards, find the last assistant
+// message, collect its tool_use blocks, then look at the IMMEDIATELY
+// following user message for tool_result blocks and correlate by id.
+// Returns empty slice when the tail isn't assistant-with-tools.
+func extractLastAssistantToolCalls(messages []agentloop.Message) []MidturnToolCall {
+	if len(messages) < 2 {
+		return nil
+	}
+	// The midturn hook runs AFTER tool results are appended, so the
+	// tail is the user message with tool_results and the prior is
+	// the assistant with tool_uses.
+	last := messages[len(messages)-1]
+	if last.Role != "user" {
+		return nil
+	}
+	prev := messages[len(messages)-2]
+	if prev.Role != "assistant" {
+		return nil
+	}
+	resultByID := map[string]agentloop.ContentBlock{}
+	for _, b := range last.Content {
+		if b.Type == "tool_result" {
+			resultByID[b.ToolUseID] = b
+		}
+	}
+	var out []MidturnToolCall
+	for _, b := range prev.Content {
+		if b.Type != "tool_use" {
+			continue
+		}
+		call := MidturnToolCall{Name: b.Name, Input: []byte(b.Input)}
+		if r, ok := resultByID[b.ID]; ok {
+			call.Result = r.Content
+			call.IsError = r.IsError
+		}
+		out = append(out, call)
+	}
+	return out
+}
+
+// extractFinalAssistantText walks the message history from the tail
+// forwards to pluck the most recent assistant text. Used by the
+// pre-end-turn gate chain (descent-hardening spec-1 item 3) so the
+// caller-supplied check can see the model's claimed completion text.
+// Returns "" when no assistant message is present.
+func extractFinalAssistantText(messages []agentloop.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		var b strings.Builder
+		for _, c := range messages[i].Content {
+			if c.Type == "text" {
+				b.WriteString(c.Text)
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	}
+	return ""
+}
 
 // pkgHasWorkspaces returns true when the root package.json
 // declares a `workspaces` array (npm/yarn monorepo).

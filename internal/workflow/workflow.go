@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/model"
 	"github.com/ericmacdougall/stoke/internal/patchapply"
 	"github.com/ericmacdougall/stoke/internal/promptcache"
+	"github.com/ericmacdougall/stoke/internal/promptguard"
 	stokeprompts "github.com/ericmacdougall/stoke/internal/prompts"
 	"github.com/ericmacdougall/stoke/internal/replay"
 	"github.com/ericmacdougall/stoke/internal/repomap"
@@ -1700,7 +1702,18 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 					filePath = filepath.Join(worktreeDir, filePath)
 				}
 				if src, readErr := os.ReadFile(filePath); readErr == nil {
-					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(filePath)), string(src))
+					// Scan the source for prompt-injection shapes before
+					// embedding it in the retry prompt. ActionWarn logs +
+					// passes through unmodified, which is the right
+					// disposition while we learn the false-positive rate.
+					sanitized, report, _ := promptguard.Sanitize(string(src), promptguard.ActionWarn, filePath)
+					if len(report.Threats) > 0 {
+						slog.Warn("promptguard threat detected in failure-analysis file read",
+							"source", filePath,
+							"threats", len(report.Threats),
+							"summary", report.Summary())
+					}
+					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(filePath)), sanitized)
 					if scaffold != "" {
 						sb.WriteString(fmt.Sprintf("\nSUGGESTED TEST SCAFFOLD for %s:\n%s\n", d.File, truncStr(scaffold, 2000)))
 						break // one scaffold is enough guidance

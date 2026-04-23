@@ -1,5 +1,7 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-04-20 -->
+<!-- BUILD_STARTED: 2026-04-21 -->
+<!-- BUILD_COMPLETED: 2026-04-21 -->
 <!-- DEPENDS_ON: spec-3 (Executor), spec-4 (browser), spec-6 (Deployer interface + Fly adapter), spec-7 (Operator.Ask) -->
 <!-- BUILD_ORDER: 9 -->
 

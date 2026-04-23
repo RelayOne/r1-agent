@@ -55,7 +55,8 @@
 | 25 | CloudSwarm CS-1..CS-4 | CloudSwarm | WORK-cloudswarm Tasks 1-6 | 1.5d | 23 (+ 24 for CS-3) |
 | 26 | TrustPlane TP-1..TP-4 | TrustPlane | WORK-trustplane Task 7 | ~5d | 8 |
 | 27 | Stoke architecture phases + hireable agent | stoke | WORK-stoke Tasks 18-24 | 3-5w | 23+24+26 |
+| 28 | r1-server visual execution trace dashboard | stoke | specs/r1-server.md (RS-1..RS-6) | ~2w | 23 (S-0 stream-to-file) |
 
-**Calendar totals:** ~53 days solo / ~5-6 weeks at 3 engineers.
+**Calendar totals:** ~55 days solo / ~6-7 weeks at 3 engineers (r1-server adds ~2 weeks).
 
 **Recommended immediate start:** item 23 (Stoke S-0 + prompt hardening), 1.5 days, unblocks items 24-25 and parts of 27.

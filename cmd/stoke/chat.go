@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -395,7 +396,14 @@ func truncOne(s string, max int) string {
 // (session AND error both nil) in the "no provider available" case —
 // the caller falls back to the old "free text runs as a task" behavior
 // with a warning.
-func buildChatSession(defaults SmartDefaults) (*chat.Session, error) {
+//
+// repoRoot is the absolute path of the working repo. It anchors the
+// post-turn descent gate (CDC-1..CDC-5): the gate captures
+// `git rev-parse HEAD` here at session construction and uses that SHA
+// as the baseline for "has this turn dirtied source files?". Pass ""
+// (or a non-git path) to disable the gate — useful for tests and
+// no-git chat targets.
+func buildChatSession(defaults SmartDefaults, repoRoot string) (*chat.Session, error) {
 	p, err := chat.NewProviderFromOptions(chat.ProviderOptions{
 		BaseURL: defaults.NativeBaseURL,
 		APIKey:  defaults.NativeAPIKey,
@@ -411,10 +419,35 @@ func buildChatSession(defaults SmartDefaults) (*chat.Session, error) {
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
+
+	// CDC-5: capture the start commit so the gate can detect turn-level
+	// edits. Empty SHA disables the gate (no-git is a valid chat
+	// target). STOKE_CHAT_DESCENT=0 lets operators flip the gate off
+	// without rebuilding.
+	var gate *chat.DescentGate
+	if repoRoot != "" && os.Getenv("STOKE_CHAT_DESCENT") != "0" {
+		startCommit := chat.CaptureStartCommit(context.Background(), repoRoot)
+		if startCommit != "" {
+			gate = &chat.DescentGate{
+				Repo:        repoRoot,
+				StartCommit: startCommit,
+				// OnLog is nil — Session.Send streams gate lines
+				// through onDelta directly so they land in the
+				// REPL/shell stream alongside the assistant text.
+				// RepairFunc and Ask are filled by later CDC tasks
+				// (chat repair-once + Operator wiring CDC-16).
+			}
+		} else {
+			log.Printf("chat: descent gate disabled (no git start commit found at %s)", repoRoot)
+		}
+	}
+
 	session, err := chat.NewSession(p, chat.Config{
 		Model:     model,
 		MaxTokens: 6000,
 		Tools:     chat.DispatcherTools(),
+		Gate:      gate,
+		RepoRoot:  repoRoot,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build chat session: %w", err)

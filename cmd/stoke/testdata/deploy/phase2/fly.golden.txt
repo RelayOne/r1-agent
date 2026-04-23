@@ -1,0 +1,8 @@
+# Fly.io dry-run preview
+# Captured from: stoke deploy --provider fly --app my-app --dry-run
+#
+# This golden fixture pins the shape of the dry-run output so future
+# refactors to deploy_cmd.go / fly_adapter.go don't silently change
+# what operators see when they preview a deploy.
+app = "my-app"
+primary_region = "iad"

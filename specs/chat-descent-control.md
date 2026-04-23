@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: spec-1 (descent), spec-2 (events, HITL), spec-3 (executor), spec-7 (Operator interface) -->
 <!-- BUILD_ORDER: 11 -->

@@ -25,9 +25,23 @@ var (
 // the session in the ID itself; for those, empty is returned and
 // the JSONL entry omits session_id — reviewers can still recover
 // session from the SOW snapshot and task_id.
+//
+// Pattern-check order matters: more-specific markers (those that
+// embed other markers as substrings) are checked first so
+// "S3-integrity-fix-FIX1" returns "S3", not "S3-integrity" (which
+// would happen if "-fix-" was checked first).
 func (cfg sowNativeConfig) sessionIDForTask(taskID string) string {
-	// Descent-repair: "<sessionID>-descent-repair-<ms>"
+	// Descent-repair: "<sessionID>-descent-repair-<ms>". The session
+	// prefix can itself be a compound session (e.g. "S1-fix" from
+	// PlanFixDAG), in which case the returned value is "S1-fix" —
+	// the descent-repair was run against that fix session.
 	if idx := strings.Index(taskID, "-descent-repair-"); idx > 0 {
+		return taskID[:idx]
+	}
+	// Integrity-fix checked before fix-DAG because the pattern
+	// "-integrity-" contains "-fix-" as a tail, not a prefix, but
+	// the primary marker is "-integrity-".
+	if idx := strings.Index(taskID, "-integrity-"); idx > 0 {
 		return taskID[:idx]
 	}
 	// Fix-DAG promoted: "<sessionID>-fix-FIXn"
@@ -36,10 +50,6 @@ func (cfg sowNativeConfig) sessionIDForTask(taskID string) string {
 	}
 	// Continuation: "<sessionID>-cont-tN"
 	if idx := strings.Index(taskID, "-cont-"); idx > 0 {
-		return taskID[:idx]
-	}
-	// Integrity-fix: "<sessionID>-integrity-fix-..."
-	if idx := strings.Index(taskID, "-integrity-"); idx > 0 {
 		return taskID[:idx]
 	}
 	return ""

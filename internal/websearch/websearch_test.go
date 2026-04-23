@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,163 @@ func TestDefaultFromEnvReturnsNilWhenNothingSet(t *testing.T) {
 	}()
 	if DefaultFromEnv() != nil {
 		t.Fatal("empty-env should return nil so callers explicitly handle no-web-search")
+	}
+}
+
+// --- Fetch allowlist + body cap
+
+// TestFetchEmptyAllowlistAllowsAnyHost covers the zero-value
+// FetchConfig path: with no allowlist configured, all hosts are
+// accepted. This is the backward-compatible default.
+func TestFetchEmptyAllowlistAllowsAnyHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("hello world"))
+	}))
+	defer srv.Close()
+
+	body, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("empty allowlist must allow any host; got %v", err)
+	}
+	if string(body) != "hello world" {
+		t.Fatalf("body=%q", string(body))
+	}
+}
+
+// TestFetchAllowlistMatchingHost covers the happy path: a non-empty
+// allowlist where the request host matches at least one glob.
+func TestFetchAllowlistMatchingHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("allowed"))
+	}))
+	defer srv.Close()
+
+	// httptest listens on 127.0.0.1; allow that + a glob to cover
+	// both direct IP and wildcard match coverage.
+	body, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		DomainAllowlist: []string{"127.0.0.1", "*.example.com"},
+		HTTPClient:      srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("matching host should fetch; got %v", err)
+	}
+	if string(body) != "allowed" {
+		t.Fatalf("body=%q", string(body))
+	}
+}
+
+// TestFetchAllowlistRejectsNonMatchingHost verifies the guard fails
+// closed for hosts the operator did not allow, with a predictable
+// "not in allowlist" substring in the error for grep-ability.
+func TestFetchAllowlistRejectsNonMatchingHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("should never reach here"))
+	}))
+	defer srv.Close()
+
+	_, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		DomainAllowlist: []string{"docs.example.com", "*.github.com"},
+		HTTPClient:      srv.Client(),
+	})
+	if err == nil {
+		t.Fatal("non-matching host must be rejected")
+	}
+	if !strings.Contains(err.Error(), "not in allowlist") {
+		t.Fatalf("error must contain 'not in allowlist'; got %v", err)
+	}
+}
+
+// TestFetchBodyCapTruncates verifies oversize responses are truncated
+// to exactly MaxBodyBytes and the truncation marker is appended.
+func TestFetchBodyCapTruncates(t *testing.T) {
+	const max = 16
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Write more than max bytes.
+		w.Write([]byte(strings.Repeat("x", 100)))
+	}))
+	defer srv.Close()
+
+	body, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		MaxBodyBytes: max,
+		HTTPClient:   srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// First `max` bytes must be the original content; marker follows.
+	prefix := strings.Repeat("x", max)
+	if !strings.HasPrefix(string(body), prefix) {
+		t.Fatalf("body prefix should be %d x's; got %q", max, string(body))
+	}
+	if !strings.Contains(string(body), "[truncated at 16 bytes]") {
+		t.Fatalf("truncation marker missing; got %q", string(body))
+	}
+}
+
+// TestFetchBodyCapExactBoundaryNotTruncated confirms that when the
+// response size equals MaxBodyBytes exactly, no marker is added.
+func TestFetchBodyCapExactBoundaryNotTruncated(t *testing.T) {
+	const max = 16
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("y", max)))
+	}))
+	defer srv.Close()
+
+	body, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		MaxBodyBytes: max,
+		HTTPClient:   srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != strings.Repeat("y", max) {
+		t.Fatalf("exact-boundary body should not be truncated; got %q", string(body))
+	}
+	if strings.Contains(string(body), "[truncated") {
+		t.Fatalf("no marker expected at exact boundary; got %q", string(body))
+	}
+}
+
+// TestFetchDefaultMaxBodyBytesApplied verifies the 100KB default kicks
+// in when MaxBodyBytes is zero.
+func TestFetchDefaultMaxBodyBytesApplied(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Write DefaultMaxBodyBytes + 10 bytes.
+		w.Write([]byte(strings.Repeat("z", DefaultMaxBodyBytes+10)))
+	}))
+	defer srv.Close()
+
+	body, err := Fetch(context.Background(), srv.URL, FetchConfig{
+		HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "[truncated at") {
+		t.Fatalf("zero MaxBodyBytes must apply DefaultMaxBodyBytes cap; got no marker, len=%d", len(body))
+	}
+}
+
+// TestHostMatchesAllowlistGlob verifies the glob semantics directly
+// since it's the guts of the allowlist check.
+func TestHostMatchesAllowlistGlob(t *testing.T) {
+	cases := []struct {
+		host, pattern string
+		want          bool
+	}{
+		{"api.github.com", "*.github.com", true},
+		{"docs.github.com", "*.github.com", true},
+		{"github.com", "*.github.com", false}, // no subdomain label to match *
+		{"DOCS.EXAMPLE.COM", "docs.example.com", true}, // case-insensitive
+		{"evil.example.com", "docs.example.com", false},
+		{"127.0.0.1", "127.0.0.1", true},
+	}
+	for _, tc := range cases {
+		got := hostMatchesAllowlist(tc.host, []string{tc.pattern})
+		if got != tc.want {
+			t.Errorf("host=%q pattern=%q: got %v, want %v", tc.host, tc.pattern, got, tc.want)
+		}
 	}
 }

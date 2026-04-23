@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: spec-2 (streamjson subtypes), spec-7 (cost data + progress data), spec-11 (sessionctl for pause/approve) -->
 <!-- BUILD_ORDER: 12 -->

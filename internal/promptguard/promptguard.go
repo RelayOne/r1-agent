@@ -13,11 +13,21 @@
 // legitimate files that happen to contain trigger phrases (e.g. a
 // README describing prompt-injection defenses).
 //
-// Wired into every path that reads project-supplied text into a prompt:
-// skill bodies loaded from .stoke/skills/ or ~/.stoke/skills/ (user
-// override surface), repomap-injected README content, CLAUDE.md, and
-// third-party doc fetches. NOT wired into stoke's own builtin skills
-// and docs — those are trusted source-controlled content.
+// Wired into the following intake paths that read project-supplied or
+// third-party text into a prompt:
+//
+//   - skill bodies loaded from .stoke/skills/ or ~/.stoke/skills/
+//     (internal/skill/registry.go)
+//   - failure-analysis file reads that get embedded as test-scaffold
+//     source in retry prompts (internal/workflow/workflow.go)
+//   - feasibility-gate web-search result bodies that get injected into
+//     task briefings (internal/plan/feasibility.go)
+//   - convergence override judge file snippets that get embedded in VP
+//     Eng / CTO prompts (internal/convergence/judge.go)
+//
+// NOT currently wired into agentloop tool outputs (Task 2 covers that
+// separately), nor into stoke's own builtin skills and docs — those
+// are trusted source-controlled content.
 package promptguard
 
 import (

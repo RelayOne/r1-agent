@@ -23,11 +23,41 @@ package convergence
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/ericmacdougall/stoke/internal/jsonutil"
+	"github.com/ericmacdougall/stoke/internal/promptguard"
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
+
+// sanitizeFileSnippets returns a copy of the JudgeContext with every
+// FileSnippets entry routed through promptguard. The contents of a
+// flagged file are project-supplied text that lands inside an LLM
+// prompt — exactly the surface promptguard is designed to cover. We
+// use ActionWarn (log and pass through) so a legitimate file that
+// happens to contain a trigger phrase (e.g. a README documenting
+// prompt-injection defenses) still reaches the judge; the threat gets
+// logged either way.
+func sanitizeFileSnippets(ctx JudgeContext) JudgeContext {
+	if len(ctx.FileSnippets) == 0 {
+		return ctx
+	}
+	cleaned := make(map[string]string, len(ctx.FileSnippets))
+	for path, content := range ctx.FileSnippets {
+		sanitized, report, _ := promptguard.Sanitize(content, promptguard.ActionWarn, path)
+		if len(report.Threats) > 0 {
+			slog.Warn("promptguard threat detected in convergence judge file snippet",
+				"mission", ctx.MissionID,
+				"path", path,
+				"threats", len(report.Threats),
+				"summary", report.Summary())
+		}
+		cleaned[path] = sanitized
+	}
+	ctx.FileSnippets = cleaned
+	return ctx
+}
 
 // JudgeContext is what the override judge needs to make a decision.
 type JudgeContext struct {
@@ -172,6 +202,7 @@ func (j *LLMOverrideJudge) Propose(ctx JudgeContext) (*JudgeProposal, error) {
 		model = "claude-sonnet-4-6"
 	}
 
+	ctx = sanitizeFileSnippets(ctx)
 	userText := vpEngPrompt + buildJudgeContextBlob(ctx)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
@@ -209,6 +240,7 @@ func (j *LLMOverrideJudge) Approve(ctx JudgeContext, proposal *JudgeProposal) (*
 		model = "claude-sonnet-4-6"
 	}
 
+	ctx = sanitizeFileSnippets(ctx)
 	proposalJSON, _ := json.MarshalIndent(proposal, "", "  ")
 	userText := ctoPrompt + string(proposalJSON) + "\n\nCONTEXT:\n" + buildJudgeContextBlob(ctx)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})

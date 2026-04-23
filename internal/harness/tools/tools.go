@@ -20,6 +20,12 @@ const (
 	ToolEnvExec            ToolName = "env_exec"
 	ToolEnvCopyIn          ToolName = "env_copy_in"
 	ToolEnvCopyOut         ToolName = "env_copy_out"
+
+	// ToolReportEnvIssue is the descent-hardening spec-1 item 6 tool.
+	// Dev and Reviewer stances advertise it so a worker can declare
+	// an environment blocker without burning LLM reasoning budget.
+	// The native-runtime handler lives in cmd/stoke/sow_env_issue.go.
+	ToolReportEnvIssue ToolName = "report_env_issue"
 )
 
 // roleTools maps each role to its authorized tool set.
@@ -28,11 +34,13 @@ var roleTools = map[string][]ToolName{
 		ToolFileRead, ToolFileWrite, ToolCodeRun,
 		ToolEnvExec, ToolEnvCopyIn, ToolEnvCopyOut,
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,
+		ToolReportEnvIssue,
 	},
 	"reviewer": {
 		ToolFileRead, ToolCodeRun,
 		ToolEnvExec,
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,
+		ToolReportEnvIssue,
 	},
 	"judge": {
 		ToolLedgerQuery, ToolLedgerWrite, ToolBusPublish, ToolResearchRequest,

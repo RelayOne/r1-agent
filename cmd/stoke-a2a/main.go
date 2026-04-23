@@ -2,9 +2,12 @@
 //
 // STOKE-013/-018 standalone A2A server. Hosts:
 //
-//   GET  /.well-known/agent.json  — Agent Card for discovery
-//   POST /a2a/rpc                 — JSON-RPC 2.0 task handlers
-//   GET  /healthz                 — liveness
+//   GET  /.well-known/agent-card.json — Agent Card (A2A v1.0 canonical)
+//   GET  /.well-known/agent.json      — 308 Permanent Redirect to the
+//                                        canonical path (legacy; sunset
+//                                        2026-05-22, 30 days post-v1.0)
+//   POST /a2a/rpc                     — JSON-RPC 2.0 task handlers
+//   GET  /healthz                     — liveness
 //
 // Configuration via environment variables (keeps the binary
 // dependency-free for container deployment):

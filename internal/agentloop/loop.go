@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -33,6 +34,15 @@ type Config struct {
 	SystemPrompt       string        // static system prompt (cached)
 	ThinkingBudget     int           // extended thinking budget (0 = disabled)
 	Timeout            time.Duration // per-turn timeout
+
+	// Correlation IDs (AL-1 / SEAM-22). When set, the loop copies them
+	// into every outbound ChatRequest.Metadata so the provider adapter
+	// can set X-Stoke-Session-ID / X-Stoke-Agent-ID / X-Stoke-Task-ID
+	// on the HTTP request. Empty strings are skipped (no empty-header
+	// emission for standalone runs).
+	SessionID string
+	AgentID   string
+	TaskID    string
 	// CompactThreshold is the estimated input-token count above which
 	// the loop calls CompactFn to rewrite the message history. 0 = no
 	// automatic compaction.
@@ -76,6 +86,23 @@ type Config struct {
 	// nil = no pre-end-turn check (default — all end_turns
 	// are accepted immediately).
 	PreEndTurnCheckFn func(messages []Message) string
+
+	// HoneypotCheckFn, when non-nil, is invoked at pre-end-turn
+	// immediately AFTER PreEndTurnCheckFn passes. Unlike the
+	// build-verification gate (which forces a retry on failure),
+	// a honeypot firing ABORTS the turn — the model has emitted
+	// output matching an injection / exfiltration / jailbreak
+	// probe, and no amount of retrying will correct that.
+	//
+	// Returns "" when no honeypot fired. A non-empty return
+	// aborts the loop with StopReason="honeypot_fired" and a
+	// wrapped error carrying the firing reason. Intended to be
+	// wired by the native runner from a
+	// critic.HoneypotRegistry — see
+	// internal/critic/default_honeypots.go (Track A Task 3).
+	//
+	// nil = no honeypot evaluation (default).
+	HoneypotCheckFn func(messages []Message) string
 }
 
 // MidturnCheckFunc is the signature for the between-turn supervisor
@@ -335,6 +362,23 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 					continue // back to top of loop for another turn
 				}
 			}
+			// Honeypot evaluation runs AFTER the build gate. A firing
+			// means the model emitted output matching an injection /
+			// exfil / jailbreak probe — we abort rather than retry,
+			// because a compromised turn can't be "fixed" by asking
+			// the (possibly compromised) model to try again.
+			if l.config.HoneypotCheckFn != nil {
+				if hpMsg := l.config.HoneypotCheckFn(messages); hpMsg != "" {
+					slog.Error("honeypot triggered — aborting turn",
+						"turn", turn,
+						"reason", hpMsg)
+					result.StopReason = "honeypot_fired"
+					result.Turns = turn + 1
+					result.FinalText = extractText(assistantBlocks)
+					result.Messages = messages
+					return result, fmt.Errorf("aborted: honeypot triggered (%s)", hpMsg)
+				}
+			}
 			result.StopReason = resp.StopReason
 			result.Turns = turn + 1
 			result.FinalText = extractText(assistantBlocks)
@@ -413,6 +457,24 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 	systemBlocks := BuildCachedSystemPrompt(l.config.SystemPrompt, "")
 	systemJSON, _ := json.Marshal(systemBlocks)
 
+	// AL-1: populate Metadata with correlation IDs so the provider
+	// adapter sets X-Stoke-* headers on the outbound HTTP call. Only
+	// non-empty values populate the map so standalone runs emit no
+	// correlation headers.
+	var meta map[string]string
+	if l.config.SessionID != "" || l.config.AgentID != "" || l.config.TaskID != "" {
+		meta = make(map[string]string, 3)
+		if l.config.SessionID != "" {
+			meta["stoke-session-id"] = l.config.SessionID
+		}
+		if l.config.AgentID != "" {
+			meta["stoke-agent-id"] = l.config.AgentID
+		}
+		if l.config.TaskID != "" {
+			meta["stoke-task-id"] = l.config.TaskID
+		}
+	}
+
 	return provider.ChatRequest{
 		Model:        l.config.Model,
 		SystemRaw:    systemJSON,
@@ -420,6 +482,7 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 		MaxTokens:    l.config.MaxTokens,
 		Tools:        sortedTools,
 		CacheEnabled: true,
+		Metadata:     meta,
 	}
 }
 
@@ -475,6 +538,24 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 		content, err := l.handler(ctx, tc.Name, tc.Input)
 		duration := time.Since(start)
 
+		// Defensive sanitization: tool output can carry adversarial
+		// content (Read on an attacker file, Bash stdout, MCP replies)
+		// that flows straight back into the model context. Three-layer
+		// guard: size cap, chat-template-token scrub, injection-shape
+		// annotation. Only log when something was actually actioned so
+		// the happy path stays quiet.
+		sanitized, sanReport := SanitizeToolOutput(content, tc.Name)
+		if sanReport.Actioned() {
+			slog.Warn("tool output sanitized",
+				"tool", tc.Name,
+				"original_bytes", sanReport.OriginalBytes,
+				"final_bytes", sanReport.FinalBytes,
+				"truncated", sanReport.Truncated,
+				"template_tokens", sanReport.TemplateTokensFound,
+				"injection_threats", sanReport.InjectionThreats,
+			)
+		}
+
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
@@ -489,7 +570,7 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 			results[idx] = ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: tc.ID,
-				Content:   content,
+				Content:   sanitized,
 			}
 		}
 

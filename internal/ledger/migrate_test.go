@@ -190,3 +190,139 @@ func TestMigrateParentHash_NilLedgerErrors(t *testing.T) {
 		t.Error("nil ledger should error")
 	}
 }
+
+// TestMigrate_PreexistingNodes seeds 3 old-format node files under nodes/
+// and asserts that opening a Store triggers the one-shot T6 migration:
+// chain/ and content/ get populated, and nodes/ is renamed to nodes.bak/.
+func TestMigrate_PreexistingNodes(t *testing.T) {
+	root := t.TempDir()
+
+	// Stage a pre-T6 layout directly on disk: three node files under nodes/
+	// and nothing under chain/ or content/ yet.
+	nodesDir := filepath.Join(root, "nodes")
+	if err := os.MkdirAll(nodesDir, 0o755); err != nil {
+		t.Fatalf("mkdir nodes: %v", err)
+	}
+	seed := []Node{
+		{
+			ID:            "legacy-aaa11111",
+			Type:          "decision",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			CreatedBy:     "stance-a",
+			MissionID:     "m-1",
+			Content:       json.RawMessage(`{"text":"one"}`),
+		},
+		{
+			ID:            "legacy-bbb22222",
+			Type:          "decision",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2025, 1, 1, 0, 1, 0, 0, time.UTC),
+			CreatedBy:     "stance-a",
+			MissionID:     "m-1",
+			Content:       json.RawMessage(`{"text":"two"}`),
+		},
+		{
+			ID:            "legacy-ccc33333",
+			Type:          "task",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2025, 1, 1, 0, 2, 0, 0, time.UTC),
+			CreatedBy:     "stance-b",
+			MissionID:     "m-2",
+			Content:       json.RawMessage(`{"text":"three"}`),
+		},
+	}
+	for _, n := range seed {
+		raw, err := json.MarshalIndent(n, "", "  ")
+		if err != nil {
+			t.Fatalf("marshal seed %s: %v", n.ID, err)
+		}
+		if err := os.WriteFile(filepath.Join(nodesDir, n.ID+".json"), raw, 0o644); err != nil {
+			t.Fatalf("write seed %s: %v", n.ID, err)
+		}
+	}
+
+	// Opening the store triggers migrateNodesToChainContent exactly once.
+	store, err := NewStore(root)
+	if err != nil {
+		t.Fatalf("NewStore triggered migration error: %v", err)
+	}
+	_ = store
+
+	// After migration: nodes.bak/ exists and contains all three legacy files.
+	backupDir := filepath.Join(root, "nodes.bak")
+	backupEntries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatalf("nodes.bak not created: %v", err)
+	}
+	if len(backupEntries) != len(seed) {
+		t.Errorf("nodes.bak has %d entries, want %d", len(backupEntries), len(seed))
+	}
+
+	// nodes/ itself must be gone (renamed).
+	if _, err := os.Stat(nodesDir); !os.IsNotExist(err) {
+		t.Errorf("nodes/ still present after migration (err=%v)", err)
+	}
+
+	// chain/ and content/ each hold one file per seed.
+	chainEntries, err := os.ReadDir(filepath.Join(root, "chain"))
+	if err != nil {
+		t.Fatalf("read chain dir: %v", err)
+	}
+	if len(chainEntries) != len(seed) {
+		t.Errorf("chain/ has %d entries, want %d", len(chainEntries), len(seed))
+	}
+	contentEntries, err := os.ReadDir(filepath.Join(root, "content"))
+	if err != nil {
+		t.Fatalf("read content dir: %v", err)
+	}
+	if len(contentEntries) != len(seed) {
+		t.Errorf("content/ has %d entries, want %d", len(contentEntries), len(seed))
+	}
+
+	// ReadNode returns the migrated payload for each original ID.
+	for _, n := range seed {
+		got, err := store.ReadNode(n.ID)
+		if err != nil {
+			t.Fatalf("ReadNode %s after migration: %v", n.ID, err)
+		}
+		if got.ID != n.ID {
+			t.Errorf("ID changed during migration: %q -> %q", n.ID, got.ID)
+		}
+		if got.Type != n.Type {
+			t.Errorf("Type for %s: got %q want %q", n.ID, got.Type, n.Type)
+		}
+		// Content round-trips through JSON indent during migration write,
+		// so compare by parsed value rather than raw bytes.
+		var wantVal, gotVal map[string]any
+		if err := json.Unmarshal(n.Content, &wantVal); err != nil {
+			t.Fatalf("unmarshal want content: %v", err)
+		}
+		if err := json.Unmarshal(got.Content, &gotVal); err != nil {
+			t.Fatalf("unmarshal got content: %v", err)
+		}
+		wantBytes, _ := json.Marshal(wantVal)
+		gotBytes, _ := json.Marshal(gotVal)
+		if string(wantBytes) != string(gotBytes) {
+			t.Errorf("Content for %s: got %s want %s", n.ID, gotBytes, wantBytes)
+		}
+		if got.ContentCommitment == "" {
+			t.Errorf("ContentCommitment not synthesized during migration for %s", n.ID)
+		}
+		if got.Salt == "" {
+			t.Errorf("Salt not synthesized during migration for %s", n.ID)
+		}
+	}
+
+	// Re-opening the store is a no-op: no panic, no error, nodes.bak left
+	// alone. (Second-open safety matters because operators may restart the
+	// process while leaving nodes.bak in place as inspection evidence.)
+	store2, err := NewStore(root)
+	if err != nil {
+		t.Fatalf("second NewStore after migration: %v", err)
+	}
+	_ = store2
+	if _, err := os.Stat(backupDir); err != nil {
+		t.Errorf("nodes.bak disappeared on second open: %v", err)
+	}
+}

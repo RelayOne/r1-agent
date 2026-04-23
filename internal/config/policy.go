@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/mcp"
 )
 
 // Policy defines the security and tool restrictions for each workflow phase.
@@ -17,6 +19,10 @@ type Policy struct {
 	Verification VerificationPolicy     `json:"verification"`
 	Skills       SkillsConfig           `json:"skills"`
 	Honesty      HonestyConfig          `json:"honesty"`
+	// MCPServers is the list of MCP servers the registry should
+	// construct from stoke.policy.yaml. Parsed by the yaml.v3-backed
+	// loader in mcp_servers.go; validated by ValidateMCPServers.
+	MCPServers []mcp.ServerConfig `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
 
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
@@ -197,6 +203,18 @@ func LoadPolicy(path string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	// Parse the mcp_servers top-level block (if any) via yaml.v3; the
+	// custom line-scanner above skips its contents.
+	servers, err := parseMCPServersBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	if len(servers) > 0 {
+		if verr := ValidateMCPServers(servers); verr != nil {
+			return Policy{}, verr
+		}
+		p.MCPServers = servers
+	}
 	return normalizePolicy(p), nil
 }
 
@@ -286,6 +304,11 @@ func parsePolicyYAML(input string) (Policy, error) {
 			section = strings.TrimSuffix(text, ":")
 			currentPhase = ""
 			currentListField = ""
+		case section == "mcp_servers":
+			// mcp_servers is a yaml-sequence block; the custom
+			// scanner skips all its contents (any indent >0) and
+			// leaves parsing to parseMCPServersBlock (yaml.v3).
+			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")
 			currentListField = ""

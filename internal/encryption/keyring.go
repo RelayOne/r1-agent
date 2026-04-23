@@ -232,6 +232,79 @@ func (f *FileKeyring) Delete(agentID string) error {
 	return err
 }
 
+// fileMasterBackend is the file-backed MasterKeyringBackend. It
+// layers on top of the existing FileKeyring layout (0700 dir, 0600
+// `<base64url(key)>.key` files) so that operators upgrading from the
+// pre-99designs world pick up their existing master key without a
+// migration step. See `backend_99designs.go` for the OS-native
+// backend it falls back FROM.
+//
+// Protection model: the file is 0600 inside a 0700 directory. That is
+// the same posture the pre-existing FileKeyring has always used and
+// is what the TASK 9 spec asked us to "fall back to." Passphrase
+// wrapping (Argon2id + AEAD around each blob) is tracked separately
+// in encryption-at-rest §5 and will re-enter here; adding it now
+// would break the spec-required read-compatibility with existing
+// keyring files (see TestOpen_CompatibleWithExistingKeyring).
+type fileMasterBackend struct {
+	fk *FileKeyring
+}
+
+// openFileBackend constructs a file-backed MasterKeyringBackend at
+// dir.
+func openFileBackend(dir string) (MasterKeyringBackend, error) {
+	fk, err := NewFileKeyring(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &fileMasterBackend{fk: fk}, nil
+}
+
+// pathFor exposes FileKeyring.path under a name that survives the
+// master/agent terminology split.
+func (f *fileMasterBackend) pathFor(key string) string { return f.fk.path(key) }
+
+func (f *fileMasterBackend) Get(key string) ([]byte, error) {
+	f.fk.mu.Lock()
+	defer f.fk.mu.Unlock()
+	b, err := os.ReadFile(f.pathFor(key))
+	if os.IsNotExist(err) {
+		return nil, ErrMasterKeyringEntryMissing
+	}
+	if err != nil {
+		return nil, fmt.Errorf("encryption: read master key: %w", err)
+	}
+	out := make([]byte, len(b))
+	copy(out, b)
+	return out, nil
+}
+
+func (f *fileMasterBackend) Set(key string, val []byte) error {
+	f.fk.mu.Lock()
+	defer f.fk.mu.Unlock()
+	// Atomic write via temp + rename — matches FileKeyring.Put so
+	// a crash mid-write doesn't corrupt the file.
+	dst := f.pathFor(key)
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, val, 0o600); err != nil {
+		return fmt.Errorf("encryption: write master key tmp: %w", err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("encryption: rename master key: %w", err)
+	}
+	return nil
+}
+
+func (f *fileMasterBackend) Delete(key string) error {
+	f.fk.mu.Lock()
+	defer f.fk.mu.Unlock()
+	err := os.Remove(f.pathFor(key))
+	if os.IsNotExist(err) {
+		return nil // idempotent
+	}
+	return err
+}
+
 // Encrypt seals plaintext with k using AES-256-GCM. Output is
 // nonce (12 bytes) || ciphertext (len(plaintext)+16 tag bytes).
 // Decrypt(k, Encrypt(k, x)) == x; with a different key it errors.

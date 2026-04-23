@@ -33,11 +33,20 @@ const (
 	// EnvURL is the gateway base URL for ModeReal.
 	EnvURL = "STOKE_TRUSTPLANE_URL"
 
+	// EnvURLCanonical is the cross-portfolio canonical name per
+	// Truecom Task 23. envOrFallback accepts either EnvURL (legacy)
+	// or EnvURLCanonical for a 90d dual-accept window closing
+	// 2026-07-21. Setting both → canonical wins, no WARN log.
+	EnvURLCanonical = "TRUECOM_API_URL"
+
 	// EnvPrivKey / EnvPrivKey_FILE: Ed25519 private key, PEM-encoded
 	// PKCS#8, resolved via internal/secrets (inline → env → file).
 	// The helper reads EnvPrivKey inline and falls through to the
 	// _FILE suffix per its contract.
 	EnvPrivKey = "STOKE_TRUSTPLANE_PRIVKEY"
+
+	// EnvPrivKeyCanonical mirrors EnvURLCanonical for the API key.
+	EnvPrivKeyCanonical = "TRUECOM_API_KEY"
 )
 
 // NewFromEnv returns a trustplane.Client configured from environment
@@ -71,11 +80,17 @@ func NewFromEnv() (Client, error) {
 }
 
 func newRealFromEnv() (*RealClient, error) {
-	base := strings.TrimSpace(os.Getenv(EnvURL))
+	// Accept canonical TRUECOM_* env names OR legacy STOKE_TRUSTPLANE_*
+	// during the 90d dual-accept window closing 2026-07-21. A WARN log
+	// fires whenever the legacy name supplied the value.
+	base := envOrFallback(EnvURLCanonical, EnvURL)
 	if base == "" {
-		return nil, fmt.Errorf("trustplane: %s=real requires %s", EnvMode, EnvURL)
+		return nil, fmt.Errorf("trustplane: %s=real requires %s (or legacy %s)", EnvMode, EnvURLCanonical, EnvURL)
 	}
-	keyPEM, err := secrets.ResolveRequired("", EnvPrivKey)
+	// Prefer canonical for inline key; fall back to legacy. The
+	// secrets resolver still handles the _FILE suffix below.
+	keyInline := envOrFallback(EnvPrivKeyCanonical, EnvPrivKey)
+	keyPEM, err := secrets.ResolveRequired(keyInline, EnvPrivKey)
 	if err != nil {
 		return nil, fmt.Errorf("trustplane: resolve %s: %w", EnvPrivKey, err)
 	}

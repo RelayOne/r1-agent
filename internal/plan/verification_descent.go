@@ -125,6 +125,58 @@ func (t DescentTier) String() string {
 	}
 }
 
+// DescentTierEvent is the structured payload fired at each tier
+// boundary when DescentConfig.OnTierEvent is non-nil. Cloudswarm-
+// protocol spec-2 item 6: the descent bridge subscribes and forwards
+// each event to the streamjson TwoLane emitter as a descent.tier line
+// + the in-process bus.Publish so downstream observers (dashboards,
+// tests, operator terminals) get the same signal.
+//
+// Fields are populated per-tier; unused fields remain zero-valued.
+// The Tier + ACID + Message triad is always populated.
+type DescentTierEvent struct {
+	// Tier is the tier that emitted the event (T1-T8).
+	Tier DescentTier
+	// ACID is the acceptance criterion under evaluation.
+	ACID string
+	// Message is the human-readable one-line log (matches OnLog body).
+	Message string
+
+	// Tier-specific fields below. Empty/zero outside the relevant tier.
+
+	// T1: did the reviewer confirm intent?
+	IntentConfirmed bool
+	// T2: did the AC pass on this run?
+	Passed bool
+	// T3: final category (code_bug, ac_bug, environment, ...).
+	Category string
+	// T4: attempt count at this tier; FileRepairCount for the current file.
+	Attempt          int
+	FileRepairCount  int
+	// T5: did the env-fix function succeed?
+	EnvFixApplied bool
+	// T6: new AC command emitted by the AC-rewrite analyst.
+	NewCommand string
+	// T7: did a refactor dispatch fire?
+	RefactorAttempted bool
+	// T8: did all 6 gates pass? Did the tier require a HITL approval?
+	AllGatesPassed   bool
+	ApprovalRequired bool
+}
+
+// emitTier is the DescentConfig helper that dispatches an event to
+// OnTierEvent when set. It also forwards the Message through OnLog so
+// existing log subscribers see the same text. Kept as a method on
+// DescentConfig so tier-site callers can write one-line emits.
+func (dc *DescentConfig) emitTier(evt DescentTierEvent) {
+	if evt.Message != "" && dc.OnLog != nil {
+		dc.OnLog(evt.Message)
+	}
+	if dc.OnTierEvent != nil {
+		dc.OnTierEvent(evt)
+	}
+}
+
 // DescentResult is the full audit trail for one AC's descent.
 type DescentResult struct {
 	// Outcome is the final disposition.
@@ -288,6 +340,56 @@ type DescentConfig struct {
 	// OnLog is called with human-readable progress messages.
 	// When nil, messages are discarded.
 	OnLog func(msg string)
+
+	// OnTierEvent is the structured-event sibling of OnLog. Each tier
+	// transition fires a DescentTierEvent carrying the tier label, AC
+	// id, and tier-specific payload (intent_confirmed, passed, category,
+	// attempt, env_fix_applied, new_command, refactor_attempted,
+	// all_gates_passed, approval_required). Cloudswarm-protocol spec-2
+	// item 6: wiring in descent_bridge.go forwards these to the
+	// streamjson TwoLane emitter + in-process bus subscribers. When nil,
+	// the events are discarded (OnLog still fires for terminal output).
+	OnTierEvent func(DescentTierEvent)
+
+	// ---------------------------------------------------------------
+	// Spec-1 item 4: per-file repair cap (Cursor 2.0 3-loop rule).
+	// ---------------------------------------------------------------
+
+	// FileRepairCounts tracks how many T4 repair rounds each file
+	// has been the subject of during this session. When a file's
+	// counter reaches MaxRepairsPerFile, T4 fails the AC rather than
+	// running another RepairFunc — the Cursor 2.0 verbatim rule says
+	// three loops on the same file is a signal to escalate, not keep
+	// burning turns. Map is lazily initialized by runDescent when nil.
+	// Session-scoped; no mutex needed (sequential access in current
+	// callsites).
+	FileRepairCounts map[string]int
+
+	// MaxRepairsPerFile caps attempts per file. Values <=0 replaced
+	// by the default of 3 at normalization time.
+	MaxRepairsPerFile int
+
+	// OnFileCapExceeded, when non-nil, is called once per AC whose
+	// repair was skipped because a target file hit the cap. Callers
+	// typically wire this to bus.Publish with event kind
+	// "descent.file_cap_exceeded" so operators can observe the
+	// escalation.
+	OnFileCapExceeded func(ac AcceptanceCriterion, file string, attempts int, lastErrors []string)
+
+	// ---------------------------------------------------------------
+	// Spec-2 item 4: soft-pass HITL approval hook (CloudSwarm).
+	// ---------------------------------------------------------------
+
+	// SoftPassApprovalFunc is called at T8 when all 6 soft-pass gates
+	// evaluate true. If nil, soft-pass is auto-granted (current
+	// behavior). If non-nil and returns false, descent returns FAIL
+	// instead of soft-pass.
+	//
+	// Used by cloudswarm-protocol governance_tier=enterprise: the
+	// approval func routes through hitl.RequestApproval which emits
+	// hitl_required on stdout and blocks until stdin supplies a
+	// decision (or timeout fires).
+	SoftPassApprovalFunc func(ctx context.Context, ac AcceptanceCriterion, verdict ReasoningVerdict) bool
 }
 
 func (dc *DescentConfig) log(format string, args ...interface{}) {
@@ -300,7 +402,75 @@ func (dc *DescentConfig) maxRepairs() int {
 	if dc.MaxCodeRepairs > 0 {
 		return dc.MaxCodeRepairs
 	}
+	// H-91g: bumped from 3 to 5. Observed on R04-sow: 3 attempts was
+	// insufficient for complex code-bugs where each attempt reveals a
+	// new aspect of the underlying issue. Now the T4 directive also
+	// carries attempt history (so repeated attempts don't retry the
+	// exact same fix), so more budget actually produces new fixes
+	// instead of thrashing. Still bounded — CODE_BUG never soft-passes,
+	// so runaway repair on a genuine defect still terminates via T8
+	// rejection rather than infinite looping.
+	return 5
+}
+
+// maxRepairsPerFile returns the per-file cap with defaulting.
+// Spec-1 item 4: default of 3 matches Cursor 2.0 verbatim.
+func (dc *DescentConfig) maxRepairsPerFile() int {
+	if dc.MaxRepairsPerFile > 0 {
+		return dc.MaxRepairsPerFile
+	}
 	return 3
+}
+
+// ensureFileRepairCounts lazily initializes the per-file counter map
+// so a nil config (e.g., dry-run) is a safe noop.
+func (dc *DescentConfig) ensureFileRepairCounts() {
+	if dc.FileRepairCounts == nil {
+		dc.FileRepairCounts = map[string]int{}
+	}
+}
+
+// incrementFileRepairs records one T4 attempt against each file in the
+// target list. Called BEFORE RepairFunc so a successful run can reset
+// the counters via resetFileRepairs if the AC passes.
+func (dc *DescentConfig) incrementFileRepairs(files []string) {
+	dc.ensureFileRepairCounts()
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		dc.FileRepairCounts[f]++
+	}
+}
+
+// resetFileRepairs zeroes the counters for the given files. Called
+// after a successful re-run so a later failure on the same file
+// starts fresh.
+func (dc *DescentConfig) resetFileRepairs(files []string) {
+	if dc.FileRepairCounts == nil {
+		return
+	}
+	for _, f := range files {
+		if f == "" {
+			continue
+		}
+		delete(dc.FileRepairCounts, f)
+	}
+}
+
+// fileCapHit returns the first file (if any) from files whose counter
+// is at or above MaxRepairsPerFile. Empty string when all are under.
+func (dc *DescentConfig) fileCapHit(files []string) string {
+	if len(files) == 0 || dc.FileRepairCounts == nil {
+		return ""
+	}
+	cap := dc.maxRepairsPerFile()
+	for _, f := range files {
+		if dc.FileRepairCounts[f] >= cap {
+			return f
+		}
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -422,9 +592,19 @@ func VerificationDescent(
 			return result
 		}
 		cfg.log("  ✓ T1: intent confirmed by reviewer")
+		cfg.emitTier(DescentTierEvent{
+			Tier:            TierIntentMatch,
+			ACID:            ac.ID,
+			IntentConfirmed: true,
+		})
 	} else {
 		// No intent checker — assume confirmed (weaker guarantee).
 		result.IntentConfirmed = true
+		cfg.emitTier(DescentTierEvent{
+			Tier:            TierIntentMatch,
+			ACID:            ac.ID,
+			IntentConfirmed: true,
+		})
 	}
 
 	// ---------------------------------------------------------------
@@ -438,10 +618,20 @@ func VerificationDescent(
 		result.Reason = "T2-run-ac: AC passed on initial check"
 		result.RawACOutput = acOutput
 		cfg.log("  ✓ T2: AC passed")
+		cfg.emitTier(DescentTierEvent{
+			Tier:   TierRunAC,
+			ACID:   ac.ID,
+			Passed: true,
+		})
 		return result
 	}
 	result.RawACOutput = acOutput
 	cfg.log("  ✗ T2: AC failed, classifying...")
+	cfg.emitTier(DescentTierEvent{
+		Tier:   TierRunAC,
+		ACID:   ac.ID,
+		Passed: false,
+	})
 
 	// ---------------------------------------------------------------
 	// T3: Classify failure
@@ -462,7 +652,20 @@ func VerificationDescent(
 	var analysisACRewrite string
 	var analysisRootCause string
 
-	if cfg.Provider != nil && !result.StderrSignature.IsDefiniteCodeBug() &&
+	// Spec-1 item 6: report_env_issue fast-path. If the worker already
+	// declared this AC as environmentally blocked (via the tool), skip
+	// the multi-analyst reasoning entirely — we know it's environment,
+	// and the 5-LLM-call descent reasoning would just re-derive that
+	// at ~$0.10/AC. T5 env-fix handles the remediation attempt.
+	if report, ok := DefaultEnvBlockerScratch().Get(cfg.Session.ID, ac.ID); ok {
+		analysisCategory = EnvBlockerFastPathCategory
+		analysisRootCause = "report_env_issue: " + report.Issue
+		result.Category = analysisCategory
+		cfg.log("  🏷 T3: worker reported env blocker (%s) — skipping multi-analyst", report.Issue)
+		// Fall through to T5 without running Provider hops.
+	}
+
+	if analysisCategory == "" && cfg.Provider != nil && !result.StderrSignature.IsDefiniteCodeBug() &&
 		!result.StderrSignature.IsEnvironmentProblem() {
 		// Full multi-analyst pass for ambiguous failures.
 		verdict, err := runDescentReasoning(ctx, cfg, ac, acOutput)
@@ -510,13 +713,51 @@ func VerificationDescent(
 
 	result.Category = analysisCategory
 	cfg.log("  → T3: final category=%s", analysisCategory)
+	cfg.emitTier(DescentTierEvent{
+		Tier:     TierClassify,
+		ACID:     ac.ID,
+		Category: analysisCategory,
+	})
 
 	// ---------------------------------------------------------------
 	// T4: Code repair (only for code_bug)
 	// ---------------------------------------------------------------
 	if analysisCategory == "code_bug" || analysisCategory == "both" {
 		if cfg.RepairFunc != nil {
+			// H-91g: accumulate attempt history so each retry sees what
+			// prior attempts tried. Without this, the planner re-analyzes
+			// fresh failure output and often proposes the same fix as
+			// last time — three identical attempts burn budget. With
+			// history injected into the directive, the repair worker can
+			// deliberately pick a DIFFERENT approach.
+			type repairMemoryEntry struct {
+				attempt   int
+				directive string
+				resultErr string
+			}
+			var repairMemory []repairMemoryEntry
+			// Spec-1 item 4 (per-file repair cap): lastErrors is passed
+			// to OnFileCapExceeded so observers can see WHY the cap was
+			// hit. Tracked alongside repairMemory (which feeds the next
+			// directive) because the callback signature takes []string.
+			var lastErrors []string
 			for attempt := 0; attempt < cfg.maxRepairs(); attempt++ {
+				targets := collectRepairTargets(ac, acOutput, cfg.FileRepairCounts)
+				if hit := cfg.fileCapHit(targets); hit != "" {
+					cfg.log("  ⛔ T4: per-file cap hit on %s (>=%d attempts) — failing AC without further repair",
+						hit, cfg.maxRepairsPerFile())
+					if cfg.OnFileCapExceeded != nil {
+						cfg.OnFileCapExceeded(ac, hit, cfg.FileRepairCounts[hit], lastErrors)
+					}
+					result.Outcome = DescentFail
+					result.ResolvedAtTier = TierCodeRepair
+					result.Reason = fmt.Sprintf(
+						"T4-code-repair: per-file repair cap exceeded: %s (%d attempts). "+
+							"Last output: %s",
+						hit, cfg.FileRepairCounts[hit], truncateDescentLog(acOutput, 200))
+					return result
+				}
+
 				result.CodeRepairAttempts++
 				directive := analysisCodeFix
 				if directive == "" {
@@ -524,13 +765,50 @@ func VerificationDescent(
 						"Fix the code for AC %s (%s). Failure: %s",
 						ac.ID, ac.Description, truncateDescentLog(acOutput, 500))
 				}
+				// Prepend the history of what this AC's prior repair
+				// attempts tried. The worker uses this to avoid retrying
+				// the same fix.
+				if len(repairMemory) > 0 {
+					var hist strings.Builder
+					hist.WriteString("PREVIOUS REPAIR ATTEMPTS ON THIS AC — do NOT retry the same approach:\n")
+					for _, e := range repairMemory {
+						fmt.Fprintf(&hist, "  Attempt %d directive: %s\n", e.attempt, truncateDescentLog(e.directive, 300))
+						if e.resultErr != "" {
+							fmt.Fprintf(&hist, "    Result: %s\n", truncateDescentLog(e.resultErr, 300))
+						}
+					}
+					hist.WriteString("\nNow try a STRUCTURALLY DIFFERENT fix:\n")
+					directive = hist.String() + directive
+				}
 				cfg.log("  ↻ T4: code repair attempt %d/%d", attempt+1, cfg.maxRepairs())
+				// Pick the first target file's repair count (or 0) for
+				// the structured event payload — gives observers enough
+				// signal to correlate with FileRepairCounts.
+				fileCount := 0
+				if len(targets) > 0 {
+					fileCount = cfg.FileRepairCounts[targets[0]]
+				}
+				cfg.emitTier(DescentTierEvent{
+					Tier:            TierCodeRepair,
+					ACID:            ac.ID,
+					Attempt:         attempt + 1,
+					FileRepairCount: fileCount,
+				})
+
+				// Increment counters BEFORE dispatch so a panic/error
+				// still counts as one attempt. resetFileRepairs clears
+				// these on a pass below.
+				cfg.incrementFileRepairs(targets)
 
 				repairCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 				err := cfg.RepairFunc(repairCtx, directive)
 				cancel()
 				if err != nil {
 					cfg.log("  ⚠ T4: repair dispatch failed: %v", err)
+					repairMemory = append(repairMemory, repairMemoryEntry{
+						attempt: attempt + 1, directive: directive, resultErr: err.Error(),
+					})
+					lastErrors = append(lastErrors, err.Error())
 					continue
 				}
 
@@ -538,6 +816,10 @@ func VerificationDescent(
 				acOutput, passed = runACCommand(ctx, cfg.RepoRoot, ac)
 				result.RawACOutput = acOutput
 				if passed {
+					// Spec-1 item 4: reset per-file counters on pass
+					// so a subsequent failure on the same file starts
+					// a fresh 3-attempt budget.
+					cfg.resetFileRepairs(targets)
 					result.Outcome = DescentPass
 					result.ResolvedAtTier = TierCodeRepair
 					result.Reason = fmt.Sprintf(
@@ -546,6 +828,10 @@ func VerificationDescent(
 					cfg.log("  ✓ T4: AC passed after repair")
 					return result
 				}
+				// Track the last failure text for the cap-exceeded
+				// event (gives the operator context on why the cap
+				// was hit).
+				lastErrors = append(lastErrors, truncateDescentLog(acOutput, 200))
 
 				// Re-classify — the failure signature may have changed.
 				// First repair might fix the original bug but reveal a new one.
@@ -584,6 +870,16 @@ func VerificationDescent(
 						analysisCodeFix = reVerdict.CodeFix
 					}
 				}
+
+				// H-91g: record this attempt's directive + still-failing
+				// AC output so the next iteration's prompt header shows
+				// the worker what's been tried. This is the critical
+				// signal that prevents triple-identical-fix thrashing.
+				repairMemory = append(repairMemory, repairMemoryEntry{
+					attempt:   attempt + 1,
+					directive: directive,
+					resultErr: truncateDescentLog(acOutput, 500),
+				})
 			}
 
 			// Exhausted code repairs and still code_bug?
@@ -619,7 +915,13 @@ func VerificationDescent(
 			}
 			cfg.log("  🔧 T5: attempting env fix for %s", rootCause)
 
-			if cfg.EnvFixFunc(ctx, rootCause, acOutput) {
+			envApplied := cfg.EnvFixFunc(ctx, rootCause, acOutput)
+			cfg.emitTier(DescentTierEvent{
+				Tier:          TierEnvFix,
+				ACID:          ac.ID,
+				EnvFixApplied: envApplied,
+			})
+			if envApplied {
 				// Env fix reports success — re-run AC.
 				acOutput, passed = runACCommand(ctx, cfg.RepoRoot, ac)
 				result.RawACOutput = acOutput
@@ -662,6 +964,11 @@ func VerificationDescent(
 			result.ACRewriteAttempted = true
 			result.ACRewriteCommand = analysisACRewrite
 			cfg.log("  ✏ T6: rewriting AC command to: %s", truncateDescentLog(analysisACRewrite, 120))
+			cfg.emitTier(DescentTierEvent{
+				Tier:       TierACRewrite,
+				ACID:       ac.ID,
+				NewCommand: analysisACRewrite,
+			})
 
 			// Run the rewritten command directly (don't modify the
 			// canonical AC — the caller decides whether to persist the rewrite).
@@ -695,6 +1002,11 @@ func VerificationDescent(
 		result.RefactorAttempted = true
 		refactorDirective := buildRefactorDirective(ac, analysisCategory, analysisRootCause, acOutput)
 		cfg.log("  🔄 T7: dispatching refactor for verifiability")
+		cfg.emitTier(DescentTierEvent{
+			Tier:              TierRefactor,
+			ACID:              ac.ID,
+			RefactorAttempted: true,
+		})
 
 		refactorCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		err := cfg.RepairFunc(refactorCtx, refactorDirective)
@@ -799,6 +1111,38 @@ func VerificationDescent(
 		result.Reason = "T8-soft-pass: other ACs in session also failing — soft-pass requires isolated failure"
 		cfg.log("  ✗ T8: other ACs also failing")
 		return result
+	}
+
+	// All 6 gates passed. Emit a structured T8 event carrying the
+	// gate status + whether HITL approval is required.
+	cfg.emitTier(DescentTierEvent{
+		Tier:             TierSoftPass,
+		ACID:             ac.ID,
+		AllGatesPassed:   true,
+		ApprovalRequired: cfg.SoftPassApprovalFunc != nil,
+	})
+
+	// Spec-2 item 4: HITL approval hook for enterprise tier. When
+	// SoftPassApprovalFunc is set (CloudSwarm integration), ask the
+	// human operator to confirm. Reject → AC fails; approve → soft-pass
+	// proceeds. Default (nil) auto-grants to preserve community-tier
+	// behavior. Synthesize a minimal ReasoningVerdict from current
+	// analysis state so the approval callback has context.
+	if cfg.SoftPassApprovalFunc != nil {
+		verdict := ReasoningVerdict{
+			Category:  result.Category,
+			Reasoning: analysisRootCause,
+			CodeFix:   analysisCodeFix,
+			ACRewrite: analysisACRewrite,
+		}
+		if !cfg.SoftPassApprovalFunc(ctx, ac, verdict) {
+			result.Outcome = DescentFail
+			result.ResolvedAtTier = TierSoftPass
+			result.Reason = "T8-soft-pass: HITL approver rejected soft-pass"
+			cfg.log("  ✗ T8: HITL approver rejected")
+			return result
+		}
+		cfg.log("  ✓ T8: HITL approver approved soft-pass")
 	}
 
 	// All prerequisites met. Grant soft-pass with full audit trail.
@@ -914,6 +1258,57 @@ func truncateDescentLog(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+// pathMentionRE matches repo-relative-ish path tokens embedded in
+// compiler/test stderr output (e.g. `src/foo.ts:42:7`, `internal/bar.go`,
+// `./packages/x/y/z.tsx`). Used by collectRepairTargets when the LLM
+// verdict doesn't populate TargetFiles. Deliberately conservative — a
+// two-segment relative path with a recognized extension — so we don't
+// accept prose "main" or "test" as a file path. Note: no anchors so
+// the pattern matches mid-line, and the leading (?:^|[\s"'(<]) group
+// captures surrounding whitespace / punctuation as a boundary.
+var pathMentionRE = regexp.MustCompile(`(?:^|[\s"'(<])` +
+	`([a-zA-Z0-9_\-./]+?\.(?:ts|tsx|js|jsx|go|rs|py|java|rb|cs|kt|swift|cpp|c|h|hpp|toml|json|yaml|yml|md))(?:$|[\s:,"')>])`)
+
+// collectRepairTargets returns the file paths the T4 repair loop
+// should count against the per-file cap. Priority order:
+//
+//  1. If the analyst populated ReasoningVerdict.TargetFiles, trust it.
+//     (Caller must plumb TargetFiles through — unwired callers still
+//     fall through to stderr parsing.)
+//  2. AcceptanceCriterion.ContentMatch.File — when the AC explicitly
+//     checks a file, that file is the fix target by construction.
+//  3. AcceptanceCriterion.FileExists — same reasoning.
+//  4. Parse path-like tokens from stderr output. Best-effort; may
+//     return zero matches for ambiguous failures (test that prints
+//     plain text with no file:line). Zero matches is safe: fileCapHit
+//     returns "" which means "don't cap".
+//
+// The returned slice is deduplicated and preserves first-seen order
+// so counter increments are stable.
+func collectRepairTargets(ac AcceptanceCriterion, acOutput string, priorCounts map[string]int) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if ac.ContentMatch != nil {
+		add(ac.ContentMatch.File)
+	}
+	add(ac.FileExists)
+	// Parse stderr paths.
+	for _, m := range pathMentionRE.FindAllStringSubmatch(acOutput, -1) {
+		if len(m) >= 2 {
+			add(m[1])
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

@@ -50,9 +50,10 @@ import (
 
 // RealClient calls a live TrustPlane gateway over HTTP with DPoP proofs.
 type RealClient struct {
-	baseURL string
-	http    *http.Client
-	signer  *dpop.Signer
+	baseURL  string
+	http     *http.Client
+	signer   *dpop.Signer
+	identity *IdentitySigner // optional; set via WithIdentity for T20 hire-flow headers
 }
 
 // RealClientOptions configures a RealClient.

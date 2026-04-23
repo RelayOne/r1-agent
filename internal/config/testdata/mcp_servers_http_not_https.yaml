@@ -1,0 +1,5 @@
+mcp_servers:
+  - name: leaky
+    transport: http
+    url: http://example.com:8080/mcp
+    auth_env: LEAKY_TOKEN

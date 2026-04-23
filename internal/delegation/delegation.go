@@ -20,6 +20,11 @@
 //     without enumerating every Cedar action name
 //   - Subscribes to NATS trustplane.delegation.revoked (wiring
 //     slot; saga orchestrator will consume in STOKE-016)
+//   - A2A-core (spec-5 build-order 5): DelegateTask ties the
+//     TrustPlane delegation to an A2A peer task submission via
+//     a pluggable TaskSubmitter so the rest of spec-5 (HMAC
+//     verifier, budget reserve, a2a-go client) can layer on top
+//     without disturbing this seam.
 package delegation
 
 import (
@@ -180,4 +185,87 @@ func (m *Manager) Bundles() []string {
 		}
 	}
 	return out
+}
+
+// --- A2A-core: DelegateTask (spec-5 build-order 5) ---
+//
+// DelegateTask is the core A2A-delegation primitive the spec-5
+// DelegateExecutor (Part 6) composes on top of. It binds two
+// concerns the rest of the spec layers atop: (a) create the
+// TrustPlane-side delegation that authorizes the hire, and
+// (b) submit the task to an A2A-compatible peer via a pluggable
+// TaskSubmitter. Callers who later wire the a2a-go client + HMAC
+// token verifier just swap the submitter; the orchestration
+// seam is stable.
+//
+// This deliberately avoids pulling a2a-go / bbolt / SQLite /
+// Ed25519 signing into this commit — the spec's Part 2 (HMAC
+// verifier), Part 3 (budget reservation), and Part 5 (A2A
+// client) each land as follow-on steps. What ships here is the
+// minimum primitive that lets an operator say "hire agent B to
+// do X under delegation D" and have the delegation created +
+// task dispatched in one call, with typed errors for the two
+// failure modes that matter at this layer.
+
+// ErrTaskDispatchFailed is returned by DelegateTask when the
+// delegation was successfully created but the A2A submitter
+// rejected the task. The caller holds a live delegation
+// (visible via Manager.Revoke + TrustPlane audit) and can
+// decide whether to retry against a different peer or revoke
+// and report.
+var ErrTaskDispatchFailed = errors.New("delegation: task dispatch failed")
+
+// ErrEmptyTaskSpec is returned when DelegateTask is called with
+// an empty TaskSpec. Zero-length specs are a caller bug —
+// surface it eagerly rather than issuing a delegation for an
+// unspecified task.
+var ErrEmptyTaskSpec = errors.New("delegation: empty task spec")
+
+// TaskSubmitter is the plug point for the A2A transport. The
+// real implementation (spec Part 5) wraps a2a-go's client; tests
+// wire a fake. Only the minimum needed for "hire and dispatch"
+// lives here: fuller stream / cancel / subscribe methods arrive
+// with the full DelegateExecutor in spec Part 6.
+type TaskSubmitter interface {
+	// SubmitTask dispatches a task to the A2A peer identified
+	// by the delegation + opaque spec bytes. Returns the
+	// peer-assigned task ID on success.
+	SubmitTask(ctx context.Context, d trustplane.Delegation, spec []byte) (taskID string, err error)
+}
+
+// TaskHandle is what DelegateTask returns on success: the
+// delegation record (so callers can audit + revoke) plus the
+// peer-assigned task ID (so callers can poll + cancel).
+type TaskHandle struct {
+	Delegation trustplane.Delegation
+	TaskID     string
+}
+
+// DelegateTask is the end-to-end primitive: create the
+// delegation via TrustPlane, then submit the task bytes to the
+// A2A peer via submitter. On submitter failure the already-
+// issued delegation is NOT auto-revoked — callers decide
+// whether revocation is appropriate for their retry story, and
+// blindly revoking would double-charge the audit log for
+// transient network errors.
+//
+// The returned handle on success carries both the delegation
+// (for downstream Verify / Revoke / saga registration) and the
+// peer's task ID (for status polling).
+func (m *Manager) DelegateTask(ctx context.Context, req Request, submitter TaskSubmitter, spec []byte) (TaskHandle, error) {
+	if len(spec) == 0 {
+		return TaskHandle{}, ErrEmptyTaskSpec
+	}
+	if submitter == nil {
+		return TaskHandle{}, fmt.Errorf("%w: nil submitter", ErrTaskDispatchFailed)
+	}
+	d, err := m.Delegate(ctx, req)
+	if err != nil {
+		return TaskHandle{}, err
+	}
+	taskID, err := submitter.SubmitTask(ctx, d, spec)
+	if err != nil {
+		return TaskHandle{Delegation: d}, fmt.Errorf("%w: %v", ErrTaskDispatchFailed, err)
+	}
+	return TaskHandle{Delegation: d, TaskID: taskID}, nil
 }

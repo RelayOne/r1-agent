@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -86,6 +87,24 @@ type Config struct {
 	// soft cap; exceeding it returns a context-continue error and the
 	// user can type again.
 	MaxTurns int
+	// Gate is the optional post-turn descent gate. When non-nil, after
+	// every chat turn that returns from the agentloop the session calls
+	// Gate.ShouldFire and (if true) Gate.Run before flushing the reply
+	// to the user. nil = legacy behavior (no descent). Spec:
+	// specs/chat-descent-control.md §1.5.
+	Gate *DescentGate
+	// RepoRoot is the cwd used for the rollback `git checkout --` when
+	// the operator picks "edit-prompt" in the gate's Ask. Defaults to
+	// Gate.Repo when empty.
+	RepoRoot string
+}
+
+// descentGate is the abstract surface Session uses to invoke the
+// post-turn descent. *DescentGate implicitly satisfies this; tests
+// inject a fake to avoid needing a real git worktree + toolchain.
+type descentGate interface {
+	ShouldFire(ctx context.Context) (bool, []string, error)
+	Run(ctx context.Context, changed []string) (ChatVerdict, error)
 }
 
 // Session holds the conversation history and dispatches turns through a
@@ -106,6 +125,14 @@ type Session struct {
 	// call is being executed (tool dispatch runs synchronously inside
 	// Send).
 	lastTurnImages []string
+
+	// gate is the post-turn descent gate. nil disables the gate
+	// entirely (legacy behavior). Set via cfg.Gate at NewSession; tests
+	// override via setGateForTest with a synthetic implementation.
+	gate descentGate
+	// repoRoot is used for the rollback `git checkout --` when the
+	// gate's verdict is EditPrompt. Falls back to gate's repo when set.
+	repoRoot string
 }
 
 // NewSession constructs a chat Session. The provider must be non-nil.
@@ -126,7 +153,28 @@ func NewSession(p provider.Provider, cfg Config) (*Session, error) {
 	if cfg.MaxTurns == 0 {
 		cfg.MaxTurns = 6
 	}
-	return &Session{cfg: cfg, provider: p}, nil
+	s := &Session{cfg: cfg, provider: p}
+	if cfg.Gate != nil {
+		s.gate = cfg.Gate
+		s.repoRoot = cfg.RepoRoot
+		if s.repoRoot == "" {
+			s.repoRoot = cfg.Gate.Repo
+		}
+	} else if cfg.RepoRoot != "" {
+		s.repoRoot = cfg.RepoRoot
+	}
+	return s, nil
+}
+
+// setGateForTest replaces the post-turn descent gate. Tests use this to
+// inject a fake gate that returns canned verdicts without needing a
+// real git worktree. Production code should set the gate via
+// Config.Gate at NewSession time.
+func (s *Session) setGateForTest(g descentGate, repoRoot string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gate = g
+	s.repoRoot = repoRoot
 }
 
 // OnDelta is called for each incremental text chunk streamed from the
@@ -157,6 +205,16 @@ type Result struct {
 	DispatchedTools []DispatchRecord
 	// Turns is the number of provider API calls made.
 	Turns int
+	// DescentLines holds the per-AC bullet lines the post-turn descent
+	// gate emitted (if any), in render order. Already streamed via
+	// onDelta; surfaced here too for callers that want to log or
+	// re-render them. nil when the gate did not fire.
+	DescentLines []string
+	// Discarded is set true when the descent-gate operator picked
+	// "edit-prompt" — the assistant's draft has been rolled back from
+	// the worktree and the chat history was NOT committed for this
+	// turn. Callers should suppress the assistant reply.
+	Discarded bool
 }
 
 // DispatchRecord is one tool invocation during a Send turn.
@@ -336,6 +394,17 @@ func (s *Session) Send(ctx context.Context, userText string, onDelta OnDelta, on
 		// If no tools were requested, the turn is complete.
 		if len(toolUses) == 0 {
 			result.Text = assistantText
+			// Run the post-turn descent gate (if configured) BEFORE we
+			// commit history or return. The gate may stream lines back
+			// into the user-facing reply via onDelta and may flag an
+			// edit-prompt verdict that discards the assistant draft.
+			s.runDescentGate(ctx, result, onDelta)
+			if result.Discarded {
+				// EditPrompt: do NOT persist this turn's history. The
+				// user will restate; the session continues from the
+				// pre-Send state.
+				return result, nil
+			}
 			// Persist history only on a clean (final) turn. This is
 			// conservative: a mid-loop crash leaves the canonical
 			// history stable so the user can retry.
@@ -560,6 +629,82 @@ func newToolResultMessage(results []toolResultBlock) (provider.ChatMessage, erro
 		return provider.ChatMessage{}, err
 	}
 	return provider.ChatMessage{Role: "user", Content: raw}, nil
+}
+
+// runDescentGate invokes the post-turn descent gate (if any) and folds
+// its bullet lines into the assistant reply. Each emitted line is also
+// streamed via onDelta so the chat UI surfaces them inline. Sets
+// result.Discarded when the operator picks "edit-prompt" — caller is
+// expected to suppress the assistant draft and roll back the touched
+// files via the gate's `git checkout --` path.
+//
+// Spec: specs/chat-descent-control.md §1.4 (output format) + §1.5
+// (dispatcher integration seam).
+func (s *Session) runDescentGate(ctx context.Context, result *Result, onDelta OnDelta) {
+	if s == nil || s.gate == nil || result == nil {
+		return
+	}
+	fire, changed, fireErr := s.gate.ShouldFire(ctx)
+	if fireErr != nil {
+		s.appendDescent(result, onDelta, "(descent gate: ShouldFire error: "+fireErr.Error()+")")
+		return
+	}
+	if !fire {
+		return
+	}
+	verdict, runErr := s.gate.Run(ctx, changed)
+	s.renderDescentVerdict(result, onDelta, verdict, runErr)
+	if verdict.EditPrompt {
+		// Roll back the dirtied files and discard the assistant draft.
+		// Best-effort: a failing checkout leaves the file as the user
+		// already saw it, which is the conservative outcome.
+		repo := s.repoRoot
+		if repo == "" {
+			// Nothing to roll back against. Still mark the turn as
+			// discarded so the caller suppresses the reply.
+			result.Discarded = true
+			return
+		}
+		for _, p := range changed {
+			cmd := exec.CommandContext(ctx, "git", "-C", repo, "checkout", "--", p)
+			_ = cmd.Run()
+		}
+		result.Discarded = true
+	}
+}
+
+// renderDescentVerdict appends one bullet per AC outcome plus optional
+// soft-pass / fatal-error tail lines, matching spec §1.4. Lines are
+// also streamed back through onDelta so the live chat UI sees them.
+func (s *Session) renderDescentVerdict(result *Result, onDelta OnDelta, v ChatVerdict, err error) {
+	for _, o := range v.Outcomes {
+		if o.Passed {
+			s.appendDescent(result, onDelta, "  ✓ "+o.AC.ID+" passed")
+			continue
+		}
+		s.appendDescent(result, onDelta, "  ✗ "+o.AC.ID+" failed: "+truncate(o.Stderr, 200))
+	}
+	if v.SoftPass {
+		s.appendDescent(result, onDelta, "  (operator accepted as-is)")
+	}
+	if err != nil && !v.SoftPass && !v.EditPrompt {
+		s.appendDescent(result, onDelta, "  ⚠ "+err.Error())
+	}
+}
+
+// appendDescent adds a single descent line to the Result and pushes it
+// through onDelta with a leading newline so the line lands on its own
+// row in the streamed chat output. The newline is part of the streamed
+// chunk because callers (REPL/TUI) treat onDelta payloads as opaque
+// text fragments.
+func (s *Session) appendDescent(result *Result, onDelta OnDelta, line string) {
+	if result == nil {
+		return
+	}
+	result.DescentLines = append(result.DescentLines, line)
+	if onDelta != nil {
+		onDelta("\n" + line)
+	}
 }
 
 // firstTextBlock extracts the first "text" content block's text from a

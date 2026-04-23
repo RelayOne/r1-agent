@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r1-server tree — {{.InstanceID}}</title>
+<script src="/ui/vendor/htmx.min.js" defer></script>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --line: #30363d;
+    --tier-t1: #58a6ff;
+    --tier-t2: #3fb950;
+    --tier-t3: #d29922;
+    --tier-t4: #f85149;
+    --tier-t5: #a371f7;
+    --tier-t6: #db6d28;
+    --tier-t7: #f778ba;
+    --tier-t8: #39c5cf;
+    --tier-unknown: #6e7681;
+  }
+  body { margin: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header nav a { color: var(--muted); text-decoration: none; margin-right: 12px; }
+  header nav a.active { color: var(--fg); border-bottom: 2px solid var(--tier-t1); padding-bottom: 2px; }
+  main { padding: 16px 20px; }
+  .meta { color: var(--muted); margin-bottom: 12px; font-size: 12px; }
+  .empty { color: var(--muted); font-style: italic; padding: 40px 0; text-align: center; }
+  .tree { list-style: none; padding: 0; margin: 0; }
+  .tree ul { list-style: none; padding-left: 24px; border-left: 1px dashed var(--line); margin: 4px 0 4px 8px; }
+  .node { margin: 2px 0; }
+  details > summary {
+    cursor: pointer; padding: 4px 6px; border-radius: 3px;
+    list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+  details > summary::before { content: "▶"; font-size: 9px; color: var(--muted); width: 10px; }
+  details[open] > summary::before { content: "▼"; }
+  details > summary:hover { background: #161b22; }
+  .leaf { padding: 4px 6px 4px 22px; display: flex; align-items: center; gap: 6px; }
+  .tier-badge {
+    display: inline-block; width: 28px; text-align: center;
+    border-radius: 2px; font-weight: 600; color: #0b0f14;
+    font-size: 11px; padding: 1px 0;
+  }
+  .tier-t1 { background: var(--tier-t1); }
+  .tier-t2 { background: var(--tier-t2); }
+  .tier-t3 { background: var(--tier-t3); }
+  .tier-t4 { background: var(--tier-t4); }
+  .tier-t5 { background: var(--tier-t5); }
+  .tier-t6 { background: var(--tier-t6); }
+  .tier-t7 { background: var(--tier-t7); }
+  .tier-t8 { background: var(--tier-t8); }
+  .tier-unknown { background: var(--tier-unknown); }
+  .dur { color: var(--muted); font-size: 11px; }
+  .acid { color: var(--muted); font-size: 11px; }
+  .preview { color: var(--muted); font-size: 11px; margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>r1-server trace</h1>
+  <nav>
+    <a href="/session/{{.InstanceID}}">waterfall</a>
+    <a href="/session/{{.InstanceID}}/tree" class="active">tree</a>
+    <a href="/session/{{.InstanceID}}/graph">3D graph</a>
+  </nav>
+  <span class="meta">session <code>{{.InstanceID}}</code></span>
+</header>
+<main>
+  <p class="meta">
+    {{len .Roots}} root span(s){{if .Stubbed}} &middot; <em>stub data (trace ingest not yet wired)</em>{{end}}
+  </p>
+  {{if not .Roots}}
+    <p class="empty">No spans yet — this session has not emitted any descent-tier events.</p>
+  {{else}}
+    <ul class="tree">
+      {{range .Roots}}{{template "node" .}}{{end}}
+    </ul>
+  {{end}}
+</main>
+</body>
+</html>
+
+{{define "node"}}
+<li class="node">
+  {{if .Children}}
+    <details open>
+      <summary>
+        <span class="tier-badge {{tierColor .Tier}}">{{.Tier}}</span>
+        <strong>{{.Name}}</strong>
+        {{if .ACID}}<span class="acid">AC {{.ACID}}</span>{{end}}
+        <span class="dur">{{.DurationMs}}ms &middot; {{formatTime .StartedAt}}</span>
+        {{if .Preview}}<span class="preview">{{truncateJSON .Preview 80}}</span>{{end}}
+      </summary>
+      <ul>
+        {{range .Children}}{{template "node" .}}{{end}}
+      </ul>
+    </details>
+  {{else}}
+    <div class="leaf">
+      <span class="tier-badge {{tierColor .Tier}}">{{.Tier}}</span>
+      <strong>{{.Name}}</strong>
+      {{if .ACID}}<span class="acid">AC {{.ACID}}</span>{{end}}
+      <span class="dur">{{.DurationMs}}ms &middot; {{formatTime .StartedAt}}</span>
+      {{if .Preview}}<span class="preview">{{truncateJSON .Preview 80}}</span>{{end}}
+    </div>
+  {{end}}
+</li>
+{{end}}

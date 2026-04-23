@@ -24,8 +24,10 @@ package plan
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/promptguard"
 	"github.com/ericmacdougall/stoke/internal/websearch"
 )
 
@@ -90,7 +92,19 @@ func EvaluateFeasibility(ctx context.Context, sow *SOW, rawSOW string, searcher 
 			fmt.Fprintf(&b, "Documentation for %s is provided inline in the SOW (evidence: %s).\n", doc.Service.Name, doc.SOWEvidence)
 		}
 		for _, r := range doc.WebResults {
-			fmt.Fprintf(&b, "\n--- %s (%s) ---\n%s\n", r.Title, r.URL, firstNonEmpty(r.Body, r.Excerpt))
+			// Third-party web bodies are an attacker-controllable surface:
+			// route them through promptguard so we at least log when an
+			// injection-shaped payload shows up in fetched doc content.
+			body := firstNonEmpty(r.Body, r.Excerpt)
+			sanitized, report, _ := promptguard.Sanitize(body, promptguard.ActionWarn, r.URL)
+			if len(report.Threats) > 0 {
+				slog.Warn("promptguard threat detected in feasibility web-search body",
+					"url", r.URL,
+					"title", r.Title,
+					"threats", len(report.Threats),
+					"summary", report.Summary())
+			}
+			fmt.Fprintf(&b, "\n--- %s (%s) ---\n%s\n", r.Title, r.URL, sanitized)
 		}
 		if txt := strings.TrimSpace(b.String()); txt != "" {
 			rep.FetchedDocsForTaskBrief[doc.Service.Name] = txt

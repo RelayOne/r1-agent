@@ -16,8 +16,14 @@ import (
 	"sync"
 )
 
-// ServerConfig describes how to launch and connect to an MCP server.
-type ServerConfig struct {
+// LegacyServerConfig describes how to launch and connect to an MCP server
+// over the legacy stdio JSON-RPC stub (StdioClient). Per specs/mcp-client.md
+// the canonical, operator-facing server config is `ServerConfig` in
+// types.go; this struct is retained only because StdioClient + the
+// .claude/mcp.json loader still drive stdio subprocesses through it.
+// MCP-3 will replace StdioClient with the mark3labs/mcp-go transport and
+// remove this struct entirely.
+type LegacyServerConfig struct {
 	Name    string            `json:"name"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
@@ -25,12 +31,10 @@ type ServerConfig struct {
 	Enabled bool              `json:"enabled"`
 }
 
-// ToolDefinition is an MCP tool definition received from a server.
-type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
-}
+// ToolDefinition (declared in types.go) is used here by the legacy
+// StdioClient to deserialize a server's `tools/list` response. The
+// same struct is also used by Stoke's own MCP servers
+// (CodebaseServer, StokeServer) to advertise their tools.
 
 // StdioClient communicates with an MCP server over stdin/stdout using JSON-RPC.
 type StdioClient struct {
@@ -65,7 +69,7 @@ type jsonRPCError struct {
 }
 
 // NewStdioClient launches an MCP server process and establishes a JSON-RPC connection.
-func NewStdioClient(config ServerConfig) (*StdioClient, error) {
+func NewStdioClient(config LegacyServerConfig) (*StdioClient, error) {
 	if !config.Enabled {
 		return nil, fmt.Errorf("MCP server %q is disabled", config.Name)
 	}
@@ -140,6 +144,23 @@ func (c *StdioClient) ListTools() ([]ToolDefinition, error) {
 }
 
 // CallTool invokes a tool on the MCP server.
+//
+// SECURITY: the returned json.RawMessage contains attacker-influenced text
+// drawn from whatever third-party MCP server the client is connected to
+// (filesystem contents, database rows, HTTP responses, etc). Callers that
+// forward this payload into an LLM prompt MUST first route it through
+// agentloop.SanitizeToolOutput (Track A Task 2) to neutralize prompt-injection
+// markers. Callers that only consume it programmatically (parsing JSON,
+// logging, returning to a non-LLM HTTP client) do NOT need to sanitize.
+//
+// See docs/mcp-security.md for the full responsibility boundary and the
+// `grep -rn "mcp-sanitization-audit:"` maintenance check.
+//
+// mcp-sanitization-audit: method definition — per-caller annotations live at
+// call sites. There are currently zero internal callers of CallTool; this is
+// a library surface consumed by external packages and future tasks. Any new
+// caller MUST add an mcp-sanitization-audit marker classifying its consumer
+// (LLM vs code).
 func (c *StdioClient) CallTool(name string, arguments map[string]interface{}) (json.RawMessage, error) {
 	return c.call("tools/call", map[string]interface{}{
 		"name":      name,
@@ -218,7 +239,7 @@ func (c *StdioClient) notify(method string, params interface{}) error {
 
 // ConfigFromFile loads MCP server configurations from a JSON file.
 // Compatible with Claude Code's .claude/mcp.json format.
-func ConfigFromFile(path string) ([]ServerConfig, error) {
+func ConfigFromFile(path string) ([]LegacyServerConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -238,9 +259,9 @@ func ConfigFromFile(path string) ([]ServerConfig, error) {
 		return nil, fmt.Errorf("parse MCP config: %w", err)
 	}
 
-	var configs []ServerConfig
+	var configs []LegacyServerConfig
 	for name, srv := range raw.MCPServers {
-		configs = append(configs, ServerConfig{
+		configs = append(configs, LegacyServerConfig{
 			Name:    name,
 			Command: srv.Command,
 			Args:    srv.Args,

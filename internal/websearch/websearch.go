@@ -31,11 +31,108 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 )
+
+// DefaultMaxBodyBytes is the default per-fetch body cap applied when
+// FetchConfig.MaxBodyBytes is zero. 100 KB is generous for API-doc
+// pages (typical doc page body < 50 KB) while bounding the memory an
+// attacker can force stoke to allocate by pointing feasibility search
+// at a never-ending stream.
+const DefaultMaxBodyBytes = 102400
+
+// FetchConfig governs full-body HTTP fetches made by this package.
+// Both fields are zero-value safe:
+//
+//   - DomainAllowlist empty  → all hosts are allowed (backward compat).
+//   - MaxBodyBytes     zero   → DefaultMaxBodyBytes is applied.
+//
+// DomainAllowlist entries are glob patterns matched against the
+// request URL's host with path.Match semantics. Examples:
+//
+//	"*.github.com"        // any github.com subdomain
+//	"docs.example.com"    // exact match
+//	"*.tld"               // any single-label .tld host
+//
+// For production deployments operators are strongly encouraged to
+// configure an allowlist. An empty allowlist is the safe default for
+// dev + CI where blocking a new domain would be operator-surprising.
+type FetchConfig struct {
+	DomainAllowlist []string
+	MaxBodyBytes    int
+	HTTPClient      *http.Client
+}
+
+// Fetch retrieves the full body at u, subject to cfg's allowlist and
+// body cap. When the response body exceeds MaxBodyBytes, the returned
+// byte slice is truncated to exactly MaxBodyBytes and a
+// "\n\n[truncated at N bytes]" marker is appended so downstream
+// callers (and any LLM that reads the payload) can see the cap fired.
+//
+// Returns an error with the literal substring "not in allowlist" when
+// DomainAllowlist is non-empty and no pattern matches the request
+// host — callers rely on that wording for log grepping and tests.
+func Fetch(ctx context.Context, u string, cfg FetchConfig) ([]byte, error) {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: parse url %q: %w", u, err)
+	}
+	if len(cfg.DomainAllowlist) > 0 {
+		host := parsed.Hostname()
+		if !hostMatchesAllowlist(host, cfg.DomainAllowlist) {
+			return nil, fmt.Errorf("websearch: host %q not in allowlist", host)
+		}
+	}
+	max := cfg.MaxBodyBytes
+	if max <= 0 {
+		max = DefaultMaxBodyBytes
+	}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: build request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("websearch: fetch %q: %w", u, err)
+	}
+	defer resp.Body.Close()
+	// Read one byte past the cap so we can detect overflow and append
+	// the truncation marker without having to Seek or re-fetch.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(max)+1))
+	if err != nil {
+		return nil, fmt.Errorf("websearch: read body %q: %w", u, err)
+	}
+	if len(body) > max {
+		body = append(body[:max], []byte(fmt.Sprintf("\n\n[truncated at %d bytes]", max))...)
+	}
+	return body, nil
+}
+
+// hostMatchesAllowlist returns true when host matches at least one
+// glob in patterns. path.Match is used because it's stdlib and
+// sufficient for domain-shape globs (leading *, literal labels).
+func hostMatchesAllowlist(host string, patterns []string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, p := range patterns {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if ok, _ := path.Match(p, host); ok {
+			return true
+		}
+	}
+	return false
+}
 
 // Result is a single search hit.
 type Result struct {

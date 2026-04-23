@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
@@ -96,8 +97,11 @@ func buildDescentConfig(
 
 	// -----------------------------------------------------------------
 	// RepairFunc: dispatch a focused repair worker for a single AC.
+	// Wraps the legacy dispatch with the spec-1 item 5 bootstrap-per-cycle
+	// guard (manifest-change re-install) and injects the spec-1 item 3
+	// pre-completion gate check into the worker's PreEndTurnCheckFn.
 	// -----------------------------------------------------------------
-	dc.RepairFunc = func(rctx context.Context, directive string) error {
+	innerRepair := func(rctx context.Context, directive string) error {
 		repairTask := plan.Task{
 			ID:          fmt.Sprintf("%s-descent-repair-%d", session.ID, time.Now().UnixMilli()),
 			Description: "verification descent: targeted repair",
@@ -114,7 +118,44 @@ func buildDescentConfig(
 			UniversalPromptBlock: cfg.combinedPromptBlock(cfg.agentContext("worker-descent-repair", "2-repair-loop", &session, 1)),
 		})
 		sup := toEngineSupervisor(autoExtractTaskSupervisor(cfg.RepoRoot, cfg.RawSOWText, workingSession, repairTask, 3))
-		tr := execNativeTask(rctx, repairTask.ID, sysP, usrP, runtimeDir, cfg, maxTurns, sup)
+
+		// Spec-1 item 3: wire the pre_completion_gate parser into the
+		// worker's PreEndTurnCheckFn chain. Any claimed completion
+		// without matching evidence forces another turn.
+		// Spec-1 item 6: tag the report_env_issue tool with the
+		// current session ID so T3 can consume its markers.
+		// Spec-1 item 7: install the ghost-write detector as an
+		// ExtraMidturnCheck. Adapter translates engine.MidturnToolCall
+		// into plan.MidturnToolCall (avoids an import cycle — the
+		// detector lives in plan/).
+		taskCfg := cfg
+		taskCfg.CurrentSessionID = session.ID
+		taskCfg.ExtraPreEndTurnCheck = plan.NewPreEndTurnCheck(plan.PreCheckContext{
+			RepoRoot:          cfg.RepoRoot,
+			SowACs:            workingSession.AcceptanceCriteria,
+			SessionTranscript: nil, // populated by the worker log reader downstream; nil disables transcript cross-check
+			OnMismatch: func(kind, claim, observed string) {
+				fmt.Printf("    ⚠ descent pre_completion_gate %s: %s (observed=%s)\n",
+					kind, truncateForLog(claim, 120), truncateForLog(observed, 120))
+			},
+		})
+		ghostCheck := plan.NewGhostWriteCheck(cfg.RepoRoot, func(evt plan.GhostWriteEvent) {
+			fmt.Printf("    👻 descent.ghost_write_detected: tool=%s path=%s reason=%s\n",
+				evt.ToolName, evt.Path, evt.Reason)
+		})
+		taskCfg.ExtraMidturnCheck = func(tools []engine.MidturnToolCall, turn int) string {
+			converted := make([]plan.MidturnToolCall, 0, len(tools))
+			for _, t := range tools {
+				converted = append(converted, plan.MidturnToolCall{
+					Name:    t.Name,
+					Input:   t.Input,
+					Result:  t.Result,
+					IsError: t.IsError,
+				})
+			}
+			return ghostCheck(converted, turn)
+		}
+		tr := execNativeTask(rctx, repairTask.ID, sysP, usrP, runtimeDir, taskCfg, maxTurns, sup)
 		if !tr.Success {
 			if tr.Error != nil {
 				return tr.Error
@@ -122,6 +163,39 @@ func buildDescentConfig(
 			return fmt.Errorf("repair task %s failed", repairTask.ID)
 		}
 		return nil
+	}
+	// Spec-1 item 5: bootstrap per descent cycle. Wrap RepairFunc so
+	// that after every repair dispatch we inspect git diff for dep
+	// manifest changes. When a lockfile or manifest was touched, run
+	// a frozen-lockfile install so the worker's claimed deps are
+	// actually resolvable BEFORE the next AC re-run. Hallucinated deps
+	// (added to package.json but missing from the registry) produce
+	// a non-zero install exit and fall through to T5 env-fix.
+	dc.RepairFunc = func(rctx context.Context, directive string) error {
+		preSHA := descentGitHead(rctx, cfg.RepoRoot)
+		err := innerRepair(rctx, directive)
+		// Check for manifest changes regardless of repair outcome —
+		// a partially-applied edit can still have touched the manifest
+		// and broken subsequent runs.
+		changed := descentGitDiffNames(rctx, cfg.RepoRoot, preSHA, "HEAD")
+		manifests := []string{
+			"package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock",
+			"go.mod", "go.sum",
+			"Cargo.toml", "Cargo.lock",
+			"requirements.txt", "pyproject.toml", "uv.lock", "poetry.lock",
+		}
+		touched := intersectStrings(changed, manifests)
+		if len(touched) > 0 {
+			frozen := plan.LockfilePresent(cfg.RepoRoot)
+			start := time.Now()
+			plan.EnsureWorkspaceInstalledOpts(rctx, cfg.RepoRoot, plan.InstallOpts{
+				Force:  true,
+				Frozen: frozen,
+			})
+			fmt.Printf("  [descent] bootstrap_reinstalled: manifests=%v frozen=%v duration=%s event=descent.bootstrap_reinstalled\n",
+				touched, frozen, time.Since(start).Round(time.Millisecond))
+		}
+		return err
 	}
 
 	// -----------------------------------------------------------------
@@ -131,8 +205,33 @@ func buildDescentConfig(
 		fixed := false
 		lc := strings.ToLower(rootCause + " " + stderr)
 
-		// Try pnpm install for module-not-found.
-		if strings.Contains(lc, "module") || strings.Contains(lc, "cannot find") || strings.Contains(lc, "not found") {
+		// H-91g Path B: extract missing npm packages from the stderr
+		// text. Patterns: "Cannot find module 'zod'", "Cannot resolve
+		// module 'react'", "ERR_MODULE_NOT_FOUND: ... 'foo'". Before
+		// we just ran `pnpm install`, but that's a no-op if the pkg
+		// isn't in any package.json — which is exactly R04's failure
+		// mode (worker imported 'zod' without declaring it). Adding
+		// the pkg to root devDependencies + install closes the loop.
+		if missing := extractMissingNpmPackages(stderr); len(missing) > 0 {
+			if _, err := os.Stat(filepath.Join(cfg.RepoRoot, "package.json")); err == nil {
+				fmt.Printf("    🔧 descent env-fix: missing npm pkg(s): %s — adding to root devDependencies\n", strings.Join(missing, ", "))
+				if addErr := addRootDevDeps(cfg.RepoRoot, missing); addErr != nil {
+					fmt.Printf("    ⚠ add-dep failed: %v\n", addErr)
+				} else {
+					installCtx, cancel := context.WithTimeout(ectx, 3*time.Minute)
+					cmd := exec.CommandContext(installCtx, "pnpm", "install", "--silent")
+					cmd.Dir = cfg.RepoRoot
+					if out, err := cmd.CombinedOutput(); err == nil {
+						fixed = true
+						fmt.Printf("    ✓ pnpm install succeeded (added %d dep(s))\n", len(missing))
+					} else {
+						fmt.Printf("    ⚠ pnpm install failed after dep-add: %s\n", truncateForLog(string(out), 200))
+					}
+					cancel()
+				}
+			}
+		} else if strings.Contains(lc, "module") || strings.Contains(lc, "cannot find") || strings.Contains(lc, "not found") {
+			// Fallback: known pkg is declared but install hasn't run.
 			if _, err := os.Stat(filepath.Join(cfg.RepoRoot, "package.json")); err == nil {
 				fmt.Println("    🔧 descent env-fix: running pnpm install...")
 				installCtx, cancel := context.WithTimeout(ectx, 2*time.Minute)
@@ -318,7 +417,65 @@ func buildDescentConfig(
 		fmt.Printf("  [descent %s] %s\n", session.ID, msg)
 	}
 
+	// -----------------------------------------------------------------
+	// OnTierEvent: spec-2 item 6 structured-event forward. When the
+	// sow-native config carries a streamjson TwoLane emitter and/or
+	// a bus, mirror each DescentTierEvent as a descent.tier observability
+	// event and a bus publish. Nil-safe: if neither sink is present,
+	// the closure is still installed but is a no-op beyond OnLog (which
+	// fires separately inside emitTier).
+	// -----------------------------------------------------------------
+	dc.OnTierEvent = buildDescentTierEventHandler(cfg, session.ID)
+
 	return dc
+}
+
+// buildDescentTierEventHandler constructs the OnTierEvent closure for
+// the given sow-native config + session. Kept as a free function so
+// unit tests can exercise the event→streamjson/bus mapping without
+// instantiating the full buildDescentConfig.
+func buildDescentTierEventHandler(cfg sowNativeConfig, sessionID string) func(plan.DescentTierEvent) {
+	emitter := cfg.StreamJSON
+	evtBus := cfg.EventBus
+	if emitter == nil && evtBus == nil {
+		return nil
+	}
+	return func(evt plan.DescentTierEvent) {
+		if emitter != nil && emitter.Enabled() {
+			payload := map[string]any{
+				"_stoke.dev/session": sessionID,
+				"_stoke.dev/tier":    evt.Tier.String(),
+				"_stoke.dev/ac_id":   evt.ACID,
+			}
+			if evt.Category != "" {
+				payload["_stoke.dev/category"] = evt.Category
+			}
+			if evt.NewCommand != "" {
+				payload["_stoke.dev/new_command"] = evt.NewCommand
+			}
+			if evt.Attempt > 0 {
+				payload["_stoke.dev/attempt"] = evt.Attempt
+			}
+			if evt.FileRepairCount > 0 {
+				payload["_stoke.dev/file_repair_count"] = evt.FileRepairCount
+			}
+			// Tier-specific booleans — only emit when meaningful.
+			switch evt.Tier {
+			case plan.TierIntentMatch:
+				payload["_stoke.dev/intent_confirmed"] = evt.IntentConfirmed
+			case plan.TierRunAC:
+				payload["_stoke.dev/passed"] = evt.Passed
+			case plan.TierEnvFix:
+				payload["_stoke.dev/env_fix_applied"] = evt.EnvFixApplied
+			case plan.TierRefactor:
+				payload["_stoke.dev/refactor_attempted"] = evt.RefactorAttempted
+			case plan.TierSoftPass:
+				payload["_stoke.dev/all_gates_passed"] = evt.AllGatesPassed
+				payload["_stoke.dev/approval_required"] = evt.ApprovalRequired
+			}
+			emitter.EmitSystem("descent.tier", payload)
+		}
+	}
 }
 
 // runDescentRepairLoop is the feature-flagged replacement for the
@@ -577,4 +734,88 @@ func detectBuildCommand(sowDoc *plan.SOW, repoRoot string) string {
 	return ""
 }
 
+// descentGitHead returns the SHA of HEAD in repoRoot, or empty on
+// error (not-a-repo, detached work tree, etc.). ctx-aware so a
+// repair wrapper's cancellation propagates.
+func descentGitHead(ctx context.Context, repoRoot string) string {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
+// descentGitDiffNames returns the file paths changed between two
+// revisions. When preSHA is empty (git not available / no commits),
+// the function falls back to `git status --porcelain` so uncommitted
+// changes still register as touched. Used by the descent bootstrap
+// wrapper (spec-1 item 5) to detect dep-manifest edits.
+func descentGitDiffNames(ctx context.Context, repoRoot, preSHA, postRef string) []string {
+	if preSHA != "" {
+		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", preSHA, postRef)
+		cmd.Dir = repoRoot
+		out, err := cmd.Output()
+		if err == nil {
+			return splitNonEmptyLines(string(out))
+		}
+	}
+	// Fall back to working-tree status (uncommitted changes).
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if len(line) < 4 {
+			continue
+		}
+		// porcelain lines are "XY <path>" — strip the status prefix.
+		path := strings.TrimSpace(line[2:])
+		if path != "" {
+			names = append(names, path)
+		}
+	}
+	return names
+}
+
+// splitNonEmptyLines is a small helper that trims and de-duplicates
+// lines from command output.
+func splitNonEmptyLines(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, ln := range strings.Split(s, "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || seen[ln] {
+			continue
+		}
+		seen[ln] = true
+		out = append(out, ln)
+	}
+	return out
+}
+
+// intersectStrings returns the values in haystack that also appear in
+// candidates. Case-sensitive; preserves haystack order.
+func intersectStrings(haystack, candidates []string) []string {
+	cand := map[string]bool{}
+	for _, c := range candidates {
+		cand[c] = true
+	}
+	var out []string
+	for _, h := range haystack {
+		// Handle subpath matches so a file inside a subdirectory
+		// (e.g. "packages/foo/package.json") still registers as a
+		// manifest change. The spec lists bare manifest names; we
+		// match on basename.
+		name := filepath.Base(h)
+		if cand[name] {
+			out = append(out, h)
+		}
+	}
+	return out
+}

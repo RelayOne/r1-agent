@@ -26,9 +26,148 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"time"
 )
+
+// migrateNodesToChainContent translates a pre-T6 single-tier nodes/
+// directory into the split chain/ + content/ layout. It runs once on
+// Store open and becomes a no-op on every subsequent open:
+//
+//   - If nodes/ does not exist, nothing to do.
+//   - If chain/ already has entries, a previous migration ran; skip.
+//   - Otherwise, for each nodes/<id>.json:
+//     synthesize a salt (random), compute content_commitment, write
+//     chain/<id>.json with the structural header + commitment and
+//     content/<id>.json with {salt, content}. The original file ID is
+//     preserved so existing edges and index rows continue to reference
+//     the same node.
+//   - After a successful migration, rename nodes/ → nodes.bak/ for
+//     one-release safety so operators can sanity-check the split and roll
+//     back by copying files back if necessary.
+//
+// Preserving the original node ID (rather than recomputing under the new
+// ID scheme) is the only way to keep existing edges valid without a
+// second migration pass. Going-forward writes through AddNode use the
+// new sha256(header || content_commitment) ID, so the two ID shapes
+// coexist: legacy IDs survive until their nodes are superseded.
+func migrateNodesToChainContent(s *Store) error {
+	if s == nil {
+		return errors.New("migrate: nil store")
+	}
+	// Detect the chain tier being already populated and skip. We do this
+	// BEFORE checking for nodes/ so a fresh ledger with no directories
+	// at all is a fast no-op.
+	if chainEntries, err := os.ReadDir(s.chainDir); err == nil {
+		for _, e := range chainEntries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				return nil // chain tier already populated
+			}
+		}
+	}
+
+	legacyDir := filepath.Join(s.rootDir, "nodes")
+	info, err := os.Stat(legacyDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("stat legacy nodes dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	entries, err := os.ReadDir(legacyDir)
+	if err != nil {
+		return fmt.Errorf("read legacy nodes dir: %w", err)
+	}
+
+	migrated := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(legacyDir, e.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("migrate: read %s: %w", path, err)
+		}
+		var legacy Node
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			return fmt.Errorf("migrate: parse %s: %w", path, err)
+		}
+		if legacy.ID == "" {
+			// Filename is authoritative in this case.
+			legacy.ID = strings.TrimSuffix(e.Name(), ".json")
+		}
+
+		// Synthesize salt + content_commitment if the legacy node didn't
+		// already carry them. We KEEP the legacy ID — rehashing would
+		// break every existing edge. The commitment is still strong:
+		// sha256(salt || content) is opaque to anyone without the salt,
+		// and Redact will delete both by removing content/<id>.json.
+		if legacy.Salt == "" {
+			salt, err := newSalt()
+			if err != nil {
+				return fmt.Errorf("migrate: salt for %s: %w", legacy.ID, err)
+			}
+			legacy.Salt = salt
+		}
+		if legacy.ContentCommitment == "" {
+			legacy.ContentCommitment = contentCommitment(legacy.Salt, legacy.Content)
+		}
+
+		if err := s.WriteNode(legacy); err != nil {
+			return fmt.Errorf("migrate: write split for %s: %w", legacy.ID, err)
+		}
+		migrated++
+	}
+
+	// One-release safety net: rename nodes/ to nodes.bak/ so the split
+	// layout is authoritative but the originals remain inspectable. If a
+	// previous migration run left nodes.bak/ in place, remove it first —
+	// any new content it could have captured has already been translated
+	// into chain/+content/ by this pass.
+	backupDir := filepath.Join(s.rootDir, "nodes.bak")
+	if _, err := os.Stat(backupDir); err == nil {
+		if rmErr := os.RemoveAll(backupDir); rmErr != nil {
+			return fmt.Errorf("migrate: clear stale nodes.bak: %w", rmErr)
+		}
+	}
+	if err := os.Rename(legacyDir, backupDir); err != nil {
+		return fmt.Errorf("migrate: rename nodes to nodes.bak: %w", err)
+	}
+	return nil
+}
+
+// parseTimestamp handles both the RFC3339Nano format written by AddNode
+// and the historical "2006-01-02T15:04:05.999999999Z" variant emitted by
+// the SQLite index formatter. Returned time is always in UTC.
+func parseTimestamp(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, errors.New("empty timestamp")
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.999999999Z",
+		time.RFC3339,
+	}
+	var last error
+	for _, layout := range layouts {
+		t, err := time.Parse(layout, s)
+		if err == nil {
+			return t.UTC(), nil
+		}
+		last = err
+	}
+	return time.Time{}, last
+}
 
 // MigrationReport summarizes a run.
 type MigrationReport struct {
@@ -165,17 +304,17 @@ type ChainBreak struct {
 	Reason       string
 }
 
-// hashNode computes the SHA256 of a node's canonical JSON.
-// Kept local so the migration tool doesn't reach into the
-// anchor.go machinery.
+// hashNode computes the SHA256 of a node's structural header + content
+// commitment. This is the Merkle-chain link hash: the successor's
+// ParentHash equals this value. The hash is DELIBERATELY independent of
+// the content tier (Content, Salt) so a crypto-shred of the content tier
+// does not break chain verification. ParentHash and ID are zeroed during
+// hashing to avoid chicken-and-egg loops.
 func hashNode(n Node) (string, error) {
-	// Canonical JSON: sorted keys, no insignificant
-	// whitespace. encoding/json.Marshal on a fixed struct
-	// produces stable output because struct-order determines
-	// field order — but we explicitly nil out ParentHash to
-	// prevent a chicken-and-egg loop (a node's hash must
-	// not depend on its own parent_hash).
 	n.ParentHash = ""
+	n.ID = ""
+	n.Content = nil
+	n.Salt = ""
 	b, err := json.Marshal(n)
 	if err != nil {
 		return "", err

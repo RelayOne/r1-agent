@@ -8,6 +8,66 @@ import (
 	"testing"
 )
 
+func TestCheckAcceptanceCriteriaVerifyFunc(t *testing.T) {
+	ctx := context.Background()
+
+	// Non-code executors populate VerifyFunc programmatically. The
+	// descent engine treats the returned (passed, output) identically
+	// to a bash command's exit code — same tier ladder, same
+	// multi-analyst reasoning on failure.
+	criteria := []AcceptanceCriterion{
+		{
+			ID:          "CLAIM-1",
+			Description: "research claim supported by source",
+			VerifyFunc: func(ctx context.Context) (bool, string) {
+				return true, "fetched https://example.com — claim verified"
+			},
+		},
+		{
+			ID:          "CLAIM-2",
+			Description: "research claim contradicted by source",
+			VerifyFunc: func(ctx context.Context) (bool, string) {
+				return false, "source says X; report says Y"
+			},
+		},
+	}
+	results, allPassed := CheckAcceptanceCriteria(ctx, t.TempDir(), criteria)
+	if allPassed {
+		t.Error("mixed pass/fail should not all pass")
+	}
+	if !results[0].Passed {
+		t.Errorf("CLAIM-1 expected pass, got output=%q", results[0].Output)
+	}
+	if results[1].Passed {
+		t.Error("CLAIM-2 expected fail")
+	}
+	if !strings.Contains(results[0].Output, "verified") {
+		t.Errorf("CLAIM-1 output lost: %q", results[0].Output)
+	}
+}
+
+func TestCheckAcceptanceCriteriaVerifyFuncBeatsCommand(t *testing.T) {
+	// Backward-compat guard: when both VerifyFunc AND Command are
+	// set, VerifyFunc wins. This ensures executor code that builds
+	// its own AC can't be accidentally overridden by a SOW
+	// Command field set by upstream parsing.
+	ctx := context.Background()
+	ac := AcceptanceCriterion{
+		ID:      "PRIORITY",
+		Command: "false", // would fail if evaluated
+		VerifyFunc: func(ctx context.Context) (bool, string) {
+			return true, "verify-func path taken"
+		},
+	}
+	res, _ := CheckAcceptanceCriteria(ctx, t.TempDir(), []AcceptanceCriterion{ac})
+	if !res[0].Passed {
+		t.Errorf("VerifyFunc should override Command; got passed=false output=%q", res[0].Output)
+	}
+	if !strings.Contains(res[0].Output, "verify-func path") {
+		t.Errorf("wrong path taken: %q", res[0].Output)
+	}
+}
+
 func TestCheckAcceptanceCriteriaCommand(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

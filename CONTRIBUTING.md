@@ -81,7 +81,13 @@ Sign your commits with `git commit -s` to add the `Signed-off-by` trailer.
 ## Reporting Issues
 
 - **Security vulnerabilities:** See [SECURITY.md](SECURITY.md).
-- **Bugs and feature requests:** Open a GitHub issue.
+- **Bugs and feature requests:** Open a GitHub issue. Templates are provided under `.github/ISSUE_TEMPLATE/` for bug reports, feature requests, and harness regressions.
+
+## Code of Conduct
+
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md) adapted from
+Contributor Covenant 2.1. By participating, you agree to uphold it. Report
+concerns privately to `conduct@goodventures.dev`.
 
 ## License
 

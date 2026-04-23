@@ -16,6 +16,16 @@
 // unchanged. stoke-mcp ships the new "primitives" surface
 // framework wrappers (STOKE-023 LangGraph/Vercel/CrewAI)
 // target.
+//
+// SECURITY (outbound sanitization policy):
+// Tool responses (invoke / verify / audit / delegate outputs and the
+// TrustPlane pass-through) are returned verbatim and are NOT pre-sanitized
+// for prompt-injection. Non-LLM consumers (CI, dashboards, downstream agent
+// frameworks that parse structured JSON) need raw data; different LLM
+// consumers have different sanitization requirements. Downstream MCP clients
+// that forward these payloads into an LLM prompt MUST apply their own
+// prompt-injection defenses. See docs/mcp-security.md for the full
+// responsibility boundary.
 package main
 
 import (

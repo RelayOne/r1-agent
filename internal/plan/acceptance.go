@@ -236,6 +236,104 @@ var (
 	installedOnce   = map[string]bool{}
 )
 
+// InstallOpts tunes EnsureWorkspaceInstalledOpts (spec-1 item 5). The
+// zero value reproduces the legacy ensureWorkspaceInstalled semantics
+// (idempotent per projectRoot, permissive install).
+type InstallOpts struct {
+	// Force bypasses the installedOnce guard so descent cycles can
+	// re-install after a RepairFunc modifies a dep manifest. Default
+	// false keeps the legacy single-install-per-run behavior.
+	Force bool
+
+	// Frozen pins the install to the lockfile when one exists: pnpm
+	// --frozen-lockfile, npm ci, cargo fetch --locked, uv sync
+	// --frozen. Catches hallucinated deps (added to package.json but
+	// not to the lockfile) at install time instead of at AC run. The
+	// caller decides when to set this based on lockfilePresent().
+	Frozen bool
+}
+
+// EnsureWorkspaceInstalledOpts is the full-featured install wrapper
+// for descent-hardening spec-1 item 5 (bootstrap per descent cycle).
+// It calls the underlying package manager with options that support
+// both forced re-install (after a dep manifest change) and
+// frozen-lockfile mode (so hallucinated deps surface as install
+// failures instead of silent pass-throughs).
+//
+// The function is safe to call without a Node project — it's a noop
+// when package.json is absent.
+func EnsureWorkspaceInstalledOpts(ctx context.Context, projectRoot string, opts InstallOpts) {
+	if !opts.Force {
+		installedOnceMu.Lock()
+		if installedOnce[projectRoot] {
+			installedOnceMu.Unlock()
+			return
+		}
+		installedOnce[projectRoot] = true
+		installedOnceMu.Unlock()
+	}
+
+	if _, err := os.Stat(filepath.Join(projectRoot, "package.json")); err != nil {
+		return
+	}
+	runDepCheck(ctx, projectRoot)
+
+	tryInstall := func(bin string, args ...string) bool {
+		if _, err := exec.LookPath(bin); err != nil {
+			return false
+		}
+		installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(installCtx, bin, args...)
+		cmd.Dir = projectRoot
+		return cmd.Run() == nil
+	}
+
+	_, pnpmWorkspace := os.Stat(filepath.Join(projectRoot, "pnpm-workspace.yaml"))
+	pnpmArgs := []string{"install", "--silent"}
+	if opts.Frozen {
+		pnpmArgs = append(pnpmArgs, "--frozen-lockfile")
+	}
+	if pnpmWorkspace == nil {
+		if tryInstall("pnpm", pnpmArgs...) {
+			return
+		}
+	}
+	if tryInstall("pnpm", pnpmArgs...) {
+		return
+	}
+	// npm ci when frozen + package-lock.json present; otherwise npm install.
+	if opts.Frozen {
+		if _, err := os.Stat(filepath.Join(projectRoot, "package-lock.json")); err == nil {
+			if tryInstall("npm", "ci", "--silent") {
+				return
+			}
+		}
+	}
+	_ = tryInstall("npm", "install", "--silent")
+}
+
+// LockfilePresent reports whether any recognized lockfile sits at the
+// project root. Used by the descent bootstrap wrapper to choose
+// between frozen and permissive install modes.
+func LockfilePresent(projectRoot string) bool {
+	candidates := []string{
+		"pnpm-lock.yaml",
+		"package-lock.json",
+		"yarn.lock",
+		"Cargo.lock",
+		"uv.lock",
+		"poetry.lock",
+		"go.sum",
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(projectRoot, c)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckAcceptanceCriteria evaluates all criteria for a session against the
 // project directory. Returns results for each criterion and an overall pass/fail.
 //
@@ -617,6 +715,21 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 	result := AcceptanceResult{
 		CriterionID: ac.ID,
 		Description: ac.Description,
+	}
+
+	// VerifyFunc short-circuit (S-3). Non-nil means the caller is
+	// an executor producing a non-code deliverable whose acceptance
+	// cannot be expressed as a bash command. The descent engine
+	// still runs the full tier ladder on the returned verdict;
+	// VerifyFunc just replaces the "what's the test" primitive.
+	// Precedence: VerifyFunc wins over Command when both are set —
+	// matches the documented contract on AcceptanceCriterion.VerifyFunc
+	// and lets executors override Command safely.
+	if ac.VerifyFunc != nil {
+		passed, output := ac.VerifyFunc(ctx)
+		result.Passed = passed
+		result.Output = output
+		return result
 	}
 
 	// Command check: run a shell command and check exit code. The

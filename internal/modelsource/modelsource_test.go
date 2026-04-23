@@ -34,7 +34,11 @@ func TestExpandModelAlias(t *testing.T) {
 		"gemini-3.1":              "gemini-3.1-pro-preview",
 		"flash":                   "gemini-2.5-flash",
 		"flash-lite":              "gemini-2.5-flash-lite",
-		"codex":                   "gpt-5-codex",
+		// 'codex' deliberately maps to claude-sonnet-4-6 for the LLM-API
+		// path — see expandModelAlias comment. The codex CLI subprocess
+		// path (engine/codex.go) uses 'gpt-5-codex' directly, bypassing
+		// modelsource.
+		"codex":                   "claude-sonnet-4-6",
 		"something-else-verbatim": "something-else-verbatim",
 	}
 	for in, want := range cases {

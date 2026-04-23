@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -93,6 +94,28 @@ type AcceptanceCriterion struct {
 	FileExists string `json:"file_exists,omitempty" yaml:"file_exists"`
 	// ContentMatch checks that a file contains a specific string.
 	ContentMatch *ContentMatchCriterion `json:"content_match,omitempty" yaml:"content_match"`
+
+	// VerifyFunc, when non-nil, replaces Command / FileExists /
+	// ContentMatch with a programmatic check. Used by non-code
+	// executors (research, browser, deploy, delegation) whose
+	// acceptance criteria are not expressible as a bash command —
+	// e.g. "deliverable claim X is supported by its source URL",
+	// "deployed app returns 200 at its health endpoint", "hired
+	// agent's translation matches the source length and key set".
+	//
+	// The verification descent engine short-circuits runACCommand
+	// when VerifyFunc is set, so every downstream tier (multi-
+	// analyst, repair, env-fix, soft-pass) operates uniformly
+	// across task types — the same trust layer that gates code
+	// also gates research/browser/deploy.
+	//
+	// Precedence: VerifyFunc wins over Command when both are set.
+	// Backward-compat preserved via json/yaml:"-" — SOW YAML never
+	// sets VerifyFunc; it's populated programmatically by executor
+	// BuildCriteria implementations.
+	//
+	// Spec: specs/executor-foundation.md S-3.
+	VerifyFunc func(ctx context.Context) (passed bool, output string) `json:"-" yaml:"-"`
 }
 
 // UnmarshalJSON on AcceptanceCriterion handles LLMs that

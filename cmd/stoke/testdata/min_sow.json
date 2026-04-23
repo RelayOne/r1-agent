@@ -1,0 +1,36 @@
+{
+  "id": "SOW-MIN-1",
+  "title": "Minimal CloudSwarm SOW fixture",
+  "sessions": [
+    {
+      "id": "S1",
+      "title": "first session",
+      "tasks": [
+        {
+          "id": "S1-T1",
+          "description": "task-one for dispatch test",
+          "files": ["src/a.ts"]
+        }
+      ],
+      "acceptance_criteria": [
+        {
+          "id": "AC-1",
+          "description": "check",
+          "command": "true"
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "second session",
+      "tasks": [
+        {
+          "id": "S2-T1",
+          "description": "another task",
+          "files": ["src/b.ts"]
+        }
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}

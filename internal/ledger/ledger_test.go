@@ -55,7 +55,14 @@ func TestAddNodeReturnsContentAddressedID(t *testing.T) {
 	}
 }
 
-func TestAddNodeSameContentSameID(t *testing.T) {
+func TestAddNodeSameContentDistinctIDsUnderRandomSalt(t *testing.T) {
+	// T6 chain/content split: node_id = sha256(canonical(header) ||
+	// content_commitment) where content_commitment = sha256(salt || content).
+	// Salt is random 16 bytes per AddNode call, so two writes of the same
+	// (type, schema_version, timestamp, creator, content) MUST produce
+	// distinct IDs — that's what blinds the commitment and gives Redact
+	// its crypto-shred guarantee. Both nodes must be fully retrievable
+	// afterwards.
 	l := newTestLedger(t)
 	ctx := context.Background()
 
@@ -67,7 +74,7 @@ func TestAddNodeSameContentSameID(t *testing.T) {
 		CreatedBy:     "stance-a",
 		Content:       json.RawMessage(`{"pattern":"singleton"}`),
 	}
-	n2 := n1 // exact copy
+	n2 := n1 // exact copy; salt will still differ
 
 	id1, err := l.AddNode(ctx, n1)
 	if err != nil {
@@ -77,8 +84,14 @@ func TestAddNodeSameContentSameID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddNode 2: %v", err)
 	}
-	if id1 != id2 {
-		t.Fatalf("same content should produce same ID: %q != %q", id1, id2)
+	if id1 == id2 {
+		t.Fatalf("random salt must make IDs distinct even for identical content, got %q twice", id1)
+	}
+	if _, err := l.Get(ctx, id1); err != nil {
+		t.Fatalf("Get id1: %v", err)
+	}
+	if _, err := l.Get(ctx, id2); err != nil {
+		t.Fatalf("Get id2: %v", err)
 	}
 }
 
@@ -364,20 +377,22 @@ func TestQueryByMissionID(t *testing.T) {
 	}
 }
 
-func TestQueryWithLimit(t *testing.T) {
+func TestQueryWithBoundedResultCount(t *testing.T) {
 	l := newTestLedger(t)
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		l.AddNode(ctx, makeNode("decision", "d", "s1"))
+		if _, err := l.AddNode(ctx, makeNode("decision", "d", "s1")); err != nil {
+			t.Fatalf("AddNode: %v", err)
+		}
 	}
 
 	results, err := l.Query(ctx, QueryFilter{Type: "decision", Limit: 2})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 nodes, got %d", len(results))
+	if got := len(results); got != 2 {
+		t.Fatalf("expected 2 nodes, got %d", got)
 	}
 }
 
@@ -514,11 +529,23 @@ func TestBatchAtomicNodeAndEdges(t *testing.T) {
 	// Pre-existing node.
 	existingID, _ := l.AddNode(ctx, makeNode("decision", "existing", "s1"))
 
+	// T6: pre-mint salt + content_commitment so we can predict the
+	// resulting node.ID for the forward-referencing supersedes edge.
+	// Batch honors a caller-supplied Salt/ContentCommitment (matching
+	// how it already honors caller-supplied ParentHash).
 	newNode := makeNode("decision", "replacement", "s1")
-	err := l.Batch(ctx, []BatchOp{
+	salt, err := newSalt()
+	if err != nil {
+		t.Fatalf("newSalt: %v", err)
+	}
+	newNode.Salt = salt
+	newNode.ContentCommitment = contentCommitment(salt, newNode.Content)
+	predictedID := computeID(newNode)
+
+	err = l.Batch(ctx, []BatchOp{
 		{OpType: BatchAddNode, Node: &newNode},
 		{OpType: BatchAddEdge, Edge: &Edge{
-			From: computeID(newNode), // predict ID
+			From: predictedID,
 			To:   existingID,
 			Type: EdgeSupersedes,
 		}},
@@ -665,10 +692,15 @@ func TestStoreNodePersistsToDisk(t *testing.T) {
 	n := makeNode("skill", "pattern-x", "s1")
 	id, _ := l.AddNode(ctx, n)
 
-	// Verify file exists.
-	path := filepath.Join(l.rootDir, "nodes", id+".json")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Fatalf("node file not found at %s", path)
+	// T6 two-tier layout: both the chain-tier header and the content-tier
+	// blob must land on disk for a fresh write.
+	chainPath := filepath.Join(l.rootDir, "chain", id+".json")
+	if _, err := os.Stat(chainPath); os.IsNotExist(err) {
+		t.Fatalf("chain file not found at %s", chainPath)
+	}
+	contentPath := filepath.Join(l.rootDir, "content", id+".json")
+	if _, err := os.Stat(contentPath); os.IsNotExist(err) {
+		t.Fatalf("content file not found at %s", contentPath)
 	}
 }
 
@@ -777,10 +809,12 @@ func TestQueryFailsOnMissingNodeFile(t *testing.T) {
 		t.Fatalf("expected 1 node, got %d", len(nodes))
 	}
 
-	// Manually delete the node file (simulate corruption).
-	nodePath := filepath.Join(l.rootDir, "nodes", id+".json")
+	// Manually delete the chain record (simulate corruption of the
+	// permanent tier — deleting only the content tier is a legitimate
+	// redaction, not a corruption).
+	nodePath := filepath.Join(l.rootDir, "chain", id+".json")
 	if err := os.Remove(nodePath); err != nil {
-		t.Fatalf("remove node file: %v", err)
+		t.Fatalf("remove chain file: %v", err)
 	}
 
 	// Query should now return an error, not silently skip.
@@ -810,12 +844,12 @@ func TestVerifyDetectsMissingNode(t *testing.T) {
 		t.Fatalf("Verify should pass: %v", err)
 	}
 
-	// Delete one node file.
+	// Delete one node's chain record (simulating permanent-tier corruption).
 	nodes, _ := l.Query(ctx, QueryFilter{Type: "task"})
 	if len(nodes) < 1 {
 		t.Fatal("expected at least 1 node")
 	}
-	nodePath := filepath.Join(l.rootDir, "nodes", nodes[0].ID+".json")
+	nodePath := filepath.Join(l.rootDir, "chain", nodes[0].ID+".json")
 	if err := os.Remove(nodePath); err != nil {
 		t.Fatalf("remove: %v", err)
 	}

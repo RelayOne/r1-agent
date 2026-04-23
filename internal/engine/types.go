@@ -204,6 +204,25 @@ type RunSpec struct {
 	// agentic discovery loops).
 	MCPConfigPath string
 
+	// MCPRegistry, when non-nil, exposes the worker-visible MCP tools
+	// via the native agentloop. Before dispatch the native runner calls
+	// AllToolsForTrust(WorkerTrust) on the registry, converts each
+	// returned mcp.Tool into an ExtraTool whose handler routes back
+	// through registry.Call, and merges them into the advertised tool
+	// list. When nil the whole path is a no-op (backward compat).
+	//
+	// The field is typed as a minimal interface rather than the concrete
+	// *mcp.Registry so unit tests can inject a fake without standing up
+	// transports or subprocesses. At runtime callers pass the real
+	// *mcp.Registry from cmd/stoke/main.go.
+	MCPRegistry MCPRegistry
+
+	// WorkerTrust is the trust label forwarded to MCPRegistry.AllToolsForTrust
+	// and MCPRegistry.Call. Accepted values mirror the mcp package:
+	// "trusted" or "untrusted". Empty strings are treated as untrusted
+	// by the registry's gate.
+	WorkerTrust string
+
 	// Pool API fields (for APIRunner / GeminiRunner direct API access)
 	PoolAPIKey  string
 	PoolBaseURL string
@@ -239,6 +258,46 @@ type RunSpec struct {
 	// parse directory structure or cross-reference timestamps. All
 	// fields are optional; empty values are omitted from the JSONL.
 	WorkerLogContext WorkerLogContext
+
+	// ExtraPreEndTurnCheck is an optional caller-supplied PreEndTurnCheckFn
+	// chained AFTER the native runner's built-in build-verification check.
+	// When both return non-empty strings the caller's message wins (build
+	// errors are a superset of honesty violations). The field is wired
+	// only by the native runner — subprocess-backed runners ignore it.
+	//
+	// Used by descent-hardening spec-1 item 3 to wire the
+	// pre-completion-gate parser.
+	ExtraPreEndTurnCheck func(finalText string) (retry bool, reason string)
+
+	// ExtraMidturnCheck is an optional caller-supplied MidturnCheckFn
+	// chained AFTER the existing supervisor hook. Used by descent-hardening
+	// spec-1 item 7 (ghost-write detector) to inject a post-tool-use
+	// reminder when an edit/write tool reported success but the target
+	// path is empty or missing on disk. Both the supervisor note and
+	// the extra note are appended to the tool-results user message
+	// when non-empty.
+	//
+	// The signature mirrors MidturnCheckFn from agentloop (kept internal
+	// to avoid a direct dependency here — the native runner does the
+	// type conversion at wire time).
+	ExtraMidturnCheck func(lastAssistantTools []MidturnToolCall, turn int) string
+
+	// HoneypotCheckFn, when non-nil, is forwarded to the agentloop
+	// as cfg.HoneypotCheckFn. It runs at pre-end-turn AFTER the
+	// native runner's build-verification gate and AFTER
+	// ExtraPreEndTurnCheck. A non-empty return ABORTS the turn
+	// (StopReason="honeypot_fired"); unlike the build gate this
+	// does not trigger a retry — a compromised turn can't be
+	// "fixed" by asking the model again.
+	//
+	// Passes finalText (the concatenated text of the most recent
+	// assistant message) so callers can evaluate a
+	// critic.HoneypotRegistry without re-implementing the
+	// agentloop.Message walker. Subprocess-backed runners
+	// (Claude/Codex CLI) ignore this field — the CLI manages its
+	// own completion gate. Used by Track A Task 3 to wire the
+	// live injection/exfil honeypot evaluator.
+	HoneypotCheckFn func(finalText string) string
 }
 
 // WorkerLogContext groups correlation IDs and config snapshot data
@@ -260,6 +319,18 @@ type WorkerLogContext struct {
 	PID         int    // this stoke process's PID
 	PPID        int    // parent process (so ladder-driver dispatch can be traced)
 	PurposeTag  string // free-form role tag, e.g. "worker", "repair", "judge", "intent-check"
+}
+
+// MidturnToolCall is the subset of agentloop tool-use info that an
+// ExtraMidturnCheck needs to decide whether to fire a reminder. The
+// native runner translates its internal agentloop.ContentBlock shape
+// into these before calling the check, so callers outside
+// internal/engine don't need to import agentloop.
+type MidturnToolCall struct {
+	Name   string
+	Input  []byte
+	Result string
+	IsError bool
 }
 
 // Validate checks that all required RunSpec fields are present.

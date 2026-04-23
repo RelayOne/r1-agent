@@ -1,0 +1,104 @@
+/* r1-server MVP dashboard — intentionally terse, no framework.
+   One file, ~100 lines, covers instance list + session detail.     */
+
+:root {
+  --bg: #0f1115;
+  --bg-alt: #161923;
+  --fg: #e6e8ef;
+  --fg-muted: #8a91a3;
+  --accent: #7bd88f;
+  --accent-dim: #3d5a47;
+  --warn: #e6b95c;
+  --err: #e6634f;
+  --border: #2a2f3d;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.5; }
+
+header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-alt);
+}
+header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+header a { color: var(--fg); text-decoration: none; }
+header a:hover { color: var(--accent); }
+nav #conn-status { color: var(--fg-muted); font-size: 12px; }
+nav #conn-status.ok { color: var(--accent); }
+nav #conn-status.err { color: var(--err); }
+
+main { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+
+footer {
+  padding: 12px 20px; color: var(--fg-muted); font-size: 11px;
+  border-top: 1px solid var(--border); margin-top: 32px;
+}
+
+/* ---------- instance list ---------- */
+table.sessions { width: 100%; border-collapse: collapse; }
+table.sessions th, table.sessions td {
+  padding: 8px 10px; text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+table.sessions th { color: var(--fg-muted); font-weight: 500; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.04em; }
+table.sessions tr:hover td { background: var(--bg-alt); }
+table.sessions td.status { width: 34px; text-align: center; font-size: 16px; }
+table.sessions td.id code { color: var(--accent); }
+table.sessions a { color: var(--fg); text-decoration: none; }
+table.sessions a:hover { color: var(--accent); }
+table.sessions td.links { white-space: nowrap; }
+table.sessions td.links a { color: var(--fg-muted); font-size: 11px; margin-right: 8px; }
+table.sessions td.links a:hover { color: var(--accent); }
+
+.empty { padding: 40px; text-align: center; color: var(--fg-muted); }
+
+/* ---------- session detail ---------- */
+.session-meta {
+  background: var(--bg-alt); border: 1px solid var(--border);
+  border-radius: 4px; padding: 12px 16px; margin-bottom: 16px;
+}
+.session-meta dl { margin: 0; display: grid;
+  grid-template-columns: max-content 1fr; gap: 6px 16px; }
+.session-meta dt { color: var(--fg-muted); }
+.session-meta dd { margin: 0; }
+
+.controls { display: flex; gap: 12px; align-items: center;
+  margin-bottom: 12px; color: var(--fg-muted); }
+.controls label { font-size: 12px; }
+.controls select, .controls input {
+  background: var(--bg-alt); color: var(--fg);
+  border: 1px solid var(--border); padding: 4px 6px;
+  font-family: inherit; font-size: 12px; border-radius: 3px;
+}
+
+.events { display: flex; flex-direction: column; gap: 4px; }
+.event {
+  background: var(--bg-alt); border-left: 3px solid var(--accent-dim);
+  padding: 6px 10px; border-radius: 0 3px 3px 0;
+  font-size: 12px; white-space: pre-wrap; word-break: break-word;
+}
+.event.evt-stoke-descent-tier { border-left-color: var(--warn); }
+.event.evt-hitl-required { border-left-color: var(--warn); }
+.event.evt-error          { border-left-color: var(--err); }
+.event.evt-stoke-task-end,
+.event.evt-stoke-session-end { border-left-color: var(--accent); }
+.event .evt-head { color: var(--fg-muted); font-size: 11px; margin-bottom: 4px; }
+.event .evt-type { color: var(--accent); font-weight: 600; }
+.event pre { margin: 0; font-size: 11px; color: var(--fg); }
+
+.error-banner {
+  background: #3a1a1a; border: 1px solid var(--err);
+  padding: 10px 14px; border-radius: 4px; margin: 12px 0;
+}
+
+/* status emoji colouring — matches colours in app.js STATUS_ICON table */
+.status-running   { color: var(--accent); }
+.status-completed { color: var(--fg-muted); }
+.status-crashed   { color: var(--err); }
+.status-failed    { color: var(--err); }
+.status-paused    { color: var(--warn); }

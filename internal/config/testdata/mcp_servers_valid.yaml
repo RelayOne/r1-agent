@@ -1,0 +1,22 @@
+mcp_servers:
+  - name: linear
+    transport: stdio
+    command: linear-mcp-server
+    args: ["--team", "ENG"]
+    auth_env: LINEAR_API_KEY
+    trust: trusted
+    max_concurrent: 4
+    timeout: 20s
+    enabled: true
+  - name: github
+    transport: http
+    url: https://api.githubcopilot.com/mcp/
+    auth_env: GITHUB_MCP_TOKEN
+    timeout: 45s
+    max_concurrent: 6
+    enabled: true
+  - name: slack-legacy
+    transport: sse
+    url: https://slack-mcp.example.com/sse
+    auth_env: SLACK_MCP_TOKEN
+    enabled: true

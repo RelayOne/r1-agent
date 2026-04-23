@@ -1,0 +1,4 @@
+mcp_servers:
+  - name: missing-cmd
+    transport: stdio
+    auth_env: SOMETHING

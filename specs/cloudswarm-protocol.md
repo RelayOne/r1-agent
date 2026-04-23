@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-04-22 -->
 <!-- CREATED: 2026-04-20 -->
 <!-- DEPENDS_ON: (none — parallel with spec-1) -->
 <!-- BUILD_ORDER: 2 -->
@@ -564,3 +565,22 @@ printf '%s\n' '{"decision":true,"reason":"ok","decided_by":"test"}' | ./stoke ru
 12. [ ] **Integration test `cmd/stoke/run_cmd_test.go`**: shells out to built binary with `--output stream-json`, captures stdout, asserts event ordering (first `session.start`, last `complete`), validates every line is valid JSON, validates exit code mapping for each of the 6 conditions (0/1/2/3/130/143). Uses `os/exec.Command` with pipe stdin/stdout.
 
 13. [ ] **Document in `docs/cloudswarm.md`**: one-page operator doc — how CloudSwarm invokes `stoke run`, the HITL wire format (plain JSON on stdin), the exit codes, the event namespace. Link from `README.md`. (This is the only new doc; the spec itself is not a doc.)
+
+## D-9: Policy Engine (fail-closed authorization)
+
+Stoke consults an authorization policy before executing any native tool call (bash, file_read, file_write, mcp_*). The policy layer is fail-closed: transport errors, timeouts, 5xx responses, malformed bodies, and zero-value results all resolve to Deny.
+
+Two backends share the `policy.Client` interface:
+
+1. **Tier 1 (local YAML)** — `STOKE_POLICY_FILE=/path/to/policy.yaml`
+   Rules evaluated top-to-bottom, first match wins. 8 predicates: `matches`, `startswith`, `equals`, `in`, `>=`, `<=`, `>`, `<`, composable via AND.
+2. **Tier 2 (Cedar-agent HTTP)** — `CLOUDSWARM_POLICY_ENDPOINT=https://...`
+   PARC body (Principal / Action / Resource / Context) to `/v1/is_authorized`. Bearer auth via `CLOUDSWARM_POLICY_TOKEN`. 2 s default timeout.
+
+Precedence if both env vars are set: tier 2 (cedar-agent) wins. If neither is set, Stoke falls back to `NullClient` which prints a one-line dev-mode banner and allows all actions.
+
+Events emitted on every Check: `stoke.policy.check` (decision + latency + backend) and on every deny: `stoke.policy.denied` (principal + action + resource + reasons). Both stream through the same NDJSON emitter used for tool calls and mission lifecycle.
+
+Operator tooling: `stoke policy validate <file.yaml>`, `stoke policy test <file.yaml> "principal=… action=… resource=…"`, `stoke policy trace --last-N N [--log path]`.
+
+See `specs/policy-engine.md` (build order 10) for the full spec and the `internal/policy` package for the implementation.
