@@ -818,7 +818,7 @@ func (w *Wizard) countRules() int {
 // choice was made. Written to .stoke/wizard-rationale.md.
 func (w *Wizard) GenerateRationale() string {
 	var b strings.Builder
-	b.WriteString("# Stoke Configuration Rationale\n\n")
+	b.WriteString("# R1 Configuration Rationale\n\n")
 	b.WriteString("## Decisions Made\n\n")
 	for _, r := range w.Prefs.Rationale {
 		b.WriteString(fmt.Sprintf("### %s\n", r.Decision))

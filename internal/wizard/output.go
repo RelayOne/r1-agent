@@ -91,7 +91,7 @@ func copyDir(src, dst string) error {
 }
 
 func renderDetailedRationale(r *WizardResult) string {
-	s := "# Stoke Configuration Rationale\n\n"
+	s := "# R1 Configuration Rationale\n\n"
 	s += fmt.Sprintf("Generated: %s\n\n", r.GeneratedAt.Format("2006-01-02 15:04:05"))
 
 	s += "## Maturity Assessment\n\n"

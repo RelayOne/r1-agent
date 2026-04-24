@@ -4329,7 +4329,7 @@ func cloudCmd(args []string) {
 		fmt.Println("  status     Show current cloud-linkage state.")
 		fmt.Println("  help       This message.")
 		fmt.Println()
-		fmt.Println("All features of Stoke work without cloud registration.")
+		fmt.Println("All features of R1 work without cloud registration.")
 		fmt.Println("See STEWARDSHIP.md for the un-managed-first commitment.")
 	default:
 		fmt.Fprintf(os.Stderr, "unknown cloud subcommand: %q\n", sub)
@@ -4378,7 +4378,7 @@ func runCloudRegister() (int, error) {
 		fmt.Fprintln(os.Stderr, "Get a one-time key at https://stoke.dev/account/link and run:")
 		fmt.Fprintln(os.Stderr, "    STOKE_CLOUD_API_KEY=<key> stoke cloud register")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Cloud registration is OPT-IN. Stoke works fully self-hosted")
+		fmt.Fprintln(os.Stderr, "Cloud registration is OPT-IN. R1 works fully self-hosted")
 		fmt.Fprintln(os.Stderr, "without this command.")
 		return 2, nil
 	}
@@ -4438,9 +4438,9 @@ func yoloCmd(args []string) {
 	}
 	ensureGitRepoOrFatal(absRepo)
 
-	fmt.Printf("⚡ STOKE yolo\n")
+	fmt.Printf("⚡ R1 yolo\n")
 	fmt.Printf("  repo: %s\n", absRepo)
-	fmt.Printf("  mode: full access with Stoke guards\n\n")
+	fmt.Printf("  mode: full access with R1 guards\n\n")
 
 	// Install hooks and generate settings
 	fmt.Print("  Installing hooks... ")
@@ -5396,7 +5396,7 @@ func addClaudeCmd(args []string) {
 	label := fs.String("label", "", "Pool label (e.g. 'Work account', 'Personal')")
 	fs.Parse(args)
 
-	fmt.Println("⚡ STOKE add-claude")
+	fmt.Println("⚡ R1 add-claude")
 	fmt.Println()
 
 	poolID, err := pools.AddClaude(*claudeBin, *label)
@@ -5405,7 +5405,7 @@ func addClaudeCmd(args []string) {
 	}
 
 	fmt.Printf("\n  Pool %s ready.\n", poolID)
-	fmt.Println("  Stoke will automatically use all registered pools for parallel execution.")
+	fmt.Println("  R1 will automatically use all registered pools for parallel execution.")
 }
 
 // --- add-codex: register a Codex subscription pool ---
@@ -5416,7 +5416,7 @@ func addCodexCmd(args []string) {
 	label := fs.String("label", "", "Pool label (e.g. 'Work OpenAI', 'Personal')")
 	fs.Parse(args)
 
-	fmt.Println("⚡ STOKE add-codex")
+	fmt.Println("⚡ R1 add-codex")
 	fmt.Println()
 
 	poolID, err := pools.AddCodex(*codexBin, *label)
@@ -5425,7 +5425,7 @@ func addCodexCmd(args []string) {
 	}
 
 	fmt.Printf("\n  Pool %s ready.\n", poolID)
-	fmt.Println("  Stoke will automatically use all registered pools for parallel execution.")
+	fmt.Println("  R1 will automatically use all registered pools for parallel execution.")
 }
 
 // --- pools: list registered pools ---
@@ -5442,7 +5442,7 @@ func poolsCmd(args []string) {
 		return
 	}
 
-	fmt.Printf("⚡ STOKE pools (%d registered)\n\n", len(manifest.Pools))
+	fmt.Printf("⚡ R1 pools (%d registered)\n\n", len(manifest.Pools))
 	for _, p := range manifest.Pools {
 		status := "ready"
 		token := readOAuthToken(p.ConfigDir)
@@ -5672,7 +5672,7 @@ func launchREPL() {
 	dispatcher := &stokeDispatcher{absRepo: absRepo, defaults: defaults}
 
 	// Banner
-	fmt.Printf("\n  \033[1;36mStoke %s\033[0m  supervised AI build orchestrator\n", version)
+	fmt.Printf("\n  \033[1;36mR1 %s\033[0m  supervised AI build orchestrator\n", version)
 	fmt.Printf("  Smart defaults active:\n")
 	fmt.Printf("    runner:  %s\n", defaults.RunnerMode)
 	if defaults.NativeBaseURL != "" {
@@ -5693,7 +5693,7 @@ func launchREPL() {
 	fmt.Println()
 	if chatSession != nil {
 		fmt.Println("  Type naturally to chat. When you agree (\"ya build it\", \"make that a scope\"),")
-		fmt.Println("  Stoke dispatches the conversation to the right command automatically.")
+		fmt.Println("  R1 dispatches the conversation to the right command automatically.")
 	} else {
 		fmt.Println("  Type naturally to kick off a /run task — or use slash commands directly.")
 	}
@@ -5843,7 +5843,7 @@ func launchREPL() {
 	})
 
 	r.Register(repl.Command{
-		Name: "yolo", Description: "Launch Claude Code with full Stoke guards",
+		Name: "yolo", Description: "Launch Claude Code with full R1 guards",
 		Run: func(args string) {
 			yoloCmd([]string{"--repo", absRepo})
 		},
@@ -6654,7 +6654,7 @@ COMMANDS:
   sow             Execute Statement of Work (multi-session with acceptance gates)
   plan            Generate a task plan from codebase analysis (headless)
   scope           Interactive scoping session with research loop (read-only)
-  yolo            Launch Claude Code interactively with full Stoke guards
+  yolo            Launch Claude Code interactively with full R1 guards
   repair          Scan -> auto-generate fix plan -> build -> re-verify
   ship            Build -> review -> fix -> review -> ... until ship-ready
   scan            Deterministic code scan (secrets, eval, TODO, debug output)
@@ -6668,7 +6668,7 @@ COMMANDS:
   pools           List all registered subscription pools
   remove-pool     Remove a pool by ID
   mcp-serve       Start the codebase MCP server (exposes project to Claude Code)
-  mcp-serve-stoke Start the Stoke MCP server (exposes Stoke as a tool to Claude Code)
+  mcp-serve-stoke Start the R1 MCP server (exposes R1 as a tool to Claude Code)
   doctor          Check tool dependencies
   version         Print version
 

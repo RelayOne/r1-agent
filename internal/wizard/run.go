@@ -418,7 +418,7 @@ func joinTrunc(items []string, maxLen int) string {
 func renderProposal(r *WizardResult) string {
 	var b strings.Builder
 	b.WriteString("\n+---------------------------------------------------------+\n")
-	b.WriteString("|            Stoke Configuration Proposal                  |\n")
+	b.WriteString("|            R1 Configuration Proposal                     |\n")
 	b.WriteString("+---------------------------------------------------------+\n")
 	b.WriteString(fmt.Sprintf("| Project: %-48s |\n", r.Config.Project.Name))
 	b.WriteString(fmt.Sprintf("| Stage:   %-48s |\n", fmt.Sprintf("%s (score %d/100)", r.Config.Project.Stage, r.Maturity.Score)))

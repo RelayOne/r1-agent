@@ -623,7 +623,7 @@ func (sh *Shell) sessionsHeight() int {
 func (sh *Shell) renderBanner(width int) string {
 	var b strings.Builder
 	// Title line: big, colorful, with repo path in muted color.
-	title := shellBannerTitle.Render(fmt.Sprintf("⚡ Stoke %s", sh.cfg.Version))
+	title := shellBannerTitle.Render(fmt.Sprintf("⚡ R1 %s", sh.cfg.Version))
 	repo := shellBannerSub.Render("  " + truncStr(sh.cfg.RepoRoot, width-24))
 	b.WriteString(title + repo + "\n")
 
@@ -803,7 +803,7 @@ func (sh *Shell) renderInput(width int) string {
 		case sh.busy:
 			status = shellBusyStyle.Render("working… Ctrl+C to cancel")
 		default:
-			status = shellStatusStyle.Render("talk to Stoke · /help for commands · Tab=focus · PgUp/PgDn=scroll · Ctrl+C=quit")
+			status = shellStatusStyle.Render("talk to R1 · /help for commands · Tab=focus · PgUp/PgDn=scroll · Ctrl+C=quit")
 		}
 	} else {
 		status = shellStatusStyle.Render(status)

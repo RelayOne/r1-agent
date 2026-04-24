@@ -203,7 +203,7 @@ var memoriesTmpl = template.Must(template.New("memories").Funcs(template.FuncMap
 </header>
 <main>
 {{if .Empty}}
-  <p><em>No memory-bus rows yet. Stoke workers populate this table via <code>Bus.Remember</code>.</em></p>
+  <p><em>No memory-bus rows yet. R1 workers populate this table via <code>Bus.Remember</code>.</em></p>
 {{else}}
   {{range .Groups}}
     <section>

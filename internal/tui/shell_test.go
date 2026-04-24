@@ -178,7 +178,7 @@ func TestShell_ViewRenders(t *testing.T) {
 	sh.input = "/help"
 
 	view := sh.View()
-	for _, want := range []string{"Stoke v1.0", "native", "Sessions", "S1", "Setup", "Log", "log line", "/help"} {
+	for _, want := range []string{"R1 v1.0", "native", "Sessions", "S1", "Setup", "Log", "log line", "/help"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q:\n%s", want, view)
 		}

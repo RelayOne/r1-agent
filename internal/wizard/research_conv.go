@@ -14,7 +14,7 @@ func runResearchConvergence(ctx context.Context, p Provider, r *WizardResult) er
 	profileJSON, _ := json.Marshal(r.Profile)
 	maturityJSON, _ := json.Marshal(r.Maturity)
 
-	system := `You are a configuration advisor for Stoke, an AI coding orchestrator.
+	system := `You are a configuration advisor for R1, an AI coding orchestrator.
 Given a detected technology profile and maturity classification, recommend
 configuration adjustments. Be concise. Output JSON only with this schema:
 
