@@ -160,9 +160,15 @@ export interface LedgerListEventsResult {
 // Memory inspection (§2.3)
 // ---------------------------------------------------------------------
 
-/** The five canonical memory-bus scopes; see `memory/` package. */
+/**
+ * Canonical memory-bus scopes. Mirrors the six `Scope*` constants in
+ * `internal/memory/membus/bus.go`. The earlier R1D-2 scaffold listed
+ * five; `ScopeSessionStep` was added as scope coverage widened to the
+ * per-step view.
+ */
 export type MemoryScope =
   | "Session"
+  | "SessionStep"
   | "Worker"
   | "AllSessions"
   | "Global"
@@ -188,6 +194,71 @@ export interface MemoryEntry {
 export interface MemoryQueryResult {
   entries: MemoryEntry[];
   truncated: boolean;
+}
+
+/**
+ * Row shape surfaced in the memory-bus viewer table (§R1D-6.2). Richer
+ * than `MemoryEntry` — it carries author + counters used by the
+ * sortable key/value table and drill-down drawer.
+ */
+export interface MemoryRow {
+  scope: MemoryScope;
+  key: string;
+  value: unknown;
+  author: string;
+  last_updated_at: Iso8601;
+  read_count: number;
+  write_count: number;
+}
+
+/** Single history entry rendered inside the memory drill-down drawer. */
+export interface MemoryHistoryEntry {
+  kind: "write" | "read";
+  who: string;
+  when: Iso8601;
+  detail?: string;
+}
+
+export interface MemoryHistoryParams {
+  scope: MemoryScope;
+  key: string;
+}
+
+export interface MemoryHistoryResult {
+  scope: MemoryScope;
+  key: string;
+  entries: MemoryHistoryEntry[];
+}
+
+/**
+ * Conflict descriptor returned by the `memory_import` stub when an
+ * incoming row collides with an existing row. The UI surfaces each
+ * conflict with overwrite / skip / cancel actions.
+ */
+export interface MemoryImportConflict {
+  key: string;
+  existing: unknown;
+  incoming: unknown;
+}
+
+export interface MemoryImportParams {
+  scope: MemoryScope;
+  rows: MemoryRow[];
+  resolution?: "overwrite" | "skip";
+}
+
+export interface MemoryImportResult {
+  imported: number;
+  conflicts: MemoryImportConflict[];
+}
+
+export interface MemoryDeleteParams {
+  scope: MemoryScope;
+  key: string;
+}
+
+export interface MemoryDeleteResult {
+  ok: boolean;
 }
 
 // ---------------------------------------------------------------------
@@ -400,6 +471,9 @@ export type InvokeMethod =
   // Memory
   | "memory_list_scopes"
   | "memory_query"
+  | "memory_history"
+  | "memory_import"
+  | "memory_delete"
   // Cost
   | "cost_get_current"
   | "cost_get_history"

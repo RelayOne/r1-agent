@@ -14,6 +14,7 @@ import type { DescentTier, MemoryScope } from "./ipc";
 
 export const ALL_MEMORY_SCOPES: MemoryScope[] = [
   "Session",
+  "SessionStep",
   "Worker",
   "AllSessions",
   "Global",
