@@ -2,6 +2,7 @@ package a2a
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +28,8 @@ func TestHTTPServer_ServesAgentCard(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/.well-known/agent.json")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/.well-known/agent.json", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get card: %v", err)
 	}
@@ -61,7 +63,8 @@ func TestHTTPServer_CardSurvivesLiveSwap(t *testing.T) {
 	newCard := Build(Options{Name: "renamed", Version: "2.0.0"})
 	srv.SetCard(newCard)
 
-	resp, err := http.Get(ts.URL + "/.well-known/agent.json")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/.well-known/agent.json", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get card: %v", err)
 	}
@@ -78,7 +81,9 @@ func TestHTTPServer_CardOnlyGET(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/.well-known/agent.json", "application/json", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/.well-known/agent.json", nil)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -109,7 +114,9 @@ func TestHTTPServer_RPCSubmitWorks(t *testing.T) {
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.submit","params":{"prompt":{"task":"do a thing"}}}`)
-	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post rpc: %v", err)
 	}
@@ -137,7 +144,9 @@ func TestHTTPServer_RPCRejectsBadJSON(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", strings.NewReader(`{not json`))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post rpc: %v", err)
 	}
@@ -160,7 +169,9 @@ func TestHTTPServer_RPCRejectsUnknownMethod(t *testing.T) {
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.fabricate","params":{}}`)
-	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -181,7 +192,9 @@ func TestHTTPServer_RPCAuthRequiredWhenTokenSet(t *testing.T) {
 
 	// Without bearer → unauthorized.
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.submit","params":{"prompt":{}}}`)
-	resp, err := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -201,7 +214,7 @@ func TestHTTPServer_RPCAcceptsBearer(t *testing.T) {
 	defer ts.Close()
 
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.submit","params":{"prompt":{}}}`)
-	req, _ := http.NewRequest("POST", ts.URL+"/a2a/rpc", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer correct-token")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -229,7 +242,8 @@ func TestHTTPServer_CardOpenEvenWithAuth(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/.well-known/agent.json")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+"/.well-known/agent.json", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get card: %v", err)
 	}
@@ -246,7 +260,9 @@ func TestHTTPServer_SubmitThenStatus(t *testing.T) {
 
 	// Submit.
 	submitBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"a2a.task.submit","params":{"prompt":{"x":1}}}`)
-	resp, _ := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(submitBody))
+	submitReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(submitBody))
+	submitReq.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(submitReq)
 	var sr struct {
 		Result Task `json:"result"`
 	}
@@ -258,7 +274,9 @@ func TestHTTPServer_SubmitThenStatus(t *testing.T) {
 
 	// Status.
 	statusBody := []byte(`{"jsonrpc":"2.0","id":2,"method":"a2a.task.status","params":{"taskId":"` + sr.Result.ID + `"}}`)
-	resp2, _ := http.Post(ts.URL+"/a2a/rpc", "application/json", bytes.NewReader(statusBody))
+	statusReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/a2a/rpc", bytes.NewReader(statusBody))
+	statusReq.Header.Set("Content-Type", "application/json")
+	resp2, _ := http.DefaultClient.Do(statusReq)
 	var ssr struct {
 		Result Task `json:"result"`
 	}

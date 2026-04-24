@@ -262,9 +262,13 @@ func scanRepairCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "scan-repair: locate stoke binary: %v\n", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := runScanRepair(ctx, cfg); err != nil {
+	// Run in an inner func so defer cancel() fires before any
+	// os.Exit below.
+	if err := func() error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		return runScanRepair(ctx, cfg)
+	}(); err != nil {
 		fmt.Fprintf(os.Stderr, "scan-repair: %v\n", err)
 		os.Exit(1)
 	}

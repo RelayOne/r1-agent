@@ -147,7 +147,9 @@ func (o *Optimizer) Build(dynamicContent string) *OptimizedPrompt {
 	}
 	o.lastStaticHash = staticHash
 
-	allSections := append(staticSections, dynamicSections...)
+	allSections := make([]Section, 0, len(staticSections)+len(dynamicSections))
+	allSections = append(allSections, staticSections...)
+	allSections = append(allSections, dynamicSections...)
 
 	return &OptimizedPrompt{
 		System:        system.String(),

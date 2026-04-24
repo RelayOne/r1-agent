@@ -207,7 +207,10 @@ func classifyDeliverable(repoRoot string, d Deliverable) ComplianceFinding {
 	}
 	// Limit evidence list length to keep the report readable.
 	if len(matchedPaths) > 4 {
-		finding.Evidence = append(matchedPaths[:4], fmt.Sprintf("… and %d more", len(matchedPaths)-4))
+		evidence := make([]string, 0, 5)
+		evidence = append(evidence, matchedPaths[:4]...)
+		evidence = append(evidence, fmt.Sprintf("… and %d more", len(matchedPaths)-4))
+		finding.Evidence = evidence
 	} else {
 		finding.Evidence = matchedPaths
 	}

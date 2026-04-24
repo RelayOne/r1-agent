@@ -296,6 +296,15 @@ func killChildProcessGroup(cmd *exec.Cmd, gracePeriod time.Duration) bool {
 // Usage:
 //   stoke simple-loop --repo /path --file SOW.md
 func simpleLoopCmd(args []string) {
+	if code := runSimpleLoopCmd(args); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// runSimpleLoopCmd runs the simple-loop body and returns the exit
+// code. Splitting the wrapper lets deferred cleanup (span.End) fire
+// before os.Exit.
+func runSimpleLoopCmd(args []string) (exitCode int) {
 	fs := flag.NewFlagSet("simple-loop", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	sowFile := fs.String("file", "", "SOW prose file")
@@ -1323,11 +1332,14 @@ func simpleLoopCmd(args []string) {
 		fmt.Println("  run 'stoke sessions status' to see results")
 	}
 	fmt.Println("═══════════════════════════════════════")
+	// Capture exit code and return so the deferred roundSpan.End()
+	// (registered earlier in this function) fires before os.Exit.
 	if step8Aborted {
 		// Non-zero exit so outer orchestrators (CI, other stoke
 		// commands) can detect the regression-cap abort without
 		// having to scrape stdout.
-		os.Exit(3)
+		exitCode = 3
+		return
 	}
 	if plateauAborted {
 		// Distinct exit code from the regression-cap abort so outer
@@ -1335,8 +1347,10 @@ func simpleLoopCmd(args []string) {
 		// non-convergence" from "bailed quickly after obvious
 		// regression". Both are PARTIAL-SUCCESS in the sense that
 		// committed work still landed; only the exit signal differs.
-		os.Exit(4)
+		exitCode = 4
+		return
 	}
+	return 0
 }
 
 // tierFilterRescueBeforeH6Cap is the H-20 last-chance hook. Called
@@ -1532,9 +1546,8 @@ func splitReviewIntoIssues(text string, maxChunks int) []string {
 	}
 	if len(issues) > maxChunks {
 		// Collapse overflow into the last chunk so nothing is dropped.
-		head := issues[:maxChunks-1]
 		tail := strings.Join(issues[maxChunks-1:], "\n\n")
-		issues = append(head, tail)
+		issues = append(issues[:maxChunks-1:maxChunks-1], tail)
 	}
 	return issues
 }

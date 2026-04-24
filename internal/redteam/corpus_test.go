@@ -116,7 +116,7 @@ var templateTokenRE = regexp.MustCompile(
 		`|<｜User｜>` +
 		`|<｜Assistant｜>` +
 		`|(?m)^Human:\s` +
-		`|(?m)^Assistant:\s`,
+		`|^Assistant:\s`,
 )
 
 // TestCorpus_TemplateTokens asserts that every sample in

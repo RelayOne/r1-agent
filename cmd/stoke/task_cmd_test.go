@@ -119,7 +119,7 @@ func TestParseTaskType(t *testing.T) {
 	cases := map[string]executor.TaskType{
 		"code":     executor.TaskCode,
 		"CODE":     executor.TaskCode,
-		" code ":   executor.TaskCode,
+		" code ":   executor.TaskCode, //nolint:gocritic // mapKey: intentional whitespace tests trimming
 		"research": executor.TaskResearch,
 		"browser":  executor.TaskBrowser,
 		"deploy":   executor.TaskDeploy,

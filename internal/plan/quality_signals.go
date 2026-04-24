@@ -664,7 +664,7 @@ func scanWeakAssertions(rel string, lines []string) []QualityFinding {
 		`\bexpect\s*\(\s*(?:true|false|1|0|null|undefined|""|''|\[\s*\]|\{\s*\})\s*\)\s*\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*(?:true|false|1|0|null|undefined|""|''|\[\s*\]|\{\s*\})\s*\)`,
 	)
 	trivialTruthy := regexp.MustCompile(
-		`\bexpect\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*\)\s*\.(?:toBeTruthy|toBeDefined|toBeDefined)\s*\(\s*\)`,
+		`\bexpect\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*\)\s*\.(?:toBeTruthy|toBeDefined)\s*\(\s*\)`,
 	)
 	assertTrue := regexp.MustCompile(
 		`\b(?:assert|chai\.assert)(?:\.ok)?\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*(?:,.*)?\s*\)`,
