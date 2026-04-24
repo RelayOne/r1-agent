@@ -1,0 +1,51 @@
+{
+  "name": "studio.get_post",
+  "version": "1.0.0",
+  "description": "Read a single blog post's full content (title, body, author, tags, categories) by post_id.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "post_id"],
+    "properties": {
+      "site_id":        { "type": "string", "minLength": 1 },
+      "post_id":        { "type": "string", "minLength": 1 },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["post_id", "slug", "status"],
+    "properties": {
+      "post_id":        { "type": "string" },
+      "slug":           { "type": "string" },
+      "title":          { "type": "string" },
+      "content":        { "type": "string" },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] },
+      "status":         { "type": "string", "enum": ["draft", "published", "scheduled"] },
+      "author":         { "type": "string" },
+      "categories":     { "type": "array", "items": { "type": "string" } },
+      "tags":           { "type": "array", "items": { "type": "string" } },
+      "published_at":   { "type": "string", "format": "date-time" },
+      "updated_at":     { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Read-before-write: fetch current post content before calling studio.update_post.",
+    "Extract post body for summarization, translation, or cross-posting to another channel.",
+    "Read-after-write verification to confirm an update_post persisted correctly."
+  ],
+  "whenNotToUse": [
+    "Caller wants all posts — use studio.list_posts, not a loop of get_post.",
+    "Caller wants a static page (terms, about) — use studio.get_page; pages and posts differ.",
+    "Post id is unknown — call studio.list_posts first to resolve."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "blog",
+    "content-read",
+    "pre-edit"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "studio.get_site",
+  "version": "1.0.0",
+  "description": "Read a single Actium Studio site's metadata (name, plan, custom domain, status, urls) by site_id.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "name", "status"],
+    "properties": {
+      "site_id":      { "type": "string" },
+      "name":         { "type": "string" },
+      "slug":         { "type": "string" },
+      "status":       { "type": "string", "enum": ["ready", "scaffolding", "archived", "failed"] },
+      "plan":         { "type": "string" },
+      "custom_domain": { "type": "string" },
+      "url":          { "type": "string", "format": "uri" },
+      "created_at":   { "type": "string", "format": "date-time" },
+      "updated_at":   { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Read-before-write safety check: confirm a site exists and its status before editing.",
+    "Fetch the site's public URL or custom domain for inclusion in a reply to the user.",
+    "Disambiguate two similarly-named sites by fetching full metadata for each candidate id."
+  ],
+  "whenNotToUse": [
+    "Caller does not yet know the site_id — call studio.list_sites first and select the target id.",
+    "Caller needs pages, not the site object — use studio.list_pages or studio.get_page.",
+    "Caller wants a composite health check with scaffold progress and staging — use studio.site_status instead (it batches 2-3 calls)."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "read",
+    "metadata",
+    "pre-flight"
+  ]
+}

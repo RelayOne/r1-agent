@@ -1,0 +1,58 @@
+{
+  "name": "studio.list_media",
+  "version": "1.0.0",
+  "description": "Enumerate media assets (images, documents, video) uploaded to an Actium Studio site.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id":   { "type": "string", "minLength": 1 },
+      "mime_type": { "type": "string", "maxLength": 128 },
+      "prefix":    { "type": "string", "maxLength": 200 },
+      "limit":     { "type": "integer", "minimum": 1, "maximum": 500 },
+      "cursor":    { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["media"],
+    "properties": {
+      "media": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["media_id", "url", "mime_type"],
+          "properties": {
+            "media_id":  { "type": "string" },
+            "name":      { "type": "string" },
+            "mime_type": { "type": "string" },
+            "url":       { "type": "string", "format": "uri" },
+            "size_bytes": { "type": "integer", "minimum": 0 },
+            "uploaded_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Resolve image URLs for inclusion in a page or post body before calling update_page/update_post.",
+    "Storage audit: enumerate assets larger than some threshold for cleanup.",
+    "Before an upload step, check whether the asset is already present to avoid duplication."
+  ],
+  "whenNotToUse": [
+    "Caller already has the media URL — skip listing; just reference the URL directly.",
+    "Caller is looking for page content, not asset metadata — use studio.list_pages / studio.get_page.",
+    "Caller wants to upload a new asset — this skill only reads; upload is a separate skill."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "media",
+    "assets",
+    "discovery"
+  ]
+}

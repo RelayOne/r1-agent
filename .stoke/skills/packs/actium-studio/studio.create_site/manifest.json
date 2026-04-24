@@ -1,0 +1,47 @@
+{
+  "name": "studio.create_site",
+  "version": "1.0.0",
+  "description": "Create an empty Actium Studio site without the natural-language scaffolder. Returns the new site_id and URL. Power-user path for callers that will drive pages explicitly.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+      "name":          { "type": "string", "minLength": 1, "maxLength": 120 },
+      "slug":          { "type": "string", "maxLength": 120 },
+      "plan":          { "type": "string", "maxLength": 64 },
+      "custom_domain": { "type": "string", "maxLength": 253 },
+      "template":      { "type": "string", "maxLength": 120 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "status"],
+    "properties": {
+      "site_id":   { "type": "string" },
+      "slug":      { "type": "string" },
+      "status":    { "type": "string", "enum": ["ready", "scaffolding", "failed"] },
+      "url":       { "type": "string", "format": "uri" },
+      "created_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Caller has a site name and optional template but does NOT want the LLM-driven scaffolder to author content.",
+    "Integration test or CI scenario that needs a deterministic empty-site starting point.",
+    "Bulk provisioning flow where scaffolding would exceed the LLM budget for each site."
+  ],
+  "whenNotToUse": [
+    "Caller wants generated landing-page content from a brief — use studio.scaffold_site (hero skill) instead.",
+    "A site with the requested slug already exists — call studio.list_sites first and reuse the existing site_id.",
+    "Caller is in autonomous mode without operator budget approval — create_site can be billed against the plan tier."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "provisioning",
+    "site-create",
+    "bulk-setup"
+  ]
+}

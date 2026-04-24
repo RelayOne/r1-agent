@@ -1,0 +1,56 @@
+{
+  "name": "studio.list_pages",
+  "version": "1.0.0",
+  "description": "Enumerate pages on a Studio site. Returns id, slug, status, and updated_at for each page. Supports pagination.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "status":  { "type": "string", "enum": ["draft", "published", "unpublished"] },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["pages"],
+    "properties": {
+      "pages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["page_id", "slug", "status"],
+          "properties": {
+            "page_id":   { "type": "string" },
+            "slug":      { "type": "string" },
+            "title":     { "type": "string" },
+            "status":    { "type": "string", "enum": ["draft", "published", "unpublished"] },
+            "updated_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Agent needs to discover the target page_id before editing or publishing.",
+    "Operator asks 'what pages does site X have' without naming one.",
+    "Building a pre-flight checklist before a bulk update or publish sweep."
+  ],
+  "whenNotToUse": [
+    "Caller already has the target page_id — go directly to studio.get_page.",
+    "Caller is polling every few seconds for a new page's appearance — use create_page's response, not a list loop.",
+    "Caller wants blog posts — use studio.list_posts; pages and blog posts are separate surfaces."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "discovery",
+    "enumeration",
+    "page-lifecycle"
+  ]
+}

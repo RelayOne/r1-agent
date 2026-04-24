@@ -1,0 +1,45 @@
+{
+  "name": "studio.create_snapshot",
+  "version": "1.0.0",
+  "description": "Create a point-in-time snapshot of an Actium Studio site. Typically invoked before a destructive or bulk update as a safety net.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "label":   { "type": "string", "maxLength": 200 },
+      "reason":  { "type": "string", "maxLength": 500 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["snapshot_id", "created_at"],
+    "properties": {
+      "snapshot_id": { "type": "string" },
+      "label":       { "type": "string" },
+      "created_at":  { "type": "string", "format": "date-time" },
+      "size_bytes":  { "type": "integer", "minimum": 0 },
+      "kind":        { "type": "string", "enum": ["manual", "auto", "pre-publish", "pre-restore"] }
+    }
+  },
+  "whenToUse": [
+    "Pre-destructive-op safety: take a snapshot before a bulk update, settings change, or promote.",
+    "Scheduled safety checkpoint before an automated content-ops batch fires.",
+    "Operator explicitly requests a named checkpoint (e.g. 'snapshot before the Q2 launch push')."
+  ],
+  "whenNotToUse": [
+    "Snapshot taken within the last few minutes and nothing has changed since — wastes storage.",
+    "Caller actually wants to export the site — snapshots are internal; use an export skill if one exists.",
+    "Caller expects create_snapshot to also publish or promote — this is backup-only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "snapshots",
+    "backup",
+    "pre-destructive"
+  ]
+}

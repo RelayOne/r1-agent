@@ -1,0 +1,59 @@
+{
+  "name": "studio.get_theme",
+  "version": "1.0.0",
+  "description": "Read an Actium Studio site's theme (brand colors, typography, spacing tokens, active theme id). Read-only.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "theme_id", "tokens"],
+    "properties": {
+      "site_id":  { "type": "string" },
+      "theme_id": { "type": "string" },
+      "name":     { "type": "string" },
+      "tokens": {
+        "type": "object",
+        "properties": {
+          "colors": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "typography": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "spacing": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Pre-edit read before calling update_theme_tokens so the agent operates on the current palette, not a guess.",
+    "Brand audit: check whether a site's tokens match the operator's brand guidelines.",
+    "Derive the brand palette for content generation so hero images or callouts pick complementary colors."
+  ],
+  "whenNotToUse": [
+    "Caller wants to change theme tokens — this is read-only; use update_theme_tokens for writes.",
+    "Caller wants per-page styling overrides — those live on the page, not the theme.",
+    "Caller only needs the primary brand color — studio.get_site returns minimal brand metadata and avoids this call."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "theme",
+    "brand",
+    "pre-edit"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "studio.get_page",
+  "version": "1.0.0",
+  "description": "Read a single page's content and metadata (title, slug, body, status, updated_at) from an Actium Studio site.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id":         { "type": "string", "minLength": 1 },
+      "page_id":         { "type": "string", "minLength": 1 },
+      "content_format":  { "type": "string", "enum": ["html", "markdown"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "slug", "status"],
+    "properties": {
+      "page_id":        { "type": "string" },
+      "slug":           { "type": "string" },
+      "title":          { "type": "string" },
+      "content":        { "type": "string" },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] },
+      "status":         { "type": "string", "enum": ["draft", "published", "unpublished"] },
+      "updated_at":     { "type": "string", "format": "date-time" },
+      "revision_id":    { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Read-before-write safety check: fetch current content before calling studio.update_page.",
+    "Extract page copy for inclusion in a reply or a downstream summarization step.",
+    "Read-after-write verification: confirm an update_page call actually persisted the new content."
+  ],
+  "whenNotToUse": [
+    "Caller wants every page on the site — use studio.list_pages, not a loop of get_page.",
+    "Caller wants the rendered public URL, not the source body — studio.get_site returns the site url, pair with slug.",
+    "Page id is unknown — call studio.list_pages first to resolve the target id."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "read",
+    "content-read",
+    "pre-edit"
+  ]
+}

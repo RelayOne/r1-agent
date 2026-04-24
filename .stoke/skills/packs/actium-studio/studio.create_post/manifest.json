@@ -1,0 +1,49 @@
+{
+  "name": "studio.create_post",
+  "version": "1.0.0",
+  "description": "Create a new blog post on an Actium Studio site. Post is created as a draft; publish via studio.publish_post.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "slug", "title"],
+    "properties": {
+      "site_id":        { "type": "string", "minLength": 1 },
+      "slug":           { "type": "string", "minLength": 1, "maxLength": 200 },
+      "title":          { "type": "string", "minLength": 1, "maxLength": 200 },
+      "content":        { "type": "string", "maxLength": 200000 },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] },
+      "author":         { "type": "string", "maxLength": 120 },
+      "categories":     { "type": "array", "items": { "type": "string", "maxLength": 120 } },
+      "tags":           { "type": "array", "items": { "type": "string", "maxLength": 120 } }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["post_id", "slug", "status"],
+    "properties": {
+      "post_id":    { "type": "string" },
+      "slug":       { "type": "string" },
+      "status":     { "type": "string", "enum": ["draft", "published"] },
+      "created_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Content-ops flow drafts a new blog post from outside copy (Notion, Google Docs, etc.).",
+    "Automated republishing: convert a newsletter issue or long-form memo into a blog post.",
+    "First half of 'draft and schedule' flow — create now, publish_post with scheduled_at later."
+  ],
+  "whenNotToUse": [
+    "Caller wants to edit an existing post — use studio.update_post; create_post fails on slug collision.",
+    "Caller is authoring a static page (/about, /pricing) — use studio.create_page; posts and pages are distinct.",
+    "Categories or tags not yet defined on the site — create_post will fail referencing unknown taxonomies; create them first."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog",
+    "post-create",
+    "content-author"
+  ]
+}

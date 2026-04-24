@@ -1,0 +1,57 @@
+{
+  "name": "studio.list_sites",
+  "version": "1.0.0",
+  "description": "Enumerate Actium Studio sites visible to the caller's credentials. Read-only; returns site ids, slugs, plans, and status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit":     { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":    { "type": "string" },
+      "status":    { "type": "string", "enum": ["ready", "scaffolding", "archived", "failed"] },
+      "plan":      { "type": "string", "maxLength": 64 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["sites"],
+    "properties": {
+      "sites": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["site_id", "name", "status"],
+          "properties": {
+            "site_id":   { "type": "string" },
+            "name":      { "type": "string" },
+            "slug":      { "type": "string" },
+            "status":    { "type": "string", "enum": ["ready", "scaffolding", "archived", "failed"] },
+            "plan":      { "type": "string" },
+            "url":       { "type": "string", "format": "uri" },
+            "updated_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Agent needs to know which sites exist before picking one to operate on (read-before-write).",
+    "Operator asks 'what sites do I have' without naming one.",
+    "Disambiguation step when a user references a site by partial name — list then match client-side."
+  ],
+  "whenNotToUse": [
+    "Caller already has a site_id — skip straight to studio.get_site; listing wastes a round-trip.",
+    "Caller expects a single, known site — call studio.get_site with the known id instead.",
+    "Caller wants per-page enumeration within a site — use studio.list_pages, not this site-level lister."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "discovery",
+    "enumeration",
+    "pre-flight"
+  ]
+}

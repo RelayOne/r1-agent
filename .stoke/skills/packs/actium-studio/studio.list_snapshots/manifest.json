@@ -1,0 +1,55 @@
+{
+  "name": "studio.list_snapshots",
+  "version": "1.0.0",
+  "description": "List available snapshots (point-in-time backups) for an Actium Studio site.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["snapshots"],
+    "properties": {
+      "snapshots": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["snapshot_id", "created_at"],
+          "properties": {
+            "snapshot_id": { "type": "string" },
+            "label":       { "type": "string" },
+            "created_at":  { "type": "string", "format": "date-time" },
+            "size_bytes":  { "type": "integer", "minimum": 0 },
+            "kind":        { "type": "string", "enum": ["manual", "auto", "pre-publish", "pre-restore"] }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Discovery step before studio.diff_versions: pick two snapshot ids to compare.",
+    "Pre-restore audit: confirm the target snapshot exists and inspect its metadata (date, kind).",
+    "Storage audit: enumerate snapshots older than X to identify cleanup candidates."
+  ],
+  "whenNotToUse": [
+    "Caller already has the snapshot_id — skip listing; use it directly.",
+    "Caller needs the contents of a snapshot — use a snapshot-content skill (not this lister).",
+    "Caller wants to create a backup — use studio.create_snapshot; this skill only reads."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "snapshots",
+    "backup-discovery",
+    "pre-restore"
+  ]
+}
