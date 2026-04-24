@@ -538,6 +538,7 @@ A 30-PR cleanup campaign also shipped:
 - [docs/decisions/](docs/decisions/) — Architecture Decision Records
 - [docs/history/](docs/history/) — Preserved historical design documents
 - [docs/security/](docs/security/) — Threat model, prompt-injection, MCP-security
+- [docs/mintlify/](docs/mintlify/) — Mintlify-ready MDX sources for `docs.r1.dev`; site config at [docs/mint.json](docs/mint.json). See [plans/work-orders/work-mintlify-docs.md](plans/work-orders/work-mintlify-docs.md) for the portfolio-level work order.
 - [specs/](specs/) — Scoped specs (ready / in-flight / shipped)
 
 ## Governance

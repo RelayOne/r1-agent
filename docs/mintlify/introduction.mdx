@@ -1,0 +1,83 @@
+---
+title: "Introduction"
+description: "R1 — a single-strong-agent coding orchestrator with adversarial review and a content-addressed governance ledger."
+---
+
+## What is R1?
+
+R1 drives Claude Code and Codex CLI through a deterministic
+**PLAN → EXECUTE → VERIFY → COMMIT** loop. It runs one strong
+implementer per task, pairs that worker with a cross-family
+reviewer, records every decision into an append-only Merkle-chained
+ledger, and enforces build / test / lint / scope gates before
+a single line is allowed to merge.
+
+<Note>
+R1 ships as the `stoke` binary today. The binary rename is
+in flight — until it lands, command examples use `stoke`.
+See the [rename notice](/mintlify/rename/stoke-to-r1) for
+the dual-accept window and identifier-mapping table.
+</Note>
+
+## The thesis
+
+**The harness is the product.** SWE-bench Pro shows the same
+underlying model swings ~15 points when you change only the
+scaffold around it. R1 reports deltas on SWE-bench Pro,
+SWE-rebench, and Terminal-Bench — not contaminated Verified
+numbers. See the [benchmark stance](/mintlify/benchmarks/swebench)
+for the full published evaluation posture.
+
+R1 is explicitly **not** a multi-agent committee. Published
+MAST data (41–86.7% failure rates in real multi-agent
+deployments; 70% accuracy degradation from blind agent-adding)
+says the prevailing "many cooperating agents" pattern is how
+you lose. R1 runs one strong implementer per task, pairs it
+with a cross-family adversarial reviewer, and treats the
+reviewer's dissent as a merge-blocking signal.
+
+## What you get
+
+<CardGroup cols={2}>
+  <Card title="Deterministic loop" icon="repeat">
+    Plan, execute, verify, commit — every phase gated, every
+    failure fingerprinted for retry escalation.
+  </Card>
+  <Card title="Content-addressed ledger" icon="database">
+    Every decision, every artifact, every verification result
+    written as a SHA-256-addressed node in an append-only graph.
+  </Card>
+  <Card title="Cross-family review" icon="eye">
+    Claude implements, Codex reviews (or vice versa). Dissent
+    blocks merge until resolved.
+  </Card>
+  <Card title="Verification descent" icon="arrow-down-wide-short">
+    Build / test / lint / scope gates refuse to believe the
+    model when it says "done".
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/mintlify/quickstart">
+    Run your first task end-to-end in under five minutes.
+  </Card>
+  <Card title="Install" icon="download" href="/mintlify/install">
+    Homebrew, curl-pipe, Docker, or build from source.
+  </Card>
+  <Card title="Core concepts" icon="book" href="/mintlify/concepts/tasks-vs-plans">
+    Tasks, plans, subagents, parallel execution, resume.
+  </Card>
+  <Card title="Operator guide" icon="wrench" href="/mintlify/operator/guide">
+    Deploy R1 in production workloads.
+  </Card>
+</CardGroup>
+
+## License
+
+R1 is **free open-source software, forever**. No license
+keys, no feature gates, no telemetry, no phone-home. Paid
+team-scale features ship as a separate product,
+[CloudSwarm](https://docs.cloudswarm.ai), which embeds R1
+as its agent runtime.

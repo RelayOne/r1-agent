@@ -1,0 +1,60 @@
+---
+title: "Install"
+description: "Homebrew, curl-pipe, Docker, and source-build installation paths for R1."
+---
+
+R1 is free open-source software. No license keys, no feature
+gates, no telemetry, no phone-home.
+
+## Homebrew (macOS + Linux)
+
+Published by goreleaser on each tag.
+
+```bash
+brew install ericmacdougall/stoke/stoke
+```
+
+## One-line installer
+
+Detects your platform, verifies the cosign signature (keyless
+OIDC via sigstore) when cosign is on PATH, and falls back to
+building from source if no prebuilt binary exists for your target.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+```
+
+## Docker
+
+linux/amd64 + linux/arm64; distroless; multi-stage.
+
+```bash
+docker pull ghcr.io/ericmacdougall/stoke:latest
+```
+
+## From source
+
+Requires Go 1.25+ (1.25 minimum); CGO enabled for SQLite.
+
+```bash
+go build ./cmd/stoke
+go build ./cmd/stoke-acp        # Agent Client Protocol adapter
+sudo mv stoke stoke-acp /usr/local/bin/
+```
+
+## Verify a signed release tarball
+
+Cosign keyless OIDC.
+
+```bash
+cosign verify-blob \
+  --certificate-identity-regexp 'https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
+  stoke_<ver>_<os>_<arch>.tar.gz
+```
+
+<Note>
+R1 ships as the `stoke` binary today. The binary rename is
+in flight — see the [rename notice](/mintlify/rename/stoke-to-r1).
+</Note>

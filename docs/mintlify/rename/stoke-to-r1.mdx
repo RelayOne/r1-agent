@@ -1,0 +1,54 @@
+---
+title: "Rename: Stoke → R1"
+description: "R1 ships as the stoke binary today. This page tracks the rename-in-flight, dual-accept windows, and identifier-mapping table."
+---
+
+<Warning>
+R1 ships as the `stoke` binary today. The binary rename is
+in flight (see `plans/work-orders/work-r1-rename.md` in-repo
+for the full rollout plan).
+</Warning>
+
+## Current state
+
+| Surface | Today | After rename |
+|---|---|---|
+| CLI binary | `stoke` | `r1` (with `stoke` shim for the dual-accept window) |
+| Homebrew formula | `ericmacdougall/stoke/stoke` | `ericmacdougall/r1/r1` |
+| Docker image | `ghcr.io/ericmacdougall/stoke` | `ghcr.io/ericmacdougall/r1` |
+| Config file | `stoke.yaml` / `stoke-plan.json` | `r1.yaml` / `r1-plan.json` |
+| MCP tool names | `stoke__*` | `r1__*` (gated to v2.0.0) |
+| Protocol doc | `stoke-protocol.md` | `r1-protocol.md` |
+
+## Dual-accept windows
+
+- **CLI shim:** the `stoke` command name keeps working for at
+  least one minor release after `r1` ships.
+- **Config files:** the loader accepts either `stoke.yaml` or
+  `r1.yaml` during the transition.
+- **MCP tool names:** v2.0.0 is the cutover; pre-v2 deployments
+  keep the `stoke__*` names.
+
+## Identifier mapping
+
+| Old | New |
+|---|---|
+| `stoke run` | `r1 run` |
+| `stoke build` | `r1 build` |
+| `stoke plan` | `r1 plan` |
+| `stoke task` | `r1 task` |
+| `stoke-acp` | `r1-acp` |
+| `stoke-server` | `r1-server` |
+
+## Why the rename?
+
+R1 sits inside the RelayOne portfolio and ships at `docs.r1.dev`.
+The product name aligns with the portfolio. The legacy `stoke`
+identifier remains valid during the dual-accept window; callers
+should plan to migrate before the v2.0.0 cutover.
+
+<Note>
+The full rename spec (including timeline, dependencies, and
+per-surface migration steps) lives in
+`plans/work-orders/work-r1-rename.md` inside the R1 repository.
+</Note>

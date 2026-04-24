@@ -1,0 +1,92 @@
+---
+title: "Quickstart"
+description: "Run your first R1 task end-to-end in under five minutes."
+---
+
+## Prerequisites
+
+- A supported platform (macOS or Linux; Windows via WSL2).
+- Claude Code or Codex CLI installed and authenticated.
+- Go 1.25+ if building from source.
+
+## 1. Install
+
+<CodeGroup>
+
+```bash Homebrew
+brew install ericmacdougall/stoke/stoke
+```
+
+```bash curl
+curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+```
+
+```bash Docker
+docker pull ghcr.io/ericmacdougall/stoke:latest
+```
+
+```bash Source
+go build ./cmd/stoke
+sudo mv stoke /usr/local/bin/
+```
+
+</CodeGroup>
+
+## 2. Run a single task
+
+```bash
+stoke run --task "Add request ID middleware" --dry-run
+```
+
+R1 will:
+
+1. **Plan** — propose a deterministic task decomposition.
+2. **Execute** — run a single strong implementer in an isolated git worktree.
+3. **Verify** — run build, test, lint, and scope gates.
+4. **Commit** — merge only if every gate passes and the cross-family reviewer concurs.
+
+Drop `--dry-run` to let R1 write, commit, and merge.
+
+## 3. Run a multi-task plan
+
+```bash
+stoke build --plan stoke-plan.json --workers 4 --dry-run
+```
+
+Tasks dispatch in GRPW priority order (most downstream work first),
+and R1 automatically serializes any tasks whose file scopes conflict.
+
+## 4. Generate a plan from a task description
+
+```bash
+stoke plan --task "Add JWT auth" --dry-run
+```
+
+R1 will inspect your repository, propose a ranked task tree, and
+emit a plan you can edit and re-feed into `stoke build`.
+
+## 5. Free-text entry
+
+```bash
+stoke task "Fix the flaky integration test in server/handler"
+```
+
+The executor router picks the right backend (Claude Code, Codex,
+library fallback) based on task type.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Tasks vs plans" icon="list" href="/mintlify/concepts/tasks-vs-plans">
+    When to use `run` vs `build` vs `plan`.
+  </Card>
+  <Card title="Subagents" icon="users" href="/mintlify/concepts/subagents">
+    How R1 spawns and supervises worker agents.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/mintlify/reference/cli">
+    All 20 commands, every flag.
+  </Card>
+  <Card title="Operator guide" icon="wrench" href="/mintlify/operator/guide">
+    Production deployment patterns.
+  </Card>
+</CardGroup>

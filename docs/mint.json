@@ -1,0 +1,185 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "R1",
+  "description": "A single-strong-agent coding orchestrator with adversarial review, content-addressed governance ledger, and a verification descent engine.",
+  "logo": {
+    "light": "/mintlify/logo/light.svg",
+    "dark": "/mintlify/logo/dark.svg",
+    "href": "https://docs.r1.dev"
+  },
+  "favicon": "/mintlify/favicon.svg",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5",
+    "anchors": {
+      "from": "#6366F1",
+      "to": "#14B8A6"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/ericmacdougall/Stoke"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Install",
+    "url": "https://docs.r1.dev/getting-started/install"
+  },
+  "tabs": [
+    {
+      "name": "Docs",
+      "url": "mintlify"
+    },
+    {
+      "name": "Reference",
+      "url": "mintlify/reference"
+    },
+    {
+      "name": "Cookbook",
+      "url": "mintlify/cookbook"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "CLI source",
+      "icon": "github",
+      "url": "https://github.com/ericmacdougall/Stoke"
+    },
+    {
+      "name": "Protocol spec",
+      "icon": "book",
+      "url": "https://docs.r1.dev/mintlify/protocols/r1-protocol"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting started",
+      "pages": [
+        "mintlify/introduction",
+        "mintlify/quickstart",
+        "mintlify/install"
+      ]
+    },
+    {
+      "group": "Core concepts",
+      "pages": [
+        "mintlify/concepts/tasks-vs-plans",
+        "mintlify/concepts/subagents",
+        "mintlify/concepts/parallel-execution",
+        "mintlify/concepts/progress-and-resume",
+        "mintlify/concepts/cost-utilization"
+      ]
+    },
+    {
+      "group": "Governance (V2 architecture)",
+      "pages": [
+        "mintlify/governance/policy-engine",
+        "mintlify/governance/audit-trail",
+        "mintlify/governance/attestation"
+      ]
+    },
+    {
+      "group": "Skills",
+      "pages": [
+        "mintlify/skills/overview",
+        "mintlify/skills/built-in",
+        "mintlify/skills/authoring",
+        "mintlify/skills/registry"
+      ]
+    },
+    {
+      "group": "MCP servers",
+      "pages": [
+        "mintlify/mcp/configuration",
+        "mintlify/mcp/circuit-breakers",
+        "mintlify/mcp/tool-listing",
+        "mintlify/mcp/tool-invocation"
+      ]
+    },
+    {
+      "group": "Deployment modes",
+      "pages": [
+        "mintlify/deployment/local-workstation",
+        "mintlify/deployment/team",
+        "mintlify/deployment/actium-studio",
+        "mintlify/deployment/cloudswarm-agent-mode"
+      ]
+    },
+    {
+      "group": "Protocols",
+      "pages": [
+        "mintlify/protocols/r1-protocol"
+      ]
+    },
+    {
+      "group": "Integrations",
+      "pages": [
+        "mintlify/integrations/trustplane",
+        "mintlify/integrations/relaygate",
+        "mintlify/integrations/actium-studio"
+      ]
+    },
+    {
+      "group": "Security",
+      "pages": [
+        "mintlify/security/sigstore-verification",
+        "mintlify/security/mcp-security"
+      ]
+    },
+    {
+      "group": "Operator guide",
+      "pages": [
+        "mintlify/operator/guide",
+        "mintlify/operator/deploy-executor",
+        "mintlify/operator/browser-executor"
+      ]
+    },
+    {
+      "group": "Benchmarks",
+      "pages": [
+        "mintlify/benchmarks/swebench",
+        "mintlify/benchmarks/anti-deception-matrix",
+        "mintlify/benchmarks/corpus-format"
+      ]
+    },
+    {
+      "group": "Rename",
+      "pages": [
+        "mintlify/rename/stoke-to-r1"
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "mintlify/reference/cli",
+        "mintlify/reference/api"
+      ]
+    },
+    {
+      "group": "Cookbook",
+      "pages": [
+        "mintlify/cookbook/overview"
+      ]
+    }
+  ],
+  "api": {
+    "baseUrl": "https://api.r1.dev",
+    "auth": {
+      "method": "bearer"
+    },
+    "openapi": []
+  },
+  "footerSocials": {
+    "github": "https://github.com/ericmacdougall/Stoke"
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true,
+    "raiseIssue": true
+  },
+  "search": {
+    "prompt": "Ask about R1..."
+  }
+}
