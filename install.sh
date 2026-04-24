@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stoke installer
+# R1 installer (formerly "stoke")
 # Usage: curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+#
+# The 60-90d stoke/r1 dual-distribution window elapsed 2026-07-23.
+# S6-4 dropped the `stoke` binary install path; this script now
+# installs the canonical `r1` binary only. The Homebrew `stoke`
+# formula + any apt `stoke` package are retracted on the same day
+# (see docs/s6-deprecation-closures.md §S6-4).
 
 REPO="ericmacdougall/Stoke"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-BINARY="stoke"
+BINARY="r1"
 
 info() { echo "==> $*"; }
 error() { echo "ERROR: $*" >&2; exit 1; }
@@ -53,12 +59,14 @@ build_from_source() {
     git clone --depth 1 "https://github.com/${REPO}.git" "${tmp_dir}/stoke"
 
     info "Building..."
-    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-bin" ./cmd/stoke)
-    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
-    # work-r1-rename.md S2-3: r1 shim binary (delegates to stoke).
+    # S6-4 (2026-07-23): the legacy stoke binary build step was
+    # dropped. The r1 binary is the canonical CLI; stoke-acp keeps
+    # its name (Agent Client Protocol adapter is a protocol identifier,
+    # not product prose).
     (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
+    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
 
-    for pair in "${tmp_dir}/stoke-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp" "${tmp_dir}/r1-bin:r1"; do
+    for pair in "${tmp_dir}/r1-bin:r1" "${tmp_dir}/stoke-acp-bin:stoke-acp"; do
         src="${pair%%:*}"
         dst_name="${pair##*:}"
         dst="${INSTALL_DIR}/${dst_name}"
@@ -70,10 +78,9 @@ build_from_source() {
         chmod +x "${dst}"
     done
 
-    info "Built and installed stoke to ${INSTALL_DIR}/${BINARY}"
+    info "Built and installed r1 to ${INSTALL_DIR}/r1"
     info "Built and installed stoke-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/stoke-acp"
-    info "Built and installed r1 (rename transition shim) to ${INSTALL_DIR}/r1"
-    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
+    info "Run 'r1 doctor' to verify your setup."
 }
 
 main() {
@@ -141,10 +148,15 @@ main() {
     info "Installing to ${INSTALL_DIR}..."
     tar -xzf "${tmp_dir}/${archive_name}" -C "${tmp_dir}"
 
-    # Install both binaries from the release archive: the main
-    # stoke CLI and the stoke-acp Agent Client Protocol adapter
-    # (S-U-002). The ACP adapter is optional — older archives
-    # won't include it, so missing stoke-acp isn't a hard error.
+    # Install binaries from the release archive: the canonical r1
+    # CLI and the stoke-acp Agent Client Protocol adapter (S-U-002).
+    # The ACP adapter is optional -- older archives won't include
+    # it, so missing stoke-acp isn't a hard error.
+    #
+    # S6-4 (2026-07-23): the legacy `stoke` binary install step was
+    # dropped. Consumers who still run `stoke` either have an old
+    # binary still on their PATH or a distribution-level symlink;
+    # neither is installed by this script any more.
     install_one() {
         local bin_name="$1"
         local dest_name="$2"
@@ -172,14 +184,12 @@ main() {
         info "Installed ${dest_name} ${version} to ${INSTALL_DIR}/${dest_name}"
     }
 
-    install_one stoke "${BINARY}" required
+    # S6-4 (2026-07-23): canonical r1 binary only. stoke-acp is
+    # optional (ACP is a protocol name, not product prose).
+    install_one r1 "${BINARY}" required
     install_one stoke-acp stoke-acp optional
-    # work-r1-rename.md S2-3: r1 ships alongside stoke during the
-    # 60-90d transition. Optional so pre-rename archives still
-    # install cleanly (they just won't carry r1).
-    install_one r1 r1 optional
 
-    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
+    info "Run 'r1 doctor' to verify your setup."
 }
 
 main "$@"
