@@ -38,3 +38,20 @@ STATUS.md
 # Marketing/positioning drafts dumped here by cross-repo scoping
 # agents; source of truth lives in goodventures-sites.
 .site/
+
+# R1 Desktop (desktop/) build artifacts -- scaffold only today;
+# full implementation tracked in plans/work-orders/work-r1-desktop-app.md.
+# Ignore Rust, frontend, and Tauri output paths so future builds do
+# not leak binaries into the repo.
+desktop/target/
+desktop/dist/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/.vite/
+desktop/.turbo/
+desktop/.DS_Store
+desktop/package-lock.json
+desktop/pnpm-lock.yaml
+desktop/yarn.lock
+desktop/Cargo.lock

@@ -1,0 +1,27 @@
+# Workspace root for the R1 Desktop Tauri app.
+#
+# SCAFFOLD ONLY. `cargo build` is not expected to succeed until R1D-1.1
+# (see desktop/PLAN.md). Run `cargo tauri init` in this directory to
+# bootstrap. The placeholder structure below reserves the expected
+# workspace shape so the init tool can merge in without churn.
+
+[workspace]
+resolver = "2"
+members = ["src-tauri"]
+
+[workspace.package]
+version = "0.0.0-scaffold"
+edition = "2021"
+rust-version = "1.77"
+authors = ["R1 team"]
+license = "MIT"
+repository = "https://github.com/ericmacdougall/Stoke"
+
+[workspace.dependencies]
+# Pinned on R1D-1.1. Kept here as a reservation so `cargo tauri init`
+# can extend without re-creating the workspace file.
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }

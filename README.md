@@ -581,6 +581,25 @@ A 30-PR cleanup campaign also shipped:
 - [SECURITY.md](SECURITY.md) — Disclosure policy, preferred channel
   (GitHub Security Advisories), threat-model scope, honor list.
 
+## Desktop App (in scoping)
+
+R1 Desktop is a cross-platform Tauri v2 GUI for R1 — SOW tree, verification
+descent ladder, ledger browser, memory-bus viewer, skill catalog, MCP
+manager, observability dashboard. Target competitive set: Claude.app,
+Hermes. R1's differentiators (SOW decomposition, T1..T8 descent,
+cryptographic ledger, memory-bus scopes) surface as first-class panels.
+
+- **Status:** SCOPED. Scaffold landed; full implementation tracked across
+  12 phases (R1D-1 through R1D-12).
+- **Scaffold location:** [`desktop/`](desktop/).
+- **Roadmap:** [`desktop/PLAN.md`](desktop/PLAN.md).
+- **Architecture:** [`desktop/docs/architecture.md`](desktop/docs/architecture.md).
+- **Work order:** `plans/work-orders/work-r1-desktop-app.md`.
+
+The scaffold is **not yet buildable**; `cargo tauri init` in `desktop/` is
+the next action. No Go code changes are expected until the desktop app
+needs a new CLI IPC verb from `cmd/stoke/ctl_cmd.go`.
+
 ## License
 
 MIT.

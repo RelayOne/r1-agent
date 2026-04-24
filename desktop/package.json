@@ -1,0 +1,23 @@
+{
+  "name": "r1-desktop",
+  "version": "0.0.0-scaffold",
+  "private": true,
+  "description": "R1 Desktop App - scaffold only. See PLAN.md.",
+  "type": "module",
+  "scripts": {
+    "dev": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\"",
+    "build": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\"",
+    "tauri": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\""
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
