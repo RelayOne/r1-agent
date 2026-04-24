@@ -108,16 +108,16 @@ func ensureMemoryTypeColumn(ctx context.Context, db *sql.DB) error {
 				dfltValue sql.NullString
 				pk        int
 			)
-			if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
-				retErr = fmt.Errorf("retention: scan table_info: %w", err)
+			if scanErr := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); scanErr != nil {
+				retErr = fmt.Errorf("retention: scan table_info: %w", scanErr)
 				return
 			}
 			if name == "memory_type" {
 				has = true
 			}
 		}
-		if err := rows.Err(); err != nil {
-			retErr = fmt.Errorf("retention: iterate table_info: %w", err)
+		if rErr := rows.Err(); rErr != nil {
+			retErr = fmt.Errorf("retention: iterate table_info: %w", rErr)
 			return
 		}
 		if has {

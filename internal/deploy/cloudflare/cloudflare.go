@@ -185,7 +185,7 @@ func (*cloudflareDeployer) Deploy(ctx context.Context, cfg deploy.DeployConfig) 
 		return deploy.DeployResult{}, err
 	}
 
-	if err := assertWranglerVersion(ctx, wranglerBin); err != nil {
+	if err = assertWranglerVersion(ctx, wranglerBin); err != nil {
 		return deploy.DeployResult{}, err
 	}
 

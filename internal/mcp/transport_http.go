@@ -199,7 +199,7 @@ func (t *HTTPTransport) Initialize(ctx context.Context) error {
 	cli := mcpclient.NewClient(httpTr)
 	// Start on Streamable-HTTP is cheap (no network), but mcp-go
 	// requires it before Initialize.
-	if err := cli.Start(initCtx); err != nil {
+	if err = cli.Start(initCtx); err != nil {
 		_ = cli.Close()
 		return fmt.Errorf("mcp/http: start Streamable-HTTP transport: %w", err)
 	}

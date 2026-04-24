@@ -287,7 +287,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		if gate := gateToolCall(ctx, name, input); !gate.Allowed {
 			return "", gate.Err
 		}
-		start := time.Now()
+		toolStart := time.Now()
 		var result string
 		var err error
 		if h, ok := extraHandlers[name]; ok {
@@ -303,10 +303,10 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			entry := map[string]any{
 				"type":        "tool_call",
 				"uuid":        newShortID("c"),
-				"ts":          start.UTC().Format(time.RFC3339Nano),
+				"ts":          toolStart.UTC().Format(time.RFC3339Nano),
 				"tool":        name,
 				"input":       truncateForWorkerLog(string(input), 4096),
-				"duration_ms": time.Since(start).Milliseconds(),
+				"duration_ms": time.Since(toolStart).Milliseconds(),
 				"result_len":  len(result),
 			}
 			addCtx(entry, &wlc)

@@ -129,7 +129,7 @@ func (s *Store) updateForkState(forkID, state string) error {
 		return err
 	}
 	var fork Fork
-	if err := json.Unmarshal(data, &fork); err != nil {
+	if err = json.Unmarshal(data, &fork); err != nil {
 		return err
 	}
 	fork.State = state

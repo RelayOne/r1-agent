@@ -68,11 +68,11 @@ func (b *Backend) Provision(ctx context.Context, spec env.Spec) (*env.Handle, er
 
 	// Start service containers (postgres, redis, etc.).
 	for _, svc := range spec.Services {
-		svcID, svcAddr, err := startService(ctx, networkName, id, svc)
-		if err != nil {
+		svcID, svcAddr, svcErr := startService(ctx, networkName, id, svc)
+		if svcErr != nil {
 			// Clean up on failure.
 			cleanupState(ctx, state)
-			return nil, fmt.Errorf("docker: start service %s: %w", svc.Name, err)
+			return nil, fmt.Errorf("docker: start service %s: %w", svc.Name, svcErr)
 		}
 		state.serviceIDs[svc.Name] = svcID
 		if svcAddr.Port > 0 {

@@ -94,7 +94,7 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	defaultBranch := "main"
 	branchCmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "--abbrev-ref", "HEAD") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	branchCmd.Dir = m.RepoRoot
-	if branchOut, err := branchCmd.Output(); err == nil {
+	if branchOut, bErr := branchCmd.Output(); bErr == nil {
 		if b := strings.TrimSpace(string(branchOut)); b != "" && b != "HEAD" {
 			defaultBranch = b
 		}

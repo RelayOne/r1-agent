@@ -156,7 +156,7 @@ func (c *RealClient) doHire(ctx context.Context, method, path string, in any, co
 	req.Header.Set("DPoP", proof)
 
 	if c.identity != nil {
-		if err := c.identity.ApplyIdentityHeaders(req, bodyBytes, contractID); err != nil {
+		if err = c.identity.ApplyIdentityHeaders(req, bodyBytes, contractID); err != nil {
 			return nil, 0, fmt.Errorf("trustplane: identity headers: %w", err)
 		}
 	}

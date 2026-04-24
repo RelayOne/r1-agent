@@ -195,10 +195,10 @@ func ensureKeyPair(dir, keyPath, pubPath string) error {
 		return fmt.Errorf("stancesign: marshal private: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := pem.Encode(&buf, pemBlock); err != nil {
+	if err = pem.Encode(&buf, pemBlock); err != nil {
 		return fmt.Errorf("stancesign: pem encode: %w", err)
 	}
-	if err := os.WriteFile(keyPath, buf.Bytes(), 0o600); err != nil {
+	if err = os.WriteFile(keyPath, buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("stancesign: write private: %w", err)
 	}
 	sshPub, err := ssh.NewPublicKey(pub)

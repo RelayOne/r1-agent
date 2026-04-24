@@ -109,7 +109,7 @@ func (r *JudgeScheduled) evaluateDissent(ctx context.Context, evt bus.Event, l *
 	}
 
 	var dc dissentContent
-	if err := json.Unmarshal(node.Content, &dc); err != nil {
+	if err = json.Unmarshal(node.Content, &dc); err != nil {
 		return false, nil
 	}
 

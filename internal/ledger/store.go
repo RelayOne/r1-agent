@@ -167,7 +167,7 @@ func (s *Store) ReadNode(id NodeID) (Node, error) {
 		return Node{}, fmt.Errorf("read chain %s: %w", id, err)
 	}
 	var cr chainRecord
-	if err := json.Unmarshal(chainData, &cr); err != nil {
+	if err = json.Unmarshal(chainData, &cr); err != nil {
 		return Node{}, fmt.Errorf("unmarshal chain %s: %w", id, err)
 	}
 	n := Node{

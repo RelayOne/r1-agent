@@ -238,15 +238,15 @@ func (s *AnchorStore) Append(a Anchor) error {
 	}
 	line, _ := json.Marshal(a)
 	line = append(line, '\n')
-	if _, err := f.Write(line); err != nil {
+	if _, err = f.Write(line); err != nil {
 		_ = f.Close()
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	if err = f.Sync(); err != nil {
 		_ = f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err = f.Close(); err != nil {
 		return err
 	}
 

@@ -333,8 +333,8 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 	// 3. Hard-reset to BaseCommit.
 	resetCmd := exec.CommandContext(ctx, handle.GitBinary, "reset", "--hard", handle.BaseCommit)
 	resetCmd.Dir = handle.Path
-	if out, err := resetCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("reset to base: %w: %s", err, out)
+	if out, rErr := resetCmd.CombinedOutput(); rErr != nil {
+		return fmt.Errorf("reset to base: %w: %s", rErr, out)
 	}
 
 	// 4. Checkout validated files from snapshot.
@@ -342,8 +342,8 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 		coArgs := append([]string{"checkout", snapshot, "--"}, existFiles...)
 		coCmd := exec.CommandContext(ctx, handle.GitBinary, coArgs...)
 		coCmd.Dir = handle.Path
-		if out, err := coCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("checkout from snapshot %s: %w: %s", snapshot[:8], err, out)
+		if out, coErr := coCmd.CombinedOutput(); coErr != nil {
+			return fmt.Errorf("checkout from snapshot %s: %w: %s", snapshot[:8], coErr, out)
 		}
 	}
 

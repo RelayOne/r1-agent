@@ -113,7 +113,7 @@ func addRootDevDeps(repoRoot string, packages []string) error {
 		return fmt.Errorf("read %s: %w", pkgPath, err)
 	}
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
+	if err = json.Unmarshal(raw, &obj); err != nil {
 		return fmt.Errorf("parse %s: %w", pkgPath, err)
 	}
 	existing := map[string]struct{}{}
