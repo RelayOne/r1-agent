@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // ResumeState is returned by RestoreFromCheckpoint and
@@ -100,7 +102,7 @@ func RestoreFromCheckpoint(repoRoot, checkpointID string) (*ResumeState, error) 
 	}
 
 	// Clean up markers that shouldn't exist per the checkpoint.
-	markerDir := filepath.Join(repoRoot, ".stoke", "sow-state-markers")
+	markerDir := r1dir.JoinFor(repoRoot, "sow-state-markers")
 	if entries, err := os.ReadDir(markerDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() {
@@ -190,7 +192,7 @@ func PruneTimelineAfter(repoRoot, checkpointID string) error {
 	}
 	// Keep entries[0..idx] inclusive. Rewrite the WAL.
 	keep := entries[:idx+1]
-	p := filepath.Join(repoRoot, ".stoke", "checkpoints", "timeline.jsonl")
+	p := r1dir.JoinFor(repoRoot, "checkpoints", "timeline.jsonl")
 	tmp := p + ".prune-tmp"
 	f, err := os.Create(tmp)
 	if err != nil {

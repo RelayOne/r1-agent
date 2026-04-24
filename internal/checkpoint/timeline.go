@@ -38,6 +38,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // TimelineEntry is one checkpoint in the append-only WAL.
@@ -94,7 +96,7 @@ type Timeline struct {
 // that disambiguates entries across runs sharing the
 // same file.
 func NewTimeline(repoRoot, runID string) (*Timeline, error) {
-	dir := filepath.Join(repoRoot, ".stoke", "checkpoints")
+	dir := r1dir.JoinFor(repoRoot, "checkpoints")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("checkpoint: mkdir: %w", err)
 	}
@@ -159,7 +161,7 @@ func (t *Timeline) Close() error {
 // Used by `stoke sow --list-checkpoints` and by the
 // resume logic to find the target checkpoint.
 func ListCheckpoints(repoRoot string) ([]TimelineEntry, error) {
-	p := filepath.Join(repoRoot, ".stoke", "checkpoints", "timeline.jsonl")
+	p := r1dir.JoinFor(repoRoot, "checkpoints", "timeline.jsonl")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {

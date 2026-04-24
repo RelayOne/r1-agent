@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // LatestWorkerLogForTask returns the most-recently-written worker JSONL log
@@ -21,7 +23,7 @@ func LatestWorkerLogForTask(repoRoot, taskID string) string {
 	if repoRoot == "" || taskID == "" {
 		return ""
 	}
-	dir := filepath.Join(repoRoot, ".stoke", "worker-logs")
+	dir := r1dir.JoinFor(repoRoot, "worker-logs")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""

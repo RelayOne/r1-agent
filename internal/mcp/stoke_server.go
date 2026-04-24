@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // maxLogBytes caps the size of any single mission stdout/stderr log. When the
@@ -327,9 +328,9 @@ func (s *StokeServer) handleBuildFromSOW(args map[string]interface{}) (string, e
 	if err := os.MkdirAll(repoRoot, 0755); err != nil {
 		return "", fmt.Errorf("create repo_root: %w", err)
 	}
-	stokeDir := filepath.Join(repoRoot, ".stoke")
+	stokeDir := r1dir.JoinFor(repoRoot)
 	if err := os.MkdirAll(stokeDir, 0700); err != nil {
-		return "", fmt.Errorf("create .stoke: %w", err)
+		return "", fmt.Errorf("create r1 data dir: %w", err)
 	}
 
 	// Allocate mission ID first so the SOW filename is unique per mission.

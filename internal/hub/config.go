@@ -3,8 +3,9 @@ package hub
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // HookConfig represents the hub configuration from .stoke/hooks.json.
@@ -38,11 +39,11 @@ type WebhookHookConfig struct {
 	Retries  int               `json:"retries,omitempty"`
 }
 
-// LoadConfig loads hook configuration from .stoke/hooks.json in the repo root.
-// Returns an empty config if the file doesn't exist.
+// LoadConfig loads hook configuration from .r1/hooks.json (canonical) or
+// .stoke/hooks.json (legacy fallback) in the repo root. Returns an empty
+// config if the file doesn't exist under either layout.
 func LoadConfig(repoRoot string) (HookConfig, error) {
-	path := filepath.Join(repoRoot, ".stoke", "hooks.json")
-	data, err := os.ReadFile(path)
+	data, err := r1dir.ReadFileFor(repoRoot, "hooks.json")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return HookConfig{}, nil

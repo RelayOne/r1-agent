@@ -27,13 +27,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/RelayOne/r1/internal/jsonutil"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 var _ = context.Background // ctx param kept for future use / symmetry with other classifier calls
@@ -203,7 +203,7 @@ func hashClassifierInput(rawSOW string, vars []string) string {
 }
 
 func classifierCachePath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".stoke", "env-var-classification.json")
+	return r1dir.JoinFor(repoRoot, "env-var-classification.json")
 }
 
 func loadClassifierCache(repoRoot, wantHash string) *EnvVarClassificationReport {
@@ -228,7 +228,7 @@ func saveClassifierCache(repoRoot string, r *EnvVarClassificationReport) {
 	if repoRoot == "" || r == nil {
 		return
 	}
-	_ = os.MkdirAll(filepath.Join(repoRoot, ".stoke"), 0o755)
+	_ = os.MkdirAll(r1dir.JoinFor(repoRoot), 0o755)
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return

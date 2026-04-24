@@ -20,6 +20,7 @@ import (
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/preflight"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/rbac"
 	"github.com/RelayOne/r1/internal/replay"
 	"github.com/RelayOne/r1/internal/repomap"
@@ -175,7 +176,7 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 		}
 
 		// Discover and register plugin hooks as hub script subscribers.
-		pluginReg := plugins.NewRegistry(filepath.Join(cfg.RepoRoot, ".stoke", "plugins"))
+		pluginReg := plugins.NewRegistry(r1dir.JoinFor(cfg.RepoRoot, "plugins"))
 		if err := pluginReg.Discover(); err != nil {
 			fmt.Fprintf(os.Stderr, "[plugins] warning: failed to discover plugins: %v\n", err)
 		}

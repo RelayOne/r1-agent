@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/conflictres"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.
@@ -58,7 +59,7 @@ type Handle struct {
 
 // NewManager creates a Manager rooted at the given repository path with default worktree base under .stoke/worktrees.
 func NewManager(repoRoot string) *Manager {
-	return &Manager{RepoRoot: repoRoot, GitBinary: "git", WorktreeBase: filepath.Join(repoRoot, ".stoke", "worktrees")}
+	return &Manager{RepoRoot: repoRoot, GitBinary: "git", WorktreeBase: r1dir.JoinFor(repoRoot, "worktrees")}
 }
 
 // Prepare creates a new git worktree and branch for a task, capturing the base commit for later diffing.

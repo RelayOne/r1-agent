@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // IgnoreEntry is a single ignore rule that suppresses a specific finding
@@ -41,7 +43,7 @@ type IgnoreList struct {
 
 // IgnoreListPath returns the canonical on-disk path.
 func IgnoreListPath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".stoke", "convergence-ignores.json")
+	return r1dir.JoinFor(projectRoot, "convergence-ignores.json")
 }
 
 // LoadIgnores reads the ignore list. Returns an empty list (not an error)
@@ -266,7 +268,7 @@ func NewRepeatTracker() *RepeatTracker {
 }
 
 func repeatTrackerPath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".stoke", "convergence-repeats.json")
+	return r1dir.JoinFor(projectRoot, "convergence-repeats.json")
 }
 
 // LoadRepeatTracker reads persisted counts. Returns a fresh tracker if the

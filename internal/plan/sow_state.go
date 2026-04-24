@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // SOWState persists SOW execution progress so an interrupted or failed run
@@ -50,7 +52,7 @@ const (
 
 // SOWStatePath returns the canonical path for SOW state inside a project.
 func SOWStatePath(projectRoot string) string {
-	return filepath.Join(projectRoot, ".stoke", "sow-state.json")
+	return r1dir.JoinFor(projectRoot, "sow-state.json")
 }
 
 // LoadSOWState reads SOW state from disk. Returns (nil, nil) if no state file

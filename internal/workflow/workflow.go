@@ -39,6 +39,7 @@ import (
 	"github.com/RelayOne/r1/internal/promptcache"
 	"github.com/RelayOne/r1/internal/promptguard"
 	stokeprompts "github.com/RelayOne/r1/internal/prompts"
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/replay"
 	"github.com/RelayOne/r1/internal/repomap"
 	"github.com/RelayOne/r1/internal/scan"
@@ -271,7 +272,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 			}
 			rec := e.Recorder.Finish(outcome, string(e.TaskType))
 			// Persist recording to disk for post-mortem analysis.
-			replayDir := filepath.Join(e.RepoRoot, ".stoke", "replays")
+			replayDir := r1dir.JoinFor(e.RepoRoot, "replays")
 			if mkErr := os.MkdirAll(replayDir, 0o755); mkErr == nil {
 				replayPath := filepath.Join(replayDir, rec.ID+".json")
 				_ = replay.Save(rec, replayPath)
@@ -295,7 +296,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		handle = worktree.Handle{
 			Name:       name,
 			Branch:     "stoke/" + name,
-			Path:       filepath.Join(e.RepoRoot, ".stoke", "worktrees", name),
+			Path:       r1dir.JoinFor(e.RepoRoot, "worktrees", name),
 			RuntimeDir: runtimeDir,
 		}
 	} else if e.InPlace {

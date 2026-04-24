@@ -15,6 +15,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/jsonutil"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // dumpRespMu serializes the debug dump writes so two concurrent
@@ -568,7 +569,7 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 
 	// Prose path. Check cache first so we don't re-call the LLM for an
 	// identical input file.
-	stokeDir := filepath.Join(projectRoot, ".stoke")
+	stokeDir := r1dir.JoinFor(projectRoot)
 	cachePath := filepath.Join(stokeDir, "sow-from-prose.json")
 	if cached, ok := loadProseCache(cachePath, data); ok {
 		result.Format = "prose"

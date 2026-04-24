@@ -49,6 +49,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/jsonutil"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // RootCauseClass is one observed pattern of failure within a single
@@ -335,7 +336,7 @@ func filterNonEmptyClasses(in []RootCauseClass) []RootCauseClass {
 // meta-reports are persisted for a given repo root. Callers should
 // create it with os.MkdirAll before writing.
 func MetaReportsDir(repoRoot string) string {
-	return filepath.Join(repoRoot, ".stoke", "meta-reports")
+	return r1dir.JoinFor(repoRoot, "meta-reports")
 }
 
 // SaveMetaReport writes report to <repoRoot>/.stoke/meta-reports/<RunID>.json

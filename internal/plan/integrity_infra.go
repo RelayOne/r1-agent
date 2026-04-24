@@ -40,6 +40,7 @@ import (
 	"strings"
 
 	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 func init() {
@@ -122,8 +123,8 @@ func (infraEcosystem) CompileErrors(ctx context.Context, projectRoot string, fil
 func readSOWText(projectRoot string) string {
 	var b strings.Builder
 	candidates := []string{
-		filepath.Join(projectRoot, ".stoke", "sow-from-prose.json"),
-		filepath.Join(projectRoot, ".stoke", "sow-state.json"),
+		r1dir.JoinFor(projectRoot, "sow-from-prose.json"),
+		r1dir.JoinFor(projectRoot, "sow-state.json"),
 	}
 	for _, p := range candidates {
 		if body, err := os.ReadFile(p); err == nil {

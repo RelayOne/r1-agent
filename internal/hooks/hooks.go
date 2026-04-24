@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // HookCommand represents a single hook command entry in Claude Code settings.
@@ -298,9 +300,11 @@ func Cleanup(runtimeDir string) {
 
 // InstallInRepo installs hooks directly in a repo (for yolo/scope interactive modes).
 // Unlike Install() which writes to RuntimeDir for headless mode, this writes to
-// repoRoot/.stoke/hooks/ so that GenerateSettings() can reference them.
+// repoRoot/<resolved>/hooks/ so that GenerateSettings() can reference them.
+// The resolved dir is `.r1/` when that layout exists, else legacy `.stoke/`
+// per work-r1-rename.md §S1-5 dual-resolve.
 func InstallInRepo(repoRoot string) error {
-	stokeDir := filepath.Join(repoRoot, ".stoke")
+	stokeDir := filepath.Join(repoRoot, r1dir.RootFor(repoRoot))
 	return Install(stokeDir)
 }
 
@@ -308,12 +312,13 @@ func InstallInRepo(repoRoot string) error {
 // mode: "yolo" (full tools) or "scope" (read-only + plan output)
 // outputFile: for scope mode, the one file Write is allowed to (e.g. "stoke-plan.json")
 func GenerateSettings(repoRoot, mode, outputFile string) (string, error) {
-	settingsDir := filepath.Join(repoRoot, ".stoke", "generated")
+	resolved := r1dir.RootFor(repoRoot)
+	settingsDir := filepath.Join(repoRoot, resolved, "generated")
 	if err := safeMkdirAll(settingsDir); err != nil {
 		return "", err
 	}
 
-	hookDir := filepath.Join(repoRoot, ".stoke", "hooks")
+	hookDir := filepath.Join(repoRoot, resolved, "hooks")
 	settings := InteractiveSettings{
 		Hooks: HookSet{
 			PreToolUse:  []HookCommand{{Type: "command", Command: filepath.Join(hookDir, "pre-tool-use.sh")}},
@@ -358,7 +363,7 @@ func GenerateSettings(repoRoot, mode, outputFile string) (string, error) {
 
 // installScopeWriteGuard overwrites the PreToolUse hook to only allow writes to the plan file.
 func installScopeWriteGuard(repoRoot, allowedFile string) {
-	hookDir := filepath.Join(repoRoot, ".stoke", "hooks")
+	hookDir := filepath.Join(repoRoot, r1dir.RootFor(repoRoot), "hooks")
 	absAllowed := filepath.Join(repoRoot, allowedFile)
 
 	// Escape single quotes for safe bash embedding (replace ' with '\'' )

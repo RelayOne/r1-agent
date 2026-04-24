@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // BuildReport is the structured output of a complete stoke build run.
@@ -64,7 +66,7 @@ type ReviewReport struct {
 
 // Save writes the report as JSON to the .stoke directory.
 func (r *BuildReport) Save(projectRoot string) error {
-	dir := filepath.Join(projectRoot, ".stoke", "reports")
+	dir := r1dir.JoinFor(projectRoot, "reports")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create reports dir: %w", err)
 	}
@@ -77,7 +79,7 @@ func (r *BuildReport) Save(projectRoot string) error {
 
 // SaveLatest writes the report as latest.json for easy CI access.
 func (r *BuildReport) SaveLatest(projectRoot string) error {
-	dir := filepath.Join(projectRoot, ".stoke", "reports")
+	dir := r1dir.JoinFor(projectRoot, "reports")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create reports dir: %w", err)
 	}
@@ -88,7 +90,7 @@ func (r *BuildReport) SaveLatest(projectRoot string) error {
 
 // LoadLatest reads the most recent report.
 func LoadLatest(projectRoot string) (*BuildReport, error) {
-	data, err := os.ReadFile(filepath.Join(projectRoot, ".stoke", "reports", "latest.json"))
+	data, err := os.ReadFile(r1dir.JoinFor(projectRoot, "reports", "latest.json"))
 	if err != nil { return nil, err }
 	var r BuildReport
 	if err := json.Unmarshal(data, &r); err != nil { return nil, err }
