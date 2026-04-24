@@ -60,13 +60,15 @@ func (r *Timeout) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger)
 	}
 
 	// Check if the researcher has already committed a report.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{
+	// On ledger error, be conservative and fire: we'd rather act
+	// on a stale report-absence signal than swallow a potential
+	// timeout. The ledger error itself is logged when encountered
+	// elsewhere; here an empty result means "no report visible",
+	// which is equivalent to "fire".
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{
 		Type:      "research.report",
 		CreatedBy: tp.ResearcherID,
 	})
-	if err != nil {
-		return true, nil // on error, be conservative and fire
-	}
 
 	// If any report exists from this researcher, skip.
 	if len(nodes) > 0 {

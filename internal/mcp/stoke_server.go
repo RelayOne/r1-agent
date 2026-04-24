@@ -314,10 +314,12 @@ func (s *StokeServer) handleBuildFromSOW(args map[string]interface{}) (string, e
 		return "", fmt.Errorf("create stderr: %w", err)
 	}
 
-	// Build the stoke command line
+	// Build the stoke command line. Prefer our own Executable so a
+	// sibling binary layout (tests / dev shells) works; fall back to
+	// the PATH "stoke" lookup when os.Executable is unavailable.
 	bin := s.stokeBin
 	if bin == "" {
-		if exe, err := os.Executable(); err == nil {
+		if exe, exeErr := os.Executable(); exeErr == nil {
 			bin = exe
 		} else {
 			bin = "stoke"

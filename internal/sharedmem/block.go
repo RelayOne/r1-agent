@@ -50,13 +50,12 @@ var (
 // a helpers package) so the single deepCopy implementation
 // stays self-contained.
 
-var (
-	reflectKindSlice  = reflect.Slice
-	reflectKindMap    = reflect.Map
-	reflectKindArray  = reflect.Array
-	reflectKindPtr    = reflect.Ptr
-	reflectKindStruct = reflect.Struct
-)
+// reflectKindStruct is the only kind-alias currently referenced
+// (see deepCopy struct branch). The slice/map/array/ptr aliases
+// lived here alongside it but are genuinely unused — kept out of
+// the file until a downstream caller needs them, so staticcheck
+// doesn't drag them in on every run.
+var reflectKindStruct = reflect.Struct
 
 func reflectValueOf(v any) reflect.Value      { return reflect.ValueOf(v) }
 func reflectMakeSlice(t reflect.Type, l, c int) reflect.Value {

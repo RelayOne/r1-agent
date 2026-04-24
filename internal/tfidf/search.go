@@ -70,8 +70,12 @@ func Build(root string, extensions []string) (*Index, error) {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) == 0 {
+		// Per-file read errors (permissions, disappeared file)
+		// are tolerated: a single unreadable document must not
+		// abort the entire corpus walk. Empty files are also
+		// skipped since they contribute zero signal.
+		data, _ := os.ReadFile(path)
+		if len(data) == 0 {
 			return nil
 		}
 

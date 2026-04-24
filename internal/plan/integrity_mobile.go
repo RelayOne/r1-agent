@@ -147,8 +147,13 @@ func (mobileEcosystem) MissingPublicSurface(projectRoot string, files []string) 
 	if cfgPath == "" {
 		return nil, nil
 	}
-	body, err := os.ReadFile(cfgPath)
-	if err != nil {
+	// Unreadable Expo config file is treated as "nothing to
+	// report" rather than a hard error — callers only want the
+	// list of missing public-surface entries, and an unreadable
+	// config will surface in the compile/manifest-import path
+	// instead.
+	body, _ := os.ReadFile(cfgPath)
+	if len(body) == 0 {
 		return nil, nil
 	}
 	text := string(body)
@@ -299,8 +304,11 @@ func mobileScanRNNativeImports(projectRoot string) map[string]string {
 
 func mobileScanMatching(projectRoot string, re *regexp.Regexp) map[string]string {
 	out := map[string]string{}
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		// Per-path walk errors (permission denied, symlink
+		// loops) are tolerated: a single bad entry must not
+		// abort the whole native-import scan.
+		if walkErr != nil || d == nil {
 			return nil
 		}
 		if d.IsDir() {
@@ -315,8 +323,9 @@ func mobileScanMatching(projectRoot string, re *regexp.Regexp) map[string]string
 		if ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".jsx" && ext != ".mjs" && ext != ".cjs" {
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
+		// Per-file read errors tolerated for the same reason.
+		body, _ := os.ReadFile(path)
+		if len(body) == 0 {
 			return nil
 		}
 		for _, m := range re.FindAllStringSubmatch(string(body), -1) {

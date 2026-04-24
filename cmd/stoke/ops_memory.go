@@ -350,7 +350,7 @@ func runMemoryAddCmd(args []string, stdout, stderr io.Writer) int {
 		Content:     content,
 		Tags:        tags,
 	}
-	if err := bus.Remember(ctx, req); err != nil {
+	if err = bus.Remember(ctx, req); err != nil {
 		fmt.Fprintf(stderr, "memory add: %v\n", err)
 		return 1
 	}

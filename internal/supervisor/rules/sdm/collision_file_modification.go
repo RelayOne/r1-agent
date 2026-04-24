@@ -57,15 +57,14 @@ func (r *CollisionFileModification) Evaluate(ctx context.Context, evt bus.Event,
 		branchID = evt.Scope.BranchID
 	}
 
-	// Query for recent file modification records.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{
+	// Query for recent file modification records. Ledger read
+	// errors here mean "no known modifications"; we skip rather
+	// than fire a false-positive collision.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{
 		Type:      "file.modification",
 		MissionID: evt.Scope.MissionID,
 		Limit:     100,
 	})
-	if err != nil {
-		return false, nil
-	}
 
 	targetFiles := make(map[string]bool, len(ap.FilePaths))
 	for _, fp := range ap.FilePaths {

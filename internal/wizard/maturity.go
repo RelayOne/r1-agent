@@ -172,8 +172,12 @@ func scoreReviewProcess(root string) int {
 func scoreTests(root string) int {
 	testFiles := 0
 	sourceFiles := 0
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		// Per-path walk errors (permission denied, vanished
+		// entry) are tolerated: maturity scoring must degrade
+		// gracefully rather than abort on the first unreadable
+		// subtree.
+		if walkErr != nil || info == nil {
 			return nil
 		}
 		if info.IsDir() {

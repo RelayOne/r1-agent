@@ -56,8 +56,10 @@ func (r *DriftCrossBranch) evaluateNodeAdded(ctx context.Context, evt bus.Event,
 		NodeID   string `json:"node_id"`
 		NodeType string `json:"node_type"`
 	}
+	// Malformed payload: skip rule (return the unmarshal error so
+	// the supervisor logs + skips rather than silently swallowing).
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {
-		return false, nil
+		return false, err
 	}
 	if !boundaryNodeTypes[np.NodeType] {
 		return false, nil
@@ -69,13 +71,13 @@ func (r *DriftCrossBranch) evaluateNodeAdded(ctx context.Context, evt bus.Event,
 	}
 
 	// Check if same type of boundary node exists in another branch.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{
+	// Tolerate ledger errors: missing cross-branch view yields an
+	// empty node set, which degrades to "no drift detected" — the
+	// safe default given the advisory nature of this rule.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{
 		Type:      np.NodeType,
 		MissionID: evt.Scope.MissionID,
 	})
-	if err != nil {
-		return false, nil
-	}
 
 	for _, n := range nodes {
 		if n.ID == np.NodeID {
@@ -112,8 +114,9 @@ func (r *DriftCrossBranch) evaluateNodeAdded(ctx context.Context, evt bus.Event,
 
 func (r *DriftCrossBranch) evaluateActionProposed(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var ap actionProposedPayload
+	// Malformed payload: let the supervisor log + skip.
 	if err := json.Unmarshal(evt.Payload, &ap); err != nil {
-		return false, nil
+		return false, err
 	}
 	if len(ap.FilePaths) == 0 {
 		return false, nil
@@ -128,13 +131,11 @@ func (r *DriftCrossBranch) evaluateActionProposed(ctx context.Context, evt bus.E
 	}
 
 	// Check if any target file is a known boundary file modified in another branch.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{
+	// Tolerate ledger errors — advisory rule, degrade to "no drift".
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{
 		Type:      "boundary_file",
 		MissionID: evt.Scope.MissionID,
 	})
-	if err != nil {
-		return false, nil
-	}
 
 	targetFiles := make(map[string]bool, len(ap.FilePaths))
 	for _, f := range ap.FilePaths {

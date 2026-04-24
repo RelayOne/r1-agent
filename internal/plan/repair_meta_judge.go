@@ -199,12 +199,25 @@ func runRepairMetaAnalyst(ctx context.Context, prov provider.Provider, model, sy
 	if strings.TrimSpace(raw) == "" {
 		return repairMetaAnalystOutput{}, fmt.Errorf("analyst %s empty (stop_reason=%q)\n%s", label, resp.StopReason, diag)
 	}
+	// Fall back to raw text in reasoning so the judge can still
+	// use it. Parse errors are a normal outcome for this analyst
+	// path — the analyst may answer in prose rather than JSON,
+	// and the judge handles "parse-error" votes explicitly.
+	return extractRepairMetaAnalyst(raw), nil
+}
+
+// extractRepairMetaAnalyst parses the analyst's raw response into
+// a repairMetaAnalystOutput. On JSON parse failure it returns a
+// "parse-error" sentinel vote with the raw text as reasoning so
+// the judge can still reason over the content. This helper keeps
+// the parse-error fallback inside a function whose signature
+// promises no error, which is the actual contract here.
+func extractRepairMetaAnalyst(raw string) repairMetaAnalystOutput {
 	var out repairMetaAnalystOutput
 	if _, err := jsonutil.ExtractJSONInto(raw, &out); err != nil {
-		// Fall back to raw text in reasoning so the judge can still use it.
-		return repairMetaAnalystOutput{Vote: "parse-error", Reasoning: raw}, nil
+		return repairMetaAnalystOutput{Vote: "parse-error", Reasoning: raw}
 	}
-	return out, nil
+	return out
 }
 
 func synthesizeRepairMetaDiagnosis(ctx context.Context, prov provider.Provider, model, shared string, votes map[string]repairMetaAnalystOutput) (*RepairStuckDiagnosis, error) {

@@ -546,13 +546,14 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 	ext := strings.ToLower(filepath.Ext(path))
 
 	// Structured formats: parse directly.
+	var sow *SOW
 	switch ext {
 	case ".json":
-		sow, err := ParseSOW(data, path)
+		sow, err = ParseSOW(data, path)
 		result.Format = "json"
 		return sow, result, err
 	case ".yaml", ".yml":
-		sow, err := ParseSOW(data, path)
+		sow, err = ParseSOW(data, path)
 		result.Format = "yaml"
 		return sow, result, err
 	}
@@ -560,7 +561,7 @@ func LoadSOWFile(path, projectRoot string, prov provider.Provider, model string)
 	// Unknown extension — sniff content.
 	trimmed := strings.TrimLeft(string(data), " \t\r\n")
 	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
-		sow, err := ParseSOW(data, "sniffed.json")
+		sow, err = ParseSOW(data, "sniffed.json")
 		result.Format = "json"
 		return sow, result, err
 	}
@@ -677,7 +678,7 @@ func loadProseCache(path string, sourceData []byte) (*SOW, bool) {
 		return nil, false
 	}
 	var c proseCache
-	if err := json.Unmarshal(data, &c); err != nil {
+	if err = json.Unmarshal(data, &c); err != nil {
 		return nil, false
 	}
 	if c.SourceHash != hashBytes(sourceData) {

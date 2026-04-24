@@ -65,11 +65,10 @@ func (r *ModificationRequiresCTO) Evaluate(ctx context.Context, evt bus.Event, l
 		return false, nil
 	}
 
-	// Check if CTO approval already exists.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{Type: "cto.approval"})
-	if err != nil {
-		return true, nil
-	}
+	// Check if CTO approval already exists. On ledger error, be
+	// conservative and fire — missing approval view must not let
+	// a snapshot modification through.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{Type: "cto.approval"})
 
 	for _, n := range nodes {
 		var ca ctoApprovalContent

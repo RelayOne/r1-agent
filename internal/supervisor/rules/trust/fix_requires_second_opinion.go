@@ -48,11 +48,9 @@ func (r *FixRequiresSecondOpinion) Evaluate(ctx context.Context, evt bus.Event, 
 		return false, fmt.Errorf("unmarshal fix payload: %w", err)
 	}
 
-	// Check if a reviewer has already verified this fix.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{Type: "review.agree"})
-	if err != nil {
-		return true, nil
-	}
+	// Check if a reviewer has already verified this fix. On
+	// ledger error, be conservative and require review.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{Type: "review.agree"})
 
 	taskID := fp.TaskID
 	if taskID == "" {

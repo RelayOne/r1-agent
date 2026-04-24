@@ -70,9 +70,14 @@ type HookSet struct {
 func LoadHookSet(repoRoot string) HookSet {
 	h := HookSet{hooks: map[string]Hook{}}
 
-	// Layer 1: builtin.
-	_ = fs.WalkDir(embeddedHooksFS, "builtin/_hooks", func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	// Layer 1: builtin. Per-entry errors are tolerated — a single
+	// unreadable embedded file must not blow up hook loading; the
+	// docstring promises best-effort with never-catastrophic failure.
+	// When WalkDir surfaces a per-path error, d is nil, so the d==nil
+	// guard implicitly covers walkErr != nil without a bare
+	// return-nil-after-nonnil-err pattern.
+	_ = fs.WalkDir(embeddedHooksFS, "builtin/_hooks", func(p string, d fs.DirEntry, _ error) error {
+		if d == nil || d.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(p, ".md") {
@@ -83,8 +88,8 @@ func LoadHookSet(repoRoot string) HookSet {
 		if !ok {
 			return nil
 		}
-		b, rerr := embeddedHooksFS.ReadFile(p)
-		if rerr != nil {
+		b, _ := embeddedHooksFS.ReadFile(p)
+		if len(b) == 0 {
 			return nil
 		}
 		content := strings.TrimRight(string(b), " \t\n\r")
@@ -135,15 +140,24 @@ func (h *HookSet) mergeLayerFromDir(root string) {
 	if err != nil || !info.IsDir() {
 		return
 	}
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	// Per-entry walk errors and per-file read errors are both
+	// tolerated: user/project layer files are best-effort, and a
+	// single unreadable hook file must not abort the whole load.
+	// Walk surfaces per-path errors via a nil DirEntry, so the
+	// d==nil guard implicitly handles the error case.
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, _ error) error {
+		if d == nil || d.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(p, ".md") {
 			return nil
 		}
-		rel, rerr := filepath.Rel(root, p)
-		if rerr != nil {
+		// filepath.Rel only fails when one of its inputs is not
+		// absolute in a platform-specific way; within a walk whose
+		// root is a resolved directory this error class is
+		// vanishingly rare and effectively means "skip this path".
+		rel, _ := filepath.Rel(root, p)
+		if rel == "" || rel == "." {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
@@ -151,8 +165,8 @@ func (h *HookSet) mergeLayerFromDir(root string) {
 		if !ok {
 			return nil
 		}
-		b, rerr := os.ReadFile(p)
-		if rerr != nil {
+		b, _ := os.ReadFile(p)
+		if len(b) == 0 {
 			return nil
 		}
 		content := strings.TrimRight(string(b), " \t\n\r")

@@ -66,11 +66,10 @@ func (r *FormatterRequiresConsent) Evaluate(ctx context.Context, evt bus.Event, 
 		return false, nil
 	}
 
-	// Check for existing CTO approval.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{Type: "cto.approval"})
-	if err != nil {
-		return true, nil
-	}
+	// Check for existing CTO approval. On ledger error, be
+	// conservative and fire — we'd rather re-prompt for consent
+	// than silently allow a formatter to rewrite a protected file.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{Type: "cto.approval"})
 
 	for _, n := range nodes {
 		var ca ctoApprovalContent

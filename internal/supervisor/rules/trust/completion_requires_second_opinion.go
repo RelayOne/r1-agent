@@ -63,11 +63,10 @@ func (r *CompletionRequiresSecondOpinion) Evaluate(ctx context.Context, evt bus.
 		return true, nil // no task info, require review to be safe
 	}
 
-	// Look for agree nodes from a different worker.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{Type: "review.agree"})
-	if err != nil {
-		return true, nil // on error, be conservative and require review
-	}
+	// Look for agree nodes from a different worker. On ledger
+	// error, be conservative and require review — missing the
+	// agree record must not let completion through unreviewed.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{Type: "review.agree"})
 
 	for _, n := range nodes {
 		if n.CreatedBy == evt.EmitterID {

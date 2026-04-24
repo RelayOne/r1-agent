@@ -152,11 +152,13 @@ func ImportTraceBundle(db *DB, bundlePath string) (ImportSummary, error) {
 	payload := make(map[string][]byte)
 	digests := make(map[string]string)
 	for _, f := range zr.File {
-		rc, err := f.Open()
+		var rc io.ReadCloser
+		rc, err = f.Open()
 		if err != nil {
 			return summary, fmt.Errorf("open %s in bundle: %w", f.Name, err)
 		}
-		buf, err := io.ReadAll(rc)
+		var buf []byte
+		buf, err = io.ReadAll(rc)
 		rc.Close()
 		if err != nil {
 			return summary, fmt.Errorf("read %s in bundle: %w", f.Name, err)
@@ -171,7 +173,7 @@ func ImportTraceBundle(db *DB, bundlePath string) (ImportSummary, error) {
 		return summary, fmt.Errorf("bundle missing manifest.json")
 	}
 	var manifest importedManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+	if err = json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return summary, fmt.Errorf("parse manifest.json: %w", err)
 	}
 	if manifest.Format != "tracebundle" {
@@ -186,7 +188,7 @@ func ImportTraceBundle(db *DB, bundlePath string) (ImportSummary, error) {
 	// manifest.MerkleRoot. Any drift here means the zip has been
 	// modified since export — hard fail rather than silently ingest
 	// something that does not match its advertised identity.
-	if err := verifyMerkleRoot(manifest, digests); err != nil {
+	if err = verifyMerkleRoot(manifest, digests); err != nil {
 		return summary, err
 	}
 	summary.SessionID = manifest.SessionID
@@ -206,13 +208,14 @@ func ImportTraceBundle(db *DB, bundlePath string) (ImportSummary, error) {
 		StartedAt:  manifest.CreatedAt,
 		UpdatedAt:  manifest.CreatedAt,
 	}
-	if err := db.UpsertSession(sig); err != nil {
+	if err = db.UpsertSession(sig); err != nil {
 		return summary, fmt.Errorf("upsert session: %w", err)
 	}
 
 	// --- stream.jsonl → session_events ---
 	if stream, ok := payload["stream.jsonl"]; ok {
-		n, err := ingestStreamJSONL(db, manifest.SessionID, stream)
+		var n int
+		n, err = ingestStreamJSONL(db, manifest.SessionID, stream)
 		if err != nil {
 			return summary, fmt.Errorf("ingest stream: %w", err)
 		}
@@ -220,7 +223,8 @@ func ImportTraceBundle(db *DB, bundlePath string) (ImportSummary, error) {
 	}
 
 	// --- ledger/nodes/*.json + ledger/edges/*.json → ledger_* tables ---
-	nodes, edges, err := ingestLedgerPayload(db, manifest.SessionID, payload)
+	var nodes, edges int
+	nodes, edges, err = ingestLedgerPayload(db, manifest.SessionID, payload)
 	if err != nil {
 		return summary, err
 	}

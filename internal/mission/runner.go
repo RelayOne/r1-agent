@@ -302,15 +302,17 @@ func (r *Runner) runHandler(ctx context.Context, m *Mission, nextPhase Phase, su
 	summary.Phases = append(summary.Phases, *result)
 
 	// Persist files changed in mission metadata for crash recovery
-	// and for downstream phases (validation needs to know what changed)
+	// and for downstream phases (validation needs to know what changed).
+	// Re-read the mission so we don't clobber any fields another
+	// writer may have advanced between the handler call and now.
 	if len(result.FilesChanged) > 0 {
-		m, err := r.store.Get(m.ID)
-		if err == nil {
-			if m.Metadata == nil {
-				m.Metadata = make(map[string]string)
+		fresh, getErr := r.store.Get(m.ID)
+		if getErr == nil {
+			if fresh.Metadata == nil {
+				fresh.Metadata = make(map[string]string)
 			}
-			m.Metadata["files_changed"] = strings.Join(result.FilesChanged, "\n")
-			r.store.Update(m)
+			fresh.Metadata["files_changed"] = strings.Join(result.FilesChanged, "\n")
+			r.store.Update(fresh)
 		}
 	}
 

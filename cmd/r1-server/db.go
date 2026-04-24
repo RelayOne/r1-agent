@@ -489,13 +489,13 @@ func (d *DB) GetLedger(instanceID string) (LedgerSnapshot, error) {
 	for nrows.Next() {
 		var n LedgerNode
 		var raw string
-		if err := nrows.Scan(&n.ID, &n.Type, &n.MissionID, &n.CreatedAt, &n.CreatedBy, &n.ParentHash, &raw); err != nil {
+		if err = nrows.Scan(&n.ID, &n.Type, &n.MissionID, &n.CreatedAt, &n.CreatedBy, &n.ParentHash, &raw); err != nil {
 			return snap, err
 		}
 		n.Raw = json.RawMessage(raw)
 		snap.Nodes = append(snap.Nodes, n)
 	}
-	if err := nrows.Err(); err != nil {
+	if err = nrows.Err(); err != nil {
 		return snap, err
 	}
 

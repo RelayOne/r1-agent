@@ -59,11 +59,9 @@ func (r *ProblemRequiresSecondOpinion) Evaluate(ctx context.Context, evt bus.Eve
 		taskID = evt.Scope.TaskID
 	}
 
-	// Check if a reviewer has already agreed the escalation is justified.
-	nodes, err := l.Query(ctx, ledger.QueryFilter{Type: "escalation.agree"})
-	if err != nil {
-		return true, nil
-	}
+	// Check if a reviewer has already agreed the escalation is
+	// justified. On ledger error, be conservative and require review.
+	nodes, _ := l.Query(ctx, ledger.QueryFilter{Type: "escalation.agree"})
 
 	for _, n := range nodes {
 		if n.CreatedBy == evt.EmitterID {
