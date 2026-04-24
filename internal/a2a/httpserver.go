@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // JSONRPC-2.0 error codes matching the spec.
@@ -104,8 +105,18 @@ func (s *Server) SetCard(c AgentCard) {
 
 // ListenAndServe runs a standalone A2A HTTP server on addr.
 // Blocking; returns the http.Server error on shutdown.
+//
+// ReadHeaderTimeout guards against Slowloris — attackers drip header
+// bytes one-at-a-time to hold connections open indefinitely. 10s is
+// comfortably above any legitimate client (A2A agent-card responses
+// are bounded JSON; clients send headers quickly) while capping the
+// attack window.
 func (s *Server) ListenAndServe(addr string) error {
-	server := &http.Server{Addr: addr, Handler: s.handlers}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           s.handlers,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	return server.ListenAndServe()
 }
 

@@ -251,7 +251,9 @@ func (w *WAL) Close() error {
 	defer w.mu.Unlock()
 
 	var firstErr error
-	if err := w.file.Close(); err != nil && firstErr == nil {
+	if err := w.file.Close(); err != nil {
+		// First close — firstErr is always nil here; capture
+		// unconditionally.
 		firstErr = err
 	}
 	if err := w.delayedFile.Close(); err != nil && firstErr == nil {

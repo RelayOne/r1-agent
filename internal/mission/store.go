@@ -25,6 +25,7 @@ package mission
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -444,7 +445,7 @@ func (s *Store) Advance(missionID string, to Phase, reason, agent string) error 
 	// Read current phase under transaction
 	var currentPhase string
 	err = tx.QueryRow("SELECT phase FROM missions WHERE id = ?", missionID).Scan(&currentPhase)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("mission %q not found", missionID)
 	}
 	if err != nil {

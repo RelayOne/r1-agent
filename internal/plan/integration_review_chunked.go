@@ -22,6 +22,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,7 +274,7 @@ func enumerateBuckets(repoRoot string) []string {
 //     "turn cap" / "budget" sentinels the reviewer emits when it
 //     couldn't converge
 func isTimeoutLikely(report *IntegrationReport, ctxErr error) bool {
-	if ctxErr == context.DeadlineExceeded {
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
 		return true
 	}
 	if report == nil {

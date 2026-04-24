@@ -310,6 +310,11 @@ func (s *Store) searchFallback(query string, limit int) ([]SearchResult, error) 
 	allArgs = append(allArgs, args...) // for score
 	allArgs = append(allArgs, limit)
 
+	// #nosec G201 — scoreClause + whereClause are built from a static
+	// SQL template ("(LOWER(content) LIKE ? OR ...)") joined by " OR "
+	// / " + ". User-supplied words only reach SQLite via `args` as ?
+	// parameters; the dynamic SQL carries only the COUNT of ? needed
+	// for N words, not user text.
 	sql := fmt.Sprintf(`
 		SELECT id, mission_id, topic, query, content, source, tags, use_count, created_at, updated_at,
 		       (%s) AS score

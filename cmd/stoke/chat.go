@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -559,7 +560,7 @@ func describeChatFailure(err error) string {
 	if err == nil {
 		return ""
 	}
-	if err == chat.ErrNoProvider {
+	if errors.Is(err, chat.ErrNoProvider) {
 		return "chat mode: unavailable — set ANTHROPIC_API_KEY or run a LiteLLM proxy"
 	}
 	return "chat mode: " + err.Error()

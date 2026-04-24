@@ -3,6 +3,7 @@ package stream
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -160,7 +161,7 @@ func (p *Parser) Parse(r io.Reader, done chan<- struct{}) <-chan Event {
 					}
 				}
 			drained:
-				if err != nil && err != io.EOF {
+				if err != nil && !errors.Is(err, io.EOF) {
 					ch <- Event{Type: "error", IsError: true, ResultText: fmt.Sprintf("read: %v", err)}
 				}
 				return

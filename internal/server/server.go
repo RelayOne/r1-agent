@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // EventBus distributes events to SSE clients.
@@ -118,5 +119,18 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) ListenAndServe() error {
-	return http.ListenAndServe(fmt.Sprintf(":%d", s.Port), s.mux)
+	// Use a configured *http.Server (not the bare http.ListenAndServe
+	// helper) so we can set ReadHeaderTimeout — the bare helper gives
+	// attackers free Slowloris and slow-body budget. 10s ReadHeader +
+	// 60s overall are above any legitimate client of a local dashboard
+	// while capping the attack window.
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", s.Port),
+		Handler:           s.mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
