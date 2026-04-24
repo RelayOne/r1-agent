@@ -29,12 +29,57 @@ type MemoryToolDefinition struct {
 	InputSchema map[string]interface{} `json:"inputSchema"`
 }
 
-// MemoryToolDefinitions returns the 12+ MCP tool definitions for the memory surface.
+// MemoryToolDefinitions returns the 12+ MCP tool definitions for the memory
+// surface. S1-4 of work-r1-rename.md mandates that every legacy stoke_* tool
+// is also published under the canonical r1_* name until v2.0.0; both names
+// dispatch to the same handler via HandleMemoryToolCall, which normalizes
+// the prefix before switching. The canonical r1_* entry is emitted first
+// in each pair so clients that iterate and pick the first match prefer it.
 func (s *MemoryServer) MemoryToolDefinitions() []MemoryToolDefinition {
+	base := s.baseMemoryToolDefinitions()
+	out := make([]MemoryToolDefinition, 0, len(base)*2)
+	for _, t := range base {
+		if r1 := canonicalMemoryToolName(t.Name); r1 != t.Name {
+			alias := t
+			alias.Name = r1
+			out = append(out, alias)
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// canonicalMemoryToolName returns the r1_* canonical alias for a legacy
+// stoke_* memory tool name. Names without the stoke_ prefix pass through
+// unchanged.
+func canonicalMemoryToolName(legacy string) string {
+	const legacyPrefix = "stoke_"
+	if strings.HasPrefix(legacy, legacyPrefix) {
+		return "r1_" + strings.TrimPrefix(legacy, legacyPrefix)
+	}
+	return legacy
+}
+
+// legacyMemoryToolName returns the legacy stoke_* form for a canonical
+// r1_* memory tool name. Names without the r1_ prefix pass through
+// unchanged. This lets HandleMemoryToolCall dispatch either prefix to
+// one switch arm.
+func legacyMemoryToolName(canonical string) string {
+	const canonicalPrefix = "r1_"
+	if strings.HasPrefix(canonical, canonicalPrefix) {
+		return "stoke_" + strings.TrimPrefix(canonical, canonicalPrefix)
+	}
+	return canonical
+}
+
+// baseMemoryToolDefinitions is the canonical source of memory tool shapes
+// under the legacy stoke_* naming. MemoryToolDefinitions wraps this and
+// emits each entry under both stoke_* (legacy) and r1_* (canonical) names.
+func (s *MemoryServer) baseMemoryToolDefinitions() []MemoryToolDefinition {
 	return []MemoryToolDefinition{
 		{
 			Name:        "stoke_status",
-			Description: "Get current Stoke session status including active missions, pool state, and cost",
+			Description: "Get current R1 session status including active missions, pool state, and cost",
 			InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
 		},
 		{
@@ -162,9 +207,12 @@ func (s *MemoryServer) MemoryToolDefinitions() []MemoryToolDefinition {
 	}
 }
 
-// HandleMemoryToolCall dispatches a memory tool call to the appropriate handler.
+// HandleMemoryToolCall dispatches a memory tool call to the appropriate
+// handler. S1-4 dual-accept: canonical r1_* and legacy stoke_* names both
+// resolve here; legacyMemoryToolName normalizes the prefix so each case
+// arm handles the pair.
 func (s *MemoryServer) HandleMemoryToolCall(ctx context.Context, toolName string, args json.RawMessage) (string, error) {
-	switch toolName {
+	switch legacyMemoryToolName(toolName) {
 	case "stoke_wisdom_find":
 		return s.handleWisdomFind(args)
 	case "stoke_wisdom_record":

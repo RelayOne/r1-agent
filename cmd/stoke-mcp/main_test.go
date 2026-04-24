@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -103,12 +105,17 @@ func TestToolsList_Returns4Primitives(t *testing.T) {
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 	result, _ := resp["result"].(map[string]any)
 	arr, _ := result["tools"].([]any)
-	if len(arr) != 4 {
-		t.Fatalf("tools len=%d want 4", len(arr))
+	// S1-4 dual-registration: each of the 4 primitives appears under
+	// BOTH the legacy stoke_* name and the canonical r1_* name, for
+	// 4 × 2 = 8 total entries. Legacy names drop at v2.0.0 (S6-6).
+	if len(arr) != 8 {
+		t.Fatalf("tools len=%d want 8 (4 stoke_* + 4 r1_*)", len(arr))
 	}
 	wantNames := map[string]bool{
 		"stoke_invoke": false, "stoke_verify": false,
 		"stoke_audit": false, "stoke_delegate": false,
+		"r1_invoke": false, "r1_verify": false,
+		"r1_audit": false, "r1_delegate": false,
 	}
 	for _, tt := range arr {
 		m, _ := tt.(map[string]any)
@@ -176,6 +183,126 @@ func TestToolsCall_Delegate(t *testing.T) {
 	if result["bundle_name"] != "read-only-calendar" {
 		t.Errorf("bundle_name mismatch: %+v", result)
 	}
+}
+
+// TestToolsList_DualRegistersR1Aliases proves S1-4 invariant: tools/list
+// advertises a canonical r1_* name next to every legacy stoke_* name,
+// with identical description + inputSchema.
+func TestToolsList_DualRegistersR1Aliases(t *testing.T) {
+	srv := newTestServer()
+	resp := rpcCall(t, srv,
+		`{"jsonrpc":"2.0","id":100,"method":"tools/list","params":{}}`)
+	result, _ := resp["result"].(map[string]any)
+	arr, _ := result["tools"].([]any)
+	byName := map[string]map[string]any{}
+	for _, tt := range arr {
+		m, _ := tt.(map[string]any)
+		n, _ := m["name"].(string)
+		byName[n] = m
+	}
+	for _, legacy := range []string{"stoke_invoke", "stoke_verify", "stoke_audit", "stoke_delegate"} {
+		canonical := "r1_" + strings.TrimPrefix(legacy, "stoke_")
+		legacyEntry, ok := byName[legacy]
+		if !ok {
+			t.Fatalf("legacy name %q missing from tools/list", legacy)
+		}
+		canonicalEntry, ok := byName[canonical]
+		if !ok {
+			t.Fatalf("canonical r1_* alias %q missing for legacy %q", canonical, legacy)
+		}
+		if legacyEntry["description"] != canonicalEntry["description"] {
+			t.Errorf("%s / %s description mismatch:\n  legacy=%q\n  canonical=%q",
+				legacy, canonical, legacyEntry["description"], canonicalEntry["description"])
+		}
+		// inputSchema is json.RawMessage on the wire — compare serialized form.
+		legacySchema, _ := json.Marshal(legacyEntry["inputSchema"])
+		canonicalSchema, _ := json.Marshal(canonicalEntry["inputSchema"])
+		if string(legacySchema) != string(canonicalSchema) {
+			t.Errorf("%s / %s inputSchema mismatch:\n  legacy=%s\n  canonical=%s",
+				legacy, canonical, legacySchema, canonicalSchema)
+		}
+	}
+}
+
+// TestToolsCall_R1InvokeMatchesStokeInvoke proves S1-4 invariant: the
+// canonical r1_invoke tool resolves to the same handler as stoke_invoke
+// and emits the same response shape. Both calls use independent servers
+// (each with its own ledger) so ledger-node content differences in the
+// two invocations don't leak across; we compare the *shape* of the
+// response (the keys that handleInvoke populates), not specific IDs.
+func TestToolsCall_R1InvokeMatchesStokeInvoke(t *testing.T) {
+	callInvoke := func(toolName string) map[string]any {
+		srv := newTestServer()
+		req := fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":{"capability":"code-search","input":{"query":"foo"}}}}`,
+			toolName)
+		resp := rpcCall(t, srv, req)
+		result, ok := resp["result"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: no result: %+v", toolName, resp)
+		}
+		return result
+	}
+	stokeResult := callInvoke("stoke_invoke")
+	r1Result := callInvoke("r1_invoke")
+
+	// The capability annotation is injected by the backend and must match.
+	if stokeResult["_stoke.dev/capability"] != r1Result["_stoke.dev/capability"] {
+		t.Errorf("capability annotation differs: stoke=%v r1=%v",
+			stokeResult["_stoke.dev/capability"], r1Result["_stoke.dev/capability"])
+	}
+	// Both paths must populate the same top-level keys (ledger node IDs
+	// will differ because each call writes to its own ledger).
+	stokeKeys := sortedKeys(stokeResult)
+	r1Keys := sortedKeys(r1Result)
+	if !equalStrings(stokeKeys, r1Keys) {
+		t.Errorf("response shape differs:\n  stoke keys=%v\n  r1 keys=%v", stokeKeys, r1Keys)
+	}
+}
+
+// TestToolsCall_R1Aliases_AllPrimitives proves every r1_* alias is callable.
+func TestToolsCall_R1Aliases_AllPrimitives(t *testing.T) {
+	cases := []struct {
+		name string
+		req  string
+	}{
+		{"r1_invoke", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"r1_invoke","arguments":{"capability":"code-search","input":{"query":"x"}}}}`},
+		{"r1_verify", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"r1_verify","arguments":{"task_class":"code","subject":"package main"}}}`},
+		{"r1_audit", `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"r1_audit","arguments":{"action":"promoted build","evidence_refs":["sha:abc"]}}}`},
+		{"r1_delegate", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"r1_delegate","arguments":{"to_did":"did:tp:b","bundle_name":"read-only-calendar","expiry_seconds":60}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer()
+			resp := rpcCall(t, srv, tc.req)
+			if _, ok := resp["result"].(map[string]any); !ok {
+				t.Fatalf("%s: expected result, got %+v", tc.name, resp)
+			}
+		})
+	}
+}
+
+// sortedKeys returns the map's keys in sorted order.
+func sortedKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// equalStrings reports whether two string slices have identical contents.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestToolsCall_UnknownToolErrors(t *testing.T) {

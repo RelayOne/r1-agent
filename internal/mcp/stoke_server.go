@@ -111,14 +111,60 @@ func NewStokeServer(stokeBin string) *StokeServer {
 	}
 }
 
-// ToolDefinitions returns the MCP tool definitions for Stoke build operations.
+// ToolDefinitions returns the MCP tool definitions for Stoke build
+// operations. S1-4 of work-r1-rename.md mandates that every legacy
+// stoke_* tool is also published under the canonical r1_* name until
+// v2.0.0; both names dispatch to the same handler via HandleToolCall,
+// which normalizes the prefix before switching. The canonical r1_*
+// entry is emitted first in each pair so clients that pick the first
+// match prefer it.
 func (s *StokeServer) ToolDefinitions() []ToolDefinition {
+	base := s.baseToolDefinitions()
+	out := make([]ToolDefinition, 0, len(base)*2)
+	for _, t := range base {
+		if r1 := canonicalStokeServerToolName(t.Name); r1 != t.Name {
+			alias := t
+			alias.Name = r1
+			out = append(out, alias)
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// canonicalStokeServerToolName returns the r1_* canonical alias for a
+// legacy stoke_* tool name. Names without the stoke_ prefix pass through
+// unchanged.
+func canonicalStokeServerToolName(legacy string) string {
+	const legacyPrefix = "stoke_"
+	if strings.HasPrefix(legacy, legacyPrefix) {
+		return "r1_" + strings.TrimPrefix(legacy, legacyPrefix)
+	}
+	return legacy
+}
+
+// legacyStokeServerToolName returns the legacy stoke_* form for a
+// canonical r1_* tool name. Names without the r1_ prefix pass through
+// unchanged. This lets HandleToolCall dispatch either prefix via a
+// single switch.
+func legacyStokeServerToolName(canonical string) string {
+	const canonicalPrefix = "r1_"
+	if strings.HasPrefix(canonical, canonicalPrefix) {
+		return "stoke_" + strings.TrimPrefix(canonical, canonicalPrefix)
+	}
+	return canonical
+}
+
+// baseToolDefinitions is the canonical source of tool shapes under the
+// legacy stoke_* naming. ToolDefinitions wraps this and emits each entry
+// under both stoke_* (legacy) and r1_* (canonical) names.
+func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 	return []ToolDefinition{
 		{
 			Name: "stoke_build_from_sow",
-			Description: "Kick off a Stoke build of a project from a Statement of Work (SOW). " +
+			Description: "Kick off an R1 build of a project from a Statement of Work (SOW). " +
 				"The SOW describes sessions, tasks, acceptance criteria, infrastructure requirements, " +
-				"and stack details. Stoke will build the project session-by-session, gating each session " +
+				"and stack details. R1 will build the project session-by-session, gating each session " +
 				"on its acceptance criteria, and supervising agents for liveness instead of timing out. " +
 				"Returns a mission_id for status polling. The build runs in the background — use " +
 				"stoke_get_mission_status to check progress.",
@@ -127,7 +173,7 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 				"properties": {
 					"repo_root": {
 						"type": "string",
-						"description": "Absolute path to the project directory where Stoke will build (will be created if it doesn't exist)"
+						"description": "Absolute path to the project directory where R1 will build (will be created if it doesn't exist)"
 					},
 					"sow": {
 						"type": "string",
@@ -173,7 +219,7 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name: "stoke_get_mission_status",
-			Description: "Check the status of a Stoke build started with stoke_build_from_sow. " +
+			Description: "Check the status of an R1 build started with stoke_build_from_sow. " +
 				"Returns: status (running|success|failed|cancelled), exit_code, started_at, finished_at, " +
 				"and the path to stdout/stderr log files for inspection.",
 			InputSchema: json.RawMessage(`{
@@ -190,7 +236,7 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 		{
 			Name: "stoke_get_mission_logs",
 			Description: "Fetch the most recent stdout/stderr lines from a running or completed " +
-				"Stoke build. Useful for showing the user what Stoke is doing without waiting " +
+				"R1 build. Useful for showing the user what R1 is doing without waiting " +
 				"for the build to finish.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
@@ -210,7 +256,7 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name: "stoke_cancel_mission",
-			Description: "Cancel a running Stoke build. Sends SIGTERM to the entire process group " +
+			Description: "Cancel a running R1 build. Sends SIGTERM to the entire process group " +
 				"and waits briefly for a clean exit before escalating to SIGKILL. No-op if the " +
 				"mission is already finished.",
 			InputSchema: json.RawMessage(`{
@@ -226,7 +272,7 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name: "stoke_list_missions",
-			Description: "List all Stoke builds started in this server session, with their current status.",
+			Description: "List all R1 builds started in this server session, with their current status.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {}
@@ -235,9 +281,12 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 	}
 }
 
-// HandleToolCall dispatches an MCP tool invocation to the appropriate handler.
+// HandleToolCall dispatches an MCP tool invocation to the appropriate
+// handler. S1-4 dual-accept: canonical r1_* and legacy stoke_* names
+// both resolve here; legacyStokeServerToolName normalizes the prefix
+// so each case arm handles the pair.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
-	switch toolName {
+	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
 		return s.handleBuildFromSOW(args)
 	case "stoke_get_mission_status":
@@ -428,7 +477,7 @@ func (s *StokeServer) handleBuildFromSOW(args map[string]interface{}) (string, e
 		"started_at":  rec.StartedAt.Format(time.RFC3339),
 		"pid":         proc.Pid(),
 		"command":     rec.Command,
-		"description": "Stoke build started in background. Poll stoke_get_mission_status with this mission_id.",
+		"description": "R1 build started in background. Poll stoke_get_mission_status with this mission_id.",
 	}
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	return string(out), nil

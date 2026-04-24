@@ -370,15 +370,81 @@ func TestStokeServer_ToolDefinitions(t *testing.T) {
 	for _, tl := range tools {
 		names[tl.Name] = true
 	}
+	// S1-4: every legacy stoke_* name must ship with its canonical r1_*
+	// alias. Both stay live until v2.0.0 per S6-6.
 	for _, want := range []string{
 		"stoke_build_from_sow",
 		"stoke_get_mission_status",
 		"stoke_get_mission_logs",
 		"stoke_cancel_mission",
 		"stoke_list_missions",
+		"r1_build_from_sow",
+		"r1_get_mission_status",
+		"r1_get_mission_logs",
+		"r1_cancel_mission",
+		"r1_list_missions",
 	} {
 		if !names[want] {
 			t.Errorf("missing tool: %s", want)
+		}
+	}
+}
+
+// TestStokeServer_ToolDefinitions_DualRegistersR1Aliases proves the r1_*
+// canonical alias is shape-identical (description + inputSchema) to its
+// legacy stoke_* twin, per S1-4 dual-registration guarantee.
+func TestStokeServer_ToolDefinitions_DualRegistersR1Aliases(t *testing.T) {
+	s := NewStokeServer("")
+	tools := s.ToolDefinitions()
+	byName := map[string]ToolDefinition{}
+	for _, tl := range tools {
+		byName[tl.Name] = tl
+	}
+	legacy := []string{
+		"stoke_build_from_sow",
+		"stoke_get_mission_status",
+		"stoke_get_mission_logs",
+		"stoke_cancel_mission",
+		"stoke_list_missions",
+	}
+	for _, name := range legacy {
+		canonical := "r1_" + strings.TrimPrefix(name, "stoke_")
+		lDef, ok := byName[name]
+		if !ok {
+			t.Fatalf("missing legacy tool: %s", name)
+		}
+		cDef, ok := byName[canonical]
+		if !ok {
+			t.Fatalf("missing canonical r1_* alias for %s: expected %s", name, canonical)
+		}
+		if lDef.Description != cDef.Description {
+			t.Errorf("%s/%s description mismatch", name, canonical)
+		}
+		// InputSchema is json.RawMessage — compare byte-for-byte.
+		if string(lDef.InputSchema) != string(cDef.InputSchema) {
+			t.Errorf("%s/%s inputSchema mismatch:\n  legacy=%s\n  canonical=%s",
+				name, canonical, lDef.InputSchema, cDef.InputSchema)
+		}
+	}
+}
+
+// TestStokeServer_HandleToolCall_R1AliasesDispatch proves every r1_* alias
+// dispatches into the same handler as its legacy stoke_* twin. The
+// list_missions handler is the safest read-only probe (no subprocess
+// spawn); both prefix forms must produce a well-formed JSON response.
+func TestStokeServer_HandleToolCall_R1AliasesDispatch(t *testing.T) {
+	s := NewStokeServer("")
+	for _, name := range []string{"stoke_list_missions", "r1_list_missions"} {
+		out, err := s.HandleToolCall(name, nil)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		var resp map[string]interface{}
+		if err := json.Unmarshal([]byte(out), &resp); err != nil {
+			t.Fatalf("%s: invalid JSON response: %v (raw=%q)", name, err, out)
+		}
+		if _, ok := resp["missions"]; !ok {
+			t.Errorf("%s: response missing \"missions\" key: %+v", name, resp)
 		}
 	}
 }

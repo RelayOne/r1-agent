@@ -202,14 +202,19 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// tools is the registered primitive tool set. The 4 shapes
-// STOKE-023 AC requires. The TrustPlane MCP tool pass-through
-// layer lands in a follow-up commit once the TrustPlane Go
-// SDK is wired into go.mod.
-var tools = []Tool{
+// baseTools is the canonical primitive tool set using the legacy
+// stoke_* naming. S1-4 of work-r1-rename.md mandates dual-registration:
+// every stoke_X tool is also published as r1_X. Both names resolve
+// to the same handler. Legacy stoke_* names stay live until v2.0.0
+// (S6-6), per ≥2-week external notice requirement.
+//
+// The 4 shapes STOKE-023 AC requires. The TrustPlane MCP tool
+// pass-through layer lands in a follow-up commit once the TrustPlane
+// Go SDK is wired into go.mod.
+var baseTools = []Tool{
 	{
 		Name:        "stoke_invoke",
-		Description: "Invoke a registered Stoke capability (skill or hired agent). Returns the capability's structured output.",
+		Description: "Invoke a registered R1 capability (skill or hired agent). Returns the capability's structured output.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -235,7 +240,7 @@ var tools = []Tool{
 	},
 	{
 		Name:        "stoke_audit",
-		Description: "Write an audit entry to the Stoke ledger with the supplied evidence references. Returns the resulting ledger node ID.",
+		Description: "Write an audit entry to the R1 ledger with the supplied evidence references. Returns the resulting ledger node ID.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -261,6 +266,55 @@ var tools = []Tool{
 			"required": ["to_did", "bundle_name"]
 		}`),
 	},
+}
+
+// tools is the full tool surface published over MCP tools/list.
+// Each baseTools entry is emitted twice: once under the canonical
+// r1_* name (S1-4 canonical prefix) and once under the legacy
+// stoke_* name (retained until v2.0.0 per S6-6). Both names
+// dispatch to the same handler in handleToolsCall.
+var tools = buildDualTools(baseTools)
+
+// buildDualTools emits each base tool twice — canonical r1_* first,
+// legacy stoke_* second — so tools/list advertises both names. The
+// canonical r1_* ordering mirrors the S1-4 dual-accept convention
+// (canonical preferred, legacy retained during the window).
+func buildDualTools(base []Tool) []Tool {
+	out := make([]Tool, 0, len(base)*2)
+	for _, t := range base {
+		r1Name := canonicalToolName(t.Name)
+		if r1Name != t.Name {
+			r1 := t
+			r1.Name = r1Name
+			out = append(out, r1)
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// canonicalToolName maps a legacy stoke_* tool name to its r1_*
+// canonical alias. Names that don't carry the stoke_ prefix are
+// returned unchanged, so this function is safe to call on any
+// tool name.
+func canonicalToolName(legacy string) string {
+	const legacyPrefix = "stoke_"
+	if strings.HasPrefix(legacy, legacyPrefix) {
+		return "r1_" + strings.TrimPrefix(legacy, legacyPrefix)
+	}
+	return legacy
+}
+
+// legacyToolName maps a canonical r1_* tool name back to its legacy
+// stoke_* form so the dispatch switch can resolve either prefix to
+// the same handler. Names that don't carry the r1_ prefix are
+// returned unchanged.
+func legacyToolName(canonical string) string {
+	const canonicalPrefix = "r1_"
+	if strings.HasPrefix(canonical, canonicalPrefix) {
+		return "stoke_" + strings.TrimPrefix(canonical, canonicalPrefix)
+	}
+	return canonical
 }
 
 // handleToolsList is intentionally EXEMPT from API-key auth.
@@ -289,7 +343,10 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 		s.respondErr(req.ID, errInvalidArgs, "parse tools/call: "+err.Error(), nil)
 		return
 	}
-	switch p.Name {
+	// S1-4: accept both legacy stoke_* and canonical r1_* names.
+	// legacyToolName normalizes r1_* → stoke_* so the switch only
+	// needs a single case per primitive.
+	switch legacyToolName(p.Name) {
 	case "stoke_invoke":
 		s.handleInvoke(ctx, req, p.Arguments)
 	case "stoke_verify":
