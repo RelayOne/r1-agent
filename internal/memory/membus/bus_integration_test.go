@@ -156,15 +156,32 @@ func TestIntegration_GlobalScopeVisibleAcrossSessions(t *testing.T) {
 			len(sessionView))
 	}
 
-	// ScopeGlobal + ScopeTarget="s-A" still returns the row — filtering
-	// by scope_target is an optional narrowing, but the primary
-	// membership is scope=global.
-	_, err = b.Recall(ctx, RecallRequest{
-		Scope:       ScopeGlobal,
-		ScopeTarget: "", // intentionally empty — global has no session partition
-	})
+	// A second global write from session-B must also be visible to any
+	// caller recalling ScopeGlobal. This nails down bidirectional
+	// cross-session visibility: A reads B's writes AND B reads A's.
+	if err := b.Remember(ctx, RememberRequest{
+		Scope:     ScopeGlobal,
+		SessionID: "s-B",
+		Author:    "worker:b1",
+		Key:       "global-from-b",
+		Content:   "from-b",
+	}); err != nil {
+		t.Fatalf("Remember global from s-B: %v", err)
+	}
+	combined, err := b.Recall(ctx, RecallRequest{Scope: ScopeGlobal})
 	if err != nil {
-		t.Fatalf("Recall global empty scope_target: %v", err)
+		t.Fatalf("Recall global combined: %v", err)
+	}
+	if len(combined) != 2 {
+		t.Fatalf("combined global recall returned %d rows, want 2", len(combined))
+	}
+	// Must contain both writers' rows regardless of which session recalls.
+	writers := map[string]bool{}
+	for _, m := range combined {
+		writers[m.SessionID] = true
+	}
+	if !writers["s-A"] || !writers["s-B"] {
+		t.Errorf("global recall missing a writer: got writers=%v, want both s-A and s-B", writers)
 	}
 }
 
