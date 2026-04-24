@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/prompts"
+	"github.com/RelayOne/r1/internal/prompts"
 )
 
 // WorkType classifies what kind of work a node performs.

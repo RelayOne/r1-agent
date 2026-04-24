@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/concern"
-	"github.com/ericmacdougall/stoke/internal/concern/templates"
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/concern"
+	"github.com/RelayOne/r1/internal/concern/templates"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 func setupTestLedger(t *testing.T) (*ledger.Ledger, string) {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/secrets"
+	"github.com/RelayOne/r1/internal/secrets"
 )
 
 // Mode selects which Client implementation NewFromEnv returns.

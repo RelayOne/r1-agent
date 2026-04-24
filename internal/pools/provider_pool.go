@@ -6,7 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // Strategy selects which member of a ProviderPool serves the next call.

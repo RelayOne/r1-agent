@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/mcp"
+	"github.com/RelayOne/r1/internal/mcp"
 )
 
 // writePolicyFixture drops a minimal stoke.policy.yaml into dir and

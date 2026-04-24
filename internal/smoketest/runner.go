@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // VerdictKind is the coarse outcome of a smoke run.

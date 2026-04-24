@@ -3,8 +3,8 @@ package main
 import (
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/skill"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/skill"
 )
 
 // hookCtx captures the (agent, phase, scenario-derived) tuple for a

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/RelayOne/r1/internal/logging"
 )
 
 // sowAPISurface scans the repo for source files and extracts the public API

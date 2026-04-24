@@ -8,8 +8,8 @@ package provider
 import (
 	"net/http"
 
-	"github.com/ericmacdougall/stoke/internal/costtrack"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // Metadata keys recognized by applyStokeCorrelationHeaders. Callers

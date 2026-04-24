@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/errtaxonomy"
+	"github.com/RelayOne/r1/internal/errtaxonomy"
 )
 
 // Class categorizes why a task failed.

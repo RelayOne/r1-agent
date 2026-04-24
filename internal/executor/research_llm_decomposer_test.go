@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/research"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/research"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // stubProvider is a minimal provider.Provider implementation that

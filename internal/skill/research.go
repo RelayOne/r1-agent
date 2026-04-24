@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/research"
+	"github.com/RelayOne/r1/internal/research"
 )
 
 // SkillUpdate records a single research-to-skill merge.

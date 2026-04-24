@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/env"
+	"github.com/RelayOne/r1/internal/env"
 )
 
 func TestProvisionAndExec(t *testing.T) {

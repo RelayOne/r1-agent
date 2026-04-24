@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
+	"github.com/RelayOne/r1/internal/bus"
 )
 
 // resumeCmd implements Task 18 — read the event log for a given

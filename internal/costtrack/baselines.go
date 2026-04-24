@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // baselineEntry matches one record in bench/baselines/*.json.

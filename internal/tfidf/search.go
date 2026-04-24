@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/chunker"
+	"github.com/RelayOne/r1/internal/chunker"
 )
 
 // Document is an indexed file.

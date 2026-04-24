@@ -34,7 +34,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // watchCmd implements `stoke watch` — a polling operator dashboard.

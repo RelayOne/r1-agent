@@ -12,10 +12,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/ericmacdougall/stoke/internal/convergence"
-	"github.com/ericmacdougall/stoke/internal/handoff"
-	"github.com/ericmacdougall/stoke/internal/mission"
-	"github.com/ericmacdougall/stoke/internal/orchestrate"
+	"github.com/RelayOne/r1/internal/convergence"
+	"github.com/RelayOne/r1/internal/handoff"
+	"github.com/RelayOne/r1/internal/mission"
+	"github.com/RelayOne/r1/internal/orchestrate"
 )
 
 // MissionAPI provides HTTP handlers for mission management.

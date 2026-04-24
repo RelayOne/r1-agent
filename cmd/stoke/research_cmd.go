@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/executor"
-	"github.com/ericmacdougall/stoke/internal/research"
+	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1/internal/research"
 )
 
 // researchCmd is the subcommand handler wired into main.go.

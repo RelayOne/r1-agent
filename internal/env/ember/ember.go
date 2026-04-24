@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/env"
-	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1/internal/logging"
 )
 
 // Backend implements env.Environment for Ember burst workers.

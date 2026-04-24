@@ -19,9 +19,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ericmacdougall/stoke/internal/promptguard"
-	"github.com/ericmacdougall/stoke/internal/r1dir"
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/promptguard"
+	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // Skill-frontmatter field names (parsed out of `---` YAML-ish blocks

@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/schemaval"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/schemaval"
 )
 
 // ExtractionTrigger fires when a loop converges or escalates to request skill

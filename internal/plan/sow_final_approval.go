@@ -29,8 +29,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/jsonutil"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/jsonutil"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // FinalApprovalVerdict is the CTO-role verdict.

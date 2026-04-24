@@ -25,8 +25,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/env"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 const (

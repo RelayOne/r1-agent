@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/mcp"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
-	"github.com/ericmacdougall/stoke/internal/tools"
+	"github.com/RelayOne/r1/internal/agentloop"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1/internal/tools"
 )
 
 // MCPRegistry is the minimal surface the native runner needs from

@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // Anthropic content-block and stop-reason discriminators. Mirrors the

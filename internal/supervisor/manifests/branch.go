@@ -1,14 +1,14 @@
 package manifests
 
 import (
-	"github.com/ericmacdougall/stoke/internal/supervisor"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/consensus"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/drift"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/hierarchy"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/research"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/skill"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/snapshot"
-	"github.com/ericmacdougall/stoke/internal/supervisor/rules/trust"
+	"github.com/RelayOne/r1/internal/supervisor"
+	"github.com/RelayOne/r1/internal/supervisor/rules/consensus"
+	"github.com/RelayOne/r1/internal/supervisor/rules/drift"
+	"github.com/RelayOne/r1/internal/supervisor/rules/hierarchy"
+	"github.com/RelayOne/r1/internal/supervisor/rules/research"
+	"github.com/RelayOne/r1/internal/supervisor/rules/skill"
+	"github.com/RelayOne/r1/internal/supervisor/rules/snapshot"
+	"github.com/RelayOne/r1/internal/supervisor/rules/trust"
 )
 
 // BranchRules returns all rules loaded by branch supervisors.

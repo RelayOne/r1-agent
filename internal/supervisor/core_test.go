@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/supervisor"
 )
 
 // mockRule implements supervisor.Rule for testing.

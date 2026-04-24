@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
+	"github.com/RelayOne/r1/internal/agentloop"
 )
 
 func TestBuildNativeCompactor_ShortHistoryUnchanged(t *testing.T) {

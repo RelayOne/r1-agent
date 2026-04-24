@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/concern"
-	"github.com/ericmacdougall/stoke/internal/harness"
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/concern"
+	"github.com/RelayOne/r1/internal/harness"
+	"github.com/RelayOne/r1/internal/ledger"
 	"gopkg.in/yaml.v3"
 )
 

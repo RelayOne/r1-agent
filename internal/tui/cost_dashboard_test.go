@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // syncWriter wraps bytes.Buffer for safe concurrent writes during async

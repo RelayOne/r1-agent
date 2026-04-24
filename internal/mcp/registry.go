@@ -41,7 +41,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ericmacdougall/stoke/internal/redact"
+	"github.com/RelayOne/r1/internal/redact"
 )
 
 // toolNamePrefix is the agentloop-visible prefix attached to every

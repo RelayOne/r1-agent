@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
+	"github.com/RelayOne/r1/internal/bus"
 )
 
 // writeTempStream creates a stream.jsonl file with the given lines in

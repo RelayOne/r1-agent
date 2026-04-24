@@ -29,9 +29,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/mcp"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // fakeMCPProvider is a minimal provider.Provider used to snapshot

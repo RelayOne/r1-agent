@@ -14,7 +14,7 @@
 package main
 
 import (
-	"github.com/ericmacdougall/stoke/internal/retention"
+	"github.com/RelayOne/r1/internal/retention"
 )
 
 // buildRetentionPolicy returns the retention.Policy for this run. When

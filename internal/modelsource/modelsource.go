@@ -53,8 +53,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/litellm"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/litellm"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // Role names a model's job in a SOW run.

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // MultiSampleChecker re-runs high-stakes tasks N times and applies

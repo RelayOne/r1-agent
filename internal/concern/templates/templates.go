@@ -3,8 +3,8 @@
 package templates
 
 import (
-	"github.com/ericmacdougall/stoke/internal/concern"
-	"github.com/ericmacdougall/stoke/internal/concern/sections"
+	"github.com/RelayOne/r1/internal/concern"
+	"github.com/RelayOne/r1/internal/concern/sections"
 )
 
 // All returns every registered template keyed by name.

@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/env"
-	"github.com/ericmacdougall/stoke/internal/failure"
+	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1/internal/failure"
 )
 
 // Outcome is the result of one verification step.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/jsonutil"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/jsonutil"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // RepairStuckDiagnosis is the meta-judge's verdict on why a session's

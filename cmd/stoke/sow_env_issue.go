@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // envIssueToolName is the canonical name advertised to the model.

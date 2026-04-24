@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/RelayOne/r1/internal/session"
 )
 
 // importedManifest mirrors cmd/stoke.TraceBundleManifest — we avoid

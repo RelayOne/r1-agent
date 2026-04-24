@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/perflog"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/perflog"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // step8RegressionCap bounds how many consecutive outer rounds may

@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/hooks"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/hooks"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // ClaudeRunner executes tasks via the Claude Code CLI with NDJSON streaming and 3-tier timeout handling.

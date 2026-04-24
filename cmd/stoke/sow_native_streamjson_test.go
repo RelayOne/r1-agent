@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // Spec-2 item 10: per-session streamjson lifecycle events.

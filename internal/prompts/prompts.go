@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/prompt"
-	"github.com/ericmacdougall/stoke/internal/vecindex"
+	"github.com/RelayOne/r1/internal/prompt"
+	"github.com/RelayOne/r1/internal/vecindex"
 )
 
 // RenderRelevantTools produces a formatted "Relevant

@@ -49,7 +49,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // ---------------------------------------------------------------------------

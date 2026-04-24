@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/mission"
+	"github.com/RelayOne/r1/internal/mission"
 )
 
 // Record captures a single context transfer between agents.

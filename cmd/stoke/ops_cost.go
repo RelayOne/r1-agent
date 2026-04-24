@@ -30,8 +30,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/eventlog"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/eventlog"
 )
 
 // costAggregate is the shape printed in --json mode.

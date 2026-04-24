@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/ledger/nodes"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger/nodes"
 )
 
 // RecordProvision writes an ExecutionEnvironment ledger node when an

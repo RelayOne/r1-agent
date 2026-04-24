@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 func TestTimeout_Evaluate_NoReport(t *testing.T) {

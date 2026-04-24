@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/interview"
+	"github.com/RelayOne/r1/internal/interview"
 )
 
 func TestNew(t *testing.T) {

@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // descentEnabled returns true when the operator has opted into the

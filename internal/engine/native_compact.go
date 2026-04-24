@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
+	"github.com/RelayOne/r1/internal/agentloop"
 )
 
 // buildNativeCompactor returns an agentloop.CompactFunc that rewrites an

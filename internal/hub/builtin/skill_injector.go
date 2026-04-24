@@ -3,8 +3,8 @@ package builtin
 import (
 	"context"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/skill"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/skill"
 )
 
 // SkillInjector is a transform subscriber that injects the skill block into

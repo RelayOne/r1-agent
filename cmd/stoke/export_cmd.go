@@ -43,8 +43,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/r1dir"
-	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1/internal/session"
 )
 
 // exportCmd wires the top-level switch entry; runs and os.Exits.

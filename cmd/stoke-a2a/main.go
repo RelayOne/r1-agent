@@ -41,8 +41,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/a2a"
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/a2a"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 func main() {

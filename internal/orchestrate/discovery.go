@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/goast"
-	"github.com/ericmacdougall/stoke/internal/mcp"
-	"github.com/ericmacdougall/stoke/internal/mission"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/goast"
+	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/mission"
 )
 
 // DiscoveryEngine provides AST-enriched, multi-phase model discovery.

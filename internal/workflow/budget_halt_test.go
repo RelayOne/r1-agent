@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/costtrack"
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/model"
-	"github.com/ericmacdougall/stoke/internal/taskstate"
-	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/model"
+	"github.com/RelayOne/r1/internal/taskstate"
+	"github.com/RelayOne/r1/internal/verify"
 )
 
 // TestWorkflowBudgetHaltE2E is the R1-3 end-to-end assertion for the

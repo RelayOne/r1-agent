@@ -33,8 +33,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ericmacdougall/stoke/internal/streamjson"
-	"github.com/ericmacdougall/stoke/internal/trustplane"
+	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1/internal/trustplane"
 )
 
 // ErrNoCandidates is returned when TrustPlane discovery returns

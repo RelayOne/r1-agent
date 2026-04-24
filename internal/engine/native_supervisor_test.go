@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
+	"github.com/RelayOne/r1/internal/agentloop"
 )
 
 func TestBuildNativeSupervisor_NoExpectations_ReturnsNil(t *testing.T) {

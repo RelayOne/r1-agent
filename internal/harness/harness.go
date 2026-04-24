@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/concern"
-	"github.com/ericmacdougall/stoke/internal/harness/prompts"
-	htools "github.com/ericmacdougall/stoke/internal/harness/tools"
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/concern"
+	"github.com/RelayOne/r1/internal/harness/prompts"
+	htools "github.com/RelayOne/r1/internal/harness/tools"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 // Config holds mission-level harness configuration.

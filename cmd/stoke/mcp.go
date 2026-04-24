@@ -37,8 +37,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/mcp"
+	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/mcp"
 )
 
 // defaultMCPTimeout mirrors specs/mcp-client.md §Data Models: 30s cap on

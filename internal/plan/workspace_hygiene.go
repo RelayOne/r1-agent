@@ -42,7 +42,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/fileutil"
+	"github.com/RelayOne/r1/internal/fileutil"
 )
 
 // ExecutorKind identifies a package/build ecosystem present in a

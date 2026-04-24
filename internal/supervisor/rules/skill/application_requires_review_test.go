@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 func TestApplicationRequiresReview_Evaluate_Tentative(t *testing.T) {

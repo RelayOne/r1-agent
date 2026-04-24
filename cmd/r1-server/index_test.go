@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/RelayOne/r1/internal/session"
 )
 
 // newHTMXTestServer builds a full mux (API + UI) against a fresh DB,

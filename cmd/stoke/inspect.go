@@ -27,10 +27,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/litellm"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/skill"
+	"github.com/RelayOne/r1/internal/litellm"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/skill"
 )
 
 // inspectOutput is the JSON shape emitted by `stoke inspect --json`.

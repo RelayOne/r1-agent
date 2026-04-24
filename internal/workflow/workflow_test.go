@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/failure"
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/model"
-	"github.com/ericmacdougall/stoke/internal/subscriptions"
-	"github.com/ericmacdougall/stoke/internal/taskstate"
-	"github.com/ericmacdougall/stoke/internal/verify"
-	"github.com/ericmacdougall/stoke/internal/worktree"
+	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/failure"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/model"
+	"github.com/RelayOne/r1/internal/subscriptions"
+	"github.com/RelayOne/r1/internal/taskstate"
+	"github.com/RelayOne/r1/internal/verify"
+	"github.com/RelayOne/r1/internal/worktree"
 )
 
 func TestDryRunWorkflowBuildsCommands(t *testing.T) {

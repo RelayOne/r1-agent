@@ -26,8 +26,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/eventlog"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/eventlog"
 )
 
 // Task is the unit the fan-out dispatches concurrently. Callers implement

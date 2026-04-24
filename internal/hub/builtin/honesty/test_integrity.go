@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // TestIntegrityChecker is a gate subscriber that records the AST shape of every

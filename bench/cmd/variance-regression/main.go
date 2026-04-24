@@ -37,7 +37,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ericmacdougall/stoke/bench/metrics"
+	"github.com/RelayOne/r1/bench/metrics"
 )
 
 type resultsFile struct {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
+	"github.com/RelayOne/r1/internal/bus"
 )
 
 // mkEvent is a tiny constructor to keep the tests readable. Timestamps

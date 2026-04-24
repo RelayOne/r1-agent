@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/mcp"
+	"github.com/RelayOne/r1/internal/mcp"
 	"gopkg.in/yaml.v3"
 )
 

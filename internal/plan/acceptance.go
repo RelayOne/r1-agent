@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/depcheck"
-	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/RelayOne/r1/internal/depcheck"
+	"github.com/RelayOne/r1/internal/logging"
 )
 
 // fileExistsColonForm matches `file_exists:<path>` — some models emit

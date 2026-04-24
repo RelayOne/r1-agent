@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // newTestSvc builds a Service with a TwoLane emitter over a shared

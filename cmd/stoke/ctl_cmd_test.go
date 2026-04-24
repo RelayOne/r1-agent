@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/sessionctl"
+	"github.com/RelayOne/r1/internal/sessionctl"
 )
 
 // ctlTestSession is a handle to a running sessionctl.Server plus the

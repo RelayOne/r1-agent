@@ -34,12 +34,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/chat"
-	"github.com/ericmacdougall/stoke/internal/costtrack"
-	"github.com/ericmacdougall/stoke/internal/hitl"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/r1env"
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/chat"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/hitl"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // runCostTracker returns a fresh cost tracker for the CloudSwarm

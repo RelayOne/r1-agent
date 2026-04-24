@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/verify"
 )
 
 // VerifyBridge wraps a verify.Pipeline and emits bus events around verification runs.

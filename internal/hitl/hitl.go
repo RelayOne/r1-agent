@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // Request is the caller-facing input to RequestApproval.

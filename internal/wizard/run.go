@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/skillselect"
+	"github.com/RelayOne/r1/internal/skillselect"
 )
 
 // Mode determines how the wizard interacts with the user.

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/trustplane"
+	"github.com/RelayOne/r1/internal/trustplane"
 )
 
 type fakeDiscoverer struct {

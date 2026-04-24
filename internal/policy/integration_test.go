@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	policytesting "github.com/ericmacdougall/stoke/internal/policy/testing"
+	policytesting "github.com/RelayOne/r1/internal/policy/testing"
 )
 
 // writeIntegrationYAML drops body in a t-scoped tempdir and returns the path.

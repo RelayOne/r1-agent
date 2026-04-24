@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/research"
+	"github.com/RelayOne/r1/internal/research"
 )
 
 // TestResearchExecutor_Execute_ReturnsDeliverable exercises the happy

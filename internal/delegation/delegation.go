@@ -33,7 +33,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/trustplane"
+	"github.com/RelayOne/r1/internal/trustplane"
 )
 
 // DefaultPolicyBundles names the templates shipped under

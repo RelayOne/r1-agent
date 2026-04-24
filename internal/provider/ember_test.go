@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/env/ember"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/env/ember"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 func TestEmberProviderName(t *testing.T) {

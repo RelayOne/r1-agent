@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/mcp"
+	"github.com/RelayOne/r1/internal/mcp"
 )
 
 // Policy defines the security and tool restrictions for each workflow phase.

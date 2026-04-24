@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 // DissentHistory queries dissent nodes in the current loop.

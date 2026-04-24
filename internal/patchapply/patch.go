@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/hashline"
+	"github.com/RelayOne/r1/internal/hashline"
 )
 
 // Hunk represents a single diff hunk.

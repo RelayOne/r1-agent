@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/gateway"
+	"github.com/RelayOne/r1/internal/gateway"
 )
 
 // Client is the transport-layer function callers supply so

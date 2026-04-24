@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // Runner prints structured text updates. Zero external dependencies.

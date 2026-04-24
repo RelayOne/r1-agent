@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/deploy"
+	"github.com/RelayOne/r1/internal/deploy"
 )
 
 // writeMockVercel stamps a bash script into t.TempDir() that mimics

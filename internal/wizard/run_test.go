@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/skillselect"
+	"github.com/RelayOne/r1/internal/skillselect"
 )
 
 func TestRunWizardYesMode(t *testing.T) {

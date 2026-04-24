@@ -16,7 +16,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/memory/membus"
+	"github.com/RelayOne/r1/internal/memory/membus"
 )
 
 // newMemoryDB creates a fresh memory.db under a tempdir and returns

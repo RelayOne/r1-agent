@@ -30,7 +30,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/sessionctl"
+	"github.com/RelayOne/r1/internal/sessionctl"
 )
 
 // runCtlCmd dispatches the top-level verb to the per-verb runner.

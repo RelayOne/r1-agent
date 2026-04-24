@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/schemaval"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/schemaval"
+	"github.com/RelayOne/r1/internal/supervisor"
 )
 
 // IntentAlignmentCheck spawns a fresh-context Judge at every task milestone to

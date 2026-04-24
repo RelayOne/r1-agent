@@ -32,15 +32,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/baseline"
-	"github.com/ericmacdougall/stoke/internal/config"
-	"github.com/ericmacdougall/stoke/internal/convergence"
-	"github.com/ericmacdougall/stoke/internal/depgraph"
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/prompts"
-	"github.com/ericmacdougall/stoke/internal/skill"
-	"github.com/ericmacdougall/stoke/internal/symindex"
-	"github.com/ericmacdougall/stoke/internal/tfidf"
+	"github.com/RelayOne/r1/internal/baseline"
+	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/convergence"
+	"github.com/RelayOne/r1/internal/depgraph"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/prompts"
+	"github.com/RelayOne/r1/internal/skill"
+	"github.com/RelayOne/r1/internal/symindex"
+	"github.com/RelayOne/r1/internal/tfidf"
 )
 
 // HandlerDeps bundles the dependencies that phase handlers need.

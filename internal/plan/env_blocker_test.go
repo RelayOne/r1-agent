@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // TestEnvBlockerScratch_RecordGetClear exercises the basic scratch

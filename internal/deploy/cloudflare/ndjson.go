@@ -28,7 +28,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/RelayOne/r1/internal/logging"
 )
 
 // pollInterval is how often TailNDJSON stats the file and reads new bytes.

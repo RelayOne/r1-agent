@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/skillselect"
+	"github.com/RelayOne/r1/internal/skillselect"
 )
 
 // MaturityClassification is the inferred project stage with score breakdown.

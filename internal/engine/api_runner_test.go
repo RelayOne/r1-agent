@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/apiclient"
+	"github.com/RelayOne/r1/internal/apiclient"
 )
 
 func TestAPIRunnerPrepare(t *testing.T) {
