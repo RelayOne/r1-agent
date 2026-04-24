@@ -202,18 +202,19 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// baseTools is the canonical primitive tool set using the legacy
-// stoke_* naming. S1-4 of work-r1-rename.md mandates dual-registration:
-// every stoke_X tool is also published as r1_X. Both names resolve
-// to the same handler. Legacy stoke_* names stay live until v2.0.0
-// (S6-6), per ≥2-week external notice requirement.
+// tools is the canonical MCP primitive tool set using r1_* naming.
 //
-// The 4 shapes STOKE-023 AC requires. The TrustPlane MCP tool
+// The S1-4 dual-registration window (r1_* canonical + stoke_* legacy
+// both published until v2.0.0) was retired by S6-6 after the >=2-week
+// external-notice requirement elapsed. This is MCP v2.0.0: canonical
+// names only.
+//
+// The 4 primitives from the STOKE-023 AC. The TrustPlane MCP tool
 // pass-through layer lands in a follow-up commit once the TrustPlane
 // Go SDK is wired into go.mod.
-var baseTools = []Tool{
+var tools = []Tool{
 	{
-		Name:        "stoke_invoke",
+		Name:        "r1_invoke",
 		Description: "Invoke a registered R1 capability (skill or hired agent). Returns the capability's structured output.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -227,7 +228,7 @@ var baseTools = []Tool{
 		}`),
 	},
 	{
-		Name:        "stoke_verify",
+		Name:        "r1_verify",
 		Description: "Run a structured verification rubric on a produced artifact. Rubrics are per task class (code / research / writing / scheduling).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -239,7 +240,7 @@ var baseTools = []Tool{
 		}`),
 	},
 	{
-		Name:        "stoke_audit",
+		Name:        "r1_audit",
 		Description: "Write an audit entry to the R1 ledger with the supplied evidence references. Returns the resulting ledger node ID.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
@@ -253,8 +254,8 @@ var baseTools = []Tool{
 		}`),
 	},
 	{
-		Name:        "stoke_delegate",
-		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via trustplane.Client. Currently the stoke-mcp binary ships StubClient only; SOW task B-5 will add a NewFromEnv factory that swaps in RealClient (hand-written HTTP against the TrustPlane gateway, no Go SDK) when STOKE_TRUSTPLANE_MODE=real.",
+		Name:        "r1_delegate",
+		Description: "Create a delegation token granting a named policy bundle's scopes to a delegatee. Token is issued via trustplane.Client. Currently the stoke-mcp binary ships StubClient only; SOW task B-5 will add a NewFromEnv factory that swaps in RealClient (hand-written HTTP against the TrustPlane gateway, no Go SDK) when R1_TRUSTPLANE_MODE=real.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -266,55 +267,6 @@ var baseTools = []Tool{
 			"required": ["to_did", "bundle_name"]
 		}`),
 	},
-}
-
-// tools is the full tool surface published over MCP tools/list.
-// Each baseTools entry is emitted twice: once under the canonical
-// r1_* name (S1-4 canonical prefix) and once under the legacy
-// stoke_* name (retained until v2.0.0 per S6-6). Both names
-// dispatch to the same handler in handleToolsCall.
-var tools = buildDualTools(baseTools)
-
-// buildDualTools emits each base tool twice — canonical r1_* first,
-// legacy stoke_* second — so tools/list advertises both names. The
-// canonical r1_* ordering mirrors the S1-4 dual-accept convention
-// (canonical preferred, legacy retained during the window).
-func buildDualTools(base []Tool) []Tool {
-	out := make([]Tool, 0, len(base)*2)
-	for _, t := range base {
-		r1Name := canonicalToolName(t.Name)
-		if r1Name != t.Name {
-			r1 := t
-			r1.Name = r1Name
-			out = append(out, r1)
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
-// canonicalToolName maps a legacy stoke_* tool name to its r1_*
-// canonical alias. Names that don't carry the stoke_ prefix are
-// returned unchanged, so this function is safe to call on any
-// tool name.
-func canonicalToolName(legacy string) string {
-	const legacyPrefix = "stoke_"
-	if strings.HasPrefix(legacy, legacyPrefix) {
-		return "r1_" + strings.TrimPrefix(legacy, legacyPrefix)
-	}
-	return legacy
-}
-
-// legacyToolName maps a canonical r1_* tool name back to its legacy
-// stoke_* form so the dispatch switch can resolve either prefix to
-// the same handler. Names that don't carry the r1_ prefix are
-// returned unchanged.
-func legacyToolName(canonical string) string {
-	const canonicalPrefix = "r1_"
-	if strings.HasPrefix(canonical, canonicalPrefix) {
-		return "stoke_" + strings.TrimPrefix(canonical, canonicalPrefix)
-	}
-	return canonical
 }
 
 // handleToolsList is intentionally EXEMPT from API-key auth.
@@ -343,20 +295,22 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) {
 		s.respondErr(req.ID, errInvalidArgs, "parse tools/call: "+err.Error(), nil)
 		return
 	}
-	// S1-4: accept both legacy stoke_* and canonical r1_* names.
-	// legacyToolName normalizes r1_* → stoke_* so the switch only
-	// needs a single case per primitive.
-	switch legacyToolName(p.Name) {
-	case "stoke_invoke":
+	// S6-6 (MCP v2.0.0): canonical r1_* names only. The legacy
+	// stoke_* dual-registration window (S1-4) was retired after the
+	// >=2-week external-notice requirement elapsed. Clients that
+	// still send stoke_* will receive an "unknown tool" error
+	// pointing at the canonical name in the message text.
+	switch p.Name {
+	case "r1_invoke":
 		s.handleInvoke(ctx, req, p.Arguments)
-	case "stoke_verify":
+	case "r1_verify":
 		s.handleVerify(ctx, req, p.Arguments)
-	case "stoke_audit":
+	case "r1_audit":
 		s.handleAudit(ctx, req, p.Arguments)
-	case "stoke_delegate":
+	case "r1_delegate":
 		s.handleDelegate(ctx, req, p.Arguments)
 	default:
-		s.respondErr(req.ID, errMethodMiss, "unknown tool: "+p.Name, nil)
+		s.respondErr(req.ID, errMethodMiss, "unknown tool: "+p.Name+" (R1 MCP v2.0.0 accepts r1_invoke / r1_verify / r1_audit / r1_delegate only; legacy stoke_* was retired per S6-6)", nil)
 	}
 }
 
@@ -379,18 +333,18 @@ func (s *Server) handleInvoke(ctx context.Context, req rpcRequest, args json.Raw
 		MissionID    string          `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: parse args: "+err.Error(), nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_invoke: parse args: "+err.Error(), nil)
 		return
 	}
 	if a.Capability == "" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: capability required", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_invoke: capability required", nil)
 		return
 	}
 	// Schema declares `input` as required + object. Empty
 	// bytes OR a literal "null" both fail the required-object
 	// check.
 	if len(a.Input) == 0 || string(a.Input) == "null" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input required (must be an object)", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_invoke: input required (must be an object)", nil)
 		return
 	}
 	// Ensure the input is at least a JSON object (not an
@@ -398,12 +352,12 @@ func (s *Server) handleInvoke(ctx context.Context, req rpcRequest, args json.Raw
 	// `type: object` so a ["foo"] input is a client bug.
 	trimmed := strings.TrimSpace(string(a.Input))
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_invoke: input must be a JSON object", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_invoke: input must be a JSON object", nil)
 		return
 	}
 	result, err := s.backends.Invoke(ctx, a.MissionID, a.Capability, a.Input, a.DelegationID)
 	if err != nil {
-		s.respondErr(req.ID, errInternal, "stoke_invoke: "+err.Error(), nil)
+		s.respondErr(req.ID, errInternal, "r1_invoke: "+err.Error(), nil)
 		return
 	}
 	// Return the backend's structured result + a content
@@ -447,11 +401,11 @@ func (s *Server) handleVerify(ctx context.Context, req rpcRequest, args json.Raw
 		Subject   string `json:"subject"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: parse args: "+err.Error(), nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_verify: parse args: "+err.Error(), nil)
 		return
 	}
 	if a.TaskClass == "" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: task_class required", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_verify: task_class required", nil)
 		return
 	}
 	if !validVerifyTaskClasses[a.TaskClass] {
@@ -463,16 +417,16 @@ func (s *Server) handleVerify(ctx context.Context, req rpcRequest, args json.Raw
 		}
 		sort.Strings(want)
 		s.respondErr(req.ID, errInvalidArgs,
-			"stoke_verify: task_class must be one of ["+strings.Join(want, ", ")+"], got "+a.TaskClass, nil)
+			"r1_verify: task_class must be one of ["+strings.Join(want, ", ")+"], got "+a.TaskClass, nil)
 		return
 	}
 	if a.Subject == "" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_verify: subject required", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_verify: subject required", nil)
 		return
 	}
 	result, err := s.backends.Verify(ctx, verify.TaskClass(a.TaskClass), a.Subject)
 	if err != nil {
-		s.respondErr(req.ID, errInternal, "stoke_verify: "+err.Error(), nil)
+		s.respondErr(req.ID, errInternal, "r1_verify: "+err.Error(), nil)
 		return
 	}
 	var outcomeCount int
@@ -518,12 +472,12 @@ func (s *Server) handleAudit(ctx context.Context, req rpcRequest, args json.RawM
 		MissionID    string   `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || a.Action == "" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_audit: action required", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_audit: action required", nil)
 		return
 	}
 	result, err := s.backends.Audit(ctx, a.MissionID, a.Action, a.EvidenceRefs, a.SubjectRef)
 	if err != nil {
-		s.respondErr(req.ID, errInternal, "stoke_audit: "+err.Error(), nil)
+		s.respondErr(req.ID, errInternal, "r1_audit: "+err.Error(), nil)
 		return
 	}
 	resp := map[string]any{
@@ -548,12 +502,12 @@ func (s *Server) handleDelegate(ctx context.Context, req rpcRequest, args json.R
 		MissionID     string `json:"mission_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || a.ToDID == "" || a.BundleName == "" {
-		s.respondErr(req.ID, errInvalidArgs, "stoke_delegate: to_did + bundle_name required", nil)
+		s.respondErr(req.ID, errInvalidArgs, "r1_delegate: to_did + bundle_name required", nil)
 		return
 	}
 	result, err := s.backends.Delegate(ctx, a.MissionID, a.ToDID, a.BundleName, a.ExpirySeconds)
 	if err != nil {
-		s.respondErr(req.ID, errInternal, "stoke_delegate: "+err.Error(), nil)
+		s.respondErr(req.ID, errInternal, "r1_delegate: "+err.Error(), nil)
 		return
 	}
 	resp := map[string]any{
