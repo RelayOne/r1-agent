@@ -16,6 +16,7 @@ import type { InvokeMethod } from "./types/ipc";
 /** Phase tag each panel attaches when logging its TODO stub call. */
 export type PhaseTag =
   | "R1D-3" // SOW tree + descent ladder
+  | "R1D-4" // Skill catalog + marketplace + test modal
   | "R1D-5" // Ledger viewer
   | "R1D-6" // Memory inspector
   | "R1D-9"; // Cost panel / observability

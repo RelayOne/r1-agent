@@ -438,22 +438,96 @@ export interface SessionSendParams {
   prompt: string;
 }
 
+/**
+ * Summary row rendered in the R1D-4 skill catalog grid. Indexes the
+ * bundled skill packs (e.g. actium-studio) and any user-installed
+ * packs discovered by the host. `installed` flips true once the
+ * marketplace install stub (§R1D-4.3) succeeds.
+ */
 export interface SkillSummary {
+  id: string;
   name: string;
-  version: string;
   description: string;
+  author: string;
+  version: string;
+  category: string;
+  tags: string[];
+  pack: string;
+  installed: boolean;
 }
 
 export interface SkillGetParams {
-  name: string;
+  id: string;
 }
 
-export interface SkillManifest {
-  name: string;
-  version: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-  output_schema: Record<string, unknown>;
+/**
+ * JSON-schema-shaped skill input / output spec. The R1D-4.2 manifest
+ * drawer renders this as a field list; the R1D-4.5 test modal walks
+ * it to auto-generate an HTML form. Shape mirrors the subset of
+ * JSON-Schema draft-07 that the Studio manifests actually use (type,
+ * properties, required, enum, minLength, maxLength, minimum, format,
+ * items, description).
+ */
+export interface SkillJsonSchema {
+  type?: string;
+  description?: string;
+  properties?: Record<string, SkillJsonSchema>;
+  required?: string[];
+  enum?: Array<string | number>;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  format?: string;
+  items?: SkillJsonSchema;
+  default?: unknown;
+}
+
+/** One worked example pair shipped inside a skill manifest. */
+export interface SkillExample {
+  title: string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown>;
+}
+
+/**
+ * Full skill manifest payload returned by `skill_get` — extends the
+ * catalog summary with the 7 R1D-4.2 required fields (inputs, outputs,
+ * examples in addition to name/description/author/version already on
+ * SkillSummary).
+ */
+export interface SkillManifest extends SkillSummary {
+  inputs: SkillJsonSchema;
+  outputs: SkillJsonSchema;
+  examples: SkillExample[];
+}
+
+export interface SkillListResult {
+  skills: SkillSummary[];
+}
+
+export interface SkillInstallParams {
+  id: string;
+}
+
+export interface SkillInstallPackParams {
+  pack: string;
+}
+
+/** Shared result shape for single-skill + pack install / uninstall. */
+export interface SkillInstallResult {
+  ok: boolean;
+  installed: number;
+}
+
+export interface SkillInvokeParams {
+  id: string;
+  input: Record<string, unknown>;
+}
+
+export interface SkillInvokeResult {
+  output: string;
+  duration_ms: number;
 }
 
 // ---------------------------------------------------------------------
@@ -553,5 +627,9 @@ export type InvokeMethod =
   | "session_cancel"
   | "skill_list"
   | "skill_get"
+  | "skill_install"
+  | "skill_uninstall"
+  | "skill_install_pack"
+  | "skill_invoke"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";

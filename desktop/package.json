@@ -27,6 +27,7 @@
     "descent-evidence": "src/panels/descent-evidence.ts",
     "ledger-viewer": "src/panels/ledger-viewer.ts",
     "memory-inspector": "src/panels/memory-inspector.ts",
+    "skill-catalog": "src/panels/skill-catalog.ts",
     "cost-panel": "src/panels/cost-panel.ts"
   }
 }
