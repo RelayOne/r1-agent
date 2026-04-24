@@ -84,6 +84,39 @@ export interface SessionSummary {
   status: "running" | "paused" | "ended";
 }
 
+/** Kind tag for the SOW tree drill-down (§R1D-3.1). */
+export type SessionTreeNodeKind = "session" | "ac" | "task";
+
+/** Lifecycle state for a SOW tree node. Superset of `SessionSummary.status`. */
+export type SessionTreeNodeStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "paused"
+  | "ended";
+
+/**
+ * Single node in the SOW drill-down tree. Sessions expand to their
+ * acceptance criteria, which expand to their tasks. `children` is
+ * empty at stub time; the real `session_tree` RPC body lands later.
+ */
+export interface SessionTreeNode {
+  id: string;
+  label: string;
+  kind: SessionTreeNodeKind;
+  status: SessionTreeNodeStatus;
+  children: SessionTreeNode[];
+}
+
+export interface SessionTreeParams {
+  session_id: string;
+}
+
+export interface SessionTreeResult {
+  nodes: SessionTreeNode[];
+}
+
 // ---------------------------------------------------------------------
 // Ledger query (§2.2)
 // ---------------------------------------------------------------------
@@ -236,6 +269,35 @@ export interface DescentTierHistoryResult {
   attempts: DescentAttempt[];
 }
 
+/** Evidence drill-down row (§R1D-3.4). Shown in the descent drawer. */
+export type DescentEvidenceKind =
+  | "build_log"
+  | "test_log"
+  | "lint_log"
+  | "verify_log"
+  | "ledger_node"
+  | "failure_report"
+  | "other";
+
+export interface DescentEvidence {
+  tier: DescentTier;
+  kind: DescentEvidenceKind;
+  summary: string;
+  artifact_ref?: string;
+  at?: Iso8601;
+}
+
+export interface DescentEvidenceParams {
+  session_id: string;
+  ac_id?: string;
+  tier: DescentTier;
+}
+
+export interface DescentEvidenceResult {
+  tier: DescentTier;
+  items: DescentEvidence[];
+}
+
 // ---------------------------------------------------------------------
 // Tauri-only verbs (§5)
 // ---------------------------------------------------------------------
@@ -344,6 +406,9 @@ export type InvokeMethod =
   // Descent
   | "descent_current_tier"
   | "descent_tier_history"
+  | "descent_evidence"
+  // SOW drill-down (R1D-3.1 / R1D-3.2)
+  | "session_tree"
   // Tauri-only
   | "session_send"
   | "session_cancel"

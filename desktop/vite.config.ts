@@ -29,6 +29,7 @@ export default defineConfig({
         // Tauri surfaces (e.g., detached cost dashboard).
         "panel-sow-tree": resolve(root, "src/panels/sow-tree.ts"),
         "panel-descent-ladder": resolve(root, "src/panels/descent-ladder.ts"),
+        "panel-descent-evidence": resolve(root, "src/panels/descent-evidence.ts"),
         "panel-ledger-viewer": resolve(root, "src/panels/ledger-viewer.ts"),
         "panel-memory-inspector": resolve(root, "src/panels/memory-inspector.ts"),
         "panel-cost": resolve(root, "src/panels/cost-panel.ts"),

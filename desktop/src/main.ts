@@ -22,6 +22,7 @@ import { renderPanel as renderDescentLadder } from "./panels/descent-ladder";
 import { renderPanel as renderLedgerViewer } from "./panels/ledger-viewer";
 import { renderPanel as renderMemoryInspector } from "./panels/memory-inspector";
 import { renderPanel as renderCostPanel } from "./panels/cost-panel";
+import { mountDrawer as mountDescentEvidenceDrawer } from "./panels/descent-evidence";
 
 type PanelEntry = {
   id: string;
@@ -54,6 +55,8 @@ function mount(): void {
     app.appendChild(section);
     panel.render(section);
   }
+
+  mountDescentEvidenceDrawer(document.body);
 }
 
 if (document.readyState === "loading") {
