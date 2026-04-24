@@ -88,6 +88,11 @@ release:
   prerelease: auto
 
 brews:
+  # S2-4 (work-r1-rename): dual-publish under both the legacy `stoke`
+  # formula and the canonical `r1` formula during the 90d transition
+  # window. Both formulae install identical binaries; the legacy
+  # `stoke` formula's caveats message points users at `r1` as the
+  # canonical name going forward.
   - name: stoke
     repository:
       owner: ericmacdougall
@@ -100,9 +105,32 @@ brews:
     install: |
       bin.install "stoke"
       bin.install "stoke-acp" if File.exist?("stoke-acp")
+    caveats: |
+      Stoke is being renamed to R1. Install the canonical formula with:
+        brew install ericmacdougall/stoke/r1
+      The `stoke` formula will remain available as an alias through
+      2026-07-22 (90d from the rename commit).
     test: |
       system "#{bin}/stoke", "--version"
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
     commit_msg_template: "chore(brew): stoke {{ .Tag }}"
+  - name: r1
+    repository:
+      owner: ericmacdougall
+      name: homebrew-stoke
+      branch: main
+    directory: Formula
+    homepage: https://github.com/ericmacdougall/Stoke
+    description: "R1 — agentic coding orchestrator (formerly Stoke)"
+    license: "Apache-2.0"
+    install: |
+      bin.install "stoke" => "r1"
+      bin.install "stoke-acp" => "r1-acp" if File.exist?("stoke-acp")
+    test: |
+      system "#{bin}/r1", "--version"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "chore(brew): r1 {{ .Tag }}"
