@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/snapshot"
 	"gopkg.in/yaml.v3"
 )
@@ -144,7 +145,7 @@ func Init(ctx context.Context, opts InitOpts) (*Config, error) {
 		opts.Preset = presetBalanced
 	}
 
-	stokeDir := filepath.Join(opts.RepoRoot, ".stoke")
+	stokeDir := r1dir.JoinFor(opts.RepoRoot)
 
 	// 1. Create .stoke/ directory and subdirectories
 	for _, sub := range []string{"", "ledger", "bus", "snapshot"} {

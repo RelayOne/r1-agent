@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // Record is one completed task's observed telemetry. Serialized as
@@ -48,7 +50,7 @@ func statsPath() string {
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".stoke", "task-stats.jsonl")
+	return r1dir.JoinFor(home, "task-stats.jsonl")
 }
 
 // Append writes a record. Creates ~/.stoke/ if missing. Silent no-op

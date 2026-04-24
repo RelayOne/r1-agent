@@ -5,13 +5,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/RelayOne/r1/internal/r1dir"
 	"gopkg.in/yaml.v3"
 )
 
 // writeOutput creates the .stoke/ directory, writes config.yaml, copies skill
 // files from the library, and writes the rationale document.
 func writeOutput(root string, r *WizardResult) error {
-	stokeDir := filepath.Join(root, ".stoke")
+	stokeDir := r1dir.JoinFor(root)
 	if err := os.MkdirAll(stokeDir, 0755); err != nil {
 		return err
 	}
@@ -45,7 +46,7 @@ func writeOutput(root string, r *WizardResult) error {
 func copySkills(names []string, destDir string) error {
 	home, _ := os.UserHomeDir()
 	libraryDirs := []string{
-		filepath.Join(home, ".stoke", "skills"),
+		r1dir.JoinFor(home, "skills"),
 	}
 	for _, name := range names {
 		for _, lib := range libraryDirs {

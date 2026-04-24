@@ -19,6 +19,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/convergence"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // Preferences captures all user choices from the wizard.
@@ -845,7 +846,7 @@ func (w *Wizard) GenerateRationale() string {
 
 // WriteRationale writes the decision log to .stoke/wizard-rationale.md.
 func (w *Wizard) WriteRationale() error {
-	stokeDir := filepath.Join(w.ProjectDir, ".stoke")
+	stokeDir := r1dir.JoinFor(w.ProjectDir)
 	if err := os.MkdirAll(stokeDir, 0755); err != nil {
 		return err
 	}

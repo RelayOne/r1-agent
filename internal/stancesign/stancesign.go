@@ -40,6 +40,8 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // Identity is a resolved per-stance signing identity.
@@ -130,7 +132,7 @@ func IdentityFor(baseDir, stance string) (*Identity, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stancesign: %w", err)
 		}
-		baseDir = filepath.Join(home, ".stoke", "stance-keys")
+		baseDir = r1dir.JoinFor(home, "stance-keys")
 	}
 	stanceDir := filepath.Join(baseDir, stance)
 	keyPath := filepath.Join(stanceDir, "id_ed25519")

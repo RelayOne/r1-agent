@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/r1env"
 )
 
@@ -69,7 +70,7 @@ func ConfigPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cloud: resolve home dir: %w", err)
 	}
-	dir := filepath.Join(home, ".stoke")
+	dir := r1dir.JoinFor(home)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("cloud: mkdir %s: %w", dir, err)
 	}

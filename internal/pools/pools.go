@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // StorePath returns ~/.stoke/pools. Panics if the home directory cannot
@@ -18,7 +20,7 @@ func StorePath() string {
 	if err != nil {
 		panic("pools: cannot determine home directory: " + err.Error())
 	}
-	return filepath.Join(home, ".stoke", "pools")
+	return r1dir.JoinFor(home, "pools")
 }
 
 // ManifestPath returns ~/.stoke/pools/manifest.json
