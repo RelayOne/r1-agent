@@ -105,7 +105,7 @@ func (c *Chain) History(missionID string) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	var records []Record
+	records := make([]Record, 0, len(handoffs))
 	for _, h := range handoffs {
 		records = append(records, Record{
 			MissionID:    h.MissionID,

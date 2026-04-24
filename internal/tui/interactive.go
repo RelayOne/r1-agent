@@ -22,6 +22,14 @@ const (
 	ModeDetail                // drill into a completed/failed task
 )
 
+// Task lifecycle status strings. Reused across status checks, status
+// updates, and rendering so the TUI has one source of truth.
+const (
+	statusActive = "active"
+	statusDone   = "done"
+	statusFailed = "failed"
+)
+
 // TaskState tracks one task in the TUI.
 type TaskState struct {
 	ID          string
@@ -113,7 +121,7 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = ModeFocus
 			if m.focusTask == "" {
 				for _, t := range m.tasks {
-					if t.Status == "active" {
+					if t.Status == statusActive {
 						m.focusTask = t.ID
 						break
 					}
@@ -143,7 +151,7 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mu.Lock()
 			// Cycle focus to next active task
 			for i, t := range m.tasks {
-				if t.Status == "active" && t.ID != m.focusTask {
+				if t.Status == statusActive && t.ID != m.focusTask {
 					m.focusTask = t.ID
 					m.cursor = i
 					break
@@ -160,7 +168,7 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mu.Lock()
 		idx := len(m.tasks)
 		m.tasks = append(m.tasks, TaskState{
-			ID: msg.id, Description: msg.desc, Status: "active",
+			ID: msg.id, Description: msg.desc, Status: statusActive,
 			PoolID: msg.pool, Attempt: 1,
 		})
 		m.taskIndex[msg.id] = idx
@@ -183,9 +191,9 @@ func (m *InteractiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx, ok := m.taskIndex[msg.id]; ok {
 			t := &m.tasks[idx]
 			if msg.success {
-				t.Status = "done"
+				t.Status = statusDone
 			} else {
-				t.Status = "failed"
+				t.Status = statusFailed
 				t.Error = msg.err
 			}
 			t.CostUSD = msg.cost
@@ -261,7 +269,7 @@ func (m *InteractiveModel) viewDashboard() string {
 		if i == m.cursor { cursor = "> " }
 		icon, style := taskIcon(t.Status)
 		line := fmt.Sprintf("%s%s %s: %s", cursor, icon, t.ID, truncStr(t.Description, 45))
-		if t.Status == "active" && t.LastTool != "" {
+		if t.Status == statusActive && t.LastTool != "" {
 			line += dimStyle.Render(fmt.Sprintf(" [%s]", t.LastTool))
 		}
 		if t.CostUSD > 0 {
@@ -374,11 +382,11 @@ func (m *InteractiveModel) viewDetail() string {
 func (m *InteractiveModel) counts() (done, failed, active int) {
 	for _, t := range m.tasks {
 		switch t.Status {
-		case "done":
+		case statusDone:
 			done++
-		case "failed":
+		case statusFailed:
 			failed++
-		case "active":
+		case statusActive:
 			active++
 		}
 	}
@@ -387,11 +395,11 @@ func (m *InteractiveModel) counts() (done, failed, active int) {
 
 func taskIcon(status string) (string, lipgloss.Style) {
 	switch status {
-	case "done":
+	case statusDone:
 		return "✓", doneStyle
-	case "failed":
+	case statusFailed:
 		return "✗", failStyle
-	case "active":
+	case statusActive:
 		return "▸", activeStyle
 	default:
 		return "○", dimStyle

@@ -169,7 +169,7 @@ func (t *Tracker) State() FlowState {
 		file  string
 		count int
 	}
-	var files []fileCount
+	files := make([]fileCount, 0, len(fileActivity))
 	for f, c := range fileActivity {
 		files = append(files, fileCount{f, c})
 	}

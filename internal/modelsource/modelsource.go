@@ -74,6 +74,15 @@ const (
 	SourceDirect     Source = "direct"
 )
 
+// Canonical model family names and concrete vendor model IDs. Centralized
+// so stringly-typed comparisons and alias expansion share one source.
+const (
+	aliasGemini        = "gemini"
+	modelIDGPT5        = "gpt-5"
+	modelIDClaudeSonnet = "claude-sonnet-4-6"
+	modelIDGeminiPro    = "gemini-3.1-pro-preview"
+)
+
 // Config is a fully-resolved model-source spec for one role.
 type Config struct {
 	Role    Role
@@ -196,7 +205,7 @@ func (c Config) Build() (*Resolved, error) {
 				apiKey = firstNonEmpty(os.Getenv("GEMINI_KEY"), os.Getenv("GEMINI_API_KEY"))
 			}
 			return &Resolved{
-				Provider: provider.NewOpenAICompatProviderWithPath("gemini", apiKey, endpoint, "/chat/completions"),
+				Provider: provider.NewOpenAICompatProviderWithPath(aliasGemini, apiKey, endpoint, "/chat/completions"),
 				Model:    modelID,
 				Source:   SourceDirect,
 				Endpoint: endpoint + "/chat/completions",
@@ -224,9 +233,9 @@ func familyFor(modelID, alias string) modelFamily {
 	switch strings.ToLower(strings.TrimSpace(alias)) {
 	case "sonnet", "opus", "haiku":
 		return familyAnthropic
-	case "codex", "gpt", "gpt-5":
+	case "codex", "gpt", modelIDGPT5:
 		return familyOpenAI
-	case "gemini", "flash", "pro":
+	case aliasGemini, "flash", "pro":
 		return familyGemini
 	}
 	// Otherwise inspect the model ID directly. This lets an operator
@@ -262,13 +271,13 @@ func expandModelAlias(in string) string {
 	case "":
 		return ""
 	case "sonnet":
-		return "claude-sonnet-4-6"
+		return modelIDClaudeSonnet
 	case "opus":
 		return "claude-opus-4-6"
 	case "haiku":
 		return "claude-haiku-4-5-20251001"
-	case "gemini", "pro", "gemini-pro", "gemini-3", "gemini-3.1":
-		return "gemini-3.1-pro-preview"
+	case aliasGemini, "pro", "gemini-pro", "gemini-3", "gemini-3.1":
+		return modelIDGeminiPro
 	case "gemini-2.5-pro":
 		// Retained as an explicit alias for callers pinning to the
 		// legacy stable family before its June 2026 shutdown.
@@ -289,9 +298,9 @@ func expandModelAlias(in string) string {
 		// task/integration reviewer. Keep the codex CLI subprocess
 		// path (engine/codex.go) separate; it uses `gpt-5-codex`
 		// directly, bypassing modelsource.
-		return "claude-sonnet-4-6"
-	case "gpt", "gpt-5":
-		return "gpt-5"
+		return modelIDClaudeSonnet
+	case "gpt", modelIDGPT5:
+		return modelIDGPT5
 	case "litellm":
 		// Sentinel value meaning "let the gateway decide"; Build()
 		// clears modelID so the ChatRequest carries whatever
@@ -344,7 +353,7 @@ func ResolveRole(role Role, flagModel, flagSource, flagURL, flagAPIKey, legacyMo
 	// behavior the operator wants from just setting the env var,
 	// without affecting the builder role.
 	if role == RoleReviewer && model == "" && source == "" && os.Getenv("GEMINI_KEY") != "" {
-		model = "gemini"
+		model = aliasGemini
 		source = string(SourceDirect)
 	}
 

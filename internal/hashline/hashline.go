@@ -179,7 +179,7 @@ func (v *Verifier) Verify(req EditRequest) EditResult {
 
 // applyEdit writes the modified file content.
 func applyEdit(tf *TaggedFile, req EditRequest) error {
-	var lines []string
+	lines := make([]string, 0, len(tf.Lines)+len(req.NewContent))
 	for _, l := range tf.Lines[:req.StartLine-1] {
 		lines = append(lines, l.Content)
 	}

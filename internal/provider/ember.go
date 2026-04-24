@@ -90,7 +90,7 @@ func (p *EmberProvider) ChatStream(req ChatRequest, onEvent func(stream.Event)) 
 
 // convertMessages translates provider.ChatMessage to ember.ChatMessage.
 func convertMessages(req ChatRequest) []ember.ChatMessage {
-	var messages []ember.ChatMessage
+	messages := make([]ember.ChatMessage, 0, len(req.Messages)+1)
 
 	// Add system message if present.
 	if req.System != "" {

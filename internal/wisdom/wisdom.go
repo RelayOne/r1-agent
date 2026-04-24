@@ -169,7 +169,7 @@ func (s *Store) AsOf(t time.Time) []Learning {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var result []Learning
+	result := make([]Learning, 0, len(s.learnings))
 	for _, l := range s.learnings {
 		if l.ValidFrom.After(t) {
 			continue // not yet valid at time t

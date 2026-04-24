@@ -485,7 +485,7 @@ func (idx *Index) Files() []string {
 
 // Callers returns all call edges where the given symbol is the callee.
 func (idx *Index) Callers(name string) []CallEdge {
-	var result []CallEdge
+	result := make([]CallEdge, 0, len(idx.calleeMap[name]))
 	for _, i := range idx.calleeMap[name] {
 		result = append(result, idx.calls[i])
 	}
@@ -494,7 +494,7 @@ func (idx *Index) Callers(name string) []CallEdge {
 
 // Callees returns all call edges where the given symbol is the caller.
 func (idx *Index) Callees(name string) []CallEdge {
-	var result []CallEdge
+	result := make([]CallEdge, 0, len(idx.callerMap[name]))
 	for _, i := range idx.callerMap[name] {
 		result = append(result, idx.calls[i])
 	}

@@ -140,7 +140,7 @@ func (g *Graph) ImpactSet(path string) []string {
 	}
 
 	delete(visited, path) // exclude the source file itself
-	var result []string
+	result := make([]string, 0, len(visited))
 	for f := range visited {
 		result = append(result, f)
 	}
@@ -269,15 +269,17 @@ func extractImports(content, ext string) []string {
 }
 
 func extractGoImports(content string) []string {
-	var imports []string
+	singles := goImportSingle.FindAllStringSubmatch(content, -1)
+	blocks := goImportBlock.FindAllStringSubmatch(content, -1)
+	imports := make([]string, 0, len(singles)+len(blocks))
 
 	// Single imports
-	for _, m := range goImportSingle.FindAllStringSubmatch(content, -1) {
+	for _, m := range singles {
 		imports = append(imports, m[1])
 	}
 
 	// Block imports
-	for _, m := range goImportBlock.FindAllStringSubmatch(content, -1) {
+	for _, m := range blocks {
 		for _, line := range goImportLine.FindAllStringSubmatch(m[1], -1) {
 			imports = append(imports, line[1])
 		}
@@ -308,11 +310,13 @@ func extractPyImports(content string) []string {
 }
 
 func extractTSImports(content string) []string {
-	var imports []string
-	for _, m := range tsImport.FindAllStringSubmatch(content, -1) {
+	impMatches := tsImport.FindAllStringSubmatch(content, -1)
+	reqMatches := tsRequire.FindAllStringSubmatch(content, -1)
+	imports := make([]string, 0, len(impMatches)+len(reqMatches))
+	for _, m := range impMatches {
 		imports = append(imports, m[1])
 	}
-	for _, m := range tsRequire.FindAllStringSubmatch(content, -1) {
+	for _, m := range reqMatches {
 		imports = append(imports, m[1])
 	}
 	return dedup(imports)

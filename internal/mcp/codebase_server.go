@@ -34,6 +34,20 @@ import (
 	"github.com/ericmacdougall/stoke/internal/vecindex"
 )
 
+// Error messages returned when a backing index/graph is not loaded.
+// Kept centralized so we emit a consistent, greppable string everywhere.
+const (
+	msgSymbolIndexUnavailable = "Symbol index not available"
+	msgDepGraphUnavailable    = "Dependency graph not available"
+)
+
+// MCP JSON-RPC 2.0 method names handled by CodebaseServer.
+const (
+	mcpMethodInitialize = "initialize"
+	mcpMethodToolsList  = "tools/list"
+	mcpMethodToolsCall  = "tools/call"
+)
+
 // CodebaseServer is an MCP tool server that exposes codebase analysis.
 type CodebaseServer struct {
 	symIdx   *symindex.Index
@@ -313,7 +327,7 @@ func (s *CodebaseServer) handleSearchSymbols(args map[string]interface{}) (strin
 	kindFilter, _ := args["kind"].(string)
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	results := s.symIdx.Search(query)
@@ -354,7 +368,7 @@ func (s *CodebaseServer) handleGetDependencies(args map[string]interface{}) (str
 	}
 
 	if s.depGraph == nil {
-		return "Dependency graph not available", nil
+		return msgDepGraphUnavailable, nil
 	}
 
 	deps := s.depGraph.Dependencies(file)
@@ -431,7 +445,7 @@ func (s *CodebaseServer) handleGetFileSymbols(args map[string]interface{}) (stri
 	}
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	symbols := s.symIdx.InFile(file)
@@ -457,7 +471,7 @@ func (s *CodebaseServer) handleImpactAnalysis(args map[string]interface{}) (stri
 	}
 
 	if s.depGraph == nil {
-		return "Dependency graph not available", nil
+		return msgDepGraphUnavailable, nil
 	}
 
 	impact := s.depGraph.ImpactSet(file)
@@ -499,7 +513,7 @@ func (s *CodebaseServer) handleFindSymbolUsages(args map[string]interface{}) (st
 	}
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	// Find the definition(s) of this symbol
@@ -579,7 +593,7 @@ func (s *CodebaseServer) handleTraceEntryPoints(args map[string]interface{}) (st
 	}
 
 	if s.depGraph == nil {
-		return "Dependency graph not available", nil
+		return msgDepGraphUnavailable, nil
 	}
 
 	roots := s.depGraph.Roots()
@@ -805,7 +819,7 @@ func (s *CodebaseServer) handleGetCallGraph(args map[string]interface{}) (string
 	}
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	var sb strings.Builder
@@ -857,7 +871,7 @@ func (s *CodebaseServer) handleGetInterfaceImplementations(args map[string]inter
 	}
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	implementors := s.symIdx.Implementors(ifaceName)
@@ -891,7 +905,7 @@ func (s *CodebaseServer) handleGetSymbolDetail(args map[string]interface{}) (str
 	}
 
 	if s.symIdx == nil {
-		return "Symbol index not available", nil
+		return msgSymbolIndexUnavailable, nil
 	}
 
 	syms := s.symIdx.Lookup(name)
@@ -960,7 +974,7 @@ func (s *CodebaseServer) ServeStdio() error {
 		}
 
 		switch req.Method {
-		case "initialize":
+		case mcpMethodInitialize:
 			writeJSONRPC(os.Stdout, req.ID, map[string]interface{}{
 				"protocolVersion": "2024-11-05",
 				"capabilities": map[string]interface{}{
@@ -975,7 +989,7 @@ func (s *CodebaseServer) ServeStdio() error {
 		case "notifications/initialized":
 			// No response needed for notifications
 
-		case "tools/list":
+		case mcpMethodToolsList:
 			tools := s.ToolDefinitions()
 			var toolList []map[string]interface{}
 			for _, t := range tools {
@@ -989,7 +1003,7 @@ func (s *CodebaseServer) ServeStdio() error {
 				"tools": toolList,
 			}, nil)
 
-		case "tools/call":
+		case mcpMethodToolsCall:
 			var params struct {
 				Name      string                 `json:"name"`
 				Arguments map[string]interface{} `json:"arguments"`

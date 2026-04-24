@@ -56,7 +56,7 @@ func (p *Pipeline) Commands() (build, test, lint string) {
 // When an execution environment is configured via WithEnvironment, commands run
 // inside that environment. Otherwise they run directly on the host via os/exec.
 func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
-	var outcomes []Outcome
+	outcomes := make([]Outcome, 0, 3)
 	var hadFailure bool
 	for _, item := range []struct {
 		name string

@@ -59,6 +59,14 @@ const (
 	TrustUntrusted = "untrusted"
 )
 
+// Transport identifiers recognized by defaultTransportFactory. Kept as
+// constants so the switch, default-rewrite, and transport constructor
+// agree on spelling.
+const (
+	TransportStdio = "stdio"
+	TransportSSE   = "sse"
+)
+
 // Config is the parsed MCP section of stoke.policy.yaml. MCP-11
 // owns the yaml→struct parse; this package only reads the already-
 // materialized Config. Keeping it here (rather than importing from
@@ -151,23 +159,23 @@ func currentTransportFactory() transportFactory {
 // advertise the legacy SSE endpoint.
 func defaultTransportFactory(cfg ServerConfig) (Client, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Transport)) {
-	case "stdio", "":
+	case TransportStdio, "":
 		// Default to stdio when unset so a minimal config with just
 		// Name + Command works out of the box. An empty Command is
 		// caught inside NewStdioTransport.
 		c := cfg
 		if c.Transport == "" {
-			c.Transport = "stdio"
+			c.Transport = TransportStdio
 		}
 		return NewStdioTransport(c)
-	case "sse", "http", "streamable_http", "streamable-http":
+	case TransportSSE, "http", "streamable_http", "streamable-http":
 		// Normalize the synonyms into the transport constructor's
 		// accepted vocabulary. SSETransport accepts "sse" and "http";
 		// callers who set "streamable_http" today get routed onto
 		// the SSE transport with the deprecation warning (matches
 		// spec §Transport Details → SSE back-compat).
 		c := cfg
-		c.Transport = "sse"
+		c.Transport = TransportSSE
 		return NewSSETransport(c)
 	default:
 		return nil, fmt.Errorf("mcp registry: unsupported transport %q for server %q", cfg.Transport, cfg.Name)

@@ -244,7 +244,7 @@ func (t *Tracker) Children(ctx context.Context, loopID string) ([]string, error)
 		return nil, fmt.Errorf("loops: walk children for %s: %w", loopID, err)
 	}
 
-	var children []string
+	children := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if n.ID == loopID {
 			continue
@@ -266,7 +266,7 @@ func (t *Tracker) ParentChain(ctx context.Context, loopID string) ([]string, err
 		return nil, fmt.Errorf("loops: walk parents for %s: %w", loopID, err)
 	}
 
-	var parents []string
+	parents := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if n.ID == loopID {
 			continue
@@ -293,7 +293,7 @@ func (t *Tracker) ActiveLoops(ctx context.Context, missionID string) ([]LoopInfo
 	// A root loop is one where no other loop supersedes it — i.e., it's the
 	// original node ID the user would reference.
 	seen := map[string]bool{}
-	var rootIDs []string
+	rootIDs := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if seen[n.ID] {
 			continue
@@ -303,7 +303,7 @@ func (t *Tracker) ActiveLoops(ctx context.Context, missionID string) ([]LoopInfo
 	}
 
 	// For each root, resolve and check if terminal.
-	var active []LoopInfo
+	active := make([]LoopInfo, 0, len(rootIDs))
 	for _, id := range rootIDs {
 		info, err := t.Get(ctx, id)
 		if err != nil {

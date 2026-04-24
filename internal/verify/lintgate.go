@@ -91,7 +91,7 @@ func (lg *LintGate) Check(ctx context.Context, dir, filePath string) LintResult 
 // CheckMultiple runs lint checks on multiple files.
 // Returns all results and whether all passed.
 func (lg *LintGate) CheckMultiple(ctx context.Context, dir string, files []string) ([]LintResult, bool) {
-	var results []LintResult
+	results := make([]LintResult, 0, len(files))
 	allPassed := true
 
 	for _, f := range files {

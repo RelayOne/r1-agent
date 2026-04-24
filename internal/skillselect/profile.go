@@ -74,7 +74,7 @@ func (p *RepoProfile) Tags() []string {
 	for _, s := range p.TestFrameworks {
 		all[strings.ToLower(s)] = true
 	}
-	var out []string
+	out := make([]string, 0, len(all))
 	for k := range all {
 		out = append(out, k)
 	}

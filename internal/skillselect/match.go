@@ -67,7 +67,7 @@ func MatchSkills(p *RepoProfile) []string {
 		Name  string
 		Score int
 	}
-	var sorted []kv
+	sorted := make([]kv, 0, len(scored))
 	for k, v := range scored {
 		sorted = append(sorted, kv{k, v})
 	}

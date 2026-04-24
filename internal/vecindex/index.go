@@ -125,7 +125,7 @@ func (idx *Index) Search(query Vector, k int) []SearchResult {
 		score float64
 	}
 
-	var results []scored
+	results := make([]scored, 0, len(idx.docs))
 	for i, doc := range idx.docs {
 		score := CosineSimilarity(query, doc.Vector)
 		results = append(results, scored{i, score})

@@ -64,11 +64,11 @@ type Case struct {
 // single malformed case doesn't sink the whole evaluation. The
 // returned slice is sorted by Case.ID for reproducibility.
 func LoadCorpus(dir string) ([]Case, error) {
-	var cases []Case
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("reviewereval: read corpus dir %s: %w", dir, err)
 	}
+	cases := make([]Case, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

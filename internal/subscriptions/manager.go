@@ -68,7 +68,7 @@ func (m *Manager) Acquire(provider Provider, taskID string) (Pool, error) {
 	defer m.mu.Unlock()
 
 	now := time.Now()
-	var candidates []int // indices into m.pools
+	candidates := make([]int, 0, len(m.pools)) // indices into m.pools
 
 	for i := range m.pools {
 		p := &m.pools[i]
@@ -164,7 +164,7 @@ func (m *Manager) AcquireExcluding(provider Provider, taskID string, exclude map
 	defer m.mu.Unlock()
 
 	now := time.Now()
-	var candidates []int
+	candidates := make([]int, 0, len(m.pools))
 
 	for i := range m.pools {
 		p := &m.pools[i]

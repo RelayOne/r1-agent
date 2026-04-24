@@ -135,7 +135,7 @@ func (c *Compactor) Compact(sections []Section) CompactResult {
 	c.prefixHash = newHash
 
 	// Build output: static sections first (verbatim)
-	var out []OutputSection
+	out := make([]OutputSection, 0, len(statics))
 	for _, s := range statics {
 		out = append(out, OutputSection{
 			Label:   s.Label,
@@ -249,7 +249,7 @@ func EstimateTokens(text string) int {
 
 // BuildSections creates Section objects from labeled content blocks.
 func BuildSections(blocks map[string]string, staticLabels map[string]bool, priorities map[string]int) []Section {
-	var sections []Section
+	sections := make([]Section, 0, len(blocks))
 	for label, content := range blocks {
 		tokens := EstimateTokens(content)
 		priority := priorities[label] // 0 if not set

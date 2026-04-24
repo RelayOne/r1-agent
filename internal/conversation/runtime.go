@@ -175,7 +175,7 @@ func (r *Runtime) PendingToolUses() []ContentBlock {
 		}
 	}
 
-	var pending []ContentBlock
+	pending := make([]ContentBlock, 0, len(toolUseIDs))
 	for _, block := range toolUseIDs {
 		pending = append(pending, block)
 	}

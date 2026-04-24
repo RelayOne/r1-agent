@@ -13,13 +13,16 @@ import (
 	"github.com/ericmacdougall/stoke/internal/atomicfs"
 )
 
+// gitHEAD is the conventional git reference for the tip of the current branch.
+const gitHEAD = "HEAD"
+
 // ModifiedFiles returns ALL files changed in a worktree vs the task branch base.
 // Uses --name-status with -M for BOTH committed AND staged diffs to capture
 // both sides of renames. FAIL-CLOSED: returns error if any git command fails.
 func ModifiedFiles(ctx context.Context, handle Handle) ([]string, error) {
 	base := handle.BaseCommit
 	if base == "" {
-		base = "HEAD"
+		base = gitHEAD
 	}
 
 	seen := map[string]bool{}
@@ -115,7 +118,7 @@ func IgnoredNewFiles(ctx context.Context, handle Handle) []string {
 func DiffSummary(ctx context.Context, handle Handle) string {
 	base := handle.BaseCommit
 	if base == "" {
-		base = "HEAD"
+		base = gitHEAD
 	}
 
 	var parts []string
@@ -247,7 +250,7 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	treeSHA := strings.TrimSpace(string(treeOut))
 
 	// 3. Get current HEAD for parent linkage
-	headCmd := exec.CommandContext(ctx, handle.GitBinary, "rev-parse", "HEAD")
+	headCmd := exec.CommandContext(ctx, handle.GitBinary, "rev-parse", gitHEAD)
 	headCmd.Dir = handle.Path
 	headOut, err := headCmd.Output()
 	if err != nil {
@@ -272,7 +275,7 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	refCmd.CombinedOutput() // best effort; snapshot SHA is still valid even if ref fails
 
 	// 6. Reset the index back to HEAD (so subsequent git operations see clean index)
-	readTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "read-tree", "HEAD")
+	readTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "read-tree", gitHEAD)
 	readTreeCmd.Dir = handle.Path
 	readTreeCmd.CombinedOutput() // best effort
 
@@ -421,7 +424,7 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 
 // ValidateMerge runs git merge-tree to check for conflicts without side effects.
 func ValidateMerge(ctx context.Context, handle Handle) error {
-	cmd := exec.CommandContext(ctx, handle.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch)
+	cmd := exec.CommandContext(ctx, handle.GitBinary, "merge-tree", "--write-tree", gitHEAD, handle.Branch)
 	cmd.Dir = handle.RepoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -468,7 +471,7 @@ func TreeSHA(ctx context.Context, handle Handle) (string, error) {
 // MainHeadSHA returns the current HEAD commit SHA of the main branch.
 // Returns empty string on error (non-fatal).
 func MainHeadSHA(ctx context.Context, repoRoot string) string {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "HEAD")
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", gitHEAD)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

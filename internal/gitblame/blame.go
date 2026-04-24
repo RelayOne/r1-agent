@@ -98,7 +98,7 @@ func (fb *FileBlame) Authors() []AuthorStat {
 		counts[l.Author]++
 	}
 
-	var stats []AuthorStat
+	stats := make([]AuthorStat, 0, len(counts))
 	for author, count := range counts {
 		stats = append(stats, AuthorStat{
 			Author:     author,
@@ -157,7 +157,7 @@ func (fb *FileBlame) AuthorsInRange(start, end int) []string {
 			seen[l.Author] = true
 		}
 	}
-	var authors []string
+	authors := make([]string, 0, len(seen))
 	for a := range seen {
 		authors = append(authors, a)
 	}
