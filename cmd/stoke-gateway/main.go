@@ -41,6 +41,13 @@ import (
 var version = "dev"
 
 func main() {
+	if err := run(); err != nil {
+		log.Printf("gateway: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	var (
 		httpAddr = flag.String("http", "127.0.0.1:4040", "HTTP bind address for the gateway's local-dev loopback")
 		secret   = flag.String("secret", "", "HMAC secret for pairing tokens (empty auto-generates; not stable across restarts)")
@@ -49,7 +56,7 @@ func main() {
 	flag.Parse()
 	if *showVer {
 		fmt.Println("stoke-gateway", version)
-		return
+		return nil
 	}
 
 	router := gateway.NewRouter([]byte(*secret))
@@ -110,7 +117,7 @@ func main() {
 	}()
 
 	if err := router.StartAll(ctx, handler); err != nil && ctx.Err() == nil {
-		log.Printf("gateway: %v", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }

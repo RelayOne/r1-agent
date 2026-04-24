@@ -54,34 +54,40 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "r1-server: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	var (
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(Version)
-		return
+		return nil
 	}
 
 	dataDir, err := ensureDataDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "r1-server: %v\n", err)
-		os.Exit(1)
+		return err
+	}
+
+	// Resolve port before opening the log file so a bad
+	// R1_SERVER_PORT doesn't leave a dangling file handle.
+	port, err := resolvePort()
+	if err != nil {
+		return fmt.Errorf("resolve port: %w", err)
 	}
 
 	logger, logFile, err := openLogger(dataDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "r1-server: open log: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("open log: %w", err)
 	}
 	defer logFile.Close()
 	slog.SetDefault(logger)
-
-	port, err := resolvePort()
-	if err != nil {
-		logger.Error("resolve port", "err", err)
-		os.Exit(1)
-	}
 
 	// Single-instance guard (RS-2 item 7). Bind the listener BEFORE
 	// opening the DB so a second instance exits without touching the
@@ -93,14 +99,14 @@ func main() {
 			"r1-server: cannot bind :%d — another r1-server may be running (%v)\n",
 			port, err)
 		logger.Error("bind listener", "port", port, "err", err)
-		os.Exit(1)
+		return fmt.Errorf("bind :%d: %w", port, err)
 	}
 
 	db, err := OpenDB(dataDir)
 	if err != nil {
 		ln.Close()
 		logger.Error("open db", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer db.Close()
 
@@ -163,9 +169,9 @@ func main() {
 	case err := <-errCh:
 		if err != nil {
 			logger.Error("serve", "err", err)
-			os.Exit(1)
+			return fmt.Errorf("serve: %w", err)
 		}
-		return
+		return nil
 	case <-shutdownCtx.Done():
 	}
 
@@ -179,6 +185,7 @@ func main() {
 	scanner.Wait()
 	sweepWG.Wait()
 	logger.Info("shutdown complete")
+	return nil
 }
 
 // resolvePort reads R1_SERVER_PORT and falls back to the default.

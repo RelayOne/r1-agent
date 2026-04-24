@@ -109,6 +109,13 @@ func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) 
 // --- create ---
 
 func missionCreateCmd(args []string) {
+	if err := runMissionCreate(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionCreate(args []string) error {
 	fs := flag.NewFlagSet("mission create", flag.ExitOnError)
 	title := fs.String("title", "", "Short mission title (required)")
 	intent := fs.String("intent", "", "Full user intent description (required)")
@@ -117,15 +124,13 @@ func missionCreateCmd(args []string) {
 	fs.Parse(args)
 
 	if *title == "" || *intent == "" {
-		fmt.Fprintln(os.Stderr, "Error: --title and --intent are required")
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("--title and --intent are required")
 	}
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
@@ -141,8 +146,7 @@ func missionCreateCmd(args []string) {
 
 	m, err := orch.CreateMission(*title, *intent, criteriaList)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Printf("Created mission %s\n", m.ID)
@@ -152,11 +156,19 @@ func missionCreateCmd(args []string) {
 	for _, c := range m.Criteria {
 		fmt.Printf("    %s: %s\n", c.ID, c.Description)
 	}
+	return nil
 }
 
 // --- list ---
 
 func missionListCmd(args []string) {
+	if err := runMissionList(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionList(args []string) error {
 	fs := flag.NewFlagSet("mission list", flag.ExitOnError)
 	phase := fs.String("phase", "", "Filter by phase (created, executing, validating, etc.)")
 	jsonOut := fs.Bool("json", false, "Output as JSON")
@@ -165,27 +177,24 @@ func missionListCmd(args []string) {
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
 	missions, err := orch.ListMissions(mission.Phase(*phase))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(missions)
-		return
+		return enc.Encode(missions)
 	}
 
 	if len(missions) == 0 {
 		fmt.Println("No missions found.")
-		return
+		return nil
 	}
 
 	fmt.Printf("%-20s %-12s %-40s %s\n", "ID", "PHASE", "TITLE", "CRITERIA")
@@ -203,11 +212,19 @@ func missionListCmd(args []string) {
 			truncateField(m.Title, 40),
 			satisfied, len(m.Criteria))
 	}
+	return nil
 }
 
 // --- status ---
 
 func missionStatusCmd(args []string) {
+	if err := runMissionStatus(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionStatus(args []string) error {
 	fs := flag.NewFlagSet("mission status", flag.ExitOnError)
 	id := fs.String("id", "", "Mission ID (required)")
 	jsonOut := fs.Bool("json", false, "Output as JSON")
@@ -215,37 +232,32 @@ func missionStatusCmd(args []string) {
 	fs.Parse(args)
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "Error: --id is required")
-		os.Exit(1)
+		return fmt.Errorf("--id is required")
 	}
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
 	m, err := orch.GetMission(*id)
 	if err != nil || m == nil {
-		fmt.Fprintf(os.Stderr, "Error: mission %q not found\n", *id)
-		os.Exit(1)
+		return fmt.Errorf("mission %q not found", *id)
 	}
 
 	status, err := orch.CheckConvergence(*id)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(map[string]interface{}{
+		return enc.Encode(map[string]interface{}{
 			"mission": m,
 			"status":  status,
 		})
-		return
 	}
 
 	fmt.Printf("Mission: %s\n", m.Title)
@@ -269,11 +281,19 @@ func missionStatusCmd(args []string) {
 	fmt.Printf("Consensus: %d votes (%d complete)\n", status.ConsensusCount, status.CompleteVotes)
 	fmt.Printf("Converged: %v\n", status.IsConverged)
 	fmt.Printf("Consensus: %v\n", status.HasConsensus)
+	return nil
 }
 
 // --- advance ---
 
 func missionAdvanceCmd(args []string) {
+	if err := runMissionAdvance(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionAdvance(args []string) error {
 	fs := flag.NewFlagSet("mission advance", flag.ExitOnError)
 	id := fs.String("id", "", "Mission ID (required)")
 	phase := fs.String("phase", "", "Target phase (required)")
@@ -283,28 +303,37 @@ func missionAdvanceCmd(args []string) {
 	fs.Parse(args)
 
 	if *id == "" || *phase == "" {
-		fmt.Fprintln(os.Stderr, "Error: --id and --phase are required")
-		os.Exit(1)
+		return fmt.Errorf("--id and --phase are required")
 	}
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
 	if err := orch.AdvanceMission(*id, mission.Phase(*phase), *reason, *agent); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Printf("Advanced mission %s to phase %s\n", *id, *phase)
+	return nil
 }
 
 // --- run ---
 
 func missionRunCmd(args []string) {
+	failed, err := runMissionRun(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if failed {
+		os.Exit(1)
+	}
+}
+
+func runMissionRun(args []string) (bool, error) {
 	fs := flag.NewFlagSet("mission run", flag.ExitOnError)
 	id := fs.String("id", "", "Mission ID (required)")
 	maxLoops := fs.Int("max-loops", 5, "Maximum convergence loop iterations")
@@ -316,14 +345,12 @@ func missionRunCmd(args []string) {
 	fs.Parse(args)
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "Error: --id is required")
-		os.Exit(1)
+		return false, fmt.Errorf("--id is required")
 	}
 
 	orch, de, err := getOrchestratorWithDiscovery(*storeDir, *claudeBin, *noDiscovery)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return false, err
 	}
 	defer orch.Close()
 	if de != nil {
@@ -347,7 +374,7 @@ func missionRunCmd(args []string) {
 
 	runner, err := orch.NewRunner(config)
 	if err != nil {
-		fatal("create runner: %v", err)
+		return false, fmt.Errorf("create runner: %v", err)
 	}
 
 	var ctx context.Context
@@ -361,8 +388,7 @@ func missionRunCmd(args []string) {
 
 	result, err := runner.Run(ctx, *id)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return false, err
 	}
 
 	fmt.Println()
@@ -371,14 +397,19 @@ func missionRunCmd(args []string) {
 	fmt.Printf("Conv loops:  %d\n", result.ConvergenceLoops)
 	fmt.Printf("Duration:    %s\n", result.TotalDuration.Round(time.Millisecond))
 
-	if result.IsFailed() {
-		os.Exit(1)
-	}
+	return result.IsFailed(), nil
 }
 
 // --- context ---
 
 func missionContextCmd(args []string) {
+	if err := runMissionContext(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionContext(args []string) error {
 	fs := flag.NewFlagSet("mission context", flag.ExitOnError)
 	id := fs.String("id", "", "Mission ID (required)")
 	maxTokens := fs.Int("max-tokens", 4000, "Maximum token budget")
@@ -386,14 +417,12 @@ func missionContextCmd(args []string) {
 	fs.Parse(args)
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "Error: --id is required")
-		os.Exit(1)
+		return fmt.Errorf("--id is required")
 	}
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
@@ -402,16 +431,23 @@ func missionContextCmd(args []string) {
 
 	ctx, err := orch.BuildAgentContext(*id, config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Print(ctx)
+	return nil
 }
 
 // --- findings ---
 
 func missionFindingsCmd(args []string) {
+	if err := runMissionFindings(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMissionFindings(args []string) error {
 	fs := flag.NewFlagSet("mission findings", flag.ExitOnError)
 	id := fs.String("id", "", "Mission ID (required)")
 	severity := fs.String("severity", "", "Filter by severity: blocking, major, minor, info")
@@ -422,22 +458,19 @@ func missionFindingsCmd(args []string) {
 	fs.Parse(args)
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "Error: --id is required")
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("--id is required")
 	}
 
 	orch, err := getOrchestrator(*storeDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer orch.Close()
 
 	m, err := orch.GetMission(*id)
 	if err != nil || m == nil {
-		fmt.Fprintf(os.Stderr, "Error: mission %q not found\n", *id)
-		os.Exit(1)
+		return fmt.Errorf("mission %q not found", *id)
 	}
 
 	var gaps []mission.Gap
@@ -447,8 +480,7 @@ func missionFindingsCmd(args []string) {
 		gaps, err = orch.OpenGaps(*id)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Apply filters
@@ -466,13 +498,12 @@ func missionFindingsCmd(args []string) {
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(map[string]interface{}{
+		return enc.Encode(map[string]interface{}{
 			"mission_id": m.ID,
 			"findings":   filtered,
 			"count":      len(filtered),
 			"total":      len(gaps),
 		})
-		return
 	}
 
 	fmt.Printf("Mission: %s (%s)\n", m.Title, m.ID)
@@ -489,7 +520,7 @@ func missionFindingsCmd(args []string) {
 
 	if len(filtered) == 0 {
 		fmt.Println("  No findings.")
-		return
+		return nil
 	}
 
 	// Group by severity for display
@@ -529,6 +560,7 @@ func missionFindingsCmd(args []string) {
 		}
 		fmt.Println()
 	}
+	return nil
 }
 
 func severityIcon(sev string) string {

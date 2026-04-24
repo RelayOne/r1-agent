@@ -41,14 +41,15 @@ func browseCmd(args []string) {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 	d, err := ex.Execute(ctx, plan, executor.EffortStandard)
 	if err != nil {
+		cancel()
 		fmt.Fprintf(os.Stderr, "browse: %v\n", err)
 		os.Exit(1)
 	}
 	bd, ok := d.(executor.BrowserDeliverable)
 	if !ok {
+		cancel()
 		fmt.Fprintf(os.Stderr, "browse: executor returned unexpected deliverable type %T\n", d)
 		os.Exit(1)
 	}
@@ -89,6 +90,7 @@ func browseCmd(args []string) {
 		}
 		fmt.Printf("  %s %s — %s\n", mark, ac.ID, reason)
 	}
+	cancel()
 	if r.Status < 200 || r.Status >= 300 {
 		os.Exit(2)
 	}

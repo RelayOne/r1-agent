@@ -222,9 +222,10 @@ func renderInspectHuman(repo string, ecos []string, hyg *plan.HygieneReport, int
 
 	// Hygiene section.
 	fmt.Println("workspace hygiene:")
-	if hyg == nil {
+	switch {
+	case hyg == nil:
 		fmt.Println("  (no report)")
-	} else if fixApplied {
+	case fixApplied:
 		fmt.Printf("  auto-fixed: %d\n", len(hyg.AutoFixed))
 		for _, f := range hyg.AutoFixed {
 			fmt.Printf("    + [%s] %s — %s\n", f.Kind, f.Package, f.Detail)
@@ -233,7 +234,7 @@ func renderInspectHuman(repo string, ecos []string, hyg *plan.HygieneReport, int
 		for _, f := range hyg.Remaining {
 			fmt.Printf("    - [%s] %s — %s\n", f.Kind, f.Package, f.Detail)
 		}
-	} else {
+	default:
 		pre := hyg.PreFix
 		if len(pre) == 0 {
 			fmt.Println("  clean (0 findings)")
@@ -252,14 +253,15 @@ func renderInspectHuman(repo string, ecos []string, hyg *plan.HygieneReport, int
 
 	// Integration section.
 	fmt.Println("integration review:")
-	if integ == nil {
+	switch {
+	case integ == nil:
 		fmt.Println("  (skipped — no provider or --agent=false)")
-	} else if len(integ.Gaps) == 0 {
+	case len(integ.Gaps) == 0:
 		fmt.Println("  clean (0 cross-file gaps)")
 		if integ.Summary != "" {
 			fmt.Printf("  %s\n", integ.Summary)
 		}
-	} else {
+	default:
 		fmt.Printf("  %d cross-file gap(s):\n", len(integ.Gaps))
 		for i, g := range integ.Gaps {
 			fmt.Printf("    %d. [%s] %s\n", i+1, g.Kind, g.Location)

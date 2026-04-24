@@ -503,7 +503,7 @@ func resolveBundlePath(outputPath, sessionID, merkleRoot string) (string, error)
 	ext := filepath.Ext(base)
 	if ext == "" {
 		ext = ".tracebundle"
-		base = base + ext
+		base += ext
 	}
 	trimmed := strings.TrimSuffix(base, ext)
 	// Avoid double-insertion if the caller already baked in a merkle

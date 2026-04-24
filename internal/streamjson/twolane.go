@@ -94,8 +94,7 @@ func isCriticalType(eventType, subtype string) bool {
 	case TypeHITLRequired, TypeError, TypeComplete, TypeMissionAborted:
 		return true
 	}
-	switch subtype {
-	case "task.complete":
+	if subtype == "task.complete" {
 		return true
 	}
 	return false

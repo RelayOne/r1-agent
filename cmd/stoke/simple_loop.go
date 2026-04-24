@@ -1297,7 +1297,8 @@ func simpleLoopCmd(args []string) {
 
 	// Final summary
 	fmt.Println("\n═══════════════════════════════════════")
-	if plateauAborted {
+	switch {
+	case plateauAborted:
 		fmt.Println("  SIMPLE LOOP PARTIAL-SUCCESS — plateau reached")
 		fmt.Printf("  repo: %s\n", absRepo)
 		fmt.Printf("  gap-count trajectory: %v (best=%d)\n",
@@ -1307,7 +1308,7 @@ func simpleLoopCmd(args []string) {
 		fmt.Println("  real code shipped to main; run `git log --oneline` to audit.")
 		fmt.Println("  next step: review the diff, merge what's good, re-scope the")
 		fmt.Println("  remaining gaps into a tighter SOW, and relaunch.")
-	} else if step8Aborted {
+	case step8Aborted:
 		fmt.Println("  SIMPLE LOOP ABORTED — Step-8 regression cap reached")
 		fmt.Printf("  repo: %s\n", absRepo)
 		fmt.Printf("  consecutive gap-closure failures: %d (cap %d)\n",
@@ -1316,7 +1317,7 @@ func simpleLoopCmd(args []string) {
 			formatGapList(step8Tracker.LastGaps()))
 		fmt.Println("  next step: relaunch stoke simple-loop OR extend the SOW")
 		fmt.Println("  to give the builder a materially different prompt.")
-	} else {
+	default:
 		fmt.Println("  SIMPLE LOOP COMPLETE")
 		fmt.Printf("  repo: %s\n", absRepo)
 		fmt.Println("  run 'stoke sessions status' to see results")

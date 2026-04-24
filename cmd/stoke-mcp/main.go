@@ -96,12 +96,18 @@ type Server struct {
 }
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "stoke-mcp:", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	apiKey := os.Getenv("STOKE_MCP_KEY")
 	ledgerDir := os.Getenv("STOKE_MCP_LEDGER_DIR")
 	backends, err := NewBackends(ledgerDir)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp: init backends:", err)
-		os.Exit(1)
+		return fmt.Errorf("init backends: %w", err)
 	}
 	defer backends.Close()
 	registered, skipped := backends.SeedBuiltinSkillManifests()
@@ -112,10 +118,7 @@ func main() {
 		requireKey: apiKey != "",
 		backends:   backends,
 	}
-	if err := srv.serve(os.Stdin); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp:", err)
-		os.Exit(1)
-	}
+	return srv.serve(os.Stdin)
 }
 
 // serve is the main RPC loop.

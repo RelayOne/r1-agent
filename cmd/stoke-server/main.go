@@ -311,7 +311,7 @@ var funcMap = template.FuncMap{
 			return fmt.Sprintf("%.1fMB", float64(n)/(1024*1024))
 		}
 	},
-	"baseName": func(s string) string { return filepath.Base(s) },
+	"baseName": filepath.Base,
 }
 
 var indexTmpl = template.Must(template.New("index").Funcs(funcMap).Parse(`<!doctype html>

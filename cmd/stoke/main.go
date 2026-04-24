@@ -4052,7 +4052,7 @@ func scanCmd(args []string) {
 		secMap, _ := scanpkg.MapSecuritySurface(absRepo, nil)
 		if secMap != nil && len(secMap.Surfaces) > 0 {
 			fmt.Printf("\n  Security surface (%d files):\n", secMap.FilesScanned)
-			fmt.Printf("  %s\n", strings.Replace(secMap.Summary(), "\n", "\n  ", -1))
+			fmt.Printf("  %s\n", strings.ReplaceAll(secMap.Summary(), "\n", "\n  "))
 		}
 	}
 
@@ -4170,7 +4170,7 @@ func auditCmd(args []string) {
 		}
 		fmt.Printf(" done ($%.4f)\n", result.CostUSD)
 		if result.ResultText != "" {
-			fmt.Printf("    %s\n\n", strings.Replace(result.ResultText, "\n", "\n    ", -1))
+			fmt.Printf("    %s\n\n", strings.ReplaceAll(result.ResultText, "\n", "\n    "))
 		}
 	}
 
@@ -4350,6 +4350,16 @@ func cloudCmd(args []string) {
 // Honors the "un-managed-first" commitment: every feature
 // continues to work without this command having been run.
 func cloudRegisterCmd() {
+	code, err := runCloudRegister()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stoke cloud register:", err)
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runCloudRegister() (int, error) {
 	apiKey := strings.TrimSpace(os.Getenv("STOKE_CLOUD_API_KEY"))
 	endpoint := strings.TrimSpace(os.Getenv("STOKE_CLOUD_ENDPOINT"))
 	if endpoint == "" {
@@ -4363,7 +4373,7 @@ func cloudRegisterCmd() {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Cloud registration is OPT-IN. Stoke works fully self-hosted")
 		fmt.Fprintln(os.Stderr, "without this command.")
-		os.Exit(2)
+		return 2, nil
 	}
 
 	client := cloud.New(endpoint, "")
@@ -4371,8 +4381,7 @@ func cloudRegisterCmd() {
 	defer cancel()
 	resp, err := client.Register(ctx, apiKey)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stoke cloud register:", err)
-		os.Exit(1)
+		return 1, err
 	}
 	cfg := &cloud.ConfigFile{
 		Endpoint: endpoint,
@@ -4382,12 +4391,12 @@ func cloudRegisterCmd() {
 		Status:   resp.Status,
 	}
 	if err := cloud.Save(cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke cloud register: save config:", err)
-		os.Exit(1)
+		return 1, fmt.Errorf("save config: %w", err)
 	}
 	path, _ := cloud.ConfigPath()
 	fmt.Printf("stoke cloud: linked %s (org %s, status %s)\n  config saved to %s\n",
 		resp.UserID, resp.OrgID, resp.Status, path)
+	return 0, nil
 }
 
 // cloudStatusCmd reads ~/.stoke/cloud.json (if present) and
@@ -5722,7 +5731,8 @@ func launchREPL() {
 		Run: func(args string) {
 			arg := strings.TrimSpace(args)
 			var sowText string
-			if arg != "" && !strings.HasPrefix(arg, "{") {
+			switch {
+			case arg != "" && !strings.HasPrefix(arg, "{"):
 				// Treat as a file path
 				path := arg
 				if !filepath.IsAbs(path) {
@@ -5735,10 +5745,10 @@ func launchREPL() {
 				}
 				sowText = string(data)
 				fmt.Printf("  Loaded SOW from %s (%d bytes)\n", path, len(sowText))
-			} else if strings.HasPrefix(arg, "{") {
+			case strings.HasPrefix(arg, "{"):
 				// Inline JSON on the command line
 				sowText = arg
-			} else {
+			default:
 				// Heredoc paste mode
 				fmt.Println("  Paste your SOW (JSON or YAML), then type END on a blank line:")
 				scanner := bufio.NewScanner(os.Stdin)
@@ -5961,13 +5971,20 @@ var (
 // /interview flow) don't work in full-screen mode yet — the TUI owns
 // stdin. Users who need interactive commands should use the line REPL.
 func launchShell(args []string) {
+	if err := runLaunchShell(args); err != nil {
+		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runLaunchShell(args []string) error {
 	fs := flag.NewFlagSet("tui", flag.ExitOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	fs.Parse(args)
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {
-		fatal("resolve repo: %v", err)
+		return fmt.Errorf("resolve repo: %v", err)
 	}
 
 	// CDC-15: stand up the operator-control socket so `stoke status /
@@ -6027,10 +6044,7 @@ func launchShell(args []string) {
 	}
 
 	shell := tui.NewShell(cfg, handler)
-	if err := shell.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "tui error: %v\n", err)
-		os.Exit(1)
-	}
+	return shell.Run()
 }
 
 // dispatchSlash routes a slash command inside the full-screen shell to the

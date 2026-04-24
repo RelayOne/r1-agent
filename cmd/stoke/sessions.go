@@ -38,16 +38,17 @@ func sessionsCmd(args []string) {
 	var flagArgs []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		if strings.HasPrefix(a, "-") {
+		switch {
+		case strings.HasPrefix(a, "-"):
 			flagArgs = append(flagArgs, a)
 			// If the flag takes a value (not a bool), grab next arg too.
 			if (a == "--repo" || a == "-repo") && i+1 < len(args) {
 				i++
 				flagArgs = append(flagArgs, args[i])
 			}
-		} else if sub == "" {
+		case sub == "":
 			sub = a
-		} else {
+		default:
 			positionals = append(positionals, a)
 		}
 	}
