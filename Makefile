@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench docker release clean check-pkg-count
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count
 
 # Default: run the CI gate
 all: build test vet
@@ -25,6 +25,12 @@ lint:
 # Run the bench corpus
 bench:
 	go run ./bench/cmd/bench
+
+# Print the prompt-cache savings projection.
+# Pricing-model only — no API calls. Produces the table published at
+# docs/benchmarks/prompt-cache.md.
+bench-cache:
+	go run ./bench/prompt_cache
 
 # Build Docker image
 # S2-4 (work-r1-rename): tag under both the legacy `stoke` name and the

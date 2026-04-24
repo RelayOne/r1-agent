@@ -548,6 +548,30 @@ A 30-PR cleanup campaign also shipped:
 - Package count drift check in `make check-pkg-count` asserted at 180
   internal packages.
 
+## Benchmarks
+
+Published reports live under
+[docs/benchmarks/](docs/benchmarks/README.md). Each report
+separates methodology from numbers, and stamps measured numbers with
+commit, Go version, host arch, date, and corpus identifier.
+Projections from pricing / token models are labelled as such and
+never mixed into measurement tables.
+
+First entry:
+
+- [docs/benchmarks/prompt-cache.md](docs/benchmarks/prompt-cache.md)
+  — Anthropic prompt-cache savings. Projects ~80.7% input-cost
+  reduction on a standard 20-turn loop using Sonnet pricing
+  (`internal/agentloop.CacheSavingsEstimate`), explains how cache
+  hits are tracked at both structuring and telemetry layers, and
+  documents the `go run ./bench/prompt_cache` path to reproduce
+  the projection plus the `go run ./bench/cmd/bench run` path to
+  measure live savings on a corpus.
+
+Planned: SWE-bench Pro, SWE-rebench, Terminal-Bench deltas as
+per-harness measurements land. Stance rationale is in
+[docs/benchmark-stance.md](docs/benchmark-stance.md).
+
 ## Docs
 
 - [docs/README.md](docs/README.md) — Navigable index (mirror of this file)
@@ -560,6 +584,7 @@ A 30-PR cleanup campaign also shipped:
 - [docs/stoke-spec-final.md](docs/stoke-spec-final.md) — 1,091-line frozen spec with 3 adversarial reviews
 - [docs/stoke-protocol.md](docs/stoke-protocol.md) — STOKE envelope v1.0 (the wire format)
 - [docs/benchmark-stance.md](docs/benchmark-stance.md) — Why we report SWE-bench Pro, SWE-rebench, Terminal-Bench deltas
+- [docs/benchmarks/](docs/benchmarks/README.md) — Published benchmark reports. First entry: [prompt-cache.md](docs/benchmarks/prompt-cache.md) — methodology + pricing-model projection of Anthropic prompt-cache savings (~80.7% input-cost reduction on a 20-turn loop), plus the reproduction path for live-telemetry measurements.
 - [docs/architecture/](docs/architecture/) — 19 sub-docs: v2-overview, ledger, bus, supervisor, harness-stances, providers, bare-mode, context-budget, policy-engine, bridge, wizard, oauth-usage-endpoint, failure-recovery, single-strong-agent-stance, etc.
 - [docs/decisions/](docs/decisions/) — Architecture Decision Records
 - [docs/history/](docs/history/) — Preserved historical design documents
