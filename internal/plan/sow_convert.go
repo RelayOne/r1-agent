@@ -352,15 +352,15 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 	// being starved by a long expand phase.
 	chunkedCtx, chunkedCancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer chunkedCancel()
-	if sow, raw, err := ConvertProseToSOWChunked(chunkedCtx, prose, prov, model, 4); err == nil {
-		return sow, raw, nil
-	} else {
-		var terminal *TerminalApprovalError
-		if errors.As(err, &terminal) {
-			return nil, nil, fmt.Errorf("chunked convert reached terminal verdict: %w", err)
-		}
-		fmt.Printf("  ⚠ chunked convert failed (%v) — falling back to single-call convert\n", err)
+	chunkedSOW, chunkedRaw, chunkedErr := ConvertProseToSOWChunked(chunkedCtx, prose, prov, model, 4)
+	if chunkedErr == nil {
+		return chunkedSOW, chunkedRaw, nil
 	}
+	var terminal *TerminalApprovalError
+	if errors.As(chunkedErr, &terminal) {
+		return nil, nil, fmt.Errorf("chunked convert reached terminal verdict: %w", chunkedErr)
+	}
+	fmt.Printf("  ⚠ chunked convert failed (%v) — falling back to single-call convert\n", chunkedErr)
 
 	fullPrompt := sowConversionPrompt + prose
 
