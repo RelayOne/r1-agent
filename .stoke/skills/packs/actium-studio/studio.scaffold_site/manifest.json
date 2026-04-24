@@ -1,0 +1,65 @@
+{
+  "name": "studio.scaffold_site",
+  "version": "1.0.0",
+  "description": "Create an Actium Studio site (structure + landing-page content + optional publish) from a natural-language brief.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["brief", "brand"],
+    "properties": {
+      "brief":    { "type": "string", "minLength": 10, "maxLength": 2000 },
+      "brand": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name":          { "type": "string", "minLength": 1, "maxLength": 120 },
+          "primary_color": { "type": "string", "maxLength": 32 },
+          "logo_url":      { "type": "string", "format": "uri", "maxLength": 1024 }
+        }
+      },
+      "deploy":   { "type": "boolean" },
+      "template": { "type": "string", "maxLength": 120 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "status", "steps"],
+    "properties": {
+      "site_id": { "type": "string" },
+      "url":     { "type": "string", "format": "uri" },
+      "status":  { "type": "string", "enum": ["ready", "scaffolding", "failed"] },
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "status", "duration_ms"],
+          "properties": {
+            "name":        { "type": "string" },
+            "status":      { "type": "string", "enum": ["ok", "not-run", "failed"] },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "User asks to create a landing page, marketing site, or docs site from a short description plus a brand name and optional logo.",
+    "A larger task's first step is 'spin up a new site' before follow-up editing.",
+    "A CloudSwarm outreach flow needs a per-prospect lead-capture site generated from a brief."
+  ],
+  "whenNotToUse": [
+    "Brief is a one-word brand name with no functional intent — ask the user for more detail first; this skill fails on brief.length < 10.",
+    "The operator already has a site they want to modify — use studio.update_content or page-level skills instead; scaffolding would create a duplicate.",
+    "Caller needs editorial review before publish — set deploy:false (default) and pair with studio.publish gated behind approval."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "moderate"
+  },
+  "recommendedFor": [
+    "landing-page",
+    "marketing-site",
+    "docs-site",
+    "lead-capture-site"
+  ]
+}

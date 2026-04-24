@@ -1,0 +1,44 @@
+{
+  "name": "studio.publish",
+  "version": "1.0.0",
+  "description": "Publish a specific Actium Studio page by id. Thin hero wrapper over publish_page with a high-signal name.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "page_id": { "type": "string", "minLength": 1 },
+      "confirm": { "type": "boolean" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "published", "published_at"],
+    "properties": {
+      "page_id":       { "type": "string" },
+      "published":     { "type": "boolean" },
+      "published_at":  { "type": "string", "format": "date-time" },
+      "published_url": { "type": "string", "format": "uri" }
+    }
+  },
+  "whenToUse": [
+    "User asks to ship a specific page that is currently in draft.",
+    "Follow-up step after a human review approves a studio.update_content draft edit.",
+    "HITL-approved publish in an autonomous CloudSwarm flow where the composite studio.update_content was too broad."
+  ],
+  "whenNotToUse": [
+    "Caller wants to publish every draft on a site — this skill is per-page; use a higher-level batch skill or a sequence of calls.",
+    "Page does not exist yet — create it via create_page (thin wrapper) before calling this skill; publish fails on unknown page_id.",
+    "Caller is in autonomous mode without operator approval and the page has not been reviewed — route through a HITL gate before invoking."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "publish",
+    "page-lifecycle",
+    "go-live"
+  ]
+}

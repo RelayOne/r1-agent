@@ -1,0 +1,60 @@
+{
+  "name": "studio.site_status",
+  "version": "1.0.0",
+  "description": "Composite health check for a Studio site (get_site + get_scaffold_status + get_staging_info) returned as a single agent-friendly summary.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id":          { "type": "string", "minLength": 1 },
+      "include_staging":  { "type": "boolean" },
+      "include_scaffold": { "type": "boolean" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "status", "pages_total"],
+    "properties": {
+      "site_id":           { "type": "string" },
+      "status":            { "type": "string", "enum": ["ready", "scaffolding", "failed", "archived"] },
+      "url":               { "type": "string", "format": "uri" },
+      "pages_total":       { "type": "integer", "minimum": 0 },
+      "pages_published":   { "type": "integer", "minimum": 0 },
+      "pages_draft":       { "type": "integer", "minimum": 0 },
+      "scaffold_progress": {
+        "type": "object",
+        "properties": {
+          "state":        { "type": "string" },
+          "percent_done": { "type": "integer", "minimum": 0, "maximum": 100 }
+        }
+      },
+      "staging": {
+        "type": "object",
+        "properties": {
+          "url":         { "type": "string", "format": "uri" },
+          "last_promote": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "User asks 'what's the state of site X' and expects a single answer, not three.",
+    "Gate before studio.update_content so the agent confirms the site is ready (not mid-scaffold).",
+    "Pre-flight check before a staging→production promote (staging section populated)."
+  ],
+  "whenNotToUse": [
+    "Caller only needs one dimension (e.g. 'is scaffold done?') — use get_scaffold_status directly to avoid extra HTTP calls.",
+    "Caller is polling every few seconds — this composite makes 2-3 requests per call; switch to the single-purpose polling skill instead.",
+    "Site does not exist yet — call list_sites first; this skill returns an error on unknown site_id rather than an empty shape."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "status-check",
+    "pre-flight",
+    "diagnostics"
+  ]
+}

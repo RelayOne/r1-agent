@@ -13,7 +13,7 @@
 | TrustPlane | /home/eric/repos/TrustPlane | payment + identity + receipts |
 | router-core | /home/eric/repos/router-core | LLM router with HMAC receipt ingress |
 | RelayOne | /home/eric/repos/RelayOne | LLM governance (enforcement gateway + control-plane) |
-| Verity | /home/eric/repos/Verity | embedded RAG + hallucination detection |
+| Veritize | /home/eric/repos/git-verity | embedded RAG + hallucination detection |
 
 ## Three tracks
 
@@ -40,14 +40,14 @@
 | 10 | RelayOne TP URL + schema + auth rewrite | RelayOne | WORK-relayone Tasks 3-7 | 2-3d | 3+4+5+6 |
 | 11 | RelayOne B-suite endpoints | RelayOne | WORK-relayone Task 8 | 1.5-2d | 10 |
 | 12 | RelayOne cleanup + docs | RelayOne | WORK-relayone Tasks 9+10 | 1d | 1+10+11 |
-| 13 | Verity URL norm + CHANGELOG + CODEOWNERS + Dockerfile + cleanup | Verity | WORK-verity Tasks 1-2, 4-5, 7-10 | 1d | — |
-| 14 | Verity B3 path alignment | Verity | WORK-verity Task 3 | 30m | 11 |
-| 15 | Verity v0.1.0 tag | Verity | WORK-verity Task 6 | 0.5d | 13 |
-| 16 | Verity v0.1.1 tag | Verity | — | 30m | 14+15 |
+| 13 | Veritize URL norm + CHANGELOG + CODEOWNERS + Dockerfile + cleanup | Veritize | WORK-verity Tasks 1-2, 4-5, 7-10 | 1d | — |
+| 14 | Veritize B3 path alignment | Veritize | WORK-verity Task 3 | 30m | 11 |
+| 15 | Veritize v0.1.0 tag | Veritize | WORK-verity Task 6 | 0.5d | 13 |
+| 16 | Veritize v0.1.1 tag | Veritize | — | 30m | 14+15 |
 | 17 | End-to-end smoke test | portfolio | — | 1h | 1-16 |
 | 18 | Stoke prompt-injection hardening | stoke | WORK-stoke Tasks 1-7 | 3-4d | — |
 | 19 | RelayOne prompt-injection hardening | RelayOne | WORK-relayone Task 9 (hardening) | 3-4d | 10 |
-| 20 | Verity prompt-injection hardening | Verity | WORK-verity Task 8 | 2-3d | 15 |
+| 20 | Veritize prompt-injection hardening | Veritize | WORK-verity Task 8 | 2-3d | 15 |
 | 21 | TrustPlane prompt-injection hardening | TrustPlane | WORK-trustplane Task 6 | 1-2d | 8 |
 | 22 | Router-core prompt-injection hardening | router-core | WORK-router-core Task 6 | 0.5d | 9 |
 | 23 | Stoke P0 hardening + S-0 foundation [CRITICAL PATH] | stoke | WORK-stoke Tasks 8-10 | 1.5d | — |

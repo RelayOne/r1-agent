@@ -1,0 +1,48 @@
+{
+  "name": "studio.update_content",
+  "version": "1.0.0",
+  "description": "Edit a single Actium Studio page's content and optionally publish it in one call (composes update_page + publish_page).",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id", "content"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "page_id":     { "type": "string", "minLength": 1 },
+      "content":     { "type": "string", "minLength": 1, "maxLength": 200000 },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] },
+      "publish":     { "type": "boolean" },
+      "commit_message": { "type": "string", "maxLength": 200 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "updated_at", "published"],
+    "properties": {
+      "page_id":     { "type": "string" },
+      "updated_at":  { "type": "string", "format": "date-time" },
+      "published":   { "type": "boolean" },
+      "published_url": { "type": "string", "format": "uri" },
+      "revision_id": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "User asks to edit a specific page body (title, hero text, section copy) on an existing site.",
+    "Follow-up step after studio.scaffold_site when the generated content needs a targeted revision.",
+    "A content-ops workflow needs atomic 'edit + publish' without a separate publish approval hop."
+  ],
+  "whenNotToUse": [
+    "Caller does not know the target page_id — call studio.site_status or studio.list_pages (when shipped) first.",
+    "Edit touches the site's navigation, theme, or global settings — use the dedicated navigation/theme/settings skills.",
+    "Operator wants a draft-only edit reviewed before publish — call update_page directly and leave publish:false, then gate studio.publish behind HITL approval."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "content-edit",
+    "page-update",
+    "publish"
+  ]
+}

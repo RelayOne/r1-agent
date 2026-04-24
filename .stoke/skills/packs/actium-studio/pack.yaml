@@ -1,0 +1,13 @@
+name: actium-studio
+version: "0.1.0"
+description: "R1 skill pack for invoking Actium Studio capabilities (site scaffold, page edits, publish, staging, analytics)."
+min_r1_version: "0.1.0"
+upstream_api_version: "studio-v1"
+
+# Seed slice: 5 of the 6 hero skills from work-r1-actium-studio-skills.md §1.2.
+# Full pack (53 manifests = 6 heroes + 47 thin wrappers) lands in phase R1S-4.
+# studio.list_templates is deferred until the Studio templates endpoint ships
+# (per work-order §1.2 item 5).
+skill_count: 5
+
+dependencies: []

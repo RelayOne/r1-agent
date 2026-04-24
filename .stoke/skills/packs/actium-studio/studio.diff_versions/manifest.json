@@ -1,0 +1,58 @@
+{
+  "name": "studio.diff_versions",
+  "version": "1.0.0",
+  "description": "Compare two snapshots of an Actium Studio site and return a structured diff of pages, content, and settings changed.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "base_snapshot_id", "head_snapshot_id"],
+    "properties": {
+      "site_id":          { "type": "string", "minLength": 1 },
+      "base_snapshot_id": { "type": "string", "minLength": 1 },
+      "head_snapshot_id": { "type": "string", "minLength": 1 },
+      "include_content":  { "type": "boolean" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "base", "head", "pages_changed"],
+    "properties": {
+      "site_id":       { "type": "string" },
+      "base":          { "type": "string" },
+      "head":          { "type": "string" },
+      "pages_changed": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["page_id", "change_type"],
+          "properties": {
+            "page_id":      { "type": "string" },
+            "change_type":  { "type": "string", "enum": ["added", "removed", "modified"] },
+            "content_diff": { "type": "string" }
+          }
+        }
+      },
+      "settings_changed": { "type": "boolean" },
+      "theme_changed":    { "type": "boolean" }
+    }
+  },
+  "whenToUse": [
+    "Operator wants to audit what changed between two Studio snapshots before restoring one.",
+    "Pre-merge review for a staging → production promote: 'show me what will change'.",
+    "Forensic investigation after an unexpected content change — locate the introducing snapshot."
+  ],
+  "whenNotToUse": [
+    "Only one snapshot exists — call list_snapshots first to confirm two are available.",
+    "Caller wants a textual word-level diff of a single page — use the page-level get_page on each snapshot and diff client-side; this skill is site-level and coarse.",
+    "Caller actually wants to restore a snapshot — use publish.restore_snapshot (gated, destructive)."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "diff",
+    "audit",
+    "snapshot-review"
+  ]
+}
