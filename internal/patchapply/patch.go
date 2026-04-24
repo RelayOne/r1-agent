@@ -435,8 +435,8 @@ func parseHunkHeader(line string) (*Hunk, error) {
 		hunk.OldCount = 1
 	}
 
-	new := strings.TrimPrefix(parts[1], "+")
-	newParts := strings.SplitN(new, ",", 2)
+	newRange := strings.TrimPrefix(parts[1], "+")
+	newParts := strings.SplitN(newRange, ",", 2)
 	hunk.NewStart, _ = strconv.Atoi(newParts[0])
 	if len(newParts) > 1 {
 		hunk.NewCount, _ = strconv.Atoi(newParts[1])

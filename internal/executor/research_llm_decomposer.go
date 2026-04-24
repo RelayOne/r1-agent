@@ -89,9 +89,9 @@ func (d *LLMDecomposer) Decompose(ctx context.Context, query string, effort Effo
 	}
 
 	low, high := effortBounds(effort)
-	cap := d.MaxSubQuestions
-	if cap > 0 && cap < high {
-		high = cap
+	maxSubQ := d.MaxSubQuestions
+	if maxSubQ > 0 && maxSubQ < high {
+		high = maxSubQ
 	}
 	if low > high {
 		low = high

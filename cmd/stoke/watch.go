@@ -689,19 +689,19 @@ func humanDuration(d time.Duration) string {
 	}
 }
 
-// truncate shortens s to max runes, appending an ellipsis when cut.
-func truncate(s string, max int) string {
-	if max <= 0 {
+// truncate shortens s to maxRunes runes, appending an ellipsis when cut.
+func truncate(s string, maxRunes int) string {
+	if maxRunes <= 0 {
 		return ""
 	}
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= maxRunes {
 		return s
 	}
-	if max <= 1 {
-		return string(r[:max])
+	if maxRunes <= 1 {
+		return string(r[:maxRunes])
 	}
-	return string(r[:max-1]) + "…"
+	return string(r[:maxRunes-1]) + "…"
 }
 
 // visibleLen counts rune length ignoring ANSI CSI escape sequences.

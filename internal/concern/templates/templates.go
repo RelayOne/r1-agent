@@ -33,11 +33,11 @@ func RegisterAll(b *concern.Builder) {
 }
 
 // spec is a shorthand constructor to reduce boilerplate.
-func spec(name string, qf sections.QueryFunc, required bool, cap int) concern.SectionSpec {
+func spec(name string, qf sections.QueryFunc, required bool, maxItems int) concern.SectionSpec {
 	return concern.SectionSpec{
 		Name:     name,
 		QueryFn:  qf,
 		Required: required,
-		Cap:      cap,
+		Cap:      maxItems,
 	}
 }

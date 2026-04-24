@@ -167,7 +167,7 @@ func formatTime(t time.Time) string {
 // appending "…" when truncated. Useful for content previews in the
 // tree view's leaf nodes — larger payloads would break the layout.
 // Returns "" for nil so {{if .Preview}} guards still work.
-func truncateJSON(v any, max int) string {
+func truncateJSON(v any, maxRunes int) string {
 	if v == nil {
 		return ""
 	}
@@ -186,11 +186,11 @@ func truncateJSON(v any, max int) string {
 		}
 		raw = string(b)
 	}
-	if max <= 0 || len([]rune(raw)) <= max {
+	if maxRunes <= 0 || len([]rune(raw)) <= maxRunes {
 		return raw
 	}
 	rs := []rune(raw)
-	return string(rs[:max]) + "…"
+	return string(rs[:maxRunes]) + "…"
 }
 
 // ListSpans builds the span set for a session by grouping

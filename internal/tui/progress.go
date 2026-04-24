@@ -729,14 +729,14 @@ func fmtDuration(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", m, s)
 }
 
-func trimTitle(s string, max int) string {
-	if len(s) <= max {
+func trimTitle(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	if max <= 3 {
-		return s[:max]
+	if maxLen <= 3 {
+		return s[:maxLen]
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
 // sessionID pulls the session identifier from either Custom["session_id"]

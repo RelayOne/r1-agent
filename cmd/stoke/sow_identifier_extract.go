@@ -266,8 +266,8 @@ func extractInlineIdentifiers(text string, minLen int) []string {
 }
 
 // appendUnique merges identifiers into an existing slice, dedupes,
-// and caps at max. Ordering is stable (first-seen wins on dedup).
-func appendUnique(existing, add []string, max int) []string {
+// and caps at maxItems. Ordering is stable (first-seen wins on dedup).
+func appendUnique(existing, add []string, maxItems int) []string {
 	seen := make(map[string]bool, len(existing))
 	for _, e := range existing {
 		seen[e] = true
@@ -277,7 +277,7 @@ func appendUnique(existing, add []string, max int) []string {
 		if seen[a] {
 			continue
 		}
-		if len(out) >= max {
+		if len(out) >= maxItems {
 			return out
 		}
 		seen[a] = true

@@ -398,15 +398,15 @@ func dedupRunStrings(in []string) []string {
 	return out
 }
 
-func joinTrunc(items []string, max int) string {
+func joinTrunc(items []string, maxLen int) string {
 	s := ""
 	for i, item := range items {
 		if i > 0 {
 			s += ", "
 		}
 		s += item
-		if len(s) > max {
-			return s[:max-3] + "..."
+		if len(s) > maxLen {
+			return s[:maxLen-3] + "..."
 		}
 	}
 	if s == "" {

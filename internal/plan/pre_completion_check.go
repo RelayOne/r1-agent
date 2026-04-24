@@ -483,12 +483,12 @@ func pathShowsInGitStatus(repoRoot, path string) bool {
 }
 
 // truncateForPreCheck trims a string for log display.
-func truncateForPreCheck(s string, max int) string {
+func truncateForPreCheck(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
 // runGitStatusCheck is an alias exposed for tests that want to

@@ -192,29 +192,29 @@ func Redact(s string) string {
 // the strings import (we want zero dependencies on other packages so
 // internal/redact can one day depend on internal/logging without
 // cycles — redact.go imports sync only).
-func replaceAll(s, old, new string) string {
-	if old == "" || old == new {
+func replaceAll(s, oldStr, newStr string) string {
+	if oldStr == "" || oldStr == newStr {
 		return s
 	}
 	// Fast path: no occurrence → return s untouched (no alloc).
-	idx := indexOf(s, old)
+	idx := indexOf(s, oldStr)
 	if idx < 0 {
 		return s
 	}
 	// Slow path: walk through replacing each occurrence.
 	var b []byte
 	b = append(b, s[:idx]...)
-	b = append(b, new...)
-	s = s[idx+len(old):]
+	b = append(b, newStr...)
+	s = s[idx+len(oldStr):]
 	for {
-		idx = indexOf(s, old)
+		idx = indexOf(s, oldStr)
 		if idx < 0 {
 			b = append(b, s...)
 			return string(b)
 		}
 		b = append(b, s[:idx]...)
-		b = append(b, new...)
-		s = s[idx+len(old):]
+		b = append(b, newStr...)
+		s = s[idx+len(oldStr):]
 	}
 }
 

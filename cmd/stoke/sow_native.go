@@ -5827,9 +5827,9 @@ func buildHardContentRetryDirective(task plan.Task, cj *plan.ContentJudgeVerdict
 	if strings.TrimSpace(sowExcerpt) != "" {
 		// Cap to keep prompt reasonable but explicit.
 		excerpt := sowExcerpt
-		const cap = 4000
-		if len(excerpt) > cap {
-			excerpt = excerpt[:cap] + "\n... (excerpt truncated at " + strconv.Itoa(cap) + " chars)"
+		const maxExcerpt = 4000
+		if len(excerpt) > maxExcerpt {
+			excerpt = excerpt[:maxExcerpt] + "\n... (excerpt truncated at " + strconv.Itoa(maxExcerpt) + " chars)"
 		}
 		b.WriteString("SOW EXCERPT (verbatim — cross-reference this for the deliverable list):\n")
 		b.WriteString("---BEGIN SOW EXCERPT---\n")

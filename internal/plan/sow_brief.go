@@ -366,13 +366,13 @@ Include one entry per task in the wave. Order doesn't matter; the runner matches
 // truncateForBrief is a shared helper for the briefing prompt builder.
 // Middle-truncates long strings so both the beginning and end are
 // visible.
-func truncateForBrief(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+func truncateForBrief(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
 		return s
 	}
-	half := (max - 32) / 2
+	half := (maxLen - 32) / 2
 	if half < 100 {
-		return s[:max]
+		return s[:maxLen]
 	}
 	return s[:half] + "\n... (truncated in middle) ...\n" + s[len(s)-half:]
 }

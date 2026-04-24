@@ -551,26 +551,26 @@ func buildSubObjectives(subs []SubQuestion, effort Effort, maxPar int) []SubObje
 	if len(subs) == 0 {
 		return nil
 	}
-	cap := effortCap(effort, maxPar, len(subs))
-	if cap <= 0 {
-		cap = 1
+	capN := effortCap(effort, maxPar, len(subs))
+	if capN <= 0 {
+		capN = 1
 	}
-	if cap >= len(subs) {
+	if capN >= len(subs) {
 		out := make([]SubObjective, len(subs))
 		for i, s := range subs {
 			out[i] = subObjectiveFrom(s)
 		}
 		return out
 	}
-	// Take the first `cap` directly; fold the rest into the last
+	// Take the first `capN` directly; fold the rest into the last
 	// SubObjective's TaskBoundaries.
-	out := make([]SubObjective, cap)
-	for i := 0; i < cap-1; i++ {
+	out := make([]SubObjective, capN)
+	for i := 0; i < capN-1; i++ {
 		out[i] = subObjectiveFrom(subs[i])
 	}
-	// Last subagent inherits cap-1 through end.
-	last := subObjectiveFrom(subs[cap-1])
-	extras := subs[cap:]
+	// Last subagent inherits capN-1 through end.
+	last := subObjectiveFrom(subs[capN-1])
+	extras := subs[capN:]
 	if len(extras) > 0 {
 		var b strings.Builder
 		b.WriteString("Also cover the following scope (merged due to effort budget):\n")
@@ -583,7 +583,7 @@ func buildSubObjectives(subs []SubQuestion, effort Effort, maxPar int) []SubObje
 		}
 		last.TaskBoundaries += b.String()
 	}
-	out[cap-1] = last
+	out[capN-1] = last
 	return out
 }
 

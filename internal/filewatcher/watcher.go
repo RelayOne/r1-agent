@@ -348,10 +348,10 @@ func (w *Watcher) detectChanges(current map[string]fileState) {
 	}
 }
 
-func (w *Watcher) changed(old, new fileState) bool {
-	if old.ModTime != new.ModTime || old.Size != new.Size {
+func (w *Watcher) changed(oldSt, newSt fileState) bool {
+	if oldSt.ModTime != newSt.ModTime || oldSt.Size != newSt.Size {
 		if w.config.UseHash {
-			return old.Hash != new.Hash
+			return oldSt.Hash != newSt.Hash
 		}
 		return true
 	}

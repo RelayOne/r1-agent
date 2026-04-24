@@ -176,11 +176,11 @@ func FormatApprovalVerdict(v *FinalApprovalVerdict) string {
 	if strings.TrimSpace(v.Reasoning) != "" {
 		fmt.Fprintf(&b, "     reasoning: %s\n", v.Reasoning)
 	}
-	max := 5
-	if len(v.Concerns) < max {
-		max = len(v.Concerns)
+	maxShow := 5
+	if len(v.Concerns) < maxShow {
+		maxShow = len(v.Concerns)
 	}
-	for i := 0; i < max; i++ {
+	for i := 0; i < maxShow; i++ {
 		c := v.Concerns[i]
 		loc := ""
 		if c.SessionID != "" {
@@ -191,8 +191,8 @@ func FormatApprovalVerdict(v *FinalApprovalVerdict) string {
 			fmt.Fprintf(&b, "           fix: %s\n", c.Fix)
 		}
 	}
-	if len(v.Concerns) > max {
-		fmt.Fprintf(&b, "     ... and %d more\n", len(v.Concerns)-max)
+	if len(v.Concerns) > maxShow {
+		fmt.Fprintf(&b, "     ... and %d more\n", len(v.Concerns)-maxShow)
 	}
 	return b.String()
 }

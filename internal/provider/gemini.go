@@ -156,12 +156,12 @@ func (p *GeminiProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	// Callers that want a specific cap can still set req.MaxTokens
 	// above this floor.
 	const geminiReviewerFloor = 32000
-	max := req.MaxTokens
-	if max < geminiReviewerFloor {
-		max = geminiReviewerFloor
+	maxTok := req.MaxTokens
+	if maxTok < geminiReviewerFloor {
+		maxTok = geminiReviewerFloor
 	}
 	body.GenerationConfig = &geminiGenCfg{
-		MaxOutputTokens: max,
+		MaxOutputTokens: maxTok,
 		Temperature:     req.Temperature,
 	}
 

@@ -238,15 +238,15 @@ func AnalyzeMultiFile(files map[string][2]string) *Analysis {
 	combined := &Analysis{}
 
 	for path, contents := range files {
-		old, new := contents[0], contents[1]
+		oldSrc, newSrc := contents[0], contents[1]
 
-		if old == "" && new != "" {
-			combined.FileChanges = append(combined.FileChanges, FileChange{Path: path, IsNew: true, Added: strings.Count(new, "\n")})
+		if oldSrc == "" && newSrc != "" {
+			combined.FileChanges = append(combined.FileChanges, FileChange{Path: path, IsNew: true, Added: strings.Count(newSrc, "\n")})
 			var syms []symbol
 			if strings.HasSuffix(path, ".go") {
-				syms = extractGoAST(new, path)
+				syms = extractGoAST(newSrc, path)
 			} else {
-				syms = extractSymbolsRegex(new)
+				syms = extractSymbolsRegex(newSrc)
 			}
 			for _, sym := range syms {
 				combined.Changes = append(combined.Changes, SymbolChange{
@@ -258,13 +258,13 @@ func AnalyzeMultiFile(files map[string][2]string) *Analysis {
 			continue
 		}
 
-		if old != "" && new == "" {
-			combined.FileChanges = append(combined.FileChanges, FileChange{Path: path, IsDeleted: true, Removed: strings.Count(old, "\n")})
+		if oldSrc != "" && newSrc == "" {
+			combined.FileChanges = append(combined.FileChanges, FileChange{Path: path, IsDeleted: true, Removed: strings.Count(oldSrc, "\n")})
 			var syms []symbol
 			if strings.HasSuffix(path, ".go") {
-				syms = extractGoAST(old, path)
+				syms = extractGoAST(oldSrc, path)
 			} else {
-				syms = extractSymbolsRegex(old)
+				syms = extractSymbolsRegex(oldSrc)
 			}
 			for _, sym := range syms {
 				combined.Changes = append(combined.Changes, SymbolChange{
@@ -276,7 +276,7 @@ func AnalyzeMultiFile(files map[string][2]string) *Analysis {
 			continue
 		}
 
-		single := Analyze(old, new, path)
+		single := Analyze(oldSrc, newSrc, path)
 		combined.Changes = append(combined.Changes, single.Changes...)
 		combined.FileChanges = append(combined.FileChanges, single.FileChanges...)
 	}
@@ -726,8 +726,8 @@ func classifyAddImpact(s *symbol) Impact {
 	return ImpactInternal
 }
 
-func classifySignatureImpact(old, new *symbol) Impact {
-	if old.Exported || new.Exported {
+func classifySignatureImpact(oldSym, newSym *symbol) Impact {
+	if oldSym.Exported || newSym.Exported {
 		return ImpactBreaking
 	}
 	return ImpactBehavioral

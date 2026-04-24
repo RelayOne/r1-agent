@@ -464,9 +464,9 @@ func (dc *DescentConfig) fileCapHit(files []string) string {
 	if len(files) == 0 || dc.FileRepairCounts == nil {
 		return ""
 	}
-	cap := dc.maxRepairsPerFile()
+	maxRepairs := dc.maxRepairsPerFile()
 	for _, f := range files {
-		if dc.FileRepairCounts[f] >= cap {
+		if dc.FileRepairCounts[f] >= maxRepairs {
 			return f
 		}
 	}

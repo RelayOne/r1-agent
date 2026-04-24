@@ -648,12 +648,12 @@ func grepSOW(sow *SOW, pattern string) string {
 	return strings.Join(hits, "\n")
 }
 
-func snippet(s string, max int) string {
+func snippet(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
 // ---------------------------------------------------------------------

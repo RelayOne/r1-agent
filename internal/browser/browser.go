@@ -71,23 +71,23 @@ func (c *Client) Fetch(ctx context.Context, url string) (FetchResult, error) {
 	}
 	defer resp.Body.Close()
 
-	cap := c.MaxBody
-	if cap <= 0 {
-		cap = 1 << 20
+	maxBody := c.MaxBody
+	if maxBody <= 0 {
+		maxBody = 1 << 20
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, cap+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("read body: %w", err)
 	}
 	truncated := false
-	if int64(len(body)) > cap {
-		body = body[:cap]
+	if int64(len(body)) > maxBody {
+		body = body[:maxBody]
 		truncated = true
 	}
 
 	text := ExtractText(string(body))
 	if truncated {
-		text += "\n\n[truncated by browser.Client at " + fmt.Sprint(cap) + " bytes]"
+		text += "\n\n[truncated by browser.Client at " + fmt.Sprint(maxBody) + " bytes]"
 	}
 	return FetchResult{
 		URL:         url,

@@ -428,11 +428,11 @@ func ConvertProseToSOWChunked(ctx context.Context, prose string, prov provider.P
 		if err != nil {
 			return s // best-effort fallback; marshal failures here are vanishingly rare
 		}
-		var copy SOW
-		if err := json.Unmarshal(b, &copy); err != nil {
+		var dup SOW
+		if err := json.Unmarshal(b, &dup); err != nil {
 			return s
 		}
-		return &copy
+		return &dup
 	}
 	if ctx.Err() == nil {
 		var verdict *FinalApprovalVerdict

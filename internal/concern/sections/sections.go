@@ -40,11 +40,11 @@ func nodeContentString(n ledger.Node, field string) string {
 }
 
 // renderNodeList formats a slice of nodes into a bulleted list.
-func renderNodeList(nodes []ledger.Node, field string, cap int) string {
+func renderNodeList(nodes []ledger.Node, field string, maxItems int) string {
 	var b strings.Builder
 	count := 0
 	for _, n := range nodes {
-		if cap > 0 && count >= cap {
+		if maxItems > 0 && count >= maxItems {
 			break
 		}
 		text := nodeContentString(n, field)

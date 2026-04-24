@@ -505,13 +505,13 @@ func CollectCodeExcerpts(repoRoot string, paths []string, maxFiles, maxBytesPerF
 	return out
 }
 
-func truncateForReasoning(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+func truncateForReasoning(s string, maxLen int) string {
+	if maxLen <= 0 || len(s) <= maxLen {
 		return s
 	}
-	half := (max - 32) / 2
+	half := (maxLen - 32) / 2
 	if half < 100 {
-		return s[:max]
+		return s[:maxLen]
 	}
 	return s[:half] + "\n... (truncated in middle) ...\n" + s[len(s)-half:]
 }

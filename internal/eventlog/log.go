@@ -309,12 +309,12 @@ func (l *Log) ReadFrom(ctx context.Context, from uint64) iter.Seq2[bus.Event, er
 				yield(bus.Event{}, err)
 				return
 			}
-			lastSeq, any, stop, err := l.readFromPage(ctx, cur, yield)
+			lastSeq, hadRows, stop, err := l.readFromPage(ctx, cur, yield)
 			if err != nil {
 				yield(bus.Event{}, err)
 				return
 			}
-			if stop || !any {
+			if stop || !hadRows {
 				return
 			}
 			cur = lastSeq + 1
@@ -323,11 +323,11 @@ func (l *Log) ReadFrom(ctx context.Context, from uint64) iter.Seq2[bus.Event, er
 }
 
 // readFromPage fetches one LIMIT-1000 page starting at cur, yielding
-// each event. Returns (lastSeq, any, stop, err) where stop=true means
+// each event. Returns (lastSeq, hadRows, stop, err) where stop=true means
 // the consumer returned false from yield (abort iteration).
 // Extracted so rows.Close() can live on a defer rather than needing
 // explicit close in every error branch (triggers sqlclosecheck).
-func (l *Log) readFromPage(ctx context.Context, cur uint64, yield func(bus.Event, error) bool) (lastSeq uint64, any bool, stop bool, err error) {
+func (l *Log) readFromPage(ctx context.Context, cur uint64, yield func(bus.Event, error) bool) (lastSeq uint64, hadRows bool, stop bool, err error) {
 	rows, err := l.db.QueryContext(ctx, `
 		SELECT id, sequence, type, mission_id, task_id, loop_id,
 		       timestamp, emitter_id, payload, causal_ref
@@ -342,20 +342,20 @@ func (l *Log) readFromPage(ctx context.Context, cur uint64, yield func(bus.Event
 	defer rows.Close()
 	lastSeq = cur
 	for rows.Next() {
-		any = true
+		hadRows = true
 		ev, scanErr := scanEvent(rows)
 		if scanErr != nil {
 			return 0, false, false, scanErr
 		}
 		lastSeq = ev.Sequence
 		if !yield(ev, nil) {
-			return lastSeq, any, true, nil
+			return lastSeq, hadRows, true, nil
 		}
 	}
 	if rerr := rows.Err(); rerr != nil {
 		return 0, false, false, fmt.Errorf("eventlog: iterate: %w", rerr)
 	}
-	return lastSeq, any, false, nil
+	return lastSeq, hadRows, false, nil
 }
 
 // ReplaySession yields every event whose session_id, mission_id, task_id,
@@ -401,9 +401,9 @@ func (l *Log) ReplaySession(ctx context.Context, sessionID string) iter.Seq2[bus
 				yield(bus.Event{}, fmt.Errorf("eventlog: query session: %w", err))
 				return
 			}
-			any := false
+			hadRows := false
 			for rows.Next() {
-				any = true
+				hadRows = true
 				ev, err := scanEvent(rows)
 				if err != nil {
 					rows.Close()
@@ -423,7 +423,7 @@ func (l *Log) ReplaySession(ctx context.Context, sessionID string) iter.Seq2[bus
 			}
 			rows.Close()
 			firstBatch = false
-			if !any {
+			if !hadRows {
 				return
 			}
 		}

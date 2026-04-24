@@ -117,18 +117,18 @@ func (m *Manifest) CodexDirs() []string {
 
 // NextID returns the next pool ID like "claude-3"
 func (m *Manifest) NextID(provider string) string {
-	max := 0
+	maxN := 0
 	prefix := provider + "-"
 	for _, p := range m.Pools {
 		if strings.HasPrefix(p.ID, prefix) {
 			var n int
 			fmt.Sscanf(p.ID, prefix+"%d", &n)
-			if n > max {
-				max = n
+			if n > maxN {
+				maxN = n
 			}
 		}
 	}
-	return fmt.Sprintf("%s-%d", provider, max+1)
+	return fmt.Sprintf("%s-%d", provider, maxN+1)
 }
 
 // AddClaude runs the Claude Code OAuth login flow and registers the pool.

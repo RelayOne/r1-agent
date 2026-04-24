@@ -758,11 +758,11 @@ func extractCallID(r mcp.ToolResult) string {
 
 // truncateForWorkerLog shortens s to max bytes with a "... <truncated N bytes>"
 // marker so reviewers see that truncation happened without scanning for length.
-func truncateForWorkerLog(s string, max int) string {
-	if len(s) <= max {
+func truncateForWorkerLog(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
 		return s
 	}
-	return s[:max] + fmt.Sprintf("... <truncated %d bytes>", len(s)-max)
+	return s[:maxBytes] + fmt.Sprintf("... <truncated %d bytes>", len(s)-maxBytes)
 }
 
 // addCtx stamps the non-empty correlation fields from wlc onto the

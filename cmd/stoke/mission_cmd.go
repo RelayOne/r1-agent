@@ -546,9 +546,9 @@ func severityIcon(sev string) string {
 	}
 }
 
-func truncateField(s string, max int) string {
-	if len(s) <= max {
+func truncateField(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }

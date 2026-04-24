@@ -211,16 +211,16 @@ type diffOp struct {
 	text string
 }
 
-func computeOps(old, new []string) []diffOp {
+func computeOps(oldLines, newLines []string) []diffOp {
 	// Simple O(NM) LCS for correctness; fine for typical file sizes
-	m, n := len(old), len(new)
+	m, n := len(oldLines), len(newLines)
 	dp := make([][]int, m+1)
 	for i := range dp {
 		dp[i] = make([]int, n+1)
 	}
 	for i := 1; i <= m; i++ {
 		for j := 1; j <= n; j++ {
-			if old[i-1] == new[j-1] {
+			if oldLines[i-1] == newLines[j-1] {
 				dp[i][j] = dp[i-1][j-1] + 1
 			} else if dp[i-1][j] >= dp[i][j-1] {
 				dp[i][j] = dp[i-1][j]
@@ -234,15 +234,15 @@ func computeOps(old, new []string) []diffOp {
 	var ops []diffOp
 	i, j := m, n
 	for i > 0 || j > 0 {
-		if i > 0 && j > 0 && old[i-1] == new[j-1] {
-			ops = append(ops, diffOp{OpContext, old[i-1]})
+		if i > 0 && j > 0 && oldLines[i-1] == newLines[j-1] {
+			ops = append(ops, diffOp{OpContext, oldLines[i-1]})
 			i--
 			j--
 		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
-			ops = append(ops, diffOp{OpAdd, new[j-1]})
+			ops = append(ops, diffOp{OpAdd, newLines[j-1]})
 			j--
 		} else {
-			ops = append(ops, diffOp{OpRemove, old[i-1]})
+			ops = append(ops, diffOp{OpRemove, oldLines[i-1]})
 			i--
 		}
 	}

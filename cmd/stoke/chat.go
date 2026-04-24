@@ -383,13 +383,13 @@ func (d *stokeDispatcher) SOW(filePath string) (string, error) {
 }
 
 // truncOne truncates s to max runes on a single line with an ellipsis.
-func truncOne(s string, max int) string {
+func truncOne(s string, maxRunes int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	if len([]rune(s)) <= max {
+	if len([]rune(s)) <= maxRunes {
 		return s
 	}
 	r := []rune(s)
-	return string(r[:max]) + "…"
+	return string(r[:maxRunes]) + "…"
 }
 
 // buildChatSession is the common path that REPL and shell use to stand

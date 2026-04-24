@@ -640,11 +640,11 @@ func parseToolInput(raw json.RawMessage) map[string]any {
 }
 
 // truncateOutput limits output size for hub events.
-func truncateOutput(s string, max int) string {
-	if len(s) <= max {
+func truncateOutput(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max] + "... (truncated)"
+	return s[:maxLen] + "... (truncated)"
 }
 
 // estimateMessagesTokens returns a rough token count for a message list.

@@ -88,9 +88,9 @@ func Fetch(ctx context.Context, u string, cfg FetchConfig) ([]byte, error) {
 			return nil, fmt.Errorf("websearch: host %q not in allowlist", host)
 		}
 	}
-	max := cfg.MaxBodyBytes
-	if max <= 0 {
-		max = DefaultMaxBodyBytes
+	maxBytes := cfg.MaxBodyBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBodyBytes
 	}
 	client := cfg.HTTPClient
 	if client == nil {
@@ -107,12 +107,12 @@ func Fetch(ctx context.Context, u string, cfg FetchConfig) ([]byte, error) {
 	defer resp.Body.Close()
 	// Read one byte past the cap so we can detect overflow and append
 	// the truncation marker without having to Seek or re-fetch.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(max)+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxBytes)+1))
 	if err != nil {
 		return nil, fmt.Errorf("websearch: read body %q: %w", u, err)
 	}
-	if len(body) > max {
-		body = append(body[:max], []byte(fmt.Sprintf("\n\n[truncated at %d bytes]", max))...)
+	if len(body) > maxBytes {
+		body = append(body[:maxBytes], []byte(fmt.Sprintf("\n\n[truncated at %d bytes]", maxBytes))...)
 	}
 	return body, nil
 }
