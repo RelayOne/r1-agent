@@ -317,17 +317,6 @@ func (s *Scheduler) releaseFiles(taskID string, tasks []plan.Task) {
 	}
 }
 
-func (s *Scheduler) findDispatchable(tasks []plan.Task) []plan.Task {
-	var ready []plan.Task
-	for _, t := range tasks {
-		if s.completed[t.ID] || s.running[t.ID] { continue }
-		if s.depsOK(t) && !s.hasConflict(t) {
-			ready = append(ready, t)
-		}
-	}
-	return ready
-}
-
 // sortByGRPW returns tasks sorted by Greatest Rank Positional Weight.
 //
 // Cycle-safe: the recursive weight computation tracks a

@@ -14,7 +14,6 @@ package repomap
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -406,25 +405,3 @@ func (rm *RepoMap) collectSymbols() {
 	})
 }
 
-// walkGoFiles is used by Build to find Go files (replaced by goast.AnalyzeDir).
-// Kept as unexported for reference, no longer called directly.
-func walkGoFiles(root string) ([]string, error) {
-	var files []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			base := filepath.Base(path)
-			if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
-			files = append(files, path)
-		}
-		return nil
-	})
-	return files, err
-}

@@ -65,13 +65,6 @@ func New(cfg Config) *Backend {
 	}
 }
 
-// flyState holds the provisioned machine state.
-type flyState struct {
-	machineID string
-	ipAddress string
-	hostname  string
-}
-
 func (b *Backend) Provision(ctx context.Context, spec env.Spec) (*env.Handle, error) {
 	guest := flyclient.GuestConfig{}
 	if spec.CPUs > 0 {

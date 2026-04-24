@@ -376,56 +376,6 @@ func drainFrames(r *bufio.Reader) {
 	}
 }
 
-// wsConn wraps a hijacked connection for testing.
-type wsConn struct {
-	w    *bufio.Writer
-	r    *bufio.Reader
-	done chan struct{}
-}
-
-// Ping sends a WebSocket ping frame.
-func (c *wsConn) Ping() error {
-	c.w.WriteByte(0x89) // FIN + ping opcode
-	c.w.WriteByte(0)    // zero-length payload
-	return c.w.Flush()
-}
-
-// ReadMessage reads the next WebSocket text frame payload.
-func (c *wsConn) ReadMessage() (string, error) {
-	// Read frame header.
-	header := make([]byte, 2)
-	if _, err := io.ReadFull(c.r, header); err != nil {
-		return "", err
-	}
-	length := int(header[1] & 0x7F)
-	switch length {
-	case 126:
-		var buf [2]byte
-		if _, err := io.ReadFull(c.r, buf[:]); err != nil {
-			return "", err
-		}
-		length = int(binary.BigEndian.Uint16(buf[:]))
-	case 127:
-		var buf [8]byte
-		if _, err := io.ReadFull(c.r, buf[:]); err != nil {
-			return "", err
-		}
-		length = int(binary.BigEndian.Uint64(buf[:]))
-	}
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(c.r, payload); err != nil {
-		return "", err
-	}
-	return string(payload), nil
-}
-
-// Close sends a WebSocket close frame.
-func (c *wsConn) Close() error {
-	c.w.WriteByte(0x88) // FIN + close opcode
-	c.w.WriteByte(0)    // zero-length payload
-	return c.w.Flush()
-}
-
 // formatDuration formats a duration in human-readable form for the dashboard.
 func formatDuration(ms int64) string {
 	d := time.Duration(ms) * time.Millisecond

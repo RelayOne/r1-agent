@@ -234,12 +234,3 @@ func indexOf(haystack, needle string) int {
 	}
 	return -1
 }
-
-// registrySize returns the number of distinct registered secrets.
-// Exposed for tests that want to assert clean-up semantics without
-// poking at the private map directly.
-func registrySize() int {
-	secretsMu.RLock()
-	defer secretsMu.RUnlock()
-	return len(secrets)
-}

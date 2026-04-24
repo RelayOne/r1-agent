@@ -38,13 +38,6 @@ type importProposalPayload struct {
 	NodeType string `json:"node_type"`
 }
 
-// importProposalContent is the expected content of a skill_import_proposal node.
-type importProposalContent struct {
-	SkillID        string `json:"skill_id"`
-	Source         string `json:"source"`
-	RiskAssessment string `json:"risk_assessment"` // "low", "medium", "high"
-}
-
 func (r *ImportConsensus) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var np importProposalPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {

@@ -351,26 +351,6 @@ func buildSummary(r *Report) string {
 	return fmt.Sprintf("%d findings: %s", len(r.Findings), strings.Join(parts, ", "))
 }
 
-func extractKeywords(text string) []string {
-	// Split on whitespace and punctuation, filter short words and stop words
-	words := regexp.MustCompile(`[a-zA-Z]+`).FindAllString(text, -1)
-	stopWords := map[string]bool{
-		"the": true, "a": true, "an": true, "is": true, "are": true,
-		"in": true, "on": true, "at": true, "to": true, "for": true,
-		"of": true, "and": true, "or": true, "be": true, "it": true,
-		"that": true, "this": true, "with": true, "from": true,
-		"should": true, "must": true, "will": true, "can": true,
-	}
-	var keywords []string
-	for _, w := range words {
-		lower := strings.ToLower(w)
-		if len(lower) >= 3 && !stopWords[lower] {
-			keywords = append(keywords, lower)
-		}
-	}
-	return keywords
-}
-
 // --- Default Rules ---
 
 // DefaultRules returns the built-in rule set.

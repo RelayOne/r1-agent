@@ -529,14 +529,6 @@ type toolResultBlock struct {
 	IsError   bool   `json:"is_error,omitempty"`
 }
 
-// newUserTextMessage wraps plain text into the content-block JSON shape
-// that provider.ChatMessage expects. Kept as a thin backwards-compatible
-// wrapper over newUserMessage for any older call sites; new code should
-// call newUserMessage directly.
-func newUserTextMessage(text string) (provider.ChatMessage, error) {
-	return newUserMessage(text, nil)
-}
-
 // newUserMessage builds a user ChatMessage that may contain one text
 // block and zero or more image blocks. The image content-block shape
 // matches Anthropic's Messages API exactly, so the existing provider

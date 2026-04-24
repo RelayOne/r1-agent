@@ -755,23 +755,6 @@ func (w *Wizard) askChoice(q Question) int {
 	return n
 }
 
-func (w *Wizard) inferScale() ScaleTier {
-	// Count Go files as a proxy for codebase size
-	entries, _ := filepath.Glob(filepath.Join(w.ProjectDir, "**/*.go"))
-	entries2, _ := filepath.Glob(filepath.Join(w.ProjectDir, "**/**/*.go"))
-	total := len(entries) + len(entries2)
-	switch {
-	case total > 200:
-		return ScaleEnterprise
-	case total > 50:
-		return ScaleGrowth
-	case total > 10:
-		return ScaleStartup
-	default:
-		return ScalePrototype
-	}
-}
-
 func (w *Wizard) scaleToIndex() int {
 	switch w.Prefs.ScaleTier {
 	case ScalePrototype:

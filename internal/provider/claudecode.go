@@ -304,28 +304,6 @@ func splitForClaudeCode(req ChatRequest) (cliPrompt, stdinContent string) {
 	return strings.TrimSpace(cli.String()), strings.TrimSpace(stdin.String())
 }
 
-// buildClaudeCodePrompt concatenates system + user messages
-// into a single string for --print mode. Used by ChatStream.
-func buildClaudeCodePrompt(req ChatRequest) string {
-	var b strings.Builder
-	if req.System != "" {
-		b.WriteString(req.System)
-		b.WriteString("\n\n")
-	}
-	for _, msg := range req.Messages {
-		if msg.Role == "user" {
-			// Content can be a JSON array of content blocks
-			// or a plain string. Extract text from both.
-			text := extractTextFromContent(msg.Content)
-			if text != "" {
-				b.WriteString(text)
-				b.WriteString("\n\n")
-			}
-		}
-	}
-	return strings.TrimSpace(b.String())
-}
-
 // extractTextFromContent pulls text from either a plain
 // string or a JSON-encoded array of content blocks.
 // Uses proper JSON unmarshaling to handle escaped quotes,

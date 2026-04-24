@@ -11,7 +11,6 @@ package docker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -495,18 +494,3 @@ var (
 	_ env.Snapshotter = (*Backend)(nil)
 )
 
-// inspectJSON runs docker inspect and returns parsed JSON.
-func inspectJSON(ctx context.Context, containerID string) (map[string]interface{}, error) {
-	out, err := dockerRun(ctx, "inspect", containerID)
-	if err != nil {
-		return nil, err
-	}
-	var result []map[string]interface{}
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		return nil, fmt.Errorf("parse docker inspect: %w", err)
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("docker inspect returned empty result")
-	}
-	return result[0], nil
-}

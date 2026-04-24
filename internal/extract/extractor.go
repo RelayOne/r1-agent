@@ -53,11 +53,9 @@ type EditBlock struct {
 }
 
 var (
-	codeBlockRe    = regexp.MustCompile("(?s)```(\\w*)\\s*\\n(.*?)```")
-	thinkingRe     = regexp.MustCompile("(?s)<thinking>(.*?)</thinking>")
-	jsonObjectRe   = regexp.MustCompile("(?s)\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}")
-	editBlockRe    = regexp.MustCompile("(?s)<<<<<<< SEARCH\\n(.*?)=======\\n(.*?)>>>>>>> REPLACE")
-	fileEditRe     = regexp.MustCompile("(?m)^(.+?)\\n<<<<<<< SEARCH")
+	codeBlockRe  = regexp.MustCompile("(?s)```(\\w*)\\s*\\n(.*?)```")
+	thinkingRe   = regexp.MustCompile("(?s)<thinking>(.*?)</thinking>")
+	jsonObjectRe = regexp.MustCompile("(?s)\\{[^{}]*(?:\\{[^{}]*\\}[^{}]*)*\\}")
 )
 
 // ExtractAll parses all structured blocks from LLM output.

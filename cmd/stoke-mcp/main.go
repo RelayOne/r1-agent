@@ -542,18 +542,6 @@ func (s *Server) checkAuth(req rpcRequest) error {
 	return nil
 }
 
-// shortHash is a deterministic 8-char sketch of a string,
-// used to make synthetic IDs traceable without importing
-// crypto/sha256 for stubs.
-func shortHash(s string) string {
-	var h uint32 = 2166136261
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= 16777619
-	}
-	return fmt.Sprintf("%08x", h)
-}
-
 // --- Response helpers ---
 
 func (s *Server) respondOK(id json.RawMessage, result any) {

@@ -75,8 +75,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-
-	"github.com/ericmacdougall/stoke/internal/plan"
 )
 
 // Hirer is an alias of Engine, preserved so the S-10 verify/settle
@@ -201,18 +199,6 @@ type DeliveryCriterion struct {
 	// WHY a criterion accepted the deliverable — useful for
 	// reviewers auditing over-permissive ACs.
 	Check func(ctx context.Context, spec string, delivery []byte) (pass bool, reason string)
-}
-
-// toPlanAC converts this DeliveryCriterion to a plan.AcceptanceCriterion
-// shell carrying only ID + Description. The actual verification runs
-// via Check(); this helper exists so callers (and future integration
-// with plan.VerificationDescent) see the same ID/Description strings
-// in ledger events and operator banners.
-func (dc DeliveryCriterion) toPlanAC() plan.AcceptanceCriterion {
-	return plan.AcceptanceCriterion{
-		ID:          dc.ID,
-		Description: dc.Description,
-	}
 }
 
 // Errors returned by the verify/settle flow.

@@ -523,32 +523,6 @@ func (b *Bus) recordHookActionFailed(h Hook, evt Event, actionErr error) {
 	log.Printf("bus: hook action failed (id=%s, pattern=%s): %v", h.ID, h.Pattern.TypePrefix, actionErr)
 }
 
-// recordHookInjectionFailed writes a bus.hook.injection_failed event to the WAL.
-func (b *Bus) recordHookInjectionFailed(h Hook, triggerEvt Event, injEvt Event, pubErr error) {
-	payload, _ := json.Marshal(map[string]any{
-		"hook_id":         h.ID,
-		"triggering_evt":  triggerEvt.ID,
-		"injected_type":   string(injEvt.Type),
-		"error":           pubErr.Error(),
-	})
-
-	b.mu.Lock()
-	b.seq++
-	failEvt := Event{
-		ID:        uuid.New().String(),
-		Type:      EvtBusHookInjectionFailed,
-		Timestamp: time.Now(),
-		EmitterID: "bus",
-		Sequence:  b.seq,
-		Payload:   payload,
-		CausalRef: triggerEvt.ID,
-	}
-	_ = b.wal.Append(failEvt)
-	b.mu.Unlock()
-
-	log.Printf("bus: hook injection failed (hook=%s, injected=%s): %v", h.ID, injEvt.Type, pubErr)
-}
-
 // recordSubscriberOverflow records that a subscriber's channel was full.
 func (b *Bus) recordSubscriberOverflow(subID string, evt Event) {
 	b.mu.Lock()

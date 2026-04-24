@@ -18,20 +18,6 @@ const (
 	ConfidenceProven    Confidence = "proven"
 )
 
-// confidenceRank returns an ordinal for promotion/demotion comparisons.
-func confidenceRank(c Confidence) int {
-	switch c {
-	case ConfidenceCandidate:
-		return 0
-	case ConfidenceTentative:
-		return 1
-	case ConfidenceProven:
-		return 2
-	default:
-		return -1
-	}
-}
-
 // promoteConfidence returns the next higher confidence level, capping at proven.
 func promoteConfidence(c Confidence) Confidence {
 	switch c {

@@ -45,8 +45,7 @@ type Graph struct {
 }
 
 var (
-	importRe  = regexp.MustCompile(`^\s*"([^"]+)"`)
-	packageRe = regexp.MustCompile(`^package\s+(\w+)`)
+	importRe = regexp.MustCompile(`^\s*"([^"]+)"`)
 )
 
 // BuildGraph scans a Go project and builds the dependency graph.

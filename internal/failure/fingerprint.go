@@ -91,8 +91,6 @@ var (
 	lineNumRe2 = regexp.MustCompile(`\(\d+,\d+\)`)
 	pathRe     = regexp.MustCompile(`(?:^|[\s'"])(/[^\s'"]+)`)
 	hexRe      = regexp.MustCompile(`0x[0-9a-fA-F]+`)
-	tsErrorNum = regexp.MustCompile(`TS\d+`)
-	goFileRe   = regexp.MustCompile(`[a-zA-Z0-9_/]+\.go`)
 )
 
 func normalizeMessage(msg string) string {

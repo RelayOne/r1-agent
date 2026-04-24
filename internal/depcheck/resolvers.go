@@ -16,7 +16,6 @@ package depcheck
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -419,11 +418,3 @@ func (c *Client) simpleHeadOrGet(ctx context.Context, key, url string) (bool, er
 	}
 }
 
-// PyPI / Crates / GoMod fields on Client let callers override registry
-// endpoints independently of NPM. Defined here rather than on Client
-// itself to keep depcheck.go v1-compatible.
-type clientExtra struct {
-	PyPI, Crates, GoMod string
-}
-
-var _ = json.Marshal // keep the json import alive for future fields

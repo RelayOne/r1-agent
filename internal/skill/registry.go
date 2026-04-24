@@ -303,37 +303,6 @@ func (r *Registry) InjectPrompt(prompt string) string {
 	return sb.String()
 }
 
-// truncateToFirstSection returns content up to the first ## heading after the
-// initial # heading. This extracts the "gotchas only" portion of a skill.
-func truncateToFirstSection(content string) string {
-	lines := strings.Split(content, "\n")
-	pastTitle := false
-	var sb strings.Builder
-	for _, line := range lines {
-		if strings.HasPrefix(line, "# ") && !pastTitle {
-			pastTitle = true
-			sb.WriteString(line)
-			sb.WriteByte('\n')
-			continue
-		}
-		if pastTitle && strings.HasPrefix(line, "## ") {
-			break
-		}
-		sb.WriteString(line)
-		sb.WriteByte('\n')
-	}
-	return strings.TrimRight(sb.String(), "\n") + "\n"
-}
-
-// estimateTokens returns a rough token count using ~4 chars per token.
-func estimateTokens(s string) int {
-	n := len(s) / 4
-	if n == 0 && len(s) > 0 {
-		return 1
-	}
-	return n
-}
-
 // InjectionTier classifies how much of a skill to include.
 type InjectionTier int
 

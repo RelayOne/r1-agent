@@ -265,41 +265,6 @@ func referenceCount(name string, files []FileInput, defFile string) int {
 	return count
 }
 
-// --- Semantic Rules ---
-
-// unreachableSymbolRule checks that exported symbols defined in modified files
-// are actually referenced somewhere else in the codebase. If a new exported
-// function/type/class exists but nothing calls it, it's dead code — the most
-// dangerous form of incompleteness.
-func unreachableSymbolRule() Rule {
-	return Rule{
-		ID: "unreachable-symbol", Name: "New symbols must be reachable",
-		Category: CatConsistency, Severity: SevBlocking, Enabled: true,
-		Description: "Exported symbol defined but never referenced from other files — code exists but is dead",
-	}
-}
-
-// criteriaSemanticRule checks acceptance criteria against actual code changes
-// using semantic analysis (symbol names, function signatures) rather than
-// naive keyword matching.
-func criteriaSemanticRule() Rule {
-	return Rule{
-		ID: "criteria-semantic", Name: "Criteria mapped to code changes",
-		Category: CatCompleteness, Severity: SevBlocking, Enabled: true,
-		Description: "Acceptance criterion has no corresponding code changes",
-	}
-}
-
-// crossFileWiringRule checks that new types are actually used (instantiated,
-// passed as arguments, returned) in at least one other file.
-func crossFileWiringRule() Rule {
-	return Rule{
-		ID: "cross-file-wiring", Name: "New types must be wired across files",
-		Category: CatConsistency, Severity: SevMajor, Enabled: true,
-		Description: "New type/class defined but never instantiated or used in another file",
-	}
-}
-
 // SemanticAnalysis performs deep code analysis on the provided files.
 // It extracts symbols, builds a reference graph, and checks for unreachable
 // code, unwired types, and unmapped criteria.
