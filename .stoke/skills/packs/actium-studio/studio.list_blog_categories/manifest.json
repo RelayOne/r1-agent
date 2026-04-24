@@ -1,0 +1,54 @@
+{
+  "name": "studio.list_blog_categories",
+  "version": "1.0.0",
+  "description": "Enumerate blog categories on an Actium Studio site. Returns id, name, slug, and post count for each category.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["categories"],
+    "properties": {
+      "categories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["category_id", "name", "slug"],
+          "properties": {
+            "category_id": { "type": "string" },
+            "name":        { "type": "string" },
+            "slug":        { "type": "string" },
+            "post_count":  { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Resolve the category_id for a named category before assigning it to a post during create_post / update_post.",
+    "Operator asks 'what categories does this blog have' without naming one.",
+    "Taxonomy audit: enumerate to find empty categories or detect near-duplicates before dedup."
+  ],
+  "whenNotToUse": [
+    "Caller already knows the category_id — skip listing and assign directly.",
+    "Caller is looking for tags (cross-cutting keywords) rather than categories (hierarchical buckets) — use studio.list_blog_tags.",
+    "Caller wants posts in a category — list posts filtered by category_id via studio.list_posts, not this skill."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "categories",
+    "discovery"
+  ]
+}

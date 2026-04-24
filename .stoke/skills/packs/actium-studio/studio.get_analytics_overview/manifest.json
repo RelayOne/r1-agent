@@ -1,0 +1,72 @@
+{
+  "name": "studio.get_analytics_overview",
+  "version": "1.0.0",
+  "description": "Fetch the site-level analytics overview: visitors, sessions, pageviews, bounce rate, top pages, for a time window.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id":   { "type": "string", "minLength": 1 },
+      "start_date": { "type": "string", "format": "date" },
+      "end_date":   { "type": "string", "format": "date" },
+      "granularity": { "type": "string", "enum": ["day", "week", "month"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "window", "totals"],
+    "properties": {
+      "site_id": { "type": "string" },
+      "window": {
+        "type": "object",
+        "required": ["start_date", "end_date"],
+        "properties": {
+          "start_date": { "type": "string", "format": "date" },
+          "end_date":   { "type": "string", "format": "date" }
+        }
+      },
+      "totals": {
+        "type": "object",
+        "properties": {
+          "visitors":    { "type": "integer", "minimum": 0 },
+          "sessions":    { "type": "integer", "minimum": 0 },
+          "pageviews":   { "type": "integer", "minimum": 0 },
+          "bounce_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "top_pages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["page_id", "pageviews"],
+          "properties": {
+            "page_id":    { "type": "string" },
+            "slug":       { "type": "string" },
+            "pageviews":  { "type": "integer", "minimum": 0 },
+            "avg_time_s": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "Reporting flow: summarize last-30-days traffic for an operator status update.",
+    "Content prioritization: identify the top pages to decide where to invest the next editorial cycle.",
+    "Post-launch validation: confirm traffic shifted correctly after a site rename or redirect rollout."
+  ],
+  "whenNotToUse": [
+    "Caller wants per-page detail — use studio.get_page_analytics; this skill is site-wide rolled-up only.",
+    "Caller wants SEO rank data — use studio.list_keywords; analytics is behavioral, not search-rank.",
+    "Caller wants real-time (<1min) activity — this endpoint is batch-aggregated; use a streaming analytics source for live views."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "analytics",
+    "reporting",
+    "discovery"
+  ]
+}

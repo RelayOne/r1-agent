@@ -1,0 +1,57 @@
+{
+  "name": "studio.get_scaffold_status",
+  "version": "1.0.0",
+  "description": "Poll an async Actium Studio scaffold job by id and return its current status, progress, and per-step timing.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["job_id"],
+    "properties": {
+      "job_id":  { "type": "string", "minLength": 1 },
+      "site_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["job_id", "status"],
+    "properties": {
+      "job_id":  { "type": "string" },
+      "site_id": { "type": "string" },
+      "status":  { "type": "string", "enum": ["queued", "scaffolding", "ready", "failed"] },
+      "progress_pct": { "type": "integer", "minimum": 0, "maximum": 100 },
+      "error_message": { "type": "string" },
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "status"],
+          "properties": {
+            "name":        { "type": "string" },
+            "status":      { "type": "string", "enum": ["ok", "running", "not-run", "failed"] },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "studio.scaffold_site returned 202 with a job_id and the agent needs to wait for 'ready' before continuing.",
+    "Operator wants a progress update on an in-flight scaffold (UI polling, status line).",
+    "Failure diagnosis: a scaffold reported 'failed' — fetch the job to surface which step failed and why."
+  ],
+  "whenNotToUse": [
+    "Caller has no job_id — this is a polling companion; scaffold must be started first with studio.scaffold_site.",
+    "Polling every <1s in a tight loop — the endpoint is cheap but not free; back off to 2-5s intervals.",
+    "Caller wants site health info (uptime, page counts) — use studio.site_status instead; this skill is scaffold-job-specific."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "scaffold",
+    "polling",
+    "async-job"
+  ]
+}

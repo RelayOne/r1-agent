@@ -1,0 +1,44 @@
+{
+  "name": "studio.delete_blog_category",
+  "version": "1.0.0",
+  "description": "Delete a blog category from an Actium Studio site. Posts assigned to this category are unassigned but not deleted.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "category_id"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "category_id": { "type": "string", "minLength": 1 },
+      "reassign_to": { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["category_id", "deleted"],
+    "properties": {
+      "category_id":      { "type": "string" },
+      "deleted":          { "type": "boolean" },
+      "reassigned_count": { "type": "integer", "minimum": 0 },
+      "deleted_at":       { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Taxonomy cleanup: remove an obsolete category after consolidating posts onto a surviving one.",
+    "Operator detected a typo in a category slug and created a replacement; old one must be removed.",
+    "Merge flow: pair with 'reassign_to' to bulk-move posts before the delete takes effect."
+  ],
+  "whenNotToUse": [
+    "Category still has posts and caller did not supply reassign_to — without reassignment, posts become uncategorized; confirm the intent first.",
+    "Caller wants to unassign a category from one post — that's an update_post operation; this deletes the category entry itself.",
+    "Caller wants to delete a tag — use studio.delete_blog_tag; category and tag endpoints are separate."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "categories",
+    "cleanup"
+  ]
+}

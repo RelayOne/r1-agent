@@ -1,0 +1,44 @@
+{
+  "name": "studio.create_blog_tag",
+  "version": "1.0.0",
+  "description": "Create a new blog tag on an Actium Studio site. Tags are flat keywords without hierarchy.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "name"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "name":    { "type": "string", "minLength": 1, "maxLength": 120 },
+      "slug":    { "type": "string", "maxLength": 120 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["tag_id", "name", "slug"],
+    "properties": {
+      "tag_id":     { "type": "string" },
+      "name":       { "type": "string" },
+      "slug":       { "type": "string" },
+      "created_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "A post references a tag not yet in the system; create the tag before assigning it to the post.",
+    "Taxonomy seeding: populate a new site's tag cloud from a predefined list.",
+    "Editorial workflow: author wants to introduce a new topic label (e.g. 'case-study')."
+  ],
+  "whenNotToUse": [
+    "A tag with the same slug already exists — call studio.list_blog_tags first; duplicate slug returns 409.",
+    "Caller wants a hierarchical bucket — use studio.create_blog_category, not create_blog_tag.",
+    "Caller wants to assign an existing tag to a post — that's update_post; this skill creates the tag entity itself."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "tags",
+    "content-author"
+  ]
+}

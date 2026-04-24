@@ -1,0 +1,44 @@
+{
+  "name": "studio.get_staging_info",
+  "version": "1.0.0",
+  "description": "Read information about an Actium Studio site's staging environment: URL, last-synced timestamp, drift indicator vs production.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "has_staging"],
+    "properties": {
+      "site_id":      { "type": "string" },
+      "has_staging":  { "type": "boolean" },
+      "staging_url":  { "type": "string", "format": "uri" },
+      "last_synced":  { "type": "string", "format": "date-time" },
+      "drift_from_prod": { "type": "string", "enum": ["none", "minor", "major"] },
+      "pending_changes": { "type": "integer", "minimum": 0 }
+    }
+  },
+  "whenToUse": [
+    "Pre-flight before studio.promote_staging — verify staging is current and reflects the intended state.",
+    "Diagnostic: answer 'what does staging look like right now' for an operator reviewing unpublished work.",
+    "Drift check: identify whether staging has diverged significantly from production, flagging a need for a fresh sync."
+  ],
+  "whenNotToUse": [
+    "Caller wants production analytics or page content — use studio.get_site or studio.get_page; staging info is environment-only.",
+    "Caller wants to trigger the sync itself — this skill only reads; a staging-sync action is a separate operation.",
+    "Site has no staging environment enabled on its plan — the has_staging flag will be false and other fields may be absent."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "staging",
+    "preview",
+    "discovery"
+  ]
+}

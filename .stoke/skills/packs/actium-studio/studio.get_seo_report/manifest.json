@@ -1,0 +1,56 @@
+{
+  "name": "studio.get_seo_report",
+  "version": "1.0.0",
+  "description": "Fetch the latest SEO audit report for an Actium Studio site. Returns per-issue findings, severity, and a rolled-up score.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "page_id": { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "score", "issues", "generated_at"],
+    "properties": {
+      "site_id":      { "type": "string" },
+      "score":        { "type": "integer", "minimum": 0, "maximum": 100 },
+      "generated_at": { "type": "string", "format": "date-time" },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "severity", "message"],
+          "properties": {
+            "id":       { "type": "string" },
+            "severity": { "type": "string", "enum": ["info", "warn", "error"] },
+            "message":  { "type": "string" },
+            "page_id":  { "type": "string" },
+            "category": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "Start of an 'improve this site' flow — enumerate current SEO issues before proposing edits.",
+    "Post-publish sanity check: after a batch of updates, confirm the score did not regress.",
+    "Operator-facing diagnostic: answer 'how is my site's SEO doing' with concrete numbers."
+  ],
+  "whenNotToUse": [
+    "No audit has been run recently — the report may be stale; pair with studio.trigger_seo_audit first.",
+    "Caller wants keyword rankings — use studio.list_keywords; this skill reports technical SEO issues.",
+    "Caller wants analytics (traffic, conversion) — use studio.get_analytics_overview; SEO report is audit data only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "seo",
+    "audit",
+    "content-quality"
+  ]
+}

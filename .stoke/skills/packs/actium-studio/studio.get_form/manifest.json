@@ -1,0 +1,64 @@
+{
+  "name": "studio.get_form",
+  "version": "1.0.0",
+  "description": "Fetch a single form's definition: fields, validation rules, destination (email/webhook), and enabled state.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "form_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "form_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["form_id", "name", "fields"],
+    "properties": {
+      "form_id":  { "type": "string" },
+      "name":     { "type": "string" },
+      "slug":     { "type": "string" },
+      "enabled":  { "type": "boolean" },
+      "fields": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "type"],
+          "properties": {
+            "name":     { "type": "string" },
+            "type":     { "type": "string" },
+            "required": { "type": "boolean" },
+            "label":    { "type": "string" }
+          }
+        }
+      },
+      "destination": {
+        "type": "object",
+        "properties": {
+          "kind":    { "type": "string", "enum": ["email", "webhook", "none"] },
+          "target":  { "type": "string" }
+        }
+      },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Review a form's field schema before drafting messaging that references specific fields.",
+    "Diagnose: 'is this form disabled, or is the destination misconfigured' — fetch to inspect.",
+    "Export: convert a form definition to JSON for documentation or cross-site cloning."
+  ],
+  "whenNotToUse": [
+    "Caller wants submission rows — use studio.list_form_submissions; this skill returns schema, not entries.",
+    "Caller has no form_id — use studio.list_forms to discover first.",
+    "Caller wants to edit the form — out of scope for the v1 skill pack; operator-console-only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "forms",
+    "schema",
+    "discovery"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "name": "studio.update_settings",
+  "version": "1.0.0",
+  "description": "Update site-level settings on Actium Studio: locale, timezone, analytics IDs, feature toggles. Opt-in skill — operator acknowledgement required per work-r1-actium-studio-skills.md §1.1.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "confirm"],
+    "properties": {
+      "site_id":   { "type": "string", "minLength": 1 },
+      "confirm":   { "type": "boolean", "const": true },
+      "locale":    { "type": "string", "maxLength": 16 },
+      "timezone":  { "type": "string", "maxLength": 64 },
+      "analytics_id": { "type": "string", "maxLength": 120 },
+      "feature_flags": {
+        "type": "object",
+        "additionalProperties": { "type": "boolean" }
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "updated_at"],
+    "properties": {
+      "site_id":   { "type": "string" },
+      "settings": {
+        "type": "object",
+        "properties": {
+          "locale":        { "type": "string" },
+          "timezone":      { "type": "string" },
+          "analytics_id":  { "type": "string" },
+          "feature_flags": {
+            "type": "object",
+            "additionalProperties": { "type": "boolean" }
+          }
+        }
+      },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Operator explicitly asked to change site-wide locale, timezone, analytics ID, or a specific feature flag and the change is reviewed.",
+    "Scripted initialization: post-scaffold setup applies a known-good settings profile captured from a template site.",
+    "Analytics cutover: swap analytics_id after a provider migration — confirmed with the operator first."
+  ],
+  "whenNotToUse": [
+    "No explicit operator confirm:true — this skill gates destructive config changes and must not fire implicitly.",
+    "Caller is adjusting per-page SEO — that's studio.update_page, not settings.",
+    "Caller wants theme tokens (colors, fonts) — use studio.update_theme_tokens; settings and theme are separate surfaces."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "settings",
+    "config",
+    "opt-in-gated"
+  ]
+}

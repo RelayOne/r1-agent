@@ -1,0 +1,57 @@
+{
+  "name": "studio.get_page_analytics",
+  "version": "1.0.0",
+  "description": "Fetch per-page analytics: pageviews, unique visitors, time on page, referrers, for a specific page over a time window.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id":    { "type": "string", "minLength": 1 },
+      "page_id":    { "type": "string", "minLength": 1 },
+      "start_date": { "type": "string", "format": "date" },
+      "end_date":   { "type": "string", "format": "date" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "pageviews"],
+    "properties": {
+      "page_id":      { "type": "string" },
+      "pageviews":    { "type": "integer", "minimum": 0 },
+      "unique_visitors": { "type": "integer", "minimum": 0 },
+      "avg_time_s":   { "type": "number", "minimum": 0 },
+      "bounce_rate":  { "type": "number", "minimum": 0, "maximum": 1 },
+      "referrers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["source", "count"],
+          "properties": {
+            "source": { "type": "string" },
+            "count":  { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "Drill-down after studio.get_analytics_overview flagged a specific top page to investigate.",
+    "Answer 'is this landing page working' with visitor count + avg time + bounce rate.",
+    "Attribution: inspect referrers for a specific campaign landing page to verify traffic sources."
+  ],
+  "whenNotToUse": [
+    "Caller wants a site-wide rollup — use studio.get_analytics_overview; per-page fan-out is slower and higher-cost.",
+    "Caller does not yet know the page_id — resolve via studio.list_pages first.",
+    "Caller wants SEO rank for the page's target keyword — use studio.list_keywords; analytics is behavioral, not rank data."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "analytics",
+    "per-page",
+    "drill-down"
+  ]
+}

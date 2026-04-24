@@ -1,0 +1,55 @@
+{
+  "name": "studio.list_blog_tags",
+  "version": "1.0.0",
+  "description": "Enumerate blog tags on an Actium Studio site. Tags are flat (non-hierarchical) cross-cutting keywords.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "prefix":  { "type": "string", "maxLength": 120 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 500 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["tags"],
+    "properties": {
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["tag_id", "name", "slug"],
+          "properties": {
+            "tag_id":     { "type": "string" },
+            "name":       { "type": "string" },
+            "slug":       { "type": "string" },
+            "post_count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Resolve tag_ids for an update_post or create_post call that assigns multiple tags.",
+    "Operator is writing a post and wants to reuse existing tags rather than create duplicates.",
+    "Autocomplete-style UI: fetch tags matching a prefix to suggest while the operator types."
+  ],
+  "whenNotToUse": [
+    "Caller wants hierarchical buckets (nesting, parent/child) — use studio.list_blog_categories; tags are flat.",
+    "Caller already has the tag name and the API accepts tag names directly — skip the lookup.",
+    "Caller wants to enumerate posts carrying a tag — list posts filtered by tag_id via studio.list_posts, not this skill."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "tags",
+    "discovery"
+  ]
+}

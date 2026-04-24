@@ -1,0 +1,58 @@
+{
+  "name": "studio.list_keywords",
+  "version": "1.0.0",
+  "description": "Enumerate tracked SEO keywords for an Actium Studio site. Returns keyword, current rank, search volume, and trend.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "country": { "type": "string", "maxLength": 8 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 500 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["keywords"],
+    "properties": {
+      "keywords": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["keyword_id", "keyword"],
+          "properties": {
+            "keyword_id":  { "type": "string" },
+            "keyword":     { "type": "string" },
+            "rank":        { "type": "integer", "minimum": 0 },
+            "volume":      { "type": "integer", "minimum": 0 },
+            "trend":       { "type": "string", "enum": ["up", "flat", "down"] },
+            "country":     { "type": "string" },
+            "last_checked": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Reporting flow: answer 'which keywords is this site ranking for' with concrete rank data.",
+    "Content-planning input: identify keywords with high volume and poor rank as update targets.",
+    "Trend tracking: flag keywords moving downward so the operator can intervene."
+  ],
+  "whenNotToUse": [
+    "Caller wants technical SEO issues — use studio.get_seo_report; this skill is keyword-rank data only.",
+    "Caller wants to add a new keyword to track — use studio.add_keyword; this is read-only.",
+    "Caller wants raw analytics traffic — use studio.get_analytics_overview; keyword-rank data lags real-time visits."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "seo",
+    "keywords",
+    "reporting"
+  ]
+}

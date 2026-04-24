@@ -1,0 +1,62 @@
+{
+  "name": "studio.list_form_submissions",
+  "version": "1.0.0",
+  "description": "Fetch submissions for a specific form on an Actium Studio site. Supports date-range filter + pagination.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "form_id"],
+    "properties": {
+      "site_id":   { "type": "string", "minLength": 1 },
+      "form_id":   { "type": "string", "minLength": 1 },
+      "start_date": { "type": "string", "format": "date-time" },
+      "end_date":   { "type": "string", "format": "date-time" },
+      "limit":      { "type": "integer", "minimum": 1, "maximum": 500 },
+      "cursor":     { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["form_id", "submissions"],
+    "properties": {
+      "form_id": { "type": "string" },
+      "submissions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["submission_id", "submitted_at"],
+          "properties": {
+            "submission_id": { "type": "string" },
+            "submitted_at":  { "type": "string", "format": "date-time" },
+            "fields": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "ip_hash":       { "type": "string" },
+            "user_agent":    { "type": "string" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Lead-review flow: pull the last 7 days of form submissions for an operator to triage.",
+    "Export: batch submissions to CSV or to a downstream CRM as part of a scheduled sync.",
+    "Incident diagnosis: 'are we receiving form submissions' — quick read to confirm the pipeline is healthy."
+  ],
+  "whenNotToUse": [
+    "Caller has no form_id — resolve via studio.list_forms first.",
+    "Caller wants the form schema — use studio.get_form; this returns submission rows, not definitions.",
+    "Submissions contain PII — ensure the caller's downstream handling complies with the operator's data policy before invoking."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "forms",
+    "submissions",
+    "lead-pipeline"
+  ]
+}

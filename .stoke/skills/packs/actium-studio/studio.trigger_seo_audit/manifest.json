@@ -1,0 +1,44 @@
+{
+  "name": "studio.trigger_seo_audit",
+  "version": "1.0.0",
+  "description": "Kick off a fresh SEO audit for an Actium Studio site. Returns an audit_id; pair with studio.get_seo_report to read results.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "scope":   { "type": "string", "enum": ["full", "page", "sitemap"] },
+      "page_id": { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["audit_id", "status"],
+    "properties": {
+      "audit_id":   { "type": "string" },
+      "status":     { "type": "string", "enum": ["queued", "running", "complete", "failed"] },
+      "eta_seconds": { "type": "integer", "minimum": 0 },
+      "started_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "After a site-wide content update, trigger a fresh audit so the next get_seo_report reflects the new state.",
+    "Pre-launch checklist: run an audit after scaffolding so publish gates can validate against current issues.",
+    "Periodic sweep: scheduled CI job kicks off a weekly audit per managed site."
+  ],
+  "whenNotToUse": [
+    "Caller only needs cached data from the last audit — use studio.get_seo_report directly; triggering is expensive.",
+    "An audit is already in flight (last one ran <5min ago) — duplicate triggers are rate-limited server-side.",
+    "Caller wants to edit SEO fields (title, meta description) — use studio.update_page; auditing is read-only analysis."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "moderate"
+  },
+  "recommendedFor": [
+    "seo",
+    "audit",
+    "scheduling"
+  ]
+}

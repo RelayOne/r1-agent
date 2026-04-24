@@ -1,0 +1,67 @@
+{
+  "name": "studio.update_navigation",
+  "version": "1.0.0",
+  "description": "Replace the navigation tree on an Actium Studio site. Accepts a nested array of menu items with label + href + children.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "items"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "location": { "type": "string", "enum": ["primary", "footer", "mobile"] },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["label", "href"],
+          "properties": {
+            "label":    { "type": "string", "minLength": 1, "maxLength": 120 },
+            "href":     { "type": "string", "minLength": 1, "maxLength": 2048 },
+            "new_tab":  { "type": "boolean" },
+            "children": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["label", "href"],
+                "properties": {
+                  "label":   { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "href":    { "type": "string", "minLength": 1, "maxLength": 2048 },
+                  "new_tab": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "updated_at"],
+    "properties": {
+      "site_id":   { "type": "string" },
+      "location":  { "type": "string", "enum": ["primary", "footer", "mobile"] },
+      "item_count": { "type": "integer", "minimum": 0 },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Add a new top-level menu item after creating a net-new page (e.g. '/pricing') that should be discoverable.",
+    "Restructure site IA during a rebrand — swap the entire navigation tree in one atomic write.",
+    "Remove dead links: rebuild the menu after deleting pages so the nav no longer points at 404s."
+  ],
+  "whenNotToUse": [
+    "Caller wants a partial edit (add one item, keep the rest) — fetch via studio.get_navigation first, mutate client-side, then write back; this skill is whole-tree replacement.",
+    "Caller wants to rename a page URL — use studio.update_page; update_navigation only edits menu entries, not the underlying pages.",
+    "Caller is about to point menu items at slugs that haven't been created — pre-flight via studio.list_pages to avoid broken links."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "navigation",
+    "site-ia",
+    "menu"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "studio.restore_snapshot",
+  "version": "1.0.0",
+  "description": "Restore an Actium Studio site to a previously-captured snapshot. Opt-in gated per work-r1-actium-studio-skills.md §1.1 — requires explicit operator confirm:true.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "snapshot_id", "confirm"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "snapshot_id": { "type": "string", "minLength": 1 },
+      "confirm":     { "type": "boolean", "const": true }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "snapshot_id", "status"],
+    "properties": {
+      "site_id":     { "type": "string" },
+      "snapshot_id": { "type": "string" },
+      "status":      { "type": "string", "enum": ["queued", "restoring", "complete", "failed"] },
+      "restored_at": { "type": "string", "format": "date-time" },
+      "error_message": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Operator explicitly approved rolling back a site after a bad publish or content regression.",
+    "Disaster-recovery flow: restore the last known-good snapshot after corruption or accidental deletion.",
+    "A scripted safe-deploy flow captured a pre-op snapshot and now needs to restore on verification failure, with confirm:true asserted by the caller."
+  ],
+  "whenNotToUse": [
+    "No explicit confirm:true from the operator — this skill is destructive and must not fire implicitly.",
+    "Caller wants to inspect a snapshot's contents before restoring — use studio.list_snapshots plus studio.diff_versions first.",
+    "Caller wants to revert a single page — restore_snapshot is site-wide; use studio.update_page with the previous content to revert one page only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "moderate"
+  },
+  "recommendedFor": [
+    "snapshot",
+    "disaster-recovery",
+    "opt-in-gated"
+  ]
+}

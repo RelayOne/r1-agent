@@ -1,0 +1,48 @@
+{
+  "name": "studio.get_media",
+  "version": "1.0.0",
+  "description": "Fetch metadata for a single media asset by id. Returns URL, mime type, size, dimensions, and upload timestamp.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "media_id"],
+    "properties": {
+      "site_id":  { "type": "string", "minLength": 1 },
+      "media_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["media_id", "url", "mime_type"],
+    "properties": {
+      "media_id":   { "type": "string" },
+      "name":       { "type": "string" },
+      "url":        { "type": "string", "format": "uri" },
+      "mime_type":  { "type": "string" },
+      "size_bytes": { "type": "integer", "minimum": 0 },
+      "width":      { "type": "integer", "minimum": 0 },
+      "height":     { "type": "integer", "minimum": 0 },
+      "alt_text":   { "type": "string" },
+      "uploaded_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Agent has a media_id (from list_media or a page reference) and needs the CDN URL + dimensions before embedding.",
+    "Accessibility audit: fetch each referenced asset to confirm alt_text is present.",
+    "Cache refresh: re-read a single asset's metadata after an external upload job completes."
+  ],
+  "whenNotToUse": [
+    "Caller has no media_id — use studio.list_media to discover assets first.",
+    "Caller wants the binary bytes — this skill is metadata-only; the returned URL can be fetched directly.",
+    "Caller wants to upload a new asset — out of scope; upload is not exposed as an agent skill in this pack."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "media",
+    "assets",
+    "metadata"
+  ]
+}

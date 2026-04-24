@@ -1,0 +1,57 @@
+{
+  "name": "studio.list_forms",
+  "version": "1.0.0",
+  "description": "Enumerate forms on an Actium Studio site. Returns id, name, slug, submission count, and enabled state.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "enabled": { "type": "boolean" },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["forms"],
+    "properties": {
+      "forms": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["form_id", "name", "slug", "enabled"],
+          "properties": {
+            "form_id":          { "type": "string" },
+            "name":             { "type": "string" },
+            "slug":             { "type": "string" },
+            "enabled":          { "type": "boolean" },
+            "submission_count": { "type": "integer", "minimum": 0 },
+            "updated_at":       { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Discovery: an operator asks 'what forms does this site have' before reviewing or editing.",
+    "Lead-pipeline flow: identify which forms have collected submissions to prioritize review.",
+    "Pre-flight before reading submissions — resolve form_id from a human-readable slug."
+  ],
+  "whenNotToUse": [
+    "Caller already knows the form_id — skip listing and read directly via studio.get_form.",
+    "Caller wants submission rows — use studio.list_form_submissions; this skill only lists form definitions.",
+    "Caller wants to create or edit a form — out of scope for the v1 skill pack; operator-console-only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "forms",
+    "discovery",
+    "lead-capture"
+  ]
+}

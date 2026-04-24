@@ -1,0 +1,46 @@
+{
+  "name": "studio.create_blog_category",
+  "version": "1.0.0",
+  "description": "Create a new blog category on an Actium Studio site. Returns the assigned category_id.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "name"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "name":        { "type": "string", "minLength": 1, "maxLength": 120 },
+      "slug":        { "type": "string", "maxLength": 120 },
+      "description": { "type": "string", "maxLength": 2000 },
+      "parent_id":   { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["category_id", "name", "slug"],
+    "properties": {
+      "category_id": { "type": "string" },
+      "name":        { "type": "string" },
+      "slug":        { "type": "string" },
+      "created_at":  { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Operator is setting up a new blog and needs the initial category taxonomy (e.g. 'Product', 'Engineering', 'Customer Stories').",
+    "A post-create flow requires a category that doesn't exist yet; create it before assigning to the post.",
+    "Taxonomy migration: scripted creation of categories from an external CMS export."
+  ],
+  "whenNotToUse": [
+    "A category with the same name or slug already exists — call studio.list_blog_categories first; duplicate slug returns 409.",
+    "Caller wants a tag (cross-cutting keyword, flat namespace) — use studio.create_blog_tag; categories are hierarchical.",
+    "Caller wants to add a category to a specific post — categories are site-scoped; post assignment happens in update_post."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "categories",
+    "content-author"
+  ]
+}

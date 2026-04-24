@@ -1,0 +1,45 @@
+{
+  "name": "studio.add_keyword",
+  "version": "1.0.0",
+  "description": "Add a keyword to an Actium Studio site's SEO keyword tracker. Returns the assigned keyword_id.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "keyword"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "keyword": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "country": { "type": "string", "maxLength": 8 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["keyword_id", "keyword"],
+    "properties": {
+      "keyword_id":   { "type": "string" },
+      "keyword":      { "type": "string" },
+      "country":      { "type": "string" },
+      "initial_rank": { "type": "integer", "minimum": 0 },
+      "created_at":   { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Content strategist identifies a new target keyword that should be tracked against the site.",
+    "Campaign launch: bulk-add keywords the campaign is optimizing for so rank data accumulates from day one.",
+    "Competitor analysis flow: add keywords competitors rank for that this site should also target."
+  ],
+  "whenNotToUse": [
+    "Keyword already tracked — call studio.list_keywords first to avoid duplicate rows.",
+    "Caller is editing page content for SEO — that's studio.update_page; this skill only tracks rank data.",
+    "Caller wants to delete / untrack a keyword — out of scope; operator console handles removal in v1."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "seo",
+    "keywords",
+    "content-strategy"
+  ]
+}

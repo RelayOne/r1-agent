@@ -1,0 +1,44 @@
+{
+  "name": "studio.get_credit_balance",
+  "version": "1.0.0",
+  "description": "Read the current Actium Studio credit balance for an account or site: remaining credits, consumption rate, projected depletion date.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "site_id":    { "type": "string" },
+      "account_id": { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["balance"],
+    "properties": {
+      "balance":              { "type": "number", "minimum": 0 },
+      "currency":             { "type": "string" },
+      "consumed_last_30d":    { "type": "number", "minimum": 0 },
+      "projected_depletion":  { "type": "string", "format": "date-time" },
+      "account_id":           { "type": "string" },
+      "as_of":                { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Cost-aware planning: before starting an LLM-heavy flow (e.g. studio.scaffold_site), confirm the account has enough credit.",
+    "Operator dashboard: surface current credit balance so the operator can refill before a scheduled campaign burns through it.",
+    "Threshold alerts: scheduled check that surfaces a warning when balance drops below a configured floor."
+  ],
+  "whenNotToUse": [
+    "Caller wants cost per individual tool invocation — this skill reports account balance, not per-call cost breakdowns.",
+    "Caller wants to purchase credits or update a payment method — out of scope; operator console handles billing writes.",
+    "Caller wants a month-over-month trend — use studio.get_billing_overview; credit balance is a point-in-time snapshot."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "billing",
+    "credits",
+    "cost-aware"
+  ]
+}

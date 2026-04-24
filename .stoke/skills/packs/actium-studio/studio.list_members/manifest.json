@@ -1,0 +1,56 @@
+{
+  "name": "studio.list_members",
+  "version": "1.0.0",
+  "description": "Enumerate team members on an Actium Studio site: user id, email, role, and last-active timestamp. Read-only — membership writes are not bundled in this pack.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "role":    { "type": "string", "maxLength": 64 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["members"],
+    "properties": {
+      "members": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["member_id", "email", "role"],
+          "properties": {
+            "member_id":   { "type": "string" },
+            "email":       { "type": "string" },
+            "role":        { "type": "string" },
+            "name":        { "type": "string" },
+            "last_active": { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Audit flow: answer 'who has access to this site' for a compliance or handoff report.",
+    "Pre-flight before an operator-driven membership change in the Studio console — know the current roster first.",
+    "Debugging: identify the owner email when a permissions-related error surfaces during another flow."
+  ],
+  "whenNotToUse": [
+    "Caller wants to invite, update, or remove a member — those operations are not bundled in this pack per work-r1-actium-studio-skills.md §1.1; use the Studio operator console.",
+    "Caller wants billing roles or seat counts — use studio.get_billing_overview; member list is identity + permission only.",
+    "Caller has no site_id — use studio.list_sites to resolve first."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "roles",
+    "members",
+    "audit"
+  ]
+}

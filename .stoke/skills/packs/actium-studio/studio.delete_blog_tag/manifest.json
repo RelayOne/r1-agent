@@ -1,0 +1,43 @@
+{
+  "name": "studio.delete_blog_tag",
+  "version": "1.0.0",
+  "description": "Delete a blog tag from an Actium Studio site. Posts tagged with this tag are unassigned from it but not deleted.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "tag_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "tag_id":  { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["tag_id", "deleted"],
+    "properties": {
+      "tag_id":            { "type": "string" },
+      "deleted":           { "type": "boolean" },
+      "untagged_post_count": { "type": "integer", "minimum": 0 },
+      "deleted_at":        { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Tag-cloud cleanup: remove a stale tag after content migration.",
+    "Dedup flow: a newer, better-named tag replaces an old one; remove the old entry after posts are re-tagged.",
+    "Typo correction: an earlier create_blog_tag used a misspelled name that's now being replaced."
+  ],
+  "whenNotToUse": [
+    "Caller wants to untag a single post — that's update_post; this deletes the tag entity itself.",
+    "Tag still has many active posts and removing it harms discoverability — re-tag the posts first.",
+    "Caller wants to delete a category — use studio.delete_blog_category; category and tag endpoints are separate."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog-taxonomy",
+    "tags",
+    "cleanup"
+  ]
+}

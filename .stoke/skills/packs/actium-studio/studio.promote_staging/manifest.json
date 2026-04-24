@@ -1,0 +1,45 @@
+{
+  "name": "studio.promote_staging",
+  "version": "1.0.0",
+  "description": "Promote an Actium Studio site's staging environment to production. Opt-in gated per work-r1-actium-studio-skills.md §1.1 — requires explicit operator confirm:true.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "confirm"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "confirm":     { "type": "boolean", "const": true },
+      "release_note": { "type": "string", "maxLength": 2000 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "status"],
+    "properties": {
+      "site_id":     { "type": "string" },
+      "status":      { "type": "string", "enum": ["queued", "promoting", "complete", "failed"] },
+      "promoted_at": { "type": "string", "format": "date-time" },
+      "prod_url":    { "type": "string", "format": "uri" },
+      "error_message": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Operator explicitly approved cutting staging over to production after reviewing the staged changes.",
+    "Release-train flow: scripted promote after all CI + QA gates signal green and confirm:true is asserted by the caller.",
+    "Rollforward after a revert: promote a freshly-rebuilt staging environment to restore service."
+  ],
+  "whenNotToUse": [
+    "No explicit confirm:true from the operator — promotion replaces production content and must not fire implicitly.",
+    "Staging environment has not been populated — pair with studio.get_staging_info first to confirm staging is current.",
+    "Caller wants to publish a single page — use studio.publish_page; promote_staging is a full-environment cutover."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "moderate"
+  },
+  "recommendedFor": [
+    "staging",
+    "release",
+    "opt-in-gated"
+  ]
+}

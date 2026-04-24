@@ -1,0 +1,46 @@
+{
+  "name": "studio.create_redirect",
+  "version": "1.0.0",
+  "description": "Create a URL redirect on an Actium Studio site. Supports 301/302/307/308 status codes.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "source", "destination"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "source":      { "type": "string", "minLength": 1, "maxLength": 1024 },
+      "destination": { "type": "string", "minLength": 1, "maxLength": 2048 },
+      "status_code": { "type": "integer", "enum": [301, 302, 307, 308] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["redirect_id", "source", "destination", "status_code"],
+    "properties": {
+      "redirect_id": { "type": "string" },
+      "source":      { "type": "string" },
+      "destination": { "type": "string" },
+      "status_code": { "type": "integer", "enum": [301, 302, 307, 308] },
+      "created_at":  { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Slug change: old URL must 301-redirect to the new one; pair with studio.update_page or update_site for the rename.",
+    "Campaign vanity URL: create a short /promo redirect pointing at a longer landing-page URL.",
+    "External-partner migration: redirect legacy paths inherited from an old site to their new locations."
+  ],
+  "whenNotToUse": [
+    "A redirect with the same source path already exists — call studio.list_redirects first; duplicates return 409.",
+    "Source or destination introduces a redirect loop (source == destination, or destination maps back to source) — pre-validate before calling.",
+    "Caller wants to serve different content at the same URL — use studio.update_page; redirects change location, not content."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "redirects",
+    "url-management",
+    "migration"
+  ]
+}

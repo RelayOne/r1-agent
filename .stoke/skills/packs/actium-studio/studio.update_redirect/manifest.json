@@ -1,0 +1,47 @@
+{
+  "name": "studio.update_redirect",
+  "version": "1.0.0",
+  "description": "Update an existing URL redirect on an Actium Studio site: change destination, status code, or source path.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "redirect_id"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "redirect_id": { "type": "string", "minLength": 1 },
+      "source":      { "type": "string", "maxLength": 1024 },
+      "destination": { "type": "string", "maxLength": 2048 },
+      "status_code": { "type": "integer", "enum": [301, 302, 307, 308] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["redirect_id", "updated_at"],
+    "properties": {
+      "redirect_id": { "type": "string" },
+      "source":      { "type": "string" },
+      "destination": { "type": "string" },
+      "status_code": { "type": "integer", "enum": [301, 302, 307, 308] },
+      "updated_at":  { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Destination page moved again — point the existing redirect at the new URL rather than creating a chained redirect.",
+    "Upgrade a temporary 302 to a permanent 301 once the destination is confirmed stable.",
+    "Fix a typo in a recently-created redirect's destination before it receives significant traffic."
+  ],
+  "whenNotToUse": [
+    "Redirect does not yet exist — use studio.create_redirect; updating a non-existent id returns 404.",
+    "Caller wants to move all redirects to a new destination — batch client-side; no bulk-update endpoint is exposed in this skill.",
+    "Change would introduce a redirect loop — pre-validate before calling; server rejects loops with 400."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "redirects",
+    "url-management",
+    "maintenance"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "name": "studio.get_billing_overview",
+  "version": "1.0.0",
+  "description": "Read the Actium Studio billing overview for an account: plan tier, seat count, monthly spend, invoice status, usage breakdown by category.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "account_id":  { "type": "string" },
+      "site_id":     { "type": "string" },
+      "start_date":  { "type": "string", "format": "date" },
+      "end_date":    { "type": "string", "format": "date" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["plan", "current_period"],
+    "properties": {
+      "account_id":   { "type": "string" },
+      "plan":         { "type": "string" },
+      "seat_count":   { "type": "integer", "minimum": 0 },
+      "current_period": {
+        "type": "object",
+        "properties": {
+          "start_date": { "type": "string", "format": "date" },
+          "end_date":   { "type": "string", "format": "date" },
+          "spend":      { "type": "number", "minimum": 0 },
+          "currency":   { "type": "string" }
+        }
+      },
+      "invoice_status": { "type": "string", "enum": ["paid", "pending", "past_due"] },
+      "usage_by_category": {
+        "type": "object",
+        "additionalProperties": { "type": "number", "minimum": 0 }
+      }
+    }
+  },
+  "whenToUse": [
+    "Generate a billing summary for an operator: plan, seats, current-period spend, and usage breakdown.",
+    "Forecasting: compare usage_by_category against last period to flag categories trending over budget.",
+    "Invoice diagnosis: answer 'is my account in good standing' by surfacing invoice_status."
+  ],
+  "whenNotToUse": [
+    "Caller wants the current credit balance only — use studio.get_credit_balance; billing_overview is broader and higher-latency.",
+    "Caller wants to pay an outstanding invoice or change the plan tier — out of scope; operator console handles billing writes.",
+    "Caller has no account_id and no site_id — billing data requires at least one scoping key."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "billing",
+    "plan",
+    "reporting"
+  ]
+}

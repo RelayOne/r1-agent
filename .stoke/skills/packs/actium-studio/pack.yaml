@@ -1,15 +1,25 @@
 name: actium-studio
 version: "0.1.0"
-description: "R1 skill pack for invoking Actium Studio capabilities (site scaffold, page edits, publish, staging, analytics)."
+description: "R1 skill pack for invoking Actium Studio capabilities (site scaffold, page edits, publish, staging, analytics, billing, roles)."
 min_r1_version: "0.1.0"
 upstream_api_version: "studio-v1"
 
-# Batch 2: 5 hero seeds (PR #55) + 20 high-frequency thin wrappers.
-# Full pack target is 53 manifests (6 heroes + 47 thin wrappers) per
-# work-r1-actium-studio-skills.md §1.2. studio.list_templates is deferred
-# until the Studio templates endpoint ships (work-order §1.2 item 5).
-# Remaining ~28 thin wrappers (blog-cat, blog-tag, seo, redirects,
-# analytics, forms, staging, settings, billing, misc) land in later batches.
-skill_count: 25
+# Batch 3 complete: 5 hero seeds (PR #55) + 20 high-frequency thin
+# wrappers (PR #64) + 31 batch-3 thin wrappers (this PR) covering
+# blog-cat, blog-tag, seo, media/get, settings, redirects, analytics,
+# forms, navigation-write, theme-write, scaffold polling, staging
+# (info + opt-in-gated promote), snapshot restore (opt-in-gated),
+# roles (list_members), and billing (credit balance + overview).
+#
+# Total: 56 manifests. This covers every bundled tool enumerated in
+# work-r1-actium-studio-skills.md §1 that has a concrete Studio
+# endpoint today. studio.list_templates has no manifest because the
+# Studio templates endpoint is unshipped (work order §1.2 item 5
+# documents this as a Studio-side prerequisite).
+#
+# The three membership-admin tools (invite_member, update_member_role,
+# remove_member) are deliberately excluded per work order §1.1 — they
+# are operator-console-only and must not be exposed as agent skills.
+skill_count: 56
 
 dependencies: []

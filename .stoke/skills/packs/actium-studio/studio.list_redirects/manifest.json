@@ -1,0 +1,57 @@
+{
+  "name": "studio.list_redirects",
+  "version": "1.0.0",
+  "description": "Enumerate URL redirects configured on an Actium Studio site. Returns source path, destination, HTTP status, and hit count.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "prefix":  { "type": "string", "maxLength": 200 },
+      "limit":   { "type": "integer", "minimum": 1, "maximum": 500 },
+      "cursor":  { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["redirects"],
+    "properties": {
+      "redirects": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["redirect_id", "source", "destination", "status_code"],
+          "properties": {
+            "redirect_id": { "type": "string" },
+            "source":      { "type": "string" },
+            "destination": { "type": "string" },
+            "status_code": { "type": "integer", "enum": [301, 302, 307, 308] },
+            "hit_count":   { "type": "integer", "minimum": 0 },
+            "updated_at":  { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Pre-flight before creating a new redirect — check whether the source path is already mapped to avoid a duplicate or conflicting rule.",
+    "Audit: answer 'which URLs on this site are redirected' for a cleanup or link-integrity pass.",
+    "Migration report: after a slug change, enumerate the redirects ensuring old URLs still resolve."
+  ],
+  "whenNotToUse": [
+    "Caller already knows the exact redirect_id to edit — skip listing; go to studio.update_redirect.",
+    "Caller wants a site's navigation structure — use studio.get_navigation; redirects are URL-rewrite rules, not menu entries.",
+    "Caller wants analytics on redirect hits in aggregate — use studio.get_analytics_overview; redirect hit_count here is per-rule only."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "redirects",
+    "url-management",
+    "discovery"
+  ]
+}

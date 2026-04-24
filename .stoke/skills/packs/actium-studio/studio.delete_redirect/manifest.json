@@ -1,0 +1,42 @@
+{
+  "name": "studio.delete_redirect",
+  "version": "1.0.0",
+  "description": "Remove a URL redirect rule from an Actium Studio site.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "redirect_id"],
+    "properties": {
+      "site_id":     { "type": "string", "minLength": 1 },
+      "redirect_id": { "type": "string", "minLength": 1 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["redirect_id", "deleted"],
+    "properties": {
+      "redirect_id": { "type": "string" },
+      "deleted":     { "type": "boolean" },
+      "deleted_at":  { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Cleanup: a redirect is no longer needed because the destination page itself was removed.",
+    "Rollback: a recently-created redirect caused an unintended loop or SEO regression.",
+    "Consolidation: merging two redirects into one; remove the obsolete one after the replacement is verified."
+  ],
+  "whenNotToUse": [
+    "The source URL is still receiving live traffic — deleting the redirect will 404 those requests; create a replacement first.",
+    "Caller wants to change the destination — use studio.update_redirect; deletion drops the rule entirely.",
+    "Caller is not sure which redirects exist — call studio.list_redirects first; deleting by id without verification risks removing the wrong rule."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "redirects",
+    "url-management",
+    "cleanup"
+  ]
+}
