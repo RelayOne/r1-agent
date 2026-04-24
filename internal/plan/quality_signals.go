@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // QualityConfig is the feature-gate for the deterministic scanners.

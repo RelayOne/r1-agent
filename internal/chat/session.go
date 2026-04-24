@@ -35,8 +35,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // DefaultSystemPrompt is the baseline system prompt for Stoke's chat mode.

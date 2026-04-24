@@ -47,9 +47,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
-	"github.com/ericmacdougall/stoke/internal/jsonutil"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/agentloop"
+	"github.com/RelayOne/r1/internal/jsonutil"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // FinalPlanApprovalAgentic is the tool-driven reviewer. Same return

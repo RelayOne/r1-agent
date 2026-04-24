@@ -40,8 +40,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
-	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/verify"
 )
 
 const (

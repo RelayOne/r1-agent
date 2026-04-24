@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/eventlog"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/eventlog"
 )
 
 // sseBufferSize is the buffered-channel capacity for each SSE

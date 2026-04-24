@@ -17,7 +17,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/oneshot"
+	"github.com/RelayOne/r1/internal/oneshot"
 )
 
 // runOneShotCmd is invoked from main when argv[1] is

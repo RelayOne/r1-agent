@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/trustplane"
+	"github.com/RelayOne/r1/internal/trustplane"
 )
 
 func TestDefaultBundles_AtLeastFive(t *testing.T) {

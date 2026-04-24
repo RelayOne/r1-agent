@@ -33,7 +33,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/r1dir"
+	"github.com/RelayOne/r1/internal/r1dir"
 )
 
 // Hook kind labels. These appear in HookSet.Kind and at several

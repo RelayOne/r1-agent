@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // ConfessionElicitor runs after task completion. It asks a fresh model

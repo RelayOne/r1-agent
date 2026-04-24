@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // TestEmitSessionEnd_CS5Fields asserts all 5 canonical snapshot fields

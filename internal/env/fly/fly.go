@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/env"
-	"github.com/ericmacdougall/stoke/internal/env/flyclient"
+	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1/internal/env/flyclient"
 )
 
 // Backend implements env.Environment for Fly/Flare machines.

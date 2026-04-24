@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/RelayOne/r1/internal/logging"
 )
 
 func init() {

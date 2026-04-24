@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/encryption"
+	"github.com/RelayOne/r1/internal/encryption"
 )
 
 // dsnEncryptionEnv is the feature flag gating at-rest encryption for the

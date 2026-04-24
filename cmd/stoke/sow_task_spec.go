@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // toEngineSupervisor translates a specSupervisorSpec into the

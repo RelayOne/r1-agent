@@ -47,7 +47,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/memory/membus"
+	"github.com/RelayOne/r1/internal/memory/membus"
 )
 
 // memoryUsage is emitted when runMemoryCmd receives an unknown / missing

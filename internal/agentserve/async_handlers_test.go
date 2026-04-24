@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/executor"
+	"github.com/RelayOne/r1/internal/executor"
 )
 
 // TestCancelTask_Running drives a long-running executor, hits

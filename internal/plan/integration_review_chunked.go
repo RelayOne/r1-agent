@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // chunkedMinBudget is the floor on a per-bucket review's time

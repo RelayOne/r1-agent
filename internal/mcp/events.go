@@ -23,9 +23,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/logging"
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // Bus event type constants — dotted-namespace per bus.EventType convention.

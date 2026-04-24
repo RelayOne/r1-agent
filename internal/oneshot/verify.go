@@ -34,7 +34,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // verifyRequest is the {artifact, acceptance_criteria, context?}

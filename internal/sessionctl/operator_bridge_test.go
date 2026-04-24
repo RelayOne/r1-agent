@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/operator"
+	"github.com/RelayOne/r1/internal/operator"
 )
 
 // slowOp is a test operator.Operator whose Ask blocks until the

@@ -17,7 +17,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // mcpCallClaimPattern matches common worker prose shapes asserting an

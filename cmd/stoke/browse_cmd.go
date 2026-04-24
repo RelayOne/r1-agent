@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/browser"
-	"github.com/ericmacdougall/stoke/internal/executor"
+	"github.com/RelayOne/r1/internal/browser"
+	"github.com/RelayOne/r1/internal/executor"
 )
 
 // browseCmd handles `stoke browse <url> [--expected TEXT] [--regex PATTERN]`.

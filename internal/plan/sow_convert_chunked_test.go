@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/fanout"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/fanout"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // routingProvider is a provider.Provider that inspects the user

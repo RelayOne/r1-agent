@@ -29,7 +29,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/session"
+	"github.com/RelayOne/r1/internal/session"
 )
 
 // writeTestSession scaffolds a complete .stoke/ tree under t.TempDir()

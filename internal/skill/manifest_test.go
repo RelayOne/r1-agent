@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/skillmfr"
+	"github.com/RelayOne/r1/internal/skillmfr"
 )
 
 func TestToManifest_PopulatesRequiredFields(t *testing.T) {

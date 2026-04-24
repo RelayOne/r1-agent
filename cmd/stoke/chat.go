@@ -29,11 +29,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/chat"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/provider"
-	"github.com/ericmacdougall/stoke/internal/r1env"
-	"github.com/ericmacdougall/stoke/internal/tui"
+	"github.com/RelayOne/r1/internal/chat"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/tui"
 )
 
 // stokeDispatcher implements chat.Dispatcher by wrapping the existing

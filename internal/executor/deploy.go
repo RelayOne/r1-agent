@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/deploy"
+	"github.com/RelayOne/r1/internal/deploy"
 	// Side-effect imports: each provider subpackage's init() registers
 	// its factory in deploy.registry so NewDeployExecutor can resolve
 	// "fly" / "vercel" / "cloudflare" via deploy.Get. Without these
@@ -14,9 +14,9 @@ import (
 	// (registered in the deploy package itself), leaving Provider=
 	// Vercel / Cloudflare unresolvable even after DP2-3 / DP2-6 landed
 	// their Deployer implementations.
-	_ "github.com/ericmacdougall/stoke/internal/deploy/cloudflare"
-	_ "github.com/ericmacdougall/stoke/internal/deploy/vercel"
-	"github.com/ericmacdougall/stoke/internal/plan"
+	_ "github.com/RelayOne/r1/internal/deploy/cloudflare"
+	_ "github.com/RelayOne/r1/internal/deploy/vercel"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // DeployExecutor wraps internal/deploy's Fly.io adapter behind the

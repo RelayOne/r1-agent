@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 func TestSQLStoreRoundtrip(t *testing.T) {

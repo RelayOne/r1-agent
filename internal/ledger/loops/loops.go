@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 // nodeTypeLoop is the ledger node type string for consensus loop nodes.

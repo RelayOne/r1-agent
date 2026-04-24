@@ -42,7 +42,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/memory"
+	"github.com/RelayOne/r1/internal/memory"
 )
 
 // TrustTier is an insight's reliability rank. New insights

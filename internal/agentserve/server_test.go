@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/executor"
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // fakeExecutor satisfies executor.Executor for tests. Configurable

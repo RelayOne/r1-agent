@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // LocalLiteLLMStub is the stub API key used when pointing at a local

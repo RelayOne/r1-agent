@@ -11,7 +11,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/memory/membus"
+	"github.com/RelayOne/r1/internal/memory/membus"
 )
 
 // TestIntegration_EnforceOnSessionEndIsolatesEndingSession seeds four

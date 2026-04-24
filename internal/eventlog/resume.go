@@ -21,7 +21,7 @@ package eventlog
 import (
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
+	"github.com/RelayOne/r1/internal/bus"
 )
 
 // ResumeMode enumerates the four possible outcomes of DecideResume.

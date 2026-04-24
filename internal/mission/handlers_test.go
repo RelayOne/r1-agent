@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/convergence"
+	"github.com/RelayOne/r1/internal/convergence"
 )
 
 func setupHandlerTestMission(t *testing.T, store *Store) *Mission {

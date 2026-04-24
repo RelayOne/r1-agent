@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/ericmacdougall/stoke/internal/taskstats"
+	"github.com/RelayOne/r1/internal/taskstats"
 )
 
 // taskStatsCmd prints a summary of ~/.stoke/task-stats.jsonl so the

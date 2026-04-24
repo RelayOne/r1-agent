@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/skillmfr"
+	"github.com/RelayOne/r1/internal/skillmfr"
 )
 
 // TestActiumStudioPackSeed asserts the seed Actium Studio skill pack

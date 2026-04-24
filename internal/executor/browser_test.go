@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/browser"
+	"github.com/RelayOne/r1/internal/browser"
 )
 
 func TestBrowserExecutor_TaskType(t *testing.T) {

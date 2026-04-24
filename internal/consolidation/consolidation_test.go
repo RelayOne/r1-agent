@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/memory"
+	"github.com/RelayOne/r1/internal/memory"
 )
 
 func TestPromote_InternToJunior_Succeeds(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
+	"github.com/RelayOne/r1/internal/bus"
 )
 
 func TestReconstructSession_EmptyLog(t *testing.T) {

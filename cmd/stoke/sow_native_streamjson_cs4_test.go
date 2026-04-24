@@ -12,9 +12,9 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/memory/membus"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/memory/membus"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // parseImportMemoryFlagForTest mirrors sowCmd's FlagSet registration

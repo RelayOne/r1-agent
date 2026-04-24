@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/audit"
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/costtrack"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/wisdom"
+	"github.com/RelayOne/r1/internal/audit"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/wisdom"
 )
 
 func setup(t *testing.T) (*bus.Bus, *ledger.Ledger) {

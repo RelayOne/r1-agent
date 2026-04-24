@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/executor"
+	"github.com/RelayOne/r1/internal/executor"
 )
 
 func TestDefaultClassifier(t *testing.T) {

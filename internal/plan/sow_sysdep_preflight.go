@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // PreflightSystemDeps is H-69: detect OS-level binaries referenced by

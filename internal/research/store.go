@@ -25,7 +25,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/ericmacdougall/stoke/internal/vecindex"
+	"github.com/RelayOne/r1/internal/vecindex"
 )
 
 // Entry is a single piece of stored research.

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/conflictres"
+	"github.com/RelayOne/r1/internal/conflictres"
 )
 
 // Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.

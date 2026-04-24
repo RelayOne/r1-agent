@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/ericmacdougall/stoke/internal/stream"
-	"github.com/ericmacdougall/stoke/internal/viewport"
+	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1/internal/viewport"
 )
 
 // Mode controls what the TUI displays.

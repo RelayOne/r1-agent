@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/deploy"
+	"github.com/RelayOne/r1/internal/deploy"
 
 	// Side-effect imports register the Vercel and Cloudflare adapters
 	// with the deploy registry via their init()s. Without these blank
@@ -19,8 +19,8 @@ import (
 	// non-fly provider as unknown. The fly adapter self-registers from
 	// the top-level internal/deploy package so it needs no import
 	// here.
-	_ "github.com/ericmacdougall/stoke/internal/deploy/cloudflare"
-	_ "github.com/ericmacdougall/stoke/internal/deploy/vercel"
+	_ "github.com/RelayOne/r1/internal/deploy/cloudflare"
+	_ "github.com/RelayOne/r1/internal/deploy/vercel"
 )
 
 // deployCmd is the `stoke deploy` entry point. DP2-10 extends the

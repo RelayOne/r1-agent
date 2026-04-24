@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/research"
-	"github.com/ericmacdougall/stoke/internal/wisdom"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/research"
+	"github.com/RelayOne/r1/internal/wisdom"
 )
 
 // MemoryServer exposes Stoke's persistent stores as MCP tools.

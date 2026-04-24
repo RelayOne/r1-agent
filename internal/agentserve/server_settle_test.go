@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/executor"
+	"github.com/RelayOne/r1/internal/executor"
 )
 
 // TestServer_OnTaskComplete_FiresOnSuccess posts a single research

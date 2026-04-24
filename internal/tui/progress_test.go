@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // syncBuffer wraps bytes.Buffer with a mutex so concurrent Writes from

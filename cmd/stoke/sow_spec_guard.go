@@ -34,7 +34,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/RelayOne/r1/internal/plan"
 )
 
 // buildCanonicalNamesBlock returns a "USE EXACTLY THESE NAMES" block

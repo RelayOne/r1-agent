@@ -3,7 +3,7 @@ package chat
 import (
 	"encoding/json"
 
-	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // Dispatcher is what cmd/stoke implements to connect chat tool calls to

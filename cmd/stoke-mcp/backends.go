@@ -34,12 +34,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/delegation"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/skill"
-	"github.com/ericmacdougall/stoke/internal/skillmfr"
-	"github.com/ericmacdougall/stoke/internal/trustplane"
-	"github.com/ericmacdougall/stoke/internal/verify"
+	"github.com/RelayOne/r1/internal/delegation"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/skill"
+	"github.com/RelayOne/r1/internal/skillmfr"
+	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/verify"
 )
 
 // Backends holds the live instances the server invokes

@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/r1env"
-	"github.com/ericmacdougall/stoke/internal/symindex"
+	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/symindex"
 )
 
 // H-27 — AST-level declared-symbol verification.

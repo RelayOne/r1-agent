@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/tui"
+	"github.com/RelayOne/r1/internal/tui"
 )
 
 func TestStripANSI_RemovesCSI(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ericmacdougall/stoke/internal/ledger"
+	"github.com/RelayOne/r1/internal/ledger"
 )
 
 // OriginalUserIntent queries the mission node for the user's verbatim goal text.

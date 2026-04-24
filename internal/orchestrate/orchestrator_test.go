@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/convergence"
-	"github.com/ericmacdougall/stoke/internal/handoff"
-	"github.com/ericmacdougall/stoke/internal/mission"
-	"github.com/ericmacdougall/stoke/internal/research"
+	"github.com/RelayOne/r1/internal/convergence"
+	"github.com/RelayOne/r1/internal/handoff"
+	"github.com/RelayOne/r1/internal/mission"
+	"github.com/RelayOne/r1/internal/research"
 )
 
 func newTestOrchestrator(t *testing.T) *Orchestrator {

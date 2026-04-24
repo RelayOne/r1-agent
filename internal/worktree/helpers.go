@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/atomicfs"
+	"github.com/RelayOne/r1/internal/atomicfs"
 )
 
 // gitHEAD is the conventional git reference for the tip of the current branch.

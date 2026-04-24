@@ -45,7 +45,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/trustplane/dpop"
+	"github.com/RelayOne/r1/internal/trustplane/dpop"
 )
 
 // RealClient calls a live TrustPlane gateway over HTTP with DPoP proofs.

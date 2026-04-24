@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/bus"
-	"github.com/ericmacdougall/stoke/internal/ledger"
-	"github.com/ericmacdougall/stoke/internal/schemaval"
-	"github.com/ericmacdougall/stoke/internal/supervisor"
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/schemaval"
+	"github.com/RelayOne/r1/internal/supervisor"
 )
 
 // JudgeScheduled fires when a scheduled drift-judge timeout arrives or when a

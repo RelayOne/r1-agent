@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/agentmsg"
-	"github.com/ericmacdougall/stoke/internal/branch"
-	"github.com/ericmacdougall/stoke/internal/dispatch"
-	"github.com/ericmacdougall/stoke/internal/plan"
-	"github.com/ericmacdougall/stoke/internal/specexec"
+	"github.com/RelayOne/r1/internal/agentmsg"
+	"github.com/RelayOne/r1/internal/branch"
+	"github.com/RelayOne/r1/internal/dispatch"
+	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/specexec"
 )
 
 // TaskResult is the outcome of one task execution.

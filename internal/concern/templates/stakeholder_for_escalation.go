@@ -1,8 +1,8 @@
 package templates
 
 import (
-	"github.com/ericmacdougall/stoke/internal/concern"
-	"github.com/ericmacdougall/stoke/internal/concern/sections"
+	"github.com/RelayOne/r1/internal/concern"
+	"github.com/RelayOne/r1/internal/concern/sections"
 )
 
 // StakeholderForEscalation returns the template for a stakeholder handling

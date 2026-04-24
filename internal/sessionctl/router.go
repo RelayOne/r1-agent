@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/operator"
+	"github.com/RelayOne/r1/internal/operator"
 )
 
 // Decision captures an operator's answer to an Ask.

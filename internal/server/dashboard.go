@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/costtrack"
-	"github.com/ericmacdougall/stoke/internal/subscriptions"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/subscriptions"
 )
 
 // DashboardAPI provides HTTP handlers for the dashboard.

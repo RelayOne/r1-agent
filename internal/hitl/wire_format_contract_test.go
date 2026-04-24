@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/streamjson"
+	"github.com/RelayOne/r1/internal/streamjson"
 )
 
 // TestHITLWireFormat_OutboundRequest_LocksShape freezes the exact keys

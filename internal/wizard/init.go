@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ericmacdougall/stoke/internal/snapshot"
+	"github.com/RelayOne/r1/internal/snapshot"
 	"gopkg.in/yaml.v3"
 )
 

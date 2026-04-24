@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ericmacdougall/stoke/internal/delegation"
-	"github.com/ericmacdougall/stoke/internal/hire"
-	"github.com/ericmacdougall/stoke/internal/trustplane"
+	"github.com/RelayOne/r1/internal/delegation"
+	"github.com/RelayOne/r1/internal/hire"
+	"github.com/RelayOne/r1/internal/trustplane"
 )
 
 // ---- test doubles ----------------------------------------------------------

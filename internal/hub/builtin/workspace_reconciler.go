@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/hub"
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // WorkspaceReconciler is an event-driven self-supervision hook that keeps a

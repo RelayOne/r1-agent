@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ericmacdougall/stoke/internal/engine"
-	"github.com/ericmacdougall/stoke/internal/stream"
+	"github.com/RelayOne/r1/internal/engine"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // mockRunner is a configurable CommandRunner for testing the full workflow
