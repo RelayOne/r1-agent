@@ -8,17 +8,17 @@ import (
 // satisfies Executor so the router can register them today, while
 // real per-type logic lands in the follow-up commits noted per
 // type. Execute returns a clearly labelled
-// ErrExecutorNotWired error; callers (CLI, router) detect this
+// ExecutorNotWiredError error; callers (CLI, router) detect this
 // sentinel and print a helpful message. BuildCriteria /
 // BuildRepairFunc / BuildEnvFixFunc return nil — the descent engine
 // treats nil as "executor has no verification/repair primitive yet"
 // and short-circuits.
 
-// ErrExecutorNotWired is the sentinel returned by Execute on an
+// ExecutorNotWiredError is the sentinel returned by Execute on an
 // executor whose real pipeline has not been wired yet. Callers
 // check for it via errors.Is so they can print an operator-friendly
 // message instead of a stack trace.
-type ErrExecutorNotWired struct {
+type ExecutorNotWiredError struct {
 	// Type is the executor type that was invoked.
 	Type TaskType
 	// FollowUp names the task(s) that will land the real pipeline.
@@ -26,7 +26,7 @@ type ErrExecutorNotWired struct {
 }
 
 // Error implements the error interface.
-func (e *ErrExecutorNotWired) Error() string {
+func (e *ExecutorNotWiredError) Error() string {
 	return fmt.Sprintf("%s executor not wired yet; lands in %s", e.Type.String(), e.FollowUp)
 }
 

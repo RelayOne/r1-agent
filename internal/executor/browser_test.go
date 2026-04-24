@@ -35,9 +35,9 @@ func TestBrowserExecutor_Execute_InteractiveNotWired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected not-wired error")
 	}
-	var notWired *ErrExecutorNotWired
+	var notWired *ExecutorNotWiredError
 	if !errors.As(err, &notWired) {
-		t.Errorf("expected ErrExecutorNotWired, got %T: %v", err, err)
+		t.Errorf("expected ExecutorNotWiredError, got %T: %v", err, err)
 	}
 }
 

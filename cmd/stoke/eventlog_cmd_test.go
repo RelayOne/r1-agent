@@ -64,7 +64,7 @@ func TestEventlogVerify_Clean(t *testing.T) {
 //
 // We flip a byte in the payload of row 2 using raw SQL so the stored
 // parent_hash no longer matches the recomputed hash. Verify should
-// return *eventlog.ErrChainBroken pointing at the corrupted row.
+// return *eventlog.ChainBrokenError pointing at the corrupted row.
 func TestEventlogVerify_Tampered(t *testing.T) {
 	dbPath := seedLog(t, []bus.Event{
 		mkEvent("a", "", "", "L1", map[string]any{"k": "v1"}),

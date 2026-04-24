@@ -15,7 +15,7 @@ func TestValidateSimple(t *testing.T) {
 
 	result := Validate(`{"name": "Alice", "age": 30}`, schema)
 	if !result.Valid {
-		t.Errorf("expected valid, got: %s", result.Error())
+		t.Errorf("expected valid, got: %s", result.String())
 	}
 }
 
@@ -61,7 +61,7 @@ func TestValidateEnum(t *testing.T) {
 
 	result := Validate(`{"status": "active"}`, schema)
 	if !result.Valid {
-		t.Errorf("should be valid: %s", result.Error())
+		t.Errorf("should be valid: %s", result.String())
 	}
 
 	result = Validate(`{"status": "unknown"}`, schema)
@@ -90,7 +90,7 @@ func TestValidateStringLength(t *testing.T) {
 
 	result = Validate(`{"code": "abc"}`, schema)
 	if !result.Valid {
-		t.Errorf("should pass: %s", result.Error())
+		t.Errorf("should pass: %s", result.String())
 	}
 }
 
@@ -107,7 +107,7 @@ func TestValidateNestedObject(t *testing.T) {
 
 	result := Validate(`{"config": {"host": "localhost", "port": 8080}}`, schema)
 	if !result.Valid {
-		t.Errorf("should be valid: %s", result.Error())
+		t.Errorf("should be valid: %s", result.String())
 	}
 
 	result = Validate(`{"config": {"host": "localhost"}}`, schema)
@@ -126,7 +126,7 @@ func TestValidateArray(t *testing.T) {
 
 	result := Validate(`{"tags": ["a", "b"]}`, schema)
 	if !result.Valid {
-		t.Errorf("should be valid: %s", result.Error())
+		t.Errorf("should be valid: %s", result.String())
 	}
 
 	result = Validate(`{"tags": "not-array"}`, schema)
@@ -196,12 +196,12 @@ func TestExtractJSON(t *testing.T) {
 }
 
 func TestFormatErrors(t *testing.T) {
-	r := Result{Valid: true}
+	r := ValidationResult{Valid: true}
 	if FormatErrors(r) != "" {
 		t.Error("valid result should produce empty string")
 	}
 
-	r = Result{
+	r = ValidationResult{
 		Valid:  false,
 		Errors: []ValidationError{{Path: "$.name", Message: "required"}},
 	}

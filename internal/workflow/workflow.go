@@ -2084,7 +2084,7 @@ func parseReviewVerdict(s string) (*reviewVerdict, error) {
 			},
 		})
 		if !result.Valid {
-			return nil, fmt.Errorf("review verdict schema validation: %s", result.Error())
+			return nil, fmt.Errorf("review verdict schema validation: %s", result.String())
 		}
 	}
 

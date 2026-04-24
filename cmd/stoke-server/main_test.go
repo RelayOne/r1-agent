@@ -315,10 +315,10 @@ func TestIsAddrInUse(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{&net.OpError{Err: errStr("listen tcp :3948: address already in use")}, true},
-		{&net.OpError{Err: errStr("something else")}, false},
-		{errStr("address already in use wrapped"), true},
-		{errStr("unrelated error"), false},
+		{&net.OpError{Err: strError("listen tcp :3948: address already in use")}, true},
+		{&net.OpError{Err: strError("something else")}, false},
+		{strError("address already in use wrapped"), true},
+		{strError("unrelated error"), false},
 	}
 	for i, c := range cases {
 		if got := isAddrInUse(c.err); got != c.want {
@@ -327,7 +327,7 @@ func TestIsAddrInUse(t *testing.T) {
 	}
 }
 
-// errStr is an error type for tests.
-type errStr string
+// strError is an error type for tests.
+type strError string
 
-func (e errStr) Error() string { return string(e) }
+func (e strError) Error() string { return string(e) }

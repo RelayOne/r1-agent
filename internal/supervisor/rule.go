@@ -8,6 +8,7 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/ledger"
@@ -56,7 +57,7 @@ func ValidatePayload(r Rule, payload map[string]any) error {
 	if res.Valid {
 		return nil
 	}
-	return res
+	return fmt.Errorf("payload schema violation: %s", res.String())
 }
 
 // PayloadSchemaProvider is an OPTIONAL interface a Rule may implement

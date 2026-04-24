@@ -63,7 +63,7 @@ const maxBashCommandLen = 512
 var (
 	policyOnce   sync.Once
 	policyClient policy.Client
-	policyErr    error
+	errPolicyInit    error
 )
 
 // getPolicyClient returns the process-wide policy.Client, constructing
@@ -75,12 +75,12 @@ func getPolicyClient() (policy.Client, error) {
 	policyOnce.Do(func() {
 		c, _, err := policy.NewFromEnv()
 		if err != nil {
-			policyErr = err
+			errPolicyInit = err
 			return
 		}
 		policyClient = c
 	})
-	return policyClient, policyErr
+	return policyClient, errPolicyInit
 }
 
 // policyGateResult is the outcome of a policy check — Allow means the

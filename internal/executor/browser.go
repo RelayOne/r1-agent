@@ -17,7 +17,7 @@
 //     Interactive mode requires a non-nil Rod backend — typically
 //     constructed by the CLI via browser.NewRodClient(cfg) under
 //     the stoke_rod build tag. Without a Rod backend attached,
-//     Execute returns ErrExecutorNotWired pointing at the tag.
+//     Execute returns ExecutorNotWiredError pointing at the tag.
 //
 // BuildCriteria emits BROWSER-LOADED + expected_* ACs for the
 // stdlib path, and BROWSER-ACTION-OK-<i>-<KIND> + expected_* ACs
@@ -75,11 +75,11 @@ func (e *BrowserExecutor) Execute(ctx context.Context, p Plan, _ EffortLevel) (D
 }
 
 // executeInteractive runs plan.Extra["actions"] via the attached Rod
-// backend. Without a backend, returns ErrExecutorNotWired pointing at
+// backend. Without a backend, returns ExecutorNotWiredError pointing at
 // the stoke_rod build tag so operators know the fix.
 func (e *BrowserExecutor) executeInteractive(ctx context.Context, p Plan, url string) (Deliverable, error) {
 	if e.Rod == nil {
-		return nil, &ErrExecutorNotWired{
+		return nil, &ExecutorNotWiredError{
 			Type:     TaskBrowser,
 			FollowUp: "browser.NewRodClient(cfg) (build with -tags stoke_rod)",
 		}

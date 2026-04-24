@@ -157,9 +157,9 @@ func TestVerify_TamperedPayload(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Verify returned nil on tampered log")
 	}
-	var cb *ErrChainBroken
+	var cb *ChainBrokenError
 	if !errors.As(err, &cb) {
-		t.Fatalf("Verify error type = %T (%v), want *ErrChainBroken", err, err)
+		t.Fatalf("Verify error type = %T (%v), want *ChainBrokenError", err, err)
 	}
 	// Tampering the payload at sequence=10 makes the NEXT row's
 	// expected parent_hash disagree with its stored parent_hash; the
@@ -167,7 +167,7 @@ func TestVerify_TamperedPayload(t *testing.T) {
 	// acceptable — we just require that Verify pinpoints near the
 	// tamper.
 	if cb.Sequence != 11 && cb.Sequence != 10 {
-		t.Fatalf("ErrChainBroken.Sequence=%d, want 10 or 11", cb.Sequence)
+		t.Fatalf("ChainBrokenError.Sequence=%d, want 10 or 11", cb.Sequence)
 	}
 }
 

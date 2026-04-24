@@ -41,17 +41,17 @@ type Log struct {
 	ulidEntropy *ulid.MonotonicEntropy
 }
 
-// ErrChainBroken is returned by Verify when the stored parent_hash does not
+// ChainBrokenError is returned by Verify when the stored parent_hash does not
 // match the hash recomputed from the previous row's (id, payload,
 // parent_hash) tuple.
-type ErrChainBroken struct {
+type ChainBrokenError struct {
 	Sequence uint64
 	Expected string
 	Got      string
 }
 
 // Error implements error.
-func (e *ErrChainBroken) Error() string {
+func (e *ChainBrokenError) Error() string {
 	return fmt.Sprintf("eventlog: chain broken at sequence %d: expected parent_hash=%s, got %s",
 		e.Sequence, e.Expected, e.Got)
 }
@@ -478,7 +478,7 @@ func scanEvent(rows *sql.Rows) (bus.Event, error) {
 }
 
 // Verify walks the chain in ascending sequence order and recomputes each
-// row's parent_hash. Returns *ErrChainBroken on the first mismatch, nil on
+// row's parent_hash. Returns *ChainBrokenError on the first mismatch, nil on
 // a clean log.
 func (l *Log) Verify(ctx context.Context) error {
 	rows, err := l.db.QueryContext(ctx, `
@@ -511,7 +511,7 @@ func (l *Log) Verify(ctx context.Context) error {
 		sum.Write([]byte(prevHash))
 		expected := hex.EncodeToString(sum.Sum(nil))
 		if expected != pHash {
-			return &ErrChainBroken{Sequence: seq, Expected: expected, Got: pHash}
+			return &ChainBrokenError{Sequence: seq, Expected: expected, Got: pHash}
 		}
 		prevID = rowID
 		prevHash = pHash

@@ -61,11 +61,11 @@ func TestClientRunActions_RejectsInteractive(t *testing.T) {
 			t.Parallel()
 			_, err := c.RunActions(context.Background(), []Action{a})
 			if err == nil {
-				t.Fatalf("want ErrInteractiveUnsupported, got nil")
+				t.Fatalf("want InteractiveUnsupportedError, got nil")
 			}
-			var eu *ErrInteractiveUnsupported
+			var eu *InteractiveUnsupportedError
 			if !errors.As(err, &eu) {
-				t.Fatalf("want ErrInteractiveUnsupported, got %T: %v", err, err)
+				t.Fatalf("want InteractiveUnsupportedError, got %T: %v", err, err)
 			}
 			if eu.Kind != a.Kind {
 				t.Errorf("Kind = %q, want %q", eu.Kind, a.Kind)
@@ -101,9 +101,9 @@ func TestClientRunActions_NavigateError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want navigation error")
 	}
-	var enav *ErrNavigationFailed
+	var enav *NavigationFailedError
 	if !errors.As(err, &enav) {
-		t.Fatalf("want ErrNavigationFailed, got %T: %v", err, err)
+		t.Fatalf("want NavigationFailedError, got %T: %v", err, err)
 	}
 	if len(results) != 1 || results[0].OK {
 		t.Errorf("result should be populated with OK=false: %+v", results)
@@ -120,15 +120,15 @@ func TestClient_Close(t *testing.T) {
 func TestNewRodClient_NoTagReturnsError(t *testing.T) {
 	t.Parallel()
 	// Without the stoke_rod build tag, NewRodClient must return a
-	// clear ErrChromeLaunchFailed — this is the single-binary
+	// clear ChromeLaunchFailedError — this is the single-binary
 	// kill-switch.
 	c, err := NewRodClient(RodConfig{PoolSize: 3})
 	if err == nil {
 		t.Fatalf("want error without stoke_rod tag, got client %v", c)
 	}
-	var elaunch *ErrChromeLaunchFailed
+	var elaunch *ChromeLaunchFailedError
 	if !errors.As(err, &elaunch) {
-		t.Fatalf("want ErrChromeLaunchFailed, got %T: %v", err, err)
+		t.Fatalf("want ChromeLaunchFailedError, got %T: %v", err, err)
 	}
 	if !strings.Contains(err.Error(), "stoke_rod") {
 		t.Errorf("error should mention stoke_rod tag: %q", err.Error())

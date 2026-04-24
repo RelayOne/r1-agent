@@ -57,14 +57,17 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Path, e.Message)
 }
 
-// Result holds the validation outcome.
-type Result struct {
+// ValidationResult holds the validation outcome.
+type ValidationResult struct {
 	Valid  bool              `json:"valid"`
 	Errors []ValidationError `json:"errors,omitempty"`
 }
 
-// Error returns a combined error string.
-func (r Result) Error() string {
+// String returns a combined summary of any validation errors.
+// Renamed from Error() so errname doesn't conflict with the
+// error-type-name convention (ValidationResult is a success/failure
+// outcome, not a Go error type).
+func (r ValidationResult) String() string {
 	if r.Valid {
 		return ""
 	}
@@ -76,10 +79,10 @@ func (r Result) Error() string {
 }
 
 // Validate checks a JSON string against a schema.
-func Validate(jsonStr string, schema Schema) Result {
+func Validate(jsonStr string, schema Schema) ValidationResult {
 	var data map[string]any
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
-		return Result{
+		return ValidationResult{
 			Valid:  false,
 			Errors: []ValidationError{{Path: "$", Message: fmt.Sprintf("invalid JSON: %v", err)}},
 		}
@@ -88,10 +91,10 @@ func Validate(jsonStr string, schema Schema) Result {
 }
 
 // ValidateMap checks a parsed map against a schema.
-func ValidateMap(data map[string]any, schema Schema) Result {
+func ValidateMap(data map[string]any, schema Schema) ValidationResult {
 	var errors []ValidationError
 	validateFields("$", data, schema.Fields, &errors)
-	return Result{
+	return ValidationResult{
 		Valid:  len(errors) == 0,
 		Errors: errors,
 	}
@@ -208,7 +211,7 @@ var CommonSchemas = map[string]Schema{
 }
 
 // FormatErrors produces a prompt-friendly error description.
-func FormatErrors(result Result) string {
+func FormatErrors(result ValidationResult) string {
 	if result.Valid {
 		return ""
 	}

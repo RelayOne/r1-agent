@@ -24,7 +24,7 @@ type Backend interface {
 	Fetch(ctx context.Context, url string) (FetchResult, error)
 
 	// RunActions executes the interactive action list in order.
-	// The stdlib backend returns ErrInteractiveUnsupported for any
+	// The stdlib backend returns InteractiveUnsupportedError for any
 	// action that requires a real browser (click / type / wait /
 	// screenshot); the rod backend implements all of them.
 	RunActions(ctx context.Context, actions []Action) ([]ActionResult, error)
@@ -36,7 +36,7 @@ type Backend interface {
 
 // RunActions is the stdlib-path implementation: navigate-only is
 // handled via Fetch; every other kind is routed to
-// ErrInteractiveUnsupported so callers know to construct a RodClient.
+// InteractiveUnsupportedError so callers know to construct a RodClient.
 //
 // A lone navigate action does the fetch + returns a single result
 // populated from FetchResult.FinalURL. Multiple navigates in one
@@ -52,7 +52,7 @@ func (c *Client) RunActions(ctx context.Context, actions []Action) ([]ActionResu
 			return out, err
 		}
 		if a.Kind != ActionNavigate {
-			return out, &ErrInteractiveUnsupported{Kind: a.Kind}
+			return out, &InteractiveUnsupportedError{Kind: a.Kind}
 		}
 		start := time.Now()
 		fr, err := c.Fetch(ctx, a.URL)
@@ -62,7 +62,7 @@ func (c *Client) RunActions(ctx context.Context, actions []Action) ([]ActionResu
 		}
 		if err != nil {
 			r.OK = false
-			r.Err = &ErrNavigationFailed{URL: a.URL, Cause: err}
+			r.Err = &NavigationFailedError{URL: a.URL, Cause: err}
 		} else {
 			r.OK = true
 			r.URL = fr.FinalURL
@@ -107,12 +107,12 @@ var rodClientFactory func(RodConfig) (*RodClient, error) = stubRodFactory
 
 // NewRodClient returns a Backend backed by the go-rod library.
 // When Stoke is built without the stoke_rod tag, this returns
-// (nil, ErrChromeLaunchFailed) with a descriptive message — the
+// (nil, ChromeLaunchFailedError) with a descriptive message — the
 // caller is expected to either rebuild with the tag or fall back to
 // the stdlib Client.
 func NewRodClient(cfg RodConfig) (*RodClient, error) {
 	if rodClientFactory == nil {
-		return nil, &ErrChromeLaunchFailed{
+		return nil, &ChromeLaunchFailedError{
 			Cause: errors.New("rodClientFactory not wired; rebuild with -tags stoke_rod"),
 		}
 	}
@@ -123,7 +123,7 @@ func NewRodClient(cfg RodConfig) (*RodClient, error) {
 // rebuild-with-tag diagnostic. Replaced by init() in rod.go under
 // the stoke_rod tag.
 func stubRodFactory(cfg RodConfig) (*RodClient, error) {
-	return nil, &ErrChromeLaunchFailed{
+	return nil, &ChromeLaunchFailedError{
 		Cause: fmt.Errorf("interactive browser actions require the stoke_rod build tag; " +
 			"rebuild with 'go build -tags stoke_rod ./cmd/stoke'"),
 	}

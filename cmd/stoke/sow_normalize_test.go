@@ -22,7 +22,7 @@ import (
 func TestResultsNormalization_FinalPassedSucceedsAll(t *testing.T) {
 	results := []plan.TaskExecResult{
 		{TaskID: "T1", Success: true},
-		{TaskID: "T2", Success: false, Error: errDummy("build failed")},
+		{TaskID: "T2", Success: false, Error: dummyError("build failed")},
 		{TaskID: "T3", Success: true},
 	}
 	finalPassed := true
@@ -50,7 +50,7 @@ func TestResultsNormalization_FinalPassedSucceedsAll(t *testing.T) {
 func TestResultsNormalization_FinalFailedLeavesOriginals(t *testing.T) {
 	results := []plan.TaskExecResult{
 		{TaskID: "T1", Success: true},
-		{TaskID: "T2", Success: false, Error: errDummy("build failed")},
+		{TaskID: "T2", Success: false, Error: dummyError("build failed")},
 	}
 	finalPassed := false
 
@@ -151,8 +151,8 @@ func resolveContinueOnFailure(flagValue string, sow *plan.SOW) bool {
 	return continueOnFailure
 }
 
-// errDummy is a test-local error type so we don't pull in errors.New
+// dummyError is a test-local error type so we don't pull in errors.New
 // for a one-off.
-type errDummy string
+type dummyError string
 
-func (e errDummy) Error() string { return string(e) }
+func (e dummyError) Error() string { return string(e) }

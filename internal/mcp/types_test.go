@@ -184,16 +184,16 @@ func TestErrorSentinels(t *testing.T) {
 // errorsWrap is a minimal fmt.Errorf("%w") equivalent that avoids pulling
 // fmt just for a one-liner.
 func errorsWrap(prefix string, err error) error {
-	return &wrappedErr{prefix: prefix, err: err}
+	return &wrappedError{prefix: prefix, err: err}
 }
 
-type wrappedErr struct {
+type wrappedError struct {
 	prefix string
 	err    error
 }
 
-func (w *wrappedErr) Error() string { return w.prefix + w.err.Error() }
-func (w *wrappedErr) Unwrap() error { return w.err }
+func (w *wrappedError) Error() string { return w.prefix + w.err.Error() }
+func (w *wrappedError) Unwrap() error { return w.err }
 
 // TestLegacyServerConfigRenamed guards against accidental reintroduction
 // of the old ServerConfig JSON-stdio shape under the canonical name. The

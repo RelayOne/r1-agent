@@ -4,7 +4,7 @@
 //
 // Compiled only when the `stoke_rod` build tag is set. Without the
 // tag, rod_stub.go provides a no-op RodClient that errors out with
-// ErrChromeLaunchFailed — this keeps the default single-binary
+// ChromeLaunchFailedError — this keeps the default single-binary
 // distribution free of a Chromium dependency.
 //
 // Design:
@@ -77,7 +77,7 @@ func (r *RodClient) ensureBrowser() (*rod.Browser, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
-		return nil, &ErrChromeLaunchFailed{Cause: errors.New("RodClient closed")}
+		return nil, &ChromeLaunchFailedError{Cause: errors.New("RodClient closed")}
 	}
 	if r.browser != nil {
 		return r.browser, nil
@@ -88,12 +88,12 @@ func (r *RodClient) ensureBrowser() (*rod.Browser, error) {
 	}
 	url, err := l.Launch()
 	if err != nil {
-		return nil, &ErrChromeLaunchFailed{Cause: err}
+		return nil, &ChromeLaunchFailedError{Cause: err}
 	}
 	br := rod.New().ControlURL(url)
 	if err := br.Connect(); err != nil {
 		l.Cleanup()
-		return nil, &ErrChromeLaunchFailed{Cause: err}
+		return nil, &ChromeLaunchFailedError{Cause: err}
 	}
 	r.launcher = l
 	r.browser = br
@@ -113,7 +113,7 @@ func (r *RodClient) Fetch(ctx context.Context, url string) (FetchResult, error) 
 	}
 	page, err := br.Context(ctx).Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
-		return FetchResult{}, &ErrNavigationFailed{URL: url, Cause: err}
+		return FetchResult{}, &NavigationFailedError{URL: url, Cause: err}
 	}
 	defer func() { _ = page.Close() }()
 
@@ -132,10 +132,10 @@ func (r *RodClient) Fetch(ctx context.Context, url string) (FetchResult, error) 
 	})()
 
 	if err := page.Navigate(url); err != nil {
-		return FetchResult{}, &ErrNavigationFailed{URL: url, Cause: err}
+		return FetchResult{}, &NavigationFailedError{URL: url, Cause: err}
 	}
 	if err := page.WaitLoad(); err != nil {
-		return FetchResult{}, &ErrNavigationFailed{URL: url, Cause: err}
+		return FetchResult{}, &NavigationFailedError{URL: url, Cause: err}
 	}
 
 	info, err := page.Info()
@@ -200,7 +200,7 @@ func (r *RodClient) RunActions(ctx context.Context, actions []Action) ([]ActionR
 	}
 	page, err := br.Context(ctx).Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
-		return nil, &ErrChromeLaunchFailed{Cause: err}
+		return nil, &ChromeLaunchFailedError{Cause: err}
 	}
 	defer func() { _ = page.Close() }()
 
@@ -230,11 +230,11 @@ func (r *RodClient) dispatch(page *rod.Page, a Action) ActionResult {
 	switch a.Kind {
 	case ActionNavigate:
 		if err := p.Navigate(a.URL); err != nil {
-			res.Err = &ErrNavigationFailed{URL: a.URL, Cause: err}
+			res.Err = &NavigationFailedError{URL: a.URL, Cause: err}
 			return res
 		}
 		if err := p.WaitLoad(); err != nil {
-			res.Err = &ErrNavigationFailed{URL: a.URL, Cause: err}
+			res.Err = &NavigationFailedError{URL: a.URL, Cause: err}
 			return res
 		}
 		if info, err := p.Info(); err == nil {
@@ -291,7 +291,7 @@ func (r *RodClient) dispatch(page *rod.Page, a Action) ActionResult {
 			Format: proto.PageCaptureScreenshotFormatPng,
 		})
 		if err != nil {
-			res.Err = &ErrActionTimeout{Kind: string(a.Kind), Cause: err}
+			res.Err = &ActionTimeoutError{Kind: string(a.Kind), Cause: err}
 			return res
 		}
 		res.ScreenshotPNG = buf
@@ -351,9 +351,9 @@ func mapRodErr(kind ActionKind, selector string, err error) error {
 	}
 	// rod timeouts wrap context.DeadlineExceeded.
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &ErrActionTimeout{Kind: string(kind), Selector: selector, Cause: err}
+		return &ActionTimeoutError{Kind: string(kind), Selector: selector, Cause: err}
 	}
-	return &ErrElementNotFound{Selector: selector, Cause: err}
+	return &ElementNotFoundError{Selector: selector, Cause: err}
 }
 
 // Close shuts down the headless browser and cleans up the launcher's

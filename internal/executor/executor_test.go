@@ -182,7 +182,7 @@ func TestCodeExecutorHooksOverrideFallback(t *testing.T) {
 // now a real composition over Hirer + Delegator + A2A submit seam
 // (see internal/executor/delegate.go and delegate_test.go for its
 // behavior coverage), so the not-wired sentinel cases left in this
-// file reduced to zero. The ErrExecutorNotWired sentinel is still
+// file reduced to zero. The ExecutorNotWiredError sentinel is still
 // in use by the BrowserExecutor interactive-mode branch and stays
 // covered by browser_test.go.
 

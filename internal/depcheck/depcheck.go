@@ -269,7 +269,7 @@ func walkPackageJSONs(root string, visit func(string)) error {
 		base := pathBase(path)
 		if isDir {
 			if base == "node_modules" || (strings.HasPrefix(base, ".") && base != "." && base != root) {
-				return skipDirSentinel
+				return errSkipDir
 			}
 			return nil
 		}

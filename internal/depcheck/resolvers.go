@@ -61,7 +61,7 @@ func (c *Client) Validate(ctx context.Context, root string) ([]Finding, error) {
 		base := filepath.Base(path)
 		if isDir {
 			if shouldSkipDir(base) {
-				return skipDirSentinel
+				return errSkipDir
 			}
 			return nil
 		}

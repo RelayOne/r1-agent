@@ -94,7 +94,7 @@ func runEventlogVerify(args []string, stdout, stderr io.Writer) int {
 	defer log.Close()
 
 	if err := log.Verify(context.Background()); err != nil {
-		var broken *eventlog.ErrChainBroken
+		var broken *eventlog.ChainBrokenError
 		if errors.As(err, &broken) {
 			fmt.Fprintf(stderr, "eventlog verify: chain broken at sequence %d\n", broken.Sequence)
 			fmt.Fprintf(stderr, "  expected parent_hash: %s\n", broken.Expected)

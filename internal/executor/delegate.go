@@ -1,6 +1,6 @@
 // delegate.go: real DelegateExecutor (work-stoke TASK 2).
 //
-// The prior scaffold in scaffold.go returned ErrExecutorNotWired.
+// The prior scaffold in scaffold.go returned ExecutorNotWiredError.
 // This file replaces it with a composition of the fully-landed
 // Hirer (hire/verify_settle.go), Delegator (delegation/), A2A task
 // submission seam (delegation.TaskSubmitter), and TrustPlane client

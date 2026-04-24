@@ -233,12 +233,12 @@ func RunToolCallWithImages(d Dispatcher, name string, input json.RawMessage, ima
 	case "dispatch_sow":
 		return d.SOW(args.FilePath)
 	}
-	return "", errUnknownTool{name: name}
+	return "", unknownToolError{name: name}
 }
 
-type errUnknownTool struct{ name string }
+type unknownToolError struct{ name string }
 
-func (e errUnknownTool) Error() string { return "chat: unknown tool: " + e.name }
+func (e unknownToolError) Error() string { return "chat: unknown tool: " + e.name }
 
 // mustSchema marshals a schema map into json.RawMessage. Panics only if
 // json.Marshal fails, which should never happen for a well-formed
