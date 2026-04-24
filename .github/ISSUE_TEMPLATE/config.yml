@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/ericmacdougall/stoke/security/advisories/new
+    url: https://github.com/RelayOne/r1/security/advisories/new
     about: >-
       Do not file security issues here. Use GitHub's private Security Advisory
       workflow (preferred) or email security@goodventures.dev. See SECURITY.md.
@@ -11,12 +11,12 @@ contact_links:
       Report Code of Conduct violations privately to the maintainers. See
       CODE_OF_CONDUCT.md for the full policy and escalation contact.
   - name: Question or design discussion
-    url: https://github.com/ericmacdougall/stoke/discussions
+    url: https://github.com/RelayOne/r1/discussions
     about: >-
       Open-ended questions, architecture debates, thesis challenges, and
       benchmark-stance discussions belong in Discussions, not Issues.
   - name: Operator setup help
-    url: https://github.com/ericmacdougall/stoke/blob/main/docs/operator-guide.md
+    url: https://github.com/RelayOne/r1/blob/main/docs/operator-guide.md
     about: >-
       Mode 1 vs Mode 2, pool configuration, macOS sandbox caveats, MCP wiring,
       and troubleshooting are covered in the Operator Guide. Check it before

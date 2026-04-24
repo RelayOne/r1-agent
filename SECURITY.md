@@ -28,7 +28,7 @@ within 7 days for critical issues.
 ### Preferred Disclosure Channel — GitHub Security Advisories
 
 The preferred channel is GitHub's private Security Advisories. Visit
-<https://github.com/ericmacdougall/stoke/security/advisories/new> (signed-in users
+<https://github.com/RelayOne/r1/security/advisories/new> (signed-in users
 only) and file a new draft advisory. This routes the report to maintainers without
 public exposure and lets us collaborate on a fix through a private fork. Email to
 `security@goodventures.dev` remains a valid alternative; use it if GitHub access

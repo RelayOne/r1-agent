@@ -43,22 +43,27 @@ each installs both names side-by-side.
 ```bash
 # 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
 # The formula installs BOTH `r1` (canonical) and `stoke` (legacy alias).
-brew install ericmacdougall/stoke/stoke        # current tap path
-# Target after tap rename (work-r1-rename.md §S5-3 — not live yet):
-#   brew install RelayOne/r1-agent/r1
+brew install RelayOne/r1-agent/r1               # canonical tap (post §S2-2)
+# Legacy tap path (still works via Homebrew's formula redirect during
+# the 90d transition window — see work-r1-rename.md §S5-3):
+#   brew install ericmacdougall/stoke/stoke
 
 # 2. One-line installer — detects platform, verifies cosign signature
 # (keyless OIDC via sigstore) when cosign is on PATH, falls back to
 # building from source if no prebuilt binary exists for your target.
 # Installs `r1`, `stoke`, and `stoke-acp` into ${INSTALL_DIR}.
-curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+# GitHub preserves the legacy URL via automatic redirect after §S2-2.
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
+# Legacy (still works via GitHub redirect):
+#   curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
 # 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
 # `r1` is the canonical image name going forward; the legacy `stoke`
 # tag is dual-published for a 60d transition window
 # (see work-r1-rename.md §S2-4).
-docker pull ghcr.io/ericmacdougall/r1:latest        # canonical
-docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy alias (retires ~2026-06-22)
+docker pull ghcr.io/RelayOne/r1:latest              # canonical (post §S2-2)
+docker pull ghcr.io/ericmacdougall/r1:latest        # legacy org alias (retires ~2026-06-22)
+docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name alias (retires ~2026-06-22)
 
 # 4. From source (Go 1.25 or later; CGO enabled for SQLite).
 go build ./cmd/r1               # canonical CLI (exec-shim → stoke)
@@ -66,9 +71,11 @@ go build ./cmd/stoke            # legacy alias / primary orchestrator binary
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
 sudo mv r1 stoke stoke-acp /usr/local/bin/
 
-# Verify a signed release tarball (cosign keyless OIDC)
+# Verify a signed release tarball (cosign keyless OIDC).
+# The cert-identity regex accepts BOTH repo paths so releases signed
+# before and after the §S2-2 repo rename verify without script edits.
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
   stoke_<ver>_<os>_<arch>.tar.gz
@@ -353,9 +360,10 @@ defense in depth.
 
 ## Repository map
 
-R1 is one Go module (`github.com/ericmacdougall/stoke`), Go 1.25,
+R1 is one Go module (`github.com/RelayOne/r1`), Go 1.25,
 organized around a small `cmd/` tree and a large `internal/` tree.
-(The module will move to `github.com/RelayOne/r1` when §S2 lands.)
+(The legacy `github.com/ericmacdougall/stoke` module path is retracted
+per §S2-1; Go's module proxy still serves pinned historical tags.)
 
 ```
 cmd/

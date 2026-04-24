@@ -102,6 +102,13 @@ changelog:
       - "^chore:"
 
 release:
+  # work-r1-rename.md §S2-2: the GitHub repo transfers from
+  # `ericmacdougall/Stoke` to `RelayOne/r1`. Until the admin-side transfer
+  # lands, `goreleaser release` continues to resolve the legacy owner/name
+  # via GitHub's automatic redirect. After the transfer, flip `owner:` to
+  # `RelayOne` and `name:` to `r1`. Leaving the legacy values in place
+  # today keeps current tag releases working; this block will be flipped
+  # atomically with the admin-merge of the S2-2 rename.
   github:
     owner: ericmacdougall
     name: Stoke
@@ -120,7 +127,10 @@ brews:
       name: homebrew-stoke
       branch: main
     directory: Formula
-    homepage: https://github.com/ericmacdougall/Stoke
+    # work-r1-rename.md §S2-2: homepage flips to the canonical RelayOne/r1
+    # URL. GitHub preserves a redirect from ericmacdougall/Stoke during the
+    # transition window so legacy consumers don't 404.
+    homepage: https://github.com/RelayOne/r1
     description: "Stoke — agentic coding orchestrator (R1)"
     license: "Apache-2.0"
     install: |
@@ -132,6 +142,8 @@ brews:
       bin.install "r1" if File.exist?("r1")
     caveats: |
       Stoke is being renamed to R1. Install the canonical formula with:
+        brew install RelayOne/r1-agent/r1
+      Legacy alias still works during the transition window:
         brew install ericmacdougall/stoke/r1
       The `stoke` formula will remain available as an alias through
       2026-07-22 (90d from the rename commit).
@@ -148,7 +160,9 @@ brews:
       name: homebrew-stoke
       branch: main
     directory: Formula
-    homepage: https://github.com/ericmacdougall/Stoke
+    # work-r1-rename.md §S2-2: homepage flips to the canonical RelayOne/r1
+    # URL (GitHub redirect preserves the legacy link).
+    homepage: https://github.com/RelayOne/r1
     description: "R1 — agentic coding orchestrator (formerly Stoke)"
     license: "Apache-2.0"
     install: |

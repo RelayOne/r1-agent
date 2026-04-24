@@ -105,7 +105,9 @@ cut when there is something useful to ship. The expectation is that
 `STEWARDSHIP.md` commitments).
 
 The `release.yml` GitHub Actions workflow signs artifacts with cosign
-and publishes the Homebrew formula to `ericmacdougall/homebrew-stoke`.
+and publishes the Homebrew formula to `RelayOne/homebrew-r1-agent` (post
+work-r1-rename.md §S2-2; the legacy `ericmacdougall/homebrew-stoke` tap is
+mirrored for the 90d transition window).
 
 ## Code of Conduct
 

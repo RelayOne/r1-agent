@@ -21,7 +21,7 @@ info:
   version: 0.1.0
   contact:
     name: Stoke maintainers (vendored copy)
-    url: https://github.com/ericmacdougall/Stoke
+    url: https://github.com/RelayOne/r1
 
 servers:
   - url: https://trustplane.local

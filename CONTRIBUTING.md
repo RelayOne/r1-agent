@@ -1,9 +1,11 @@
 # Contributing to R1
 
-Thank you for your interest in contributing to R1 (the project
-source tree still lives at `github.com/ericmacdougall/stoke` and
-the primary binary is still named `stoke` pending the §S2 rename —
-paths and binary invocations below reflect the current on-disk layout).
+Thank you for your interest in contributing to R1. The canonical
+source tree is `github.com/RelayOne/r1` post work-r1-rename.md §S2-2;
+GitHub preserves redirects from the legacy `github.com/ericmacdougall/stoke`
+path. The primary binary is still named `stoke` pending the §S2-3
+binary rename — paths and binary invocations below reflect the current
+on-disk layout.
 
 ## Development Setup
 

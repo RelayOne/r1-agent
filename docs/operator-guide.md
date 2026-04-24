@@ -82,7 +82,10 @@ Output:
 ### Setup
 
 ```bash
-# Pull the stoke-pool image (bundles Claude Code, Codex CLI, Node.js, Git)
+# Pull the stoke-pool image (bundles Claude Code, Codex CLI, Node.js, Git).
+# Canonical image name post work-r1-rename.md §S2-2:
+#   ghcr.io/RelayOne/r1-pool:latest
+# Legacy tag below stays valid via GHCR's redirect during the 60d transition.
 docker pull ghcr.io/ericmacdougall/stoke-pool:latest
 
 # Initialize container pools (runs interactive login inside the container)
@@ -112,6 +115,7 @@ docker run --rm \
   -e CLAUDE_CONFIG_DIR=/config \
   ghcr.io/ericmacdougall/stoke-pool:latest \
   claude -p "..." --output-format stream-json ...
+# Canonical image post §S2-2: ghcr.io/RelayOne/r1-pool:latest
 ```
 
 Each container gets its own credential volume, so OAuth tokens are fully isolated.

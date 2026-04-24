@@ -186,8 +186,8 @@ R1 v2 wraps the execution engine in a multi-role consensus layer.
 | Nightly bench workflow | HTML report artifacts, regression detection | Done | `.github/workflows/bench-nightly.yml` |
 | CLA Assistant workflow | Contributor CLA signature enforced at PR time | Done | `.github/workflows/cla.yml` |
 | goreleaser + cosign keyless OIDC signing | Signed cross-platform releases (linux/darwin × amd64/arm64) | Done | `.github/workflows/release.yml` |
-| Homebrew tap (`ericmacdougall/homebrew-stoke`) | `brew install` via goreleaser formula | Done | [install.sh](../install.sh) |
-| Docker image (`ghcr.io/ericmacdougall/stoke`) | Multi-stage distroless runtime | Done | [Dockerfile](../Dockerfile) |
+| Homebrew tap (`RelayOne/homebrew-r1-agent`, legacy `ericmacdougall/homebrew-stoke`) | `brew install` via goreleaser formula | Done | [install.sh](../install.sh) |
+| Docker image (`ghcr.io/RelayOne/r1`, legacy `ghcr.io/ericmacdougall/stoke`) | Multi-stage distroless runtime | Done | [Dockerfile](../Dockerfile) |
 | Dockerfile.pool (worker image) | macOS Keychain isolation workaround via Docker volumes | Done | [Dockerfile.pool](../Dockerfile.pool) |
 | Package-count drift check | `make check-pkg-count` asserts 180 internal packages | Done | [Makefile](../Makefile) |
 | Self-scan dogfooding | 18+ rules over 1,010 Go source files; zero blocking | Done | `internal/scan/` |

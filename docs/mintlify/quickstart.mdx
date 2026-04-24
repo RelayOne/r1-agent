@@ -14,15 +14,21 @@ description: "Run your first R1 task end-to-end in under five minutes."
 <CodeGroup>
 
 ```bash Homebrew
-brew install ericmacdougall/stoke/stoke
+# Canonical (post work-r1-rename.md §S2-2); legacy tap
+# `ericmacdougall/stoke/stoke` still works during transition.
+brew install RelayOne/r1-agent/r1
 ```
 
 ```bash curl
-curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+# Canonical URL (post §S2-2); legacy URL `ericmacdougall/Stoke`
+# still works via GitHub's automatic redirect.
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
 ```
 
 ```bash Docker
-docker pull ghcr.io/ericmacdougall/stoke:latest
+# Canonical image (post §S2-2); legacy tags
+# `ghcr.io/ericmacdougall/{r1,stoke}:latest` dual-published for 60d.
+docker pull ghcr.io/RelayOne/r1:latest
 ```
 
 ```bash Source

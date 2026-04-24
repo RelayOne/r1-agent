@@ -15,7 +15,7 @@ edition = "2021"
 rust-version = "1.77"
 authors = ["R1 team"]
 license = "MIT"
-repository = "https://github.com/ericmacdougall/Stoke"
+repository = "https://github.com/RelayOne/r1"
 
 [workspace.dependencies]
 # Pinned on R1D-1.1. Kept here as a reservation so `cargo tauri init`

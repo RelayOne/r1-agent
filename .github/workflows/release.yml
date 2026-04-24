@@ -87,8 +87,11 @@ jobs:
       # The legacy `stoke` tags keep existing `docker pull` commands working
       # for downstream consumers; the `r1` tags are the canonical forward
       # target. Both sets point at identical image content.
-      # Registering the image under the RelayOne org (ghcr.io/RelayOne/r1)
-      # is deferred to S2-2, which requires the GitHub repo rename first.
+      # S2-2 (GitHub repo rename): once the source repo transfers from
+      # `ericmacdougall/Stoke` to `RelayOne/r1`, GHCR auto-publishes under
+      # `ghcr.io/RelayOne/r1`. We tag that canonical path here and keep
+      # the legacy `ghcr.io/ericmacdougall/*` tags for the 60d window so
+      # downstream `docker pull` commands keep working through redirects.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -96,6 +99,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
+            ghcr.io/relayone/r1:${{ steps.version.outputs.version }}
+            ghcr.io/relayone/r1:latest
             ghcr.io/ericmacdougall/stoke:${{ steps.version.outputs.version }}
             ghcr.io/ericmacdougall/stoke:latest
             ghcr.io/ericmacdougall/r1:${{ steps.version.outputs.version }}

@@ -153,14 +153,20 @@ make release
 
 - Cross-platform archives (linux/amd64, linux/arm64, darwin/amd64,
   darwin/arm64) containing `stoke` and `stoke-acp`.
-- Docker images (multi-arch) pushed to `ghcr.io/ericmacdougall/stoke`.
-- Homebrew formula pushed to `ericmacdougall/homebrew-stoke`.
+- Docker images (multi-arch) pushed to `ghcr.io/RelayOne/r1`
+  (canonical, post work-r1-rename.md §S2-2), with legacy
+  `ghcr.io/ericmacdougall/{r1,stoke}` tags dual-published for 60d.
+- Homebrew formula pushed to `RelayOne/homebrew-r1-agent` (canonical)
+  and mirrored to the legacy `ericmacdougall/homebrew-stoke` tap for
+  the transition window.
 - cosign keyless OIDC signatures for every archive
   (`*.tar.gz.sig` + certificate bundle), verifiable via:
 
 ```bash
+# The cert-identity regex accepts BOTH repo paths so archives signed
+# before and after the §S2-2 GitHub repo rename verify identically.
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
   stoke_<ver>_<os>_<arch>.tar.gz
@@ -190,11 +196,14 @@ optionally `codex`, and the R1 binary (named `stoke` on disk).
 ```bash
 # Install via the one-line installer (auto-detects platform,
 # verifies cosign signature if cosign is present, falls back
-# to source build if no prebuilt binary exists for the platform)
-curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+# to source build if no prebuilt binary exists for the platform).
+# GitHub preserves a redirect from the legacy URL.
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
+# Legacy (redirected): https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh
 
 # Or via Homebrew
-brew install ericmacdougall/stoke/stoke
+brew install RelayOne/r1-agent/r1          # canonical (post §S2-2)
+# Legacy tap still works during transition: ericmacdougall/stoke/stoke
 
 # Verify
 stoke doctor
@@ -234,8 +243,9 @@ docker run --rm \
   -v ~/pools:/pools \
   -w /workspace \
   -e CLAUDE_CONFIG_DIR=/pools/claude-1 \
-  ghcr.io/ericmacdougall/stoke:latest \
+  ghcr.io/RelayOne/r1:latest \
   build --plan stoke-plan.json
+# Legacy image: ghcr.io/ericmacdougall/stoke:latest (dual-published 60d post §S2-2)
 ```
 
 For long-running managed deployments, mount the data dir to a
@@ -248,8 +258,9 @@ docker run -d --restart unless-stopped \
   -v "$(pwd):/workspace" \
   -v stoke-data:/var/lib/stoke \
   -e STOKE_DATA_DIR=/var/lib/stoke \
-  ghcr.io/ericmacdougall/stoke:latest \
+  ghcr.io/RelayOne/r1:latest \
   serve --listen :8080
+# Legacy image: ghcr.io/ericmacdougall/stoke:latest (dual-published 60d post §S2-2)
 ```
 
 ### Managed cloud (opt-in)
@@ -407,11 +418,11 @@ R1 is a single static binary. Rollback is "install the previous
 tag":
 
 ```bash
-# Homebrew
-brew install ericmacdougall/stoke/stoke@<previous-version>
+# Homebrew (canonical tap; legacy `ericmacdougall/stoke/stoke@...` also accepted during transition)
+brew install RelayOne/r1-agent/r1@<previous-version>
 
-# Docker
-docker pull ghcr.io/ericmacdougall/stoke:<previous-tag>
+# Docker (canonical image; legacy `ghcr.io/ericmacdougall/stoke:<tag>` dual-published)
+docker pull ghcr.io/RelayOne/r1:<previous-tag>
 
 # Source
 git checkout <previous-tag> -- cmd/ internal/

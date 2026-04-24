@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stoke installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
-
-REPO="ericmacdougall/Stoke"
+# Stoke / R1 installer
+# Usage (canonical, post work-r1-rename.md §S2-2):
+#   curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
+# Legacy URL (still works via GitHub's automatic redirect):
+#   curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+#
+# REPO default tracks the canonical RelayOne/r1 path post
+# work-r1-rename.md §S2-2 (the GitHub repo rename is an admin-side
+# operation bundled with the merge of this change). GitHub's
+# automatic redirect keeps the legacy `ericmacdougall/Stoke` URL
+# resolving to the same repo during the indefinite redirect window,
+# so REPO=ericmacdougall/Stoke can be passed to pin callers at the
+# old path if needed.
+REPO="${REPO:-RelayOne/r1}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY="stoke"
 
@@ -122,8 +132,13 @@ main() {
         local sig_url="${url}.sig"
         info "Verifying cosign signature..."
         if curl -fsSL -o "${tmp_dir}/${archive_name}.sig" "${sig_url}" 2>/dev/null; then
+            # work-r1-rename.md §S2-2: accept signatures from both the
+            # legacy `ericmacdougall/Stoke` release workflow AND the
+            # canonical `RelayOne/r1` release workflow so releases
+            # signed before and after the GitHub repo rename verify
+            # without script edits.
             if cosign verify-blob \
-                --certificate-identity-regexp "https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*" \
+                --certificate-identity-regexp "https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --signature "${tmp_dir}/${archive_name}.sig" \
                 "${tmp_dir}/${archive_name}" 2>&1; then

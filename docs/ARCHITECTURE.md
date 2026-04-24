@@ -20,7 +20,7 @@ feature table with spec traceability, see [FEATURE-MAP.md](FEATURE-MAP.md).
 | Layer | Technology |
 |-------|------------|
 | Language | Go 1.25.5 (CGO enabled for SQLite) |
-| Module | `github.com/ericmacdougall/stoke`, one module, no vendored deps beyond `go.mod` |
+| Module | `github.com/RelayOne/r1` (post §S2-1 rename; legacy `github.com/ericmacdougall/stoke` retracted), one module, no vendored deps beyond `go.mod` |
 | Concurrency | Native goroutines + sync primitives; process-group isolation for child LLM CLIs |
 | Persistence | SQLite (modernc.org/sqlite, pure Go SQLite driver) + append-only NDJSON WAL + JSON session files |
 | Search | FTS5 (built into SQLite) for wisdom, memory, research. Vector search via sqlite-vec (scoped) |
@@ -32,7 +32,7 @@ feature table with spec traceability, see [FEATURE-MAP.md](FEATURE-MAP.md).
 | Telemetry | Structured slog + custom perflog package (microsecond spans, `STOKE_PERFLOG=1`) |
 | Sandboxing | Per-pool `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, per-worktree `settings.json`, `Setpgid:true`, SIGTERM→SIGKILL group kill |
 | CI | GitHub Actions: build/vet/test + race + lint (advisory) + govulncheck + gosec |
-| Release | goreleaser (cross-platform), cosign keyless OIDC signing, Homebrew via `ericmacdougall/homebrew-stoke`, Docker via ghcr.io |
+| Release | goreleaser (cross-platform), cosign keyless OIDC signing, Homebrew via `RelayOne/homebrew-r1-agent` (canonical post §S2-2) with legacy `ericmacdougall/homebrew-stoke` mirrored 90d, Docker via `ghcr.io/RelayOne/r1` |
 | Container | Multi-stage Dockerfile (distroless runtime), separate `Dockerfile.pool` for worker images |
 
 ## Repository map
@@ -494,7 +494,9 @@ All state is local. SQLite files live under `.stoke/`.
 ### Container runtime
 
 - `Dockerfile`: multi-stage, distroless runtime image. Published to
-  `ghcr.io/ericmacdougall/stoke:latest` on each tag.
+  `ghcr.io/RelayOne/r1:latest` on each tag (canonical post §S2-2); the
+  legacy `ghcr.io/ericmacdougall/stoke:latest` tag is dual-published
+  for 60d after the repo rename.
 - `Dockerfile.pool`: worker image for the macOS Keychain isolation
   workaround. Docker volume-based isolation lets operators run
   multiple pools on a single macOS host without Keychain collisions.

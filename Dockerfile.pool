@@ -2,7 +2,9 @@
 # Bundles Claude Code, Codex CLI, Node.js LTS, and Git for isolated execution.
 # Multi-arch: linux/amd64, linux/arm64
 #
-# Build: docker build -f Dockerfile.pool -t ghcr.io/ericmacdougall/stoke-pool:latest .
+# Build: docker build -f Dockerfile.pool -t ghcr.io/RelayOne/r1-pool:latest .
+# Legacy tag (retires 60d after §S2-2 repo rename lands):
+#   docker build -f Dockerfile.pool -t ghcr.io/ericmacdougall/stoke-pool:latest .
 # Usage: stoke pool init --container my-pool
 
 FROM node:22-bookworm-slim

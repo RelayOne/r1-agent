@@ -11,7 +11,11 @@ gates, no telemetry, no phone-home.
 Published by goreleaser on each tag.
 
 ```bash
-brew install ericmacdougall/stoke/stoke
+# Canonical tap (post work-r1-rename.md §S2-2).
+brew install RelayOne/r1-agent/r1
+
+# Legacy tap (still works via Homebrew redirect during the transition):
+# brew install ericmacdougall/stoke/stoke
 ```
 
 ## One-line installer
@@ -21,7 +25,12 @@ OIDC via sigstore) when cosign is on PATH, and falls back to
 building from source if no prebuilt binary exists for your target.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+# Canonical URL (post work-r1-rename.md §S2-2). GitHub preserves the
+# legacy URL via automatic redirect, so either line below works.
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
+
+# Legacy URL (redirected):
+# curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 ```
 
 ## Docker
@@ -29,7 +38,12 @@ curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.s
 linux/amd64 + linux/arm64; distroless; multi-stage.
 
 ```bash
-docker pull ghcr.io/ericmacdougall/stoke:latest
+# Canonical image (post work-r1-rename.md §S2-2).
+docker pull ghcr.io/RelayOne/r1:latest
+
+# Legacy tags (dual-published for 60d after §S2-2):
+# docker pull ghcr.io/ericmacdougall/r1:latest
+# docker pull ghcr.io/ericmacdougall/stoke:latest
 ```
 
 ## From source
@@ -44,11 +58,14 @@ sudo mv stoke stoke-acp /usr/local/bin/
 
 ## Verify a signed release tarball
 
-Cosign keyless OIDC.
+Cosign keyless OIDC. The cert-identity regex accepts both the legacy
+`ericmacdougall/Stoke` workflow and the canonical `RelayOne/r1`
+workflow so releases signed before and after §S2-2 verify without
+script edits.
 
 ```bash
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github\.com/ericmacdougall/Stoke/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
   stoke_<ver>_<os>_<arch>.tar.gz
