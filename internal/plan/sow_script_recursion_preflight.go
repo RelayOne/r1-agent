@@ -86,7 +86,6 @@ func PreflightScriptRecursion(repoRoot string) []string {
 			return nil
 		}
 		var removed []string
-		var rekept []string
 		for name, valAny := range scripts {
 			if !knownRecursionRisks[name] {
 				continue
@@ -103,7 +102,6 @@ func PreflightScriptRecursion(repoRoot string) []string {
 			if val == name || strings.HasPrefix(val, name+" ") || strings.HasPrefix(val, name+"\t") {
 				removed = append(removed, fmt.Sprintf("%s = %q", name, val))
 				delete(scripts, name)
-				rekept = append(rekept, fmt.Sprintf("%s:%s", name, val))
 			}
 		}
 		if len(removed) == 0 {

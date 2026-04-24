@@ -528,7 +528,14 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 	}
 
 	if label := name; label == "" {
-		name = fmt.Sprintf("%s Container #%s", strings.Title(provider), strings.TrimPrefix(poolID, provider+"-"))
+		// Provider names are single-word ASCII (claude, codex, openai);
+		// strings.Title is deprecated (Unicode word-boundary issues
+		// that don't apply here) so title-case via slice is fine.
+		display := provider
+		if len(provider) > 0 {
+			display = strings.ToUpper(provider[:1]) + provider[1:]
+		}
+		name = fmt.Sprintf("%s Container #%s", display, strings.TrimPrefix(poolID, provider+"-"))
 	}
 
 	pool := Pool{

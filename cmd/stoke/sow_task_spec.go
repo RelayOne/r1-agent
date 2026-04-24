@@ -233,9 +233,9 @@ func collectTaskSearchTerms(session plan.Session, task plan.Task) []string {
 		if ac.ContentMatch != nil && taskFileSet[ac.ContentMatch.File] {
 			add(ac.ContentMatch.Pattern)
 		}
-		if ac.FileExists != "" && taskFileSet[ac.FileExists] {
-			// The file path itself is already in terms; nothing extra.
-		}
+		// FileExists ACs: the file path itself is already in terms; no
+		// extra tokens to add. Intentionally not an `if` branch so
+		// staticcheck SA9003 is happy.
 	}
 
 	// 7. Identifier-like tokens from task.Description

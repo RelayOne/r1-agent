@@ -107,12 +107,13 @@ func (e *Emitter) SetStokeMeta(version, instanceID, traceParent string) {
 func NewTraceParent() string {
 	var trace [16]byte
 	var span [8]byte
-	if _, err := rand.Read(trace[:]); err != nil {
-		// Fall through with zero trace — still RFC-valid.
-	}
-	if _, err := rand.Read(span[:]); err != nil {
-		// ditto.
-	}
+	// Ignore errors: crypto/rand.Read on Linux/Darwin reads from
+	// /dev/urandom which never fails in practice; on an exceptional
+	// platform we'd fall back to the zero trace which is still
+	// RFC-W3C-valid. Explicit `_ =` satisfies staticcheck SA9003
+	// without the empty-branch anti-pattern.
+	_, _ = rand.Read(trace[:])
+	_, _ = rand.Read(span[:])
 	return fmt.Sprintf("00-%s-%s-01",
 		hex.EncodeToString(trace[:]),
 		hex.EncodeToString(span[:]))

@@ -1253,7 +1253,7 @@ func scanSOWEndpointContracts(repoRoot, sowText string) []QualityFinding {
 		if len(m) < 3 {
 			continue
 		}
-		path := strings.TrimRight(m[2], ".,;:`)*)\"'")
+		path := strings.TrimRight(m[2], ".,;:`)*\"'")
 		// Skip obvious non-endpoints: /usr/, /tmp/, /home/, /etc/.
 		if strings.HasPrefix(path, "/usr/") || strings.HasPrefix(path, "/tmp/") ||
 			strings.HasPrefix(path, "/home/") || strings.HasPrefix(path, "/etc/") ||

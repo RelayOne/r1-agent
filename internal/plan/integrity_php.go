@@ -78,7 +78,7 @@ func (phpEcosystem) UnresolvedImports(projectRoot string, files []string) ([]Man
 				SourceFile: relFile,
 				ImportPath: ns,
 				Manifest:   relMani,
-				AddCommand: fmt.Sprintf("composer require <vendor>/<package> # to cover namespace %s", ns),
+				AddCommand: fmt.Sprintf("composer require %s # to cover namespace %s (best-guess package name)", guess, ns),
 			})
 		}
 	}

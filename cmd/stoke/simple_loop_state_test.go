@@ -520,7 +520,12 @@ func TestCurrentRepoHead_ReturnsSha(t *testing.T) {
 }
 
 func TestHashProse_Deterministic(t *testing.T) {
-	if hashProse("abc") != hashProse("abc") {
+	// Two separate calls with the same input — binding to distinct
+	// variables both documents the intent and sidesteps SA4000's
+	// false-positive on X != X.
+	a := hashProse("abc")
+	b := hashProse("abc")
+	if a != b {
 		t.Error("hashProse must be deterministic")
 	}
 	if hashProse("abc") == hashProse("abd") {

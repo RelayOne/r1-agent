@@ -80,6 +80,9 @@ func (b *Backend) Provision(ctx context.Context, spec env.Spec) (*env.Handle, er
 	if err != nil {
 		return nil, fmt.Errorf("ssh: mkdir %s: %w", workDir, err)
 	}
+	if !result.Success() {
+		return nil, fmt.Errorf("ssh: mkdir %s failed (exit %d): %s", workDir, result.ExitCode, result.CombinedOutput())
+	}
 
 	// Run setup commands.
 	for _, cmd := range spec.SetupCommands {
