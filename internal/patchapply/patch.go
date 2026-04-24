@@ -39,10 +39,15 @@ type Line struct {
 // LineOp classifies a diff line.
 type LineOp string
 
+// LineOp values match the leading column of a unified-diff hunk line
+// and are used verbatim when the patch is serialized.
 const (
+	// OpContext marks an unchanged line included to anchor the hunk.
 	OpContext LineOp = " "
-	OpAdd     LineOp = "+"
-	OpDelete  LineOp = "-"
+	// OpAdd marks a line inserted by the patch.
+	OpAdd LineOp = "+"
+	// OpDelete marks a line removed by the patch.
+	OpDelete LineOp = "-"
 )
 
 // Sentinel paths used by unified diff format to mark file creation/deletion.

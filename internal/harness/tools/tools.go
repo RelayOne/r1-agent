@@ -6,20 +6,49 @@ package tools
 // ToolName identifies a tool available to stance workers.
 type ToolName string
 
+// Tool identifiers below are the stable protocol values that travel
+// between stance workers and the harness authorization check. Renaming
+// any of these is a breaking change to on-disk ledger records and to
+// skill manifests that name tools.
 const (
-	ToolFileRead           ToolName = "file_read"
-	ToolFileWrite          ToolName = "file_write"
-	ToolCodeRun            ToolName = "code_run"
-	ToolWebSearch          ToolName = "web_search"
-	ToolWebFetch           ToolName = "web_fetch"
-	ToolLedgerQuery        ToolName = "ledger_query"
-	ToolLedgerWrite        ToolName = "ledger_write"
+	// ToolFileRead grants read-only access to the worktree file system.
+	ToolFileRead ToolName = "file_read"
+	// ToolFileWrite grants write access to the worktree file system.
+	// Authorization is paired with sandbox checks — presence here only
+	// means the role is allowed to attempt a write.
+	ToolFileWrite ToolName = "file_write"
+	// ToolCodeRun permits executing build, test, and lint commands in
+	// the worktree. Distinct from ToolEnvExec, which targets remote
+	// execution environments.
+	ToolCodeRun ToolName = "code_run"
+	// ToolWebSearch allows issuing search-engine queries via the
+	// configured provider.
+	ToolWebSearch ToolName = "web_search"
+	// ToolWebFetch allows retrieving specific URLs. Paired with
+	// ToolWebSearch for research workflows.
+	ToolWebFetch ToolName = "web_fetch"
+	// ToolLedgerQuery permits read-only queries against the append-only
+	// ledger graph.
+	ToolLedgerQuery ToolName = "ledger_query"
+	// ToolLedgerWrite permits appending new nodes/edges to the ledger.
+	// Writes are immutable by design; see internal/ledger.
+	ToolLedgerWrite ToolName = "ledger_write"
+	// ToolSkillImportPropose lets a researcher propose adding a new
+	// external skill to the registry (subject to supervisor approval).
 	ToolSkillImportPropose ToolName = "skill_import_propose"
-	ToolBusPublish         ToolName = "bus_publish"
-	ToolResearchRequest    ToolName = "research_request"
-	ToolEnvExec            ToolName = "env_exec"
-	ToolEnvCopyIn          ToolName = "env_copy_in"
-	ToolEnvCopyOut         ToolName = "env_copy_out"
+	// ToolBusPublish permits emitting events on the durable WAL-backed
+	// event bus.
+	ToolBusPublish ToolName = "bus_publish"
+	// ToolResearchRequest enqueues an asynchronous research task for
+	// the research subsystem.
+	ToolResearchRequest ToolName = "research_request"
+	// ToolEnvExec executes commands in a remote execution environment
+	// (SSH, Fly, Ember). Distinct from ToolCodeRun which runs locally.
+	ToolEnvExec ToolName = "env_exec"
+	// ToolEnvCopyIn uploads files into the remote environment.
+	ToolEnvCopyIn ToolName = "env_copy_in"
+	// ToolEnvCopyOut downloads files out of the remote environment.
+	ToolEnvCopyOut ToolName = "env_copy_out"
 
 	// ToolReportEnvIssue is the descent-hardening spec-1 item 6 tool.
 	// Dev and Reviewer stances advertise it so a worker can declare

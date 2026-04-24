@@ -20,16 +20,23 @@ func NewEscalationForwardsUpward() *EscalationForwardsUpward {
 	return &EscalationForwardsUpward{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *EscalationForwardsUpward) Name() string {
 	return "hierarchy.escalation_forwards_upward"
 }
 
+// Pattern subscribes to worker-originated escalation requests so the
+// rule can decide whether to punt them upward.
 func (r *EscalationForwardsUpward) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: "worker.escalation.requested"}
 }
 
+// Priority (95) runs this rule slightly below the parent-agreement
+// rule (100) but above generic hierarchy bookkeeping.
 func (r *EscalationForwardsUpward) Priority() int { return 95 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *EscalationForwardsUpward) Rationale() string {
 	return "Unresolved branch-level escalations must be forwarded to the mission supervisor."
 }
@@ -43,6 +50,10 @@ type escalationForwardPayload struct {
 	BranchResolved bool   `json:"branch_resolved"`
 }
 
+// Evaluate fires only when branch-level resolution has been attempted
+// and failed. Short-circuits on BranchResolved=true; otherwise looks
+// for a matching escalation.resolution_attempt ledger node with
+// success=false.
 func (r *EscalationForwardsUpward) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var ep escalationForwardPayload
 	if err := json.Unmarshal(evt.Payload, &ep); err != nil {
@@ -82,6 +93,9 @@ func (r *EscalationForwardsUpward) Evaluate(ctx context.Context, evt bus.Event, 
 	return false, nil
 }
 
+// Action emits a supervisor.escalation.forwarded event scoped to the
+// parent mission (branch stripped from Scope) carrying the original
+// escalation metadata plus the source branch ID for provenance.
 func (r *EscalationForwardsUpward) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var ep escalationForwardPayload
 	if err := json.Unmarshal(evt.Payload, &ep); err != nil {

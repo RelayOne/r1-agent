@@ -11,17 +11,39 @@ import (
 // Class categorizes why a task failed.
 type Class string
 
+// Failure classes feed both retry logic (ShouldRetry) and fingerprint
+// deduplication (see MatchHistory). Values are persisted in session
+// stores and ledger entries, so changes are breaking.
 const (
-	BuildFailed     Class = "BuildFailed"
-	TestsFailed     Class = "TestsFailed"
-	LintFailed      Class = "LintFailed"
+	// BuildFailed means `go build` (or the language equivalent) exited
+	// non-zero. Usually a syntax or type error in the attempt's diff.
+	BuildFailed Class = "BuildFailed"
+	// TestsFailed means the test runner reported one or more failures.
+	TestsFailed Class = "TestsFailed"
+	// LintFailed means the lint gate rejected the attempt. Often
+	// auto-fixable; see internal/autofix.
+	LintFailed Class = "LintFailed"
+	// PolicyViolation means the attempt's diff contained a forbidden
+	// pattern (secrets, eval, disabled lint directives, etc.).
 	PolicyViolation Class = "PolicyViolation"
-	ReviewRejected  Class = "ReviewRejected"
-	Timeout         Class = "Timeout"
-	WrongFiles      Class = "WrongFiles"
-	Incomplete      Class = "Incomplete"
-	Regression      Class = "Regression"
-	RateLimited     Class = "RateLimited"
+	// ReviewRejected means an adversarial reviewer (or critic) vetoed
+	// the attempt for reasons beyond build/test/lint.
+	ReviewRejected Class = "ReviewRejected"
+	// Timeout means the attempt exceeded its deadline before producing
+	// a verdict. The underlying tool may still be running.
+	Timeout Class = "Timeout"
+	// WrongFiles means the attempt edited files outside the declared
+	// scope (see verify.CheckScope).
+	WrongFiles Class = "WrongFiles"
+	// Incomplete means the attempt stopped without reaching all success
+	// criteria (missing tests, unfinished code path, etc.).
+	Incomplete Class = "Incomplete"
+	// Regression means the attempt passed its own gate but broke a
+	// previously passing baseline check.
+	Regression Class = "Regression"
+	// RateLimited means the underlying model/provider returned a
+	// throttling error. Retry after backoff.
+	RateLimited Class = "RateLimited"
 )
 
 // Detail captures one specific issue from a failed attempt.
@@ -390,7 +412,12 @@ func inferMissing(class Class) []string {
 type Action int
 
 const (
+	// Retry means the failure looks transient or fixable and the
+	// scheduler should re-dispatch the task with a fresh attempt.
 	Retry Action = iota
+	// Escalate means the failure is not retryable (budget exhausted,
+	// same-failure twice, or a non-retryable class) and must be
+	// surfaced for triage.
 	Escalate
 )
 

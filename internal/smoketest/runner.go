@@ -28,11 +28,22 @@ import (
 // VerdictKind is the coarse outcome of a smoke run.
 type VerdictKind string
 
+// Verdict kinds are the four terminal states for a smoke run. Values
+// are emitted to the ledger and displayed in TUI; changing strings is
+// a breaking change for downstream consumers.
 const (
-	VerdictPass       VerdictKind = "pass"
-	VerdictFail       VerdictKind = "fail"
-	VerdictStaticOnly VerdictKind = "static_only" // structural checks only; runtime could not execute this class
-	VerdictSkipped    VerdictKind = "skipped"     // session-level opt-out (no capability match worth attempting)
+	// VerdictPass means every smoke command exited zero.
+	VerdictPass VerdictKind = "pass"
+	// VerdictFail means at least one smoke command failed; see
+	// Verdict.FirstFailed for the offender.
+	VerdictFail VerdictKind = "fail"
+	// VerdictStaticOnly means only structural checks ran — the
+	// runtime could not execute this capability class (missing
+	// toolchain, unsupported env). Not a failure.
+	VerdictStaticOnly VerdictKind = "static_only"
+	// VerdictSkipped means the session opted out because no capability
+	// matched strongly enough to justify a smoke attempt.
+	VerdictSkipped VerdictKind = "skipped"
 )
 
 // Verdict is the smoke runner's output for one session.

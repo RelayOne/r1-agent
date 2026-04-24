@@ -21,9 +21,16 @@ type Option struct {
 type NotifyKind int
 
 const (
+	// KindInfo is a neutral status message (the default).
 	KindInfo NotifyKind = iota
+	// KindWarn flags a recoverable concern the operator should see but
+	// need not act on immediately.
 	KindWarn
+	// KindError flags a failure condition. Terminal implementations
+	// route this to stderr and a red marker.
 	KindError
+	// KindSuccess flags a positive completion (task passed, mission
+	// merged, etc.). Used for UX affordances.
 	KindSuccess
 )
 

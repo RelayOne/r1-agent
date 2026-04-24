@@ -23,16 +23,24 @@ func NewDraftRequiresReview() *DraftRequiresReview {
 	return &DraftRequiresReview{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *DraftRequiresReview) Name() string {
 	return "consensus.draft_requires_review"
 }
 
+// Pattern subscribes the rule to ledger-node-added events; each new
+// node is screened for the draft type in Evaluate.
 func (r *DraftRequiresReview) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: string(bus.EvtLedgerNodeAdded)}
 }
 
+// Priority (90) orders this rule alongside DissentRequiresAddress so
+// a fresh draft dispatches reviewers before later low-priority rules
+// react.
 func (r *DraftRequiresReview) Priority() int { return 90 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *DraftRequiresReview) Rationale() string {
 	return "Every draft must be reviewed by consensus partners before it can be accepted."
 }
@@ -46,6 +54,8 @@ type nodeAddedPayload struct {
 	Concern  string `json:"concern"`
 }
 
+// Evaluate reports true iff the added node is a draft (matched either
+// by type name containing "draft" or by Status == "draft").
 func (r *DraftRequiresReview) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {
@@ -61,6 +71,9 @@ func (r *DraftRequiresReview) Evaluate(ctx context.Context, evt bus.Event, l *le
 	return true, nil
 }
 
+// Action publishes a supervisor.spawn.requested event for each
+// reviewer role (Reviewer and LeadEngineer), scoped to the new draft
+// node so each spawn inherits the loop and concern context.
 func (r *DraftRequiresReview) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {

@@ -19,14 +19,27 @@ const nodeTypeLoop = "loop"
 // LoopState represents the current state of a consensus loop.
 type LoopState string
 
+// Loop states are the seven positions a consensus loop can occupy.
+// Transitions are driven by supervisor rules; see
+// supervisor/rules/consensus. Values are persisted in the ledger.
 const (
-	StateProposing         LoopState = "proposing"
-	StateDrafted           LoopState = "drafted"
-	StateConvening         LoopState = "convening"
-	StateReviewing         LoopState = "reviewing"
+	// StateProposing is the initial state: a draft is being authored.
+	StateProposing LoopState = "proposing"
+	// StateDrafted means a draft exists and is awaiting convening.
+	StateDrafted LoopState = "drafted"
+	// StateConvening means the system is gathering reviewer stances.
+	StateConvening LoopState = "convening"
+	// StateReviewing means reviewers have been convened and are
+	// evaluating the current draft.
+	StateReviewing LoopState = "reviewing"
+	// StateResolvingDissents means at least one reviewer dissented and
+	// the authoring stance is producing a revised draft.
 	StateResolvingDissents LoopState = "resolving_dissents"
-	StateConverged         LoopState = "converged"
-	StateEscalated         LoopState = "escalated"
+	// StateConverged is a terminal state: all convened reviewers agree.
+	StateConverged LoopState = "converged"
+	// StateEscalated is a terminal state: the loop exceeded its
+	// iteration budget or timed out and was handed to a supervisor.
+	StateEscalated LoopState = "escalated"
 )
 
 // terminalStates are states in which a loop is no longer active.
@@ -38,12 +51,21 @@ var terminalStates = map[LoopState]bool{
 // LoopType categorizes what artifact the loop governs.
 type LoopType string
 
+// Loop types categorize what artifact the consensus loop governs. The
+// type drives which reviewer stances are convened and which supervisor
+// rules apply.
 const (
-	LoopTypePRD      LoopType = "prd"
-	LoopTypeSOW      LoopType = "sow"
-	LoopTypeTicket   LoopType = "ticket"
-	LoopTypePR       LoopType = "pr_review"
+	// LoopTypePRD governs a product requirements document.
+	LoopTypePRD LoopType = "prd"
+	// LoopTypeSOW governs a statement of work.
+	LoopTypeSOW LoopType = "sow"
+	// LoopTypeTicket governs an individual work ticket.
+	LoopTypeTicket LoopType = "ticket"
+	// LoopTypePR governs a pull-request review.
+	LoopTypePR LoopType = "pr_review"
+	// LoopTypeRefactor governs a structural refactor proposal.
 	LoopTypeRefactor LoopType = "refactor"
+	// LoopTypeResearch governs a research-request lifecycle.
 	LoopTypeResearch LoopType = "research"
 )
 

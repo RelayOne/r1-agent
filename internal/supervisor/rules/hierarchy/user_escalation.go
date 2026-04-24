@@ -14,9 +14,15 @@ import (
 // OperatingMode controls how user escalation behaves.
 type OperatingMode string
 
+// Operating modes switch between human-in-the-loop and fully
+// autonomous handling of mission-level escalations.
 const (
+	// ModeInteractive pauses work and surfaces a message through the
+	// PO stance so a human operator decides next.
 	ModeInteractive OperatingMode = "interactive"
-	ModeFullAuto    OperatingMode = "full_auto"
+	// ModeFullAuto spawns a Stakeholder stance to make the decision
+	// without human involvement.
+	ModeFullAuto OperatingMode = "full_auto"
 )
 
 // UserEscalation handles escalations that reach the mission level.
@@ -31,16 +37,25 @@ func NewUserEscalation() *UserEscalation {
 	return &UserEscalation{Mode: ModeInteractive}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *UserEscalation) Name() string {
 	return "hierarchy.user_escalation"
 }
 
+// Pattern subscribes to supervisor.escalation.forwarded — the event
+// produced by EscalationForwardsUpward once a branch hands an
+// escalation up to the mission level.
 func (r *UserEscalation) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: "supervisor.escalation.forwarded"}
 }
 
+// Priority (100) shares the top slot with CompletionRequiresParentAgreement:
+// the user decision is the most urgent action once an escalation reaches
+// the mission supervisor.
 func (r *UserEscalation) Priority() int { return 100 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *UserEscalation) Rationale() string {
 	return "Mission-level escalations that cannot be auto-resolved must reach the user or a Stakeholder."
 }
@@ -55,6 +70,9 @@ type forwardedEscalationPayload struct {
 	Level          string `json:"level"`
 }
 
+// Evaluate suppresses the rule when a prior mission-level resolution
+// for the same task already exists (so Action doesn't fire repeatedly
+// across replays); otherwise allows the escalation to proceed.
 func (r *UserEscalation) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var ep forwardedEscalationPayload
 	if err := json.Unmarshal(evt.Payload, &ep); err != nil {
@@ -88,6 +106,10 @@ func (r *UserEscalation) Evaluate(ctx context.Context, evt bus.Event, l *ledger.
 	return true, nil
 }
 
+// Action dispatches based on r.Mode. In ModeInteractive it emits a
+// PO-routed user message and a worker.paused event so the work halts
+// until a human responds. In ModeFullAuto it spawns a Stakeholder
+// stance to make the call autonomously. Unknown modes are rejected.
 func (r *UserEscalation) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var ep forwardedEscalationPayload
 	if err := json.Unmarshal(evt.Payload, &ep); err != nil {
