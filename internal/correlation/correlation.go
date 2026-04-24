@@ -1,17 +1,19 @@
-// Package correlation carries per-request R1 (formerly Stoke) session/
-// agent/task IDs on the request context so the outbound LLM-call layer
-// can attach X-R1-Session-ID / X-R1-Agent-ID / X-R1-Task-ID headers
-// (canonical) plus the legacy X-Stoke-* header pair during the S1-2
-// 30-day dual-send window (through 2026-05-23).
+// Package correlation carries per-request R1 session/agent/task IDs
+// on the request context so the outbound LLM-call layer can attach
+// X-R1-Session-ID / X-R1-Agent-ID / X-R1-Task-ID headers.
 //
-// RelayGate's apiserver reads either header family (canonical wins
-// when both present — see router-core commit a1ca514) and threads the
-// ID into the audit pipeline; every LLM call routed through RelayGate
-// ends up correlated back to the originating R1 session / worker /
-// task. When the IDs are unset (zero-value struct), the header-setting
+// RelayGate's apiserver reads these headers and threads them into the
+// audit pipeline; every LLM call routed through RelayGate ends up
+// correlated back to the originating R1 session / worker / task.
+// When the IDs are unset (zero-value struct), the header-setting
 // helper omits them entirely rather than emitting empty strings.
 //
-// This package is deliberately minimal — no imports beyond context —
+// The S1-2 30-day dual-send window (through 2026-05-23) emitted the
+// legacy X-Stoke-* family alongside canonical X-R1-*. The window
+// elapsed 2026-05-23; S6-1 drops the legacy emission here. RelayGate
+// mirrors the drop on the ingress side (router-core S6-1 branch).
+//
+// This package is deliberately minimal -- no imports beyond context --
 // so it can be consumed from internal/apiclient, internal/provider,
 // and internal/agentloop without creating import cycles.
 package correlation
@@ -44,7 +46,7 @@ func WithIDs(ctx context.Context, ids IDs) context.Context {
 }
 
 // FromContext extracts IDs previously stored via WithIDs. Returns the
-// zero IDs{} if none present — callers do not need to branch on
+// zero IDs{} if none present -- callers do not need to branch on
 // "is it there?" separately.
 func FromContext(ctx context.Context) IDs {
 	if ctx == nil {
@@ -56,17 +58,14 @@ func FromContext(ctx context.Context) IDs {
 	return IDs{}
 }
 
-// ApplyHeaders sets both the canonical X-R1-* header family AND the
-// legacy X-Stoke-* family on req for any non-empty ID in ctx. Both
-// families carry IDENTICAL values. This is the S1-2 30-day dual-send
-// window (through 2026-05-23) — RelayGate accepts either family and
-// prefers canonical when both are present (router-core commit
-// a1ca514). After 2026-05-23 the legacy X-Stoke-* emission is dropped
-// per S6-1.
+// ApplyHeaders sets the canonical X-R1-* header family on req for any
+// non-empty ID in ctx. Empty fields are skipped -- standalone R1 runs
+// with no session/task identity emit zero correlation headers rather
+// than empty-string headers.
 //
-// Empty fields are skipped on BOTH families — standalone R1 runs with
-// no session/task identity emit zero correlation headers rather than
-// empty-string headers.
+// The legacy X-Stoke-* family was emitted alongside canonical during
+// the S1-2 30d dual-send window; that window elapsed 2026-05-23 and
+// legacy emission is now dropped per S6-1.
 func ApplyHeaders(ctx context.Context, req *http.Request) {
 	if req == nil {
 		return
@@ -74,14 +73,11 @@ func ApplyHeaders(ctx context.Context, req *http.Request) {
 	ids := FromContext(ctx)
 	if ids.SessionID != "" {
 		req.Header.Set("X-R1-Session-ID", ids.SessionID)
-		req.Header.Set("X-Stoke-Session-ID", ids.SessionID)
 	}
 	if ids.AgentID != "" {
 		req.Header.Set("X-R1-Agent-ID", ids.AgentID)
-		req.Header.Set("X-Stoke-Agent-ID", ids.AgentID)
 	}
 	if ids.TaskID != "" {
 		req.Header.Set("X-R1-Task-ID", ids.TaskID)
-		req.Header.Set("X-Stoke-Task-ID", ids.TaskID)
 	}
 }
