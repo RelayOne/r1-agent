@@ -330,7 +330,12 @@ func (e *Emitter) EmitStoke(eventType string, data map[string]any) {
 		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if meta.version != "" {
+		// S3-3 dual-emit: every EmitStoke event carries both the
+		// legacy `stoke_version` key and the canonical `r1_version`
+		// key with identical values during the 30-day rename window
+		// (work-r1-rename.md §S3-3). Consumers can read either.
 		evt["stoke_version"] = meta.version
+		evt["r1_version"] = meta.version
 	}
 	if meta.instanceID != "" {
 		evt["instance_id"] = meta.instanceID

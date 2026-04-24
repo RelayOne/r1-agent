@@ -52,6 +52,12 @@ func TestEmitStoke_EnvelopeStampedWhenMetaSet(t *testing.T) {
 	if evt["stoke_version"] != StokeProtocolVersion {
 		t.Errorf("stoke_version=%v", evt["stoke_version"])
 	}
+	// S3-3 dual-emit: both legacy `stoke_version` and canonical
+	// `r1_version` must be present with the identical value during the
+	// 30-day rename window (work-r1-rename.md §S3-3).
+	if evt["r1_version"] != StokeProtocolVersion {
+		t.Errorf("r1_version=%v (expected dual-emit of stoke_version)", evt["r1_version"])
+	}
 	if evt["instance_id"] != "r1-abc12345" {
 		t.Errorf("instance_id=%v", evt["instance_id"])
 	}
@@ -89,7 +95,10 @@ func TestEmitStoke_OmitsEnvelopeWhenMetaUnset(t *testing.T) {
 	}
 	// The three optional envelope keys must NOT be present — that's
 	// the backward-compat guarantee for pre-STOKE consumers.
-	for _, key := range []string{"stoke_version", "instance_id", "trace_parent"} {
+	// S3-3: `r1_version` is the canonical dual-emit sibling of
+	// `stoke_version` and must also be omitted when meta is unset
+	// (backward-compat guarantee).
+	for _, key := range []string{"stoke_version", "r1_version", "instance_id", "trace_parent"} {
 		if _, present := evt[key]; present {
 			t.Errorf("%s should be absent when meta is unset, got %v", key, evt[key])
 		}

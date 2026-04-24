@@ -43,7 +43,13 @@ type Manifest struct {
 	SOWName    string `json:"sow_name"`    // --file basename, if any
 	Mode       string `json:"mode"`        // "headless" | "chat" | "interactive"
 	Model      string `json:"model"`       // backing model tag
-	StokeBuild string `json:"stoke_build"` // git short hash
+	StokeBuild string `json:"stoke_build"` // git short hash (legacy; 30d dual-emit per work-r1-rename.md §S3-3)
+	// R1Build mirrors StokeBuild so emitted JSON carries both the
+	// legacy `stoke_build` key and the canonical `r1_build` key during
+	// the 30-day rename window. Populated in Register from
+	// Manifest.StokeBuild when R1Build is unset so producers only need
+	// to set the value once.
+	R1Build string `json:"r1_build"` // canonical sibling of stoke_build (S3-3 dual-emit)
 	WorkerLogsDir string `json:"worker_logs_dir"` // absolute path to .stoke/worker-logs/
 	LogFile    string `json:"log_file"`    // stoke-run.log absolute path
 	StartedAt  string `json:"started_at"`  // RFC3339Nano
@@ -94,6 +100,15 @@ func Register(m Manifest) (*Registration, error) {
 	}
 	if m.User == "" {
 		m.User = os.Getenv("USER")
+	}
+	// S3-3 dual-emit: mirror StokeBuild into R1Build so the manifest
+	// carries both `stoke_build` (legacy) and `r1_build` (canonical)
+	// keys during the 30-day rename window. Callers that set only the
+	// legacy field still see dual-keyed output.
+	if m.R1Build == "" {
+		m.R1Build = m.StokeBuild
+	} else if m.StokeBuild == "" {
+		m.StokeBuild = m.R1Build
 	}
 	dir := InstancesDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

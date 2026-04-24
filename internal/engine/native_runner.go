@@ -795,7 +795,12 @@ func addCtx(entry map[string]any, wlc *WorkerLogContext) {
 		entry["model"] = wlc.Model
 	}
 	if wlc.StokeBuild != "" {
+		// S3-3 dual-emit: worker-log entries carry both the legacy
+		// `stoke_build` key and the canonical `r1_build` key with
+		// identical values during the 30-day rename window
+		// (work-r1-rename.md §S3-3).
 		entry["stoke_build"] = wlc.StokeBuild
+		entry["r1_build"] = wlc.StokeBuild
 	}
 	if wlc.SOWPath != "" {
 		entry["sow_path"] = wlc.SOWPath

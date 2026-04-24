@@ -51,6 +51,86 @@ func TestRegisterWritesManifest(t *testing.T) {
 	}
 }
 
+// TestRegisterDualEmitsStokeAndR1Build verifies §S3-3 of
+// work-r1-rename.md: the persisted manifest JSON carries BOTH the
+// legacy `stoke_build` key AND the canonical `r1_build` key with the
+// identical value, regardless of which sibling field the caller set.
+// Dropping either key is scheduled after the 30-day window.
+func TestRegisterDualEmitsStokeAndR1Build(t *testing.T) {
+	// Case A: caller sets only legacy StokeBuild — R1Build mirror fills in.
+	t.Run("LegacyOnly_MirrorsToR1", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("STOKE_RUNTRACK_DIR", dir)
+
+		const want = "abc1234"
+		reg, err := Register(Manifest{
+			RunID:      "run-legacy",
+			StokeBuild: want,
+		})
+		if err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		defer reg.Close()
+
+		raw, err := os.ReadFile(filepath.Join(dir, "run-legacy.json"))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		// Inspect the raw JSON so we catch both keys at the wire level.
+		var flat map[string]any
+		if err := json.Unmarshal(raw, &flat); err != nil {
+			t.Fatalf("unmarshal raw: %v", err)
+		}
+		for _, k := range []string{"stoke_build", "r1_build"} {
+			got, ok := flat[k]
+			if !ok {
+				t.Errorf("key %q missing from manifest JSON: %s", k, raw)
+				continue
+			}
+			if s, _ := got.(string); s != want {
+				t.Errorf("key %q = %q, want %q", k, s, want)
+			}
+		}
+	})
+
+	// Case B: caller sets only canonical R1Build — StokeBuild mirror
+	// fills in. Forward-compat: once callers migrate, legacy readers
+	// still get data.
+	t.Run("CanonicalOnly_MirrorsToStoke", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("STOKE_RUNTRACK_DIR", dir)
+
+		const want = "def5678"
+		reg, err := Register(Manifest{
+			RunID:   "run-canonical",
+			R1Build: want,
+		})
+		if err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		defer reg.Close()
+
+		raw, err := os.ReadFile(filepath.Join(dir, "run-canonical.json"))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		var flat map[string]any
+		if err := json.Unmarshal(raw, &flat); err != nil {
+			t.Fatalf("unmarshal raw: %v", err)
+		}
+		for _, k := range []string{"stoke_build", "r1_build"} {
+			got, ok := flat[k]
+			if !ok {
+				t.Errorf("key %q missing from manifest JSON: %s", k, raw)
+				continue
+			}
+			if s, _ := got.(string); s != want {
+				t.Errorf("key %q = %q, want %q", k, s, want)
+			}
+		}
+	})
+}
+
 func TestRegisterRejectsEmptyRunID(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("STOKE_RUNTRACK_DIR", dir)

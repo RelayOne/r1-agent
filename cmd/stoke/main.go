@@ -1698,7 +1698,11 @@ func sowCmd(args []string) {
 			"cwd":             *repo,
 			"model":           *nativeModel,
 			"reasoning_model": *reasoningModel,
-			"stoke_version":   "v2",
+			// S3-3 dual-emit: both legacy `stoke_version` and
+			// canonical `r1_version` carry the same value during the
+			// 30-day rename window (work-r1-rename.md §S3-3).
+			"stoke_version": "v2",
+			"r1_version":    "v2",
 		})
 		defer func() {
 			streamEmitter.EmitResult(streamResult.subtype, streamResult.cost, streamResult.turns, streamResult.text, streamResult.stokeFields)

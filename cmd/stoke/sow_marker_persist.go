@@ -51,6 +51,12 @@ type SessionProvenance struct {
 	SOWSpecHash        string `json:"sow_spec_hash,omitempty"`
 	SOWID              string `json:"sow_id,omitempty"`
 	StokeVersion       string `json:"stoke_version,omitempty"`
+	// R1Version mirrors StokeVersion so emitted marker JSON carries both
+	// the legacy `stoke_version` key and the canonical `r1_version` key
+	// during the 30-day rename window (work-r1-rename.md §S3-3). The
+	// writer auto-populates this from StokeVersion when unset so upstream
+	// callers only need to supply the value once.
+	R1Version          string `json:"r1_version,omitempty"`
 	GitBaseSHA         string `json:"git_base_sha,omitempty"`
 	ParallelWorkers    int    `json:"parallel_workers,omitempty"`
 	ReviewerSplitUsed  bool   `json:"reviewer_split_used,omitempty"`
@@ -109,6 +115,19 @@ func writeUpstreamSessionMarker(repoRoot string, session plan.Session, changedFi
 	}
 	if err := os.MkdirAll(sessionMarkerDir(repoRoot), 0o755); err != nil {
 		return fmt.Errorf("create marker dir: %w", err)
+	}
+
+	// S3-3 dual-emit: mirror provenance.StokeVersion into R1Version (and
+	// vice-versa) so the emitted marker JSON always carries both legacy
+	// `stoke_version` and canonical `r1_version` keys during the 30-day
+	// rename window (work-r1-rename.md §S3-3). Best-effort: nil
+	// provenance remains nil.
+	if provenance != nil {
+		if provenance.R1Version == "" {
+			provenance.R1Version = provenance.StokeVersion
+		} else if provenance.StokeVersion == "" {
+			provenance.StokeVersion = provenance.R1Version
+		}
 	}
 
 	marker := SessionPersistMarker{
