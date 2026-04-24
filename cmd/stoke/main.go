@@ -1483,7 +1483,10 @@ func ensureR1ServerRunning() {
 	}
 	// Fast health check: if r1-server answers, do nothing.
 	client := &http.Client{Timeout: 200 * time.Millisecond}
-	if resp, err := client.Get("http://localhost:3948/api/health"); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost:3948/api/health", nil)
+	if resp, err := client.Do(req); err == nil {
 		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			return
@@ -5577,7 +5580,13 @@ func firstNonEmpty(vals ...string) string {
 // as "something is listening" — we are not validating auth here.
 func probeReachable(url string, timeout time.Duration) bool {
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(url)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return false
 	}
