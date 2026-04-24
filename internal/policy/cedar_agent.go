@@ -121,13 +121,13 @@ func (c *HTTPClient) Check(ctx context.Context, req Request) (Result, error) {
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return c.unavailable(fmt.Sprintf("marshal PARC body: %v", err)), fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return c.unavailable(fmt.Sprintf("marshal PARC body: %v", err)), fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 
 	url := strings.TrimRight(c.endpoint, "/") + "/v1/is_authorized"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
-		return c.unavailable(fmt.Sprintf("build request: %v", err)), fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return c.unavailable(fmt.Sprintf("build request: %v", err)), fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.token != "" {

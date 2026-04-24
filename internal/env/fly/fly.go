@@ -10,6 +10,7 @@ package fly
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -271,7 +272,8 @@ func (b *Backend) sshExec(ctx context.Context, ip, dir, cmdStr string, envVars m
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			return nil, err

@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -309,7 +310,8 @@ func defaultExecInContainer(ctx context.Context, containerID, dir string, cmdArg
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 		} else if ctx.Err() != nil {
 			result.ExitCode = -1

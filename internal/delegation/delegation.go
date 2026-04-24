@@ -265,7 +265,7 @@ func (m *Manager) DelegateTask(ctx context.Context, req Request, submitter TaskS
 	}
 	taskID, err := submitter.SubmitTask(ctx, d, spec)
 	if err != nil {
-		return TaskHandle{Delegation: d}, fmt.Errorf("%w: %v", ErrTaskDispatchFailed, err)
+		return TaskHandle{Delegation: d}, fmt.Errorf("%w: %w", ErrTaskDispatchFailed, err)
 	}
 	return TaskHandle{Delegation: d, TaskID: taskID}, nil
 }

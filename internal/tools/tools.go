@@ -14,6 +14,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -497,7 +498,8 @@ func (r *Registry) handleGrep(ctx context.Context, input json.RawMessage) (strin
 	result := string(output)
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			return "(no matches found)", nil
 		}
 		// rg might not be installed, fall back to grep
@@ -732,7 +734,7 @@ func validateContentSyntax(path, content string) error {
 	if (ext == ".json" || ext == ".jsonc") && strings.TrimSpace(content) != "" {
 		var v interface{}
 		if err := json.Unmarshal([]byte(content), &v); err != nil {
-			return fmt.Errorf("write_file rejected: %s contains invalid JSON: %v — fix the content and retry", path, err)
+			return fmt.Errorf("write_file rejected: %s contains invalid JSON: %w — fix the content and retry", path, err)
 		}
 		return nil
 	}

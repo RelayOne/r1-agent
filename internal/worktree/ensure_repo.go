@@ -94,7 +94,7 @@ func ensureInitialCommit(ctx context.Context, path string) error {
 	if err := runGit(ctx, path, "commit", "--no-gpg-sign", "-m", "chore: initial commit (stoke)"); err != nil {
 		// Fall back to --allow-empty if the add somehow failed
 		if err2 := runGit(ctx, path, "commit", "--allow-empty", "--no-gpg-sign", "-m", "chore: initial commit (stoke)"); err2 != nil {
-			return fmt.Errorf("initial commit: %w (also tried --allow-empty: %v)", err, err2)
+			return fmt.Errorf("initial commit: %w (also tried --allow-empty: %w)", err, err2)
 		}
 	}
 	return nil
