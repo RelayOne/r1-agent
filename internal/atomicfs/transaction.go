@@ -21,6 +21,13 @@ import (
 	"sync"
 )
 
+// Canonical Op.Kind values distinguishing file operations.
+const (
+	opKindWrite  = "write"
+	opKindCreate = "create"
+	opKindDelete = "delete"
+)
+
 // Op is a pending file operation.
 type Op struct {
 	Path       string `json:"path"`
@@ -63,7 +70,7 @@ func (tx *Transaction) Write(path string, content []byte) error {
 
 	tx.ops = append(tx.ops, Op{
 		Path:       fullPath,
-		Kind:       "write",
+		Kind:       opKindWrite,
 		Content:    content,
 		OrigHash:   origHash,
 		origExists: origExists,
@@ -82,7 +89,7 @@ func (tx *Transaction) Create(path string, content []byte) error {
 	fullPath := tx.resolve(path)
 	tx.ops = append(tx.ops, Op{
 		Path:    fullPath,
-		Kind:    "create",
+		Kind:    opKindCreate,
 		Content: content,
 	})
 	return nil
@@ -104,7 +111,7 @@ func (tx *Transaction) Delete(path string) error {
 
 	tx.ops = append(tx.ops, Op{
 		Path:       fullPath,
-		Kind:       "delete",
+		Kind:       opKindDelete,
 		OrigHash:   origHash,
 		origExists: true,
 	})
@@ -119,7 +126,7 @@ func (tx *Transaction) Validate() error {
 
 	for _, op := range tx.ops {
 		switch op.Kind {
-		case "write":
+		case opKindWrite:
 			if op.OrigHash != "" {
 				currentData, err := os.ReadFile(op.Path)
 				if err != nil {
@@ -129,11 +136,11 @@ func (tx *Transaction) Validate() error {
 					return fmt.Errorf("conflict: %s was modified since read", op.Path)
 				}
 			}
-		case "create":
+		case opKindCreate:
 			if _, err := os.Stat(op.Path); err == nil {
 				return fmt.Errorf("file already exists: %s", op.Path)
 			}
-		case "delete":
+		case opKindDelete:
 			if _, err := os.Stat(op.Path); err != nil {
 				return fmt.Errorf("file not found for deletion: %s", op.Path)
 			}
@@ -150,11 +157,11 @@ func (tx *Transaction) DryRun() []string {
 	var summary []string
 	for _, op := range tx.ops {
 		switch op.Kind {
-		case "write":
+		case opKindWrite:
 			summary = append(summary, fmt.Sprintf("WRITE %s (%d bytes)", op.Path, len(op.Content)))
-		case "create":
+		case opKindCreate:
 			summary = append(summary, fmt.Sprintf("CREATE %s (%d bytes)", op.Path, len(op.Content)))
-		case "delete":
+		case opKindDelete:
 			summary = append(summary, fmt.Sprintf("DELETE %s", op.Path))
 		}
 	}
@@ -172,7 +179,7 @@ func (tx *Transaction) Commit() error {
 
 	// Phase 1: Validate
 	for _, op := range tx.ops {
-		if op.Kind == "write" && op.OrigHash != "" {
+		if op.Kind == opKindWrite && op.OrigHash != "" {
 			currentData, err := os.ReadFile(op.Path)
 			if err != nil {
 				return fmt.Errorf("conflict: %s disappeared", op.Path)
@@ -181,7 +188,7 @@ func (tx *Transaction) Commit() error {
 				return fmt.Errorf("conflict: %s was modified since read", op.Path)
 			}
 		}
-		if op.Kind == "create" {
+		if op.Kind == opKindCreate {
 			if _, err := os.Stat(op.Path); err == nil {
 				return fmt.Errorf("conflict: %s already exists", op.Path)
 			}
@@ -202,7 +209,7 @@ func (tx *Transaction) Commit() error {
 	}
 
 	for _, op := range tx.ops {
-		if op.Kind == "write" || op.Kind == "create" {
+		if op.Kind == opKindWrite || op.Kind == opKindCreate {
 			dir := filepath.Dir(op.Path)
 			if err := os.MkdirAll(dir, 0755); err != nil {
 				cleanup()
@@ -257,7 +264,7 @@ func (tx *Transaction) Commit() error {
 	}
 
 	for _, op := range tx.ops {
-		if op.Kind == "delete" {
+		if op.Kind == opKindDelete {
 			if err := os.Remove(op.Path); err != nil {
 				rollback()
 				return fmt.Errorf("delete %s: %w", op.Path, err)
@@ -307,11 +314,11 @@ func (tx *Transaction) Summary() string {
 	writes, creates, deletes := 0, 0, 0
 	for _, op := range tx.ops {
 		switch op.Kind {
-		case "write":
+		case opKindWrite:
 			writes++
-		case "create":
+		case opKindCreate:
 			creates++
-		case "delete":
+		case opKindDelete:
 			deletes++
 		}
 	}

@@ -44,6 +44,13 @@ const (
 	LangUnknown    Language = "unknown"
 )
 
+// Canonical Chunk.Kind values for semantic code constructs.
+const (
+	KindFunction = "function"
+	KindMethod   = "method"
+	KindClass    = "class"
+)
+
 // DetectLanguage returns the language based on file extension.
 func DetectLanguage(path string) Language {
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -210,10 +217,10 @@ func chunkGoAST(path, content string, lines []string) []Chunk {
 		case *ast.FuncDecl:
 			start := fset.Position(d.Pos()).Line
 			end := fset.Position(d.End()).Line
-			kind := "function"
+			kind := KindFunction
 			name := d.Name.Name
 			if d.Recv != nil {
-				kind = "method"
+				kind = KindMethod
 			}
 			bounds = append(bounds, boundary{startLine: start, endLine: end, name: name, kind: kind})
 		case *ast.GenDecl:
@@ -350,25 +357,25 @@ func detectKind(line string, lang Language) string {
 			return "type"
 		}
 		if strings.Contains(lower, ") ") && strings.HasPrefix(lower, "func (") {
-			return "method"
+			return KindMethod
 		}
-		return "function"
+		return KindFunction
 	case LangPython:
 		if strings.HasPrefix(lower, "class ") {
-			return "class"
+			return KindClass
 		}
 		if strings.HasPrefix(lower, "def ") {
-			return "function"
+			return KindFunction
 		}
-		return "method"
+		return KindMethod
 	case LangTypeScript:
 		if strings.Contains(lower, "class ") {
-			return "class"
+			return KindClass
 		}
 		if strings.Contains(lower, "interface ") {
 			return "interface"
 		}
-		return "function"
+		return KindFunction
 	case LangRust:
 		if strings.Contains(lower, "struct ") {
 			return "struct"
@@ -382,15 +389,15 @@ func detectKind(line string, lang Language) string {
 		if strings.HasPrefix(lower, "impl") {
 			return "impl"
 		}
-		return "function"
+		return KindFunction
 	case LangJava:
 		if strings.Contains(lower, "class ") {
-			return "class"
+			return KindClass
 		}
 		if strings.Contains(lower, "interface ") {
 			return "interface"
 		}
-		return "method"
+		return KindMethod
 	}
 	return "block"
 }

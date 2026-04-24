@@ -32,6 +32,11 @@ const (
 	PermRepairRun    Permission = "repair:run"     // Run repair workflows.
 )
 
+// Canonical role names for predefined RBAC roles.
+const (
+	RoleAdmin = "admin"
+)
+
 // Role represents a named set of permissions.
 type Role struct {
 	Name        string       `json:"name" yaml:"name"`
@@ -51,8 +56,8 @@ func (r Role) Has(perm Permission) bool {
 
 // PredefinedRoles contains the built-in role definitions.
 var PredefinedRoles = map[string]Role{
-	"admin": {
-		Name:        "admin",
+	RoleAdmin: {
+		Name:        RoleAdmin,
 		Description: "Full access to all operations",
 		Permissions: []Permission{
 			PermPlanCreate, PermPlanRead, PermBuildExecute, PermBuildCancel,
@@ -104,7 +109,7 @@ func NewPolicy(defaultRole string) *Policy {
 		roles[k] = v
 	}
 	if defaultRole == "" {
-		defaultRole = "admin" // single-user default: full access
+		defaultRole = RoleAdmin // single-user default: full access
 	}
 	return &Policy{
 		roles:       roles,

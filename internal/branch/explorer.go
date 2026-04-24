@@ -18,6 +18,11 @@ import (
 	"time"
 )
 
+// Canonical Branch.Status values.
+const (
+	branchStatusFailed = "failed"
+)
+
 // Message is a conversation turn.
 type Message struct {
 	Role    string `json:"role"`
@@ -146,7 +151,7 @@ func (e *Explorer) Fail(branchID string, reason string) error {
 	if !ok {
 		return fmt.Errorf("branch %s not found", branchID)
 	}
-	b.Status = "failed"
+	b.Status = branchStatusFailed
 	b.Metadata["failure_reason"] = reason
 	b.CompletedAt = time.Now()
 	return nil
@@ -250,7 +255,7 @@ func (e *Explorer) Prune() int {
 
 	pruned := 0
 	for id, b := range e.branches {
-		if b.Status == "failed" {
+		if b.Status == branchStatusFailed {
 			delete(e.branches, id)
 			pruned++
 		}

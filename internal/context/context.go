@@ -32,6 +32,14 @@ const (
 	L3Deep     = TierProject // on-demand deep semantic search
 )
 
+// Compaction level identifiers returned by Manager.Compact.
+const (
+	compactionNone       = "none"
+	compactionGentle     = "gentle"
+	compactionModerate   = "moderate"
+	compactionAggressive = "aggressive"
+)
+
 // Budget controls context window utilization.
 type Budget struct {
 	MaxTokens        int     // total context window (e.g. 200000)
@@ -113,7 +121,7 @@ func (m *Manager) Compact() string {
 	}
 
 	if util <= m.budget.TargetUtil {
-		return "none"
+		return compactionNone
 	}
 
 	m.compactCount++
@@ -135,8 +143,8 @@ func (m *Manager) Compact() string {
 			}
 		}
 		if m.Utilization() <= m.budget.TargetUtil {
-			m.lastCompaction = "gentle"
-			return "gentle"
+			m.lastCompaction = compactionGentle
+			return compactionGentle
 		}
 	}
 
@@ -154,8 +162,8 @@ func (m *Manager) Compact() string {
 			}
 		}
 		if m.Utilization() <= m.budget.TargetUtil {
-			m.lastCompaction = "moderate"
-			return "moderate"
+			m.lastCompaction = compactionModerate
+			return compactionModerate
 		}
 	}
 
@@ -172,12 +180,12 @@ func (m *Manager) Compact() string {
 			}
 		}
 		m.blocks = kept
-		m.lastCompaction = "aggressive"
-		return "aggressive"
+		m.lastCompaction = compactionAggressive
+		return compactionAggressive
 	}
 
-	m.lastCompaction = "gentle"
-	return "gentle"
+	m.lastCompaction = compactionGentle
+	return compactionGentle
 }
 
 // CompactCount returns the number of compactions performed.

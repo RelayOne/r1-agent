@@ -16,6 +16,11 @@ import (
 	"strings"
 )
 
+// Canonical Issue.Level values.
+const (
+	levelWarning = "warning"
+)
+
 // Issue represents a single lint/build error.
 type Issue struct {
 	File    string `json:"file"`
@@ -144,8 +149,8 @@ func parseLine(line string) (Issue, bool) {
 		fmt.Sscanf(m[2], "%d", &lineNum)
 		msg := m[4]
 		level := "error"
-		if strings.Contains(strings.ToLower(msg), "warning") {
-			level = "warning"
+		if strings.Contains(strings.ToLower(msg), levelWarning) {
+			level = levelWarning
 		}
 		return Issue{
 			File:    m[1],
@@ -160,8 +165,8 @@ func parseLine(line string) (Issue, bool) {
 		fmt.Sscanf(m[2], "%d", &lineNum)
 		msg := m[3]
 		level := "error"
-		if strings.Contains(strings.ToLower(msg), "warning") {
-			level = "warning"
+		if strings.Contains(strings.ToLower(msg), levelWarning) {
+			level = levelWarning
 		}
 		return Issue{
 			File:    m[1],
@@ -209,7 +214,7 @@ func FormatFixPrompt(issues []Issue) string {
 func filterErrors(issues []Issue) []Issue {
 	var filtered []Issue
 	for _, issue := range issues {
-		if issue.Level != "warning" {
+		if issue.Level != levelWarning {
 			filtered = append(filtered, issue)
 		}
 	}

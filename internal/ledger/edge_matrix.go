@@ -11,12 +11,18 @@ type edgeConstraint struct {
 // anyType is a sentinel value meaning "any node type is allowed".
 const anyType = "*"
 
+// Canonical ledger node type strings referenced in the edge matrix.
+const (
+	nodeTypeDecisionInternal = "decision_internal"
+	nodeTypeDecisionRepo     = "decision_repo"
+)
+
 // allowedEdgeMatrix maps each EdgeType to its set of allowed (from_type, to_type) constraints.
 // If a from or to type is anyType ("*"), any node type is accepted in that position.
 var allowedEdgeMatrix = map[EdgeType][]edgeConstraint{
 	// distills: decision_internal -> decision_repo only.
 	EdgeDistills: {
-		{FromType: "decision_internal", ToType: "decision_repo"},
+		{FromType: nodeTypeDecisionInternal, ToType: nodeTypeDecisionRepo},
 	},
 
 	// supersedes: same-type nodes only (a node can only supersede another of the same type).
@@ -33,10 +39,10 @@ var allowedEdgeMatrix = map[EdgeType][]edgeConstraint{
 
 	// contradicts: decision or draft nodes can contradict each other.
 	EdgeContradicts: {
-		{FromType: "decision_internal", ToType: "decision_internal"},
-		{FromType: "decision_repo", ToType: "decision_repo"},
-		{FromType: "decision_internal", ToType: "decision_repo"},
-		{FromType: "decision_repo", ToType: "decision_internal"},
+		{FromType: nodeTypeDecisionInternal, ToType: nodeTypeDecisionInternal},
+		{FromType: nodeTypeDecisionRepo, ToType: nodeTypeDecisionRepo},
+		{FromType: nodeTypeDecisionInternal, ToType: nodeTypeDecisionRepo},
+		{FromType: nodeTypeDecisionRepo, ToType: nodeTypeDecisionInternal},
 		{FromType: "draft", ToType: "draft"},
 	},
 
@@ -61,8 +67,8 @@ var allowedEdgeMatrix = map[EdgeType][]edgeConstraint{
 	EdgeResolves: {
 		{FromType: "stakeholder_directive", ToType: "escalation"},
 		{FromType: "judge_verdict", ToType: "escalation"},
-		{FromType: "decision_internal", ToType: "escalation"},
-		{FromType: "decision_repo", ToType: "escalation"},
+		{FromType: nodeTypeDecisionInternal, ToType: "escalation"},
+		{FromType: nodeTypeDecisionRepo, ToType: "escalation"},
 		{FromType: "branch_completion_agreement", ToType: "branch_completion_proposal"},
 		{FromType: "branch_completion_dissent", ToType: "branch_completion_proposal"},
 		{FromType: "dissent", ToType: "draft"},

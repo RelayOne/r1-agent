@@ -45,6 +45,12 @@ const (
 	OpDelete  LineOp = "-"
 )
 
+// Sentinel paths used by unified diff format to mark file creation/deletion.
+const (
+	devNullAbs = "/dev/null"
+	devNullRel = "dev/null"
+)
+
 // FilePatch represents changes to a single file.
 type FilePatch struct {
 	OldPath string `json:"old_path"`
@@ -95,10 +101,10 @@ func Parse(diff string) (*Patch, error) {
 			if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "+++ ") {
 				newPath := strings.TrimSpace(lines[i+1][4:])
 				current.NewPath = stripPrefix(newPath)
-				if current.OldPath == "/dev/null" || current.OldPath == "dev/null" {
+				if current.OldPath == devNullAbs || current.OldPath == devNullRel {
 					current.IsNew = true
 				}
-				if current.NewPath == "/dev/null" || current.NewPath == "dev/null" {
+				if current.NewPath == devNullAbs || current.NewPath == devNullRel {
 					current.IsDelete = true
 				}
 				i += 2
@@ -111,10 +117,10 @@ func Parse(diff string) (*Patch, error) {
 		if strings.HasPrefix(line, "+++ ") && current != nil {
 			newPath := strings.TrimSpace(line[4:])
 			current.NewPath = stripPrefix(newPath)
-			if current.NewPath == "/dev/null" || current.NewPath == "dev/null" {
+			if current.NewPath == devNullAbs || current.NewPath == devNullRel {
 				current.IsDelete = true
 			}
-			if current.OldPath == "/dev/null" || current.OldPath == "dev/null" {
+			if current.OldPath == devNullAbs || current.OldPath == devNullRel {
 				current.IsNew = true
 			}
 			i++

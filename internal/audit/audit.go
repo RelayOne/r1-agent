@@ -7,6 +7,12 @@ import (
 	"github.com/ericmacdougall/stoke/internal/scan"
 )
 
+// Canonical persona and severity identifiers reused across audit callers.
+const (
+	personaSecurity = "security"
+	severityHigh    = "high"
+)
+
 // Persona represents an expert perspective for code review.
 type Persona struct {
 	ID     string `json:"id"`
@@ -46,7 +52,7 @@ type AuditReport struct {
 func DefaultPersonas() []Persona {
 	return []Persona{
 		// --- Core 5 (always available) ---
-		{ID: "security", Name: "Security Reviewer",
+		{ID: personaSecurity, Name: "Security Reviewer",
 			Focus: "Authentication, authorization, injection, secrets, cryptography, input validation, CSRF, XSS, SSRF"},
 		{ID: "performance", Name: "Performance Reviewer",
 			Focus: "N+1 queries, unbounded allocations, missing pagination, blocking I/O, cache misses, hot paths, memory leaks"},
@@ -114,10 +120,10 @@ func BuildPrompt(p Persona, req ReviewRequest) string {
 	}
 
 	// Include security surface for security persona
-	if p.ID == "security" && req.SecurityMap != nil && len(req.SecurityMap.Surfaces) > 0 {
+	if p.ID == personaSecurity && req.SecurityMap != nil && len(req.SecurityMap.Surfaces) > 0 {
 		sb.WriteString("SECURITY SURFACE MAP:\n")
 		for _, s := range req.SecurityMap.Surfaces {
-			if s.Risk == "high" {
+			if s.Risk == severityHigh {
 				sb.WriteString(fmt.Sprintf("  [%s] %s:%d -- %s (%s)\n", s.Category, s.File, s.Line, s.Note, s.Risk))
 			}
 		}
@@ -152,12 +158,12 @@ func filterFindings(findings []scan.Finding, personaID string) []scan.Finding {
 	var out []scan.Finding
 	for _, f := range findings {
 		switch personaID {
-		case "security", "privacy":
+		case personaSecurity, "privacy":
 			if f.Rule == "no-hardcoded-secret" || f.Rule == "no-eval" || f.Rule == "no-innerhtml" || f.Rule == "no-exec" {
 				out = append(out, f)
 			}
 		case "reliability", "concurrency":
-			if f.Severity == "critical" || f.Severity == "high" {
+			if f.Severity == "critical" || f.Severity == severityHigh {
 				out = append(out, f)
 			}
 		case "maintainability", "dx":
@@ -169,7 +175,7 @@ func filterFindings(findings []scan.Finding, personaID string) []scan.Finding {
 				out = append(out, f)
 			}
 		case "performance", "cost":
-			if f.Severity == "high" || f.Severity == "medium" {
+			if f.Severity == severityHigh || f.Severity == "medium" {
 				out = append(out, f)
 			}
 		}
@@ -183,7 +189,7 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 	if securityMap == nil && scanResult == nil {
 		// No context -- return core 5 only
 		var core []Persona
-		coreIDs := map[string]bool{"security": true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
+		coreIDs := map[string]bool{personaSecurity: true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
 		for _, p := range allPersonas {
 			if coreIDs[p.ID] {
 				core = append(core, p)
@@ -201,7 +207,7 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 		for _, s := range securityMap.Surfaces {
 			switch s.Category {
 			case "auth", "crypto", "injection", "secrets":
-				selected["security"] = true
+				selected[personaSecurity] = true
 				selected["privacy"] = true
 			case "network":
 				selected["performance"] = true
@@ -214,7 +220,7 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 
 	if scanResult != nil {
 		if scanResult.HasBlocking() {
-			selected["security"] = true
+			selected[personaSecurity] = true
 		}
 		for _, f := range scanResult.Findings {
 			if f.Rule == "no-todo-fixme" {
@@ -234,7 +240,7 @@ func SelectPersonas(allPersonas []Persona, securityMap *scan.SecurityMap, scanRe
 	}
 	if len(out) < 3 {
 		// Minimum useful set
-		coreIDs := map[string]bool{"security": true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
+		coreIDs := map[string]bool{personaSecurity: true, "performance": true, "reliability": true, "maintainability": true, "ops": true}
 		for _, p := range allPersonas {
 			if coreIDs[p.ID] && !selected[p.ID] {
 				out = append(out, p)

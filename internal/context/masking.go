@@ -141,7 +141,7 @@ func (m *Manager) CompactWithMasking(maskCfg MaskConfig) (string, MaskResult) {
 	maskResult := m.MaskObservations(maskCfg)
 
 	// Step 2: If still over budget, apply standard compaction
-	level := "none"
+	level := compactionNone
 	if m.ShouldCompact() {
 		level = m.Compact()
 	}

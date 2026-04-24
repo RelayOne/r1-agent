@@ -13,6 +13,9 @@ import (
 	"github.com/ericmacdougall/stoke/internal/ledger"
 )
 
+// nodeTypeLoop is the ledger node type string for consensus loop nodes.
+const nodeTypeLoop = "loop"
+
 // LoopState represents the current state of a consensus loop.
 type LoopState string
 
@@ -246,7 +249,7 @@ func (t *Tracker) Children(ctx context.Context, loopID string) ([]string, error)
 		if n.ID == loopID {
 			continue
 		}
-		if n.Type != "loop" {
+		if n.Type != nodeTypeLoop {
 			continue
 		}
 		children = append(children, n.ID)
@@ -268,7 +271,7 @@ func (t *Tracker) ParentChain(ctx context.Context, loopID string) ([]string, err
 		if n.ID == loopID {
 			continue
 		}
-		if n.Type != "loop" {
+		if n.Type != nodeTypeLoop {
 			continue
 		}
 		parents = append(parents, n.ID)
@@ -279,7 +282,7 @@ func (t *Tracker) ParentChain(ctx context.Context, loopID string) ([]string, err
 // ActiveLoops returns all non-terminal loops for a mission.
 func (t *Tracker) ActiveLoops(ctx context.Context, missionID string) ([]LoopInfo, error) {
 	nodes, err := t.ledger.Query(ctx, ledger.QueryFilter{
-		Type:      "loop",
+		Type:      nodeTypeLoop,
 		MissionID: missionID,
 	})
 	if err != nil {
@@ -336,7 +339,7 @@ func (t *Tracker) TransitionState(ctx context.Context, loopID string, newState L
 	}
 
 	newNode := ledger.Node{
-		Type:          "loop",
+		Type:          nodeTypeLoop,
 		SchemaVersion: 1,
 		CreatedAt:     time.Now().UTC(),
 		CreatedBy:     resolved.CreatedBy,

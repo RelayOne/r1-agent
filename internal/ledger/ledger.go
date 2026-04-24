@@ -358,7 +358,7 @@ func (l *Ledger) AddEdge(_ context.Context, edge Edge) error {
 	}
 
 	// Decision log directionality: repo decisions cannot cite internal decisions.
-	if fromNode.Type == "decision_repo" && toNode.Type == "decision_internal" {
+	if fromNode.Type == nodeTypeDecisionRepo && toNode.Type == nodeTypeDecisionInternal {
 		return fmt.Errorf("ledger: directionality violation: decision_repo %q cannot have edge to decision_internal %q", edge.From, edge.To)
 	}
 

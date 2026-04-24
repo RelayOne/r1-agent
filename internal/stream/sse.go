@@ -224,7 +224,7 @@ func (p *SSEParser) parseContentBlockStart(payload string) (*Event, error) {
 		return nil, fmt.Errorf("parse content_block_start: %w", err)
 	}
 
-	if block.ContentBlock.Type == "tool_use" {
+	if block.ContentBlock.Type == blockTypeToolUse {
 		// Buffer the tool use metadata. Don't emit yet — input arrives in
 		// streamed input_json_delta chunks. We finalize on content_block_stop.
 		pt := &pendingTool{
@@ -351,7 +351,7 @@ func (p *SSEParser) parseError(payload string) (*Event, error) {
 		Raw:        []byte(payload),
 	}
 	if errMsg.Error.Type == "rate_limit_error" || errMsg.Error.Type == "overloaded_error" {
-		ev.Subtype = "rate_limited"
+		ev.Subtype = subtypeRateLimited
 	}
 	return ev, nil
 }

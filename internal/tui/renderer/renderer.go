@@ -156,6 +156,14 @@ const (
 	ACSoftPass
 )
 
+// Verdict string aliases recognised across session.complete, task.complete,
+// ac.result and descent.resolve events.
+const (
+	verdictSoftpass         = "softpass"
+	verdictSoftpassDashed   = "soft-pass"
+	verdictSoftpassSnake    = "soft_pass"
+)
+
 type SessionNode struct {
 	ID, Title, Reason                string
 	Status                           Status
@@ -504,7 +512,7 @@ func (m *Model) applyEvent(ev Event) {
 			switch ev.Verdict {
 			case "pass", "done":
 				s.Status = StatusDone
-			case "softpass", "soft-pass", "soft_pass":
+			case verdictSoftpass, verdictSoftpassDashed, verdictSoftpassSnake:
 				s.Status = StatusDone
 				s.SoftPasses++
 			default:
@@ -539,7 +547,7 @@ func (m *Model) applyEvent(ev Event) {
 			switch ev.Verdict {
 			case "pass":
 				ac.Status = ACPass
-			case "softpass", "soft-pass", "soft_pass":
+			case verdictSoftpass, verdictSoftpassDashed, verdictSoftpassSnake:
 				ac.Status = ACSoftPass
 			case "fail":
 				ac.Status = ACFail
@@ -552,7 +560,7 @@ func (m *Model) applyEvent(ev Event) {
 			switch ev.Verdict {
 			case "pass":
 				ac.Status = ACPass
-			case "softpass", "soft-pass", "soft_pass":
+			case verdictSoftpass, verdictSoftpassDashed, verdictSoftpassSnake:
 				ac.Status = ACSoftPass
 			case "fail":
 				ac.Status = ACFail
@@ -593,7 +601,7 @@ func (m *Model) applyEvent(ev Event) {
 			switch ev.Verdict {
 			case "pass":
 				ac.Status = ACPass
-			case "softpass", "soft-pass", "soft_pass":
+			case verdictSoftpass, verdictSoftpassDashed, verdictSoftpassSnake:
 				ac.Status = ACSoftPass
 			case "fail":
 				ac.Status = ACFail

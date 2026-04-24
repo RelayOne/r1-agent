@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// Canonical wire strings shared between parser.go and sse.go.
+const (
+	blockTypeToolUse   = "tool_use"
+	subtypeRateLimited = "rate_limited"
+)
+
 // Event is a parsed event from a Claude Code or Codex CLI NDJSON stream.
 type Event struct {
 	Type      string     `json:"type"`
@@ -243,7 +249,7 @@ func parseLine(data []byte) Event {
 				for _, c := range msg.Content {
 					switch c.Type {
 					case "text": ev.DeltaText += c.Text
-					case "tool_use":
+					case blockTypeToolUse:
 						var input map[string]interface{}
 						json.Unmarshal(c.Input, &input)
 						ev.ToolUses = append(ev.ToolUses, ToolUse{ID: c.ID, Name: c.Name, Input: input})
@@ -284,7 +290,7 @@ func parseLine(data []byte) Event {
 		}
 	case "rate_limit_event":
 		ev.IsError = true
-		ev.Subtype = "rate_limited"
+		ev.Subtype = subtypeRateLimited
 	}
 	return ev
 }
