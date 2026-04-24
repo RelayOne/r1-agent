@@ -35,6 +35,8 @@ func (d Decision) String() string {
 	switch d {
 	case DecisionAllow:
 		return "allow"
+	case DecisionDeny:
+		return "deny"
 	default:
 		return "deny"
 	}

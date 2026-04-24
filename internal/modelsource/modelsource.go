@@ -210,6 +210,8 @@ func (c Config) Build() (*Resolved, error) {
 				Source:   SourceDirect,
 				Endpoint: endpoint + "/chat/completions",
 			}, nil
+		case familyUnknown:
+			return nil, fmt.Errorf("modelsource: source=direct but could not infer vendor from model %q (supported aliases: sonnet, opus, codex, gemini)", c.Model)
 		default:
 			return nil, fmt.Errorf("modelsource: source=direct but could not infer vendor from model %q (supported aliases: sonnet, opus, codex, gemini)", c.Model)
 		}

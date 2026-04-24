@@ -205,6 +205,8 @@ func (p *ProviderPool) Next() (*ProviderMember, error) {
 		return p.nextFailover()
 	case StrategyWeighted:
 		return p.nextWeighted()
+	case StrategyRoundRobin:
+		return p.nextRoundRobin()
 	default:
 		// StrategyRoundRobin is the zero value; any unknown strategy
 		// falls through here too. That is the safe default: a new

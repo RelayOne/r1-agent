@@ -69,6 +69,8 @@ func (a Action) DefaultTimeout() time.Duration {
 	switch a.Kind {
 	case ActionNavigate, ActionWaitForNetworkIdle:
 		return 30 * time.Second
+	case ActionClick, ActionType, ActionWaitForSelector, ActionScreenshot, ActionExtractText, ActionExtractAttribute:
+		return 10 * time.Second
 	default:
 		return 10 * time.Second
 	}

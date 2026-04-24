@@ -81,6 +81,8 @@ func (t *Terminal) Notify(kind NotifyKind, message string) {
 		prefix = "ERROR: "
 	case KindSuccess:
 		prefix = "OK: "
+	case KindInfo:
+		// No prefix — informational messages print as-is.
 	}
 	fmt.Fprintln(t.out, prefix+message)
 }

@@ -63,6 +63,8 @@ func (s TaskStatus) IsTerminal() bool {
 	switch s {
 	case TaskCompleted, TaskFailed, TaskCanceled, TaskRejected:
 		return true
+	case TaskSubmitted, TaskWorking, TaskInputRequired:
+		return false
 	default:
 		return false
 	}

@@ -377,6 +377,8 @@ func inferMissing(class Class) []string {
 		return []string{"task should reference how tests are structured in this codebase"}
 	case PolicyViolation:
 		return []string{"task should explicitly prohibit type bypasses"}
+	case LintFailed, ReviewRejected, Timeout, WrongFiles, Incomplete, Regression, RateLimited:
+		return nil
 	default:
 		return nil
 	}
@@ -420,6 +422,9 @@ func ShouldRetry(analysis *Analysis, attempt int, prior *Analysis) Decision {
 		return Decision{Action: Retry, Constraint: "only modify files in the task scope"}
 	case RateLimited:
 		return Decision{Action: Retry} // pool manager rotates
+	case BuildFailed, TestsFailed, LintFailed, ReviewRejected, Incomplete, Regression:
+		// Fall through to error-taxonomy refinement below.
+		fallthrough
 	default:
 		// Use structured error taxonomy for refined retry strategy on unclassified failures.
 		if analysis.Summary != "" {

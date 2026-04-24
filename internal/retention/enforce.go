@@ -150,6 +150,9 @@ func durationFor(d Duration) (time.Duration, bool) {
 		return 30 * 24 * time.Hour, true
 	case Retain90Days:
 		return 90 * 24 * time.Hour, true
+	case WipeAfterSession, RetainForever:
+		// Not ticker-driven — caller special-cases both.
+		return 0, false
 	}
 	return 0, false
 }

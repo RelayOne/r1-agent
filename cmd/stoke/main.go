@@ -6889,6 +6889,10 @@ func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.En
 			User:    os.Getenv("STOKE_SSH_USER"),
 			KeyPath: os.Getenv("STOKE_SSH_KEY"),
 		})
+	case env.BackendInProc:
+		// InProc backend is not wired here — it is selected only via
+		// ResolveBackend fallback paths, not via cfg.EnvBackend.
+		return nil, nil, fmt.Errorf("inproc env backend cannot be provisioned directly; use fallback resolution")
 	default:
 		return nil, nil, fmt.Errorf("unknown env backend: %s", cfg.EnvBackend)
 	}

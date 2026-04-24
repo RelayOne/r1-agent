@@ -614,6 +614,10 @@ func watchCommandFor(stack ExecutorKind) *watchCommandSpec {
 			program: "pyright",
 			args:    []string{"--watch", "--outputjson=false"},
 		}
+	case ExecPnpm, ExecNpm, ExecYarn, ExecPip, ExecPoetry, ExecUv:
+		// Package managers have no meaningful watch surface — their
+		// errors surface via the TS / Python compiler watchers above.
+		return nil
 	}
 	return nil
 }

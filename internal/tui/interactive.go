@@ -229,6 +229,8 @@ func (m *InteractiveModel) View() string {
 		return m.viewFocus()
 	case ModeDetail:
 		return m.viewDetail()
+	case ModeDashboard:
+		return m.viewDashboard()
 	default:
 		return m.viewDashboard()
 	}

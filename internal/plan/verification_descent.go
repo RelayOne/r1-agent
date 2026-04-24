@@ -255,6 +255,8 @@ func (s StderrClass) String() string {
 		return "env-missing"
 	case StderrTimeout:
 		return "timeout"
+	case StderrUnclassified:
+		return "unclassified"
 	default:
 		return "unclassified"
 	}

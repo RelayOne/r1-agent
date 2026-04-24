@@ -115,6 +115,8 @@ func Priority(i Intent) int {
 		return 20
 	case IntentInject:
 		return 10
+	case IntentStatusQuery, IntentApprove, IntentReject, IntentQuery:
+		return 0
 	default:
 		return 0
 	}

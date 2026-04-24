@@ -532,7 +532,7 @@ func reflectDeepCopy(v any) any {
 	}
 	kind := rv.Kind()
 	switch kind {
-	case reflectKindSlice:
+	case reflect.Slice:
 		if rv.IsNil() {
 			return v
 		}
@@ -545,7 +545,7 @@ func reflectDeepCopy(v any) any {
 			}
 		}
 		return out.Interface()
-	case reflectKindMap:
+	case reflect.Map:
 		if rv.IsNil() {
 			return v
 		}
@@ -557,7 +557,7 @@ func reflectDeepCopy(v any) any {
 			reflectSetMapIndex(out, kCopy, vCopy)
 		}
 		return out.Interface()
-	case reflectKindArray:
+	case reflect.Array:
 		// Arrays are fixed-size; Go copies on assignment so
 		// a simple value-copy gives us a distinct instance.
 		// Nested pointer/slice elements still need deep
@@ -571,7 +571,7 @@ func reflectDeepCopy(v any) any {
 			}
 		}
 		return out.Interface()
-	case reflectKindPtr:
+	case reflect.Ptr:
 		if rv.IsNil() {
 			return v
 		}
@@ -579,6 +579,16 @@ func reflectDeepCopy(v any) any {
 		ptr := reflectNew(rv.Type().Elem())
 		reflectSetValue(ptr.Elem(), elem)
 		return ptr.Interface()
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.Chan, reflect.Func, reflect.Interface, reflect.String, reflect.UnsafePointer,
+		reflect.Struct:
+		// Scalars / channels / funcs / interfaces / strings / struct
+		// fall through to the struct-or-passthrough tail below.
 	}
 	// Struct / interface / channel / func / other: JSON
 	// round-trip as the last resort. Structs with exported

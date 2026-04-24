@@ -279,6 +279,8 @@ func kindRank(k DeliverableKind) int {
 		return 2
 	case KindCommand:
 		return 3
+	case KindUnknown:
+		return 99
 	default:
 		return 99
 	}

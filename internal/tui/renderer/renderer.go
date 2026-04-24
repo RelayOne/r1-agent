@@ -841,6 +841,8 @@ func glyphForAC(status ACStatus, mono bool) string {
 		return Glyph(mono, false, false, false, false, true, false)
 	case ACInDescent:
 		return Glyph(mono, false, false, false, false, false, true)
+	case ACPending:
+		return Glyph(mono, false, true, false, false, false, false)
 	}
 	return Glyph(mono, false, true, false, false, false, false)
 }

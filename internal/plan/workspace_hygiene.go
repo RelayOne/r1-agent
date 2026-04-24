@@ -352,6 +352,8 @@ func scanAll(repoRoot string, execs []ExecutorKind) []HygieneFinding {
 			findings = append(findings, scanPoetry(repoRoot)...)
 		case ExecUv:
 			findings = append(findings, scanUv(repoRoot)...)
+		case ExecTS, ExecPyright:
+			// Type-checkers have no package manifest to hygiene-scan.
 		}
 	}
 	return findings
@@ -1013,6 +1015,11 @@ func autoFixAll(ctx context.Context, repoRoot string, execs []ExecutorKind, find
 				} else {
 					fmt.Printf("  🧽 hygiene: cargo fetch (%s) — failed: %v\n", f.Package, err)
 				}
+			case ExecTS, ExecPyright, ExecPnpm, ExecNpm, ExecYarn, ExecPip, ExecPoetry, ExecUv:
+				// No shared "install" auto-fix for these ecosystems —
+				// node packages are handled via the missing-devdep
+				// branch above; python pkg managers surface lockfile
+				// hygiene below; type-checkers have no install step.
 			}
 		case "missing-lockfile":
 			switch f.Executor {
@@ -1030,6 +1037,8 @@ func autoFixAll(ctx context.Context, repoRoot string, execs []ExecutorKind, find
 				} else {
 					fmt.Printf("  🧽 hygiene: uv sync — failed: %v\n", err)
 				}
+			case ExecTS, ExecPyright, ExecPnpm, ExecNpm, ExecYarn, ExecCargo, ExecGoMod, ExecPip:
+				// Only Poetry and uv surface auto-fixable lockfile hygiene.
 			}
 		}
 	}
@@ -1113,6 +1122,8 @@ func runNodeInstall(ctx context.Context, repoRoot string, execs []ExecutorKind) 
 		cmdLine = "yarn install --silent"
 	case ExecNpm:
 		cmdLine = "npm install --silent"
+	case ExecTS, ExecPyright, ExecPnpm, ExecCargo, ExecGoMod, ExecPip, ExecPoetry, ExecUv:
+		cmdLine = "pnpm install --silent"
 	default:
 		cmdLine = "pnpm install --silent"
 	}

@@ -667,6 +667,8 @@ func renderACLine(ac *acState) string {
 		glyph = "[~]"
 	case acInDescent:
 		glyph = "[*]"
+	case acPending:
+		return ""
 	default:
 		return ""
 	}
@@ -698,6 +700,8 @@ func renderACLine(ac *acState) string {
 		} else {
 			suffix = " (soft-pass)"
 		}
+	case acPending, acPass:
+		// No suffix for pending / passing states.
 	}
 	return fmt.Sprintf("%s %s %s%s", "|--", glyph, trimTitle(title, 30), suffix)
 }
@@ -714,6 +718,8 @@ func statusIcon(s sessionStatus) string {
 		return "[x]"
 	case sessionBlocked:
 		return "[-]"
+	case sessionPending:
+		return "[ ]"
 	default:
 		return "[ ]"
 	}

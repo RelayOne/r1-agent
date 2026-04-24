@@ -466,6 +466,8 @@ func (p *Patch) Stats() (files, additions, deletions int) {
 					additions++
 				case OpDelete:
 					deletions++
+				case OpContext:
+					// Context lines are neither additions nor deletions.
 				}
 			}
 		}

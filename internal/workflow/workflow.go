@@ -1731,6 +1731,8 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 		sb.WriteString("  - Modify files outside the task scope\n")
 	case failure.Regression:
 		sb.WriteString("  - Break existing passing tests\n")
+	case failure.BuildFailed, failure.TestsFailed, failure.LintFailed, failure.ReviewRejected, failure.Timeout, failure.Incomplete, failure.RateLimited:
+		sb.WriteString("  - Repeat the same approach that just failed\n")
 	default:
 		sb.WriteString("  - Repeat the same approach that just failed\n")
 	}
@@ -1862,6 +1864,8 @@ func pickRunner(e Engine, phase string) (string, engine.CommandRunner) {
 			return e.Runners.Codex != nil
 		case model.ProviderNative:
 			return e.Runners.Native != nil
+		case model.ProviderOpenRouter, model.ProviderDirectAPI, model.ProviderEmber, model.ProviderLintOnly:
+			return false // not yet wired as runners
 		default:
 			return false // openrouter/direct-api not yet wired as runners
 		}
@@ -1896,6 +1900,8 @@ func providerToRunner(e Engine, p model.Provider) (string, engine.CommandRunner)
 		if e.Runners.Codex != nil {
 			return string(p), e.Runners.Codex
 		}
+		return string(model.ProviderClaude), e.Runners.Claude
+	case model.ProviderClaude, model.ProviderOpenRouter, model.ProviderDirectAPI, model.ProviderEmber, model.ProviderLintOnly:
 		return string(model.ProviderClaude), e.Runners.Claude
 	default:
 		return string(model.ProviderClaude), e.Runners.Claude

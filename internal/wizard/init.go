@@ -302,6 +302,13 @@ func setReflectValue(f reflect.Value, value string) error {
 			return fmt.Errorf("wizard: invalid bool %q: %w", value, err)
 		}
 		f.SetBool(b)
+	case reflect.Invalid,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Complex64, reflect.Complex128,
+		reflect.Array, reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Pointer, reflect.Slice, reflect.Struct, reflect.UnsafePointer:
+		return fmt.Errorf("wizard: unsupported field type %s", f.Kind())
 	default:
 		return fmt.Errorf("wizard: unsupported field type %s", f.Kind())
 	}
