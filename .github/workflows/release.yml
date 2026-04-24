@@ -82,6 +82,13 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
+      # S2-4 (work-r1-rename): dual-publish under both the legacy `stoke`
+      # name and the canonical `r1` name during the 60d transition window.
+      # The legacy `stoke` tags keep existing `docker pull` commands working
+      # for downstream consumers; the `r1` tags are the canonical forward
+      # target. Both sets point at identical image content.
+      # Registering the image under the RelayOne org (ghcr.io/RelayOne/r1)
+      # is deferred to S2-2, which requires the GitHub repo rename first.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -91,5 +98,7 @@ jobs:
           tags: |
             ghcr.io/ericmacdougall/stoke:${{ steps.version.outputs.version }}
             ghcr.io/ericmacdougall/stoke:latest
+            ghcr.io/ericmacdougall/r1:${{ steps.version.outputs.version }}
+            ghcr.io/ericmacdougall/r1:latest
           build-args: |
             VERSION=${{ steps.version.outputs.version }}

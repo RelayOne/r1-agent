@@ -1,0 +1,96 @@
+---
+title: "Stewardship"
+description: "What R1 promises its users — the un-managed-first commitment, enforced at CI time."
+---
+
+R1 is **un-managed-first**: the single binary you build from this
+repo does everything the project does. The managed-cloud service is
+an opt-in convenience layer, never a gate on core functionality.
+
+## The core commitment
+
+<Warning>
+**No functional feature will migrate from self-hosted to cloud-only.**
+</Warning>
+
+If a capability ships in the open-source CLI today, it will still
+ship in the open-source CLI tomorrow. Managed cloud may offer the
+same capability with extra convenience (hosted state, zero-setup
+pools, centralized audit) but the local-only path stays supported
+and stays feature-complete.
+
+## Enforcement
+
+This is a hard rule, not a "best effort." Three mechanisms hold it:
+
+<Steps>
+  <Step title="Release acceptance test">
+    Every release builds R1 from source without any cloud credentials
+    and runs a golden SOW to completion. A release that fails this
+    test is not released.
+  </Step>
+  <Step title="No cloud-only flags in main">
+    If a capability is cloud-gated, it either ships with a
+    self-hosted equivalent or it doesn't ship yet. Cloud-only
+    feature flags are rejected in review.
+  </Step>
+  <Step title="Breaking changes are bugs">
+    Breaking changes to the CLI that would require cloud enrollment
+    to continue working are treated as bugs, not upgrades.
+  </Step>
+</Steps>
+
+## Why this matters
+
+The prevailing pattern in agent frameworks — OSS core + paid cloud
+for anything that matters — produces systems that work only at the
+vendor's pleasure. R1 is a coding + general-assistant harness that
+operators rely on in the middle of the night when nothing else
+works. It has to keep working:
+
+- when the cloud doesn't
+- when the network is segmented
+- when the vendor has priorities that aren't yours
+
+## What "managed cloud" does NOT mean
+
+<CardGroup cols={2}>
+  <Card title="Not better models" icon="ban">
+    The open-source path and the managed path call the same
+    provider APIs.
+  </Card>
+  <Card title="Not better safety" icon="ban">
+    Supervisor rules, anti-deception patterns, and integrity gates
+    are the same binary in both paths.
+  </Card>
+  <Card title="Not better performance" icon="ban">
+    Hosted may have lower latency due to edge PoPs, but no speed
+    tier is reserved for managed users.
+  </Card>
+  <Card title="Not more tools" icon="ban">
+    The tool surface is identical; capability manifests that drive
+    tool registration are the same files.
+  </Card>
+</CardGroup>
+
+## What it DOES mean
+
+- Hosted session state (you don't run a database).
+- Centralized pool management across devices.
+- Cross-agent audit consolidation for teams running multiple R1
+  instances.
+- Optional identity anchoring via the TrustPlane network.
+
+If any of those would be useful, run `stoke cloud register`. If not,
+the local binary is complete.
+
+## Questions
+
+Open an issue. Stewardship is a public commitment, not a legal
+document — if you think we're violating the spirit of it, please
+say so in the open where the community can weigh in.
+
+<Tip>
+Source of truth:
+[`STEWARDSHIP.md`](https://github.com/ericmacdougall/Stoke/blob/main/STEWARDSHIP.md).
+</Tip>

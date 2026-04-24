@@ -1,0 +1,212 @@
+---
+title: "Your first SOW"
+description: "A walkthrough: write a Statement of Work, run it under R1, watch it merge."
+---
+
+This cookbook takes a real task — "Add a `/healthz` endpoint to an
+existing Go HTTP service" — from plan authoring to merge. By the
+end you'll understand the SOW file format, the dispatch loop, and
+how to read the resulting run report.
+
+<Tip>
+Works with any language R1 auto-detects. The example uses Go
+because the repo includes Go scaffolding, but swap in `package.json`
+and `npm test` and the flow is identical.
+</Tip>
+
+## Prerequisites
+
+- R1 installed (`stoke version` prints something).
+- Claude Code or Codex authenticated.
+- A git repo to work in.
+
+<Steps>
+  <Step title="Run the wizard">
+    From the repo root:
+
+    ```bash
+    stoke init
+    ```
+
+    The wizard asks for a preset (minimal / balanced / strict) and
+    writes `stoke.policy.yaml`. Pick `balanced` for this walkthrough.
+  </Step>
+  <Step title="Verify your setup">
+    ```bash
+    stoke doctor
+    ```
+
+    All rows must be green. If a provider row is red, follow the
+    "how to fix" line — usually `stoke add-claude` or setting
+    `ANTHROPIC_API_KEY`.
+  </Step>
+  <Step title="Write the SOW">
+    Create `stoke-plan.json` at the repo root:
+
+    ```json
+    {
+      "version": "1",
+      "tasks": [
+        {
+          "id": "healthz",
+          "description": "Add a /healthz HTTP endpoint that returns {\"ok\":true} on GET. Wire it into the existing router. Add a unit test asserting status 200 and JSON body shape.",
+          "files": ["server/handler.go", "server/handler_test.go"],
+          "deps": [],
+          "acceptance_criteria": [
+            { "name": "builds",   "command": "go build ./..." },
+            { "name": "tests",    "command": "go test ./server/..." },
+            { "name": "endpoint_exists", "content_match": "healthz" }
+          ],
+          "roi": "high",
+          "task_type": "code"
+        }
+      ]
+    }
+    ```
+
+    Three acceptance criteria: the build passes, the test passes,
+    and the string `healthz` appears somewhere in the diff. R1
+    validates the plan when it loads it — cycles, duplicate IDs,
+    missing deps, unknown files all fail fast.
+  </Step>
+  <Step title="Dry-run">
+    Always dry-run first:
+
+    ```bash
+    stoke build --plan stoke-plan.json --dry-run
+    ```
+
+    R1 prints the dispatch order, the file scope, which provider
+    it chose, and the ROI-filtered view. No LLM call, no worktree
+    creation.
+
+    Verify the plan shape is what you expect. A common mistake is
+    putting a file in `files` that doesn't exist yet — the
+    validator catches that.
+  </Step>
+  <Step title="Run for real">
+    ```bash
+    stoke build --plan stoke-plan.json --workers 1
+    ```
+
+    On a TTY, R1 opens a multi-line dashboard. Watch the phase
+    transitions:
+
+    - `healthz → PLAN` (read-only, MCP triple-isolated)
+    - `healthz → EXECUTE` (sandbox on, honeypot gate, descent if flagged)
+    - `healthz → VERIFY` (build + test + scope + critic)
+    - `healthz → REVIEW` (cross-family reviewer)
+    - `healthz → MERGE` (`git merge-tree --write-tree` pre-validation, serialized merge)
+
+    Cost accrues in the corner. Duration is tracked per phase.
+  </Step>
+  <Step title="Watch the cross-family reviewer">
+    If Claude implemented, Codex reviews. If Codex implemented,
+    Claude reviews. The reviewer sees the diff, the AC list, the
+    touched files, parallel-worker awareness, and the failure
+    history. Its verdict is ledgered as a `Review` node. Dissent
+    blocks merge — you'll see `StopReason="reviewer_dissent"`.
+  </Step>
+  <Step title="Read the report">
+    After the merge completes:
+
+    ```bash
+    cat .stoke/reports/latest.json | jq .
+    ```
+
+    You get per-task `TaskReport`, per-attempt `AttemptReport`,
+    `FailureReport` (empty if everything passed), session
+    `CostSummary`, ledger summary, and learned-patterns. Keep the
+    report — it's portable, it's content-addressed, and it's the
+    audit trail for this run.
+  </Step>
+</Steps>
+
+## What if it fails?
+
+<Warning>
+Max 3 attempts per task. Same-error-twice triggers automatic
+escalation to a different model or strategy.
+</Warning>
+
+R1's failure handling:
+
+- `failure.Classify()` maps output to one of 10 classes: BUILD,
+  TEST, LINT, SCOPE, PROTECTED_FILE, TIMEOUT, AUTH, TOOL, SANDBOX,
+  UNCLASSIFIED.
+- `failure.Compute()` fingerprints the failure.
+- `MatchHistory()` checks for repeats. Same fingerprint twice →
+  escalate.
+- Worktree is discarded; a fresh one is created for retry with the
+  failure brief + diff summary injected into the next PLAN phase.
+
+Check the report for:
+
+```json
+{
+  "failure": {
+    "class": "TEST",
+    "fingerprint": "abc123...",
+    "parsed_errors": ["handler_test.go:42: expected 200, got 404"]
+  }
+}
+```
+
+If the failure persists after three attempts, R1 exits non-zero
+and leaves the last worktree around for inspection at
+`.stoke/worktrees/<session-id>/`.
+
+## Adding a second task
+
+Dependencies catch the interesting case. Add to the plan:
+
+```json
+{
+  "id": "healthz-docs",
+  "description": "Document the /healthz endpoint in README.md with a one-line description and the expected JSON payload.",
+  "files": ["README.md"],
+  "deps": ["healthz"],
+  "acceptance_criteria": [
+    { "name": "readme_mentions", "content_match": "healthz" }
+  ],
+  "roi": "medium",
+  "task_type": "code"
+}
+```
+
+With `--workers 2`, R1's scheduler sees `healthz-docs` depends on
+`healthz` and serializes them. With `--workers 1`, they run in
+GRPW priority order — the task with more downstream work first.
+
+File-scope conflicts are also resolved automatically: if two tasks
+write the same file, R1 serializes them. If one reads and one
+writes, the writer runs first.
+
+## Using `stoke task` for free-text entry
+
+If you don't want to author a plan, drop straight in:
+
+```bash
+stoke task "Add a /healthz endpoint that returns {\"ok\":true}; wire it into the existing router; add a unit test"
+```
+
+The executor router classifies the free-text description and
+dispatches. For straightforward single-task work this is the
+fastest path.
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="The SOW pipeline" icon="diagram-project" href="/mintlify/concepts/sow-pipeline">
+    Full PLAN → EXECUTE → VERIFY → COMMIT walkthrough.
+  </Card>
+  <Card title="Verification descent" icon="shield-check" href="/mintlify/concepts/verification-descent">
+    The T1–T8 anti-deception ladder.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/mintlify/reference/cli">
+    Every subcommand with purpose.
+  </Card>
+  <Card title="Env vars" icon="gear" href="/mintlify/reference/env-vars">
+    STOKE_* / R1_* configuration surface.
+  </Card>
+</CardGroup>

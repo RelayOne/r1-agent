@@ -53,6 +53,10 @@ brew install ericmacdougall/stoke/stoke        # legacy tap path
 curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
 # Docker (linux/amd64 + linux/arm64; distroless, multi-stage)
+# R1 is the canonical image name going forward; the legacy `stoke`
+# tag is dual-published for a 60d transition window (see work-r1-rename.md S2-4).
+docker pull ghcr.io/ericmacdougall/r1:latest
+# Legacy name (still works, will be retired ~2026-06-22):
 docker pull ghcr.io/ericmacdougall/stoke:latest
 
 # From source (Go 1.25 or later; CGO enabled for SQLite)

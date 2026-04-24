@@ -27,8 +27,10 @@ bench:
 	go run ./bench/cmd/bench
 
 # Build Docker image
+# S2-4 (work-r1-rename): tag under both the legacy `stoke` name and the
+# canonical `r1` name so local workflows match what CI publishes to GHCR.
 docker:
-	docker build -t stoke:latest .
+	docker build -t stoke:latest -t r1:latest .
 
 # Build release artifacts via goreleaser
 release:

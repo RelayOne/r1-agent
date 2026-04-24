@@ -1,0 +1,160 @@
+---
+title: "Memory and the 4-tier model"
+description: "How R1 stores, retrieves, and propagates knowledge across turns, tasks, sessions, and the whole fleet."
+---
+
+R1 carries knowledge at four separate timescales. Each tier has a
+distinct purpose, a distinct backing store, and distinct query
+shapes. Mixing them up is the fastest way to produce a harness that
+remembers too much or too little.
+
+## The four tiers
+
+<CardGroup cols={2}>
+  <Card title="Tier 1 — Turn context" icon="comment">
+    Lives for the duration of one LLM turn. Held in the agentloop
+    message array. Compacted by `internal/microcompact/` and
+    `internal/ctxpack/` when it approaches the window limit.
+  </Card>
+  <Card title="Tier 2 — Session memory" icon="clock">
+    Lives for the duration of one session. Backed by
+    `internal/session/`'s `SessionStore` (JSON or SQLite). Captures
+    attempt history, learned patterns, cost summary, BaseCommit.
+  </Card>
+  <Card title="Tier 3 — Cross-session memory" icon="database">
+    Lives across sessions, scoped per project or per user. Backed
+    by SQLite + FTS5 at `internal/memory/` and `internal/wisdom/`.
+    Temporal validity (`ValidFrom`/`ValidUntil`) supported.
+  </Card>
+  <Card title="Tier 4 — Scoped memory bus" icon="network-wired">
+    Live intra-session worker-to-worker channel. 6 visibility
+    scopes; writer-goroutine + batched INSERTs; 10k+ ops/sec.
+    Scoped in `specs/memory-bus.md`.
+  </Card>
+</CardGroup>
+
+## Tier 1: turn context
+
+The agent loop keeps the full message array, system prompt,
+available tools, and accumulated tool results. When context
+approaches the token budget:
+
+- **L0 (Identity)** — system prompt, role — never compacted.
+- **L1 (Critical)** — current task, AC list, immediate tool results — compacted last.
+- **L2 (Topical)** — recent tool results, last few worker turns.
+- **L3 (Deep)** — older turns, summarized progressively.
+
+Progressive compaction means the worker retains the *shape* of the
+session without its weight. Event-driven reminders fire at 60%
+context, on same-error 3×, on test-write, on turn-drift, and on
+idle detection (`internal/boulder/`).
+
+## Tier 2: session memory
+
+`SessionStore` persists:
+
+```
+Session {
+  ID, PlanPath, StartedAt
+  Tasks        []TaskState
+  Attempts     []Attempt       // phase, cost, duration, verdict
+  Cost         CostSummary
+  LearnedPatterns []Pattern
+  BaseCommit   string          // captured at worktree creation
+}
+```
+
+Two backends satisfy the interface: JSON file (`Store`) and SQLite
+WAL (`SQLStore`). The JSON variant is the default for local runs;
+SQLite is used when `stoke agent-serve` or `stoke-server` needs
+long-lived state.
+
+Resume reads the store, picks up at the first incomplete task,
+and re-creates worktrees from `BaseCommit`. Every attempt records
+the phase transitions, cost, duration, turn count, token usage,
+and final verdict.
+
+## Tier 3: cross-session memory
+
+Two systems share the SQLite database `internal/wisdom/`:
+
+### `stoke memory` (6 verbs, flagged)
+
+`add`, `list`, `get`, `promote`, `delete`, `search`. Stores
+arbitrary user-facing memories with FTS5 indexing. The full stack
+(scoped in `specs/memory-full-stack.md`) layers on `sqlite-vec`
+vector search, a 3-way embedder fallback, automatic consolidation,
+and 4 auto-retrieval hooks.
+
+### `wisdom` (always on)
+
+Cross-task learnings — gotchas, decisions, invariants — with
+temporal validity:
+
+```go
+w := wisdom.Wisdom{
+  ValidFrom:  time.Now(),
+  ValidUntil: time.Now().Add(90 * 24 * time.Hour),
+  Content:    "Go 1.24 race detector hangs on TwoLane without stop-channel fix",
+}
+```
+
+`wisdom.AsOf(t time.Time)` queries the store as it existed at a
+historical timestamp — useful for replays and audits. `Invalidate()`
+marks a wisdom entry as superseded without deleting it.
+
+## Tier 4: the scoped memory bus
+
+Scoped in `specs/memory-bus.md`. 6 visibility scopes:
+
+| Scope | Reach |
+|---|---|
+| `ScopeSession` | Current session only |
+| `ScopeSessionStep` | Current session + step |
+| `ScopeWorker` | Current worker goroutine |
+| `ScopeAllSessions` | All active sessions on this host |
+| `ScopeGlobal` | Global fleet (via stoke-gateway when present) |
+| `ScopeAlways` | Permanent (graduates to Tier 3) |
+
+Writer-goroutine pattern + batched INSERTs — 10k+ ops/sec. The
+bus is how workers in the same session share findings without
+crossing tool-output boundaries. It is **not** a replacement for
+the event bus; the event bus is for control-plane events, the
+memory bus is for data-plane findings.
+
+## 12 MCP memory tools
+
+The `stoke-mcp` server exposes ledger, wisdom, research, and skill
+stores as MCP tools — so external clients (other agents, editors,
+dashboards) can read and write into R1's memory over the standard
+MCP protocol:
+
+- `stoke_ledger_query`, `stoke_wisdom_search`, `stoke_wisdom_add`
+- `stoke_research_search`, `stoke_research_add`
+- `stoke_skill_list`, `stoke_skill_invoke`
+- ... plus memory add/get/promote/delete/search
+
+API-key auth via `STOKE_MCP_KEY` gates every tool call.
+
+## Auto-retrieval hooks (Tier 3, full-stack)
+
+When the full memory stack ships, four auto-retrieval hooks fire:
+
+1. **Task dispatch** — retrieves wisdom matching the task's file
+   scope and description.
+2. **Plan phase** — retrieves patterns from prior successful plans
+   on this repo.
+3. **Failure escalation** — retrieves prior failures with a matching
+   fingerprint.
+4. **Review phase** — retrieves reviewer notes from related prior
+   reviews.
+
+Operators can disable any of these individually via config.
+
+## Further reading
+
+- `specs/memory-bus.md` — 4-tier design with scope taxonomy
+- `specs/memory-full-stack.md` — sqlite-vec + embedder + auto-retrieval
+- `specs/operator-ux-memory.md` — `stoke memory` CLI design
+- [`internal/wisdom/`](https://github.com/ericmacdougall/Stoke/tree/main/internal/wisdom)
+- [`internal/memory/`](https://github.com/ericmacdougall/Stoke/tree/main/internal/memory)

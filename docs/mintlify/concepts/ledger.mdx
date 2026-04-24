@@ -1,0 +1,148 @@
+---
+title: "The content-addressed ledger"
+description: "R1's append-only SHA-256-keyed Merkle graph — what it is, why it exists, and how it's used."
+---
+
+R1 runs every decision, artifact, cost, review, and merge through
+a single governance substrate: a **content-addressed, append-only
+graph** at `internal/ledger/`.
+
+## The shape
+
+Every node is a `(type, payload) → SHA-256 prefix + body` pair.
+Edges encode causality and consensus.
+
+```
+Node  { ID, Type, Payload, ParentHash, CreatedAt }
+Edge  { From, To, Kind, CreatedAt }
+```
+
+- **22 node types** — PRD, SOW, Ticket, Review, Artifact, Cost,
+  Verify, AuditFinding, Stance, Skill, Concern, Merge, and more.
+  Each implements the `NodeTyper` interface in
+  `internal/ledger/nodes/`.
+- **7 edge types** — `produces`, `reviews`, `blocks`, `depends-on`,
+  `consumes`, `consents`, `escalates`.
+- **16 type prefixes** in IDs — makes it possible to grep a raw log
+  and see at a glance what kind of node each hash points at
+  (`sow-abcd...`, `rev-1234...`, `art-5678...`).
+
+## Why content-addressed?
+
+Every "mutable" system R1 ever tried leaked state invariants the
+moment a worker misbehaved. Content-addressing guarantees:
+
+<CardGroup cols={2}>
+  <Card title="Tamper-evident" icon="shield-check">
+    You can't edit a node without its hash changing and every
+    downstream `ParentHash` pointer breaking.
+  </Card>
+  <Card title="Deterministic identity" icon="fingerprint">
+    The same logical decision from two independent runs produces the
+    same ID. De-duplication is trivial.
+  </Card>
+  <Card title="Free audit trails" icon="scroll">
+    Causality is chain-verifiable from any leaf backward to the PRD
+    that spawned the work.
+  </Card>
+  <Card title="Offline portable" icon="box-archive">
+    A `.tracebundle` export is content-addressed; two exports can
+    never alias on disk.
+  </Card>
+</CardGroup>
+
+## The two-level Merkle commitment
+
+Redaction and retention are first-class concerns. Storing raw
+content inside a Merkle-chained ID makes redaction a chain-breaker.
+R1 avoids this with a **two-level commitment**:
+
+```
+node_id = sha256(type || header || sha256(payload))
+```
+
+- The inner `sha256(payload)` is the *commitment*. It's stored with
+  the node, but the raw `payload` lives in a separate "content"
+  tier.
+- Wiping the content tier leaves `commitment`, `header`, and the
+  chain structure intact — the graph stays walkable, IDs stay
+  stable, Merkle integrity is preserved **forever**.
+- This makes HIPAA / GDPR / EU AI Act Art. 12 right-to-erasure
+  workflows possible without destroying the governance record of
+  *when* the data existed, *who* produced it, and *what* depended
+  on it.
+
+See `specs/ledger-redaction.md` in the repo for the full design.
+
+## The consensus loop tracker
+
+`internal/ledger/loops/` runs a 7-state state machine over the
+ledger: `PRD → SOW → ticket → PR → landed → verified → closed`.
+Every transition requires specific edges to be present. For
+example:
+
+- A `Ticket` → `PR` transition requires a `produces` edge from
+  the ticket to an `Artifact` node (the PR content-address).
+- A `PR` → `landed` transition requires at least one `reviews`
+  edge with an approving `Review` node from a cross-family
+  reviewer.
+
+The state machine refuses transitions that don't have the required
+edges. That's how "the reviewer approved" is turned from a flag
+into a verifiable ledger fact.
+
+## Backends
+
+Two implementations satisfy the same interface:
+
+- **Filesystem** (default for local runs) — append-only file per
+  node type, atomic rename, cheap, no daemon.
+- **SQLite** (for long-lived dashboards) — normalized tables + edge
+  table + WAL. Makes ad-hoc queries and UI-driven exploration
+  tractable.
+
+The interface makes them interchangeable. `r1-server`'s 3D ledger
+visualizer (scoped in `specs/r1-server-ui-v2.md`) can point at
+either.
+
+## How the rest of R1 uses it
+
+Every subsystem writes ledger nodes:
+
+| Subsystem | Nodes produced |
+|---|---|
+| `workflow/` | `SOW`, `Ticket`, `Verify`, `Merge` |
+| `critic/` | `AuditFinding` |
+| `model/` (cross-family reviewer) | `Review` |
+| `costtrack/` | `Cost` |
+| `harness/` | `Stance` |
+| `skill/` | `Skill` |
+| `concern/` | `Concern` |
+| `executor/` (any) | `Artifact` |
+
+The V1→V2 bridge adapters in `bridge/` ensure V1 cost/verify/wisdom/
+audit surfaces also emit ledger nodes — no subsystem is "off-ledger."
+
+## Querying
+
+Operators have three doors:
+
+- `stoke eventlog` — inspect the append-only bus WAL, which
+  references ledger nodes by ID.
+- `stoke inspect <session>` — dump ledger state for a specific
+  session.
+- **r1-server** (port 3948) — HTTP API + SSE + 3D viz:
+  `GET /api/session/{id}/ledger` returns the DAG.
+
+<Tip>
+Every R1-family event carries the STOKE protocol envelope with
+`ledger_node_id` when available — so traces, logs, and dashboards
+can always resolve back to a concrete node.
+</Tip>
+
+## Further reading
+
+- [`internal/ledger/`](https://github.com/ericmacdougall/Stoke/tree/main/internal/ledger) — code
+- [`docs/ARCHITECTURE.md`](https://github.com/ericmacdougall/Stoke/blob/main/docs/ARCHITECTURE.md) — full subsystem reference
+- `specs/ledger-redaction.md` — two-level commitment design
+- `specs/r1-server-ui-v2.md` — 3D force-directed visualizer

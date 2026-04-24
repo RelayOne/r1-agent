@@ -1,0 +1,201 @@
+---
+title: "How it works"
+description: "The operator journey and the subsystem chain that runs when you invoke R1."
+---
+
+This page walks a successful R1 run from two angles: what the
+operator sees and what the system does. For the subsystem-grouped
+technical reference, see [Architecture](/mintlify/architecture).
+
+## The operator journey
+
+<Steps>
+  <Step title="Install and verify">
+    Install via Homebrew, curl-pipe, Docker, or
+    `go build ./cmd/stoke`. Run `stoke doctor` to check Git, the
+    LLM CLIs (`claude`, `codex`), every configured provider in the
+    fallback chain, and the OAuth usage endpoint.
+  </Step>
+  <Step title="Describe the work">
+    Three entry points:
+
+    - hand-write a plan at `stoke-plan.json`
+    - `stoke plan --task "Add JWT auth"` — R1 generates the plan from codebase analysis
+    - `stoke task "Fix the flaky integration test in server/handler"` — free-text; the executor router classifies and dispatches
+  </Step>
+  <Step title="Dry-run first">
+    `--dry-run` validates the plan and shows dispatch order, file
+    scopes, provider routing, and the ROI-filtered view. Nothing is
+    spawned, nothing is written.
+  </Step>
+  <Step title="Execute for real">
+    Drop `--dry-run`, add `--workers N`. R1 opens a live dashboard:
+    one-line-per-event on piped stderr, a multi-line ANSI TUI on a
+    TTY, or a full-screen Bubble Tea UI with `--interactive`. Cost
+    accrues in the corner; `stoke attach <id>` tails from another
+    terminal.
+  </Step>
+  <Step title="Intervene if needed">
+    - `stoke ctl pause <session>` pauses at the next safe boundary via the sessionctl Unix socket
+    - `stoke ctl inspect <session>` dumps current ledger state
+    - if `r1-server` is installed, open <code>http://localhost:3948/</code> for the live stream view and 3D ledger visualizer
+    - `stoke ctl resume --reject-softpass` replays from the last checkpoint if you disagree with a soft-pass
+  </Step>
+  <Step title="Completion">
+    Each task merges via `git merge-tree --write-tree` pre-validation
+    + serialized merge. The worktree is force-cleaned. Session writes
+    `.stoke/reports/latest.json` with per-task results, per-attempt
+    costs, failure classifications, learned patterns, and a ledger
+    summary.
+  </Step>
+</Steps>
+
+## The system flow
+
+A successful `stoke build` traces through ~40 subsystems. Below is
+the chain in order.
+
+### Config load + plan validation
+
+`internal/config/` walks up from CWD to auto-discover
+`stoke.policy.yaml`, validates fields, and sets the
+`verificationExplicit` bool so "omitted" vs "all false" stays
+distinguishable. `internal/plan/` validates: cycle DFS, duplicate
+IDs, dep resolution, file-existence predicates. ROI filter drops
+`low`/`skip` tasks.
+
+### Auto-detect build/test/lint
+
+`internal/skillselect/` inspects repo structure (`go.mod`,
+`package.json`, `Cargo.toml`, `pyproject.toml`, ...) and infers the
+command triple. Skills register per tech stack.
+
+### Initialize the governance layer
+
+`internal/ledger/` opens the append-only graph.
+`internal/bus/` opens the WAL at `.stoke/bus/events.log`.
+`internal/supervisor/` loads the rule manifests. Built-in hub
+subscribers (honesty gate, cost tracker) register.
+
+### Schedule
+
+`internal/scheduler/` sorts tasks by GRPW priority (critical path
+first), sets up file-scope conflict detection, establishes the
+dispatch queue.
+
+### Per-task dispatch
+
+<Steps>
+  <Step title="Resolve provider">
+    `internal/model/` walks `Primary → FallbackChain`
+    (Claude → Codex → OpenRouter → Direct API → lint-only).
+    Budget-aware: approaching threshold shifts to a cheaper backend.
+  </Step>
+  <Step title="Acquire pool worker">
+    `internal/subscriptions/` picks the least-loaded pool; circuit
+    breaker state consulted; OAuth poller fresh.
+  </Step>
+  <Step title="Create worktree + install hooks">
+    `internal/worktree/` creates a fresh worktree at `BaseCommit`.
+    `hooks.Install()` drops PreToolUse + PostToolUse guards:
+    protected-file scope, honeypot detection, path escape, hook-bypass.
+  </Step>
+  <Step title="Signature + heartbeat">
+    `internal/session/signature.go` writes
+    `<repo>/.stoke/r1.session.json` atomically, spawns a 30s
+    heartbeat goroutine, best-effort `POST /api/register` to
+    `localhost:3948`.
+  </Step>
+  <Step title="PLAN phase">
+    `workflow.RunPlan()` launches Claude (or Codex) with read-only
+    tools, MCP triple-isolated
+    (`--strict-mcp-config --mcp-config <empty.json> --disallowedTools mcp__*`),
+    repomap injected (PageRank-ranked, token-budgeted via
+    `RenderRelevant`).
+  </Step>
+  <Step title="EXECUTE phase">
+    `workflow.RunExecute()` with sandbox on (`failIfUnavailable:true`).
+    `agentloop/` runs the Messages API (parallel tools + caching) or
+    `engine/` shells to the CLI (`Setpgid:true`, 3-tier timeouts).
+    Every tool output is sanitized at `agentloop.executeTools`.
+    End-of-turn triggers the honeypot gate. If `STOKE_DESCENT=1`,
+    verification descent runs.
+  </Step>
+  <Step title="VERIFY phase">
+    Build + test + lint + scope check + protected-file check +
+    AST-aware critic (secrets, SQL injection, debug prints,
+    empty-catch).
+  </Step>
+  <Step title="REVIEW phase">
+    `model.CrossModelReviewer()` picks the reviewer from the opposite
+    family. Reviewer sees the diff, touched files, parallel-worker
+    awareness, AC list, failure history. Dissent blocks merge.
+    Reviewer verdicts ledgered as `Review` nodes.
+  </Step>
+  <Step title="MERGE phase">
+    `worktree.Merge()` uses `git merge-tree --write-tree` for
+    zero-side-effect conflict validation. `mergeMu sync.Mutex`
+    serializes. Pre-merge snapshot taken; restore-on-failure rolls
+    back. Cleanup: `git worktree remove --force` + `os.RemoveAll`
+    fallback + `git worktree prune`.
+  </Step>
+</Steps>
+
+### Persistence + learning
+
+Session state persists via `SessionStore` (JSON or SQLite). Wisdom
+promotes useful patterns with `ValidFrom` / `ValidUntil` temporal
+validity (`AsOf()` queries at a historical timestamp). A ledger
+`Artifact` node appends with `produces` edges; causality is
+chain-verifiable from any leaf backward to the PRD.
+
+### Failure recovery
+
+<Warning>
+  Max 3 attempts per task. Same-error-twice escalates to a different
+  model or strategy — paying for three identical failures is a waste.
+</Warning>
+
+- `failure.Classify()` → one of 10 classes: BUILD, TEST, LINT, SCOPE,
+  PROTECTED_FILE, TIMEOUT, AUTH, TOOL, SANDBOX, UNCLASSIFIED.
+- Language-specific parsers (TS / Go / Python / Rust / Clippy)
+  extract the first ~3 meaningful errors.
+- `failure.Compute()` generates a fingerprint; `MatchHistory()`
+  escalates repeats.
+- Clean worktree per retry — "learning" is carried in instructions,
+  not state.
+
+### Final report
+
+`report.Build()` writes `.stoke/reports/latest.json`: per-task
+`TaskReport`, per-attempt `AttemptReport`, `FailureReport` (class +
+fingerprint + parsed errors), session `CostSummary`, ledger summary,
+learned-patterns manifest. Heartbeat exits, `r1.session.json`
+transitions to `completed`, bus WAL fsynced, SessionStore flushed.
+
+## Key design decisions
+
+**Why append-only?** Every "mutable" system R1 ever tried leaked
+state invariants the moment a worker misbehaved. Content-addressed
+append-only ledgers + Merkle-chained events make retroactive tamper
+impossible.
+
+**Why triple-isolate MCP during plan/verify?**
+`--strict-mcp-config` alone isn't enough — a leaked MCP config on
+the caller's machine would still activate servers. Pairing it with
+an empty JSON config and `--disallowedTools mcp__*` gives three
+independent failure modes that all have to hold for MCP to
+accidentally fire.
+
+**Why single-strong-agent + cross-family reviewer?** Published MAST
+data shows 41–86.7% failure rates in real multi-agent deployments
+and 70% accuracy degradation from blind agent-adding. One strong
+implementer with a cross-family adversarial reviewer gets the
+"fresh eyes" property without the coordination tax.
+
+**Why clean worktree per retry?** Half-repaired codebases are
+strictly worse than a fresh start + an instruction update. The diff
+summary goes into the next prompt; the repo state does not.
+
+See [`docs/HOW-IT-WORKS.md`](https://github.com/ericmacdougall/Stoke/blob/main/docs/HOW-IT-WORKS.md)
+for the upstream source.

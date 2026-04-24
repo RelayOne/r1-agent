@@ -59,17 +59,31 @@
       "pages": [
         "mintlify/introduction",
         "mintlify/quickstart",
-        "mintlify/install"
+        "mintlify/install",
+        "mintlify/architecture",
+        "mintlify/how-it-works",
+        "mintlify/feature-map"
       ]
     },
     {
       "group": "Core concepts",
       "pages": [
+        "mintlify/concepts/ledger",
+        "mintlify/concepts/verification-descent",
+        "mintlify/concepts/memory-bus",
+        "mintlify/concepts/sow-pipeline",
         "mintlify/concepts/tasks-vs-plans",
         "mintlify/concepts/subagents",
         "mintlify/concepts/parallel-execution",
         "mintlify/concepts/progress-and-resume",
         "mintlify/concepts/cost-utilization"
+      ]
+    },
+    {
+      "group": "Project",
+      "pages": [
+        "mintlify/governance",
+        "mintlify/stewardship"
       ]
     },
     {
@@ -154,13 +168,15 @@
       "group": "Reference",
       "pages": [
         "mintlify/reference/cli",
+        "mintlify/reference/env-vars",
         "mintlify/reference/api"
       ]
     },
     {
       "group": "Cookbook",
       "pages": [
-        "mintlify/cookbook/overview"
+        "mintlify/cookbook/overview",
+        "mintlify/cookbook/first-sow"
       ]
     }
   ],

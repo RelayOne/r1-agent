@@ -1,0 +1,155 @@
+---
+title: "CLI reference"
+description: "Every stoke subcommand, grouped by intent. Sourced from cmd/stoke/main.go."
+---
+
+R1 ships the `stoke` binary today. The rename to `r1` is in flight
+with a dual-accept shim; see the [rename notice](/mintlify/rename/stoke-to-r1).
+
+All subcommands support `--help` to print flags.
+
+## Core task / plan / mission
+
+| Command | Purpose |
+|---|---|
+| `stoke run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
+| `stoke build` | Multi-task plan with parallel workers, resume, ROI filter |
+| `stoke plan` | Generate a task plan from codebase analysis |
+| `stoke task` | Free-text task entry; executor router classifies and dispatches |
+| `stoke mission` | Multi-phase mission execution with convergence validation |
+| `stoke ship` | End-to-end: plan → build → ship |
+| `stoke sow` | Statement-of-Work pipeline entry point |
+| `stoke scope` | Display the allowed file scope for a task |
+| `stoke plan-status` | Inspect plan validation state |
+| `stoke plan-resume` | Resume a plan from the last completed task |
+
+## Executors — non-code task types
+
+| Command | Purpose |
+|---|---|
+| `stoke browse` | BrowserExecutor Part 1: fetch + HTML strip + verify-contains/regex |
+| `stoke deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare scoped) |
+| `stoke research` | ResearchExecutor MVP — stdlib, keyword-overlap claim verification |
+
+## Observability
+
+| Command | Purpose |
+|---|---|
+| `stoke status` | Session dashboard (progress, cost, learned patterns) |
+| `stoke watch` | Live session follower |
+| `stoke inspect` | Dump ledger state for a session |
+| `stoke events` | Read-only operator surface for `.stoke/events.db` |
+| `stoke tasks` | List tasks grouped from the eventlog |
+| `stoke logs` | Tail `stream.jsonl` (or eventlog fallback) |
+| `stoke cost` | Aggregate `cost_usd` across eventlog events |
+| `stoke eventlog` | Hash-chain verify + session/mission/loop listing |
+| `stoke task-stats` / `stoke stats` | Task-level statistics |
+| `stoke sessions` | List all sessions |
+
+## Control plane (sessionctl)
+
+Over the Unix socket, 8 verbs:
+
+| Command | Purpose |
+|---|---|
+| `stoke pause <id>` | Pause at next safe boundary |
+| `stoke resume <id>` | Resume a paused session |
+| `stoke approve <id>` | Approve a pending HITL gate |
+| `stoke override <id>` | Override a soft-pass or descent verdict |
+| `stoke budget <id>` | Adjust session budget |
+| `stoke inject <id>` | Inject a message into the session |
+| `stoke takeover <id>` | Hand control over to another client |
+| `stoke status <id>` | Query session status |
+
+## Audit, scan, quality
+
+| Command | Purpose |
+|---|---|
+| `stoke scan` | Deterministic code scan (secrets, eval, injection, debug) — 18+ rules |
+| `stoke audit` | Multi-perspective review via 17 personas (auto-selected per task) |
+| `stoke scan-repair` | Scan + auto-repair loop |
+| `stoke verify` | HTTP wrapper around `plan.VerificationDescent` — `--serve` flag |
+| `stoke repair` | Auto-fix common configuration issues |
+| `stoke yolo` | Execute without verification gates (opt-in, ledgered) |
+
+## Memory and wisdom (flagged)
+
+| Command | Purpose |
+|---|---|
+| `stoke memory` | 6 verbs: add, list, get, promote, delete, search |
+
+## Pools and providers
+
+| Command | Purpose |
+|---|---|
+| `stoke pool` | Subscription pool utilization + circuit breaker state |
+| `stoke pools` | List configured pool directories |
+| `stoke add-claude` | Register a Claude subscription pool directory |
+| `stoke add-codex` | Register a Codex subscription pool directory |
+| `stoke remove-pool` | Remove a pool directory |
+
+## Servers (long-running)
+
+| Command | Purpose |
+|---|---|
+| `stoke serve` | Mission API HTTP server |
+| `stoke agent-serve` | Hireable-agent facade (POST `/api/task`, GET `/api/task/{id}`) |
+| `stoke mcp-serve` | MCP codebase tool server |
+| `stoke mcp-serve-stoke` | MCP codebase tool server (alias variant) |
+
+## MCP client
+
+| Command | Purpose |
+|---|---|
+| `stoke mcp` | MCP client: list-servers, list-tools, test, call |
+
+## Cloud + external
+
+| Command | Purpose |
+|---|---|
+| `stoke cloud` | Managed-cloud operations (`register`, ...) |
+| `stoke policy` | Policy engine operations |
+| `stoke export` | Content-addressed `.tracebundle` producer |
+
+## Bootstrap and health
+
+| Command | Purpose |
+|---|---|
+| `stoke init` / `stoke wizard` | First-time config wizard (minimal / balanced / strict) |
+| `stoke doctor` | Tool-dependency check across 5 fallback providers |
+| `stoke print-default-policy` | Print `stoke.policy.yaml` defaults |
+| `stoke simple-loop` | Minimal loop entry for debugging |
+
+## Shell and entry
+
+| Command | Purpose |
+|---|---|
+| `stoke` (no args) | Launch line REPL (composes with pipes, CI/CD logs) |
+| `stoke tui` / `stoke shell` | Launch full-screen Bubble Tea shell |
+| `stoke --one-shot` | CloudSwarm hero-skill bridge: dispatch a single R1 reasoning verb, read JSON from `--input`/stdin, write JSON to stdout |
+
+## Version / help
+
+| Command | Purpose |
+|---|---|
+| `stoke version` | Print version (ldflags-populated) |
+| `stoke help` | Usage text |
+
+## Sibling binaries
+
+Installed alongside `stoke` when you build the source:
+
+| Binary | Purpose |
+|---|---|
+| `stoke-acp` | Agent Client Protocol adapter for ACP-aware editors |
+| `stoke-a2a` | Agent-to-Agent peering daemon |
+| `stoke-mcp` | MCP codebase tool server as a standalone binary |
+| `stoke-server` | Mission API HTTP server |
+| `stoke-gateway` | Managed-cloud gateway |
+| `r1-server` | Per-machine dashboard on port 3948 |
+
+## Further reading
+
+- [README → Commands table](https://github.com/ericmacdougall/Stoke/blob/main/README.md#commands) — upstream commands section
+- [`cmd/stoke/main.go`](https://github.com/ericmacdougall/Stoke/blob/main/cmd/stoke/main.go) — dispatch source
+- [Env vars](/mintlify/reference/env-vars) — STOKE_* / R1_* env variables

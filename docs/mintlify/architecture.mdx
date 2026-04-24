@@ -1,0 +1,200 @@
+---
+title: "Architecture"
+description: "R1's subsystems, data model, and execution flow — ported from docs/ARCHITECTURE.md."
+---
+
+R1 is a Go 1.25 monorepo. One module
+(`github.com/ericmacdougall/stoke`), ~132 internal packages, nine
+executables, zero framework dependencies on the runtime HTTP path.
+
+<Note>
+The binary ships today as `stoke`. Source paths (`cmd/stoke/`,
+`.stoke/`, `STOKE_*` env vars) keep their on-disk names through the
+rename transition. See the [rename notice](/mintlify/rename/stoke-to-r1).
+</Note>
+
+## Tech stack at a glance
+
+| Layer | Technology |
+|---|---|
+| Language | Go 1.25.5 (CGO for SQLite) |
+| Persistence | SQLite (`modernc.org/sqlite`) + append-only NDJSON WAL + JSON session files |
+| Search | FTS5 for wisdom, memory, research; `sqlite-vec` for vector search |
+| Event bus | Custom WAL-backed, ULID-indexed, parent-hash chained NDJSON |
+| Ledger | Content-addressed SHA-256, 16 node-type prefixes, Merkle chain with two-level commitment |
+| LLM transport | Anthropic Messages API, Claude Code CLI, Codex CLI, OpenRouter, Direct APIs via SSE |
+| TUI | Bubble Tea + lipgloss |
+| HTTP | stdlib `net/http` everywhere |
+| Sandboxing | Per-pool `CLAUDE_CONFIG_DIR`/`CODEX_HOME`, per-worktree `settings.json`, `Setpgid:true`, SIGTERM→SIGKILL group kill |
+| Release | goreleaser + cosign keyless OIDC, Homebrew via tap, Docker via ghcr.io |
+
+## Executables
+
+<CardGroup cols={2}>
+  <Card title="stoke" icon="terminal">
+    Primary orchestrator — 30+ subcommands, ~7K LOC `main.go`.
+  </Card>
+  <Card title="stoke-acp" icon="plug">
+    Agent Client Protocol adapter for ACP-aware editors.
+  </Card>
+  <Card title="stoke-a2a" icon="handshake">
+    Agent-to-Agent peering (signed cards, HMAC, x402, saga compensators).
+  </Card>
+  <Card title="stoke-mcp" icon="toolbox">
+    MCP codebase tool server exposing ledger/wisdom/research/skill stores.
+  </Card>
+  <Card title="stoke-server" icon="server">
+    Mission API HTTP server (programmatic access, dashboards).
+  </Card>
+  <Card title="stoke-gateway" icon="cloud">
+    Managed-cloud gateway (hosted state, centralized pool management).
+  </Card>
+  <Card title="r1-server" icon="gauge">
+    Per-machine dashboard on port 3948 — ledger DAG + event stream over HTTP + SSE.
+  </Card>
+  <Card title="chat-probe" icon="microphone">
+    Chat-descent + sessionctl socket diagnostic tool.
+  </Card>
+</CardGroup>
+
+## Core subsystems
+
+### Ledger (`internal/ledger/`)
+
+Append-only content-addressed graph. Every node is
+`(type, payload) → SHA-256 prefix + body`. Edges encode causality
+and consensus.
+
+- 22 node type structs (PRD, SOW, Ticket, Review, Artifact, Cost,
+  Verify, AuditFinding, Stance, Skill, Concern, Merge, ...).
+- 7 edge types: `produces`, `reviews`, `blocks`, `depends-on`,
+  `consumes`, `consents`, `escalates`.
+- 7-state consensus loop tracker drives `PRD → SOW → ticket → PR → landed`.
+- Dual backend: filesystem (append-only file per type) and SQLite.
+- Two-level Merkle commitment enables content redaction without
+  breaking chain integrity.
+
+See [Concepts → Ledger](/mintlify/concepts/ledger) for the full story.
+
+### Bus (`internal/bus/`)
+
+Durable WAL-backed event system. 30+ event types, hooks, delayed
+events, parent-hash causality chains. ULID-indexed so sort order =
+time order. Every event carries the STOKE protocol envelope
+(`stoke_version`, `instance_id`, `trace_parent`, optional
+`ledger_node_id`).
+
+### Supervisor (`internal/supervisor/`)
+
+Deterministic rules engine. 30 rules across 10 categories
+(consensus, drift, hierarchy, research, skill, snapshot, SDM,
+cross-team, trust, lifecycle). Rules are pure functions of
+`event + ledger state → advisory or blocking verdict`. No LLM
+involvement — deterministic is the point.
+
+### Concern + Harness (`internal/concern/`, `internal/harness/`)
+
+Per-stance context projection. 10 concern sections × 9 role templates
+render a role-specific system prompt from ledger state. 11 stance
+templates with per-stance tool authorization — a Reviewer never gets
+`Write`, a PO never gets `Bash`.
+
+### Engine + Agentloop (`internal/engine/`, `internal/agentloop/`)
+
+The "call an LLM" layer.
+
+- `engine/` wraps Claude Code CLI and Codex CLI as subprocesses with
+  process-group isolation, streaming NDJSON, 3-tier timeouts.
+- `agentloop/` is the native Anthropic Messages loop with prompt
+  caching, parallel tools, honeypot gate, tool-output sanitization,
+  and context-budget reminders.
+
+### Scheduler (`internal/scheduler/`)
+
+GRPW priority (most downstream work first), file-scope conflict
+detection, resume support, and `WithSpecExec(N, strategy)` wrapper
+for speculative parallel execution.
+
+### Workflow (`internal/workflow/`)
+
+The phase machine: `PLAN → EXECUTE → VERIFY → (maybe) RETRY → REVIEW → MERGE`.
+See [Concepts → SOW Pipeline](/mintlify/concepts/sow-pipeline) for
+a step-by-step walkthrough.
+
+### Verification Descent (H-91 series)
+
+The anti-deception layer, gated via `STOKE_DESCENT=1`. Anti-deception
+contract + forced self-check + ghost-write detector + per-file repair
+cap + env-issue worker tool + VerifyFunc ladder. See
+[Concepts → Verification Descent](/mintlify/concepts/verification-descent).
+
+### Executors (`internal/executor/`, `browser/`, `deploy/`, `delegation/`)
+
+One `Executor` interface with `Execute`, `BuildCriteria`,
+`BuildRepairFunc`, `BuildEnvFixFunc`. Shipping backends: Code
+(SOW-backed), Research MVP, Browser Part 1 (HTTP + strip),
+Deploy (Fly.io), Delegation MVP (TrustPlane verify-settle).
+
+## Data models
+
+### Plan + Task + AcceptanceCriterion
+
+```
+Plan    { Version, Tasks[] }
+Task    { ID, Description, Files[], Deps[], AcceptanceCriteria[],
+          ROI, TaskType }
+AcceptanceCriterion {
+  Name, Command?, FileExists?, ContentMatch?, VerifyFunc?
+}
+```
+
+ROI ∈ `{high, medium, low, skip}`. TaskType ∈
+`{code, research, browse, deploy, delegate}`. Plan validation catches
+cycles (DFS), duplicate IDs, missing deps, unknown files.
+
+### Ledger node + edge
+
+```
+Node  { ID, Type, Payload, ParentHash, CreatedAt }
+Edge  { From, To, Kind, CreatedAt }
+```
+
+IDs are SHA-256 prefixes computed from
+`(type, header, commitment_hash)` — raw payload content is in a
+separate tier so redaction preserves chain integrity.
+
+## Infrastructure
+
+R1 is **un-managed-first**. A plain host with Go 1.25+, Git, and
+`claude` or `codex` on PATH does everything the project does. All
+state is local, under `.stoke/`.
+
+Optional add-ons:
+
+- **r1-server** on port 3948 — per-machine dashboard.
+- **Subscription pools** via `CLAUDE_CONFIG_DIR`/`CODEX_HOME`.
+- **TrustPlane gateway** for A2A identity anchoring.
+- **MCP servers** (GitHub, Linear, Slack, Postgres, custom).
+- **Managed cloud gateway** — hosted state, centralized pools.
+
+<Tip>
+The commitment to un-managed-first is codified in
+[Stewardship](/mintlify/stewardship): no functional feature will
+migrate from self-hosted to cloud-only.
+</Tip>
+
+## Testing architecture
+
+- Unit tests co-located, ~100K LOC across ~1,010 Go files.
+- Integration tests at repo root.
+- Full race detector clean (`go test ./... -race`).
+- 58-sample red-team adversarial corpus (OWASP LLM01, CL4R1T4S,
+  Rehberger SpAIware, Willison prompt-injection tag).
+- Nightly golden mission bench (20 tasks × 5 categories) with HTML
+  report + regression detection.
+- Dogfooding scan over 1,010 Go source files — zero blocking findings.
+- 12 negative hook tests — every attack payload must be blocked.
+
+See the full source at
+[`docs/ARCHITECTURE.md`](https://github.com/ericmacdougall/Stoke/blob/main/docs/ARCHITECTURE.md)
+for the complete repository map and API surface reference.
