@@ -1,0 +1,44 @@
+{
+  "name": "studio.publish_page",
+  "version": "1.0.0",
+  "description": "Thin 1:1 wrapper over Studio's publish_page endpoint. Ships the current draft of a specific page.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id":      { "type": "string", "minLength": 1 },
+      "page_id":      { "type": "string", "minLength": 1 },
+      "scheduled_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "published", "published_at"],
+    "properties": {
+      "page_id":      { "type": "string" },
+      "published":    { "type": "boolean" },
+      "published_at": { "type": "string", "format": "date-time" },
+      "published_url": { "type": "string", "format": "uri" }
+    }
+  },
+  "whenToUse": [
+    "Ship an existing draft page after an editorial or HITL review has approved it.",
+    "Scheduled publish: set scheduled_at to a future ISO-8601 timestamp and let Studio schedule the go-live.",
+    "Batch-publish driver: iterate list_pages draft results and publish the approved subset."
+  ],
+  "whenNotToUse": [
+    "Caller is editing and publishing in one step — use studio.update_content (hero) or studio.publish (hero alias).",
+    "Page is already published and unchanged — publishing again is a no-op but bills a round-trip.",
+    "Autonomous-mode call without operator approval — publish is MutatesState+public-facing; route through HITL first."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "publish",
+    "page-lifecycle",
+    "go-live"
+  ]
+}

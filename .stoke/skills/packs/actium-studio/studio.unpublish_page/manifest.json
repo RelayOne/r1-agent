@@ -1,0 +1,44 @@
+{
+  "name": "studio.unpublish_page",
+  "version": "1.0.0",
+  "description": "Take a published page offline (rollback / takedown). Reverts to draft state; the page still exists and can be re-published.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id":      { "type": "string", "minLength": 1 },
+      "page_id":      { "type": "string", "minLength": 1 },
+      "reason":       { "type": "string", "maxLength": 500 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "published", "unpublished_at"],
+    "properties": {
+      "page_id":        { "type": "string" },
+      "published":      { "type": "boolean" },
+      "unpublished_at": { "type": "string", "format": "date-time" },
+      "status":         { "type": "string", "enum": ["draft", "unpublished"] }
+    }
+  },
+  "whenToUse": [
+    "Operator needs to take a page offline without deleting it — rollback during an incident.",
+    "Scheduled-content rollback: a time-limited campaign page needs to come down but be kept for archive.",
+    "Compliance takedown where content must not be public but the record must persist for audit."
+  ],
+  "whenNotToUse": [
+    "Caller actually wants to delete the page — unpublish preserves the record; use a delete-page skill if it exists.",
+    "Caller wants to edit the page instead of taking it down — use studio.update_page and leave publish:false.",
+    "Autonomous-mode call without operator approval — public-facing state change; route through HITL."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "takedown",
+    "rollback",
+    "page-lifecycle"
+  ]
+}

@@ -37,33 +37,44 @@ browser-hosted sessions — ships as a **separate product**,
 embeds R1 as its agent runtime. **How do I pay for team scale?**
 Use CloudSwarm. R1 standalone stays free.
 
+> **Upgrading from Stoke?** Your existing `.stoke/` directory is
+> auto-detected — no migration step required. Every install method
+> below drops both the canonical `r1` binary and the legacy `stoke`
+> alias into `$PATH`, and `r1 <args>` is byte-identical to
+> `stoke <args>`. For the full rename rollout (binary, Homebrew tap,
+> Docker image, config file, MCP tool names), see
+> [docs/mintlify/rename/stoke-to-r1.mdx](docs/mintlify/rename/stoke-to-r1.mdx).
+
+`r1` is the canonical invocation going forward; `stoke` remains a
+supported alias through the dual-accept window (at least one minor
+release past the `r1` cutover). Pick any of the four paths below —
+each installs both names side-by-side.
+
 ```bash
-# Homebrew (macOS + Linux) — published by goreleaser on each tag.
-# The formula now installs BOTH `stoke` and `r1` side-by-side:
-# `r1` is the canonical name going forward, `stoke` stays for the
-# 60-90d rename transition (work-r1-rename.md §S2-3 / §S5-3).
-brew install ericmacdougall/stoke/stoke        # legacy tap path
-# Target after tap rename (§S5-3 — not live yet):
+# 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
+# The formula installs BOTH `r1` (canonical) and `stoke` (legacy alias).
+brew install ericmacdougall/stoke/stoke        # current tap path
+# Target after tap rename (work-r1-rename.md §S5-3 — not live yet):
 #   brew install RelayOne/r1-agent/r1
 
-# One-line installer — detects platform, verifies cosign signature
+# 2. One-line installer — detects platform, verifies cosign signature
 # (keyless OIDC via sigstore) when cosign is on PATH, falls back to
 # building from source if no prebuilt binary exists for your target.
-# Installs `stoke`, `stoke-acp`, AND `r1` into ${INSTALL_DIR}.
+# Installs `r1`, `stoke`, and `stoke-acp` into ${INSTALL_DIR}.
 curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
-# Docker (linux/amd64 + linux/arm64; distroless, multi-stage)
-# R1 is the canonical image name going forward; the legacy `stoke`
-# tag is dual-published for a 60d transition window (see work-r1-rename.md S2-4).
-docker pull ghcr.io/ericmacdougall/r1:latest
-# Legacy name (still works, will be retired ~2026-06-22):
-docker pull ghcr.io/ericmacdougall/stoke:latest
+# 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
+# `r1` is the canonical image name going forward; the legacy `stoke`
+# tag is dual-published for a 60d transition window
+# (see work-r1-rename.md §S2-4).
+docker pull ghcr.io/ericmacdougall/r1:latest        # canonical
+docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy alias (retires ~2026-06-22)
 
-# From source (Go 1.25 or later; CGO enabled for SQLite)
-go build ./cmd/stoke
+# 4. From source (Go 1.25 or later; CGO enabled for SQLite).
+go build ./cmd/r1               # canonical CLI (exec-shim → stoke)
+go build ./cmd/stoke            # legacy alias / primary orchestrator binary
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
-go build ./cmd/r1               # r1 wrapper (delegates to stoke)
-sudo mv stoke stoke-acp r1 /usr/local/bin/
+sudo mv r1 stoke stoke-acp /usr/local/bin/
 
 # Verify a signed release tarball (cosign keyless OIDC)
 cosign verify-blob \
@@ -537,6 +548,30 @@ A 30-PR cleanup campaign also shipped:
 - Package count drift check in `make check-pkg-count` asserted at 180
   internal packages.
 
+## Benchmarks
+
+Published reports live under
+[docs/benchmarks/](docs/benchmarks/README.md). Each report
+separates methodology from numbers, and stamps measured numbers with
+commit, Go version, host arch, date, and corpus identifier.
+Projections from pricing / token models are labelled as such and
+never mixed into measurement tables.
+
+First entry:
+
+- [docs/benchmarks/prompt-cache.md](docs/benchmarks/prompt-cache.md)
+  — Anthropic prompt-cache savings. Projects ~80.7% input-cost
+  reduction on a standard 20-turn loop using Sonnet pricing
+  (`internal/agentloop.CacheSavingsEstimate`), explains how cache
+  hits are tracked at both structuring and telemetry layers, and
+  documents the `go run ./bench/prompt_cache` path to reproduce
+  the projection plus the `go run ./bench/cmd/bench run` path to
+  measure live savings on a corpus.
+
+Planned: SWE-bench Pro, SWE-rebench, Terminal-Bench deltas as
+per-harness measurements land. Stance rationale is in
+[docs/benchmark-stance.md](docs/benchmark-stance.md).
+
 ## Docs
 
 - [docs/README.md](docs/README.md) — Navigable index (mirror of this file)
@@ -549,6 +584,7 @@ A 30-PR cleanup campaign also shipped:
 - [docs/stoke-spec-final.md](docs/stoke-spec-final.md) — 1,091-line frozen spec with 3 adversarial reviews
 - [docs/stoke-protocol.md](docs/stoke-protocol.md) — STOKE envelope v1.0 (the wire format)
 - [docs/benchmark-stance.md](docs/benchmark-stance.md) — Why we report SWE-bench Pro, SWE-rebench, Terminal-Bench deltas
+- [docs/benchmarks/](docs/benchmarks/README.md) — Published benchmark reports. First entry: [prompt-cache.md](docs/benchmarks/prompt-cache.md) — methodology + pricing-model projection of Anthropic prompt-cache savings (~80.7% input-cost reduction on a 20-turn loop), plus the reproduction path for live-telemetry measurements.
 - [docs/architecture/](docs/architecture/) — 19 sub-docs: v2-overview, ledger, bus, supervisor, harness-stances, providers, bare-mode, context-budget, policy-engine, bridge, wizard, oauth-usage-endpoint, failure-recovery, single-strong-agent-stance, etc.
 - [docs/decisions/](docs/decisions/) — Architecture Decision Records
 - [docs/history/](docs/history/) — Preserved historical design documents
@@ -569,6 +605,25 @@ A 30-PR cleanup campaign also shipped:
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1.
 - [SECURITY.md](SECURITY.md) — Disclosure policy, preferred channel
   (GitHub Security Advisories), threat-model scope, honor list.
+
+## Desktop App (in scoping)
+
+R1 Desktop is a cross-platform Tauri v2 GUI for R1 — SOW tree, verification
+descent ladder, ledger browser, memory-bus viewer, skill catalog, MCP
+manager, observability dashboard. Target competitive set: Claude.app,
+Hermes. R1's differentiators (SOW decomposition, T1..T8 descent,
+cryptographic ledger, memory-bus scopes) surface as first-class panels.
+
+- **Status:** SCOPED. Scaffold landed; full implementation tracked across
+  12 phases (R1D-1 through R1D-12).
+- **Scaffold location:** [`desktop/`](desktop/).
+- **Roadmap:** [`desktop/PLAN.md`](desktop/PLAN.md).
+- **Architecture:** [`desktop/docs/architecture.md`](desktop/docs/architecture.md).
+- **Work order:** `plans/work-orders/work-r1-desktop-app.md`.
+
+The scaffold is **not yet buildable**; `cargo tauri init` in `desktop/` is
+the next action. No Go code changes are expected until the desktop app
+needs a new CLI IPC verb from `cmd/stoke/ctl_cmd.go`.
 
 ## License
 

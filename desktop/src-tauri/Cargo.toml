@@ -1,0 +1,27 @@
+# Scaffold crate for the Tauri sidecar (Rust host tier).
+# See desktop/docs/architecture.md §1 (Tier 2: Rust host).
+# No src/ source yet. `cargo build` here will fail until R1D-1.1.
+
+[package]
+name = "r1-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "R1 Desktop - Tauri sidecar. Scaffold only."
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+# Default feature set placeholder; Tauri v2 moves permission/capability
+# config into tauri.conf.json, so this list stays empty at scaffold time.
+default = []

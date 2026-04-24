@@ -153,6 +153,7 @@
     {
       "group": "Benchmarks",
       "pages": [
+        "mintlify/benchmarks/prompt-cache",
         "mintlify/benchmarks/swebench",
         "mintlify/benchmarks/anti-deception-matrix",
         "mintlify/benchmarks/corpus-format"

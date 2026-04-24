@@ -1,0 +1,3 @@
+# Placeholder. Platform icons (32x32.png, 128x128.png, icon.icns, icon.ico)
+# land here during R1D-11 polish. Until then the bundle entry is inactive
+# (tauri.conf.json -> bundle.active: false).

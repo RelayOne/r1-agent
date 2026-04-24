@@ -1,0 +1,64 @@
+{
+  "name": "studio.get_navigation",
+  "version": "1.0.0",
+  "description": "Read the site-wide navigation (header, footer, menus) for an Actium Studio site.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id": { "type": "string", "minLength": 1 },
+      "menu":    { "type": "string", "enum": ["header", "footer", "mobile", "all"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "menus"],
+    "properties": {
+      "site_id": { "type": "string" },
+      "menus": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "items"],
+          "properties": {
+            "name":  { "type": "string" },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["label", "url"],
+                "properties": {
+                  "label": { "type": "string" },
+                  "url":   { "type": "string" },
+                  "page_id": { "type": "string" },
+                  "external": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "updated_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Pre-edit read before calling update_navigation: agents should operate on the current menu state, not guess.",
+    "Audit IA (information architecture): enumerate menu entries across header and footer for a consistency check.",
+    "Resolve whether a target page is already linked from navigation before adding a redundant entry."
+  ],
+  "whenNotToUse": [
+    "Caller wants to modify navigation — this is read-only; use update_navigation for writes.",
+    "Caller wants the rendered DOM or HTML of the navigation — this returns structured menu data, not markup.",
+    "Caller wants per-page in-body links — those live inside page content (get_page), not navigation."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "navigation",
+    "information-architecture",
+    "pre-edit"
+  ]
+}

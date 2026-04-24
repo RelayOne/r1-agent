@@ -1,0 +1,47 @@
+{
+  "name": "studio.update_page",
+  "version": "1.0.0",
+  "description": "Edit a single page's fields (title, slug, body). Does NOT publish; pair with studio.publish_page to ship the change.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "page_id"],
+    "properties": {
+      "site_id":        { "type": "string", "minLength": 1 },
+      "page_id":        { "type": "string", "minLength": 1 },
+      "title":          { "type": "string", "maxLength": 200 },
+      "slug":           { "type": "string", "maxLength": 200 },
+      "content":        { "type": "string", "maxLength": 200000 },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["page_id", "updated_at"],
+    "properties": {
+      "page_id":     { "type": "string" },
+      "updated_at":  { "type": "string", "format": "date-time" },
+      "revision_id": { "type": "string" },
+      "status":      { "type": "string", "enum": ["draft", "published", "unpublished"] }
+    }
+  },
+  "whenToUse": [
+    "Editorial update to an existing draft that will be reviewed before publish.",
+    "Automated content-ops edit (spelling fix, copy refresh) where the operator explicitly wants to leave publish for a separate approved step.",
+    "First half of an edit-then-publish sequence; follow up with studio.publish_page after review."
+  ],
+  "whenNotToUse": [
+    "Caller wants atomic edit-and-publish — use studio.update_content (hero) instead; saves a round trip.",
+    "Page does not exist yet — call studio.create_page; update_page fails on unknown page_id.",
+    "Changing the slug without a studio.create_redirect for the old URL will break external links — plan the redirect first."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "page-edit",
+    "content-edit",
+    "draft-update"
+  ]
+}

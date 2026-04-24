@@ -7,11 +7,14 @@ import (
 	"github.com/RelayOne/r1/internal/skillmfr"
 )
 
-// TestActiumStudioPackSeed asserts the seed Actium Studio skill pack
-// at `.stoke/skills/packs/actium-studio/` loads, every manifest.json
-// parses + validates, and the set matches the documented seed slice
-// (5 of the 6 hero skills per work-r1-actium-studio-skills.md
-// phase R1S-1.5).
+// TestActiumStudioPackSeed asserts the Actium Studio skill pack at
+// `.stoke/skills/packs/actium-studio/` loads, every manifest.json
+// parses + validates, and the set matches the expected roster.
+//
+// Batch 2 (this file): 5 hand-authored heroes (PR #55 seed) + 20
+// high-frequency thin wrappers (sites, pages, blog, media, navigation,
+// snapshots, theme). Remaining ~28 thin wrappers land in later batches
+// per work-r1-actium-studio-skills.md §1.2.
 //
 // The test is path-relative to the package source (go test runs with
 // cwd == internal/skill), so it finds the pack regardless of where the
@@ -32,14 +35,40 @@ func TestActiumStudioPackSeed(t *testing.T) {
 		t.Errorf("pack version empty")
 	}
 
-	// Expected seed skills. Update both this list and pack.yaml's
-	// skill_count when new exemplars land in R1S-4.
+	// Expected skills — alphabetical (LoadPack sorts by Name). Update
+	// this list and pack.yaml's skill_count together when the next batch
+	// lands.
 	want := []string{
+		// Batch 2 — thin wrappers
+		"studio.create_page",
+		"studio.create_post",
+		"studio.create_site",
+		"studio.create_snapshot",
+		// PR #55 seed — hero
 		"studio.diff_versions",
+		"studio.get_navigation",
+		"studio.get_page",
+		"studio.get_post",
+		"studio.get_site",
+		"studio.get_theme",
+		"studio.list_media",
+		"studio.list_pages",
+		"studio.list_posts",
+		"studio.list_sites",
+		"studio.list_snapshots",
+		// PR #55 seed — hero
 		"studio.publish",
+		"studio.publish_page",
+		"studio.publish_post",
+		// PR #55 seed — hero
 		"studio.scaffold_site",
 		"studio.site_status",
+		"studio.unpublish_page",
+		// PR #55 seed — hero
 		"studio.update_content",
+		"studio.update_page",
+		"studio.update_post",
+		"studio.update_site",
 	}
 	if got, wantN := len(loaded.Manifests), len(want); got != wantN {
 		t.Fatalf("manifest count = %d, want %d (names loaded: %v)",
@@ -66,7 +95,7 @@ func TestActiumStudioPackSeed(t *testing.T) {
 }
 
 // TestActiumStudioPackRegisters exercises RegisterPack end-to-end:
-// loads the seed pack and registers every manifest with a fresh
+// loads the pack and registers every manifest with a fresh
 // skillmfr.Registry. Guards the integration path the production
 // `r1 skills pack install` command (phase R1S-1.4) will use.
 func TestActiumStudioPackRegisters(t *testing.T) {
@@ -80,13 +109,20 @@ func TestActiumStudioPackRegisters(t *testing.T) {
 	if n == 0 {
 		t.Fatal("RegisterPack registered 0 manifests")
 	}
-	// Every registered manifest should be retrievable by name.
+	// Spot-check a mix of hero and batch-2 names resolve after register.
 	for _, name := range []string{
+		// PR #55 heroes
 		"studio.scaffold_site",
 		"studio.update_content",
 		"studio.publish",
 		"studio.diff_versions",
 		"studio.site_status",
+		// Batch 2 representatives
+		"studio.list_sites",
+		"studio.get_page",
+		"studio.create_post",
+		"studio.publish_page",
+		"studio.create_snapshot",
 	} {
 		if _, ok := mr.Get(name); !ok {
 			t.Errorf("manifest %q not in registry after RegisterPack", name)

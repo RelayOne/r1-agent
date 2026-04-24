@@ -1,0 +1,50 @@
+{
+  "name": "studio.update_post",
+  "version": "1.0.0",
+  "description": "Edit an existing blog post's fields (title, slug, body, author, categories, tags). Does NOT publish.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "post_id"],
+    "properties": {
+      "site_id":        { "type": "string", "minLength": 1 },
+      "post_id":        { "type": "string", "minLength": 1 },
+      "title":          { "type": "string", "maxLength": 200 },
+      "slug":           { "type": "string", "maxLength": 200 },
+      "content":        { "type": "string", "maxLength": 200000 },
+      "content_format": { "type": "string", "enum": ["html", "markdown"] },
+      "author":         { "type": "string", "maxLength": 120 },
+      "categories":     { "type": "array", "items": { "type": "string", "maxLength": 120 } },
+      "tags":           { "type": "array", "items": { "type": "string", "maxLength": 120 } }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["post_id", "updated_at"],
+    "properties": {
+      "post_id":     { "type": "string" },
+      "updated_at":  { "type": "string", "format": "date-time" },
+      "revision_id": { "type": "string" },
+      "status":      { "type": "string", "enum": ["draft", "published", "scheduled"] }
+    }
+  },
+  "whenToUse": [
+    "Editorial revision to an existing draft before an approved publish.",
+    "Spelling / link-correction sweep across one or more published posts; status remains published after update.",
+    "Taxonomy rewrite: move a post between categories or refresh its tag set."
+  ],
+  "whenNotToUse": [
+    "Post does not exist yet — use studio.create_post; update_post fails on unknown post_id.",
+    "Caller wants atomic edit-and-publish — compose update_post + studio.publish_post, or write a composite skill.",
+    "Caller is editing a static page, not a blog post — use studio.update_page."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "cheap"
+  },
+  "recommendedFor": [
+    "blog",
+    "post-edit",
+    "content-edit"
+  ]
+}

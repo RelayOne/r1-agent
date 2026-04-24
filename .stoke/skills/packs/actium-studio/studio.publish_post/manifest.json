@@ -1,0 +1,45 @@
+{
+  "name": "studio.publish_post",
+  "version": "1.0.0",
+  "description": "Thin 1:1 wrapper over Studio's publish_post endpoint. Ships the current draft of a blog post, optionally at a scheduled time.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id", "post_id"],
+    "properties": {
+      "site_id":      { "type": "string", "minLength": 1 },
+      "post_id":      { "type": "string", "minLength": 1 },
+      "scheduled_at": { "type": "string", "format": "date-time" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["post_id", "published"],
+    "properties": {
+      "post_id":      { "type": "string" },
+      "published":    { "type": "boolean" },
+      "published_at": { "type": "string", "format": "date-time" },
+      "published_url": { "type": "string", "format": "uri" },
+      "status":        { "type": "string", "enum": ["published", "scheduled"] }
+    }
+  },
+  "whenToUse": [
+    "Ship a blog post after editorial review has approved the draft.",
+    "Scheduled go-live: provide scheduled_at for future publication.",
+    "Batch publication driver that iterates approved drafts and ships them one by one."
+  ],
+  "whenNotToUse": [
+    "Post is already published and unchanged — calling publish_post again is a billed no-op.",
+    "Caller has not finished editing the post — use studio.update_post first; publishing mid-edit ships partial work.",
+    "Autonomous-mode call without operator approval — publishing is public-facing; route through HITL first."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "blog",
+    "publish",
+    "go-live"
+  ]
+}

@@ -1,0 +1,200 @@
+---
+title: "Prompt cache savings"
+description: "How R1 structures Claude API calls for Anthropic prompt caching, how cache hits are tracked, and what the pricing model projects."
+---
+
+<Note>
+The numbers on this page are **pricing-model projections** produced by
+`internal/agentloop.CacheSavingsEstimate`, not live API measurements.
+The [reproduction section](#reproducing-with-live-telemetry) at the
+bottom explains how to aggregate measured figures from a corpus run.
+</Note>
+
+## Why prompt caching matters to R1
+
+R1 drives one strong implementer per task through a multi-turn
+**PLAN → EXECUTE → VERIFY** loop. Every turn re-sends the same system
+prompt, tool schema, repo map, and prior turns. Without caching, a
+20-turn session on Sonnet pays full input-token price on every single
+turn — and the prior-turn history grows quadratically.
+
+Anthropic prices cached tokens at 10% of the input rate (cache reads)
+with a 25% premium on the turn that first writes the cache. When the
+static prefix is structured correctly, the break-even point is turn
+two, and every subsequent turn pays the 10% rate for almost all of
+its input.
+
+The `internal/agentloop` package is the native Messages-API loop that
+replaces `claude` / `codex` subprocess spawning. It exists precisely
+because spawning a new subprocess destroys the cache: the cache is
+per-process on the Anthropic side, so every spawn re-writes the whole
+prefix.
+
+## How "cache hit" is tracked
+
+R1 tracks cache behavior at two layers, both plumbed into the per-run
+result record emitted by the benchmark harness.
+
+### Cache structuring — `internal/agentloop/cache.go`
+
+- `BuildCachedSystemPrompt(static, dynamic)` splits the system prompt
+  into a cached static block (annotated with `cache_control: ephemeral`)
+  and an uncached dynamic tail.
+- `SortToolsDeterministic` sorts tool definitions alphabetically by
+  name before every request. Non-deterministic tool order busts the
+  cache on every turn and is the single most common cache-busting
+  anti-pattern.
+- `CacheSavingsEstimate(systemTokens, toolTokens, avgTurnTokens,
+  turns, model)` returns projected cost with and without caching
+  using Anthropic's published pricing:
+
+  | Class  | Input / MTok | Cache write / MTok | Cache read / MTok |
+  |--------|-------------:|-------------------:|------------------:|
+  | Sonnet |        $3.00 |              $3.75 |             $0.30 |
+  | Opus   |        $5.00 |              $6.25 |             $0.50 |
+  | Haiku  |        $1.00 |              $1.25 |             $0.10 |
+
+### Runtime telemetry — `internal/stream/cache.go`
+
+`PromptCacheStats.Record(usage TokenUsage)` reads
+`cache_read_input_tokens` and `cache_creation_input_tokens` off every
+`message_delta` event streamed back from Anthropic. A request is
+counted as a **hit** when cache-read tokens are non-zero, a **miss**
+when both cache fields are zero, and a **creation** when cache-write
+tokens are non-zero.
+
+Live counters exposed on `CacheStats`:
+
+- `total_requests`, `cache_hits`, `cache_misses`, `cache_creations`
+- `hit_rate = cache_hits / total_requests`
+- `tokens_saved` — sum of cache-read tokens
+- `estimated_saving_usd` — measured: cache-read × $2.70/MTok minus
+  cache-creation × $0.75/MTok
+
+These fields are populated into `bench/harnesses.RunResult` as
+`CacheReadTokens` / `CacheWriteTokens`, so any corpus run produces
+an auditable per-task measurement.
+
+## What the model projects
+
+Deterministic pricing-model evaluation against three representative
+agentic-workload profiles:
+
+| Profile | System tok | Tool tok | Avg turn tok | Turns | No-cache USD | Cached USD | Reduction |
+|---------|-----------:|---------:|-------------:|------:|-------------:|-----------:|----------:|
+| short_loop_5_turns     | 2,000 | 1,500 | 400 |  5 | 0.0645 | 0.0293 | **54.5%** |
+| standard_loop_20_turns | 4,000 | 2,000 | 600 | 20 | 0.7020 | 0.1355 | **80.7%** |
+| long_loop_50_turns     | 8,000 | 2,500 | 800 | 50 | 4.5150 | 0.4607 | **89.8%** |
+
+Model: Sonnet pricing. Opus and Haiku produce identical percentages
+(the pricing structure is proportional) but different absolute
+dollars.
+
+<Info>
+**Methodology footprint.** Runner: `bench/prompt_cache/run.go` at
+commit `a59c9b56bad0ce67aaeca32a54aa4f442eeb8220`. Go: 1.26.2
+linux/amd64. Date: 2026-04-23. Pricing table: as of 2026-Q1 per
+`internal/agentloop/cache.go`.
+</Info>
+
+### Interpretation
+
+The standard 20-turn loop is where R1's internal targets live. The
+model projects **80.7% input-cost reduction** for that profile —
+this is the source of the "~82% input cost reduction" language used
+in historical design docs. The real figure shifts with profile
+shape; a well-structured long-running session approaches 90%.
+
+<Warning>
+Two caveats:
+
+1. The "~82%" figure is a pricing-model projection for a specific
+   workload shape. Real sessions vary. Sessions with frequent cache
+   breaks (tool-set changes mid-session, system-prompt reshuffling,
+   non-deterministic prior-turn ordering) can drop to single-digit
+   savings.
+2. The projection assumes the cache is structured correctly. The
+   point of `internal/agentloop/cache.go` is to make that assumption
+   true for every call originating inside R1.
+
+Measured savings vary by workload. Use the reproduction path below
+to get a number for your specific mix.
+</Warning>
+
+## Reproducing the projection
+
+<CodeGroup>
+
+```bash Text output
+go run ./bench/prompt_cache
+```
+
+```bash JSON
+go run ./bench/prompt_cache -json
+```
+
+```bash Other models
+go run ./bench/prompt_cache -model opus
+go run ./bench/prompt_cache -model haiku
+```
+
+```bash Makefile
+make bench-cache
+```
+
+</CodeGroup>
+
+The runner does not make API calls. It loads the three profiles
+above and invokes `agentloop.CacheSavingsEstimate` three times. Output
+is deterministic — you should get the same numbers on any machine.
+
+## Reproducing with live telemetry
+
+To replace the model projection with an actual measured figure:
+
+<Steps>
+
+<Step title="Run a corpus through the benchmark harness">
+```bash
+go run ./bench/cmd/bench run --corpus ./corpus --harnesses stoke --reps 3
+```
+</Step>
+
+<Step title="Aggregate cache tokens across the per-task RunResult records">
+Reports land in `bench/reports/*.json` with `cache_read_tokens` and
+`cache_write_tokens` per task. Cross-reference against `input_tokens`
+for the denominator.
+</Step>
+
+<Step title="Compute measured reduction">
+Using Sonnet-relative pricing weights:
+
+```
+measured_reduction = 1 - (
+  cache_write_tokens * 1.25 +
+  cache_read_tokens  * 0.10 +
+  uncached_input_tokens * 1.00
+) / (total_input_tokens_no_cache * 1.00)
+```
+</Step>
+
+<Step title="Publish the measurement">
+Add a separate "Measured" table below the projection table so the
+distinction stays visible. Include corpus name, commit hash, model,
+date, and per-profile figures. Do not overwrite the projection.
+</Step>
+
+</Steps>
+
+## Related code
+
+- `internal/agentloop/cache.go` — cache structuring and savings model.
+- `internal/promptcache/optimizer.go` — section-based optimizer for
+  non-agentloop prompts (plan / SOW / review). Tracks its own
+  hit / miss / break counters.
+- `internal/stream/cache.go` — live cache-stats accumulator fed by
+  the SSE stream parser.
+- `bench/harnesses/iface.go` — `RunResult.CacheReadTokens` /
+  `RunResult.CacheWriteTokens`.
+- `bench/prompt_cache/run.go` — the runner used to produce the
+  projection table above.

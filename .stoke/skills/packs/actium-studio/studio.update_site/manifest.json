@@ -1,0 +1,49 @@
+{
+  "name": "studio.update_site",
+  "version": "1.0.0",
+  "description": "Update a Studio site's top-level metadata: name, slug, plan tier, custom domain. Per-page content is NOT touched by this skill.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id":       { "type": "string", "minLength": 1 },
+      "name":          { "type": "string", "minLength": 1, "maxLength": 120 },
+      "slug":          { "type": "string", "maxLength": 120 },
+      "plan":          { "type": "string", "maxLength": 64 },
+      "custom_domain": { "type": "string", "maxLength": 253 }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["site_id", "updated_at"],
+    "properties": {
+      "site_id":       { "type": "string" },
+      "name":          { "type": "string" },
+      "slug":          { "type": "string" },
+      "plan":          { "type": "string" },
+      "custom_domain": { "type": "string" },
+      "url":           { "type": "string", "format": "uri" },
+      "updated_at":    { "type": "string", "format": "date-time" }
+    }
+  },
+  "whenToUse": [
+    "Operator renames a site or attaches a custom domain.",
+    "Upgrade/downgrade a site's plan tier via an agent-assisted flow.",
+    "Slug change coordinated with a redirects.create_redirect call for the old URL."
+  ],
+  "whenNotToUse": [
+    "Caller wants to edit page content — this is site-level only; use studio.update_page / studio.update_content.",
+    "Caller wants to change theme tokens — use the theme-specific skills (e.g. update_theme_tokens wrapper).",
+    "Slug collision not pre-checked — call studio.list_sites first to avoid a 409 on duplicate slug."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    true,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "site-metadata",
+    "rename",
+    "plan-change"
+  ]
+}

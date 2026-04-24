@@ -1,0 +1,60 @@
+{
+  "name": "studio.list_posts",
+  "version": "1.0.0",
+  "description": "Enumerate blog posts on an Actium Studio site. Returns post ids, slugs, status, author, and timestamps.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["site_id"],
+    "properties": {
+      "site_id":   { "type": "string", "minLength": 1 },
+      "status":    { "type": "string", "enum": ["draft", "published", "scheduled"] },
+      "category":  { "type": "string", "maxLength": 120 },
+      "tag":       { "type": "string", "maxLength": 120 },
+      "limit":     { "type": "integer", "minimum": 1, "maximum": 200 },
+      "cursor":    { "type": "string" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["posts"],
+    "properties": {
+      "posts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["post_id", "slug", "status"],
+          "properties": {
+            "post_id":      { "type": "string" },
+            "slug":         { "type": "string" },
+            "title":        { "type": "string" },
+            "status":       { "type": "string", "enum": ["draft", "published", "scheduled"] },
+            "author":       { "type": "string" },
+            "published_at": { "type": "string", "format": "date-time" },
+            "updated_at":   { "type": "string", "format": "date-time" }
+          }
+        }
+      },
+      "next_cursor": { "type": "string" }
+    }
+  },
+  "whenToUse": [
+    "Agent needs the post_id of a specific blog post before editing or publishing.",
+    "Editorial audit: pull drafts older than X days; feed to a cleanup or nudge flow.",
+    "Populate a sitemap, RSS feed input, or a 'recent posts' widget from blog data."
+  ],
+  "whenNotToUse": [
+    "Caller already has the post_id — go directly to studio.get_post.",
+    "Caller wants pages, not blog posts — use studio.list_pages; pages and posts are separate.",
+    "Caller wants only a single post by slug — prefer studio.get_post with a lookup if the id is unknown, rather than listing and filtering."
+  ],
+  "behaviorFlags": {
+    "mutatesState":    false,
+    "requiresNetwork": true,
+    "costCategory":    "free"
+  },
+  "recommendedFor": [
+    "blog",
+    "discovery",
+    "enumeration"
+  ]
+}
