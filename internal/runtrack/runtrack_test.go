@@ -11,7 +11,7 @@ import (
 
 func TestRegisterWritesManifest(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	reg, err := Register(Manifest{
 		RunID:   "run-abc-123",
@@ -60,7 +60,7 @@ func TestRegisterDualEmitsStokeAndR1Build(t *testing.T) {
 	// Case A: caller sets only legacy StokeBuild — R1Build mirror fills in.
 	t.Run("LegacyOnly_MirrorsToR1", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("STOKE_RUNTRACK_DIR", dir)
+		t.Setenv("R1_RUNTRACK_DIR", dir)
 
 		const want = "abc1234"
 		reg, err := Register(Manifest{
@@ -98,7 +98,7 @@ func TestRegisterDualEmitsStokeAndR1Build(t *testing.T) {
 	// still get data.
 	t.Run("CanonicalOnly_MirrorsToStoke", func(t *testing.T) {
 		dir := t.TempDir()
-		t.Setenv("STOKE_RUNTRACK_DIR", dir)
+		t.Setenv("R1_RUNTRACK_DIR", dir)
 
 		const want = "def5678"
 		reg, err := Register(Manifest{
@@ -133,7 +133,7 @@ func TestRegisterDualEmitsStokeAndR1Build(t *testing.T) {
 
 func TestRegisterRejectsEmptyRunID(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	_, err := Register(Manifest{RunID: ""})
 	if err == nil {
@@ -146,7 +146,7 @@ func TestRegisterRejectsEmptyRunID(t *testing.T) {
 
 func TestHeartbeatUpdatesTimestamp(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	reg, err := Register(Manifest{RunID: "run-hb"})
 	if err != nil {
@@ -174,7 +174,7 @@ func TestHeartbeatUpdatesTimestamp(t *testing.T) {
 
 func TestCloseRemovesManifest(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	reg, err := Register(Manifest{RunID: "run-close"})
 	if err != nil {
@@ -202,7 +202,7 @@ func TestCloseRemovesManifest(t *testing.T) {
 
 func TestListMultipleInstances(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	for i := 0; i < 3; i++ {
 		reg, err := Register(Manifest{RunID: "run-" + string(rune('a'+i))})
@@ -223,7 +223,7 @@ func TestListMultipleInstances(t *testing.T) {
 
 func TestListSkipsBadFiles(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	// Write a valid manifest.
 	reg, _ := Register(Manifest{RunID: "good"})
@@ -255,7 +255,7 @@ func TestListSkipsBadFiles(t *testing.T) {
 }
 
 func TestListReturnsNilForMissingDir(t *testing.T) {
-	t.Setenv("STOKE_RUNTRACK_DIR", "/tmp/stoke-test-nonexistent-xyz-999")
+	t.Setenv("R1_RUNTRACK_DIR", "/tmp/stoke-test-nonexistent-xyz-999")
 	ms, err := List()
 	if err != nil {
 		t.Errorf("missing dir should not be an error, got %v", err)
@@ -267,7 +267,7 @@ func TestListReturnsNilForMissingDir(t *testing.T) {
 
 func TestStartHeartbeatTicks(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	reg, err := Register(Manifest{RunID: "run-tick"})
 	if err != nil {
@@ -305,19 +305,19 @@ func TestIsProcessAliveForBogusPID(t *testing.T) {
 
 func TestDefaultServerPort(t *testing.T) {
 	// Default.
-	t.Setenv("STOKE_SERVER_PORT", "")
+	t.Setenv("R1_SERVER_PORT", "")
 	if p := DefaultServerPort(); p != 3948 {
 		t.Errorf("default port = %d, want 3948", p)
 	}
 
 	// Override.
-	t.Setenv("STOKE_SERVER_PORT", "9999")
+	t.Setenv("R1_SERVER_PORT", "9999")
 	if p := DefaultServerPort(); p != 9999 {
 		t.Errorf("override port = %d, want 9999", p)
 	}
 
 	// Bad override falls back to default.
-	t.Setenv("STOKE_SERVER_PORT", "not-a-number")
+	t.Setenv("R1_SERVER_PORT", "not-a-number")
 	if p := DefaultServerPort(); p != 3948 {
 		t.Errorf("bad override should fall back to 3948, got %d", p)
 	}
@@ -327,7 +327,7 @@ func TestRegisterIsAtomic(t *testing.T) {
 	// Verify writeJSON uses a .tmp + rename pattern so a concurrent
 	// reader never sees a half-written file.
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	reg, err := Register(Manifest{RunID: "run-atomic"})
 	if err != nil {

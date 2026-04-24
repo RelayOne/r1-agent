@@ -6,7 +6,7 @@ package main
 //   - it actually binds a Unix socket
 //   - the default Status handler returns a snapshot whose Mode matches
 //     the caller's mode argument
-//   - STOKE_CTL_DIR overrides the default /tmp socket directory
+//   - R1_CTL_DIR overrides the default /tmp socket directory
 //
 // All tests use t.Setenv which forbids t.Parallel; that's fine because
 // the helper is fast (single socket, no I/O).
@@ -25,7 +25,7 @@ import (
 // socket and answers a `status` round-trip with OK=true.
 func TestStartSessionCtlServer_Listens(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_CTL_DIR", dir)
+	t.Setenv("R1_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("run", "")
 	if srv == nil {
@@ -58,7 +58,7 @@ func TestStartSessionCtlServer_Listens(t *testing.T) {
 // is what `stoke status` renders in the MODE column.
 func TestStartSessionCtlServer_DefaultStatus_ModeMatches(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_CTL_DIR", dir)
+	t.Setenv("R1_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("chat", "")
 	if srv == nil {
@@ -98,11 +98,11 @@ func TestStartSessionCtlServer_DefaultStatus_ModeMatches(t *testing.T) {
 	}
 }
 
-// TestStartSessionCtlServer_CustomDir verifies STOKE_CTL_DIR routes the
+// TestStartSessionCtlServer_CustomDir verifies R1_CTL_DIR routes the
 // socket file into the requested directory and not /tmp.
 func TestStartSessionCtlServer_CustomDir(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_CTL_DIR", dir)
+	t.Setenv("R1_CTL_DIR", dir)
 
 	srv, sessID := startSessionCtlServer("ship", "")
 	if srv == nil {
@@ -117,7 +117,7 @@ func TestStartSessionCtlServer_CustomDir(t *testing.T) {
 	// Negative: the helper must NOT have written into /tmp.
 	tmpPath := filepath.Join("/tmp", "stoke-"+sessID+".sock")
 	if _, err := os.Stat(tmpPath); err == nil {
-		t.Errorf("socket leaked into /tmp at %s; STOKE_CTL_DIR override ignored", tmpPath)
+		t.Errorf("socket leaked into /tmp at %s; R1_CTL_DIR override ignored", tmpPath)
 		_ = os.Remove(tmpPath)
 	}
 }

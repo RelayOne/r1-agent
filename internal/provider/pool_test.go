@@ -326,7 +326,7 @@ func mustPool(t *testing.T, json string) *Pool {
 
 // envKey is the single name we read in tests. Centralizing prevents
 // typos from drifting the tests out of sync with the code path.
-const envKey = "STOKE_PROVIDERS"
+const envKey = "R1_PROVIDERS"
 
 func lookupEnv() (string, bool) {
 	return os.LookupEnv(envKey)

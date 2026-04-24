@@ -133,7 +133,7 @@ func TestDeploy_WorkersHappyPath(t *testing.T) {
 	stdout := "Published example (1.23 sec)\n  https://stdout-only.alice.workers.dev"
 
 	bin, argsLog := writeMockWrangler(t, "⛅️ wrangler 4.0.0", stdout, ndjson)
-	t.Setenv("STOKE_WRANGLER_BIN", bin)
+	t.Setenv("R1_WRANGLER_BIN", bin)
 
 	d := newCloudflareDeployer()
 	res, err := d.Deploy(context.Background(), deploy.DeployConfig{
@@ -186,7 +186,7 @@ func TestDeploy_OldWranglerVersion(t *testing.T) {
 	tightenPolling(t)
 
 	bin, argsLog := writeMockWrangler(t, "wrangler 2.9.0", "", "")
-	t.Setenv("STOKE_WRANGLER_BIN", bin)
+	t.Setenv("R1_WRANGLER_BIN", bin)
 
 	d := newCloudflareDeployer()
 	_, err := d.Deploy(context.Background(), deploy.DeployConfig{AppName: "example"})
@@ -216,7 +216,7 @@ func TestDeploy_PagesMode(t *testing.T) {
 
 	ndjson := `{"type":"deploy-complete","url":"https://pages-example.pages.dev"}`
 	bin, argsLog := writeMockWrangler(t, "wrangler 4.1.0", "Deployed to https://pages-example.pages.dev", ndjson)
-	t.Setenv("STOKE_WRANGLER_BIN", bin)
+	t.Setenv("R1_WRANGLER_BIN", bin)
 
 	pubDir := t.TempDir()
 

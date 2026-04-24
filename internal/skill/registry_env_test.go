@@ -38,7 +38,7 @@ This skill exists only to be discovered from the STOKE_SKILLS_DIR path.
 	home := t.TempDir()
 
 	t.Setenv("HOME", home)
-	t.Setenv("STOKE_SKILLS_DIR", extDir)
+	t.Setenv("R1_SKILLS_DIR", extDir)
 
 	r := DefaultRegistry(proj)
 	if err := r.Load(); err != nil {
@@ -79,7 +79,7 @@ description: Probe skill used to verify project default skills path
 
 	t.Setenv("HOME", home)
 	// Ensure env is NOT set.
-	t.Setenv("STOKE_SKILLS_DIR", "")
+	t.Setenv("R1_SKILLS_DIR", "")
 
 	r := DefaultRegistry(proj)
 	if err := r.Load(); err != nil {
@@ -108,7 +108,7 @@ func TestDefaultRegistry_EmptyStokeSkillsDirFallsBack(t *testing.T) {
 	}
 
 	t.Setenv("HOME", home)
-	t.Setenv("STOKE_SKILLS_DIR", "   ")
+	t.Setenv("R1_SKILLS_DIR", "   ")
 
 	r := DefaultRegistry(proj)
 	if err := r.Load(); err != nil {

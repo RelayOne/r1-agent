@@ -69,8 +69,8 @@ export function acknowledgeAlarm(id: string) { return id; }
 // TestDeclaredSymbolsGate_HarnessPath_H28 exercises the same path
 // with STOKE_H27_TREESITTER=1 set so the tree-sitter variant fires.
 func TestDeclaredSymbolsGate_HarnessPath_H28(t *testing.T) {
-	os.Setenv("STOKE_H27_TREESITTER", "1")
-	defer os.Unsetenv("STOKE_H27_TREESITTER")
+	os.Setenv("R1_H27_TREESITTER", "1")
+	defer os.Unsetenv("R1_H27_TREESITTER")
 
 	root := t.TempDir()
 	file := "src/alarm.ts"

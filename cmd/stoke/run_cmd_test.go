@@ -68,7 +68,7 @@ func TestRunCommandFreeTextQueryReturnsCode0(t *testing.T) {
 // TestRunCommandBudgetExhausted verifies the STOKE_BUDGET_EXHAUSTED
 // entry guard fires exit code 2 before any dispatch. Spec-2 item 7.
 func TestRunCommandBudgetExhausted(t *testing.T) {
-	t.Setenv("STOKE_BUDGET_EXHAUSTED", "1")
+	t.Setenv("R1_BUDGET_EXHAUSTED", "1")
 	code := runCommandExitCode([]string{"--output", "stream-json", "--sow", "does-not-matter.md"})
 	if code != ExitBudgetOrUsage {
 		t.Errorf("budget-exhausted exit=%d, want %d", code, ExitBudgetOrUsage)

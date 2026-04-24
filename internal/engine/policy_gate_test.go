@@ -398,7 +398,7 @@ func TestGateToolCall_EnvBackedNullClient_AllowsWhenPolicyUnset(t *testing.T) {
 	// uses gateToolCallWith with an injected Client, so there's no
 	// cross-test interference.
 	t.Setenv("CLOUDSWARM_POLICY_ENDPOINT", "")
-	t.Setenv("STOKE_POLICY_FILE", "")
+	t.Setenv("R1_POLICY_FILE", "")
 	res := gateToolCall(context.Background(), "bash",
 		json.RawMessage(`{"command":"pwd"}`))
 	if !res.Allowed {

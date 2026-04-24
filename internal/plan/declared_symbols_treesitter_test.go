@@ -130,28 +130,28 @@ class OfflineQueue:
 }
 
 func TestTreeSitterEnabled_EnvVar(t *testing.T) {
-	old := os.Getenv("STOKE_H27_TREESITTER")
-	defer os.Setenv("STOKE_H27_TREESITTER", old)
+	old := os.Getenv("R1_H27_TREESITTER")
+	defer os.Setenv("R1_H27_TREESITTER", old)
 
-	os.Unsetenv("STOKE_H27_TREESITTER")
+	os.Unsetenv("R1_H27_TREESITTER")
 	if treeSitterEnabled() {
 		t.Error("unset env should disable tree-sitter")
 	}
-	os.Setenv("STOKE_H27_TREESITTER", "")
+	os.Setenv("R1_H27_TREESITTER", "")
 	if treeSitterEnabled() {
 		t.Error("empty env should disable tree-sitter")
 	}
-	os.Setenv("STOKE_H27_TREESITTER", "1")
+	os.Setenv("R1_H27_TREESITTER", "1")
 	if !treeSitterEnabled() {
-		t.Error("STOKE_H27_TREESITTER=1 should enable")
+		t.Error("R1_H27_TREESITTER=1 should enable")
 	}
-	os.Setenv("STOKE_H27_TREESITTER", "true")
+	os.Setenv("R1_H27_TREESITTER", "true")
 	if !treeSitterEnabled() {
-		t.Error("STOKE_H27_TREESITTER=true should enable")
+		t.Error("R1_H27_TREESITTER=true should enable")
 	}
-	os.Setenv("STOKE_H27_TREESITTER", "0")
+	os.Setenv("R1_H27_TREESITTER", "0")
 	if treeSitterEnabled() {
-		t.Error("STOKE_H27_TREESITTER=0 should disable")
+		t.Error("R1_H27_TREESITTER=0 should disable")
 	}
 }
 

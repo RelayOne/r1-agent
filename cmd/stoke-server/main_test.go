@@ -18,7 +18,7 @@ import (
 func newTestServer(t *testing.T) (*httptest.Server, string) {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("STOKE_RUNTRACK_DIR", dir)
+	t.Setenv("R1_RUNTRACK_DIR", dir)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealth)

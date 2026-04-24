@@ -84,19 +84,19 @@ func TestDetectMCPGhostCalls_VariantVerbs(t *testing.T) {
 }
 
 func TestMCPStrictModeEnabled(t *testing.T) {
-	t.Setenv("STOKE_MCP_STRICT", "1")
+	t.Setenv("R1_MCP_STRICT", "1")
 	if !MCPStrictModeEnabled() {
-		t.Error("STOKE_MCP_STRICT=1 should enable strict mode")
+		t.Error("R1_MCP_STRICT=1 should enable strict mode")
 	}
-	t.Setenv("STOKE_MCP_STRICT", "")
+	t.Setenv("R1_MCP_STRICT", "")
 	if MCPStrictModeEnabled() {
 		t.Error("empty STOKE_MCP_STRICT should NOT enable strict mode")
 	}
-	t.Setenv("STOKE_MCP_STRICT", "0")
+	t.Setenv("R1_MCP_STRICT", "0")
 	if MCPStrictModeEnabled() {
-		t.Error("STOKE_MCP_STRICT=0 should NOT enable strict mode")
+		t.Error("R1_MCP_STRICT=0 should NOT enable strict mode")
 	}
-	t.Setenv("STOKE_MCP_STRICT", "true")
+	t.Setenv("R1_MCP_STRICT", "true")
 	if MCPStrictModeEnabled() {
 		t.Error("only the literal \"1\" enables strict mode (matches spec wording)")
 	}

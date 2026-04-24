@@ -206,7 +206,7 @@ func TestGetSessionEvents_WithSince(t *testing.T) {
 func TestConfig_SaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "cloud.json")
-	t.Setenv("STOKE_CLOUD_CONFIG", path)
+	t.Setenv("R1_CLOUD_CONFIG", path)
 
 	cfg := &ConfigFile{
 		Endpoint: "https://cloud.stoke.dev",
@@ -240,7 +240,7 @@ func TestConfig_SaveLoadRoundTrip(t *testing.T) {
 
 func TestLoad_MissingFileReturnsNilNoError(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("STOKE_CLOUD_CONFIG", filepath.Join(dir, "does-not-exist.json"))
+	t.Setenv("R1_CLOUD_CONFIG", filepath.Join(dir, "does-not-exist.json"))
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load on missing file should not error: %v", err)
@@ -253,7 +253,7 @@ func TestLoad_MissingFileReturnsNilNoError(t *testing.T) {
 func TestIsLinked(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cloud.json")
-	t.Setenv("STOKE_CLOUD_CONFIG", path)
+	t.Setenv("R1_CLOUD_CONFIG", path)
 
 	if IsLinked() {
 		t.Error("IsLinked should be false when file absent")

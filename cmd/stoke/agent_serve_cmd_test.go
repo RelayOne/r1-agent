@@ -3,7 +3,7 @@ package main
 // agent_serve_cmd_test.go — TASK-T20 flag-surface coverage. The
 // listener itself is exercised by internal/agentserve tests; here we
 // only verify that --trustplane-register (and its --trustplane-endpoint
-// / STOKE_TRUSTPLANE_ENDPOINT fallbacks) survive flag.Parse and reach
+// / R1_TRUSTPLANE_ENDPOINT fallbacks) survive flag.Parse and reach
 // agentServeOpts in their expected shape.
 
 import (
@@ -17,9 +17,9 @@ import (
 // test also covers --trustplane-endpoint and the agent-id flag so a
 // future revert that drops any of the three fails here first.
 func TestAgentServe_TrustPlaneRegisterFlag_ParsedOK(t *testing.T) {
-	t.Setenv("STOKE_TRUSTPLANE_ENDPOINT", "")
-	t.Setenv("STOKE_TRUSTPLANE_DID", "")
-	t.Setenv("STOKE_TRUSTPLANE_AGENT_ID", "")
+	t.Setenv("R1_TRUSTPLANE_ENDPOINT", "")
+	t.Setenv("R1_TRUSTPLANE_DID", "")
+	t.Setenv("R1_TRUSTPLANE_AGENT_ID", "")
 
 	opts, err := parseAgentServeFlags([]string{
 		"--trustplane-register",
@@ -57,8 +57,8 @@ func TestAgentServe_TrustPlaneRegisterFlag_ParsedOK(t *testing.T) {
 	}
 
 	// Env fallback path — --trustplane-endpoint unset should pick up
-	// STOKE_TRUSTPLANE_ENDPOINT when provided.
-	t.Setenv("STOKE_TRUSTPLANE_ENDPOINT", "https://env.example.com")
+	// R1_TRUSTPLANE_ENDPOINT when provided.
+	t.Setenv("R1_TRUSTPLANE_ENDPOINT", "https://env.example.com")
 	opts, err = parseAgentServeFlags([]string{"--trustplane-register"})
 	if err != nil {
 		t.Fatalf("parseAgentServeFlags (env fallback): %v", err)
@@ -72,7 +72,7 @@ func TestAgentServe_TrustPlaneRegisterFlag_ParsedOK(t *testing.T) {
 
 	// Default path — no flag, no env. Register stays false and the
 	// listener behaves like a standalone hireable agent.
-	t.Setenv("STOKE_TRUSTPLANE_ENDPOINT", "")
+	t.Setenv("R1_TRUSTPLANE_ENDPOINT", "")
 	opts, err = parseAgentServeFlags(nil)
 	if err != nil {
 		t.Fatalf("parseAgentServeFlags (defaults): %v", err)

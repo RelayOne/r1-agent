@@ -6,11 +6,10 @@
 // tree. Each surface ships with a window-close date pinned in code so
 // the S6 deprecation phase has a deterministic flip target:
 //
-//   - Env vars (S1-1, 90 days, ends 2026-07-23) -- env.go.
-//     LookupEnv(canonical, legacy) reads R1_* first, falls back to the
-//     legacy STOKE_* var, and rate-limits a single-shot deprecation
-//     WARN per (canonical, legacy) pair. EnvLegacyDropEnabled() reads
-//     R1_ENV_LEGACY_DROP for the post-window canonical-only mode.
+//   - Env vars (S1-1, 90 days, ended 2026-07-23) -- env.go.
+//     LookupEnv(canonical, _) reads R1_* only. The legacy STOKE_*
+//     fallback was retired 2026-07-23 per S6-3. The second argument
+//     is accepted for call-site compatibility but ignored.
 //
 //   - HTTP headers (S1-2, 30 days, ends 2026-05-23) -- headers.go.
 //     DualHeader(h, pair, value) stamps both X-R1-* and X-Stoke-* on
