@@ -19,6 +19,7 @@ export type PhaseTag =
   | "R1D-4" // Skill catalog + marketplace + test modal
   | "R1D-5" // Ledger viewer
   | "R1D-6" // Memory inspector
+  | "R1D-7" // Settings + vault + providers + governance
   | "R1D-9"; // Cost panel / observability
 
 /**

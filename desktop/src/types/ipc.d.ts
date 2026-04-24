@@ -531,6 +531,78 @@ export interface SkillInvokeResult {
 }
 
 // ---------------------------------------------------------------------
+// Settings: providers / vault / governance (§R1D-7)
+// ---------------------------------------------------------------------
+
+/** Configured-provider status surfaced in the Providers section. */
+export type ProviderStatus = "configured" | "needs_key";
+
+/**
+ * Single provider row rendered in the R1D-7.2 Providers section.
+ * `id` is stable (e.g. "claude", "openai"); `name` is human-readable;
+ * `endpoint` is the base URL the client hits; `model` is the default
+ * model identifier for this provider; `is_default` flips true for the
+ * one provider the session composer pre-selects; `status` drives the
+ * pill chip ("configured" = ready, "needs_key" = missing vault entry).
+ */
+export interface ProviderRow {
+  id: string;
+  name: string;
+  endpoint: string;
+  model: string;
+  is_default: boolean;
+  status: ProviderStatus;
+}
+
+/**
+ * Result of the `provider_test` stub. `ok` is the success flag the UI
+ * renders as a pill; `latency_ms` is the round-trip time; `model` is
+ * the model the endpoint reports back; `message` carries a one-line
+ * diagnostic when the test fails.
+ */
+export interface ProviderTestResult {
+  ok: boolean;
+  latency_ms: number;
+  model: string;
+  message?: string;
+}
+
+/** Kind tag for rows in the Vault section (R1D-7.3). */
+export type VaultEntryKind = "api_key" | "passphrase" | "other";
+
+/**
+ * Single vault row. The raw secret is never sent to the WebView — the
+ * host returns `masked_preview` (e.g. "••••••••1234") and the panel
+ * decides whether to surface the last-4 suffix on Reveal. `updated_at`
+ * powers the "Last rotated" column.
+ */
+export interface VaultEntry {
+  id: string;
+  name: string;
+  kind: VaultEntryKind;
+  masked_preview: string;
+  updated_at: Iso8601;
+}
+
+export interface VaultSetResult {
+  ok: boolean;
+}
+
+export interface VaultDeleteResult {
+  ok: boolean;
+}
+
+/** Policy tier persisted by the Governance section (R1D-7.4). */
+export type PolicyTier = "community" | "enterprise";
+
+/** Retention policy controlling how long ledger + memory rows stick around. */
+export type RetentionPolicy = "ephemeral" | "30d" | "90d" | "1y" | "forever";
+
+export interface GovSetResult {
+  ok: boolean;
+}
+
+// ---------------------------------------------------------------------
 // Server-pushed events (§4)
 // ---------------------------------------------------------------------
 
@@ -631,5 +703,11 @@ export type InvokeMethod =
   | "skill_uninstall"
   | "skill_install_pack"
   | "skill_invoke"
+  // Settings: providers / vault / governance (R1D-7)
+  | "provider_test"
+  | "vault_list"
+  | "vault_set"
+  | "vault_delete"
+  | "gov_set"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";

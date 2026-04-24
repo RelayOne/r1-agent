@@ -27,6 +27,10 @@ import { renderPanel as renderCostPanel } from "./panels/cost-panel";
 import { renderPanel as renderSkillCatalog } from "./panels/skill-catalog";
 import { mountDrawer as mountDescentEvidenceDrawer } from "./panels/descent-evidence";
 import { mountNodeDrawer as mountLedgerNodeDrawer } from "./panels/ledger-node-drawer";
+import {
+  mountSettings,
+  mountSettingsTrigger,
+} from "./panels/settings";
 
 type PanelEntry = {
   id: string;
@@ -53,6 +57,11 @@ function mount(): void {
   app.classList.add("r1-app-grid");
   app.innerHTML = "";
 
+  const toolbar = document.createElement("div");
+  toolbar.className = "r1-app-toolbar";
+  toolbar.style.gridArea = "toolbar";
+  app.appendChild(toolbar);
+
   for (const panel of PANELS) {
     const section = document.createElement("section");
     section.id = panel.id;
@@ -63,6 +72,8 @@ function mount(): void {
 
   mountDescentEvidenceDrawer(document.body);
   mountLedgerNodeDrawer(document.body);
+  mountSettings(document.body);
+  mountSettingsTrigger(toolbar);
 }
 
 if (document.readyState === "loading") {
