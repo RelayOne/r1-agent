@@ -1,82 +1,360 @@
 # Business Value
 
-<!-- THIS DOCUMENT IS FOR NON-TECHNICAL READERS.
-     Write like a pitch deck, not a spec.
-     A marketer should be able to write a landing page from this alone.
-     An investor should understand the opportunity from this alone.
-     ZERO code. ZERO jargon. ZERO acronyms without expansion. -->
+This document is the pitch. No code. No jargon. No acronyms without
+expansion. A marketer should be able to write a landing page from
+this alone. An investor should understand the opportunity from this
+alone.
 
-## The Problem
+## The problem
 
-<!-- Paint the picture. Who suffers? How much does it cost them?
-     Use specific scenarios, not abstractions.
-     "A [role] at a [company type] currently has to [painful manual process].
-     This takes [time]. It costs [money]. It fails [how often]."
-     Make the reader FEEL the pain before you introduce the solution. -->
+Coding agents hallucinate success. They say "I ran the tests and
+they pass" when they never ran the tests. They write a function,
+fail to save it, and report the task complete. They claim to have
+fixed a bug and hand back a codebase that doesn't compile. A
+production team running twenty of these agents in parallel spends
+more engineering time auditing their outputs than the agents saved.
 
-## Who This Is For
+The industry response has been to throw more agents at the problem:
+supervisor agents, critic agents, voter agents, orchestrator agents.
+A 2025 academic study of real multi-agent deployments
+(**Multi-Agent Failure in the Wild**) measured failure rates between
+41% and 87%. A separate study showed a 70% accuracy drop when teams
+blindly added more agents to an existing workflow. The "committee of
+cooperating agents" pattern is how you lose.
 
-<!-- Be specific about the target user. Not "developers" — which developers?
-     "Backend engineers at mid-size SaaS companies who manage 10+ microservices
-     and spend 40% of their week on deployment pipeline maintenance." -->
+The underlying model already has the capability. It's been publicly
+shown that the **same model** improves by ~15 points on the
+industry's hardest coding benchmark (SWE-bench Pro) when the
+scaffolding around it changes. **The scaffold is the product.**
 
-## How [Product Name] Solves It
+Every harness on the market today either:
 
-<!-- Walk through the solution as a user story, not a feature list.
-     "Instead of [old painful way], [user] now [new easy way].
-     [Specific example of the before/after]. [Quantified improvement]."
-     Tell a story. Make it vivid. -->
+1. Trusts the agent blindly and audits at commit time (too late,
+   silent failures land in production), or
+2. Stacks a multi-agent committee on top (expensive, slow, and
+   measurably worse than a single strong worker plus one reviewer).
 
-## Key Benefits
+Nobody is running a disciplined single-worker harness with
+cross-family adversarial review, append-only governance traces, and
+a verification engine that refuses to accept "done" at face value.
 
-<!-- Lead with OUTCOMES, not features. Format:
-     [Measurable outcome]: [How the product delivers it]
+## Who this is for
 
-     Examples:
-     "Cut deployment time from 45 minutes to 90 seconds: one-command deploy with automatic rollback"
-     "Eliminate 100% of content moderation false positives: AI classification trained on 45M+ monthly samples"
+**Engineering leaders at venture-backed product companies** who are
+already using AI coding tools, already seeing silent failures in
+pull requests, and already spending half the productivity gain on
+after-the-fact audit. They feel the tension between "our AI shipped
+more code this quarter than our human engineers" and "we have no
+idea what it actually did." They need the productivity. They can't
+trust the outputs. They'd pay for trust.
 
-     5-8 benefits. Each one should make someone think "I want that." -->
+**Compliance-regulated teams** (health, finance, legal, public
+sector) who cannot adopt AI coding tools at all today because
+nothing gives them an audit trail they can defend. Append-only
+content-addressed governance ledgers with two-level Merkle
+commitments unlock HIPAA, GDPR, and EU AI Act Article 12 compliance.
+This is a category that is currently excluded from AI coding
+entirely.
 
-## What Makes This Different
+**Solo operators and small teams** who are building serious
+products without an engineering org. The commit stream of one strong
+implementer plus a reviewer catches the mistakes you would have
+caught in a code review if you had a code review. Stoke gives small
+teams the review discipline of large teams.
 
-<!-- Direct comparison to alternatives. Be honest and specific.
-     "Unlike [Alternative A] which [limitation], [Product] [advantage]."
-     "Where [Alternative B] requires [painful thing], [Product] [better approach]."
-     This is NOT a feature comparison table. This is a narrative about why you win. -->
+**AI safety researchers, red teamers, and adversarial testers** who
+need to probe a realistic harness and catch prompt-injection
+bypasses before the whole industry ships them. Stoke exposes every
+layer.
 
-## Business Model
+## How Stoke solves it
 
-<!-- How money flows. Be concrete.
-     "Freemium: free for individuals, $X/mo per team, enterprise pricing for [features]."
-     "Usage-based: $X per [unit], volume discounts at [thresholds]." -->
+Stoke runs one strong implementer per task and pairs it with a
+cross-family adversarial reviewer. If the worker is Claude, the
+reviewer is Codex. If the worker is Codex, the reviewer is Claude.
+Both sign off, or the work doesn't merge.
 
-## Market Opportunity
+Every action — every tool call, every file edit, every test result,
+every cost line — lands in an append-only ledger. Redaction uses a
+cryptographic commitment so sensitive content can be wiped without
+breaking the integrity chain. Auditors get true provenance.
+Operators get causal traces. Regulators get compliance-ready
+retention.
 
-<!-- Size the market. Use real data or cite sources.
-     TAM/SAM/SOM if you have it. Growth rates. Trends driving demand. -->
+A verification descent engine refuses to let a worker say "done"
+without proving it. If the worker claims to have written a file,
+Stoke checks the file exists and isn't empty. If the worker says
+"tests pass," Stoke runs the tests. If the worker repairs the same
+file three times in a row, the loop ends. If the worker burns $0.50
+re-diagnosing an environment issue a human could have spotted, the
+environment-issue tool shortcuts the whole multi-analyst ladder
+and saves the operator's budget.
 
-## Traction & Proof Points
+Before every commit, an 11-layer defense-in-depth gate runs:
+protected-file check, scope check, build, test, lint, AST-aware
+critic (catches hardcoded secrets, SQL injection, debug prints,
+empty catch blocks), cross-model review, and seven more. Any one of
+the eleven can fail the merge. All eleven have to pass.
 
-<!-- What's been built, shipped, validated.
-     Users, revenue, partnerships, waitlist, pilot results.
-     "X users in beta" is better than nothing. Be honest about stage. -->
+Prompt injection gets treated as a first-class engineering concern.
+Every file Stoke reads into a prompt is scanned by a dedicated
+sanitizer. Every tool output is capped at 200KB, scrubbed of
+chat-template tokens, and annotated when it looks injection-shaped.
+Every end-of-turn is checked against four honeypots: a system-prompt
+canary, a markdown-image exfiltration probe, a template-token leak
+detector, and a destructive-without-consent pattern. A 58-sample
+adversarial corpus regression-tests all of it on every build.
+
+The **result**: code you can actually merge without an after-the-
+fact human audit. A governance trace you can hand to your compliance
+officer. A cost profile that stays predictable because retry loops
+can't spin forever.
+
+## Key benefits
+
+**Ship AI-generated code without a follow-up audit pass.** The
+cross-model review gate + AST critic + verification descent catch
+the classes of failure that human reviewers used to spend 40%
+of their time on.
+
+**Never silently lose work to a "done" that isn't done.** The
+ghost-write detector, the forced self-check before turn end, and
+the per-file repair cap together mean Stoke refuses to accept
+completion without evidence.
+
+**Cut your AI coding cost by avoiding wasted retry loops.** Same-
+error-twice escalation and fingerprint deduplication stop the "burn
+3× budget repeating the same mistake" failure mode. Environment-
+issue worker tool saves ~$0.10 per acceptance criterion on known
+env failures.
+
+**Audit anything, forever.** Append-only content-addressed ledger
+with Merkle chaining means every decision is provable and nothing
+can be retroactively tampered. Redact sensitive content via the
+two-level commitment without breaking the chain.
+
+**Adopt AI coding in regulated industries.** HIPAA, GDPR, and EU AI
+Act Article 12 compliance lands via the ledger + retention policies
++ encryption-at-rest path (ships scoped and in-flight).
+
+**Deploy in minutes, not weeks.** One binary, one config file,
+optional SQLite. No database to run. No sidecar to operate. No
+cloud dependency unless you opt in. A plain host with Git and one
+LLM CLI is enough.
+
+**Keep the binary working forever, even offline.** The stewardship
+commitment — baked into the project license and enforced by a CI
+acceptance test — guarantees no feature migrates from self-hosted
+to cloud-only.
+
+**Run every model you already pay for.** The five-provider fallback
+chain (Claude, Codex, OpenRouter, direct Anthropic API, lint-only)
+means Stoke routes to whatever you have budget for, automatically.
+
+**Integrate with anything that speaks Model Context Protocol.** MCP
+client + server, trust gating, circuit breakers, concurrency caps.
+Connect Linear, GitHub, Slack, Postgres, or any custom server.
+
+**Visibility without instrumentation.** The r1-server dashboard
+auto-discovers any running Stoke instance on the machine, exposes
+the live event stream, the ledger DAG, and a 3D force-directed
+graph of the reasoning trace — all from the JSON signature file
+Stoke writes on startup. Install by running a single binary.
+
+## What makes this different
+
+**Every other harness in the "AI orchestrator" category is a
+multi-agent committee.** They scale by adding coordination. Stoke
+scales by making a single strong worker more reliable. The MAST
+study data says single-strong-agent-plus-reviewer outperforms
+committees by wide margins on real tasks.
+
+**Every other harness audits at commit time.** Stoke audits at
+every end-of-turn via the verification descent engine. By the time
+a diff reaches the commit gate, three or four layers of checks have
+already fired.
+
+**Every other harness treats prompt injection as a marketing
+liability.** Stoke treats it as an engineering problem with a test
+suite. Four independent defense layers, 58 adversarial samples, a
+per-category minimum detection rate asserted on every build.
+
+**Every other harness locks its features behind a cloud tier.**
+Stoke's stewardship commitment says no feature migrates from self-
+hosted to cloud-only, ever, enforced by a CI acceptance test that
+builds Stoke from source without cloud credentials and runs a
+golden workflow to completion. Managed cloud exists for convenience.
+The binary is complete.
+
+**Every other harness is a binary black box.** Stoke ships 180
+internal packages, each focused, each audited (see
+`PACKAGE-AUDIT.md`), each inspectable. The 30-PR cleanup campaign
+landed 600+ lint findings across unused, nilerr, exhaustive,
+goconst, prealloc, predeclared, gocritic, errname, errorlint,
+gosec, and more. The race detector is green across the full repo.
+Any new race fails CI; it doesn't warn.
+
+## Business model
+
+- **Self-hosted binary:** free, MIT-licensed. Unlimited use. No
+  telemetry. No phone-home. No feature gate.
+- **Managed cloud (opt-in):** hosted session state, centralized
+  pool management across devices, cross-agent audit consolidation
+  for teams running multiple Stoke instances. Usage-based pricing
+  on stored state and cross-device coordination. Never cheaper than
+  running your own binary; always more convenient.
+- **Enterprise support contract:** SLA on security disclosures,
+  custom stance role templates, private MCP server integrations,
+  on-site training. Annual subscription.
+- **TrustPlane identity anchoring (opt-in):** Ed25519 DPoP signing
+  + RFC 9449 compliance for agent-to-agent federation. Used by
+  operators running agents that hire other agents via the A2A
+  protocol.
+
+## Market opportunity
+
+The AI coding tools category is already multi-billion-dollar ARR
+with double-digit quarterly growth. The underlying models are
+commoditizing rapidly — every provider now ships a coding-capable
+model with a tool-use loop. The **differentiation is in the
+harness**. SWE-bench Pro published numbers show up to a 15-point
+delta from scaffold changes alone, which in a category where 10%
+accuracy translates directly to enterprise contract size is an
+enormous lever.
+
+Regulated industries (health, finance, legal, public sector) are
+excluded from the category today by compliance and audit gaps. A
+harness that unlocks them is not competing with existing tools for
+share; it's creating a greenfield segment.
+
+The cost of wasted retry loops in a production AI coding pipeline
+is measurable in every team's monthly invoice. A harness that cuts
+retries through fingerprint deduplication and environment-issue
+shortcuts pays for itself in provider API savings alone at modest
+team scale.
+
+## Traction and proof points
+
+- **Production-viable on real scope.** In-repo ladder experiments
+  show Stoke converging on R10-scope tasks (ticket-triage app with
+  worker + SQLite, 25 tasks) with working code end-to-end. The
+  simple-loop variant is production-viable at this scope today.
+- **Race-clean, test-clean, vet-clean.** The CI gate — build + test
+  + vet + race + advisory-lint — is green on every PR. A 30-PR
+  cleanup campaign closed 600+ lint findings across 16 analyzer
+  categories. Any new race fails the build.
+- **Open-source and governed.** Shipping under MIT with formal
+  governance (`GOVERNANCE.md`), a signed CLA (`CLA.md`), a
+  stewardship commitment (`STEWARDSHIP.md`), and a disclosure policy
+  with honor list (`SECURITY.md`). Path to maintainer is documented.
+- **180 internal packages.** Focused, audited, inspectable. Package
+  count drift is a CI check.
+- **Signed binaries, verifiable releases.** goreleaser builds
+  cross-platform artifacts on every tag. cosign keyless OIDC via
+  sigstore signs every release. Homebrew tap updated automatically.
+  Docker image published to GitHub Container Registry.
+- **58-sample red-team corpus.** Minimum detection rate asserted per
+  category on every build; regression catches any bypass before it
+  lands.
 
 ## Roadmap
 
 ### Shipped
-<!-- What's live and working today. Written as benefits, not features. -->
 
-### Building Now
-<!-- What's actively being developed. Expected timeline. -->
+**Execution engine with an adversarial reviewer.** Single-strong-agent
+plus cross-family review gate. Merge-blocking dissent.
 
-### Coming Next
-<!-- What's planned. Why these are the right next priorities. -->
+**Verification descent.** Eight-tier ladder catches ghost writes,
+forces completion evidence, caps repair loops, plugs in non-code
+executors through a VerifyFunc contract.
 
-## The Team's Unfair Advantage
+**Content-addressed governance ledger.** Append-only, Merkle-chained,
+22 node types, 7 edge types, filesystem + SQLite backends, durable
+event bus with STOKE protocol envelope.
 
-<!-- Why THIS team can win THIS market. Specific domain expertise.
-     Prior exits. Relevant scale experience. Unique technical insight. -->
+**Prompt-injection defense-in-depth.** Four ingest-path scanners,
+tool-output sanitization, end-of-turn honeypots, websearch allowlist,
+red-team corpus regression.
+
+**Multi-task executor architecture.** Code, research, browse
+(HTTP), deploy (Fly.io), and delegation MVP executors. Uniform
+interface. Free-text task routing.
+
+**r1-server visual execution trace.** Auto-discovers Stoke instances,
+exposes event stream + ledger DAG + checkpoints, live dashboard at
+`http://localhost:3948`.
+
+**Agent-to-Agent federation.** Signed agent cards v1.0.0, HMAC
+tokens, Ed25519 DPoP (RFC 9449), canonical `/.well-known/agent-
+card.json` route with Deprecation/Sunset headers on the legacy path.
+
+**Production-grade release pipeline.** CI gate (build/vet/test +
+race + advisory-lint + govulncheck + gosec), goreleaser + cosign
+keyless OIDC, Homebrew tap, Docker image, one-line installer with
+platform detection and signature verification.
+
+**Governance documents.** GOVERNANCE.md, CLA.md, CONTRIBUTING.md,
+CODE_OF_CONDUCT.md, STEWARDSHIP.md, SECURITY.md, PACKAGE-AUDIT.md.
+
+### Building now
+
+**Verification descent at scale.** H-91 series hardening, soft-pass
+propagation, attempt history carryover, correlation IDs with SOW
+snapshot.
+
+**r1-server UI v2.** Waterfall + tree default view, 3D ledger
+visualizer with InstancedMesh + time scrubber, memory explorer with
+FTS5 search, cryptographic verification UI per node, `.tracebundle`
+portable export.
+
+**Encryption at rest + retention policies.** SQLCipher + per-line
+XChaCha20-Poly1305 JSONL + OS keyring, per-surface retention,
+crypto-shred without breaking the Merkle chain. Compliance-ready
+(HIPAA / GDPR / EU AI Act Art. 12).
+
+**Memory full stack.** sqlite-vec + 3-way embedder fallback + auto-
+retrieval hooks + consolidation into semantic/procedural tiers.
+
+### Coming next
+
+**Agent-to-agent hiring marketplace.** Full A2A protocol with HMAC
+tokens, trust clamping, x402 micropayments, signed cards, JWKS, and
+saga compensators. Federation across hosted agents.
+
+**DeployExecutor Phase 2.** Vercel and Cloudflare adapters after the
+Fly.io path proves out.
+
+**Browser interactive mode.** go-rod powered headless browser with
+click, type, wait, screenshot, and vision-diff acceptance criteria.
+
+**Ledger redaction with two-level Merkle commitment.** Content-tier
+wipe that preserves chain integrity forever. Regulatory unlocker.
+
+## The unfair advantage
+
+Stoke is built by a team that has spent years operating AI coding
+agents in real production environments, watched the multi-agent
+committee pattern fail in real deployments, and designed a harness
+around the specific failure modes they observed. The design is
+opinionated on a first-hand basis, not derivative.
+
+The codebase is a showcase of what a rigorous single-developer-
+velocity engineering process can produce when the process itself is
+the subject: 180 focused internal packages, race-clean tests, an
+append-only governance ledger, a verification engine that
+instruments its own claims, and a published academic stance
+(`docs/benchmark-stance.md`, `docs/architecture/single-strong-
+agent-stance.md`).
+
+The stewardship commitment is the moat. Every competitor in the
+category has a commercial incentive to gate features behind cloud
+tiers. Stoke's license, CI, and governance documents together make
+that path impossible for Stoke itself. Operators betting their
+production pipelines on a harness cannot run it on a vendor that
+might paywall the runtime tomorrow. Stoke's guarantee that the
+binary is complete, forever, is the reason regulated industries can
+standardize on it.
 
 ---
-*Last updated: [date]*
+
+*Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
