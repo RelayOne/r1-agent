@@ -198,8 +198,9 @@ func swiftStdlibRoots() map[string]struct{} {
 }
 
 func parseSwiftLikeErrors(projectRoot, output string, re *regexp.Regexp, code string) []CompileErr {
-	var errs []CompileErr
-	for _, line := range strings.Split(output, "\n") {
+	lines := strings.Split(output, "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -308,7 +309,7 @@ func (objcEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 	defer cancel()
 	var all []CompileErr
 	for _, f := range files {
-		cmd := exec.CommandContext(c, "clang", "-fsyntax-only", "-x", "objective-c", f)
+		cmd := exec.CommandContext(c, "clang", "-fsyntax-only", "-x", "objective-c", f) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		for _, line := range strings.Split(string(out), "\n") {

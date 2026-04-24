@@ -21,16 +21,25 @@ func NewConvergenceDetected() *ConvergenceDetected {
 	return &ConvergenceDetected{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *ConvergenceDetected) Name() string {
 	return "consensus.convergence_detected"
 }
 
+// Pattern tells the supervisor which bus events trigger this rule:
+// any ledger-node-added event, since new agree/dissent nodes may flip
+// the convergence state.
 func (r *ConvergenceDetected) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: string(bus.EvtLedgerNodeAdded)}
 }
 
+// Priority places this rule near the top of the queue (95 of 100) so
+// convergence is detected before lower-priority follow-ups fire.
 func (r *ConvergenceDetected) Priority() int { return 95 }
 
+// Rationale is the human-readable explanation included in supervisor
+// decisions for audit.
 func (r *ConvergenceDetected) Rationale() string {
 	return "A loop converges when all partners agree and no dissents are outstanding."
 }
@@ -41,6 +50,9 @@ type convergenceContent struct {
 	Resolved bool   `json:"resolved"`
 }
 
+// Evaluate reports whether the loop referenced by evt has at least
+// one agree node and no unresolved dissent nodes. Returns false (with
+// no error) for irrelevant node types or missing loop scope.
 func (r *ConvergenceDetected) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {
@@ -95,6 +107,9 @@ func (r *ConvergenceDetected) Evaluate(ctx context.Context, evt bus.Event, l *le
 	return hasAgree, nil
 }
 
+// Action emits a consensus.loop.state.changed event transitioning the
+// loop to the converged state. CausalRef links back to the triggering
+// node-added event.
 func (r *ConvergenceDetected) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {

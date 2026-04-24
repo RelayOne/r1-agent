@@ -66,7 +66,7 @@ func (c *Client) Validate(ctx context.Context, root string) ([]Finding, error) {
 			return nil
 		}
 		switch base {
-		case "package.json", "requirements.txt", "pyproject.toml", "Cargo.toml", "go.mod":
+		case packageJSONFile, "requirements.txt", "pyproject.toml", "Cargo.toml", "go.mod":
 			manifests = append(manifests, path)
 		}
 		return nil
@@ -99,7 +99,7 @@ func shouldSkipDir(name string) bool {
 func (c *Client) validateManifest(ctx context.Context, path string) ([]Finding, error) {
 	base := filepath.Base(path)
 	switch base {
-	case "package.json":
+	case packageJSONFile:
 		return c.ValidatePackageJSON(ctx, path)
 	case "requirements.txt":
 		return c.validatePythonRequirements(ctx, path)

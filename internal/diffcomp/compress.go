@@ -179,7 +179,7 @@ func TruncateToTokens(diff FileDiff, maxTokens int) FileDiff {
 	}
 
 	// Keep hunks until budget exhausted
-	var kept []Hunk
+	kept := make([]Hunk, 0, len(diff.Hunks))
 	used := 0
 	for _, h := range diff.Hunks {
 		hunkStr := renderHunk(h)
@@ -283,7 +283,7 @@ func startHunk(oldNum, newNum int, ops []diffOp, idx, contextLines int, oldLines
 }
 
 func compressHunk(h Hunk, opts CompressOpts) Hunk {
-	var lines []Line
+	lines := make([]Line, 0, len(h.Lines))
 	for _, l := range h.Lines {
 		if l.Op != OpContext {
 			trimmed := strings.TrimSpace(l.Content)

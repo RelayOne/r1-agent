@@ -96,7 +96,7 @@ func ScanDeclaredSymbolsNotImplementedTreeSitter(repoRoot, sowProse string, chan
 		}
 	}
 
-	var out []QualityFinding
+	out := make([]QualityFinding, 0, len(declared))
 	for _, d := range declared {
 		if present[d] || present[strings.ToLower(d)] {
 			continue

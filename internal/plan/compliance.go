@@ -207,7 +207,10 @@ func classifyDeliverable(repoRoot string, d Deliverable) ComplianceFinding {
 	}
 	// Limit evidence list length to keep the report readable.
 	if len(matchedPaths) > 4 {
-		finding.Evidence = append(matchedPaths[:4], fmt.Sprintf("… and %d more", len(matchedPaths)-4))
+		evidence := make([]string, 0, 5)
+		evidence = append(evidence, matchedPaths[:4]...)
+		evidence = append(evidence, fmt.Sprintf("… and %d more", len(matchedPaths)-4))
+		finding.Evidence = evidence
 	} else {
 		finding.Evidence = matchedPaths
 	}
@@ -452,7 +455,7 @@ func filterNoiseDeliverables(ds []Deliverable) []Deliverable {
 		"errors": true, "logic": true, "state": true, "data": true,
 		"types": true, "etc": true,
 	}
-	var out []Deliverable
+	out := make([]Deliverable, 0, len(ds))
 	for _, d := range ds {
 		name := strings.TrimSpace(d.Name)
 		if len(name) < 3 {

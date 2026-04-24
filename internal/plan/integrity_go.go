@@ -131,11 +131,12 @@ func (goEcosystem) CompileErrors(ctx context.Context, projectRoot string, files 
 	c, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 	args := append([]string{"vet"}, pkgs...)
-	cmd := exec.CommandContext(c, "go", args...)
+	cmd := exec.CommandContext(c, "go", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = projectRoot
 	out, _ := cmd.CombinedOutput()
-	var errs []CompileErr
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

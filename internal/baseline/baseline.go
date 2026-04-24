@@ -184,7 +184,7 @@ func Verify(ctx context.Context, repoRoot string, cmds Commands) (*Snapshot, err
 // runCommand executes a shell command and captures its result.
 func runCommand(ctx context.Context, dir, name, command string) CommandResult {
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, "bash", "-lc", command)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = dir
 
 	out, err := cmd.CombinedOutput()

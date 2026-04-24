@@ -86,7 +86,7 @@ func (p *Pipeline) Run(ctx context.Context, dir string) ([]Outcome, error) {
 
 // runLocal executes a command directly on the host.
 func (p *Pipeline) runLocal(ctx context.Context, name, cmdStr, dir string) Outcome {
-	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return Outcome{Name: name, Success: err == nil, Output: string(out)}

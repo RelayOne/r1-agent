@@ -114,7 +114,7 @@ func RunContainer(ctx context.Context, cfg ContainerConfig) (ContainerResult, er
 	args = append(args, cfg.Cmd...)
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -140,13 +140,13 @@ func RunContainer(ctx context.Context, cfg ContainerConfig) (ContainerResult, er
 // EnsureNetwork creates the Docker network if it does not already exist.
 func EnsureNetwork(ctx context.Context, name string) error {
 	// Check if network exists.
-	check := exec.CommandContext(ctx, "docker", "network", "inspect", name)
+	check := exec.CommandContext(ctx, "docker", "network", "inspect", name) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	if check.Run() == nil {
 		return nil
 	}
 
 	// Create an internal network with no external access.
-	cmd := exec.CommandContext(ctx, "docker", "network", "create",
+	cmd := exec.CommandContext(ctx, "docker", "network", "create", // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 		"--internal",
 		"--driver", "bridge",
 		name,

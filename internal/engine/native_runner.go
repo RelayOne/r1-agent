@@ -117,7 +117,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		"write_file": true,
 		"bash":       true, // bash can write; restricted in read-only mode
 	}
-	var toolDefs []provider.ToolDef
+	toolDefs := make([]provider.ToolDef, 0, len(allDefs))
 	for _, td := range allDefs {
 		if spec.Phase.ReadOnly && writableTools[td.Name] {
 			continue // exclude write-capable tools in read-only mode
@@ -287,7 +287,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		if gate := gateToolCall(ctx, name, input); !gate.Allowed {
 			return "", gate.Err
 		}
-		start := time.Now()
+		toolStart := time.Now()
 		var result string
 		var err error
 		if h, ok := extraHandlers[name]; ok {
@@ -303,10 +303,10 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 			entry := map[string]any{
 				"type":        "tool_call",
 				"uuid":        newShortID("c"),
-				"ts":          start.UTC().Format(time.RFC3339Nano),
+				"ts":          toolStart.UTC().Format(time.RFC3339Nano),
 				"tool":        name,
 				"input":       truncateForWorkerLog(string(input), 4096),
-				"duration_ms": time.Since(start).Milliseconds(),
+				"duration_ms": time.Since(toolStart).Milliseconds(),
 				"result_len":  len(result),
 			}
 			addCtx(entry, &wlc)
@@ -375,7 +375,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				// the bash-command build gate for cases where the
 				// ecosystem registry doesn't cover the repo shape.
 				if buildCmd := detectBuildCommand(spec.WorktreeDir); buildCmd != "" {
-					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd)
+					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 					cmd.Dir = spec.WorktreeDir
 					out, err := cmd.CombinedOutput()
 					if err != nil {
@@ -561,8 +561,9 @@ func runEcosystemGate(ctx context.Context, repoDir string) string {
 	if err != nil {
 		return "" // not a git repo or git unavailable
 	}
-	var files []string
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	files := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if len(line) < 4 {
 			continue
 		}
@@ -857,7 +858,7 @@ func extractLastAssistantToolCalls(messages []agentloop.Message) []MidturnToolCa
 			resultByID[b.ToolUseID] = b
 		}
 	}
-	var out []MidturnToolCall
+	out := make([]MidturnToolCall, 0, len(prev.Content))
 	for _, b := range prev.Content {
 		if b.Type != "tool_use" {
 			continue

@@ -82,7 +82,7 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	}
 
 	// Capture target branch HEAD before creating the worktree
-	baseCmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "HEAD")
+	baseCmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "HEAD") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	baseCmd.Dir = m.RepoRoot
 	baseOut, err := baseCmd.Output()
 	if err != nil {
@@ -92,15 +92,15 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 
 	// Detect default branch (don't hardcode "main" -- repos may use "master" or custom names)
 	defaultBranch := "main"
-	branchCmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "--abbrev-ref", "HEAD")
+	branchCmd := exec.CommandContext(ctx, m.GitBinary, "rev-parse", "--abbrev-ref", "HEAD") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	branchCmd.Dir = m.RepoRoot
-	if branchOut, err := branchCmd.Output(); err == nil {
+	if branchOut, bErr := branchCmd.Output(); bErr == nil {
 		if b := strings.TrimSpace(string(branchOut)); b != "" && b != "HEAD" {
 			defaultBranch = b
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "add", path, "-b", branch, defaultBranch)
+	cmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "add", path, "-b", branch, defaultBranch) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	cmd.Dir = m.RepoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -176,7 +176,7 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	}
 
 	// Force-remove worktree (handles dirty worktrees with uncommitted changes)
-	cmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "remove", "--force", handle.Path)
+	cmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "remove", "--force", handle.Path) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	cmd.Dir = m.RepoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
 		errs = append(errs, fmt.Sprintf("worktree remove: %v: %s", err, strings.TrimSpace(string(out))))
@@ -185,14 +185,14 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	}
 
 	// Delete branch
-	branchCmd := exec.CommandContext(ctx, m.GitBinary, "branch", "-D", handle.Branch)
+	branchCmd := exec.CommandContext(ctx, m.GitBinary, "branch", "-D", handle.Branch) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	branchCmd.Dir = m.RepoRoot
 	if out, err := branchCmd.CombinedOutput(); err != nil {
 		errs = append(errs, fmt.Sprintf("branch -D: %v: %s", err, strings.TrimSpace(string(out))))
 	}
 
 	// Prune stale worktree refs
-	pruneCmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "prune")
+	pruneCmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "prune") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	pruneCmd.Dir = m.RepoRoot
 	pruneCmd.Run() // best-effort
 
@@ -200,7 +200,7 @@ func (m *Manager) Cleanup(ctx context.Context, handle Handle) error {
 	// Without this, intermediate agent commits survive as reachable objects
 	// under refs/stoke-snapshots/ and accumulate over time.
 	snapRef := "refs/stoke-snapshots/" + handle.Name
-	delRefCmd := exec.CommandContext(ctx, m.GitBinary, "update-ref", "-d", snapRef)
+	delRefCmd := exec.CommandContext(ctx, m.GitBinary, "update-ref", "-d", snapRef) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	delRefCmd.Dir = m.RepoRoot
 	delRefCmd.Run() // best-effort
 
@@ -226,7 +226,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 
 	// Validate with merge-tree first (zero side effects, Git 2.38+)
 	var conflicts []conflictres.Conflict // hoisted for use in merge fallback
-	validateCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch)
+	validateCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge-tree", "--write-tree", "HEAD", handle.Branch) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	validateCmd.Dir = m.RepoRoot
 	if out, err := validateCmd.CombinedOutput(); err != nil {
 		if mergeCtx.Err() != nil {
@@ -257,7 +257,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 	}
 
 	// Merge for real
-	mergeCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--no-ff", handle.Branch, "-m", message)
+	mergeCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--no-ff", handle.Branch, "-m", message) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	mergeCmd.Dir = m.RepoRoot
 	if m.Signer != nil {
 		m.Signer.ApplyTo(mergeCmd)
@@ -271,7 +271,7 @@ func (m *Manager) Merge(ctx context.Context, handle Handle, message string) erro
 		if len(conflicts) > 0 && allAutoResolved(conflicts) {
 			if applyErr := m.applyConflictResolutions(mergeCtx, handle, conflicts); applyErr != nil {
 				// Abort the conflicted merge state before returning.
-				abortCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--abort")
+				abortCmd := exec.CommandContext(mergeCtx, m.GitBinary, "merge", "--abort") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 				abortCmd.Dir = m.RepoRoot
 				_ = abortCmd.Run()
 				return fmt.Errorf("git merge conflict auto-resolution failed: %w (original: %s)", applyErr, string(out))
@@ -328,7 +328,7 @@ func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, c
 		// Applying Resolve() to a file without markers would corrupt it.
 		if !strings.Contains(contentStr, "<<<<<<<") {
 			// No conflict markers — git resolved this file on its own. Stage it.
-			addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file)
+			addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 			addCmd.Dir = m.RepoRoot
 			if out, addErr := addCmd.CombinedOutput(); addErr != nil {
 				return fmt.Errorf("git add %s: %w: %s", file, addErr, string(out))
@@ -341,12 +341,12 @@ func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, c
 			return fmt.Errorf("file %s has unresolved conflicts after apply", file)
 		}
 
-		if err := os.WriteFile(filePath, []byte(res.Resolved), 0644); err != nil {
+		if err := os.WriteFile(filePath, []byte(res.Resolved), 0644); err != nil { // #nosec G306 -- conflict-resolved source file; 0644 preserves source perms.
 			return fmt.Errorf("write resolved file %s: %w", file, err)
 		}
 
 		// Stage the resolved file.
-		addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file)
+		addCmd := exec.CommandContext(ctx, m.GitBinary, "add", file) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 		addCmd.Dir = m.RepoRoot
 		if out, err := addCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git add %s: %w: %s", file, err, string(out))
@@ -354,7 +354,7 @@ func (m *Manager) applyConflictResolutions(ctx context.Context, handle Handle, c
 	}
 
 	// Complete the merge commit.
-	commitCmd := exec.CommandContext(ctx, m.GitBinary, "commit", "--no-edit")
+	commitCmd := exec.CommandContext(ctx, m.GitBinary, "commit", "--no-edit") // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	commitCmd.Dir = m.RepoRoot
 	if m.Signer != nil {
 		m.Signer.ApplyTo(commitCmd)

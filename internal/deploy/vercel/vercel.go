@@ -302,7 +302,7 @@ func runVercel(ctx context.Context, cfg deploy.DeployConfig, args ...string) (st
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(runCtx, bin, args...)
+	cmd := exec.CommandContext(runCtx, bin, args...) // #nosec G204 -- deploy tool binary invoked with Stoke-generated args.
 	if cfg.Dir != "" {
 		cmd.Dir = cfg.Dir
 	}

@@ -118,7 +118,7 @@ func (r *DuplicateWorkDetected) evaluateNode(ctx context.Context, evt bus.Event,
 	}
 
 	var wd workDescriptor
-	if err := json.Unmarshal(node.Content, &wd); err != nil {
+	if err = json.Unmarshal(node.Content, &wd); err != nil {
 		return false, nil
 	}
 

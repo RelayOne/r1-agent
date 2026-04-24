@@ -397,7 +397,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, effort Effort) (Re
 		body = deterministicSynthesize(q, findings)
 	}
 	if o.RunRoot != "" {
-		_ = os.WriteFile(filepath.Join(o.RunRoot, "synthesis.md"), []byte(body), 0o644)
+		_ = os.WriteFile(filepath.Join(o.RunRoot, "synthesis.md"), []byte(body), 0o644) // #nosec G306 -- research report artefact; user-readable.
 	}
 	o.emit("synthesis.ready", map[string]any{"bytes": len(body)})
 
@@ -663,7 +663,7 @@ func writePlanFile(runRoot, query string, objs []SubObjective) error {
 			fmt.Fprintf(&b, "Hints: %s\n\n", strings.Join(o.Hints, ", "))
 		}
 	}
-	return os.WriteFile(filepath.Join(runRoot, "plan.md"), []byte(b.String()), 0o644)
+	return os.WriteFile(filepath.Join(runRoot, "plan.md"), []byte(b.String()), 0o644) // #nosec G306 -- research plan artefact; user-readable.
 }
 
 // writeSubagentDir persists one subagent's artefacts as three files
@@ -692,11 +692,11 @@ func writeSubagentDir(runRoot string, idx int, obj SubObjective, f Findings, fet
 	if obj.TaskBoundaries != "" {
 		fmt.Fprintf(&ob, "## Task Boundaries\n\n%s\n", obj.TaskBoundaries)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "objective.md"), []byte(ob.String()), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "objective.md"), []byte(ob.String()), 0o644); err != nil { // #nosec G306 -- research artefact; user-readable.
 		return err
 	}
 	// findings.md
-	if err := os.WriteFile(filepath.Join(dir, "findings.md"), []byte(f.Summary), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "findings.md"), []byte(f.Summary), 0o644); err != nil { // #nosec G306 -- research artefact; user-readable.
 		return err
 	}
 	// sources.jsonl
@@ -714,7 +714,7 @@ func writeSubagentDir(runRoot string, idx int, obj SubObjective, f Findings, fet
 		sb.Write(line)
 		sb.WriteByte('\n')
 	}
-	return os.WriteFile(filepath.Join(dir, "sources.jsonl"), []byte(sb.String()), 0o644)
+	return os.WriteFile(filepath.Join(dir, "sources.jsonl"), []byte(sb.String()), 0o644) // #nosec G306 -- research artefact; user-readable.
 }
 
 // readFindingsFromDisk reconstructs a []Findings by reading each

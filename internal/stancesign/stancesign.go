@@ -195,10 +195,10 @@ func ensureKeyPair(dir, keyPath, pubPath string) error {
 		return fmt.Errorf("stancesign: marshal private: %w", err)
 	}
 	var buf bytes.Buffer
-	if err := pem.Encode(&buf, pemBlock); err != nil {
+	if err = pem.Encode(&buf, pemBlock); err != nil {
 		return fmt.Errorf("stancesign: pem encode: %w", err)
 	}
-	if err := os.WriteFile(keyPath, buf.Bytes(), 0o600); err != nil {
+	if err = os.WriteFile(keyPath, buf.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("stancesign: write private: %w", err)
 	}
 	sshPub, err := ssh.NewPublicKey(pub)
@@ -206,7 +206,7 @@ func ensureKeyPair(dir, keyPath, pubPath string) error {
 		return fmt.Errorf("stancesign: public key: %w", err)
 	}
 	authorizedLine := ssh.MarshalAuthorizedKey(sshPub)
-	if err := os.WriteFile(pubPath, authorizedLine, 0o644); err != nil {
+	if err := os.WriteFile(pubPath, authorizedLine, 0o644); err != nil { // #nosec G306 -- SSH public key file; 0644 is standard.
 		return fmt.Errorf("stancesign: write public: %w", err)
 	}
 	return nil

@@ -123,6 +123,8 @@ func runTaskCmd(args []string, stdout, stderr io.Writer, r *router.Router) int {
 		fmt.Fprintf(stdout, "hint: run `stoke chat` to start a conversation.\n")
 	case executor.TaskDeploy:
 		fmt.Fprintf(stdout, "hint: run `stoke deploy --provider fly --app <name>` to run the fly.io deploy pipeline.\n")
+	case executor.TaskUnknown, executor.TaskResearch, executor.TaskBrowser, executor.TaskDelegate:
+		fmt.Fprintf(stdout, "hint: this executor is scaffolding; real pipeline lands in a follow-up Track B task.\n")
 	default:
 		fmt.Fprintf(stdout, "hint: this executor is scaffolding; real pipeline lands in a follow-up Track B task.\n")
 	}

@@ -130,7 +130,7 @@ func ScanDeclaredSymbolsNotImplemented(repoRoot, sowProse string, changedFiles [
 		present[strings.ToLower(sym.Name)] = true
 	}
 
-	var out []QualityFinding
+	out := make([]QualityFinding, 0, len(declared))
 	for _, d := range declared {
 		if present[d] || present[strings.ToLower(d)] {
 			continue
@@ -173,7 +173,7 @@ var declaredSymbolPatterns = []*regexp.Regexp{
 	// "the acknowledgeAlarm handler" / "the fooBar function/endpoint/method"
 	regexp.MustCompile(`(?i)\b(?:the|a|an)\s+([A-Za-z_][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*)\s+(?:handler|function|method|endpoint|provider|hook|component|controller|service|middleware|guard|resolver|action|reducer|selector|thunk)\b`),
 	// "a FooSchema class|struct|type|enum|interface|trait|schema|record"
-	regexp.MustCompile(`(?i)\b(?:a|an|the)\s+([A-Z][A-Za-z0-9_]+)\s+(?:class|struct|type|enum|interface|trait|schema|record|model|entity|model)\b`),
+	regexp.MustCompile(`(?i)\b(?:a|an|the)\s+([A-Z][A-Za-z0-9_]+)\s+(?:class|struct|type|enum|interface|trait|schema|record|model|entity)\b`),
 	// "export function Xyz", "export class Xyz", "export const Xyz"
 	regexp.MustCompile(`(?i)\bexport(?:s)?\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b`),
 	// "called XxxYyy" / "named XxxYyy" (PascalCase or camelCase only)

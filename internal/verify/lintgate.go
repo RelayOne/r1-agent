@@ -77,7 +77,7 @@ func (lg *LintGate) Check(ctx context.Context, dir, filePath string) LintResult 
 		cmdStr = fmt.Sprintf(cmdTemplate, fullPath)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr)
+	cmd := exec.CommandContext(ctx, "bash", "-lc", cmdStr) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 

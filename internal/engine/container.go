@@ -43,7 +43,7 @@ func wrapInDocker(ctx context.Context, prepared PreparedCommand, spec RunSpec) *
 	args = append(args, prepared.Binary)
 	args = append(args, prepared.Args...)
 
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd
 }

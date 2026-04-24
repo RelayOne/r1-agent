@@ -135,7 +135,7 @@ func writeUpstreamSessionMarker(repoRoot string, session plan.Session, changedFi
 	if err != nil {
 		return fmt.Errorf("marshal marker: %w", err)
 	}
-	return os.WriteFile(sessionMarkerPath(repoRoot, session.ID), data, 0o644)
+	return os.WriteFile(sessionMarkerPath(repoRoot, session.ID), data, 0o644) // #nosec G306 -- CLI output artefact; user-readable.
 }
 
 // isUpstreamSessionAlreadyComplete returns true if a marker exists for

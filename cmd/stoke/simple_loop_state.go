@@ -66,7 +66,7 @@ type simpleLoopState struct {
 // when neither side is populated, preserving backwards compat with
 // state files written before RepoHead existed.
 func currentRepoHead(repoRoot string) string {
-	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD")
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD") // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -81,7 +81,7 @@ func currentRepoHead(repoRoot string) string {
 // reflect. Returns (false, err) on git failure so the caller can treat
 // "couldn't verify" as refuse-to-resume.
 func repoTreeIsDirty(repoRoot string) (bool, error) {
-	cmd := exec.Command("git", "-C", repoRoot, "status", "--porcelain=v1")
+	cmd := exec.Command("git", "-C", repoRoot, "status", "--porcelain=v1") // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	out, err := cmd.Output()
 	if err != nil {
 		return false, err
@@ -102,7 +102,7 @@ func repoHeadIsAncestor(repoRoot, savedHead, currentHead string) (bool, error) {
 	if savedHead == currentHead {
 		return true, nil
 	}
-	cmd := exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", savedHead, currentHead)
+	cmd := exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", savedHead, currentHead) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {
@@ -144,7 +144,7 @@ func SaveSimpleLoopState(repoRoot string, state *simpleLoopState) error {
 	}
 	target := simpleLoopStateFile(repoRoot)
 	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+	if err := os.WriteFile(tmp, body, 0o644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		return fmt.Errorf("write tmp: %w", err)
 	}
 	if err := os.Rename(tmp, target); err != nil {

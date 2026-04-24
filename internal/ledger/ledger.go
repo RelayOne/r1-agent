@@ -398,7 +398,7 @@ func (l *Ledger) Query(_ context.Context, filter QueryFilter) ([]Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ledger: query index: %w", err)
 	}
-	var nodes []Node
+	nodes := make([]Node, 0, len(ids))
 	for _, id := range ids {
 		n, err := l.store.ReadNode(id)
 		if err != nil {
@@ -623,8 +623,8 @@ func (l *Ledger) RebuildIndex() error {
 		return fmt.Errorf("ledger: list nodes: %w", err)
 	}
 	for _, n := range nodes {
-		if err := l.index.InsertNode(n); err != nil {
-			return fmt.Errorf("ledger: reindex node %s: %w", n.ID, err)
+		if iErr := l.index.InsertNode(n); iErr != nil {
+			return fmt.Errorf("ledger: reindex node %s: %w", n.ID, iErr)
 		}
 	}
 

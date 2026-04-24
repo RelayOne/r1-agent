@@ -332,7 +332,7 @@ func (s *CodebaseServer) handleSearchSymbols(args map[string]interface{}) (strin
 
 	results := s.symIdx.Search(query)
 
-	var filtered []symindex.Symbol
+	filtered := make([]symindex.Symbol, 0, len(results))
 	for _, sym := range results {
 		if kindFilter != "" && string(sym.Kind) != kindFilter {
 			continue
@@ -1065,5 +1065,5 @@ func WriteMCPConfig(configPath, binaryPath, repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0o644)
+	return os.WriteFile(configPath, data, 0o644) // #nosec G306 -- codebase server artefact; user-readable.
 }

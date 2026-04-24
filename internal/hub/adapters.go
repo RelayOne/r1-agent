@@ -245,6 +245,8 @@ func ConsentGate(workflow *consent.Workflow) Subscriber {
 			switch decision {
 			case consent.DecisionDenied, consent.DecisionBlocked:
 				return &HookResponse{Decision: Deny, Reason: "consent: " + string(decision)}
+			case consent.DecisionApproved, consent.DecisionPending, consent.DecisionAuto:
+				return &HookResponse{Decision: Allow}
 			default:
 				return &HookResponse{Decision: Allow}
 			}

@@ -32,6 +32,20 @@ const (
 	ProjectPython   ProjectType = "python"
 )
 
+// Package manager and monorepo tool names. Used both as the value
+// stored in ProjectInfo and as the runner string when building the
+// concrete script command.
+const (
+	pkgMgrPnpm    = "pnpm"
+	pkgMgrYarn    = "yarn"
+	pkgMgrNpm     = "npm"
+	monoTurborepo = "turborepo"
+
+	// Default build command emitted when the project has a `build`
+	// script (or a tsconfig.json) and falls through to plain npm.
+	cmdNpmRunBuild = "npm run build"
+)
+
 // ProjectInfo describes the detected project type and its capabilities.
 type ProjectInfo struct {
 	Type          ProjectType // framework/language detected
@@ -125,7 +139,7 @@ func DetectProject(projectRoot string) ProjectInfo {
 				// Monorepo detection
 				if fileExists(filepath.Join(projectRoot, "turbo.json")) {
 					info.IsMonorepo = true
-					info.MonorepoTool = "turborepo"
+					info.MonorepoTool = monoTurborepo
 				} else if fileExists(filepath.Join(projectRoot, "nx.json")) {
 					info.IsMonorepo = true
 					info.MonorepoTool = "nx"
@@ -139,15 +153,15 @@ func DetectProject(projectRoot string) ProjectInfo {
 
 				// Package manager detection
 				if fileExists(filepath.Join(projectRoot, "pnpm-lock.yaml")) || fileExists(filepath.Join(projectRoot, "pnpm-workspace.yaml")) {
-					info.PackageManager = "pnpm"
+					info.PackageManager = pkgMgrPnpm
 					if !info.IsMonorepo && fileExists(filepath.Join(projectRoot, "pnpm-workspace.yaml")) {
 						info.IsMonorepo = true
 						info.MonorepoTool = "pnpm-workspaces"
 					}
 				} else if fileExists(filepath.Join(projectRoot, "yarn.lock")) {
-					info.PackageManager = "yarn"
+					info.PackageManager = pkgMgrYarn
 				} else {
-					info.PackageManager = "npm"
+					info.PackageManager = pkgMgrNpm
 				}
 
 				// Parse workspace globs
@@ -261,17 +275,17 @@ func DetectCommands(projectRoot string) Commands {
 		cmds := Commands{}
 
 		// Select the right runner for monorepos
-		runner := "npm"
+		runner := pkgMgrNpm
 		if info.IsMonorepo {
 			switch info.PackageManager {
-			case "pnpm":
-				runner = "pnpm"
-			case "yarn":
-				runner = "yarn"
+			case pkgMgrPnpm:
+				runner = pkgMgrPnpm
+			case pkgMgrYarn:
+				runner = pkgMgrYarn
 			}
 		}
 
-		if info.IsMonorepo && info.MonorepoTool == "turborepo" {
+		if info.IsMonorepo && info.MonorepoTool == monoTurborepo {
 			// Turborepo: use turbo run for orchestrated builds
 			if scripts["build"] {
 				cmds.Build = runner + " run build"
@@ -302,9 +316,9 @@ func DetectCommands(projectRoot string) Commands {
 				cmds.Test = "npm test"
 			}
 			if scripts["build"] {
-				cmds.Build = "npm run build"
+				cmds.Build = cmdNpmRunBuild
 			} else if fileExists(filepath.Join(projectRoot, "tsconfig.json")) || info.Type == ProjectNextJS {
-				cmds.Build = "npm run build"
+				cmds.Build = cmdNpmRunBuild
 			}
 			if scripts["lint"] {
 				cmds.Lint = "npm run lint"

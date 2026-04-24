@@ -118,7 +118,7 @@ func (arduinoEcosystem) CompileErrors(ctx context.Context, projectRoot string, f
 		if fqbn == "" {
 			fqbn = "esp32:esp32:esp32"
 		}
-		cmd := exec.CommandContext(c, "arduino-cli", "compile", "--fqbn", fqbn, "--warnings", "default", "--dry-run", dir)
+		cmd := exec.CommandContext(c, "arduino-cli", "compile", "--fqbn", fqbn, "--warnings", "default", "--dry-run", dir) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		for _, line := range strings.Split(string(out), "\n") {

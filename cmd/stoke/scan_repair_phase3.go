@@ -50,7 +50,7 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 	// 3a: aggregate.
 	agg := aggregatePhase3Findings(cfg.Repo)
 	res.Aggregated = countAggregateLines(agg)
-	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-aggregated.md"),
+	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-aggregated.md"), // #nosec G306 -- CLI output artefact; user-readable.
 		[]byte(agg), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "  [Phase 3a] write findings-aggregated.md: %v\n", err)
 	}
@@ -76,13 +76,13 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 	if res.Aggregated == 0 {
 		// Nothing to dedupe/filter — write empty files and let the
 		// orchestrator take the zero-findings clean exit.
-		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deduped.md"),
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deduped.md"), // #nosec G306 -- CLI output artefact; user-readable.
 			[]byte("# Deduped Findings\n\nNone.\n"), 0644)
-		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-approved.md"),
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-approved.md"), // #nosec G306 -- CLI output artefact; user-readable.
 			[]byte("# Approved Findings\n\nNone.\n"), 0644)
-		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deferred.md"),
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deferred.md"), // #nosec G306 -- CLI output artefact; user-readable.
 			[]byte("# Deferred Findings\n\nNone.\n"), 0644)
-		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-dropped.md"),
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-dropped.md"), // #nosec G306 -- CLI output artefact; user-readable.
 			[]byte("# Dropped Findings\n\nNone.\n"), 0644)
 		res.SOWPath = filepath.Join(cfg.Repo, "FIX_SOW.md")
 		return res, nil
@@ -108,7 +108,7 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 		// Fail-open: treat the aggregate itself as the dedupe result.
 		dedupeReply = agg
 	}
-	_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deduped.md"),
+	_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deduped.md"), // #nosec G306 -- CLI output artefact; user-readable.
 		[]byte("# Deduped Findings\n\n"+dedupeReply+"\n"), 0644)
 	res.Deduped = countFindingLinesInBlock(dedupeReply)
 	fmt.Printf("🧹 Phase 3b dedupe: %d→%d\n", res.Aggregated, res.Deduped)
@@ -132,15 +132,15 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 	res.Deferred = len(deferred)
 	res.Dropped = len(dropped)
 
-	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-approved.md"),
+	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-approved.md"), // #nosec G306 -- CLI output artefact; user-readable.
 		[]byte("# Approved Findings\n\n"+strings.Join(approved, "\n")+"\n"), 0644); err != nil {
 		return res, fmt.Errorf("write findings-approved.md: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deferred.md"),
+	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-deferred.md"), // #nosec G306 -- CLI output artefact; user-readable.
 		[]byte("# Deferred Findings\n\n"+strings.Join(deferred, "\n")+"\n"), 0644); err != nil {
 		return res, fmt.Errorf("write findings-deferred.md: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-dropped.md"),
+	if err := os.WriteFile(filepath.Join(cfg.Repo, "audit", "findings-dropped.md"), // #nosec G306 -- CLI output artefact; user-readable.
 		[]byte("# Dropped Findings\n\n"+strings.Join(dropped, "\n")+"\n"), 0644); err != nil {
 		return res, fmt.Errorf("write findings-dropped.md: %w", err)
 	}
@@ -151,7 +151,7 @@ func runPhase3Full(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result,
 	if len(approved) == 0 {
 		// Write an empty SOW; the orchestrator's zero-findings branch
 		// replaces this with the clean-exit message.
-		_ = os.WriteFile(sowPath, []byte("# Fix SOW\n\nNo high-impact findings approved.\n"), 0644)
+		_ = os.WriteFile(sowPath, []byte("# Fix SOW\n\nNo high-impact findings approved.\n"), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 		return res, nil
 	}
 
@@ -550,7 +550,7 @@ func runPhase3dFixTasks(ctx context.Context, cfg *scanRepairConfig, approved []s
 			body = b.String()
 		}
 		out := filepath.Join(outDir, section+".md")
-		if err := os.WriteFile(out, []byte(body), 0644); err != nil {
+		if err := os.WriteFile(out, []byte(body), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 			fmt.Fprintf(os.Stderr, "  [Phase 3d] write %s: %v\n", out, err)
 		}
 	}
@@ -638,7 +638,7 @@ func writeFinalSOW(cfg *scanRepairConfig, res *phase3Result, approved []string, 
 	}
 
 	sowPath := filepath.Join(cfg.Repo, "FIX_SOW.md")
-	if err := os.WriteFile(sowPath, []byte(buf.String()), 0644); err != nil {
+	if err := os.WriteFile(sowPath, []byte(buf.String()), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		return err
 	}
 	res.SOWPath = sowPath
@@ -648,7 +648,7 @@ func writeFinalSOW(cfg *scanRepairConfig, res *phase3Result, approved []string, 
 	specsDir := filepath.Join(cfg.Repo, "specs")
 	if err := os.MkdirAll(specsDir, 0755); err == nil {
 		repairName := fmt.Sprintf("repair-%s.md", time.Now().Format("2006-01-02"))
-		_ = os.WriteFile(filepath.Join(specsDir, repairName), []byte(buf.String()), 0644)
+		_ = os.WriteFile(filepath.Join(specsDir, repairName), []byte(buf.String()), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 	}
 	return nil
 }

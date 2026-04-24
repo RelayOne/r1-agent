@@ -11,6 +11,15 @@ import (
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// Stream-event types and result subtypes used when translating
+// apiclient events into stream.Event payloads.
+const (
+	apiEventText            = "text"
+	apiSubtypeSuccess       = "success"
+	apiSubtypeErrorRunning  = "error_during_execution"
+	apiSubtypeRateLimited   = "rate_limited"
+)
+
 // APIRunner implements CommandRunner using the native apiclient package
 // for direct API calls. Supports Anthropic, OpenAI-compatible, and
 // LiteLLM proxy endpoints without spawning subprocesses.
@@ -123,7 +132,7 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 	// Stream the response, translating apiclient events to stream.Event
 	usage, apiErr := client.Stream(ctx, req, func(ev apiclient.StreamEvent) {
 		switch ev.Type {
-		case "text":
+		case apiEventText:
 			resultText.WriteString(ev.Text)
 			if onEvent != nil {
 				onEvent(stream.Event{
@@ -136,7 +145,7 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 				onEvent(stream.Event{
 					Type:    "result",
 					IsError: true,
-					Subtype: "error_during_execution",
+					Subtype: apiSubtypeErrorRunning,
 				})
 			}
 		}
@@ -156,13 +165,13 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 	if apiErr != nil {
 		result.IsError = true
 		result.ResultText = apiErr.Error()
-		result.Subtype = "error_during_execution"
+		result.Subtype = apiSubtypeErrorRunning
 
 		// Detect rate limiting and auth errors
 		var apiError *apiclient.APIError
 		if errors.As(apiErr, &apiError) {
 			if apiError.IsRateLimit() {
-				result.Subtype = "rate_limited"
+				result.Subtype = apiSubtypeRateLimited
 			}
 			if apiError.IsAuth() {
 				result.Subtype = "auth_error"
@@ -194,7 +203,7 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 	}
 
 	result.ResultText = resultText.String()
-	result.Subtype = "success"
+	result.Subtype = apiSubtypeSuccess
 	result.Tokens = stream.TokenUsage{
 		Input:  lastUsage.InputTokens,
 		Output: lastUsage.OutputTokens,
@@ -207,7 +216,7 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 	if onEvent != nil {
 		onEvent(stream.Event{
 			Type:       "result",
-			Subtype:    "success",
+			Subtype:    apiSubtypeSuccess,
 			ResultText: result.ResultText,
 			DurationMs: durationMs,
 			CostUSD:    result.CostUSD,

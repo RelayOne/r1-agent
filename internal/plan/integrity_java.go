@@ -138,7 +138,7 @@ func (javaEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 	}
 	if _, err := exec.LookPath("javac"); err == nil {
 		args := append([]string{"-d", os.TempDir(), "-Xmaxerrs", "200"}, files...)
-		cmd := exec.CommandContext(c, "javac", args...)
+		cmd := exec.CommandContext(c, "javac", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		return javaParseErrors(projectRoot, string(out)), nil
@@ -147,8 +147,9 @@ func (javaEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 }
 
 func javaParseErrors(projectRoot, output string) []CompileErr {
-	var errs []CompileErr
-	for _, line := range strings.Split(output, "\n") {
+	lines := strings.Split(output, "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

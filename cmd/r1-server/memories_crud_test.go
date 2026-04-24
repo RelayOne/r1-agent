@@ -21,6 +21,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -48,7 +49,7 @@ func postMemoryHelper(t *testing.T, baseURL string, req memoryWriteRequest, pass
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	httpReq, err := http.NewRequest(http.MethodPost, baseURL+"/api/memories", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+"/api/memories", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -317,7 +318,7 @@ func TestMemoriesDELETE_Removes(t *testing.T) {
 	// Second DELETE — 404 because the row is already gone. Proves the
 	// handler distinguishes "already removed" from a successful
 	// removal rather than silently returning 204 for both.
-	req2, _ := http.NewRequest(http.MethodDelete,
+	req2, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete,
 		s.URL+"/api/memories/"+strconv.FormatInt(id, 10), nil)
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
@@ -351,7 +352,7 @@ func TestMemoriesPUT_ScopeAlways_MissingPass_401(t *testing.T) {
 		Content:    "attempted overwrite",
 		MemoryType: "hacked",
 	})
-	req, _ := http.NewRequest(http.MethodPut,
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut,
 		s.URL+"/api/memories/"+strconv.FormatInt(id, 10),
 		bytes.NewReader(putBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -415,8 +416,10 @@ func TestMemoriesCRUD_V2Off_404(t *testing.T) {
 	s := newUIServer(t)
 
 	// POST
-	resp, err := http.Post(s.URL+"/api/memories", "application/json",
+	postReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL+"/api/memories",
 		strings.NewReader(`{"scope":"permanent","content":"x","key":"k"}`))
+	postReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(postReq)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -426,7 +429,7 @@ func TestMemoriesCRUD_V2Off_404(t *testing.T) {
 	}
 
 	// PUT
-	req, _ := http.NewRequest(http.MethodPut, s.URL+"/api/memories/1",
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, s.URL+"/api/memories/1",
 		strings.NewReader(`{"content":"x"}`))
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -438,7 +441,7 @@ func TestMemoriesCRUD_V2Off_404(t *testing.T) {
 	}
 
 	// DELETE
-	req, _ = http.NewRequest(http.MethodDelete, s.URL+"/api/memories/1", nil)
+	req, _ = http.NewRequestWithContext(context.Background(), http.MethodDelete, s.URL+"/api/memories/1", nil)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("DELETE: %v", err)

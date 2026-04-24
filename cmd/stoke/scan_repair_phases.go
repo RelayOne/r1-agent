@@ -210,7 +210,7 @@ func writeSemanticFinding(repo, sectionFile string, pattern semanticPattern, rep
 	if body == "" {
 		body = "(no response — call failed or timed out)"
 	}
-	if err := os.WriteFile(outPath, []byte(fmt.Sprintf("# %s / %s\n\n%s\n", base, pattern.Name, body)), 0644); err != nil {
+	if err := os.WriteFile(outPath, []byte(fmt.Sprintf("# %s / %s\n\n%s\n", base, pattern.Name, body)), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		// A failed per-pattern write doesn't abort the whole phase —
 		// other (section,pattern) goroutines are still running and
 		// the aggregate report will just be missing this entry. Log
@@ -315,7 +315,7 @@ func writeSemanticReport(repo string, res *phase2Result, numSections, numPattern
 		}
 	}
 
-	return os.WriteFile(filepath.Join(repo, "audit", "semantic-report.md"), buf.Bytes(), 0644)
+	return os.WriteFile(filepath.Join(repo, "audit", "semantic-report.md"), buf.Bytes(), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 }
 
 // writeEmptySemanticReport is called from the short-circuits in
@@ -323,7 +323,7 @@ func writeSemanticReport(repo string, res *phase2Result, numSections, numPattern
 // from crashing on a missing file.
 func writeEmptySemanticReport(repo, reason string) error {
 	body := fmt.Sprintf("# Semantic Audit Report\n\nNo semantic scan ran: %s\n", reason)
-	return os.WriteFile(filepath.Join(repo, "audit", "semantic-report.md"), []byte(body), 0644)
+	return os.WriteFile(filepath.Join(repo, "audit", "semantic-report.md"), []byte(body), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 }
 
 // parseSemanticPatterns extracts the 20 patterns from
@@ -441,7 +441,7 @@ func runPhase3(ctx context.Context, cfg *scanRepairConfig, p1 *phase1Result, p2 
 	}
 
 	sowPath := filepath.Join(cfg.Repo, "FIX_SOW.md")
-	if err := os.WriteFile(sowPath, []byte(reply), 0644); err != nil {
+	if err := os.WriteFile(sowPath, []byte(reply), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		return "", fmt.Errorf("write FIX_SOW.md: %w", err)
 	}
 	return sowPath, nil
@@ -534,7 +534,7 @@ func runPhase4(ctx context.Context, cfg *scanRepairConfig, sowPath string) error
 	if len(args) == 0 {
 		return fmt.Errorf("unknown mode %q", cfg.Mode)
 	}
-	cmd := exec.CommandContext(ctx, cfg.StokeBin, args...)
+	cmd := exec.CommandContext(ctx, cfg.StokeBin, args...) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = cfg.Repo
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -695,7 +695,7 @@ func ensureClaudeScripts(repo string) error {
 			continue
 		}
 		fmt.Printf("  .claude/scripts missing — running %s in %s\n", c, repo)
-		cmd := exec.Command("bash", c)
+		cmd := exec.Command("bash", c) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 		cmd.Dir = repo
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
@@ -720,7 +720,7 @@ func ensureClaudeScripts(repo string) error {
 func runShell(ctx context.Context, dir, cmdline string, timeout time.Duration) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "bash", "-lc", cmdline)
+	cmd := exec.CommandContext(cctx, "bash", "-lc", cmdline) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

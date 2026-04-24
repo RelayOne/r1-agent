@@ -76,6 +76,8 @@ func (i Intent) String() string {
 		return "diagnose"
 	case IntentAmbiguous:
 		return "ambiguous"
+	case IntentUnknown:
+		return "unknown"
 	default:
 		return "unknown"
 	}
@@ -181,6 +183,8 @@ func ClassifyIntent(ctx context.Context, input string, llm IntentLLMFunc) (Inten
 	switch got {
 	case IntentImplement, IntentDiagnose, IntentAmbiguous:
 		return got, nil
+	case IntentUnknown:
+		return IntentAmbiguous, nil
 	default:
 		return IntentAmbiguous, nil
 	}
@@ -292,6 +296,14 @@ func Gate(ctx context.Context, input string, tools []harnessTools.ToolName, llm 
 			Intent:  intent,
 			Tools:   clamped,
 			Clamped: len(clamped) != len(tools),
+		}, err
+	case IntentUnknown:
+		// Safety fallback: IntentUnknown from a flaky LLM clamps
+		// tools to read-only, matching IntentAmbiguous behavior.
+		return GateResult{
+			Intent:  IntentAmbiguous,
+			Tools:   ClampReadOnly(tools),
+			Clamped: true,
 		}, err
 	default:
 		// Defensive: `ClassifyIntent` never returns values outside

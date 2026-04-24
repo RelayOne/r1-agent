@@ -205,6 +205,8 @@ func (p *ProviderPool) Next() (*ProviderMember, error) {
 		return p.nextFailover()
 	case StrategyWeighted:
 		return p.nextWeighted()
+	case StrategyRoundRobin:
+		return p.nextRoundRobin()
 	default:
 		// StrategyRoundRobin is the zero value; any unknown strategy
 		// falls through here too. That is the safe default: a new
@@ -220,7 +222,7 @@ func (p *ProviderPool) Next() (*ProviderMember, error) {
 func (p *ProviderPool) nextRoundRobin() (*ProviderMember, error) {
 	n := len(p.members)
 	for attempt := 0; attempt < n; attempt++ {
-		idx := int(atomic.AddUint64(&p.counter, 1)-1) % n
+		idx := int(atomic.AddUint64(&p.counter, 1)-1) % n // #nosec G115 -- negative-result wrap handled explicitly below.
 		if idx < 0 { // guard against wrap on 32-bit int coercion
 			idx += n
 		}
@@ -251,7 +253,7 @@ func (p *ProviderPool) nextWeighted() (*ProviderMember, error) {
 		// on ProviderMember.Weight.
 		return p.nextRoundRobin()
 	}
-	step := int(atomic.AddUint64(&p.counter, 1)-1) % total
+	step := int(atomic.AddUint64(&p.counter, 1)-1) % total // #nosec G115 -- negative-result wrap handled explicitly below.
 	if step < 0 {
 		step += total
 	}

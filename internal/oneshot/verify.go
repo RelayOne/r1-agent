@@ -199,7 +199,7 @@ func stageArtifact(artifact string) (string, string, func(), error) {
 	}
 	cleanup := func() { _ = os.RemoveAll(tmp) }
 	artifactPath := filepath.Join(tmp, "artifact.txt")
-	if err := os.WriteFile(artifactPath, []byte(artifact), 0o644); err != nil {
+	if err := os.WriteFile(artifactPath, []byte(artifact), 0o644); err != nil { // #nosec G306 -- verification artefact; user-readable.
 		cleanup()
 		return "", "", func() {}, err
 	}

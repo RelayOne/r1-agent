@@ -21,20 +21,29 @@ func NewDissentRequiresAddress() *DissentRequiresAddress {
 	return &DissentRequiresAddress{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *DissentRequiresAddress) Name() string {
 	return "consensus.dissent_requires_address"
 }
 
+// Pattern subscribes the rule to ledger-node-added events so each new
+// node can be screened for the dissent type.
 func (r *DissentRequiresAddress) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: string(bus.EvtLedgerNodeAdded)}
 }
 
+// Priority (90) runs this rule before ConvergenceDetected (95) so a
+// dissent flips the loop state before any convergence check fires on
+// the same event.
 func (r *DissentRequiresAddress) Priority() int { return 90 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *DissentRequiresAddress) Rationale() string {
 	return "Dissent must be resolved before a loop can converge; the proposing worker must address it."
 }
 
+// Evaluate reports true iff the added node is a dissent node.
 func (r *DissentRequiresAddress) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {
@@ -44,6 +53,9 @@ func (r *DissentRequiresAddress) Evaluate(ctx context.Context, evt bus.Event, l 
 	return strings.Contains(np.NodeType, "dissent"), nil
 }
 
+// Action emits two bus events: a loop state transition to
+// resolving_dissents and a dissent notification addressed to the
+// proposing worker with instructions to address the dissent.
 func (r *DissentRequiresAddress) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var np nodeAddedPayload
 	if err := json.Unmarshal(evt.Payload, &np); err != nil {

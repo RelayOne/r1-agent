@@ -15,6 +15,7 @@
 package a2a
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,8 @@ func TestAgentCard_V1_CanonicalRoute(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + CanonicalCardPath)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+CanonicalCardPath, nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get canonical card: %v", err)
 	}
@@ -77,7 +79,8 @@ func TestAgentCard_V1_LegacyRedirect(t *testing.T) {
 	defer ts.Close()
 
 	client := noFollowClient()
-	resp, err := client.Get(ts.URL + LegacyCardPath)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+LegacyCardPath, nil)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("get legacy path: %v", err)
 	}
@@ -113,7 +116,8 @@ func TestAgentCard_V1_LegacyRedirectFollowedYieldsCanonicalCard(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + LegacyCardPath)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+LegacyCardPath, nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("follow redirect: %v", err)
 	}
@@ -144,7 +148,7 @@ func TestAgentCard_V1_LegacyRedirectRejectsPOST(t *testing.T) {
 	defer ts.Close()
 
 	client := noFollowClient()
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+LegacyCardPath, nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+LegacyCardPath, nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("post legacy: %v", err)
@@ -193,7 +197,8 @@ func TestAgentCard_V1_SchemaFields(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + CanonicalCardPath)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, ts.URL+CanonicalCardPath, nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

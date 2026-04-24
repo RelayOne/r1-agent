@@ -74,7 +74,7 @@ func NewStdioClient(config LegacyServerConfig) (*StdioClient, error) {
 		return nil, fmt.Errorf("MCP server %q is disabled", config.Name)
 	}
 
-	cmd := exec.Command(config.Command, config.Args...)
+	cmd := exec.Command(config.Command, config.Args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	// Set up environment
 	cmd.Env = os.Environ()
 	for k, v := range config.Env {
@@ -259,7 +259,7 @@ func ConfigFromFile(path string) ([]LegacyServerConfig, error) {
 		return nil, fmt.Errorf("parse MCP config: %w", err)
 	}
 
-	var configs []LegacyServerConfig
+	configs := make([]LegacyServerConfig, 0, len(raw.MCPServers))
 	for name, srv := range raw.MCPServers {
 		configs = append(configs, LegacyServerConfig{
 			Name:    name,
@@ -276,5 +276,5 @@ func ConfigFromFile(path string) ([]LegacyServerConfig, error) {
 // Used for MCP isolation (disabling all MCP servers for a phase).
 func EmptyConfigPath(dir string) (string, error) {
 	path := filepath.Join(dir, "empty-mcp.json")
-	return path, os.WriteFile(path, []byte("{}"), 0644)
+	return path, os.WriteFile(path, []byte("{}"), 0644) // #nosec G306 -- MCP client cache; user-readable.
 }

@@ -81,7 +81,7 @@ func (b *Backend) Exec(ctx context.Context, h *env.Handle, cmdArgs []string, opt
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	cmd.Dir = h.WorkDir
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir

@@ -133,6 +133,8 @@ func goastKindToString(k goast.SymbolKind) string {
 		return "var"
 	case goast.KindConstant:
 		return "const"
+	case goast.KindField:
+		return "field"
 	}
 	return "?"
 }

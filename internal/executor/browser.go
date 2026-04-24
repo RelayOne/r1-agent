@@ -268,7 +268,7 @@ func (d BrowserInteractiveDeliverable) CombinedText() string {
 // Results[i].OK) plus expected_text / expected_regex ACs that run
 // against CombinedText().
 func buildInteractiveCriteria(d BrowserInteractiveDeliverable) []plan.AcceptanceCriterion {
-	var out []plan.AcceptanceCriterion
+	out := make([]plan.AcceptanceCriterion, 0, len(d.Actions))
 	for i, a := range d.Actions {
 		i, a := i, a
 		// Only emit ACs for actions that actually ran (Results may

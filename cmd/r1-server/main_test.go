@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -36,7 +37,8 @@ func newTestServer(t *testing.T, db *DB) *httptest.Server {
 
 func TestAPIHealth(t *testing.T) {
 	s := newTestServer(t, newTestDB(t))
-	resp, err := http.Get(s.URL + "/api/health")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/health", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get health: %v", err)
 	}
@@ -73,7 +75,9 @@ func TestAPIRegisterThenList(t *testing.T) {
 		StreamFile: "/tmp/fake-repo/.stoke/stream.jsonl",
 	}
 	body, _ := json.Marshal(sig)
-	resp, err := http.Post(s.URL+"/api/register", "application/json", bytes.NewReader(body))
+	postReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL+"/api/register", bytes.NewReader(body))
+	postReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(postReq)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -83,7 +87,8 @@ func TestAPIRegisterThenList(t *testing.T) {
 	}
 
 	// List sessions — should contain the one we just registered.
-	resp, err = http.Get(s.URL + "/api/sessions")
+	listReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/sessions", nil)
+	resp, err = http.DefaultClient.Do(listReq)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -103,7 +108,8 @@ func TestAPIRegisterThenList(t *testing.T) {
 	}
 
 	// Session detail by ID.
-	resp, err = http.Get(s.URL + "/api/session/" + sig.InstanceID)
+	detailReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/session/"+sig.InstanceID, nil)
+	resp, err = http.DefaultClient.Do(detailReq)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -122,7 +128,9 @@ func TestAPIRegisterThenList(t *testing.T) {
 
 func TestAPIRegisterRejectsEmptyInstance(t *testing.T) {
 	s := newTestServer(t, newTestDB(t))
-	resp, err := http.Post(s.URL+"/api/register", "application/json", bytes.NewReader([]byte(`{}`)))
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL+"/api/register", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -142,7 +150,8 @@ func TestAPIEventsEmpty(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	resp, err := http.Get(s.URL + "/api/session/r1-empty/events")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/session/r1-empty/events", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("events: %v", err)
 	}
@@ -179,7 +188,8 @@ func TestAPICheckpointsMissingFile(t *testing.T) {
 	if err := db.UpsertSession(sig); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	resp, err := http.Get(s.URL + "/api/session/r1-ckpt/checkpoints")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/session/r1-ckpt/checkpoints", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("checkpoints: %v", err)
 	}

@@ -48,7 +48,8 @@ func TestIndexServesHTMXShellWhenV2Enabled(t *testing.T) {
 	t.Setenv("R1_SERVER_UI_V2", "1")
 	s, _ := newHTMXTestServer(t)
 
-	resp, err := http.Get(s.URL + "/")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get /: %v", err)
 	}
@@ -102,7 +103,8 @@ func TestIndexFallsBackToSPAWhenV2Disabled(t *testing.T) {
 	t.Setenv("R1_SERVER_UI_V2", "")
 	s, _ := newHTMXTestServer(t)
 
-	resp, err := http.Get(s.URL + "/")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get /: %v", err)
 	}
@@ -153,7 +155,7 @@ func TestSessionsEndpointReturnsHTMLFragmentForHTMX(t *testing.T) {
 		}
 	}
 
-	req, _ := http.NewRequest("GET", s.URL+"/api/sessions", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/api/sessions", nil)
 	req.Header.Set("Accept", "text/html")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -329,7 +331,8 @@ func TestEventsSSEDeliversSeededEventAsMessage(t *testing.T) {
 // air-gapped box.
 func TestHTMXVendoredAssetServed(t *testing.T) {
 	s, _ := newHTMXTestServer(t)
-	resp, err := http.Get(s.URL + "/ui/vendor/htmx.min.js")
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/ui/vendor/htmx.min.js", nil)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get htmx asset: %v", err)
 	}
@@ -403,7 +406,7 @@ func TestWantsHTMLContentNegotiation(t *testing.T) {
 		{"*/*", false}, // neither HTML nor JSON mentioned explicitly
 	}
 	for _, c := range cases {
-		r, _ := http.NewRequest("GET", "/", nil)
+		r, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		if c.accept != "" {
 			r.Header.Set("Accept", c.accept)
 		}

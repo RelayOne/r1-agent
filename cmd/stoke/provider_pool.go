@@ -17,18 +17,6 @@ import (
 	"github.com/ericmacdougall/stoke/internal/provider"
 )
 
-// smartPool is the process-wide provider pool parsed from
-// STOKE_PROVIDERS at startup. nil when the env var is unset
-// (the backward-compatible SmartDefaults path is active).
-//
-// Populated by resolveSmartDefaultsWithPool and read by any site
-// that wants per-role provider selection (reasoning vs worker vs
-// reviewer). Keeping this as a package-level var avoids threading
-// it through every function signature in main.go for the initial
-// integration — a future pass can plumb it explicitly once the
-// pool has a richer set of callers.
-var smartPool *provider.Pool
-
 // resolveSmartDefaultsWithPool wraps detectSmartDefaults with a
 // pool-first branch. Returns:
 //   - SmartDefaults populated from the worker-role entry when a
@@ -51,7 +39,6 @@ func resolveSmartDefaultsWithPool() SmartDefaults {
 		// Backward-compatible path: exactly detectSmartDefaults().
 		return detectSmartDefaults()
 	}
-	smartPool = pool
 
 	// Pool path: pick the worker-role entry to fill SmartDefaults so
 	// the REPL banner + downstream single-provider call sites still

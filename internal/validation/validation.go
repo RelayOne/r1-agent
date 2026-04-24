@@ -34,10 +34,10 @@ func PositiveFloat(f float64, label string) error {
 	return nil
 }
 
-// InRange validates that n is within [min, max] inclusive.
-func InRange(n, min, max int, label string) error {
-	if n < min || n > max {
-		return fmt.Errorf("%s must be between %d and %d, got %d", label, min, max, n)
+// InRange validates that n is within [lo, hi] inclusive.
+func InRange(n, lo, hi int, label string) error {
+	if n < lo || n > hi {
+		return fmt.Errorf("%s must be between %d and %d, got %d", label, lo, hi, n)
 	}
 	return nil
 }

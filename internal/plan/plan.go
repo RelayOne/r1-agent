@@ -81,7 +81,7 @@ func Save(projectRoot string, p *Plan) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(projectRoot, "stoke-plan.json"), data, 0644)
+	return os.WriteFile(filepath.Join(projectRoot, "stoke-plan.json"), data, 0644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 }
 
 // Validate checks a plan for structural problems.

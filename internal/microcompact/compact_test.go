@@ -53,7 +53,9 @@ func TestCompactPreservesStaticPrefix(t *testing.T) {
 		{Label: "chat", Content: "User message.", Static: false, Priority: 5, Tokens: 100},
 	}
 
-	sections := append(statics, dynamics...)
+	sections := make([]Section, 0, len(statics)+len(dynamics))
+	sections = append(sections, statics...)
+	sections = append(sections, dynamics...)
 	result := c.Compact(sections)
 
 	// First two sections should be the static ones

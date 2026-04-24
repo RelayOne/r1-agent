@@ -128,7 +128,7 @@ func (cEcosystem) CompileErrors(ctx context.Context, projectRoot string, files [
 	var all []CompileErr
 	for _, f := range files {
 		args := []string{"-fsyntax-only", f}
-		cmd := exec.CommandContext(c, bin, args...)
+		cmd := exec.CommandContext(c, bin, args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		for _, line := range strings.Split(string(out), "\n") {

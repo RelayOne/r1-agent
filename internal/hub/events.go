@@ -52,7 +52,7 @@ const (
 	EventModelRateLimited   EventType = "model.rate_limited"
 	EventModelFallback      EventType = "model.fallback"
 	EventModelCostThreshold EventType = "model.cost_threshold"
-	EventModelTokenThreshold EventType = "model.token_threshold"
+	EventModelTokenThreshold EventType = "model.token_threshold" // #nosec G101 -- event type name, not a credential.
 	EventModelCacheHit      EventType = "model.cache_hit"
 )
 

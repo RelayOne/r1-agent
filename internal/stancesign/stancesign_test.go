@@ -81,7 +81,7 @@ func TestSanitizeStance(t *testing.T) {
 		"Reviewer":         "reviewer",
 		"cto":              "cto",
 		"WITH_UNDERSCORE":  "with-underscore",
-		"  spaces around ": "spaces-around",
+		"  spaces around ": "spaces-around", //nolint:gocritic // mapKey: intentional whitespace tests sanitization
 	}
 	for in, want := range cases {
 		if got := sanitizeStance(in); got != want {

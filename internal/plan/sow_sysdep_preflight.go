@@ -46,7 +46,7 @@ func PreflightSystemDeps(sow *SOW) []string {
 		return nil
 	}
 
-	var missing []string
+	missing := make([]string, 0, len(needed))
 	for _, bin := range needed {
 		if _, err := exec.LookPath(bin); err == nil {
 			continue
@@ -97,9 +97,9 @@ func PreflightSystemDeps(sow *SOW) []string {
 	args := append([]string{"install", "-y", "--no-install-recommends"}, uniq...)
 	var cmd *exec.Cmd
 	if os.Geteuid() == 0 {
-		cmd = exec.Command("apt-get", args...)
+		cmd = exec.Command("apt-get", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	} else {
-		cmd = exec.Command("sudo", append([]string{"-n", "apt-get"}, args...)...)
+		cmd = exec.Command("sudo", append([]string{"-n", "apt-get"}, args...)...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {

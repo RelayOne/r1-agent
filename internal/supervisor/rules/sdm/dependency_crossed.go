@@ -62,7 +62,7 @@ func (r *DependencyCrossed) Evaluate(ctx context.Context, evt bus.Event, l *ledg
 	}
 
 	var tc taskDAGContent
-	if err := json.Unmarshal(node.Content, &tc); err != nil {
+	if err = json.Unmarshal(node.Content, &tc); err != nil {
 		return false, nil
 	}
 

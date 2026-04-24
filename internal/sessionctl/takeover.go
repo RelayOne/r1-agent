@@ -237,7 +237,7 @@ func capturePreCommit(repo string) string {
 	if repo == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD")
+	cmd := exec.Command("git", "-C", repo, "rev-parse", "HEAD") // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("sessionctl/takeover: rev-parse HEAD in %s failed: %v", repo, err)
@@ -253,7 +253,7 @@ func computeDiffStat(repo, preCommit string) string {
 	if repo == "" || preCommit == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", repo, "diff", "--stat", preCommit+"..HEAD")
+	cmd := exec.Command("git", "-C", repo, "diff", "--stat", preCommit+"..HEAD") // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

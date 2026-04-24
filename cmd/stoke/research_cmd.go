@@ -35,6 +35,12 @@ import (
 
 // researchCmd is the subcommand handler wired into main.go.
 func researchCmd(args []string) {
+	os.Exit(runResearchCmd(args))
+}
+
+// runResearchCmd is the real entry point; extracted so deferred
+// cancel() and any other cleanup fires before the outer os.Exit.
+func runResearchCmd(args []string) int {
 	fs := flag.NewFlagSet("research", flag.ContinueOnError)
 	var urlsCSV stringList
 	fs.Var(&urlsCSV, "url", "candidate source URL (repeat to add more)")
@@ -44,13 +50,13 @@ func researchCmd(args []string) {
 	stubBody := fs.String("stub-body", "", "body returned by --stub-fetch for every supplied URL")
 	useTLS := fs.Bool("require-tls", true, "reject http:// URLs (https-only)")
 	if err := fs.Parse(args); err != nil {
-		os.Exit(2)
+		return 2
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: stoke research [flags] \"query\"")
 		fs.PrintDefaults()
-		os.Exit(2)
+		return 2
 	}
 	query := strings.Join(rest, " ")
 
@@ -81,12 +87,12 @@ func researchCmd(args []string) {
 	d, err := ex.Execute(ctx, plan, executor.EffortLevelFromString(*effort))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "research failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	rd, ok := d.(executor.ResearchDeliverable)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "unexpected deliverable type %T\n", d)
-		os.Exit(1)
+		return 1
 	}
 
 	// Build verification verdicts so the JSON dump captures which
@@ -131,7 +137,7 @@ func researchCmd(args []string) {
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir %s: %v\n", dir, err)
-		os.Exit(1)
+		return 1
 	}
 	ts := time.Now().UTC().Format("20060102-150405")
 	outPath := filepath.Join(dir, ts+".json")
@@ -144,13 +150,14 @@ func researchCmd(args []string) {
 	buf, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "encode json: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
-	if err := os.WriteFile(outPath, buf, 0644); err != nil {
+	if err := os.WriteFile(outPath, buf, 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Fprintf(os.Stderr, "write %s: %v\n", outPath, err)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("\nReport JSON: %s\n", outPath)
+	return 0
 }
 
 // reportPayload is the JSON-dump shape. Stable field order so the

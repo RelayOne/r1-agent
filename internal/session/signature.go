@@ -135,7 +135,7 @@ func NewInstanceID() string {
 		// fall back to time-based bits so WriteSignature still works.
 		now := time.Now().UnixNano()
 		for i := 0; i < 4; i++ {
-			b[i] = byte(now >> (i * 8))
+			b[i] = byte(now >> (i * 8)) // #nosec G115 -- explicit byte truncation via shift; one-byte mask is intentional.
 		}
 	}
 	return "r1-" + hex.EncodeToString(b[:])

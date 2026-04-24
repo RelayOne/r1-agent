@@ -255,9 +255,10 @@ func fieldListToReturns(fl *ast.FieldList) []string {
 
 // parseGoFuncRegex is the regex fallback for non-parseable source.
 func parseGoFuncRegex(source string) []FuncSig {
-	var sigs []FuncSig
+	matches := goFuncRegex.FindAllStringSubmatch(source, -1)
+	sigs := make([]FuncSig, 0, len(matches))
 
-	for _, m := range goFuncRegex.FindAllStringSubmatch(source, -1) {
+	for _, m := range matches {
 		sig := FuncSig{
 			Name: m[2],
 		}

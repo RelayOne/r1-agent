@@ -50,9 +50,18 @@ import (
 // passing explicit gates (SuccessRate, MinSamples, etc.).
 type TrustTier string
 
+// Trust tiers gate how much weight a consolidated insight carries.
+// Values are persisted in the memory store; renames would invalidate
+// existing records.
 const (
+	// TierIntern is the entry tier: an insight has been observed but
+	// has not yet accumulated enough evidence for promotion.
 	TierIntern TrustTier = "intern"
+	// TierJunior is the middle tier: the insight has met MinSamples
+	// and MinSuccessRate gates for promotion from Intern.
 	TierJunior TrustTier = "junior"
+	// TierSenior is the top tier: the insight is treated as a reliable
+	// default and surfaced to agents ahead of lower-tier peers.
 	TierSenior TrustTier = "senior"
 )
 

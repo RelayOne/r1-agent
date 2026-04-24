@@ -25,6 +25,8 @@ func promoteConfidence(c Confidence) Confidence {
 		return ConfidenceTentative
 	case ConfidenceTentative:
 		return ConfidenceProven
+	case ConfidenceProven:
+		return c
 	default:
 		return c
 	}
@@ -37,6 +39,8 @@ func demoteConfidence(c Confidence) Confidence {
 		return ConfidenceTentative
 	case ConfidenceTentative:
 		return ConfidenceCandidate
+	case ConfidenceCandidate:
+		return c
 	default:
 		return c
 	}

@@ -988,7 +988,7 @@ func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]int
 
 // convertToolDefs converts Anthropic-style tool definitions to OpenAI format.
 func (p *OpenAICompatProvider) convertToolDefs(tools []ToolDef) []map[string]interface{} {
-	var result []map[string]interface{}
+	result := make([]map[string]interface{}, 0, len(tools))
 	for _, t := range tools {
 		result = append(result, map[string]interface{}{
 			"type": "function",

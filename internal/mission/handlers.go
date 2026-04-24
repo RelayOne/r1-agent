@@ -524,7 +524,7 @@ func topN(scores map[string]float64, n int) []string {
 		path  string
 		score float64
 	}
-	var items []scored
+	items := make([]scored, 0, len(scores))
 	for path, score := range scores {
 		items = append(items, scored{path, score})
 	}
@@ -536,7 +536,7 @@ func topN(scores map[string]float64, n int) []string {
 			}
 		}
 	}
-	var result []string
+	result := make([]string, 0, n)
 	for i, item := range items {
 		if i >= n {
 			break
@@ -1057,7 +1057,7 @@ func parseDecomposition(response string) ([]WorkNode, bool) {
 	}
 
 	now := time.Now()
-	var nodes []WorkNode
+	nodes := make([]WorkNode, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		wt := WorkType(item.Type)
 		if wt == "" {
@@ -1773,7 +1773,7 @@ func parseValidationFindings(findings, missionID string, store *Store) int {
 func extractMissionKeywords(intent string) []string {
 	words := strings.Fields(strings.ToLower(intent))
 	seen := make(map[string]bool)
-	var keywords []string
+	keywords := make([]string, 0, len(words))
 	for _, w := range words {
 		w = strings.Trim(w, ".,;:!?\"'()[]{}") // strip punctuation
 		if len(w) < 3 || seen[w] {

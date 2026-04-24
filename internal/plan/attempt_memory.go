@@ -120,7 +120,7 @@ func (r *RepairTrail) stagnationHint() string {
 	// Count files seen across attempts that made no forward progress.
 	fileCount := map[string]int{}
 	zeroProgressAttempts := 0
-	var idxs []int
+	idxs := make([]int, 0, len(r.Records))
 	for i, rec := range r.Records {
 		if rec.NetProgress > 0 {
 			continue

@@ -133,7 +133,7 @@ func detectConflicts(ctx context.Context, mgr *Manager, a, b Handle) ([]string, 
 	// Use merge-tree to detect conflicts without modifying anything
 	// git merge-tree --write-tree <base> <headA> <headB>
 	// Exit code 1 = conflicts exist, files listed in output
-	cmd := exec.CommandContext(ctx, mgr.GitBinary, "merge-tree", "--write-tree", a.BaseCommit, headA, headB)
+	cmd := exec.CommandContext(ctx, mgr.GitBinary, "merge-tree", "--write-tree", a.BaseCommit, headA, headB) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	cmd.Dir = mgr.RepoRoot
 	out, err := cmd.CombinedOutput()
 
@@ -148,7 +148,7 @@ func detectConflicts(ctx context.Context, mgr *Manager, a, b Handle) ([]string, 
 
 // worktreeHead returns the current HEAD commit of a worktree's branch.
 func worktreeHead(ctx context.Context, mgr *Manager, h Handle) (string, error) {
-	cmd := exec.CommandContext(ctx, mgr.GitBinary, "rev-parse", h.Branch)
+	cmd := exec.CommandContext(ctx, mgr.GitBinary, "rev-parse", h.Branch) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	cmd.Dir = mgr.RepoRoot
 	out, err := cmd.Output()
 	if err != nil {

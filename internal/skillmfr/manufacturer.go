@@ -159,7 +159,7 @@ func (m *Manufacturer) ProcessImport(ctx context.Context, proposalID string) err
 	}
 
 	var sf SkillFile
-	if err := json.Unmarshal(proposal.Content, &sf); err != nil {
+	if err = json.Unmarshal(proposal.Content, &sf); err != nil {
 		return fmt.Errorf("skillmfr: unmarshal proposal: %w", err)
 	}
 
@@ -204,7 +204,7 @@ func (m *Manufacturer) ProcessReview(ctx context.Context, reviewID string) error
 	}
 
 	var rr ReviewResult
-	if err := json.Unmarshal(reviewNode.Content, &rr); err != nil {
+	if err = json.Unmarshal(reviewNode.Content, &rr); err != nil {
 		return fmt.Errorf("skillmfr: unmarshal review: %w", err)
 	}
 
@@ -214,7 +214,7 @@ func (m *Manufacturer) ProcessReview(ctx context.Context, reviewID string) error
 	}
 
 	var sf SkillFile
-	if err := json.Unmarshal(skillNode.Content, &sf); err != nil {
+	if err = json.Unmarshal(skillNode.Content, &sf); err != nil {
 		return fmt.Errorf("skillmfr: unmarshal skill: %w", err)
 	}
 

@@ -190,7 +190,7 @@ func LoadPolicy(path string) (Policy, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "{") {
 		var p Policy
-		if err := json.Unmarshal(raw, &p); err != nil {
+		if err = json.Unmarshal(raw, &p); err != nil {
 			return Policy{}, err
 		}
 		// Detect whether the JSON had a verification section.

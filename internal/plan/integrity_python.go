@@ -154,14 +154,14 @@ func (pythonEcosystem) CompileErrors(ctx context.Context, projectRoot string, fi
 	// Prefer pyright, then mypy, then py_compile.
 	if _, err := exec.LookPath("pyright"); err == nil {
 		args := append([]string{"--outputjson=false"}, files...)
-		cmd := exec.CommandContext(c, "pyright", args...)
+		cmd := exec.CommandContext(c, "pyright", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		return pyParseErrors(projectRoot, string(out), pyrightErrRE, "pyright"), nil
 	}
 	if _, err := exec.LookPath("mypy"); err == nil {
 		args := append([]string{"--show-column-numbers", "--no-color-output", "--no-error-summary"}, files...)
-		cmd := exec.CommandContext(c, "mypy", args...)
+		cmd := exec.CommandContext(c, "mypy", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		return pyParseErrors(projectRoot, string(out), mypyErrRE, "mypy"), nil
@@ -170,7 +170,7 @@ func (pythonEcosystem) CompileErrors(ctx context.Context, projectRoot string, fi
 		// Final fallback: py_compile catches syntax errors only.
 		var errs []CompileErr
 		for _, f := range files {
-			cmd := exec.CommandContext(c, "python3", "-m", "py_compile", f)
+			cmd := exec.CommandContext(c, "python3", "-m", "py_compile", f) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 			cmd.Dir = projectRoot
 			out, _ := cmd.CombinedOutput()
 			if len(out) > 0 {
@@ -187,8 +187,9 @@ func (pythonEcosystem) CompileErrors(ctx context.Context, projectRoot string, fi
 }
 
 func pyParseErrors(projectRoot, output string, re *regexp.Regexp, code string) []CompileErr {
-	var errs []CompileErr
-	for _, line := range strings.Split(output, "\n") {
+	lines := strings.Split(output, "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

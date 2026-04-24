@@ -274,7 +274,7 @@ func runGit(repoRoot string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitInvocationTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = repoRoot
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -355,11 +355,3 @@ func truncateBytes(s string, n int) string {
 	return s[:n] + "\n... [truncated]\n"
 }
 
-// max is a tiny local helper so we don't depend on Go 1.21's builtin
-// being the same shape everywhere the repo builds.
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

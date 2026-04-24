@@ -246,7 +246,7 @@ func (t *SSETransport) CallTool(ctx context.Context, name string, args json.RawM
 	var argsAny any
 	if len(args) > 0 {
 		var decoded any
-		if err := json.Unmarshal(args, &decoded); err != nil {
+		if err = json.Unmarshal(args, &decoded); err != nil {
 			return ToolResult{}, fmt.Errorf("mcp/sse: decode args for %q: %w", name, err)
 		}
 		argsAny = decoded

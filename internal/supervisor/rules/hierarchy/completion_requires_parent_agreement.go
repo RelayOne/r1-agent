@@ -22,16 +22,23 @@ func NewCompletionRequiresParentAgreement() *CompletionRequiresParentAgreement {
 	return &CompletionRequiresParentAgreement{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *CompletionRequiresParentAgreement) Name() string {
 	return "hierarchy.completion_requires_parent_agreement"
 }
 
+// Pattern subscribes to branch-completion proposals so the mission
+// supervisor can weigh in on every branch's declared completion.
 func (r *CompletionRequiresParentAgreement) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: "supervisor.branch.completion.proposed"}
 }
 
+// Priority (100) is the highest in the hierarchy category; the parent
+// decision must resolve before any dependent rules fire.
 func (r *CompletionRequiresParentAgreement) Priority() int { return 100 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *CompletionRequiresParentAgreement) Rationale() string {
 	return "Branch completion must be approved at the mission level to maintain hierarchy integrity."
 }
@@ -46,12 +53,19 @@ type branchCompletionPayload struct {
 	VerifyPass  bool   `json:"verify_pass"`
 }
 
+// Evaluate always returns true: the mission supervisor must weigh in
+// on every branch-completion proposal. The agree/dissent decision is
+// made in Action based on the payload.
 func (r *CompletionRequiresParentAgreement) Evaluate(_ context.Context, _ bus.Event, _ *ledger.Ledger) (bool, error) {
 	// Always evaluate -- the mission supervisor must weigh in on every
 	// branch completion proposal.
 	return true, nil
 }
 
+// Action inspects the completion payload and publishes either an
+// agree or a dissent supervisor.branch.completion.decided event. The
+// decision is agree iff all declared tasks are done and verification
+// passed; otherwise a dissent with a specific reason is emitted.
 func (r *CompletionRequiresParentAgreement) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var bp branchCompletionPayload
 	if err := json.Unmarshal(evt.Payload, &bp); err != nil {

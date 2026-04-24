@@ -116,7 +116,7 @@ func (p *GeminiProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 	// ChatMessage.Content is json.RawMessage and may be either a
 	// plain string ("hello") or an Anthropic-style block array
 	// ([{type:"text", text:"hello"}]). Try both.
-	var contents []geminiContent
+	contents := make([]geminiContent, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		text := extractGeminiText(m.Content)
 		if text == "" {

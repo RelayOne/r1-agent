@@ -308,7 +308,7 @@ func (e *Enforcer) saveState() {
 	}
 	path := filepath.Join(e.stateDir, "boulder.json")
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0644); err != nil { // #nosec G306 -- enforcer marker consumed by user tooling; 0644 is appropriate.
 		return
 	}
 	os.Rename(tmp, path)

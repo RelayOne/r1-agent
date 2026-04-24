@@ -461,7 +461,7 @@ func (o *Orchestrator) CreateMission(title, intent string, criteria []string) (*
 
 	id := fmt.Sprintf("m-%d", time.Now().UnixNano())
 
-	var mCriteria []mission.Criterion
+	mCriteria := make([]mission.Criterion, 0, len(criteria))
 	for i, desc := range criteria {
 		mCriteria = append(mCriteria, mission.Criterion{
 			ID:          fmt.Sprintf("c-%d", i+1),
@@ -776,7 +776,7 @@ func (a *contextAdapter) SearchResearch(query string, limit int) ([]mission.Rese
 	if err != nil {
 		return nil, err
 	}
-	var entries []mission.ResearchEntry
+	entries := make([]mission.ResearchEntry, 0, len(results))
 	for _, r := range results {
 		entries = append(entries, mission.ResearchEntry{
 			Topic:   r.Entry.Topic,
@@ -793,7 +793,7 @@ func (a *contextAdapter) GetResearchByMission(missionID string) ([]mission.Resea
 	if err != nil {
 		return nil, err
 	}
-	var entries []mission.ResearchEntry
+	entries := make([]mission.ResearchEntry, 0, len(results))
 	for _, r := range results {
 		entries = append(entries, mission.ResearchEntry{
 			Topic:   r.Topic,

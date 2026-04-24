@@ -113,7 +113,7 @@ func addRootDevDeps(repoRoot string, packages []string) error {
 		return fmt.Errorf("read %s: %w", pkgPath, err)
 	}
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err != nil {
+	if err = json.Unmarshal(raw, &obj); err != nil {
 		return fmt.Errorf("parse %s: %w", pkgPath, err)
 	}
 	existing := map[string]struct{}{}
@@ -146,5 +146,5 @@ func addRootDevDeps(repoRoot string, packages []string) error {
 	}
 	// Append trailing newline to match typical editor convention.
 	out = append(out, '\n')
-	return os.WriteFile(pkgPath, out, 0o644)
+	return os.WriteFile(pkgPath, out, 0o644) // #nosec G306 -- CLI output artefact; user-readable.
 }

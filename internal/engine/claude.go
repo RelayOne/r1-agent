@@ -62,7 +62,7 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 	hooksConf := hooks.HooksConfig(runtimeDir)
 	if len(hooksConf) > 0 {
 		var merged map[string]interface{}
-		if err := json.Unmarshal(raw, &merged); err != nil {
+		if err = json.Unmarshal(raw, &merged); err != nil {
 			return PreparedCommand{}, fmt.Errorf("unmarshal settings for hooks merge: %w", err)
 		}
 		for k, v := range hooksConf {
@@ -74,7 +74,7 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 		}
 	}
 
-	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil { // #nosec G306 -- MCP config stub for Claude Code subprocess; 0644 is standard.
 		return PreparedCommand{}, err
 	}
 
@@ -96,7 +96,7 @@ func (r *ClaudeRunner) Prepare(spec RunSpec) (PreparedCommand, error) {
 	notes := []string{"Claude Code runner"}
 	if !spec.Phase.MCPEnabled {
 		emptyMCPPath := filepath.Join(runtimeDir, fmt.Sprintf("empty-mcp-%s.json", spec.Phase.Name))
-		if err := os.WriteFile(emptyMCPPath, []byte("{}"), 0o644); err != nil {
+		if err := os.WriteFile(emptyMCPPath, []byte("{}"), 0o644); err != nil { // #nosec G306 -- MCP config stub for Claude Code subprocess; 0644 is standard.
 			return PreparedCommand{}, err
 		}
 		args = append(args, "--strict-mcp-config", "--mcp-config", emptyMCPPath)
@@ -128,7 +128,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		// Wrap in docker run for container pool execution
 		cmd = wrapInDocker(ctx, prepared, spec)
 	} else {
-		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 		cmd.Dir = prepared.Dir
 		cmd.Env = prepared.Env
 	}

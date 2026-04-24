@@ -49,7 +49,7 @@ func (r *GeminiRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		return RunResult{}, fmt.Errorf("gemini binary not found: %s (install gemini CLI or set --gemini-bin)", prepared.Binary)
 	}
 
-	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+	cmd := exec.CommandContext(ctx, prepared.Binary, prepared.Args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 	cmd.Dir = prepared.Dir
 	cmd.Env = prepared.Env
 

@@ -394,7 +394,7 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		// previously surfaced here as a bare "empty response" with no clue
 		// what happened.
 		dumpRespMu.Lock()
-		_ = os.WriteFile("/tmp/stoke-sow-resp-debug.json", marshalRespOrEmpty(resp), 0o644)
+		_ = os.WriteFile("/tmp/stoke-sow-resp-debug.json", marshalRespOrEmpty(resp), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		dumpRespMu.Unlock()
 		return nil, nil, fmt.Errorf("empty response from model (stop_reason=%q, %d content blocks; full response saved to /tmp/stoke-sow-resp-debug.json)\n%s", resp.StopReason, len(resp.Content), diag)
 	}
@@ -404,9 +404,9 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 	// files are overwritten per call and are never read by the runner,
 	// so they're safe to leave behind.
 	dumpOnErr := func(extracted []byte) {
-		_ = os.WriteFile("/tmp/stoke-sow-raw.txt", []byte(raw), 0o644)
+		_ = os.WriteFile("/tmp/stoke-sow-raw.txt", []byte(raw), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		if extracted != nil {
-			_ = os.WriteFile("/tmp/stoke-sow-extracted.json", extracted, 0o644)
+			_ = os.WriteFile("/tmp/stoke-sow-extracted.json", extracted, 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		}
 	}
 

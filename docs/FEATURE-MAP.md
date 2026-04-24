@@ -1,74 +1,102 @@
 # Feature Map
 
-Every feature Stoke has or will have, grouped by user-visible outcome. For each: what it does, the benefit to the operator, current build status, and the spec it traces to.
+Every feature Stoke has or will have, grouped by user-visible outcome.
+For each: what it does, the benefit to the operator, current build
+status, and the spec it traces to.
 
 Status legend:
 
-- **Done** — shipped in the current trunk (`feat/smart-chat-mode`), passing build/vet/test.
-- **Scoped** — spec file in `specs/`, STATUS: ready, awaiting `/build`.
-- **Scoping** — spec in progress.
+- **Done** — shipped in the current trunk, passing build/test/vet,
+  race-clean, and integrated into the default execution path.
+- **Done (flagged)** — shipped but behind an env var or CLI flag.
+- **Ready** — spec file in `specs/` at STATUS: ready, awaiting build.
+- **Scoped** — spec in flight or under review.
 - **Horizon** — on the roadmap, not yet scoped.
 
-## Verification Descent — the trust layer
+## The trust layer — verification descent
+
+Verification descent refuses to believe a model when it says "done."
+It runs the anti-deception contract, parses actual completion
+evidence, catches ghost writes, caps repair loops, and plugs
+non-code executors into the same ladder.
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| Anti-deception contract in worker prompts | Workers cannot silently fake completion — truthfulness block injected at dispatch | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| Forced self-check before turn end | Model signals tangible completion evidence; parser cross-checks against git + AC state | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| Bootstrap per descent cycle | Manifest-touching repairs re-install deps before next AC — no stale-workspace false failures | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| Per-file repair cap | 3-attempt cap per file (Cursor 2.0 parity) prevents infinite repair loops | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| Ghost-write detector | Post-tool supervisor hook catches "tool reported success but file is empty" fakes | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| Env-issue worker tool | Worker self-reports environment blockers; descent skips multi-analyst — saves ~$0.10/AC | Done (tier1) | [descent-hardening](../specs/descent-hardening.md) |
-| VerifyFunc on acceptance criteria | Non-code executors (research/browser/deploy) plug into the same 8-tier descent ladder | Done (Task 11) | [executor-foundation](../specs/executor-foundation.md) |
+| Anti-deception contract in worker prompts | Workers cannot silently fake completion — truthfulness block injected at dispatch | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Forced self-check before turn end | Model signals tangible completion evidence; parser cross-checks against git + AC state | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Bootstrap per descent cycle | Manifest-touching repairs re-install deps before next AC — no stale-workspace false failures | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Per-file repair cap (3 attempts, Cursor 2.0 parity) | Infinite repair loops end | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Ghost-write detector | Post-tool supervisor hook catches "tool reported success but file is empty" fakes | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Env-issue worker tool | Worker self-reports environment blockers; descent skips multi-analyst — saves ~$0.10/AC | Done | [descent-hardening](../specs/descent-hardening.md) |
+| VerifyFunc on acceptance criteria | Non-code executors (research/browse/deploy/delegate) plug into the 8-tier ladder | Done | [executor-foundation](../specs/executor-foundation.md) |
+| Soft-pass AC after 2× `ac_bug` verdicts | Reviewers blaming the AC can't spin forever | Done | [descent-hardening](../specs/descent-hardening.md) |
+| T8 soft-pass → session verdict | Top-tier soft-pass propagates to the session-level verdict (H-91b) | Done | [descent-hardening](../specs/descent-hardening.md) |
+| JSONL tool-call log + reviewer injection | Reviewer sees what the worker actually did, not what it claimed | Done | [descent-hardening](../specs/descent-hardening.md) |
+| Correlation IDs + SOW snapshot | Every worker turn is traceable back to the SOW snapshot it was given | Done (H-91d) | [descent-hardening](../specs/descent-hardening.md) |
+| Attempt history for T4 | Retry context carries forward per-AC attempt history (H-91g) | Done | [descent-hardening](../specs/descent-hardening.md) |
+| `STOKE_DESCENT=1` opt-in flag | Ship the engine behind a flag; flip to default after bake-in | Done (flagged) | [descent-hardening](../specs/descent-hardening.md) |
 
 ## Prompt-injection hardening
 
+Every file-to-prompt ingest path is scanned, every tool output is
+sanitized, every end-of-turn is gated against honeypots.
+
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| Promptguard wired into 4 ingest paths | Every file-to-prompt flow is scanned (skills, failure analysis, feasibility gate, convergence judge) | Done (Track A 1) | Portfolio WORK-stoke.md Track A 1 |
-| Tool-output sanitization | 200KB cap + chat-template-token scrub + injection-shape annotation on every tool_result | Done (Track A 2) | Portfolio Track A 2 |
-| Honeypot pre-end-turn gate | Canary + markdown-exfil + role-injection + destructive-without-consent; turn aborts on fire | Done (Track A 3) | Portfolio Track A 3 |
-| Websearch domain allowlist + body cap | Operator-configurable glob allowlist; 100KB body cap on every fetch | Done (Track A 4) | Portfolio Track A 4 |
-| MCP sanitization audit | Per-CallTool marker asserts LLM vs code classification; grep-able maintenance check | Done (Track A 5) | Portfolio Track A 5 |
-| Red-team corpus | 58-sample regression suite across 4 categories (OWASP LLM01, CL4R1T4S, SpAIware); 100% detection on active set | Done (Track A 6) | Portfolio Track A 6 |
-| SECURITY.md + known-miss advancement | Disclosure policy at repo root; 1 known-miss sample being advanced to detection | Scoped | [finishing-touches](../specs/finishing-touches.md) |
+| Promptguard wired into 4 ingest paths | Every file-to-prompt flow is scanned (skills, failure analysis, feasibility gate, convergence judge) | Done | Portfolio WORK-stoke.md Track A 1 |
+| Tool-output sanitization | 200KB cap + chat-template-token scrub + injection-shape annotation on every tool_result | Done | Portfolio Track A 2 |
+| Honeypot pre-end-turn gate | Canary + markdown-exfil + role-injection + destructive-without-consent; turn aborts on fire | Done | Portfolio Track A 3 |
+| Websearch domain allowlist + body cap | Operator-configurable glob allowlist; 100KB body cap on every fetch | Done | Portfolio Track A 4 |
+| MCP sanitization audit marker | Per-CallTool marker asserts LLM vs code classification; grep-able maintenance check | Done | Portfolio Track A 5 |
+| Red-team corpus | 58-sample regression suite across 4 categories (OWASP LLM01, CL4R1T4S, SpAIware, Willison); ≥60% detection per category | Done | Portfolio Track A 6 |
+| SECURITY.md + disclosure policy | GitHub Security Advisories preferred channel; honor list for responsible disclosure | Done | [SECURITY.md](../SECURITY.md) |
+| Known-miss advancement | 1 known-miss corpus sample being advanced into detection | Scoped | [finishing-touches](../specs/finishing-touches.md) |
 
 ## Executor architecture — multi-task agent
 
+One `Executor` interface, many backends. `stoke task "<free text>"`
+routes via a classifier.
+
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| Executor interface + router | Uniform Execute/BuildCriteria/BuildRepairFunc/BuildEnvFixFunc surface; natural-language task routing | Done (Task 19) | [executor-foundation](../specs/executor-foundation.md) |
-| `stoke task` CLI | Free-text entry point — router classifies + dispatches | Done (Task 19) | [executor-foundation](../specs/executor-foundation.md) |
-| CodeExecutor (SOW-backed) | Existing SOW pipeline wrapped behind the executor interface | Done (wrapper) | [executor-foundation](../specs/executor-foundation.md) |
-| ResearchExecutor MVP | Single-agent, stdlib-only; keyword-overlap claim verification | Done (Task 20 MVP) | [browser-research-executors](../specs/browser-research-executors.md) Part 2 |
+| Executor interface + router | Uniform Execute/BuildCriteria/BuildRepairFunc/BuildEnvFixFunc surface; natural-language task routing | Done | [executor-foundation](../specs/executor-foundation.md) |
+| `stoke task` CLI | Free-text entry point — router classifies + dispatches | Done | [executor-foundation](../specs/executor-foundation.md) |
+| CodeExecutor (SOW-backed) | Existing SOW pipeline wrapped behind the executor interface | Done | [executor-foundation](../specs/executor-foundation.md) |
+| ResearchExecutor MVP | Single-agent, stdlib-only; keyword-overlap claim verification | Done | [browser-research-executors](../specs/browser-research-executors.md) Part 2 |
 | Research lead+subagent orchestrator | Anthropic-style orchestrator-worker; lead decomposes, N subagents fan out in parallel | Scoped | [research-orchestrator](../specs/research-orchestrator.md) |
-| BrowserExecutor Part 1 (http) | Fetch + HTML strip + VerifyContains/VerifyRegex; `stoke browse` CLI | Done (Task 21 part 1) | [browser-research-executors](../specs/browser-research-executors.md) Part 1 |
+| BrowserExecutor Part 1 (http) | Fetch + HTML strip + VerifyContains/VerifyRegex; `stoke browse` CLI | Done | [browser-research-executors](../specs/browser-research-executors.md) Part 1 |
 | BrowserExecutor Part 2 (go-rod) | Interactive headless browser: click, type, wait, screenshot, vision diff | Scoped | [browser-interactive](../specs/browser-interactive.md) |
-| DeployExecutor (Fly.io) | `stoke deploy` with dry-run + health-check ACs; subprocess via `flyctl` | Done (Task 22) | [deploy-executor](../specs/deploy-executor.md) |
+| DeployExecutor (Fly.io) | `stoke deploy` with dry-run + health-check ACs; subprocess via `flyctl` | Done | [deploy-executor](../specs/deploy-executor.md) |
 | DeployExecutor Phase 2 (Vercel + Cloudflare) | Additional provider adapters | Scoped | [deploy-phase2](../specs/deploy-phase2.md) |
-| DelegationExecutor MVP (verify-settle) | Hired-agent deliverable verification + settlement via TrustPlane | Done (S-10 sliver) | [delegation-a2a](../specs/delegation-a2a.md) |
+| DelegationExecutor MVP (verify-settle) | Hired-agent deliverable verification + settlement via TrustPlane | Done | [delegation-a2a](../specs/delegation-a2a.md) |
 | DelegationExecutor full (A2A protocol) | HMAC tokens + trust clamp + x402 micropayments + signed cards + JWKS + saga compensators | Scoped | [delegation-a2a](../specs/delegation-a2a.md) |
 
 ## Protocol surfaces — external integrations
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| CloudSwarm NDJSON + HITL | Two-lane emitter; `hitl_required` gate on stdin; `stoke run` subcommand | Done (tier1) | [cloudswarm-protocol](../specs/cloudswarm-protocol.md) |
-| STOKE envelope (v1.0) | Every event carries `stoke_version`, `instance_id`, `trace_parent`, optional `ledger_node_id` | Done (RS-6) | [docs/stoke-protocol.md](stoke-protocol.md) |
-| r1-server binary | Separate daemon ingesting r1.session.json + event log + ledger DAG from running Stoke instances | Done (RS-1..RS-6) | [r1-server](../specs/r1-server.md) |
-| r1-server web dashboard | Instance list + live stream view + 3D force-directed ledger visualizer (Three.js + time scrubber) | Done (RS-4) | [r1-server](../specs/r1-server.md) |
-| `stoke agent-serve` HTTP | Hireable-agent facade — POST /api/task + GET /api/task/{id}; X-Stoke-Bearer auth | Done (Task 24 MVP) | [agent-serve-async](../specs/agent-serve-async.md) |
+| CloudSwarm NDJSON + HITL | Two-lane emitter; `hitl_required` gate on stdin; `stoke run` subcommand | Done | [cloudswarm-protocol](../specs/cloudswarm-protocol.md) |
+| STOKE envelope (v1.0) | Every event carries `stoke_version`, `instance_id`, `trace_parent`, optional `ledger_node_id` | Done | [stoke-protocol](stoke-protocol.md) |
+| r1-server binary | Separate daemon ingesting r1.session.json + event log + ledger DAG from running Stoke instances | Done | [r1-server](../specs/r1-server.md) |
+| r1-server web dashboard (MVP) | Instance list + live-tailing stream view + event-type filter + auto-scroll | Done | [r1-server](../specs/r1-server.md) |
+| r1-server UI v2 (waterfall + 3D) | Waterfall + tree view, LLM I/O bubbles, 3D force-directed ledger viz | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
+| `stoke agent-serve` HTTP MVP | Hireable-agent facade — POST /api/task + GET /api/task/{id}; X-Stoke-Bearer auth | Done | [agent-serve-async](../specs/agent-serve-async.md) |
 | Agent-serve async mode | Worker pool + SSE events + webhook callbacks + crash recovery | Scoped | [agent-serve-async](../specs/agent-serve-async.md) |
-| MCP client | Consume external MCP servers (github, linear, slack) for worker tool access | Scoped | [mcp-client](../specs/mcp-client.md) |
+| MCP client | Consume external MCP servers (github, linear, slack, postgres, custom) for worker tool access | Done (flagged) | [mcp-client](../specs/mcp-client.md) |
+| MCP trust gating + circuit breaker | Per-server trust label, concurrency cap, auth redactor, closed/open/half-open breaker | Done | [mcp-security](mcp-security.md) |
 | Policy engine | Cedar/OPA-style governance; `CLOUDSWARM_POLICY_ENDPOINT` no-op today | Scoped | [policy-engine](../specs/policy-engine.md) |
+| TrustPlane real client (DPoP + RFC 9449) | Stdlib-only Ed25519 DPoP; no go-jose dep; env-driven key loading | Done | [trustplane-integration](trustplane-integration.md) |
+| A2A Agent Card v1.0.0 + canonical path | `/.well-known/agent-card.json` canonical; legacy `agent.json` 308-redirects with Deprecation + Sunset headers | Done | [CHANGELOG.md](../CHANGELOG.md) T22 |
+| ACP adapter (`stoke-acp`) | Agent Client Protocol adapter exposes Stoke to ACP-aware editors | Done | S-U-002 |
 
 ## Operator ergonomics
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| TUI progress renderer | Live multi-line dashboard on stderr; event-bus Observe subscriber | Done (S-1) | [tui-renderer](../specs/tui-renderer.md) |
-| Multi-provider pool (`STOKE_PROVIDERS`) | Mix providers by role — Anthropic for reasoning + Ollama for workers + Gemini for review | Done (S-6) | [provider-pool](../specs/provider-pool.md) |
-| HITL soft-pass approval | `SoftPassApprovalFunc` on descent config; enterprise-tier HITL gate | Done (S-2 via tier1) | [cloudswarm-protocol](../specs/cloudswarm-protocol.md) + [operator-ux-memory](../specs/operator-ux-memory.md) Part B |
+| TUI progress renderer | Live multi-line dashboard on stderr; event-bus Observe subscriber | Done | [tui-renderer](../specs/tui-renderer.md) |
+| Bubble Tea interactive TUI | Full-screen Dashboard / Focus / Detail panes | Done | [tui-renderer](../specs/tui-renderer.md) |
+| Multi-provider pool (`STOKE_PROVIDERS`) | Mix providers by role — Anthropic for reasoning + Ollama for workers + Gemini for review | Done | [provider-pool](../specs/provider-pool.md) |
+| HITL soft-pass approval | `SoftPassApprovalFunc` on descent config; enterprise-tier HITL gate | Done | [cloudswarm-protocol](../specs/cloudswarm-protocol.md) + [operator-ux-memory](../specs/operator-ux-memory.md) Part B |
 | `stoke plan` CLI | Structured plan review separate from `stoke ship`; produces resumable `plan.json` | Scoped | [operator-ux-commands](../specs/operator-ux-commands.md) Part A |
 | Nested TUI panes (execute-phase) | Per-session/task/AC drill-down navigation; active-focus with tab/j/k/enter | Scoped | [operator-ux-commands](../specs/operator-ux-commands.md) Part C |
 | Live inter-session meta-reasoner | Consolidates episodic memory between sessions into semantic/procedural for the next | Scoped | [operator-ux-commands](../specs/operator-ux-commands.md) Part E |
@@ -76,22 +104,28 @@ Status legend:
 | Intent Gate (plan vs diagnose) | Verb-scan + Haiku fallback; DIAGNOSE masks write tools | Scoped | [operator-ux-commands](../specs/operator-ux-commands.md) |
 | `stoke attach` + `stoke replay` | Client to sessionctl socket + read-only event-log timeline with follow mode | Scoped | [finishing-touches](../specs/finishing-touches.md) |
 | Chat descent control + sessionctl | Chat mini-descent gate; Unix socket control plane with 8 verbs | Scoped | [chat-descent-control](../specs/chat-descent-control.md) |
+| `stoke doctor` | Tool-dependency check across all 5 fallback chain providers | Done | [QUICKSTART](../specs/QUICKSTART.md) |
+| `stoke repair` | Auto-fix common configuration issues | Done | [QUICKSTART](../specs/QUICKSTART.md) |
+| `stoke memory` CLI (6 verbs) | add, list, get, promote, delete, search over persistent cross-session memory | Done (flagged) | [memory-full-stack](../specs/memory-full-stack.md) |
 
 ## Durability + replay
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| Event log (bus WAL) | Append-only NDJSON at `.stoke/bus/events.log`; `stoke resume` reporting | Done (Task 18 MVP) | [executor-foundation](../specs/executor-foundation.md) §eventlog |
+| Event log (bus WAL) | Append-only NDJSON at `.stoke/bus/events.log`; `stoke resume` reporting | Done | [executor-foundation](../specs/executor-foundation.md) §eventlog |
 | Event log proper (SQLite + hash chain) | ULID-indexed events table with parent-hash chain; `stoke sow --resume-from=<seq>` restart hook | Scoped | [event-log-proper](../specs/event-log-proper.md) |
-| Fan-out generalization | Extract session-scheduler parallelism into reusable `internal/fanout/` for research + delegation consumers | Scoped | [fanout-generalization](../specs/fanout-generalization.md) |
+| Fan-out generalization | Extract session-scheduler parallelism into reusable `internal/fanout/` for research + delegation consumers | Done | [fanout-generalization](../specs/fanout-generalization.md) |
+| `.tracebundle` export | Content-addressed portable trace archive — other r1-servers can import | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
+| Session snapshot + restore | Pre-merge snapshot of protected baseline; restore on merge failure | Done | [ARCHITECTURE](ARCHITECTURE.md) |
 
 ## Memory — persistent cross-session knowledge
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|
-| Memory store MVP | `stoke_memories` table + FTS5 + triggers in the existing wisdom SQLite DB | Done (S-9 MVP) | [operator-ux-memory](../specs/operator-ux-memory.md) Part D |
+| Memory store MVP | `stoke_memories` table + FTS5 + triggers in the existing wisdom SQLite DB | Done | [operator-ux-memory](../specs/operator-ux-memory.md) Part D |
 | Memory full stack | sqlite-vec + 3-way embedder fallback + consolidation + 4 auto-retrieval hooks + `stoke memory` CLI (6 verbs) | Scoped | [memory-full-stack](../specs/memory-full-stack.md) |
 | Scoped memory bus (worker-to-worker) | Live intra-session comms with 6 visibility scopes (ScopeSession / ScopeSessionStep / ScopeWorker / ScopeAllSessions / ScopeGlobal / ScopeAlways); writer-goroutine pattern + batched INSERTs for 10k+ ops/sec | Scoped | [memory-bus](../specs/memory-bus.md) |
+| Wisdom temporal validity | ValidFrom/ValidUntil, AsOf() query, Invalidate() | Done | [ARCHITECTURE](ARCHITECTURE.md) |
 
 ## Durability + governance
 
@@ -101,6 +135,70 @@ Status legend:
 | Encryption at rest | SQLCipher (chacha20) + per-line XChaCha20-Poly1305 JSONL + OS keyring with FileBackend fallback | Scoped | [encryption-at-rest](../specs/encryption-at-rest.md) |
 | Retention policies | Per-surface configurable retention; on-session-end + hourly sweep; crypto-shreds content tier without breaking Merkle chain; compliance-ready (HIPAA / GDPR / EU AI Act Art. 12) | Scoped | [retention-policies](../specs/retention-policies.md) |
 
+## V2 governance layer
+
+Stoke v2 wraps the execution engine in a multi-role consensus layer.
+
+| Feature | Benefit | Status | Spec |
+|---|---|---|---|
+| Append-only content-addressed ledger | 22 node types, 7 edge types, SHA256 + 16 prefixes, filesystem + SQLite backends | Done | [v2-overview](architecture/v2-overview.md) |
+| Durable WAL-backed event bus | 30+ event types, hooks, delayed events, parent-hash causality | Done | [bus](architecture/bus.md) |
+| 30 deterministic supervisor rules | 10 categories (consensus, drift, hierarchy, research, skill, snapshot, SDM, cross-team, trust, lifecycle); 3 per-tier manifests | Done | [supervisor-rules](architecture/supervisor-rules.md) |
+| 7-state consensus loop tracker | PRD → SOW → ticket → PR → landed lifecycle | Done | [v2-overview](architecture/v2-overview.md) |
+| 11 stance roles | PO, CTO, QA Lead, Reviewer, Dev, Researcher, SDM, Deployer, Harness + per-role tool authorization | Done | [harness-stances](architecture/harness-stances.md) |
+| Concern field projection | 10 sections × 9 role templates render role-specific system prompts from ledger state | Done | [v2-overview](architecture/v2-overview.md) |
+| Skill manufacturing pipeline | 4 workflows + confidence ladder produces reusable playbooks | Done | [skill-pipeline](architecture/skill-pipeline.md) |
+| V1-to-V2 bridge adapters | cost/verify/wisdom/audit emit bus events + ledger nodes automatically | Done | [bridge](architecture/bridge.md) |
+| Content-addressed ID generation | SHA256, 16 node-type prefixes, collision-safe across backends | Done | `internal/contentid/` |
+| Structured error taxonomy (10 codes) | Uniform `stokerr.Error` with code + context; `errors.As` everywhere | Done | `internal/stokerr/` |
+| Snapshot protection | Baseline manifest (file paths + content hashes); pre-merge + restore-on-failure | Done | `internal/snapshot/` |
+| First-time config wizard (presets) | minimal / balanced / strict presets | Done | [wizard](architecture/wizard.md) |
+| 12 MCP memory tools | Expose ledger, wisdom, research, skill stores as MCP | Done | [ARCHITECTURE](ARCHITECTURE.md) |
+
+## Execution engine
+
+| Feature | Benefit | Status | Spec |
+|---|---|---|---|
+| Native agentic tool-use loop (Anthropic Messages API) | Parallel tools, prompt caching, direct-API path — no CLI dependency | Done | [agentloop](architecture/agentloop.md) |
+| 5-provider fallback chain | Claude → Codex → OpenRouter → Direct API → lint-only | Done | [providers](architecture/providers.md) |
+| Cross-model review gate | Claude implements → Codex reviews (or vice versa); dissent blocks merge | Done | `internal/model/` |
+| GRPW priority scheduling | Tasks with most downstream work dispatch first; file-scope conflict detection | Done | `internal/scheduler/` |
+| Speculative parallel execution (`--specexec`) | 4 strategies in parallel, pick winner by verification | Done | `internal/specexec/` |
+| 10 failure classes with language-specific parsers | TS/Go/Python/Rust/Clippy parsers; fingerprint dedup; same-error-twice escalation | Done | `internal/failure/` |
+| Dependency-aware test selection | `testselect.BuildGraph()` narrows `go test` to affected packages | Done | `internal/testselect/` |
+| Adversarial self-audit convergence checks | Mission-level convergence validation | Done | `internal/convergence/` |
+| Pre-commit AST-aware critic | Secrets, injection, debug prints, empty catches | Done | `internal/critic/` |
+| 17 review personas | Security, performance, a11y, DX, testing, doc, ... auto-selected per task | Done | `internal/audit/` |
+| Ember integration (Phases 1-3) | Managed AI routing, burst compute, remote progress | Done | [ROADMAP](ROADMAP.md) |
+| Ranked repomap injection | PageRank over import graph, token-budgeted `RenderRelevant()` | Done | `internal/repomap/` |
+| L0-L3 context budget framing | Identity, Critical, Topical, Deep tiers with progressive compaction | Done | [context-budget](architecture/context-budget.md) |
+| Auto-infer task dependencies from file scope overlap | Missing deps caught at plan validation time | Done | `internal/plan/` |
+| Shared dependency symlinks | node_modules, vendor, .venv shared across worktrees | Done | `internal/worktree/` |
+
+## CI / release / productionization
+
+| Feature | Benefit | Status | Spec |
+|---|---|---|---|
+| CI gate: build + test + vet | Three commands pin every PR | Done | `.github/workflows/ci.yml` |
+| Race detector green across repo | Any new race fails CI, not advisory | Done | streamjson TwoLane fix |
+| `golangci-lint` advisory | Findings surface as warnings; 30-PR cleanup campaign closed 600+ findings | Done | `.github/workflows/ci.yml` |
+| `govulncheck` + `gosec` | Findings surface as warnings; stdlib vulns → Go upgrade | Done | `.github/workflows/ci.yml` |
+| Nightly bench workflow | HTML report artifacts, regression detection | Done | `.github/workflows/bench-nightly.yml` |
+| CLA Assistant workflow | Contributor CLA signature enforced at PR time | Done | `.github/workflows/cla.yml` |
+| goreleaser + cosign keyless OIDC signing | Signed cross-platform releases (linux/darwin × amd64/arm64) | Done | `.github/workflows/release.yml` |
+| Homebrew tap (`ericmacdougall/homebrew-stoke`) | `brew install` via goreleaser formula | Done | [install.sh](../install.sh) |
+| Docker image (`ghcr.io/ericmacdougall/stoke`) | Multi-stage distroless runtime | Done | [Dockerfile](../Dockerfile) |
+| Dockerfile.pool (worker image) | macOS Keychain isolation workaround via Docker volumes | Done | [Dockerfile.pool](../Dockerfile.pool) |
+| Package-count drift check | `make check-pkg-count` asserts 180 internal packages | Done | [Makefile](../Makefile) |
+| Self-scan dogfooding | 18+ rules over 1,010 Go source files; zero blocking | Done | `internal/scan/` |
+| Negative hook tests (12 attack payloads) | All blocked | Done | `internal/hooks/` |
+| OAuth endpoint contract test | Forward-compatibility validation | Done | `internal/subscriptions/` |
+| Bench corpus (20 tasks × 5 categories) | Security, correctness, refactoring, features, testing | Done | `bench/` |
+| SWE-bench Pro evaluation path | Published; separate methodology | Done | [benchmark-stance](benchmark-stance.md) |
+| Productionization docs | SECURITY.md, CONTRIBUTING.md, CHANGELOG.md, Makefile, GOVERNANCE.md, CLA.md, CODE_OF_CONDUCT.md, STEWARDSHIP.md | Done | Repo root |
+| Architecture sub-docs | 19 files under docs/architecture/ | Done | [docs/architecture/](architecture/) |
+| Historical design docs preserved | Original design rationale retained in docs/history/ | Done | [docs/history/](history/) |
+
 ## r1-server UI v2 — visual execution trace
 
 | Feature | Benefit | Status | Spec |
@@ -108,36 +206,47 @@ Status legend:
 | Waterfall + indented-tree default view | Familiar observability UX; LLM I/O as message bubbles; cost/token badges inline | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
 | htmx + SSE + vendored ESM | Works offline; no CDN dependency; ~250KB vendored JS inside the binary | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
 | 3D ledger graph (perf retrofit) | InstancedMesh + Web Worker simulation + aggregation time scrubber; 3000-node smooth on mid-range laptop | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
-| Memory explorer (grouped-list default) | Scope-grouped cards with inline backlinks, FTS5 search, [Promote]/[Delete]/[+Add] | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
-| Skill load/unload events | `skill_loaded` / `skill_unloaded` ledger nodes emitted at SkillInjector hook; 3D viz shows hexagonal prisms with opacity transitions | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
-| Cryptographic verification UI | Every node shows ✔ verified / ⚠ unsigned / ✗ tampered based on `ledger.Verify()` hash check | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
-| `.tracebundle` export | Content-addressed portable trace archive — other r1-servers can import | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
+| Memory explorer (grouped-list default) | Scope-grouped cards with inline backlinks, FTS5 search, Promote/Delete/+Add | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
+| Skill load/unload events | `skill_loaded` / `skill_unloaded` ledger nodes; 3D viz shows hexagonal prisms with opacity transitions | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
+| Cryptographic verification UI | Every node shows verified / unsigned / tampered based on `ledger.Verify()` hash check | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
 | Run diff view | Git-like tree-diff of two session runs | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
 
-## Build pipeline — all scope cycles
+## 30-PR cleanup campaign — "put the repo on a race-clean footing"
 
-### Scope cycle 1 (2026-04-21)
+Shipped this session. Each line is a landed PR on `main`.
 
-1. **research-orchestrator** (16) — 35 items
-2. **browser-interactive** (17) — 47 items
-3. **event-log-proper** (18) — 35 items
-4. **agent-serve-async** (19) — 50 items
-5. **memory-full-stack** (20) — 64 items
-6. **operator-ux-commands** (21) — 68 items
-7. **finishing-touches** (22) — 62 items
+| PR | Area | Findings closed |
+|---|---|---|
+| #5 | OSS-hub governance | GOVERNANCE + CLA + goreleaser brews + cosign keyless OIDC |
+| #6 | Tests | four pre-existing test failures on `main` |
+| #7 | CI | Go-version drift on lint + security jobs |
+| #8 | Race | streamjson TwoLane stop-channel race + .site/ gitignore |
+| #9 | Lint | unconvert + ineffassign + wastedassign (batch 1) |
+| #10 | Lint | makezero + ineffassign + wastedassign (batch 2) |
+| #11 | Lint | forcetypeassert on production paths |
+| #12 | Lint | noctx context-aware HTTP probes in cmd/stoke |
+| #13 | Lint | staticcheck SA4000/SA4006/SA4010/SA1019/SA1024/SA9003 |
+| #14 | Lint | gosec-security + govet-nilness + errorlint on production paths |
+| #15 | Lint | errorlint %w + errors.As on production paths |
+| #16 | Lint | goconst — extract repeated string literals to package consts |
+| #17 | Lint | prealloc — pre-allocate slices in bounded loops |
+| #18 | Lint | test-file forcetypeassert + G306 (0644 → 0600) |
+| #19 | Lint | predeclared — rename variables shadowing Go builtins |
+| #20 | Lint | unused — remove dead code across 21 files (~340 lines) |
+| #21 | Lint | exhaustive — close switch coverage gaps across 21 files |
+| #22 | Lint | gosimple — 13 staticcheck findings |
+| #23 | Lint | gocritic — 22 findings across exitAfterDefer + misc |
+| #24 | Lint | errname — rename identifiers to match Go error conventions |
+| #25 | Lint | nilerr — 37 findings across 22 files |
+| #26 | Lint | prealloc + goconst — round 2 |
+| #28 | Lint | revive — indent-error-flow in sow_convert |
+| #29 | Lint | errorlint — close remaining 35 findings |
 
-### Scope cycle 2 (2026-04-21) — r1-server RS-7…RS-11 + research corrections
-
-8. **memory-bus** (23) — 58 items
-9. **ledger-redaction** (24) — 48 items
-10. **encryption-at-rest** (25) — 61 items
-11. **retention-policies** (26) — 48 items
-12. **r1-server-ui-v2** (27) — 91 items
-
-### Parallel track — specs awaiting `/build` from prior cycles
-
-mcp-client, policy-engine, fanout-generalization, deploy-phase2, chat-descent-control, delegation-a2a (full A2A).
+Race-clean gate in place. Advisory-lint posture documented. OSS-hub
+governance shipped: `GOVERNANCE.md`, `CONTRIBUTING.md`, `CLA.md`,
+`CODE_OF_CONDUCT.md`, `STEWARDSHIP.md`, `SECURITY.md`, goreleaser
+Homebrew publishing, cosign keyless OIDC signing.
 
 ---
 
-*Last updated: 2026-04-21 (scope cycle 2)*
+*Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*

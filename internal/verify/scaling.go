@@ -98,7 +98,7 @@ func (sp *ScaledPipeline) RunScaled(ctx context.Context, dir string, stats Chang
 				outcomes = append(outcomes, Outcome{Name: extra.name, Skipped: true, Success: true, Output: "no command configured"})
 				continue
 			}
-			cmd := exec.CommandContext(ctx, "bash", "-lc", extra.cmd)
+			cmd := exec.CommandContext(ctx, "bash", "-lc", extra.cmd) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 			cmd.Dir = dir
 			out, err := cmd.CombinedOutput()
 			outcome := Outcome{Name: extra.name, Success: err == nil, Output: string(out)}
@@ -120,7 +120,7 @@ func DiffStats(ctx context.Context, dir, base string) (ChangeStats, error) {
 		base = "HEAD~1"
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "diff", "--shortstat", base+"..HEAD")
+	cmd := exec.CommandContext(ctx, "git", "diff", "--shortstat", base+"..HEAD") // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

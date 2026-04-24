@@ -172,7 +172,7 @@ func (r *Registry) SearchSkills(query string, topK int) []SkillMatch {
 		name  string
 		score float64
 	}
-	var entries []entry
+	entries := make([]entry, 0, len(scored))
 	for name, score := range scored {
 		entries = append(entries, entry{name, score})
 	}
@@ -181,7 +181,7 @@ func (r *Registry) SearchSkills(query string, topK int) []SkillMatch {
 	})
 
 	// Build results.
-	var results []SkillMatch
+	results := make([]SkillMatch, 0, topK)
 	for i, e := range entries {
 		if i >= topK {
 			break

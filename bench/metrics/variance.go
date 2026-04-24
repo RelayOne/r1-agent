@@ -145,7 +145,7 @@ func (r *VarianceRun) WriteReport(path string) error {
 	for _, d := range r.PerTaskDeltas() {
 		fmt.Fprintf(&b, "| %s | %+.2f |\n", d.TaskID, d.Delta)
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o644) // #nosec G306 -- benchmark output artefact; user-readable.
 }
 
 // Wiring note (B3 follow-up): the VarianceRun contract is in place.

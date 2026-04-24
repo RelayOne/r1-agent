@@ -239,7 +239,7 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	raw, diag := collectModelText(resp)
 	if strings.TrimSpace(raw) == "" {
 		dumpRespMu.Lock()
-		_ = os.WriteFile("/tmp/stoke-refine-resp-debug.json", marshalRespOrEmpty(resp), 0o644)
+		_ = os.WriteFile("/tmp/stoke-refine-resp-debug.json", marshalRespOrEmpty(resp), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		dumpRespMu.Unlock()
 		return nil, fmt.Errorf("refine returned no usable content (stop_reason=%q, %d blocks; response saved to /tmp/stoke-refine-resp-debug.json)\n%s", resp.StopReason, len(resp.Content), diag)
 	}
@@ -247,7 +247,7 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 	// (extract, parse, validate) have something to inspect. Overwritten
 	// per call. Cheap insurance.
 	dumpRespMu.Lock()
-	_ = os.WriteFile("/tmp/stoke-refine-raw.txt", []byte(raw), 0o644)
+	_ = os.WriteFile("/tmp/stoke-refine-raw.txt", []byte(raw), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 	dumpRespMu.Unlock()
 
 	blob, extractErr := jsonutil.ExtractJSONObject(raw)
@@ -605,7 +605,7 @@ BROKEN JSON:
 	}
 	// Dump the repair output too, so failures downstream are visible.
 	dumpRespMu.Lock()
-	_ = os.WriteFile("/tmp/stoke-refine-repair-raw.txt", []byte(raw), 0o644)
+	_ = os.WriteFile("/tmp/stoke-refine-repair-raw.txt", []byte(raw), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 	dumpRespMu.Unlock()
 	blob, err := jsonutil.ExtractJSONObject(raw)
 	if err != nil {

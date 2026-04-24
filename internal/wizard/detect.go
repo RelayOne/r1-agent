@@ -23,14 +23,14 @@ func DetectGitStats(projectDir string) GitStats {
 	var stats GitStats
 
 	// Commit count
-	if out, err := exec.Command("git", "-C", projectDir, "rev-list", "--count", "HEAD").Output(); err == nil {
+	if out, err := exec.Command("git", "-C", projectDir, "rev-list", "--count", "HEAD").Output(); err == nil { // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 		if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
 			stats.CommitCount = n
 		}
 	}
 
 	// Contributor count
-	if out, err := exec.Command("git", "-C", projectDir, "shortlog", "-sn", "--no-merges", "HEAD").Output(); err == nil {
+	if out, err := exec.Command("git", "-C", projectDir, "shortlog", "-sn", "--no-merges", "HEAD").Output(); err == nil { // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 		stats.ContributorCount = len(strings.Split(strings.TrimSpace(string(out)), "\n"))
 	}
 

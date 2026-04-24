@@ -126,7 +126,7 @@ func TestVerifyChain_Tampered_Fails(t *testing.T) {
 	// Structural-header mutation: change CreatedBy. This is part of the
 	// canonical-header hash input so it flips the predecessor hash and
 	// invalidates node 8's ParentHash link.
-	cr.CreatedBy = cr.CreatedBy + "-tampered"
+	cr.CreatedBy += "-tampered"
 	mutated, err := json.MarshalIndent(cr, "", "  ")
 	if err != nil {
 		t.Fatalf("remarshal tampered: %v", err)

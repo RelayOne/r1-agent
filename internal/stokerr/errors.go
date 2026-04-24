@@ -10,17 +10,48 @@ import (
 // Code classifies an error.
 type Code string
 
+// The error code set below is the Stoke-wide taxonomy: every structured
+// error produced in the codebase should carry exactly one of these codes
+// so downstream code (retry logic, HTTP status mapping, ledger audit
+// emission) can switch on a stable value instead of string-matching.
 const (
-	ErrValidation     Code = "validation"
-	ErrNotFound       Code = "not_found"
-	ErrConflict       Code = "conflict"
-	ErrAppendOnly     Code = "append_only_violation"
-	ErrPermission     Code = "permission_denied"
+	// ErrValidation signals input that failed structural or semantic
+	// validation (e.g., malformed IDs, missing required fields). Callers
+	// should surface to the user; retrying without changes will not help.
+	ErrValidation Code = "validation"
+	// ErrNotFound signals a lookup miss for a resource the caller
+	// addressed by ID. Distinct from ErrValidation: the request was
+	// well-formed, just unsatisfiable.
+	ErrNotFound Code = "not_found"
+	// ErrConflict signals a concurrent-mutation collision or a state
+	// precondition failure (e.g., write against a stale version).
+	// Callers may retry after re-reading state.
+	ErrConflict Code = "conflict"
+	// ErrAppendOnly signals an attempt to mutate content-addressed or
+	// append-only storage (ledger nodes, WAL entries). Never retryable:
+	// the data model forbids the operation, not just the current state.
+	ErrAppendOnly Code = "append_only_violation"
+	// ErrPermission signals that an RBAC or sandbox policy blocked the
+	// call. Not retryable without role/config changes.
+	ErrPermission Code = "permission_denied"
+	// ErrBudgetExceeded signals that the mission/task hit its cost or
+	// token budget. Callers must either raise the budget or abort.
 	ErrBudgetExceeded Code = "budget_exceeded"
-	ErrTimeout        Code = "timeout"
-	ErrCrashRecovery  Code = "crash_recovery"
-	ErrSchemaVersion  Code = "schema_version"
-	ErrInternal       Code = "internal"
+	// ErrTimeout signals a deadline or process-timeout tripped. The
+	// underlying work may or may not have completed; callers decide
+	// whether the operation was idempotent and safe to retry.
+	ErrTimeout Code = "timeout"
+	// ErrCrashRecovery signals that state was restored from a crash
+	// checkpoint and the caller may be observing partial or replayed
+	// work. Used to gate "fresh state required" operations.
+	ErrCrashRecovery Code = "crash_recovery"
+	// ErrSchemaVersion signals a data-format version mismatch (on-disk
+	// artifact newer/older than this binary supports). Requires a
+	// migration or upgrade, not a retry.
+	ErrSchemaVersion Code = "schema_version"
+	// ErrInternal is the catch-all for unexpected invariants. Its
+	// presence in a response indicates a bug and should be reported.
+	ErrInternal Code = "internal"
 )
 
 // Error is a structured error carrying a classification code.

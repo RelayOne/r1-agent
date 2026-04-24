@@ -117,7 +117,7 @@ func Save(snap *Snapshot, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // Load reads a snapshot from a file.
@@ -217,7 +217,7 @@ func minLen(a, b int) int {
 }
 
 func gitOutput(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return string(out), err

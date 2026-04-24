@@ -20,15 +20,32 @@ import (
 // IDs.
 type ActionKind string
 
+// Action kinds are the eight interactive browser primitives. Each
+// literal is the canonical CLI name (--action=<kind>) and the token
+// embedded in acceptance-criteria IDs, so renames break both CLI
+// invocations and stored test plans.
 const (
-	ActionNavigate           ActionKind = "navigate"
-	ActionClick              ActionKind = "click"
-	ActionType               ActionKind = "type"
-	ActionWaitForSelector    ActionKind = "wait_for_selector"
+	// ActionNavigate loads a URL in the browser context.
+	ActionNavigate ActionKind = "navigate"
+	// ActionClick performs a left-click on the element matching Selector.
+	ActionClick ActionKind = "click"
+	// ActionType enters Text into the element matching Selector.
+	ActionType ActionKind = "type"
+	// ActionWaitForSelector blocks until Selector is present in the DOM
+	// or Timeout elapses.
+	ActionWaitForSelector ActionKind = "wait_for_selector"
+	// ActionWaitForNetworkIdle blocks until the browser reports the
+	// network has been idle for a provider-defined quiet window.
 	ActionWaitForNetworkIdle ActionKind = "wait_for_network_idle"
-	ActionScreenshot         ActionKind = "screenshot"
-	ActionExtractText        ActionKind = "extract_text"
-	ActionExtractAttribute   ActionKind = "extract_attribute"
+	// ActionScreenshot captures the current viewport and returns bytes
+	// in the ActionResult (optionally writing to OutputPath).
+	ActionScreenshot ActionKind = "screenshot"
+	// ActionExtractText returns the text content of the element
+	// matching Selector.
+	ActionExtractText ActionKind = "extract_text"
+	// ActionExtractAttribute returns the named Attribute from the
+	// element matching Selector.
+	ActionExtractAttribute ActionKind = "extract_attribute"
 )
 
 // AllActionKinds returns the eight kinds in stable order — used by
@@ -69,6 +86,8 @@ func (a Action) DefaultTimeout() time.Duration {
 	switch a.Kind {
 	case ActionNavigate, ActionWaitForNetworkIdle:
 		return 30 * time.Second
+	case ActionClick, ActionType, ActionWaitForSelector, ActionScreenshot, ActionExtractText, ActionExtractAttribute:
+		return 10 * time.Second
 	default:
 		return 10 * time.Second
 	}

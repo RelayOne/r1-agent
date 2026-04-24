@@ -101,8 +101,9 @@ func ExtractAll(text string) []Block {
 
 // ExtractCode extracts all code blocks from LLM output.
 func ExtractCode(text string) []Block {
-	var blocks []Block
-	for _, m := range codeBlockRe.FindAllStringSubmatch(text, -1) {
+	matches := codeBlockRe.FindAllStringSubmatch(text, -1)
+	blocks := make([]Block, 0, len(matches))
+	for _, m := range matches {
 		blocks = append(blocks, Block{
 			Type:     BlockCode,
 			Language: m[1],
@@ -170,8 +171,9 @@ func ExtractFirstJSON(text string) map[string]any {
 // ExtractToolCalls parses tool call JSON from LLM output.
 // Expects objects with "name" and "arguments" or "input" fields.
 func ExtractToolCalls(text string) []ToolCall {
-	var calls []ToolCall
-	for _, obj := range ExtractJSON(text) {
+	objs := ExtractJSON(text)
+	calls := make([]ToolCall, 0, len(objs))
+	for _, obj := range objs {
 		name, _ := obj["name"].(string)
 		if name == "" {
 			continue
@@ -234,8 +236,9 @@ func ExtractEdits(text string) []EditBlock {
 
 // ExtractThinking extracts thinking/reasoning blocks.
 func ExtractThinking(text string) []string {
-	var result []string
-	for _, m := range thinkingRe.FindAllStringSubmatch(text, -1) {
+	matches := thinkingRe.FindAllStringSubmatch(text, -1)
+	result := make([]string, 0, len(matches))
+	for _, m := range matches {
 		result = append(result, strings.TrimSpace(m[1]))
 	}
 	return result

@@ -281,6 +281,8 @@ func (u *WorkUnit) IsTerminal() bool {
 	switch u.Status {
 	case WorkUnitCompleted, WorkUnitFailed, WorkUnitRevoked:
 		return true
+	case WorkUnitPending, WorkUnitAccepted:
+		return false
 	default:
 		return false
 	}

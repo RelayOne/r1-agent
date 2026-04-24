@@ -80,7 +80,7 @@ func ensureInitialCommit(ctx context.Context, path string) error {
 	gi := filepath.Join(path, ".gitignore")
 	if _, err := os.Stat(gi); os.IsNotExist(err) {
 		stub := "# Stoke-generated .gitignore\n.stoke/\nnode_modules/\nvendor/\ntarget/\n.venv/\n__pycache__/\n"
-		if err := os.WriteFile(gi, []byte(stub), 0o644); err != nil {
+		if err := os.WriteFile(gi, []byte(stub), 0o644); err != nil { // #nosec G306 -- repo metadata; 0644 is standard.
 			return fmt.Errorf("seed .gitignore: %w", err)
 		}
 	}
@@ -101,7 +101,7 @@ func ensureInitialCommit(ctx context.Context, path string) error {
 }
 
 func runGit(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- git binary with Stoke-generated args (refs, paths, SHAs) not external input.
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

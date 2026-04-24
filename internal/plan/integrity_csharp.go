@@ -113,8 +113,9 @@ func (csharpEcosystem) CompileErrors(ctx context.Context, projectRoot string, fi
 	cmd := exec.CommandContext(c, "dotnet", "build", "--no-restore", "--nologo", "-v", "quiet")
 	cmd.Dir = projectRoot
 	out, _ := cmd.CombinedOutput()
-	var errs []CompileErr
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

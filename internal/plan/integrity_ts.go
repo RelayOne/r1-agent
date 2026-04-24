@@ -184,7 +184,7 @@ func (tsEcosystem) CompileErrors(ctx context.Context, projectRoot string, files 
 	if len(pkgDirs) == 0 {
 		return nil, nil
 	}
-	var roots []string
+	roots := make([]string, 0, len(pkgDirs))
 	for r := range pkgDirs {
 		roots = append(roots, r)
 	}
@@ -228,8 +228,9 @@ func tsRunTscInDir(parentCtx context.Context, projectRoot, pkgDir string) ([]Com
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = pkgDir
 	out, _ := cmd.CombinedOutput()
-	var errs []CompileErr
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

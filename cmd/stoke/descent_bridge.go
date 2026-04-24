@@ -261,7 +261,7 @@ func buildDescentConfig(
 					if binary != "" {
 						fmt.Printf("    🔧 descent env-fix: attempting to install %q...\n", binary)
 						aptCtx, cancel := context.WithTimeout(ectx, 1*time.Minute)
-						cmd := exec.CommandContext(aptCtx, "apt-get", "install", "-y", "-qq", binary)
+						cmd := exec.CommandContext(aptCtx, "apt-get", "install", "-y", "-qq", binary) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 						if err := cmd.Run(); err == nil {
 							fixed = true
 							fmt.Printf("    ✓ installed %s\n", binary)
@@ -360,7 +360,7 @@ func buildDescentConfig(
 		defer cancel()
 		// Use checkOneCriterion-style env setup: bash -lc with
 		// node_modules/.bin on PATH via the AC runner's own env logic.
-		cmd := exec.CommandContext(buildCtx, "bash", "-lc", buildCmd)
+		cmd := exec.CommandContext(buildCtx, "bash", "-lc", buildCmd) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 		cmd.Dir = cfg.RepoRoot
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -758,7 +758,7 @@ func descentGitHead(ctx context.Context, repoRoot string) string {
 // wrapper (spec-1 item 5) to detect dep-manifest edits.
 func descentGitDiffNames(ctx context.Context, repoRoot, preSHA, postRef string) []string {
 	if preSHA != "" {
-		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", preSHA, postRef)
+		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", preSHA, postRef) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 		cmd.Dir = repoRoot
 		out, err := cmd.Output()
 		if err == nil {

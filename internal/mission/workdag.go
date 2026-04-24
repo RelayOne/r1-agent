@@ -544,7 +544,7 @@ func (d *WorkDAG) computePriorities() {
 // readyNodes returns nodes whose deps are all complete and have no file
 // conflicts with running nodes. Must be called with mu held.
 func (d *WorkDAG) readyNodes() []*WorkNode {
-	var ready []*WorkNode
+	ready := make([]*WorkNode, 0, len(d.nodes))
 	for _, n := range d.nodes {
 		if n.Status != WorkPending {
 			continue

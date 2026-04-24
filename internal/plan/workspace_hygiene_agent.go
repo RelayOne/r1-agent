@@ -293,7 +293,7 @@ func execBashTool(ctx context.Context, input map[string]interface{}, repoRoot st
 	fmt.Printf("    🔧 hygiene-agent: %s\n", truncate(cmdStr, 80))
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	c := exec.CommandContext(cctx, "bash", "-lc", cmdStr)
+	c := exec.CommandContext(cctx, "bash", "-lc", cmdStr) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	c.Dir = cwd
 	var buf bytes.Buffer
 	c.Stdout = &buf

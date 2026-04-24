@@ -199,7 +199,7 @@ func (s *Store) writeJSON(relPath string, v interface{}) error {
 		return fmt.Errorf("create dir: %w", err)
 	}
 	tmp := fullPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, fullPath)

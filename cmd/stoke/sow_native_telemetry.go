@@ -81,7 +81,7 @@ func maybeWriteSOWSnapshot(cfg sowNativeConfig, sessionID string) string {
 		return ""
 	}
 	path := filepath.Join(dir, "sow-snapshot.md")
-	if err := os.WriteFile(path, []byte(cfg.RawSOWText), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(cfg.RawSOWText), 0o644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Printf("    ⚠ sow snapshot: write %s: %v (non-fatal)\n", path, err)
 		return ""
 	}

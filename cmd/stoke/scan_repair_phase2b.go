@@ -192,7 +192,7 @@ func writeVectorFinding(outDir string, v securityVector, reply string) int {
 	}
 	out := filepath.Join(outDir, fmt.Sprintf("vector-%d-%s.md", v.Num, v.Slug))
 	content := fmt.Sprintf("# Vector %d: %s\n\n%s\n", v.Num, v.Name, body)
-	if err := os.WriteFile(out, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(out, []byte(content), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Fprintf(os.Stderr, "  [Phase 2b] write %s: %v\n", out, err)
 	}
 	return countFindingLines(body)

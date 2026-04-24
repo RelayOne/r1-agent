@@ -664,7 +664,7 @@ func scanWeakAssertions(rel string, lines []string) []QualityFinding {
 		`\bexpect\s*\(\s*(?:true|false|1|0|null|undefined|""|''|\[\s*\]|\{\s*\})\s*\)\s*\.(?:toBe|toEqual|toStrictEqual)\s*\(\s*(?:true|false|1|0|null|undefined|""|''|\[\s*\]|\{\s*\})\s*\)`,
 	)
 	trivialTruthy := regexp.MustCompile(
-		`\bexpect\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*\)\s*\.(?:toBeTruthy|toBeDefined|toBeDefined)\s*\(\s*\)`,
+		`\bexpect\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*\)\s*\.(?:toBeTruthy|toBeDefined)\s*\(\s*\)`,
 	)
 	assertTrue := regexp.MustCompile(
 		`\b(?:assert|chai\.assert)(?:\.ok)?\s*\(\s*(?:true|1|"[^"]+"|'[^']+')\s*(?:,.*)?\s*\)`,
@@ -1665,6 +1665,10 @@ func ScanDeclaredFilesNotCreated(repoRoot string, declared []string) []QualityFi
 	if repoRoot == "" || len(declared) == 0 {
 		return nil
 	}
+	// NOTE: do NOT prealloc this slice — the test
+	// TestScanDeclaredFilesNotCreated_EmptyInputs asserts a nil
+	// (not empty-non-nil) return when every declared entry is
+	// whitespace. A `make(..., 0, N)` would flip that contract.
 	var findings []QualityFinding
 	for _, rel := range declared {
 		rel = strings.TrimSpace(rel)

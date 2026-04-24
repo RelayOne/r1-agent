@@ -21,16 +21,23 @@ func NewPartnerTimeout() *PartnerTimeout {
 	return &PartnerTimeout{}
 }
 
+// Name returns the stable rule identifier used by the supervisor
+// registry and audit logs.
 func (r *PartnerTimeout) Name() string {
 	return "consensus.partner_timeout"
 }
 
+// Pattern subscribes this rule to delayed partner-timeout events
+// (emitted by the bus scheduler when a partner's SLA elapses).
 func (r *PartnerTimeout) Pattern() bus.Pattern {
 	return bus.Pattern{TypePrefix: "consensus.partner.timeout"}
 }
 
+// Priority (80) runs after iteration and convergence rules; timeouts
+// are a secondary failure mode.
 func (r *PartnerTimeout) Priority() int { return 80 }
 
+// Rationale is the human-readable justification surfaced in audit.
 func (r *PartnerTimeout) Rationale() string {
 	return "Consensus partners that fail to respond within the timeout must be replaced or escalated."
 }
@@ -43,6 +50,10 @@ type timeoutPayload struct {
 	IsReplacement bool   `json:"is_replacement"`
 }
 
+// Evaluate returns true iff the partner identified in the timeout
+// payload has not yet produced an agree, dissent, or research-result
+// node. Ledger query errors conservatively treat the partner as
+// timed-out.
 func (r *PartnerTimeout) Evaluate(ctx context.Context, evt bus.Event, l *ledger.Ledger) (bool, error) {
 	var tp timeoutPayload
 	if err := json.Unmarshal(evt.Payload, &tp); err != nil {
@@ -68,6 +79,9 @@ func (r *PartnerTimeout) Evaluate(ctx context.Context, evt bus.Event, l *ledger.
 	return true, nil
 }
 
+// Action marks the partner timed-out, then either spawns a
+// replacement (first timeout) or escalates to a supervisor (if the
+// already-replaced partner timed out as well).
 func (r *PartnerTimeout) Action(ctx context.Context, evt bus.Event, b *bus.Bus) error {
 	var tp timeoutPayload
 	if err := json.Unmarshal(evt.Payload, &tp); err != nil {

@@ -376,7 +376,7 @@ func (s *Shell) Search(ctx context.Context, query string, maxResults int) ([]Res
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, "bash", "-lc", cmd).Output()
+	out, err := exec.CommandContext(cctx, "bash", "-lc", cmd).Output() // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	if err != nil {
 		return nil, fmt.Errorf("websearch shell: %w", err)
 	}

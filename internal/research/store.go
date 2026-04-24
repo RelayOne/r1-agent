@@ -288,9 +288,9 @@ func (s *Store) searchFallback(query string, limit int) ([]SearchResult, error) 
 
 	// Build WHERE clause: (content LIKE '%word1%' OR topic LIKE '%word1%' ...) for each word
 	// Score = count of matching words
-	var conditions []string
-	var scoreExprs []string
-	var args []interface{}
+	conditions := make([]string, 0, len(words))
+	scoreExprs := make([]string, 0, len(words))
+	args := make([]interface{}, 0, len(words)*4)
 	for _, w := range words {
 		like := "%" + w + "%"
 		cond := "(LOWER(content) LIKE ? OR LOWER(topic) LIKE ? OR LOWER(query) LIKE ? OR LOWER(tags) LIKE ?)"
@@ -472,7 +472,7 @@ func sanitizeFTSQuery(query string) string {
 	query = strings.ReplaceAll(query, "\"", "\"\"")
 	// Split into words and add prefix matching
 	words := strings.Fields(query)
-	var parts []string
+	parts := make([]string, 0, len(words))
 	for _, w := range words {
 		// Wrap each word in quotes for exact matching, add * for prefix
 		parts = append(parts, "\""+w+"\"*")
@@ -610,7 +610,7 @@ func (s *Store) SemanticSearch(query string, limit int) ([]SearchResult, error) 
 	}
 
 	// Convert vecindex results to research SearchResults
-	var out []SearchResult
+	out := make([]SearchResult, 0, len(results))
 	for _, r := range results {
 		if r.Score < 0.01 {
 			continue // skip near-zero similarity

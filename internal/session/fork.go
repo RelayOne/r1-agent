@@ -47,7 +47,7 @@ func (s *Store) ForkSession(parentID, branchName, description string) (*Fork, er
 	}
 
 	forkPath := filepath.Join(forksDir, fork.ID+".json")
-	if err := os.WriteFile(forkPath, data, 0644); err != nil {
+	if err := os.WriteFile(forkPath, data, 0o600); err != nil {
 		return nil, err
 	}
 
@@ -58,7 +58,7 @@ func (s *Store) ForkSession(parentID, branchName, description string) (*Fork, er
 		forkState.PlanID = fork.ID
 		forkData, _ := json.MarshalIndent(&forkState, "", "  ")
 		statePath := filepath.Join(forksDir, fork.ID+"-state.json")
-		os.WriteFile(statePath, forkData, 0644)
+		os.WriteFile(statePath, forkData, 0o600)
 	}
 
 	return fork, nil
@@ -129,7 +129,7 @@ func (s *Store) updateForkState(forkID, state string) error {
 		return err
 	}
 	var fork Fork
-	if err := json.Unmarshal(data, &fork); err != nil {
+	if err = json.Unmarshal(data, &fork); err != nil {
 		return err
 	}
 	fork.State = state
@@ -137,5 +137,5 @@ func (s *Store) updateForkState(forkID, state string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(forkPath, updated, 0644)
+	return os.WriteFile(forkPath, updated, 0o600)
 }

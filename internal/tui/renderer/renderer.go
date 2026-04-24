@@ -214,14 +214,13 @@ type Model struct {
 	order                  []string
 	focusSession, focusTask int
 
-	costSpent, costBudget, costBurn float64
-	costByKind                      map[string]float64
+	costSpent, costBudget float64
+	costByKind            map[string]float64
 
 	descent     []DescentTick // ring cap 8
 	events      []Event       // ring cap 64
 	eventOffset int
 	dropped     uint64
-	malformed   uint64
 
 	hitlOpen   bool
 	hitlReq    HITLRequest
@@ -842,6 +841,8 @@ func glyphForAC(status ACStatus, mono bool) string {
 		return Glyph(mono, false, false, false, false, true, false)
 	case ACInDescent:
 		return Glyph(mono, false, false, false, false, false, true)
+	case ACPending:
+		return Glyph(mono, false, true, false, false, false, false)
 	}
 	return Glyph(mono, false, true, false, false, false, false)
 }

@@ -243,7 +243,7 @@ func (r *Registry) Get(name string) *Skill {
 func (r *Registry) List() []*Skill {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var result []*Skill
+	result := make([]*Skill, 0, len(r.skills))
 	for _, s := range r.skills {
 		result = append(result, s)
 	}
@@ -459,7 +459,7 @@ func (r *Registry) InjectCatalogBudgeted(prompt string, tokenBudget int) (string
 	})
 
 	used := 0
-	var selected []SkillSelection
+	selected := make([]SkillSelection, 0, len(ordered))
 	overflow := 0
 	for _, s := range ordered {
 		cost := (len(s.Name) + len(s.Description)) / 4
@@ -573,7 +573,7 @@ func (r *Registry) Add(name, description, content string, keywords []string) err
 	sb.WriteString(content)
 
 	path := filepath.Join(dir, name+".md")
-	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil { // #nosec G306 -- skill registry manifest; user-readable.
 		return err
 	}
 

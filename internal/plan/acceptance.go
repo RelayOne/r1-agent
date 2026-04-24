@@ -285,7 +285,7 @@ func EnsureWorkspaceInstalledOpts(ctx context.Context, projectRoot string, opts 
 		}
 		installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(installCtx, bin, args...)
+		cmd := exec.CommandContext(installCtx, bin, args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		return cmd.Run() == nil
 	}
@@ -362,7 +362,7 @@ func CheckAcceptanceCriteria(ctx context.Context, projectRoot string, criteria [
 func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, criteria []AcceptanceCriterion, judge SemanticEvaluator) ([]AcceptanceResult, bool) {
 	ensureWorkspaceInstalled(ctx, projectRoot)
 
-	var results []AcceptanceResult
+	results := make([]AcceptanceResult, 0, len(criteria))
 	allPassed := true
 
 	for _, ac := range criteria {
@@ -481,7 +481,7 @@ func ensureWorkspaceInstalled(ctx context.Context, projectRoot string) {
 		// — which killed run18 and run20 in exactly this spot.
 		installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(installCtx, bin, args...)
+		cmd := exec.CommandContext(installCtx, bin, args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		// Silence output: anything useful shows up in the AC failure
 		// anyway. We just want to get node_modules on disk.
@@ -771,7 +771,7 @@ func checkOneCriterion(ctx context.Context, projectRoot string, ac AcceptanceCri
 			cmdText = fileExistsColonForm.ReplaceAllString(cmdText, "file_exists $1")
 		}
 		wrappedCmd := `file_exists() { test -f "$1" || test -d "$1"; }; ` + cmdText
-		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", wrappedCmd)
+		cmd := exec.CommandContext(cmdCtx, "bash", "-lc", wrappedCmd) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		cmd.Env = acceptanceCommandEnv(projectRoot)
 		out, err := cmd.CombinedOutput()

@@ -33,6 +33,10 @@ func NewTerminalFrom(in io.Reader, out, errW io.Writer) *Terminal {
 	return &Terminal{reader: bufio.NewReader(in), out: out, errW: errW}
 }
 
+// Ask writes the prompt and any options to the configured out stream,
+// then reads a single line from in. Blocks until the user types a
+// newline, ctx is cancelled, or the reader reports EOF. Returns the
+// trimmed input; on ctx cancel returns ctx.Err().
 func (t *Terminal) Ask(ctx context.Context, prompt string, options []Option) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -70,6 +74,8 @@ func (t *Terminal) Ask(ctx context.Context, prompt string, options []Option) (st
 	}
 }
 
+// Notify writes message to the Terminal's out stream with a severity
+// prefix keyed by kind. Goroutine-safe.
 func (t *Terminal) Notify(kind NotifyKind, message string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -81,6 +87,8 @@ func (t *Terminal) Notify(kind NotifyKind, message string) {
 		prefix = "ERROR: "
 	case KindSuccess:
 		prefix = "OK: "
+	case KindInfo:
+		// No prefix — informational messages print as-is.
 	}
 	fmt.Fprintln(t.out, prefix+message)
 }

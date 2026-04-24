@@ -39,10 +39,15 @@ type Line struct {
 // LineOp classifies a diff line.
 type LineOp string
 
+// LineOp values match the leading column of a unified-diff hunk line
+// and are used verbatim when the patch is serialized.
 const (
+	// OpContext marks an unchanged line included to anchor the hunk.
 	OpContext LineOp = " "
-	OpAdd     LineOp = "+"
-	OpDelete  LineOp = "-"
+	// OpAdd marks a line inserted by the patch.
+	OpAdd LineOp = "+"
+	// OpDelete marks a line removed by the patch.
+	OpDelete LineOp = "-"
 )
 
 // Sentinel paths used by unified diff format to mark file creation/deletion.
@@ -266,7 +271,7 @@ func applyPatch(patch *Patch, root string, reverse, dryRun bool) *ApplyResult {
 
 		if !dryRun {
 			output := strings.Join(newLines, "\n")
-			if err := os.WriteFile(fullPath, []byte(output), 0644); err != nil {
+			if err := os.WriteFile(fullPath, []byte(output), 0644); err != nil { // #nosec G306 -- patch target (existing source file); 0644 preserves source perms.
 				result.Failed = append(result.Failed, path)
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", path, err))
 				continue
@@ -296,7 +301,7 @@ func applyNewFile(fp FilePatch, fullPath string, dryRun bool) error {
 			}
 		}
 	}
-	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0644)
+	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0644) // #nosec G306 -- patch target (existing source file); 0644 preserves source perms.
 }
 
 func applyHunks(lines []string, hunks []Hunk) ([]string, error) {
@@ -466,6 +471,8 @@ func (p *Patch) Stats() (files, additions, deletions int) {
 					additions++
 				case OpDelete:
 					deletions++
+				case OpContext:
+					// Context lines are neither additions nor deletions.
 				}
 			}
 		}
