@@ -17,6 +17,7 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/perflog"
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // step8RegressionCap bounds how many consecutive outer rounds may
@@ -1840,7 +1841,7 @@ func codexCall(bin, dir, prompt string) string {
 	// have a narrow job (is the plan/diff OK?) that doesn't need deep
 	// chain-of-thought. Can be overridden per-run via
 	// STOKE_CODEX_REASONING_EFFORT={low,medium,high}.
-	reasoningEffort := os.Getenv("STOKE_CODEX_REASONING_EFFORT")
+	reasoningEffort := r1env.Get("R1_CODEX_REASONING_EFFORT", "STOKE_CODEX_REASONING_EFFORT")
 	if reasoningEffort == "" {
 		reasoningEffort = "low"
 	}

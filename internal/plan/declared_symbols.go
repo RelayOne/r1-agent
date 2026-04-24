@@ -1,12 +1,12 @@
 package plan
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/symindex"
 )
 
@@ -149,7 +149,7 @@ func ScanDeclaredSymbolsNotImplemented(repoRoot, sowProse string, changedFiles [
 		// Operator can still escalate by setting
 		// STOKE_DECLARED_SYMBOL_BLOCKING=1.
 		sev := SevAdvisory
-		if os.Getenv("STOKE_DECLARED_SYMBOL_BLOCKING") == "1" {
+		if r1env.Get("R1_DECLARED_SYMBOL_BLOCKING", "STOKE_DECLARED_SYMBOL_BLOCKING") == "1" {
 			sev = SevBlocking
 		}
 		out = append(out, QualityFinding{

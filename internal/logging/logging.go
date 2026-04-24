@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/redact"
 )
 
@@ -43,7 +44,7 @@ func Init(level string, output io.Writer) {
 		// (tool output, API error, operator shell command echoed into a
 		// log line), it gets stripped before it lands on disk. Operators
 		// who want raw logs for debugging can set STOKE_LOG_REDACT=0.
-		if os.Getenv("STOKE_LOG_REDACT") != "0" {
+		if r1env.Get("R1_LOG_REDACT", "STOKE_LOG_REDACT") != "0" {
 			output = redact.NewWriter(output)
 		}
 		var lvl slog.Level

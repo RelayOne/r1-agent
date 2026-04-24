@@ -392,6 +392,16 @@ type SharedAuditEvent struct {
 // wrapped under `_stoke.dev/` because the 9-field shape IS the public
 // contract with Multica + CloudSwarm.
 //
+// S1-6 dual-key emission: alongside the canonical `session_id` field,
+// every emitted event also carries `stoke_session_id` (legacy) AND
+// `r1_session_id` (canonical) with the identical value. This mirrors
+// the RelayGate audit-event shape through the 60-day rename window
+// ending 2026-06-22, so cross-product collectors (CloudSwarm,
+// RelayGate, Multica) can read either key during the transition.
+// Both keys are always emitted for the duration of the S1-6 dual-emit
+// window — dropping the legacy key is scheduled for phase S6-2
+// (2026-06-22). Per work-r1-rename.md §S1-6.
+//
 // Callers emitting `stoke.request.*` / `stoke.descent.*` events
 // should gradually migrate to this helper; EmitStoke / EmitSystem
 // remain the right choice for non-audit events.
@@ -416,19 +426,59 @@ func (e *Emitter) EmitSharedAudit(ev SharedAuditEvent) {
 		ev.Severity = "info"
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	buf, err := json.Marshal(ev)
+	// S1-6 dual-key: marshal the struct first, then rewrite the JSON
+	// object to include `stoke_session_id` + `r1_session_id` as
+	// companion fields alongside the canonical `session_id`. Using a
+	// map[string]any round-trip keeps the struct definition stable and
+	// the dual-key contract self-contained in the emitter — callers do
+	// not need to think about the legacy/canonical split.
+	raw, err := json.Marshal(ev)
 	if err != nil {
+		e.mu.Lock()
+		defer e.mu.Unlock()
 		fallback, _ := json.Marshal(map[string]any{
-			"type":       "error",
-			"uuid":       uuid.NewString(),
-			"session_id": e.sessionID,
-			"message":    fmt.Sprintf("streamjson shared-audit marshal failed: %v", err),
+			"type":             "error",
+			"uuid":             uuid.NewString(),
+			"session_id":       e.sessionID,
+			"stoke_session_id": e.sessionID,
+			"r1_session_id":    e.sessionID,
+			"message":          fmt.Sprintf("streamjson shared-audit marshal failed: %v", err),
 		})
 		fmt.Fprintln(e.w, string(fallback))
 		return
 	}
+
+	var flat map[string]any
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		// Marshal of a struct whose JSON decode back into a map fails
+		// is pathological — emit the original bytes verbatim so the
+		// event still lands, just without the dual-key mirror.
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		fmt.Fprintln(e.w, string(raw))
+		return
+	}
+	flat["stoke_session_id"] = ev.SessionID
+	flat["r1_session_id"] = ev.SessionID
+
+	buf, err := json.Marshal(flat)
+	if err != nil {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		fallback, _ := json.Marshal(map[string]any{
+			"type":             "error",
+			"uuid":             uuid.NewString(),
+			"session_id":       e.sessionID,
+			"stoke_session_id": e.sessionID,
+			"r1_session_id":    e.sessionID,
+			"message":          fmt.Sprintf("streamjson shared-audit re-marshal failed: %v", err),
+		})
+		fmt.Fprintln(e.w, string(fallback))
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	fmt.Fprintln(e.w, string(buf))
 }
 

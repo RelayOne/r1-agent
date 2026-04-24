@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/ericmacdougall/stoke/internal/promptguard"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // Skill-frontmatter field names (parsed out of `---` YAML-ish blocks
@@ -104,7 +105,7 @@ func NewRegistry(dirs ...string) *Registry {
 func DefaultRegistry(projectRoot string) *Registry {
 	home, _ := os.UserHomeDir()
 	projectSkillsDir := filepath.Join(projectRoot, ".stoke", "skills")
-	if v := strings.TrimSpace(os.Getenv("STOKE_SKILLS_DIR")); v != "" {
+	if v := strings.TrimSpace(r1env.Get("R1_SKILLS_DIR", "STOKE_SKILLS_DIR")); v != "" {
 		projectSkillsDir = v
 	}
 	dirs := []string{

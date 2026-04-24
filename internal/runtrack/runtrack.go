@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // Manifest describes a live stoke process instance. Written on start,
@@ -56,7 +58,7 @@ type Manifest struct {
 //
 // Override with STOKE_RUNTRACK_DIR for tests.
 func InstancesDir() string {
-	if d := os.Getenv("STOKE_RUNTRACK_DIR"); d != "" {
+	if d := r1env.Get("R1_RUNTRACK_DIR", "STOKE_RUNTRACK_DIR"); d != "" {
 		return d
 	}
 	return "/tmp/stoke/instances"
@@ -66,7 +68,7 @@ func InstancesDir() string {
 // Override with STOKE_SERVER_PORT. Kept in runtrack so CLI and
 // server share a single source of truth.
 func DefaultServerPort() int {
-	if v := os.Getenv("STOKE_SERVER_PORT"); v != "" {
+	if v := r1env.Get("R1_SERVER_PORT", "STOKE_SERVER_PORT"); v != "" {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
 			return n

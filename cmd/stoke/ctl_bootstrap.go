@@ -24,6 +24,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/sessionctl"
 )
 
@@ -67,7 +68,7 @@ func startSessionCtlServer(mode string, repoRoot string) (*sessionctl.Server, st
 		)
 	}
 
-	ctlDir := os.Getenv("STOKE_CTL_DIR")
+	ctlDir := r1env.Get("R1_CTL_DIR", "STOKE_CTL_DIR")
 	if ctlDir == "" {
 		ctlDir = "/tmp"
 	}

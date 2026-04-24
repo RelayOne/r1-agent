@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // ParallelSessions, when > 0, enables the DAG-driven parallel runner.
@@ -552,7 +554,7 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 			// behavior for runs that want harder enforcement.
 			if allPassed && ss.SmokeGate != nil {
 				kind, reason, output := ss.SmokeGate(session)
-				strict := os.Getenv("STOKE_SOW_SMOKE_STRICT") != ""
+				strict := r1env.Get("R1_SOW_SMOKE_STRICT", "STOKE_SOW_SMOKE_STRICT") != ""
 				switch kind {
 				case "fail":
 					if strict {

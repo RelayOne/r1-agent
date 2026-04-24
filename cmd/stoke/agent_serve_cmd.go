@@ -20,6 +20,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/agentserve"
 	"github.com/ericmacdougall/stoke/internal/deploy"
 	"github.com/ericmacdougall/stoke/internal/executor"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/trustplane"
 )
 
@@ -48,7 +49,7 @@ func agentServeCmd(args []string) {
 	}
 
 	registry := buildExecutorRegistry()
-	bearer := parseTokens(os.Getenv("STOKE_SERVE_TOKENS"))
+	bearer := parseTokens(r1env.Get("R1_SERVE_TOKENS", "STOKE_SERVE_TOKENS"))
 
 	cfg := agentserve.Config{
 		Version:      version,
@@ -151,15 +152,15 @@ func parseAgentServeFlags(args []string) (agentServeOpts, error) {
 	advertised := cleanCSV(*caps)
 	endpoint := *tpEndpoint
 	if endpoint == "" {
-		endpoint = strings.TrimSpace(os.Getenv("STOKE_TRUSTPLANE_ENDPOINT"))
+		endpoint = strings.TrimSpace(r1env.Get("R1_TRUSTPLANE_ENDPOINT", "STOKE_TRUSTPLANE_ENDPOINT"))
 	}
 	did := *tpDID
 	if did == "" {
-		did = strings.TrimSpace(os.Getenv("STOKE_TRUSTPLANE_DID"))
+		did = strings.TrimSpace(r1env.Get("R1_TRUSTPLANE_DID", "STOKE_TRUSTPLANE_DID"))
 	}
 	agentID := *tpAgentID
 	if agentID == "" {
-		agentID = strings.TrimSpace(os.Getenv("STOKE_TRUSTPLANE_AGENT_ID"))
+		agentID = strings.TrimSpace(r1env.Get("R1_TRUSTPLANE_AGENT_ID", "STOKE_TRUSTPLANE_AGENT_ID"))
 	}
 
 	return agentServeOpts{
@@ -281,13 +282,13 @@ func capabilityRegistration(s *agentserve.Server, opts agentServeOpts, did strin
 // Returns a typed error when both are unset so the caller reports a
 // clear configuration gap to operators.
 func loadTrustPlanePrivateKey() (ed25519.PrivateKey, error) {
-	inline := strings.TrimSpace(os.Getenv("STOKE_TRUSTPLANE_PRIVKEY"))
+	inline := strings.TrimSpace(r1env.Get("R1_TRUSTPLANE_PRIVKEY", "STOKE_TRUSTPLANE_PRIVKEY"))
 	if inline != "" {
 		return decodeEd25519PEM(inline)
 	}
-	path := strings.TrimSpace(os.Getenv("STOKE_TRUSTPLANE_PRIVKEY_FILE"))
+	path := strings.TrimSpace(r1env.Get("R1_TRUSTPLANE_PRIVKEY_FILE", "STOKE_TRUSTPLANE_PRIVKEY_FILE"))
 	if path == "" {
-		return nil, errors.New("neither STOKE_TRUSTPLANE_PRIVKEY nor STOKE_TRUSTPLANE_PRIVKEY_FILE set")
+		return nil, errors.New("neither R1_TRUSTPLANE_PRIVKEY / STOKE_TRUSTPLANE_PRIVKEY nor R1_TRUSTPLANE_PRIVKEY_FILE / STOKE_TRUSTPLANE_PRIVKEY_FILE set")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {

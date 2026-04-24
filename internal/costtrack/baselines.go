@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // baselineEntry matches one record in bench/baselines/*.json.
@@ -79,7 +81,7 @@ func LoadBaselines(path string) (map[string]AmplificationBudget, error) {
 // missing baselines as "enforcement disabled" rather than fatal.
 func LoadBaselinesFromSearchPaths(filename string) (map[string]AmplificationBudget, error) {
 	candidates := []string{}
-	if p := os.Getenv("STOKE_BASELINES_PATH"); p != "" {
+	if p := r1env.Get("R1_BASELINES_PATH", "STOKE_BASELINES_PATH"); p != "" {
 		candidates = append(candidates, p)
 	}
 	candidates = append(candidates, fmt.Sprintf("bench/baselines/%s", filename))

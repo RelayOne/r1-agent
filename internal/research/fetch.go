@@ -26,9 +26,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // Fetcher is the minimal interface the verifier (and the executor)
@@ -59,7 +60,7 @@ type HTTPFetcher struct {
 // STOKE_RESEARCH_REQUIRE_TLS=1 for strict https-only mode.
 func NewHTTPFetcher() *HTTPFetcher {
 	allow := []string{}
-	if raw := strings.TrimSpace(os.Getenv("STOKE_RESEARCH_ALLOWLIST")); raw != "" {
+	if raw := strings.TrimSpace(r1env.Get("R1_RESEARCH_ALLOWLIST", "STOKE_RESEARCH_ALLOWLIST")); raw != "" {
 		for _, part := range strings.Split(raw, ",") {
 			p := strings.ToLower(strings.TrimSpace(part))
 			if p != "" {
@@ -72,7 +73,7 @@ func NewHTTPFetcher() *HTTPFetcher {
 		Allowlist:  allow,
 		UserAgent:  "stoke-research/1.0 (+https://github.com/ericmacdougall/stoke)",
 		MaxBody:    MaxBodyBytes,
-		RequireTLS: os.Getenv("STOKE_RESEARCH_REQUIRE_TLS") == "1",
+		RequireTLS: r1env.Get("R1_RESEARCH_REQUIRE_TLS", "STOKE_RESEARCH_REQUIRE_TLS") == "1",
 	}
 }
 

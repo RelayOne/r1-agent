@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // ConfigFile is the on-disk record of a successful cloud
@@ -57,7 +59,7 @@ type ConfigFile struct {
 // Resolves ~/.stoke/cloud.json, creating the parent dir if
 // missing. Honors STOKE_CLOUD_CONFIG env override for tests.
 func ConfigPath() (string, error) {
-	if override := strings.TrimSpace(os.Getenv("STOKE_CLOUD_CONFIG")); override != "" {
+	if override := strings.TrimSpace(r1env.Get("R1_CLOUD_CONFIG", "STOKE_CLOUD_CONFIG")); override != "" {
 		if err := os.MkdirAll(filepath.Dir(override), 0o755); err != nil {
 			return "", fmt.Errorf("cloud: mkdir parent of %s: %w", override, err)
 		}

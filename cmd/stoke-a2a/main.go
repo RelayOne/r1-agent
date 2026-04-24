@@ -42,18 +42,21 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/a2a"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 func main() {
-	addr := envOr("STOKE_A2A_ADDR", ":7430")
-	name := envOr("STOKE_A2A_NAME", "stoke-a2a")
-	version := envOr("STOKE_A2A_VERSION", "dev")
-	desc := os.Getenv("STOKE_A2A_DESC")
-	url := os.Getenv("STOKE_A2A_URL")
-	providerName := os.Getenv("STOKE_A2A_PROVIDER")
-	token := os.Getenv("STOKE_A2A_TOKEN")
+	// S1-1 env rename: canonical R1_A2A_* with STOKE_A2A_* fallback
+	// through the 2026-07-23 dual-accept window.
+	addr := envOr("R1_A2A_ADDR", "STOKE_A2A_ADDR", ":7430")
+	name := envOr("R1_A2A_NAME", "STOKE_A2A_NAME", "stoke-a2a")
+	version := envOr("R1_A2A_VERSION", "STOKE_A2A_VERSION", "dev")
+	desc := r1env.Get("R1_A2A_DESC", "STOKE_A2A_DESC")
+	url := r1env.Get("R1_A2A_URL", "STOKE_A2A_URL")
+	providerName := r1env.Get("R1_A2A_PROVIDER", "STOKE_A2A_PROVIDER")
+	token := r1env.Get("R1_A2A_TOKEN", "STOKE_A2A_TOKEN")
 
-	caps := parseCapabilities(os.Getenv("STOKE_A2A_CAPABILITIES"))
+	caps := parseCapabilities(r1env.Get("R1_A2A_CAPABILITIES", "STOKE_A2A_CAPABILITIES"))
 
 	card := a2a.Build(a2a.Options{
 		Name:         name,
@@ -117,8 +120,12 @@ func parseCapabilities(s string) []a2a.CapabilityRef {
 	return out
 }
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+// envOr resolves an env-var via r1env.Get (canonical R1_* first, legacy
+// STOKE_* fallback with single-shot WARN) and substitutes def when
+// both are unset. The dual-arg signature keeps call sites explicit
+// about the rename pair they're participating in.
+func envOr(canonical, legacy, def string) string {
+	if v := r1env.Get(canonical, legacy); v != "" {
 		return v
 	}
 	return def

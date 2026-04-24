@@ -11,6 +11,8 @@ import (
 	"github.com/smacker/go-tree-sitter/python"
 	"github.com/smacker/go-tree-sitter/typescript/tsx"
 	"github.com/smacker/go-tree-sitter/typescript/typescript"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // H-28 — Tree-sitter backed variant of the H-27 declared-symbol gate.
@@ -40,7 +42,7 @@ import (
 // variants ship in the same binary — operators can A/B without
 // rebuilding.
 func treeSitterEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("STOKE_H27_TREESITTER")))
+	v := strings.ToLower(strings.TrimSpace(r1env.Get("R1_H27_TREESITTER", "STOKE_H27_TREESITTER")))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 

@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/verify"
 )
 
@@ -103,8 +104,8 @@ func main() {
 }
 
 func run() error {
-	apiKey := os.Getenv("STOKE_MCP_KEY")
-	ledgerDir := os.Getenv("STOKE_MCP_LEDGER_DIR")
+	apiKey := r1env.Get("R1_MCP_KEY", "STOKE_MCP_KEY")
+	ledgerDir := r1env.Get("R1_MCP_LEDGER_DIR", "STOKE_MCP_LEDGER_DIR")
 	backends, err := NewBackends(ledgerDir)
 	if err != nil {
 		return fmt.Errorf("init backends: %w", err)

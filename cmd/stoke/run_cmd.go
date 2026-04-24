@@ -38,6 +38,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/costtrack"
 	"github.com/ericmacdougall/stoke/internal/hitl"
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/streamjson"
 )
 
@@ -125,7 +126,7 @@ func runCommandExitCode(args []string) int {
 	// exit-code contract complete even in headless tests without
 	// requiring a full CostTracker wire-up (which lands with the
 	// session runner in item 9).
-	if os.Getenv("STOKE_BUDGET_EXHAUSTED") == "1" {
+	if r1env.Get("R1_BUDGET_EXHAUSTED", "STOKE_BUDGET_EXHAUSTED") == "1" {
 		emitter.EmitTopLevel(streamjson.TypeError, map[string]any{
 			"subtype":            "budget_exhausted",
 			"_stoke.dev/message": "cost tracker reports over budget at entry",
@@ -161,7 +162,7 @@ func runCommandExitCode(args []string) int {
 	// concurrency through STOKE_MAX_WORKERS; stoke itself doesn't
 	// consume the value, but we echo it so CloudSwarm can confirm the
 	// subprocess received the hint.
-	if workers := os.Getenv("STOKE_MAX_WORKERS"); workers != "" {
+	if workers := r1env.Get("R1_MAX_WORKERS", "STOKE_MAX_WORKERS"); workers != "" {
 		emitter.EmitSystem("concurrency.cap", map[string]any{
 			"_stoke.dev/max_workers": workers,
 		})

@@ -24,6 +24,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 var (
@@ -35,11 +37,11 @@ var (
 
 func initIfNeeded() {
 	once.Do(func() {
-		if os.Getenv("STOKE_PERFLOG") == "" {
+		if r1env.Get("R1_PERFLOG", "STOKE_PERFLOG") == "" {
 			return
 		}
 		enabled.Store(true)
-		if path := os.Getenv("STOKE_PERFLOG_FILE"); path != "" {
+		if path := r1env.Get("R1_PERFLOG_FILE", "STOKE_PERFLOG_FILE"); path != "" {
 			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 			if err == nil {
 				sink = f

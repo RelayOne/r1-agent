@@ -3,9 +3,10 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // Role constants for the provider pool. Operators pin each PoolEntry to
@@ -51,7 +52,7 @@ type Pool struct {
 // (nil, nil) so callers can fall back to the existing SmartDefaults
 // path without a branch at every site.
 func NewPoolFromEnv() (*Pool, error) {
-	raw := strings.TrimSpace(os.Getenv("STOKE_PROVIDERS"))
+	raw := strings.TrimSpace(r1env.Get("R1_PROVIDERS", "STOKE_PROVIDERS"))
 	if raw == "" {
 		return nil, nil
 	}

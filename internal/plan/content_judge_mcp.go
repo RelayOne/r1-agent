@@ -14,9 +14,10 @@
 package plan
 
 import (
-	"os"
 	"regexp"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // mcpCallClaimPattern matches common worker prose shapes asserting an
@@ -100,7 +101,7 @@ func DetectMCPGhostCalls(transcript string) []MCPGhostCallFinding {
 // block task completion. Read from the environment on each call so
 // operators can flip the policy mid-run without restarting.
 func MCPStrictModeEnabled() bool {
-	return os.Getenv("STOKE_MCP_STRICT") == "1"
+	return r1env.Get("R1_MCP_STRICT", "STOKE_MCP_STRICT") == "1"
 }
 
 // excerptAround returns a window of `radius` runes centered on the

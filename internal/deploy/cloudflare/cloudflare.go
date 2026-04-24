@@ -57,6 +57,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/bus"
 	"github.com/ericmacdougall/stoke/internal/deploy"
 	"github.com/ericmacdougall/stoke/internal/logging"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // wranglerMinMajor is the minimum Wrangler major version the adapter
@@ -456,12 +457,12 @@ func buildChildEnv(cfg deploy.DeployConfig, ndjsonPath string) []string {
 // known location without touching PATH; operators use it to pin a
 // specific wrangler release for reproducible deploys.
 func resolveWrangler() (string, error) {
-	if override := strings.TrimSpace(os.Getenv("STOKE_WRANGLER_BIN")); override != "" {
+	if override := strings.TrimSpace(r1env.Get("R1_WRANGLER_BIN", "STOKE_WRANGLER_BIN")); override != "" {
 		return override, nil
 	}
 	p, err := exec.LookPath("wrangler")
 	if err != nil {
-		return "", errors.New("cloudflare.Deploy: wrangler not found on PATH (install wrangler or set STOKE_WRANGLER_BIN)")
+		return "", errors.New("cloudflare.Deploy: wrangler not found on PATH (install wrangler or set R1_WRANGLER_BIN / legacy STOKE_WRANGLER_BIN through 2026-07-23)")
 	}
 	return p, nil
 }

@@ -23,13 +23,14 @@ import (
 
 	"github.com/ericmacdougall/stoke/internal/engine"
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // descentEnabled returns true when the operator has opted into the
 // verification descent engine. Default off until bench suite proves
 // parity with the legacy loop.
 func descentEnabled() bool {
-	return os.Getenv("STOKE_DESCENT") == "1"
+	return r1env.Get("R1_DESCENT", "STOKE_DESCENT") == "1"
 }
 
 // descentAcceptanceCache stashes finalAcceptance results from

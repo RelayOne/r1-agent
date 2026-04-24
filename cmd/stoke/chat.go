@@ -32,6 +32,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/chat"
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/tui"
 )
 
@@ -426,7 +427,7 @@ func buildChatSession(defaults SmartDefaults, repoRoot string) (*chat.Session, e
 	// target). STOKE_CHAT_DESCENT=0 lets operators flip the gate off
 	// without rebuilding.
 	var gate *chat.DescentGate
-	if repoRoot != "" && os.Getenv("STOKE_CHAT_DESCENT") != "0" {
+	if repoRoot != "" && r1env.Get("R1_CHAT_DESCENT", "STOKE_CHAT_DESCENT") != "0" {
 		startCommit := chat.CaptureStartCommit(context.Background(), repoRoot)
 		if startCommit != "" {
 			gate = &chat.DescentGate{

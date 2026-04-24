@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // PreflightSystemDeps is H-69: detect OS-level binaries referenced by
@@ -61,9 +63,9 @@ func PreflightSystemDeps(sow *SOW) []string {
 	var diag []string
 	diag = append(diag, fmt.Sprintf("sysdep preflight: ACs reference %d system binary/binaries not on $PATH: %s", len(missing), strings.Join(missing, ", ")))
 
-	shouldInstall := os.Getenv("STOKE_SYSDEP_INSTALL") == "1"
+	shouldInstall := r1env.Get("R1_SYSDEP_INSTALL", "STOKE_SYSDEP_INSTALL") == "1"
 	if !shouldInstall {
-		diag = append(diag, "sysdep preflight: STOKE_SYSDEP_INSTALL=1 is not set; not auto-installing. Set it to have H-69 attempt `apt-get install` of missing packages.")
+		diag = append(diag, "sysdep preflight: R1_SYSDEP_INSTALL=1 (legacy: STOKE_SYSDEP_INSTALL=1) is not set; not auto-installing. Set it to have H-69 attempt `apt-get install` of missing packages.")
 		return diag
 	}
 	if _, err := exec.LookPath("apt-get"); err != nil {

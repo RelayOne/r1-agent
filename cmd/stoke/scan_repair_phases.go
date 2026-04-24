@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // ------------------------------------------------------------------
@@ -670,7 +672,7 @@ func ensureClaudeScripts(repo string) error {
 	}
 	// Try setup.sh from $STOKE_HOME or the running stoke binary's repo.
 	candidates := []string{}
-	if home := os.Getenv("STOKE_HOME"); home != "" {
+	if home := r1env.Get("R1_HOME", "STOKE_HOME"); home != "" {
 		candidates = append(candidates, filepath.Join(home, "setup.sh"))
 	}
 	if exe, err := os.Executable(); err == nil {

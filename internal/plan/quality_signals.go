@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // QualityConfig is the feature-gate for the deterministic scanners.
@@ -175,15 +177,15 @@ func LoadQualityConfigFromEnv() QualityConfig {
 		}
 	}
 
-	if only := os.Getenv("STOKE_QS_ENABLE_ONLY"); only != "" {
+	if only := r1env.Get("R1_QS_ENABLE_ONLY", "STOKE_QS_ENABLE_ONLY"); only != "" {
 		for _, p := range m {
 			*p = false
 		}
-		apply(only, true, "STOKE_QS_ENABLE_ONLY")
+		apply(only, true, "R1_QS_ENABLE_ONLY")
 		return cfg
 	}
-	apply(os.Getenv("STOKE_QS_DISABLE"), false, "STOKE_QS_DISABLE")
-	apply(os.Getenv("STOKE_QS_ENABLE"), true, "STOKE_QS_ENABLE")
+	apply(r1env.Get("R1_QS_DISABLE", "STOKE_QS_DISABLE"), false, "R1_QS_DISABLE")
+	apply(r1env.Get("R1_QS_ENABLE", "STOKE_QS_ENABLE"), true, "R1_QS_ENABLE")
 	return cfg
 }
 

@@ -57,6 +57,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/progress"
 	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
 	"github.com/ericmacdougall/stoke/internal/report"
@@ -300,7 +301,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	// so the structured logs are the only output. In --output
 	// stream-json mode the NDJSON still goes to stdout; the renderer
 	// coexists on stderr.
-	if isatty.IsTerminal(os.Stderr.Fd()) && os.Getenv("STOKE_NO_TUI") != "1" {
+	if isatty.IsTerminal(os.Stderr.Fd()) && r1env.Get("R1_NO_TUI", "STOKE_NO_TUI") != "1" {
 		progressRenderer := tui.New(os.Stderr, true, 0)
 		progressRenderer.Subscribe(eventBus)
 	}
@@ -574,7 +575,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	fmt.Printf("  Progress: %s\n", estimator.Summary())
 
 	// Fire webhook notification on build completion (if configured).
-	if webhookURL := os.Getenv("STOKE_WEBHOOK_URL"); webhookURL != "" {
+	if webhookURL := r1env.Get("R1_WEBHOOK_URL", "STOKE_WEBHOOK_URL"); webhookURL != "" {
 		notifier := notify.NewWebhookNotifier(webhookURL, nil, nil)
 		eventType := "build_complete"
 		if !buildReport.Success {
@@ -626,7 +627,7 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 
 func main() {
 	// Initialize structured logging from STOKE_LOG_LEVEL env (default: "info").
-	logLevel := os.Getenv("STOKE_LOG_LEVEL")
+	logLevel := r1env.Get("R1_LOG_LEVEL", "STOKE_LOG_LEVEL")
 	if logLevel == "" {
 		logLevel = "info"
 	}
@@ -1478,7 +1479,7 @@ func openStreamFile(path string) (*os.File, error) {
 // is absent, return silently — r1-server is optional. Disabled
 // entirely by STOKE_NO_R1_SERVER=1.
 func ensureR1ServerRunning() {
-	if os.Getenv("STOKE_NO_R1_SERVER") == "1" {
+	if r1env.Get("R1_NO_R1_SERVER", "STOKE_NO_R1_SERVER") == "1" {
 		return
 	}
 	// Fast health check: if r1-server answers, do nothing.
@@ -3045,7 +3046,7 @@ func sowCmd(args []string) {
 				// the reviewer's gaps ARE real and the original task is
 				// structurally too big (rare; usually indicates the
 				// planner under-decomposed the SOW).
-				if os.Getenv("STOKE_SOW_ENABLE_DECOMP_OVERFLOW") == "" {
+				if r1env.Get("R1_SOW_ENABLE_DECOMP_OVERFLOW", "STOKE_SOW_ENABLE_DECOMP_OVERFLOW") == "" {
 					fmt.Printf("    ⏹ decomp overflow disabled — %d sub-directive(s) from %s deferred to session ACs\n", len(subDirectives), fromTaskID)
 					return
 				}
@@ -3722,7 +3723,7 @@ func sowCmd(args []string) {
 		streamResult.text = err.Error()
 		streamResult.turns = passed + failed
 		exitWithStreamResult(streamEmitter, 1, streamResult, streamResult.subtype, streamResult.text)
-	case failed > 0 && (mainFailed > 0 || os.Getenv("STOKE_SOW_STRICT_META") == "1"):
+	case failed > 0 && (mainFailed > 0 || r1env.Get("R1_SOW_STRICT_META", "STOKE_SOW_STRICT_META") == "1"):
 		fmt.Fprintf(os.Stderr, "\nSOW finished with %d failed session(s).\n", failed)
 		if passed > 0 {
 			fmt.Fprintf(os.Stderr, "  %d session(s) passed; rerun with --resume to skip them.\n", passed)
@@ -4353,8 +4354,8 @@ func cloudRegisterCmd() {
 }
 
 func runCloudRegister() (int, error) {
-	apiKey := strings.TrimSpace(os.Getenv("STOKE_CLOUD_API_KEY"))
-	endpoint := strings.TrimSpace(os.Getenv("STOKE_CLOUD_ENDPOINT"))
+	apiKey := strings.TrimSpace(r1env.Get("R1_CLOUD_API_KEY", "STOKE_CLOUD_API_KEY"))
+	endpoint := strings.TrimSpace(r1env.Get("R1_CLOUD_ENDPOINT", "STOKE_CLOUD_ENDPOINT"))
 	if endpoint == "" {
 		endpoint = cloud.DefaultEndpoint
 	}
@@ -5526,7 +5527,7 @@ func detectSmartDefaults() SmartDefaults {
 	d := SmartDefaults{
 		NativeModel: "claude-sonnet-4-6",
 	}
-	if m := os.Getenv("STOKE_NATIVE_MODEL"); m != "" {
+	if m := r1env.Get("R1_NATIVE_MODEL", "STOKE_NATIVE_MODEL"); m != "" {
 		d.NativeModel = m
 	}
 
@@ -6785,7 +6786,7 @@ QUICKSTART:
 func serveCmd(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.Int("port", 8420, "HTTP server port")
-	token := fs.String("token", os.Getenv("STOKE_API_TOKEN"), "Bearer token for auth (or STOKE_API_TOKEN)")
+	token := fs.String("token", r1env.Get("R1_API_TOKEN", "STOKE_API_TOKEN"), "Bearer token for auth (or R1_API_TOKEN / legacy STOKE_API_TOKEN through 2026-07-23)")
 	repo := fs.String("repo", ".", "Repository root")
 	dataDir := fs.String("data-dir", ".stoke", "Data directory for mission/research stores")
 	fs.Parse(args)
@@ -6881,13 +6882,14 @@ func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.En
 			SSHKeyPath: os.Getenv("EMBER_SSH_KEY"),
 		})
 	case env.BackendSSH:
-		if os.Getenv("STOKE_SSH_HOST") == "" {
-			return nil, nil, fmt.Errorf("ssh backend requires STOKE_SSH_HOST env var")
+		sshHost := r1env.Get("R1_SSH_HOST", "STOKE_SSH_HOST")
+		if sshHost == "" {
+			return nil, nil, fmt.Errorf("ssh backend requires R1_SSH_HOST (or legacy STOKE_SSH_HOST through 2026-07-23) env var")
 		}
 		backend = envssh.New(envssh.Config{
-			Host:    os.Getenv("STOKE_SSH_HOST"),
-			User:    os.Getenv("STOKE_SSH_USER"),
-			KeyPath: os.Getenv("STOKE_SSH_KEY"),
+			Host:    sshHost,
+			User:    r1env.Get("R1_SSH_USER", "STOKE_SSH_USER"),
+			KeyPath: r1env.Get("R1_SSH_KEY", "STOKE_SSH_KEY"),
 		})
 	case env.BackendInProc:
 		// InProc backend is not wired here — it is selected only via

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/runtrack"
 )
 
@@ -18,7 +19,7 @@ import (
 // a stoke invocation still works — the dashboard just won't be
 // available. Set STOKE_NO_SERVER=1 to skip entirely.
 func ensureStokeServer() {
-	if os.Getenv("STOKE_NO_SERVER") == "1" {
+	if r1env.Get("R1_NO_SERVER", "STOKE_NO_SERVER") == "1" {
 		return
 	}
 	if serverAlive(runtrack.DefaultServerPort()) {

@@ -27,6 +27,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/plan"
 	"github.com/ericmacdougall/stoke/internal/taskstats"
 	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/repomap"
 	"github.com/ericmacdougall/stoke/internal/skill"
 	"github.com/ericmacdougall/stoke/internal/stream"
@@ -666,7 +667,7 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// non-async mode. reviewAndFollowup fires review goroutines and
 	// Add/Done on this wg. We Wait() after Phase 1 so integration review
 	// + ACs see final state.
-	if envMode := os.Getenv("STOKE_SOW_REVIEW_MODE"); (envMode == "" || envMode == "async") && cfg.asyncReviewWg == nil {
+	if envMode := r1env.Get("R1_SOW_REVIEW_MODE", "STOKE_SOW_REVIEW_MODE"); (envMode == "" || envMode == "async") && cfg.asyncReviewWg == nil {
 		cfg.asyncReviewWg = &sync.WaitGroup{}
 	}
 
@@ -875,9 +876,9 @@ func runSessionNative(ctx context.Context, session plan.Session, sowDoc *plan.SO
 	// dispatch avg is 40-60s; briefing saves maybe 10-15s per task
 	// on context-rich sessions → break-even is around task count
 	// 7-10. Bump threshold to 10, retain env override.
-	smallSession := len(session.Tasks) <= 10 && os.Getenv("STOKE_SOW_FORCE_BRIEFING") == ""
+	smallSession := len(session.Tasks) <= 10 && r1env.Get("R1_SOW_FORCE_BRIEFING", "STOKE_SOW_FORCE_BRIEFING") == ""
 	if smallSession {
-		fmt.Printf("  briefing skipped: %d tasks ≤ 5 (STOKE_SOW_FORCE_BRIEFING=1 to override)\n", len(session.Tasks))
+		fmt.Printf("  briefing skipped: %d tasks ≤ 5 (R1_SOW_FORCE_BRIEFING=1 or legacy STOKE_SOW_FORCE_BRIEFING=1 to override)\n", len(session.Tasks))
 	}
 	if cfg.BriefingProvider != nil && len(session.Tasks) > 0 && !smallSession {
 		briefingSpan := perflog.Start("phase0.briefing", "session="+session.ID, "tasks="+strconv.Itoa(len(session.Tasks)))
@@ -4900,7 +4901,7 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 	//                faithfulness guard + quality sweep are the only gates.
 	//   milestone — review only every Nth task (via STOKE_SOW_REVIEW_EVERY,
 	//                default 3). Middle ground.
-	mode := os.Getenv("STOKE_SOW_REVIEW_MODE")
+	mode := r1env.Get("R1_SOW_REVIEW_MODE", "STOKE_SOW_REVIEW_MODE")
 	if mode == "" {
 		mode = "async"
 	}
@@ -4922,7 +4923,7 @@ func reviewAndFollowup(ctx context.Context, sowDoc *plan.SOW, workingSession pla
 		// Fallback to eager if caller didn't wire the waitgroup.
 	case "milestone":
 		every := 3
-		if v := os.Getenv("STOKE_SOW_REVIEW_EVERY"); v != "" {
+		if v := r1env.Get("R1_SOW_REVIEW_EVERY", "STOKE_SOW_REVIEW_EVERY"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				every = n
 			}
@@ -5008,7 +5009,7 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	// calls that would be pure waste. main.go always sets
 	// OnDecompOverflow (it no-ops internally when unset) so we must
 	// check the env var directly, not just the nil-ness of the cb.
-	overflowEnabled := cfg.OnDecompOverflow != nil && os.Getenv("STOKE_SOW_ENABLE_DECOMP_OVERFLOW") != ""
+	overflowEnabled := cfg.OnDecompOverflow != nil && r1env.Get("R1_SOW_ENABLE_DECOMP_OVERFLOW", "STOKE_SOW_ENABLE_DECOMP_OVERFLOW") != ""
 	if atCap && !overflowEnabled {
 		fmt.Printf("    ⏹ %s at review cap (depth=%d) — skipping reviewer + decomposer, deferring to session ACs\n", originalTask.ID, depth)
 		return
@@ -6178,8 +6179,8 @@ func runIntegrationReviewPhase(ctx context.Context, cfg sowNativeConfig, sowDoc 
 	// integration review costs 4.5-8 min on R04+ SOWs and is
 	// redundant on ≤5-task sessions. STOKE_SOW_FORCE_INTEG=1 to
 	// always run regardless of task count.
-	if len(workingSession.Tasks) <= 5 && os.Getenv("STOKE_SOW_FORCE_INTEG") == "" {
-		fmt.Printf("  ⏩ integration review skipped: %d tasks ≤ 5 (STOKE_SOW_FORCE_INTEG=1 to override)\n", len(workingSession.Tasks))
+	if len(workingSession.Tasks) <= 5 && r1env.Get("R1_SOW_FORCE_INTEG", "STOKE_SOW_FORCE_INTEG") == "" {
+		fmt.Printf("  ⏩ integration review skipped: %d tasks ≤ 5 (R1_SOW_FORCE_INTEG=1 or legacy STOKE_SOW_FORCE_INTEG=1 to override)\n", len(workingSession.Tasks))
 		return
 	}
 	model := cfg.ReasoningModel

@@ -13,11 +13,12 @@ package plan
 
 import (
 	"context"
-	"os"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
 // runParallel is the DAG-scheduled session runner. It:
@@ -337,7 +338,7 @@ func (ss *SessionScheduler) runParallel(ctx context.Context, execFn SessionExecu
 			// STOKE_SOW_SMOKE_STRICT=1 restores old flip-on-fail.
 			if allPassed && ss.SmokeGate != nil {
 				kind, reason, output := ss.SmokeGate(session)
-				strict := os.Getenv("STOKE_SOW_SMOKE_STRICT") != ""
+				strict := r1env.Get("R1_SOW_SMOKE_STRICT", "STOKE_SOW_SMOKE_STRICT") != ""
 				switch kind {
 				case "fail":
 					if strict {
