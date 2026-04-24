@@ -177,7 +177,7 @@ func toInt64(v any) (int64, bool) {
 	case uint:
 		// uint can exceed int64 max; only accept when it fits.
 		if uint64(x) <= uint64(1<<63-1) {
-			return int64(x), true
+			return int64(x), true // #nosec G115 -- bounded on prior line: uint64(x) <= math.MaxInt64.
 		}
 		return 0, false
 	case uint8:

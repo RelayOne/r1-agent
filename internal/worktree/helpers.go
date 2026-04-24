@@ -63,22 +63,22 @@ func ModifiedFiles(ctx context.Context, handle Handle) ([]string, error) {
 	}
 
 	// 1. Committed changes: --name-status -M captures rename old+new paths
-	c1 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-status", "-M", base+"..HEAD")
+	c1 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-status", "-M", base+"..HEAD") // #nosec G204 -- git binary with Stoke-generated args (BaseCommit captured at worktree creation, literal subcommands) not external input.
 	c1.Dir = handle.Path
 	parseNameStatus("committed", c1)
 
 	// 2. Staged changes: ALSO --name-status -M (catches staged renames like git mv)
-	c2 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-status", "-M", "--cached")
+	c2 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-status", "-M", "--cached") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	c2.Dir = handle.Path
 	parseNameStatus("staged", c2)
 
 	// 3. Unstaged working-tree changes
-	c3 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-only")
+	c3 := exec.CommandContext(ctx, handle.GitBinary, "diff", "--name-only") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	c3.Dir = handle.Path
 	collectNameOnly("unstaged", c3)
 
 	// 4. Untracked files
-	c4 := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--exclude-standard")
+	c4 := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--exclude-standard") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	c4.Dir = handle.Path
 	collectNameOnly("untracked", c4)
 
@@ -98,7 +98,7 @@ func ModifiedFiles(ctx context.Context, handle Handle) ([]string, error) {
 // and won't be in the merged commit, but the agent's build/test may depend on them.
 // Callers should warn if non-empty: the verified environment differs from the merge artifact.
 func IgnoredNewFiles(ctx context.Context, handle Handle) []string {
-	cmd := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--ignored", "--exclude-standard")
+	cmd := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--ignored", "--exclude-standard") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	cmd.Dir = handle.Path
 	out, err := cmd.Output()
 	if err != nil {
@@ -124,7 +124,7 @@ func DiffSummary(ctx context.Context, handle Handle) string {
 	var parts []string
 
 	// Tracked changes
-	cmd := exec.CommandContext(ctx, handle.GitBinary, "diff", "--stat", base)
+	cmd := exec.CommandContext(ctx, handle.GitBinary, "diff", "--stat", base) // #nosec G204 -- git binary with Stoke-generated args (BaseCommit captured at worktree creation, literal subcommands) not external input.
 	cmd.Dir = handle.Path
 	out, err := cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) != "" {
@@ -132,7 +132,7 @@ func DiffSummary(ctx context.Context, handle Handle) string {
 	}
 
 	// Untracked files (new files the agent created but didn't stage)
-	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--exclude-standard")
+	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-files", "--others", "--exclude-standard") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	lsCmd.Dir = handle.Path
 	lsOut, err := lsCmd.Output()
 	if err != nil {
@@ -234,14 +234,14 @@ var ErrNothingToCommit = fmt.Errorf("nothing to commit")
 // executable permissions. Gaps: gitignored files are skipped, empty dirs vanish.
 func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	// 1. Stage everything into the index (including untracked)
-	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A")
+	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	addCmd.Dir = handle.Path
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("snapshot: git add -A: %w: %s", err, out)
 	}
 
 	// 2. Serialize the index into a tree object (does not touch HEAD)
-	writeTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "write-tree")
+	writeTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "write-tree") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	writeTreeCmd.Dir = handle.Path
 	treeOut, err := writeTreeCmd.Output()
 	if err != nil {
@@ -250,7 +250,7 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	treeSHA := strings.TrimSpace(string(treeOut))
 
 	// 3. Get current HEAD for parent linkage
-	headCmd := exec.CommandContext(ctx, handle.GitBinary, "rev-parse", gitHEAD)
+	headCmd := exec.CommandContext(ctx, handle.GitBinary, "rev-parse", gitHEAD) // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	headCmd.Dir = handle.Path
 	headOut, err := headCmd.Output()
 	if err != nil {
@@ -259,7 +259,8 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	headSHA := strings.TrimSpace(string(headOut))
 
 	// 4. Create a commit object from the tree (HEAD never moves, no hooks fire)
-	commitTreeCmd := exec.CommandContext(ctx, handle.GitBinary,
+	// treeSHA and headSHA come from git's own output above (tree/commit object hashes); not external input.
+	commitTreeCmd := exec.CommandContext(ctx, handle.GitBinary, // #nosec G204 -- git binary; treeSHA/headSHA are git-produced object hashes from preceding commands.
 		"commit-tree", treeSHA, "-p", headSHA, "-m", "stoke: working tree snapshot")
 	commitTreeCmd.Dir = handle.Path
 	snapOut, err := commitTreeCmd.Output()
@@ -269,13 +270,14 @@ func SnapshotWorkingTree(ctx context.Context, handle Handle) (string, error) {
 	snapSHA := strings.TrimSpace(string(snapOut))
 
 	// 5. Store under a ref to protect from GC (dangling commits expire in 14 days)
+	// refName composed from Stoke-controlled prefix + handle.Name (set when worktree created).
 	refName := "refs/stoke-snapshots/" + handle.Name
-	refCmd := exec.CommandContext(ctx, handle.GitBinary, "update-ref", refName, snapSHA)
+	refCmd := exec.CommandContext(ctx, handle.GitBinary, "update-ref", refName, snapSHA) // #nosec G204 -- git binary; refName has fixed Stoke prefix + internal handle name, snapSHA is git-produced.
 	refCmd.Dir = handle.Path
 	refCmd.CombinedOutput() // best effort; snapshot SHA is still valid even if ref fails
 
 	// 6. Reset the index back to HEAD (so subsequent git operations see clean index)
-	readTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "read-tree", gitHEAD)
+	readTreeCmd := exec.CommandContext(ctx, handle.GitBinary, "read-tree", gitHEAD) // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	readTreeCmd.Dir = handle.Path
 	readTreeCmd.CombinedOutput() // best effort
 
@@ -321,7 +323,8 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 	var existFiles []string
 	var deletedFiles []string
 	for _, f := range validatedFiles {
-		catCmd := exec.CommandContext(ctx, handle.GitBinary, "cat-file", "-e", snapshot+":"+f)
+		// f is from validatedFiles (caller-validated path list); snapshot is a git-produced SHA.
+		catCmd := exec.CommandContext(ctx, handle.GitBinary, "cat-file", "-e", snapshot+":"+f) // #nosec G204 -- git binary; snapshot is git-produced SHA, f is a pre-validated path from verify stage.
 		catCmd.Dir = handle.Path
 		if catCmd.Run() == nil {
 			existFiles = append(existFiles, f)
@@ -330,8 +333,8 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 		}
 	}
 
-	// 3. Hard-reset to BaseCommit.
-	resetCmd := exec.CommandContext(ctx, handle.GitBinary, "reset", "--hard", handle.BaseCommit)
+	// 3. Hard-reset to BaseCommit. BaseCommit is captured by Stoke at worktree creation.
+	resetCmd := exec.CommandContext(ctx, handle.GitBinary, "reset", "--hard", handle.BaseCommit) // #nosec G204 -- git binary; BaseCommit captured at worktree creation from git rev-parse, not external input.
 	resetCmd.Dir = handle.Path
 	if out, rErr := resetCmd.CombinedOutput(); rErr != nil {
 		return fmt.Errorf("reset to base: %w: %s", rErr, out)
@@ -340,7 +343,7 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 	// 4. Checkout validated files from snapshot.
 	if len(existFiles) > 0 {
 		coArgs := append([]string{"checkout", snapshot, "--"}, existFiles...)
-		coCmd := exec.CommandContext(ctx, handle.GitBinary, coArgs...)
+		coCmd := exec.CommandContext(ctx, handle.GitBinary, coArgs...) // #nosec G204 -- git binary; coArgs has a literal subcommand leader plus git-produced snapshot SHA and pre-validated file paths.
 		coCmd.Dir = handle.Path
 		if out, coErr := coCmd.CombinedOutput(); coErr != nil {
 			return fmt.Errorf("checkout from snapshot %s: %w: %s", snapshot[:8], coErr, out)
@@ -349,7 +352,7 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 
 	// 5. Remove files the agent deleted.
 	for _, f := range deletedFiles {
-		rmCmd := exec.CommandContext(ctx, handle.GitBinary, "rm", "--cached", "--quiet", "--ignore-unmatch", f)
+		rmCmd := exec.CommandContext(ctx, handle.GitBinary, "rm", "--cached", "--quiet", "--ignore-unmatch", f) // #nosec G204 -- git binary; f is a pre-validated file path from verify stage.
 		rmCmd.Dir = handle.Path
 		rmCmd.CombinedOutput()
 		os.Remove(filepath.Join(handle.Path, f))
@@ -360,7 +363,7 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 	for _, f := range validatedFiles {
 		validSet[f] = true
 	}
-	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-tree", "-r", "--name-only", handle.BaseCommit)
+	lsCmd := exec.CommandContext(ctx, handle.GitBinary, "ls-tree", "-r", "--name-only", handle.BaseCommit) // #nosec G204 -- git binary; BaseCommit is Stoke-captured SHA, literal subcommand arguments otherwise.
 	lsCmd.Dir = handle.Path
 	lsOut, err := lsCmd.Output()
 	if err != nil {
@@ -371,10 +374,11 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 		if line == "" || validSet[line] {
 			continue
 		}
-		catCmd := exec.CommandContext(ctx, handle.GitBinary, "cat-file", "-e", snapshot+":"+line)
+		// line comes from git ls-tree output (git-produced path listing of BaseCommit).
+		catCmd := exec.CommandContext(ctx, handle.GitBinary, "cat-file", "-e", snapshot+":"+line) // #nosec G204 -- git binary; snapshot is git-produced SHA, line is a path from git's own ls-tree output.
 		catCmd.Dir = handle.Path
 		if catCmd.Run() != nil {
-			rmCmd := exec.CommandContext(ctx, handle.GitBinary, "rm", "--cached", "--quiet", "--ignore-unmatch", line)
+			rmCmd := exec.CommandContext(ctx, handle.GitBinary, "rm", "--cached", "--quiet", "--ignore-unmatch", line) // #nosec G204 -- git binary; line is a path from git's own ls-tree output.
 			rmCmd.Dir = handle.Path
 			rmCmd.CombinedOutput()
 			os.Remove(filepath.Join(handle.Path, line))
@@ -397,21 +401,21 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 	}
 
 	// 7. Stage everything.
-	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A")
+	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	addCmd.Dir = handle.Path
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
 
 	// 8. Check if anything is staged.
-	statusCmd := exec.CommandContext(ctx, handle.GitBinary, "diff", "--cached", "--quiet")
+	statusCmd := exec.CommandContext(ctx, handle.GitBinary, "diff", "--cached", "--quiet") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	statusCmd.Dir = handle.Path
 	if err := statusCmd.Run(); err == nil {
 		return ErrNothingToCommit
 	}
 
-	// 9. Commit.
-	commitCmd := exec.CommandContext(ctx, handle.GitBinary, "commit", "-m", message)
+	// 9. Commit. message is the Stoke-authored harness commit message string.
+	commitCmd := exec.CommandContext(ctx, handle.GitBinary, "commit", "-m", message) // #nosec G204 -- git binary; message is a Stoke-authored harness commit message, not external input.
 	commitCmd.Dir = handle.Path
 	if signer != nil {
 		signer.ApplyTo(commitCmd)
@@ -424,7 +428,7 @@ func commitVerifiedTreeImpl(ctx context.Context, handle Handle, validatedFiles [
 
 // ValidateMerge runs git merge-tree to check for conflicts without side effects.
 func ValidateMerge(ctx context.Context, handle Handle) error {
-	cmd := exec.CommandContext(ctx, handle.GitBinary, "merge-tree", "--write-tree", gitHEAD, handle.Branch)
+	cmd := exec.CommandContext(ctx, handle.GitBinary, "merge-tree", "--write-tree", gitHEAD, handle.Branch) // #nosec G204 -- git binary; Branch is a Stoke-generated worktree branch name (not external input).
 	cmd.Dir = handle.RepoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -453,13 +457,13 @@ func HashFiles(root string, files []string) map[string]string {
 // TreeSHA values guarantee the exact same tree (catches mode changes
 // that HashFiles misses).
 func TreeSHA(ctx context.Context, handle Handle) (string, error) {
-	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A")
+	addCmd := exec.CommandContext(ctx, handle.GitBinary, "add", "-A") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	addCmd.Dir = handle.Path
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git add -A: %w: %s", err, out)
 	}
 
-	cmd := exec.CommandContext(ctx, handle.GitBinary, "write-tree")
+	cmd := exec.CommandContext(ctx, handle.GitBinary, "write-tree") // #nosec G204 -- git binary with literal subcommand arguments, no external input.
 	cmd.Dir = handle.Path
 	out, err := cmd.Output()
 	if err != nil {
@@ -471,7 +475,7 @@ func TreeSHA(ctx context.Context, handle Handle) (string, error) {
 // MainHeadSHA returns the current HEAD commit SHA of the main branch.
 // Returns empty string on error (non-fatal).
 func MainHeadSHA(ctx context.Context, repoRoot string) string {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", gitHEAD)
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", gitHEAD) // #nosec G204 -- hardcoded git binary; repoRoot is a Stoke-owned repository path.
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -484,10 +488,11 @@ func MainHeadSHA(ctx context.Context, repoRoot string) string {
 // Refuses to reset if the working tree has uncommitted changes to avoid data loss.
 func ResetMainTo(ctx context.Context, repoRoot, commitSHA string) {
 	// Check for dirty working tree — refuse to destroy uncommitted changes.
-	status, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain").Output()
+	status, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain").Output() // #nosec G204 -- hardcoded git binary; repoRoot is a Stoke-owned repository path.
 	if err == nil && len(strings.TrimSpace(string(status))) > 0 {
 		// Working tree is dirty — don't reset, it would destroy user's changes.
 		return
 	}
-	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "reset", "--hard", commitSHA).Run()
+	// commitSHA is produced by Stoke's own MainHeadSHA() or merge pipeline (git-produced hash).
+	_ = exec.CommandContext(ctx, "git", "-C", repoRoot, "reset", "--hard", commitSHA).Run() // #nosec G204 -- hardcoded git binary; commitSHA is a git-produced SHA captured by the merge pipeline.
 }

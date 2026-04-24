@@ -428,7 +428,7 @@ func cryptoRandU64() uint64 {
 		// to the time-based source so we don't panic. The
 		// deception posture is still intact — even a weak
 		// RNG breaks timing-based gaming.
-		return uint64(time.Now().UnixNano())
+		return uint64(time.Now().UnixNano()) // #nosec G115 -- UnixNano is always positive on any call after the Unix epoch (1970); cannot overflow uint64 until year ~2262.
 	}
 	return binary.BigEndian.Uint64(b[:])
 }

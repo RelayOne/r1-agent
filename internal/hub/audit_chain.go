@@ -75,10 +75,12 @@ func (a *ChainedAuditLog) Verify() error {
 	defer a.mu.Unlock()
 
 	prevHash := ""
+	var seqIdx uint64
 	for i, entry := range a.entries {
-		if entry.Sequence != uint64(i) {
+		if entry.Sequence != seqIdx {
 			return fmt.Errorf("audit chain broken at index %d: expected seq %d, got %d", i, i, entry.Sequence)
 		}
+		seqIdx++
 		if entry.PrevHash != prevHash {
 			return fmt.Errorf("audit chain broken at seq %d: prev hash mismatch", entry.Sequence)
 		}
