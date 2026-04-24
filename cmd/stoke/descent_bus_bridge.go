@@ -33,8 +33,24 @@ func descentSubtypeFor(k bus.EventType) (string, bool) {
 		return "stoke.descent.pre_completion_gate_failed", true
 	case bus.EvtWorkerEnvBlocked:
 		return "stoke.worker.env_blocked", true
+	case bus.EvtWorkerSpawned,
+		bus.EvtWorkerActionStarted, bus.EvtWorkerActionCompleted,
+		bus.EvtWorkerDeclarationDone, bus.EvtWorkerDeclarationFix,
+		bus.EvtWorkerDeclarationProblem,
+		bus.EvtWorkerPaused, bus.EvtWorkerResumed, bus.EvtWorkerTerminated,
+		bus.EvtLedgerNodeAdded, bus.EvtLedgerEdgeAdded,
+		bus.EvtSupervisorRuleFired, bus.EvtSupervisorHookInjected,
+		bus.EvtSupervisorCheckpoint,
+		bus.EvtSkillLoaded, bus.EvtSkillApplied, bus.EvtSkillExtraction,
+		bus.EvtMissionStarted, bus.EvtMissionCompleted, bus.EvtMissionAborted,
+		bus.EvtBusHandlerPanic, bus.EvtBusSubscriberOverflow,
+		bus.EvtBusHookActionFailed, bus.EvtBusHookInjectionFailed:
+		// Non-descent events have no streamjson subtype mapping.
+		return "", false
+	default:
+		// Non-descent events have no streamjson subtype mapping.
+		return "", false
 	}
-	return "", false
 }
 
 // InstallDescentBusBridge subscribes to every descent event kind and
@@ -80,6 +96,22 @@ func InstallDescentBusBridge(b *bus.Bus, em *streamjson.Emitter) {
 			bus.EvtDescentPreCompletionGateFailed,
 			bus.EvtWorkerEnvBlocked:
 			severity = "warn"
+		case bus.EvtWorkerSpawned,
+			bus.EvtWorkerActionStarted, bus.EvtWorkerActionCompleted,
+			bus.EvtWorkerDeclarationDone, bus.EvtWorkerDeclarationFix,
+			bus.EvtWorkerDeclarationProblem,
+			bus.EvtWorkerPaused, bus.EvtWorkerResumed, bus.EvtWorkerTerminated,
+			bus.EvtLedgerNodeAdded, bus.EvtLedgerEdgeAdded,
+			bus.EvtSupervisorRuleFired, bus.EvtSupervisorHookInjected,
+			bus.EvtSupervisorCheckpoint,
+			bus.EvtSkillLoaded, bus.EvtSkillApplied, bus.EvtSkillExtraction,
+			bus.EvtMissionStarted, bus.EvtMissionCompleted, bus.EvtMissionAborted,
+			bus.EvtBusHandlerPanic, bus.EvtBusSubscriberOverflow,
+			bus.EvtBusHookActionFailed, bus.EvtBusHookInjectionFailed,
+			bus.EvtDescentBootstrapReinstalled:
+			// Keep default "info" severity.
+		default:
+			// All other event types keep the default "info" severity.
 		}
 		em.EmitSharedAudit(streamjson.SharedAuditEvent{
 			Type: sub,

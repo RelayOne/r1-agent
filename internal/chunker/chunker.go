@@ -93,6 +93,9 @@ func ChunkFile(path, content string) []Chunk {
 		patterns = rustPatterns
 	case LangJava:
 		patterns = javaPatterns
+	case LangUnknown:
+		// Fallback: chunk by blank-line-separated blocks
+		return chunkByBlankLines(path, lines)
 	default:
 		// Fallback: chunk by blank-line-separated blocks
 		return chunkByBlankLines(path, lines)
@@ -398,6 +401,8 @@ func detectKind(line string, lang Language) string {
 			return "interface"
 		}
 		return KindMethod
+	case LangUnknown:
+		return "block"
 	}
 	return "block"
 }

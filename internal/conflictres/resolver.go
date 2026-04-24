@@ -103,6 +103,8 @@ func AutoResolve(conflicts []Conflict) []Conflict {
 			conflicts[i].Resolved = conflicts[i].Ours + "\n" + conflicts[i].Theirs
 			conflicts[i].AutoResolved = true
 			conflicts[i].Confidence = 0.8
+		case KindSemantic:
+			// Semantic conflicts cannot be auto-resolved; leave for manual review.
 		}
 	}
 	return conflicts

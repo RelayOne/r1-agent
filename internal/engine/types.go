@@ -69,6 +69,8 @@ func (d DeterminismCategory) String() string {
 		return "bit_exact"
 	case DeterminismBestEffort:
 		return "best_effort"
+	case DeterminismSemantic:
+		return "semantic"
 	default:
 		return "semantic"
 	}
@@ -99,6 +101,8 @@ func (c ComputeAffinity) String() string {
 		return "gpu_inference"
 	case ComputeProbabilistic:
 		return "probabilistic"
+	case ComputeAny:
+		return "any"
 	default:
 		return "any"
 	}

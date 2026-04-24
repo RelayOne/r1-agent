@@ -259,6 +259,9 @@ func (r *Runner) executePhase(ctx context.Context, m *Mission, summary *RunSumma
 	case PhaseConverged:
 		return r.runConsensus(ctx, m, summary)
 
+	case PhaseCompleted, PhaseFailed, PhasePaused:
+		return "", fmt.Errorf("unexpected phase %q", m.Phase)
+
 	default:
 		return "", fmt.Errorf("unexpected phase %q", m.Phase)
 	}

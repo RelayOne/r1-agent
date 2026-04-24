@@ -146,6 +146,8 @@ func Specificity(s HierScope) int {
 		return 2
 	case HierGlobal:
 		return 1
+	case HierAuto:
+		return 0
 	}
 	return 0
 }

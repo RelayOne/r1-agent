@@ -3922,6 +3922,8 @@ func statusCmd(args []string) {
 			done++
 		case plan.StatusFailed:
 			failed++
+		case plan.StatusPending, plan.StatusActive, plan.StatusVerifying, plan.StatusBlocked:
+			pending++
 		default:
 			pending++
 		}
@@ -3944,6 +3946,8 @@ func statusCmd(args []string) {
 			icon = "✗"
 		case plan.StatusActive:
 			icon = "▸"
+		case plan.StatusPending, plan.StatusVerifying, plan.StatusBlocked:
+			// Keep default icon "○".
 		}
 		fmt.Printf("  %s %s: %s\n", icon, t.ID, trunc(t.Description, 60))
 	}

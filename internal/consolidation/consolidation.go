@@ -168,6 +168,8 @@ func nextTier(t TrustTier) (TrustTier, bool) {
 		return TierJunior, true
 	case TierJunior:
 		return TierSenior, true
+	case TierSenior:
+		return "", false
 	default:
 		return "", false
 	}

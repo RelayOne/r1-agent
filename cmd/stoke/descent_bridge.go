@@ -472,6 +472,10 @@ func buildDescentTierEventHandler(cfg sowNativeConfig, sessionID string) func(pl
 			case plan.TierSoftPass:
 				payload["_stoke.dev/all_gates_passed"] = evt.AllGatesPassed
 				payload["_stoke.dev/approval_required"] = evt.ApprovalRequired
+			case plan.TierClassify, plan.TierCodeRepair, plan.TierACRewrite:
+				// These tiers carry no tier-specific booleans to emit.
+			default:
+				// Other tiers carry no tier-specific booleans to emit.
 			}
 			emitter.EmitSystem("descent.tier", payload)
 		}

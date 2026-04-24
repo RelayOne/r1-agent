@@ -75,6 +75,8 @@ func (s AmplificationStatus) String() string {
 		return "exceeded"
 	case AmplificationDisabled:
 		return "disabled"
+	case AmplificationOK:
+		return "ok"
 	default:
 		return "ok"
 	}
@@ -156,6 +158,8 @@ func FormatStatus(taskClass string, status AmplificationStatus, mult float64) st
 		return fmt.Sprintf("  ⚠️  amplification ALERT: %s flow at %.1fx baseline", taskClass, mult)
 	case AmplificationExceeded:
 		return fmt.Sprintf("  🛑 amplification EXCEEDED: %s flow at %.1fx baseline (Rule of 4)", taskClass, mult)
+	case AmplificationOK, AmplificationDisabled:
+		return ""
 	default:
 		return ""
 	}

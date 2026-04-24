@@ -371,6 +371,22 @@ func (h *Harness) Recover(ctx context.Context) error {
 			if sess, ok := h.stances[stanceID]; ok {
 				sess.Status = StatusTerminated
 			}
+		case bus.EvtWorkerActionStarted, bus.EvtWorkerActionCompleted,
+			bus.EvtWorkerDeclarationDone, bus.EvtWorkerDeclarationFix,
+			bus.EvtWorkerDeclarationProblem,
+			bus.EvtLedgerNodeAdded, bus.EvtLedgerEdgeAdded,
+			bus.EvtSupervisorRuleFired, bus.EvtSupervisorHookInjected,
+			bus.EvtSupervisorCheckpoint,
+			bus.EvtSkillLoaded, bus.EvtSkillApplied, bus.EvtSkillExtraction,
+			bus.EvtMissionStarted, bus.EvtMissionCompleted, bus.EvtMissionAborted,
+			bus.EvtBusHandlerPanic, bus.EvtBusSubscriberOverflow,
+			bus.EvtBusHookActionFailed, bus.EvtBusHookInjectionFailed,
+			bus.EvtDescentFileCapExceeded, bus.EvtDescentGhostWriteDetected,
+			bus.EvtDescentBootstrapReinstalled, bus.EvtDescentPreCompletionGateFailed,
+			bus.EvtWorkerEnvBlocked:
+			// Other bus events are not relevant to stance replay; ignore.
+		default:
+			// Any future bus event types fall through as no-op.
 		}
 	})
 }

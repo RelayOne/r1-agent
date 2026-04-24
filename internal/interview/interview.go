@@ -174,6 +174,8 @@ func (s *Session) Synthesize() *ClarifiedScope {
 			scope.Risks = append(scope.Risks, splitItems(a.Response)...)
 		case PhaseVerify:
 			scope.SuccessCriteria = append(scope.SuccessCriteria, splitItems(a.Response)...)
+		case PhaseApproval:
+			// Approval phase contributes no structured scope fields.
 		}
 	}
 

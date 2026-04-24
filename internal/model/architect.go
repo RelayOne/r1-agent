@@ -67,6 +67,8 @@ func (pc PipelineConfig) ResolveRole(role PipelineRole, isAvailable func(Provide
 		preferred = pc.EditorProvider
 	case RoleReviewer:
 		preferred = pc.ReviewerProvider
+	case RoleFull:
+		preferred = pc.ArchitectProvider
 	default:
 		preferred = pc.ArchitectProvider
 	}
@@ -130,6 +132,8 @@ func ShouldUsePipeline(taskType TaskType) bool {
 		return true // complex tasks benefit from split
 	case TaskTypeDocs:
 		return false // docs don't need architect
+	case TaskTypePlan, TaskTypeRefactor, TaskTypeTypeSafety, TaskTypeDevOps, TaskTypeReview:
+		return true // default to pipeline for safety
 	default:
 		return true // default to pipeline for safety
 	}

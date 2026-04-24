@@ -159,6 +159,24 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		case EvtLoopConverged, EvtLoopEscalated,
 			EvtBranchCompletionAgreed, EvtTaskMilestoneReached:
 			s.checkpoint(ctx)
+		case bus.EvtWorkerSpawned,
+			bus.EvtWorkerActionStarted, bus.EvtWorkerActionCompleted,
+			bus.EvtWorkerDeclarationDone, bus.EvtWorkerDeclarationFix,
+			bus.EvtWorkerDeclarationProblem,
+			bus.EvtWorkerPaused, bus.EvtWorkerResumed, bus.EvtWorkerTerminated,
+			bus.EvtLedgerNodeAdded, bus.EvtLedgerEdgeAdded,
+			bus.EvtSupervisorRuleFired, bus.EvtSupervisorHookInjected,
+			bus.EvtSupervisorCheckpoint,
+			bus.EvtSkillLoaded, bus.EvtSkillApplied, bus.EvtSkillExtraction,
+			bus.EvtMissionStarted, bus.EvtMissionCompleted, bus.EvtMissionAborted,
+			bus.EvtBusHandlerPanic, bus.EvtBusSubscriberOverflow,
+			bus.EvtBusHookActionFailed, bus.EvtBusHookInjectionFailed,
+			bus.EvtDescentFileCapExceeded, bus.EvtDescentGhostWriteDetected,
+			bus.EvtDescentBootstrapReinstalled, bus.EvtDescentPreCompletionGateFailed,
+			bus.EvtWorkerEnvBlocked:
+			// Other events do not trigger a supervisor checkpoint.
+		default:
+			// Any future bus event types fall through as no-op.
 		}
 	})
 

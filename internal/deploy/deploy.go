@@ -90,6 +90,8 @@ func (p Provider) String() string {
 		return "docker"
 	case ProviderKamal:
 		return "kamal"
+	case ProviderUnknown:
+		return "unknown"
 	default:
 		return "unknown"
 	}

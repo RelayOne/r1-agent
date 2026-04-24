@@ -221,6 +221,8 @@ func goastKindToSymKind(k goast.SymbolKind) symbolKind {
 		return skInterface
 	case goast.KindVariable, goast.KindConstant:
 		return skVariable
+	case goast.KindField:
+		return skVariable
 	}
 	return skFunction
 }

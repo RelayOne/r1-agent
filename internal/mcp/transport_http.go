@@ -75,6 +75,8 @@ func (a activeTransport) String() string {
 		return "streamable-http"
 	case activeSSE:
 		return "sse"
+	case activeNone:
+		return "none"
 	default:
 		return "none"
 	}
@@ -271,6 +273,8 @@ func (t *HTTPTransport) ListTools(ctx context.Context) ([]Tool, error) {
 		return sse.ListTools(ctx)
 	case activeStreamable:
 		return t.listToolsStreamable(ctx, cli)
+	case activeNone:
+		return nil, errors.New("mcp/http: transport not initialized (call Initialize first)")
 	default:
 		return nil, errors.New("mcp/http: transport not initialized (call Initialize first)")
 	}
@@ -296,6 +300,8 @@ func (t *HTTPTransport) CallTool(ctx context.Context, name string, args json.Raw
 		return sse.CallTool(ctx, name, args)
 	case activeStreamable:
 		return t.callToolStreamable(ctx, cli, name, args)
+	case activeNone:
+		return ToolResult{}, errors.New("mcp/http: transport not initialized (call Initialize first)")
 	default:
 		return ToolResult{}, errors.New("mcp/http: transport not initialized (call Initialize first)")
 	}

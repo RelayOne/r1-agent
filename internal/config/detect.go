@@ -321,6 +321,8 @@ func DetectCommands(projectRoot string) Commands {
 			cmds.Lint = "python -m ruff check ."
 		}
 		return cmds
+	case ProjectUnknown:
+		return Commands{}
 	}
 
 	return Commands{}

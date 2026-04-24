@@ -168,6 +168,8 @@ func (c *Critic) Review(changes map[string]string) *Verdict {
 			blocks++
 		case SeverityWarn:
 			warns++
+		case SeverityInfo:
+			// Info findings don't contribute to block/warn counts.
 		}
 	}
 

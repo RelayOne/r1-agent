@@ -641,6 +641,8 @@ func (d *WorkDAG) allDone() bool {
 		switch n.Status {
 		case WorkComplete, WorkFailed, WorkBlocked:
 			continue
+		case WorkPending, WorkReady, WorkRunning:
+			return false
 		default:
 			return false
 		}
@@ -654,6 +656,8 @@ func (d *WorkDAG) countRemaining() int {
 	for _, n := range d.nodes {
 		switch n.Status {
 		case WorkComplete, WorkFailed, WorkBlocked:
+		case WorkPending, WorkReady, WorkRunning:
+			count++
 		default:
 			count++
 		}
@@ -681,6 +685,9 @@ func (d *WorkDAG) buildResult(start time.Time) *DAGResult {
 			r.NodesFailed++
 		case WorkBlocked:
 			r.NodesBlocked++
+		case WorkPending, WorkReady, WorkRunning:
+			// Not counted as terminal; WorkDAG.buildResult is expected
+			// to run after execution completes, so these are rare.
 		}
 		if n.Result != nil {
 			for _, f := range n.Result.FilesChanged {

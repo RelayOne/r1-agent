@@ -167,6 +167,8 @@ func CrossModelReviewer(executeProvider Provider) Provider {
 		return ProviderCodex
 	case ProviderCodex:
 		return ProviderClaude
+	case ProviderNative, ProviderOpenRouter, ProviderDirectAPI, ProviderEmber, ProviderLintOnly:
+		return ProviderClaude // default reviewer
 	default:
 		return ProviderClaude // default reviewer
 	}
