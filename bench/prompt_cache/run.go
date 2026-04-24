@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ericmacdougall/stoke/internal/agentloop"
+	"github.com/RelayOne/r1/internal/agentloop"
 )
 
 // profile names a representative agentic workload profile. None of these
