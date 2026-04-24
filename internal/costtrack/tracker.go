@@ -75,6 +75,8 @@ type Usage struct {
 // AlertLevel for budget thresholds.
 type AlertLevel string
 
+// Budget alert levels fired as spend approaches and crosses the cap.
+// Values are stable strings persisted in alert logs.
 const (
 	AlertInfo     AlertLevel = "info"     // approaching limit
 	AlertWarning  AlertLevel = "warning"  // near limit

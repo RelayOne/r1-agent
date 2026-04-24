@@ -35,10 +35,12 @@ import (
 // build + lint criteria.
 type TaskClass string
 
+// TaskClass values select which built-in rubric applies. Treat as a
+// stable protocol — rubrics are looked up by string from user plans.
 const (
-	TaskClassCode     TaskClass = "code"
-	TaskClassResearch TaskClass = "research"
-	TaskClassWriting  TaskClass = "writing"
+	TaskClassCode       TaskClass = "code"
+	TaskClassResearch   TaskClass = "research"
+	TaskClassWriting    TaskClass = "writing"
 	TaskClassScheduling TaskClass = "scheduling"
 )
 
@@ -113,7 +115,8 @@ func (r Rubric) Validate() error {
 // Built-in rubrics. Operators can replace these via
 // Registry.Register.
 
-// CodeRubric: build + test + lint + scope discipline.
+// CodeRubric is the default rubric for code tasks: build + test + lint
+// + scope discipline + test-meaningfulness.
 var CodeRubric = Rubric{
 	Class: TaskClassCode,
 	Criteria: []Criterion{
@@ -130,7 +133,8 @@ var CodeRubric = Rubric{
 	},
 }
 
-// ResearchRubric: faithfulness / relevance / completeness.
+// ResearchRubric is the default rubric for research tasks, weighted
+// toward faithfulness and source-claim alignment over recency.
 var ResearchRubric = Rubric{
 	Class: TaskClassResearch,
 	Criteria: []Criterion{
@@ -145,7 +149,8 @@ var ResearchRubric = Rubric{
 	},
 }
 
-// WritingRubric: multi-dimensional analytic.
+// WritingRubric is the default rubric for writing tasks: multi-axis
+// analytic covering clarity, structure, voice, and factual correctness.
 var WritingRubric = Rubric{
 	Class: TaskClassWriting,
 	Criteria: []Criterion{
@@ -160,7 +165,8 @@ var WritingRubric = Rubric{
 	},
 }
 
-// SchedulingRubric: state-based checks.
+// SchedulingRubric is the default rubric for scheduling tasks,
+// evaluating hard constraint satisfaction plus soft preference alignment.
 var SchedulingRubric = Rubric{
 	Class: TaskClassScheduling,
 	Criteria: []Criterion{

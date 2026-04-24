@@ -35,12 +35,14 @@ import (
 // Name identifies a built-in or registered topology.
 type Name string
 
+// Built-in topology names. Stored in metrics + selection heuristics,
+// so treat as a stable protocol: never rename without a migration.
 const (
-	NameSupervisorWorker   Name = "supervisor-worker"
-	NameSequential         Name = "sequential"
-	NameConcurrentFanOut   Name = "concurrent-fan-out"
-	NameFlatHandoffs       Name = "flat-handoffs"
-	NameDynamic            Name = "dynamic"
+	NameSupervisorWorker Name = "supervisor-worker"
+	NameSequential       Name = "sequential"
+	NameConcurrentFanOut Name = "concurrent-fan-out"
+	NameFlatHandoffs     Name = "flat-handoffs"
+	NameDynamic          Name = "dynamic"
 )
 
 // Task is one unit of work a topology dispatches to a Runner.

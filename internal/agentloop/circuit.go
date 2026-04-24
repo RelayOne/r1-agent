@@ -35,11 +35,14 @@ import (
 // the SOW's "configurable per node class" requirement.
 type NodeClass string
 
+// NodeClass tiers drive per-class step-count ceilings (see
+// DefaultStepLimits). Strings are stable; they appear in plans and
+// in telemetry.
 const (
-	NodeClassLight  NodeClass = "light"   // trivial edit: cap ~25 steps
-	NodeClassMedium NodeClass = "medium"  // typical refactor / feature: cap ~75
-	NodeClassHeavy  NodeClass = "heavy"   // large rewrite: cap ~200
-	NodeClassXL     NodeClass = "xl"      // multi-file mission: cap ~400
+	NodeClassLight  NodeClass = "light"  // trivial edit: cap ~25 steps
+	NodeClassMedium NodeClass = "medium" // typical refactor / feature: cap ~75
+	NodeClassHeavy  NodeClass = "heavy"  // large rewrite: cap ~200
+	NodeClassXL     NodeClass = "xl"     // multi-file mission: cap ~400
 )
 
 // DefaultStepLimits maps node classes to default step ceilings.

@@ -17,6 +17,8 @@ import (
 // Priority levels for message dispatch.
 type Priority int
 
+// Priority tiers for the three-tier dispatch queue. Lower numbers
+// dispatch first — Critical drains before High drains before Normal.
 const (
 	PriorityCritical Priority = 0 // system failures, security events
 	PriorityHigh     Priority = 1 // task completion, phase transitions
@@ -27,6 +29,8 @@ const (
 // Status tracks message lifecycle.
 type Status string
 
+// Message lifecycle states. Status strings are persisted in the queue
+// store and exposed on telemetry — treat as wire protocol.
 const (
 	StatusPending   Status = "pending"   // written but not yet sent
 	StatusSent      Status = "sent"      // delivery attempted

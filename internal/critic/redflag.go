@@ -29,31 +29,30 @@ import (
 type RedFlag string
 
 const (
-	// FlagOverconfidence: "I'm confident", "definitely works",
-	// "100% sure" — the agent is asserting certainty it hasn't
-	// demonstrated.
+	// FlagOverconfidence fires on phrases like "I'm confident",
+	// "definitely works", or "100% sure" — the agent is asserting
+	// certainty it hasn't demonstrated.
 	FlagOverconfidence RedFlag = "overconfidence"
 
-	// FlagSpeculation: "should work", "probably fine", "I
-	// think", "most likely" — the agent is speculating rather
-	// than checking.
+	// FlagSpeculation fires on phrases like "should work", "probably
+	// fine", "I think", or "most likely" — the agent is speculating
+	// rather than checking.
 	FlagSpeculation RedFlag = "speculation"
 
-	// FlagDeferralToFuture: "will be tested", "could add tests
-	// later", "TODO: verify" — the agent is deferring the
-	// work instead of doing it.
+	// FlagDeferralToFuture fires on phrases like "will be tested",
+	// "could add tests later", or "TODO: verify" — the agent is
+	// deferring the work instead of doing it.
 	FlagDeferralToFuture RedFlag = "deferral_to_future"
 
-	// FlagHandWave: "essentially", "basically", "roughly",
-	// "more or less" — the agent is describing what it did in
-	// imprecise terms that obscure whether it actually did it.
+	// FlagHandWave fires on phrases like "essentially", "basically",
+	// "roughly", or "more or less" — the agent is describing what it
+	// did in imprecise terms that obscure whether it actually did it.
 	FlagHandWave RedFlag = "hand_wave"
 
-	// FlagEvidenceClaim: "I verified", "I tested", "I
-	// confirmed" paired with no visible tool call to back it
-	// up. This flag requires caller-supplied context about
-	// whether tools ran — callers pass didRunTools=false to
-	// enable this class.
+	// FlagEvidenceClaim fires on phrases like "I verified", "I tested",
+	// or "I confirmed" paired with no visible tool call to back it up.
+	// This flag requires caller-supplied context about whether tools
+	// ran — callers pass didRunTools=false to enable this class.
 	FlagEvidenceClaim RedFlag = "evidence_claim_no_tools"
 )
 

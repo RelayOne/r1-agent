@@ -7,6 +7,8 @@ import (
 // ROIClass categorizes the expected value of a task.
 type ROIClass int
 
+// ROI tiers for plan filtering. Tasks marked ROISkip are dropped
+// before execution; the other tiers influence scheduling priority.
 const (
 	ROIHigh   ROIClass = iota // correctness, security, reliability
 	ROIMedium                 // refactoring, type safety, tests

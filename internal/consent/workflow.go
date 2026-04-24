@@ -22,6 +22,8 @@ import (
 // Risk level for an operation.
 type Risk int
 
+// Risk levels classify operations by how much human oversight they require.
+// RiskNone ships through silently; RiskBlocked is never executed.
 const (
 	RiskNone    Risk = 0 // no approval needed
 	RiskLow     Risk = 1 // auto-approved with logging
@@ -33,6 +35,8 @@ const (
 // Decision is the outcome of an approval request.
 type Decision string
 
+// Decision constants are the string-wire values persisted in request logs
+// and emitted to telemetry; treat them as a stable protocol.
 const (
 	DecisionApproved Decision = "approved"
 	DecisionDenied   Decision = "denied"

@@ -24,6 +24,8 @@ import (
 // Backend identifies an execution environment backend.
 type Backend string
 
+// Backend identifiers for the known execution sandboxes. The string
+// form is what the user puts in config — renaming breaks config files.
 const (
 	BackendInProc Backend = "inproc"
 	BackendDocker Backend = "docker"

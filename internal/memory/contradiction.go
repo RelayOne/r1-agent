@@ -35,18 +35,18 @@ import (
 type ContradictionKind string
 
 const (
-	// KindNegationFlip: one fact asserts, the other
-	// explicitly negates (shares tokens + one has not/never).
+	// KindNegationFlip marks contradictions where one fact asserts and
+	// the other explicitly negates (shares tokens + one has not/never).
 	KindNegationFlip ContradictionKind = "negation_flip"
 
-	// KindFactualDelta: different factual content on the
-	// same tags (e.g. "capital of France is Paris" vs
-	// "capital of France is Lyon"). Detected via exact-tag
-	// match with distinct content that's NOT a negation.
+	// KindFactualDelta marks contradictions where two facts share the
+	// same tags but assert different content (e.g. "capital of France
+	// is Paris" vs "capital of France is Lyon"). Detected via exact-tag
+	// match with distinct content that is not a negation.
 	KindFactualDelta ContradictionKind = "factual_delta"
 
-	// KindUnknown: the validator flagged a disagreement but
-	// couldn't classify the kind.
+	// KindUnknown marks contradictions the validator flagged but could
+	// not classify under one of the known kinds.
 	KindUnknown ContradictionKind = "unknown"
 )
 

@@ -21,19 +21,22 @@ import (
 // Class is an error classification.
 type Class string
 
+// Error-classification tags. The Strategies map below keys off these
+// values to decide retry + escalation policy, and the strings show up
+// in telemetry dashboards, so treat them as stable protocol.
 const (
-	ClassTransient   Class = "transient"   // network, timeout, temporary unavailability
-	ClassRateLimit   Class = "rate_limit"  // API rate limits, throttling
-	ClassAuth        Class = "auth"        // authentication/authorization failure
-	ClassSyntax      Class = "syntax"      // code syntax/compilation errors
-	ClassType        Class = "type"        // type errors, wrong arguments
-	ClassRuntime     Class = "runtime"     // runtime panics, nil dereference
-	ClassResource    Class = "resource"    // out of memory, disk full, context too large
-	ClassLogic       Class = "logic"       // test failures, assertion errors
-	ClassPermission  Class = "permission"  // file permission, sandbox restriction
-	ClassNotFound    Class = "not_found"   // file/module/function not found
-	ClassConflict    Class = "conflict"    // merge conflict, lock contention
-	ClassUnknown     Class = "unknown"
+	ClassTransient  Class = "transient"  // network, timeout, temporary unavailability
+	ClassRateLimit  Class = "rate_limit" // API rate limits, throttling
+	ClassAuth       Class = "auth"       // authentication/authorization failure
+	ClassSyntax     Class = "syntax"     // code syntax/compilation errors
+	ClassType       Class = "type"       // type errors, wrong arguments
+	ClassRuntime    Class = "runtime"    // runtime panics, nil dereference
+	ClassResource   Class = "resource"   // out of memory, disk full, context too large
+	ClassLogic      Class = "logic"      // test failures, assertion errors
+	ClassPermission Class = "permission" // file permission, sandbox restriction
+	ClassNotFound   Class = "not_found"  // file/module/function not found
+	ClassConflict   Class = "conflict"   // merge conflict, lock contention
+	ClassUnknown    Class = "unknown"
 )
 
 // RetryStrategy describes how to handle an error class.
