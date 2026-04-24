@@ -3,7 +3,16 @@
 /stoke-server
 /r1-server
 /chat-probe
-.stoke/
+# .stoke/ is a runtime scratch dir EXCEPT for the gates.d/ presets
+# referenced by the R1 site. Ignore every child of .stoke/ except
+# that one subtree. (git cannot re-include a file whose parent dir
+# is excluded, so we list children instead of excluding .stoke/.)
+.stoke/boulder/
+.stoke/replays/
+.stoke/worktrees/
+.stoke/*.json
+.stoke/*.log
+.stoke/test-mode-active
 *.tmp
 *.log
 *.zip

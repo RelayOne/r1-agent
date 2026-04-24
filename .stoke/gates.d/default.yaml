@@ -1,0 +1,32 @@
+# Default gates preset.
+#
+# Balanced thresholds for general-purpose code tasks: build + tests
+# + scope are hard blockers, lint is advisory, review is weighted
+# into the composite score. A task passes when every blocker passes
+# AND the weighted composite score clears 0.80.
+preset: default
+description: Balanced defaults for general-purpose code tasks.
+composite:
+  threshold: 0.80
+  weights:
+    build: 2.0
+    tests: 2.0
+    lint: 1.0
+    review: 1.5
+    scope: 1.0
+gates:
+  - id: build
+    threshold: 1.0
+    blocker: true
+  - id: tests
+    threshold: 1.0
+    blocker: true
+  - id: lint
+    threshold: 0.9
+    blocker: false
+  - id: review
+    threshold: 0.8
+    blocker: true
+  - id: scope
+    threshold: 1.0
+    blocker: true

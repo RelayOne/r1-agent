@@ -183,8 +183,9 @@ per-category minimum detection rate asserted on every build.
 Stoke's stewardship commitment says no feature migrates from self-
 hosted to cloud-only, ever, enforced by a CI acceptance test that
 builds Stoke from source without cloud credentials and runs a
-golden workflow to completion. Managed cloud exists for convenience.
-The binary is complete.
+golden workflow to completion. CloudSwarm (the managed team-scale
+product that embeds R1) exists for convenience, not for unlocking
+features. The binary is complete.
 
 **Every other harness is a binary black box.** Stoke ships 180
 internal packages, each focused, each audited (see
@@ -196,20 +197,39 @@ Any new race fails CI; it doesn't warn.
 
 ## Business model
 
-- **Self-hosted binary:** free, MIT-licensed. Unlimited use. No
-  telemetry. No phone-home. No feature gate.
-- **Managed cloud (opt-in):** hosted session state, centralized
-  pool management across devices, cross-agent audit consolidation
-  for teams running multiple Stoke instances. Usage-based pricing
-  on stored state and cross-device coordination. Never cheaper than
-  running your own binary; always more convenient.
-- **Enterprise support contract:** SLA on security disclosures,
-  custom stance role templates, private MCP server integrations,
-  on-site training. Annual subscription.
-- **TrustPlane identity anchoring (opt-in):** Ed25519 DPoP signing
-  + RFC 9449 compliance for agent-to-agent federation. Used by
-  operators running agents that hire other agents via the A2A
-  protocol.
+**R1 is free OSS forever.** The R1 binary, every one of its
+internal packages, the governance ledger, the verify pipeline, the
+stance harness, and the reviewer loop all live in this repo under
+an open-source license (MIT today; Apache-2.0 on the R1 rename per
+`plans/work-orders/work-r1-rename.md`). There is no "R1 Pro". There
+is no feature gate that unlocks for a fee. There is no R1 upsell
+embedded in the binary. You can run it on a laptop forever, and
+nothing in R1 will ever ask you for money.
+
+**Paid team scale is a separate product: CloudSwarm.** When an
+organization needs hosted session state, centralized subscription-
+pool management across devices, cross-agent audit consolidation,
+managed identity anchoring, or browser-hosted R1 sessions, that
+capability ships as **CloudSwarm** — a distinct product that
+*embeds* R1 as its agent runtime. CloudSwarm prices on managed
+infrastructure (compute, storage, identity, retention), not on
+R1 itself. Running R1 on your own machine never gets more
+expensive by choosing not to use CloudSwarm.
+
+**How do I pay for team scale?** Use CloudSwarm. It bundles R1
+with the hosted control plane (identity, session state, audit,
+pool management) that teams need for shared use. R1 stays free
+standalone; CloudSwarm prices the managed layer on top.
+
+**Enterprise support contract (optional):** SLA on security
+disclosures, custom stance role templates, private MCP server
+integrations, on-site training. Purchased separately; does not
+gate any R1 feature.
+
+**TrustPlane identity anchoring (opt-in):** Ed25519 DPoP signing
++ RFC 9449 compliance for agent-to-agent federation. Used by
+operators running agents that hire other agents via the A2A
+protocol. Ships in-repo; free.
 
 ## Market opportunity
 

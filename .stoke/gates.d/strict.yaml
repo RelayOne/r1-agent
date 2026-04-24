@@ -1,0 +1,32 @@
+# Strict gates preset.
+#
+# Tighter thresholds for regulated / high-trust work: every gate is
+# a blocker, lint is a hard gate at 1.0, composite threshold is
+# raised to 0.95. Use for merges into protected branches or for
+# safety-critical packages.
+preset: strict
+description: Tight thresholds for regulated or safety-critical work.
+composite:
+  threshold: 0.95
+  weights:
+    build: 2.0
+    tests: 2.0
+    lint: 1.5
+    review: 2.0
+    scope: 1.0
+gates:
+  - id: build
+    threshold: 1.0
+    blocker: true
+  - id: tests
+    threshold: 1.0
+    blocker: true
+  - id: lint
+    threshold: 1.0
+    blocker: true
+  - id: review
+    threshold: 0.9
+    blocker: true
+  - id: scope
+    threshold: 1.0
+    blocker: true

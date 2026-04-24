@@ -1,0 +1,31 @@
+# Fast gates preset.
+#
+# Minimum-viable thresholds for rapid iteration on experimental
+# work: build + tests remain hard blockers, lint and review are
+# advisory, scope is relaxed. Do NOT use for merges into main.
+preset: fast
+description: Minimum-viable thresholds for rapid iteration and spikes.
+composite:
+  threshold: 0.60
+  weights:
+    build: 2.0
+    tests: 2.0
+    lint: 0.5
+    review: 0.5
+    scope: 1.0
+gates:
+  - id: build
+    threshold: 1.0
+    blocker: true
+  - id: tests
+    threshold: 1.0
+    blocker: true
+  - id: lint
+    threshold: 0.5
+    blocker: false
+  - id: review
+    threshold: 0.5
+    blocker: false
+  - id: scope
+    threshold: 0.8
+    blocker: false

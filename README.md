@@ -25,6 +25,16 @@ signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/archit
 
 ## Install
 
+Stoke (renaming to R1) is **free open-source software, forever**.
+No license keys, no feature gates, no telemetry, no phone-home.
+Run it on a laptop or on a cluster; R1 will never ask you for
+money. Paid team scale — hosted session state, centralized
+subscription-pool management, cross-agent audit consolidation,
+browser-hosted sessions — ships as a **separate product**,
+[CloudSwarm](docs/BUSINESS-VALUE.md#business-model), which
+embeds R1 as its agent runtime. **How do I pay for team scale?**
+Use CloudSwarm. R1 standalone stays free.
+
 ```bash
 # Homebrew (macOS + Linux) — published by goreleaser on each tag
 brew install ericmacdougall/stoke/stoke
