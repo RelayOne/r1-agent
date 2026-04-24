@@ -2,7 +2,7 @@
 
 ## Overview
 
-The agent loop (`internal/agentloop/`) implements a native agentic tool-use loop using the Anthropic Messages API directly, bypassing the Claude Code CLI. This gives Stoke full control over tool execution, prompt caching, cost tracking, and context management.
+The agent loop (`internal/agentloop/`) implements a native agentic tool-use loop using the Anthropic Messages API directly, bypassing the Claude Code CLI. This gives R1 full control over tool execution, prompt caching, cost tracking, and context management.
 
 ## Design
 

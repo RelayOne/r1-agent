@@ -1,9 +1,14 @@
 # Architecture
 
-This document covers Stoke's technical architecture: the stack, the
+This document covers R1's technical architecture: the stack, the
 repository layout, the major subsystems and how they talk to each
 other, the data model, the execution flow, the testing architecture,
-and the infrastructure a deployed Stoke instance requires.
+and the infrastructure a deployed R1 instance requires.
+
+> R1 ships as the `stoke` binary today; the binary rename is in
+> flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Paths
+> (`cmd/stoke/`, `.stoke/`, `STOKE_*` env vars, `stoke.policy.yaml`)
+> keep their on-disk names throughout the transition.
 
 For the user-facing view (what the operator sees, in order), see
 [HOW-IT-WORKS.md](HOW-IT-WORKS.md). For the marketing pitch with no
@@ -253,9 +258,9 @@ Multi-task agent: one interface, many backends.
 
 ### r1-server (`cmd/r1-server/`)
 
-Per-machine dashboard. Port 3948. Discovers running Stoke instances
+Per-machine dashboard. Port 3948. Discovers running R1 instances
 via `<repo>/.stoke/r1.session.json` signature files, exposes the
-event stream + ledger DAG + checkpoints over HTTP + SSE. Stoke
+event stream + ledger DAG + checkpoints over HTTP + SSE. R1
 continues to work when r1-server isn't installed (silent fallback).
 
 - Polling-only filesystem scanner (60s), walks `$HOME/{,code,projects,dev,repos,src,work}`, skips `.git`/`node_modules`/`vendor`/`target`.
@@ -381,7 +386,7 @@ Auth: `X-Stoke-Bearer` token.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET    | `/api/health` | Health probe |
-| POST   | `/api/register` | Stoke startup registers its `r1.session.json` |
+| POST   | `/api/register` | R1 startup registers its `r1.session.json` |
 | GET    | `/api/sessions?status=` | Instance list |
 | GET    | `/api/session/{id}` | Session metadata |
 | GET    | `/api/session/{id}/events?after=&limit=` | Cursor-paginated events |
@@ -450,7 +455,7 @@ attach`, the TUI's live-follow mode, and chat-descent control.
 
 ## Infrastructure
 
-Stoke is un-managed-first. The single binary you build from this repo
+R1 is un-managed-first. The single binary you build from this repo
 does everything the project does.
 
 ### Required infrastructure
@@ -459,9 +464,9 @@ does everything the project does.
 
 - Go 1.25+ (build time only if installing from source)
 - Git
-- `claude` or `codex` on PATH (the CLIs Stoke drives)
+- `claude` or `codex` on PATH (the CLIs R1 drives)
 - Any subset of: `ANTHROPIC_API_KEY`, OpenAI OAuth via Codex CLI,
-  OpenRouter API key, direct Anthropic API key — Stoke walks the
+  OpenRouter API key, direct Anthropic API key — R1 walks the
   fallback chain until one works.
 
 All state is local. SQLite files live under `.stoke/`.
@@ -469,11 +474,11 @@ All state is local. SQLite files live under `.stoke/`.
 ### Optional infrastructure
 
 - **r1-server** (port 3948): per-machine dashboard. Silent fallback
-  when not installed. Spawned automatically by Stoke startup via
+  when not installed. Spawned automatically by R1 startup via
   `ensureR1ServerRunning()` → `exec.LookPath` + `Setsid:true`.
   Disabled via `STOKE_NO_R1_SERVER=1`.
 - **Subscription pools** (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`):
-  pre-authenticated directories Stoke round-robins through. Required
+  pre-authenticated directories R1 round-robins through. Required
   for high-throughput builds where a single subscription rate-limits.
   Registered via `stoke add-claude` / `stoke add-codex`.
 - **TrustPlane gateway**: identity anchoring for A2A peering. Opt-in
@@ -517,7 +522,7 @@ All state is local. SQLite files live under `.stoke/`.
 - **Unit tests**: co-located with packages. ~100K LOC across ~1,010
   Go files. Table-driven style preferred.
 - **Integration tests**: `integration_test.go` at repo root exercises
-  full Stoke workflows against local fixtures.
+  full R1 workflows against local fixtures.
 - **Race detector**: full repo is race-clean as of the streamjson
   TwoLane stop-channel fix. CI runs `go test ./... -race`; any new
   race fails the job, not an advisory warning.

@@ -1,16 +1,16 @@
-# Stoke Roadmap
+# R1 Roadmap
 
 ## Product Stack
 
 ```
-Stoke (open source)     AI coding orchestrator. Works everywhere.
-Ember (SaaS)            Cloud dev machines. Where Stoke runs best.
+R1 (open source)        AI coding orchestrator. Works everywhere.
+Ember (SaaS)            Cloud dev machines. Where R1 runs best.
 Flare (infrastructure)  Firecracker microVMs on GCP. Powers both.
 ```
 
 ## Current State (v2)
 
-Stoke is a Go binary with two layers:
+R1 is a Go binary with two layers:
 
 **V1 Execution Engine** — Wraps Claude Code and Codex CLI as execution engines.
 Deterministic PLAN -> EXECUTE -> VERIFY -> COMMIT phases with multi-model routing,
@@ -72,21 +72,21 @@ ember:
 - Live progress at ember.dev/s/<session_id>
 - Shareable URL for team visibility
 
-### Phase 4: Chat Sidebar — Not in scope for Stoke
+### Phase 4: Chat Sidebar — Not in scope for R1
 
-The Ember desktop app / VS Code extension wraps Stoke's plan generation
-in a conversational interface. This is an Ember-side workstream. The Stoke
+The Ember desktop app / VS Code extension wraps R1's plan generation
+in a conversational interface. This is an Ember-side workstream. The R1
 side already exports the surfaces it needs via the MCP server and HTTP API.
 
 ## Flare Integration
 
-Stoke talks to the Fly-compatible REST API via `internal/env/fly/` which
-works against Flare unchanged. No additional Stoke work is needed for
+R1 talks to the Fly-compatible REST API via `internal/env/fly/` which
+works against Flare unchanged. No additional R1 work is needed for
 Flare compute backends.
 
 ## Open Source Strategy
 
 - License: MIT
-- Stoke works fully standalone (no Ember required)
+- R1 works fully standalone (no Ember required)
 - Compute backend interface is extensible (inproc, docker, ssh, fly, ember)
 - The value is the Ember API behind the key, not the client code

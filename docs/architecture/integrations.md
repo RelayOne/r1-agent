@@ -4,13 +4,13 @@
 
 Derived from the "Building the central nervous system for AI coding agents" research document. This is architectural research about how an event-bus-driven AI coding tool can integrate with development ecosystem protocols.
 
-**This is NOT a skill.** It is reference material for future Stoke integration work.
+**This is NOT a skill.** It is reference material for future R1 integration work.
 
 ## Potential Integration Points
 
 ### Language Server Protocol (LSP)
 - Real-time diagnostics, completions, and code actions
-- Stoke could expose an LSP server for IDE integration
+- R1 could expose an LSP server for IDE integration
 - Agent loop could consume LSP diagnostics instead of running separate lint passes
 
 ### Debug Adapter Protocol (DAP)

@@ -1,25 +1,25 @@
-# Stoke prompt-injection defense
+# R1 prompt-injection defense
 
 ## Threat model
 
-Stoke is an agentic coding orchestrator. It drives models that read
+R1 is an agentic coding orchestrator. It drives models that read
 files, fetch URLs, run shell commands, and call MCP tools. Every one
 of those surfaces is a potential injection vector — the attacker
-doesn't need access to Stoke's process, only to content that Stoke
+doesn't need access to R1's process, only to content that R1
 will eventually hand to a model.
 
 Three canonical vectors:
 
 1. **Direct injection** — attacker controls the initial prompt or a
-   user-role message. Low relevance for Stoke because `stoke ship`
+   user-role message. Low relevance for R1 because `stoke ship`
    takes SOW YAML from the project's trusted tree. Still scanned
    defensively for the `stoke chat` interactive path.
 
 2. **Indirect injection via tool output** — attacker seeds a file,
-   web page, or shell-command output that Stoke's agent reads. The
+   web page, or shell-command output that R1's agent reads. The
    output becomes the next turn's user-role content block and
    instructs the model to deviate. This is the HIGHEST-risk vector
-   for Stoke and the one most of this document addresses.
+   for R1 and the one most of this document addresses.
 
 3. **Exfiltration via agent output** — once a model has been
    compromised (by 1 or 2), it tries to leak the system prompt,
@@ -123,21 +123,21 @@ writeups). Runs via `go test ./internal/redteam/...`. Minimum 60%
 detection rate asserted per category; unmatched samples are kept in
 `corpus/known-misses/` as findings to drive defenses forward.
 
-## What Stoke does NOT defend against
+## What R1 does NOT defend against
 
 Honest scope limits:
 
-- **Adaptive attackers with white-box access to Stoke's prompt
+- **Adaptive attackers with white-box access to R1's prompt
   structure.** The 2025 OpenAI/Anthropic/DeepMind adaptive-attack
   study demonstrated all 12 tested defenses fall to motivated
-  adversaries. Stoke's posture is cost imposition, not prevention
+  adversaries. R1's posture is cost imposition, not prevention
   — making attacks expensive enough that they're not worth
   running at scale.
-- **Attacks routed through Stoke's own source-controlled prompts.**
+- **Attacks routed through R1's own source-controlled prompts.**
   Those are trusted content; if your threat model includes a
   compromised committer, that is a different problem addressed by
   code review and signed commits, not prompt-injection defenses.
-- **Outbound MCP results.** Stoke's MCP server does not pre-sanitize
+- **Outbound MCP results.** R1's MCP server does not pre-sanitize
   responses. Downstream LLM consumers apply their own defenses.
   See `docs/mcp-security.md`.
 - **Side-channel exfil via tool arguments.** If the model invokes

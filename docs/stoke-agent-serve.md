@@ -1,6 +1,6 @@
-# Stoke agent-serve (Task 24)
+# R1 agent-serve (Task 24)
 
-`stoke agent-serve` exposes a Stoke instance as an HTTP endpoint
+`stoke agent-serve` exposes an R1 instance as an HTTP endpoint
 so other agents — or TrustPlane — can hire it and receive a
 verified result back. Distinct from `stoke serve` which runs the
 mission-orchestrator API consumed by stoke-server / dashboards.
@@ -111,7 +111,7 @@ Future async mode will:
   exposed beyond localhost.
 - The websearch allowlist (`internal/websearch/`) does NOT apply
   transitively through agent-serve — if a hired task uses the
-  browser executor, the operator of THIS Stoke is responsible
+  browser executor, the operator of THIS R1 is responsible
   for the URL surface those requests end up hitting.
 - The honeypot pipeline (`internal/critic/honeypot.go`) runs
   regardless of invocation path — a hired agent that tries to

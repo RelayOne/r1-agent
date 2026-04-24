@@ -1,6 +1,6 @@
 # Feature Map
 
-Every feature Stoke has or will have, grouped by user-visible outcome.
+Every feature R1 has or will have, grouped by user-visible outcome.
 For each: what it does, the benefit to the operator, current build
 status, and the spec it traces to.
 
@@ -77,7 +77,7 @@ routes via a classifier.
 |---|---|---|---|
 | CloudSwarm NDJSON + HITL | Two-lane emitter; `hitl_required` gate on stdin; `stoke run` subcommand | Done | [cloudswarm-protocol](../specs/cloudswarm-protocol.md) |
 | STOKE envelope (v1.0) | Every event carries `stoke_version`, `instance_id`, `trace_parent`, optional `ledger_node_id` | Done | [stoke-protocol](stoke-protocol.md) |
-| r1-server binary | Separate daemon ingesting r1.session.json + event log + ledger DAG from running Stoke instances | Done | [r1-server](../specs/r1-server.md) |
+| r1-server binary | Separate daemon ingesting r1.session.json + event log + ledger DAG from running R1 instances | Done | [r1-server](../specs/r1-server.md) |
 | r1-server web dashboard (MVP) | Instance list + live-tailing stream view + event-type filter + auto-scroll | Done | [r1-server](../specs/r1-server.md) |
 | r1-server UI v2 (waterfall + 3D) | Waterfall + tree view, LLM I/O bubbles, 3D force-directed ledger viz | Scoped | [r1-server-ui-v2](../specs/r1-server-ui-v2.md) |
 | `stoke agent-serve` HTTP MVP | Hireable-agent facade — POST /api/task + GET /api/task/{id}; X-Stoke-Bearer auth | Done | [agent-serve-async](../specs/agent-serve-async.md) |
@@ -87,7 +87,7 @@ routes via a classifier.
 | Policy engine | Cedar/OPA-style governance; `CLOUDSWARM_POLICY_ENDPOINT` no-op today | Scoped | [policy-engine](../specs/policy-engine.md) |
 | TrustPlane real client (DPoP + RFC 9449) | Stdlib-only Ed25519 DPoP; no go-jose dep; env-driven key loading | Done | [trustplane-integration](trustplane-integration.md) |
 | A2A Agent Card v1.0.0 + canonical path | `/.well-known/agent-card.json` canonical; legacy `agent.json` 308-redirects with Deprecation + Sunset headers | Done | [CHANGELOG.md](../CHANGELOG.md) T22 |
-| ACP adapter (`stoke-acp`) | Agent Client Protocol adapter exposes Stoke to ACP-aware editors | Done | S-U-002 |
+| ACP adapter (`stoke-acp`) | Agent Client Protocol adapter exposes R1 to ACP-aware editors | Done | S-U-002 |
 
 ## Operator ergonomics
 
@@ -137,7 +137,7 @@ routes via a classifier.
 
 ## V2 governance layer
 
-Stoke v2 wraps the execution engine in a multi-role consensus layer.
+R1 v2 wraps the execution engine in a multi-role consensus layer.
 
 | Feature | Benefit | Status | Spec |
 |---|---|---|---|

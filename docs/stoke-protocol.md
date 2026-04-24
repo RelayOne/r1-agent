@@ -2,19 +2,19 @@
 
 **STOKE** — **S**trong **T**raceable **O**bservable **K**nowledge **E**xecutor.
 
-STOKE is the event envelope that every Stoke-emitted reasoning event
+STOKE is the event envelope that every R1-emitted reasoning event
 carries when the NDJSON stream is enabled. It is additive on top of the
 existing Claude-Code-compatible shape (`type`, `uuid`, `session_id`,
 `ts`) and extends it with fields that let r1-server, CloudSwarm, and
 any other consumer correlate a single event back to:
 
 - the **protocol version** (forward-compat gate)
-- the **instance** that produced it (one Stoke process per repo)
+- the **instance** that produced it (one R1 process per repo)
 - the **trace** it participates in (W3C Trace Context)
 - the **ledger node** (content-addressed SHA-256) that authored it
 
 The protocol is intentionally tiny. The STOKE "glass box" thesis is
-that R1/Stoke already produces a content-addressed Merkle-chained
+that R1 already produces a content-addressed Merkle-chained
 reasoning ledger; this envelope just makes it addressable by external
 consumers without parsing the event body.
 
@@ -54,7 +54,7 @@ values are *omitted*, not emitted as `null`.
 
 ## Event types
 
-Today's `stoke.*` namespace — grows as more Stoke subsystems route
+Today's `stoke.*` namespace — grows as more R1 subsystems route
 events through the envelope.
 
 | Event type | Emitted when | Notable body fields |
@@ -84,13 +84,13 @@ events through the envelope.
 
 - `version`: `00`
 - `trace-id`: 16 random bytes (hex-encoded, 32 chars) — stable for
-  the lifetime of one Stoke process / session
+  the lifetime of one R1 process / session
 - `parent-id`: 8 random bytes (hex-encoded, 16 chars) — stable per
-  Stoke process; becomes the parent when cross-system propagation
+  R1 process; becomes the parent when cross-system propagation
   lands
 - `trace-flags`: `01` (sampled)
 
-`streamjson.NewTraceParent()` generates one. Stoke stamps it once at
+`streamjson.NewTraceParent()` generates one. R1 stamps it once at
 startup via `SetStokeMeta` and keeps it immutable for the process
 lifetime. A future release may extend this to propagate an incoming
 `traceparent` from RelayGate / CloudSwarm headers — the envelope
@@ -99,7 +99,7 @@ field is already in place for that.
 ## Ledger node IDs
 
 `ledger_node_id` is a SHA-256-derived content-addressed identifier
-allocated when Stoke writes a node under `<repo>/.stoke/ledger/nodes/`.
+allocated when R1 writes a node under `<repo>/.stoke/ledger/nodes/`.
 The emit call site passes it in via the `data` map:
 
 ```go
@@ -124,7 +124,7 @@ pattern-matching on the event body.
   `mission.aborted`). Those events will gain the STOKE envelope in a
   follow-up if CloudSwarm wants early adoption; until then they stay
   at their current shape.
-- `EmitStoke` is additive — it adds the Stoke-namespace events
+- `EmitStoke` is additive — it adds the STOKE-namespace events
   without altering any pre-existing emit behavior.
 
 ## Versioning

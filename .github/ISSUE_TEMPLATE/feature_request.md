@@ -1,13 +1,13 @@
 ---
 name: Feature request
-about: Propose a new capability, CLI surface, or subsystem for Stoke
+about: Propose a new capability, CLI surface, or subsystem for R1
 title: "feat: <short description>"
 labels: ["enhancement", "triage"]
 assignees: []
 ---
 
 <!--
-  Stoke aims for deliberate, motivated additions. "One strong implementer +
+  R1 aims for deliberate, motivated additions. "One strong implementer +
   adversarial reviewer" is the thesis; we resist feature creep that dilutes
   that stance. A sharp proposal that says "here is the concrete gap, here is
   the smallest wedge that closes it" lands much faster than a vague wish.
@@ -27,7 +27,7 @@ assignees: []
 ## Proposal
 
 <!--
-  What would you like Stoke to do instead? Be as specific as you can:
+  What would you like R1 to do instead? Be as specific as you can:
     - New CLI subcommand? New flag on an existing command? New config key?
     - New package? New phase in the workflow?
     - Backward compatible or breaking?
@@ -50,7 +50,7 @@ assignees: []
 ## Scope boundaries
 
 <!--
-  Explicitly call out what this proposal is NOT trying to do. Stoke specs
+  Explicitly call out what this proposal is NOT trying to do. R1 specs
   favor "what not to do" lists because they prevent scope drift during
   implementation.
 -->
@@ -62,7 +62,7 @@ assignees: []
 ## Impact on the thesis
 
 <!--
-  Stoke is "single strong agent + adversarial reviewer, not a multi-agent
+  R1 is "single strong agent + adversarial reviewer, not a multi-agent
   committee." Does this proposal respect that? If it seems to push toward
   multi-agent coordination, justify why.
 -->

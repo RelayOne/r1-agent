@@ -1,15 +1,15 @@
 # MCP Security: Prompt-Injection Responsibility Boundary
 
-Stoke sits on both sides of the Model Context Protocol wire:
+R1 sits on both sides of the Model Context Protocol wire:
 
-- **Inbound** — Stoke is an MCP **client** that calls third-party MCP tool servers via `internal/mcp.StdioClient.CallTool`. Whatever those servers return (filesystem contents, DB rows, HTTP responses, scraped HTML) is attacker-influenced text.
-- **Outbound** — Stoke is an MCP **server** via `internal/mcp/stoke_server.go` (the `stoke mcp-serve-stoke` path) and `cmd/stoke-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
+- **Inbound** — R1 is an MCP **client** that calls third-party MCP tool servers via `internal/mcp.StdioClient.CallTool`. Whatever those servers return (filesystem contents, DB rows, HTTP responses, scraped HTML) is attacker-influenced text.
+- **Outbound** — R1 is an MCP **server** via `internal/mcp/stoke_server.go` (the `stoke mcp-serve-stoke` path) and `cmd/stoke-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
 
 Prompt-injection defenses live at different layers on each side. This document fixes the contract.
 
 ---
 
-## Inbound (Stoke as MCP client)
+## Inbound (R1 as MCP client)
 
 **Rule.** Every `CallTool` result that flows into an LLM prompt MUST be routed through `agentloop.SanitizeToolOutput` before it reaches the model. Results that are only parsed by code, returned to a non-LLM HTTP client, or written to a log do NOT need sanitization.
 
@@ -42,9 +42,9 @@ If a reviewer sees a `CallTool` call with no matching `mcp-sanitization-audit:` 
 
 ---
 
-## Outbound (Stoke as MCP server)
+## Outbound (R1 as MCP server)
 
-**Rule.** Stoke's MCP servers (`internal/mcp/stoke_server.go` and `cmd/stoke-mcp/`) return tool results **verbatim**. They do NOT strip, escape, or rewrite attacker-influenced substrings before sending them to the MCP client.
+**Rule.** R1's MCP servers (`internal/mcp/stoke_server.go` and `cmd/stoke-mcp/`) return tool results **verbatim**. They do NOT strip, escape, or rewrite attacker-influenced substrings before sending them to the MCP client.
 
 **Why not pre-sanitize outbound.**
 
@@ -52,7 +52,7 @@ If a reviewer sees a `CallTool` call with no matching `mcp-sanitization-audit:` 
 2. **LLM consumers disagree on defenses.** Anthropic's Claude pipeline, OpenAI's tool-use pipeline, and self-hosted frameworks each prefer different prompt-injection strategies (tag wrapping, entity encoding, delimiter replacement, none). The MCP server cannot know which strategy its consumer wants, and guessing wrong is worse than doing nothing.
 3. **MCP is not exclusively an LLM protocol.** The spec is neutral on payload semantics; sanitizing at the server would overreach.
 
-**What downstream MCP consumers MUST do.** If you connect to a Stoke MCP server and intend to pipe its results into an LLM prompt, apply your own prompt-injection defenses at the consumption site. Treat every field as untrusted text. In particular: build logs (`stoke_get_mission_status`), verify/audit output (`stoke-mcp` primitives), and the TrustPlane pass-through layer can all carry attacker text from the repo, SOW, or upstream tool.
+**What downstream MCP consumers MUST do.** If you connect to an R1 MCP server and intend to pipe its results into an LLM prompt, apply your own prompt-injection defenses at the consumption site. Treat every field as untrusted text. In particular: build logs (`stoke_get_mission_status`), verify/audit output (`stoke-mcp` primitives), and the TrustPlane pass-through layer can all carry attacker text from the repo, SOW, or upstream tool.
 
 ---
 

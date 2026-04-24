@@ -1,6 +1,6 @@
 # `.stoke/gates.yaml` — gates preset schema
 
-Stoke's verify pipeline decides whether a task may merge by running
+R1's verify pipeline decides whether a task may merge by running
 it through a preset bundle of per-gate thresholds and composite
 weights. The R1 site's gates demo drags a single "strictness"
 slider — under the hood that slider switches between three
@@ -118,7 +118,7 @@ listed gates clears `0.80`.
    key or symlink to a file under `gates.d/`), the loader uses it.
 2. Otherwise callers select by name: `LoadGatesPresetDir(".stoke/gates.d")`
    then lookup `all[strings.ToLower(name)]`.
-3. If nothing matches, Stoke falls back to the in-code `CodeRubric`
+3. If nothing matches, R1 falls back to the in-code `CodeRubric`
    in `internal/verify/rubrics.go` — the pre-preset-era default.
 
 ## Integration

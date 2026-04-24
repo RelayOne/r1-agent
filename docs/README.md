@@ -1,8 +1,10 @@
-# Stoke
+# R1
+
+> **Note:** R1 ships as the `stoke` binary today; the binary rename is in flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Command examples below still use `stoke` — that is the correct invocation for current builds.
 
 **A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**
 
-Stoke drives Claude Code and Codex CLI through a deterministic
+R1 drives Claude Code and Codex CLI through a deterministic
 PLAN → EXECUTE → VERIFY → COMMIT loop. It runs one strong implementer
 per task, pairs that worker with a cross-family reviewer, records
 every decision into an append-only Merkle-chained ledger, and enforces
@@ -10,15 +12,15 @@ build/test/lint/scope gates before a single line is allowed to merge.
 
 The thesis: **the harness is the product.** SWE-bench Pro shows the
 same underlying model swings ~15 points when you change only the
-scaffold around it. Stoke reports deltas on SWE-bench Pro,
+scaffold around it. R1 reports deltas on SWE-bench Pro,
 SWE-rebench, and Terminal-Bench — not contaminated Verified numbers.
 See [docs/benchmark-stance.md](docs/benchmark-stance.md) for the full
 published evaluation stance.
 
-Stoke is explicitly **not** a multi-agent committee. The published
+R1 is explicitly **not** a multi-agent committee. The published
 MAST data (41–86.7% failure rates in real multi-agent deployments;
 70% accuracy degradation from blind agent-adding) says the prevailing
-"many cooperating agents" pattern is how you lose. Stoke runs one
+"many cooperating agents" pattern is how you lose. R1 runs one
 strong implementer per task, pairs it with a cross-family adversarial
 reviewer, and treats the reviewer's dissent as a merge-blocking
 signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/architecture/single-strong-agent-stance.md).
@@ -84,19 +86,19 @@ stoke build --plan stoke-plan.json --interactive
 
 ## Commands
 
-Stoke ships as a monorepo of nine executables. `stoke` is the primary
-driver; the others are purpose-built satellites that share the same
-`internal/` packages.
+R1 ships as a monorepo of nine executables. `stoke` is the primary
+driver (it will become `r1` when §S2-3 lands); the others are
+purpose-built satellites that share the same `internal/` packages.
 
 | Binary | Purpose |
 |--------|---------|
 | `stoke` | Primary orchestrator — 30+ subcommands below |
-| `stoke-acp` | Agent Client Protocol adapter (S-U-002) — exposes Stoke over ACP for editor integrations |
+| `stoke-acp` | Agent Client Protocol adapter (S-U-002) — exposes R1 over ACP for editor integrations |
 | `stoke-a2a` | Agent-to-Agent peering — signed agent cards, HMAC tokens, x402 micropayments, saga compensators |
 | `stoke-mcp` | MCP codebase tool server — exposes ledger, wisdom, research, skill stores as MCP tools |
 | `stoke-server` | Mission API HTTP server for programmatic access and dashboards |
 | `stoke-gateway` | Managed-cloud gateway: hosted session state, centralized pool management |
-| `r1-server` | Per-machine dashboard (port 3948) — discovers running Stoke instances, live event stream, 3D ledger visualizer |
+| `r1-server` | Per-machine dashboard (port 3948) — discovers running R1 instances, live event stream, 3D ledger visualizer |
 | `chat-probe` | Diagnostic utility for chat-descent gate and sessionctl socket |
 | `critique-compare` | Bench runner for critic/reviewer prompt tuning |
 
@@ -184,7 +186,7 @@ stoke build --plan stoke-plan.json
 
 ## Governance architecture
 
-Stoke wraps its execution engine in a multi-role consensus layer
+R1 wraps its execution engine in a multi-role consensus layer
 rooted in an append-only content-addressed graph.
 
 - **Ledger** — Append-only Merkle-chained graph of nodes and edges.
@@ -223,7 +225,7 @@ rooted in an append-only content-addressed graph.
 
 ## Verification descent — the trust layer
 
-Workers routinely claim "done" when they aren't. Stoke's verification
+Workers routinely claim "done" when they aren't. R1's verification
 descent engine refuses to believe them.
 
 - **Anti-deception contract** injected into every worker prompt at
@@ -245,7 +247,7 @@ descent engine refuses to believe them.
   descent ladder — the criterion-build / repair primitives swap per
   executor but the ladder runs unchanged.
 - **Soft-pass AC after 2× `ac_bug` verdicts.** When reviewers keep
-  blaming the AC for the failure, Stoke escalates rather than spin.
+  blaming the AC for the failure, R1 escalates rather than spin.
 
 ## Prompt-injection hardening
 
@@ -329,8 +331,9 @@ defense in depth.
 
 ## Repository map
 
-Stoke is one Go module (`github.com/ericmacdougall/stoke`), Go 1.25,
+R1 is one Go module (`github.com/ericmacdougall/stoke`), Go 1.25,
 organized around a small `cmd/` tree and a large `internal/` tree.
+(The module will move to `github.com/RelayOne/r1` when §S2 lands.)
 
 ```
 cmd/
@@ -420,7 +423,7 @@ Makefile's expected value.
 
 ## MCP servers
 
-Stoke can connect to Model Context Protocol (MCP) servers — GitHub,
+R1 can connect to Model Context Protocol (MCP) servers — GitHub,
 Linear, Slack, Postgres, or any custom server — and expose their tools
 to workers as `mcp_<server>_<tool>` calls. Configure in
 `stoke.policy.yaml`:

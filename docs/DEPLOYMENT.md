@@ -1,10 +1,16 @@
 # Deployment
 
-This document covers deploying Stoke in development, on a single
+This document covers deploying R1 in development, on a single
 operator host, on a shared workstation with pool isolation, in a
 container, and in the managed-cloud configuration. It also covers
-every environment variable Stoke reads, where each one comes from,
+every environment variable R1 reads, where each one comes from,
 and how to verify a deployment is healthy.
+
+> R1 ships as the `stoke` binary today (rename to `r1` tracked in
+> `plans/work-orders/work-r1-rename.md` §S2-3). Every CLI invocation,
+> `STOKE_*` environment variable, `.stoke/` path, and `X-Stoke-*`
+> header below remains the literal on-disk / on-the-wire identifier
+> throughout the dual-accept windows.
 
 For the architecture reference, see [ARCHITECTURE.md](ARCHITECTURE.md).
 For the operator walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
@@ -20,7 +26,7 @@ For the operator walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 | `claude` CLI | Latest | One of the two primary execution engines |
 | `codex` CLI | Latest | The other primary execution engine + cross-model reviewer |
 
-Either `claude` or `codex` is sufficient to run Stoke — the fallback
+Either `claude` or `codex` is sufficient to run R1 — the fallback
 chain handles missing providers by demoting to the next tier — but
 the full cross-model review gate requires both.
 
@@ -46,7 +52,7 @@ the full cross-model review gate requires both.
 
 ## Environment variables
 
-Stoke reads a substantial list of environment variables. Most have
+R1 reads a substantial list of environment variables. Most have
 sane defaults; only a few are ever strictly required.
 
 ### Core configuration
@@ -179,7 +185,7 @@ collisions).
 ### Single operator host
 
 The simplest deployment. A plain machine with Git, `claude`,
-optionally `codex`, and the Stoke binary.
+optionally `codex`, and the R1 binary (named `stoke` on disk).
 
 ```bash
 # Install via the one-line installer (auto-detects platform,
@@ -214,7 +220,7 @@ stoke add-claude ~/pools/claude-1
 stoke add-claude ~/pools/claude-2
 stoke add-codex  ~/pools/codex-1
 
-# Stoke's subscriptions.Acquire() round-robins across pools,
+# R1's subscriptions.Acquire() round-robins across pools,
 # consults per-pool circuit breakers, and polls OAuth usage for
 # live load information.
 stoke build --plan stoke-plan.json --workers 4
@@ -263,7 +269,7 @@ The managed path is convenience, not a feature tier.
 
 ### r1-server
 
-r1-server auto-spawns on Stoke startup unless `STOKE_NO_R1_SERVER=1`
+r1-server auto-spawns on R1 startup unless `STOKE_NO_R1_SERVER=1`
 is set. To install it as a long-running service:
 
 ```bash
@@ -274,7 +280,7 @@ r1-server --listen :3948 --data-dir ~/.local/share/stoke-r1
 # Visit http://localhost:3948/
 ```
 
-It runs read-only against Stoke instances — no write access, no
+It runs read-only against R1 instances — no write access, no
 shared database. Pure HTTP + SSE. Nothing to operate.
 
 ## Infrastructure requirements
@@ -294,7 +300,7 @@ shared database. Pure HTTP + SSE. Nothing to operate.
 
 ### Network
 
-- **Outbound only.** Stoke initiates HTTPS connections to provider
+- **Outbound only.** R1 initiates HTTPS connections to provider
   APIs (Anthropic, OpenAI, OpenRouter, Gemini, Ollama if remote) and
   to any configured MCP servers.
 - **Inbound: optional.** `stoke serve` or `stoke-server` open a
@@ -303,7 +309,7 @@ shared database. Pure HTTP + SSE. Nothing to operate.
   `localhost:3948`. Do not expose to the public internet without a
   reverse proxy and auth; the local API is unauthenticated by
   design (it trusts local `POST /api/register` signatures from
-  Stoke startup).
+  R1 startup).
 
 ### Compute
 
@@ -339,7 +345,7 @@ shared database. Pure HTTP + SSE. Nothing to operate.
 - `stoke status` lists active sessions with phase, progress, cost
   accrual, and failure counts.
 - r1-server dashboard (`http://localhost:3948/`) lists every
-  running Stoke instance, live phase state, and the ledger DAG.
+  running R1 instance, live phase state, and the ledger DAG.
 
 ### Event stream
 
@@ -397,7 +403,7 @@ awk -F'\t' '/\.end/ {split($2,a,"="); split($3,b,"="); phase=a[2]; dur=b[2]; sub
 
 ### Binary rollback
 
-Stoke is a single static binary. Rollback is "install the previous
+R1 is a single static binary. Rollback is "install the previous
 tag":
 
 ```bash

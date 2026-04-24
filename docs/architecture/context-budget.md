@@ -4,7 +4,7 @@ Package: `internal/context/`
 
 ## Four Context Layers
 
-Following the MemPalace articulation, Stoke's context budget is organized into
+Following the MemPalace articulation, R1's context budget is organized into
 four logical layers mapped to three Go tiers:
 
 | Layer | Name | Tokens | Loading | Go Tier |
@@ -19,7 +19,7 @@ four logical layers mapped to three Go tiers:
 System identity, role constraints, and operating mode. Always present in every
 API call regardless of compaction level.
 
-Examples: "You are a Stoke developer stance", "Do not modify protected files",
+Examples: "You are an R1 developer stance", "Do not modify protected files",
 "Follow Go best practices".
 
 ### L1 — Critical Facts (~120 tokens)

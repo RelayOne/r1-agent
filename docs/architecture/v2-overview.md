@@ -1,6 +1,6 @@
 # V2 Governance Overview
 
-Stoke v2 adds a multi-role consensus layer on top of the v1 execution engine.
+R1 v2 adds a multi-role consensus layer on top of the v1 execution engine.
 
 ## Substrate Layer
 

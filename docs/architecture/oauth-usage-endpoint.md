@@ -1,6 +1,6 @@
 # OAuth Usage Endpoint
 
-Stoke polls an undocumented Anthropic OAuth endpoint to track subscription
+R1 polls an undocumented Anthropic OAuth endpoint to track subscription
 utilization for rate-limit management.
 
 ## Endpoint

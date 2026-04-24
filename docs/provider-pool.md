@@ -1,6 +1,6 @@
 # Multi-provider pool (`STOKE_PROVIDERS`)
 
-Stoke normally picks one LLM provider via `detectSmartDefaults()` — a
+R1 normally picks one LLM provider via `detectSmartDefaults()` — a
 probe chain of LiteLLM -> claude binary -> codex binary -> `ANTHROPIC_API_KEY`.
 That single provider services every role: workers (task dispatch),
 reasoning (planning, judging), and reviewers (second-opinion gates).
@@ -92,7 +92,7 @@ Worker dispatches go to Ollama; planning / review go to Anthropic.
 
 ## Behavior when unset
 
-If `STOKE_PROVIDERS` is empty or unset, Stoke falls back to
+If `STOKE_PROVIDERS` is empty or unset, R1 falls back to
 `detectSmartDefaults()` verbatim. The pre-S-6 probe chain runs,
 one provider is picked, and every role uses that one provider.
 This is the default experience and requires no config.
@@ -100,7 +100,7 @@ This is the default experience and requires no config.
 ## Behavior when set but a role is missing
 
 When the pool is configured but no entry serves the requested role
-(and no `role: any` fallback exists), Stoke exits with a fatal error
+(and no `role: any` fallback exists), R1 exits with a fatal error
 naming the role. Example:
 
 ```

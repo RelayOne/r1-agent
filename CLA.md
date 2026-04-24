@@ -1,8 +1,8 @@
 # Individual Contributor License Agreement
 
-Thank you for your interest in contributing to Stoke (R1), the
-open-source agentic coding orchestrator maintained by
-**ericmacdougall** (the "Project Owner"). This Contributor License
+Thank you for your interest in contributing to R1 (legacy product
+name: Stoke), the open-source agentic coding orchestrator maintained
+by **ericmacdougall** (the "Project Owner"). This Contributor License
 Agreement ("Agreement") clarifies the intellectual-property license
 granted with contributions from any person or entity. It is the
 same shape as the widely used Apache-style Individual CLA, adapted
@@ -26,7 +26,7 @@ Contributor.
 **"Contribution"** — any original work of authorship, including any
 modifications or additions to an existing work, that is intentionally
 submitted by You to the Project Owner for inclusion in, or
-documentation of, the Stoke project. "Submitted" means any form of
+documentation of, the R1 project. "Submitted" means any form of
 electronic, verbal, or written communication sent to the Project
 Owner or its representatives, including but not limited to
 communication on electronic mailing lists, source code control

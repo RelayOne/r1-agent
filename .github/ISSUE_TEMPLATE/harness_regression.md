@@ -7,7 +7,7 @@ assignees: []
 ---
 
 <!--
-  Stoke's thesis is "the harness is the product." A measurable regression on
+  R1's thesis is "the harness is the product." A measurable regression on
   a harness-quality benchmark is a first-class bug, on par with a crash. Use
   this template when you see a score drop, a timeout increase, or a behavior
   change that degrades outcomes relative to a known-good reference.

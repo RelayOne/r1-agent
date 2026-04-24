@@ -1,6 +1,6 @@
 # Provider Fallback Chain
 
-Stoke routes tasks to execution engines via a 5-provider fallback chain. The chain
+R1 routes tasks to execution engines via a 5-provider fallback chain. The chain
 is task-type aware: different task types have different preferred providers based on
 observed benchmark performance.
 

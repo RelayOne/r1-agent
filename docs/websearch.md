@@ -1,6 +1,6 @@
 # Websearch — Domain Allowlist and Body Cap
 
-The `internal/websearch` package is the adapter layer stoke's feasibility
+The `internal/websearch` package is the adapter layer R1's feasibility
 gate uses to retrieve external API documentation. The gate refuses to
 build code against a service that has no documentation coverage, so
 websearch is on the critical path for any SOW that references a
@@ -78,7 +78,7 @@ websearch.FetchConfig{
 
 The cap can also be tuned upward (e.g. 200 KB) when legitimate doc
 pages are known to be larger than the default, but leave it bounded —
-the goal is to bound the memory an attacker can force stoke to
+the goal is to bound the memory an attacker can force R1 to
 allocate by pointing a feasibility search at a never-ending stream.
 
 ## Where this runs

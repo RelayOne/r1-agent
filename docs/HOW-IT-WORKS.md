@@ -1,7 +1,7 @@
 # How It Works
 
 This document walks through what happens when an operator drives a
-coding task through Stoke — first from the operator's point of view
+coding task through R1 — first from the operator's point of view
 (what you type, what you see), then from the system's point of view
 (what runs, in what order, and why). If you want the technical
 reference grouped by subsystem, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -11,7 +11,7 @@ If you want the pitch, see [BUSINESS-VALUE.md](BUSINESS-VALUE.md).
 
 ### Step 1: Install and verify
 
-You install Stoke via Homebrew, the one-line installer, Docker, or
+You install R1 via Homebrew, the one-line installer, Docker, or
 `go build ./cmd/stoke` from source. Either way, `stoke doctor` is
 the first command you run. It checks Git, the LLM CLIs
 (`claude`, `codex`), every configured provider in the fallback
@@ -23,7 +23,7 @@ tells you exactly what is missing and how to fix it.
 You either:
 
 - write a task plan as `stoke-plan.json`, or
-- run `stoke plan --task "Add JWT auth"` and let Stoke generate a
+- run `stoke plan --task "Add JWT auth"` and let R1 generate a
   plan from codebase analysis, or
 - skip the plan entirely and run `stoke task "Fix the flaky
   integration test in server/handler"` — free-text entry that the
@@ -37,7 +37,7 @@ tasks — programmatic `VerifyFunc` callbacks.
 
 ### Step 3: Dry-run first
 
-You always run `--dry-run` first. Stoke validates the plan, shows
+You always run `--dry-run` first. R1 validates the plan, shows
 which tasks will execute in which order, which files are in scope,
 which provider will handle each task, and the ROI-filtered view. No
 child process is spawned, no LLM call is made, no worktree is
@@ -45,7 +45,7 @@ created.
 
 ### Step 4: Execute for real
 
-You drop `--dry-run` and add `--workers 4`. Stoke opens a live
+You drop `--dry-run` and add `--workers 4`. R1 opens a live
 dashboard — a plain one-line-per-event stream when stderr is a pipe,
 or an ANSI cursor-up multi-line TUI when stderr is a TTY. If you
 passed `--interactive`, a Bubble Tea full-screen TUI opens with
@@ -63,7 +63,7 @@ If something goes sideways, you have levers:
 - `stoke ctl pause <session>` pauses the session at the next safe
   boundary via the sessionctl Unix socket.
 - `stoke ctl inspect <session>` dumps the current ledger state.
-- If you have `r1-server` installed (it auto-spawned on Stoke
+- If you have `r1-server` installed (it auto-spawned on R1
   startup unless you set `STOKE_NO_R1_SERVER=1`), open
   <http://localhost:3948/> in a browser for the live stream view
   and 3D ledger visualizer.
@@ -237,10 +237,10 @@ dispatch queue.
 **Why Go?** The entire orchestration layer has to be fast, statically
 compiled, and hackable. Go's concurrency primitives map cleanly to
 the "N goroutines per task, each wrapping a child process with a
-streaming parser" model. The stdlib is strong enough that Stoke's
+streaming parser" model. The stdlib is strong enough that R1's
 HTTP servers and clients have zero framework dependencies.
 
-**Why append-only?** Every "mutable" system Stoke ever tried leaked
+**Why append-only?** Every "mutable" system R1 ever tried leaked
 state invariants the moment a worker misbehaved. Content-addressed
 append-only ledgers + Merkle-chained events make retroactive tamper
 impossible and give us free audit trails.
@@ -293,7 +293,7 @@ multi-agent setups without the coordination tax.
 ## What's different about this approach
 
 **Verification descent, not verification checkpoint.** Most harnesses
-verify at merge time. Stoke verifies at every end-of-turn and builds
+verify at merge time. R1 verifies at every end-of-turn and builds
 an 8-tier ladder of increasingly strict checks. Workers can't silently
 fake completion because the ladder won't let them. See the H-91
 series and `specs/descent-hardening.md`.
@@ -314,7 +314,7 @@ true provenance; operators get causal traces.
 **Un-managed-first stewardship.** The binary you build from this repo
 does everything the project does. Managed cloud is opt-in, never a
 gate. `STEWARDSHIP.md` codifies the commitment and CI has an
-acceptance test that builds Stoke from source without any cloud
+acceptance test that builds R1 from source without any cloud
 credentials and runs a golden SOW to completion.
 
 **Race-clean concurrency gate.** Go's race detector runs against the
@@ -334,7 +334,7 @@ and delegation executors all plug into the same 8-tier descent ladder
 via `VerifyFunc`. The criterion-build and repair primitives swap per
 executor; the ladder is unchanged. One tool surface, many backends.
 
-**Stoke protocol envelope.** Every Stoke-family event carries
+**STOKE protocol envelope.** Every R1-family event carries
 `stoke_version`, `instance_id`, W3C `trace_parent`, and an optional
 `ledger_node_id`. The envelope is additive — Claude-Code-only
 consumers see exactly the old shape, and every tool in the ecosystem

@@ -59,17 +59,17 @@ entirely.
 **Solo operators and small teams** who are building serious
 products without an engineering org. The commit stream of one strong
 implementer plus a reviewer catches the mistakes you would have
-caught in a code review if you had a code review. Stoke gives small
+caught in a code review if you had a code review. R1 gives small
 teams the review discipline of large teams.
 
 **AI safety researchers, red teamers, and adversarial testers** who
 need to probe a realistic harness and catch prompt-injection
-bypasses before the whole industry ships them. Stoke exposes every
+bypasses before the whole industry ships them. R1 exposes every
 layer.
 
-## How Stoke solves it
+## How R1 solves it
 
-Stoke runs one strong implementer per task and pairs it with a
+R1 runs one strong implementer per task and pairs it with a
 cross-family adversarial reviewer. If the worker is Claude, the
 reviewer is Codex. If the worker is Codex, the reviewer is Claude.
 Both sign off, or the work doesn't merge.
@@ -83,8 +83,8 @@ retention.
 
 A verification descent engine refuses to let a worker say "done"
 without proving it. If the worker claims to have written a file,
-Stoke checks the file exists and isn't empty. If the worker says
-"tests pass," Stoke runs the tests. If the worker repairs the same
+R1 checks the file exists and isn't empty. If the worker says
+"tests pass," R1 runs the tests. If the worker repairs the same
 file three times in a row, the loop ends. If the worker burns $0.50
 re-diagnosing an environment issue a human could have spotted, the
 environment-issue tool shortcuts the whole multi-analyst ladder
@@ -97,7 +97,7 @@ empty catch blocks), cross-model review, and seven more. Any one of
 the eleven can fail the merge. All eleven have to pass.
 
 Prompt injection gets treated as a first-class engineering concern.
-Every file Stoke reads into a prompt is scanned by a dedicated
+Every file R1 reads into a prompt is scanned by a dedicated
 sanitizer. Every tool output is capped at 200KB, scrubbed of
 chat-template tokens, and annotated when it looks injection-shaped.
 Every end-of-turn is checked against four honeypots: a system-prompt
@@ -119,7 +119,7 @@ of their time on.
 
 **Never silently lose work to a "done" that isn't done.** The
 ghost-write detector, the forced self-check before turn end, and
-the per-file repair cap together mean Stoke refuses to accept
+the per-file repair cap together mean R1 refuses to accept
 completion without evidence.
 
 **Cut your AI coding cost by avoiding wasted retry loops.** Same-
@@ -149,45 +149,45 @@ to cloud-only.
 
 **Run every model you already pay for.** The five-provider fallback
 chain (Claude, Codex, OpenRouter, direct Anthropic API, lint-only)
-means Stoke routes to whatever you have budget for, automatically.
+means R1 routes to whatever you have budget for, automatically.
 
 **Integrate with anything that speaks Model Context Protocol.** MCP
 client + server, trust gating, circuit breakers, concurrency caps.
 Connect Linear, GitHub, Slack, Postgres, or any custom server.
 
 **Visibility without instrumentation.** The r1-server dashboard
-auto-discovers any running Stoke instance on the machine, exposes
+auto-discovers any running R1 instance on the machine, exposes
 the live event stream, the ledger DAG, and a 3D force-directed
 graph of the reasoning trace — all from the JSON signature file
-Stoke writes on startup. Install by running a single binary.
+R1 writes on startup. Install by running a single binary.
 
 ## What makes this different
 
 **Every other harness in the "AI orchestrator" category is a
-multi-agent committee.** They scale by adding coordination. Stoke
+multi-agent committee.** They scale by adding coordination. R1
 scales by making a single strong worker more reliable. The MAST
 study data says single-strong-agent-plus-reviewer outperforms
 committees by wide margins on real tasks.
 
-**Every other harness audits at commit time.** Stoke audits at
+**Every other harness audits at commit time.** R1 audits at
 every end-of-turn via the verification descent engine. By the time
 a diff reaches the commit gate, three or four layers of checks have
 already fired.
 
 **Every other harness treats prompt injection as a marketing
-liability.** Stoke treats it as an engineering problem with a test
+liability.** R1 treats it as an engineering problem with a test
 suite. Four independent defense layers, 58 adversarial samples, a
 per-category minimum detection rate asserted on every build.
 
 **Every other harness locks its features behind a cloud tier.**
-Stoke's stewardship commitment says no feature migrates from self-
+R1's stewardship commitment says no feature migrates from self-
 hosted to cloud-only, ever, enforced by a CI acceptance test that
-builds Stoke from source without cloud credentials and runs a
+builds R1 from source without cloud credentials and runs a
 golden workflow to completion. CloudSwarm (the managed team-scale
 product that embeds R1) exists for convenience, not for unlocking
 features. The binary is complete.
 
-**Every other harness is a binary black box.** Stoke ships 180
+**Every other harness is a binary black box.** R1 ships 180
 internal packages, each focused, each audited (see
 `PACKAGE-AUDIT.md`), each inspectable. The 30-PR cleanup campaign
 landed 600+ lint findings across unused, nilerr, exhaustive,
@@ -256,7 +256,7 @@ team scale.
 ## Traction and proof points
 
 - **Production-viable on real scope.** In-repo ladder experiments
-  show Stoke converging on R10-scope tasks (ticket-triage app with
+  show R1 converging on R10-scope tasks (ticket-triage app with
   worker + SQLite, 25 tasks) with working code end-to-end. The
   simple-loop variant is production-viable at this scope today.
 - **Race-clean, test-clean, vet-clean.** The CI gate — build + test
@@ -300,7 +300,7 @@ red-team corpus regression.
 (HTTP), deploy (Fly.io), and delegation MVP executors. Uniform
 interface. Free-text task routing.
 
-**r1-server visual execution trace.** Auto-discovers Stoke instances,
+**r1-server visual execution trace.** Auto-discovers R1 instances,
 exposes event stream + ledger DAG + checkpoints, live dashboard at
 `http://localhost:3948`.
 
@@ -352,7 +352,7 @@ wipe that preserves chain integrity forever. Regulatory unlocker.
 
 ## The unfair advantage
 
-Stoke is built by a team that has spent years operating AI coding
+R1 is built by a team that has spent years operating AI coding
 agents in real production environments, watched the multi-agent
 committee pattern fail in real deployments, and designed a harness
 around the specific failure modes they observed. The design is
@@ -368,10 +368,10 @@ agent-stance.md`).
 
 The stewardship commitment is the moat. Every competitor in the
 category has a commercial incentive to gate features behind cloud
-tiers. Stoke's license, CI, and governance documents together make
-that path impossible for Stoke itself. Operators betting their
+tiers. R1's license, CI, and governance documents together make
+that path impossible for R1 itself. Operators betting their
 production pipelines on a harness cannot run it on a vendor that
-might paywall the runtime tomorrow. Stoke's guarantee that the
+might paywall the runtime tomorrow. R1's guarantee that the
 binary is complete, forever, is the reason regulated industries can
 standardize on it.
 

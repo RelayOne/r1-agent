@@ -1,6 +1,9 @@
-# Contributing to Stoke
+# Contributing to R1
 
-Thank you for your interest in contributing to Stoke.
+Thank you for your interest in contributing to R1 (the project
+source tree still lives at `github.com/ericmacdougall/stoke` and
+the primary binary is still named `stoke` pending the §S2 rename —
+paths and binary invocations below reflect the current on-disk layout).
 
 ## Development Setup
 

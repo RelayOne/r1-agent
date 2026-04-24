@@ -1,24 +1,24 @@
-# Why Stoke is a single-strong-agent + adversarial-reviewer harness, not a multi-agent system
+# Why R1 is a single-strong-agent + adversarial-reviewer harness, not a multi-agent system
 
 **S-U-018 positioning brief.** Status: stable as of April 2026.
 
 ## Summary
 
-Stoke deliberately does NOT adopt the "many cooperating agents" pattern that has dominated AI-engineering marketing since 2024. The published failure data makes the case against it:
+R1 deliberately does NOT adopt the "many cooperating agents" pattern that has dominated AI-engineering marketing since 2024. The published failure data makes the case against it:
 
 - The Multi-Agent System Failure Taxonomy (MAST) study across 8 production multi-agent systems documented failure rates of **41–86.7%** in real deployments.
 - A 2025 evaluation by the Berkeley AI Research group found that **blindly adding agents to a pipeline degrades end-to-end accuracy by up to 70%** on SWE-bench-adjacent benchmarks — agents interact destructively more often than they compound.
 - UC Berkeley's 2026 follow-up: **21.3% of multi-agent failures come from premature termination** when agents hand off to each other without strict contracts.
 
-Stoke's architecture responds to this evidence with two load-bearing decisions:
+R1's architecture responds to this evidence with two load-bearing decisions:
 
 1. **One strong implementer per task.** The primary model (currently Claude 4.6 or the configured builder) writes the code. There is no "planner agent + coder agent + tester agent" ceremony around it. The implementer has full context, full tool access within its authorized scope, and explicit completion responsibility.
 
-2. **An adversarial reviewer, separate routing.** Stoke's `internal/modelsource/` ships a two-role surface (Builder vs. Reviewer) with independent routing — operators select the reviewer model via `--reviewer-model` or `REVIEWER_MODEL` independently of the builder. The recommended configuration is cross-family (Codex reviews Claude's work, or vice versa). When no reviewer is explicitly configured, Stoke falls back to the `--reasoning-model` CLI flag value; if `GEMINI_KEY` is set, review can auto-route to Gemini. Operators running without explicit reviewer configuration should verify which model is actually reviewing their runs — same-family review still catches mechanical errors but loses the cross-family disagreement signal.
+2. **An adversarial reviewer, separate routing.** R1's `internal/modelsource/` ships a two-role surface (Builder vs. Reviewer) with independent routing — operators select the reviewer model via `--reviewer-model` or `REVIEWER_MODEL` independently of the builder. The recommended configuration is cross-family (Codex reviews Claude's work, or vice versa). When no reviewer is explicitly configured, R1 falls back to the `--reasoning-model` CLI flag value; if `GEMINI_KEY` is set, review can auto-route to Gemini. Operators running without explicit reviewer configuration should verify which model is actually reviewing their runs — same-family review still catches mechanical errors but loses the cross-family disagreement signal.
 
 This composition sidesteps the failure modes MAST cataloged:
 
-| MAST failure mode | Why Stoke dodges it |
+| MAST failure mode | Why R1 dodges it |
 |---|---|
 | Premature termination (21.3%) | Phase transitions are driven by a structured state machine, not agent-to-agent natural-language handoff. Completion still involves LLM judgment (native SOW runs use `ReviewTaskWork` + `CheckAcceptanceCriteriaWithJudge`'s semantic judge on AC failures) but the judgment operates against explicit acceptance criteria, not ad-hoc agent consensus. |
 | Specification drift across agents | One implementer per phase, one spec, structured verdict on transition. |
@@ -27,15 +27,15 @@ This composition sidesteps the failure modes MAST cataloged:
 | Infinite reasoning loops | 30-task default session cap + step-count circuit breakers + deadlock watchdog. |
 | Silent skill degradation | `internal/reviewereval/` measurement harness can run any (builder, reviewer) pair against ground truth and surface FP/FN rates. |
 
-## What Stoke does NOT do
+## What R1 does NOT do
 
-- Stoke does not run "planner + coder + tester" as separate coordinating agents. Planning, execution, and verification ARE separate phase invocations (each starts with a fresh context window — see `docs/harness-architecture.md`), but the transitions are driven by structured verdicts, not agent-to-agent natural-language negotiation. The legacy multi-phase flow lives in `internal/workflow/`; native SOW runs (the `--runner=native` path) drive review / repair / acceptance out of `cmd/stoke/sow_native.go`'s state machine instead — both paths share the same structured-transition posture.
-- Stoke does not use "multi-agent voting" to resolve ambiguity. Ambiguous acceptance criteria fail the integrity gate and surface to the operator.
-- Stoke does not spawn sub-agents to "handle edge cases." Edge cases either fit in the single implementer's context (by design — Stoke's context packer is relevance-weighted) or are decomposed deterministically by the scheduler into smaller tasks of the same shape.
+- R1 does not run "planner + coder + tester" as separate coordinating agents. Planning, execution, and verification ARE separate phase invocations (each starts with a fresh context window — see `docs/harness-architecture.md`), but the transitions are driven by structured verdicts, not agent-to-agent natural-language negotiation. The legacy multi-phase flow lives in `internal/workflow/`; native SOW runs (the `--runner=native` path) drive review / repair / acceptance out of `cmd/stoke/sow_native.go`'s state machine instead — both paths share the same structured-transition posture.
+- R1 does not use "multi-agent voting" to resolve ambiguity. Ambiguous acceptance criteria fail the integrity gate and surface to the operator.
+- R1 does not spawn sub-agents to "handle edge cases." Edge cases either fit in the single implementer's context (by design — R1's context packer is relevance-weighted) or are decomposed deterministically by the scheduler into smaller tasks of the same shape.
 
-## Where multi-agent patterns ARE valid in Stoke
+## Where multi-agent patterns ARE valid in R1
 
-Stoke uses multiple models in three specific places, none of which are "agents coordinating":
+R1 uses multiple models in three specific places, none of which are "agents coordinating":
 
 1. **Cross-model review.** A second model reviews the first's output. Not cooperation — adversarial. The two never share state beyond the diff under review.
 

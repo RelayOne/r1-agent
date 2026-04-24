@@ -1,6 +1,6 @@
 # Benchmark stance
 
-**Short version:** Stoke does not report SWE-bench Verified scores. We track
+**Short version:** R1 does not report SWE-bench Verified scores. We track
 SWE-bench Pro, SWE-rebench, and Terminal-Bench because Verified is
 contaminated and its top-line numbers no longer mean what they used to.
 
@@ -24,7 +24,7 @@ signals one of two things:
 - The author is knowingly quoting a metric whose headline number is
   no longer a fair comparator.
 
-Neither is a posture Stoke wants.
+Neither is a posture R1 wants.
 
 ## What we track instead
 
@@ -38,7 +38,7 @@ Published top-model scores sit in the 23–59% band — an order of
 magnitude closer to the real-world failure rates we see in
 production. Microsoft's internal .NET corpus (closest public proxy
 for "big internal monorepo") reports ~68% on their best runs. Those
-numbers match what we observe on Stoke's own bench corpus, which is
+numbers match what we observe on R1's own bench corpus, which is
 the sanity check we want a benchmark to provide.
 
 ### SWE-rebench (Nebius)
@@ -54,12 +54,12 @@ Terminal-native tasks — the harness has to actually execute and
 observe shell commands, not just propose patches. Catches a class of
 failure that patch-only benchmarks can't see: agents that produce
 code that compiles but doesn't actually work when you run it. This
-is the benchmark closest to what Stoke's verify stage does every
+is the benchmark closest to what R1's verify stage does every
 commit.
 
 ## Why this matters for harness engineering
 
-Stoke's central design claim is that *the harness is the product*.
+R1's central design claim is that *the harness is the product*.
 SWE-bench Pro supports that directly: the same base model moves ~15
 points when the scaffold is tuned. Terminal-Bench supports it from
 the other side: the same model can pass a Verified task and fail its
@@ -67,11 +67,11 @@ terminal equivalent because the scaffold didn't actually *run the
 code*. A harness team that reports Verified numbers without Pro or
 Terminal-Bench comparators is either missing the point or hiding it.
 
-## What a benchmark claim from Stoke looks like
+## What a benchmark claim from R1 looks like
 
 - We publish the base-model-vs-harness delta, not an absolute score.
-  "Sonnet 4.6 + Stoke at the reviewer seat is 14 points above Sonnet
-  4.6 alone on SWE-bench Pro" is a useful claim. "Stoke gets 81% on
+  "Sonnet 4.6 + R1 at the reviewer seat is 14 points above Sonnet
+  4.6 alone on SWE-bench Pro" is a useful claim. "R1 gets 81% on
   SWE-bench Verified" is not.
 - We publish the harness configuration that produced the number:
   builder model, reviewer model, worker count, session parallelism,
@@ -82,7 +82,7 @@ Terminal-Bench comparators is either missing the point or hiding it.
   SWE-rebench" is the kind of data that builds trust in the delta
   methodology.
 
-## What Stoke commits to
+## What R1 commits to
 
 - No Verified scores in README, marketing, or external comms.
 - Delta-vs-baseline reporting on Pro / rebench / Terminal-Bench in

@@ -1,8 +1,8 @@
-# Stoke Operator Guide
+# R1 Operator Guide
 
 ## Auth Modes
 
-Stoke supports two authentication modes for Claude Code and Codex CLI.
+R1 supports two authentication modes for Claude Code and Codex CLI.
 
 ### Mode 1: Subscription (default)
 
@@ -47,7 +47,7 @@ CLAUDE_CONFIG_DIR=/pool/claude-2 claude login
 CLAUDE_CONFIG_DIR=/pool/claude-3 claude login
 ```
 
-After login, each directory contains `.credentials.json` with an OAuth token. Stoke reads this to poll the usage endpoint.
+After login, each directory contains `.credentials.json` with an OAuth token. R1 reads this to poll the usage endpoint.
 
 ### Codex CLI pools
 
@@ -103,7 +103,7 @@ Each `stoke pool init --container` invocation:
 
 ### How it works
 
-When Stoke dispatches a task to a container pool, the engine wraps the CLI command in `docker run`:
+When R1 dispatches a task to a container pool, the engine wraps the CLI command in `docker run`:
 
 ```
 docker run --rm \
@@ -118,7 +118,7 @@ Each container gets its own credential volume, so OAuth tokens are fully isolate
 
 ### Mixing host and container pools
 
-You can mix host-direct and container pools. Stoke's pool manager treats them identically for scheduling; the only difference is how the CLI process is spawned.
+You can mix host-direct and container pools. R1's pool manager treats them identically for scheduling; the only difference is how the CLI process is spawned.
 
 ### Host-direct pools (opt-in on macOS)
 
@@ -140,7 +140,7 @@ CODEX_HOME=/pool/codex-1 codex auth login
 
 ## MCP Isolation
 
-When a phase has `mcp_enabled: false` (plan and verify by default), Stoke applies triple isolation:
+When a phase has `mcp_enabled: false` (plan and verify by default), R1 applies triple isolation:
 
 1. `--strict-mcp-config` -- reject any MCP server not in the config
 2. `--mcp-config <empty.json>` -- config contains zero servers
@@ -150,7 +150,7 @@ This prevents plugin-provided MCP servers from leaking into read-only phases.
 
 ## Sandbox Configuration
 
-Stoke generates a `.claude/settings.json` in each worktree with:
+R1 generates a `.claude/settings.json` in each worktree with:
 
 ```json
 {
@@ -190,7 +190,7 @@ Or pass explicit paths: `--claude-bin /usr/local/bin/claude`
 ✗ [TASK-3] rate limited during execute phase
 ```
 
-Stoke rotates pools when one is rate-limited. If all pools are exhausted:
+R1 rotates pools when one is rate-limited. If all pools are exhausted:
 1. Check `stoke pool` for utilization
 2. Wait for the 5-hour window to reset
 3. Add more pool slots
@@ -243,7 +243,7 @@ stoke status
 ### GitHub Actions
 
 ```yaml
-- name: Run Stoke
+- name: Run R1
   run: |
     stoke build --plan stoke-plan.json --workers 2 --mode mode2
     cat .stoke/reports/latest.json
@@ -255,7 +255,7 @@ stoke status
 
 ### Headless mode
 
-Stoke's headless TUI runner works in any terminal without special requirements. All output goes to stdout/stderr as structured text.
+R1's headless TUI runner works in any terminal without special requirements. All output goes to stdout/stderr as structured text.
 
 ```bash
 stoke build --plan stoke-plan.json 2>&1 | tee build.log

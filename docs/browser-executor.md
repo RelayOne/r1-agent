@@ -1,6 +1,6 @@
 # Browser executor (Task 21)
 
-Stoke's browser executor lets you fetch and verify web content as
+R1's browser executor lets you fetch and verify web content as
 a first-class executor type. Task 21 ships two phases:
 
 **Part 1 (this release)** — stdlib-only fetch + extract + verify.

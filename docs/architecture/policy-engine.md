@@ -1,6 +1,6 @@
 # 11-Layer Policy Engine
 
-Stoke enforces security through 11 layers, each independently testable. A task
+R1 enforces security through 11 layers, each independently testable. A task
 must pass all layers; no single layer grants a blanket exception.
 
 ## Layer Map
@@ -79,7 +79,7 @@ this many tool-use turns. Prevents infinite loops and runaway cost.
 - Nested AI sessions (`claude`, `codex` invocations)
 - Destructive commands (`rm -rf /`, `sudo rm`, `chmod -R 777`)
 - RCE patterns (`curl | bash`, `wget | sh`)
-- Hook tampering (removing/modifying Stoke hooks)
+- Hook tampering (removing/modifying R1 hooks)
 
 **PostToolUse detects:**
 - Type bypass patterns (`@ts-ignore`, `as any`, `eslint-disable`)
@@ -110,7 +110,7 @@ See `internal/hooks/hooks_test.go`, `internal/scan/scan_test.go`,
 `internal/rbac/rbac_test.go`, `internal/verify/pipeline_test.go`, and
 `internal/config/policy_test.go` for the full test suites.
 
-Run the self-scan to verify Stoke's own source is clean:
+Run the self-scan to verify R1's own source is clean:
 ```bash
 go test ./internal/scan/ -run TestSelfScan
 ```

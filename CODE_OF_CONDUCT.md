@@ -3,7 +3,7 @@
 ## Our Pledge
 
 We as members, contributors, and maintainers pledge to make participation in the
-Stoke community a harassment-free experience for everyone, regardless of age,
+R1 community a harassment-free experience for everyone, regardless of age,
 body size, visible or invisible disability, ethnicity, sex characteristics,
 gender identity and expression, level of experience, education, socio-economic
 status, nationality, personal appearance, race, caste, color, religion, or
@@ -24,7 +24,7 @@ community include:
   and learning from the experience.
 - Focusing on what is best not just for us as individuals, but for the overall
   community.
-- Keeping technical disagreements technical. Stoke is an AI-orchestration
+- Keeping technical disagreements technical. R1 is an AI-orchestration
   project; disagreement about model choice, scheduler policy, verification
   strategy, or adversarial-reviewer design is expected and welcome. Argue the
   trade-off, cite the data, avoid ad hominem.

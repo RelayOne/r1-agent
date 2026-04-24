@@ -1,18 +1,18 @@
 # TrustPlane Integration
 
-How Stoke talks to the TrustPlane gateway, how to switch between the
+How R1 talks to the TrustPlane gateway, how to switch between the
 in-memory stub and the live HTTP client, and which env vars govern
 the wiring.
 
 ## Architecture in one paragraph
 
-Stoke defines a narrow interface (`trustplane.Client`, 8 methods) for
+R1 defines a narrow interface (`trustplane.Client`, 8 methods) for
 everything it asks TrustPlane to do: identity registration, audit
 anchoring, HITL approvals, reputation read/write, delegation
 create/verify/revoke, and Cedar policy evaluation. Two
 implementations ship: `StubClient` (in-process, always-pass, default)
 and `RealClient` (hand-written HTTP against the vendored OpenAPI spec
-at `internal/trustplane/openapi/gateway.yaml`). Stoke deliberately
+at `internal/trustplane/openapi/gateway.yaml`). R1 deliberately
 does **not** import any TrustPlane Go module; the only TrustPlane
 artifact in-tree is the vendored spec, used as documentation for the
 hand-written client.
@@ -50,13 +50,13 @@ gateway verifies the signature against the JWK, checks that the JWK's
 thumbprint matches the public key registered at identity creation,
 and rejects `jti` replays inside a 5-minute window.
 
-Stoke's DPoP signer is `internal/trustplane/dpop`, Go-stdlib-only
+R1's DPoP signer is `internal/trustplane/dpop`, Go-stdlib-only
 (`crypto/ed25519`, `encoding/base64`, `encoding/json`). No go-jose
 dependency — EdDSA signing is 50 lines in-tree.
 
 What the signer does **not** do yet:
 
-- `ath` (access-token hash): Stoke uses DPoP-only flows, no bound
+- `ath` (access-token hash): R1 uses DPoP-only flows, no bound
   access tokens. Add `Signer.WithAccessToken` if/when needed.
 - `DPoP-Nonce` echo: the gateway may demand a nonce on retry. No
   gateway we've tested requires it; plumb via `Signer.WithNonce`
@@ -110,7 +110,7 @@ can be retried freely by the caller on transport errors.
 ## Updating the vendored spec
 
 The OpenAPI YAML at `internal/trustplane/openapi/gateway.yaml` is
-hand-maintained. When TrustPlane ships a gateway change Stoke
+hand-maintained. When TrustPlane ships a gateway change R1
 consumes:
 
 1. Edit `gateway.yaml` to match the new contract.
@@ -122,5 +122,5 @@ consumes:
    behavioral note.
 
 The spec is intentionally a small slice of the TrustPlane API —
-only the endpoints Stoke calls. Don't add endpoints we don't
+only the endpoints R1 calls. Don't add endpoints we don't
 implement; don't remove endpoints RealClient uses.

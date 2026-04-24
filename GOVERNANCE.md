@@ -1,10 +1,10 @@
 # Governance
 
-This document describes how decisions are made in the Stoke (R1)
-project — who can merge what, how to propose changes, and the path to
-becoming a maintainer. It complements `STEWARDSHIP.md` (what the
-project promises its users) with an account of how the project runs
-internally.
+This document describes how decisions are made in the R1 project
+(legacy product name: Stoke) — who can merge what, how to propose
+changes, and the path to becoming a maintainer. It complements
+`STEWARDSHIP.md` (what the project promises its users) with an
+account of how the project runs internally.
 
 ## Roles
 

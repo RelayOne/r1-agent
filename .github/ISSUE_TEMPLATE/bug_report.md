@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible bug in Stoke
+about: Report a reproducible bug in R1
 title: "bug: <short description>"
 labels: ["bug", "triage"]
 assignees: []
@@ -21,7 +21,7 @@ assignees: []
 
 ## Environment
 
-- Stoke version / commit:        <!-- `stoke version` or `git rev-parse HEAD` -->
+- R1 version / commit:        <!-- `stoke version` or `git rev-parse HEAD` -->
 - Go version:                    <!-- `go version` -->
 - OS / arch:                     <!-- e.g. macOS 14.5 arm64, Ubuntu 24.04 amd64 -->
 - Claude Code CLI version:       <!-- `claude --version`, if relevant -->
@@ -96,6 +96,6 @@ stoke ...
 
 - [ ] I searched existing issues and did not find a duplicate.
 - [ ] I included the exact command line I ran.
-- [ ] I included the Stoke version / commit hash.
+- [ ] I included the R1 version / commit hash.
 - [ ] I redacted any API keys, tokens, or private paths from logs.
 - [ ] This is not a security vulnerability (those go to SECURITY.md).

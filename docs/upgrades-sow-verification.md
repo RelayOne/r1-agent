@@ -1,4 +1,4 @@
-# Stoke Upgrades SOW — Verification Report
+# R1 Upgrades SOW — Verification Report
 
 Generated: 2026-04-15 after commit `7aa61b2`
 Branch: `feat/smart-chat-mode`

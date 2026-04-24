@@ -1,6 +1,6 @@
 # Deploy Executor
 
-Track B Task 22 ships the first real deploy adapter for Stoke:
+Track B Task 22 ships the first real deploy adapter for R1:
 fly.io via `flyctl`. This document is the operator-facing reference
 for the `stoke deploy` command and the `internal/executor`
 `DeployExecutor`.
@@ -26,11 +26,11 @@ Authentication is delegated to `flyctl`'s existing mechanisms:
 
 - Interactive: `flyctl auth login` (stored under `~/.fly/`).
 - CI / non-interactive: export `FLY_API_TOKEN` (or `FLY_ACCESS_TOKEN`)
-  before invoking `stoke deploy`. Stoke does NOT read this token
+  before invoking `stoke deploy`. R1 does NOT read this token
   itself — it is passed through to the child `flyctl` process via
   the inherited environment.
 
-Stoke never logs the token, never writes it to a file, and never
+R1 never logs the token, never writes it to a file, and never
 passes it on the command line.
 
 ## Dry-run
@@ -41,7 +41,7 @@ stoke deploy --provider fly --app my-app --dry-run
 
 Renders a minimal `fly.toml` preview to stdout and exits 0. No
 subprocess, no network, no filesystem writes. Use this to review
-what Stoke would ship before committing:
+what R1 would ship before committing:
 
 ```toml
 # fly.toml preview (provider=fly, dry-run)
