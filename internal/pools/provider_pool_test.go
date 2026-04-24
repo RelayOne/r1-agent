@@ -302,11 +302,19 @@ func TestProviderPool_Call_SuccessFirstProvider(t *testing.T) {
 		t.Fatalf("Call response: %+v", resp)
 	}
 	// First call used member "a".
-	if m1.Provider.(*fakeProvider).calls != 1 {
-		t.Fatalf("m1.calls = %d, want 1", m1.Provider.(*fakeProvider).calls)
+	m1fake, ok := m1.Provider.(*fakeProvider)
+	if !ok {
+		t.Fatalf("m1.Provider: unexpected type: %T", m1.Provider)
 	}
-	if m2.Provider.(*fakeProvider).calls != 0 {
-		t.Fatalf("m2.calls = %d, want 0", m2.Provider.(*fakeProvider).calls)
+	if m1fake.calls != 1 {
+		t.Fatalf("m1.calls = %d, want 1", m1fake.calls)
+	}
+	m2fake, ok := m2.Provider.(*fakeProvider)
+	if !ok {
+		t.Fatalf("m2.Provider: unexpected type: %T", m2.Provider)
+	}
+	if m2fake.calls != 0 {
+		t.Fatalf("m2.calls = %d, want 0", m2fake.calls)
 	}
 }
 
@@ -417,7 +425,13 @@ func TestProviderPool_ConcurrentNext(t *testing.T) {
 					return
 				}
 				v, _ := counts.LoadOrStore(got.Name(), new(int64))
-				atomic.AddInt64(v.(*int64), 1)
+				p, ok := v.(*int64)
+				if !ok {
+					t.Errorf("counts value: unexpected type: %T", v)
+					done <- struct{}{}
+					return
+				}
+				atomic.AddInt64(p, 1)
 			}
 			done <- struct{}{}
 		}()
@@ -434,7 +448,11 @@ func TestProviderPool_ConcurrentNext(t *testing.T) {
 		if !ok {
 			t.Fatalf("member %s never served any call", name)
 		}
-		n := atomic.LoadInt64(v.(*int64))
+		ptr, ok := v.(*int64)
+		if !ok {
+			t.Fatalf("counts[%s]: unexpected type: %T", name, v)
+		}
+		n := atomic.LoadInt64(ptr)
 		if n == 0 {
 			t.Fatalf("member %s served 0 calls under load", name)
 		}

@@ -132,7 +132,11 @@ func TestTasks_JSONOutput(t *testing.T) {
 	if got["mission_id"] != "M1" {
 		t.Errorf("mission_id=%v, want M1", got["mission_id"])
 	}
-	if got["event_count"].(float64) != 2 {
+	evCount, ok := got["event_count"].(float64)
+	if !ok {
+		t.Fatalf("event_count: unexpected type: %T", got["event_count"])
+	}
+	if evCount != 2 {
 		t.Errorf("event_count=%v, want 2", got["event_count"])
 	}
 	if got["last_type"] != "task.complete" {

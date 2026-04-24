@@ -28,7 +28,7 @@ func TestDefinitions(t *testing.T) {
 
 func TestHandleRead(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.go"), []byte("line 1\nline 2\nline 3\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "test.go"), []byte("line 1\nline 2\nline 3\n"), 0o600)
 
 	r := NewRegistry(dir)
 	result, err := r.Handle(context.Background(), "read_file", toJSON(map[string]string{"path": "test.go"}))
@@ -49,7 +49,7 @@ func TestHandleReadOffset(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		lines = append(lines, "line "+string(rune('0'+i)))
 	}
-	os.WriteFile(filepath.Join(dir, "big.txt"), []byte(strings.Join(lines, "\n")), 0644)
+	os.WriteFile(filepath.Join(dir, "big.txt"), []byte(strings.Join(lines, "\n")), 0o600)
 
 	r := NewRegistry(dir)
 	result, err := r.Handle(context.Background(), "read_file",
@@ -73,7 +73,7 @@ func TestHandleReadMissing(t *testing.T) {
 func TestHandleEdit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.go")
-	os.WriteFile(path, []byte("hello world\ngoodbye world\n"), 0644)
+	os.WriteFile(path, []byte("hello world\ngoodbye world\n"), 0o600)
 
 	r := NewRegistry(dir)
 	// Must read first
@@ -103,7 +103,7 @@ func TestHandleEdit(t *testing.T) {
 func TestHandleEditUniqueness(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dup.go")
-	os.WriteFile(path, []byte("foo bar\nfoo baz\n"), 0644)
+	os.WriteFile(path, []byte("foo bar\nfoo baz\n"), 0o600)
 
 	r := NewRegistry(dir)
 	r.Handle(context.Background(), "read_file", toJSON(map[string]string{"path": "dup.go"}))
@@ -122,7 +122,7 @@ func TestHandleEditUniqueness(t *testing.T) {
 func TestHandleEditReplaceAll(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "multi.go")
-	os.WriteFile(path, []byte("foo bar\nfoo baz\n"), 0644)
+	os.WriteFile(path, []byte("foo bar\nfoo baz\n"), 0o600)
 
 	r := NewRegistry(dir)
 	r.Handle(context.Background(), "read_file", toJSON(map[string]string{"path": "multi.go"}))
@@ -144,7 +144,7 @@ func TestHandleEditReplaceAll(t *testing.T) {
 
 func TestHandleEditNotFound(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.go"), []byte("hello world\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "test.go"), []byte("hello world\n"), 0o600)
 
 	r := NewRegistry(dir)
 	r.Handle(context.Background(), "read_file", toJSON(map[string]string{"path": "test.go"}))
@@ -218,7 +218,7 @@ func TestHandleWrite_ReportsAbsolutePathAnchor(t *testing.T) {
 func TestHandleRead_ReportsAbsolutePathAnchor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "seed.txt")
-	os.WriteFile(path, []byte("line1\nline2\n"), 0o644)
+	os.WriteFile(path, []byte("line1\nline2\n"), 0o600)
 	r := NewRegistry(dir)
 	result, err := r.Handle(context.Background(), "read_file",
 		toJSON(map[string]interface{}{"path": "seed.txt"}))
@@ -237,7 +237,7 @@ func TestHandleRead_ReportsAbsolutePathAnchor(t *testing.T) {
 func TestHandleEdit_ReportsAbsolutePathAnchor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "src.txt")
-	os.WriteFile(path, []byte("old content"), 0o644)
+	os.WriteFile(path, []byte("old content"), 0o600)
 	r := NewRegistry(dir)
 	// Must read first
 	_, _ = r.Handle(context.Background(), "read_file",
@@ -291,9 +291,9 @@ func TestHandleBashTimeout(t *testing.T) {
 
 func TestHandleGlob(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(dir, "b.go"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(dir, "c.txt"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte(""), 0o600)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte(""), 0o600)
+	os.WriteFile(filepath.Join(dir, "c.txt"), []byte(""), 0o600)
 
 	r := NewRegistry(dir)
 	result, err := r.Handle(context.Background(), "glob",

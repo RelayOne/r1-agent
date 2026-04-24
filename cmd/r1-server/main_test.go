@@ -191,7 +191,11 @@ func TestAPICheckpointsMissingFile(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["count"].(float64) != 0 {
+	count, ok := body["count"].(float64)
+	if !ok {
+		t.Fatalf("count field: unexpected type: %T", body["count"])
+	}
+	if count != 0 {
 		t.Errorf("count=%v, want 0 for missing file", body["count"])
 	}
 }

@@ -158,7 +158,7 @@ func TestConvertProseToSOW_PromptIncludesProse(t *testing.T) {
 func TestLoadSOWFile_JSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stoke-sow.json")
-	os.WriteFile(path, []byte(validSOWJSON), 0644)
+	os.WriteFile(path, []byte(validSOWJSON), 0o600)
 
 	sow, result, err := LoadSOWFile(path, dir, nil, "")
 	if err != nil {
@@ -175,7 +175,7 @@ func TestLoadSOWFile_JSON(t *testing.T) {
 func TestLoadSOWFile_YAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stoke-sow.yaml")
-	os.WriteFile(path, []byte("id: yaml-test\nname: Yaml\nsessions: [{id: S1, title: t, tasks: [{id: T1, description: x}], acceptance_criteria: [{id: AC1, description: d}]}]\n"), 0644)
+	os.WriteFile(path, []byte("id: yaml-test\nname: Yaml\nsessions: [{id: S1, title: t, tasks: [{id: T1, description: x}], acceptance_criteria: [{id: AC1, description: d}]}]\n"), 0o600)
 
 	sow, result, err := LoadSOWFile(path, dir, nil, "")
 	if err != nil {
@@ -193,7 +193,7 @@ func TestLoadSOWFile_Prose_ConvertsAndCaches(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spec.md")
 	prose := "# Project Spec\n\nBuild a Rust web server that exposes /health and /metrics.\n"
-	os.WriteFile(path, []byte(prose), 0644)
+	os.WriteFile(path, []byte(prose), 0o600)
 
 	prov := &mockProvider{name: "mock", response: validSOWJSON}
 	sow, result, err := LoadSOWFile(path, dir, prov, "claude-sonnet-4-6")
@@ -247,7 +247,7 @@ func TestLoadSOWFile_Prose_ConvertsAndCaches(t *testing.T) {
 func TestLoadSOWFile_Prose_CacheInvalidatedOnSourceChange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spec.md")
-	os.WriteFile(path, []byte("# Spec v1\n"), 0644)
+	os.WriteFile(path, []byte("# Spec v1\n"), 0o600)
 
 	prov := &mockProvider{name: "mock", response: validSOWJSON}
 	_, _, err := LoadSOWFile(path, dir, prov, "claude-sonnet-4-6")
@@ -262,7 +262,7 @@ func TestLoadSOWFile_Prose_CacheInvalidatedOnSourceChange(t *testing.T) {
 	// least once" rather than an exact count, because the exact
 	// number is a refactoring detail that drifts with chunked
 	// pipeline revisions.
-	os.WriteFile(path, []byte("# Spec v2 (different content)\n"), 0644)
+	os.WriteFile(path, []byte("# Spec v2 (different content)\n"), 0o600)
 	called := 0
 	prov2 := &mockProvider{name: "mock", response: strings.Replace(validSOWJSON, "gen-1", "gen-2", 1)}
 	wrapper := &countingProvider{inner: prov2, count: &called}
@@ -296,7 +296,7 @@ func (c *countingProvider) ChatStream(req provider.ChatRequest, onEvent func(str
 func TestLoadSOWFile_Prose_NoProvider(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spec.txt")
-	os.WriteFile(path, []byte("This is a project spec."), 0644)
+	os.WriteFile(path, []byte("This is a project spec."), 0o600)
 
 	_, _, err := LoadSOWFile(path, dir, nil, "")
 	if err == nil || !strings.Contains(err.Error(), "provider") {
@@ -307,7 +307,7 @@ func TestLoadSOWFile_Prose_NoProvider(t *testing.T) {
 func TestLoadSOWFile_UnknownExt_SniffsJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spec.weird")
-	os.WriteFile(path, []byte(validSOWJSON), 0644)
+	os.WriteFile(path, []byte(validSOWJSON), 0o600)
 
 	sow, result, err := LoadSOWFile(path, dir, nil, "")
 	if err != nil {

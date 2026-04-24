@@ -26,7 +26,7 @@ func initTempGitRepo(t *testing.T, dir string) string {
 	run("git", "init")
 	run("git", "config", "user.email", "test@example.com")
 	run("git", "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("seed"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("seed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("git", "add", ".")
@@ -44,7 +44,7 @@ func TestBootstrapReinstallOnManifestChange(t *testing.T) {
 	preSHA := initTempGitRepo(t, dir)
 	// Write a package.json and commit so it's on HEAD.
 	pj := filepath.Join(dir, "package.json")
-	if err := os.WriteFile(pj, []byte(`{"name":"x","version":"1.0.0"}`), 0o644); err != nil {
+	if err := os.WriteFile(pj, []byte(`{"name":"x","version":"1.0.0"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	runGit := func(args ...string) {

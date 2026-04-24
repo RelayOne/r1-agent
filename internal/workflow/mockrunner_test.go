@@ -101,7 +101,7 @@ func (m *mockRunner) Run(ctx context.Context, spec engine.RunSpec, onEvent engin
 			if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 				return engine.RunResult{}, err
 			}
-			if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(absPath, []byte(content), 0o600); err != nil {
 				return engine.RunResult{}, err
 			}
 		}

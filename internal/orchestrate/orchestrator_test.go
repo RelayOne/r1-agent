@@ -686,7 +686,7 @@ func TestBaselinePersistedAndRecovered(t *testing.T) {
 // writeFile is a test helper to create files in a temp directory.
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatalf("writeFile %s: %v", name, err)
 	}
 }

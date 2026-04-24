@@ -13,7 +13,10 @@ import (
 func rpcCall(t *testing.T, srv *Server, req string) map[string]any {
 	t.Helper()
 	srv.out = &bytes.Buffer{}
-	out := srv.out.(*bytes.Buffer)
+	out, ok := srv.out.(*bytes.Buffer)
+	if !ok {
+		t.Fatalf("srv.out: unexpected type: %T", srv.out)
+	}
 	if err := srv.serve(strings.NewReader(req + "\n")); err != nil {
 		t.Fatalf("serve: %v", err)
 	}
@@ -183,7 +186,11 @@ func TestToolsCall_UnknownToolErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if int(err["code"].(float64)) != errMethodMiss {
+	code, ok := err["code"].(float64)
+	if !ok {
+		t.Fatalf("error.code: unexpected type: %T", err["code"])
+	}
+	if int(code) != errMethodMiss {
 		t.Errorf("code=%v want %d", err["code"], errMethodMiss)
 	}
 }
@@ -196,7 +203,11 @@ func TestAuth_RejectsWrongKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if int(err["code"].(float64)) != errUnauthorized {
+	code, ok := err["code"].(float64)
+	if !ok {
+		t.Fatalf("error.code: unexpected type: %T", err["code"])
+	}
+	if int(code) != errUnauthorized {
 		t.Errorf("code=%v want %d", err["code"], errUnauthorized)
 	}
 }
@@ -242,7 +253,11 @@ func TestParseError(t *testing.T) {
 	srv := newTestServer()
 	resp := rpcCall(t, srv, `{not valid json`)
 	err, _ := resp["error"].(map[string]any)
-	if int(err["code"].(float64)) != errParse {
+	code, ok := err["code"].(float64)
+	if !ok {
+		t.Fatalf("error.code: unexpected type: %T", err["code"])
+	}
+	if int(code) != errParse {
 		t.Errorf("code=%v want %d", err["code"], errParse)
 	}
 }
@@ -273,7 +288,11 @@ func TestInvoke_RejectsMissingInput(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on missing input")
 	}
-	if int(err["code"].(float64)) != errInvalidArgs {
+	code, ok := err["code"].(float64)
+	if !ok {
+		t.Fatalf("error.code: unexpected type: %T", err["code"])
+	}
+	if int(code) != errInvalidArgs {
 		t.Errorf("code=%v want %d", err["code"], errInvalidArgs)
 	}
 }

@@ -95,7 +95,7 @@ func TestCheckAcceptanceCriteriaCommand(t *testing.T) {
 func TestCheckAcceptanceCriteriaFileExists(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "schema.sql"), []byte("CREATE TABLE;"), 0644)
+	os.WriteFile(filepath.Join(dir, "schema.sql"), []byte("CREATE TABLE;"), 0o600)
 
 	criteria := []AcceptanceCriterion{
 		{ID: "AC1", Description: "schema exists", FileExists: "schema.sql"},
@@ -117,7 +117,7 @@ func TestCheckAcceptanceCriteriaFileExists(t *testing.T) {
 func TestCheckAcceptanceCriteriaContentMatch(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "config.rs"), []byte("pub struct AppConfig {\n    pub db_url: String,\n}"), 0644)
+	os.WriteFile(filepath.Join(dir, "config.rs"), []byte("pub struct AppConfig {\n    pub db_url: String,\n}"), 0o600)
 
 	criteria := []AcceptanceCriterion{
 		{

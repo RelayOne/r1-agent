@@ -32,7 +32,7 @@ func initGitRepo(t *testing.T, dir string) string {
 	}
 	run("init", "-q")
 	run("config", "commit.gpgsign", "false")
-	if err := os.WriteFile(dir+"/seed.txt", []byte("seed\n"), 0o644); err != nil {
+	if err := os.WriteFile(dir+"/seed.txt", []byte("seed\n"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	run("add", ".")

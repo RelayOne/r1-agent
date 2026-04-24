@@ -13,7 +13,7 @@ func TestDetectGoPostgresProject(t *testing.T) {
 go 1.22
 
 require github.com/jackc/pgx/v5 v5.5.0
-`), 0644)
+`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestDetectNextJSWithPrisma(t *testing.T) {
 			"@prisma/client": "5.0.0",
 			"pg": "8.0.0"
 		}
-	}`), 0644)
+	}`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -58,15 +58,15 @@ func TestDetectNextJSWithPrisma(t *testing.T) {
 
 func TestDetectMonorepo(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0o600)
 	os.MkdirAll(filepath.Join(dir, "apps", "web"), 0755)
 	os.WriteFile(filepath.Join(dir, "apps", "web", "package.json"), []byte(`{
 		"dependencies": {"react": "18.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	os.MkdirAll(filepath.Join(dir, "apps", "api"), 0755)
 	os.WriteFile(filepath.Join(dir, "apps", "api", "go.mod"), []byte(`module example.com/api
 go 1.22
-`), 0644)
+`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -93,7 +93,7 @@ services:
     image: redis:7
   queue:
     image: apache/kafka:3.7
-`), 0644)
+`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -115,7 +115,7 @@ services:
 
 func TestDetectCloudflareWorkers(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "wrangler.toml"), []byte(`name = "my-worker"`), 0644)
+	os.WriteFile(filepath.Join(dir, "wrangler.toml"), []byte(`name = "my-worker"`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestDetectCloudflareWorkers(t *testing.T) {
 func TestDetectCIPlatforms(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0755)
-	os.WriteFile(filepath.Join(dir, ".github", "workflows", "test.yml"), []byte("name: test"), 0644)
+	os.WriteFile(filepath.Join(dir, ".github", "workflows", "test.yml"), []byte("name: test"), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestDetectEnvFile(t *testing.T) {
 DATABASE_URL=postgresql://localhost/mydb
 REDIS_URL=redis://localhost:6379
 KAFKA_BROKERS=localhost:9092
-`), 0644)
+`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {
@@ -247,7 +247,7 @@ boto3 = "^1.34"
 
 [tool.uv]
 package = true
-`), 0644)
+`), 0o600)
 
 	p, err := DetectProfile(dir)
 	if err != nil {

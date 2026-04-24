@@ -43,6 +43,7 @@ func writeMockVercel(t *testing.T, stdout string) (binPath, argsLog string) {
 		stdout + "\n" +
 		"__STOKE_VERCEL_EOF__\n"
 
+	//nolint:gosec // test fixture: executable stub invoked by the deploy path via exec
 	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write mock vercel: %v", err)
 	}

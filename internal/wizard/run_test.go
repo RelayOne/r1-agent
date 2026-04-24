@@ -13,10 +13,10 @@ import (
 func TestRunWizardYesMode(t *testing.T) {
 	dir := t.TempDir()
 	// Create a minimal Go project
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module testproject\ngo 1.22\nrequire github.com/lib/pq v1.10.0\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "main_test.go"), []byte("package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module testproject\ngo 1.22\nrequire github.com/lib/pq v1.10.0\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "main_test.go"), []byte("package main\nimport \"testing\"\nfunc TestMain(t *testing.T) {}\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test\n"), 0o600)
 
 	result, err := RunWizard(context.Background(), Opts{
 		ProjectRoot: dir,

@@ -17,14 +17,14 @@ import "myapp/utils"
 func main() {
 	utils.Hello()
 }
-`), 0644)
+`), 0o600)
 
 	// utils.go has no imports
 	os.MkdirAll(filepath.Join(dir, "utils"), 0755)
 	os.WriteFile(filepath.Join(dir, "utils", "helpers.go"), []byte(`package utils
 
 func Hello() {}
-`), 0644)
+`), 0o600)
 
 	// config.go imports utils too
 	os.WriteFile(filepath.Join(dir, "config.go"), []byte(`package main
@@ -34,7 +34,7 @@ import "myapp/utils"
 func loadConfig() {
 	utils.Hello()
 }
-`), 0644)
+`), 0o600)
 
 	return dir
 }

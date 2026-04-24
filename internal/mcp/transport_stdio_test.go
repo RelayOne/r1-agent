@@ -31,7 +31,7 @@ func buildFakeServer(t *testing.T, src string) string {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.go")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(src), 0o600); err != nil {
 		t.Fatalf("write fake server source: %v", err)
 	}
 	binPath := filepath.Join(dir, "fake_mcp_server")

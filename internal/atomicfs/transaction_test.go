@@ -11,7 +11,7 @@ func TestWriteAndCommit(t *testing.T) {
 
 	// Create an existing file
 	origPath := filepath.Join(dir, "test.txt")
-	os.WriteFile(origPath, []byte("original"), 0644)
+	os.WriteFile(origPath, []byte("original"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Write("test.txt", []byte("updated"))
@@ -48,7 +48,7 @@ func TestCreateAndCommit(t *testing.T) {
 func TestDeleteAndCommit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "delete-me.txt")
-	os.WriteFile(path, []byte("bye"), 0644)
+	os.WriteFile(path, []byte("bye"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Delete("delete-me.txt")
@@ -65,13 +65,13 @@ func TestDeleteAndCommit(t *testing.T) {
 func TestConflictDetection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "conflict.txt")
-	os.WriteFile(path, []byte("v1"), 0644)
+	os.WriteFile(path, []byte("v1"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Write("conflict.txt", []byte("v2"))
 
 	// Modify the file behind the transaction's back
-	os.WriteFile(path, []byte("v1-modified"), 0644)
+	os.WriteFile(path, []byte("v1-modified"), 0o600)
 
 	err := tx.Commit()
 	if err == nil {
@@ -81,7 +81,7 @@ func TestConflictDetection(t *testing.T) {
 
 func TestCreateExistingFails(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "exists.txt"), []byte("hi"), 0644)
+	os.WriteFile(filepath.Join(dir, "exists.txt"), []byte("hi"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Create("exists.txt", []byte("new"))
@@ -108,7 +108,7 @@ func TestDryRun(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("data"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("data"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Write("a.txt", []byte("new"))
@@ -119,7 +119,7 @@ func TestValidate(t *testing.T) {
 	}
 
 	// Modify behind back
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed"), 0o600)
 	err = tx.Validate()
 	if err == nil {
 		t.Error("should detect conflict")
@@ -149,7 +149,7 @@ func TestLen(t *testing.T) {
 
 func TestSummary(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "e.txt"), []byte("x"), 0644)
+	os.WriteFile(filepath.Join(dir, "e.txt"), []byte("x"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Write("e.txt", []byte("y"))
@@ -174,8 +174,8 @@ func TestFiles(t *testing.T) {
 
 func TestMultiFileAtomicCommit(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "f1.txt"), []byte("orig1"), 0644)
-	os.WriteFile(filepath.Join(dir, "f2.txt"), []byte("orig2"), 0644)
+	os.WriteFile(filepath.Join(dir, "f1.txt"), []byte("orig1"), 0o600)
+	os.WriteFile(filepath.Join(dir, "f2.txt"), []byte("orig2"), 0o600)
 
 	tx := NewTransaction(dir)
 	tx.Write("f1.txt", []byte("new1"))

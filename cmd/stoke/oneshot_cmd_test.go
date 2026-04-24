@@ -54,7 +54,7 @@ func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
 	t.Run("real task returns ok with plan", func(t *testing.T) {
 		dir := t.TempDir()
 		inPath := filepath.Join(dir, "in.json")
-		if err := os.WriteFile(inPath, []byte(`{"task":"design a landing page"}`), 0o644); err != nil {
+		if err := os.WriteFile(inPath, []byte(`{"task":"design a landing page"}`), 0o600); err != nil {
 			t.Fatalf("write input: %v", err)
 		}
 		var stdout, stderr bytes.Buffer
@@ -87,7 +87,7 @@ func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
 	t.Run("empty task falls through to scaffold", func(t *testing.T) {
 		dir := t.TempDir()
 		inPath := filepath.Join(dir, "in.json")
-		if err := os.WriteFile(inPath, []byte(`{}`), 0o644); err != nil {
+		if err := os.WriteFile(inPath, []byte(`{}`), 0o600); err != nil {
 			t.Fatalf("write input: %v", err)
 		}
 		var stdout, stderr bytes.Buffer
@@ -114,7 +114,7 @@ func TestRunOneShotCmd_VerifyAndCritiqueAlsoScaffold(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			dir := t.TempDir()
 			inPath := filepath.Join(dir, "in.json")
-			if err := os.WriteFile(inPath, []byte(`{}`), 0o644); err != nil {
+			if err := os.WriteFile(inPath, []byte(`{}`), 0o600); err != nil {
 				t.Fatalf("write: %v", err)
 			}
 			var stdout, stderr bytes.Buffer

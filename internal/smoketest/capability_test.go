@@ -20,7 +20,7 @@ func tempRoot(t *testing.T, layout map[string]string) string {
 	for rel, content := range layout {
 		full := filepath.Join(dir, rel)
 		os.MkdirAll(filepath.Dir(full), 0o755)
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

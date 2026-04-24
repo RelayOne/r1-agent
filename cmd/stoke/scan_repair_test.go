@@ -31,7 +31,7 @@ Every route: auth checked? Authorization (role/permission) checked?
 ## 3. DEAD_CODE (medium)
 Exported functions never imported. Variables never read.
 `
-	if err := os.WriteFile(filepath.Join(dir, "semantic-patterns.md"), []byte(body), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "semantic-patterns.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -51,13 +51,13 @@ func writeFixtureSection(t *testing.T, repo string, files []string) string {
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(full, []byte("// placeholder body\nexport function foo() {}\n"), 0644); err != nil {
+		if err := os.WriteFile(full, []byte("// placeholder body\nexport function foo() {}\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		buf.WriteString("./" + f + "\n")
 	}
 	p := filepath.Join(sectionsDir, "section-0000.txt")
-	if err := os.WriteFile(p, []byte(buf.String()), 0644); err != nil {
+	if err := os.WriteFile(p, []byte(buf.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -140,7 +140,7 @@ func TestRunPhase2_ParallelDispatch(t *testing.T) {
 	_ = os.MkdirAll(sectionsDir, 0755)
 	for i := 0; i < 3; i++ {
 		p := filepath.Join(sectionsDir, "section-000"+string(rune('0'+i))+".txt")
-		_ = os.WriteFile(p, []byte("./fake.ts\n"), 0644)
+		_ = os.WriteFile(p, []byte("./fake.ts\n"), 0o600)
 	}
 	got, _ := filepath.Glob(filepath.Join(sectionsDir, "section-*.txt"))
 	if len(got) != 3 {
@@ -206,7 +206,7 @@ func TestRunPhase2_CapsEnforced(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte("./fake.ts\n"), 0644); err != nil {
+		if err := os.WriteFile(p, []byte("./fake.ts\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -289,8 +289,8 @@ func TestRunPhase3_WritesFixSOW_FromReviewer(t *testing.T) {
 	if err := os.MkdirAll(auditDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), []byte("det"), 0644)
-	_ = os.WriteFile(filepath.Join(auditDir, "semantic-report.md"), []byte("sem"), 0644)
+	_ = os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), []byte("det"), 0o600)
+	_ = os.WriteFile(filepath.Join(auditDir, "semantic-report.md"), []byte("sem"), 0o600)
 
 	cfg := &scanRepairConfig{
 		Repo: repo,
@@ -322,8 +322,8 @@ func TestRunPhase3_StubOnEmptyReviewer(t *testing.T) {
 	repo := t.TempDir()
 	auditDir := filepath.Join(repo, "audit")
 	_ = os.MkdirAll(auditDir, 0755)
-	_ = os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), []byte("det"), 0644)
-	_ = os.WriteFile(filepath.Join(auditDir, "semantic-report.md"), []byte("sem"), 0644)
+	_ = os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), []byte("det"), 0o600)
+	_ = os.WriteFile(filepath.Join(auditDir, "semantic-report.md"), []byte("sem"), 0o600)
 
 	cfg := &scanRepairConfig{
 		Repo: repo,
@@ -393,8 +393,8 @@ func TestCleanAuditArtifacts(t *testing.T) {
 	if err := os.MkdirAll(auditDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(auditDir, "thing.md"), []byte("old"), 0644)
-	_ = os.WriteFile(filepath.Join(repo, "FIX_SOW.md"), []byte("old"), 0644)
+	_ = os.WriteFile(filepath.Join(auditDir, "thing.md"), []byte("old"), 0o600)
+	_ = os.WriteFile(filepath.Join(repo, "FIX_SOW.md"), []byte("old"), 0o600)
 	if err := cleanAuditArtifacts(repo); err != nil {
 		t.Fatalf("clean: %v", err)
 	}
@@ -615,7 +615,7 @@ func TestEndToEnd_SmokeAllPhases(t *testing.T) {
 		// Write minimal deterministic-report.md so Phase 3 can read it.
 		_ = os.MkdirAll(filepath.Join(cfg.Repo, "audit"), 0755)
 		_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "deterministic-report.md"),
-			[]byte("# Deterministic\n- [critical] src/main.ts: placeholder comment\n"), 0644)
+			[]byte("# Deterministic\n- [critical] src/main.ts: placeholder comment\n"), 0o600)
 		return &phase1Result{
 			NumSections:           1,
 			DeterministicFindings: 1,
@@ -713,7 +713,7 @@ func TestEndToEnd_EarlyExitOnZeroFindings(t *testing.T) {
 		phase1Runner: func(ctx context.Context, cfg *scanRepairConfig) (*phase1Result, error) {
 			_ = os.MkdirAll(filepath.Join(cfg.Repo, "audit"), 0755)
 			_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "deterministic-report.md"),
-				[]byte("# Deterministic\n\nNo findings.\n"), 0644)
+				[]byte("# Deterministic\n\nNo findings.\n"), 0o600)
 			return &phase1Result{
 				NumSections: 1,
 				Sections:    []string{sectionFile},
@@ -808,8 +808,8 @@ with open(out, "w") as f:
 	// Create the fake source files (project-mapper.sh writes paths
 	// but deterministic-scan doesn't actually need them to exist).
 	_ = os.MkdirAll(filepath.Join(repo, "src"), 0755)
-	_ = os.WriteFile(filepath.Join(repo, "src", "a.ts"), []byte("// placeholder\n"), 0644)
-	_ = os.WriteFile(filepath.Join(repo, "src", "b.ts"), []byte("// placeholder\n"), 0644)
+	_ = os.WriteFile(filepath.Join(repo, "src", "a.ts"), []byte("// placeholder\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(repo, "src", "b.ts"), []byte("// placeholder\n"), 0o600)
 
 	cfg := &scanRepairConfig{
 		Repo: repo,

@@ -206,7 +206,10 @@ func TestNativeRunner_MCP_AdvertisesTools(t *testing.T) {
 		}
 	}
 
-	reg := spec.MCPRegistry.(*fakeMCPRegistry)
+	reg, ok := spec.MCPRegistry.(*fakeMCPRegistry)
+	if !ok {
+		t.Fatalf("MCPRegistry: unexpected type: %T", spec.MCPRegistry)
+	}
 	if reg.trustSeen != "trusted" {
 		t.Errorf("AllToolsForTrust trust=%q, want %q", reg.trustSeen, "trusted")
 	}

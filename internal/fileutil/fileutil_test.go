@@ -89,7 +89,7 @@ func TestFileExists(t *testing.T) {
 		t.Error("non-existent file should not exist")
 	}
 	path := filepath.Join(dir, "exists.txt")
-	os.WriteFile(path, []byte("hi"), 0644)
+	os.WriteFile(path, []byte("hi"), 0o600)
 	if !FileExists(path) {
 		t.Error("written file should exist")
 	}

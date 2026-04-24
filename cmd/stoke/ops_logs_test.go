@@ -27,7 +27,7 @@ func writeTempStream(t *testing.T, lines []string) string {
 		buf.WriteString(ln)
 		buf.WriteByte('\n')
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
 	return path

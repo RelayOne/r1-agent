@@ -26,7 +26,7 @@ func TestComputeTag(t *testing.T) {
 func TestTagFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.go")
-	os.WriteFile(path, []byte("package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"), 0644)
+	os.WriteFile(path, []byte("package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"), 0o600)
 
 	tf, err := TagFile(path)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestTagFile(t *testing.T) {
 func TestRender(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.go")
-	os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0644)
+	os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0o600)
 
 	tf, _ := TagFile(path)
 	rendered := tf.Render()
@@ -71,7 +71,7 @@ func TestRender(t *testing.T) {
 func TestVerifySuccess(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0644)
+	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o600)
 
 	tf, _ := TagFile(path)
 	v := NewVerifier()
@@ -104,14 +104,14 @@ func TestVerifySuccess(t *testing.T) {
 func TestVerifyConflict(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0644)
+	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o600)
 
 	// Agent reads file
 	tf, _ := TagFile(path)
 	oldTag := tf.Lines[1].Tag
 
 	// Another agent modifies the file
-	os.WriteFile(path, []byte("alpha\nmodified\ngamma\n"), 0644)
+	os.WriteFile(path, []byte("alpha\nmodified\ngamma\n"), 0o600)
 
 	v := NewVerifier()
 	result := v.Verify(EditRequest{
@@ -136,7 +136,7 @@ func TestVerifyConflict(t *testing.T) {
 func TestVerifyMultiLineEdit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("a\nb\nc\nd\ne\n"), 0644)
+	os.WriteFile(path, []byte("a\nb\nc\nd\ne\n"), 0o600)
 
 	tf, _ := TagFile(path)
 	v := NewVerifier()
@@ -163,7 +163,7 @@ func TestVerifyMultiLineEdit(t *testing.T) {
 func TestVerifyInvalidRange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("a\nb\n"), 0644)
+	os.WriteFile(path, []byte("a\nb\n"), 0o600)
 
 	v := NewVerifier()
 	result := v.Verify(EditRequest{
@@ -181,7 +181,7 @@ func TestVerifyInvalidRange(t *testing.T) {
 func TestGetTag(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
-	os.WriteFile(path, []byte("hello\nworld\n"), 0644)
+	os.WriteFile(path, []byte("hello\nworld\n"), 0o600)
 
 	tf, _ := TagFile(path)
 	tag, ok := tf.GetTag(1)

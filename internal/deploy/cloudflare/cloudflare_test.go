@@ -72,6 +72,7 @@ esac
 exit 0
 `
 
+	//nolint:gosec // test fixture: executable stub invoked by deploy path via exec
 	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write mock wrangler: %v", err)
 	}

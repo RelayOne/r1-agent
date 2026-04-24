@@ -131,7 +131,7 @@ func TestVerifyChain_Tampered_Fails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remarshal tampered: %v", err)
 	}
-	if err := os.WriteFile(path, mutated, 0o644); err != nil {
+	if err := os.WriteFile(path, mutated, 0o600); err != nil {
 		t.Fatalf("write tampered: %v", err)
 	}
 

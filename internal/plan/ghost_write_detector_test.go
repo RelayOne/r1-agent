@@ -43,7 +43,7 @@ func TestGhostWriteDetector_MissingFile(t *testing.T) {
 func TestGhostWriteDetector_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := "out.txt"
-	if err := os.WriteFile(filepath.Join(dir, path), []byte{}, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, path), []byte{}, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var events []GhostWriteEvent
@@ -68,7 +68,7 @@ func TestGhostWriteDetector_EmptyFile(t *testing.T) {
 func TestGhostWriteDetector_NormalWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := "hello.ts"
-	if err := os.WriteFile(filepath.Join(dir, path), []byte("export const x = 1;\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, path), []byte("export const x = 1;\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var events []GhostWriteEvent
@@ -122,7 +122,7 @@ func TestGhostWriteDetector_IgnoresErrorResults(t *testing.T) {
 func TestGhostWriteDetector_AbsolutePathRespected(t *testing.T) {
 	dir := t.TempDir()
 	abs := filepath.Join(dir, "abs.txt")
-	if err := os.WriteFile(abs, []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte("hi"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	check := NewGhostWriteCheck("/ignored/root", nil)

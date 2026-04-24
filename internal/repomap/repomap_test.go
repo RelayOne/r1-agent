@@ -34,7 +34,7 @@ type Config struct {
 func NewConfig(name string) *Config {
 	return &Config{Name: name}
 }
-`), 0644)
+`), 0o600)
 
 	// util.go
 	os.WriteFile(filepath.Join(dir, "pkg", "util", "util.go"), []byte(`package util
@@ -60,13 +60,13 @@ func (h *Helper) Process() int {
 func (h *Helper) Reset() {
 	h.Value = 0
 }
-`), 0644)
+`), 0o600)
 
 	// test file (should be skipped)
 	os.WriteFile(filepath.Join(dir, "pkg", "util", "util_test.go"), []byte(`package util
 
 func TestHello(t *testing.T) {}
-`), 0644)
+`), 0o600)
 
 	return dir
 }
@@ -171,7 +171,7 @@ func privateFunc() {}
 func PublicFunc(a, b, c, d int) int {
 	return a + b + c + d
 }
-`), 0644)
+`), 0o600)
 
 	node, err := parseGoFile(path, "test.go")
 	if err != nil {
@@ -220,11 +220,11 @@ func TestSkipHiddenAndVendor(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0755)
 
 	os.WriteFile(filepath.Join(dir, ".hidden", "hidden.go"),
-		[]byte("package hidden\nfunc Hidden() {}"), 0644)
+		[]byte("package hidden\nfunc Hidden() {}"), 0o600)
 	os.WriteFile(filepath.Join(dir, "vendor", "pkg", "vendor.go"),
-		[]byte("package pkg\nfunc Vendored() {}"), 0644)
+		[]byte("package pkg\nfunc Vendored() {}"), 0o600)
 	os.WriteFile(filepath.Join(dir, "src", "real.go"),
-		[]byte("package src\nfunc Real() {}"), 0644)
+		[]byte("package src\nfunc Real() {}"), 0o600)
 
 	rm, _ := Build(dir)
 	if len(rm.Files) != 1 {

@@ -240,7 +240,10 @@ func TestAddReducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddReducer: %v", err)
 	}
-	got := out.([]any)
+	got, ok := out.([]any)
+	if !ok {
+		t.Fatalf("out: unexpected type: %T", out)
+	}
 	if len(got) != 3 {
 		t.Errorf("len=%d want 3", len(got))
 	}
@@ -251,7 +254,10 @@ func TestUnionReducer_Dedupes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UnionReducer: %v", err)
 	}
-	got := out.([]any)
+	got, ok := out.([]any)
+	if !ok {
+		t.Fatalf("out: unexpected type: %T", out)
+	}
 	if len(got) != 3 {
 		t.Errorf("len=%d want 3 (a,b,c) got %v", len(got), got)
 	}
@@ -289,12 +295,20 @@ func TestMaxReducer_LargeInt64Precision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaxReducer: %v", err)
 	}
-	if out.(int64) != b {
+	outI64, ok := out.(int64)
+	if !ok {
+		t.Fatalf("out: unexpected type: %T", out)
+	}
+	if outI64 != b {
 		t.Errorf("MaxReducer picked %v want %v (int64 precision regression)", out, b)
 	}
 	// Reverse order.
 	out2, _ := MaxReducer(b, a)
-	if out2.(int64) != b {
+	out2I64, ok := out2.(int64)
+	if !ok {
+		t.Fatalf("out2: unexpected type: %T", out2)
+	}
+	if out2I64 != b {
 		t.Errorf("MaxReducer reverse picked %v want %v", out2, b)
 	}
 }
@@ -305,7 +319,11 @@ func TestMaxReducer_MixedIntTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaxReducer: %v", err)
 	}
-	if out.(int64) != 10 {
+	outI64, ok := out.(int64)
+	if !ok {
+		t.Fatalf("out: unexpected type: %T", out)
+	}
+	if outI64 != 10 {
 		t.Errorf("got %v want 10", out)
 	}
 }
@@ -316,7 +334,11 @@ func TestMaxReducer_MixedIntAndFloat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MaxReducer: %v", err)
 	}
-	if out.(float64) != 5.5 {
+	outF64, ok := out.(float64)
+	if !ok {
+		t.Fatalf("out: unexpected type: %T", out)
+	}
+	if outF64 != 5.5 {
 		t.Errorf("got %v want 5.5", out)
 	}
 }
@@ -390,12 +412,18 @@ func TestCloneBlock_DeepCopiesValue(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	// Tamper with the returned slice.
-	val := got.Value.([]any)
+	val, ok := got.Value.([]any)
+	if !ok {
+		t.Fatalf("got.Value: unexpected type: %T", got.Value)
+	}
 	val[0] = "TAMPERED"
 
 	// Re-read — the store's copy should be unaffected.
 	got2, _ := s.Get(ctx, "b1")
-	val2 := got2.Value.([]any)
+	val2, ok := got2.Value.([]any)
+	if !ok {
+		t.Fatalf("got2.Value: unexpected type: %T", got2.Value)
+	}
 	if val2[0] == "TAMPERED" {
 		t.Errorf("store leaked Value aliasing: %v", val2)
 	}
@@ -410,10 +438,16 @@ func TestCloneBlock_DeepCopiesMapValue(t *testing.T) {
 		Provenance: []ProvenanceEntry{baseProv("agent-a")},
 	})
 	got, _ := s.Get(ctx, "b1")
-	m := got.Value.(map[string]any)
+	m, ok := got.Value.(map[string]any)
+	if !ok {
+		t.Fatalf("got.Value: unexpected type: %T", got.Value)
+	}
 	m["k"] = "TAMPERED"
 	got2, _ := s.Get(ctx, "b1")
-	m2 := got2.Value.(map[string]any)
+	m2, ok := got2.Value.(map[string]any)
+	if !ok {
+		t.Fatalf("got2.Value: unexpected type: %T", got2.Value)
+	}
 	if m2["k"] == "TAMPERED" {
 		t.Errorf("map aliasing leaked: %v", m2)
 	}
@@ -446,7 +480,10 @@ func TestCloneBlock_PreservesTypedSliceValue(t *testing.T) {
 	// Mutation independence.
 	ss[0] = "TAMPERED"
 	got2, _ := s.Get(ctx, "b1")
-	ss2 := got2.Value.([]string)
+	ss2, ok := got2.Value.([]string)
+	if !ok {
+		t.Fatalf("got2.Value: unexpected type: %T", got2.Value)
+	}
 	if ss2[0] == "TAMPERED" {
 		t.Error("mutation leaked through to store")
 	}

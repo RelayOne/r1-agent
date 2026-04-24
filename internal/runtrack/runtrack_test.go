@@ -150,9 +150,9 @@ func TestListSkipsBadFiles(t *testing.T) {
 	defer reg.Close()
 
 	// Write some garbage that looks like it could be a manifest.
-	_ = os.WriteFile(filepath.Join(dir, "corrupt.json"), []byte("not json"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "also-corrupt.json"), []byte("{}"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "not-json.txt"), []byte("{}"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "corrupt.json"), []byte("not json"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "also-corrupt.json"), []byte("{}"), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "not-json.txt"), []byte("{}"), 0o600)
 
 	ms, err := List()
 	if err != nil {

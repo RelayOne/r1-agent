@@ -30,7 +30,11 @@ func TestDashboardTasksEmpty(t *testing.T) {
 	}
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	if int(resp["count"].(float64)) != 0 {
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", resp["count"])
+	}
+	if int(count) != 0 {
 		t.Errorf("count=%v, want 0", resp["count"])
 	}
 }
@@ -46,7 +50,11 @@ func TestDashboardTasksWithData(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	if int(resp["count"].(float64)) != 2 {
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", resp["count"])
+	}
+	if int(count) != 2 {
 		t.Errorf("count=%v, want 2", resp["count"])
 	}
 }
@@ -63,7 +71,11 @@ func TestDashboardTasksFilterByStatus(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	if int(resp["count"].(float64)) != 2 {
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", resp["count"])
+	}
+	if int(count) != 2 {
 		t.Errorf("count=%v, want 2", resp["count"])
 	}
 }
@@ -124,7 +136,11 @@ func TestDashboardPools(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	if int(resp["count"].(float64)) != 0 {
+	count, ok := resp["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", resp["count"])
+	}
+	if int(count) != 0 {
 		t.Errorf("count=%v, want 0", resp["count"])
 	}
 }
@@ -140,8 +156,15 @@ func TestDashboardSummary(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
-	tasks := resp["tasks"].(map[string]interface{})
-	if int(tasks["total"].(float64)) != 2 {
+	tasks, ok := resp["tasks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tasks: unexpected type: %T", resp["tasks"])
+	}
+	total, ok := tasks["total"].(float64)
+	if !ok {
+		t.Fatalf("tasks.total: unexpected type: %T", tasks["total"])
+	}
+	if int(total) != 2 {
 		t.Errorf("total=%v, want 2", tasks["total"])
 	}
 }

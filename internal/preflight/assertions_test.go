@@ -61,7 +61,7 @@ func TestCheckFileExists(t *testing.T) {
 	}
 
 	// Create the file
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test"), 0o600)
 	result = checker(dir)
 	if !result.Passed {
 		t.Error("should pass for existing file")

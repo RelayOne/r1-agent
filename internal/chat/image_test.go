@@ -24,7 +24,7 @@ func writePNG(t *testing.T, path string) {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode png: %v", err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		t.Fatalf("write png: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestLoadImage_MissingFile(t *testing.T) {
 func TestLoadImage_UnsupportedExtension(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "blob.bmp")
-	if err := os.WriteFile(p, []byte("BM fake"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("BM fake"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadImage(p)
@@ -135,7 +135,7 @@ func TestLoadImage_TooLarge(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "big.png")
 	big := make([]byte, MaxImageBytes+1)
-	if err := os.WriteFile(p, big, 0o644); err != nil {
+	if err := os.WriteFile(p, big, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadImage(p)
@@ -147,7 +147,7 @@ func TestLoadImage_TooLarge(t *testing.T) {
 func TestLoadImage_MislabeledContent(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "fake.png")
-	if err := os.WriteFile(p, []byte("not a png"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("not a png"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadImage(p)

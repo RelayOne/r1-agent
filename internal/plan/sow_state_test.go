@@ -118,7 +118,7 @@ func TestSOWState_RemainingSessions(t *testing.T) {
 
 func TestSessionScheduler_Resume_SkipsCompleted(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("ok"), 0o600)
 
 	sow := &SOW{
 		ID: "resume", Name: "Resume",
@@ -221,7 +221,7 @@ func TestSessionScheduler_Retry_SucceedsOnSecondAttempt(t *testing.T) {
 
 func TestSessionScheduler_ContinueOnFailure(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("ok"), 0644)
+	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("ok"), 0o600)
 	sow := &SOW{
 		ID: "cof", Name: "Cof",
 		Sessions: []Session{
@@ -268,7 +268,7 @@ sessions:
         command: echo ok
 `
 	path := filepath.Join(dir, "stoke-sow.yaml")
-	os.WriteFile(path, []byte(yamlContent), 0644)
+	os.WriteFile(path, []byte(yamlContent), 0o600)
 
 	sow, err := LoadSOW(path)
 	if err != nil {
@@ -289,7 +289,7 @@ func TestLoadSOW_JSONStillWorks(t *testing.T) {
 	dir := t.TempDir()
 	jsonContent := `{"id":"test-json","name":"Test","sessions":[{"id":"S1","title":"t","tasks":[{"id":"T1","description":"x"}],"acceptance_criteria":[{"id":"AC1","description":"d"}]}]}`
 	path := filepath.Join(dir, "stoke-sow.json")
-	os.WriteFile(path, []byte(jsonContent), 0644)
+	os.WriteFile(path, []byte(jsonContent), 0o600)
 
 	sow, err := LoadSOW(path)
 	if err != nil {
@@ -302,8 +302,8 @@ func TestLoadSOW_JSONStillWorks(t *testing.T) {
 
 func TestLoadSOWFromDir_PrefersJSON(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "stoke-sow.json"), []byte(`{"id":"json-wins","name":"j","sessions":[]}`), 0644)
-	os.WriteFile(filepath.Join(dir, "stoke-sow.yaml"), []byte("id: yaml-loses\nname: y\nsessions: []\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "stoke-sow.json"), []byte(`{"id":"json-wins","name":"j","sessions":[]}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "stoke-sow.yaml"), []byte("id: yaml-loses\nname: y\nsessions: []\n"), 0o600)
 
 	sow, err := LoadSOWFromDir(dir)
 	if err != nil {
@@ -316,7 +316,7 @@ func TestLoadSOWFromDir_PrefersJSON(t *testing.T) {
 
 func TestLoadSOWFromDir_YAMLFallback(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "stoke-sow.yaml"), []byte("id: yaml-only\nname: y\nsessions: []\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "stoke-sow.yaml"), []byte("id: yaml-only\nname: y\nsessions: []\n"), 0o600)
 
 	sow, err := LoadSOWFromDir(dir)
 	if err != nil {

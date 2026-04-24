@@ -108,7 +108,10 @@ func TestAPIListMissions(t *testing.T) {
 	}
 
 	result := decodeJSON(t, w)
-	count := result["count"].(float64)
+	count, ok := result["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", result["count"])
+	}
 	if count != 2 {
 		t.Errorf("count = %v, want 2", count)
 	}
@@ -123,7 +126,10 @@ func TestAPIListMissionsFilterPhase(t *testing.T) {
 
 	w := doReq(t, srv.Handler(), "GET", "/api/missions?phase=created", nil)
 	result := decodeJSON(t, w)
-	count := result["count"].(float64)
+	count, ok := result["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", result["count"])
+	}
 	if count != 1 {
 		t.Errorf("count = %v, want 1 (only created phase)", count)
 	}
@@ -228,7 +234,10 @@ func TestAPIBuildContext(t *testing.T) {
 	}
 
 	result := decodeJSON(t, w)
-	ctx := result["context"].(string)
+	ctx, ok := result["context"].(string)
+	if !ok {
+		t.Fatalf("context: unexpected type: %T", result["context"])
+	}
 	if ctx == "" {
 		t.Error("context should not be empty")
 	}
@@ -288,7 +297,10 @@ func TestAPIFindingsEmpty(t *testing.T) {
 	}
 
 	result := decodeJSON(t, w)
-	count := result["count"].(float64)
+	count, ok := result["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", result["count"])
+	}
 	if count != 0 {
 		t.Errorf("count = %v, want 0 (no findings yet)", count)
 	}
@@ -330,7 +342,10 @@ func TestAPIFindingsAfterConvergenceRun(t *testing.T) {
 	}
 
 	result := decodeJSON(t, w)
-	count := result["count"].(float64)
+	count, ok := result["count"].(float64)
+	if !ok {
+		t.Fatalf("count: unexpected type: %T", result["count"])
+	}
 	// The convergence run should have stored gaps from its findings
 	if len(report.Findings) > 0 && count == 0 {
 		t.Error("convergence produced findings but findings endpoint returned none")
@@ -358,8 +373,15 @@ func TestAPIFindingsFilterSeverity(t *testing.T) {
 	result := decodeJSON(t, w)
 	findings := result["findings"]
 	if findings != nil {
-		for _, f := range findings.([]interface{}) {
-			finding := f.(map[string]interface{})
+		list, ok := findings.([]interface{})
+		if !ok {
+			t.Fatalf("findings: unexpected type: %T", findings)
+		}
+		for _, f := range list {
+			finding, ok := f.(map[string]interface{})
+			if !ok {
+				t.Fatalf("finding entry: unexpected type: %T", f)
+			}
 			if finding["severity"] != "blocking" {
 				t.Errorf("found non-blocking finding when filtering: %v", finding["severity"])
 			}
@@ -383,8 +405,15 @@ func TestAPIFindingsFilterCategory(t *testing.T) {
 	result := decodeJSON(t, w)
 	findings := result["findings"]
 	if findings != nil {
-		for _, f := range findings.([]interface{}) {
-			finding := f.(map[string]interface{})
+		list, ok := findings.([]interface{})
+		if !ok {
+			t.Fatalf("findings: unexpected type: %T", findings)
+		}
+		for _, f := range list {
+			finding, ok := f.(map[string]interface{})
+			if !ok {
+				t.Fatalf("finding entry: unexpected type: %T", f)
+			}
 			if finding["category"] != "test" {
 				t.Errorf("found non-test finding when filtering: %v", finding["category"])
 			}

@@ -31,7 +31,7 @@ verification:
   scope_check: false
 `
 	path := filepath.Join(dir, "stoke.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p, err := LoadPolicy(path)
@@ -76,7 +76,7 @@ files:
   protected: []
 `
 	path := filepath.Join(dir, "stoke.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p, err := LoadPolicy(path)
@@ -94,7 +94,7 @@ func TestAutoLoadPolicyDiscovers(t *testing.T) {
 	dir := t.TempDir()
 	// Write a policy file with a well-known name
 	path := filepath.Join(dir, "stoke.yaml")
-	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// AutoLoadPolicy with empty explicit path should discover it
@@ -125,11 +125,11 @@ func TestAutoLoadPolicyExplicitOverrides(t *testing.T) {
 	dir := t.TempDir()
 	// Write a policy at a non-standard name
 	explicit := filepath.Join(dir, "custom-policy.yaml")
-	if err := os.WriteFile(explicit, []byte(DefaultPolicyYAML()), 0o644); err != nil {
+	if err := os.WriteFile(explicit, []byte(DefaultPolicyYAML()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Also write stoke.yaml (should be ignored when explicit is given)
-	if err := os.WriteFile(filepath.Join(dir, "stoke.yaml"), []byte("invalid yaml {{{{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "stoke.yaml"), []byte("invalid yaml {{{{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Explicit path should take precedence
@@ -145,7 +145,7 @@ func TestAutoLoadPolicyExplicitOverrides(t *testing.T) {
 func TestLoadPolicyYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "stoke.policy.yaml")
-	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p, err := LoadPolicy(path)

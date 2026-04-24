@@ -235,7 +235,7 @@ func TestRunDeployCmd_ProviderValidation(t *testing.T) {
 // preview naming the provider.
 func TestRunDeployCmd_AutoHappyPath(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "vercel.json"), []byte(`{"version":2}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vercel.json"), []byte(`{"version":2}`), 0o600); err != nil {
 		t.Fatalf("plant vercel.json: %v", err)
 	}
 
@@ -274,10 +274,10 @@ func TestRunDeployCmd_AutoAmbiguityExits(t *testing.T) {
 // refuse to silently pick one.
 func TestRunDeployCmd_AutoAmbiguousSignals(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "vercel.json"), []byte(`{}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vercel.json"), []byte(`{}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "wrangler.toml"), []byte("name = \"x\"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "wrangler.toml"), []byte("name = \"x\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

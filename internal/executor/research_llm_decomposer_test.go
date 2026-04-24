@@ -224,7 +224,10 @@ func TestLLMDecomposer_LLMFailure_FallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute after fallback: %v", err)
 	}
-	rd := d_.(ResearchDeliverable)
+	rd, ok := d_.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d_)
+	}
 	// The heuristic "X vs Y" split produces >1 subq, which yields
 	// >=1 claim given the stubbed page is relevant.
 	if rd.Report.Query != "Postgres vs MySQL" {
@@ -345,7 +348,10 @@ func TestResearchExecutor_FanOut_WritesFiles(t *testing.T) {
 		}
 	}
 
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	if rd.Report.Query != p.Query {
 		t.Errorf("query dropped: %q", rd.Report.Query)
 	}
@@ -452,7 +458,10 @@ func TestResearchExecutor_ProviderOnly_BuildsDecomposer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	if rd.Report.Query != "what" {
 		t.Errorf("query: %q", rd.Report.Query)
 	}

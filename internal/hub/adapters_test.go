@@ -158,7 +158,7 @@ func TestLoadConfigValid(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(cfg)
-	os.WriteFile(filepath.Join(stokeDir, "hooks.json"), data, 0o644)
+	os.WriteFile(filepath.Join(stokeDir, "hooks.json"), data, 0o600)
 
 	loaded, err := LoadConfig(dir)
 	if err != nil {

@@ -35,7 +35,7 @@ func (c *Config) String() string {
 	return c.Name
 }
 `
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0o600)
 
 	utils := `package main
 
@@ -45,7 +45,7 @@ func Compute(x int) int {
 	return x * 2
 }
 `
-	os.WriteFile(filepath.Join(dir, "utils.go"), []byte(utils), 0644)
+	os.WriteFile(filepath.Join(dir, "utils.go"), []byte(utils), 0o600)
 	return dir
 }
 
@@ -237,7 +237,7 @@ def standalone():
 _private = 1
 public_var = 2
 `
-	os.WriteFile(filepath.Join(dir, "app.py"), []byte(py), 0644)
+	os.WriteFile(filepath.Join(dir, "app.py"), []byte(py), 0o600)
 
 	idx, _ := Build(dir)
 	if idx.Count() == 0 {
@@ -267,7 +267,7 @@ export function createApp(): App {
 const VERSION = "1.0";
 export type ID = string;
 `
-	os.WriteFile(filepath.Join(dir, "app.ts"), []byte(ts), 0644)
+	os.WriteFile(filepath.Join(dir, "app.ts"), []byte(ts), 0o600)
 
 	idx, _ := Build(dir)
 	if idx.Count() == 0 {
@@ -284,8 +284,8 @@ func TestSkipHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
 	hidden := filepath.Join(dir, ".hidden")
 	os.MkdirAll(hidden, 0755)
-	os.WriteFile(filepath.Join(hidden, "secret.go"), []byte("package secret\nfunc Secret() {}"), 0644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc Main() {}"), 0644)
+	os.WriteFile(filepath.Join(hidden, "secret.go"), []byte("package secret\nfunc Secret() {}"), 0o600)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc Main() {}"), 0o600)
 
 	idx, _ := Build(dir)
 	files := idx.Files()

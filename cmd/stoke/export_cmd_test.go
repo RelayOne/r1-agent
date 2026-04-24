@@ -44,12 +44,12 @@ func writeTestSession(t *testing.T) (string, session.SignatureFile) {
 	}
 	// stream.jsonl
 	streamPath := filepath.Join(stokeDir, "stream.jsonl")
-	if err := os.WriteFile(streamPath, []byte(`{"type":"stoke.session.start"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(streamPath, []byte(`{"type":"stoke.session.start"}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
 	// checkpoints.jsonl
 	checkpointPath := filepath.Join(stokeDir, "checkpoints.jsonl")
-	if err := os.WriteFile(checkpointPath, []byte(`{"checkpoint":1}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(checkpointPath, []byte(`{"checkpoint":1}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write checkpoints: %v", err)
 	}
 	// ledger/ with a node and an edge
@@ -57,10 +57,10 @@ func writeTestSession(t *testing.T) (string, session.SignatureFile) {
 	if err := os.MkdirAll(filepath.Join(ledgerDir, "nodes"), 0o755); err != nil {
 		t.Fatalf("mkdir ledger: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ledgerDir, "nodes", "n1.json"), []byte(`{"id":"n1"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ledgerDir, "nodes", "n1.json"), []byte(`{"id":"n1"}`), 0o600); err != nil {
 		t.Fatalf("write node: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(ledgerDir, "chain.txt"), []byte("hashchain\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(ledgerDir, "chain.txt"), []byte("hashchain\n"), 0o600); err != nil {
 		t.Fatalf("write chain: %v", err)
 	}
 	// memory.db with one session-scoped row
@@ -86,7 +86,7 @@ func writeTestSession(t *testing.T) (string, session.SignatureFile) {
 	if err != nil {
 		t.Fatalf("marshal sig: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(stokeDir, "r1.session.json"), sigBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stokeDir, "r1.session.json"), sigBytes, 0o600); err != nil {
 		t.Fatalf("write sig: %v", err)
 	}
 	return root, sig
@@ -245,7 +245,7 @@ func TestBuildTraceBundle_DeterministicMerkleRoot(t *testing.T) {
 	}
 
 	// Mutate an artefact and re-export — root MUST change.
-	if err := os.WriteFile(sig.StreamFile, []byte(`{"mutated":true}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(sig.StreamFile, []byte(`{"mutated":true}`+"\n"), 0o600); err != nil {
 		t.Fatalf("mutate stream: %v", err)
 	}
 	outDir3 := t.TempDir()

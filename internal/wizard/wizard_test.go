@@ -10,7 +10,7 @@ import (
 
 func TestWizardAutoDetect(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22\nrequire github.com/lib/pq v1.10.0\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22\nrequire github.com/lib/pq v1.10.0\n"), 0o600)
 
 	w := New(dir)
 	w.Writer = &bytes.Buffer{}
@@ -91,7 +91,7 @@ func TestWizardGenerateYAML(t *testing.T) {
 
 func TestWizardInteractive(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22\n"), 0o600)
 
 	// Simulate: accept defaults for everything (12 questions)
 	input := strings.NewReader("1\n1\n2\n2\n2\n2\n2\nnone\nauto\n1\nauto\n1\n")

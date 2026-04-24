@@ -20,7 +20,7 @@ func TestPreflightScriptRecursion_RemovesSelfCollision(t *testing.T) {
     "lint": "eslint ."
   }
 }
-`), 0644)
+`), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestPreflightScriptRecursion_LintSelfCollision(t *testing.T) {
     "format": "prettier --write ."
   }
 }
-`), 0644)
+`), 0o600)
 	diag := PreflightScriptRecursion(dir)
 	joined := strings.Join(diag, " | ")
 	if !strings.Contains(joined, "eslint") || !strings.Contains(joined, "prettier") {
@@ -86,7 +86,7 @@ func TestPreflightScriptRecursion_NoChangesWhenSafe(t *testing.T) {
     "lint": "eslint ."
   }
 }
-`), 0644)
+`), 0o600)
 	diag := PreflightScriptRecursion(dir)
 	// "test": "jest" is NOT self-recursive even though jest is in the
 	// risks set — the script name is "test", not "jest", so running
@@ -107,7 +107,7 @@ func TestPreflightScriptRecursion_SkipsNodeModules(t *testing.T) {
   "name": "some-pkg",
   "scripts": {"vitest": "vitest run"}
 }
-`), 0644)
+`), 0o600)
 	diag := PreflightScriptRecursion(dir)
 	if len(diag) != 0 {
 		t.Fatalf("expected no diagnostics (node_modules should be skipped); got: %v", diag)

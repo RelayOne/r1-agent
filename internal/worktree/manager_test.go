@@ -23,7 +23,7 @@ func TestPrepareAndCleanupWorktree(t *testing.T) {
 	}
 	run("init", "-b", "main")
 	run("config", "commit.gpgsign", "false")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("add", "README.md")

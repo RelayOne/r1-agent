@@ -92,9 +92,18 @@ func TestMessagesWithCacheControlBlockArray(t *testing.T) {
 		{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"hello"}]`)},
 	}
 	out := messagesWithCacheControl(msgs, 1)
-	m := out[0].(map[string]interface{})
-	blocks := m["content"].([]interface{})
-	last := blocks[len(blocks)-1].(map[string]interface{})
+	m, ok := out[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("out[0]: unexpected type: %T", out[0])
+	}
+	blocks, ok := m["content"].([]interface{})
+	if !ok {
+		t.Fatalf("content: unexpected type: %T", m["content"])
+	}
+	last, ok := blocks[len(blocks)-1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("last block: unexpected type: %T", blocks[len(blocks)-1])
+	}
 	if _, ok := last["cache_control"]; !ok {
 		t.Fatalf("expected cache_control on last block: %+v", last)
 	}

@@ -76,7 +76,7 @@ func TestRun_FailWithRepair_PassesAfterRepair(t *testing.T) {
 	// should therefore pass.
 	dir := t.TempDir()
 	script := filepath.Join(dir, "gate.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o600); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func TestRun_FailWithRepair_PassesAfterRepair(t *testing.T) {
 		}),
 		RepairFunc: func(_ context.Context, _ AcceptanceCriterion, _ string) error {
 			repaired = true
-			return os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755)
+			return os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o600)
 		},
 		Ask: func(_ context.Context, _ string) string {
 			t.Fatal("Ask should not be reached when repair succeeds")

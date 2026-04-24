@@ -88,7 +88,7 @@ func newTempNDJSONPath(t *testing.T) string {
 // opens + syncs + closes per call to mimic Wrangler's flush behavior.
 func appendLine(t *testing.T, path string, data string) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatalf("append open %s: %v", path, err)
 	}
@@ -250,7 +250,7 @@ func TestTailNDJSON_CtxCancel(t *testing.T) {
 	// Otherwise we'd be testing openWhenReady's ctx branch, not the main
 	// loop's, and the two return different error values.
 	path := newTempNDJSONPath(t)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("create fixture: %v", err)
 	}

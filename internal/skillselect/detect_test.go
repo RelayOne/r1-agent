@@ -569,7 +569,7 @@ func TestSelectSkillsWithRegistry(t *testing.T) {
 
 	// Create a skill file on disk.
 	content := "# docker-deploy\n\n> Deploy with Docker\n\n<!-- keywords: docker, deploy -->\n\nUse docker compose up."
-	if err := os.WriteFile(filepath.Join(dir, "docker-deploy.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "docker-deploy.md"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := reg.Load(); err != nil {
@@ -634,7 +634,7 @@ func TestHasMethods(t *testing.T) {
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -23,7 +23,7 @@ func TestDeclaredSymbolsGate_HarnessPath_H27(t *testing.T) {
 	// resolveAlarm is missing.
 	if err := os.WriteFile(abs, []byte(`
 export function acknowledgeAlarm(id: string) { return id; }
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Scoped SOW as built by sow_native.go runSessionNative path.
@@ -80,7 +80,7 @@ func TestDeclaredSymbolsGate_HarnessPath_H28(t *testing.T) {
 	}
 	if err := os.WriteFile(abs, []byte(`
 export function acknowledgeAlarm(id: string) { return id; }
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sow := &SOW{
@@ -129,7 +129,7 @@ func TestDeclaredSymbolsGate_HarnessPath_MultiLanguageSOW(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, goFile), []byte(`package main
-func Process(id string) string { return id }`), 0o644); err != nil {
+func Process(id string) string { return id }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// TS handler: stub, no implementation
@@ -140,7 +140,7 @@ func Process(id string) string { return id }`), 0o644); err != nil {
 	if err := os.WriteFile(filepath.Join(root, tsFile), []byte(`
 // stub file — processAlert missing
 export const VERSION = "0.0.1";
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sow := &SOW{

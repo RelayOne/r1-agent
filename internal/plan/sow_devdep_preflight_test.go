@@ -18,7 +18,7 @@ func TestPreflightWorkspaceDevDeps_AddsMissingBinaries(t *testing.T) {
     "prettier": "3.0.0"
   }
 }
-`), 0644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sow := &SOW{
@@ -69,14 +69,14 @@ func TestPreflightWorkspaceDevDeps_SkipsAlreadyInWorkspace(t *testing.T) {
   "name": "root",
   "workspaces": ["packages/*"]
 }
-`), 0644)
+`), 0o600)
 	subDir := filepath.Join(dir, "packages", "api")
 	os.MkdirAll(subDir, 0755)
 	os.WriteFile(filepath.Join(subDir, "package.json"), []byte(`{
   "name": "@repo/api",
   "devDependencies": {"typescript": "5.3.0", "vitest": "1.0.0"}
 }
-`), 0644)
+`), 0o600)
 
 	sow := &SOW{
 		Sessions: []Session{

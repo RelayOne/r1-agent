@@ -19,7 +19,7 @@ require (
 	google.golang.org/grpc v1.62.0
 )
 `
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600)
 
 	domains := DetectDomains(dir)
 
@@ -49,7 +49,7 @@ func TestDetectDomains_PackageJSON(t *testing.T) {
     "ioredis": "^5.0.0"
   }
 }`
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0o600)
 
 	domains := DetectDomains(dir)
 
@@ -63,7 +63,7 @@ func TestDetectDomains_PackageJSON(t *testing.T) {
 
 func TestDetectDomains_FileSignals(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine"), 0644)
+	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM alpine"), 0o600)
 	os.Mkdir(filepath.Join(dir, "terraform"), 0755)
 
 	domains := DetectDomains(dir)
@@ -151,7 +151,7 @@ func TestNewValidatorForProject(t *testing.T) {
 go 1.22
 require github.com/IBM/sarama v1.0.0
 `
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(gomod), 0o600)
 
 	v := NewValidatorForProject(dir)
 	// Should have base rules + Kafka/messaging rules

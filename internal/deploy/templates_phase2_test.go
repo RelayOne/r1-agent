@@ -194,7 +194,7 @@ func TestWriteIfAbsent_DoesNotOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "vercel.json")
 	original := []byte(`{"preserved": true}`)
-	if err := os.WriteFile(target, original, 0o644); err != nil {
+	if err := os.WriteFile(target, original, 0o600); err != nil {
 		t.Fatalf("seed file: %v", err)
 	}
 

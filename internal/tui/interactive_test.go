@@ -527,6 +527,7 @@ func TestTruncStr(t *testing.T) {
 
 func applyMsg(m *InteractiveModel, msg tea.Msg) (*InteractiveModel, tea.Cmd) {
 	model, cmd := m.Update(msg)
+	//nolint:forcetypeassert // test helper; panic on surprise is acceptable
 	return model.(*InteractiveModel), cmd
 }
 

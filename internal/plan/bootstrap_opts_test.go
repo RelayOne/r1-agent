@@ -27,7 +27,7 @@ func TestLockfilePresent(t *testing.T) {
 	for _, name := range cases {
 		sub := t.TempDir()
 		path := filepath.Join(sub, name)
-		if err := os.WriteFile(path, []byte(""), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if !LockfilePresent(sub) {

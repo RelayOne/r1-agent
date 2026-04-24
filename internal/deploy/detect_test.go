@@ -15,7 +15,7 @@ func writeFile(t *testing.T, root, rel string) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(full), err)
 	}
-	if err := os.WriteFile(full, nil, 0o644); err != nil {
+	if err := os.WriteFile(full, nil, 0o600); err != nil {
 		t.Fatalf("write %s: %v", full, err)
 	}
 }

@@ -122,7 +122,10 @@ func TestSign_JTIUniqueness(t *testing.T) {
 			t.Fatalf("Sign iter %d: %v", i, err)
 		}
 		_, payload, _ := decodeJWT(t, tok)
-		jti := payload["jti"].(string)
+		jti, ok := payload["jti"].(string)
+		if !ok {
+			t.Fatalf("jti: unexpected type: %T", payload["jti"])
+		}
 		if seen[jti] {
 			t.Fatalf("jti collision at iter %d: %s", i, jti)
 		}
@@ -169,8 +172,15 @@ func TestSign_EmbeddedJWKMatchesPublicKey(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 	header, _, _ := decodeJWT(t, tok)
-	jwk := header["jwk"].(map[string]any)
-	xBytes, err := base64.RawURLEncoding.DecodeString(jwk["x"].(string))
+	jwk, ok := header["jwk"].(map[string]any)
+	if !ok {
+		t.Fatalf("jwk: unexpected type: %T", header["jwk"])
+	}
+	jwkX, ok := jwk["x"].(string)
+	if !ok {
+		t.Fatalf("jwk.x: unexpected type: %T", jwk["x"])
+	}
+	xBytes, err := base64.RawURLEncoding.DecodeString(jwkX)
 	if err != nil {
 		t.Fatalf("decode jwk.x: %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 
 func TestSafeWriteFileRejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
-	err := SafeWriteFile(dir, "../escape.txt", []byte("bad"), 0644)
+	err := SafeWriteFile(dir, "../escape.txt", []byte("bad"), 0o600)
 	if err == nil {
 		t.Fatal("expected path traversal rejection")
 	}
@@ -17,11 +17,11 @@ func TestSafeWriteFileRejectsTraversal(t *testing.T) {
 func TestSafeWriteFileRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "real.txt")
-	os.WriteFile(target, []byte("original"), 0644)
+	os.WriteFile(target, []byte("original"), 0o600)
 	link := filepath.Join(dir, "link.txt")
 	os.Symlink(target, link)
 
-	err := SafeWriteFile(dir, "link.txt", []byte("overwrite"), 0644)
+	err := SafeWriteFile(dir, "link.txt", []byte("overwrite"), 0o600)
 	if err == nil {
 		t.Fatal("expected symlink rejection")
 	}
@@ -34,7 +34,7 @@ func TestSafeWriteFileRejectsSymlink(t *testing.T) {
 
 func TestSafeWriteFileSuccess(t *testing.T) {
 	dir := t.TempDir()
-	err := SafeWriteFile(dir, "sub/file.txt", []byte("hello"), 0644)
+	err := SafeWriteFile(dir, "sub/file.txt", []byte("hello"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSafeWriteFileRejectsParentSymlink(t *testing.T) {
 	// Create a symlink directory: dir/evil -> /tmp
 	os.Symlink(os.TempDir(), filepath.Join(dir, "evil"))
 
-	err := SafeWriteFile(dir, "evil/escape.txt", []byte("bad"), 0644)
+	err := SafeWriteFile(dir, "evil/escape.txt", []byte("bad"), 0o600)
 	if err == nil {
 		t.Fatal("expected parent directory symlink rejection")
 		// Cleanup in case test fails
@@ -59,8 +59,8 @@ func TestSafeWriteFileRejectsParentSymlink(t *testing.T) {
 
 func TestHashFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("world"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o600)
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("world"), 0o600)
 
 	h := HashFiles(dir, []string{"a.txt", "b.txt", "missing.txt"})
 	if h["a.txt"] == "" || h["a.txt"] == "MISSING" {

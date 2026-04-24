@@ -58,7 +58,7 @@ func TestFilterSourceFiles_MixedSourceAndDocs(t *testing.T) {
 func TestBuildACs_Go(t *testing.T) {
 	dir := t.TempDir()
 	// Create a minimal Go file so detectLanguage sees a .go change.
-	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package foo\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package foo\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	acs := BuildACsForTouched(dir, []string{"foo.go"})
@@ -112,7 +112,7 @@ func TestBuildACs_PythonWithoutConfig(t *testing.T) {
 
 func TestBuildACs_PythonWithPytestIni(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "pytest.ini"), []byte("[pytest]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pytest.ini"), []byte("[pytest]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	acs := BuildACsForTouched(dir, []string{"app.py"})
@@ -180,7 +180,7 @@ func TestShouldFire_DirtyGoFile(t *testing.T) {
 	gitCmd(t, dir, "config", "user.email", "test@example.com")
 	gitCmd(t, dir, "config", "user.name", "Test")
 	// Seed an initial commit so HEAD exists.
-	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitCmd(t, dir, "add", "seed.txt")
@@ -193,7 +193,7 @@ func TestShouldFire_DirtyGoFile(t *testing.T) {
 	}
 
 	// Dirty a .go file (untracked — porcelain picks this up).
-	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package foo\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package foo\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -221,7 +221,7 @@ func TestShouldFire_OnlyDocsDirty(t *testing.T) {
 	gitCmd(t, dir, "init", "-q")
 	gitCmd(t, dir, "config", "user.email", "test@example.com")
 	gitCmd(t, dir, "config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitCmd(t, dir, "add", "seed.txt")
@@ -229,7 +229,7 @@ func TestShouldFire_OnlyDocsDirty(t *testing.T) {
 	head := CaptureStartCommit(context.Background(), dir)
 	// assert.HeadSeeded: we need the SHA to build a DescentGate below.
 
-	if err := os.WriteFile(filepath.Join(dir, "NOTES.md"), []byte("# hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "NOTES.md"), []byte("# hi\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

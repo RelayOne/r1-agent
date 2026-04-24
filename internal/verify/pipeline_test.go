@@ -30,7 +30,7 @@ func TestRunSkipsUnconfigured(t *testing.T) {
 
 func TestRunBuildSuccess(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0644)
+	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o600)
 
 	p := NewPipeline("echo build-ok", "echo test-ok", "echo lint-ok")
 	outcomes, err := p.Run(context.Background(), dir)

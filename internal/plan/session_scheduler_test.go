@@ -12,7 +12,7 @@ import (
 func TestSessionSchedulerSuccess(t *testing.T) {
 	dir := t.TempDir()
 	// Create a file that acceptance criteria can check
-	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world"), 0644)
+	os.WriteFile(filepath.Join(dir, "output.txt"), []byte("hello world"), 0o600)
 
 	sow := &SOW{
 		ID: "test", Name: "Test",

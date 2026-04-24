@@ -182,7 +182,7 @@ func TestTailReadsJSONL(t *testing.T) {
 	content := `{"type":"dispatch_start","dispatch_id":"d-123"}
 {"type":"tool_call","tool":"bash","result":"hello"}
 `
-	if err := os.WriteFile(jsonl, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(jsonl, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

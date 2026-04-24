@@ -72,7 +72,7 @@ func TestDispatchCloudSwarmSOWMalformedReturns2(t *testing.T) {
 	// Write a bad SOW to a temp file.
 	dir := t.TempDir()
 	bad := dir + "/bad.json"
-	if err := os.WriteFile(bad, []byte("{not json}"), 0o644); err != nil {
+	if err := os.WriteFile(bad, []byte("{not json}"), 0o600); err != nil {
 		t.Fatalf("write bad sow: %v", err)
 	}
 	var buf bytes.Buffer

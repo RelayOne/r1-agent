@@ -59,7 +59,10 @@ func TestResearchExecutor_Execute_NoURLs_EmptyClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	if len(rd.Report.Claims) != 0 {
 		t.Errorf("want 0 claims without URLs, got %d", len(rd.Report.Claims))
 	}
@@ -80,7 +83,10 @@ func TestResearchExecutor_BuildCriteria_OneACPerClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	acs := ex.BuildCriteria(Task{ID: "T-1"}, rd)
 	if len(acs) != len(rd.Report.Claims) {
 		t.Fatalf("AC count %d != claim count %d", len(acs), len(rd.Report.Claims))
@@ -114,7 +120,10 @@ func TestResearchExecutor_VerifyFunc_Passes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	if len(rd.Report.Claims) == 0 {
 		t.Fatal("no claims extracted")
 	}
@@ -146,7 +155,10 @@ func TestResearchExecutor_VerifyFunc_Fails(t *testing.T) {
 	d, _ := ex.Execute(context.Background(),
 		Plan{Query: "Go programming language", Extra: map[string]any{"urls": []string{sourceURL}}},
 		EffortLow)
-	rd := d.(ResearchDeliverable)
+	rd, ok := d.(ResearchDeliverable)
+	if !ok {
+		t.Fatalf("deliverable: unexpected type: %T", d)
+	}
 	if len(rd.Report.Claims) == 0 {
 		t.Fatal("no claims extracted from seed body")
 	}

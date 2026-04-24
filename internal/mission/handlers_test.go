@@ -40,9 +40,9 @@ func TestResearchHandler(t *testing.T) {
 
 	// Create a temp repo with some files
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "auth.go"), []byte("package auth"), 0644)
-	os.WriteFile(filepath.Join(repoDir, "jwt.go"), []byte("package jwt"), 0644)
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "auth.go"), []byte("package auth"), 0o600)
+	os.WriteFile(filepath.Join(repoDir, "jwt.go"), []byte("package jwt"), 0o600)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main"), 0o600)
 
 	handler := NewResearchHandler(HandlerDeps{
 		Store:    store,
@@ -202,7 +202,7 @@ func TestValidateHandler(t *testing.T) {
 	// Create a repo with a file containing a TODO
 	repoDir := t.TempDir()
 	os.WriteFile(filepath.Join(repoDir, "auth.go"),
-		[]byte("package auth\n\n// TODO: implement JWT\nfunc Login() {}\n"), 0644)
+		[]byte("package auth\n\n// TODO: implement JWT\nfunc Login() {}\n"), 0o600)
 
 	handler := NewValidateHandler(HandlerDeps{
 		Store:     store,
@@ -650,7 +650,7 @@ func TestResearchHandlerDiscoveryFnSkipsFallback(t *testing.T) {
 	// Create a temp repo with files that would match the fallback search
 	repoDir := t.TempDir()
 	os.WriteFile(filepath.Join(repoDir, "jwt.go"),
-		[]byte("package jwt\n\nfunc IssueToken() {}\n"), 0644)
+		[]byte("package jwt\n\nfunc IssueToken() {}\n"), 0o600)
 
 	discoveryRan := false
 	handler := NewResearchHandler(HandlerDeps{
@@ -718,7 +718,7 @@ func TestValidateHandlerLayer4GapParsing(t *testing.T) {
 	m := setupHandlerTestMission(t, store)
 
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
 
 	handler := NewValidateHandler(HandlerDeps{
 		Store:    store,
@@ -798,7 +798,7 @@ func TestValidateHandlerLayer4FixedParsing(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
 
 	handler := NewValidateHandler(HandlerDeps{
 		Store:    store,
@@ -846,7 +846,7 @@ func TestValidateHandlerLayer4ParsesJSON(t *testing.T) {
 	})
 
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
 
 	jsonResponse := `Some preamble text before JSON.
 {"gaps":[{"category":"security","severity":"blocking","file":"api.go","line":55,"description":"No input validation on user endpoint"}],"fixed":["Missing rate limiter"]}`
@@ -911,7 +911,7 @@ func TestValidateHandlerSecurityOnlyWithDiscoveryFn(t *testing.T) {
 	// Create a repo with both TODO (non-security) and a hardcoded secret (security)
 	repoDir := t.TempDir()
 	os.WriteFile(filepath.Join(repoDir, "auth.go"),
-		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0644)
+		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0o600)
 
 	handler := NewValidateHandler(HandlerDeps{
 		Store:    store,
@@ -962,7 +962,7 @@ func TestValidateHandlerLayer3ParsesJSON(t *testing.T) {
 	m := setupHandlerTestMission(t, store)
 
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
 
 	jsonResponse := `{"verdict":"incomplete","gaps":[` +
 		`{"category":"test","severity":"blocking","file":"auth.go","line":42,"description":"No test for token expiry","suggestion":"Add expiry test"},` +
@@ -1032,7 +1032,7 @@ func TestValidateHandlerFullRulesWithoutDiscoveryFn(t *testing.T) {
 	// Same files as above, but without ValidateDiscoveryFn
 	repoDir := t.TempDir()
 	os.WriteFile(filepath.Join(repoDir, "auth.go"),
-		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0644)
+		[]byte("package auth\n\n// TODO: refactor this\nvar api_key = \"abcdefghijklmnopqrstuvwxyz1234567890\"\n"), 0o600)
 
 	handler := NewValidateHandler(HandlerDeps{
 		Store:    store,
@@ -1095,7 +1095,7 @@ func TestFullPipelineWithDiscovery(t *testing.T) {
 	}
 
 	repoDir := t.TempDir()
-	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600)
 
 	metrics := NewMetrics()
 

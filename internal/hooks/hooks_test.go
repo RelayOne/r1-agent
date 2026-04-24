@@ -201,7 +201,7 @@ func TestSafeWrite_RejectsSymlinks(t *testing.T) {
 	os.Symlink(realDir, linkPath)
 
 	target := filepath.Join(linkPath, "file.txt")
-	err := safeWrite(target, []byte("data"), 0644)
+	err := safeWrite(target, []byte("data"), 0o600)
 	if err == nil {
 		t.Error("safeWrite should reject symlinks in path")
 	}

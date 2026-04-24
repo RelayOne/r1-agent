@@ -14,7 +14,7 @@ func TestLoadJSON(t *testing.T) {
 			{"id": "T1", "description": "first", "files": ["a.go"], "dependencies": []},
 			{"id": "T2", "description": "second", "dependencies": ["T1"]}
 		]
-	}`), 0644)
+	}`), 0o600)
 
 	p, err := Load(dir)
 	if err != nil {

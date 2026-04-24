@@ -90,7 +90,7 @@ func TestWorktreeCreateMergeCleanup(t *testing.T) {
 
 	// Simulate agent: write files but do NOT commit (as the prompt instructs).
 	// This is the actual product flow.
-	os.WriteFile(filepath.Join(handle.Path, "new.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(handle.Path, "new.go"), []byte("package main\n"), 0o600)
 
 	// ModifiedFiles should detect uncommitted changes
 	files, err := worktree.ModifiedFiles(ctx, handle)
@@ -145,8 +145,8 @@ func TestWorktreeCleanupDirty(t *testing.T) {
 	handle, _ := mgr.Prepare(ctx, "dirty-test")
 
 	// Write files WITHOUT committing (dirty worktree)
-	os.WriteFile(filepath.Join(handle.Path, "uncommitted.go"), []byte("package dirty\n"), 0644)
-	os.WriteFile(filepath.Join(handle.Path, "also-dirty.go"), []byte("package dirty\n"), 0644)
+	os.WriteFile(filepath.Join(handle.Path, "uncommitted.go"), []byte("package dirty\n"), 0o600)
+	os.WriteFile(filepath.Join(handle.Path, "also-dirty.go"), []byte("package dirty\n"), 0o600)
 
 	// Cleanup should succeed despite dirty state (--force)
 	err := mgr.Cleanup(ctx, handle)
@@ -192,12 +192,12 @@ func TestParallelWorktreesMerge(t *testing.T) {
 	h2, _ := mgr.Prepare(ctx, "par-b")
 
 	// Agents write files but do NOT commit (actual product flow)
-	os.WriteFile(filepath.Join(h1.Path, "a.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(h1.Path, "a.go"), []byte("package main\n"), 0o600)
 	if err := worktree.CommitVerifiedTree(ctx, h1, []string{"a.go"}, "add a"); err != nil {
 		t.Fatalf("CommitVerifiedTree a: %v", err)
 	}
 
-	os.WriteFile(filepath.Join(h2.Path, "b.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(h2.Path, "b.go"), []byte("package main\n"), 0o600)
 	if err := worktree.CommitVerifiedTree(ctx, h2, []string{"b.go"}, "add b"); err != nil {
 		t.Fatalf("CommitVerifiedTree b: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSchedulerWithDeps(t *testing.T) {
 			{"id":"B","description":"depends on A","files":["b.go"],"dependencies":["A"]},
 			{"id":"C","description":"independent","files":["c.go"]}
 		]
-	}`), 0644)
+	}`), 0o600)
 
 	p, err := plan.Load(dir)
 	if err != nil {
@@ -386,7 +386,7 @@ func TestScopeDirectoryPattern(t *testing.T) {
 
 func TestDetectGoCommands(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0o600)
 	cmds := config.DetectCommands(dir)
 	if cmds.Build != "go build ./..." || cmds.Test != "go test ./..." || cmds.Lint != "go vet ./..." {
 		t.Errorf("cmds=%+v", cmds)
@@ -395,8 +395,8 @@ func TestDetectGoCommands(t *testing.T) {
 
 func TestDetectNodeTS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc","test":"jest"}}`), 0644)
-	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc","test":"jest"}}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0o600)
 	cmds := config.DetectCommands(dir)
 	if cmds.Build != "npm run build" {
 		t.Errorf("build=%q", cmds.Build)
@@ -714,7 +714,7 @@ func TestIgnoredNewFiles_TrackedPlusIgnored(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a .gitignore
-	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0644)
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0o600)
 	git := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
@@ -733,8 +733,8 @@ func TestIgnoredNewFiles_TrackedPlusIgnored(t *testing.T) {
 	defer mgr.Cleanup(ctx, h)
 
 	// Agent creates a tracked file and an ignored file
-	os.WriteFile(filepath.Join(h.Path, "app.txt"), []byte("tracked\n"), 0644)
-	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("ignored secret\n"), 0644)
+	os.WriteFile(filepath.Join(h.Path, "app.txt"), []byte("tracked\n"), 0o600)
+	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("ignored secret\n"), 0o600)
 
 	// ModifiedFiles should return the tracked file but NOT the ignored one
 	modified, err := worktree.ModifiedFiles(ctx, h)
@@ -790,7 +790,7 @@ func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
 	ctx := context.Background()
 
 	// Add a .gitignore
-	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0644)
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("*.local\n"), 0o600)
 	git := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
@@ -809,7 +809,7 @@ func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
 	defer mgr.Cleanup(ctx, h)
 
 	// Agent creates ONLY an ignored file
-	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("secret\n"), 0644)
+	os.WriteFile(filepath.Join(h.Path, "secret.local"), []byte("secret\n"), 0o600)
 
 	// ModifiedFiles returns empty (only untracked, but ignored by gitignore)
 	modified, err := worktree.ModifiedFiles(ctx, h)
@@ -920,7 +920,7 @@ func setupGitRepo(t *testing.T) string {
 	git("config", "user.name", "Stoke Test")
 	git("config", "commit.gpgsign", "false")
 	git("checkout", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600)
 	git("add", "-A")
 	git("commit", "-m", "initial")
 	return dir
@@ -941,7 +941,7 @@ func indexOf(s []string, val string) int {
 
 func TestInprocEnvProvisionAndExec(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0644)
+	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o600)
 
 	backend := inprocenv.New()
 	ctx := context.Background()
@@ -1027,7 +1027,7 @@ func TestInprocEnvExecFailure(t *testing.T) {
 
 func TestVerifyPipelineWithInprocEnv(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o600)
 
 	backend := inprocenv.New()
 	ctx := context.Background()

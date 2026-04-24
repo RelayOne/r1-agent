@@ -38,7 +38,7 @@ verification:
   build: required
   tests: required
   lint: optional
-`), 0644)
+`), 0o600)
 
 	o, err := New(RunConfig{
 		RepoRoot:   dir,

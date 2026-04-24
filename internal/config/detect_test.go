@@ -8,7 +8,7 @@ import (
 
 func TestDetectNode(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test","scripts":{"test":"jest","lint":"eslint ."}}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test","scripts":{"test":"jest","lint":"eslint ."}}`), 0o600)
 	cmds := DetectCommands(dir)
 	if cmds.Test != "npm test" {
 		t.Errorf("test=%q", cmds.Test)
@@ -20,7 +20,7 @@ func TestDetectNode(t *testing.T) {
 
 func TestDetectNodeMissingScripts(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"test"}`), 0o600)
 	cmds := DetectCommands(dir)
 	// No scripts section → no commands emitted
 	if cmds.Test != "" {
@@ -33,8 +33,8 @@ func TestDetectNodeMissingScripts(t *testing.T) {
 
 func TestDetectNodeWithTS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc"}}`), 0644)
-	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"scripts":{"build":"tsc"}}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte(`{}`), 0o600)
 	cmds := DetectCommands(dir)
 	if cmds.Build != "npm run build" {
 		t.Errorf("build=%q", cmds.Build)
@@ -43,7 +43,7 @@ func TestDetectNodeWithTS(t *testing.T) {
 
 func TestDetectGo(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0o600)
 	cmds := DetectCommands(dir)
 	if cmds.Build != "go build ./..." {
 		t.Errorf("build=%q", cmds.Build)
@@ -58,7 +58,7 @@ func TestDetectGo(t *testing.T) {
 
 func TestDetectRust(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname=\"test\""), 0644)
+	os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname=\"test\""), 0o600)
 	cmds := DetectCommands(dir)
 	if cmds.Build != "cargo build" {
 		t.Errorf("build=%q", cmds.Build)
@@ -70,7 +70,7 @@ func TestDetectRust(t *testing.T) {
 
 func TestDetectPython(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.poetry]"), 0644)
+	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.poetry]"), 0o600)
 	cmds := DetectCommands(dir)
 	if cmds.Test != "python -m pytest" {
 		t.Errorf("test=%q", cmds.Test)
@@ -94,7 +94,7 @@ func TestDetectProjectReact(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"react": "^18.0.0", "react-dom": "^18.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectReact {
 		t.Errorf("type=%q, want react", info.Type)
@@ -111,7 +111,7 @@ func TestDetectProjectNextJS(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"next": "^14.0.0", "react": "^18.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectNextJS {
 		t.Errorf("type=%q, want nextjs", info.Type)
@@ -130,7 +130,7 @@ func TestDetectProjectVue(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"vue": "^3.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectVue {
 		t.Errorf("type=%q, want vue", info.Type)
@@ -144,7 +144,7 @@ func TestDetectProjectSvelte(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"devDependencies": {"svelte": "^4.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectSvelte {
 		t.Errorf("type=%q, want svelte", info.Type)
@@ -158,7 +158,7 @@ func TestDetectProjectAngular(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"@angular/core": "^17.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectAngular {
 		t.Errorf("type=%q, want angular", info.Type)
@@ -170,7 +170,7 @@ func TestDetectProjectAngular(t *testing.T) {
 
 func TestDetectProjectGo(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\ngo 1.22"), 0o600)
 	info := DetectProject(dir)
 	if info.Type != ProjectGo {
 		t.Errorf("type=%q, want go", info.Type)
@@ -185,7 +185,7 @@ func TestDetectProjectWithStyles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"react": "^18.0.0"},
 		"devDependencies": {"tailwindcss": "^3.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	info := DetectProject(dir)
 	if !info.HasStyles {
 		t.Error("project with tailwindcss should have HasStyles=true")
@@ -196,9 +196,9 @@ func TestDetectProjectWithHTML(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"react": "^18.0.0"}
-	}`), 0644)
+	}`), 0o600)
 	os.MkdirAll(filepath.Join(dir, "public"), 0755)
-	os.WriteFile(filepath.Join(dir, "public", "index.html"), []byte("<html></html>"), 0644)
+	os.WriteFile(filepath.Join(dir, "public", "index.html"), []byte("<html></html>"), 0o600)
 	info := DetectProject(dir)
 	if !info.HasHTML {
 		t.Error("project with public/index.html should have HasHTML=true")
@@ -207,7 +207,7 @@ func TestDetectProjectWithHTML(t *testing.T) {
 
 func TestDetectProjectPythonWithTemplates(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.poetry]"), 0644)
+	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[tool.poetry]"), 0o600)
 	os.MkdirAll(filepath.Join(dir, "templates"), 0755)
 	info := DetectProject(dir)
 	if info.Type != ProjectPython {
@@ -238,9 +238,9 @@ func TestDetectTurborepoMonorepo(t *testing.T) {
 		"devDependencies": {"next": "14.0.0", "turbo": "latest"},
 		"workspaces": ["apps/*", "packages/*"],
 		"scripts": {"build": "turbo run build", "test": "turbo run test", "lint": "turbo run lint"}
-	}`), 0644)
-	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0644)
-	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0644)
+	}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0o600)
 
 	info := DetectProject(dir)
 	if !info.IsMonorepo {
@@ -275,7 +275,7 @@ members = [
     "crates/core",
     "crates/api",
 ]
-`), 0644)
+`), 0o600)
 
 	info := DetectProject(dir)
 	if info.Type != ProjectRust {
@@ -303,8 +303,8 @@ func TestDetectYarnWorkspaces(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"workspaces": ["packages/*"],
 		"scripts": {"build": "tsc", "test": "jest"}
-	}`), 0644)
-	os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte(``), 0644)
+	}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "yarn.lock"), []byte(``), 0o600)
 
 	info := DetectProject(dir)
 	if !info.IsMonorepo {
@@ -327,12 +327,12 @@ func TestDetectPnpmWorkspaceOnly(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"scripts": {"build": "tsc", "test": "vitest"}
-	}`), 0644)
+	}`), 0o600)
 	os.WriteFile(filepath.Join(dir, "pnpm-workspace.yaml"), []byte(`packages:
   - 'apps/*'
   - 'libs/*'
-`), 0644)
-	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0644)
+`), 0o600)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0o600)
 
 	info := DetectProject(dir)
 	if !info.IsMonorepo {
@@ -347,8 +347,8 @@ func TestDetectNxMonorepo(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"scripts": {"build": "nx build", "test": "nx test"}
-	}`), 0644)
-	os.WriteFile(filepath.Join(dir, "nx.json"), []byte(`{}`), 0644)
+	}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "nx.json"), []byte(`{}`), 0o600)
 
 	info := DetectProject(dir)
 	if !info.IsMonorepo {
@@ -364,7 +364,7 @@ func TestDetectNonMonorepoNode(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"name": "simple-app",
 		"scripts": {"build": "tsc", "test": "jest"}
-	}`), 0644)
+	}`), 0o600)
 
 	info := DetectProject(dir)
 	if info.IsMonorepo {

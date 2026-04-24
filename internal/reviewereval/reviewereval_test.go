@@ -15,7 +15,7 @@ func writeCase(t *testing.T, dir string, c Case) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, c.ID+".json")
-	if err := os.WriteFile(p, data, 0o644); err != nil {
+	if err := os.WriteFile(p, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -25,9 +25,9 @@ func TestLoadCorpusSortsAndSkipsBadFiles(t *testing.T) {
 	writeCase(t, dir, Case{ID: "b", Label: LabelReal, Spec: "s"})
 	writeCase(t, dir, Case{ID: "a", Label: LabelFake, Spec: "s"})
 	// bogus file with invalid JSON
-	os.WriteFile(filepath.Join(dir, "bad.json"), []byte("{not json"), 0o644)
+	os.WriteFile(filepath.Join(dir, "bad.json"), []byte("{not json"), 0o600)
 	// non-json file ignored
-	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0o644)
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0o600)
 	got, err := LoadCorpus(dir)
 	if err != nil {
 		t.Fatal(err)

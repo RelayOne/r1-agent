@@ -295,7 +295,11 @@ func TestStokeServer_ListMissions_Ordering(t *testing.T) {
 		}
 		var resp map[string]interface{}
 		json.Unmarshal([]byte(out), &resp)
-		ids = append(ids, resp["mission_id"].(string))
+		mid, ok := resp["mission_id"].(string)
+		if !ok {
+			t.Fatalf("mission_id: unexpected type: %T", resp["mission_id"])
+		}
+		ids = append(ids, mid)
 		time.Sleep(2 * time.Millisecond) // ensure monotonic clock separates them
 	}
 
@@ -310,7 +314,11 @@ func TestStokeServer_ListMissions_Ordering(t *testing.T) {
 		t.Fatalf("expected 3 missions, got %d", len(missions))
 	}
 	// Newest first: the last id should be first in the list
-	first := missions[0].(map[string]interface{})["mission_id"]
+	m0, ok := missions[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missions[0]: unexpected type: %T", missions[0])
+	}
+	first := m0["mission_id"]
 	if first != ids[len(ids)-1] {
 		t.Errorf("expected newest-first ordering, got %v first (wanted %s)", first, ids[len(ids)-1])
 	}

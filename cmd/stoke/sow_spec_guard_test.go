@@ -156,7 +156,7 @@ func TestScanPlaceholderStubs_RustUnimplemented(t *testing.T) {
 	src := `pub fn do_work() {
     unimplemented!()
 }`
-	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"lib.rs"})
 	if len(findings) == 0 {
@@ -175,7 +175,7 @@ pub fn placeholder() -> i32 {
     42
 }
 `
-	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"lib.rs"})
 	if len(findings) == 0 {
@@ -189,7 +189,7 @@ pub fn placeholder() -> i32 {
 func TestScanPlaceholderStubs_RustTodoBang(t *testing.T) {
 	dir := t.TempDir()
 	src := `pub fn f() { todo!() }`
-	os.WriteFile(filepath.Join(dir, "a.rs"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.rs"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"a.rs"})
 	if len(findings) == 0 {
@@ -205,7 +205,7 @@ func foo() {
 	panic("TODO: implement foo")
 }
 `
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"main.go"})
 	if len(findings) == 0 {
@@ -218,7 +218,7 @@ func TestScanPlaceholderStubs_PythonNotImplementedError(t *testing.T) {
 	src := `def process(data):
     raise NotImplementedError("coming soon")
 `
-	os.WriteFile(filepath.Join(dir, "mod.py"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "mod.py"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"mod.py"})
 	if len(findings) == 0 {
@@ -232,7 +232,7 @@ func TestScanPlaceholderStubs_TypeScriptNotImplemented(t *testing.T) {
   throw new Error("Not implemented");
 }
 `
-	os.WriteFile(filepath.Join(dir, "mod.ts"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "mod.ts"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"mod.ts"})
 	if len(findings) == 0 {
@@ -255,7 +255,7 @@ mod tests {
     }
 }
 `
-	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o644)
+	os.WriteFile(filepath.Join(dir, "lib.rs"), []byte(src), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"lib.rs"})
 	if len(findings) != 0 {
@@ -274,7 +274,7 @@ func TestScanPlaceholderStubs_NonexistentFileSkipped(t *testing.T) {
 func TestScanPlaceholderStubs_BinaryExtensionSkipped(t *testing.T) {
 	dir := t.TempDir()
 	// Even a literal "unimplemented!()" in a binary file should be skipped.
-	os.WriteFile(filepath.Join(dir, "blob.bin"), []byte("pub fn placeholder() { unimplemented!() }"), 0o644)
+	os.WriteFile(filepath.Join(dir, "blob.bin"), []byte("pub fn placeholder() { unimplemented!() }"), 0o600)
 
 	findings := scanPlaceholderStubs(dir, []string{"blob.bin"})
 	if len(findings) != 0 {
@@ -337,7 +337,7 @@ func TestCheckSpecFaithfulness_EmptyFileFlagged(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "crates/foo"), 0o755)
 	// Create a 0-byte file
-	os.WriteFile(filepath.Join(dir, "crates/foo/Cargo.toml"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "crates/foo/Cargo.toml"), nil, 0o600)
 
 	session := plan.Session{
 		ID: "S1",
@@ -355,8 +355,8 @@ func TestCheckSpecFaithfulness_PlaceholderFileFlagged(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "crates/foo/src"), 0o755)
 	// Create a valid Cargo.toml but a stub lib.rs
-	os.WriteFile(filepath.Join(dir, "crates/foo/Cargo.toml"), []byte("[package]\nname = \"foo\"\nversion = \"0.1.0\"\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "crates/foo/src/lib.rs"), []byte("pub fn placeholder() {}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "crates/foo/Cargo.toml"), []byte("[package]\nname = \"foo\"\nversion = \"0.1.0\"\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "crates/foo/src/lib.rs"), []byte("pub fn placeholder() {}\n"), 0o600)
 
 	session := plan.Session{
 		ID: "S1",
@@ -426,7 +426,7 @@ func TestLoadRawSOWText_FromFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spec.md")
 	content := "# My project\n\nStuff."
-	os.WriteFile(path, []byte(content), 0o644)
+	os.WriteFile(path, []byte(content), 0o600)
 
 	got := loadRawSOWText(path, nil)
 	if got != content {

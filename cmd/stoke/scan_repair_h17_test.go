@@ -54,7 +54,7 @@ SQL, XSS, command, path traversal.
 ## 3. Cryptography
 JWT algorithm, key derivation.
 `
-	if err := os.WriteFile(filepath.Join(dir, "vectors.md"), []byte(body), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "vectors.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	vectors := parseSecurityVectors(filepath.Join(dir, "vectors.md"))
@@ -259,19 +259,19 @@ func TestPhase3a_AggregateWalksAllSources(t *testing.T) {
 	// Deterministic scans.
 	ensureDir(t, filepath.Join(repo, "audit", "scans"))
 	_ = os.WriteFile(filepath.Join(repo, "audit", "scans", "section-0000-grep.md"),
-		[]byte("- [CRITICAL] src/a.ts:1 — det finding — fix: f\n"), 0644)
+		[]byte("- [CRITICAL] src/a.ts:1 — det finding — fix: f\n"), 0o600)
 	// Semantic scans.
 	ensureDir(t, filepath.Join(repo, "audit", "scans", "section-0000"))
 	_ = os.WriteFile(filepath.Join(repo, "audit", "scans", "section-0000", "pat.md"),
-		[]byte("- [HIGH] src/a.ts:5 — sem finding — fix: g\n"), 0644)
+		[]byte("- [HIGH] src/a.ts:5 — sem finding — fix: g\n"), 0o600)
 	// Security vectors.
 	ensureDir(t, filepath.Join(repo, "audit", "security"))
 	_ = os.WriteFile(filepath.Join(repo, "audit", "security", "vector-1-auth.md"),
-		[]byte("- [CRITICAL] src/b.ts:3 — sec finding — fix: h\n"), 0644)
+		[]byte("- [CRITICAL] src/b.ts:3 — sec finding — fix: h\n"), 0o600)
 	// Personas.
 	ensureDir(t, filepath.Join(repo, "audit", "perspectives"))
 	_ = os.WriteFile(filepath.Join(repo, "audit", "perspectives", "lead-eng.qa.md"),
-		[]byte("- [MEDIUM] src/c.ts:7 — per finding — fix: i\n"), 0644)
+		[]byte("- [MEDIUM] src/c.ts:7 — per finding — fix: i\n"), 0o600)
 
 	agg := aggregatePhase3Findings(repo)
 	for _, want := range []string{"det finding", "sem finding", "sec finding", "per finding"} {
@@ -355,7 +355,7 @@ func TestPhase3c_WritesThreeFiles(t *testing.T) {
 	// Seed aggregate finding sources so Phase 3a picks up content.
 	ensureDir(t, filepath.Join(repo, "audit", "scans"))
 	_ = os.WriteFile(filepath.Join(repo, "audit", "scans", "section-0000-grep.md"),
-		[]byte("- [CRITICAL] src/a.ts:1 — race condition — fix: lock\n"), 0644)
+		[]byte("- [CRITICAL] src/a.ts:1 — race condition — fix: lock\n"), 0o600)
 
 	cfg := &scanRepairConfig{
 		Repo: repo,
@@ -606,7 +606,7 @@ func TestH18_EndToEndHeadlessFullPipeline(t *testing.T) {
 		phase1Runner: func(ctx context.Context, cfg *scanRepairConfig) (*phase1Result, error) {
 			_ = os.MkdirAll(filepath.Join(cfg.Repo, "audit"), 0755)
 			_ = os.WriteFile(filepath.Join(cfg.Repo, "audit", "deterministic-report.md"),
-				[]byte("# Deterministic\n"), 0644)
+				[]byte("# Deterministic\n"), 0o600)
 			return &phase1Result{NumSections: 1, DeterministicFindings: 1, Sections: []string{sectionFile}}, nil
 		},
 		semanticCaller: func(ctx context.Context, dir, prompt string) string {
@@ -688,7 +688,7 @@ func writePersonasFixture(t *testing.T, repo string) {
 	for i, s := range allSlugs {
 		fmt.Fprintf(&buf, "### %d. %s\nYou are the %s. Audit for your domain.\n\n", i+1, s, s)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "audit-personas.md"), []byte(buf.String()), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "audit-personas.md"), []byte(buf.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

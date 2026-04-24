@@ -29,7 +29,7 @@ func TestBuildNativeSupervisor_QuietUntilThreshold(t *testing.T) {
 	dir := t.TempDir()
 	// File exists and is missing the required identifier — scan would
 	// find a violation if it ran.
-	os.WriteFile(filepath.Join(dir, "foo.rs"), []byte("fn nothing() {}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "foo.rs"), []byte("fn nothing() {}"), 0o600)
 	fn := BuildNativeSupervisor(SupervisorConfig{
 		WorkDir:        dir,
 		WritesPerCheck: 3,
@@ -58,7 +58,7 @@ func TestBuildNativeSupervisor_QuietUntilThreshold(t *testing.T) {
 
 func TestBuildNativeSupervisor_FiresAtThreshold(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "concern.rs"), []byte("struct GenericEntity{}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "concern.rs"), []byte("struct GenericEntity{}"), 0o600)
 	fn := BuildNativeSupervisor(SupervisorConfig{
 		WorkDir:        dir,
 		WritesPerCheck: 2,
@@ -99,7 +99,7 @@ func TestBuildNativeSupervisor_FiresAtThreshold(t *testing.T) {
 
 func TestBuildNativeSupervisor_DoesNotNagOnSameViolation(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.rs"), []byte("// nope"), 0o644)
+	os.WriteFile(filepath.Join(dir, "a.rs"), []byte("// nope"), 0o600)
 	fn := BuildNativeSupervisor(SupervisorConfig{
 		WorkDir:        dir,
 		WritesPerCheck: 1,
@@ -132,7 +132,7 @@ func TestBuildNativeSupervisor_DoesNotNagOnSameViolation(t *testing.T) {
 
 func TestBuildNativeSupervisor_IgnoresReadAndBash(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "x.rs"), []byte("nothing"), 0o644)
+	os.WriteFile(filepath.Join(dir, "x.rs"), []byte("nothing"), 0o600)
 	fn := BuildNativeSupervisor(SupervisorConfig{
 		WorkDir:        dir,
 		WritesPerCheck: 1,
@@ -166,7 +166,7 @@ func TestScanSpecExpectations_MissingFileSkipped(t *testing.T) {
 
 func TestScanSpecExpectations_ForbiddenContent(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "foo.rs"), []byte("pub struct WrongName;"), 0o644)
+	os.WriteFile(filepath.Join(dir, "foo.rs"), []byte("pub struct WrongName;"), 0o600)
 	violations := scanSpecExpectations(dir, []SpecExpectation{
 		{File: "foo.rs", MustNotContain: []string{"WrongName"}},
 	}, map[string]bool{})

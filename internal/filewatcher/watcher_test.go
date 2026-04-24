@@ -22,8 +22,8 @@ func TestNewWatcher(t *testing.T) {
 
 func TestScanDetectsFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a"), 0o600)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b"), 0o600)
 
 	w := New(Config{Root: dir})
 	if err := w.scan(false); err != nil {
@@ -38,14 +38,14 @@ func TestScanDetectsFiles(t *testing.T) {
 func TestScanDetectsChanges(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.go")
-	os.WriteFile(file, []byte("v1"), 0644)
+	os.WriteFile(file, []byte("v1"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
 
 	// Modify the file
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(file, []byte("v2-modified"), 0644)
+	os.WriteFile(file, []byte("v2-modified"), 0o600)
 
 	events, err := w.Scan()
 	if err != nil {
@@ -69,7 +69,7 @@ func TestScanDetectsCreate(t *testing.T) {
 	w := New(Config{Root: dir})
 	w.scan(false)
 
-	os.WriteFile(filepath.Join(dir, "new.go"), []byte("package new"), 0644)
+	os.WriteFile(filepath.Join(dir, "new.go"), []byte("package new"), 0o600)
 
 	events, err := w.Scan()
 	if err != nil {
@@ -90,7 +90,7 @@ func TestScanDetectsCreate(t *testing.T) {
 func TestScanDetectsDelete(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "del.go")
-	os.WriteFile(file, []byte("bye"), 0644)
+	os.WriteFile(file, []byte("bye"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
@@ -115,9 +115,9 @@ func TestScanDetectsDelete(t *testing.T) {
 
 func TestExtensionFilter(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("go"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("txt"), 0644)
-	os.WriteFile(filepath.Join(dir, "c.js"), []byte("js"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("go"), 0o600)
+	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("txt"), 0o600)
+	os.WriteFile(filepath.Join(dir, "c.js"), []byte("js"), 0o600)
 
 	w := New(Config{Root: dir, Extensions: []string{".go"}})
 	w.scan(false)
@@ -129,8 +129,8 @@ func TestExtensionFilter(t *testing.T) {
 
 func TestIgnoreHidden(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "visible.go"), []byte("v"), 0644)
-	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("h"), 0644)
+	os.WriteFile(filepath.Join(dir, "visible.go"), []byte("v"), 0o600)
+	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("h"), 0o600)
 
 	w := New(Config{Root: dir, IgnoreHidden: true})
 	w.scan(false)
@@ -144,8 +144,8 @@ func TestIgnoreDirs(t *testing.T) {
 	dir := t.TempDir()
 	subdir := filepath.Join(dir, "node_modules")
 	os.MkdirAll(subdir, 0755)
-	os.WriteFile(filepath.Join(subdir, "pkg.js"), []byte("js"), 0644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("go"), 0644)
+	os.WriteFile(filepath.Join(subdir, "pkg.js"), []byte("js"), 0o600)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("go"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
@@ -157,7 +157,7 @@ func TestIgnoreDirs(t *testing.T) {
 
 func TestSnapshot(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
@@ -171,14 +171,14 @@ func TestSnapshot(t *testing.T) {
 func TestHashMode(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.go")
-	os.WriteFile(file, []byte("content"), 0644)
+	os.WriteFile(file, []byte("content"), 0o600)
 
 	w := New(Config{Root: dir, UseHash: true})
 	w.scan(false)
 
 	// Same content, touch mtime
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(file, []byte("content"), 0644)
+	os.WriteFile(file, []byte("content"), 0o600)
 
 	events, _ := w.Scan()
 	for _, e := range events {
@@ -191,7 +191,7 @@ func TestHashMode(t *testing.T) {
 func TestHasChanged(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.go")
-	os.WriteFile(file, []byte("v1"), 0644)
+	os.WriteFile(file, []byte("v1"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
@@ -201,7 +201,7 @@ func TestHasChanged(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(file, []byte("v2"), 0644)
+	os.WriteFile(file, []byte("v2"), 0o600)
 
 	if !w.HasChanged(file) {
 		t.Error("should detect change")
@@ -210,12 +210,12 @@ func TestHasChanged(t *testing.T) {
 
 func TestInvalidationSet(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("v1"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("v1"), 0o600)
 
 	w := New(Config{Root: dir})
 	w.scan(false)
 
-	os.WriteFile(filepath.Join(dir, "b.go"), []byte("new"), 0644)
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("new"), 0o600)
 
 	paths, err := w.InvalidationSet()
 	if err != nil {
@@ -238,7 +238,7 @@ func TestOnChangeHandler(t *testing.T) {
 
 	w.scan(false) // baseline
 
-	os.WriteFile(filepath.Join(dir, "new.go"), []byte("new"), 0644)
+	os.WriteFile(filepath.Join(dir, "new.go"), []byte("new"), 0o600)
 
 	// Simulate one poll cycle
 	w.scan(true)
@@ -251,7 +251,7 @@ func TestOnChangeHandler(t *testing.T) {
 
 func TestStartStop(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0644)
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("a"), 0o600)
 
 	w := New(Config{Root: dir, Interval: 50 * time.Millisecond})
 	if err := w.Start(); err != nil {

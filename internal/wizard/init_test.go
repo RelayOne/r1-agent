@@ -19,7 +19,7 @@ func initGitRepo(t *testing.T, dir string) {
 		{"git", "config", "commit.gpgsign", "false"},
 	}
 	// Create a file and commit so HEAD exists.
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmds = append(cmds,
@@ -353,7 +353,7 @@ func TestLedgerGuardRejectsModification(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodePath := filepath.Join(ledgerDir, "abc123.json")
-	if err := os.WriteFile(nodePath, []byte(`{"id":"abc123"}`), 0644); err != nil {
+	if err := os.WriteFile(nodePath, []byte(`{"id":"abc123"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -371,7 +371,7 @@ func TestLedgerGuardRejectsModification(t *testing.T) {
 	}
 
 	// Now modify the file — the hook should reject this.
-	if err := os.WriteFile(nodePath, []byte(`{"id":"abc123","modified":true}`), 0644); err != nil {
+	if err := os.WriteFile(nodePath, []byte(`{"id":"abc123","modified":true}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := gitCmd("add", ".stoke/ledger/nodes/abc123.json"); err != nil {

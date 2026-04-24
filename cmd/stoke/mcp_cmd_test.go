@@ -48,7 +48,7 @@ mcp_servers:
     command: "/usr/bin/true"
     trust: untrusted
 `
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	return path

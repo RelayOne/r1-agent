@@ -40,7 +40,7 @@ func TestEnumerateBuckets_FindsManifests(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		if err := os.WriteFile(full, []byte(w.content), 0644); err != nil {
+		if err := os.WriteFile(full, []byte(w.content), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -85,7 +85,7 @@ func TestEnumerateBuckets_SkipsNodeModulesAndDotGit(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		if err := os.WriteFile(full, []byte("{}"), 0644); err != nil {
+		if err := os.WriteFile(full, []byte("{}"), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -104,10 +104,10 @@ func TestEnumerateBuckets_RespectsMaxDepth(t *testing.T) {
 	if err := os.MkdirAll(deep, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "apps", "foo", "package.json"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "apps", "foo", "package.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(deep, "package.json"), []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(deep, "package.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := enumerateBuckets(dir)

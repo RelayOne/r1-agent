@@ -39,7 +39,7 @@ func TestStartRetentionSweepFiresOnTick(t *testing.T) {
 		t.Fatalf("mkdir streams: %v", err)
 	}
 	stale := filepath.Join(streams, "stale.jsonl")
-	if err := os.WriteFile(stale, []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
 		t.Fatalf("seed stale file: %v", err)
 	}
 	old := time.Now().Add(-200 * 24 * time.Hour)

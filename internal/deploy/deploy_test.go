@@ -171,6 +171,7 @@ func TestDeploy_FlyctlFakeFailure(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "flyctl")
 	script := "#!/bin/sh\necho 'fake flyctl stderr: auth failed' 1>&2\nexit 1\n"
+	//nolint:gosec // test fixture: executable stub invoked by Deploy via exec
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("stamp stub: %v", err)
 	}
@@ -199,6 +200,7 @@ func TestDeploy_FlyctlStubSuccess(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "flyctl")
 	script := "#!/bin/sh\necho 'deploy ok'\nexit 0\n"
+	//nolint:gosec // test fixture: executable stub invoked by Deploy via exec
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatalf("stamp stub: %v", err)
 	}
@@ -223,6 +225,7 @@ func TestDeploy_FlyctlStubSuccess(t *testing.T) {
 func TestDeploy_FlyctlStubHealthURLOverride(t *testing.T) {
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "flyctl")
+	//nolint:gosec // test fixture: executable stub invoked by Deploy via exec
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("stamp stub: %v", err)
 	}

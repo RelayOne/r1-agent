@@ -211,7 +211,7 @@ mcp_servers:
     timeout: 20s
 `
 	path := filepath.Join(dir, "stoke.policy.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p, err := LoadPolicy(path)
@@ -260,7 +260,7 @@ mcp_servers:
     command: ./x
 `
 	path := filepath.Join(dir, "stoke.policy.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := LoadPolicy(path); err == nil {

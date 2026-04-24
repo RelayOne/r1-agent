@@ -26,7 +26,7 @@ func fakeRegistry(real map[string]bool) *httptest.Server {
 func writePackageJSON(t *testing.T, dir, contents string) string {
 	t.Helper()
 	p := filepath.Join(dir, "package.json")
-	if err := os.WriteFile(p, []byte(contents), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p

@@ -51,10 +51,18 @@ func TestCost_SumsPayloadCostUSD(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &agg); err != nil {
 		t.Fatalf("unmarshal stdout %q: %v", out.String(), err)
 	}
-	if math.Abs(agg["total_usd"].(float64)-2.0) > 1e-9 {
+	totalUSD, ok := agg["total_usd"].(float64)
+	if !ok {
+		t.Fatalf("total_usd: unexpected type: %T", agg["total_usd"])
+	}
+	if math.Abs(totalUSD-2.0) > 1e-9 {
 		t.Errorf("total_usd=%v, want 2.0", agg["total_usd"])
 	}
-	if agg["events"].(float64) != 2 {
+	events2, ok := agg["events"].(float64)
+	if !ok {
+		t.Fatalf("events: unexpected type: %T", agg["events"])
+	}
+	if events2 != 2 {
 		t.Errorf("events=%v, want 2", agg["events"])
 	}
 }
@@ -77,10 +85,18 @@ func TestCost_TypeContainsCost_ContributesEvenWithoutCostUSD(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &agg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if agg["events"].(float64) != 1 {
+	events1, ok := agg["events"].(float64)
+	if !ok {
+		t.Fatalf("events: unexpected type: %T", agg["events"])
+	}
+	if events1 != 1 {
 		t.Errorf("events=%v, want 1", agg["events"])
 	}
-	if agg["total_usd"].(float64) != 0.0 {
+	total0, ok := agg["total_usd"].(float64)
+	if !ok {
+		t.Fatalf("total_usd: unexpected type: %T", agg["total_usd"])
+	}
+	if total0 != 0.0 {
 		t.Errorf("total_usd=%v, want 0", agg["total_usd"])
 	}
 }
@@ -100,7 +116,11 @@ func TestCost_TypeContainsCost_PicksUpCostUSD(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &agg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if math.Abs(agg["total_usd"].(float64)-3.5) > 1e-9 {
+	total35, ok := agg["total_usd"].(float64)
+	if !ok {
+		t.Fatalf("total_usd: unexpected type: %T", agg["total_usd"])
+	}
+	if math.Abs(total35-3.5) > 1e-9 {
 		t.Errorf("total_usd=%v, want 3.5", agg["total_usd"])
 	}
 }
@@ -141,10 +161,18 @@ func TestCost_SessionFilter(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	// Only the M1 row's $1 should count.
-	if math.Abs(agg["total_usd"].(float64)-1.0) > 1e-9 {
+	totalM1, ok := agg["total_usd"].(float64)
+	if !ok {
+		t.Fatalf("total_usd: unexpected type: %T", agg["total_usd"])
+	}
+	if math.Abs(totalM1-1.0) > 1e-9 {
 		t.Errorf("total_usd=%v, want 1.0 under session=M1", agg["total_usd"])
 	}
-	if agg["events"].(float64) != 1 {
+	eventsM1, ok := agg["events"].(float64)
+	if !ok {
+		t.Fatalf("events: unexpected type: %T", agg["events"])
+	}
+	if eventsM1 != 1 {
 		t.Errorf("events=%v, want 1", agg["events"])
 	}
 }

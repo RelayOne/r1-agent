@@ -24,7 +24,7 @@ When the build fails:
 3. Apply the minimal fix
 4. Re-run the build
 `
-	os.WriteFile(filepath.Join(skillDir, "build-fix.md"), []byte(content), 0644)
+	os.WriteFile(filepath.Join(skillDir, "build-fix.md"), []byte(content), 0o600)
 
 	reg := NewRegistry(skillDir)
 	if err := reg.Load(); err != nil {
@@ -56,7 +56,7 @@ func TestRegistryLoadDirectory(t *testing.T) {
 
 Write the test first, then make it pass.
 `
-	os.WriteFile(filepath.Join(skillDir, "index.md"), []byte(content), 0644)
+	os.WriteFile(filepath.Join(skillDir, "index.md"), []byte(content), 0o600)
 
 	reg := NewRegistry(filepath.Join(dir, "skills"))
 	reg.Load()
@@ -73,9 +73,9 @@ func TestRegistryMatch(t *testing.T) {
 	os.MkdirAll(skillDir, 0755)
 
 	os.WriteFile(filepath.Join(skillDir, "build-fix.md"),
-		[]byte("# build-fix\n<!-- keywords: build, compile -->\nFix builds."), 0644)
+		[]byte("# build-fix\n<!-- keywords: build, compile -->\nFix builds."), 0o600)
 	os.WriteFile(filepath.Join(skillDir, "security.md"),
-		[]byte("# security\n<!-- keywords: security, auth, xss -->\nSecurity review."), 0644)
+		[]byte("# security\n<!-- keywords: security, auth, xss -->\nSecurity review."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -107,7 +107,7 @@ func TestRegistryMatchOne(t *testing.T) {
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "test.md"),
-		[]byte("# test\n<!-- keywords: test -->\nRun tests."), 0644)
+		[]byte("# test\n<!-- keywords: test -->\nRun tests."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -126,7 +126,7 @@ func TestRegistryInjectPrompt(t *testing.T) {
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "build-fix.md"),
-		[]byte("# build-fix\n<!-- keywords: build -->\nFix the build."), 0644)
+		[]byte("# build-fix\n<!-- keywords: build -->\nFix the build."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -184,9 +184,9 @@ func TestRegistryPriority(t *testing.T) {
 
 	// Same skill in both dirs
 	os.WriteFile(filepath.Join(projDir, "build.md"),
-		[]byte("# build\n<!-- keywords: build -->\nProject version."), 0644)
+		[]byte("# build\n<!-- keywords: build -->\nProject version."), 0o600)
 	os.WriteFile(filepath.Join(userDir, "build.md"),
-		[]byte("# build\n<!-- keywords: build -->\nUser version."), 0644)
+		[]byte("# build\n<!-- keywords: build -->\nUser version."), 0o600)
 
 	reg := NewRegistry(projDir, userDir)
 	reg.Load()
@@ -205,9 +205,9 @@ func TestSuggestSimilar(t *testing.T) {
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "build-fix.md"),
-		[]byte("# build-fix\n<!-- keywords: build -->\nFix."), 0644)
+		[]byte("# build-fix\n<!-- keywords: build -->\nFix."), 0o600)
 	os.WriteFile(filepath.Join(skillDir, "build-run.md"),
-		[]byte("# build-run\n<!-- keywords: build -->\nRun."), 0644)
+		[]byte("# build-run\n<!-- keywords: build -->\nRun."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -248,9 +248,9 @@ func TestRegistryList(t *testing.T) {
 	skillDir := filepath.Join(dir, "skills")
 	os.MkdirAll(skillDir, 0755)
 	os.WriteFile(filepath.Join(skillDir, "beta.md"),
-		[]byte("# beta\n<!-- keywords: beta -->\nBeta."), 0644)
+		[]byte("# beta\n<!-- keywords: beta -->\nBeta."), 0o600)
 	os.WriteFile(filepath.Join(skillDir, "alpha.md"),
-		[]byte("# alpha\n<!-- keywords: alpha -->\nAlpha."), 0644)
+		[]byte("# alpha\n<!-- keywords: alpha -->\nAlpha."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -304,7 +304,7 @@ func TestLoadBuiltinsDoesNotOverwrite(t *testing.T) {
 
 	// Create a project skill with same name as a builtin
 	os.WriteFile(filepath.Join(skillDir, "go-concurrency.md"),
-		[]byte("# go-concurrency\n<!-- keywords: goroutine -->\nProject version."), 0644)
+		[]byte("# go-concurrency\n<!-- keywords: goroutine -->\nProject version."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -351,9 +351,9 @@ func TestInjectPromptBudgeted(t *testing.T) {
 
 	// Create two skills with known sizes and Gotchas sections for keyword-match tier
 	os.WriteFile(filepath.Join(skillDir, "small.md"),
-		[]byte("# small\n<!-- keywords: build -->\nShort content.\n\n## Gotchas\n\nWatch out for X."), 0644)
+		[]byte("# small\n<!-- keywords: build -->\nShort content.\n\n## Gotchas\n\nWatch out for X."), 0o600)
 	os.WriteFile(filepath.Join(skillDir, "medium.md"),
-		[]byte("# medium\n<!-- keywords: build -->\n"+string(make([]byte, 400))+"\n\n## Gotchas\n\nWatch out for Y."), 0644)
+		[]byte("# medium\n<!-- keywords: build -->\n"+string(make([]byte, 400))+"\n\n## Gotchas\n\nWatch out for Y."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -379,7 +379,7 @@ func TestInjectPromptBudgetedStackMatch(t *testing.T) {
 
 	// Create a stack-matched skill
 	os.WriteFile(filepath.Join(skillDir, "postgres.md"),
-		[]byte("# postgres\n<!-- keywords: postgres -->\nPostgres best practices.\n\n## Gotchas\n\nAlways use connection pooling."), 0644)
+		[]byte("# postgres\n<!-- keywords: postgres -->\nPostgres best practices.\n\n## Gotchas\n\nAlways use connection pooling."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -404,7 +404,7 @@ func TestInjectPromptBudgetedEmpty(t *testing.T) {
 	os.MkdirAll(skillDir, 0755)
 
 	os.WriteFile(filepath.Join(skillDir, "unrelated.md"),
-		[]byte("# unrelated\n<!-- keywords: zebra -->\nZebra stuff."), 0644)
+		[]byte("# unrelated\n<!-- keywords: zebra -->\nZebra stuff."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -426,7 +426,7 @@ func TestInjectPromptBudgetedAlwaysOn(t *testing.T) {
 	os.MkdirAll(skillDir, 0755)
 
 	os.WriteFile(filepath.Join(skillDir, "agent-discipline.md"),
-		[]byte("# agent-discipline\n<!-- keywords: always -->\nAlways verify your work."), 0644)
+		[]byte("# agent-discipline\n<!-- keywords: always -->\nAlways verify your work."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -451,7 +451,7 @@ func TestYAMLFrontmatterParsing(t *testing.T) {
 	os.MkdirAll(skillDir, 0755)
 
 	content := "---\nname: analyzing-contracts\ndescription: Smart contract analysis patterns\ntriggers:\n  - solidity\n  - smart contract\nallowed-tools:\n  - bash\n  - read_file\n---\n\n# Analyzing Contracts\n\nWhen reviewing smart contracts...\n\n## Gotchas\n\nCheck for reentrancy."
-	os.WriteFile(filepath.Join(skillDir, "analyzing-contracts.md"), []byte(content), 0644)
+	os.WriteFile(filepath.Join(skillDir, "analyzing-contracts.md"), []byte(content), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()
@@ -488,9 +488,9 @@ func TestSKILLMDDirectoryFormat(t *testing.T) {
 	os.MkdirAll(refsDir, 0755)
 
 	os.WriteFile(filepath.Join(skillSubDir, "SKILL.md"),
-		[]byte("# my-skill\n> A test skill\n<!-- keywords: test -->\nSome content."), 0644)
+		[]byte("# my-skill\n> A test skill\n<!-- keywords: test -->\nSome content."), 0o600)
 	os.WriteFile(filepath.Join(refsDir, "examples.md"),
-		[]byte("# Examples\n\nExample 1..."), 0644)
+		[]byte("# Examples\n\nExample 1..."), 0o600)
 
 	reg := NewRegistry(skillDir)
 	reg.Load()

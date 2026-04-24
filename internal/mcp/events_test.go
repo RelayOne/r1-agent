@@ -216,10 +216,18 @@ func TestEmitter_PublishComplete(t *testing.T) {
 	p := parsePayload(t, evts[0])
 	hasKeys(t, "bus.complete", p, "server", "tool", "call_id", "duration_ms", "size_bytes")
 	// JSON round-trip: ints come back as float64.
-	if p["duration_ms"].(float64) != 123 {
+	dur, ok := p["duration_ms"].(float64)
+	if !ok {
+		t.Fatalf("duration_ms: unexpected type: %T", p["duration_ms"])
+	}
+	if dur != 123 {
 		t.Errorf("duration_ms=%v", p["duration_ms"])
 	}
-	if p["size_bytes"].(float64) != 4096 {
+	sz, ok := p["size_bytes"].(float64)
+	if !ok {
+		t.Fatalf("size_bytes: unexpected type: %T", p["size_bytes"])
+	}
+	if sz != 4096 {
 		t.Errorf("size_bytes=%v", p["size_bytes"])
 	}
 	assertNoForbiddenKeys(t, "bus.complete", p)
@@ -417,6 +425,10 @@ func TestEmitter_NoSecretLikePayload(t *testing.T) {
 		t.Fatalf("stream events: got %d want 5", len(streamEvts))
 	}
 	for _, se := range streamEvts {
-		assertNoForbiddenKeys(t, "stream/"+strings.TrimPrefix(se["type"].(string), "stoke."), se)
+		seType, ok := se["type"].(string)
+		if !ok {
+			t.Fatalf("stream event type: unexpected type: %T", se["type"])
+		}
+		assertNoForbiddenKeys(t, "stream/"+strings.TrimPrefix(seType, "stoke."), se)
 	}
 }

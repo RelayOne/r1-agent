@@ -66,7 +66,7 @@ func TestEnsureRepo_NoOpOnExistingRepoWithCommits(t *testing.T) {
 			t.Fatalf("setup git %v: %v: %s", args, err, out)
 		}
 	}
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# test\n"), 0o600)
 	for _, args := range [][]string{
 		{"add", "README.md"},
 		{"commit", "-m", "initial", "--no-gpg-sign"},

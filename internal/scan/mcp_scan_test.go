@@ -16,7 +16,7 @@ func TestScanEnvMcpUngated_CIConfig_Fires(t *testing.T) {
 	}
 	ci := filepath.Join(wfDir, "ci.yml")
 	content := "name: ci\njobs:\n  test:\n    runs-on: ubuntu-latest\n    env:\n      STOKE_MCP_UNGATED=1\n    steps:\n      - run: echo hi\n"
-	if err := os.WriteFile(ci, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(ci, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,6 +52,7 @@ func TestScanEnvMcpUngated_ScriptsCI_Fires(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(sub, "run.sh")
+	//nolint:gosec // test fixture: intentionally-executable script input to the scanner
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexport STOKE_MCP_UNGATED=1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestScanEnvMcpUngated_ReadmeDoesNotFire(t *testing.T) {
 	dir := t.TempDir()
 	readme := filepath.Join(dir, "README.md")
 	content := "# Dev tips\n\nTo bypass in local dev only: STOKE_MCP_UNGATED=1\n"
-	if err := os.WriteFile(readme, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(readme, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,7 +100,7 @@ func TestScanEnvMcpUngated_FullWalkPicksUpHiddenDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	ci := filepath.Join(wfDir, "ci.yml")
-	if err := os.WriteFile(ci, []byte("env:\n  STOKE_MCP_UNGATED=1\n"), 0o644); err != nil {
+	if err := os.WriteFile(ci, []byte("env:\n  STOKE_MCP_UNGATED=1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

@@ -67,7 +67,7 @@ func TestApplyPatch(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
 	original := "package main\n\nimport \"fmt\"\n\nfunc main() {\n}\n"
-	os.WriteFile(file, []byte(original), 0644)
+	os.WriteFile(file, []byte(original), 0o600)
 
 	patch, _ := Parse(sampleDiff)
 	result := Apply(patch, dir)
@@ -89,7 +89,7 @@ func TestDryRun(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
 	original := "package main\n\nimport \"fmt\"\n\nfunc main() {\n}\n"
-	os.WriteFile(file, []byte(original), 0644)
+	os.WriteFile(file, []byte(original), 0o600)
 
 	patch, _ := Parse(sampleDiff)
 	result := DryRun(patch, dir)
@@ -110,7 +110,7 @@ func TestApplyReverse(t *testing.T) {
 	file := filepath.Join(dir, "main.go")
 	// Start with the "after" state
 	after := "package main\n\nimport (\n\t\"fmt\"\n)\n\nfunc main() {\n}\n"
-	os.WriteFile(file, []byte(after), 0644)
+	os.WriteFile(file, []byte(after), 0o600)
 
 	patch, _ := Parse(sampleDiff)
 	result := ApplyReverse(patch, dir)
@@ -160,7 +160,7 @@ func TestApplyNewFile(t *testing.T) {
 func TestApplyDeleteFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "old.go")
-	os.WriteFile(file, []byte("package old"), 0644)
+	os.WriteFile(file, []byte("package old"), 0o600)
 
 	diff := "--- a/old.go\n" +
 		"+++ /dev/null\n" +
@@ -185,7 +185,7 @@ func TestApplyContextMismatch(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "main.go")
 	// Different content than what patch expects
-	os.WriteFile(file, []byte("totally different\ncontent\nhere\n"), 0644)
+	os.WriteFile(file, []byte("totally different\ncontent\nhere\n"), 0o600)
 
 	patch, _ := Parse(sampleDiff)
 	result := Apply(patch, dir)

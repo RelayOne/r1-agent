@@ -27,7 +27,7 @@ description: Probe skill used to verify STOKE_SKILLS_DIR is honored
 
 This skill exists only to be discovered from the STOKE_SKILLS_DIR path.
 `
-	if err := os.WriteFile(filepath.Join(extDir, "env-override-probe.md"), []byte(skillMD), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(extDir, "env-override-probe.md"), []byte(skillMD), 0o600); err != nil {
 		t.Fatalf("write probe skill: %v", err)
 	}
 
@@ -73,7 +73,7 @@ description: Probe skill used to verify project default skills path
 
 > Probe skill
 `
-	if err := os.WriteFile(filepath.Join(projectSkillsDir, "default-path-probe.md"), []byte(skillMD), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectSkillsDir, "default-path-probe.md"), []byte(skillMD), 0o600); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestDefaultRegistry_EmptyStokeSkillsDirFallsBack(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	skillMD := "---\nname: ws-probe\ndescription: Probe\n---\n# ws-probe\n\n> Probe\n"
-	if err := os.WriteFile(filepath.Join(projectSkillsDir, "ws-probe.md"), []byte(skillMD), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectSkillsDir, "ws-probe.md"), []byte(skillMD), 0o600); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
 

@@ -23,7 +23,7 @@ func seedChainAndContent(t *testing.T, root, id string, chainBody, contentBody [
 	}
 	chainPath = filepath.Join(chainDir, id+".json")
 	contentPath = filepath.Join(contentDir, id+".json")
-	if err := os.WriteFile(chainPath, chainBody, 0o644); err != nil {
+	if err := os.WriteFile(chainPath, chainBody, 0o600); err != nil {
 		t.Fatalf("write chain: %v", err)
 	}
 	if err := os.WriteFile(contentPath, contentBody, 0o600); err != nil {

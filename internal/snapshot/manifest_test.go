@@ -56,7 +56,7 @@ func TestInSnapshot(t *testing.T) {
 	}
 
 	// Create a new file after snapshot — should not be in snapshot
-	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0o600)
 	if m.InSnapshot("new.txt") {
 		t.Error("new.txt should NOT be in snapshot (created after)")
 	}
@@ -72,7 +72,7 @@ func TestPromote(t *testing.T) {
 
 	// Create a new file and promote it
 	newPath := filepath.Join(dir, "promoted.go")
-	os.WriteFile(newPath, []byte("package main\n"), 0644)
+	os.WriteFile(newPath, []byte("package main\n"), 0o600)
 
 	if m.InSnapshot("promoted.go") {
 		t.Error("promoted.go should not be in snapshot yet")
@@ -158,7 +158,7 @@ func TestManifestGitignorePatterns(t *testing.T) {
 
 	// Create a .gitignore
 	gitignore := "*.log\nbuild/\n# comment\n\n.env\n"
-	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gitignore), 0644)
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gitignore), 0o600)
 
 	// Add and commit .gitignore so it appears in ls-files
 	gitOutput(dir, "add", ".gitignore")

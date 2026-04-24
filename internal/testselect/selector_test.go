@@ -12,7 +12,7 @@ func setupProject(t *testing.T) string {
 	write := func(rel, content string) {
 		path := filepath.Join(dir, rel)
 		os.MkdirAll(filepath.Dir(path), 0755)
-		os.WriteFile(path, []byte(content), 0644)
+		os.WriteFile(path, []byte(content), 0o600)
 	}
 
 	write("internal/config/policy.go", `package config

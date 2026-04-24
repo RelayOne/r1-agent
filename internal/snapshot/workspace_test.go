@@ -26,7 +26,7 @@ func setupGitRepo(t *testing.T) string {
 	}
 
 	// Create initial commit
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Test"), 0o600)
 	cmd := exec.Command("git", "add", ".")
 	cmd.Dir = dir
 	cmd.Run()
@@ -62,9 +62,9 @@ func TestTakeWithModifiedFiles(t *testing.T) {
 	dir := setupGitRepo(t)
 
 	// Modify a tracked file
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Modified"), 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Modified"), 0o600)
 	// Add an untracked file
-	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0644)
+	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new"), 0o600)
 
 	snap, err := Take(dir, "modified")
 	if err != nil {
@@ -163,7 +163,7 @@ func TestFileState(t *testing.T) {
 
 	// Create a file with specific content
 	content := []byte("package main\nfunc main() {}\n")
-	os.WriteFile(filepath.Join(dir, "main.go"), content, 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), content, 0o600)
 
 	snap, _ := Take(dir, "filestate")
 

@@ -21,7 +21,7 @@ func TestLoadWorkerLogExcerpt_RendersToolCalls(t *testing.T) {
 {"ts":"2026-04-20T19:45:20.000Z","tool":"edit_file","input":"{\"path\":\"src/foo.ts\"}","result":"Edit applied","result_len":12,"duration_ms":8}
 {"ts":"2026-04-20T19:45:25.000Z","tool":"bash","input":"{\"command\":\"false\"}","err":"exit 1","duration_ms":5}
 `
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,7 +60,7 @@ func TestLoadWorkerLogExcerpt_MaxCalls(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		b.WriteString(`{"ts":"2026-04-20T19:45:12.000Z","tool":"bash","input":"{}","result":"ok","result_len":2,"duration_ms":1}` + "\n")
 	}
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	excerpt := LoadWorkerLogExcerpt(path, 5)
@@ -93,7 +93,7 @@ func TestLatestWorkerLogForTask(t *testing.T) {
 	newer := filepath.Join(logsDir, "T1-1000000000000000005.jsonl")
 	otherTask := filepath.Join(logsDir, "T2-1000000000000000009.jsonl")
 	for _, p := range []string{older, newer, otherTask} {
-		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte("{}\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -124,7 +124,7 @@ func TestWorkerLogRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "T42-" + fmt.Sprintf("%d", time.Now().UnixNano()) + ".jsonl")
 
 	// Open the file the same way native_runner.go does.
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

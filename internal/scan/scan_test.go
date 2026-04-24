@@ -8,7 +8,7 @@ import (
 
 func TestScanTSIgnore(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.ts"), []byte("// @ts-ignore\nconst x: any = 1;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "bad.ts"), []byte("// @ts-ignore\nconst x: any = 1;\n"), 0o600)
 
 	result, err := ScanFiles(dir, DefaultRules(), nil)
 	if err != nil {
@@ -28,7 +28,7 @@ func TestScanTSIgnore(t *testing.T) {
 
 func TestScanAsAny(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "cast.ts"), []byte("const x = foo as any;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "cast.ts"), []byte("const x = foo as any;\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -42,7 +42,7 @@ func TestScanAsAny(t *testing.T) {
 
 func TestScanConsoleLog(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "debug.js"), []byte("console.log('debug');\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "debug.js"), []byte("console.log('debug');\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -56,7 +56,7 @@ func TestScanConsoleLog(t *testing.T) {
 
 func TestScanTestOnly(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "test.ts"), []byte("it.only('should work', () => {});\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "test.ts"), []byte("it.only('should work', () => {});\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -70,7 +70,7 @@ func TestScanTestOnly(t *testing.T) {
 
 func TestScanHardcodedSecret(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "config.go"), []byte(`password := "supersecretpassword123"`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "config.go"), []byte(`password := "supersecretpassword123"`+"\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -84,7 +84,7 @@ func TestScanHardcodedSecret(t *testing.T) {
 
 func TestScanCleanFile(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "clean.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "clean.go"), []byte("package main\n\nfunc main() {}\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	if len(result.Findings) != 0 {
@@ -94,8 +94,8 @@ func TestScanCleanFile(t *testing.T) {
 
 func TestScanModifiedOnly(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.ts"), []byte("// @ts-ignore\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "also_bad.ts"), []byte("// @ts-ignore\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "bad.ts"), []byte("// @ts-ignore\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "also_bad.ts"), []byte("// @ts-ignore\n"), 0o600)
 
 	// Only scan bad.ts
 	result, _ := ScanFiles(dir, DefaultRules(), []string{"bad.ts"})
@@ -106,7 +106,7 @@ func TestScanModifiedOnly(t *testing.T) {
 
 func TestScanPythonNoqa(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.py"), []byte("x = 1  # noqa: E501\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "bad.py"), []byte("x = 1  # noqa: E501\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -120,7 +120,7 @@ func TestScanPythonNoqa(t *testing.T) {
 
 func TestScanGoNolint(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package main\n\nvar x = 1 // nolint:unused\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "bad.go"), []byte("package main\n\nvar x = 1 // nolint:unused\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
@@ -147,7 +147,7 @@ func TestHasBlocking(t *testing.T) {
 
 func TestScanDangerousHTML(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "content.tsx"), []byte(`<div dangerouslySetInnerHTML={{ __html: html }} />`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "content.tsx"), []byte(`<div dangerouslySetInnerHTML={{ __html: html }} />`+"\n"), 0o600)
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
 	for _, f := range result.Findings {
@@ -162,7 +162,7 @@ func TestScanDangerousHTML(t *testing.T) {
 
 func TestScanOutlineNone(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "styles.css"), []byte("button { outline: none; }\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "styles.css"), []byte("button { outline: none; }\n"), 0o600)
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
 	for _, f := range result.Findings {
@@ -177,7 +177,7 @@ func TestScanOutlineNone(t *testing.T) {
 
 func TestScanInlineStyleColor(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "card.tsx"), []byte(`<div style={{ color: "#ff0000" }}>Hi</div>`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "card.tsx"), []byte(`<div style={{ color: "#ff0000" }}>Hi</div>`+"\n"), 0o600)
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
 	for _, f := range result.Findings {
@@ -192,7 +192,7 @@ func TestScanInlineStyleColor(t *testing.T) {
 
 func TestScanDivOnClick(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "button.jsx"), []byte(`<div className="btn" onClick={go}>Click</div>`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "button.jsx"), []byte(`<div className="btn" onClick={go}>Click</div>`+"\n"), 0o600)
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	found := false
 	for _, f := range result.Findings {
@@ -209,7 +209,7 @@ func TestScanDivOnClick(t *testing.T) {
 
 func TestSecuritySurfaceCORS(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "server.ts"), []byte(`res.setHeader("Access-Control-Allow-Origin", "*")`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "server.ts"), []byte(`res.setHeader("Access-Control-Allow-Origin", "*")`+"\n"), 0o600)
 	result, _ := MapSecuritySurface(dir, nil)
 	found := false
 	for _, s := range result.Surfaces {
@@ -224,7 +224,7 @@ func TestSecuritySurfaceCORS(t *testing.T) {
 
 func TestSecuritySurfaceLocalStorage(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "auth.ts"), []byte(`localStorage.setItem("auth_token", token)`+"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "auth.ts"), []byte(`localStorage.setItem("auth_token", token)`+"\n"), 0o600)
 	result, _ := MapSecuritySurface(dir, nil)
 	found := false
 	for _, s := range result.Surfaces {
@@ -240,8 +240,8 @@ func TestSecuritySurfaceLocalStorage(t *testing.T) {
 func TestScanSkipsNodeModules(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755)
-	os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "bad.js"), []byte("eval('x')\n"), 0644)
-	os.WriteFile(filepath.Join(dir, "src.js"), []byte("var x = 1;\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "bad.js"), []byte("eval('x')\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "src.js"), []byte("var x = 1;\n"), 0o600)
 
 	result, _ := ScanFiles(dir, DefaultRules(), nil)
 	for _, f := range result.Findings {

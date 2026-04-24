@@ -224,7 +224,11 @@ func TestFanoutExpandTask_FailedStubIsolated(t *testing.T) {
 			expandFailed[i] = true
 			continue
 		}
-		expanded[i] = fr.Value.(Session)
+		sess, ok := fr.Value.(Session)
+		if !ok {
+			t.Fatalf("fr.Value: unexpected type: %T", fr.Value)
+		}
+		expanded[i] = sess
 	}
 	kept := expanded[:0]
 	for i, s := range expanded {

@@ -273,7 +273,7 @@ func TestFailureSummaryAllPass(t *testing.T) {
 
 func TestAutoDetectGo(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module test\n"), 0o600)
 
 	cmds := AutoDetect(dir)
 	if cmds.Build != "go build ./..." {

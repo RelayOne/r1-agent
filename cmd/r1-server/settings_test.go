@@ -81,7 +81,7 @@ retention:
   memory_bus_days: 7
   ledger_days: 60
 `)
-	if err := os.WriteFile(path, body, 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	t.Setenv("R1_CONFIG_PATH", path)
@@ -124,7 +124,7 @@ func TestSettings_MalformedYAML_500(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "bad.yaml")
 	// Unbalanced YAML: an opening brace with no close.
-	if err := os.WriteFile(path, []byte("server: {port: 80\nretention: ["), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("server: {port: 80\nretention: ["), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	t.Setenv("R1_CONFIG_PATH", path)

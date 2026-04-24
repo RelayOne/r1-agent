@@ -187,7 +187,7 @@ func TestScanDeclaredSymbolsTreeSitter_FullPath(t *testing.T) {
 export function acknowledgeAlarm(id: string) { return id; }
 export class AlarmSchema {}
 // resolveAlarm stub missing — H-28 must catch this
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Prose uses phrasing the extractor patterns handle individually
@@ -212,7 +212,7 @@ func TestScanDeclaredSymbolsTreeSitter_PrecisionVsRegex(t *testing.T) {
 	abs := filepath.Join(root, "x.ts")
 	if err := os.WriteFile(abs, []byte(`
 export const getUserById = async (id: string) => id;
-`), 0o644); err != nil {
+`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	prose := "The getUserById handler must be exported."

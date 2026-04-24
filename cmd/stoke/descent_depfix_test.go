@@ -122,7 +122,7 @@ func TestAddRootDevDeps_AddsNewPackages(t *testing.T) {
     "typescript": "^5.0.0"
   }
 }`
-	if err := os.WriteFile(pkg, []byte(initial), 0o644); err != nil {
+	if err := os.WriteFile(pkg, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -158,7 +158,7 @@ func TestAddRootDevDeps_SkipsDuplicates(t *testing.T) {
     "typescript": "^5.0.0"
   }
 }`
-	_ = os.WriteFile(pkg, []byte(initial), 0o644)
+	_ = os.WriteFile(pkg, []byte(initial), 0o600)
 
 	// zod exists in deps → skipped even though we're adding to devDeps.
 	// typescript exists in devDeps → skipped.
@@ -193,7 +193,7 @@ func TestAddRootDevDeps_SkipsDuplicates(t *testing.T) {
 func TestAddRootDevDeps_CreatesDevDepsIfMissing(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package.json")
-	_ = os.WriteFile(pkg, []byte(`{"name":"root"}`), 0o644)
+	_ = os.WriteFile(pkg, []byte(`{"name":"root"}`), 0o600)
 
 	if err := addRootDevDeps(dir, []string{"zod"}); err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestAddRootDevDeps_NoChangeIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package.json")
 	initial := `{"name":"root","devDependencies":{"zod":"^3.22.0"}}`
-	_ = os.WriteFile(pkg, []byte(initial), 0o644)
+	_ = os.WriteFile(pkg, []byte(initial), 0o600)
 	info1, _ := os.Stat(pkg)
 
 	// Adding an already-declared pkg should not rewrite the file.
@@ -238,7 +238,7 @@ func TestAddRootDevDeps_MissingPackageJson(t *testing.T) {
 func TestAddRootDevDeps_CorruptJSON(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package.json")
-	_ = os.WriteFile(pkg, []byte(`{ "not valid json`), 0o644)
+	_ = os.WriteFile(pkg, []byte(`{ "not valid json`), 0o600)
 	err := addRootDevDeps(dir, []string{"zod"})
 	if err == nil {
 		t.Error("expected error for corrupt package.json")

@@ -237,7 +237,7 @@ func TestMigrate_PreexistingNodes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal seed %s: %v", n.ID, err)
 		}
-		if err := os.WriteFile(filepath.Join(nodesDir, n.ID+".json"), raw, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(nodesDir, n.ID+".json"), raw, 0o600); err != nil {
 			t.Fatalf("write seed %s: %v", n.ID, err)
 		}
 	}

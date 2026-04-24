@@ -352,20 +352,20 @@ func main() {
 func NewApp() string {
 	return "app"
 }
-`), 0644)
+`), 0o600)
 
 	os.WriteFile(filepath.Join(dir, "util.go"), []byte(`package main
 
 func Helper(x int) int {
 	return x * 2
 }
-`), 0644)
+`), 0o600)
 
 	// Test file should be skipped
 	os.WriteFile(filepath.Join(dir, "main_test.go"), []byte(`package main
 import "testing"
 func TestMain(t *testing.T) {}
-`), 0644)
+`), 0o600)
 
 	a, err := AnalyzeDir(dir)
 	if err != nil {
@@ -390,10 +390,10 @@ func TestAnalyzeFiles(t *testing.T) {
 
 	os.WriteFile(filepath.Join(dir, "a.go"), []byte(`package a
 func A() {}
-`), 0644)
+`), 0o600)
 	os.WriteFile(filepath.Join(dir, "b.go"), []byte(`package a
 func B() {}
-`), 0644)
+`), 0o600)
 
 	a, err := AnalyzeFiles(dir, []string{"a.go"})
 	if err != nil {
@@ -471,12 +471,12 @@ func TestSkipHiddenAndVendor(t *testing.T) {
 	dir := t.TempDir()
 
 	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
-	os.WriteFile(filepath.Join(dir, ".git", "hidden.go"), []byte("package hidden\nfunc H() {}"), 0644)
+	os.WriteFile(filepath.Join(dir, ".git", "hidden.go"), []byte("package hidden\nfunc H() {}"), 0o600)
 
 	os.MkdirAll(filepath.Join(dir, "vendor", "lib"), 0755)
-	os.WriteFile(filepath.Join(dir, "vendor", "lib", "lib.go"), []byte("package lib\nfunc L() {}"), 0644)
+	os.WriteFile(filepath.Join(dir, "vendor", "lib", "lib.go"), []byte("package lib\nfunc L() {}"), 0o600)
 
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}"), 0644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}"), 0o600)
 
 	a, _ := AnalyzeDir(dir)
 	if len(a.Files) != 1 {

@@ -92,7 +92,7 @@ func TestLoadSOWFromDir(t *testing.T) {
 		},
 	}
 	data, _ := json.MarshalIndent(sow, "", "  ")
-	os.WriteFile(filepath.Join(dir, "stoke-sow.json"), data, 0644)
+	os.WriteFile(filepath.Join(dir, "stoke-sow.json"), data, 0o600)
 
 	loaded, err := LoadSOWFromDir(dir)
 	if err != nil {
@@ -371,7 +371,7 @@ members = [
     "crates/api",
     "crates/cli",
 ]
-`), 0644)
+`), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Language != "rust" {
@@ -394,9 +394,9 @@ func TestDetectStackTurborepo(t *testing.T) {
 		"name": "framebright",
 		"devDependencies": {"next": "14.0.0", "turbo": "latest"},
 		"workspaces": ["apps/*", "packages/*"]
-	}`), 0644)
-	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0644)
-	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(`lockfileVersion: '9.0'`), 0644)
+	}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "turbo.json"), []byte(`{}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(`lockfileVersion: '9.0'`), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Language != "typescript" {
@@ -423,7 +423,7 @@ func TestDetectStackReactNative(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"dependencies": {"react-native": "0.73.0", "react": "18.0.0"}
-	}`), 0644)
+	}`), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Framework != "react-native" {
@@ -436,13 +436,13 @@ func TestDetectStackPnpmWorkspace(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
 		"name": "mono",
 		"devDependencies": {}
-	}`), 0644)
+	}`), 0o600)
 	os.WriteFile(filepath.Join(dir, "pnpm-workspace.yaml"), []byte(`packages:
   - 'apps/*'
   - 'packages/*'
   - 'tools/*'
-`), 0644)
-	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0644)
+`), 0o600)
+	os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(``), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Monorepo == nil {
@@ -458,7 +458,7 @@ func TestDetectStackPnpmWorkspace(t *testing.T) {
 
 func TestDetectStackGo(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\ngo 1.22\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\ngo 1.22\n"), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Language != "go" {
@@ -471,7 +471,7 @@ func TestDetectStackGo(t *testing.T) {
 
 func TestDetectStackPython(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"test\"\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\nname = \"test\"\n"), 0o600)
 
 	spec := DetectStackFromRepo(dir)
 	if spec.Language != "python" {

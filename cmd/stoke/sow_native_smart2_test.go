@@ -263,7 +263,7 @@ func TestRunCrossModelReview_WithDiff_CallsProvider(t *testing.T) {
 	initEmptyGitRepo(t, dir)
 	// Modify the seeded file so `git diff HEAD` picks it up (untracked
 	// files don't show in diff HEAD without --intent-to-add).
-	os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("changed\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("changed\n"), 0o600)
 
 	prov := &mockChatProvider{response: `{"approved":true,"score":90,"summary":"fine","concerns":[]}`}
 	cfg := sowNativeConfig{RepoRoot: dir, ReviewProvider: prov, Model: "m"}
@@ -450,7 +450,7 @@ func initEmptyGitRepo(t *testing.T, dir string) {
 	mustCmd("git", "init")
 	mustCmd("git", "config", "user.name", "Test")
 	mustCmd("git", "config", "user.email", "test@example.com")
-	os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o600)
 	mustCmd("git", "add", ".")
 	mustCmd("git", "commit", "-m", "init", "--no-gpg-sign")
 }

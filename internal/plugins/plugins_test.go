@@ -35,7 +35,7 @@ func TestDiscoverWithPlugin(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,7 +77,7 @@ func TestHooksForEvent(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(manifest)
-	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestEnabledFilter(t *testing.T) {
 			Version: "1.0.0",
 		}
 		data, _ := json.Marshal(manifest)
-		if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

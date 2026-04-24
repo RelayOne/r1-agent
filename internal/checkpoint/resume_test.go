@@ -24,9 +24,9 @@ func TestRestoreFromCheckpoint_FullCycle(t *testing.T) {
 	// Write session markers as if S1, S3, and S2 all completed.
 	markerDir := filepath.Join(dir, ".stoke", "sow-state-markers")
 	os.MkdirAll(markerDir, 0o755)
-	os.WriteFile(filepath.Join(markerDir, "S1.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(markerDir, "S2.json"), []byte(`{}`), 0o644)
-	os.WriteFile(filepath.Join(markerDir, "S3.json"), []byte(`{}`), 0o644)
+	os.WriteFile(filepath.Join(markerDir, "S1.json"), []byte(`{}`), 0o600)
+	os.WriteFile(filepath.Join(markerDir, "S2.json"), []byte(`{}`), 0o600)
+	os.WriteFile(filepath.Join(markerDir, "S3.json"), []byte(`{}`), 0o600)
 
 	// Resume from CP-006 (session-start:S2) — S2's marker
 	// should be DELETED because it's post-checkpoint work.

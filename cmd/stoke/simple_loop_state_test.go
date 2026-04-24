@@ -24,7 +24,7 @@ func initGitRepoWithCommit(t *testing.T, dir string, msg string) string {
 		}
 	}
 	run("init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	run("add", "README.md")
@@ -44,7 +44,7 @@ func initGitRepoWithCommit(t *testing.T, dir string, msg string) string {
 
 func appendCommit(t *testing.T, dir, filename, msg string) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, filename), []byte("y"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte("y"), 0o600); err != nil {
 		t.Fatalf("append file: %v", err)
 	}
 	run := func(args ...string) {
@@ -125,7 +125,7 @@ func TestSimpleLoopState_LoadMalformed(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(simpleLoopStateFile(repo), []byte("{not json"), 0o644); err != nil {
+	if err := os.WriteFile(simpleLoopStateFile(repo), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadSimpleLoopState(repo)
@@ -146,7 +146,7 @@ func TestSimpleLoopState_LoadWrongVersion(t *testing.T) {
 		"current_round": 2,
 		"sow_hash":      "abc",
 	})
-	if err := os.WriteFile(simpleLoopStateFile(repo), body, 0o644); err != nil {
+	if err := os.WriteFile(simpleLoopStateFile(repo), body, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := LoadSimpleLoopState(repo)
@@ -276,7 +276,7 @@ func TestSaveSimpleLoopState_AtomicRename(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".stoke"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(simpleLoopStateFile(repo), []byte("junk"), 0o644); err != nil {
+	if err := os.WriteFile(simpleLoopStateFile(repo), []byte("junk"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	state := &simpleLoopState{
@@ -362,7 +362,7 @@ func TestValidateResumeCompat_HeadDivergedRefuses(t *testing.T) {
 	// Rewrite history: amend the first commit so savedHead is orphaned.
 	run("checkout", "-q", "--orphan", "new-branch")
 	run("rm", "-rf", "--cached", ".")
-	if err := os.WriteFile(filepath.Join(repo, "C.md"), []byte("c"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "C.md"), []byte("c"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("add", "C.md")
@@ -415,7 +415,7 @@ func TestValidateResumeCompat_DirtyTreeRefuses(t *testing.T) {
 	repo := t.TempDir()
 	head := initGitRepoWithCommit(t, repo, "c1")
 	// Introduce dirt — an untracked file is enough.
-	if err := os.WriteFile(filepath.Join(repo, "half-written.ts"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "half-written.ts"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	h := hashProse("spec A")
@@ -469,7 +469,7 @@ func TestRepoTreeIsDirty_StagedChangeTrue(t *testing.T) {
 	_ = initGitRepoWithCommit(t, repo, "c1")
 	_ = appendCommit(t, repo, "a.ts", "c2") // establish baseline
 	// Stage a modification without committing.
-	if err := os.WriteFile(filepath.Join(repo, "a.ts"), []byte("modified"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "a.ts"), []byte("modified"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", repo, "add", "a.ts")
@@ -491,7 +491,7 @@ func TestRepoTreeIsDirty_StagedChangeTrue(t *testing.T) {
 func TestRepoTreeIsDirty_UntrackedFileTrue(t *testing.T) {
 	repo := t.TempDir()
 	_ = initGitRepoWithCommit(t, repo, "c1")
-	if err := os.WriteFile(filepath.Join(repo, "new.ts"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "new.ts"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dirty, err := repoTreeIsDirty(repo)

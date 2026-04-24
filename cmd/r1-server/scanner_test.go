@@ -141,7 +141,7 @@ func TestScannerTailsStreamFile(t *testing.T) {
 
 	repo := t.TempDir()
 	streamPath := filepath.Join(repo, "stream.jsonl")
-	if err := os.WriteFile(streamPath, []byte{}, 0o644); err != nil {
+	if err := os.WriteFile(streamPath, []byte{}, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,7 +170,7 @@ func TestScannerTailsStreamFile(t *testing.T) {
 	// brings up a tailer for this session.
 
 	// Append two events to the stream file.
-	f, err := os.OpenFile(streamPath, os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(streamPath, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,10 +229,10 @@ func TestScannerLoadsLedger(t *testing.T) {
 
 	nodeJSON := `{"id":"node-abc","type":"task","mission_id":"m1","created_at":"2026-04-20T21:00:00Z","created_by":"dev"}`
 	edgeJSON := `{"id":"e-1","from":"node-abc","to":"node-def","type":"depends_on"}`
-	if err := os.WriteFile(filepath.Join(nodesDir, "node-abc.json"), []byte(nodeJSON), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nodesDir, "node-abc.json"), []byte(nodeJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(edgesDir, "e-1.json"), []byte(edgeJSON), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(edgesDir, "e-1.json"), []byte(edgeJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

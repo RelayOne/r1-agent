@@ -301,7 +301,7 @@ func TestEnforceSweepRetainForeverSkipsFileSweeps(t *testing.T) {
 
 func writeFile(t *testing.T, path, content string, mtime time.Time) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %q: %v", path, err)
 	}
 	if err := os.Chtimes(path, mtime, mtime); err != nil {
