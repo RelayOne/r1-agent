@@ -157,11 +157,6 @@ func (m *SecurityMap) Summary() string {
 	return strings.Join(parts, "\n")
 }
 
-func min(a, b int) int {
-	if a < b { return a }
-	return b
-}
-
 func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
 }

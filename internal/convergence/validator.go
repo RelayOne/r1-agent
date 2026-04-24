@@ -868,10 +868,6 @@ func duplicateLogicRule() Rule {
 			var findings []Finding
 			// Look for identical sequences of trimmed lines (at least 3 lines long) appearing 3+ times.
 			// Build a map of 3-line sliding windows.
-			type block struct {
-				text  string
-				lines []int
-			}
 			windowSize := 3
 			if len(lines) < windowSize {
 				return nil

@@ -29,7 +29,6 @@
 package plan
 
 import (
-	"context"
 	"encoding/xml"
 	"fmt"
 	"os/exec"
@@ -491,8 +490,3 @@ func truncateForPreCheck(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// runGitStatusCheck is an alias exposed for tests that want to
-// intercept the git call. Not used in production code path.
-var runGitStatusCheck = func(ctx context.Context, repoRoot, path string) bool {
-	return pathShowsInGitStatus(repoRoot, path)
-}

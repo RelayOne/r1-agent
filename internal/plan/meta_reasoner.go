@@ -184,29 +184,6 @@ type MetaSessionSummary struct {
 	ACsPassed     int    `json:"acs_passed"`
 }
 
-// seededRootCauseClasses is the canonical list of failure categories
-// observed empirically across prior Stoke runs. The prompt shows these
-// to the LLM so classification reuses stable names when applicable and
-// only coins new class names when a genuine novel pattern appears.
-//
-// Keep in sync with the descriptions in the prompt. When you add a
-// class here, also update metaReasonerPrompt below.
-var seededRootCauseClasses = []struct {
-	Name        string
-	Description string
-}{
-	{"missing_devdep", "script references a binary not declared in the package's devDependencies"},
-	{"missing_script_target", "script references a helper file or path not present on disk"},
-	{"cross_package_contract", "code imports a symbol another package doesn't export (or exports under a different name)"},
-	{"empty_tsconfig_include", "TypeScript TS18003 — tsconfig.include matched zero files"},
-	{"package_exports_mismatch", "package.json exports map points to a file that doesn't exist"},
-	{"turbo_pipeline_drift", "turbo.json (or equivalent) references a task script a package doesn't define"},
-	{"install_hang", "pnpm/npm/cargo/go install stalled or deadlocked"},
-	{"spec_ambiguity", "the SOW didn't tell the worker which version / library / shape to use — not a code bug, a prompt bug"},
-	{"reviewer_over_dispatch", "per-task reviewer flagged polish beyond the task's scope, spawning follow-ups that added cost without closing an AC"},
-	{"reviewer_under_dispatch", "per-task reviewer missed a real gap that later failed a downstream AC"},
-}
-
 // RunMetaReasoning consults the LLM to classify this run's failures
 // into root-cause categories and emit prevention rules. Deterministic
 // fact gathering happens in the caller — this function consumes facts

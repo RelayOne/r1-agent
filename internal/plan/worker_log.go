@@ -136,11 +136,11 @@ func LoadWorkerLogExcerpt(path string, maxCalls int) string {
 // shortenOneLine collapses whitespace and truncates s for inline display in
 // the reviewer prompt. Very long bash outputs become a single visible line
 // with "..." suffix so one call takes at most ~1-2 lines in the excerpt.
-func shortenOneLine(s string, max int) string {
+func shortenOneLine(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " \\n ")
 	s = strings.ReplaceAll(s, "\t", " ")
-	if len(s) > max {
-		s = s[:max] + "…"
+	if len(s) > maxLen {
+		s = s[:maxLen] + "…"
 	}
 	return s
 }

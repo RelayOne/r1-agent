@@ -355,11 +355,3 @@ func truncateBytes(s string, n int) string {
 	return s[:n] + "\n... [truncated]\n"
 }
 
-// max is a tiny local helper so we don't depend on Go 1.21's builtin
-// being the same shape everywhere the repo builds.
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

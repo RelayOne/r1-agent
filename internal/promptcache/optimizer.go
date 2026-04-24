@@ -255,10 +255,3 @@ func hashContent(s string) string {
 func estimateTokens(s string) int {
 	return (len(s) + 3) / 4
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

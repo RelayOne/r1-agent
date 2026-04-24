@@ -156,15 +156,6 @@ func (rustEcosystem) MissingPublicSurface(projectRoot string, files []string) ([
 	return out, nil
 }
 
-// rustcErrRE matches `cargo check` / rustc error lines:
-//
-//	error[E0425]: cannot find value `foo` in this scope
-//	 --> src/foo.rs:12:5
-//
-// We merge the code line + location line into one CompileErr.
-var rustErrHeadRE = regexp.MustCompile(`^error(?:\[(E\d+)\])?:\s*(.*)$`)
-var rustErrLocRE = regexp.MustCompile(`^\s*-->\s+(.+?):(\d+):(\d+)`)
-
 func (rustEcosystem) CompileErrors(ctx context.Context, projectRoot string, files []string) ([]CompileErr, error) {
 	manifests := rustCollectManifests(projectRoot)
 	if len(manifests) == 0 {

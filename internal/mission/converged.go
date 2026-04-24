@@ -327,18 +327,6 @@ func splitReviewAndVerdict(response string) (review, verdict string) {
 	return review, verdict
 }
 
-// Kept for backward compatibility — some callers may use these directly.
-func buildReviewPrompt(combinedContext string) string {
-	return buildReviewAndJudgePrompt(combinedContext)
-}
-
-func buildCompletenessPrompt(combinedContext, review string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Review:\n%s\n\n", review)
-	fmt.Fprintf(&b, "Is this review COMPLETE or INCOMPLETE? Respond: VERDICT: COMPLETE or VERDICT: INCOMPLETE: <gaps>\n")
-	return b.String()
-}
-
 // isCompleteVerdict parses the arbiter's completeness judgment.
 func isCompleteVerdict(verdict string) bool {
 	v := strings.TrimSpace(strings.ToUpper(verdict))

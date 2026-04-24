@@ -22,9 +22,7 @@ import (
 // tag, it is an empty struct that exists only so callers compile
 // unchanged — all methods return ChromeLaunchFailedError with a
 // "rebuild with -tags stoke_rod" cause.
-type RodClient struct {
-	cfg RodConfig
-}
+type RodClient struct{}
 
 // Fetch is a stub that returns ChromeLaunchFailedError.
 func (r *RodClient) Fetch(ctx context.Context, url string) (FetchResult, error) {

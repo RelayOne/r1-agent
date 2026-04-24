@@ -1252,12 +1252,12 @@ func buildRefactorDirective(ac AcceptanceCriterion, category, rootCause, failure
 }
 
 // truncateDescentLog trims a string for log display.
-func truncateDescentLog(s string, max int) string {
+func truncateDescentLog(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= max {
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }
 
 // pathMentionRE matches repo-relative-ish path tokens embedded in

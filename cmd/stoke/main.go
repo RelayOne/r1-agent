@@ -4179,13 +4179,6 @@ func auditCmd(args []string) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // newEventBus creates a pre-configured event bus with standard observers and gates.
 func newEventBus() *hub.Bus {
 	bus := hub.New()
@@ -5576,35 +5569,6 @@ func detectSmartDefaults() SmartDefaults {
 	d.RunnerMode = "claude"
 	d.Notes = append(d.Notes, "no runner detected — defaulting to claude (will require `claude` binary)")
 	return d
-}
-
-// firstNonEmpty returns the first non-empty string from the argument list.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// probeReachable performs a quick GET to check if a URL responds at all.
-// Used for LiteLLM autodetection. Any HTTP response (including 401/404) counts
-// as "something is listening" — we are not validating auth here.
-func probeReachable(url string, timeout time.Duration) bool {
-	client := &http.Client{Timeout: timeout}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode < 600
 }
 
 // runSOWWithDefaults executes a SOW string using the smart-defaults runner.

@@ -543,7 +543,6 @@ func (sh *Shell) submitLine() (tea.Model, tea.Cmd) {
 
 var (
 	shellBorder        = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240"))
-	shellBorderActive  = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86"))
 	shellBannerTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	shellBannerAccent  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207"))
 	shellBannerSub     = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
@@ -557,7 +556,6 @@ var (
 	shellPromptAnswer  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("207"))
 	shellStatusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 	shellBusyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	shellChatMarker    = lipgloss.NewStyle().Foreground(lipgloss.Color("207"))
 	shellCmdEcho       = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 )
 
