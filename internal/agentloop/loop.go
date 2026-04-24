@@ -25,6 +25,14 @@ import (
 	"github.com/ericmacdougall/stoke/internal/stream"
 )
 
+// Anthropic content-block and stop-reason discriminators. Mirrors the
+// strings used in the Messages API; centralised so the various switches
+// in this file stay in sync.
+const (
+	blockText    = "text"
+	blockToolUse = "tool_use"
+)
+
 // Config configures the agent loop.
 type Config struct {
 	Model              string        // e.g. "claude-sonnet-4-5-20250929"
@@ -258,7 +266,7 @@ func (l *Loop) SetEventBus(bus *hub.Bus) { l.eventBus = bus }
 func (l *Loop) Run(ctx context.Context, userMessage string) (*Result, error) {
 	messages := []Message{{
 		Role:    "user",
-		Content: []ContentBlock{{Type: "text", Text: userMessage}},
+		Content: []ContentBlock{{Type: blockText, Text: userMessage}},
 	}}
 	return l.RunWithHistory(ctx, messages)
 }
@@ -317,9 +325,9 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		for _, rc := range resp.Content {
 			block := ContentBlock{Type: rc.Type}
 			switch rc.Type {
-			case "text":
+			case blockText:
 				block.Text = rc.Text
-			case "tool_use":
+			case blockToolUse:
 				block.ID = rc.ID
 				block.Name = rc.Name
 				if rc.Input != nil {
@@ -341,7 +349,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		// pre-completion check fails (Cline pattern: build
 		// errors must be fixed in the SAME turn, not a
 		// separate repair dispatch).
-		if resp.StopReason != "tool_use" {
+		if resp.StopReason != blockToolUse {
 			// Pre-end-turn verification: run the build check
 			// and force another turn if it fails. This is the
 			// single biggest quality improvement — the model
@@ -355,7 +363,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 					messages = append(messages, Message{
 						Role: "user",
 						Content: []ContentBlock{{
-							Type: "text",
+							Type: blockText,
 							Text: "[BUILD VERIFICATION FAILED — fix before completing]\n\n" + errMsg + "\n\nFix these errors now. Do NOT end your turn until the build passes.",
 						}},
 					})
@@ -423,7 +431,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 				// reads them in order.
 				lastIdx := len(messages) - 1
 				messages[lastIdx].Content = append(messages[lastIdx].Content, ContentBlock{
-					Type: "text",
+					Type: blockText,
 					Text: "[SUPERVISOR NOTE] " + note,
 				})
 			}
@@ -490,7 +498,7 @@ func (l *Loop) buildRequest(messages []Message) provider.ChatRequest {
 func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]ContentBlock, bool) {
 	var toolCalls []ContentBlock
 	for _, b := range blocks {
-		if b.Type == "tool_use" {
+		if b.Type == blockToolUse {
 			toolCalls = append(toolCalls, b)
 		}
 	}
@@ -611,7 +619,7 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 func extractText(blocks []ContentBlock) string {
 	var text string
 	for _, b := range blocks {
-		if b.Type == "text" {
+		if b.Type == blockText {
 			text += b.Text
 		}
 	}

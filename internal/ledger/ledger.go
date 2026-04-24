@@ -398,7 +398,7 @@ func (l *Ledger) Query(_ context.Context, filter QueryFilter) ([]Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ledger: query index: %w", err)
 	}
-	var nodes []Node
+	nodes := make([]Node, 0, len(ids))
 	for _, id := range ids {
 		n, err := l.store.ReadNode(id)
 		if err != nil {

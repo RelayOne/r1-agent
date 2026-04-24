@@ -581,7 +581,7 @@ func grepProse(prose, pattern string) string {
 		return fmt.Sprintf("invalid regex: %v", err)
 	}
 	lines := strings.Split(prose, "\n")
-	var hits []string
+	hits := make([]string, 0, len(lines))
 	for i, line := range lines {
 		if !re.MatchString(line) {
 			continue

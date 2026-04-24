@@ -73,7 +73,7 @@ func DetectMCPGhostCalls(transcript string) []MCPGhostCallFinding {
 		seen[name] = struct{}{}
 	}
 
-	var out []MCPGhostCallFinding
+	out := make([]MCPGhostCallFinding, 0, len(claims))
 	emitted := map[string]struct{}{}
 	for _, idx := range claims {
 		// idx[4:6] = capture group 2 (the mcp_* tool name).

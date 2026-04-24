@@ -229,7 +229,7 @@ func (s *Store) ListNodes() ([]Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read chain dir: %w", err)
 	}
-	var nodes []Node
+	nodes := make([]Node, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -250,7 +250,7 @@ func (s *Store) ListEdges() ([]Edge, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read edges dir: %w", err)
 	}
-	var edges []Edge
+	edges := make([]Edge, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

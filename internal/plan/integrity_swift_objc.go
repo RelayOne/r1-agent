@@ -198,8 +198,9 @@ func swiftStdlibRoots() map[string]struct{} {
 }
 
 func parseSwiftLikeErrors(projectRoot, output string, re *regexp.Regexp, code string) []CompileErr {
-	var errs []CompileErr
-	for _, line := range strings.Split(output, "\n") {
+	lines := strings.Split(output, "\n")
+	errs := make([]CompileErr, 0, len(lines))
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

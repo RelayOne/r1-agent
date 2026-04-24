@@ -452,7 +452,7 @@ func filterNoiseDeliverables(ds []Deliverable) []Deliverable {
 		"errors": true, "logic": true, "state": true, "data": true,
 		"types": true, "etc": true,
 	}
-	var out []Deliverable
+	out := make([]Deliverable, 0, len(ds))
 	for _, d := range ds {
 		name := strings.TrimSpace(d.Name)
 		if len(name) < 3 {

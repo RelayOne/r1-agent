@@ -319,7 +319,7 @@ type SimplePlanner struct{}
 // Plan implements Planner via heuristic line splitting.
 func (SimplePlanner) Plan(_ context.Context, taskTitle, taskDesc string, _ []string) (*ExecPlan, error) {
 	lines := strings.Split(taskDesc, "\n")
-	var steps []Step
+	steps := make([]Step, 0, len(lines))
 	id := 1
 	for _, line := range lines {
 		line = strings.TrimSpace(line)

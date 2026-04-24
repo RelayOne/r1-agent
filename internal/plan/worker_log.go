@@ -27,7 +27,7 @@ func LatestWorkerLogForTask(repoRoot, taskID string) string {
 		return ""
 	}
 	prefix := taskID + "-"
-	var matches []string
+	matches := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() {
 			continue

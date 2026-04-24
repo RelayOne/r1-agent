@@ -117,7 +117,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 		"write_file": true,
 		"bash":       true, // bash can write; restricted in read-only mode
 	}
-	var toolDefs []provider.ToolDef
+	toolDefs := make([]provider.ToolDef, 0, len(allDefs))
 	for _, td := range allDefs {
 		if spec.Phase.ReadOnly && writableTools[td.Name] {
 			continue // exclude write-capable tools in read-only mode
@@ -561,8 +561,9 @@ func runEcosystemGate(ctx context.Context, repoDir string) string {
 	if err != nil {
 		return "" // not a git repo or git unavailable
 	}
-	var files []string
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	files := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if len(line) < 4 {
 			continue
 		}
@@ -857,7 +858,7 @@ func extractLastAssistantToolCalls(messages []agentloop.Message) []MidturnToolCa
 			resultByID[b.ToolUseID] = b
 		}
 	}
-	var out []MidturnToolCall
+	out := make([]MidturnToolCall, 0, len(prev.Content))
 	for _, b := range prev.Content {
 		if b.Type != "tool_use" {
 			continue

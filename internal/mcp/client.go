@@ -259,7 +259,7 @@ func ConfigFromFile(path string) ([]LegacyServerConfig, error) {
 		return nil, fmt.Errorf("parse MCP config: %w", err)
 	}
 
-	var configs []LegacyServerConfig
+	configs := make([]LegacyServerConfig, 0, len(raw.MCPServers))
 	for name, srv := range raw.MCPServers {
 		configs = append(configs, LegacyServerConfig{
 			Name:    name,

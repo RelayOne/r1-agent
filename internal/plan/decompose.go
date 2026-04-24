@@ -215,7 +215,7 @@ func splitSemicolons(desc string) []string {
 }
 
 func buildResult(task Task, descriptions []string, strategy string) DecompositionResult {
-	var subtasks []Task
+	subtasks := make([]Task, 0, len(descriptions))
 	for i, desc := range descriptions {
 		subtasks = append(subtasks, Task{
 			ID:          fmt.Sprintf("%s-%d", task.ID, i+1),

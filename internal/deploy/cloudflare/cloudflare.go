@@ -99,6 +99,12 @@ var progressTypes = map[string]struct{}{
 // (spec §Post-Deploy Verification Parity: "event taxonomy identical").
 const EvtDeployProgress bus.EventType = "deploy.progress"
 
+// cfModePages is the value of cfg.Env["CF_MODE"] (lower-cased) that
+// switches the adapter from the default `wrangler deploy` (workers
+// mode) to `wrangler pages deploy`. Centralised so the rollback,
+// build-args, and detection paths stay in lock-step.
+const cfModePages = "pages"
+
 // packageBus is the optional *bus.Bus the adapter publishes
 // deploy.progress events on. It is nil by default; callers that want
 // to observe progression register a bus via SetBus(). Keeping the bus
@@ -333,7 +339,7 @@ func (*cloudflareDeployer) Rollback(ctx context.Context, cfg deploy.DeployConfig
 	mode := cfMode(cfg)
 	var args []string
 	switch mode {
-	case "pages":
+	case cfModePages:
 		deployID := cfg.Env["CF_PAGES_DEPLOYMENT_ID"]
 		projectName := cfg.AppName
 		if projectName == "" {
@@ -346,7 +352,7 @@ func (*cloudflareDeployer) Rollback(ctx context.Context, cfg deploy.DeployConfig
 			return errors.New("cloudflare.Rollback: pages mode requires CF_PAGES_DEPLOYMENT_ID")
 		}
 		args = []string{
-			"pages", "deployment", "rollback", deployID,
+			cfModePages, "deployment", "rollback", deployID,
 			"--project-name", projectName,
 		}
 	default: // workers
@@ -394,12 +400,12 @@ func cfMode(cfg deploy.DeployConfig) string {
 // --env when present.
 func buildWranglerArgs(mode string, cfg deploy.DeployConfig) ([]string, error) {
 	switch mode {
-	case "pages":
+	case cfModePages:
 		dir := strings.TrimSpace(cfg.Env["CF_PAGES_DIR"])
 		if dir == "" {
 			return nil, errors.New("cloudflare.Deploy: pages mode requires CF_PAGES_DIR")
 		}
-		args := []string{"pages", "deploy", dir}
+		args := []string{cfModePages, "deploy", dir}
 		if name := strings.TrimSpace(cfg.AppName); name != "" {
 			args = append(args, "--project-name", name)
 		}

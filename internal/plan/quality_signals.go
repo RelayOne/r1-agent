@@ -1665,6 +1665,10 @@ func ScanDeclaredFilesNotCreated(repoRoot string, declared []string) []QualityFi
 	if repoRoot == "" || len(declared) == 0 {
 		return nil
 	}
+	// NOTE: do NOT prealloc this slice — the test
+	// TestScanDeclaredFilesNotCreated_EmptyInputs asserts a nil
+	// (not empty-non-nil) return when every declared entry is
+	// whitespace. A `make(..., 0, N)` would flip that contract.
 	var findings []QualityFinding
 	for _, rel := range declared {
 		rel = strings.TrimSpace(rel)

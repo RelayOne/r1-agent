@@ -332,7 +332,7 @@ func (s *CodebaseServer) handleSearchSymbols(args map[string]interface{}) (strin
 
 	results := s.symIdx.Search(query)
 
-	var filtered []symindex.Symbol
+	filtered := make([]symindex.Symbol, 0, len(results))
 	for _, sym := range results {
 		if kindFilter != "" && string(sym.Kind) != kindFilter {
 			continue

@@ -24,7 +24,7 @@ func (r *Registry) UpdateFromResearch(entries []research.Entry) ([]SkillUpdate, 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var updates []SkillUpdate
+	updates := make([]SkillUpdate, 0, len(entries))
 	for _, entry := range entries {
 		targetSkill := r.findSkillForResearch(entry)
 		if targetSkill == nil {

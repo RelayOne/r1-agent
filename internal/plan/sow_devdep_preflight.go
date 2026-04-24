@@ -59,7 +59,7 @@ func PreflightWorkspaceDevDeps(repoRoot string, sow *SOW) []string {
 		return []string{fmt.Sprintf("devdep preflight: failed to scan workspace package.json files: %v", err)}
 	}
 
-	var missing []string
+	missing := make([]string, 0, len(needed))
 	for _, bin := range needed {
 		pkg, ok := devToolBinaryToNpmPackage[bin]
 		if !ok {
@@ -244,7 +244,7 @@ func addMissingToRootDevDeps(rootPkgPath string, missing []string) ([]string, er
 	if dev == nil {
 		dev = map[string]any{}
 	}
-	var added []string
+	added := make([]string, 0, len(missing))
 	for _, name := range missing {
 		if existing[name] {
 			continue

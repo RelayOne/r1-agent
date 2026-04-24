@@ -231,12 +231,12 @@ func (e *ResearchExecutor) executeInline(
 	maxClaims int,
 ) (Deliverable, error) {
 	var (
-		answers []research.SubQuestionAnswer
 		claims  []research.Claim
 		sources []research.Source
 		seenURL = map[string]bool{}
 		claimN  int
 	)
+	answers := make([]research.SubQuestionAnswer, 0, len(subs))
 
 	for _, sq := range subs {
 		urls := collectURLs(sq, byHint, globalURLs)

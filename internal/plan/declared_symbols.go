@@ -130,7 +130,7 @@ func ScanDeclaredSymbolsNotImplemented(repoRoot, sowProse string, changedFiles [
 		present[strings.ToLower(sym.Name)] = true
 	}
 
-	var out []QualityFinding
+	out := make([]QualityFinding, 0, len(declared))
 	for _, d := range declared {
 		if present[d] || present[strings.ToLower(d)] {
 			continue

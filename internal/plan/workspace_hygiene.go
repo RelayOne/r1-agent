@@ -810,7 +810,6 @@ func goModHasRequires(mod string) bool {
 // when Cargo.toml exists but Cargo.lock is missing, which is the
 // actual "nobody has run any cargo command here" signal.
 func scanCargo(repoRoot string) []HygieneFinding {
-	var findings []HygieneFinding
 	// A repo may have a root Cargo workspace OR a Rust sidecar under
 	// crates/*, services/*, tools/*, etc. DetectExecutors already
 	// signalled Cargo presence via the 2-level walk, so we mirror
@@ -819,6 +818,7 @@ func scanCargo(repoRoot string) []HygieneFinding {
 	// that already has a Cargo.lock (workspace member sharing root
 	// lock).
 	manifests := findCargoManifests(repoRoot)
+	findings := make([]HygieneFinding, 0, len(manifests))
 	for _, mpath := range manifests {
 		dir := filepath.Dir(mpath)
 		if fileutil.FileExists(filepath.Join(dir, "Cargo.lock")) {

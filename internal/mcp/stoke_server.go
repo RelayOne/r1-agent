@@ -575,7 +575,7 @@ func (s *StokeServer) handleCancelMission(args map[string]interface{}) (string, 
 func (s *StokeServer) handleListMissions() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var list []map[string]interface{}
+	list := make([]map[string]interface{}, 0, len(s.missions))
 	// Stable ordering: newest first
 	ids := make([]string, 0, len(s.missions))
 	for id := range s.missions {

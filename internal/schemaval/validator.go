@@ -71,7 +71,7 @@ func (r ValidationResult) String() string {
 	if r.Valid {
 		return ""
 	}
-	var msgs []string
+	msgs := make([]string, 0, len(r.Errors))
 	for _, e := range r.Errors {
 		msgs = append(msgs, e.Error())
 	}

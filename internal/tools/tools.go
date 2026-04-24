@@ -544,7 +544,7 @@ func (r *Registry) handleGlob(input json.RawMessage) (string, error) {
 	}
 
 	// Make paths relative
-	var results []string
+	results := make([]string, 0, len(matches))
 	for _, m := range matches {
 		rel, err := filepath.Rel(r.workDir, m)
 		if err != nil {

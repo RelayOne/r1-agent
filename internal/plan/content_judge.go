@@ -78,7 +78,7 @@ func JudgeDeclaredContent(ctx context.Context, prov provider.Provider, model str
 		Content   string
 		Truncated bool
 	}
-	var blobs []fileBlob
+	blobs := make([]fileBlob, 0, len(task.Files))
 	const perFileBudget = 6000
 	for _, rel := range task.Files {
 		full := filepath.Join(repoRoot, rel)

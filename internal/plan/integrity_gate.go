@@ -234,7 +234,7 @@ func RunIntegrityGate(ctx context.Context, projectRoot string, session Session, 
 
 	// Probe each ecosystem in deterministic order (by name) so
 	// repeated runs produce stable output.
-	var ecoNames []string
+	ecoNames := make([]string, 0, len(byEco))
 	for name := range byEco {
 		ecoNames = append(ecoNames, name)
 	}

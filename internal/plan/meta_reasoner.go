@@ -406,7 +406,7 @@ func LoadRecentMetaReports(repoRoot string, maxReports int) ([]MetaReport, error
 		report MetaReport
 		when   time.Time
 	}
-	var cands []candidate
+	cands := make([]candidate, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

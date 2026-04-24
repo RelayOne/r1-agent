@@ -36,6 +36,10 @@ import (
 	"time"
 )
 
+// packageJSONFile is the canonical npm/Node manifest filename. Centralised
+// so the walker, manifest classifier, and resolver agree byte-for-byte.
+const packageJSONFile = "package.json"
+
 // Finding is one hallucinated or otherwise unresolvable dependency.
 type Finding struct {
 	// PackageJSON is the absolute path of the package.json that
@@ -273,7 +277,7 @@ func walkPackageJSONs(root string, visit func(string)) error {
 			}
 			return nil
 		}
-		if base == "package.json" {
+		if base == packageJSONFile {
 			visit(path)
 		}
 		return nil

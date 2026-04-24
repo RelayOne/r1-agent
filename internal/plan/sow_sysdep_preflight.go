@@ -46,7 +46,7 @@ func PreflightSystemDeps(sow *SOW) []string {
 		return nil
 	}
 
-	var missing []string
+	missing := make([]string, 0, len(needed))
 	for _, bin := range needed {
 		if _, err := exec.LookPath(bin); err == nil {
 			continue

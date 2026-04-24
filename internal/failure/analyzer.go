@@ -176,7 +176,7 @@ var (
 )
 
 func parseBuildErrors(output string) []Detail {
-	var details []Detail
+	details := make([]Detail, 0, 20)
 
 	// TypeScript
 	for _, m := range tsErrorRe.FindAllStringSubmatch(output, 20) {
@@ -233,7 +233,7 @@ var (
 )
 
 func parseTestErrors(output string) []Detail {
-	var details []Detail
+	details := make([]Detail, 0, 20)
 
 	// Jest / Vitest
 	for _, m := range jestFailRe.FindAllStringSubmatch(output, 20) {
@@ -281,7 +281,7 @@ var (
 )
 
 func parseLintErrors(output string) []Detail {
-	var details []Detail
+	details := make([]Detail, 0, 20)
 
 	for _, m := range eslintRe.FindAllStringSubmatch(output, 20) {
 		if m[3] == "error" {

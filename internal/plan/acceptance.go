@@ -362,7 +362,7 @@ func CheckAcceptanceCriteria(ctx context.Context, projectRoot string, criteria [
 func CheckAcceptanceCriteriaWithJudge(ctx context.Context, projectRoot string, criteria []AcceptanceCriterion, judge SemanticEvaluator) ([]AcceptanceResult, bool) {
 	ensureWorkspaceInstalled(ctx, projectRoot)
 
-	var results []AcceptanceResult
+	results := make([]AcceptanceResult, 0, len(criteria))
 	allPassed := true
 
 	for _, ac := range criteria {

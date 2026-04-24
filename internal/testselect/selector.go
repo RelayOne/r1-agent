@@ -125,7 +125,6 @@ func (g *Graph) Select(changedFiles []string) *Selection {
 
 	// Collect test files for affected packages
 	var selected, skipped []string
-	var packages []string
 
 	pkgSet := make(map[string]bool)
 	for dir, tests := range g.testFiles {
@@ -137,6 +136,7 @@ func (g *Graph) Select(changedFiles []string) *Selection {
 		}
 	}
 
+	packages := make([]string, 0, len(pkgSet))
 	for pkg := range pkgSet {
 		packages = append(packages, "./"+pkg+"/...")
 	}
@@ -162,7 +162,7 @@ func (g *Graph) Select(changedFiles []string) *Selection {
 // SelectAll returns all test files (for full test runs).
 func (g *Graph) SelectAll() *Selection {
 	var all []string
-	var packages []string
+	packages := make([]string, 0, len(g.testFiles))
 	for dir, tests := range g.testFiles {
 		all = append(all, tests...)
 		packages = append(packages, "./"+dir+"/...")
@@ -263,7 +263,7 @@ func extractImportsAST(source string) []string {
 	if err != nil {
 		return nil
 	}
-	var imports []string
+	imports := make([]string, 0, len(f.Imports))
 	for _, imp := range f.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
 		imports = append(imports, path)

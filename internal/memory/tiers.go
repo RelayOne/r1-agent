@@ -348,7 +348,7 @@ func (m *InMemoryStorage) Get(_ context.Context, id string) (Item, error) {
 func (m *InMemoryStorage) Query(_ context.Context, q Query) ([]Item, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var out []Item
+	out := make([]Item, 0, len(m.items))
 	now := time.Now()
 	for _, it := range m.items {
 		if q.Tier != "" && it.Tier != q.Tier {
