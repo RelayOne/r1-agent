@@ -1,0 +1,149 @@
+---
+title: "Verification descent"
+description: "The anti-deception layer: T1–T8 ladder that refuses to believe the model when it says 'done'."
+---
+
+Most harnesses verify at merge time. R1 verifies at **every
+end-of-turn** and builds an 8-tier ladder of increasingly strict
+checks. Workers can't silently fake completion because the ladder
+won't let them.
+
+The engine is gated today behind `STOKE_DESCENT=1` (or the
+`--descent` flag) while it bakes in. The H-91 spec series drives
+its hardening.
+
+<Note>
+The descent engine is not specific to code. Non-code executors
+(research, browse, deploy, delegate) plug into the same ladder via
+`VerifyFunc` on acceptance criteria. One surface, many backends.
+</Note>
+
+## The ladder
+
+<Steps>
+  <Step title="T1 — Anti-deception contract">
+    A truthfulness block is injected into every worker prompt at
+    dispatch. It commits the worker to concrete completion evidence
+    (file paths, commit hashes, test output) and disallows "looks
+    like it worked" language. Failure to follow the contract is a
+    parse-time failure.
+  </Step>
+  <Step title="T2 — Forced self-check before turn end">
+    Before the worker is allowed to end a turn, it must emit a
+    structured self-check: which ACs did it touch, what is the
+    tangible evidence, what remains. The parser cross-checks the
+    self-check against git state, AC state, and the tool-call log.
+    Mismatch aborts the turn with `StopReason="self_check_failed"`.
+  </Step>
+  <Step title="T3 — Ghost-write detector">
+    A post-tool supervisor hook catches "tool reported success but
+    file is empty" fakes. Every `Write` / `Edit` result has its
+    landed file inspected; byte-zero files + success verdicts are
+    flagged.
+  </Step>
+  <Step title="T4 — Per-file repair cap (Cursor 2.0 parity)">
+    A file touched 3 times without its ACs passing is frozen. The
+    attempt history is carried forward per-AC (H-91g) so the next
+    retry sees exactly what was tried and why it failed — no
+    infinite repair loops.
+  </Step>
+  <Step title="T5 — Env-issue worker tool">
+    Workers self-report environment blockers (missing binary,
+    unresolvable import, broken test runner) via a structured tool.
+    Descent skips multi-analyst convergence for declared env
+    failures — saves ~$0.10 per AC and gets human-readable
+    diagnostics to the operator.
+  </Step>
+  <Step title="T6 — Bootstrap per descent cycle">
+    Manifest-touching repairs (`package.json`, `go.mod`,
+    `Cargo.toml`, `pyproject.toml`) trigger automatic dep-install
+    before the next AC runs. Stale-workspace false failures are
+    eliminated.
+  </Step>
+  <Step title="T7 — Multi-analyst convergence">
+    Two independent analysts review the evidence. If they agree
+    the AC is met, it passes. If they disagree, the loop continues
+    or escalates. Soft-pass after 2× `ac_bug` verdicts prevents
+    reviewers who blame the AC from spinning forever.
+  </Step>
+  <Step title="T8 — Session verdict">
+    T8 soft-pass propagates to the session-level verdict (H-91b)
+    with `SoftPassApprovalFunc` hook available for HITL gating.
+    The session can pause and wait for operator thumbs-up before
+    merging.
+  </Step>
+</Steps>
+
+## Evidence surfaces
+
+Every descent cycle emits three artifacts the reviewer (and the
+next retry) can inspect:
+
+<CardGroup cols={3}>
+  <Card title="JSONL tool-call log" icon="file-lines">
+    Every tool invocation, arguments, and result in a structured
+    log. Reviewers see what the worker actually did, not what it
+    claimed.
+  </Card>
+  <Card title="SOW snapshot" icon="camera">
+    The SOW as it appeared when dispatch fired, content-addressed.
+    Correlation IDs (H-91d) tie every worker turn back to this
+    exact snapshot.
+  </Card>
+  <Card title="Ledger Verify node" icon="badge-check">
+    A `Verify` node appended to the ledger with the descent verdict,
+    verdict context, and edges to the Artifacts consumed.
+  </Card>
+</CardGroup>
+
+## VerifyFunc — non-code executors share the ladder
+
+The `AcceptanceCriterion.VerifyFunc` callback lets non-code
+executors plug into the same 8-tier ladder:
+
+```go
+type AcceptanceCriterion struct {
+    Name         string
+    Command      string                      // code path
+    FileExists   string                      // code path
+    ContentMatch *regexp.Regexp              // code path
+    VerifyFunc   func(ctx) (bool, string)    // non-code path
+}
+```
+
+- **ResearchExecutor** uses `VerifyFunc` for keyword-overlap claim
+  verification against retrieved sources.
+- **BrowserExecutor** uses it for `verify-contains` / `verify-regex`
+  checks against fetched page text.
+- **DeployExecutor** uses it to poll post-deploy health endpoints.
+- **DelegationExecutor** uses it to consume TrustPlane
+  verify-settle signatures on hired-agent deliverables.
+
+The criterion-build and repair primitives swap per executor; **the
+ladder itself is unchanged**.
+
+## Enabling descent
+
+<Warning>
+Descent is **flagged** today (`STOKE_DESCENT=1`). Once the H-91
+bake-in is complete, it becomes the default. Ship plans should
+expect this flip in a minor release.
+</Warning>
+
+```bash
+export STOKE_DESCENT=1
+stoke build --plan stoke-plan.json --workers 4
+```
+
+Or pass `--descent` explicitly on the command line. The session
+will print:
+
+```
+🔬 verification descent engine enabled (STOKE_DESCENT=1)
+```
+
+## Further reading
+
+- `specs/descent-hardening.md` — full H-91 series spec
+- [`cmd/stoke/descent_bridge.go`](https://github.com/ericmacdougall/Stoke/blob/main/cmd/stoke/descent_bridge.go) — opt-in bridge
+- [Architecture → Verification Descent](/mintlify/architecture#verification-descent-h-91-series)

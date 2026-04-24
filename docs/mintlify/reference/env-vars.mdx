@@ -1,0 +1,145 @@
+---
+title: "Environment variables"
+description: "STOKE_* and R1_* environment variables R1 reads. Canonical R1_* names with STOKE_* fallback during the rename window."
+---
+
+During the rename-in-flight, R1 reads both `R1_*` (canonical) and
+`STOKE_*` (legacy) for every environment variable. The code pattern
+is `r1env.Get("R1_FOO", "STOKE_FOO")` — the canonical name wins,
+the legacy name is a fallback.
+
+<Note>
+  New deployments should set `R1_*`. Existing deployments can keep
+  `STOKE_*` indefinitely during the dual-accept window; see the
+  [rename notice](/mintlify/rename/stoke-to-r1) for the cutover
+  schedule.
+</Note>
+
+## Core runtime
+
+| Variable | Purpose |
+|---|---|
+| `R1_HOME` / `STOKE_HOME` | Override the R1 state directory (defaults to `~/.stoke`) |
+| `R1_DATA_DIR` | r1-server data directory (tests / explicit override) |
+| `R1_CONFIG_PATH` | Path to r1-server config YAML |
+| `R1_CTL_DIR` / `STOKE_CTL_DIR` | Override the sessionctl socket directory |
+| `R1_RUNTRACK_DIR` / `STOKE_RUNTRACK_DIR` | Override the runtrack directory |
+| `R1_SERVER_PORT` / `STOKE_SERVER_PORT` | Override r1-server listen port (default 3948) |
+
+## Descent engine
+
+| Variable | Purpose |
+|---|---|
+| `R1_DESCENT` / `STOKE_DESCENT` | Set to `1` to enable the verification descent engine |
+
+See [Concepts → Verification Descent](/mintlify/concepts/verification-descent).
+
+## SOW pipeline controls
+
+| Variable | Purpose |
+|---|---|
+| `R1_SOW_REVIEW_MODE` / `STOKE_SOW_REVIEW_MODE` | `async` (default), `lazy`, `milestone` |
+| `R1_SOW_REVIEW_EVERY` / `STOKE_SOW_REVIEW_EVERY` | In `milestone` mode, review every Nth task |
+| `R1_SOW_FORCE_BRIEFING` / `STOKE_SOW_FORCE_BRIEFING` | `1` to force briefing even when task count ≤ 5 |
+
+## Providers
+
+| Variable | Purpose |
+|---|---|
+| `STOKE_PROVIDERS` | Multi-provider pool spec; overrides `detectSmartDefaults()` (e.g. Anthropic for reasoning, Ollama for workers, Gemini for review) |
+
+## Logging and observability
+
+| Variable | Purpose |
+|---|---|
+| `R1_LOG_REDACT` / `STOKE_LOG_REDACT` | `0` to disable log redaction (raw logs for debugging); default `1` |
+| `R1_PERFLOG` / `STOKE_PERFLOG` | Set to any value to enable `perflog` microsecond span capture |
+| `R1_PERFLOG_FILE` / `STOKE_PERFLOG_FILE` | Override perflog output path |
+
+## MCP
+
+| Variable | Purpose |
+|---|---|
+| `R1_MCP_KEY` / `STOKE_MCP_KEY` | API-key auth for `stoke-mcp` tool calls (required on shared infra) |
+| `R1_MCP_LEDGER_DIR` / `STOKE_MCP_LEDGER_DIR` | Override ledger directory for the MCP server |
+| `STOKE_MCP_UNGATED` | <Warning>Never use in CI or shared infra.</Warning> Disables MCP gating for local dev only. The self-scan flags `STOKE_MCP_UNGATED=1` as critical when it appears in `.github/` or `scripts/ci/`. |
+
+## TrustPlane
+
+| Variable | Purpose |
+|---|---|
+| `STOKE_TRUSTPLANE_MODE` | `stub` (default, local) or `real` (talks to gateway) |
+| `STOKE_TRUSTPLANE_URL` | Gateway URL when mode is `real` |
+| `STOKE_TRUSTPLANE_PRIVKEY` | Raw Ed25519 private key (base64) |
+| `STOKE_TRUSTPLANE_PRIVKEY_FILE` | Path to file containing the Ed25519 private key |
+
+## A2A (Agent-to-Agent) peering
+
+Canonical `R1_A2A_*` with `STOKE_A2A_*` fallback:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `R1_A2A_ADDR` | Listen address | `:7430` |
+| `R1_A2A_NAME` | Agent name | `stoke-a2a` |
+| `R1_A2A_VERSION` | Semver for the agent card | `dev` |
+| `R1_A2A_DESC` | Human description | — |
+| `R1_A2A_URL` | External URL for the agent card | — |
+| `R1_A2A_PROVIDER` | Provider organization name | — |
+| `R1_A2A_TOKEN` | Bearer token for `/a2a/rpc` (empty = open) | — |
+| `R1_A2A_CAPABILITIES` | Comma-separated `<name>@<version>` list | — |
+
+## Research executor
+
+| Variable | Purpose |
+|---|---|
+| `R1_RESEARCH_ALLOWLIST` / `STOKE_RESEARCH_ALLOWLIST` | Comma-separated domain suffix list |
+| `R1_RESEARCH_REQUIRE_TLS` / `STOKE_RESEARCH_REQUIRE_TLS` | `1` for strict https-only mode |
+
+## Encryption at rest
+
+| Variable | Purpose |
+|---|---|
+| `STOKE_DB_ENCRYPTION` | `1` enables SQLCipher (chacha20) on `server.db` and `wisdom.db` |
+
+When `STOKE_DB_ENCRYPTION=1`, R1 derives a 32-byte master key via
+the OS keyring with a `FileBackend` fallback. See
+`specs/encryption-at-rest.md`.
+
+## r1-server
+
+| Variable | Purpose |
+|---|---|
+| `R1_SERVER_UI_V2` | `1` enables the v2 UI features (waterfall, 3D ledger, memory explorer) |
+| `R1_SERVER_SHARE_ENABLED` | `1` enables the share link feature (v2 UI gated) |
+| `R1_SERVER_TRACE_STUB` | `1` shows the stub trace banner |
+| `R1_ADMIN_PASS` | Passphrase for admin-scoped memory routes (scope=`always`) |
+| `STOKE_NO_R1_SERVER` | `1` disables the auto-spawn of r1-server at R1 startup |
+
+## Retention and honeypots
+
+| Variable | Purpose |
+|---|---|
+| `STOKE_RETENTION` | `1` enables the default retention profile when no operator config exists |
+| `STOKE_CANARY_DO_NOT_EMIT` | Canary honeypot marker — not a credential; never set, never log |
+
+## Upstream provider keys
+
+R1 honors the standard provider environment variables:
+
+- `ANTHROPIC_API_KEY` — direct Anthropic Messages API
+- `OPENAI_API_KEY` — direct OpenAI API
+- `OPENROUTER_API_KEY` — OpenRouter gateway
+- `CLAUDE_CONFIG_DIR` — subscription OAuth pool directory for Claude
+- `CODEX_HOME` — subscription OAuth pool directory for Codex
+
+<Tip>
+R1 walks the fallback chain until one works:
+Claude → Codex → OpenRouter → Direct API → lint-only. You only need
+one set — `stoke doctor` will tell you exactly which.
+</Tip>
+
+## Debugging env resolution
+
+`stoke doctor` prints the resolved value of every variable R1
+consulted (redacted for secrets), so you can see exactly which
+fallback fired.

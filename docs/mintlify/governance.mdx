@@ -1,0 +1,138 @@
+---
+title: "Governance"
+description: "How decisions are made in the R1 project — roles, decision processes, and the path to maintainer."
+---
+
+R1 is a community-governed open-source project. This page describes
+how decisions are made internally — who can merge what, how to
+propose changes, and how contributors become maintainers. It
+complements [Stewardship](/mintlify/stewardship) (what the project
+promises its users) with an account of how the project runs.
+
+## Roles
+
+### Contributor
+
+Anyone who opens a pull request, issue, or GitHub Discussion. No
+formal onboarding — read `CONTRIBUTING.md`, sign the CLA the first
+time you submit code (`CLA.md`), and open a PR. Contributions are
+evaluated on technical merit, not affiliation.
+
+### Maintainer
+
+A contributor with write access to the repository. Maintainers:
+
+- Review and merge pull requests.
+- Triage issues and close stale ones.
+- Cut release tags.
+- Vote on maintainer nominations and RFCs.
+- Enforce the Code of Conduct.
+
+Maintainers are listed in `.github/CODEOWNERS` (authoritative) and
+in the repository's GitHub team membership.
+
+### BDFL (Benevolent Dictator For Life)
+
+The repository owner (`ericmacdougall`) breaks ties when maintainers
+cannot reach lazy consensus on an RFC and acts as final arbiter on
+license, CLA, and org-level decisions.
+
+<Note>
+The BDFL role is deliberately narrow — day-to-day work is driven by
+maintainer consensus, not BDFL decree.
+</Note>
+
+## Decision process
+
+<CardGroup cols={3}>
+  <Card title="Small changes" icon="feather">
+    Bug fixes, doc updates, tests, non-breaking features.
+
+    - One maintainer approval
+    - CI green
+    - CLA signed
+    - No formal discussion required
+  </Card>
+  <Card title="Architecture changes" icon="sitemap">
+    New packages, new subsystems, cross-cutting refactors.
+
+    - Two maintainer approvals
+    - GitHub Discussion in the "Design" category expected first
+    - CI green
+  </Card>
+  <Card title="Breaking changes" icon="triangle-exclamation">
+    Public API, CLI flag removals, config-format changes.
+
+    - RFC open ≥ 7 calendar days in the "RFC" category
+    - Lazy consensus; BDFL breaks ties
+    - Changelog entry mandatory
+  </Card>
+</CardGroup>
+
+## Becoming a maintainer
+
+Maintainer access is granted to contributors who have demonstrated
+sustained, high-quality contributions and alignment with the
+project's stewardship commitments.
+
+<Steps>
+  <Step title="Sustained contribution">
+    Open and land PRs over at least three months. No hard count on
+    volume — the bar is "I'd trust this person to review my code."
+  </Step>
+  <Step title="Nomination">
+    An existing maintainer opens a GitHub Discussion in the
+    "Governance" category with a short rationale.
+  </Step>
+  <Step title="Lazy consensus, seven days">
+    If no existing maintainer objects within seven days, the
+    nomination carries.
+  </Step>
+  <Step title="Access granted">
+    The BDFL (or any maintainer with org admin) adds the new
+    maintainer to the GitHub team and updates `.github/CODEOWNERS`
+    if applicable.
+  </Step>
+</Steps>
+
+Stepping down is always fine, no notice required. A maintainer
+inactive for more than twelve months is moved to "emeritus" status —
+still credited, no write access.
+
+## Code ownership
+
+`.github/CODEOWNERS` is the authoritative source for required
+reviewers on specific paths. A CODEOWNERS entry can require review
+from a named maintainer or team for changes to sensitive files
+(release workflows, security configuration, the ledger schema). If
+a path has no CODEOWNERS entry, any maintainer may review and merge.
+
+## Release cadence
+
+Releases are tag-driven. There is no fixed cadence — a tag is cut
+when there is something useful to ship. The expectation is that
+`main` is always releasable (CI green, no known regressions against
+Stewardship commitments).
+
+The `release.yml` GitHub Actions workflow signs artifacts with
+cosign (keyless OIDC) and publishes the Homebrew formula to
+`ericmacdougall/homebrew-stoke`.
+
+## Code of Conduct
+
+All participation is governed by `CODE_OF_CONDUCT.md`. Violations
+are reported to the BDFL; enforcement actions (warning, temporary
+ban, permanent ban) are decided by the BDFL in consultation with
+maintainers.
+
+## Amendments
+
+This document is itself governed by the "breaking change" process —
+amendments require an RFC open for seven days, lazy consensus of
+maintainers, and a changelog entry.
+
+<Tip>
+Source of truth:
+[`GOVERNANCE.md`](https://github.com/ericmacdougall/Stoke/blob/main/GOVERNANCE.md).
+The Mintlify page is a mirror; the repo file is authoritative.
+</Tip>

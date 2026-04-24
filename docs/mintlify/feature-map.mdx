@@ -1,0 +1,169 @@
+---
+title: "Feature map"
+description: "Every R1 feature grouped by user-visible outcome, with build status and spec traceability."
+---
+
+Status legend:
+
+- **Done** — shipped in the current trunk, passing build / test /
+  vet, race-clean, integrated into the default execution path.
+- **Flagged** — shipped but behind an env var or CLI flag.
+- **Ready** — spec at STATUS: ready, awaiting build.
+- **Scoped** — spec in flight or under review.
+- **Horizon** — on the roadmap, not yet scoped.
+
+## Verification descent (the trust layer)
+
+| Feature | Status |
+|---|---|
+| Anti-deception contract in worker prompts | Done |
+| Forced self-check before turn end | Done |
+| Bootstrap per descent cycle (manifest-touching repairs) | Done |
+| Per-file repair cap (3 attempts, Cursor 2.0 parity) | Done |
+| Ghost-write detector (post-tool supervisor hook) | Done |
+| Env-issue worker tool | Done |
+| VerifyFunc on acceptance criteria | Done |
+| Soft-pass AC after 2× `ac_bug` verdicts | Done |
+| T8 soft-pass → session verdict (H-91b) | Done |
+| JSONL tool-call log + reviewer injection | Done |
+| Correlation IDs + SOW snapshot (H-91d) | Done |
+| Attempt history for T4 (H-91g) | Done |
+| `STOKE_DESCENT=1` opt-in flag | Flagged |
+
+See [Concepts → Verification Descent](/mintlify/concepts/verification-descent)
+for the T1–T8 ladder.
+
+## Prompt-injection hardening
+
+| Feature | Status |
+|---|---|
+| Promptguard wired into 4 ingest paths | Done |
+| Tool-output sanitization (200KB cap + chat-template scrub + injection annotation) | Done |
+| Honeypot pre-end-turn gate (canary, markdown-exfil, role-injection, destructive-without-consent) | Done |
+| Websearch domain allowlist + 100KB body cap | Done |
+| MCP sanitization audit marker | Done |
+| Red-team corpus (58 samples, ≥60% detection per category) | Done |
+| `SECURITY.md` + disclosure policy | Done |
+
+## Executor architecture — multi-task agent
+
+| Feature | Status |
+|---|---|
+| Executor interface + router | Done |
+| `stoke task` free-text entry | Done |
+| CodeExecutor (SOW-backed) | Done |
+| ResearchExecutor MVP (stdlib-only, keyword-overlap verification) | Done |
+| Research lead+subagent orchestrator (Anthropic-style) | Scoped |
+| BrowserExecutor Part 1 (http + HTML strip + verify-contains/regex) | Done |
+| BrowserExecutor Part 2 (go-rod interactive) | Scoped |
+| DeployExecutor (Fly.io) | Done |
+| DeployExecutor Phase 2 (Vercel + Cloudflare) | Scoped |
+| DelegationExecutor MVP (verify-settle via TrustPlane) | Done |
+| DelegationExecutor full A2A (HMAC + x402 + JWKS + saga compensators) | Scoped |
+
+## Protocol surfaces
+
+| Feature | Status |
+|---|---|
+| CloudSwarm NDJSON + HITL | Done |
+| STOKE envelope v1.0 (`stoke_version`, `instance_id`, `trace_parent`, `ledger_node_id`) | Done |
+| r1-server binary + web dashboard MVP | Done |
+| r1-server UI v2 (waterfall + 3D) | Scoped |
+| `stoke agent-serve` HTTP MVP | Done |
+| Agent-serve async (worker pool + SSE + webhooks + crash recovery) | Scoped |
+| MCP client (GitHub, Linear, Slack, Postgres, custom) | Flagged |
+| MCP trust gating + circuit breaker | Done |
+| Policy engine (Cedar/OPA-style) | Scoped |
+| TrustPlane real client (DPoP + RFC 9449, stdlib-only) | Done |
+| A2A Agent Card v1.0.0 + canonical path | Done |
+| ACP adapter (`stoke-acp`) | Done |
+
+## Operator ergonomics
+
+| Feature | Status |
+|---|---|
+| TUI progress renderer | Done |
+| Bubble Tea interactive TUI (Dashboard / Focus / Detail) | Done |
+| Multi-provider pool (`STOKE_PROVIDERS`) | Done |
+| HITL soft-pass approval | Done |
+| `stoke doctor` (5-provider tool-dependency check) | Done |
+| `stoke repair` (auto-fix common config issues) | Done |
+| `stoke memory` CLI (6 verbs) | Flagged |
+| `stoke attach` + `stoke replay` | Scoped |
+| Chat descent control + sessionctl socket (8 verbs) | Scoped |
+
+## Memory — persistent cross-session knowledge
+
+| Feature | Status |
+|---|---|
+| Memory store MVP (`stoke_memories` + FTS5 + triggers) | Done |
+| Memory full stack (sqlite-vec + 3-way embedder + consolidation + `stoke memory` CLI) | Scoped |
+| Scoped memory bus (6 visibility scopes; writer-goroutine + batched INSERTs; 10k+ ops/sec) | Scoped |
+| Wisdom temporal validity (`ValidFrom`/`ValidUntil`, `AsOf()`, `Invalidate()`) | Done |
+
+See [Concepts → Memory bus](/mintlify/concepts/memory-bus) for the
+4-tier memory model.
+
+## Durability + governance
+
+| Feature | Status |
+|---|---|
+| Two-level Merkle commitment (ledger IDs depend on header + commitment, not content) | Scoped |
+| Encryption at rest (SQLCipher chacha20 + per-line XChaCha20-Poly1305 JSONL + OS keyring) | Scoped |
+| Retention policies (HIPAA / GDPR / EU AI Act Art. 12 ready) | Scoped |
+| `.tracebundle` export (content-addressed portable trace archive) | Scoped |
+| Session snapshot + restore (pre-merge baseline; rollback on failure) | Done |
+
+## V2 governance layer
+
+| Feature | Status |
+|---|---|
+| Append-only content-addressed ledger (22 node types, 7 edge types, dual backend) | Done |
+| Durable WAL-backed event bus (30+ event types, delayed events, causality) | Done |
+| 30 deterministic supervisor rules across 10 categories | Done |
+| 7-state consensus loop tracker | Done |
+| 11 stance roles + per-role tool authorization | Done |
+| Concern field projection (10 sections × 9 role templates) | Done |
+| Skill manufacturing pipeline (4 workflows + confidence ladder) | Done |
+| V1→V2 bridge adapters | Done |
+| First-time config wizard (minimal / balanced / strict presets) | Done |
+| 12 MCP memory tools | Done |
+
+## Execution engine
+
+| Feature | Status |
+|---|---|
+| Native agentic tool-use loop (Anthropic Messages API) | Done |
+| 5-provider fallback chain | Done |
+| Cross-model review gate | Done |
+| GRPW priority scheduling + file-scope conflict detection | Done |
+| Speculative parallel execution (`--specexec`, 4 strategies) | Done |
+| 10 failure classes + language-specific parsers + fingerprint dedup | Done |
+| Dependency-aware test selection | Done |
+| Pre-commit AST-aware critic | Done |
+| 17 review personas | Done |
+| Ranked repomap injection (PageRank-budgeted) | Done |
+| L0–L3 context budget framing with progressive compaction | Done |
+
+## CI / release / productionization
+
+| Feature | Status |
+|---|---|
+| CI gate: build + test + vet | Done |
+| Race detector green across repo | Done |
+| `golangci-lint` advisory (600+ findings closed in 30-PR cleanup) | Done |
+| `govulncheck` + `gosec` | Done |
+| Nightly bench workflow + HTML report + regression detection | Done |
+| CLA Assistant workflow | Done |
+| goreleaser + cosign keyless OIDC signing | Done |
+| Homebrew tap (`ericmacdougall/homebrew-stoke`) | Done |
+| Docker image (distroless, multi-stage) | Done |
+| Package-count drift check (`make check-pkg-count`) | Done |
+| Self-scan dogfooding (18+ rules, 1,010 files, zero blocking) | Done |
+| 12 negative hook tests (all attacks blocked) | Done |
+| OAuth endpoint contract test | Done |
+| Bench corpus (20 tasks × 5 categories) | Done |
+| SWE-bench Pro evaluation path | Done |
+
+Full table with spec links lives at
+[`docs/FEATURE-MAP.md`](https://github.com/ericmacdougall/Stoke/blob/main/docs/FEATURE-MAP.md).
