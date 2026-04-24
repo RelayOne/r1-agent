@@ -38,15 +38,31 @@ weeks from kickoff).
 
 ## R1D-1 — Tauri scaffold + r1 subprocess IPC (1 week)
 
+> **IPC contract frozen in `IPC-CONTRACT.md`** (11 subprocess-bound verbs
+> + 4 Tauri-only verbs, JSON-RPC 2.0 wire format, `stokerr`-derived
+> error taxonomy). Rust stubs live at `src-tauri/src/ipc.rs`; Go-side
+> `Handler` interface + `ErrNotImplemented` sentinel live at
+> `internal/desktopapi/desktopapi.go`.
+>
+> **Boundary.** The Go-side `Handler` interface is the canonical
+> dispatch surface for every verb that round-trips to the r1
+> subprocess. The Rust host translates Tauri `invoke` calls into
+> JSON-RPC 2.0 envelopes, writes them to the subprocess stdin, and
+> fans the response (or `not_implemented` sentinel) back to the
+> WebView. The 4 Tauri-only verbs (`session.send`, `session.cancel`,
+> `skill.list`, `skill.get`) bypass the Go `Handler` and execute in
+> the Rust host directly — process control and cached reads.
+
 - [ ] R1D-1.1: `cargo tauri init` in `/home/eric/repos/stoke/desktop/` with
       React+TS+Vite+Tailwind+shadcn/ui template.
 - [ ] R1D-1.2: Rust sidecar — subprocess launcher that spawns `r1 --one-shot`
       (or `r1 serve` if a long-lived server mode exists; confirm before start),
       parses stdout JSON events.
 - [ ] R1D-1.3: Tauri event forwarding from Rust to WebView — one-way stream of
-      parsed events.
-- [ ] R1D-1.4: Tauri `invoke` commands for the 4 MVP RPC verbs: `session.create`,
-      `session.send`, `session.cancel`, `skill.list`.
+      parsed events (shapes in `IPC-CONTRACT.md` §4).
+- [ ] R1D-1.4: Tauri `invoke` commands for the 4 MVP RPC verbs: `session.start`,
+      `session.send`, `session.cancel`, `skill.list` — dispatch wired from the
+      stubs in `src-tauri/src/ipc.rs`.
 - [ ] R1D-1.5: WebView: single-page IPC-test surface with prompt input, reply
       display pane, and session-start button.
 - [ ] **AC:** `cargo tauri dev` launches the Tauri window on macOS, Windows,
