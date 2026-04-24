@@ -26,6 +26,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -143,8 +145,15 @@ var tauriInvokeRE = regexp.MustCompile(`\binvoke\s*\(\s*['"\x60]([A-Za-z_][A-Za-
 // file:line if the backend handler is missing.
 func scanTauriInvokes(projectRoot string) map[string]string {
 	out := map[string]string{}
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort invoke scan: log and skip unreadable
+			// subtrees so one permission-denied path can't hide the
+			// rest of the frontend source.
+			logging.Global().Warn("plan.integrity_desktop: invoke walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -160,13 +169,16 @@ func scanTauriInvokes(projectRoot string) map[string]string {
 			ext != ".mjs" && ext != ".cjs" && ext != ".vue" && ext != ".svelte" {
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		for _, m := range tauriInvokeRE.FindAllStringSubmatch(string(body), -1) {
-			if _, dup := out[m[1]]; !dup {
-				out[m[1]] = path
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Unreadable frontend file: log and continue so one bad
+			// file can't hide invocations declared elsewhere.
+			logging.Global().Warn("plan.integrity_desktop: unreadable frontend file", "path", path, "err", readErr)
+		} else {
+			for _, m := range tauriInvokeRE.FindAllStringSubmatch(string(body), -1) {
+				if _, dup := out[m[1]]; !dup {
+					out[m[1]] = path
+				}
 			}
 		}
 		return nil
@@ -179,8 +191,14 @@ var tauriCommandRE = regexp.MustCompile(`(?s)#\[tauri::command(?:[^\]]*)?\][^f]*
 func scanTauriCommands(projectRoot string) map[string]string {
 	out := map[string]string{}
 	srcTauri := filepath.Join(projectRoot, "src-tauri")
-	_ = filepath.WalkDir(srcTauri, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(srcTauri, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort command scan: log and skip unreadable
+			// subtrees.
+			logging.Global().Warn("plan.integrity_desktop: command walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -192,12 +210,14 @@ func scanTauriCommands(projectRoot string) map[string]string {
 		if !strings.HasSuffix(d.Name(), ".rs") {
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		for _, m := range tauriCommandRE.FindAllStringSubmatch(string(body), -1) {
-			out[m[1]] = path
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Unreadable .rs file: log and continue.
+			logging.Global().Warn("plan.integrity_desktop: unreadable .rs file", "path", path, "err", readErr)
+		} else {
+			for _, m := range tauriCommandRE.FindAllStringSubmatch(string(body), -1) {
+				out[m[1]] = path
+			}
 		}
 		return nil
 	})
@@ -211,8 +231,14 @@ var tauriHandlerRE = regexp.MustCompile(`tauri::generate_handler!\s*\[([^\]]*)\]
 func scanTauriInvokeHandlerList(projectRoot string) map[string]struct{} {
 	out := map[string]struct{}{}
 	srcTauri := filepath.Join(projectRoot, "src-tauri")
-	_ = filepath.WalkDir(srcTauri, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(srcTauri, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort handler-list scan: log and skip unreadable
+			// subtrees.
+			logging.Global().Warn("plan.integrity_desktop: handler walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -224,21 +250,23 @@ func scanTauriInvokeHandlerList(projectRoot string) map[string]struct{} {
 		if !strings.HasSuffix(d.Name(), ".rs") {
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		for _, m := range tauriHandlerRE.FindAllStringSubmatch(string(body), -1) {
-			for _, raw := range strings.Split(m[1], ",") {
-				raw = strings.TrimSpace(raw)
-				if raw == "" {
-					continue
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Unreadable .rs file: log and continue.
+			logging.Global().Warn("plan.integrity_desktop: unreadable handler file", "path", path, "err", readErr)
+		} else {
+			for _, m := range tauriHandlerRE.FindAllStringSubmatch(string(body), -1) {
+				for _, raw := range strings.Split(m[1], ",") {
+					raw = strings.TrimSpace(raw)
+					if raw == "" {
+						continue
+					}
+					// Last path segment only ("a::b::c" → "c").
+					if i := strings.LastIndex(raw, "::"); i >= 0 {
+						raw = raw[i+2:]
+					}
+					out[raw] = struct{}{}
 				}
-				// Last path segment only ("a::b::c" → "c").
-				if i := strings.LastIndex(raw, "::"); i >= 0 {
-					raw = raw[i+2:]
-				}
-				out[raw] = struct{}{}
 			}
 		}
 		return nil

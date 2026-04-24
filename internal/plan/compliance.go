@@ -31,6 +31,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // ComplianceVerdict is the per-deliverable classification.
@@ -139,12 +141,24 @@ func classifyDeliverable(repoRoot string, d Deliverable) ComplianceFinding {
 	stubOnly := true
 	note := ""
 
-	walkErr := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
+	walkErr := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, werr error) error {
+		if werr != nil {
+			// Best-effort compliance scan: log and skip unreadable
+			// paths but keep traversing the rest of the repo. A
+			// single bad dir shouldn't flip a deliverable to Missing.
+			logging.Global().Warn("plan.compliance: walk error", "path", path, "err", werr)
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		rel, rerr := filepath.Rel(repoRoot, path)
-		if rerr != nil {
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			// Can't relativize — log and treat like unreadable.
+			logging.Global().Warn("plan.compliance: rel-path error", "path", path, "err", relErr)
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if entry.IsDir() {

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/env"
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // Backend implements env.Environment for Ember burst workers.
@@ -241,7 +242,12 @@ func (b *Backend) Cost(ctx context.Context, h *env.Handle) (env.CostEstimate, er
 	// Query current status to get real cost.
 	status, err := b.getWorkerStatus(ctx, h.ID)
 	if err != nil {
-		// Fall back to stored cost.
+		// Fall back to zero cost when the status endpoint is
+		// unreachable: Cost() must not fail the whole teardown
+		// pipeline just because we can't fetch a live price. Log the
+		// error so operators can see transient API failures.
+		logging.Global().Warn("ember: worker status unavailable, falling back to zero cost",
+			"worker_id", h.ID, "err", err)
 		return env.CostEstimate{
 			ComputeUSD: 0,
 			TotalUSD:   0,

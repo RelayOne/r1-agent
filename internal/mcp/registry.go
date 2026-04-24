@@ -285,18 +285,23 @@ func NewRegistry(cfg Config, emitter *Emitter) (*Registry, error) {
 			continue
 		}
 		g.Go(func() error {
-			client, err := factory(sc)
-			if err != nil {
-				results <- result{name: sc.Name, err: err}
-				return nil // don't fail the whole group
+			// Errors are routed back through the results channel and
+			// handled by the caller; this goroutine must not fail
+			// the errgroup because one server failing should not
+			// cancel the others.
+			client, factoryErr := factory(sc)
+			switch {
+			case factoryErr != nil:
+				results <- result{name: sc.Name, err: factoryErr}
+			default:
+				if initErr := client.Initialize(gctx); initErr != nil {
+					// Best-effort tear down of the partial client.
+					_ = client.Close()
+					results <- result{name: sc.Name, err: initErr}
+				} else {
+					results <- result{name: sc.Name, client: client}
+				}
 			}
-			if initErr := client.Initialize(gctx); initErr != nil {
-				// Best-effort tear down of the partially-built client.
-				_ = client.Close()
-				results <- result{name: sc.Name, err: initErr}
-				return nil
-			}
-			results <- result{name: sc.Name, client: client}
 			return nil
 		})
 	}

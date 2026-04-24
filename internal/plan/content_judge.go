@@ -145,10 +145,17 @@ func JudgeDeclaredContent(ctx context.Context, prov provider.Provider, model str
 	// thinking-emitting model — codex-review P2.
 	raw, _ := collectModelText(resp)
 	var verdict ContentJudgeVerdict
-	if _, perr := jsonutil.ExtractJSONInto(raw, &verdict); perr != nil {
-		// Non-JSON verdict — default to non-gating rather than making
-		// the judge a source of spurious failures.
-		return &ContentJudgeVerdict{Real: true, Reason: "judge returned non-JSON; defaulting to non-gating"}, nil
+	_, parseErr := jsonutil.ExtractJSONInto(raw, &verdict)
+	if parseErr != nil {
+		// Non-JSON verdict: the judge MUST NOT fail the pipeline on
+		// its own parse errors — that would make it a source of
+		// spurious failures. Default to non-gating and surface the
+		// parse failure in Reason so callers can see what happened.
+		fallback := &ContentJudgeVerdict{
+			Real:   true,
+			Reason: fmt.Sprintf("judge returned non-JSON (%v); defaulting to non-gating", parseErr),
+		}
+		return fallback, nil
 	}
 	return &verdict, nil
 }

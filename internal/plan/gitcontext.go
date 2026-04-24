@@ -34,6 +34,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // gitInvocationTimeout caps how long any single git sub-command may
@@ -105,8 +107,14 @@ func AssembleFileHistory(repoRoot, filePath string, maxCommits, maxDiffBytes int
 		maxDiffBytes = capMaxDiffByte
 	}
 
-	// Silent no-op when git is missing.
-	if _, err := exec.LookPath("git"); err != nil {
+	// Silent no-op when git is missing: the gitcontext enrichment is
+	// optional, and callers interpret (nil, nil) as "no git context
+	// available" rather than an error. The LookPath failure here is
+	// *expected* when git isn't installed, but we still log it so
+	// operators can tell *why* git-context was skipped.
+	gitPath, gitLookErr := exec.LookPath("git")
+	if gitPath == "" {
+		logging.Global().Info("plan.gitcontext: git not found; context-assembly skipped", "err", gitLookErr)
 		return nil, nil
 	}
 

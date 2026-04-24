@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // SymbolKind classifies a code symbol.
@@ -175,8 +177,12 @@ func AnalyzeSource(src []byte, relPath string) (*FileAnalysis, error) {
 func AnalyzeDir(root string) (*Analysis, error) {
 	a := &Analysis{}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort AST walk: log unreadable paths and move on
+			// so a single permission-denied subtree doesn't blow up
+			// the whole analysis.
+			logging.Global().Warn("goast: walk error", "path", path, "err", walkErr)
 			return nil
 		}
 		if info.IsDir() {
@@ -191,9 +197,12 @@ func AnalyzeDir(root string) (*Analysis, error) {
 		}
 
 		rel, _ := filepath.Rel(root, path)
-		fa, err := AnalyzeFile(path, rel)
-		if err != nil {
-			return nil // skip unparseable files
+		fa, parseErr := AnalyzeFile(path, rel)
+		if parseErr != nil {
+			// Unparseable file: log and skip so a single syntax-
+			// broken file can't tank an AnalyzeDir of the whole repo.
+			logging.Global().Warn("goast: skipping unparseable file", "path", path, "err", parseErr)
+			return nil
 		}
 		a.Files = append(a.Files, fa)
 		a.AllSymbols = append(a.AllSymbols, fa.Symbols...)

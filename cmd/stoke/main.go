@@ -6583,9 +6583,12 @@ func readDocsDir(dir string) (string, error) {
 		if ext != ".md" && ext != ".txt" && ext != ".json" && ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil // skip unreadable; docs-dir is best-effort
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Best-effort: skip unreadable files but log the error so
+			// the signal is not silently swallowed.
+			logging.Global().Warn("docs-dir: skipping unreadable file", "path", path, "err", readErr)
+			return nil
 		}
 		rel, _ := filepath.Rel(dir, path)
 		fmt.Fprintf(&b, "\n### %s\n\n%s\n", rel, string(data))

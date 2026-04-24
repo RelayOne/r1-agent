@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -142,8 +144,14 @@ func (csharpEcosystem) CompileErrors(ctx context.Context, projectRoot string, fi
 
 func csFindProjects(projectRoot string) []string {
 	var out []string
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort project discovery: log and skip unreadable
+			// subtrees so a single bad path can't hide valid projects.
+			logging.Global().Warn("plan.integrity_csharp: project walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -179,8 +187,15 @@ func csReadPackageRefs(path string) map[string]struct{} {
 func csLocalNamespaces(projectRoot string) map[string]struct{} {
 	out := map[string]struct{}{}
 	re := regexp.MustCompile(`(?m)^\s*namespace\s+([A-Za-z_][A-Za-z0-9_\.]*)`)
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort namespace scan: log and skip unreadable
+			// subtrees so a single bad path can't hide valid
+			// namespaces elsewhere.
+			logging.Global().Warn("plan.integrity_csharp: namespace walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -193,12 +208,15 @@ func csLocalNamespaces(projectRoot string) map[string]struct{} {
 		if strings.ToLower(filepath.Ext(d.Name())) != ".cs" {
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		for _, m := range re.FindAllStringSubmatch(string(body), -1) {
-			out[m[1]] = struct{}{}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Unreadable .cs file: log and continue so the rest of
+			// the namespace scan still runs.
+			logging.Global().Warn("plan.integrity_csharp: unreadable .cs file", "path", path, "err", readErr)
+		} else {
+			for _, m := range re.FindAllStringSubmatch(string(body), -1) {
+				out[m[1]] = struct{}{}
+			}
 		}
 		return nil
 	})

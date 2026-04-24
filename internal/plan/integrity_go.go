@@ -39,7 +39,20 @@ var goImportLineRE = regexp.MustCompile(`^\s*"([^"]+)"`)
 
 func (goEcosystem) UnresolvedImports(projectRoot string, files []string) ([]ManifestMiss, error) {
 	modRoot, modPath, deps, err := goFindModule(projectRoot)
-	if err != nil || modRoot == "" {
+	if err != nil {
+		// No go.mod (or a read failure) means this repo either isn't
+		// a Go module or the module is unreadable. In both cases the
+		// Ecosystem interface expects an "empty findings" result for
+		// non-applicable repos. Surface unexpected errors through
+		// os.IsNotExist — if the file simply doesn't exist, treat as
+		// not-a-Go-module; any other error is an unexpected I/O
+		// failure and should propagate to the caller.
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("go: find module: %w", err)
+	}
+	if modRoot == "" {
 		return nil, nil
 	}
 	stdlib := goStdlibSet()

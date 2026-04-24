@@ -17,6 +17,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // Node is a file/module in the dependency graph.
@@ -59,9 +61,12 @@ func Build(root string, extensions []string) (*Graph, error) {
 			return nil
 		}
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil // skip unreadable files
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Best-effort dependency graph: log unreadable files and
+			// continue so one bad file doesn't nuke the whole graph.
+			logging.Global().Warn("depgraph: skipping unreadable file", "path", path, "err", readErr)
+			return nil
 		}
 
 		imports := extractImports(string(data), ext)

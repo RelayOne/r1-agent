@@ -44,6 +44,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // maxLogBytes caps the size of any single mission stdout/stderr log. When the
@@ -744,25 +746,31 @@ func (h *realHandle) Kill() error {
 	if h.cmd.Process == nil {
 		return fmt.Errorf("no process")
 	}
-	pgid, err := syscall.Getpgid(h.cmd.Process.Pid)
-	if err != nil {
-		// Process already gone
-		return nil
+	// Getpgid returning an error is expected when the process has
+	// already exited (ESRCH). In that case there is nothing left to
+	// kill and Kill() has nothing to do, so we skip the signal path
+	// entirely and return the default (nil) error. We log the
+	// lookup error so an unexpected failure (not just ESRCH) is
+	// still visible in operator logs.
+	pgid, pgidErr := syscall.Getpgid(h.cmd.Process.Pid)
+	if pgidErr == nil {
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		// Give the subprocess a moment to flush and exit cleanly.
+		done := make(chan struct{})
+		go func() {
+			_, _ = h.cmd.Process.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+	} else {
+		logging.Global().Info("mcp.stoke_server: Kill() Getpgid failed; treating as process-already-gone",
+			"pid", h.cmd.Process.Pid, "err", pgidErr)
 	}
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	// Give the subprocess a moment to flush and exit cleanly
-	done := make(chan struct{})
-	go func() {
-		_, _ = h.cmd.Process.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-time.After(3 * time.Second):
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		return nil
-	}
+	return nil
 }
 
 // ServeStdio runs the MCP server over stdin/stdout (the MCP stdio transport).

@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -162,8 +164,14 @@ func (cEcosystem) CompileErrors(ctx context.Context, projectRoot string, files [
 
 func cCollectHeaders(projectRoot string) map[string]struct{} {
 	out := map[string]struct{}{}
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort header collection: log and skip unreadable
+			// subtrees rather than aborting the whole walk.
+			logging.Global().Warn("plan.integrity_c: walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {

@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -34,8 +36,19 @@ func (phpEcosystem) Owns(path string) bool {
 var phpUseRE = regexp.MustCompile(`(?m)^\s*use\s+([A-Za-z_][A-Za-z0-9_\\]*)`)
 
 func (phpEcosystem) UnresolvedImports(projectRoot string, files []string) ([]ManifestMiss, error) {
+	// No composer.json (or it's a directory) means this repo isn't a
+	// PHP project; the Ecosystem interface expects an empty-findings
+	// result for non-applicable repos. We still log non-ENOENT stat
+	// errors so an unexpected I/O failure isn't silently swallowed.
 	manifest := filepath.Join(projectRoot, "composer.json")
-	if info, err := os.Stat(manifest); err != nil || info.IsDir() {
+	info, statErr := os.Stat(manifest)
+	if statErr != nil {
+		if !os.IsNotExist(statErr) {
+			logging.Global().Warn("plan.integrity_php: composer.json stat error", "path", manifest, "err", statErr)
+		}
+		return nil, nil
+	}
+	if info == nil || info.IsDir() {
 		return nil, nil
 	}
 	prefixes, packageNames := phpReadComposer(manifest)

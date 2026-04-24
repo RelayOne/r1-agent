@@ -63,11 +63,16 @@ type decomposeLegacyPlan struct {
 func handleDecompose(payload json.RawMessage) (Response, error) {
 	req := decomposeRequest{}
 	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &req); err != nil {
-			// Malformed JSON input still returns a legacy-shape
-			// scaffold response so CloudSwarm sees a stable shape
-			// rather than exit-code noise.
-			return decomposeScaffoldResponse("invalid request payload: " + err.Error()), nil
+		// Malformed JSON input deliberately returns a legacy-shape
+		// scaffold response (with err surfaced via Data) rather than a
+		// Go-level error, so CloudSwarm sees a stable shape rather
+		// than exit-code noise. The unmarshal error is intentionally
+		// routed into the response body.
+		unmarshalErr := json.Unmarshal(payload, &req)
+		if unmarshalErr != nil {
+			msg := "invalid request payload: " + unmarshalErr.Error()
+			resp := decomposeScaffoldResponse(msg)
+			return resp, nil
 		}
 	}
 

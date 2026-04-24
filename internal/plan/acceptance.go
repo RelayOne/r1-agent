@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/depcheck"
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // fileExistsColonForm matches `file_exists:<path>` — some models emit
@@ -599,8 +600,18 @@ func fuzzyFindFile(projectRoot, wantRel string) (string, bool) {
 		if root == "." {
 			rootAbs = projectRoot
 		}
-		filepath.WalkDir(rootAbs, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() || found != "" {
+		_ = filepath.WalkDir(rootAbs, func(p string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// Best-effort suffix search: log the walk error and
+				// skip the unreadable subtree so one permission-denied
+				// path can't hide a match elsewhere in the workspace.
+				logging.Global().Warn("plan.acceptance: walk error", "path", p, "err", walkErr)
+				if d != nil && d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() || found != "" {
 				return nil
 			}
 			// Skip node_modules, .git, dist, build, .next, target, etc.

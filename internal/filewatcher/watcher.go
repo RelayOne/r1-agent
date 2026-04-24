@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // EventType classifies a file change.
@@ -213,9 +215,13 @@ func (w *Watcher) pollLoop() {
 func (w *Watcher) scan(notify bool) error {
 	current := make(map[string]fileState)
 
-	err := filepath.Walk(w.config.Root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // skip unreadable
+	err := filepath.Walk(w.config.Root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort scan: log the walk error so we don't lose
+			// the signal (e.g. permission denied), and skip the entry
+			// so a single bad path can't abort the whole scan.
+			logging.Global().Warn("filewatcher: walk error", "path", path, "err", walkErr)
+			return nil
 		}
 
 		if info.IsDir() {
@@ -267,8 +273,10 @@ func (w *Watcher) scan(notify bool) error {
 func (w *Watcher) scanCollect() ([]Event, error) {
 	current := make(map[string]fileState)
 
-	err := filepath.Walk(w.config.Root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	err := filepath.Walk(w.config.Root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort scan: log and skip unreadable entries.
+			logging.Global().Warn("filewatcher: walk error", "path", path, "err", walkErr)
 			return nil
 		}
 		if info.IsDir() {

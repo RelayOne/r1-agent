@@ -611,9 +611,13 @@ func NewPlanHandler(deps HandlerDeps) PhaseHandler {
 					if feedback != "" {
 						prompt += "\n\n" + feedback
 					}
-					_, err := deps.ExecuteFn(pCtx, m, prompt, "generate plan")
-					if err != nil {
-						return planText, nil // fallback to deterministic plan
+					_, execErr := deps.ExecuteFn(pCtx, m, prompt, "generate plan")
+					if execErr != nil {
+						// Fallback to the deterministic plan when the
+						// model run fails; log so the fallback signal
+						// isn't silently lost.
+						log.Printf("mission: plan generation failed for %s, using deterministic plan: %v", m.ID, execErr)
+						return planText, nil
 					}
 					updatedGaps, _ := deps.Store.OpenGaps(m.ID)
 					var items []string
@@ -1169,8 +1173,15 @@ func NewValidateHandler(deps HandlerDeps) PhaseHandler {
 		// When Layer 4 is NOT available, we run the full rule set.
 		if deps.Validator != nil {
 			var files []convergence.FileInput
-			filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
+			_ = filepath.WalkDir(deps.RepoRoot, func(path string, d fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					// Best-effort validation scan: log unreadable
+					// entries and keep walking so a single bad path
+					// can't prevent validation of the rest of the repo.
+					log.Printf("mission: validator walk error at %s: %v", path, walkErr)
+					return nil
+				}
+				if d.IsDir() {
 					return nil
 				}
 				rel, _ := filepath.Rel(deps.RepoRoot, path)

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // Commands holds build/test/lint commands for a project.
@@ -179,8 +181,18 @@ func DetectProject(projectRoot string) ProjectInfo {
 			frontendExts := map[string]bool{".tsx": true, ".jsx": true, ".vue": true, ".svelte": true}
 			srcDir := filepath.Join(projectRoot, "src")
 			if _, err := os.Stat(srcDir); err == nil {
-				filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-					if err != nil || d.IsDir() {
+				_ = filepath.WalkDir(srcDir, func(path string, d os.DirEntry, walkErr error) error {
+					// Best-effort frontend detection: log the walk
+					// error and skip the unreadable subtree/file so
+					// detection still works on the rest of src/.
+					if walkErr != nil {
+						logging.Global().Warn("config.detect: frontend walk error", "path", path, "err", walkErr)
+						if d != nil && d.IsDir() {
+							return filepath.SkipDir
+						}
+						return filepath.SkipDir
+					}
+					if d.IsDir() {
 						return nil
 					}
 					if frontendExts[filepath.Ext(path)] {

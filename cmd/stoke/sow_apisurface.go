@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 // sowAPISurface scans the repo for source files and extracts the public API
@@ -29,8 +31,11 @@ func sowAPISurface(repoRoot string, budget int) string {
 	}
 	var files []fileAPI
 
-	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort scan: log the walk error but continue so a
+			// single unreadable path doesn't kill the whole surface.
+			logging.Global().Warn("sowAPISurface: walk error", "path", path, "err", walkErr)
 			return nil
 		}
 		name := d.Name()
@@ -49,8 +54,10 @@ func sowAPISurface(repoRoot string, budget int) string {
 			return nil
 		}
 		rel, _ := filepath.Rel(repoRoot, path)
-		content, err := os.ReadFile(path)
-		if err != nil {
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Best-effort: log unreadable files but keep scanning.
+			logging.Global().Warn("sowAPISurface: unreadable file", "path", path, "err", readErr)
 			return nil
 		}
 		if len(content) > 64*1024 {

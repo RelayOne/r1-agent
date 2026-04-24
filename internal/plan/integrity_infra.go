@@ -38,6 +38,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -290,8 +292,15 @@ func vendorAlternatives(provider string) string {
 // source file imports it yet).
 func scanVendorSDKs(projectRoot string) map[string]string {
 	out := map[string]string{}
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort vendor-SDK scan: log and skip unreadable
+			// subtrees so one bad path can't hide a provider lurking
+			// elsewhere.
+			logging.Global().Warn("plan.integrity_infra: walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -310,17 +319,20 @@ func scanVendorSDKs(projectRoot string) map[string]string {
 		default:
 			return nil
 		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-		text := string(body)
-		for provider, re := range providerSignatures {
-			if _, dup := out[provider]; dup {
-				continue
-			}
-			if re.MatchString(text) {
-				out[provider] = path
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			// Unreadable source file: log and continue so the scan
+			// still catches providers in the rest of the tree.
+			logging.Global().Warn("plan.integrity_infra: unreadable file", "path", path, "err", readErr)
+		} else {
+			text := string(body)
+			for provider, re := range providerSignatures {
+				if _, dup := out[provider]; dup {
+					continue
+				}
+				if re.MatchString(text) {
+					out[provider] = path
+				}
 			}
 		}
 		return nil

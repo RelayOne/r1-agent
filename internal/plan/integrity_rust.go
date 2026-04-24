@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/logging"
 )
 
 func init() {
@@ -178,7 +180,14 @@ func (rustEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 	if len(relevant) == 0 {
 		return nil, nil
 	}
-	if _, err := exec.LookPath("cargo"); err != nil {
+	// Silent no-op when cargo is missing: the compile-regression gate
+	// is optional and callers interpret (nil, nil) as "no cargo
+	// check available" rather than an error. We still log the
+	// LookPath result so operators can tell *why* the gate was
+	// skipped in a given run.
+	cargoPath, cargoLookErr := exec.LookPath("cargo")
+	if cargoPath == "" {
+		logging.Global().Info("plan.integrity_rust: cargo not found; compile-regression gate skipped", "err", cargoLookErr)
 		return nil, nil
 	}
 	var all []CompileErr
@@ -233,8 +242,15 @@ func (rustEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 
 func rustCollectManifests(projectRoot string) []string {
 	var out []string
-	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+	_ = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Best-effort manifest scan: log and skip unreadable
+			// subtrees so a single bad path can't hide valid
+			// Cargo.toml manifests elsewhere in the workspace.
+			logging.Global().Warn("plan.integrity_rust: walk error", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
