@@ -23,6 +23,7 @@ import { renderPanel as renderLedgerViewer } from "./panels/ledger-viewer";
 import { renderPanel as renderMemoryInspector } from "./panels/memory-inspector";
 import { renderPanel as renderCostPanel } from "./panels/cost-panel";
 import { mountDrawer as mountDescentEvidenceDrawer } from "./panels/descent-evidence";
+import { mountNodeDrawer as mountLedgerNodeDrawer } from "./panels/ledger-node-drawer";
 
 type PanelEntry = {
   id: string;
@@ -57,6 +58,7 @@ function mount(): void {
   }
 
   mountDescentEvidenceDrawer(document.body);
+  mountLedgerNodeDrawer(document.body);
 }
 
 if (document.readyState === "loading") {

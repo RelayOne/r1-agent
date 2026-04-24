@@ -130,12 +130,26 @@ export interface LedgerGetNodeParams {
   hash: string;
 }
 
+/**
+ * Rich ledger node shape used by the R1D-5 browser. Consumed by the
+ * node-detail drawer and the session-timeline renderers. `id` doubles
+ * as the user-visible identifier; `content_hash` is the canonical
+ * content-addressed hash; `parent_hash` is the prior node in the
+ * per-session chain (empty on the first node). `shredded` flips true
+ * after a crypto-shred so the UI can render a tombstone.
+ */
 export interface LedgerNode {
-  hash: string;
-  /** 22 ledger node types; see `ledger/nodes/`. */
-  type: string;
+  id: string;
+  /** One of ~30 node kinds registered in `internal/ledger/nodes/`. */
+  kind: string;
+  timestamp: Iso8601;
+  content_hash: string;
+  parent_hash: string;
   payload: Record<string, unknown>;
-  edges: LedgerEdge[];
+  shredded: boolean;
+  /** Legacy alias for `kind` retained for `ledger_get_node` consumers. */
+  type?: string;
+  edges?: LedgerEdge[];
 }
 
 export interface LedgerListEventsParams {
@@ -154,6 +168,52 @@ export interface LedgerEventSummary {
 export interface LedgerListEventsResult {
   events: LedgerEventSummary[];
   next_cursor?: string;
+}
+
+/** Summary row returned by `ledger_sessions`, shown in the left pane. */
+export interface LedgerSessionSummary {
+  session_id: string;
+  started_at: Iso8601;
+  node_count: number;
+}
+
+export interface LedgerSessionsResult {
+  sessions: LedgerSessionSummary[];
+}
+
+export interface LedgerTimelineParams {
+  session_id: string;
+}
+
+export interface LedgerTimelineResult {
+  nodes: LedgerNode[];
+}
+
+export interface LedgerVerifyParams {
+  session_id: string;
+}
+
+export interface LedgerVerifyResult {
+  passed: boolean;
+  first_bad_offset: number | null;
+  message?: string;
+}
+
+export interface LedgerShredParams {
+  session_id: string;
+  node_id: string;
+}
+
+export interface LedgerShredResult {
+  ok: boolean;
+}
+
+export interface LedgerExportParams {
+  session_id: string;
+}
+
+export interface LedgerExportResult {
+  ndjson: string;
 }
 
 // ---------------------------------------------------------------------
@@ -468,6 +528,11 @@ export type InvokeMethod =
   // Ledger
   | "ledger_get_node"
   | "ledger_list_events"
+  | "ledger_sessions"
+  | "ledger_timeline"
+  | "ledger_verify"
+  | "ledger_shred"
+  | "ledger_export"
   // Memory
   | "memory_list_scopes"
   | "memory_query"
