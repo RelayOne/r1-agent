@@ -691,13 +691,6 @@ func writeFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// getOrchestratorFromStore is a stub helper — in real integration,
-// the ExecuteFn would close over the orchestrator.
-func getOrchestratorFromStore(t *testing.T, m *mission.Mission) *mission.Mission {
-	t.Helper()
-	return m
-}
-
 // --- Close ---
 
 func TestClose(t *testing.T) {

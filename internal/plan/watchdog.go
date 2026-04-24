@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -25,7 +24,6 @@ type Watchdog struct {
 	cancel     context.CancelFunc
 	lastPulse  atomic.Int64 // unix nano of last pulse
 	stopped    atomic.Bool
-	mu         sync.Mutex
 	label      string
 }
 

@@ -817,12 +817,7 @@ func (ss *SessionScheduler) DryRun() string {
 	return b.String()
 }
 
-// checkInfraEnvVars returns missing env vars for the given infra requirements.
-func checkInfraEnvVars(reqs []InfraRequirement) []string {
-	return checkInfraEnvVarsFiltered(reqs, nil)
-}
-
-// checkInfraEnvVarsFiltered is checkInfraEnvVars with an optional filter
+// checkInfraEnvVarsFiltered is an infra-env gate with an optional filter
 // that restricts the gate to only classifier-approved build-required
 // variables. A nil filter reverts to legacy behavior (gate on every
 // declared var). An empty non-nil filter (len==0) gates on nothing —

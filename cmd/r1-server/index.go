@@ -41,7 +41,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -415,10 +414,3 @@ func renderEventLine(row EventRow) string {
 	)
 }
 
-// marshalEventsJSON is a tiny helper reused by index_test for golden
-// comparison of JSON responses — kept package-private + tiny so tests
-// can call it without re-exporting writeJSON.
-func marshalEventsJSON(rows []EventRow) string {
-	b, _ := json.Marshal(rows)
-	return string(b)
-}

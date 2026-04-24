@@ -106,12 +106,6 @@ func (e CompileError) key() string {
 // to inject all of them into every prompt.
 const maxTrackedErrors = 200
 
-// staleAfter drops errors the watcher hasn't re-observed within this
-// window when the stack does not emit a clean-boundary signal. tsc's
-// "Watching for file changes" resets the window authoritatively; for
-// stacks without that signal, time-based aging is the fallback.
-const staleAfter = 30 * time.Second
-
 // watcherMaxRestarts caps how many times we relaunch a dying watch
 // subprocess before giving up. After this, the watcher is dead and
 // Current() returns empty. Crash-looping forever would waste CPU and

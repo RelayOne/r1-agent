@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/stream"
@@ -94,8 +93,6 @@ type AnthropicProvider struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
-	sseParser  *stream.SSEParser
-	mu         sync.Mutex
 }
 
 // NewAnthropicProvider creates a direct Anthropic API client.

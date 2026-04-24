@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -223,7 +222,3 @@ func truncateForNote(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// spaceRe is unused but kept for future expansion when we want to
-// normalize whitespace during matching. Silences the unused import if
-// this file shrinks.
-var spaceRe = regexp.MustCompile(`\s+`)
