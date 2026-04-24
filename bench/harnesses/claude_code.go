@@ -50,7 +50,7 @@ func (c *ClaudeCode) Run(ctx context.Context, taskMount string) RunResult {
 	args = append(args, prompt)
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, c.binPath(), args...)
+	cmd := exec.CommandContext(ctx, c.binPath(), args...) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	cmd.Dir = taskMount
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

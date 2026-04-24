@@ -469,7 +469,7 @@ func pathShowsInGitStatus(repoRoot, path string) bool {
 	if !gitStatusAvailable {
 		return true
 	}
-	cmd := exec.Command("git", "status", "--porcelain", "--", path)
+	cmd := exec.Command("git", "status", "--porcelain", "--", path) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {

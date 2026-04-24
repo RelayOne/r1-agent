@@ -312,7 +312,7 @@ func fixDAGBash(ctx context.Context, input map[string]interface{}, repoRoot stri
 
 	cctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-	c := exec.CommandContext(cctx, "bash", "-lc", cmdStr)
+	c := exec.CommandContext(cctx, "bash", "-lc", cmdStr) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	c.Dir = repoRoot
 	// Belt-and-suspenders: make sure bash truly starts from repoRoot even
 	// if something in the env tries to chdir elsewhere.

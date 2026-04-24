@@ -72,7 +72,7 @@ func (r *BuildReport) Save(projectRoot string) error {
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil { return err }
 	path := filepath.Join(dir, filename)
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- build report artefact; user-readable.
 }
 
 // SaveLatest writes the report as latest.json for easy CI access.
@@ -83,7 +83,7 @@ func (r *BuildReport) SaveLatest(projectRoot string) error {
 	}
 	data, err := json.MarshalIndent(r, "", "  ")
 	if err != nil { return err }
-	return os.WriteFile(filepath.Join(dir, "latest.json"), data, 0644)
+	return os.WriteFile(filepath.Join(dir, "latest.json"), data, 0644) // #nosec G306 -- build report artefact; user-readable.
 }
 
 // LoadLatest reads the most recent report.

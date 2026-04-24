@@ -114,7 +114,7 @@ func PreflightScriptRecursion(repoRoot string) []string {
 			return nil
 		}
 		updated = append(updated, '\n')
-		if wErr := os.WriteFile(path, updated, 0644); wErr != nil {
+		if wErr := os.WriteFile(path, updated, 0644); wErr != nil { // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 			diag = append(diag, fmt.Sprintf("H-79 script-recursion preflight: failed to write %s: %v", path, wErr))
 			return nil
 		}

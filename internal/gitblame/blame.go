@@ -37,7 +37,7 @@ type FileBlame struct {
 
 // Blame runs git blame on a file and returns parsed results.
 func Blame(repoDir, filePath string) (*FileBlame, error) {
-	cmd := exec.Command("git", "blame", "--porcelain", filePath)
+	cmd := exec.Command("git", "blame", "--porcelain", filePath) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil {

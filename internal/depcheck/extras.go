@@ -119,7 +119,7 @@ func CheckGitRef(ctx context.Context, url, ref string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", fmt.Errorf("depcheck: git not available: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", url, ref)
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", url, ref) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("depcheck: git ls-remote %s %s: %w", url, ref, err)

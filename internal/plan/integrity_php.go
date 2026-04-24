@@ -122,7 +122,7 @@ func (phpEcosystem) CompileErrors(ctx context.Context, projectRoot string, files
 	defer cancel()
 	var errs []CompileErr
 	for _, f := range files {
-		cmd := exec.CommandContext(c, "php", "-l", f)
+		cmd := exec.CommandContext(c, "php", "-l", f) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		for _, line := range strings.Split(string(out), "\n") {

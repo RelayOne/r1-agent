@@ -203,7 +203,7 @@ func (idx *Index) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- vector index cache; user-readable.
 }
 
 // Load reads the index from a JSON file.

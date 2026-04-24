@@ -392,7 +392,7 @@ func runJudgeSynthesis(ctx context.Context, prov provider.Provider, model, share
 	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf("judge returned no content (stop_reason=%q)\n%s", resp.StopReason, diag)
 	}
-	_ = os.WriteFile("/tmp/stoke-reasoning-raw.txt", []byte(raw), 0o644)
+	_ = os.WriteFile("/tmp/stoke-reasoning-raw.txt", []byte(raw), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 
 	var verdict ReasoningVerdict
 	if _, err := jsonutil.ExtractJSONInto(raw, &verdict); err != nil {

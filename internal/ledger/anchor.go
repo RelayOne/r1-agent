@@ -265,7 +265,7 @@ func (s *AnchorStore) Append(a Anchor) error {
 		// failure as a non-fatal diagnostic.
 		return fmt.Errorf("anchor seq %d persisted to index.jsonl but inspection file marshal failed: %w", a.Seq, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, fname), body, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, fname), body, 0o600); err != nil {
 		return fmt.Errorf("anchor seq %d persisted to index.jsonl but inspection file write failed: %w", a.Seq, err)
 	}
 	return nil

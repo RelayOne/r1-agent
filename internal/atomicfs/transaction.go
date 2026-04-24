@@ -251,7 +251,7 @@ func (tx *Transaction) Commit() error {
 	rollback := func() {
 		// Restore backups
 		for _, b := range backups {
-			os.WriteFile(b.path, b.data, 0644)
+			os.WriteFile(b.path, b.data, 0644) // #nosec G306 -- atomic multi-file transaction target; 0644 preserves source perms.
 		}
 		cleanup()
 	}

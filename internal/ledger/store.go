@@ -130,7 +130,7 @@ func (s *Store) WriteNode(n Node) error {
 	if err != nil {
 		return fmt.Errorf("marshal chain record: %w", err)
 	}
-	if err := os.WriteFile(chainPath, chainData, 0o644); err != nil {
+	if err := os.WriteFile(chainPath, chainData, 0o600); err != nil {
 		return fmt.Errorf("write chain record: %w", err)
 	}
 
@@ -218,7 +218,7 @@ func (s *Store) WriteEdge(e Edge) error {
 	if err != nil {
 		return fmt.Errorf("marshal edge: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // ListNodes reads every chain record and reconstitutes the full Node (with

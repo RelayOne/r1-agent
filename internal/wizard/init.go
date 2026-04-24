@@ -43,7 +43,7 @@ func InstallLedgerGuardHook(repoRoot string) error {
 
 	if os.IsNotExist(err) || len(existing) == 0 {
 		// No existing hook — write ours directly.
-		if err := os.WriteFile(hookPath, ledgerGuardScript, 0755); err != nil {
+		if err := os.WriteFile(hookPath, ledgerGuardScript, 0755); err != nil { // #nosec G306 -- hook script requires executable permission; written to user-owned repo.
 			return fmt.Errorf("wizard: write pre-commit hook: %w", err)
 		}
 		return nil
@@ -51,7 +51,7 @@ func InstallLedgerGuardHook(repoRoot string) error {
 
 	// Existing hook without our guard — append.
 	combined := string(existing) + "\n" + string(ledgerGuardScript)
-	if err := os.WriteFile(hookPath, []byte(combined), 0755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(combined), 0755); err != nil { // #nosec G306 -- hook script requires executable permission; written to user-owned repo.
 		return fmt.Errorf("wizard: append to pre-commit hook: %w", err)
 	}
 	return nil
@@ -201,7 +201,7 @@ func SaveConfig(stokeDir string, cfg *Config) error {
 		return fmt.Errorf("wizard: marshal config: %w", err)
 	}
 	path := filepath.Join(stokeDir, "config.yaml")
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- hook script requires executable permission; written to user-owned repo.
 }
 
 // DefaultConfig returns sensible defaults.

@@ -1137,7 +1137,7 @@ func runNodeInstall(ctx context.Context, repoRoot string, execs []ExecutorKind) 
 func runBashIn(ctx context.Context, cwd, cmd string, timeout time.Duration) error {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	c := exec.CommandContext(cctx, "bash", "-lc", cmd)
+	c := exec.CommandContext(cctx, "bash", "-lc", cmd) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	c.Dir = cwd
 	return c.Run()
 }

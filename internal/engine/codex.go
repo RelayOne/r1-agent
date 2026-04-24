@@ -69,7 +69,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 	if spec.ContainerImage != "" && spec.ContainerVol != "" {
 		cmd = wrapInDocker(ctx, prepared, spec)
 	} else {
-		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...)
+		cmd = exec.CommandContext(ctx, prepared.Binary, prepared.Args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 		cmd.Dir = prepared.Dir
 		cmd.Env = prepared.Env
 	}

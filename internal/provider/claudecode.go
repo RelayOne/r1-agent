@@ -165,7 +165,7 @@ func (p *ClaudeCodeProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 		args = append(args, "--model", p.Model)
 	}
 
-	cmd := exec.Command(p.Binary, args...)
+	cmd := exec.Command(p.Binary, args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	if stdinContent != "" {
 		cmd.Stdin = strings.NewReader(stdinContent)
 	}

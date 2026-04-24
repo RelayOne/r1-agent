@@ -166,7 +166,7 @@ func (b *Backend) CopyIn(ctx context.Context, h *env.Handle, srcLocal, dstRemote
 	ip := h.Meta["ip"]
 
 	args := b.scpArgs(ip, srcLocal, fmt.Sprintf("%s@%s:%s", b.sshUser, ip, dstRemote))
-	cmd := exec.CommandContext(ctx, "scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("fly copy-in: %w: %s", err, out)
@@ -181,7 +181,7 @@ func (b *Backend) CopyOut(ctx context.Context, h *env.Handle, srcRemote, dstLoca
 	ip := h.Meta["ip"]
 
 	args := b.scpArgs(ip, fmt.Sprintf("%s@%s:%s", b.sshUser, ip, srcRemote), dstLocal)
-	cmd := exec.CommandContext(ctx, "scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("fly copy-out: %w: %s", err, out)
@@ -253,7 +253,7 @@ func (b *Backend) sshExec(ctx context.Context, ip, dir, cmdStr string, envVars m
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, "ssh", args...)
+	cmd := exec.CommandContext(execCtx, "ssh", args...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	if len(stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

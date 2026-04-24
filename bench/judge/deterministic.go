@@ -109,11 +109,11 @@ func (d *DeterministicJudge) runTests(ctx context.Context, task *Task, workspace
 	var cmd *exec.Cmd
 	switch task.Language {
 	case "go":
-		cmd = exec.CommandContext(ctx, "go", "test", "-v", "-count=1", testPath)
+		cmd = exec.CommandContext(ctx, "go", "test", "-v", "-count=1", testPath) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	case "python":
-		cmd = exec.CommandContext(ctx, "python", "-m", "pytest", testPath, "-v")
+		cmd = exec.CommandContext(ctx, "python", "-m", "pytest", testPath, "-v") // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	default:
-		cmd = exec.CommandContext(ctx, "go", "test", "-v", "-count=1", testPath)
+		cmd = exec.CommandContext(ctx, "go", "test", "-v", "-count=1", testPath) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	}
 	cmd.Dir = workspace
 	out, err := cmd.CombinedOutput()

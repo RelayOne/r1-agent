@@ -131,7 +131,7 @@ func Save(rec *Recording, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // Load reads a recording from a file.

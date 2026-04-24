@@ -78,7 +78,7 @@ func Run(ctx context.Context, session plan.Session, repoRoot string) Verdict {
 	for _, cmd := range cmds {
 		v.Commands = append(v.Commands, cmd)
 		cctx, cancel := context.WithTimeout(ctx, perCommandTimeout)
-		c := exec.CommandContext(cctx, "bash", "-lc", cmd)
+		c := exec.CommandContext(cctx, "bash", "-lc", cmd) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 		c.Dir = repoRoot
 		out, err := c.CombinedOutput()
 		cancel()

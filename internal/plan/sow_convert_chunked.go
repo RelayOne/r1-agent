@@ -827,7 +827,7 @@ func expandSession(ctx context.Context, prose string, stack *StackSpec, stub Ses
 		// One file per session ID + timestamp; bounded count via the
 		// 50-most-recent rule below to avoid disk bloat on a long run.
 		dumpPath := fmt.Sprintf("/tmp/stoke-expand-fail-%s-%d.txt", stub.ID, time.Now().UnixNano())
-		_ = os.WriteFile(dumpPath, []byte(raw), 0644)
+		_ = os.WriteFile(dumpPath, []byte(raw), 0644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		return Session{}, fmt.Errorf("parse session: %w (raw saved to %s)", err, dumpPath)
 	}
 	// Force the ID + outputs to match the stub even if the model

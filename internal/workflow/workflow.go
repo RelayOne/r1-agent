@@ -2192,7 +2192,7 @@ func buildSemdiffInputs(ctx context.Context, handle worktree.Handle) map[string]
 		}
 		oldContent := ""
 		if handle.BaseCommit != "" {
-			cmd := exec.CommandContext(ctx, "git", "show", handle.BaseCommit+":"+f)
+			cmd := exec.CommandContext(ctx, "git", "show", handle.BaseCommit+":"+f) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 			cmd.Dir = handle.Path
 			if out, showErr := cmd.Output(); showErr == nil {
 				oldContent = string(out)

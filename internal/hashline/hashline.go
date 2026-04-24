@@ -196,7 +196,7 @@ func applyEdit(tf *TaggedFile, req EditRequest) error {
 	}
 
 	tmp := tf.Path + ".hashline.tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil { // #nosec G306 -- hash-anchored edit output; user-readable code file.
 		return err
 	}
 	return os.Rename(tmp, tf.Path)

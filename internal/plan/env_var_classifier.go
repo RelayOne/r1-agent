@@ -233,7 +233,7 @@ func saveClassifierCache(repoRoot string, r *EnvVarClassificationReport) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(classifierCachePath(repoRoot), data, 0o644)
+	_ = os.WriteFile(classifierCachePath(repoRoot), data, 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 }
 
 func buildClassifierPrompt(sow *SOW, rawSOW string, vars []string) string {

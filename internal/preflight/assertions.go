@@ -131,7 +131,7 @@ func CheckDiskSpace(repoDir string) CheckResult {
 	// Use a simple heuristic: check if we can create a temp file
 	tmpFile := filepath.Join(repoDir, ".stoke-preflight-check")
 	data := make([]byte, 1024) // 1KB test write
-	err := os.WriteFile(tmpFile, data, 0644)
+	err := os.WriteFile(tmpFile, data, 0644) // #nosec G306 -- preflight record; user-readable.
 	os.Remove(tmpFile)
 	if err != nil {
 		return CheckResult{

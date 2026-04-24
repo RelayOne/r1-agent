@@ -1844,7 +1844,7 @@ func codexCall(bin, dir, prompt string) string {
 	} else {
 		args = append(args, prompt)
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = dir
 	if useStdin {
 		cmd.Stdin = strings.NewReader(prompt)
@@ -1956,7 +1956,7 @@ func extractCodexFinalMessage(jsonl string) string {
 }
 
 func shellCmd(dir, cmd string) string {
-	out, _ := exec.Command("bash", "-lc", "cd "+dir+" && "+cmd).CombinedOutput()
+	out, _ := exec.Command("bash", "-lc", "cd "+dir+" && "+cmd).CombinedOutput() // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	return strings.TrimSpace(string(out))
 }
 

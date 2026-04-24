@@ -474,7 +474,7 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 	volName := "stoke-pool-" + poolID
 
 	// Create Docker volume
-	cmd := exec.Command("docker", "volume", "create", volName)
+	cmd := exec.Command("docker", "volume", "create", volName) // #nosec G204 -- subscription/provider binary with Stoke-generated args.
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("docker volume create: %w: %s", err, out)
 	}
@@ -509,7 +509,7 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 		}
 	}
 
-	loginCmd := exec.Command("docker", loginArgs...)
+	loginCmd := exec.Command("docker", loginArgs...) // #nosec G204 -- subscription/provider binary with Stoke-generated args.
 	loginCmd.Stdin = os.Stdin
 	loginCmd.Stdout = os.Stdout
 	loginCmd.Stderr = os.Stderr
@@ -517,7 +517,7 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 	fmt.Printf("  Launching %s login inside container...\n\n", provider)
 	if err := loginCmd.Run(); err != nil {
 		// Cleanup volume on failure
-		exec.Command("docker", "volume", "rm", volName).Run()
+		exec.Command("docker", "volume", "rm", volName).Run() // #nosec G204 -- subscription/provider binary with Stoke-generated args.
 		return "", fmt.Errorf("%s login failed: %w", provider, err)
 	}
 
@@ -564,10 +564,10 @@ func readAccountIDFromVolume(image, volName, configMount, provider string) strin
 	if provider == "claude" {
 		credFile = ".credentials.json"
 	} else {
-		credFile = ".codex-credentials.json"
+		credFile = ".codex-credentials.json" // #nosec G101 -- filename for provider credential file, not a credential value.
 	}
 
-	cmd := exec.Command("docker", "run", "--rm",
+	cmd := exec.Command("docker", "run", "--rm", // #nosec G204 -- subscription/provider binary with Stoke-generated args.
 		"-v", volName+":"+configMount,
 		image,
 		"cat", filepath.Join(configMount, credFile))
@@ -620,7 +620,7 @@ func RemoveContainerPool(poolID string) error {
 
 	// Remove Docker volume if this is a container pool
 	if removed.Runtime == RuntimeContainer && removed.ContainerVol != "" {
-		cmd := exec.Command("docker", "volume", "rm", removed.ContainerVol)
+		cmd := exec.Command("docker", "volume", "rm", removed.ContainerVol) // #nosec G204 -- subscription/provider binary with Stoke-generated args.
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to remove volume %s: %s\n", removed.ContainerVol, out)
 		}

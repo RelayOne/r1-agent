@@ -236,7 +236,7 @@ func (r *Runtime) SaveTo(path string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- conversation state; user-readable.
 }
 
 // LoadFrom restores conversation state from a JSON file.

@@ -146,5 +146,5 @@ func addRootDevDeps(repoRoot string, packages []string) error {
 	}
 	// Append trailing newline to match typical editor convention.
 	out = append(out, '\n')
-	return os.WriteFile(pkgPath, out, 0o644)
+	return os.WriteFile(pkgPath, out, 0o644) // #nosec G306 -- CLI output artefact; user-readable.
 }

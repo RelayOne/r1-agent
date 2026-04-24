@@ -131,7 +131,7 @@ func (goEcosystem) CompileErrors(ctx context.Context, projectRoot string, files 
 	c, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()
 	args := append([]string{"vet"}, pkgs...)
-	cmd := exec.CommandContext(c, "go", args...)
+	cmd := exec.CommandContext(c, "go", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = projectRoot
 	out, _ := cmd.CombinedOutput()
 	var errs []CompileErr

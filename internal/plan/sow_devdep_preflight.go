@@ -261,7 +261,7 @@ func addMissingToRootDevDeps(rootPkgPath string, missing []string) ([]string, er
 		return nil, err
 	}
 	updated = append(updated, '\n')
-	if err := os.WriteFile(rootPkgPath, updated, 0644); err != nil {
+	if err := os.WriteFile(rootPkgPath, updated, 0644); err != nil { // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		return nil, err
 	}
 	return added, nil
@@ -282,7 +282,7 @@ func runInstall(repoRoot string) ([]byte, error) {
 	default:
 		cmdName, args = "npm", []string{"install", "--no-audit", "--no-fund"}
 	}
-	cmd := exec.Command(cmdName, args...)
+	cmd := exec.Command(cmdName, args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = repoRoot
 	return cmd.CombinedOutput()
 }
@@ -448,7 +448,7 @@ func fixOneModuleType(pkgPath string, skipDirs map[string]bool) (string, error) 
 	if len(raw) > 0 && raw[len(raw)-1] == '\n' {
 		updated = append(updated, '\n')
 	}
-	if err := os.WriteFile(pkgPath, updated, 0644); err != nil {
+	if err := os.WriteFile(pkgPath, updated, 0644); err != nil { // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		return "", err
 	}
 	if prevType == "" {

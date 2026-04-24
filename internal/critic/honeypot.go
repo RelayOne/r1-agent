@@ -130,7 +130,7 @@ func (p *HoneypotPool) Pick(class string, seed uint64) (Honeypot, bool) {
 	if len(ids) == 0 {
 		return Honeypot{}, false
 	}
-	idx := int(seed % uint64(len(ids)))
+	idx := int(seed % uint64(len(ids))) // #nosec G115 -- modulo by slice length bounds result to [0, len(ids)); always fits in int.
 	h, ok := p.byID[ids[idx]]
 	return h, ok
 }
@@ -409,7 +409,7 @@ func (s *PeriodicSnapshotter) nextDelay() time.Duration {
 	if span <= 0 {
 		return base
 	}
-	r := int64(rng() % uint64(span))
+	r := int64(rng() % uint64(span)) // #nosec G115 -- span > 0 checked above; result bounded by span, fits in int64.
 	offset := r - int64(jitter)/int64(time.Nanosecond)
 	d := base + time.Duration(offset)
 	if d < time.Nanosecond {

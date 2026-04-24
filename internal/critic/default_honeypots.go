@@ -140,7 +140,7 @@ func (r *HoneypotRegistry) Evaluate(ctx HoneypotContext) HoneypotVerdict {
 //
 // Exported so the canary-injection site (cmd/stoke/sow_native.go)
 // and the rule agree on a single string constant.
-const CanaryToken = "STOKE_CANARY_DO_NOT_EMIT"
+const CanaryToken = "STOKE_CANARY_DO_NOT_EMIT" // #nosec G101 -- canary honeypot marker, not a credential.
 
 // precompiled patterns used by default rules — built once at
 // init so Match calls are allocation-free on the hot path.

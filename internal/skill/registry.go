@@ -573,7 +573,7 @@ func (r *Registry) Add(name, description, content string, keywords []string) err
 	sb.WriteString(content)
 
 	path := filepath.Join(dir, name+".md")
-	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil { // #nosec G306 -- skill registry manifest; user-readable.
 		return err
 	}
 

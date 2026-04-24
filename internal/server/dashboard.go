@@ -7,7 +7,7 @@ package server
 
 import (
 	"bufio"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- RFC 6455 WebSocket handshake mandates SHA1 for Sec-WebSocket-Accept; not used for cryptographic security.
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -338,7 +338,7 @@ func (a *DashboardAPI) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // computeAcceptKey generates the Sec-WebSocket-Accept value per RFC 6455.
 func computeAcceptKey(clientKey string) string {
 	const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-	h := sha1.New()
+	h := sha1.New() // #nosec G401 -- RFC 6455 WebSocket handshake mandates SHA1 for Sec-WebSocket-Accept; not used for cryptographic security.
 	io.WriteString(h, clientKey+magic)
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }

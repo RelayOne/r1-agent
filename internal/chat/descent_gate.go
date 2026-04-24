@@ -135,7 +135,7 @@ func (g *DescentGate) Run(ctx context.Context, changed []string) (ChatVerdict, e
 // root so relative-path commands (e.g. `go build ./...`) resolve
 // correctly. Stdout and stderr are captured separately for display.
 func runAC(ctx context.Context, repo string, ac AcceptanceCriterion) ACOutcome {
-	cmd := exec.CommandContext(ctx, "sh", "-c", ac.Command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", ac.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = repo
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

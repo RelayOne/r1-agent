@@ -430,7 +430,7 @@ func writeFindingJSON(path string, f subagentFinding) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, blob, 0o644)
+	return os.WriteFile(path, blob, 0o644) // #nosec G306 -- executor research artefact; user-readable.
 }
 
 // readFindingJSON reads one finding file back. Missing / unparseable

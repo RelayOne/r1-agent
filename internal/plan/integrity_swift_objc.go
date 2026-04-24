@@ -308,7 +308,7 @@ func (objcEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 	defer cancel()
 	var all []CompileErr
 	for _, f := range files {
-		cmd := exec.CommandContext(c, "clang", "-fsyntax-only", "-x", "objective-c", f)
+		cmd := exec.CommandContext(c, "clang", "-fsyntax-only", "-x", "objective-c", f) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		for _, line := range strings.Split(string(out), "\n") {

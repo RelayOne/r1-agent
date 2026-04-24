@@ -375,7 +375,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 				// the bash-command build gate for cases where the
 				// ecosystem registry doesn't cover the repo shape.
 				if buildCmd := detectBuildCommand(spec.WorktreeDir); buildCmd != "" {
-					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd)
+					cmd := exec.CommandContext(ctx, "bash", "-lc", buildCmd) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
 					cmd.Dir = spec.WorktreeDir
 					out, err := cmd.CombinedOutput()
 					if err != nil {

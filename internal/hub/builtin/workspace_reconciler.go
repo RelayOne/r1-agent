@@ -127,7 +127,7 @@ func (w *WorkspaceReconciler) reconcile(ctx context.Context) {
 		if _, err := exec.LookPath(bin); err != nil {
 			return false
 		}
-		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 		cmd.Dir = w.WorkDir
 		// Stdout/stderr discarded on purpose — this is best-effort.
 		// The AC stage will surface any real problem the model

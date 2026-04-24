@@ -146,7 +146,7 @@ func researchCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "encode json: %v\n", err)
 		os.Exit(1)
 	}
-	if err := os.WriteFile(outPath, buf, 0644); err != nil {
+	if err := os.WriteFile(outPath, buf, 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Fprintf(os.Stderr, "write %s: %v\n", outPath, err)
 		os.Exit(1)
 	}

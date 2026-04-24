@@ -299,7 +299,7 @@ func (c AgentCard) WriteFile(path string) error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o644); err != nil { // #nosec G306 -- agent card public metadata; 0644 is standard.
 		return fmt.Errorf("a2a: write agent card: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

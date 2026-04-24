@@ -81,7 +81,7 @@ func (s *Store) Save(cp Checkpoint) error {
 	}
 
 	tmp := current + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write checkpoint: %w", err)
 	}
 	return os.Rename(tmp, current)

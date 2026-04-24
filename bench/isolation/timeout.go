@@ -36,7 +36,7 @@ func (t *TimeoutRunner) Run(ctx context.Context, name string, args ...string) (T
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -1065,5 +1065,5 @@ func WriteMCPConfig(configPath, binaryPath, repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath, data, 0o644)
+	return os.WriteFile(configPath, data, 0o644) // #nosec G306 -- codebase server artefact; user-readable.
 }

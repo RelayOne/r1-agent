@@ -157,7 +157,7 @@ func JudgeAC(ctx context.Context, prov provider.Provider, model string, in Seman
 		return nil, fmt.Errorf("semantic judge returned no content")
 	}
 	// Dump for post-mortem.
-	_ = os.WriteFile("/tmp/stoke-semantic-judge-raw.txt", []byte(raw), 0o644)
+	_ = os.WriteFile("/tmp/stoke-semantic-judge-raw.txt", []byte(raw), 0o644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 
 	var verdict SemanticVerdict
 	if _, err := jsonutil.ExtractJSONInto(raw, &verdict); err != nil {

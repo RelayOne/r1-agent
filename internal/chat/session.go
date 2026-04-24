@@ -658,7 +658,7 @@ func (s *Session) runDescentGate(ctx context.Context, result *Result, onDelta On
 			return
 		}
 		for _, p := range changed {
-			cmd := exec.CommandContext(ctx, "git", "-C", repo, "checkout", "--", p)
+			cmd := exec.CommandContext(ctx, "git", "-C", repo, "checkout", "--", p) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 			_ = cmd.Run()
 		}
 		result.Discarded = true

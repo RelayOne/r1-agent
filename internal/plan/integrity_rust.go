@@ -184,7 +184,7 @@ func (rustEcosystem) CompileErrors(ctx context.Context, projectRoot string, file
 	var all []CompileErr
 	for mani := range relevant {
 		c, cancel := context.WithTimeout(ctx, 180*time.Second)
-		cmd := exec.CommandContext(c, "cargo", "check", "--message-format", "short", "--manifest-path", mani)
+		cmd := exec.CommandContext(c, "cargo", "check", "--message-format", "short", "--manifest-path", mani) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		out, _ := cmd.CombinedOutput()
 		cancel()

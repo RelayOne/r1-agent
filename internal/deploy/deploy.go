@@ -315,7 +315,7 @@ func flyDeploy(ctx context.Context, cfg DeployConfig) (DeployResult, error) {
 	}
 
 	var stdout, stderr strings.Builder
-	cmd := exec.CommandContext(ctx, flyctl, args...)
+	cmd := exec.CommandContext(ctx, flyctl, args...) // #nosec G204 -- deploy tool binary invoked with Stoke-generated args.
 	cmd.Dir = cfg.Dir
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

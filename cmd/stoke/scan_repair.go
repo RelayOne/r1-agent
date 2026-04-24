@@ -130,7 +130,7 @@ func isHeadless(cfg *scanRepairConfig) bool {
 		return !cfg.Interactive
 	}
 	// Default auto-detect: no TTY on stdin → headless.
-	return !term.IsTerminal(int(os.Stdin.Fd()))
+	return !term.IsTerminal(int(os.Stdin.Fd())) // #nosec G115 -- file descriptor is a small integer that always fits in int.
 }
 
 // scanRepairCmd is the cmd/stoke/main.go dispatcher entry point. It
@@ -391,12 +391,12 @@ func runScanRepair(ctx context.Context, cfg *scanRepairConfig) error {
 				"[DROPPED] %d low-impact findings filtered to audit/findings-dropped.md.\n",
 			p1.NumSections, ph3.Dropped)
 		completePath := filepath.Join(cfg.Repo, "audit", "scan-complete.md")
-		if err := os.WriteFile(completePath, []byte(msg), 0644); err != nil {
+		if err := os.WriteFile(completePath, []byte(msg), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 			fmt.Fprintf(os.Stderr, "  [scan-repair] write %s: %v\n", completePath, err)
 		}
 		// Also write a trivial FIX_SOW.md so downstream tools that
 		// blindly look for it don't blow up.
-		_ = os.WriteFile(filepath.Join(cfg.Repo, "FIX_SOW.md"),
+		_ = os.WriteFile(filepath.Join(cfg.Repo, "FIX_SOW.md"), // #nosec G306 -- CLI output artefact; user-readable.
 			[]byte("# Fix SOW\n\nAudit found no high-impact issues. No tasks generated.\n"), 0644)
 		fmt.Printf("🎯 Phase 3c TIER: APPROVED=0 DEFERRED=%d DROPPED=%d — skipping Phase 4\n",
 			ph3.Deferred, ph3.Dropped)
@@ -611,7 +611,7 @@ func writeDeterministicReport(auditDir string, res *phase1Result) error {
 		buf.WriteString("```\n\n")
 	}
 
-	return os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), buf.Bytes(), 0644)
+	return os.WriteFile(filepath.Join(auditDir, "deterministic-report.md"), buf.Bytes(), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 }
 
 // ------------------------------------------------------------------

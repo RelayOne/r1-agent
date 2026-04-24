@@ -169,7 +169,7 @@ func (w *Wizard) Run() error {
 		}
 	}
 
-	if err := os.WriteFile(outPath, []byte(yaml), 0644); err != nil {
+	if err := os.WriteFile(outPath, []byte(yaml), 0644); err != nil { // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -193,7 +193,7 @@ func (w *Wizard) RunAutoDetect() error {
 
 	yaml := w.GenerateYAML()
 	outPath := filepath.Join(w.ProjectDir, "stoke.policy.yaml")
-	if err := os.WriteFile(outPath, []byte(yaml), 0644); err != nil {
+	if err := os.WriteFile(outPath, []byte(yaml), 0644); err != nil { // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
@@ -849,6 +849,6 @@ func (w *Wizard) WriteRationale() error {
 	if err := os.MkdirAll(stokeDir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(stokeDir, "wizard-rationale.md"),
+	return os.WriteFile(filepath.Join(stokeDir, "wizard-rationale.md"), // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
 		[]byte(w.GenerateRationale()), 0644)
 }

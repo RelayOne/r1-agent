@@ -108,7 +108,7 @@ func (r *Registry) appendToSkillSection(s *Skill, section string, entry research
 		}
 	}
 
-	if err := os.WriteFile(s.Path, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(s.Path, []byte(newContent), 0o644); err != nil { // #nosec G306 -- skill markdown is user-readable content, not sensitive.
 		return err
 	}
 

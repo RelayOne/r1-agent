@@ -393,7 +393,7 @@ func (w *BuildWatcher) runOnce(ctx context.Context) error {
 		return fmt.Errorf("no watch command for stack %q", w.stack)
 	}
 
-	cmd := exec.CommandContext(ctx, spec.program, spec.args...)
+	cmd := exec.CommandContext(ctx, spec.program, spec.args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = w.repoRoot
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 

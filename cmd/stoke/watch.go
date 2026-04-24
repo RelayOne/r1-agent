@@ -602,7 +602,7 @@ func detectStokePid(repoRoot string) (int, bool) {
 	// Match the repo argument loosely: pgrep's -f matches the full command
 	// line. We drop the trailing slash to be tolerant of normalization.
 	needle := "stoke sow.*" + regexp.QuoteMeta(strings.TrimRight(repoRoot, "/"))
-	cmd := exec.Command("pgrep", "-f", needle)
+	cmd := exec.Command("pgrep", "-f", needle) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, false

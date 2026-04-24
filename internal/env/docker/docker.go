@@ -422,7 +422,7 @@ func dockerRun(ctx context.Context, args ...string) (string, error) {
 }
 
 func defaultDockerRun(ctx context.Context, args []string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("docker %s: %w: %s", args[0], err, strings.TrimSpace(string(out)))

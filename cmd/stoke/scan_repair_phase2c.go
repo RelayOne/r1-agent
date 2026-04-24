@@ -282,7 +282,7 @@ func writePersonaFinding(outDir string, per persona, reply string) int {
 	}
 	out := filepath.Join(outDir, per.Slug+".qa.md")
 	content := fmt.Sprintf("# %s\n\n%s\n", per.Name, body)
-	if err := os.WriteFile(out, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(out, []byte(content), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Fprintf(os.Stderr, "  [Phase 2c] write %s: %v\n", out, err)
 	}
 	return countCheckboxFindings(body)

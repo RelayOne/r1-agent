@@ -359,7 +359,7 @@ func SaveMetaReport(repoRoot string, report *MetaReport) error {
 	if err != nil {
 		return fmt.Errorf("marshal meta-report: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil { // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 		return fmt.Errorf("write meta-report: %w", err)
 	}
 	return nil

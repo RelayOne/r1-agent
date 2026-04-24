@@ -1496,7 +1496,7 @@ func ensureR1ServerRunning() {
 	if err != nil {
 		return // not installed — zero-dep fallback
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -2102,7 +2102,7 @@ func sowCmd(args []string) {
 		if err != nil {
 			sowFatal(streamEmitter, streamResult, "export SOW: %v", err)
 		}
-		if err := os.WriteFile(*exportSOW, b, 0o644); err != nil {
+		if err := os.WriteFile(*exportSOW, b, 0o644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 			sowFatal(streamEmitter, streamResult, "write exported SOW: %v", err)
 		}
 		fmt.Printf("  ✓ exported SOW to %s (%d sessions, %d bytes)\n", *exportSOW, len(sow.Sessions), len(b))
@@ -3861,7 +3861,7 @@ Rules:
 				if !filepath.IsAbs(outputPath) {
 					outputPath = filepath.Join(absRepo, outputPath)
 				}
-				if err := os.WriteFile(outputPath, []byte(jsonStr), 0644); err != nil {
+				if err := os.WriteFile(outputPath, []byte(jsonStr), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 					fatal("write plan: %v", err)
 				}
 				fmt.Printf("Plan saved to %s\n", outputPath)
@@ -4463,7 +4463,7 @@ func yoloCmd(args []string) {
 	fmt.Printf("  Press Ctrl+C or /exit to end session\n\n")
 
 	// Launch interactive claude (stdin/stdout/stderr attached to terminal)
-	cmd := exec.Command(*claudeBin, claudeArgs...)
+	cmd := exec.Command(*claudeBin, claudeArgs...) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = absRepo
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -4485,7 +4485,7 @@ func yoloCmd(args []string) {
 	afterHash := gitHead(absRepo)
 	if beforeHash != afterHash {
 		fmt.Printf("\n  Changes made during session:\n")
-		diffCmd := exec.Command("git", "log", "--oneline", beforeHash+".."+afterHash)
+		diffCmd := exec.Command("git", "log", "--oneline", beforeHash+".."+afterHash) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 		diffCmd.Dir = absRepo
 		diffCmd.Stdout = os.Stdout
 		diffCmd.Run()
@@ -4544,7 +4544,7 @@ func scopeCmd(args []string) {
 
 	// Generate empty MCP config for isolation (same as headless planning)
 	emptyMCPPath := filepath.Join(absRepo, ".stoke", "generated", "empty-mcp-scope.json")
-	if err := os.WriteFile(emptyMCPPath, []byte("{}"), 0644); err != nil {
+	if err := os.WriteFile(emptyMCPPath, []byte("{}"), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fatal("write empty MCP config: %v", err)
 	}
 
@@ -4566,7 +4566,7 @@ func scopeCmd(args []string) {
 	fmt.Printf("  Ask Claude to save the plan when ready.\n")
 	fmt.Printf("  Press Ctrl+C or /exit to end session\n\n")
 
-	cmd := exec.Command(*claudeBin, claudeArgs...)
+	cmd := exec.Command(*claudeBin, claudeArgs...) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = absRepo
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -4710,7 +4710,7 @@ func repairCmd(args []string) {
 	if err != nil {
 		fatal("marshal repair plan: %v", err)
 	}
-	if err := os.WriteFile(repairPlanPath, planData, 0644); err != nil {
+	if err := os.WriteFile(repairPlanPath, planData, 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fatal("write repair plan: %v", err)
 	}
 
@@ -4812,7 +4812,7 @@ func repairCmd(args []string) {
 	if err != nil {
 		fatal("marshal report: %v", err)
 	}
-	if err := os.WriteFile(reportPath, reportData, 0644); err != nil {
+	if err := os.WriteFile(reportPath, reportData, 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fatal("write report: %v", err)
 	}
 	fmt.Printf("  Report: %s\n", reportPath)
@@ -5195,7 +5195,7 @@ func shipCmd(args []string) {
 		if err != nil {
 			fatal("marshal fix plan: %v", err)
 		}
-		if err := os.WriteFile(fixPlanPath, fixData, 0644); err != nil {
+		if err := os.WriteFile(fixPlanPath, fixData, 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 			fatal("write fix plan: %v", err)
 		}
 		currentPlanPath = fixPlanPath
@@ -6585,7 +6585,7 @@ func persistFetchedDocs(repoRoot string, docs map[string]string) error {
 			continue
 		}
 		p := filepath.Join(dir, safe+".md")
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 			return fmt.Errorf("write %s: %w", p, err)
 		}
 	}

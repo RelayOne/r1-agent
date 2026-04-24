@@ -274,7 +274,7 @@ func runGit(repoRoot string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitInvocationTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = repoRoot
 	var stderr strings.Builder
 	cmd.Stderr = &stderr

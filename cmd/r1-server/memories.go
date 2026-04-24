@@ -334,7 +334,7 @@ func (d *DB) insertMemoryForTest(scope, key, author, content string, createdAt t
 // level. If/when a Bus is plumbed into this binary, swap the raw SQL for
 // Bus.Remember without changing the HTTP contract.
 
-const adminPassHeader = "X-R1-Admin-Pass"
+const adminPassHeader = "X-R1-Admin-Pass" // #nosec G101 -- HTTP header name, not a credential value.
 
 // memoryWriteRequest is the JSON body accepted by POST /api/memories.
 // Fields mirror the membus Remember shape minus the attribution fields

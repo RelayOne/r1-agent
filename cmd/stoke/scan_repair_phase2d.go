@@ -76,7 +76,7 @@ func runPhase2dCodexReview(ctx context.Context, cfg *scanRepairConfig) error {
 	// stderr discarded (the script is noisy with progress logs).
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "bash", scriptPath, "--all")
+	cmd := exec.CommandContext(cctx, "bash", scriptPath, "--all") // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	cmd.Dir = cfg.Repo
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -88,7 +88,7 @@ func runPhase2dCodexReview(ctx context.Context, cfg *scanRepairConfig) error {
 
 	// Persist the raw JSON so operators can inspect.
 	rawPath := filepath.Join(cfg.Repo, "audit", "codex-review.json")
-	if err := os.WriteFile(rawPath, stdout.Bytes(), 0644); err != nil {
+	if err := os.WriteFile(rawPath, stdout.Bytes(), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
 		fmt.Fprintf(os.Stderr, "  [Phase 2d] write %s: %v\n", rawPath, err)
 	}
 
@@ -114,14 +114,14 @@ func writeCodexReviewFromJSON(outDir string, raw []byte) error {
 	if trimmed[0] == '[' {
 		if err := json.Unmarshal(trimmed, &findings); err != nil {
 			fmt.Printf("🤖 Phase 2d codex: malformed JSON (array): %v — writing note file\n", err)
-			_ = os.WriteFile(outPath, []byte("# Codex Review\n\n(codex returned malformed JSON)\n"), 0644)
+			_ = os.WriteFile(outPath, []byte("# Codex Review\n\n(codex returned malformed JSON)\n"), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 			return nil
 		}
 	} else {
 		var obj codexReviewJSON
 		if err := json.Unmarshal(trimmed, &obj); err != nil {
 			fmt.Printf("🤖 Phase 2d codex: malformed JSON (obj): %v — writing note file\n", err)
-			_ = os.WriteFile(outPath, []byte("# Codex Review\n\n(codex returned malformed JSON)\n"), 0644)
+			_ = os.WriteFile(outPath, []byte("# Codex Review\n\n(codex returned malformed JSON)\n"), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 			return nil
 		}
 		findings = obj.Findings
@@ -155,7 +155,7 @@ func writeCodexReviewFromJSON(outDir string, raw []byte) error {
 		}
 	}
 	fmt.Printf("🤖 Phase 2d codex: %d findings\n", len(findings))
-	return os.WriteFile(outPath, buf.Bytes(), 0644)
+	return os.WriteFile(outPath, buf.Bytes(), 0644) // #nosec G306 -- CLI output artefact; user-readable.
 }
 
 // formatCodexLine renders the codex "line" field which might be an

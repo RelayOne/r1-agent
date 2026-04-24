@@ -109,7 +109,7 @@ func (s *StdioTransport) Initialize(ctx context.Context) error {
 	// when Initialize returns successfully. Process lifetime is
 	// managed by Close() instead.
 	cmdFunc := func(_ context.Context, command string, env []string, args []string) (*exec.Cmd, error) {
-		cmd := exec.Command(command, args...)
+		cmd := exec.Command(command, args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 		// Host env first, then transport-merged additions. The mcp-go
 		// transport has already merged os.Environ() with its own `env`
 		// arg when cmdFunc is absent; we replicate that here because

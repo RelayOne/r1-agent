@@ -206,7 +206,7 @@ func ensureKeyPair(dir, keyPath, pubPath string) error {
 		return fmt.Errorf("stancesign: public key: %w", err)
 	}
 	authorizedLine := ssh.MarshalAuthorizedKey(sshPub)
-	if err := os.WriteFile(pubPath, authorizedLine, 0o644); err != nil {
+	if err := os.WriteFile(pubPath, authorizedLine, 0o644); err != nil { // #nosec G306 -- SSH public key file; 0644 is standard.
 		return fmt.Errorf("stancesign: write public: %w", err)
 	}
 	return nil

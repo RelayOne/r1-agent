@@ -716,7 +716,7 @@ func (w *cappedWriter) Close() error {
 // realSpawn is the default spawnFunc: launches bin with its own process
 // group so cancellation can target the whole tree.
 func realSpawn(bin string, args []string, workdir string, env []string, stdout, stderr io.Writer) (processHandle, error) {
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(bin, args...) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = workdir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

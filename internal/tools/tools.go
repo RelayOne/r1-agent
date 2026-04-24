@@ -313,7 +313,7 @@ func (r *Registry) handleEdit(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("%s: %w", args.Path, err)
 	}
 
-	if err := os.WriteFile(path, []byte(result.NewContent), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(result.NewContent), 0644); err != nil { // #nosec G306 -- str_replace tool target (existing source file); 0644 preserves source perms.
 		return "", err
 	}
 
@@ -374,7 +374,7 @@ func (r *Registry) handleWrite(input json.RawMessage) (string, error) {
 		return "", fmt.Errorf("cannot create directory %s: %w", dir, err)
 	}
 
-	if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(args.Content), 0644); err != nil { // #nosec G306 -- str_replace tool target (existing source file); 0644 preserves source perms.
 		return "", err
 	}
 
@@ -415,7 +415,7 @@ func (r *Registry) handleBash(ctx context.Context, input json.RawMessage) (strin
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", args.Command)
+	cmd := exec.CommandContext(ctx, "bash", "-c", args.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.Dir = r.workDir
 	// Process-group isolation: pnpm (and other build tools) spawn
 	// hundreds of child processes. exec.CommandContext only kills

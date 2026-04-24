@@ -53,7 +53,7 @@ func (a *Aider) Run(ctx context.Context, taskMount string) RunResult {
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, a.binPath(), args...)
+	cmd := exec.CommandContext(ctx, a.binPath(), args...) // #nosec G204 -- benchmark harness binary with Stoke-generated args.
 	cmd.Dir = taskMount
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

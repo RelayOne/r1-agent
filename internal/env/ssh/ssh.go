@@ -128,7 +128,7 @@ func (b *Backend) CopyIn(ctx context.Context, h *env.Handle, srcLocal, dstRemote
 	if h == nil {
 		return env.ErrNotProvisioned
 	}
-	cmd := exec.CommandContext(ctx, "scp", b.scpArgs(srcLocal, fmt.Sprintf("%s@%s:%s", b.user, b.host, dstRemote))...)
+	cmd := exec.CommandContext(ctx, "scp", b.scpArgs(srcLocal, fmt.Sprintf("%s@%s:%s", b.user, b.host, dstRemote))...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh copy-in: %w: %s", err, out)
@@ -140,7 +140,7 @@ func (b *Backend) CopyOut(ctx context.Context, h *env.Handle, srcRemote, dstLoca
 	if h == nil {
 		return env.ErrNotProvisioned
 	}
-	cmd := exec.CommandContext(ctx, "scp", b.scpArgs(fmt.Sprintf("%s@%s:%s", b.user, b.host, srcRemote), dstLocal)...)
+	cmd := exec.CommandContext(ctx, "scp", b.scpArgs(fmt.Sprintf("%s@%s:%s", b.user, b.host, srcRemote), dstLocal)...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ssh copy-out: %w: %s", err, out)
@@ -187,7 +187,7 @@ func (b *Backend) sshExec(ctx context.Context, dir, cmdStr string, envVars map[s
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, "ssh", b.sshArgs(remote.String())...)
+	cmd := exec.CommandContext(execCtx, "ssh", b.sshArgs(remote.String())...) // #nosec G204 -- sandbox/container binary invoked with Stoke-generated args.
 	if len(stdin) > 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}

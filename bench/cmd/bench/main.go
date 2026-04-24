@@ -168,7 +168,7 @@ func cmdRun(args []string) {
 	// Save raw results
 	resultsPath := filepath.Join(*outputDir, "results.json")
 	data, _ := json.MarshalIndent(allResults, "", "  ")
-	os.WriteFile(resultsPath, data, 0o644)
+	os.WriteFile(resultsPath, data, 0o644) // #nosec G306 -- benchmark output artefact; user-readable.
 	fmt.Printf("\nResults saved to %s (%d runs)\n", resultsPath, len(allResults))
 
 	// Variance regression export (B3). One JSON per harness in the
@@ -234,7 +234,7 @@ func writeVarianceReports(results []BenchResult, pathPrefix, label string) error
 		}
 		data, _ := json.MarshalIndent(doc, "", "  ")
 		path := fmt.Sprintf("%s-%s.json", pathPrefix, harness)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o644); err != nil { // #nosec G306 -- benchmark output artefact; user-readable.
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		fmt.Printf("variance-out saved: %s (%d tasks)\n", path, len(doc.Tasks))

@@ -55,7 +55,7 @@ func (b *Bus) invokeScript(ctx context.Context, sub *Subscriber, ev *Event) *Hoo
 	}
 
 	// Run via shell to support pipes, quoting, etc.
-	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		// Kill entire process group on timeout

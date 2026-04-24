@@ -1439,7 +1439,7 @@ func PreflightACCommands(ctx context.Context, projectRoot string, criteria []Acc
 
 		// Quick timeout — these should be fast checks.
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		cmd := exec.CommandContext(checkCtx, "bash", "-lc", ac.Command)
+		cmd := exec.CommandContext(checkCtx, "bash", "-lc", ac.Command) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 		cmd.Dir = projectRoot
 		cmd.Env = acceptanceCommandEnv(projectRoot)
 		out, err := cmd.CombinedOutput()

@@ -199,7 +199,7 @@ func (*cloudflareDeployer) Deploy(ctx context.Context, cfg deploy.DeployConfig) 
 	}
 	defer os.RemoveAll(tmpDir)
 	ndjsonPath := filepath.Join(tmpDir, "wrangler.ndjson")
-	if err := os.WriteFile(ndjsonPath, nil, 0o644); err != nil {
+	if err := os.WriteFile(ndjsonPath, nil, 0o644); err != nil { // #nosec G306 -- deploy artefact; user-readable.
 		return deploy.DeployResult{}, fmt.Errorf("cloudflare.Deploy: pre-create ndjson: %w", err)
 	}
 
@@ -245,7 +245,7 @@ func (*cloudflareDeployer) Deploy(ctx context.Context, cfg deploy.DeployConfig) 
 	// deploy cannot leave zombie build workers behind (spec §Existing
 	// Patterns to Follow: "process spawn + stream parsing").
 	var stdout, stderr strings.Builder
-	cmd := exec.CommandContext(ctx, wranglerBin, args...)
+	cmd := exec.CommandContext(ctx, wranglerBin, args...) // #nosec G204 -- deploy tool binary invoked with Stoke-generated args.
 	cmd.Dir = cfg.Dir
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -357,7 +357,7 @@ func (*cloudflareDeployer) Rollback(ctx context.Context, cfg deploy.DeployConfig
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, wranglerBin, args...)
+	cmd := exec.CommandContext(ctx, wranglerBin, args...) // #nosec G204 -- deploy tool binary invoked with Stoke-generated args.
 	cmd.Dir = cfg.Dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = buildChildEnv(cfg, "") // no NDJSON tail for rollback

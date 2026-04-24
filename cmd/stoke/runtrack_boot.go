@@ -30,7 +30,7 @@ func ensureStokeServer() {
 	if bin == "" {
 		return
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
 	// Detach: own process group so SIGINT to stoke doesn't kill it.
 	setSidOnCmd(cmd)
 	cmd.Stdout = nil

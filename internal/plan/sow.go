@@ -262,7 +262,7 @@ func SaveSOW(path string, sow *SOW) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
 }
 
 // ValidateSOWStrict runs every check in ValidateSOW PLUS the strict

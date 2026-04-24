@@ -115,7 +115,7 @@ func (m *Manifest) Save(stokeDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0644)
+	return os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o600)
 }
 
 // InSnapshot checks if a file path is in the snapshot manifest.
