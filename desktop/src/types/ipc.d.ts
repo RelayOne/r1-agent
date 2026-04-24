@@ -709,5 +709,69 @@ export type InvokeMethod =
   | "vault_set"
   | "vault_delete"
   | "gov_set"
+  // MCP servers (R1D-8)
+  | "mcp_list"
+  | "mcp_add"
+  | "mcp_remove"
+  | "mcp_test"
+  | "mcp_invoke_tool"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
+
+// ---------------------------------------------------------------------
+// MCP servers panel (R1D-8)
+// ---------------------------------------------------------------------
+
+/** One configured MCP server entry. */
+export interface MCPServer {
+  id: string;
+  name: string;
+  url: string;
+  transport: "stdio" | "sse" | "http";
+  status: "configured" | "connected" | "error";
+  last_test_at?: Iso8601;
+  last_error?: string;
+}
+
+/** A tool advertised by an MCP server's `tools/list` response. */
+export interface MCPTool {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+/** Result of a connection-test handshake against an MCP server. */
+export interface MCPTestResult {
+  ok: boolean;
+  latency_ms: number;
+  protocol_version: string;
+  tools: MCPTool[];
+  message?: string;
+}
+
+/** Invocation request payload. */
+export interface MCPInvokeRequest {
+  server_id: string;
+  tool_name: string;
+  args: Record<string, unknown>;
+}
+
+/** Invocation result. */
+export interface MCPInvokeResult {
+  ok: boolean;
+  output: string;
+  duration_ms: number;
+  error?: StokeError;
+}
+
+/** Add-server form payload. */
+export interface MCPAddRequest {
+  name: string;
+  url: string;
+  transport: "stdio" | "sse" | "http";
+}
+
+/** Generic ok response for add/remove. */
+export interface MCPOkResult {
+  ok: boolean;
+}

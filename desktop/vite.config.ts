@@ -33,6 +33,7 @@ export default defineConfig({
         "panel-ledger-viewer": resolve(root, "src/panels/ledger-viewer.ts"),
         "panel-memory-inspector": resolve(root, "src/panels/memory-inspector.ts"),
         "panel-skill-catalog": resolve(root, "src/panels/skill-catalog.ts"),
+        "panel-mcp-servers": resolve(root, "src/panels/mcp-servers.ts"),
         "panel-cost": resolve(root, "src/panels/cost-panel.ts"),
       },
     },

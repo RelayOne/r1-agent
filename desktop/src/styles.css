@@ -20,11 +20,12 @@ html, body, #app {
 .r1-app-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr auto;
+  grid-template-rows: 1fr 1fr 1fr auto auto;
   grid-template-areas:
     "sow     descent"
     "ledger  memory"
     "skills  skills"
+    "mcp     mcp"
     "cost    cost";
   gap: 1rem;
   padding: 1rem;
@@ -1357,4 +1358,232 @@ html, body, #app {
   font-size: 0.7rem;
   color: #8a93a4;
   font-variant-numeric: tabular-nums;
+}
+
+/* R1D-8 MCP servers panel */
+.r1-panel-mcp-servers { grid-area: mcp; }
+
+.r1-mcp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  min-height: 0;
+}
+
+.r1-mcp-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.r1-mcp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  overflow: auto;
+  min-height: 0;
+}
+
+.r1-mcp-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  background: #1b1f27;
+  cursor: pointer;
+}
+
+.r1-mcp-row:hover { border-color: #3ea6ff; }
+
+.r1-mcp-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  grid-column: 1;
+}
+
+.r1-mcp-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.r1-mcp-row-meta {
+  display: flex;
+  gap: 0.6rem;
+  grid-column: 1;
+  font-size: 0.72rem;
+  color: #8a93a4;
+}
+
+.r1-mcp-transport {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 0.4rem;
+  border-radius: 3px;
+  background: #2a3140;
+}
+
+.r1-mcp-url {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  word-break: break-all;
+}
+
+.r1-mcp-row-actions {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.r1-mcp-badge {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #2a3140;
+  color: #b3bccf;
+}
+
+.r1-mcp-badge-ok { background: #1f4632; color: #79e09a; }
+.r1-mcp-badge-err { background: #4a1f1f; color: #ff8b8b; }
+.r1-mcp-badge-configured { background: #2a3140; color: #b3bccf; }
+.r1-mcp-badge-connected { background: #1f3b4a; color: #7ec5ff; }
+.r1-mcp-badge-error { background: #4a1f1f; color: #ff8b8b; }
+
+.r1-mcp-add-dialog {
+  border: 1px solid #272c37;
+  border-radius: 8px;
+  background: #171a21;
+  color: #e6e8ee;
+  padding: 1rem;
+  min-width: 320px;
+}
+
+.r1-mcp-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.r1-mcp-add-form h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+}
+
+.r1-mcp-add-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #b3bccf;
+}
+
+.r1-mcp-add-form input,
+.r1-mcp-add-form select {
+  background: #0f1115;
+  color: #e6e8ee;
+  border: 1px solid #272c37;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.r1-mcp-detail {
+  border-top: 1px solid #272c37;
+  padding-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.r1-mcp-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.r1-mcp-detail-head h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.r1-mcp-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.r1-mcp-tool {
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  background: #1b1f27;
+}
+
+.r1-mcp-tool header h4 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.r1-mcp-tool header p {
+  margin: 0.15rem 0 0.5rem 0;
+  font-size: 0.78rem;
+  color: #8a93a4;
+}
+
+.r1-mcp-tool-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.r1-mcp-tool-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: #b3bccf;
+}
+
+.r1-mcp-tool-form input,
+.r1-mcp-tool-form select {
+  background: #0f1115;
+  color: #e6e8ee;
+  border: 1px solid #272c37;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.r1-mcp-tool-form small {
+  color: #8a93a4;
+  font-size: 0.7rem;
+}
+
+.r1-mcp-tool-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #8a93a4;
+}
+
+.r1-mcp-tool-output {
+  margin: 0.5rem 0 0 0;
+  padding: 0.5rem;
+  background: #0f1115;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  color: #b3bccf;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
 }

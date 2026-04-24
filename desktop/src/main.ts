@@ -2,8 +2,8 @@
 //
 // R1 Desktop WebView entrypoint (R1D-2).
 //
-// Composes the R1D-2 + R1D-4 panel skeletons into a 4-row, 2-column
-// CSS grid. Layout:
+// Composes the R1D-2 / R1D-4 / R1D-8 panel skeletons into a 5-row,
+// 2-column CSS grid. Layout:
 //
 //   +------------------+------------------+
 //   | SOW tree         | Descent ladder   |  row 1
@@ -12,7 +12,9 @@
 //   +------------------+------------------+
 //   | Skill catalog                       |  row 3 (full-width)
 //   +-------------------------------------+
-//   | Cost panel                          |  row 4 (full-width)
+//   | MCP servers                         |  row 4 (full-width)
+//   +-------------------------------------+
+//   | Cost panel                          |  row 5 (full-width)
 //   +-------------------------------------+
 //
 // Real Tauri bootstrap (Vite + React + shadcn/ui) lands in R1D-1.1.
@@ -25,6 +27,7 @@ import { renderPanel as renderLedgerViewer } from "./panels/ledger-viewer";
 import { renderPanel as renderMemoryInspector } from "./panels/memory-inspector";
 import { renderPanel as renderCostPanel } from "./panels/cost-panel";
 import { renderPanel as renderSkillCatalog } from "./panels/skill-catalog";
+import { renderPanel as renderMCPServers } from "./panels/mcp-servers";
 import { mountDrawer as mountDescentEvidenceDrawer } from "./panels/descent-evidence";
 import { mountNodeDrawer as mountLedgerNodeDrawer } from "./panels/ledger-node-drawer";
 import {
@@ -34,7 +37,7 @@ import {
 
 type PanelEntry = {
   id: string;
-  gridArea: "sow" | "descent" | "ledger" | "memory" | "skills" | "cost";
+  gridArea: "sow" | "descent" | "ledger" | "memory" | "skills" | "mcp" | "cost";
   render: (root: HTMLElement) => void;
 };
 
@@ -44,6 +47,7 @@ const PANELS: PanelEntry[] = [
   { id: "panel-ledger-viewer", gridArea: "ledger", render: renderLedgerViewer },
   { id: "panel-memory-inspector", gridArea: "memory", render: renderMemoryInspector },
   { id: "panel-skill-catalog", gridArea: "skills", render: renderSkillCatalog },
+  { id: "panel-mcp-servers", gridArea: "mcp", render: renderMCPServers },
   { id: "panel-cost", gridArea: "cost", render: renderCostPanel },
 ];
 
