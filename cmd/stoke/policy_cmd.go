@@ -31,11 +31,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/ericmacdougall/stoke/internal/policy"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // policyCmd is the public entry wired into main.go's subcommand switch.
@@ -258,7 +260,11 @@ func runPolicyTrace(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("policy trace", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	lastN := fs.Int("last-N", 20, "number of recent policy events to show")
-	logPath := fs.String("log", "./.stoke/stream.jsonl", "path to the NDJSON stream log")
+	// Default stream path resolves via r1dir: prefers `./.r1/stream.jsonl`
+	// when the canonical layout exists, falls back to `./.stoke/stream.jsonl`
+	// for pre-rename sessions (work-r1-rename.md §S1-5).
+	defaultLog := "./" + filepath.Join(r1dir.Root(), "stream.jsonl")
+	logPath := fs.String("log", defaultLog, "path to the NDJSON stream log")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}

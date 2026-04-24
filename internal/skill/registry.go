@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/ericmacdougall/stoke/internal/promptguard"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 	"github.com/ericmacdougall/stoke/internal/r1env"
 )
 
@@ -104,23 +105,37 @@ func NewRegistry(dirs ...string) *Registry {
 // so they still participate in discovery at lower priority.
 func DefaultRegistry(projectRoot string) *Registry {
 	home, _ := os.UserHomeDir()
-	projectSkillsDir := filepath.Join(projectRoot, ".stoke", "skills")
+	// Project skills dir resolves via r1dir: prefer `.r1/skills` when the
+	// canonical layout exists, fall back to `.stoke/skills` otherwise.
+	// STOKE_SKILLS_DIR (and its canonical R1_SKILLS_DIR companion) still
+	// overrides the filesystem-resolved path.
+	projectSkillsDir := filepath.Join(projectRoot, r1dir.RootFor(projectRoot), "skills")
 	if v := strings.TrimSpace(r1env.Get("R1_SKILLS_DIR", "STOKE_SKILLS_DIR")); v != "" {
 		projectSkillsDir = v
 	}
 	dirs := []string{
 		projectSkillsDir, // project (highest priority) — STOKE_SKILLS_DIR aware
 	}
+	// Also walk the legacy project-local path when it differs from the
+	// canonical one so any skills still written to `.stoke/skills/`
+	// during the transition window continue to participate in discovery.
+	if legacyProjectSkillsDir := filepath.Join(projectRoot, r1dir.Legacy, "skills"); legacyProjectSkillsDir != projectSkillsDir {
+		dirs = append(dirs, legacyProjectSkillsDir)
+	}
 	if home != "" {
 		// Cross-tool agentskills.io discovery paths (S-U-001).
 		// Stoke reads skills from every major tool's skill directory
 		// so operator skills are portable without manual copying.
-		// Priority: project > user-stoke > user-claude > user-codex
-		// > user-cursor. Existing dedup (project > user > builtin)
-		// handles precedence when the same skill name appears in
-		// multiple paths.
+		// Priority: project > user-r1 > user-stoke > user-claude >
+		// user-codex > user-cursor. Existing dedup (project > user >
+		// builtin) handles precedence when the same skill name appears
+		// in multiple paths. During the transition window both
+		// ~/.r1/skills and ~/.stoke/skills are probed so operators who
+		// have already rehomed skills to `.r1/` and operators still on
+		// legacy `.stoke/` both work.
 		dirs = append(dirs,
-			filepath.Join(home, ".stoke", "skills"),
+			filepath.Join(home, r1dir.Canonical, "skills"),
+			filepath.Join(home, r1dir.Legacy, "skills"),
 			filepath.Join(projectRoot, ".claude", "skills"),
 			filepath.Join(home, ".claude", "skills"),
 			filepath.Join(projectRoot, ".codex", "skills"),

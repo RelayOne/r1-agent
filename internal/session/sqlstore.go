@@ -11,6 +11,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // SQLStore is a SQLite-backed session store for crash recovery and learning.
@@ -19,9 +20,31 @@ type SQLStore struct {
 	root string
 }
 
-// NewSQLStore opens (or creates) a SQLite database at .stoke/session.db.
+// NewSQLStore opens (or creates) a SQLite database at
+// `<projectRoot>/<resolved-root>/session.db`, where the resolved root is
+// `.r1/` when that directory already exists, `.stoke/` when only the
+// legacy layout exists, and `.r1/` by default for brand-new projects (so
+// fresh sessions land on the post-rename layout per
+// work-r1-rename.md §S1-5).
+//
+// The SQLite WAL / DB files are not dual-written: SQLite owns one
+// authoritative file tree per store, and the operator-driven
+// `r1 migrate-session` helper handles the one-time copy from the
+// legacy path when required. Readers that still scan `.stoke/` can
+// continue to do so until they migrate; they just see a stale DB.
 func NewSQLStore(projectRoot string) (*SQLStore, error) {
-	root := filepath.Join(projectRoot, ".stoke")
+	canonical := filepath.Join(projectRoot, r1dir.Canonical)
+	legacy := filepath.Join(projectRoot, r1dir.Legacy)
+
+	var root string
+	switch {
+	case dirExists(canonical):
+		root = canonical
+	case dirExists(legacy):
+		root = legacy
+	default:
+		root = canonical
+	}
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}

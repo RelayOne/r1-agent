@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 
 	"github.com/ericmacdougall/stoke/internal/eventlog"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // runLogsCmd implements `stoke logs`. Exit-code convention matches
@@ -78,8 +79,13 @@ func runLogsCmd(args []string, stdout, stderr io.Writer) int {
 }
 
 // resolveStreamJSONL mirrors resolveEventsDB: explicit wins, otherwise
-// default to <cwd>/.stoke/stream.jsonl. We do NOT walk up to a git
-// root — behaviour stays predictable and easy to override.
+// default to <cwd>/<resolved-dir>/stream.jsonl. We do NOT walk up to a
+// git root — behaviour stays predictable and easy to override.
+//
+// Dual-resolve (§S1-5): when both `.r1/stream.jsonl` and
+// `.stoke/stream.jsonl` exist the canonical path wins; when only one
+// exists we return it; when neither exists we return the canonical path
+// so "file not found" messages point at the post-rename layout.
 func resolveStreamJSONL(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -88,7 +94,15 @@ func resolveStreamJSONL(explicit string) string {
 	if err != nil {
 		cwd = "."
 	}
-	return filepath.Join(cwd, ".stoke", "stream.jsonl")
+	canonical := filepath.Join(cwd, r1dir.Canonical, "stream.jsonl")
+	if _, err := os.Stat(canonical); err == nil {
+		return canonical
+	}
+	legacy := filepath.Join(cwd, r1dir.Legacy, "stream.jsonl")
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return canonical
 }
 
 // tailStreamJSONL emits the last N lines of a JSONL file to stdout.

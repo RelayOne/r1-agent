@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // Hook kind labels. These appear in HookSet.Kind and at several
@@ -123,14 +125,24 @@ func LoadHookSet(repoRoot string) HookSet {
 		return nil
 	})
 
-	// Layer 2: user global.
+	// Layer 2: user global. Probe BOTH canonical `~/.r1/hooks` and
+	// legacy `~/.stoke/hooks` during the dual-resolve window so
+	// operators who have rehomed hook overrides to the canonical
+	// layout and operators still on legacy both work unchanged.
+	// Subsequent layer merges are order-preserving: canonical is
+	// loaded first, legacy appends after, matching the existing
+	// "later layers append, don't replace" semantics.
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		h.mergeLayerFromDir(filepath.Join(home, ".stoke", "hooks"))
+		h.mergeLayerFromDir(filepath.Join(home, r1dir.Canonical, "hooks"))
+		h.mergeLayerFromDir(filepath.Join(home, r1dir.Legacy, "hooks"))
 	}
 
-	// Layer 3: project-local.
+	// Layer 3: project-local. Same dual-resolve: probe the canonical
+	// path first, then the legacy path for any `.stoke/hooks/` still
+	// carrying project overrides during the transition.
 	if repoRoot != "" {
-		h.mergeLayerFromDir(filepath.Join(repoRoot, ".stoke", "hooks"))
+		h.mergeLayerFromDir(filepath.Join(repoRoot, r1dir.Canonical, "hooks"))
+		h.mergeLayerFromDir(filepath.Join(repoRoot, r1dir.Legacy, "hooks"))
 	}
 
 	// Count hooks per kind.

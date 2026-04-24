@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/memory/membus"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // SweepResult tallies what a single EnforceSweep pass removed. All four
@@ -63,9 +64,20 @@ type SweepResult struct {
 // package-level variables below (kept as vars, not consts, so the
 // enforce_test.go harness can point them at a t.TempDir without needing a
 // functional-options rewrite of the two public functions).
+//
+// During the `.stoke/` → `.r1/` dual-resolve window (work-r1-rename.md
+// §S1-5) these default to the legacy layout on cwd-relative paths; the
+// sweep also walks the canonical `.r1/` paths via legacyStreamsDir /
+// legacyCheckpointsDir so both sides get aged out.
 var (
-	streamsDir     = ".stoke/streams"
-	checkpointsDir = ".stoke/checkpoints"
+	streamsDir     = filepath.Join(r1dir.Legacy, "streams")
+	checkpointsDir = filepath.Join(r1dir.Legacy, "checkpoints")
+
+	// canonicalStreamsDir / canonicalCheckpointsDir are swept alongside
+	// the legacy paths so post-rename sessions get cleaned up too. Kept
+	// as vars for test overrides.
+	canonicalStreamsDir     = filepath.Join(r1dir.Canonical, "streams")
+	canonicalCheckpointsDir = filepath.Join(r1dir.Canonical, "checkpoints")
 )
 
 // ensureMemoryTypeColumnOnce guards the one-time ALTER TABLE that adds the
@@ -234,29 +246,54 @@ func EnforceSweep(ctx context.Context, policy Policy, bus *membus.Bus) (SweepRes
 	}
 
 	// --- stream files ---------------------------------------------------
+	// Sweep BOTH legacy `.stoke/streams/` and canonical `.r1/streams/`
+	// per the §S1-5 dual-resolve window so aging-out is symmetric across
+	// the rename. Missing directories are not errors — fresh repos and
+	// pure-legacy / pure-canonical repos both land here.
 	if streamTTL, ok := durationFor(policy.StreamFiles); ok {
-		n, err := sweepFilesOlderThan(streamsDir, streamTTL)
-		if err != nil {
-			log.Printf("retention: sweep stream files: %v", err)
-			errs = append(errs, fmt.Errorf("retention: stream sweep: %w", err))
+		for _, dir := range dedupDirs(streamsDir, canonicalStreamsDir) {
+			n, err := sweepFilesOlderThan(dir, streamTTL)
+			if err != nil {
+				log.Printf("retention: sweep stream files (%s): %v", dir, err)
+				errs = append(errs, fmt.Errorf("retention: stream sweep %s: %w", dir, err))
+			}
+			result.StreamFilesRemoved += n
 		}
-		result.StreamFilesRemoved = n
 	}
 
 	// --- checkpoint files -----------------------------------------------
 	if ckptTTL, ok := durationFor(policy.CheckpointFiles); ok {
-		n, err := sweepFilesOlderThan(checkpointsDir, ckptTTL)
-		if err != nil {
-			log.Printf("retention: sweep checkpoint files: %v", err)
-			errs = append(errs, fmt.Errorf("retention: checkpoint sweep: %w", err))
+		for _, dir := range dedupDirs(checkpointsDir, canonicalCheckpointsDir) {
+			n, err := sweepFilesOlderThan(dir, ckptTTL)
+			if err != nil {
+				log.Printf("retention: sweep checkpoint files (%s): %v", dir, err)
+				errs = append(errs, fmt.Errorf("retention: checkpoint sweep %s: %w", dir, err))
+			}
+			result.CheckpointsRemoved += n
 		}
-		result.CheckpointsRemoved = n
 	}
 
 	if len(errs) > 0 {
 		return result, errors.Join(errs...)
 	}
 	return result, nil
+}
+
+// dedupDirs returns dirs with duplicates removed while preserving input
+// order. Used by the dual-layout sweep so that if streamsDir and
+// canonicalStreamsDir point at the same tree (e.g. a test harness
+// overrides both to the same tempdir) the sweep doesn't double-count.
+func dedupDirs(dirs ...string) []string {
+	seen := make(map[string]bool, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 // sweepFilesOlderThan walks dir and unlinks every regular file whose mtime

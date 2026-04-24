@@ -57,6 +57,7 @@ import (
 	"github.com/ericmacdougall/stoke/internal/pools"
 	"github.com/ericmacdougall/stoke/internal/progress"
 	"github.com/ericmacdougall/stoke/internal/provider"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 	"github.com/ericmacdougall/stoke/internal/r1env"
 	"github.com/ericmacdougall/stoke/internal/remote"
 	"github.com/ericmacdougall/stoke/internal/repl"
@@ -360,8 +361,10 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 			return nil, fmt.Errorf("provision environment: %w", provErr)
 		}
 
-		// Open ledger for env audit trail if available.
-		envLedgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+		// Open ledger for env audit trail if available. Prefers the
+		// canonical `.r1/ledger/` layout, falls back to the legacy
+		// `.stoke/ledger/` for pre-rename sessions per §S1-5.
+		envLedgerDir := r1dir.JoinFor(absRepo, "ledger")
 		if fileExists(envLedgerDir) {
 			if lg, err := ledger.New(envLedgerDir); err == nil {
 				buildLedger = lg
@@ -784,7 +787,10 @@ func initCmd(args []string) {
 	}
 
 	// If reinitializing, verify existing ledger integrity first.
-	ledgerDir := filepath.Join(projectDir, ".stoke", "ledger")
+	// Uses the dual-resolve helper so an operator reinitialising a
+	// pre-rename project finds the legacy `.stoke/ledger/` layout,
+	// and a post-rename one finds `.r1/ledger/` (§S1-5).
+	ledgerDir := r1dir.JoinFor(projectDir, "ledger")
 	if fileExists(ledgerDir) {
 		lg, err := ledger.New(ledgerDir)
 		if err != nil {
@@ -1717,15 +1723,17 @@ func sowCmd(args []string) {
 	ensureGitRepoOrFatal(absRepo)
 
 	// r1-server signature + stream-to-file. RS-1 of spec r1-server.md:
-	// every running Stoke instance writes <repo>/.stoke/r1.session.json
-	// so r1-server can discover it, and tees NDJSON events to
-	// <repo>/.stoke/stream.jsonl so r1-server can tail them. Both are
-	// best-effort — failure to write the signature is logged to stderr
-	// but does not abort Stoke.
-	streamFilePath := filepath.Join(absRepo, ".stoke", "stream.jsonl")
-	ledgerDirPath := filepath.Join(absRepo, ".stoke", "ledger")
-	checkpointFilePath := filepath.Join(absRepo, ".stoke", "checkpoints", "timeline.jsonl")
-	busWALPath := filepath.Join(absRepo, ".stoke", "bus", "events.log")
+	// every running Stoke instance writes its signature under the
+	// resolved per-project data dir (prefers `.r1/`, falls back to
+	// `.stoke/` during the dual-resolve transition window per
+	// work-r1-rename.md §S1-5) and tees NDJSON events to
+	// `<repo>/<resolved>/stream.jsonl` so r1-server can tail them.
+	// Both are best-effort — failure to write the signature is logged
+	// to stderr but does not abort Stoke.
+	streamFilePath := r1dir.JoinFor(absRepo, "stream.jsonl")
+	ledgerDirPath := r1dir.JoinFor(absRepo, "ledger")
+	checkpointFilePath := r1dir.JoinFor(absRepo, "checkpoints", "timeline.jsonl")
+	busWALPath := r1dir.JoinFor(absRepo, "bus", "events.log")
 	if f, ferr := openStreamFile(streamFilePath); ferr == nil {
 		streamEmitter.AddWriter(f)
 		// Ensure events are flushed at exit; Close is a no-op on the
@@ -3967,8 +3975,9 @@ func statusCmd(args []string) {
 			latest.PlanID, latest.TasksDone, latest.TasksTotal, latest.TotalCost)
 	}
 
-	// Show ledger integrity status
-	ledgerDir := filepath.Join(absRepo, ".stoke", "ledger")
+	// Show ledger integrity status. Dual-resolve per §S1-5: `.r1/ledger/`
+	// wins when present, `.stoke/ledger/` is the legacy fallback.
+	ledgerDir := r1dir.JoinFor(absRepo, "ledger")
 	if fileExists(ledgerDir) {
 		lg, err := ledger.New(ledgerDir)
 		if err != nil {
@@ -4865,13 +4874,15 @@ func shipCmd(args []string) {
 
 	// RS-1 + RS-5: r1-server signature + optional auto-launch.
 	ensureR1ServerRunning()
+	// Dual-resolve paths per §S1-5: each of these lands under `.r1/*`
+	// when the canonical layout is present, else legacy `.stoke/*`.
 	shipSig, shipSigErr := session.WriteSignature(absRepo, session.SignatureConfig{
 		Mode:           "ship",
 		SowName:        *task,
-		StreamFile:     filepath.Join(absRepo, ".stoke", "stream.jsonl"),
-		LedgerDir:      filepath.Join(absRepo, ".stoke", "ledger"),
-		CheckpointFile: filepath.Join(absRepo, ".stoke", "checkpoints", "timeline.jsonl"),
-		BusWAL:         filepath.Join(absRepo, ".stoke", "bus", "events.log"),
+		StreamFile:     r1dir.JoinFor(absRepo, "stream.jsonl"),
+		LedgerDir:      r1dir.JoinFor(absRepo, "ledger"),
+		CheckpointFile: r1dir.JoinFor(absRepo, "checkpoints", "timeline.jsonl"),
+		BusWAL:         r1dir.JoinFor(absRepo, "bus", "events.log"),
 	})
 	if shipSigErr != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ r1-server signature: %v (continuing without it)\n", shipSigErr)

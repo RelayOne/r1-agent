@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ericmacdougall/stoke/internal/plan"
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // SessionStore is the interface for session persistence.
@@ -24,18 +27,69 @@ type SessionStore interface {
 	LoadLearning() (*Learning, error)
 }
 
-// Store persists session state as JSON files under .stoke/.
+// Store persists session state as JSON files under the per-project data
+// dir. Reads prefer the canonical `.r1/` layout and fall back to the
+// legacy `.stoke/` layout when only the latter exists (per
+// work-r1-rename.md §S1-5 dual-resolve rule). Writes tee into BOTH
+// layouts so external consumers that still read `.stoke/` see the
+// latest state and rollback to pre-rename builds only requires deleting
+// `.r1/`.
+//
+// `root` is the primary (canonical-preferred) location used for tmp+rename
+// atomic writes and subsequent reads. `legacyRoot` is the dual-write tee
+// target. When the caller is already on the legacy layout (because only
+// `.stoke/` exists), root and legacyRoot collapse to the same path and
+// the tee is a no-op.
 type Store struct {
-	root string
-	mu   sync.Mutex
+	root       string
+	legacyRoot string
+	mu         sync.Mutex
 }
 
-// New creates a session store.
+// New creates a session store. The resolved primary root is `.r1/` when
+// that directory already exists under projectRoot, otherwise `.stoke/`
+// for legacy sessions. For brand-new projects (neither exists) we seed
+// the canonical `.r1/` layout so post-rename sessions start on the
+// canonical side, while still dual-writing into `.stoke/` for rollback
+// safety.
 func New(projectRoot string) *Store {
-	root := filepath.Join(projectRoot, ".stoke")
+	canonical := filepath.Join(projectRoot, r1dir.Canonical)
+	legacy := filepath.Join(projectRoot, r1dir.Legacy)
+
+	canonicalExists := dirExists(canonical)
+	legacyExists := dirExists(legacy)
+
+	// Pick the primary root. Canonical wins when present; legacy wins
+	// when it is the only one that exists; canonical is the default for
+	// brand-new projects so new sessions land on the post-rename layout.
+	var root string
+	switch {
+	case canonicalExists:
+		root = canonical
+	case legacyExists:
+		root = legacy
+	default:
+		root = canonical
+	}
+
 	_ = os.MkdirAll(root, 0700)
 	_ = os.MkdirAll(filepath.Join(root, "history"), 0700)
-	return &Store{root: root}
+
+	// Seed the legacy tee target so dual-writes succeed without racing
+	// the first MkdirAll inside writeJSON on a fresh project.
+	legacyMirror := legacy
+	if legacyMirror != root {
+		_ = os.MkdirAll(legacyMirror, 0700)
+		_ = os.MkdirAll(filepath.Join(legacyMirror, "history"), 0700)
+	}
+
+	return &Store{root: root, legacyRoot: legacyMirror}
+}
+
+// dirExists reports whether path is an existing directory.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // State is recoverable session data. Written after every task completion.
@@ -66,8 +120,24 @@ func (s *Store) LoadState() (*State, error) {
 }
 
 // ClearState removes session state (called when build completes).
+// Removes from BOTH canonical and legacy layouts so a cleared session on
+// one side doesn't phantom-resume via the other during the dual-resolve
+// window.
 func (s *Store) ClearState() error {
-	return os.Remove(filepath.Join(s.root, "session.json"))
+	err := os.Remove(filepath.Join(s.root, "session.json"))
+	if s.legacyRoot != "" && s.legacyRoot != s.root {
+		legacyErr := os.Remove(filepath.Join(s.legacyRoot, "session.json"))
+		// Keep the first real error. ENOENT on either side is fine —
+		// dual-write may have been partial, and the caller treats
+		// "already cleared" as success.
+		if err != nil && errors.Is(err, fs.ErrNotExist) {
+			err = nil
+		}
+		if legacyErr != nil && !errors.Is(legacyErr, fs.ErrNotExist) && err == nil {
+			err = legacyErr
+		}
+	}
+	return err
 }
 
 // --- Learned patterns ---
@@ -195,6 +265,24 @@ func (s *Store) writeJSON(relPath string, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
+	if err := writeAtomicJSON(fullPath, data); err != nil {
+		return err
+	}
+	// Dual-write tee into the legacy layout. Partial-write failures on
+	// the tee are logged (later: telemetry) but not surfaced to the
+	// caller — the authoritative state is already persisted, and the
+	// legacy tee exists only for rollback safety.
+	if s.legacyRoot != "" && s.legacyRoot != s.root {
+		legacyPath := filepath.Join(s.legacyRoot, relPath)
+		_ = writeAtomicJSON(legacyPath, data)
+	}
+	return nil
+}
+
+// writeAtomicJSON creates parent dirs then writes data via tmp+rename
+// for crash-safety. Extracted so the dual-write tee reuses the same
+// atomicity as the primary write.
+func writeAtomicJSON(fullPath string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}

@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 //go:embed builtin/_universal/coding-standards.md
@@ -58,27 +60,36 @@ func LoadUniversalContext(repoRoot string) UniversalContext {
 		u.Sources = append(u.Sources, "builtin:known-gotchas.md")
 	}
 
-	// Layer 2: user global.
+	// Layer 2: user global. Probe both canonical `~/.r1/*.md` and legacy
+	// `~/.stoke/*.md` per the dual-resolve rule (work-r1-rename.md §S1-5).
+	// Layer order: canonical first, legacy second — matches the rest of
+	// the skill loader's "later layers append" convention so canonical
+	// wins only when present, and legacy remains a fallback that also
+	// gets appended when both exist (user extends rather than replaces).
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if cs, path, ok := readIfExists(filepath.Join(home, ".stoke", "coding-standards.md")); ok {
-			csParts = append(csParts, cs)
-			u.Sources = append(u.Sources, path)
-		}
-		if kg, path, ok := readIfExists(filepath.Join(home, ".stoke", "known-gotchas.md")); ok {
-			kgParts = append(kgParts, kg)
-			u.Sources = append(u.Sources, path)
+		for _, dirName := range []string{r1dir.Canonical, r1dir.Legacy} {
+			if cs, path, ok := readIfExists(filepath.Join(home, dirName, "coding-standards.md")); ok {
+				csParts = append(csParts, cs)
+				u.Sources = append(u.Sources, path)
+			}
+			if kg, path, ok := readIfExists(filepath.Join(home, dirName, "known-gotchas.md")); ok {
+				kgParts = append(kgParts, kg)
+				u.Sources = append(u.Sources, path)
+			}
 		}
 	}
 
-	// Layer 3: project-local.
+	// Layer 3: project-local. Same dual-probe: canonical then legacy.
 	if repoRoot != "" {
-		if cs, path, ok := readIfExists(filepath.Join(repoRoot, ".stoke", "coding-standards.md")); ok {
-			csParts = append(csParts, cs)
-			u.Sources = append(u.Sources, path)
-		}
-		if kg, path, ok := readIfExists(filepath.Join(repoRoot, ".stoke", "known-gotchas.md")); ok {
-			kgParts = append(kgParts, kg)
-			u.Sources = append(u.Sources, path)
+		for _, dirName := range []string{r1dir.Canonical, r1dir.Legacy} {
+			if cs, path, ok := readIfExists(filepath.Join(repoRoot, dirName, "coding-standards.md")); ok {
+				csParts = append(csParts, cs)
+				u.Sources = append(u.Sources, path)
+			}
+			if kg, path, ok := readIfExists(filepath.Join(repoRoot, dirName, "known-gotchas.md")); ok {
+				kgParts = append(kgParts, kg)
+				u.Sources = append(u.Sources, path)
+			}
 		}
 	}
 

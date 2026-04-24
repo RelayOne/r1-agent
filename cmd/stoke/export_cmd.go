@@ -43,6 +43,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 	"github.com/ericmacdougall/stoke/internal/session"
 )
 
@@ -114,18 +115,20 @@ func resolveExportSignature(repoRoot, sessionID string) (session.SignatureFile, 
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Legacy repos without a live signature file: build a
-			// synthesised SignatureFile pointing at the default
-			// .stoke/ layout so `stoke export` still works on a
+			// synthesised SignatureFile pointing at the resolved
+			// data-dir layout so `stoke export` still works on a
 			// crashed session whose sidecar never finished writing.
+			// r1dir.JoinFor prefers `.r1/` when present, falls back to
+			// `.stoke/` for pre-rename sessions (work-r1-rename.md §S1-5).
 			return session.SignatureFile{
 				Version:        "synthetic",
 				InstanceID:     sessionID,
 				RepoRoot:       repoRoot,
 				Status:         "unknown",
-				StreamFile:     filepath.Join(repoRoot, ".stoke", "stream.jsonl"),
-				LedgerDir:      filepath.Join(repoRoot, ".stoke", "ledger"),
-				CheckpointFile: filepath.Join(repoRoot, ".stoke", "checkpoints.jsonl"),
-				BusWAL:         filepath.Join(repoRoot, ".stoke", "memory.db"),
+				StreamFile:     r1dir.JoinFor(repoRoot, "stream.jsonl"),
+				LedgerDir:      r1dir.JoinFor(repoRoot, "ledger"),
+				CheckpointFile: r1dir.JoinFor(repoRoot, "checkpoints.jsonl"),
+				BusWAL:         r1dir.JoinFor(repoRoot, "memory.db"),
 				UpdatedAt:      time.Now().UTC(),
 			}, nil
 		}

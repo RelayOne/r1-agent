@@ -34,6 +34,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ericmacdougall/stoke/internal/r1dir"
 )
 
 // SignatureVersion is the current schema version for r1.session.json.
@@ -112,7 +114,13 @@ type SignatureFile struct {
 // must invoke Close on exit to stop the heartbeat and mark the final
 // status. Safe for concurrent Close calls.
 type Signature struct {
+	// path is the primary on-disk location — `.r1/r1.session.json` if
+	// the canonical layout exists, else `.stoke/r1.session.json`.
 	path string
+	// legacyPath is the dual-write tee target, always under `.stoke/`.
+	// Equal to path when only the legacy layout exists; writes to it
+	// become a no-op tee in that case.
+	legacyPath string
 
 	mu   sync.Mutex
 	data SignatureFile
@@ -141,9 +149,22 @@ func NewInstanceID() string {
 	return "r1-" + hex.EncodeToString(b[:])
 }
 
-// signaturePath returns <repoRoot>/.stoke/r1.session.json.
+// signaturePath returns <repoRoot>/<resolved-dir>/r1.session.json.
+// Prefers the canonical `.r1/` layout when present (per
+// work-r1-rename.md §S1-5) and falls back to the legacy `.stoke/`
+// layout for pre-rename sessions. WriteSignature teed into BOTH layouts
+// via writeSignatureBytes so r1-server scanners discover sessions on
+// either path during the indefinite transition window.
 func signaturePath(repoRoot string) string {
-	return filepath.Join(repoRoot, ".stoke", "r1.session.json")
+	return filepath.Join(repoRoot, r1dir.RootFor(repoRoot), "r1.session.json")
+}
+
+// legacySignaturePath returns <repoRoot>/.stoke/r1.session.json
+// regardless of which layout exists. The dual-write tee in WriteSignature
+// uses this to ensure legacy r1-server scanners still find the session
+// file during the transition window.
+func legacySignaturePath(repoRoot string) string {
+	return filepath.Join(repoRoot, r1dir.Legacy, "r1.session.json")
 }
 
 // WriteSignature writes the r1.session.json file for the running
@@ -162,7 +183,8 @@ func WriteSignature(repoRoot string, cfg SignatureConfig) (*Signature, error) {
 	}
 	now := time.Now().UTC()
 	sig := &Signature{
-		path: signaturePath(repoRoot),
+		path:       signaturePath(repoRoot),
+		legacyPath: legacySignaturePath(repoRoot),
 		data: SignatureFile{
 			Version:        SignatureVersion,
 			PID:            os.Getpid(),
@@ -196,16 +218,36 @@ func WriteSignature(repoRoot string, cfg SignatureConfig) (*Signature, error) {
 // writeAtomic renders the current signature data to disk via
 // tmp+rename. Callers must hold sig.mu.
 //
+// The signature is ALSO teed into the legacy `.stoke/r1.session.json`
+// path during the dual-resolve transition window so r1-server scanners
+// that still probe the legacy layout continue to discover the session.
+// The tee is best-effort: a failure on the legacy side is swallowed
+// because the authoritative signature on the primary path is already
+// committed.
+//
 // Concurrency note: writeAtomic ONLY reads sig.data under the
 // caller's lock; it does not acquire sig.mu itself.
 func (s *Signature) writeAtomic() error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("signature: mkdir %s: %w", dir, err)
-	}
 	buf, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("signature: marshal: %w", err)
+	}
+	if err := writeSignatureAtomic(s.path, buf); err != nil {
+		return err
+	}
+	if s.legacyPath != "" && s.legacyPath != s.path {
+		_ = writeSignatureAtomic(s.legacyPath, buf)
+	}
+	return nil
+}
+
+// writeSignatureAtomic writes buf to path via tmp+rename with fsync on
+// the tmp file. Extracted so the dual-write tee reuses the same
+// atomicity semantics as the primary write.
+func writeSignatureAtomic(path string, buf []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("signature: mkdir %s: %w", dir, err)
 	}
 	tmp, err := os.CreateTemp(dir, "r1.session.*.tmp")
 	if err != nil {
@@ -226,7 +268,7 @@ func (s *Signature) writeAtomic() error {
 		os.Remove(tmpPath)
 		return fmt.Errorf("signature: close tmp: %w", err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("signature: rename: %w", err)
 	}
