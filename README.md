@@ -38,12 +38,18 @@ embeds R1 as its agent runtime. **How do I pay for team scale?**
 Use CloudSwarm. R1 standalone stays free.
 
 ```bash
-# Homebrew (macOS + Linux) — published by goreleaser on each tag
-brew install ericmacdougall/stoke/stoke
+# Homebrew (macOS + Linux) — published by goreleaser on each tag.
+# The formula now installs BOTH `stoke` and `r1` side-by-side:
+# `r1` is the canonical name going forward, `stoke` stays for the
+# 60-90d rename transition (work-r1-rename.md §S2-3 / §S5-3).
+brew install ericmacdougall/stoke/stoke        # legacy tap path
+# Target after tap rename (§S5-3 — not live yet):
+#   brew install RelayOne/r1-agent/r1
 
 # One-line installer — detects platform, verifies cosign signature
 # (keyless OIDC via sigstore) when cosign is on PATH, falls back to
 # building from source if no prebuilt binary exists for your target.
+# Installs `stoke`, `stoke-acp`, AND `r1` into ${INSTALL_DIR}.
 curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
 # Docker (linux/amd64 + linux/arm64; distroless, multi-stage)
@@ -52,7 +58,8 @@ docker pull ghcr.io/ericmacdougall/stoke:latest
 # From source (Go 1.25 or later; CGO enabled for SQLite)
 go build ./cmd/stoke
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
-sudo mv stoke stoke-acp /usr/local/bin/
+go build ./cmd/r1               # r1 wrapper (delegates to stoke)
+sudo mv stoke stoke-acp r1 /usr/local/bin/
 
 # Verify a signed release tarball (cosign keyless OIDC)
 cosign verify-blob \
@@ -96,13 +103,17 @@ stoke build --plan stoke-plan.json --interactive
 
 ## Commands
 
-R1 ships as a monorepo of nine executables. `stoke` is the primary
-driver (it will become `r1` when §S2-3 lands); the others are
-purpose-built satellites that share the same `internal/` packages.
+R1 ships as a monorepo of ten executables. `stoke` is the primary
+driver; `r1` ships alongside it as the canonical new name during
+the §S2-3 rename transition (thin exec-shim that delegates to the
+sibling `stoke` binary, so `r1 <args>` is byte-identical to
+`stoke <args>`). The rest are purpose-built satellites that share
+the same `internal/` packages.
 
 | Binary | Purpose |
 |--------|---------|
 | `stoke` | Primary orchestrator — 30+ subcommands below |
+| `r1` | Canonical CLI name (work-r1-rename.md §S2-3) — exec-shim to `stoke` during the 60-90d transition |
 | `stoke-acp` | Agent Client Protocol adapter (S-U-002) — exposes R1 over ACP for editor integrations |
 | `stoke-a2a` | Agent-to-Agent peering — signed agent cards, HMAC tokens, x402 micropayments, saga compensators |
 | `stoke-mcp` | MCP codebase tool server — exposes ledger, wisdom, research, skill stores as MCP tools |

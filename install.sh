@@ -55,8 +55,10 @@ build_from_source() {
     info "Building..."
     (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-bin" ./cmd/stoke)
     (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
+    # work-r1-rename.md S2-3: r1 shim binary (delegates to stoke).
+    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
 
-    for pair in "${tmp_dir}/stoke-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp"; do
+    for pair in "${tmp_dir}/stoke-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp" "${tmp_dir}/r1-bin:r1"; do
         src="${pair%%:*}"
         dst_name="${pair##*:}"
         dst="${INSTALL_DIR}/${dst_name}"
@@ -70,7 +72,8 @@ build_from_source() {
 
     info "Built and installed stoke to ${INSTALL_DIR}/${BINARY}"
     info "Built and installed stoke-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/stoke-acp"
-    info "Run 'stoke doctor' to verify your setup."
+    info "Built and installed r1 (rename transition shim) to ${INSTALL_DIR}/r1"
+    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
 }
 
 main() {
@@ -171,8 +174,12 @@ main() {
 
     install_one stoke "${BINARY}" required
     install_one stoke-acp stoke-acp optional
+    # work-r1-rename.md S2-3: r1 ships alongside stoke during the
+    # 60-90d transition. Optional so pre-rename archives still
+    # install cleanly (they just won't carry r1).
+    install_one r1 r1 optional
 
-    info "Run 'stoke doctor' to verify your setup."
+    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
 }
 
 main "$@"

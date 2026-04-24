@@ -59,6 +59,27 @@ builds:
     goarch:
       - amd64
       - arm64
+  - id: r1
+    # r1 shim binary (work-r1-rename.md S2-3). Thin exec-shim that
+    # delegates to the sibling `stoke` binary; no CGO, so it cross-
+    # compiles without the gcc overrides the main stoke build uses.
+    # Shipped alongside `stoke` during the 60-90d transition window
+    # so both names work; once S5-* tap-rename lands, `r1` becomes
+    # canonical and `stoke` retires.
+    main: ./cmd/r1
+    binary: r1
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
 
 archives:
   - format: tar.gz
@@ -100,8 +121,13 @@ brews:
     install: |
       bin.install "stoke"
       bin.install "stoke-acp" if File.exist?("stoke-acp")
+      # work-r1-rename.md S2-3: ship `r1` alongside `stoke` during
+      # the 60-90d rename transition. `r1` is a thin exec-shim that
+      # delegates to the sibling `stoke` binary in the same bindir.
+      bin.install "r1" if File.exist?("r1")
     test: |
       system "#{bin}/stoke", "--version"
+      system "#{bin}/r1", "--version" if File.exist?("#{bin}/r1")
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
