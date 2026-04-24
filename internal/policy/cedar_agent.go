@@ -136,7 +136,7 @@ func (c *HTTPClient) Check(ctx context.Context, req Request) (Result, error) {
 
 	resp, err := c.hc.Do(httpReq)
 	if err != nil {
-		return c.unavailable(fmt.Sprintf("transport: %v", err)), fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return c.unavailable(fmt.Sprintf("transport: %v", err)), fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -147,12 +147,12 @@ func (c *HTTPClient) Check(ctx context.Context, req Request) (Result, error) {
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return c.unavailable(fmt.Sprintf("read body: %v", err)), fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return c.unavailable(fmt.Sprintf("read body: %v", err)), fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 
 	var parsed parcResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return c.unavailable(fmt.Sprintf("decode body: %v", err)), fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return c.unavailable(fmt.Sprintf("decode body: %v", err)), fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 
 	switch parsed.Decision {

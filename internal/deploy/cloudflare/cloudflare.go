@@ -288,7 +288,7 @@ func (*cloudflareDeployer) Deploy(ctx context.Context, cfg deploy.DeployConfig) 
 	}
 
 	if runErr != nil {
-		return result, fmt.Errorf("cloudflare.Deploy: wrangler %s: %v\nstderr tail: %s",
+		return result, fmt.Errorf("cloudflare.Deploy: wrangler %s: %w\nstderr tail: %s",
 			strings.Join(args, " "), runErr, tailString(stderr.String(), 500))
 	}
 	return result, nil
@@ -367,7 +367,7 @@ func (*cloudflareDeployer) Rollback(ctx context.Context, cfg deploy.DeployConfig
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("cloudflare.Rollback: wrangler %s: %v\nstderr tail: %s",
+		return fmt.Errorf("cloudflare.Rollback: wrangler %s: %w\nstderr tail: %s",
 			strings.Join(args, " "), err, tailString(stderr.String(), 500))
 	}
 	return nil

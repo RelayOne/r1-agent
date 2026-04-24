@@ -3,6 +3,7 @@ package membus
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -76,7 +77,7 @@ func TestValidateRemember(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("validateRemember err=%v, wantErr=%v", err, tc.wantErr)
 			}
-			if tc.isForb && err != ErrScopeForbidden {
+			if tc.isForb && !errors.Is(err, ErrScopeForbidden) {
 				t.Errorf("want ErrScopeForbidden, got %v", err)
 			}
 		})
@@ -249,7 +250,7 @@ func TestRememberRejectsWorkerAlways(t *testing.T) {
 		Content: "blocked",
 		Author:  "worker:w42",
 	})
-	if err != ErrScopeForbidden {
+	if !errors.Is(err, ErrScopeForbidden) {
 		t.Errorf("got %v, want ErrScopeForbidden", err)
 	}
 }

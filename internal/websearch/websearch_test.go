@@ -55,7 +55,7 @@ func TestChainPropagatesRealError(t *testing.T) {
 	a := &fakeSearcher{name: "a", err: custom}
 	chain := &Chain{Providers: []Searcher{a}}
 	_, err := chain.Search(context.Background(), "q", 5)
-	if err != custom {
+	if !errors.Is(err, custom) {
 		t.Fatalf("expected custom error to propagate; got %v", err)
 	}
 }

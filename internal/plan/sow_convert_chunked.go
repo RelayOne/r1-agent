@@ -30,6 +30,7 @@ package plan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -775,7 +776,10 @@ func expandSessionWithRetry(ctx context.Context, prose string, stack *StackSpec,
 	}
 	full, err2 := expandSession(ctx, prose, stack, stub, prov, model, budget)
 	if err2 != nil {
-		return Session{}, fmt.Errorf("first attempt: %v; retry: %v", err, err2)
+		return Session{}, errors.Join(
+			fmt.Errorf("first attempt: %w", err),
+			fmt.Errorf("retry: %w", err2),
+		)
 	}
 	return full, nil
 }

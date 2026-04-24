@@ -2,6 +2,7 @@ package mission
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -128,7 +129,7 @@ func TestConvergedAnswerContextCancellation(t *testing.T) {
 		Mission:  "cancelled",
 		StepName: "test-cancel",
 	})
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 	if result.Depth != 0 {

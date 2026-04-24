@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -260,7 +261,10 @@ func RefineSOW(original *SOW, crit *SOWCritique, prov provider.Provider, model s
 		// one-paragraph directive.
 		repaired, repairErr := repairJSONViaLLM(raw, prov, model)
 		if repairErr != nil {
-			return nil, fmt.Errorf("parse refined SOW: %w; repair attempt also failed: %v (raw saved to /tmp/stoke-refine-raw.txt, stop_reason=%q)", extractErr, repairErr, resp.StopReason)
+			return nil, errors.Join(
+				fmt.Errorf("parse refined SOW: %w", extractErr),
+				fmt.Errorf("repair attempt also failed: %w (raw saved to /tmp/stoke-refine-raw.txt, stop_reason=%q)", repairErr, resp.StopReason),
+			)
 		}
 		blob = repaired
 	}

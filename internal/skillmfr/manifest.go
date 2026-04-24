@@ -182,7 +182,10 @@ func validateSchemaBytes(field string, raw json.RawMessage) error {
 	}
 	var anyVal interface{}
 	if err := json.Unmarshal(raw, &anyVal); err != nil {
-		return fmt.Errorf("%w: %s must be valid JSON: %v", ErrIncompleteManifest, field, err)
+		return errors.Join(
+			fmt.Errorf("%w: %s must be valid JSON", ErrIncompleteManifest, field),
+			err,
+		)
 	}
 	return nil
 }

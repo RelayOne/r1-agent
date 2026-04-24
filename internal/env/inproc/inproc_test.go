@@ -2,6 +2,7 @@ package inproc
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -144,7 +145,7 @@ func TestServiceNotFound(t *testing.T) {
 	defer b.Teardown(context.Background(), h)
 
 	_, err := b.Service(context.Background(), h, "postgres")
-	if err != env.ErrServiceNotFound {
+	if !errors.Is(err, env.ErrServiceNotFound) {
 		t.Errorf("err=%v, want ErrServiceNotFound", err)
 	}
 }
@@ -185,13 +186,13 @@ func TestTeardownIdempotent(t *testing.T) {
 func TestNilHandleErrors(t *testing.T) {
 	b := New()
 
-	if _, err := b.Exec(context.Background(), nil, []string{"echo"}, env.ExecOpts{}); err != env.ErrNotProvisioned {
+	if _, err := b.Exec(context.Background(), nil, []string{"echo"}, env.ExecOpts{}); !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("Exec nil handle: %v", err)
 	}
-	if err := b.CopyIn(context.Background(), nil, "", ""); err != env.ErrNotProvisioned {
+	if err := b.CopyIn(context.Background(), nil, "", ""); !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("CopyIn nil handle: %v", err)
 	}
-	if _, err := b.Cost(context.Background(), nil); err != env.ErrNotProvisioned {
+	if _, err := b.Cost(context.Background(), nil); !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("Cost nil handle: %v", err)
 	}
 }

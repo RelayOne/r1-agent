@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -158,7 +159,8 @@ func (r *APIRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc) 
 		result.Subtype = "error_during_execution"
 
 		// Detect rate limiting and auth errors
-		if apiError, ok := apiErr.(*apiclient.APIError); ok {
+		var apiError *apiclient.APIError
+		if errors.As(apiErr, &apiError) {
 			if apiError.IsRateLimit() {
 				result.Subtype = "rate_limited"
 			}

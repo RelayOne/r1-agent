@@ -3,6 +3,7 @@ package stoke_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -828,7 +829,7 @@ func TestIgnoredNewFiles_IgnoredOnly(t *testing.T) {
 
 	// CommitVerifiedTree should return ErrNothingToCommit
 	err = worktree.CommitVerifiedTree(ctx, h, []string{}, "nothing")
-	if err != worktree.ErrNothingToCommit {
+	if !errors.Is(err, worktree.ErrNothingToCommit) {
 		t.Errorf("expected ErrNothingToCommit, got: %v", err)
 	}
 }

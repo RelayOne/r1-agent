@@ -374,7 +374,7 @@ func runMissionRun(args []string) (bool, error) {
 
 	runner, err := orch.NewRunner(config)
 	if err != nil {
-		return false, fmt.Errorf("create runner: %v", err)
+		return false, fmt.Errorf("create runner: %w", err)
 	}
 
 	var ctx context.Context

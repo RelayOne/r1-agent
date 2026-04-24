@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -56,7 +57,8 @@ func (r *GeminiRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	result := RunResult{Prepared: prepared, ResultText: string(out)}
 	if err != nil {
 		result.IsError = true
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 		}
 	}

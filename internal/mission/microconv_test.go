@@ -2,6 +2,7 @@ package mission
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -157,7 +158,7 @@ func TestMicroConvergenceContextCancellation(t *testing.T) {
 			return nil, nil
 		},
 	})
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 	if result.Iterations != 0 {

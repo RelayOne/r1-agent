@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -150,7 +151,8 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 	case waitErr := <-waitDone:
 		stderrText := <-stderrDone
 		if waitErr != nil {
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
 				result.ExitCode = exitErr.ExitCode()
 			}
 			result.IsError = true

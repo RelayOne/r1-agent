@@ -4,6 +4,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -180,7 +181,8 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	select {
 	case waitErr := <-waitDone:
 		if waitErr != nil {
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
 				result.ExitCode = exitErr.ExitCode()
 			}
 			// Don't return error for exit code 1 -- parse subtype instead (#15685: exit 0 on rate limit)

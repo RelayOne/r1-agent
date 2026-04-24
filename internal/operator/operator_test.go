@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -66,7 +67,7 @@ func TestTerminal_Ask_CtxCanceled(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error from canceled ctx, got nil (result=%q)", got)
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 	if got != "" {

@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -302,7 +303,7 @@ func TestExec(t *testing.T) {
 func TestExecNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	_, err := b.Exec(context.Background(), nil, []string{"echo"}, env.ExecOpts{})
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -318,7 +319,7 @@ func TestExecAfterTeardown(t *testing.T) {
 	b.Teardown(ctx, h)
 
 	_, err = b.Exec(ctx, h, []string{"echo"}, env.ExecOpts{})
-	if err != env.ErrAlreadyTornDown {
+	if !errors.Is(err, env.ErrAlreadyTornDown) {
 		t.Errorf("err=%v, want ErrAlreadyTornDown", err)
 	}
 }
@@ -371,7 +372,7 @@ func TestCopyIn(t *testing.T) {
 func TestCopyInNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	err := b.CopyIn(context.Background(), nil, "/a", "/b")
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -398,7 +399,7 @@ func TestCopyOut(t *testing.T) {
 func TestCopyOutNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	err := b.CopyOut(context.Background(), nil, "/a", "/b")
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -413,7 +414,7 @@ func TestServiceNotFound(t *testing.T) {
 	}
 
 	_, err = b.Service(ctx, h, "nonexistent")
-	if err != env.ErrServiceNotFound {
+	if !errors.Is(err, env.ErrServiceNotFound) {
 		t.Errorf("err=%v, want ErrServiceNotFound", err)
 	}
 }
@@ -421,7 +422,7 @@ func TestServiceNotFound(t *testing.T) {
 func TestServiceNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	_, err := b.Service(context.Background(), nil, "pg")
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -501,7 +502,7 @@ func TestCost(t *testing.T) {
 func TestCostNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	_, err := b.Cost(context.Background(), nil)
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -531,7 +532,7 @@ func TestSnapshot(t *testing.T) {
 func TestSnapshotNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	_, err := b.Snapshot(context.Background(), nil)
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }
@@ -559,7 +560,7 @@ func TestRestore(t *testing.T) {
 func TestRestoreNilHandle(t *testing.T) {
 	b, _ := setup(t)
 	err := b.Restore(context.Background(), nil, "snap-1")
-	if err != env.ErrNotProvisioned {
+	if !errors.Is(err, env.ErrNotProvisioned) {
 		t.Errorf("err=%v, want ErrNotProvisioned", err)
 	}
 }

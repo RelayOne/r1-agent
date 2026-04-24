@@ -343,7 +343,7 @@ func flyDeploy(ctx context.Context, cfg DeployConfig) (DeployResult, error) {
 	}
 
 	if runErr != nil {
-		return result, fmt.Errorf("deploy: flyctl %s: %v\nstderr tail: %s",
+		return result, fmt.Errorf("deploy: flyctl %s: %w\nstderr tail: %s",
 			strings.Join(args, " "), runErr, tail(stderr.String(), 500))
 	}
 	return result, nil

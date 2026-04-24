@@ -2,6 +2,7 @@ package mission
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -284,7 +285,7 @@ func TestRunnerContextCancellation(t *testing.T) {
 	})
 
 	result, err := runner.Run(ctx, "m-cancel")
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 	_ = result

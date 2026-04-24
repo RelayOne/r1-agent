@@ -3,6 +3,7 @@ package flyclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,9 +105,9 @@ func TestAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		// May be wrapped.
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		// May be wrapped differently.
 		t.Logf("error type: %T: %v", err, err)
 		return
 	}

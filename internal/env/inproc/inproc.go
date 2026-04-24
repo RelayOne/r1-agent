@@ -6,6 +6,7 @@ package inproc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -111,7 +112,8 @@ func (b *Backend) Exec(ctx context.Context, h *env.Handle, cmdArgs []string, opt
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 		} else if ctx.Err() != nil {
 			result.ExitCode = -1

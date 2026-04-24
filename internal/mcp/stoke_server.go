@@ -34,6 +34,7 @@ package mcp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -403,7 +404,8 @@ func (s *StokeServer) handleBuildFromSOW(args map[string]interface{}) (string, e
 		}
 		if waitErr != nil {
 			rec.Status = "failed"
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
 				rec.ExitCode = exitErr.ExitCode()
 			} else {
 				rec.ExitCode = -1

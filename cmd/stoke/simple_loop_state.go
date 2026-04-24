@@ -104,7 +104,8 @@ func repoHeadIsAncestor(repoRoot, savedHead, currentHead string) (bool, error) {
 	}
 	cmd := exec.Command("git", "-C", repoRoot, "merge-base", "--is-ancestor", savedHead, currentHead)
 	if err := cmd.Run(); err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
 			// Git returns exit 1 when the first commit is NOT an
 			// ancestor. Not an error in the usual sense.
 			return false, nil

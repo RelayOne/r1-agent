@@ -1420,7 +1420,7 @@ func (e Engine) runCrossModelReview(
 		e.recordAttemptEvidence(attempt, attemptStart, execRunnerName, execResult.ResultText, *evidence)
 		e.Worktrees.Cleanup(ctx, handle)
 		_ = e.advanceState(taskstate.Failed, "review returned invalid JSON")
-		return nil, fmt.Errorf("cross-model review returned invalid JSON: %v", parseErr)
+		return nil, fmt.Errorf("cross-model review returned invalid JSON: %w", parseErr)
 	}
 
 	// Review quality gate: reviewer must have Read at least half the changed files.

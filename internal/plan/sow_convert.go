@@ -424,7 +424,10 @@ func ConvertProseToSOW(prose string, prov provider.Provider, model string) (*SOW
 		repaired, repairErr := repairJSONViaLLM(raw, prov, model)
 		if repairErr != nil {
 			dumpOnErr(nil)
-			return nil, nil, fmt.Errorf("parse generated SOW: %w; repair attempt also failed: %v (raw saved to /tmp/stoke-sow-raw.txt)", extractErr, repairErr)
+			return nil, nil, errors.Join(
+				fmt.Errorf("parse generated SOW: %w", extractErr),
+				fmt.Errorf("repair attempt also failed: %w (raw saved to /tmp/stoke-sow-raw.txt)", repairErr),
+			)
 		}
 		jsonBlob = repaired
 	}

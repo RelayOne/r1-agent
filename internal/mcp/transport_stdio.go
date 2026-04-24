@@ -308,7 +308,7 @@ func (s *StdioTransport) doClose() error {
 
 	if closeErr != nil {
 		if waitErr != nil {
-			return fmt.Errorf("mcp stdio: close: %w (also: %v)", closeErr, waitErr)
+			return errors.Join(fmt.Errorf("mcp stdio: close: %w", closeErr), waitErr)
 		}
 		return fmt.Errorf("mcp stdio: close: %w", closeErr)
 	}

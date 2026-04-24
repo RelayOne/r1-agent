@@ -5984,7 +5984,7 @@ func runLaunchShell(args []string) error {
 
 	absRepo, err := filepath.Abs(*repo)
 	if err != nil {
-		return fmt.Errorf("resolve repo: %v", err)
+		return fmt.Errorf("resolve repo: %w", err)
 	}
 
 	// CDC-15: stand up the operator-control socket so `stoke status /

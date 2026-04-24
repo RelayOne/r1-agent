@@ -151,7 +151,7 @@ func New(cfg RunConfig) (*Orchestrator, error) {
 	// Validate policy structure
 	for _, ve := range config.ValidatePolicy(policy) {
 		if ve.Fatal {
-			return nil, fmt.Errorf("policy error: %s", ve)
+			return nil, fmt.Errorf("policy error: %w", ve)
 		}
 	}
 

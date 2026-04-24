@@ -309,7 +309,7 @@ func (h *Hirer) disputeAndReturn(
 	wrapped := fmt.Errorf("%w: AC %s: %s", ErrVerificationFailed, failed.ID, failed.Reason)
 	if derr != nil {
 		// Dispute itself failed (network / auth). Surface both.
-		return fmt.Errorf("%w; dispute filing error: %v", wrapped, derr)
+		return errors.Join(wrapped, fmt.Errorf("dispute filing error: %w", derr))
 	}
 	return wrapped
 }

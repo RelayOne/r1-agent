@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -512,7 +513,7 @@ func TestPausedStanceCanBeResumed(t *testing.T) {
 	cancel()
 	select {
 	case err := <-stanceExited:
-		if err != nil && err != context.Canceled {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatalf("stance runner error: %v", err)
 		}
 	case <-time.After(5 * time.Second):

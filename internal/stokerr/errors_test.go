@@ -27,7 +27,7 @@ func TestErrorMessageWithCause(t *testing.T) {
 func TestUnwrap(t *testing.T) {
 	cause := fmt.Errorf("root cause")
 	e := Wrap(ErrTimeout, "timed out", cause)
-	if e.Unwrap() != cause {
+	if !errors.Is(e.Unwrap(), cause) {
 		t.Fatal("Unwrap did not return cause")
 	}
 }
