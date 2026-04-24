@@ -39,10 +39,11 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/RelayOne/r1/internal/r1env"
 )
 
 // memoryBusSchemaDDL creates the read-side projection of the memory
@@ -316,79 +317,78 @@ func (d *DB) insertMemoryForTest(scope, key, author, content string, createdAt t
 // ---------------------------------------------------------------------------
 // work-stoke TASK 14 — memory explorer CRUD
 //
-// Spec 27 §6.5 ("Memory CRUD & RBAC") + specs/work-stoke.md TASK 14 close-out:
-// expose POST/PUT/DELETE on top of the existing read-only /memories view, and
-// gate writes whose scope is "always" behind a shared passphrase supplied via
-// the X-R1-Admin-Pass header.
+// Adds POST /api/memories, PUT /api/memories/{id}, DELETE /api/memories/{id}
+// on top of the read-only grouped-list view above. Writes that target
+// scope=="always" require an operator passphrase carried in the JSON body's
+// "passphrase" field; the expected value is sourced from the env pair
+// R1_MEMORIES_PASSPHRASE (canonical) / STOKE_MEMORIES_PASSPHRASE (legacy)
+// via internal/r1env.Get so the s1-5 dual-accept window applies uniformly.
 //
-// The passphrase comparison uses crypto/subtle.ConstantTimeCompare so a
-// timing-oracle attacker cannot probe the env-var byte-by-byte. When
-// R1_ADMIN_PASS is unset, ScopeAlways writes are fail-closed: any attempt
-// returns 401 regardless of header content so a misconfigured server cannot
-// silently accept unrestricted always-scope writes.
+// Fail-closed posture: when the env var is unset every ScopeAlways write is
+// rejected. The constant-time comparison keeps the wrong-passphrase path
+// indistinguishable from the missing-passphrase path, so a caller cannot
+// tell the two states apart via response timing.
 //
-// r1-server does not own a *membus.Bus handle today (see retention_sweep.go
-// design notes); writes therefore go through raw SQL against
-// stoke_memory_bus. The shape is the same spec §3 upsert the bus writer uses
-// so the row is indistinguishable from a Bus-authored row at the schema
-// level. If/when a Bus is plumbed into this binary, swap the raw SQL for
-// Bus.Remember without changing the HTTP contract.
+// r1-server does not own a *membus.Bus handle today — writes go through raw
+// SQL against stoke_memory_bus using the same column shape membus's writer
+// loop uses. Rows are indistinguishable from Bus-authored rows at the
+// schema level; when a Bus handle is plumbed into this binary the raw SQL
+// can be swapped for Bus.Remember without changing the HTTP contract.
 
-const adminPassHeader = "X-R1-Admin-Pass" // #nosec G101 -- HTTP header name, not a credential value.
-
-// memoryWriteRequest is the JSON body accepted by POST /api/memories.
-// Fields mirror the membus Remember shape minus the attribution fields
-// (session/step/task) which r1-server cannot attest — those default to empty
-// strings so the row still satisfies the non-null column constraints.
+// memoryWriteRequest is the JSON body accepted by POST /api/memories. The
+// Passphrase field is only consulted when Scope == "always"; for every
+// other scope it is ignored so normal-scope callers do not need to know the
+// value.
 type memoryWriteRequest struct {
-	Scope       string `json:"scope"`
-	ScopeTarget string `json:"scope_target"`
-	Key         string `json:"key"`
-	Content     string `json:"content"`
-	MemoryType  string `json:"memory_type"`
+	Scope       string     `json:"scope"`
+	ScopeTarget string     `json:"scope_target"`
+	Key         string     `json:"key"`
+	Content     string     `json:"content"`
+	Tags        []string   `json:"tags"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	Passphrase  string     `json:"passphrase"`
 }
 
 // memoryUpdateRequest is the JSON body accepted by PUT /api/memories/{id}.
-// Only content + memory_type are updatable via this endpoint; rekeying a
-// memory or changing its scope would invalidate downstream references so
-// those mutations require a delete + post pair.
+// Scope + key cannot change via update — those mutations would invalidate
+// downstream references so they require delete + create. Only content, tags
+// and expiry are mutable here.
 type memoryUpdateRequest struct {
-	Content    string `json:"content"`
-	MemoryType string `json:"memory_type"`
+	Content    string     `json:"content"`
+	Tags       []string   `json:"tags"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	Passphrase string     `json:"passphrase"`
 }
 
-// requireAdminPassIfAlways returns true when the request is authorised to
-// write a row whose scope value is the given one. For non-"always" scopes it
-// always returns true. For "always", it fails closed (returns false and has
-// already written a 401 to w) whenever:
+// requirePassphraseIfAlways enforces the scope=="always" passphrase gate.
+// For every other scope it returns true unconditionally. For ScopeAlways it
+// returns false (after writing the 401 response) whenever:
 //
-//   - R1_ADMIN_PASS is unset on the server (no passphrase configured)
-//   - the request omitted the X-R1-Admin-Pass header
-//   - the header value does not match the env var under a constant-time
-//     comparison
+//   - R1_MEMORIES_PASSPHRASE / STOKE_MEMORIES_PASSPHRASE are both unset
+//   - the request body omitted the "passphrase" field
+//   - the supplied value does not match the expected one under a
+//     constant-time comparison
 //
-// The comparison uses subtle.ConstantTimeCompare so the server's response
-// timing cannot leak byte-by-byte information about the configured value.
-func requireAdminPassIfAlways(w http.ResponseWriter, r *http.Request, scope string) bool {
+// The comparison uses subtle.ConstantTimeCompare so the server's timing
+// profile does not leak whether the gate was tripped by a configuration
+// gap vs. a caller-side mistake.
+func requirePassphraseIfAlways(w http.ResponseWriter, scope, supplied string) bool {
 	if scope != "always" {
 		return true
 	}
-	expected := os.Getenv("R1_ADMIN_PASS")
-	got := r.Header.Get(adminPassHeader)
-	// Fail-closed: missing server config or missing header → 401. We still
-	// run a constant-time compare against a zero-length `expected` to keep
-	// the timing profile identical across missing-config vs wrong-header.
-	if expected == "" || got == "" ||
-		subtle.ConstantTimeCompare([]byte(expected), []byte(got)) != 1 {
-		http.Error(w, "scope=always requires admin passphrase", http.StatusUnauthorized)
+	expected := r1env.Get("R1_MEMORIES_PASSPHRASE", "STOKE_MEMORIES_PASSPHRASE")
+	if expected == "" || supplied == "" ||
+		subtle.ConstantTimeCompare([]byte(expected), []byte(supplied)) != 1 {
+		http.Error(w, "scope=always requires operator passphrase", http.StatusUnauthorized)
 		return false
 	}
 	return true
 }
 
-// readJSONBody decodes a small JSON body (capped at 64 KiB) into v. The cap
-// mirrors the /api/register handler so an attacker cannot OOM the server by
-// streaming an unbounded body.
+// readJSONBody decodes a small JSON body (capped at 64 KiB) into v. A
+// non-nil error here yields a 400 at the handler so malformed payloads
+// never reach SQL. The 64 KiB cap keeps an unbounded streamed body from
+// exhausting memory.
 func readJSONBody(r *http.Request, v any) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
@@ -398,11 +398,40 @@ func readJSONBody(r *http.Request, v any) error {
 	return nil
 }
 
+// encodeTags produces the JSON array string stored in the tags column.
+// Nil / empty slices round-trip to "[]" so the NOT NULL DEFAULT '[]'
+// constraint is never violated and the column always parses as JSON.
+func encodeTags(tags []string) (string, error) {
+	if len(tags) == 0 {
+		return "[]", nil
+	}
+	raw, err := json.Marshal(tags)
+	if err != nil {
+		return "", fmt.Errorf("encode tags: %w", err)
+	}
+	return string(raw), nil
+}
+
+// expiresArg returns the argument passed to SQLite for the expires_at
+// column. A nil *time.Time writes SQL NULL (no expiry); a non-nil pointer
+// writes the RFC3339Nano UTC rendering so retention_sweep.go can compare
+// it lexicographically against time.Now().UTC().Format(time.RFC3339Nano).
+func expiresArg(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 // CreateMemoryRow inserts a new row into stoke_memory_bus and returns the
-// autoincrement id. Key is optional — when empty we derive a stable dedup key
-// from the current nanosecond so two creates without an explicit key do not
-// collide on the UNIQUE (scope, scope_target, key) constraint.
-func (d *DB) CreateMemoryRow(scope, scopeTarget, key, content, memoryType string, now time.Time) (int64, error) {
+// autoincrement id. Key is optional — when empty we derive a nanosecond-
+// unique key so two creates without an explicit key do not collide on the
+// UNIQUE (scope, scope_target, key) constraint.
+func (d *DB) CreateMemoryRow(scope, scopeTarget, key, content string, tags []string, expiresAt *time.Time, now time.Time) (int64, error) {
+	tagsJSON, err := encodeTags(tags)
+	if err != nil {
+		return 0, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if key == "" {
@@ -410,16 +439,17 @@ func (d *DB) CreateMemoryRow(scope, scopeTarget, key, content, memoryType string
 	}
 	res, err := d.sql.Exec(
 		`INSERT INTO stoke_memory_bus(
-		    created_at, scope, scope_target, key, author, content,
-		    content_hash, memory_type
-		 ) VALUES (?, ?, ?, ?, ?, ?, '', ?)`,
+		    created_at, expires_at, scope, scope_target, key,
+		    author, content, content_hash, tags
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?)`,
 		now.Format(time.RFC3339Nano),
+		expiresArg(expiresAt),
 		scope,
 		scopeTarget,
 		key,
 		"r1-server",
 		content,
-		memoryType,
+		tagsJSON,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert memory row: %w", err)
@@ -427,17 +457,21 @@ func (d *DB) CreateMemoryRow(scope, scopeTarget, key, content, memoryType string
 	return res.LastInsertId()
 }
 
-// UpdateMemoryRow updates the content + memory_type of an existing row. It
-// returns sql.ErrNoRows when the id does not match any row so the caller can
-// distinguish "row missing" from "db failed".
-func (d *DB) UpdateMemoryRow(id int64, content, memoryType string) error {
+// UpdateMemoryRow rewrites the mutable columns (content, tags, expires_at)
+// of an existing row. Returns sql.ErrNoRows when the id matches no row so
+// the caller surfaces a 404 rather than a silent success.
+func (d *DB) UpdateMemoryRow(id int64, content string, tags []string, expiresAt *time.Time) error {
+	tagsJSON, err := encodeTags(tags)
+	if err != nil {
+		return err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	res, err := d.sql.Exec(
 		`UPDATE stoke_memory_bus
-		    SET content = ?, memory_type = ?
+		    SET content = ?, tags = ?, expires_at = ?
 		  WHERE id = ?`,
-		content, memoryType, id,
+		content, tagsJSON, expiresArg(expiresAt), id,
 	)
 	if err != nil {
 		return fmt.Errorf("update memory row: %w", err)
@@ -453,7 +487,7 @@ func (d *DB) UpdateMemoryRow(id int64, content, memoryType string) error {
 }
 
 // DeleteMemoryRow removes a row by id, returning sql.ErrNoRows when no row
-// was affected so the caller can surface a 404 instead of a generic 204.
+// was affected so the caller surfaces a 404 instead of a silent 204.
 func (d *DB) DeleteMemoryRow(id int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -471,8 +505,9 @@ func (d *DB) DeleteMemoryRow(id int64) error {
 	return nil
 }
 
-// getMemoryScope loads the scope column for a single row so PUT/DELETE can
-// enforce the ScopeAlways passphrase gate without re-fetching the full row.
+// getMemoryScope loads the scope column for a single row so PUT / DELETE
+// can enforce the ScopeAlways passphrase gate without re-fetching the full
+// row.
 func (d *DB) getMemoryScope(id int64) (string, error) {
 	var scope string
 	err := d.sql.QueryRow(
@@ -481,10 +516,9 @@ func (d *DB) getMemoryScope(id int64) (string, error) {
 	return scope, err
 }
 
-// serveMemoryCreate handles POST /api/memories. Body shape is
-// memoryWriteRequest; scope=="always" gates on X-R1-Admin-Pass. On success
-// the handler returns 200 with {id, ok:true}, matching the work-stoke
-// TASK 14 test contract (TestMemoriesPOST_NormalScope_200).
+// serveMemoryCreate handles POST /api/memories. 201 on success with the
+// body {id, ok:true}; 400 on malformed JSON or missing required fields;
+// 401 when scope=="always" and the passphrase gate rejects.
 func (d *DB) serveMemoryCreate(w http.ResponseWriter, r *http.Request) {
 	if !v2Enabled() {
 		http.NotFound(w, r)
@@ -499,20 +533,22 @@ func (d *DB) serveMemoryCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scope and content are required", http.StatusBadRequest)
 		return
 	}
-	if !requireAdminPassIfAlways(w, r, req.Scope) {
+	if !requirePassphraseIfAlways(w, req.Scope, req.Passphrase) {
 		return
 	}
-	id, err := d.CreateMemoryRow(req.Scope, req.ScopeTarget, req.Key, req.Content, req.MemoryType, time.Now().UTC())
+	id, err := d.CreateMemoryRow(req.Scope, req.ScopeTarget, req.Key, req.Content, req.Tags, req.ExpiresAt, time.Now().UTC())
 	if err != nil {
 		http.Error(w, "create memory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "ok": true})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "ok": true})
 }
 
-// serveMemoryUpdate handles PUT /api/memories/{id}. The passphrase gate runs
-// against the stored row's scope, not a request-supplied one, so a caller
-// cannot bypass the gate by omitting scope from the body.
+// serveMemoryUpdate handles PUT /api/memories/{id}. The passphrase gate
+// runs against the stored row's scope, not a body-supplied one, so a
+// caller cannot bypass the gate by omitting scope from the update payload.
+// 200 on success; 404 when the id matches no row; 401 when the stored
+// scope is "always" and the passphrase fails.
 func (d *DB) serveMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 	if !v2Enabled() {
 		http.NotFound(w, r)
@@ -520,6 +556,11 @@ func (d *DB) serveMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, ok := parseMemoryID(w, r)
 	if !ok {
+		return
+	}
+	var req memoryUpdateRequest
+	if err := readJSONBody(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	scope, err := d.getMemoryScope(id)
@@ -531,15 +572,10 @@ func (d *DB) serveMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "lookup memory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !requireAdminPassIfAlways(w, r, scope) {
+	if !requirePassphraseIfAlways(w, scope, req.Passphrase) {
 		return
 	}
-	var req memoryUpdateRequest
-	if err := readJSONBody(r, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := d.UpdateMemoryRow(id, req.Content, req.MemoryType); err != nil {
+	if err := d.UpdateMemoryRow(id, req.Content, req.Tags, req.ExpiresAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
@@ -550,10 +586,12 @@ func (d *DB) serveMemoryUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "ok": true})
 }
 
-// serveMemoryDelete handles DELETE /api/memories/{id}. Same gate as update:
-// the stored row's scope drives the passphrase requirement, not a body field.
-// Successful deletes return 204 No Content per REST convention; a missing id
-// yields 404 so callers can distinguish an already-deleted row.
+// serveMemoryDelete handles DELETE /api/memories/{id}. 204 on success;
+// 404 when the id is unknown (including a repeat DELETE of a row that was
+// already removed); 401 when the stored scope is "always" and the caller
+// cannot prove the passphrase. The JSON body is optional — only needed
+// for scope=="always" rows — and an absent body is decoded as the zero
+// memoryUpdateRequest so the gate rejects cleanly.
 func (d *DB) serveMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	if !v2Enabled() {
 		http.NotFound(w, r)
@@ -562,6 +600,13 @@ func (d *DB) serveMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseMemoryID(w, r)
 	if !ok {
 		return
+	}
+	var req memoryUpdateRequest
+	if r.ContentLength > 0 {
+		if err := readJSONBody(r, &req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	scope, err := d.getMemoryScope(id)
 	if err != nil {
@@ -572,7 +617,7 @@ func (d *DB) serveMemoryDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "lookup memory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !requireAdminPassIfAlways(w, r, scope) {
+	if !requirePassphraseIfAlways(w, scope, req.Passphrase) {
 		return
 	}
 	if err := d.DeleteMemoryRow(id); err != nil {
@@ -586,10 +631,9 @@ func (d *DB) serveMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseMemoryID pulls and validates the {id} path value shared by PUT + DELETE.
-// Writes a 400 + returns ok=false when the id is malformed so the caller can
-// bail early without duplicating validation boilerplate. Accepts a trailing
-// slash (a no-op for the Go 1.22 mux but future-proof).
+// parseMemoryID pulls and validates the {id} path value shared by PUT +
+// DELETE. Writes a 400 + returns ok=false when the id is malformed so the
+// caller can bail early without duplicating validation boilerplate.
 func parseMemoryID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := strings.TrimSuffix(r.PathValue("id"), "/")
 	id, err := strconv.ParseInt(raw, 10, 64)

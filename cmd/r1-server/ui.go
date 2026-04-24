@@ -108,12 +108,13 @@ func mountUI(mux *http.ServeMux, db *DB) {
 		mux.HandleFunc("GET /memories", db.serveMemories)
 
 		// work-stoke TASK 14: memory CRUD endpoints. POST creates a new
-		// row, PUT/DELETE operate by autoincrement id. Writes whose
-		// scope is "always" require the R1_ADMIN_PASS passphrase via
-		// X-R1-Admin-Pass (see memories.go requireAdminPassIfAlways).
-		// Routes are also R1_SERVER_UI_V2-gated inside the handlers
-		// themselves so they 404 until the flag is set — matches the
-		// GET /memories precedent.
+		// row, PUT / DELETE operate by autoincrement id. Writes whose
+		// scope is "always" require the R1_MEMORIES_PASSPHRASE (legacy
+		// STOKE_MEMORIES_PASSPHRASE) passphrase supplied via the JSON
+		// body — see memories.go requirePassphraseIfAlways. Routes are
+		// also R1_SERVER_UI_V2-gated inside the handlers themselves so
+		// they 404 until the flag is set — matches the GET /memories
+		// precedent.
 		mux.HandleFunc("POST /api/memories", db.serveMemoryCreate)
 		mux.HandleFunc("PUT /api/memories/{id}", db.serveMemoryUpdate)
 		mux.HandleFunc("DELETE /api/memories/{id}", db.serveMemoryDelete)
