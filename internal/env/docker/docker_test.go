@@ -67,12 +67,6 @@ func (m *mockDocker) run(_ context.Context, args []string) (string, error) {
 	return "", nil
 }
 
-func (m *mockDocker) on(key string, out string, err error) {
-	m.mu.Lock()
-	m.response[key] = mockResp{out: out, err: err}
-	m.mu.Unlock()
-}
-
 func (m *mockDocker) callCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
