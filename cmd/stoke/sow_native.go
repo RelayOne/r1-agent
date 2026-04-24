@@ -3687,8 +3687,10 @@ func buildParallelWaves(tasks []plan.Task) [][]int {
 				if len(currentWave) == 0 {
 					currentWave = append(currentWave, i)
 					placed[i] = len(waves)
-					unknownInWave = true
 					progress = true
+					// unknownInWave intentionally not set — the
+					// break below exits the inner loop and the
+					// outer for re-declares it on next iteration.
 					break // alone
 				}
 				continue
@@ -5247,7 +5249,10 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 	if harnessBuildOutput == "" && gapsAreCommandExecutionEvidence(verdict.GapsFound) {
 		retroOut := runHarnessBuildVerify(cfg.RepoRoot)
 		if retroOut != "" {
-			harnessBuildOutput = retroOut
+			// harnessBuildOutput isn't propagated further — the earlier
+			// HarnessBuildOutput struct-field write (line ~5084) already
+			// captured the pre-retro value; retroOut is only consumed
+			// locally in the promote-on-EXIT=0 block below.
 			fmt.Printf("    🛠️  H-89 retroactive build verify fired (task=%s, gap=command-execution-evidence, bytes=%d)\n", originalTask.ID, len(retroOut))
 			// If the build exit code is clearly 0, promote the
 			// verdict to complete. The "__EXIT__=" marker is

@@ -958,7 +958,7 @@ func (m *Model) renderSessionTreeLocked() string {
 		s := m.sessions[i]
 		g := glyphFor(s.Status, m.monochrome)
 		focused := i == m.focusSession
-		prefix := "  "
+		var prefix string
 		if focused {
 			prefix = g + " "
 		} else {

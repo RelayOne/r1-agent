@@ -540,7 +540,7 @@ func (wc *watcher) renderSession(bw *bufio.Writer, s plan.SessionRecord, f *fram
 	}
 
 	// Acceptance summary: prefer the per-session record, else log scrape.
-	acs := ""
+	var acs string
 	if len(s.Acceptance) > 0 {
 		passed := 0
 		for _, a := range s.Acceptance {

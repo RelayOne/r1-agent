@@ -32,12 +32,10 @@ func StrReplace(content, oldStr, newStr string, replaceAll bool) (*ReplaceResult
 		if count > 1 && !replaceAll {
 			return nil, fmt.Errorf("old_string appears %d times in file; provide more context to make it unique, or set replace_all=true", count)
 		}
-		replacements := 1
 		if replaceAll {
-			replacements = count
 			return &ReplaceResult{
 				NewContent:   strings.ReplaceAll(content, oldStr, newStr),
-				Replacements: replacements,
+				Replacements: count,
 				Method:       "exact",
 				Confidence:   1.0,
 			}, nil

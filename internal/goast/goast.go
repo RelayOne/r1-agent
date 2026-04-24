@@ -147,7 +147,11 @@ func AnalyzeSource(src []byte, relPath string) (*FileAnalysis, error) {
 				currentRecv = receiverTypeName(d.Recv.List[0].Type)
 				currentFunc = currentRecv + "." + d.Name.Name
 			} else {
-				currentRecv = ""
+				// No receiver — currentFunc uses the bare name. We
+				// don't zero currentRecv here because it gets
+				// overwritten on the next method iteration before
+				// any read, making the reset dead (flagged by
+				// ineffassign).
 				currentFunc = d.Name.Name
 			}
 
@@ -259,8 +263,7 @@ func (a *Analysis) CalleesOf(name string) []CallEdge {
 // via the call graph (transitive closure).
 func (a *Analysis) Reachable(entryPoints []string) map[string]bool {
 	reachable := make(map[string]bool)
-	queue := make([]string, len(entryPoints))
-	copy(queue, entryPoints)
+	queue := append([]string(nil), entryPoints...)
 
 	for len(queue) > 0 {
 		name := queue[0]

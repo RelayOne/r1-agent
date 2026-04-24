@@ -484,18 +484,18 @@ func merkleRootOfLeaves(hexLeaves []string) string {
 	}
 	sorted = sorted[:j]
 
-	leaves := make([][]byte, len(sorted))
-	for i, hx := range sorted {
+	leaves := make([][]byte, 0, len(sorted))
+	for _, hx := range sorted {
 		b, err := hex.DecodeString(hx)
 		if err != nil {
 			// Caller passed a non-hex leaf; fall back to hashing the
 			// raw string so the anchor still commits to SOMETHING
 			// rather than silently skipping.
 			sum := sha256.Sum256([]byte(hx))
-			leaves[i] = sum[:]
+			leaves = append(leaves, sum[:])
 			continue
 		}
-		leaves[i] = b
+		leaves = append(leaves, b)
 	}
 	for len(leaves) > 1 {
 		if len(leaves)%2 == 1 {
