@@ -1,13 +1,14 @@
 {
   "name": "r1-desktop",
-  "version": "0.0.0-scaffold",
+  "version": "0.0.0-r1d-2",
   "private": true,
-  "description": "R1 Desktop App - scaffold only. See PLAN.md.",
+  "description": "R1 Desktop App - R1D-2 UI panel skeletons. See PLAN.md.",
   "type": "module",
   "scripts": {
-    "dev": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\"",
-    "build": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\"",
-    "tauri": "node -e \"console.error('[r1-desktop] scaffold only; see desktop/PLAN.md R1D-1.1. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\""
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "tauri": "node -e \"console.error('[r1-desktop] Tauri runtime not yet wired; see desktop/PLAN.md R1D-1.1 / R1D-4. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0"
@@ -19,5 +20,12 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "r1Panels": {
+    "sow-tree": "src/panels/sow-tree.ts",
+    "descent-ladder": "src/panels/descent-ladder.ts",
+    "ledger-viewer": "src/panels/ledger-viewer.ts",
+    "memory-inspector": "src/panels/memory-inspector.ts",
+    "cost-panel": "src/panels/cost-panel.ts"
   }
 }

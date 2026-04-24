@@ -73,6 +73,19 @@ weeks from kickoff).
 
 ## R1D-2 — Session view + basic chat (1 week)
 
+> **Status (2026-04-23):** Initial UI panel scaffolding shipped. Five panel
+> skeletons live under `desktop/src/panels/` (`sow-tree.ts`,
+> `descent-ladder.ts`, `ledger-viewer.ts`, `memory-inspector.ts`,
+> `cost-panel.ts`) and compose into a 3-row, 2-col grid from
+> `desktop/src/main.ts`. Each panel imports its typed IPC contract from
+> `desktop/src/types/ipc.d.ts` and fetches through `invokeStub` (logs
+> `TODO <phase>` and returns an empty result). Vite + TS are wired so
+> `npm run build` + `npm run typecheck` both pass. Real session-view
+> data binding (composer, streaming chat, tool-use blocks) lands as
+> R1D-2.1..R1D-2.5 follow-ups against this scaffold.
+
+- [x] R1D-2.0 (scaffold): Panel skeletons + 3×2 grid + IPC type file +
+      Vite entry-point map. Shipped by PR scope/r1-desktop-r1d-2-ui-panels.
 - [ ] R1D-2.1: Session view component with chat transcript + composer.
 - [ ] R1D-2.2: Tool-use rendering — inline collapsible blocks per tool call.
 - [ ] R1D-2.3: Markdown rendering via react-markdown with syntax-highlighted

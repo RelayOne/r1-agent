@@ -1,0 +1,192 @@
+/*
+ * R1 Desktop scaffold styles (R1D-2).
+ *
+ * Intentionally minimal — just enough to make the 3-row, 2-col grid
+ * look like five distinct panels. Replaced wholesale by the Tailwind
+ * + shadcn/ui layer generated in R1D-1.1.
+ */
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #0f1115;
+  color: #e6e8ee;
+}
+
+.r1-app-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr auto;
+  grid-template-areas:
+    "sow     descent"
+    "ledger  memory"
+    "cost    cost";
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.r1-panel {
+  background: #171a21;
+  border: 1px solid #272c37;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.r1-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #272c37;
+  background: #1b1f27;
+}
+
+.r1-panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.r1-panel-subtitle {
+  font-size: 0.75rem;
+  color: #8a93a4;
+}
+
+.r1-panel-body {
+  padding: 0.75rem 1rem;
+  overflow: auto;
+  flex: 1 1 auto;
+}
+
+.r1-placeholder {
+  color: #6c7588;
+  font-style: italic;
+  list-style: none;
+  padding: 0.5rem 0;
+}
+
+.r1-sow-tree,
+.r1-descent-ladder,
+.r1-ledger-events,
+.r1-memory-scopes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.r1-sow-node,
+.r1-descent-tier,
+.r1-ledger-event,
+.r1-memory-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  background: #1f242d;
+}
+
+.r1-sow-status {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #6c7588;
+  flex: 0 0 auto;
+}
+
+.r1-sow-status.r1-status-running  { background: #3ea6ff; }
+.r1-sow-status.r1-status-paused   { background: #f5c449; }
+.r1-sow-status.r1-status-ended    { background: #6c7588; }
+
+.r1-sow-meta,
+.r1-ledger-at {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #8a93a4;
+}
+
+.r1-ledger-hash {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  color: #b3bccf;
+}
+
+.r1-status-pill {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #2a3140;
+  color: #b3bccf;
+}
+
+.r1-descent-tier[data-status="running"] .r1-status-pill { background: #234a6b; color: #9dcbff; }
+.r1-descent-tier[data-status="passed"]  .r1-status-pill { background: #1f4a34; color: #8fe4b8; }
+.r1-descent-tier[data-status="failed"]  .r1-status-pill { background: #5a1f1f; color: #ff9d9d; }
+
+.r1-descent-tier-name {
+  font-weight: 600;
+  width: 2rem;
+}
+
+.r1-scope-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: #b3bccf;
+}
+
+.r1-cost-summary {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+
+.r1-cost-row {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem;
+  background: #1f242d;
+  border-radius: 4px;
+}
+
+.r1-cost-row dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a93a4;
+}
+
+.r1-cost-row dd {
+  margin: 0;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.r1-btn {
+  margin-left: auto;
+  background: #2a3140;
+  color: #e6e8ee;
+  border: 1px solid #394152;
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.r1-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
