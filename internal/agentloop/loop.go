@@ -287,7 +287,7 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			est := estimateMessagesTokens(messages)
 			if est > l.config.CompactThreshold {
 				compacted := l.config.CompactFn(messages, est)
-				if compacted != nil && len(compacted) > 0 {
+				if len(compacted) > 0 {
 					messages = compacted
 					result.Messages = messages
 				}

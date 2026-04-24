@@ -133,7 +133,7 @@ func collectFileHintsAround(s string, blockStart int) []string {
 //   - `foo.rs`
 //   - (quoted: "pkg/bar.go")
 var fileHintRe = regexp.MustCompile(
-	"(?:[a-zA-Z0-9_./-]*/)?[a-zA-Z0-9_.-]+\\.(?:rs|go|py|ts|tsx|js|jsx|java|kt|swift|c|cpp|h|hpp|cs|rb|ex|toml|yaml|yml|json|md)\\b",
+	`(?:[a-zA-Z0-9_./-]*/)?[a-zA-Z0-9_.-]+\.(?:rs|go|py|ts|tsx|js|jsx|java|kt|swift|c|cpp|h|hpp|cs|rb|ex|toml|yaml|yml|json|md)\b`,
 )
 
 // extractFileHintsFromParagraph pulls every file-path-looking token

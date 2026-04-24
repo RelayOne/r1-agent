@@ -266,10 +266,7 @@ func isValidDeliverable(s string) bool {
 		"processing": true, "code": true, "files": true,
 		"tests": true, "docs": true, "documentation": true,
 	}
-	if noise[low] {
-		return false
-	}
-	return true
+	return !noise[low]
 }
 
 func kindRank(k DeliverableKind) int {

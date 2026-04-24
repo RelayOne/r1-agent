@@ -243,7 +243,7 @@ func (l *Ledger) AddNode(_ context.Context, node Node) (NodeID, error) {
 	if node.Type == "" {
 		return "", errors.New("ledger: node type is required")
 	}
-	if node.Content == nil || len(node.Content) == 0 {
+	if len(node.Content) == 0 {
 		return "", errors.New("ledger: node content is required")
 	}
 	if node.SchemaVersion < 1 {
@@ -523,7 +523,7 @@ func (l *Ledger) Batch(_ context.Context, ops []BatchOp) error {
 			if n.Type == "" {
 				return fmt.Errorf("ledger: batch op %d: node type required", i)
 			}
-			if n.Content == nil || len(n.Content) == 0 {
+			if len(n.Content) == 0 {
 				return fmt.Errorf("ledger: batch op %d: node content required", i)
 			}
 			if n.SchemaVersion < 1 {

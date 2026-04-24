@@ -371,9 +371,7 @@ func mergeRemaining(rescan, pre, fixed []HygieneFinding) []HygieneFinding {
 
 	// Keep everything from the rescan. This captures "install surfaced
 	// a new issue" as well as "auto-fix didn't actually remove it".
-	for _, f := range rescan {
-		remaining = append(remaining, f)
-	}
+	remaining = append(remaining, rescan...)
 
 	// And anything from pre that wasn't auto-fixable and isn't
 	// already in the rescan list.

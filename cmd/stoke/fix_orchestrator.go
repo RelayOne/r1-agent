@@ -137,9 +137,9 @@ func (o *fixOrchestrator) run(a *fixAttempt) {
 
 		// 2. Re-review: diff the fix branch vs main.
 		diff := shellCmd(a.worktreePath,
-			fmt.Sprintf("git diff main..HEAD --stat 2>/dev/null"))
+			"git diff main..HEAD --stat 2>/dev/null")
 		log := shellCmd(a.worktreePath,
-			fmt.Sprintf("git log main..HEAD --oneline 2>/dev/null"))
+			"git log main..HEAD --oneline 2>/dev/null")
 		if diff == "" && log == "" {
 			fmt.Printf("  ⚠️  fix-%d: CC made no commits on attempt %d — abandoning\n",
 				a.id, a.attempts)

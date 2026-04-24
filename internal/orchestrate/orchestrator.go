@@ -638,8 +638,7 @@ func (o *Orchestrator) NewRunnerForMission(config mission.RunnerConfig, missionI
 	}
 
 	// Build context adapter for research/handoff enrichment in prompts
-	var ctxSource mission.ContextSource
-	ctxSource = &contextAdapter{orch: o}
+	var ctxSource mission.ContextSource = &contextAdapter{orch: o}
 
 	deps := mission.HandlerDeps{
 		Store:            o.store,

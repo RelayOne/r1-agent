@@ -595,9 +595,7 @@ func (s *CodebaseServer) handleTraceEntryPoints(args map[string]interface{}) (st
 
 	// Build reverse adjacency for BFS
 	rev := make(map[string][]string)
-	for _, dep := range s.depGraph.Dependents(file) {
-		rev[file] = append(rev[file], dep)
-	}
+	rev[file] = append(rev[file], s.depGraph.Dependents(file)...)
 	visited := map[string]bool{file: true}
 	for len(queue) > 0 {
 		current := queue[0]

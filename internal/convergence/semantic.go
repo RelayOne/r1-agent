@@ -443,10 +443,7 @@ func isEntryPointGo(s goast.Symbol) bool {
 			return true
 		}
 	}
-	if s.Kind == goast.KindMethod {
-		return true
-	}
-	return false
+	return s.Kind == goast.KindMethod
 }
 
 // checkReachabilityRegex uses reference counting for non-Go files.
