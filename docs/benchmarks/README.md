@@ -16,9 +16,10 @@ we stamp them with commit, hardware, date, and corpus identifier.
 
 ## Planned reports
 
-Stubs listed in `mint.json` navigation and referenced by earlier
-portfolio work orders; content lives elsewhere today and will be
-ported into this directory as the measurements land.
+The entries below are listed in `mint.json` navigation and referenced
+by earlier portfolio work orders; their content lives elsewhere in
+the repo today and will be ported into this directory as the
+measurements land.
 
 - SWE-bench Pro — evaluation path is in
   [../bench-swebench.md](../bench-swebench.md). Measured deltas vs.
