@@ -2521,7 +2521,7 @@ func runOverrideForSession(ctx context.Context, session plan.Session, acceptance
 	// Turn failing acceptance results into convergence.Finding shapes so
 	// the existing judge can operate on them. Each failing criterion
 	// becomes a synthetic finding with Evidence = command output.
-	var findings []convergence.Finding
+	findings := make([]convergence.Finding, 0, len(acceptance))
 	for _, r := range acceptance {
 		if r.Passed {
 			continue
@@ -2630,7 +2630,7 @@ func buildContinuationContext(session plan.Session, acceptance []plan.Acceptance
 	for _, ac := range session.AcceptanceCriteria {
 		acIdx[ac.ID] = ac
 	}
-	var sticky []plan.StickyACContext
+	sticky := make([]plan.StickyACContext, 0, len(acceptance))
 	for _, r := range acceptance {
 		if r.Passed {
 			continue

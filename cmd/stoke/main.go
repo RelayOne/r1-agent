@@ -148,7 +148,7 @@ func runBuild(cfg BuildConfig) (*report.BuildReport, error) {
 	}
 
 	// Build pool configurations
-	var poolConfigs []subscriptions.Pool
+	poolConfigs := make([]subscriptions.Pool, 0, len(cfg.ClaudePoolDirs)+len(cfg.CodexPoolDirs))
 	for i, dir := range cfg.ClaudePoolDirs {
 		poolConfigs = append(poolConfigs, subscriptions.Pool{
 			ID:        fmt.Sprintf("claude-%d", i+1),
@@ -1092,7 +1092,7 @@ func buildCmd(args []string) {
 	}
 
 	// Build subscription pool configs
-	var poolConfigs []subscriptions.Pool
+	poolConfigs := make([]subscriptions.Pool, 0, len(claudePoolDirs)+len(codexPoolDirs))
 	for i, dir := range claudePoolDirs {
 		poolConfigs = append(poolConfigs, subscriptions.Pool{
 			ID:        fmt.Sprintf("claude-%d", i+1),
@@ -4666,11 +4666,11 @@ func repairCmd(args []string) {
 		byFile[f.File] = append(byFile[f.File], f)
 	}
 
-	var tasks []plan.Task
+	tasks := make([]plan.Task, 0, len(byFile))
 	taskNum := 1
 	for file, fileFindings := range byFile {
 		// Group by severity
-		var descriptions []string
+		descriptions := make([]string, 0, len(fileFindings))
 		for _, f := range fileFindings {
 			descriptions = append(descriptions, fmt.Sprintf("[%s] %s (line %d): %s", f.Severity, f.Rule, f.Line, f.Message))
 		}
@@ -5464,7 +5464,7 @@ func autoDiscoverPools() *subscriptions.Manager {
 		return nil
 	}
 
-	var poolConfigs []subscriptions.Pool
+	poolConfigs := make([]subscriptions.Pool, 0, len(manifest.Pools))
 	for _, p := range manifest.Pools {
 		provider := subscriptions.ProviderClaude
 		if p.Provider == "codex" {

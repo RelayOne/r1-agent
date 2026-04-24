@@ -209,7 +209,7 @@ func (d *DB) ListSpans(instanceID string, stub bool) ([]*Span, bool, error) {
 		return nil, false, fmt.Errorf("list events for spans: %w", err)
 	}
 
-	var spans []*Span
+	spans := make([]*Span, 0, len(rows))
 	for _, ev := range rows {
 		s := spanFromEvent(ev)
 		if s == nil {

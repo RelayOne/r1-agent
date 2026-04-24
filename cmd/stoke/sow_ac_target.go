@@ -195,7 +195,7 @@ func extractGrepFiles(chunk string) []string {
 	// Skip flags. First non-flag token is the pattern; remaining
 	// non-flag tokens are file paths.
 	seenPattern := false
-	var out []string
+	out := make([]string, 0, len(fields))
 	for _, f := range fields {
 		if strings.HasPrefix(f, "-") && f != "-" && !strings.HasPrefix(f, "--=") {
 			// Flags with attached values (-e pattern / --regexp=X) are

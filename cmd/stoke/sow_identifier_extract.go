@@ -95,8 +95,8 @@ var codeBlockRe = regexp.MustCompile("(?s)```([a-zA-Z0-9_+-]*)\\s*\n(.*?)\n```")
 // char offset of the opening fence so callers can locate enclosing
 // prose.
 func findCodeBlocks(s string) []codeBlock {
-	var out []codeBlock
 	matches := codeBlockRe.FindAllStringSubmatchIndex(s, -1)
+	out := make([]codeBlock, 0, len(matches))
 	for _, m := range matches {
 		if len(m) < 6 {
 			continue
@@ -141,7 +141,7 @@ var fileHintRe = regexp.MustCompile(
 func extractFileHintsFromParagraph(text string) []string {
 	matches := fileHintRe.FindAllString(text, -1)
 	seen := make(map[string]bool)
-	var out []string
+	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		m = strings.Trim(m, "`\"'()[].,;")
 		if m == "" || seen[m] {

@@ -124,8 +124,9 @@ func ExtractImageRefs(userText string) (paths []string, residual string) {
 	// (two tokens: "open", "/tmp/foo.png") matches only the path token;
 	// but "/tmp/foo.png" alone also matches. We rebuild the residual
 	// text token-by-token so non-matching tokens stay intact.
-	var residualTokens []string
-	for _, tok := range splitPreservingSpaces(text) {
+	tokens := splitPreservingSpaces(text)
+	residualTokens := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
 		trimmed := strings.TrimSpace(tok)
 		if trimmed == "" {
 			residualTokens = append(residualTokens, tok)

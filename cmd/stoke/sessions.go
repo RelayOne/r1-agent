@@ -153,7 +153,7 @@ func sessionsStatusCmd(repo string, jsonOut bool) {
 		fmt.Fprintln(os.Stderr, "sessions status:", err)
 		os.Exit(1)
 	}
-	var markers []sessionMarker
+	markers := make([]sessionMarker, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue

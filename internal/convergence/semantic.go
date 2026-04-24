@@ -195,7 +195,7 @@ func extractGoFileSymbols(path string, content []byte) []codeSymbol {
 		return extractGoFileSymbolsRegex(path, content)
 	}
 
-	var symbols []codeSymbol
+	symbols := make([]codeSymbol, 0, len(fa.Symbols))
 	for _, s := range fa.Symbols {
 		kind := goastKindToSymKind(s.Kind)
 		symbols = append(symbols, codeSymbol{
@@ -423,8 +423,8 @@ func buildGoAnalysisFromFiles(files []FileInput) *goast.Analysis {
 // checkReachabilityAST uses goast call graph to find truly unreachable symbols.
 // More accurate than regex reference counting because it traces actual call edges.
 func checkReachabilityAST(a *goast.Analysis, files []FileInput) []Finding {
-	var findings []Finding
 	dead := a.DeadSymbols()
+	findings := make([]Finding, 0, len(dead))
 
 	for _, s := range dead {
 		if isTestFile(s.File) {
@@ -638,7 +638,7 @@ func extractConcepts(criterion string) []string {
 	// Split on word boundaries and punctuation
 	words := regexp.MustCompile(`[a-z0-9]+`).FindAllString(criterion, -1)
 
-	var concepts []string
+	concepts := make([]string, 0, len(words))
 	for _, w := range words {
 		if len(w) <= 2 {
 			continue

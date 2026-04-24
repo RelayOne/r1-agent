@@ -287,7 +287,7 @@ func (tx *Transaction) Len() int {
 func (tx *Transaction) Files() []string {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	var files []string
+	files := make([]string, 0, len(tx.ops))
 	for _, op := range tx.ops {
 		files = append(files, op.Path)
 	}

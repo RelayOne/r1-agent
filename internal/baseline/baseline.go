@@ -77,7 +77,7 @@ func (s *Snapshot) FailureSummary() string {
 	if len(failures) == 0 {
 		return "all checks pass"
 	}
-	var parts []string
+	parts := make([]string, 0, len(failures))
 	for _, f := range failures {
 		lines := strings.Split(strings.TrimSpace(f.Output), "\n")
 		tail := lines

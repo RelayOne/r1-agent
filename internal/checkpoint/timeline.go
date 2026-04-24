@@ -167,8 +167,9 @@ func ListCheckpoints(repoRoot string) ([]TimelineEntry, error) {
 		}
 		return nil, fmt.Errorf("checkpoint: read WAL: %w", err)
 	}
-	var entries []TimelineEntry
-	for _, line := range splitLines(data) {
+	lines := splitLines(data)
+	entries := make([]TimelineEntry, 0, len(lines))
+	for _, line := range lines {
 		if len(line) == 0 {
 			continue
 		}

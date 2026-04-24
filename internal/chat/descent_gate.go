@@ -185,8 +185,9 @@ func (g *DescentGate) ShouldFire(ctx context.Context) (bool, []string, error) {
 	if err != nil {
 		return false, nil, err
 	}
-	var touched []string
-	for _, line := range strings.Split(string(out), "\n") {
+	lines := strings.Split(string(out), "\n")
+	touched := make([]string, 0, len(lines))
+	for _, line := range lines {
 		// Porcelain v1 lines are "XY path" — XY is a 2-char status
 		// code, column 3 is a space, remainder is the path. Anything
 		// shorter than 4 chars cannot carry a path.

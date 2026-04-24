@@ -105,7 +105,7 @@ func ChunkFile(path, content string) []Chunk {
 func ChunkFileWithBudget(path, content string, maxTokens int) []Chunk {
 	chunks := ChunkFile(path, content)
 
-	var result []Chunk
+	result := make([]Chunk, 0, len(chunks))
 	used := 0
 	for _, c := range chunks {
 		est := estimateTokens(c.Content)
@@ -242,7 +242,7 @@ func chunkGoAST(path, content string, lines []string) []Chunk {
 		return nil
 	}
 
-	var chunks []Chunk
+	chunks := make([]Chunk, 0, len(bounds))
 	for _, b := range bounds {
 		startIdx := b.startLine - 1
 		endIdx := b.endLine - 1
@@ -293,7 +293,7 @@ func chunkBySyntax(path string, lines []string, patterns []*regexp.Regexp, lang 
 		return chunkByBlankLines(path, lines)
 	}
 
-	var chunks []Chunk
+	chunks := make([]Chunk, 0, len(boundaries))
 	for i, b := range boundaries {
 		endLine := len(lines) - 1
 		if i+1 < len(boundaries) {

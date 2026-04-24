@@ -95,7 +95,7 @@ func reconstructSession(sessionID string, events []bus.Event) sessionState {
 	typeCounts := map[string]int{}
 	missionSet := map[string]struct{}{}
 	taskSet := map[string]struct{}{}
-	var matched []bus.Event
+	matched := make([]bus.Event, 0, len(events))
 
 	for _, e := range events {
 		if !eventMatchesSession(e, sessionID) {
@@ -238,7 +238,7 @@ func listSessions(events []bus.Event) {
 		fmt.Println("(no sessions found in event log)")
 		return
 	}
-	var ids []string
+	ids := make([]string, 0, len(set))
 	for s := range set {
 		ids = append(ids, s)
 	}

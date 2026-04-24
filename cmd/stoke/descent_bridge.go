@@ -786,9 +786,10 @@ func descentGitDiffNames(ctx context.Context, repoRoot, preSHA, postRef string) 
 // splitNonEmptyLines is a small helper that trims and de-duplicates
 // lines from command output.
 func splitNonEmptyLines(s string) []string {
-	var out []string
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
 	seen := map[string]bool{}
-	for _, ln := range strings.Split(s, "\n") {
+	for _, ln := range lines {
 		ln = strings.TrimSpace(ln)
 		if ln == "" || seen[ln] {
 			continue

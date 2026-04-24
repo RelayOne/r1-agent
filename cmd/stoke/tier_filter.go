@@ -515,7 +515,7 @@ var gapStoplist = map[string]bool{
 
 func gapKeywords(gap string) []string {
 	words := gapKeywordSplitter.FindAllString(gap, -1)
-	var out []string
+	out := make([]string, 0, len(words))
 	for _, w := range words {
 		lw := strings.ToLower(w)
 		if len(lw) < 4 || gapStoplist[lw] {

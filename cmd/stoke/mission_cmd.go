@@ -452,7 +452,7 @@ func missionFindingsCmd(args []string) {
 	}
 
 	// Apply filters
-	var filtered []mission.Gap
+	filtered := make([]mission.Gap, 0, len(gaps))
 	for _, g := range gaps {
 		if *severity != "" && g.Severity != *severity {
 			continue

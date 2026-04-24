@@ -245,7 +245,7 @@ func (s *Session) Send(ctx context.Context, userText string, onDelta OnDelta, on
 	s.lastTurnImages = nil
 	s.mu.Unlock()
 
-	var attached []AttachedImage
+	attached := make([]AttachedImage, 0, len(imgPaths))
 	var imageNotices []string
 	for _, p := range imgPaths {
 		img, err := LoadImage(p)

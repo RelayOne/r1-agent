@@ -123,7 +123,7 @@ func AvgForFileCount(records []Record, fileCount, tolerance int) (avgMs int64, s
 	if len(records) == 0 {
 		return 0, 0, 0
 	}
-	var durations []int64
+	durations := make([]int64, 0, len(records))
 	for _, r := range records {
 		if !r.Success {
 			continue

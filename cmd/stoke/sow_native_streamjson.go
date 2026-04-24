@@ -176,7 +176,7 @@ func (cfg sowNativeConfig) emitPlanReady(sowDoc *plan.SOW) {
 	if cfg.StreamJSON == nil || !cfg.StreamJSON.Enabled() || sowDoc == nil {
 		return
 	}
-	var sessionIDs []string
+	sessionIDs := make([]string, 0, len(sowDoc.Sessions))
 	for _, s := range sowDoc.Sessions {
 		sessionIDs = append(sessionIDs, s.ID)
 	}

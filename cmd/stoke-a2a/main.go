@@ -100,8 +100,9 @@ func parseCapabilities(s string) []a2a.CapabilityRef {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
-	var out []a2a.CapabilityRef
-	for _, raw := range strings.Split(s, ",") {
+	fields := strings.Split(s, ",")
+	out := make([]a2a.CapabilityRef, 0, len(fields))
+	for _, raw := range fields {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue

@@ -287,7 +287,7 @@ func listJSONLFiles(dir string) []string {
 	if err != nil {
 		return nil
 	}
-	var out []string
+	out := make([]string, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue

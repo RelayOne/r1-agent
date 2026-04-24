@@ -300,7 +300,7 @@ func dispatchCloudSwarmSOW(
 		return ExitBudgetOrUsage
 	}
 
-	var sessionIDs []string
+	sessionIDs := make([]string, 0, len(sow.Sessions))
 	var taskCount, acCount int
 	for _, s := range sow.Sessions {
 		sessionIDs = append(sessionIDs, s.ID)

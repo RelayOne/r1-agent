@@ -228,7 +228,7 @@ func (b *Bus) Agents() []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	var names []string
+	names := make([]string, 0, len(b.agents))
 	for name := range b.agents {
 		names = append(names, name)
 	}

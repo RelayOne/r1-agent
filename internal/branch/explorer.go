@@ -211,7 +211,7 @@ func (e *Explorer) All() []*Branch {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	var all []*Branch
+	all := make([]*Branch, 0, len(e.branches))
 	for _, b := range e.branches {
 		all = append(all, b)
 	}

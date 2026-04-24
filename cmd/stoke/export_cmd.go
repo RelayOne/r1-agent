@@ -230,8 +230,7 @@ type bundleFile struct {
 // representations in sync is the one invariant worth the duplication.
 func gatherTraceBundleArtifacts(sig session.SignatureFile) ([]TraceBundleEntry, []bundleFile, error) {
 	var (
-		entries []TraceBundleEntry
-		files   []bundleFile
+		files []bundleFile
 	)
 
 	// --- stream.jsonl ---
@@ -277,6 +276,7 @@ func gatherTraceBundleArtifacts(sig session.SignatureFile) ([]TraceBundleEntry, 
 	// Produce a manifest entry per file. Digest is SHA-256 over the
 	// raw bytes we're about to archive — identical bytes on any host
 	// yield an identical digest.
+	entries := make([]TraceBundleEntry, 0, len(files))
 	for _, f := range files {
 		sum := sha256.Sum256(f.Data)
 		entries = append(entries, TraceBundleEntry{

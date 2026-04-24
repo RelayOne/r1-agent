@@ -310,7 +310,7 @@ func prioritizeAggregatedFindings(agg string, maxChars int) (string, map[string]
 		idx      int    // original position (stable ordering within rank)
 	}
 	lines := strings.SplitAfter(agg, "\n")
-	var entries []entry
+	entries := make([]entry, 0, len(lines))
 	for i, l := range lines {
 		if l == "" {
 			continue
@@ -396,12 +396,12 @@ func describeDropped(dropped map[string]int) string {
 		count int
 		rank  int
 	}
-	var items []kv
+	items := make([]kv, 0, len(dropped))
 	for sev, c := range dropped {
 		items = append(items, kv{sev: sev, count: c, rank: severityRank[sev]})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].rank > items[j].rank })
-	var parts []string
+	parts := make([]string, 0, len(items))
 	for _, it := range items {
 		parts = append(parts, fmt.Sprintf("dropped %s=%d", it.sev, it.count))
 	}
