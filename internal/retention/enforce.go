@@ -84,7 +84,12 @@ func ensureMemoryTypeColumn(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("retention: nil db")
 	}
 	onceIface, _ := ensureMemoryTypeColumnOnce.LoadOrStore(db, &sync.Once{})
-	once := onceIface.(*sync.Once)
+	once, ok := onceIface.(*sync.Once)
+	if !ok {
+		// LoadOrStore stored a *sync.Once by construction; anything
+		// else is a programming error in this file.
+		return fmt.Errorf("retention: unexpected once type %T", onceIface)
+	}
 	var retErr error
 	once.Do(func() {
 		rows, err := db.QueryContext(ctx, `PRAGMA table_info(stoke_memory_bus)`)

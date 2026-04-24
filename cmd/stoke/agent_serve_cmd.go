@@ -223,7 +223,13 @@ func registerWithTrustPlane(ctx context.Context, opts agentServeOpts, s *agentse
 	}
 	client.WithIdentity(signer)
 
-	reg, err := capabilityRegistration(s, opts, did, priv.Public().(ed25519.PublicKey))
+	pub, ok := priv.Public().(ed25519.PublicKey)
+	if !ok {
+		// priv is guaranteed ed25519.PrivateKey by the parser above;
+		// a surprise type here is a programming error.
+		return nil, "", fmt.Errorf("trustplane: unexpected public-key type %T", priv.Public())
+	}
+	reg, err := capabilityRegistration(s, opts, did, pub)
 	if err != nil {
 		return nil, "", err
 	}

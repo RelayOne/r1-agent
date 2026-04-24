@@ -414,10 +414,14 @@ func (s *Server) handleVerify(ctx context.Context, req rpcRequest, args json.Raw
 		s.respondErr(req.ID, errInternal, "stoke_verify: "+err.Error(), nil)
 		return
 	}
+	var outcomeCount int
+	if outs, ok := result["outcomes"].([]map[string]any); ok {
+		outcomeCount = len(outs)
+	}
 	summary := fmt.Sprintf("verify %s: %d/%d criteria passed (weighted %.2f)",
 		a.TaskClass,
 		countPassedOutcomes(result["outcomes"]),
-		len(result["outcomes"].([]map[string]any)),
+		outcomeCount,
 		result["weighted_score"])
 	resp := map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": summary}},

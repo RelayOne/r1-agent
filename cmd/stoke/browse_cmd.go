@@ -47,7 +47,11 @@ func browseCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "browse: %v\n", err)
 		os.Exit(1)
 	}
-	bd := d.(executor.BrowserDeliverable)
+	bd, ok := d.(executor.BrowserDeliverable)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "browse: executor returned unexpected deliverable type %T\n", d)
+		os.Exit(1)
+	}
 	r := bd.Result
 
 	fmt.Printf("URL:          %s\n", r.URL)

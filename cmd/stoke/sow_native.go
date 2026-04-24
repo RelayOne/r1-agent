@@ -5197,7 +5197,12 @@ func reviewAndFollowupRecursive(ctx context.Context, sowDoc *plan.SOW, workingSe
 			var prev int
 			if cfg.ContentJudgeRejections != nil {
 				if v, ok := cfg.ContentJudgeRejections.Load(originalTask.ID); ok {
-					prev = v.(int)
+					// sync.Map stores any; this map only ever stores
+					// int values (see the Store call below). A surprise
+					// type is a programming error; treat as zero.
+					if n, isInt := v.(int); isInt {
+						prev = n
+					}
 				}
 				cfg.ContentJudgeRejections.Store(originalTask.ID, prev+1)
 			}
