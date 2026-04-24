@@ -29,7 +29,7 @@ func (r *Registry) LoadBuiltins() error {
 // loadBuiltinsLocked loads builtins without acquiring the mutex.
 // Caller must hold r.mu.
 func (r *Registry) loadBuiltinsLocked() error {
-	return fs.WalkDir(builtinFS, "builtin", func(path string, d fs.DirEntry, err error) error {
+	return fs.WalkDir(builtinFS, sourceBuiltin, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -44,7 +44,7 @@ func (r *Registry) loadBuiltinsLocked() error {
 
 		// Don't overwrite project/user skills
 		if _, exists := r.skills[name]; !exists {
-			r.skills[name] = parseSkill(name, string(content), "builtin", "embedded://"+path, 0)
+			r.skills[name] = parseSkill(name, string(content), sourceBuiltin, "embedded://"+path, 0)
 		}
 		return nil
 	})
@@ -53,7 +53,7 @@ func (r *Registry) loadBuiltinsLocked() error {
 // BuiltinCount returns the number of embedded built-in skills.
 func BuiltinCount() int {
 	count := 0
-	fs.WalkDir(builtinFS, "builtin", func(path string, d fs.DirEntry, _ error) error {
+	fs.WalkDir(builtinFS, sourceBuiltin, func(path string, d fs.DirEntry, _ error) error {
 		if !d.IsDir() && strings.HasSuffix(path, ".md") {
 			count++
 		}

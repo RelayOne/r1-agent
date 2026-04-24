@@ -153,12 +153,12 @@ func (u UniversalContext) PromptBlock() string {
 // entries into a single "builtin" token.
 func (u UniversalContext) ShortSources() string {
 	seen := map[string]bool{}
-	var out []string
+	out := make([]string, 0, len(u.Sources))
 	home, _ := os.UserHomeDir()
 	for _, s := range u.Sources {
 		tok := s
-		if strings.HasPrefix(s, "builtin:") {
-			tok = "builtin"
+		if strings.HasPrefix(s, sourceBuiltin+":") {
+			tok = sourceBuiltin
 		} else if home != "" && strings.HasPrefix(s, home+string(filepath.Separator)) {
 			tok = "~" + strings.TrimPrefix(s, home)
 		}

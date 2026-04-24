@@ -67,14 +67,14 @@ func InferMaturity(root string, profile *skillselect.RepoProfile) MaturityClassi
 	breakdown["observability"] = obsScore
 	total += obsScore * 10 / 100
 
-	stage := "prototype"
+	stage := string(ScalePrototype)
 	switch {
 	case total >= 71:
 		stage = "mature"
 	case total >= 41:
-		stage = "growth"
+		stage = string(ScaleGrowth)
 	case total >= 21:
-		stage = "mvp"
+		stage = stageMVP
 	}
 
 	return MaturityClassification{

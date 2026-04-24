@@ -114,7 +114,7 @@ func (tsEcosystem) UnresolvedImports(projectRoot string, files []string) ([]Mani
 }
 
 func (tsEcosystem) MissingPublicSurface(projectRoot string, files []string) ([]PublicSurfaceMiss, error) {
-	var out []PublicSurfaceMiss
+	out := make([]PublicSurfaceMiss, 0, len(files))
 	for _, f := range files {
 		rel, err := filepath.Rel(projectRoot, f)
 		if err != nil {

@@ -326,7 +326,7 @@ func (s *Server) runTask(ctx context.Context, state *TaskState, req TaskRequest,
 	// worker reached here, honor it and bail. Emission already
 	// happened in handleCancelTask; clear the cancel func so the
 	// handler's deferred call is a no-op.
-	if state.Status == "cancelled" {
+	if state.Status == taskStatusCancelled {
 		s.mu.Unlock()
 		s.clearLive(state.ID)
 		return
@@ -359,19 +359,19 @@ func (s *Server) runTask(ctx context.Context, state *TaskState, req TaskRequest,
 	state.CompletedAt = &completedAt
 	// If /cancel fired during the Execute call, prefer the cancelled
 	// state even if the executor returned a wrapped ctx error.
-	if state.Status == "cancelled" {
+	if state.Status == taskStatusCancelled {
 		s.mu.Unlock()
 		s.clearLive(state.ID)
-		s.emitTaskEvent(state, "cancelled", true)
+		s.emitTaskEvent(state, taskStatusCancelled, true)
 		return
 	}
-	kind := "completed"
+	kind := taskStatusCompleted
 	if err != nil {
-		state.Status = "failed"
+		state.Status = taskStatusFailed
 		state.Error = err.Error()
-		kind = "failed"
+		kind = taskStatusFailed
 	} else {
-		state.Status = "completed"
+		state.Status = taskStatusCompleted
 		if deliverable != nil {
 			state.Summary = deliverable.Summary()
 			state.Size = deliverable.Size()

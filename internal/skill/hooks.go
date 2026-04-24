@@ -34,6 +34,21 @@ import (
 	"strings"
 )
 
+// Hook kind labels. These appear in HookSet.Kind and at several
+// lookup / switch sites; centralizing them avoids drift between the
+// definition and the switch arms.
+const (
+	hookKindAgents    = "agents"
+	hookKindScenarios = "scenarios"
+	hookKindPhases    = "phases"
+
+	// sourceBuiltin marks hooks / skills loaded from the embedded
+	// defaults rather than from disk. Used as both a path prefix
+	// token and a short-label in HookSet.ShortSources, and as the
+	// Source tag on embedded skill registry entries.
+	sourceBuiltin = "builtin"
+)
+
 //go:embed all:builtin/_hooks
 var embeddedHooksFS embed.FS
 
@@ -121,11 +136,11 @@ func LoadHookSet(repoRoot string) HookSet {
 	// Count hooks per kind.
 	for _, hk := range h.hooks {
 		switch hk.Kind {
-		case "agents":
+		case hookKindAgents:
 			h.AgentCount++
-		case "scenarios":
+		case hookKindScenarios:
 			h.ScenarioCount++
-		case "phases":
+		case hookKindPhases:
 			h.PhaseCount++
 		}
 	}
@@ -204,7 +219,7 @@ func splitKindName(rel string) (string, string, bool) {
 		return "", "", false
 	}
 	switch kind {
-	case "agents", "scenarios", "phases":
+	case hookKindAgents, hookKindScenarios, hookKindPhases:
 		return kind, name, true
 	}
 	return "", "", false
@@ -255,7 +270,7 @@ func (h HookSet) PromptBlock(selections ...HookSelector) string {
 	// Group by kind, preserving caller order within a kind but
 	// keeping kinds in a stable (agents, scenarios, phases) sequence.
 	grouped := map[string][]string{}
-	order := []string{"agents", "scenarios", "phases"}
+	order := []string{hookKindAgents, hookKindScenarios, hookKindPhases}
 	for _, sel := range selections {
 		if sel.Kind == "" || sel.Name == "" {
 			continue
@@ -279,11 +294,11 @@ func (h HookSet) PromptBlock(selections ...HookSelector) string {
 			b.WriteString("\n\n")
 		}
 		switch kind {
-		case "agents":
+		case hookKindAgents:
 			b.WriteString("AGENT HOOKS (role-specific guidance for this call):\n")
-		case "scenarios":
+		case hookKindScenarios:
 			b.WriteString("SCENARIO HOOKS (situation-specific guidance):\n")
-		case "phases":
+		case hookKindPhases:
 			b.WriteString("PHASE HOOKS (phase-specific guidance):\n")
 		}
 		b.WriteString(strings.Join(parts, "\n\n"))
@@ -306,13 +321,13 @@ func (h HookSet) Names() []string {
 // directories contributed hook content, for startup log lines.
 func (h HookSet) ShortSources() string {
 	seen := map[string]bool{}
-	var out []string
+	out := make([]string, 0, len(h.Sources))
 	home, _ := os.UserHomeDir()
 	for _, s := range h.Sources {
 		var tok string
 		switch {
-		case strings.HasPrefix(s, "builtin:"):
-			tok = "builtin"
+		case strings.HasPrefix(s, sourceBuiltin+":"):
+			tok = sourceBuiltin
 		case home != "" && strings.HasPrefix(s, home+string(filepath.Separator)):
 			tok = "~/.stoke/hooks/"
 		default:

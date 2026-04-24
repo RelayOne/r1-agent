@@ -108,7 +108,7 @@ func (pythonEcosystem) UnresolvedImports(projectRoot string, files []string) ([]
 // is no __all__, Python's default is "everything importable" — no
 // action required.
 func (pythonEcosystem) MissingPublicSurface(projectRoot string, files []string) ([]PublicSurfaceMiss, error) {
-	var out []PublicSurfaceMiss
+	out := make([]PublicSurfaceMiss, 0, len(files))
 	for _, f := range files {
 		base := filepath.Base(f)
 		if base == "__init__.py" || strings.HasPrefix(base, "_") || strings.HasSuffix(base, "_test.py") {

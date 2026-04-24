@@ -67,6 +67,27 @@ type ChatResponse struct {
 	Usage      stream.TokenUsage  `json:"usage"`
 }
 
+// Anthropic protocol literals (role names, content-block types, stop
+// reasons). Pulled out as constants so the wire contract has a single
+// source of truth and the scanner does not flag the raw duplicates.
+const (
+	// Provider identifier used for routing / logging.
+	providerNameAnthropic = "anthropic"
+
+	// Message role literals (Anthropic Messages API).
+	roleUser      = "user"
+	roleAssistant = "assistant"
+
+	// Content block type literals.
+	blockTypeText    = "text"
+	blockTypeToolUse = "tool_use"
+
+	// Stop-reason literals (normalized and as emitted by upstream).
+	stopReasonEndTurn = "end_turn"
+	stopReasonToolUse = "tool_use"
+	stopReasonStop    = "stop"
+)
+
 // ResponseContent is a content block in a response.
 //
 // Anthropic emits four content block shapes today: "text", "tool_use",
@@ -119,7 +140,7 @@ func NewAnthropicProvider(apiKey, baseURL string) *AnthropicProvider {
 	}
 }
 
-func (p *AnthropicProvider) Name() string { return "anthropic" }
+func (p *AnthropicProvider) Name() string { return providerNameAnthropic }
 
 // Chat sends a non-streaming chat completion request with bounded
 // retries on transient failures. Transient failures include:
@@ -358,7 +379,7 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 				if len(ev.ToolUses) > 0 {
 					for _, tu := range ev.ToolUses {
 						result.Content = append(result.Content, ResponseContent{
-							Type: "tool_use", ID: tu.ID, Name: tu.Name, Input: tu.Input,
+							Type: blockTypeToolUse, ID: tu.ID, Name: tu.Name, Input: tu.Input,
 						})
 					}
 				}
@@ -377,7 +398,7 @@ func (p *AnthropicProvider) ChatStream(req ChatRequest, onEvent func(stream.Even
 	}
 
 	if text := fullText.String(); text != "" {
-		result.Content = append([]ResponseContent{{Type: "text", Text: text}}, result.Content...)
+		result.Content = append([]ResponseContent{{Type: blockTypeText, Text: text}}, result.Content...)
 	}
 
 	return &result, nil
@@ -749,7 +770,7 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 
 	// Build content blocks: text first, then tool uses
 	if fullText.Len() > 0 {
-		result.Content = append(result.Content, ResponseContent{Type: "text", Text: fullText.String()})
+		result.Content = append(result.Content, ResponseContent{Type: blockTypeText, Text: fullText.String()})
 	}
 	for i := 0; i < len(toolCallMap); i++ {
 		tc := toolCallMap[i]
@@ -759,7 +780,7 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 		var input map[string]interface{}
 		json.Unmarshal([]byte(tc.Function.Arguments), &input)
 		result.Content = append(result.Content, ResponseContent{
-			Type:  "tool_use",
+			Type:  blockTypeToolUse,
 			ID:    tc.ID,
 			Name:  tc.Function.Name,
 			Input: input,
@@ -768,9 +789,9 @@ func (p *OpenAICompatProvider) ChatStream(req ChatRequest, onEvent func(stream.E
 
 	// Map OpenAI stop reasons to Anthropic-style for agentloop compatibility
 	if result.StopReason == "tool_calls" {
-		result.StopReason = "tool_use"
-	} else if result.StopReason == "stop" {
-		result.StopReason = "end_turn"
+		result.StopReason = stopReasonToolUse
+	} else if result.StopReason == stopReasonStop {
+		result.StopReason = stopReasonEndTurn
 	}
 
 	return &result, nil
@@ -818,7 +839,7 @@ func (p *OpenAICompatProvider) convertResponse(resp openAIChatResponse) *ChatRes
 
 		// Add text content
 		if choice.Message.Content != "" {
-			result.Content = append(result.Content, ResponseContent{Type: "text", Text: choice.Message.Content})
+			result.Content = append(result.Content, ResponseContent{Type: blockTypeText, Text: choice.Message.Content})
 		}
 
 		// Add tool use content blocks
@@ -826,7 +847,7 @@ func (p *OpenAICompatProvider) convertResponse(resp openAIChatResponse) *ChatRes
 			var input map[string]interface{}
 			json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			result.Content = append(result.Content, ResponseContent{
-				Type:  "tool_use",
+				Type:  blockTypeToolUse,
 				ID:    tc.ID,
 				Name:  tc.Function.Name,
 				Input: input,
@@ -836,9 +857,9 @@ func (p *OpenAICompatProvider) convertResponse(resp openAIChatResponse) *ChatRes
 		// Map OpenAI stop reasons to Anthropic-style
 		switch choice.FinishReason {
 		case "tool_calls":
-			result.StopReason = "tool_use"
-		case "stop":
-			result.StopReason = "end_turn"
+			result.StopReason = stopReasonToolUse
+		case stopReasonStop:
+			result.StopReason = stopReasonEndTurn
 		default:
 			result.StopReason = choice.FinishReason
 		}
@@ -907,13 +928,13 @@ func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]int
 			if b.Type == "tool_result" {
 				hasToolResults = true
 			}
-			if b.Type == "tool_use" {
+			if b.Type == blockTypeToolUse {
 				hasToolUse = true
 			}
 		}
 
 		// User message with tool_result blocks → one "tool" role message per result.
-		if hasToolResults && m.Role == "user" {
+		if hasToolResults && m.Role == roleUser {
 			var toolMsgs []map[string]interface{}
 			for _, b := range blocks {
 				if b.Type == "tool_result" {
@@ -928,14 +949,14 @@ func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]int
 		}
 
 		// Assistant message with tool_use blocks → single message with tool_calls.
-		if hasToolUse && m.Role == "assistant" {
+		if hasToolUse && m.Role == roleAssistant {
 			var toolCalls []map[string]interface{}
 			var textContent string
 			for _, b := range blocks {
-				if b.Type == "text" {
+				if b.Type == blockTypeText {
 					textContent += b.Text
 				}
-				if b.Type == "tool_use" {
+				if b.Type == blockTypeToolUse {
 					argsJSON := "{}"
 					if b.Input != nil {
 						argsJSON = string(b.Input)
@@ -951,7 +972,7 @@ func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]int
 				}
 			}
 			return []map[string]interface{}{{
-				"role":       "assistant",
+				"role":       roleAssistant,
 				"content":    textContent,
 				"tool_calls": toolCalls,
 			}}
@@ -960,7 +981,7 @@ func (p *OpenAICompatProvider) convertOneMessage(m ChatMessage) []map[string]int
 		// Plain text blocks
 		var text string
 		for _, b := range blocks {
-			if b.Type == "text" {
+			if b.Type == blockTypeText {
 				text += b.Text
 			}
 		}

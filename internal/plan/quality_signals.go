@@ -835,7 +835,7 @@ func scanIdenticalBodies(paths map[string]string) []QualityFinding {
 			bodyMap[key] = append(bodyMap[key], loc{file: path, line: line, name: name})
 		}
 	}
-	var out []QualityFinding
+	out := make([]QualityFinding, 0, len(bodyMap))
 	for _, locs := range bodyMap {
 		if len(locs) < 4 {
 			continue
@@ -1047,7 +1047,7 @@ func extractExportNames(content string) []string {
 			}
 		}
 	}
-	var out []string
+	out := make([]string, 0, len(set))
 	for n := range set {
 		out = append(out, n)
 	}
@@ -1268,7 +1268,7 @@ func scanSOWEndpointContracts(repoRoot, sowText string) []QualityFinding {
 		endpoints = append(endpoints, key)
 	}
 
-	var out []QualityFinding
+	out := make([]QualityFinding, 0, len(endpoints))
 	for _, e := range endpoints {
 		if routeFileExists(repoRoot, e.path) {
 			continue
@@ -1742,7 +1742,7 @@ func ExtractDeclaredFiles(sowProse string) []string {
 	}
 	const maxPaths = 100
 	seen := make(map[string]struct{}, 16)
-	var out []string
+	out := make([]string, 0, maxPaths)
 	// Use SubmatchIndex so we know where the match starts in the
 	// original prose — needed to look at the preceding byte and
 	// reject URLs (the regex match captures `example.com/a/b.json`

@@ -80,7 +80,7 @@ func (infraEcosystem) UnresolvedImports(projectRoot string, files []string) ([]M
 	sowText := readSOWText(projectRoot)
 	allowed := sowAllowedProviders(sowText)
 	detected := scanVendorSDKs(projectRoot)
-	var out []ManifestMiss
+	out := make([]ManifestMiss, 0, len(detected))
 	for provider, firstFile := range detected {
 		if _, ok := allowed[provider]; ok {
 			continue

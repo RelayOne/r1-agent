@@ -22,6 +22,18 @@ import (
 	"github.com/ericmacdougall/stoke/internal/promptguard"
 )
 
+// Skill-frontmatter field names (parsed out of `---` YAML-ish blocks
+// at the top of each skill markdown). Consts keep the inline list
+// handler and the block-list handler agreeing on one spelling.
+const (
+	skillFieldTriggers     = "triggers"
+	skillFieldAllowedTools = "allowed-tools"
+	skillFieldKeywords     = "keywords"
+
+	// Source labels on loaded skills, ordered by precedence.
+	skillSourceProject = "project"
+)
+
 // scanUserContent runs project/user-supplied skill content through the
 // prompt-injection intake scanner. Builtins are trusted source-controlled
 // content and skip the scan. Action is currently Warn across the board —
@@ -29,7 +41,7 @@ import (
 // unchanged. After a telemetry period shows the false-positive rate,
 // escalate to Strip for project/user sources via a policy flag.
 func scanUserContent(content []byte, source, path string) []byte {
-	if source == "builtin" {
+	if source == sourceBuiltin {
 		return content
 	}
 	_, report, _ := promptguard.Sanitize(string(content), promptguard.ActionWarn, path)
@@ -138,7 +150,7 @@ func (r *Registry) Load() error {
 	for i, dir := range r.dirs {
 		source := "user"
 		if i == 0 {
-			source = "project"
+			source = skillSourceProject
 		}
 
 		entries, err := os.ReadDir(dir)
@@ -171,7 +183,7 @@ func (r *Registry) Load() error {
 					continue
 				}
 				// Overwrite builtins but not higher-priority project/user skills
-				if existing, exists := r.skills[name]; exists && existing.Source != "builtin" {
+				if existing, exists := r.skills[name]; exists && existing.Source != sourceBuiltin {
 					continue
 				}
 				content = scanUserContent(content, source, skillPath)
@@ -218,7 +230,7 @@ func (r *Registry) Load() error {
 				if err != nil {
 					continue
 				}
-				if existing, exists := r.skills[skillName]; exists && existing.Source != "builtin" {
+				if existing, exists := r.skills[skillName]; exists && existing.Source != sourceBuiltin {
 					continue
 				}
 				content = scanUserContent(content, source, flatPath)
@@ -582,7 +594,7 @@ func (r *Registry) Add(name, description, content string, keywords []string) err
 		Description: description,
 		Keywords:    keywords,
 		Content:     sb.String(),
-		Source:      "project",
+		Source:      skillSourceProject,
 		Path:        path,
 		Priority:    len(r.dirs),
 	}
@@ -720,11 +732,11 @@ func parseFrontmatter(fm string, s *Skill) {
 				v := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 				v = strings.Trim(v, `"'`)
 				switch inList {
-				case "triggers":
+				case skillFieldTriggers:
 					s.Triggers = append(s.Triggers, v)
-				case "allowed-tools":
+				case skillFieldAllowedTools:
 					s.AllowedTools = append(s.AllowedTools, v)
-				case "keywords":
+				case skillFieldKeywords:
 					s.Keywords = append(s.Keywords, v)
 				}
 				continue
@@ -749,7 +761,7 @@ func parseFrontmatter(fm string, s *Skill) {
 			if val != "" {
 				s.Description = val
 			}
-		case "triggers":
+		case skillFieldTriggers:
 			if val != "" {
 				// Inline list: triggers: [foo, bar]
 				inline := strings.TrimSpace(val)
@@ -764,9 +776,9 @@ func parseFrontmatter(fm string, s *Skill) {
 					}
 				}
 			} else {
-				inList = "triggers"
+				inList = skillFieldTriggers
 			}
-		case "allowed-tools":
+		case skillFieldAllowedTools:
 			if val != "" {
 				// Inline list
 				inline := strings.TrimSpace(val)
@@ -781,9 +793,9 @@ func parseFrontmatter(fm string, s *Skill) {
 					}
 				}
 			} else {
-				inList = "allowed-tools"
+				inList = skillFieldAllowedTools
 			}
-		case "keywords":
+		case skillFieldKeywords:
 			if val != "" {
 				// Inline list
 				inline := strings.TrimSpace(val)
@@ -798,7 +810,7 @@ func parseFrontmatter(fm string, s *Skill) {
 					}
 				}
 			} else {
-				inList = "keywords"
+				inList = skillFieldKeywords
 			}
 		}
 	}

@@ -141,7 +141,7 @@ func Init(ctx context.Context, opts InitOpts) (*Config, error) {
 		return nil, fmt.Errorf("wizard: repo root is required")
 	}
 	if opts.Preset == "" {
-		opts.Preset = "balanced"
+		opts.Preset = presetBalanced
 	}
 
 	stokeDir := filepath.Join(opts.RepoRoot, ".stoke")
@@ -221,7 +221,7 @@ func DefaultConfig() *Config {
 			StopPct:     100.0,
 		},
 		Supervisor: SupervisorConfig{
-			Preset:        "balanced",
+			Preset:        presetBalanced,
 			RuleOverrides: map[string]RuleOverride{},
 		},
 		Skills: SkillsConfig{
@@ -318,22 +318,22 @@ func setReflectValue(f reflect.Value, value string) error {
 // ApplyPreset applies a named supervisor preset (minimal, balanced, strict).
 func ApplyPreset(cfg *Config, preset string) error {
 	switch preset {
-	case "minimal":
-		cfg.Supervisor.Preset = "minimal"
+	case presetMinimal:
+		cfg.Supervisor.Preset = presetMinimal
 		cfg.Budget.MaxUSD = 5.0
 		cfg.Skills.AutoDetect = false
 		cfg.Bus.PropagationMode = "minimal"
 		cfg.Snapshot.FormatterOnSnapshot = false
 		cfg.Snapshot.ColdStartAnnotation = false
-	case "balanced":
-		cfg.Supervisor.Preset = "balanced"
+	case presetBalanced:
+		cfg.Supervisor.Preset = presetBalanced
 		cfg.Budget.MaxUSD = 10.0
 		cfg.Skills.AutoDetect = true
 		cfg.Bus.PropagationMode = "filtered"
 		cfg.Snapshot.FormatterOnSnapshot = true
 		cfg.Snapshot.ColdStartAnnotation = true
-	case "strict":
-		cfg.Supervisor.Preset = "strict"
+	case presetStrict:
+		cfg.Supervisor.Preset = presetStrict
 		cfg.Budget.MaxUSD = 25.0
 		cfg.Skills.AutoDetect = true
 		cfg.Bus.PropagationMode = "verbose"

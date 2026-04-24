@@ -177,7 +177,7 @@ func defaultQuality(stage string) QualityConfig {
 			ReviewMode:       "self",
 			HonestyEnforce:   "strict", // always strict on honesty
 		}
-	case "mvp":
+	case stageMVP:
 		return QualityConfig{
 			Verification:     "standard",
 			CodeQuality:      "standard",
@@ -217,7 +217,7 @@ func defaultSecurity(stage string, profile *skillselect.RepoProfile) SecurityCon
 	}
 	// Compliance auto-detection from profile
 	for _, fw := range profile.Frameworks {
-		if fw == "stripe" || fw == "hedera" {
+		if fw == detectStripe || fw == "hedera" {
 			sec.Compliance = appendIfMissing(sec.Compliance, "pci_dss")
 			sec.DataSensitivity = "restricted"
 		}
@@ -232,8 +232,8 @@ func defaultSecurity(stage string, profile *skillselect.RepoProfile) SecurityCon
 func detectIaC(profile *skillselect.RepoProfile) string {
 	for _, t := range profile.InfraTools {
 		switch t {
-		case "terraform":
-			return "terraform"
+		case detectTerraform:
+			return detectTerraform
 		case "cdk":
 			return "cdk"
 		case "pulumi":
@@ -247,7 +247,7 @@ func defaultScale(stage string) ScaleConfig {
 	switch stage {
 	case "prototype":
 		return ScaleConfig{Expected: "small", Latency: "tolerant", DataVolume: "small"}
-	case "mvp":
+	case stageMVP:
 		return ScaleConfig{Expected: "small", Latency: "standard", DataVolume: "small"}
 	case "growth":
 		return ScaleConfig{Expected: "medium", Latency: "standard", DataVolume: "medium"}
@@ -260,7 +260,7 @@ func detectDomains(profile *skillselect.RepoProfile) []string {
 	var domains []string
 	for _, fw := range profile.Frameworks {
 		switch fw {
-		case "stripe":
+		case detectStripe:
 			domains = append(domains, "payments")
 		case "react-native", "expo":
 			domains = append(domains, "mobile")
@@ -298,13 +298,13 @@ func detectTeamSize(root string) string {
 	contributors := countGitContributors(root)
 	switch {
 	case contributors >= 20:
-		return "20+"
+		return teamSize20Plus
 	case contributors >= 6:
-		return "6-20"
+		return teamSize6to20
 	case contributors >= 2:
-		return "2-5"
+		return teamSize2to5
 	default:
-		return "solo"
+		return teamSizeSolo
 	}
 }
 
@@ -312,7 +312,7 @@ func defaultRisk(stage string) RiskConfig {
 	switch stage {
 	case "prototype":
 		return RiskConfig{Autonomy: "yolo", BlastRadius: "none"}
-	case "mvp":
+	case stageMVP:
 		return RiskConfig{Autonomy: "permissive", BlastRadius: "none"}
 	case "growth":
 		return RiskConfig{Autonomy: "standard", BlastRadius: "staging"}

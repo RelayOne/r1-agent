@@ -56,7 +56,7 @@ func DetectGitStats(projectDir string) GitStats {
 		if err != nil || info.IsDir() {
 			// Skip .git and vendor
 			name := info.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if name == ".git" || name == detectVendor || name == "node_modules" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -92,7 +92,7 @@ func DetectGitStats(projectDir string) GitStats {
 	filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			name := info.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if name == ".git" || name == detectVendor || name == "node_modules" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -127,12 +127,12 @@ func InferStage(stats GitStats) ScaleTier {
 func InferTeamSize(stats GitStats) string {
 	switch {
 	case stats.ContributorCount > 20:
-		return "20+"
+		return teamSize20Plus
 	case stats.ContributorCount > 5:
-		return "6-20"
+		return teamSize6to20
 	case stats.ContributorCount > 1:
-		return "2-5"
+		return teamSize2to5
 	default:
-		return "solo"
+		return teamSizeSolo
 	}
 }

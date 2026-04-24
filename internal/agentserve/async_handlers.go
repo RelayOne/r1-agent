@@ -25,12 +25,20 @@ import (
 // or-cancelled) — drops would indicate a pathologically slow client.
 const sseBufferSize = 64
 
+// Task status string constants. These are on the wire (JSON status
+// field) and persisted to disk, so changes here would break consumers.
+const (
+	taskStatusCompleted = "completed"
+	taskStatusFailed    = "failed"
+	taskStatusCancelled = "cancelled"
+)
+
 // terminalStates is the set of task states that cause the SSE stream
 // to terminate after the final frame is flushed.
 var terminalStates = map[string]struct{}{
-	"completed": {},
-	"failed":    {},
-	"cancelled": {},
+	taskStatusCompleted: {},
+	taskStatusFailed:    {},
+	taskStatusCancelled: {},
 }
 
 // handleCancelTask implements POST /api/task/{id}/cancel. Invokes the
@@ -62,7 +70,7 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	cancel := s.cancels[id]
 	// Flip state before releasing mu so runTask's terminal-phase
 	// check observes "cancelled" even if Execute has already returned.
-	state.Status = "cancelled"
+	state.Status = taskStatusCancelled
 	now := time.Now().UTC()
 	state.CompletedAt = &now
 	snapshot := *state
@@ -71,7 +79,7 @@ func (s *Server) handleCancelTask(w http.ResponseWriter, r *http.Request) {
 	if cancel != nil {
 		cancel()
 	}
-	s.emitTaskEvent(state, "cancelled", true)
+	s.emitTaskEvent(state, taskStatusCancelled, true)
 	writeJSON(w, http.StatusOK, snapshot)
 }
 

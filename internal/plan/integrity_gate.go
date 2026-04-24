@@ -475,7 +475,7 @@ func compileErrDelta(base, cur []CompileErr) []CompileErr {
 	for _, e := range base {
 		seen[key(e)] = struct{}{}
 	}
-	var out []CompileErr
+	out := make([]CompileErr, 0, len(cur))
 	for _, e := range cur {
 		if _, ok := seen[key(e)]; ok {
 			continue

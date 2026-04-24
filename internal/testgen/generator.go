@@ -29,6 +29,16 @@ type FuncSig struct {
 	IsExported bool     `json:"is_exported"`
 }
 
+// Go type name literals used by the scaffold generator when matching
+// parsed type strings and when emitting zero / typical values. Pulled
+// out as constants so the same spelling is used everywhere.
+const (
+	goTypeString = "string"
+	goTypeInt    = "int"
+	goTypeError  = "error"
+	goLiteralNil = "nil"
+)
+
 // Param is a function parameter.
 type Param struct {
 	Name string `json:"name"`
@@ -329,7 +339,7 @@ func generateCases(sig FuncSig) []testCase {
 
 	// Edge case for strings: empty
 	for _, p := range sig.Params {
-		if p.Type == "string" {
+		if p.Type == goTypeString {
 			edgeCase := testCase{name: "empty " + p.Name, values: make(map[string]string), wantErr: true}
 			for _, p2 := range sig.Params {
 				if p2.Name == p.Name {
@@ -348,23 +358,23 @@ func generateCases(sig FuncSig) []testCase {
 
 func zeroValue(typ string) string {
 	switch typ {
-	case "string":
+	case goTypeString:
 		return `""`
-	case "int", "int64", "int32", "float64", "float32":
+	case goTypeInt, "int64", "int32", "float64", "float32":
 		return "0"
 	case "bool":
 		return "false"
-	case "error":
-		return "nil"
+	case goTypeError:
+		return goLiteralNil
 	default:
 		if strings.HasPrefix(typ, "[]") {
-			return "nil"
+			return goLiteralNil
 		}
 		if strings.HasPrefix(typ, "*") {
-			return "nil"
+			return goLiteralNil
 		}
 		if strings.HasPrefix(typ, "map[") {
-			return "nil"
+			return goLiteralNil
 		}
 		return typ + "{}"
 	}
@@ -372,9 +382,9 @@ func zeroValue(typ string) string {
 
 func typicalValue(typ string) string {
 	switch typ {
-	case "string":
+	case goTypeString:
 		return `"test"`
-	case "int", "int64", "int32":
+	case goTypeInt, "int64", "int32":
 		return "42"
 	case "float64", "float32":
 		return "3.14"
@@ -387,7 +397,7 @@ func typicalValue(typ string) string {
 
 func hasErrorReturn(returns []string) bool {
 	for _, r := range returns {
-		if r == "error" {
+		if r == goTypeError {
 			return true
 		}
 	}
@@ -401,7 +411,7 @@ func returnVars(returns []string) string {
 	vars := make([]string, len(returns))
 	usedNames := make(map[string]int)
 	for i, r := range returns {
-		if r == "error" {
+		if r == goTypeError {
 			vars[i] = "err"
 		} else {
 			name := "got"

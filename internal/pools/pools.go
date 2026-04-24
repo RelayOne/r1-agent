@@ -32,6 +32,15 @@ const (
 	RuntimeContainer = "container" // CLI runs inside a Docker container
 )
 
+// Provider identifier strings. Persisted to manifest.json and
+// referenced by callers when filtering pools by provider. Kept as
+// plain string constants (not a named type) because they round-trip
+// through JSON already shaped as plain strings.
+const (
+	ProviderClaude = "claude"
+	ProviderCodex  = "codex"
+)
+
 // Pool is one registered subscription pool.
 type Pool struct {
 	ID            string    `json:"id"`
@@ -97,7 +106,7 @@ func (m *Manifest) FindByAccount(accountID string) *Pool {
 func (m *Manifest) ClaudeDirs() []string {
 	var dirs []string
 	for _, p := range m.Pools {
-		if p.Provider == "claude" {
+		if p.Provider == ProviderClaude {
 			dirs = append(dirs, p.ConfigDir)
 		}
 	}
@@ -108,7 +117,7 @@ func (m *Manifest) ClaudeDirs() []string {
 func (m *Manifest) CodexDirs() []string {
 	var dirs []string
 	for _, p := range m.Pools {
-		if p.Provider == "codex" {
+		if p.Provider == ProviderCodex {
 			dirs = append(dirs, p.ConfigDir)
 		}
 	}
@@ -139,7 +148,7 @@ func AddClaude(claudeBin, label string) (string, error) {
 		return "", fmt.Errorf("load manifest: %w", err)
 	}
 
-	poolID := manifest.NextID("claude")
+	poolID := manifest.NextID(ProviderClaude)
 	configDir := filepath.Join(StorePath(), poolID)
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return "", fmt.Errorf("create pool dir: %w", err)
@@ -207,7 +216,7 @@ func AddClaude(claudeBin, label string) (string, error) {
 		ID:        poolID,
 		Label:     label,
 		ConfigDir: configDir,
-		Provider:  "claude",
+		Provider:  ProviderClaude,
 		AccountID: accountID,
 		AddedAt:   time.Now(),
 	}
@@ -310,7 +319,7 @@ func AddCodex(codexBin, label string) (string, error) {
 		return "", fmt.Errorf("load manifest: %w", err)
 	}
 
-	poolID := manifest.NextID("codex")
+	poolID := manifest.NextID(ProviderCodex)
 	configDir := filepath.Join(StorePath(), poolID)
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return "", fmt.Errorf("create pool dir: %w", err)
@@ -353,7 +362,7 @@ func AddCodex(codexBin, label string) (string, error) {
 	}
 
 	// Dedup
-	if existing := manifest.FindByAccount(accountID); existing != nil && existing.Provider == "codex" {
+	if existing := manifest.FindByAccount(accountID); existing != nil && existing.Provider == ProviderCodex {
 		fmt.Printf("\n  Account already registered as %s (%s)\n", existing.ID, existing.Label)
 		fmt.Println("  Refreshing credentials...")
 		if err := copyCredentials(configDir, existing.ConfigDir); err != nil {
@@ -376,7 +385,7 @@ func AddCodex(codexBin, label string) (string, error) {
 		ID:        poolID,
 		Label:     label,
 		ConfigDir: configDir,
-		Provider:  "codex",
+		Provider:  ProviderCodex,
 		AccountID: accountID,
 		AddedAt:   time.Now(),
 	}
@@ -485,13 +494,13 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 
 	// Run login flow inside container with the volume mounted
 	configMount := "/config"
-	loginBin := "claude"
-	if provider == "codex" {
-		loginBin = "codex"
+	loginBin := ProviderClaude
+	if provider == ProviderCodex {
+		loginBin = ProviderCodex
 	}
 
 	var loginArgs []string
-	if provider == "claude" {
+	if provider == ProviderClaude {
 		loginArgs = []string{
 			"run", "-it", "--rm",
 			"-v", volName + ":" + configMount,
@@ -561,7 +570,7 @@ func InitContainerPool(poolImage, name, provider string) (string, error) {
 // readAccountIDFromVolume extracts an account ID from credentials stored in a Docker volume.
 func readAccountIDFromVolume(image, volName, configMount, provider string) string {
 	var credFile string
-	if provider == "claude" {
+	if provider == ProviderClaude {
 		credFile = ".credentials.json"
 	} else {
 		credFile = ".codex-credentials.json" // #nosec G101 -- filename for provider credential file, not a credential value.
@@ -577,7 +586,7 @@ func readAccountIDFromVolume(image, volName, configMount, provider string) strin
 		return ""
 	}
 
-	if provider == "claude" {
+	if provider == ProviderClaude {
 		var creds claudeCredentials
 		if json.Unmarshal(out, &creds) != nil {
 			return ""

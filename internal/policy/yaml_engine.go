@@ -21,6 +21,14 @@ type YAMLClient struct {
 	path  string
 }
 
+// Effect strings on policy rules. These are part of the on-disk YAML
+// contract — users write these verbatim in their rules files — so
+// they must stay string-equal to the legacy wire format.
+const (
+	effectPermit = "permit"
+	effectForbid = "forbid"
+)
+
 // compiledRule is the parse-time representation of one YAML
 // rule. Regex compilation, operator parsing, and numeric
 // coercion all happen at load time so Check is allocation-light.
@@ -74,7 +82,7 @@ func NewYAMLClient(path string) (*YAMLClient, error) {
 
 // compileRule validates and compiles a single rule.
 func compileRule(r ruleYAML) (compiledRule, error) {
-	if r.Effect != "permit" && r.Effect != "forbid" {
+	if r.Effect != effectPermit && r.Effect != effectForbid {
 		return compiledRule{}, fmt.Errorf("effect must be \"permit\" or \"forbid\", got %q", r.Effect)
 	}
 	cr := compiledRule{
@@ -139,12 +147,12 @@ func (c *YAMLClient) Check(_ context.Context, req Request) (Result, error) {
 			continue
 		}
 		switch r.Effect {
-		case "permit":
+		case effectPermit:
 			return Result{
 				Decision: DecisionAllow,
 				Reasons:  []string{r.ID},
 			}, nil
-		case "forbid":
+		case effectForbid:
 			return Result{
 				Decision: DecisionDeny,
 				Reasons:  []string{r.ID},

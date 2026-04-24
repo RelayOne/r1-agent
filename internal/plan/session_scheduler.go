@@ -634,9 +634,9 @@ func (ss *SessionScheduler) Run(ctx context.Context, execFn SessionExecuteFunc) 
 		var blocked, failed []string
 		for _, s := range ss.state.Sessions {
 			switch s.Status {
-			case "blocked":
+			case sessionStatusBlocked:
 				blocked = append(blocked, fmt.Sprintf("%s (%s)", s.SessionID, s.LastError))
-			case "failed":
+			case sessionStatusFailed:
 				failed = append(failed, fmt.Sprintf("%s (%s)", s.SessionID, s.LastError))
 			}
 		}
@@ -673,7 +673,7 @@ func (ss *SessionScheduler) recordSessionStart(session Session, attempt int) {
 	if rec == nil {
 		return
 	}
-	rec.Status = "running"
+	rec.Status = sessionStatusRunning
 	rec.Attempts = attempt
 	if rec.StartedAt.IsZero() {
 		rec.StartedAt = time.Now()
@@ -690,7 +690,7 @@ func (ss *SessionScheduler) recordSessionSuccess(session Session, result Session
 	if rec == nil {
 		return
 	}
-	rec.Status = "done"
+	rec.Status = sessionStatusDone
 	rec.AcceptanceMet = true
 	rec.Acceptance = result.Acceptance
 	rec.TaskResults = result.TaskResults
@@ -709,7 +709,7 @@ func (ss *SessionScheduler) recordSessionFailure(session Session, result Session
 	if rec == nil {
 		return
 	}
-	rec.Status = "failed"
+	rec.Status = sessionStatusFailed
 	rec.AcceptanceMet = result.AcceptanceMet
 	rec.Acceptance = result.Acceptance
 	rec.TaskResults = result.TaskResults
@@ -734,7 +734,7 @@ func (ss *SessionScheduler) recordSessionBlocked(session Session, result Session
 	if rec == nil {
 		return
 	}
-	rec.Status = "blocked"
+	rec.Status = sessionStatusBlocked
 	rec.AcceptanceMet = false
 	rec.Attempts = 0
 	if err != nil {
@@ -804,7 +804,7 @@ func (ss *SessionScheduler) DryRun() string {
 	if state, _ := LoadSOWState(ss.projectRoot); state != nil {
 		var done []string
 		for _, s := range state.Sessions {
-			if s.Status == "done" && s.AcceptanceMet {
+			if s.Status == sessionStatusDone && s.AcceptanceMet {
 				done = append(done, s.SessionID)
 			}
 		}

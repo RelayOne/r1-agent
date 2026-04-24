@@ -309,7 +309,7 @@ func goDepCovers(imp string, deps map[string]struct{}) bool {
 // `go vet ./path/...` invocation.
 func goPackagesForFiles(projectRoot string, files []string) []string {
 	seen := map[string]struct{}{}
-	var out []string
+	out := make([]string, 0, len(files))
 	for _, f := range files {
 		rel, err := filepath.Rel(projectRoot, f)
 		if err != nil {

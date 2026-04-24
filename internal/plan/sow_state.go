@@ -26,7 +26,7 @@ type SOWState struct {
 type SessionRecord struct {
 	SessionID       string              `json:"session_id"`
 	Title           string              `json:"title"`
-	Status          string              `json:"status"` // pending | running | done | failed | skipped
+	Status          string              `json:"status"` // pending | running | done | failed | skipped | blocked
 	AcceptanceMet   bool                `json:"acceptance_met"`
 	Acceptance      []AcceptanceResult  `json:"acceptance,omitempty"`
 	TaskResults     []TaskExecResult    `json:"task_results,omitempty"`
@@ -35,6 +35,18 @@ type SessionRecord struct {
 	StartedAt       time.Time           `json:"started_at,omitempty"`
 	FinishedAt      time.Time           `json:"finished_at,omitempty"`
 }
+
+// Session status values persisted to sow-state.json. They are part of
+// the on-disk wire format — any change here must stay string-equal to
+// what older states contain, so these are plain string constants.
+const (
+	sessionStatusPending  = "pending"
+	sessionStatusRunning  = "running"
+	sessionStatusDone     = "done"
+	sessionStatusFailed   = "failed"
+	sessionStatusSkipped  = "skipped"
+	sessionStatusBlocked  = "blocked"
+)
 
 // SOWStatePath returns the canonical path for SOW state inside a project.
 func SOWStatePath(projectRoot string) string {
@@ -142,8 +154,8 @@ func (st *SOWState) MergeSOW(sow *SOW) {
 		current[s.ID] = true
 	}
 	for i := range st.Sessions {
-		if !current[st.Sessions[i].SessionID] && st.Sessions[i].Status == "pending" {
-			st.Sessions[i].Status = "skipped"
+		if !current[st.Sessions[i].SessionID] && st.Sessions[i].Status == sessionStatusPending {
+			st.Sessions[i].Status = sessionStatusSkipped
 		}
 	}
 }
@@ -152,8 +164,8 @@ func (st *SOWState) MergeSOW(sow *SOW) {
 func (st *SOWState) RemainingSessions() []string {
 	var ids []string
 	for _, s := range st.Sessions {
-		if s.Status != "done" || !s.AcceptanceMet {
-			if s.Status == "skipped" {
+		if s.Status != sessionStatusDone || !s.AcceptanceMet {
+			if s.Status == sessionStatusSkipped {
 				continue
 			}
 			ids = append(ids, s.SessionID)

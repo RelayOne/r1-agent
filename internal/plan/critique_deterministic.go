@@ -30,6 +30,20 @@ import (
 	"strings"
 )
 
+// Critique verdict and severity string literals. These appear on
+// CritiqueIssue / SOWCritique as untyped strings (the shape is JSON-
+// serialized for downstream callers), so we keep them as string
+// constants rather than enums to preserve the wire format.
+const (
+	critiqueVerdictReject = "reject"
+	critiqueVerdictRefine = "refine"
+	critiqueVerdictShip   = "ship"
+
+	critiqueSevBlocking = "blocking"
+
+	stackReactNative = "react-native"
+)
+
 // CritiqueDeterministic runs every rule-based check on the SOW and
 // returns a SOWCritique populated with findings. Caller decides
 // whether to run the LLM pass based on HasBlocking / verdict.
@@ -41,10 +55,10 @@ func CritiqueDeterministic(sow *SOW) *SOWCritique {
 		Dimensions: map[string]int{},
 	}
 	if sow == nil {
-		c.Verdict = "reject"
+		c.Verdict = critiqueVerdictReject
 		c.Summary = "nil SOW"
 		c.Issues = append(c.Issues, CritiqueIssue{
-			Severity:    "blocking",
+			Severity:    critiqueSevBlocking,
 			Description: "SOW is nil",
 			Fix:         "ensure ConvertProseToSOW produced a non-nil SOW",
 		})
@@ -63,16 +77,16 @@ func CritiqueDeterministic(sow *SOW) *SOWCritique {
 	blocking, major, minor := countSeverities(c.Issues)
 	switch {
 	case blocking > 0:
-		c.Verdict = "reject"
+		c.Verdict = critiqueVerdictReject
 		c.OverallScore = max(0, 50-blocking*10)
 	case major > 3:
-		c.Verdict = "refine"
+		c.Verdict = critiqueVerdictRefine
 		c.OverallScore = max(50, 80-major*3)
 	case major > 0 || minor > 5:
-		c.Verdict = "refine"
+		c.Verdict = critiqueVerdictRefine
 		c.OverallScore = max(70, 90-major*2-minor)
 	default:
-		c.Verdict = "ship"
+		c.Verdict = critiqueVerdictShip
 		c.OverallScore = max(85, 100-minor)
 	}
 	c.Summary = fmt.Sprintf("deterministic critique: %d blocking, %d major, %d minor across %d sessions / %d tasks",
@@ -85,7 +99,7 @@ func CritiqueDeterministic(sow *SOW) *SOWCritique {
 func critiqueStructural(sow *SOW, c *SOWCritique) {
 	if len(sow.Sessions) == 0 {
 		c.Issues = append(c.Issues, CritiqueIssue{
-			Severity:    "blocking",
+			Severity:    critiqueSevBlocking,
 			Description: "SOW has no sessions",
 			Fix:         "generator produced an empty session list; re-run prose conversion",
 		})
@@ -96,7 +110,7 @@ func critiqueStructural(sow *SOW, c *SOWCritique) {
 	for _, s := range sow.Sessions {
 		if strings.TrimSpace(s.ID) == "" {
 			c.Issues = append(c.Issues, CritiqueIssue{
-				Severity:    "blocking",
+				Severity:    critiqueSevBlocking,
 				SessionID:   "(missing)",
 				Description: "session with empty ID",
 				Fix:         "assign a unique ID like S1, S2 to every session",
@@ -123,7 +137,7 @@ func critiqueStructural(sow *SOW, c *SOWCritique) {
 		for _, t := range s.Tasks {
 			if strings.TrimSpace(t.ID) == "" {
 				c.Issues = append(c.Issues, CritiqueIssue{
-					Severity:    "blocking",
+					Severity:    critiqueSevBlocking,
 					SessionID:   s.ID,
 					TaskID:      "(missing)",
 					Description: "task with empty ID",
@@ -133,7 +147,7 @@ func critiqueStructural(sow *SOW, c *SOWCritique) {
 			}
 			if prev, dup := seenTID[t.ID]; dup {
 				c.Issues = append(c.Issues, CritiqueIssue{
-					Severity:    "blocking",
+					Severity:    critiqueSevBlocking,
 					SessionID:   s.ID,
 					TaskID:      t.ID,
 					Description: fmt.Sprintf("duplicate task ID — also in session %s", prev),
@@ -171,7 +185,7 @@ func critiqueDeps(sow *SOW, c *SOWCritique) {
 				}
 				if dep == t.ID {
 					c.Issues = append(c.Issues, CritiqueIssue{
-						Severity:    "blocking",
+						Severity:    critiqueSevBlocking,
 						SessionID:   s.ID,
 						TaskID:      t.ID,
 						Description: "self-loop dependency (task lists its own ID)",
@@ -198,7 +212,7 @@ func critiqueDeps(sow *SOW, c *SOWCritique) {
 	}
 	if cycle := detectCycle(all); cycle != "" {
 		c.Issues = append(c.Issues, CritiqueIssue{
-			Severity:    "blocking",
+			Severity:    critiqueSevBlocking,
 			Description: "dependency cycle detected: " + cycle,
 			Fix:         "break the cycle by dropping the back-edge from the latest task in the cycle",
 		})
@@ -219,17 +233,17 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 	}
 	// Known-bad substrings in AC commands.
 	patterns := []badPattern{
-		{"|| echo ok", "blocking", "fallback swallows real failures", "remove the || echo ok; let the command fail"},
-		{"|| echo 'ok'", "blocking", "fallback swallows real failures", "remove the fallback"},
-		{"|| true", "blocking", "|| true turns every exit code into success", "remove the || true; let the command fail"},
-		{"$REPO_URL", "blocking", "unset env var; SOW runs against cwd, no remote clone exists", "remove the git clone; use pnpm install + build at repo root"},
-		{"$(mktemp", "blocking", "ACs run in the repo root, not a tmp dir", "rewrite to run in the current workspace"},
-		{"git clone", "blocking", "AC should not clone — the workspace is already present", "remove the clone step; verify the already-present tree"},
-		{"next dev", "blocking", "long-running process never exits; AC command must terminate", "use 'next build' or 'next lint' instead"},
-		{"expo start", "blocking", "long-running process; AC command must terminate", "use 'expo doctor' or a build command instead"},
-		{"playwright", "blocking", "browser E2E requires browser binaries + display server not available in the build agent", "replace with unit / integration tests at the API layer"},
-		{"cypress", "blocking", "browser E2E not supported in the build agent", "replace with unit tests or Playwright-less integration tests"},
-		{"puppeteer", "blocking", "browser automation requires Chromium not available in the build agent", "replace with unit / integration tests"},
+		{"|| echo ok", critiqueSevBlocking, "fallback swallows real failures", "remove the || echo ok; let the command fail"},
+		{"|| echo 'ok'", critiqueSevBlocking, "fallback swallows real failures", "remove the fallback"},
+		{"|| true", critiqueSevBlocking, "|| true turns every exit code into success", "remove the || true; let the command fail"},
+		{"$REPO_URL", critiqueSevBlocking, "unset env var; SOW runs against cwd, no remote clone exists", "remove the git clone; use pnpm install + build at repo root"},
+		{"$(mktemp", critiqueSevBlocking, "ACs run in the repo root, not a tmp dir", "rewrite to run in the current workspace"},
+		{"git clone", critiqueSevBlocking, "AC should not clone — the workspace is already present", "remove the clone step; verify the already-present tree"},
+		{"next dev", critiqueSevBlocking, "long-running process never exits; AC command must terminate", "use 'next build' or 'next lint' instead"},
+		{"expo start", critiqueSevBlocking, "long-running process; AC command must terminate", "use 'expo doctor' or a build command instead"},
+		{"playwright", critiqueSevBlocking, "browser E2E requires browser binaries + display server not available in the build agent", "replace with unit / integration tests at the API layer"},
+		{"cypress", critiqueSevBlocking, "browser E2E not supported in the build agent", "replace with unit tests or Playwright-less integration tests"},
+		{"puppeteer", critiqueSevBlocking, "browser automation requires Chromium not available in the build agent", "replace with unit / integration tests"},
 	}
 	// 'vitest' without ' run' also a problem (dev mode hangs), check
 	// separately so we don't false-positive on 'vitest run'.
@@ -308,7 +322,7 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 			}
 			if checkVitestMode(cmd) {
 				c.Issues = append(c.Issues, CritiqueIssue{
-					Severity:    "blocking",
+					Severity:    critiqueSevBlocking,
 					SessionID:   s.ID,
 					Description: fmt.Sprintf("AC %s uses 'vitest' without 'run' — dev mode hangs", ac.ID),
 					Fix:         "change to 'vitest run' so it exits after one pass",
@@ -316,7 +330,7 @@ func critiqueAcceptanceCriteria(sow *SOW, c *SOWCritique) {
 			}
 			if checkViteMode(cmd) {
 				c.Issues = append(c.Issues, CritiqueIssue{
-					Severity:    "blocking",
+					Severity:    critiqueSevBlocking,
 					SessionID:   s.ID,
 					Description: fmt.Sprintf("AC %s uses 'vite' dev-server — long-running, never exits", ac.ID),
 					Fix:         "change to 'vite build' or 'vite preview' (which has its own timeout handling)",
@@ -374,7 +388,7 @@ func critiqueStack(sow *SOW, c *SOWCritique) {
 			Fix:         "set language (typescript | python | go | rust) so downstream tooling picks right defaults",
 		})
 	}
-	if sow.Stack.Framework == "next" || sow.Stack.Framework == "react-native" {
+	if sow.Stack.Framework == "next" || sow.Stack.Framework == stackReactNative {
 		if sow.Stack.Monorepo == nil || sow.Stack.Monorepo.Manager == "" {
 			c.Issues = append(c.Issues, CritiqueIssue{
 				Severity:    "minor",
@@ -407,7 +421,7 @@ func critiqueStack(sow *SOW, c *SOWCritique) {
 func countSeverities(issues []CritiqueIssue) (blocking, major, minor int) {
 	for _, i := range issues {
 		switch i.Severity {
-		case "blocking":
+		case critiqueSevBlocking:
 			blocking++
 		case "major":
 			major++
@@ -471,7 +485,7 @@ func FormatCritique(c *SOWCritique) string {
 
 func sevWeight(s string) int {
 	switch s {
-	case "blocking":
+	case critiqueSevBlocking:
 		return 0
 	case "major":
 		return 1

@@ -28,17 +28,25 @@ const (
 	DecisionAllow
 )
 
+// decisionAllowStr / decisionDenyStr are the wire-format strings for
+// authorization decisions. They appear on logs, audit events, and in
+// the YAML policy engine's effect field.
+const (
+	decisionAllowStr = "allow"
+	decisionDenyStr  = "deny"
+)
+
 // String returns "allow" for DecisionAllow and "deny" for
 // DecisionDeny or any other (unknown) Decision value. The output
 // is stable and suitable for logs and event payloads.
 func (d Decision) String() string {
 	switch d {
 	case DecisionAllow:
-		return "allow"
+		return decisionAllowStr
 	case DecisionDeny:
-		return "deny"
+		return decisionDenyStr
 	default:
-		return "deny"
+		return decisionDenyStr
 	}
 }
 

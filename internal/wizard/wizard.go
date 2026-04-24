@@ -292,15 +292,15 @@ func (w *Wizard) askModel() {
 	})
 	switch choice {
 	case 1:
-		w.Prefs.PrimaryModel = "claude"
-		w.Prefs.ReviewModel = "claude"
+		w.Prefs.PrimaryModel = providerLabelClaude
+		w.Prefs.ReviewModel = providerLabelClaude
 	case 2:
-		w.Prefs.PrimaryModel = "claude"
+		w.Prefs.PrimaryModel = providerLabelClaude
 		w.Prefs.ReviewModel = "codex"
 	case 3:
-		w.Prefs.PrimaryModel = "claude"
+		w.Prefs.PrimaryModel = providerLabelClaude
 		w.Prefs.ReviewModel = "codex"
-		w.Prefs.FallbackChain = []string{"claude", "codex", "openrouter"}
+		w.Prefs.FallbackChain = []string{providerLabelClaude, "codex", "openrouter"}
 	}
 }
 
@@ -779,10 +779,10 @@ func (w *Wizard) verifyValue(enabled bool) string {
 
 func (w *Wizard) applyDefaults() {
 	if w.Prefs.PrimaryModel == "" {
-		w.Prefs.PrimaryModel = "claude"
+		w.Prefs.PrimaryModel = providerLabelClaude
 	}
 	if w.Prefs.ReviewModel == "" {
-		w.Prefs.ReviewModel = "claude"
+		w.Prefs.ReviewModel = providerLabelClaude
 	}
 	if w.Prefs.AdversarialDepth == "" {
 		w.Prefs.AdversarialDepth = DepthStandard

@@ -154,7 +154,7 @@ func (arduinoEcosystem) CompileErrors(ctx context.Context, projectRoot string, f
 
 func arduinoSketchDirs(files []string) []string {
 	seen := map[string]struct{}{}
-	var out []string
+	out := make([]string, 0, len(files))
 	for _, f := range files {
 		dir := filepath.Dir(f)
 		if _, dup := seen[dir]; dup {
