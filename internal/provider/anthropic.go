@@ -193,13 +193,16 @@ func (p *AnthropicProvider) Chat(req ChatRequest) (*ChatResponse, error) {
 // chatOnce is the single-request path extracted from Chat so the retry
 // loop can reuse it cleanly.
 //
-// The metadata map carries portfolio-alignment correlation IDs:
-//   - stoke-session-id → X-Stoke-Session-ID outbound header
-//   - stoke-agent-id   → X-Stoke-Agent-ID
-//   - stoke-task-id    → X-Stoke-Task-ID
-// Empty / absent values skip the corresponding header entirely (no
-// empty-string headers). modelAlias is the caller-supplied model name
-// used for AL-2 resolved-alias logging.
+// The metadata map carries portfolio-alignment correlation IDs.
+// applyStokeCorrelationHeaders emits BOTH the canonical X-R1-*
+// header family AND the legacy X-Stoke-* family (S1-2 dual-send,
+// 30-day window through 2026-05-23):
+//   - stoke-session-id → X-R1-Session-ID + X-Stoke-Session-ID
+//   - stoke-agent-id   → X-R1-Agent-ID   + X-Stoke-Agent-ID
+//   - stoke-task-id    → X-R1-Task-ID    + X-Stoke-Task-ID
+// Empty / absent values skip the corresponding header entirely on
+// both families (no empty-string headers). modelAlias is the
+// caller-supplied model name used for AL-2 resolved-alias logging.
 func (p *AnthropicProvider) chatOnce(data []byte, metadata map[string]string, modelAlias string) (*ChatResponse, error) {
 	httpReq, err := http.NewRequest("POST", p.baseURL+"/v1/messages", bytes.NewReader(data))
 	if err != nil {

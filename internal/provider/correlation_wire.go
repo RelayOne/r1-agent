@@ -14,7 +14,9 @@ import (
 
 // Metadata keys recognized by applyStokeCorrelationHeaders. Callers
 // populate ChatRequest.Metadata from correlation.IDs at the dispatch
-// layer (internal/agentloop or chat session).
+// layer (internal/agentloop or chat session). The metadata key names
+// remain `stoke-*` for now (internal-only wire; renaming them is an
+// orthogonal cleanup outside the S1-2 header-dual-send scope).
 const (
 	MetaSessionID = "stoke-session-id"
 	MetaAgentID   = "stoke-agent-id"
@@ -22,20 +24,30 @@ const (
 )
 
 // applyStokeCorrelationHeaders copies the three recognized metadata
-// keys onto outbound X-Stoke-* headers (AL-1 / SEAM-22). Empty keys
-// are skipped rather than emitted as empty strings — RelayGate's
-// audit ingress checks for non-empty values.
+// keys onto outbound request headers — setting BOTH the canonical
+// X-R1-* header family AND the legacy X-Stoke-* family with identical
+// values (AL-1 / SEAM-22 / S1-2 dual-send, 30-day window through
+// 2026-05-23). RelayGate accepts either family and prefers canonical
+// when both present (router-core commit a1ca514). After 2026-05-23
+// the legacy X-Stoke-* emission is dropped per S6-1.
+//
+// Empty keys are skipped on BOTH families rather than emitted as
+// empty strings — RelayGate's audit ingress checks for non-empty
+// values.
 func applyStokeCorrelationHeaders(req *http.Request, metadata map[string]string) {
 	if req == nil || len(metadata) == 0 {
 		return
 	}
 	if v := metadata[MetaSessionID]; v != "" {
+		req.Header.Set("X-R1-Session-ID", v)
 		req.Header.Set("X-Stoke-Session-ID", v)
 	}
 	if v := metadata[MetaAgentID]; v != "" {
+		req.Header.Set("X-R1-Agent-ID", v)
 		req.Header.Set("X-Stoke-Agent-ID", v)
 	}
 	if v := metadata[MetaTaskID]; v != "" {
+		req.Header.Set("X-R1-Task-ID", v)
 		req.Header.Set("X-Stoke-Task-ID", v)
 	}
 }
