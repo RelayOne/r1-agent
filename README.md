@@ -37,33 +37,44 @@ browser-hosted sessions — ships as a **separate product**,
 embeds R1 as its agent runtime. **How do I pay for team scale?**
 Use CloudSwarm. R1 standalone stays free.
 
+> **Upgrading from Stoke?** Your existing `.stoke/` directory is
+> auto-detected — no migration step required. Every install method
+> below drops both the canonical `r1` binary and the legacy `stoke`
+> alias into `$PATH`, and `r1 <args>` is byte-identical to
+> `stoke <args>`. For the full rename rollout (binary, Homebrew tap,
+> Docker image, config file, MCP tool names), see
+> [docs/mintlify/rename/stoke-to-r1.mdx](docs/mintlify/rename/stoke-to-r1.mdx).
+
+`r1` is the canonical invocation going forward; `stoke` remains a
+supported alias through the dual-accept window (at least one minor
+release past the `r1` cutover). Pick any of the four paths below —
+each installs both names side-by-side.
+
 ```bash
-# Homebrew (macOS + Linux) — published by goreleaser on each tag.
-# The formula now installs BOTH `stoke` and `r1` side-by-side:
-# `r1` is the canonical name going forward, `stoke` stays for the
-# 60-90d rename transition (work-r1-rename.md §S2-3 / §S5-3).
-brew install ericmacdougall/stoke/stoke        # legacy tap path
-# Target after tap rename (§S5-3 — not live yet):
+# 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
+# The formula installs BOTH `r1` (canonical) and `stoke` (legacy alias).
+brew install ericmacdougall/stoke/stoke        # current tap path
+# Target after tap rename (work-r1-rename.md §S5-3 — not live yet):
 #   brew install RelayOne/r1-agent/r1
 
-# One-line installer — detects platform, verifies cosign signature
+# 2. One-line installer — detects platform, verifies cosign signature
 # (keyless OIDC via sigstore) when cosign is on PATH, falls back to
 # building from source if no prebuilt binary exists for your target.
-# Installs `stoke`, `stoke-acp`, AND `r1` into ${INSTALL_DIR}.
+# Installs `r1`, `stoke`, and `stoke-acp` into ${INSTALL_DIR}.
 curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
-# Docker (linux/amd64 + linux/arm64; distroless, multi-stage)
-# R1 is the canonical image name going forward; the legacy `stoke`
-# tag is dual-published for a 60d transition window (see work-r1-rename.md S2-4).
-docker pull ghcr.io/ericmacdougall/r1:latest
-# Legacy name (still works, will be retired ~2026-06-22):
-docker pull ghcr.io/ericmacdougall/stoke:latest
+# 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
+# `r1` is the canonical image name going forward; the legacy `stoke`
+# tag is dual-published for a 60d transition window
+# (see work-r1-rename.md §S2-4).
+docker pull ghcr.io/ericmacdougall/r1:latest        # canonical
+docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy alias (retires ~2026-06-22)
 
-# From source (Go 1.25 or later; CGO enabled for SQLite)
-go build ./cmd/stoke
+# 4. From source (Go 1.25 or later; CGO enabled for SQLite).
+go build ./cmd/r1               # canonical CLI (exec-shim → stoke)
+go build ./cmd/stoke            # legacy alias / primary orchestrator binary
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
-go build ./cmd/r1               # r1 wrapper (delegates to stoke)
-sudo mv stoke stoke-acp r1 /usr/local/bin/
+sudo mv r1 stoke stoke-acp /usr/local/bin/
 
 # Verify a signed release tarball (cosign keyless OIDC)
 cosign verify-blob \
