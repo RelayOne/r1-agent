@@ -715,6 +715,13 @@ export type InvokeMethod =
   | "mcp_remove"
   | "mcp_test"
   | "mcp_invoke_tool"
+  // Observability dashboard (R1D-9)
+  | "obs_kpis"
+  | "obs_latency_histogram"
+  | "obs_skill_counts"
+  | "obs_error_timeline"
+  | "obs_export_csv"
+  | "obs_relaygate_reconcile"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
@@ -774,4 +781,69 @@ export interface MCPAddRequest {
 /** Generic ok response for add/remove. */
 export interface MCPOkResult {
   ok: boolean;
+}
+
+// ---------------------------------------------------------------------
+// Observability dashboard (R1D-9)
+// ---------------------------------------------------------------------
+
+/** Time-range tokens accepted by every obs IPC. */
+export type ObsRange = "1h" | "24h" | "7d" | "30d";
+
+/** Top-line KPI summary card values. */
+export interface ObsKPIs {
+  range: ObsRange;
+  total_sessions: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  avg_latency_ms: number;
+  error_rate: number;
+  unique_skills: number;
+}
+
+/** One bucket in a latency histogram. */
+export interface LatencyBucket {
+  upper_ms: number;
+  count: number;
+}
+
+/** Per-provider latency histogram payload. */
+export interface ProviderLatencyHistogram {
+  provider: string;
+  total_calls: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  buckets: LatencyBucket[];
+}
+
+/** Skill invocation count payload. */
+export interface SkillInvocationCount {
+  skill: string;
+  count: number;
+  error_count: number;
+}
+
+/** Error rate at a single time point. */
+export interface ErrorTimelinePoint {
+  ts: Iso8601;
+  total: number;
+  errors: number;
+}
+
+/** CSV export response. */
+export interface ObsCsvExport {
+  filename: string;
+  csv: string;
+  row_count: number;
+}
+
+/** RelayGate cost-reconciliation result. */
+export interface RelayGateReconcileResult {
+  configured: boolean;
+  match: boolean;
+  desktop_cost_usd: number;
+  relaygate_cost_usd: number;
+  delta_usd: number;
+  message?: string;
 }

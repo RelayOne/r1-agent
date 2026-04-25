@@ -20,12 +20,13 @@ html, body, #app {
 .r1-app-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr auto auto;
+  grid-template-rows: 1fr 1fr 1fr auto auto auto;
   grid-template-areas:
     "sow     descent"
     "ledger  memory"
     "skills  skills"
     "mcp     mcp"
+    "obs     obs"
     "cost    cost";
   gap: 1rem;
   padding: 1rem;
@@ -1586,4 +1587,234 @@ html, body, #app {
   word-break: break-word;
   max-height: 200px;
   overflow: auto;
+}
+
+/* R1D-9 observability dashboard */
+.r1-panel-observability { grid-area: obs; }
+
+.r1-obs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.r1-obs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.r1-obs-range {
+  display: inline-flex;
+  gap: 0.25rem;
+  background: #1b1f27;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.r1-obs-range-btn {
+  background: transparent;
+  color: #8a93a4;
+  border: none;
+  padding: 0.25rem 0.65rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.r1-obs-range-btn[aria-selected="true"] {
+  background: #2a3140;
+  color: #e6e8ee;
+}
+
+.r1-obs-banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.r1-obs-banner-warn {
+  background: #4a3b1f;
+  color: #f5c449;
+  border: 1px solid #6b5523;
+}
+
+.r1-obs-banner-ok {
+  background: #1f4632;
+  color: #79e09a;
+  border: 1px solid #2a6443;
+}
+
+.r1-obs-kpi-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+
+.r1-obs-kpi-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem 0.75rem;
+  background: #1b1f27;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+}
+
+.r1-obs-kpi-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a93a4;
+}
+
+.r1-obs-kpi-value {
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.15rem;
+}
+
+.r1-obs-latency h3,
+.r1-obs-skills h3,
+.r1-obs-errors h3 {
+  margin: 0 0 0.4rem 0;
+  font-size: 0.82rem;
+  color: #b3bccf;
+  font-weight: 600;
+}
+
+.r1-obs-latency-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.5rem;
+}
+
+.r1-obs-hist-card {
+  background: #1b1f27;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+}
+
+.r1-obs-hist-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.r1-obs-hist-card h4 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.r1-obs-hist-meta {
+  font-size: 0.7rem;
+  color: #8a93a4;
+  font-variant-numeric: tabular-nums;
+}
+
+.r1-obs-hist {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 80px;
+  padding-top: 0.25rem;
+}
+
+.r1-obs-hist-bar {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  height: 100%;
+  position: relative;
+}
+
+.r1-obs-hist-bar-fill {
+  display: block;
+  width: 100%;
+  background: #3ea6ff;
+  border-radius: 2px 2px 0 0;
+  min-height: 1px;
+}
+
+.r1-obs-hist-bar-label {
+  position: absolute;
+  bottom: -14px;
+  font-size: 0.6rem;
+  color: #6c7588;
+  font-variant-numeric: tabular-nums;
+}
+
+.r1-obs-skill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.r1-obs-skill-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(80px, 2fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+
+.r1-obs-skill-name {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: #e6e8ee;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.r1-obs-skill-bar {
+  display: block;
+  height: 8px;
+  background: #1b1f27;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.r1-obs-skill-bar-fill {
+  display: block;
+  height: 100%;
+  background: #79e09a;
+}
+
+.r1-obs-skill-count {
+  font-variant-numeric: tabular-nums;
+  color: #b3bccf;
+}
+
+.r1-obs-skill-err {
+  font-size: 0.7rem;
+  color: #ff8b8b;
+  font-variant-numeric: tabular-nums;
+}
+
+.r1-obs-error-chart {
+  background: #1b1f27;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
+.r1-obs-error-svg {
+  width: 100%;
+  height: auto;
+  max-height: 140px;
+  display: block;
 }

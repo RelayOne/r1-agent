@@ -21,7 +21,7 @@ export type PhaseTag =
   | "R1D-6" // Memory inspector
   | "R1D-7" // Settings + vault + providers + governance
   | "R1D-8" // MCP servers panel
-  | "R1D-9"; // Cost panel / observability
+  | "R1D-9"; // Cost panel / observability dashboard
 
 /**
  * invokeStub logs a structured TODO line and resolves with the

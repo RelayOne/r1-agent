@@ -34,6 +34,7 @@ export default defineConfig({
         "panel-memory-inspector": resolve(root, "src/panels/memory-inspector.ts"),
         "panel-skill-catalog": resolve(root, "src/panels/skill-catalog.ts"),
         "panel-mcp-servers": resolve(root, "src/panels/mcp-servers.ts"),
+        "panel-observability": resolve(root, "src/panels/observability.ts"),
         "panel-cost": resolve(root, "src/panels/cost-panel.ts"),
       },
     },
