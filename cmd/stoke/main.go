@@ -750,6 +750,11 @@ func main() {
 		browseCmd(os.Args[2:])
 	case "agent-serve":
 		agentServeCmd(os.Args[2:])
+	case "desktop-rpc":
+		// R1D-1.2: long-lived JSON-RPC 2.0 server for the Tauri desktop host.
+		// Reads NDJSON requests on stdin; writes NDJSON responses on stdout.
+		// One process per active desktop session.
+		os.Exit(runDesktopRPCCmd(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "plan-resume":
 		resumeCmd(os.Args[2:])
 	case "policy":

@@ -12,14 +12,12 @@ members = ["src-tauri"]
 [workspace.package]
 version = "0.0.0-scaffold"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.85"
 authors = ["R1 team"]
 license = "MIT"
 repository = "https://github.com/RelayOne/r1"
 
 [workspace.dependencies]
-# Pinned on R1D-1.1. Kept here as a reservation so `cargo tauri init`
-# can extend without re-creating the workspace file.
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
