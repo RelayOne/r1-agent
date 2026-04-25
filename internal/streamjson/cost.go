@@ -65,6 +65,8 @@ func StartCostReporter(emitter *TwoLane, provider CostProvider, interval time.Du
 					continue
 				}
 				last = total
+				// EmitSystem handles D-032 dual-emit for stoke.*
+				// subtypes automatically.
 				emitter.EmitSystem("stoke.cost", map[string]any{
 					"_stoke.dev/total_usd": total,
 				})
