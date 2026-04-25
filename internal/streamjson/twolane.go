@@ -303,6 +303,8 @@ func buildEvent(eventType, subtype, sessionID string, extra map[string]any) map[
 // observability lane (they're subtype-driven and do NOT promote to
 // critical). Kept as a method on the TwoLane for symmetry — callers
 // normally use EmitSystem directly.
+//
+// EmitSystem handles D-032 dual-emit for stoke.* subtypes automatically.
 func (tl *TwoLane) EmitDescent(kind string, payload map[string]any) {
 	tl.EmitSystem("stoke.descent."+kind, payload)
 }

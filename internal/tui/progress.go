@@ -29,6 +29,22 @@ import (
 // names is authoritative across producer (streamjson) and consumer
 // (ProgressRenderer).
 const (
+	// Canonical r1.* event types (D-032). These are the primary names
+	// going forward; the legacy stoke.* aliases below remain for the
+	// 60-day dual-emit window (until 2026-06-25).
+	EventR1PlanReady      hub.EventType = "r1.plan.ready"
+	EventR1SessionStart   hub.EventType = "r1.session.start"
+	EventR1SessionEnd     hub.EventType = "r1.session.end"
+	EventR1TaskStart      hub.EventType = "r1.task.start"
+	EventR1TaskEnd        hub.EventType = "r1.task.end"
+	EventR1ACResult       hub.EventType = "r1.ac.result"
+	EventR1DescentStart   hub.EventType = "r1.descent.start"
+	EventR1DescentTier    hub.EventType = "r1.descent.tier"
+	EventR1DescentResolve hub.EventType = "r1.descent.resolve"
+	EventR1Cost           hub.EventType = "r1.cost"
+
+	// Legacy stoke.* aliases — dual-emitted alongside r1.* for the
+	// 60-day window (D-032). Deprecated; remove after 2026-06-25.
 	EventStokePlanReady      hub.EventType = "stoke.plan.ready"
 	EventStokeSessionStart   hub.EventType = "stoke.session.start"
 	EventStokeSessionEnd     hub.EventType = "stoke.session.end"
