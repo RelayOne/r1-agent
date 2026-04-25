@@ -10,6 +10,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/costtrack"
 	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1/internal/verityrename"
 )
 
 // Metadata keys recognized by applyStokeCorrelationHeaders. Callers
@@ -23,6 +24,11 @@ const (
 	MetaTaskID    = "stoke-task-id"
 )
 
+// clientAttributionValue is the frozen value emitted as X-Veritize-Client
+// (and legacy X-Verity-Client) on every outbound inference request.
+// RelayGate records this for attribution in the receipt-hook audit trail.
+const clientAttributionValue = "r1"
+
 // applyStokeCorrelationHeaders copies the three recognized metadata
 // keys onto outbound request headers — setting BOTH the canonical
 // X-R1-* header family AND the legacy X-Stoke-* family with identical
@@ -31,11 +37,21 @@ const (
 // when both present (router-core commit a1ca514). After 2026-05-23
 // the legacy X-Stoke-* emission is dropped per S6-1.
 //
+// In addition it stamps the V1-2 Veritize dual-send attribution headers
+// (X-Veritize-Client + legacy X-Verity-Client) so RelayGate can record
+// R1 provenance in its receipt-hook audit events. Both are emitted
+// through 2026-05-23; after that the legacy emission is dropped per V6-1.
+//
 // Empty keys are skipped on BOTH families rather than emitted as
-// empty strings — RelayGate's audit ingress checks for non-empty
-// values.
+// empty strings — RelayGate's audit ingress checks for non-empty values.
 func applyStokeCorrelationHeaders(req *http.Request, metadata map[string]string) {
-	if req == nil || len(metadata) == 0 {
+	if req == nil {
+		return
+	}
+	// V1-2: dual-send Veritize client attribution on every outbound call.
+	verityrename.DualSend(req.Header, verityrename.ClientHeaderPair, clientAttributionValue)
+
+	if len(metadata) == 0 {
 		return
 	}
 	if v := metadata[MetaSessionID]; v != "" {
