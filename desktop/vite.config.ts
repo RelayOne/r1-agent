@@ -35,6 +35,8 @@ export default defineConfig({
         "panel-skill-catalog": resolve(root, "src/panels/skill-catalog.ts"),
         "panel-mcp-servers": resolve(root, "src/panels/mcp-servers.ts"),
         "panel-observability": resolve(root, "src/panels/observability.ts"),
+        "panel-approval-queue": resolve(root, "src/panels/approval-queue.ts"),
+        "panel-scheduler": resolve(root, "src/panels/scheduler.ts"),
         "panel-cost": resolve(root, "src/panels/cost-panel.ts"),
       },
     },

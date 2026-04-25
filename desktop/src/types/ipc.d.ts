@@ -722,6 +722,14 @@ export type InvokeMethod =
   | "obs_error_timeline"
   | "obs_export_csv"
   | "obs_relaygate_reconcile"
+  // Approval queue + scheduler (R1D-10 UI)
+  | "approval_list"
+  | "approval_decide"
+  | "schedule_list"
+  | "schedule_create"
+  | "schedule_update"
+  | "schedule_delete"
+  | "schedule_run_now"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
@@ -846,4 +854,64 @@ export interface RelayGateReconcileResult {
   relaygate_cost_usd: number;
   delta_usd: number;
   message?: string;
+}
+
+// ---------------------------------------------------------------------
+// Approval queue + scheduler (R1D-10 UI)
+// ---------------------------------------------------------------------
+
+/** Pending operator approval gate from a running autonomous session. */
+export interface ApprovalRequest {
+  id: string;
+  session_id: string;
+  session_title: string;
+  kind: "tool_use" | "filesystem_write" | "network" | "spawn_subagent" | "merge" | "deploy";
+  summary: string;
+  detail?: string;
+  requested_at: Iso8601;
+  expires_at?: Iso8601;
+}
+
+/** Operator decision payload. */
+export interface ApprovalDecision {
+  id: string;
+  decision: "approve" | "reject";
+  comment?: string;
+}
+
+/** Generic ok response. */
+export interface ApprovalOkResult {
+  ok: boolean;
+}
+
+/** A scheduled recurring task. */
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  prompt: string;
+  cron: string;
+  enabled: boolean;
+  skill_pack?: string;
+  provider?: string;
+  budget_usd?: number;
+  last_run_at?: Iso8601;
+  next_run_at?: Iso8601;
+  last_status?: "ok" | "error" | "running";
+}
+
+/** Create / update payload. */
+export interface ScheduleUpsertRequest {
+  id?: string;
+  name: string;
+  prompt: string;
+  cron: string;
+  enabled: boolean;
+  skill_pack?: string;
+  provider?: string;
+  budget_usd?: number;
+}
+
+export interface ScheduleOkResult {
+  ok: boolean;
+  id?: string;
 }

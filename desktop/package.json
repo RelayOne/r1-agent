@@ -30,6 +30,8 @@
     "skill-catalog": "src/panels/skill-catalog.ts",
     "mcp-servers": "src/panels/mcp-servers.ts",
     "observability": "src/panels/observability.ts",
+    "approval-queue": "src/panels/approval-queue.ts",
+    "scheduler": "src/panels/scheduler.ts",
     "cost-panel": "src/panels/cost-panel.ts"
   }
 }

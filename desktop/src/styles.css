@@ -20,14 +20,15 @@ html, body, #app {
 .r1-app-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr 1fr auto auto auto;
+  grid-template-rows: 1fr 1fr 1fr auto auto auto auto;
   grid-template-areas:
-    "sow     descent"
-    "ledger  memory"
-    "skills  skills"
-    "mcp     mcp"
-    "obs     obs"
-    "cost    cost";
+    "sow         descent"
+    "ledger      memory"
+    "skills      skills"
+    "mcp         mcp"
+    "obs         obs"
+    "approvals   scheduler"
+    "cost        cost";
   gap: 1rem;
   padding: 1rem;
 }
@@ -1817,4 +1818,238 @@ html, body, #app {
   height: auto;
   max-height: 140px;
   display: block;
+}
+
+/* R1D-10 approval queue + scheduler */
+.r1-panel-approval-queue { grid-area: approvals; }
+.r1-panel-scheduler { grid-area: scheduler; }
+
+.r1-approval-body,
+.r1-scheduler-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+}
+
+.r1-approval-badge {
+  margin-left: auto;
+  background: #5a1f1f;
+  color: #ff9d9d;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.r1-approval-list,
+.r1-scheduler-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: auto;
+}
+
+.r1-approval-row,
+.r1-scheduler-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  background: #1b1f27;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+}
+
+.r1-approval-row-head,
+.r1-scheduler-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.r1-approval-kind {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 4px;
+  background: #2a3140;
+  color: #b3bccf;
+}
+
+.r1-approval-kind-tool_use { background: #234a6b; color: #9dcbff; }
+.r1-approval-kind-filesystem_write { background: #4a3b1f; color: #f5c449; }
+.r1-approval-kind-network { background: #1f4a34; color: #8fe4b8; }
+.r1-approval-kind-spawn_subagent { background: #3b1f4a; color: #d49dff; }
+.r1-approval-kind-merge { background: #2a3140; color: #b3bccf; }
+.r1-approval-kind-deploy { background: #5a1f1f; color: #ff9d9d; }
+
+.r1-approval-session {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.r1-approval-at,
+.r1-approval-expires {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: #8a93a4;
+}
+
+.r1-approval-summary {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #e6e8ee;
+}
+
+.r1-approval-detail {
+  margin: 0;
+  padding: 0.5rem;
+  background: #0f1115;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #b3bccf;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.r1-approval-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.r1-approval-comment-input {
+  flex: 1 1 auto;
+  background: #0f1115;
+  color: #e6e8ee;
+  border: 1px solid #272c37;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.78rem;
+}
+
+.r1-scheduler-toolbar {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.r1-scheduler-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.r1-scheduler-cron {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  background: #2a3140;
+  color: #b3bccf;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+}
+
+.r1-scheduler-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+}
+
+.r1-scheduler-status-ok { background: #1f4632; color: #79e09a; }
+.r1-scheduler-status-error { background: #5a1f1f; color: #ff9d9d; }
+.r1-scheduler-status-running { background: #234a6b; color: #9dcbff; }
+
+.r1-scheduler-toggle {
+  margin-left: auto;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.r1-scheduler-toggle-on { background: #1f4632; color: #79e09a; }
+.r1-scheduler-toggle-off { background: #2a3140; color: #8a93a4; }
+
+.r1-scheduler-prompt {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #b3bccf;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.r1-scheduler-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.r1-scheduler-meta {
+  font-size: 0.72rem;
+  color: #8a93a4;
+  margin-right: auto;
+}
+
+.r1-scheduler-dialog {
+  border: 1px solid #272c37;
+  border-radius: 8px;
+  background: #171a21;
+  color: #e6e8ee;
+  padding: 1rem;
+  min-width: 420px;
+}
+
+.r1-scheduler-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.r1-scheduler-form h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.95rem;
+}
+
+.r1-scheduler-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #b3bccf;
+}
+
+.r1-scheduler-form input,
+.r1-scheduler-form textarea {
+  background: #0f1115;
+  color: #e6e8ee;
+  border: 1px solid #272c37;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.r1-scheduler-form-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.r1-btn-danger {
+  background: #5a1f1f;
+  color: #ff9d9d;
+  border-color: #6b2424;
 }

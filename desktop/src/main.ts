@@ -31,6 +31,8 @@ import { renderPanel as renderCostPanel } from "./panels/cost-panel";
 import { renderPanel as renderSkillCatalog } from "./panels/skill-catalog";
 import { renderPanel as renderMCPServers } from "./panels/mcp-servers";
 import { renderPanel as renderObservability } from "./panels/observability";
+import { renderPanel as renderApprovalQueue } from "./panels/approval-queue";
+import { renderPanel as renderScheduler } from "./panels/scheduler";
 import { mountDrawer as mountDescentEvidenceDrawer } from "./panels/descent-evidence";
 import { mountNodeDrawer as mountLedgerNodeDrawer } from "./panels/ledger-node-drawer";
 import {
@@ -40,7 +42,17 @@ import {
 
 type PanelEntry = {
   id: string;
-  gridArea: "sow" | "descent" | "ledger" | "memory" | "skills" | "mcp" | "obs" | "cost";
+  gridArea:
+    | "sow"
+    | "descent"
+    | "ledger"
+    | "memory"
+    | "skills"
+    | "mcp"
+    | "obs"
+    | "approvals"
+    | "scheduler"
+    | "cost";
   render: (root: HTMLElement) => void;
 };
 
@@ -52,6 +64,8 @@ const PANELS: PanelEntry[] = [
   { id: "panel-skill-catalog", gridArea: "skills", render: renderSkillCatalog },
   { id: "panel-mcp-servers", gridArea: "mcp", render: renderMCPServers },
   { id: "panel-observability", gridArea: "obs", render: renderObservability },
+  { id: "panel-approval-queue", gridArea: "approvals", render: renderApprovalQueue },
+  { id: "panel-scheduler", gridArea: "scheduler", render: renderScheduler },
   { id: "panel-cost", gridArea: "cost", render: renderCostPanel },
 ];
 
