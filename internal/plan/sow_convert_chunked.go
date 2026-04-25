@@ -37,9 +37,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/fanout"
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/fanout"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // chunkedSkeletonPrompt asks the model to extract just the

@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/RelayOne/r1/internal/chat"
-	"github.com/RelayOne/r1/internal/litellm"
+	"github.com/RelayOne/r1-agent/internal/chat"
+	"github.com/RelayOne/r1-agent/internal/litellm"
 )
 
 // recordingDispatcher captures which dispatcher method the chat session

@@ -17,11 +17,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/agentserve"
-	"github.com/RelayOne/r1/internal/deploy"
-	"github.com/RelayOne/r1/internal/executor"
-	"github.com/RelayOne/r1/internal/r1env"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/agentserve"
+	"github.com/RelayOne/r1-agent/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
 )
 
 // agentServeCmd handles `stoke agent-serve` — the hireable-agent

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/mission"
-	"github.com/RelayOne/r1/internal/orchestrate"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/mission"
+	"github.com/RelayOne/r1-agent/internal/orchestrate"
 )
 
 // missionCmd dispatches to mission subcommands.

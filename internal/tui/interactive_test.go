@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // --- Model Creation ---

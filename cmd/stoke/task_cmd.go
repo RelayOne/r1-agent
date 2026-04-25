@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/executor"
-	"github.com/RelayOne/r1/internal/router"
+	"github.com/RelayOne/r1-agent/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/router"
 )
 
 // taskCmd is the thin `stoke task "..."` entry point added by

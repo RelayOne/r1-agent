@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // TestGhostWriteRetry exercises the descent_bridge wrapper that wires

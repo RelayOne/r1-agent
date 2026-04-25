@@ -9,7 +9,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/memory/membus"
+	"github.com/RelayOne/r1-agent/internal/memory/membus"
 )
 
 func newTestBus(t *testing.T) *membus.Bus {

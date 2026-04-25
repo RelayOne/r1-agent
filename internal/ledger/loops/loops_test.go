@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 func newTestLedger(t *testing.T) *ledger.Ledger {

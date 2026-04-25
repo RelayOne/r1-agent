@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/config"
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/model"
-	"github.com/RelayOne/r1/internal/stream"
-	"github.com/RelayOne/r1/internal/taskstate"
-	"github.com/RelayOne/r1/internal/verify"
-	"github.com/RelayOne/r1/internal/wisdom"
+	"github.com/RelayOne/r1-agent/internal/config"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/model"
+	"github.com/RelayOne/r1-agent/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/taskstate"
+	"github.com/RelayOne/r1-agent/internal/verify"
+	"github.com/RelayOne/r1-agent/internal/wisdom"
 )
 
 // TestE2EWorkflowSuccess exercises the full plan→execute→verify pipeline

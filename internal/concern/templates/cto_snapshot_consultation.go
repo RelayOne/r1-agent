@@ -1,8 +1,8 @@
 package templates
 
 import (
-	"github.com/RelayOne/r1/internal/concern"
-	"github.com/RelayOne/r1/internal/concern/sections"
+	"github.com/RelayOne/r1-agent/internal/concern"
+	"github.com/RelayOne/r1-agent/internal/concern/sections"
 )
 
 // CTOSnapshotConsultation returns the template for a CTO snapshot consultation.

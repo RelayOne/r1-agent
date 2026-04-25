@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1-agent/internal/env"
 )
 
 // mockDockerRun records calls and returns scripted responses.

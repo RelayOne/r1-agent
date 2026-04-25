@@ -47,7 +47,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 // Scope controls who sees a memory via Recall. Exactly one value per row.

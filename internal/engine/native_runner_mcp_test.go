@@ -29,9 +29,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/mcp"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/mcp"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // fakeMCPProvider is a minimal provider.Provider used to snapshot

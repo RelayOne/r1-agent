@@ -31,8 +31,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
 )
 
 // eventlogCmd dispatches to the `stoke eventlog <verb>` subcommands.

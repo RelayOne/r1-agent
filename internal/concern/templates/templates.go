@@ -3,8 +3,8 @@
 package templates
 
 import (
-	"github.com/RelayOne/r1/internal/concern"
-	"github.com/RelayOne/r1/internal/concern/sections"
+	"github.com/RelayOne/r1-agent/internal/concern"
+	"github.com/RelayOne/r1-agent/internal/concern/sections"
 )
 
 // All returns every registered template keyed by name.

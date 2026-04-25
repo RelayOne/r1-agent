@@ -36,7 +36,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // ClarifyUnknownAnswer is the sentinel string the worker sees when the

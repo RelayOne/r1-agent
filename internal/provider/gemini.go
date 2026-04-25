@@ -27,7 +27,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // GeminiProvider is a thin HTTP client for Google's Gemini API.

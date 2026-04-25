@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // --- Smart 15: RawSOW injection tests ---

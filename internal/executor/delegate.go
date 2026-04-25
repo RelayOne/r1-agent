@@ -46,11 +46,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/a2a"
-	"github.com/RelayOne/r1/internal/delegation"
-	"github.com/RelayOne/r1/internal/hire"
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/a2a"
+	"github.com/RelayOne/r1-agent/internal/delegation"
+	"github.com/RelayOne/r1-agent/internal/hire"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
 )
 
 // DeliveryWaiter blocks until the hired agent has produced a

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 func TestModificationRequiresCTO_Evaluate_CrossBranchFile(t *testing.T) {

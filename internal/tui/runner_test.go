@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 func TestTaskStartComplete(t *testing.T) {

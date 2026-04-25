@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // ParallelSessions, when > 0, enables the DAG-driven parallel runner.

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // SupervisorType distinguishes the three supervisor tiers.

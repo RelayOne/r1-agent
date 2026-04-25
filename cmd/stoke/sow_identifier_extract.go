@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // sowIdentifierExtractor scans raw SOW text and produces a map from

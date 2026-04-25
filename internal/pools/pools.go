@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // StorePath returns ~/.stoke/pools. Panics if the home directory cannot

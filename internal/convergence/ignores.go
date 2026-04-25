@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // IgnoreEntry is a single ignore rule that suppresses a specific finding

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // writeFixture helper: drops a .stoke/r1.session.json under repoRoot

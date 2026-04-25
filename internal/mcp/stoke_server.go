@@ -46,8 +46,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/logging"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // maxLogBytes caps the size of any single mission stdout/stderr log. When the

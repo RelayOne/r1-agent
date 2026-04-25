@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
 )
 
 // seedLog opens a fresh events.db in a tempdir and appends the given

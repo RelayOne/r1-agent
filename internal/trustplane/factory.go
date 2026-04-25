@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/secrets"
+	"github.com/RelayOne/r1-agent/internal/secrets"
 )
 
 // Mode selects which Client implementation NewFromEnv returns.

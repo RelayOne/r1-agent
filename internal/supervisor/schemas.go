@@ -16,7 +16,7 @@
 
 package supervisor
 
-import "github.com/RelayOne/r1/internal/schemaval"
+import "github.com/RelayOne/r1-agent/internal/schemaval"
 
 // WorkerPausedSchema is the shape for bus.EvtWorkerPaused events:
 // pause a running worker with a reason. Used by 9 rules across

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/mission"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/mission"
 )
 
 // mockRunner captures the RunSpec passed to Run for inspection.

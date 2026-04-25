@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/perflog"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/perflog"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // TaskWorkVerdict is the LLM reviewer's ruling on a worker's task output.

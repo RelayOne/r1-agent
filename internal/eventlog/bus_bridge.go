@@ -3,7 +3,7 @@ package eventlog
 import (
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 // EmitBus is the single blessed bridge between the durable event log and

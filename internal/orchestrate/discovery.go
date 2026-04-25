@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/goast"
-	"github.com/RelayOne/r1/internal/mcp"
-	"github.com/RelayOne/r1/internal/mission"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/goast"
+	"github.com/RelayOne/r1-agent/internal/mcp"
+	"github.com/RelayOne/r1-agent/internal/mission"
 )
 
 // DiscoveryEngine provides AST-enriched, multi-phase model discovery.

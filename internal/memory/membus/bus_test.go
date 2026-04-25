@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 // openTestDB returns a fresh SQLite handle rooted in t.TempDir. The WAL

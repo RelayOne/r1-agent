@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/RelayOne/r1/internal/env/ember"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/env/ember"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // EmberProvider implements Provider using Ember's managed AI endpoint.

@@ -19,7 +19,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/oklog/ulid/v2"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 //go:embed schema.sql

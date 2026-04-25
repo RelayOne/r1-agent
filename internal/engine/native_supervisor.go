@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/agentloop"
+	"github.com/RelayOne/r1-agent/internal/agentloop"
 )
 
 // SpecExpectation describes what a specific file is supposed to contain

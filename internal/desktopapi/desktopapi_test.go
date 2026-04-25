@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/stokerr"
+	"github.com/RelayOne/r1-agent/internal/stokerr"
 )
 
 // TestErrNotImplementedShape verifies the sentinel error carries the

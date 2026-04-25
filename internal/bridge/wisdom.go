@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
-	"github.com/RelayOne/r1/internal/wisdom"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/wisdom"
 )
 
 // WisdomBridge wraps a wisdom.Store and emits bus events when learnings are recorded.

@@ -27,7 +27,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/goast"
+	"github.com/RelayOne/r1-agent/internal/goast"
 )
 
 // symbolKind classifies extracted code symbols.

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 func TestBuildSOWNativePrompt_IncludesAllContext(t *testing.T) {

@@ -40,8 +40,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/retention"
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/retention"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // Version is the build-identifier reported by /api/health and

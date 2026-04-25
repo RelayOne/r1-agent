@@ -39,8 +39,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // sessionSizerTaskFloor is the minimum task count below which the

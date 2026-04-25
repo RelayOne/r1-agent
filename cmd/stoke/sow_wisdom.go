@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/wisdom"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/wisdom"
 )
 
 // sessionWisdomExtractPrompt asks the model to distill a completed session

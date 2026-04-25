@@ -41,8 +41,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // FixDAGTask is one node in a promoted fix DAG. Maps 1:1 onto

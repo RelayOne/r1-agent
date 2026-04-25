@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1-agent/internal/env"
 )
 
 func TestProvisionAndExec(t *testing.T) {

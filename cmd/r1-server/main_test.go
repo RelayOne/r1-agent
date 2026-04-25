@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // newTestDB opens a fresh SQLite DB under t.TempDir() so each test

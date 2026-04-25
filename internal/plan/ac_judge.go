@@ -22,9 +22,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/perflog"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/perflog"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // SemanticVerdict is the LLM judge's ruling on a failed mechanical check.

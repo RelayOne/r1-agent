@@ -3,8 +3,8 @@ package hub
 import (
 	"context"
 
-	"github.com/RelayOne/r1/internal/consent"
-	"github.com/RelayOne/r1/internal/flowtrack"
+	"github.com/RelayOne/r1-agent/internal/consent"
+	"github.com/RelayOne/r1-agent/internal/flowtrack"
 )
 
 // WisdomSubscriber creates a hub subscriber that records task outcomes as wisdom learnings.

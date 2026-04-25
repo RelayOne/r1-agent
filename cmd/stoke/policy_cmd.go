@@ -36,8 +36,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/RelayOne/r1/internal/policy"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/policy"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // policyCmd is the public entry wired into main.go's subcommand switch.

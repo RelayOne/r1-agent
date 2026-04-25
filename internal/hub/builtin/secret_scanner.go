@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // SecretScanner is a gate subscriber that denies file writes containing

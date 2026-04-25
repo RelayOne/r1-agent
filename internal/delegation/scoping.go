@@ -27,7 +27,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
 )
 
 // DelegationContext carries the authority state of a delegated

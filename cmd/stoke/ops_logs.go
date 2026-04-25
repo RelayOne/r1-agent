@@ -22,8 +22,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/RelayOne/r1/internal/eventlog"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // runLogsCmd implements `stoke logs`. Exit-code convention matches

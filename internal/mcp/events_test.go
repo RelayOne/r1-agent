@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // forbiddenKeys are payload keys that MUST NEVER appear on any MCP

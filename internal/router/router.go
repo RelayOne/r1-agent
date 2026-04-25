@@ -11,7 +11,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/executor"
 )
 
 // ErrNoExecutor is returned by Dispatch when the router has no

@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
-	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/executor"
 	"github.com/google/uuid"
 )
 

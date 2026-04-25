@@ -43,7 +43,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // memoryBusSchemaDDL creates the read-side projection of the memory

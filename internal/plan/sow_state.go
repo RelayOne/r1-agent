@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // SOWState persists SOW execution progress so an interrupted or failed run

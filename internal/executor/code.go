@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // CodeExecutor wraps the existing SOW / descent pipeline in

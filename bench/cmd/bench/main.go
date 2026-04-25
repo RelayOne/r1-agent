@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/bench/cost"
-	"github.com/RelayOne/r1/bench/harnesses"
-	"github.com/RelayOne/r1/bench/judge"
-	"github.com/RelayOne/r1/bench/reports"
+	"github.com/RelayOne/r1-agent/bench/cost"
+	"github.com/RelayOne/r1-agent/bench/harnesses"
+	"github.com/RelayOne/r1-agent/bench/judge"
+	"github.com/RelayOne/r1-agent/bench/reports"
 )
 
 func main() {

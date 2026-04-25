@@ -1,13 +1,14 @@
-module github.com/RelayOne/r1
+module github.com/RelayOne/r1-agent
 
 go 1.25.5
 
-// S2-1 (work-r1-rename) — module renamed from
-// github.com/ericmacdougall/stoke to github.com/RelayOne/r1 to fix
-// the portfolio-org gap (the repo moved from an individual account
-// to the RelayOne org). Pre-rename versions under the legacy path
-// are retracted below; importers should migrate to the new path.
+// S2-1 v2 (D-009 / D-014) — module path is github.com/RelayOne/r1-agent (canonical).
+// Prior paths are retracted:
+//   github.com/ericmacdougall/stoke — original individual-account path
+//   github.com/RelayOne/r1          — intermediate path (S2-1 v1, commit 58c961e)
+// Importers must migrate to github.com/RelayOne/r1-agent.
 retract [v0.0.0, v0.99.0] // pre-rename individual-account path (github.com/ericmacdougall/stoke)
+retract [v0.0.0, v0.99.0] // intermediate path (github.com/RelayOne/r1, S2-1 v1)
 
 require (
 	github.com/99designs/keyring v1.2.2

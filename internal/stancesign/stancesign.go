@@ -41,7 +41,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // Identity is a resolved per-stance signing identity.

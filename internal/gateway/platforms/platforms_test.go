@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/gateway"
+	"github.com/RelayOne/r1-agent/internal/gateway"
 )
 
 func TestMemoryClient_RoundTrip(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hitl"
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/hitl"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // Spec-2 item 12 validates the HITL stdin reader pattern (RT-04 §7):

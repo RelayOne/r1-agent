@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // Data-dir dual-resolve window per work-r1-rename.md S1-5. The window

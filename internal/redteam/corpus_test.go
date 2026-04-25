@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/promptguard"
+	"github.com/RelayOne/r1-agent/internal/promptguard"
 )
 
 // runPromptguardCategory scans every .txt/.md file under corpus/<cat>/

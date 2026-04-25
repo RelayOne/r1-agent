@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/RelayOne/r1/internal/audit"
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/audit"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // AuditBridge wraps audit report recording into bus events and ledger nodes.

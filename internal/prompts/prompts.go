@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/prompt"
-	"github.com/RelayOne/r1/internal/vecindex"
+	"github.com/RelayOne/r1-agent/internal/prompt"
+	"github.com/RelayOne/r1-agent/internal/vecindex"
 )
 
 // RenderRelevantTools produces a formatted "Relevant

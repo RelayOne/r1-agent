@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // LatestWorkerLogForTask returns the most-recently-written worker JSONL log

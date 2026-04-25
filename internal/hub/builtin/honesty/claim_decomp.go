@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // ClaimDecomposer is an observe subscriber that runs after task completion.

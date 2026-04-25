@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // EnvDeprecationDate is the announced sunset for legacy STOKE_* env

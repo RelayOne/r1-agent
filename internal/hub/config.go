@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // HookConfig represents the hub configuration from .stoke/hooks.json.

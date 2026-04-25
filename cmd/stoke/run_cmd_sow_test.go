@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hitl"
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/hitl"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // TestDispatchCloudSwarmSOWParsesAndAnnounces verifies the real SOW

@@ -31,8 +31,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // FallbackProvider implements provider.Provider by delegating to a

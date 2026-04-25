@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/ledger"
-	"github.com/RelayOne/r1/internal/research"
-	"github.com/RelayOne/r1/internal/wisdom"
+	"github.com/RelayOne/r1-agent/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/research"
+	"github.com/RelayOne/r1-agent/internal/wisdom"
 )
 
 // MemoryServer exposes Stoke's persistent stores as MCP tools.

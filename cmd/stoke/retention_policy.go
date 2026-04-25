@@ -14,7 +14,7 @@
 package main
 
 import (
-	"github.com/RelayOne/r1/internal/retention"
+	"github.com/RelayOne/r1-agent/internal/retention"
 )
 
 // buildRetentionPolicy returns the retention.Policy for this run. When

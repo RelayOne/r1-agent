@@ -28,7 +28,7 @@
 package ctxpack
 
 import (
-	"github.com/RelayOne/r1/internal/microcompact"
+	"github.com/RelayOne/r1-agent/internal/microcompact"
 )
 
 // ContextEngine is the threshold-policy contract. The default

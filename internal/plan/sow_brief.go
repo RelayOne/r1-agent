@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // TaskBriefing is what the lead dev hands to a worker before dispatch. It

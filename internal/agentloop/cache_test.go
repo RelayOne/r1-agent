@@ -3,7 +3,7 @@ package agentloop
 import (
 	"testing"
 
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 func TestSortToolsDeterministic(t *testing.T) {

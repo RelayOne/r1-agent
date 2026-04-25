@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/goast"
+	"github.com/RelayOne/r1-agent/internal/goast"
 )
 
 // Symbol represents a code symbol (function, type, method, const).

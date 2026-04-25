@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // BridgeHubToEventBus registers a wildcard observer on the hub.Bus that

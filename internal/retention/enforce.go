@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/memory/membus"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/memory/membus"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // SweepResult tallies what a single EnforceSweep pass removed. All four

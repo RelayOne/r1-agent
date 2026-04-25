@@ -12,7 +12,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 // tempLog creates a Log in a per-test temp dir and schedules its cleanup.

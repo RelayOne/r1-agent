@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/websearch"
+	"github.com/RelayOne/r1-agent/internal/websearch"
 )
 
 func TestFeasibilityShippableWhenNoServices(t *testing.T) {

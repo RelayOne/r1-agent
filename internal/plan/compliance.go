@@ -32,7 +32,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/logging"
 )
 
 // ComplianceVerdict is the per-deliverable classification.

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // ImportChecker is a gate subscriber that scans newly added imports against

@@ -19,7 +19,7 @@
 package main
 
 import (
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // emitSessionStart announces a session boot on the streamjson wire.

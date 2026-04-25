@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/logging"
 )
 
 // Commands holds build/test/lint commands for a project.

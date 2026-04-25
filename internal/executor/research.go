@@ -43,9 +43,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/research"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/research"
 )
 
 // ResearchExecutor satisfies Executor for TaskResearch. It runs

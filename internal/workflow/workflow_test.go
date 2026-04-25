@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/config"
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/failure"
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/model"
-	"github.com/RelayOne/r1/internal/subscriptions"
-	"github.com/RelayOne/r1/internal/taskstate"
-	"github.com/RelayOne/r1/internal/verify"
-	"github.com/RelayOne/r1/internal/worktree"
+	"github.com/RelayOne/r1-agent/internal/config"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/failure"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/model"
+	"github.com/RelayOne/r1-agent/internal/subscriptions"
+	"github.com/RelayOne/r1-agent/internal/taskstate"
+	"github.com/RelayOne/r1-agent/internal/verify"
+	"github.com/RelayOne/r1-agent/internal/worktree"
 )
 
 func TestDryRunWorkflowBuildsCommands(t *testing.T) {

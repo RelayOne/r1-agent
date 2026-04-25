@@ -1,8 +1,8 @@
 package manifests
 
 import (
-	"github.com/RelayOne/r1/internal/supervisor"
-	"github.com/RelayOne/r1/internal/supervisor/rules/sdm"
+	"github.com/RelayOne/r1-agent/internal/supervisor"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/sdm"
 )
 
 // SDMRules returns all rules loaded by the SDM supervisor.

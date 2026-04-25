@@ -32,15 +32,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/baseline"
-	"github.com/RelayOne/r1/internal/config"
-	"github.com/RelayOne/r1/internal/convergence"
-	"github.com/RelayOne/r1/internal/depgraph"
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/prompts"
-	"github.com/RelayOne/r1/internal/skill"
-	"github.com/RelayOne/r1/internal/symindex"
-	"github.com/RelayOne/r1/internal/tfidf"
+	"github.com/RelayOne/r1-agent/internal/baseline"
+	"github.com/RelayOne/r1-agent/internal/config"
+	"github.com/RelayOne/r1-agent/internal/convergence"
+	"github.com/RelayOne/r1-agent/internal/depgraph"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/prompts"
+	"github.com/RelayOne/r1-agent/internal/skill"
+	"github.com/RelayOne/r1-agent/internal/symindex"
+	"github.com/RelayOne/r1-agent/internal/tfidf"
 )
 
 // HandlerDeps bundles the dependencies that phase handlers need.

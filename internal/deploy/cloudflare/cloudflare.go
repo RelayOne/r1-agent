@@ -54,10 +54,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/deploy"
-	"github.com/RelayOne/r1/internal/logging"
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // wranglerMinMajor is the minimum Wrangler major version the adapter

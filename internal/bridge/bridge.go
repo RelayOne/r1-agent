@@ -1,7 +1,7 @@
 // Package bridge wires v1 runtime components into the v2 bus and ledger.
 package bridge
 
-import "github.com/RelayOne/r1/internal/bus"
+import "github.com/RelayOne/r1-agent/internal/bus"
 
 // Bridge event types for v1 component integration.
 const (

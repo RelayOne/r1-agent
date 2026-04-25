@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // toEngineSupervisor translates a specSupervisorSpec into the

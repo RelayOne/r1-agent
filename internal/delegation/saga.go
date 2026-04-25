@@ -44,7 +44,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/workunit"
+	"github.com/RelayOne/r1-agent/internal/workunit"
 )
 
 // SettlementKind names the three settlement policies.

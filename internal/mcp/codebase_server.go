@@ -28,10 +28,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/depgraph"
-	"github.com/RelayOne/r1/internal/symindex"
-	"github.com/RelayOne/r1/internal/tfidf"
-	"github.com/RelayOne/r1/internal/vecindex"
+	"github.com/RelayOne/r1-agent/internal/depgraph"
+	"github.com/RelayOne/r1-agent/internal/symindex"
+	"github.com/RelayOne/r1-agent/internal/tfidf"
+	"github.com/RelayOne/r1-agent/internal/vecindex"
 )
 
 // Error messages returned when a backing index/graph is not loaded.

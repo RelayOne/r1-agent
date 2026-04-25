@@ -30,8 +30,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
 )
 
 // runEventsCmd implements `stoke events`. Returns an exit code rather

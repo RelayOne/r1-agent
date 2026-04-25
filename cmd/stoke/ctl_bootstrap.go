@@ -24,8 +24,8 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/RelayOne/r1/internal/r1env"
-	"github.com/RelayOne/r1/internal/sessionctl"
+	"github.com/RelayOne/r1-agent/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/sessionctl"
 )
 
 // startSessionCtlServer is called at the top of every long-lived entry

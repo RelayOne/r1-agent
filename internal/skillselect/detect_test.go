@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/skill"
+	"github.com/RelayOne/r1-agent/internal/skill"
 )
 
 // --- Layer 1: File presence tests ---

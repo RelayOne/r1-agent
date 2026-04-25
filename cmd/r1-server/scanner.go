@@ -30,7 +30,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // ScannerConfig controls scanner timing + search paths. Zero values

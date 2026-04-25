@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/apiclient"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/apiclient"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // Stream-event types and result subtypes used when translating

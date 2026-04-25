@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/promptguard"
+	"github.com/RelayOne/r1-agent/internal/promptguard"
 )
 
 // MaxToolOutputBytes caps the size of any single tool_result content

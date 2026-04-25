@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1-agent/internal/costtrack"
 )
 
 func newTestDashboardServer() (*Server, *DashboardState) {

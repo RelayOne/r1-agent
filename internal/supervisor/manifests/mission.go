@@ -6,15 +6,15 @@
 package manifests
 
 import (
-	"github.com/RelayOne/r1/internal/supervisor"
-	"github.com/RelayOne/r1/internal/supervisor/rules/consensus"
-	crossteam "github.com/RelayOne/r1/internal/supervisor/rules/cross_team"
-	"github.com/RelayOne/r1/internal/supervisor/rules/drift"
-	"github.com/RelayOne/r1/internal/supervisor/rules/hierarchy"
-	"github.com/RelayOne/r1/internal/supervisor/rules/research"
-	"github.com/RelayOne/r1/internal/supervisor/rules/skill"
-	"github.com/RelayOne/r1/internal/supervisor/rules/snapshot"
-	"github.com/RelayOne/r1/internal/supervisor/rules/trust"
+	"github.com/RelayOne/r1-agent/internal/supervisor"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/consensus"
+	crossteam "github.com/RelayOne/r1-agent/internal/supervisor/rules/cross_team"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/drift"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/hierarchy"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/research"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/skill"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/snapshot"
+	"github.com/RelayOne/r1-agent/internal/supervisor/rules/trust"
 )
 
 // MissionRules returns all rules loaded by the mission supervisor.

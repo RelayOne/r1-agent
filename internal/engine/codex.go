@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/costtrack"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/costtrack"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // CodexRunner executes tasks via the Codex CLI with process group isolation and stderr rate-limit detection.

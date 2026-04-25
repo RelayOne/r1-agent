@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/config"
-	"github.com/RelayOne/r1/internal/costtrack"
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/model"
-	"github.com/RelayOne/r1/internal/taskstate"
-	"github.com/RelayOne/r1/internal/verify"
+	"github.com/RelayOne/r1-agent/internal/config"
+	"github.com/RelayOne/r1-agent/internal/costtrack"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/model"
+	"github.com/RelayOne/r1-agent/internal/taskstate"
+	"github.com/RelayOne/r1-agent/internal/verify"
 )
 
 // TestWorkflowBudgetHaltE2E is the R1-3 end-to-end assertion for the

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // JudgeRelevance filters a list of candidate skill matches through the

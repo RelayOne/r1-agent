@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1-agent/internal/config"
 )
 
 // CommandResult captures the outcome of running a single verification command.

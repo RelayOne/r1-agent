@@ -39,7 +39,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // VerifyRequest is the JSON body accepted by POST /verify.

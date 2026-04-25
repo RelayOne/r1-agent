@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // Reuse the mockProvider type defined in sow_convert_test.go (same package).

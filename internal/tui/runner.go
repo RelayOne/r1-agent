@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // Runner prints structured text updates. Zero external dependencies.

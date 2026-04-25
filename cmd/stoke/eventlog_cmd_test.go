@@ -15,8 +15,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
 )
 
 // TestEventlog_NoVerb prints usage and exits 2.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // CostTracker is an observe subscriber that records per-call cost from model

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // TestBudgetHaltFlow asserts the site claim "per-build budget

@@ -39,8 +39,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/logging"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 func init() {

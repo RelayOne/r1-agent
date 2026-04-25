@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/encryption"
+	"github.com/RelayOne/r1-agent/internal/encryption"
 )
 
 // TestOpenSQLiteStore_PlaintextPath — default path continues to work.

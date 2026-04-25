@@ -14,7 +14,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // resolveSmartDefaultsWithPool wraps detectSmartDefaults with a

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/deploy"
 )
 
 func TestRunDeployCmd_DryRun(t *testing.T) {

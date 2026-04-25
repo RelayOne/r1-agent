@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/engine"
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/engine"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // clarifyToolDescription is the tool-use guidance the worker sees. It

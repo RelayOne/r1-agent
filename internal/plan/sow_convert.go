@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // dumpRespMu serializes the debug dump writes so two concurrent

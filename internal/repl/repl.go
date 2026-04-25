@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/conversation"
-	"github.com/RelayOne/r1/internal/interview"
-	"github.com/RelayOne/r1/internal/skill"
-	"github.com/RelayOne/r1/internal/viewport"
+	"github.com/RelayOne/r1-agent/internal/conversation"
+	"github.com/RelayOne/r1-agent/internal/interview"
+	"github.com/RelayOne/r1-agent/internal/skill"
+	"github.com/RelayOne/r1-agent/internal/viewport"
 )
 
 // Command is a slash command handler.

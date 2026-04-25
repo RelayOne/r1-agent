@@ -49,7 +49,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // ---------------------------------------------------------------------------

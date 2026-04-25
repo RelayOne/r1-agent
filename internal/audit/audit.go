@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/scan"
+	"github.com/RelayOne/r1-agent/internal/scan"
 )
 
 // Canonical persona and severity identifiers reused across audit callers.

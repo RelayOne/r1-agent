@@ -10,8 +10,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // SQLStore is a SQLite-backed session store for crash recovery and learning.

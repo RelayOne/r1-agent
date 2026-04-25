@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/consent"
-	"github.com/RelayOne/r1/internal/flowtrack"
+	"github.com/RelayOne/r1-agent/internal/consent"
+	"github.com/RelayOne/r1-agent/internal/flowtrack"
 )
 
 func TestFileProtectionGate(t *testing.T) {

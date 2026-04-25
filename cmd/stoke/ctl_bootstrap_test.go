@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/sessionctl"
+	"github.com/RelayOne/r1-agent/internal/sessionctl"
 )
 
 // TestStartSessionCtlServer_Listens checks that the helper binds a real

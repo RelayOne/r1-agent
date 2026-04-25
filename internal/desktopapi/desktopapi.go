@@ -23,7 +23,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/RelayOne/r1/internal/stokerr"
+	"github.com/RelayOne/r1-agent/internal/stokerr"
 )
 
 // ---------------------------------------------------------------------

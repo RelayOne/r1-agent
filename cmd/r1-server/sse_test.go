@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // seedStreamSession creates a running session plus n events so SSE

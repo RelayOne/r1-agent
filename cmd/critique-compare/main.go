@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 type raw struct {

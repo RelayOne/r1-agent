@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // ProviderOptions describes the inputs needed to stand up a chat-capable

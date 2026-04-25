@@ -3,7 +3,7 @@ package model
 import (
 	"strings"
 
-	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1-agent/internal/costtrack"
 )
 
 // TaskType classifies a task for benchmark-backed model routing (e.g., plan, refactor, security).

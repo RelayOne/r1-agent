@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // agentVerdict is the JSON shape the repair agent must emit once it

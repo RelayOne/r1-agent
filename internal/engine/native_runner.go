@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/agentloop"
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/mcp"
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
-	"github.com/RelayOne/r1/internal/tools"
+	"github.com/RelayOne/r1-agent/internal/agentloop"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/mcp"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/tools"
 )
 
 // MCPRegistry is the minimal surface the native runner needs from

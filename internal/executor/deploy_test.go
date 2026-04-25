@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/deploy"
 )
 
 func TestDeployExecutor_TaskType(t *testing.T) {

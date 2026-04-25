@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // Fetcher is the minimal interface the verifier (and the executor)
@@ -71,7 +71,7 @@ func NewHTTPFetcher() *HTTPFetcher {
 	return &HTTPFetcher{
 		Client:     &http.Client{Timeout: 20 * time.Second},
 		Allowlist:  allow,
-		UserAgent:  "stoke-research/1.0 (+https://github.com/RelayOne/r1)",
+		UserAgent:  "stoke-research/1.0 (+https://github.com/RelayOne/r1-agent)",
 		MaxBody:    MaxBodyBytes,
 		RequireTLS: r1env.Get("R1_RESEARCH_REQUIRE_TLS", "STOKE_RESEARCH_REQUIRE_TLS") == "1",
 	}

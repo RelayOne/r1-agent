@@ -50,7 +50,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/skillmfr"
+	"github.com/RelayOne/r1-agent/internal/skillmfr"
 )
 
 // builtinManifestVersion is the shared version stamped onto

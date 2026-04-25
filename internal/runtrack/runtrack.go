@@ -28,7 +28,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // Manifest describes a live stoke process instance. Written on start,

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
-	"github.com/RelayOne/r1/internal/wisdom"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/wisdom"
 )
 
 // --- mock provider for wisdom + cross-review tests ---

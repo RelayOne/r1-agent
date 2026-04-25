@@ -15,9 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/research"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/research"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // stubProvider is a minimal provider.Provider implementation that

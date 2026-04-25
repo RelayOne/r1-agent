@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
-	"github.com/RelayOne/r1/internal/schemaval"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/schemaval"
 )
 
 // Timeout handles researcher timeout events. If the researcher has not yet

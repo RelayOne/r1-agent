@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // SignatureVersion is the current schema version for r1.session.json.

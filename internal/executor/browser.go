@@ -31,8 +31,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/browser"
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/browser"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // BrowserExecutor satisfies Executor for TaskBrowser. Client is the

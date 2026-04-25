@@ -15,8 +15,8 @@ package main
 import (
 	"encoding/json"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // descentSubtypeFor maps a bus event type to its streamjson subtype.

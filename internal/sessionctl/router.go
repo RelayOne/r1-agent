@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/operator"
+	"github.com/RelayOne/r1-agent/internal/operator"
 )
 
 // Decision captures an operator's answer to an Ask.

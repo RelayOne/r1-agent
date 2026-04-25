@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/executor"
 )
 
 // TestCancelTask_Running drives a long-running executor, hits

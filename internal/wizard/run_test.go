@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/skillselect"
+	"github.com/RelayOne/r1-agent/internal/skillselect"
 )
 
 func TestRunWizardYesMode(t *testing.T) {

@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/ledger"
-	"github.com/RelayOne/r1/internal/schemaval"
-	"github.com/RelayOne/r1/internal/supervisor"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/schemaval"
+	"github.com/RelayOne/r1-agent/internal/supervisor"
 )
 
 // PartnerTimeout handles a delayed timeout event for a consensus partner.

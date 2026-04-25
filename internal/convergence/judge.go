@@ -26,9 +26,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/promptguard"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/promptguard"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // sanitizeFileSnippets returns a copy of the JudgeContext with every

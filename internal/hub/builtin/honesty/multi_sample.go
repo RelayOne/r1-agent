@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/hub"
-	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/provider"
 )
 
 // MultiSampleChecker re-runs high-stakes tasks N times and applies

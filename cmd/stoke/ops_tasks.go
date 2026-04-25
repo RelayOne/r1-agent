@@ -25,8 +25,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/eventlog"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/eventlog"
 )
 
 // taskSummary collects per-task aggregates produced while iterating the

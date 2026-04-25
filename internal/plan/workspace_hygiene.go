@@ -42,7 +42,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/fileutil"
+	"github.com/RelayOne/r1-agent/internal/fileutil"
 )
 
 // ExecutorKind identifies a package/build ecosystem present in a

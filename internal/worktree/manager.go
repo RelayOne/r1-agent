@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/conflictres"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/conflictres"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // Manager creates, merges, and cleans up git worktrees, serializing merges via a mutex to prevent ref corruption.

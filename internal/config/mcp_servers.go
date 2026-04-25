@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1-agent/internal/mcp"
 	"gopkg.in/yaml.v3"
 )
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 type CodexProvider struct {

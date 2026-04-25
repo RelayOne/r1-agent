@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // Compile-time assertion: fakeExecutor satisfies Executor. If this

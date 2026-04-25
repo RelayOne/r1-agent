@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // DefaultChatClarifyTimeout is how long the responder waits for the

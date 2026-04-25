@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/executor"
-	"github.com/RelayOne/r1/internal/router"
+	"github.com/RelayOne/r1-agent/internal/executor"
+	"github.com/RelayOne/r1-agent/internal/router"
 )
 
 // newTestRouter builds a router with every scaffolding executor

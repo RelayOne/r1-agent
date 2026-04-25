@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // TaskDAGScope queries the task node and its parent chain via depends_on edges.

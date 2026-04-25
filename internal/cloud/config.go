@@ -26,8 +26,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/r1dir"
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // ConfigFile is the on-disk record of a successful cloud

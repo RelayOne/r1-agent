@@ -14,7 +14,7 @@ package executor
 import (
 	"context"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // EffortLevel determines verification aggressiveness. Simple tasks

@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/r1dir"
-	"github.com/RelayOne/r1/internal/snapshot"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/snapshot"
 	"gopkg.in/yaml.v3"
 )
 

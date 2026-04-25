@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/skill"
+	"github.com/RelayOne/r1-agent/internal/skill"
 )
 
 // StackInfo holds the detected technology stack of a repository.

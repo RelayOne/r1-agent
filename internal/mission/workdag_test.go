@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/prompts"
+	"github.com/RelayOne/r1-agent/internal/prompts"
 )
 
 // simpleExecutor returns a WorkExecutor that records execution order and completes immediately.

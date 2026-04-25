@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // capturingProvider is a fake provider.Provider that records the last

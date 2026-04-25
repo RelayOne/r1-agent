@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/checkpoint"
+	"github.com/RelayOne/r1-agent/internal/checkpoint"
 )
 
 // sessionsCmd is the `stoke sessions` subcommand. Provides

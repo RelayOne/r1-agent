@@ -45,7 +45,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/deploy"
 )
 
 // vercelBinEnv names the env override operators and tests use to point

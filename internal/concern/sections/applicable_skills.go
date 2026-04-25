@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // ApplicableSkills queries skill nodes matching the current mission.

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // mockSettlement is a test double for SettlementClient. It records

@@ -19,9 +19,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/promptguard"
-	"github.com/RelayOne/r1/internal/r1dir"
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/promptguard"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // Skill-frontmatter field names (parsed out of `---` YAML-ish blocks

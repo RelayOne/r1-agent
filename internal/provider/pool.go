@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 // Role constants for the provider pool. Operators pin each PoolEntry to

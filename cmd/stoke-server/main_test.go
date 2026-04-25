@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/runtrack"
+	"github.com/RelayOne/r1-agent/internal/runtrack"
 )
 
 // helper: boot a full mux + runtrack dir, return the test server.

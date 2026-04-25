@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // syncBuffer wraps bytes.Buffer with a mutex so concurrent Writes from

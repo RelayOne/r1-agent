@@ -37,7 +37,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/RelayOne/r1/bench/metrics"
+	"github.com/RelayOne/r1-agent/bench/metrics"
 )
 
 type resultsFile struct {

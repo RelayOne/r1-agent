@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // scriptedProvider is a test double that implements provider.Provider

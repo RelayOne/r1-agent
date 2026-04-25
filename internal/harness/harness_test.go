@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/concern"
-	"github.com/RelayOne/r1/internal/harness"
-	htools "github.com/RelayOne/r1/internal/harness/tools"
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/concern"
+	"github.com/RelayOne/r1-agent/internal/harness"
+	htools "github.com/RelayOne/r1-agent/internal/harness/tools"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // setup creates a Harness backed by real ledger+bus in temp dirs and

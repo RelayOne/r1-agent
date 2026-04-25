@@ -29,7 +29,7 @@ package mcp
 import (
 	"os"
 
-	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/logging"
 )
 
 // RegisterAuthSecrets reads the AuthEnv value from the process

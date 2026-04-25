@@ -43,7 +43,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/RelayOne/r1/internal/runtrack"
+	"github.com/RelayOne/r1-agent/internal/runtrack"
 )
 
 const defaultPort = 3948

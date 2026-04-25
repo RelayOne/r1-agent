@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/mission"
+	"github.com/RelayOne/r1-agent/internal/mission"
 )
 
 func newTestChain(t *testing.T) (*Chain, *mission.Store) {

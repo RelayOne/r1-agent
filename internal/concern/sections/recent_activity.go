@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // RecentActivity queries the last N nodes in the current scope.

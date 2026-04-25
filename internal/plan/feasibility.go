@@ -27,8 +27,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/promptguard"
-	"github.com/RelayOne/r1/internal/websearch"
+	"github.com/RelayOne/r1-agent/internal/promptguard"
+	"github.com/RelayOne/r1-agent/internal/websearch"
 )
 
 // FeasibilityReport is the gate's output.

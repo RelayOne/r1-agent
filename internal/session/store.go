@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // SessionStore is the interface for session persistence.

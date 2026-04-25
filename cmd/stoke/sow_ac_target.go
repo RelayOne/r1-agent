@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // extractACTargets returns the file path(s) an AC command is most

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/policy"
+	"github.com/RelayOne/r1-agent/internal/policy"
 )
 
 // fakePolicyClient is a controllable Client double for gate tests.

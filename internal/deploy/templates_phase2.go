@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/atomicfs"
+	"github.com/RelayOne/r1-agent/internal/atomicfs"
 )
 
 // Template bodies pulled verbatim from specs/deploy-phase2.md §Config File Templates.

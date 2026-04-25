@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/logging"
 )
 
 func init() {

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/tfidf"
+	"github.com/RelayOne/r1-agent/internal/tfidf"
 )
 
 // SkillIndex provides multi-axis semantic search over loaded skills.

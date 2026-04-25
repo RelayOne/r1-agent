@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/encryption"
-	"github.com/RelayOne/r1/internal/session"
+	"github.com/RelayOne/r1-agent/internal/encryption"
+	"github.com/RelayOne/r1-agent/internal/session"
 )
 
 // TestOpenDB_PlaintextPath is the "nothing-changed" guard. With

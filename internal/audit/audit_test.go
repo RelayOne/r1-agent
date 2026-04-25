@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/scan"
+	"github.com/RelayOne/r1-agent/internal/scan"
 )
 
 func TestDefaultPersonas(t *testing.T) {

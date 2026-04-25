@@ -39,7 +39,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1-agent/internal/r1dir"
 )
 
 // TimelineEntry is one checkpoint in the append-only WAL.

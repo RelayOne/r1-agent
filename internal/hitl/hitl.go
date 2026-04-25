@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // Request is the caller-facing input to RequestApproval.

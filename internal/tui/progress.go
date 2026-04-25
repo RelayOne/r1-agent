@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // Stoke lifecycle event types. These mirror the subtypes the streamjson

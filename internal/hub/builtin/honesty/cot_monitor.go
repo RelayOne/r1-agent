@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // CoTMonitor is an observe subscriber that scans extended thinking blocks

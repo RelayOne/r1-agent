@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/RelayOne/r1/internal/bus"
-	"github.com/RelayOne/r1/internal/concern/sections"
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/concern/sections"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // StanceRole identifies which stance role is being spawned.

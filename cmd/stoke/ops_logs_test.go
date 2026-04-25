@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1-agent/internal/bus"
 )
 
 // writeTempStream creates a stream.jsonl file with the given lines in

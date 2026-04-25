@@ -32,8 +32,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/RelayOne/r1/internal/gateway"
-	"github.com/RelayOne/r1/internal/gateway/platforms"
+	"github.com/RelayOne/r1-agent/internal/gateway"
+	"github.com/RelayOne/r1-agent/internal/gateway/platforms"
 )
 
 // version is the binary version; -ldflags injects at

@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/convergence"
-	"github.com/RelayOne/r1/internal/mission"
-	"github.com/RelayOne/r1/internal/orchestrate"
+	"github.com/RelayOne/r1-agent/internal/convergence"
+	"github.com/RelayOne/r1-agent/internal/mission"
+	"github.com/RelayOne/r1-agent/internal/orchestrate"
 )
 
 func newTestMissionAPI(t *testing.T) (*Server, *orchestrate.Orchestrator) {

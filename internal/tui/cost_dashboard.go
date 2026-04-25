@@ -29,7 +29,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // costRow accumulates per-model token + USD + call totals.

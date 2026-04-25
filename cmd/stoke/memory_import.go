@@ -32,7 +32,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/RelayOne/r1/internal/memory/membus"
+	"github.com/RelayOne/r1-agent/internal/memory/membus"
 )
 
 // importedMemoryRow is the wire format for one row in the snapshot.

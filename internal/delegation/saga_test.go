@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/trustplane"
-	"github.com/RelayOne/r1/internal/workunit"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/workunit"
 )
 
 func newAcceptedUnit(t *testing.T, taskID, delegationID, policy string) *workunit.WorkUnit {

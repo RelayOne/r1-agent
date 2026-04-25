@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/goast"
+	"github.com/RelayOne/r1-agent/internal/goast"
 )
 
 // SymbolKind classifies a code symbol.

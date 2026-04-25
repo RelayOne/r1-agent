@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/vecindex"
+	"github.com/RelayOne/r1-agent/internal/vecindex"
 )
 
 // TestExecutePromptDoesNotMentionCommit ensures the execute prompt

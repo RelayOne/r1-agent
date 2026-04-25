@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 func TestTestIntegrityChecker_DenyAssertionDecrease(t *testing.T) {

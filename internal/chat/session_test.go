@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // mockProvider is a deterministic stand-in for provider.Provider. Each

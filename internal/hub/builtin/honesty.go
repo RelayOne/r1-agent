@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1-agent/internal/hub"
 )
 
 // HonestyGate is a gate subscriber that detects faking-completeness patterns

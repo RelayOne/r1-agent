@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	harnessTools "github.com/RelayOne/r1/internal/harness/tools"
+	harnessTools "github.com/RelayOne/r1-agent/internal/harness/tools"
 )
 
 // TestClassifyIntentDeterministic covers the regex table from the

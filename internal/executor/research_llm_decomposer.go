@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/jsonutil"
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/research"
+	"github.com/RelayOne/r1-agent/internal/jsonutil"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/research"
 )
 
 // LLMDecomposer decomposes a research query into SubQuestions using an

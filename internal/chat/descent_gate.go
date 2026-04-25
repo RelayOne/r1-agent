@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/operator"
+	"github.com/RelayOne/r1-agent/internal/operator"
 )
 
 // DescentGate detects dirtied source files after a chat turn and runs a

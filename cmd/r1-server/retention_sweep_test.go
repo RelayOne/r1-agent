@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/retention"
+	"github.com/RelayOne/r1-agent/internal/retention"
 )
 
 // TestStartRetentionSweepFiresOnTick drives the sweep goroutine with

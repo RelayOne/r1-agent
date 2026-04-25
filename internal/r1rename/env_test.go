@@ -6,7 +6,7 @@ package r1rename
 import (
 	"testing"
 
-	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1-agent/internal/r1env"
 )
 
 func TestLookupEnv_CanonicalWins(t *testing.T) {

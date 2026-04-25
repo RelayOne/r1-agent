@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/deploy"
+	"github.com/RelayOne/r1-agent/internal/deploy"
 )
 
 // writeMockWrangler stamps a bash script at tmp/wrangler that mimics

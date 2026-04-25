@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
 )
 
 // TestSignalDrainFlow verifies that the same drain pattern used by

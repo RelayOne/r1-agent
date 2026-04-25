@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/provider"
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/provider"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // TestEnvBlockerScratch_RecordGetClear exercises the basic scratch

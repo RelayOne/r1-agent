@@ -48,7 +48,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/RelayOne/r1/internal/policy"
+	"github.com/RelayOne/r1-agent/internal/policy"
 )
 
 // maxBashCommandLen caps the "command" context value sent to the

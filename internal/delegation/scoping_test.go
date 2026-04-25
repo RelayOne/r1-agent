@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
 )
 
 func TestDelegationContext_HasScope(t *testing.T) {

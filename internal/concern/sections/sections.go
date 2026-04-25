@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1-agent/internal/ledger"
 )
 
 // Scope specifies where in the task DAG this concern field is scoped.

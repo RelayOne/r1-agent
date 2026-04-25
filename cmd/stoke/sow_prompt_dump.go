@@ -38,7 +38,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1-agent/internal/plan"
 )
 
 // dumpTaskPrompts walks every session and task in a SOW, builds the

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1-agent/internal/logging"
 )
 
 // TestRedact_RoundTrip is the canonical happy path from

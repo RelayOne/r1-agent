@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/memory/membus"
-	"github.com/RelayOne/r1/internal/retention"
+	"github.com/RelayOne/r1-agent/internal/memory/membus"
+	"github.com/RelayOne/r1-agent/internal/retention"
 )
 
 // startRetentionSweep spawns a goroutine that calls

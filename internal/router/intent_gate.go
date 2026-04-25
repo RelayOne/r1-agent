@@ -32,7 +32,7 @@ import (
 	"regexp"
 	"strings"
 
-	harnessTools "github.com/RelayOne/r1/internal/harness/tools"
+	harnessTools "github.com/RelayOne/r1-agent/internal/harness/tools"
 )
 
 // Intent is the coarse user-intent classification. The enum is

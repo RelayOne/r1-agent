@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1-agent/internal/stream"
 )
 
 // ClaudeCodeProvider shells out to `claude --print -p` for

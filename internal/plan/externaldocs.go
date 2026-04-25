@@ -34,8 +34,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/RelayOne/r1/internal/skill"
-	"github.com/RelayOne/r1/internal/websearch"
+	"github.com/RelayOne/r1-agent/internal/skill"
+	"github.com/RelayOne/r1-agent/internal/websearch"
 )
 
 // ExternalService is one third-party service the SOW references.

@@ -33,8 +33,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/RelayOne/r1/internal/streamjson"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1-agent/internal/streamjson"
+	"github.com/RelayOne/r1-agent/internal/trustplane"
 )
 
 // ErrNoCandidates is returned when TrustPlane discovery returns

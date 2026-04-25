@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1-agent/internal/env"
 )
 
 // Backend implements env.Environment using Docker containers.

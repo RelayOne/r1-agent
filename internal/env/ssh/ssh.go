@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/RelayOne/r1/internal/env"
+	"github.com/RelayOne/r1-agent/internal/env"
 )
 
 // Backend implements env.Environment for remote machines accessed via SSH.

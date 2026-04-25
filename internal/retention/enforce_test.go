@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/RelayOne/r1/internal/memory/membus"
+	"github.com/RelayOne/r1-agent/internal/memory/membus"
 )
 
 // newBusForTest opens a fresh in-tmpdir SQLite DB, runs the membus migration,
