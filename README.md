@@ -1,6 +1,6 @@
 # R1
 
-> **Note:** R1 ships as the `stoke` binary today; the binary rename is in flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Until that lands, command examples below still use `stoke` — that is the correct invocation for current builds.
+> **Note:** Install as `r1` (canonical). Command examples in Quick start and subcommand tables below still show `stoke` — both names invoke the same binary during the 90-day dual-accept window (through 2026-07-23). The `stoke` → `r1` binary rename is tracked at `plans/work-orders/work-r1-rename.md` §S2-3.
 
 **A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**
 
@@ -45,51 +45,57 @@ Use CloudSwarm. R1 standalone stays free.
 > Docker image, config file, MCP tool names), see
 > [docs/mintlify/rename/stoke-to-r1.mdx](docs/mintlify/rename/stoke-to-r1.mdx).
 
-`r1` is the canonical invocation going forward; `stoke` remains a
-supported alias through the dual-accept window (at least one minor
-release past the `r1` cutover). Pick any of the four paths below —
-each installs both names side-by-side.
+`r1` is the canonical invocation. Pick any install path below — each
+drops both `r1` (canonical) and the `stoke` legacy alias into `$PATH`
+for the 90-day dual-accept window.
 
 ```bash
-# 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
-# The formula installs BOTH `r1` (canonical) and `stoke` (legacy alias).
-brew install RelayOne/r1-agent/r1               # canonical tap (post §S2-2)
-# Legacy tap path (still works via Homebrew's formula redirect during
-# the 90d transition window — see work-r1-rename.md §S5-3):
-#   brew install ericmacdougall/stoke/stoke
+# Homebrew (macOS + Linux)
+brew install r1
 
-# 2. One-line installer — detects platform, verifies cosign signature
-# (keyless OIDC via sigstore) when cosign is on PATH, falls back to
-# building from source if no prebuilt binary exists for your target.
-# Installs `r1`, `stoke`, and `stoke-acp` into ${INSTALL_DIR}.
-# GitHub preserves the legacy URL via automatic redirect after §S2-2.
+# apt (Debian / Ubuntu)
+sudo apt install r1
+
+# Go toolchain (Go 1.25+; CGO enabled for SQLite)
+go install github.com/RelayOne/r1/cmd/r1@latest
+
+# Docker (linux/amd64 + linux/arm64; distroless)
+docker pull ghcr.io/RelayOne/r1
+```
+
+<details>
+<summary>Legacy stoke install (deprecated — supported through 2026-07-23)</summary>
+
+The `stoke` package name is retired. These paths still resolve during the
+90-day transition window; they install the same binary with both names.
+
+```bash
+# Homebrew legacy tap (redirects to the r1 formula)
+brew install ericmacdougall/stoke/stoke
+
+# One-line installer (GitHub redirect preserved after §S2-2 repo rename)
 curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
-# Legacy (still works via GitHub redirect):
+# or legacy URL (GitHub redirect):
 #   curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
 
-# 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
-# `r1` is the canonical image name going forward; the legacy `stoke`
-# tag is dual-published for a 60d transition window
-# (see work-r1-rename.md §S2-4).
-docker pull ghcr.io/RelayOne/r1:latest              # canonical (post §S2-2)
-docker pull ghcr.io/ericmacdougall/r1:latest        # legacy org alias (retires ~2026-06-22)
-docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name alias (retires ~2026-06-22)
+# Docker legacy tags (dual-published through 2026-06-22)
+docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name (retires ~2026-06-22)
+docker pull ghcr.io/ericmacdougall/r1:latest        # legacy org (retires ~2026-06-22)
 
-# 4. From source (Go 1.25 or later; CGO enabled for SQLite).
-go build ./cmd/r1               # canonical CLI (exec-shim → stoke)
-go build ./cmd/stoke            # legacy alias / primary orchestrator binary
-go build ./cmd/stoke-acp        # Agent Client Protocol adapter
+# Build from source — both binaries
+go build ./cmd/r1 ./cmd/stoke ./cmd/stoke-acp
 sudo mv r1 stoke stoke-acp /usr/local/bin/
 
-# Verify a signed release tarball (cosign keyless OIDC).
-# The cert-identity regex accepts BOTH repo paths so releases signed
-# before and after the §S2-2 repo rename verify without script edits.
+# Verify a signed release tarball (cosign keyless OIDC)
+# The cert-identity regex accepts both repo paths for releases before and after the §S2-2 rename.
 cosign verify-blob \
   --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
-  stoke_<ver>_<os>_<arch>.tar.gz
+  --signature r1_<ver>_<os>_<arch>.tar.gz.sig \
+  r1_<ver>_<os>_<arch>.tar.gz
 ```
+
+</details>
 
 ## Quick start
 
