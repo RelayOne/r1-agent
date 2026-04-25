@@ -15,6 +15,8 @@ import type { InvokeMethod } from "./types/ipc";
 
 /** Phase tag each panel attaches when logging its TODO stub call. */
 export type PhaseTag =
+  | "R1D-1" // IPC contract + Tauri scaffold
+  | "R1D-2" // Session view + basic chat
   | "R1D-3" // SOW tree + descent ladder
   | "R1D-4" // Skill catalog + marketplace + test modal
   | "R1D-5" // Ledger viewer
@@ -22,7 +24,8 @@ export type PhaseTag =
   | "R1D-7" // Settings + vault + providers + governance
   | "R1D-8" // MCP servers panel
   | "R1D-9" // Cost panel / observability dashboard
-  | "R1D-10"; // Approval queue + scheduler
+  | "R1D-10" // Approval queue + scheduler
+  | "R1D-11"; // Polish + onboarding
 
 /**
  * invokeStub logs a structured TODO line and resolves with the
