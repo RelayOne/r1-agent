@@ -1,4 +1,4 @@
-# R1
+# R1 — agent runtime; previously developed at github.com/ericmacdougall/stoke; canonical home is now here.
 
 > **Note:** R1 ships as the `stoke` binary today; the binary rename is in flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Until that lands, command examples below still use `stoke` — that is the correct invocation for current builds.
 
