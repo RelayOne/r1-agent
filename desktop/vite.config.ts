@@ -27,6 +27,7 @@ export default defineConfig({
         main: resolve(root, "index.html"),
         // Per-panel entry points — usable by tests + future per-window
         // Tauri surfaces (e.g., detached cost dashboard).
+        "panel-session-view": resolve(root, "src/panels/session-view.ts"),
         "panel-sow-tree": resolve(root, "src/panels/sow-tree.ts"),
         "panel-descent-ladder": resolve(root, "src/panels/descent-ladder.ts"),
         "panel-descent-evidence": resolve(root, "src/panels/descent-evidence.ts"),

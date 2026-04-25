@@ -2,27 +2,30 @@
 //
 // R1 Desktop WebView entrypoint (R1D-2).
 //
-// Composes the R1D-2 / R1D-4 / R1D-8 / R1D-9 panel skeletons into a
-// 6-row, 2-column CSS grid. Layout:
+// Composes all shipped panel skeletons into a CSS grid. Layout:
 //
-//   +------------------+------------------+
-//   | SOW tree         | Descent ladder   |  row 1
-//   +------------------+------------------+
-//   | Ledger viewer    | Memory inspector |  row 2
-//   +------------------+------------------+
-//   | Skill catalog                       |  row 3 (full-width)
 //   +-------------------------------------+
-//   | MCP servers                         |  row 4 (full-width)
+//   | Session view (workspace+chat)       |  row 0 (full-width, R1D-2)
 //   +-------------------------------------+
-//   | Observability                       |  row 5 (full-width)
+//   +------------------+------------------+
+//   | SOW tree         | Descent ladder   |  row 1 (R1D-3)
+//   +------------------+------------------+
+//   | Ledger viewer    | Memory inspector |  row 2 (R1D-5/6)
+//   +------------------+------------------+
+//   | Skill catalog                       |  row 3 (full-width, R1D-4)
 //   +-------------------------------------+
-//   | Cost panel                          |  row 6 (full-width)
+//   | MCP servers                         |  row 4 (full-width, R1D-8)
+//   +-------------------------------------+
+//   | Observability                       |  row 5 (full-width, R1D-9)
+//   +-------------------------------------+
+//   | Cost panel                          |  row 6 (full-width, R1D-9)
 //   +-------------------------------------+
 //
 // Real Tauri bootstrap (Vite + React + shadcn/ui) lands in R1D-1.1.
 // This file is intentionally framework-free so it works the moment
 // `cargo tauri init` generates `main.rs` + `main.tsx`.
 
+import { renderPanel as renderSessionView } from "./panels/session-view";
 import { renderPanel as renderSowTree } from "./panels/sow-tree";
 import { renderPanel as renderDescentLadder } from "./panels/descent-ladder";
 import { renderPanel as renderLedgerViewer } from "./panels/ledger-viewer";
@@ -43,6 +46,7 @@ import {
 type PanelEntry = {
   id: string;
   gridArea:
+    | "session"
     | "sow"
     | "descent"
     | "ledger"
@@ -57,6 +61,7 @@ type PanelEntry = {
 };
 
 const PANELS: PanelEntry[] = [
+  { id: "panel-session-view", gridArea: "session", render: renderSessionView },
   { id: "panel-sow-tree", gridArea: "sow", render: renderSowTree },
   { id: "panel-descent-ladder", gridArea: "descent", render: renderDescentLadder },
   { id: "panel-ledger-viewer", gridArea: "ledger", render: renderLedgerViewer },
