@@ -1201,7 +1201,7 @@ func buildCmd(args []string) {
 		fmt.Println()
 	}
 
-	fmt.Printf("⚡ STOKE build %s\n", version)
+	fmt.Printf("⚡ R1 build %s\n", version)
 	fmt.Printf("  plan:    %s (%d tasks)\n", p.ID, len(p.Tasks))
 	fmt.Printf("  workers: %d\n", *workers)
 	fmt.Printf("  build:   %s\n", orNone(*buildC))
@@ -3751,7 +3751,7 @@ func sowCmd(args []string) {
 		// above so the operator sees them. Set STOKE_SOW_STRICT_META=1
 		// to restore old all-or-nothing behavior.
 		fmt.Fprintf(os.Stderr, "\nSOW finished with %d meta-session failure(s) (main sessions all passed).\n", failed)
-		fmt.Fprintln(os.Stderr, "  (H-76 soft-pass: meta-only failures don't block rung promotion. Set STOKE_SOW_STRICT_META=1 to opt out.)")
+		fmt.Fprintln(os.Stderr, "  (H-76 soft-pass: meta-only failures don't block rung promotion. Set R1_SOW_STRICT_META=1 to opt out.)")
 		streamResult.subtype = "success_with_meta_failures"
 		streamResult.text = fmt.Sprintf("%d main session(s) passed; %d meta session(s) failed (soft-ignored)", passed, failed)
 		streamResult.turns = passed + failed
@@ -3819,7 +3819,7 @@ Rules:
 		return
 	}
 
-	fmt.Printf("⚡ STOKE plan\n  Launching Claude in read-only mode...\n\n")
+	fmt.Printf("⚡ R1 plan\n  Launching Claude in read-only mode...\n\n")
 
 	// Use app.RunConfig with plan-like settings
 	// Create harness-owned task state for plan generation
@@ -3943,7 +3943,7 @@ func statusCmd(args []string) {
 	}
 
 	elapsed := time.Since(state.StartedAt).Round(time.Second)
-	fmt.Printf("⚡ STOKE status\n\n")
+	fmt.Printf("⚡ R1 status\n\n")
 	fmt.Printf("  Plan:    %s\n", state.PlanID)
 	fmt.Printf("  Tasks:   %d done, %d failed, %d pending (of %d)\n", done, failed, pending, len(state.Tasks))
 	fmt.Printf("  Cost:    $%.2f\n", state.TotalCostUSD)
@@ -4012,7 +4012,7 @@ func scanCmd(args []string) {
 	}
 
 	if !*jsonOut {
-		fmt.Printf("⚡ STOKE scan\n\n")
+		fmt.Printf("⚡ R1 scan\n\n")
 	}
 
 	// Run deterministic code scan
@@ -4091,7 +4091,7 @@ func auditCmd(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 
-	fmt.Printf("⚡ STOKE audit\n\n")
+	fmt.Printf("⚡ R1 audit\n\n")
 
 	// Run scan first to inform persona selection
 	scanResult, _ := scanpkg.ScanFiles(absRepo, scanpkg.DefaultRules(), nil)
@@ -4224,7 +4224,7 @@ func poolCmd(args []string) {
 		return
 	}
 
-	fmt.Printf("⚡ STOKE pool (%d pool(s))\n\n", len(poolDirs))
+	fmt.Printf("⚡ R1 pool (%d pool(s))\n\n", len(poolDirs))
 
 	for i, dir := range poolDirs {
 		token := readOAuthToken(dir)
@@ -4309,7 +4309,7 @@ func cloudCmd(args []string) {
 		// exit non-zero so shell scripts / CI don't treat
 		// bad invocations as success.
 		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, "\nUsage: stoke cloud <subcommand>  (register | status | help)")
+		fmt.Fprintln(os.Stderr, "\nUsage: r1 cloud <subcommand>  (register | status | help)")
 		os.Exit(2)
 	}
 	sub := "help"
@@ -4322,7 +4322,7 @@ func cloudCmd(args []string) {
 	case "status":
 		cloudStatusCmd()
 	case "", "help", "--help", "-h":
-		fmt.Println("stoke cloud <subcommand>")
+		fmt.Println("r1 cloud <subcommand>")
 		fmt.Println()
 		fmt.Println("Subcommands:")
 		fmt.Println("  register   Link this instance to the managed cloud (OPT-IN).")
@@ -4359,7 +4359,7 @@ func cloudCmd(args []string) {
 func cloudRegisterCmd() {
 	code, err := runCloudRegister()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stoke cloud register:", err)
+		fmt.Fprintln(os.Stderr, "r1 cloud register:", err)
 	}
 	if code != 0 {
 		os.Exit(code)
@@ -4373,10 +4373,10 @@ func runCloudRegister() (int, error) {
 		endpoint = cloud.DefaultEndpoint
 	}
 	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "stoke cloud register: STOKE_CLOUD_API_KEY not set")
+		fmt.Fprintln(os.Stderr, "r1 cloud register: R1_CLOUD_API_KEY not set")
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Get a one-time key at https://stoke.dev/account/link and run:")
-		fmt.Fprintln(os.Stderr, "    STOKE_CLOUD_API_KEY=<key> stoke cloud register")
+		fmt.Fprintln(os.Stderr, "Get a one-time key at https://r1.dev/account/link and run:")
+		fmt.Fprintln(os.Stderr, "    R1_CLOUD_API_KEY=<key> r1 cloud register")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Cloud registration is OPT-IN. R1 works fully self-hosted")
 		fmt.Fprintln(os.Stderr, "without this command.")
@@ -4401,7 +4401,7 @@ func runCloudRegister() (int, error) {
 		return 1, fmt.Errorf("save config: %w", err)
 	}
 	path, _ := cloud.ConfigPath()
-	fmt.Printf("stoke cloud: linked %s (org %s, status %s)\n  config saved to %s\n",
+	fmt.Printf("r1 cloud: linked %s (org %s, status %s)\n  config saved to %s\n",
 		resp.UserID, resp.OrgID, resp.Status, path)
 	return 0, nil
 }
@@ -4411,12 +4411,12 @@ func runCloudRegister() (int, error) {
 func cloudStatusCmd() {
 	cfg, err := cloud.Load()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stoke cloud status:", err)
+		fmt.Fprintln(os.Stderr, "r1 cloud status:", err)
 		os.Exit(1)
 	}
 	if cfg == nil || strings.TrimSpace(cfg.APIKey) == "" {
 		fmt.Println("Cloud linkage: NOT configured (self-hosted mode).")
-		fmt.Println("Run `STOKE_CLOUD_API_KEY=<key> stoke cloud register` to opt in.")
+		fmt.Println("Run `R1_CLOUD_API_KEY=<key> r1 cloud register` to opt in.")
 		return
 	}
 	fmt.Printf("Cloud linkage: LINKED\n  endpoint: %s\n  user:     %s\n  org:      %s\n  status:   %s\n",
@@ -4535,7 +4535,7 @@ func scopeCmd(args []string) {
 		fatal("resolve repo: %v", err)
 	}
 
-	fmt.Printf("⚡ STOKE scope\n")
+	fmt.Printf("⚡ R1 scope\n")
 	fmt.Printf("  repo: %s\n", absRepo)
 	fmt.Printf("  mode: read-only (no writes allowed)\n")
 	fmt.Printf("  output: %s\n", *output)
@@ -4649,7 +4649,7 @@ func repairCmd(args []string) {
 		*lintC = detected.Lint
 	}
 
-	fmt.Printf("⚡ STOKE repair\n")
+	fmt.Printf("⚡ R1 repair\n")
 	fmt.Printf("  repo: %s\n", absRepo)
 	fmt.Printf("  build: %s\n", orNone(*buildC))
 	fmt.Printf("  test:  %s\n", orNone(*testC))
@@ -4906,7 +4906,7 @@ func shipCmd(args []string) {
 		*lintC = detected.Lint
 	}
 
-	fmt.Printf("⚡ STOKE ship\n")
+	fmt.Printf("⚡ R1 ship\n")
 	fmt.Printf("  repo:       %s\n", absRepo)
 	fmt.Printf("  task:       %s\n", orNone(*task))
 	fmt.Printf("  max rounds: %d\n", *maxRounds)
@@ -5466,7 +5466,7 @@ func poolsCmd(args []string) {
 
 func removePoolCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: stoke remove-pool <pool-id>")
+		fmt.Fprintln(os.Stderr, "Usage: r1 remove-pool <pool-id>")
 		os.Exit(2)
 	}
 
