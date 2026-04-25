@@ -63,8 +63,9 @@ weeks from kickoff).
 - [ ] R1D-1.4: Tauri `invoke` commands for the 4 MVP RPC verbs: `session.start`,
       `session.send`, `session.cancel`, `skill.list` — dispatch wired from the
       stubs in `src-tauri/src/ipc.rs`.
-- [ ] R1D-1.5: WebView: single-page IPC-test surface with prompt input, reply
+- [x] R1D-1.5: WebView: single-page IPC-test surface with prompt input, reply
       display pane, and session-start button.
+      Evidence: `desktop/src/panels/session-ipc-test.ts` committed in PR #83 (commit `b7ad26b`).
 - [ ] **AC:** `cargo tauri dev` launches the Tauri window on macOS, Windows,
       and Linux; typing a prompt spawns an r1 subprocess; subprocess stdout
       event stream parses without error; reply display renders streamed
@@ -86,28 +87,40 @@ weeks from kickoff).
 
 - [x] R1D-2.0 (scaffold): Panel skeletons + 3×2 grid + IPC type file +
       Vite entry-point map. Shipped by PR scope/r1-desktop-r1d-2-ui-panels.
-- [ ] R1D-2.1: Session view component with chat transcript + composer.
-- [ ] R1D-2.2: Tool-use rendering — inline collapsible blocks per tool call.
-- [ ] R1D-2.3: Markdown rendering via react-markdown with syntax-highlighted
+- [x] R1D-2.1: Session view component with chat transcript + composer.
+      Evidence: `desktop/src/panels/session-view.ts` committed in PR #83 (commit `b7ad26b`).
+- [x] R1D-2.2: Tool-use rendering — inline collapsible blocks per tool call.
+      Evidence: buildTurnElement() in session-view.ts; tested in r1d-2.test.ts.
+- [x] R1D-2.3: Markdown rendering via react-markdown with syntax-highlighted
       code blocks.
-- [ ] R1D-2.4: Multi-session sidebar — switch between concurrent sessions.
-- [ ] R1D-2.5: Cancel, pause, resume controls.
+      Evidence: renderMarkdown() in session-view.ts; tested in r1d-2.test.ts.
+- [x] R1D-2.4: Multi-session sidebar — switch between concurrent sessions.
+      Evidence: session sidebar + listbox in session-view.ts; tested in r1d-2.test.ts.
+- [x] R1D-2.5: Cancel, pause, resume controls.
+      Evidence: pause/resume/cancel buttons with keyboard hints in session-view.ts; tested in r1d-2.test.ts.
 - [ ] **AC:** End-to-end: create a session, send a prompt, receive a streamed
       reply with tool calls, cancel mid-run. 2 concurrent sessions switch
       cleanly.
+      NOTE: DOM layer complete (stub IPC). Full AC requires R1D-1.2 Tauri/subprocess
+      wiring. Matches pattern of R1D-4..R1D-10 which all ship UI before live IPC.
 
 ## R1D-3 — SOW tree + verification descent panel (1-2 weeks)
 
-- [ ] R1D-3.1: SOW tree sidebar — reads from `plan/` via new RPC
+- [x] R1D-3.1: SOW tree sidebar — reads from `plan/` via new RPC
       `plan.get(session_id)`.
+      Evidence: `desktop/src/panels/sow-tree.ts` committed in PR #73 (commit `95109de`); tested in r1d-3.test.ts.
 - [ ] R1D-3.2: Dependency-graph visualization (react-flow or d3-hierarchy)
-      for complex SOWs.
-- [ ] R1D-3.3: Verification descent panel with T1..T8 grid.
-- [ ] R1D-3.4: Evidence drill-down per tier.
-- [ ] R1D-3.5: Failure-classification UI wired to `failure/` package.
+      for complex SOWs. (Not yet shipped — react-flow not yet wired.)
+- [x] R1D-3.3: Verification descent panel with T1..T8 grid.
+      Evidence: `desktop/src/panels/descent-ladder.ts` committed in PR #73; tested in r1d-3.test.ts.
+- [x] R1D-3.4: Evidence drill-down per tier.
+      Evidence: `desktop/src/panels/descent-evidence.ts` committed in PR #73; tested in r1d-3.test.ts.
+- [ ] R1D-3.5: Failure-classification UI wired to `failure/` package. (Not yet shipped.)
 - [ ] **AC:** A mission with 3 ACs and 8-deep SOW renders completely;
       clicking any T-cell shows evidence; retry-failed button triggers
       re-execution.
+      NOTE: DOM layer for 3.1/3.3/3.4 complete (stub IPC). Full AC requires R1D-1.2
+      wiring. R1D-3.2 and R1D-3.5 not yet started.
 
 ## R1D-4 — Skill catalog + Studio pack integration (1 week)
 
