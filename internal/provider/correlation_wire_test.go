@@ -83,6 +83,45 @@ func TestApplyStokeCorrelationHeaders_NilRequest_NoOp(t *testing.T) {
 	})
 }
 
+// TestApplyStokeCorrelationHeaders_VeritizeDualSend asserts the V1-2
+// Veritize attribution header is stamped on EVERY outbound request with
+// both the canonical X-Veritize-Client and legacy X-Verity-Client names.
+// Both must carry the frozen "r1" value through 2026-05-23.
+func TestApplyStokeCorrelationHeaders_VeritizeDualSend(t *testing.T) {
+	req := httptest.NewRequest("POST", "http://relaygate.example.com/v1/messages", nil)
+	// Call with nil metadata — the Veritize headers must still be emitted.
+	applyStokeCorrelationHeaders(req, nil)
+
+	if got := req.Header.Get("X-Veritize-Client"); got != clientAttributionValue {
+		t.Errorf("X-Veritize-Client = %q; want %q", got, clientAttributionValue)
+	}
+	if got := req.Header.Get("X-Verity-Client"); got != clientAttributionValue {
+		t.Errorf("X-Verity-Client (legacy) = %q; want %q", got, clientAttributionValue)
+	}
+	// Canonical and legacy must carry the same value.
+	if req.Header.Get("X-Veritize-Client") != req.Header.Get("X-Verity-Client") {
+		t.Error("Veritize dual-send: canonical and legacy must match")
+	}
+}
+
+// TestApplyStokeCorrelationHeaders_VeritizeDualSend_WithMetadata asserts
+// Veritize headers coexist with the R1/Stoke correlation headers.
+func TestApplyStokeCorrelationHeaders_VeritizeDualSend_WithMetadata(t *testing.T) {
+	req := httptest.NewRequest("POST", "http://x", nil)
+	applyStokeCorrelationHeaders(req, map[string]string{
+		MetaSessionID: "sess-vz",
+	})
+	if got := req.Header.Get("X-Veritize-Client"); got != clientAttributionValue {
+		t.Errorf("X-Veritize-Client = %q; want %q", got, clientAttributionValue)
+	}
+	if got := req.Header.Get("X-Verity-Client"); got != clientAttributionValue {
+		t.Errorf("X-Verity-Client = %q; want %q", got, clientAttributionValue)
+	}
+	if got := req.Header.Get("X-R1-Session-ID"); got != "sess-vz" {
+		t.Errorf("X-R1-Session-ID = %q; want %q", got, "sess-vz")
+	}
+}
+
 // TestApplyStokeCorrelationHeaders_DualSendR1AndStoke is the provider-
 // side mirror of correlation.TestApplyHeaders_DualSendR1AndStoke —
 // both the ChatRequest.Metadata path (anthropic + openai-compat
