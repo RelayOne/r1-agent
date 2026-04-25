@@ -186,12 +186,17 @@ func TestEmitter_PublishStart(t *testing.T) {
 	}
 	assertNoForbiddenKeys(t, "bus.start", p)
 
+	// D-032 dual-emit: each EmitStoke("stoke.*",...) now produces two lines:
+	// canonical r1.* first, then legacy stoke.*.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.call.start" {
-		t.Errorf("stream type=%v want stoke.mcp.call.start", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.call.start" {
+		t.Errorf("canonical stream type=%v want r1.mcp.call.start", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.call.start" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.call.start", streamEvts[1]["type"])
 	}
 	hasKeys(t, "stream.start", streamEvts[0], "server", "tool", "call_id")
 	assertNoForbiddenKeys(t, "stream.start", streamEvts[0])
@@ -232,12 +237,16 @@ func TestEmitter_PublishComplete(t *testing.T) {
 	}
 	assertNoForbiddenKeys(t, "bus.complete", p)
 
+	// D-032 dual-emit: canonical r1.* first, legacy stoke.* second.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.call.complete" {
-		t.Errorf("stream type=%v", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.call.complete" {
+		t.Errorf("canonical stream type=%v want r1.mcp.call.complete", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.call.complete" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.call.complete", streamEvts[1]["type"])
 	}
 	hasKeys(t, "stream.complete", streamEvts[0],
 		"server", "tool", "call_id", "duration_ms", "size_bytes")
@@ -267,12 +276,16 @@ func TestEmitter_PublishError(t *testing.T) {
 	}
 	assertNoForbiddenKeys(t, "bus.error", p)
 
+	// D-032 dual-emit: canonical r1.* first, legacy stoke.* second.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.call.error" {
-		t.Errorf("stream type=%v", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.call.error" {
+		t.Errorf("canonical stream type=%v want r1.mcp.call.error", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.call.error" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.call.error", streamEvts[1]["type"])
 	}
 	hasKeys(t, "stream.error", streamEvts[0],
 		"server", "tool", "call_id", "err_kind", "err_msg")
@@ -306,12 +319,16 @@ func TestEmitter_PublishCircuitStateChange(t *testing.T) {
 	}
 	assertNoForbiddenKeys(t, "bus.circuit", p)
 
+	// D-032 dual-emit: canonical r1.* first, legacy stoke.* second.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.circuit.state_change" {
-		t.Errorf("stream type=%v", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.circuit.state_change" {
+		t.Errorf("canonical stream type=%v want r1.mcp.circuit.state_change", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.circuit.state_change" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.circuit.state_change", streamEvts[1]["type"])
 	}
 	hasKeys(t, "stream.circuit", streamEvts[0], "server", "from", "to", "info")
 	assertNoForbiddenKeys(t, "stream.circuit", streamEvts[0])
@@ -355,12 +372,16 @@ func TestEmitter_PublishConfigDeprecated(t *testing.T) {
 	hasKeys(t, "bus.deprecated", p, "server", "reason")
 	assertNoForbiddenKeys(t, "bus.deprecated", p)
 
+	// D-032 dual-emit: canonical r1.* first, legacy stoke.* second.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.config.deprecated" {
-		t.Errorf("stream type=%v", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.config.deprecated" {
+		t.Errorf("canonical stream type=%v want r1.mcp.config.deprecated", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.config.deprecated" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.config.deprecated", streamEvts[1]["type"])
 	}
 	hasKeys(t, "stream.deprecated", streamEvts[0], "server", "reason")
 	assertNoForbiddenKeys(t, "stream.deprecated", streamEvts[0])
@@ -386,12 +407,16 @@ func TestEmitter_StreamOnly(t *testing.T) {
 	e := NewEmitter(nil, s)
 
 	e.PublishStart("s", "t", "c")
+	// D-032 dual-emit: canonical r1.* first, legacy stoke.* second.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 1 {
-		t.Fatalf("stream events: got %d want 1", len(streamEvts))
+	if len(streamEvts) != 2 {
+		t.Fatalf("stream events: got %d want 2 (D-032 dual-emit)", len(streamEvts))
 	}
-	if streamEvts[0]["type"] != "stoke.mcp.call.start" {
-		t.Errorf("stream type=%v", streamEvts[0]["type"])
+	if streamEvts[0]["type"] != "r1.mcp.call.start" {
+		t.Errorf("canonical stream type=%v want r1.mcp.call.start", streamEvts[0]["type"])
+	}
+	if streamEvts[1]["type"] != "stoke.mcp.call.start" {
+		t.Errorf("legacy stream type=%v want stoke.mcp.call.start", streamEvts[1]["type"])
 	}
 }
 
@@ -420,15 +445,18 @@ func TestEmitter_NoSecretLikePayload(t *testing.T) {
 		p := parsePayload(t, evt)
 		assertNoForbiddenKeys(t, string(evt.Type), p)
 	}
+	// D-032 dual-emit: 5 publishes × 2 (canonical r1.* + legacy stoke.*) = 10 stream events.
 	streamEvts := parseStream(t, &buf)
-	if len(streamEvts) != 5 {
-		t.Fatalf("stream events: got %d want 5", len(streamEvts))
+	if len(streamEvts) != 10 {
+		t.Fatalf("stream events: got %d want 10 (D-032 dual-emit: 5 × 2)", len(streamEvts))
 	}
 	for _, se := range streamEvts {
 		seType, ok := se["type"].(string)
 		if !ok {
 			t.Fatalf("stream event type: unexpected type: %T", se["type"])
 		}
-		assertNoForbiddenKeys(t, "stream/"+strings.TrimPrefix(seType, "stoke."), se)
+		// Strip both r1. and stoke. prefixes for the key-check label.
+		label := strings.TrimPrefix(strings.TrimPrefix(seType, "r1."), "stoke.")
+		assertNoForbiddenKeys(t, "stream/"+label, se)
 	}
 }

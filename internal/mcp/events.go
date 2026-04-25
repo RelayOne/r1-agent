@@ -178,6 +178,7 @@ func (e *Emitter) emit(evtType bus.EventType, payload map[string]any) {
 
 	if e.stream != nil {
 		// streamjson mirror: prefix "stoke." per spec §Event Emission.
+		// EmitStoke handles D-032 dual-emit for stoke.* types automatically.
 		e.stream.EmitStoke("stoke."+string(evtType), payload)
 	}
 }

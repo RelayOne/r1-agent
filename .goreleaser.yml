@@ -1,6 +1,6 @@
 version: 2
 
-project_name: stoke
+project_name: r1
 
 before:
   hooks:
@@ -102,16 +102,13 @@ changelog:
       - "^chore:"
 
 release:
-  # work-r1-rename.md §S2-2: the GitHub repo transfers from
-  # `ericmacdougall/Stoke` to `RelayOne/r1`. Until the admin-side transfer
-  # lands, `goreleaser release` continues to resolve the legacy owner/name
-  # via GitHub's automatic redirect. After the transfer, flip `owner:` to
-  # `RelayOne` and `name:` to `r1`. Leaving the legacy values in place
-  # today keeps current tag releases working; this block will be flipped
-  # atomically with the admin-merge of the S2-2 rename.
+  # D-014: RelayOne/r1-agent is the canonical repo (new repo, not rename).
+  # Goreleaser publishes releases to RelayOne/r1-agent. The GITHUB_TOKEN
+  # on CI is scoped to the repo the workflow runs in, so this must match
+  # the repo where the workflow + tag live.
   github:
-    owner: ericmacdougall
-    name: Stoke
+    owner: RelayOne
+    name: r1-agent
   draft: false
   prerelease: auto
 
@@ -127,10 +124,7 @@ brews:
       name: homebrew-stoke
       branch: main
     directory: Formula
-    # work-r1-rename.md §S2-2: homepage flips to the canonical RelayOne/r1
-    # URL. GitHub preserves a redirect from ericmacdougall/Stoke during the
-    # transition window so legacy consumers don't 404.
-    homepage: https://github.com/RelayOne/r1
+    homepage: https://github.com/RelayOne/r1-agent
     description: "Stoke — agentic coding orchestrator (R1)"
     license: "Apache-2.0"
     install: |
@@ -160,9 +154,7 @@ brews:
       name: homebrew-stoke
       branch: main
     directory: Formula
-    # work-r1-rename.md §S2-2: homepage flips to the canonical RelayOne/r1
-    # URL (GitHub redirect preserves the legacy link).
-    homepage: https://github.com/RelayOne/r1
+    homepage: https://github.com/RelayOne/r1-agent
     description: "R1 — agentic coding orchestrator (formerly Stoke)"
     license: "Apache-2.0"
     install: |

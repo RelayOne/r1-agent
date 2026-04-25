@@ -40,15 +40,30 @@ func TestEmitStoke_EnvelopeStampedWhenMetaSet(t *testing.T) {
 		"ledger_node_id": "node-sha256-xyz",
 	})
 
-	got := strings.TrimSpace(buf.String())
-	var evt map[string]any
-	if err := json.Unmarshal([]byte(got), &evt); err != nil {
-		t.Fatalf("unmarshal: %v (raw=%q)", err, got)
+	// D-032: dual-emit produces two NDJSON lines — canonical r1.* first,
+	// then legacy stoke.*.
+	raw := strings.TrimSpace(buf.String())
+	evtLines := strings.SplitN(raw, "\n", 2)
+	if len(evtLines) != 2 {
+		t.Fatalf("expected 2 NDJSON lines (dual-emit), got %d (raw=%q)", len(evtLines), raw)
 	}
 
-	if evt["type"] != "stoke.session.start" {
-		t.Errorf("type=%v", evt["type"])
+	var canonical, legacy map[string]any
+	if err := json.Unmarshal([]byte(evtLines[0]), &canonical); err != nil {
+		t.Fatalf("unmarshal canonical: %v (raw=%q)", err, evtLines[0])
 	}
+	if canonical["type"] != "r1.session.start" {
+		t.Errorf("canonical type=%v, want r1.session.start", canonical["type"])
+	}
+	if err := json.Unmarshal([]byte(evtLines[1]), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy: %v (raw=%q)", err, evtLines[1])
+	}
+	if legacy["type"] != "stoke.session.start" {
+		t.Errorf("legacy type=%v, want stoke.session.start", legacy["type"])
+	}
+
+	// Validate envelope on the canonical event.
+	evt := canonical
 	if evt["stoke_version"] != StokeProtocolVersion {
 		t.Errorf("stoke_version=%v", evt["stoke_version"])
 	}
@@ -88,10 +103,18 @@ func TestEmitStoke_OmitsEnvelopeWhenMetaUnset(t *testing.T) {
 
 	e.EmitStoke("stoke.task.start", map[string]any{"task_id": "T1"})
 
-	got := strings.TrimSpace(buf.String())
+	// D-032: dual-emit produces two lines; check the canonical r1.* first line.
+	raw := strings.TrimSpace(buf.String())
+	firstLine := raw
+	if idx := strings.Index(raw, "\n"); idx >= 0 {
+		firstLine = raw[:idx]
+	}
 	var evt map[string]any
-	if err := json.Unmarshal([]byte(got), &evt); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err := json.Unmarshal([]byte(firstLine), &evt); err != nil {
+		t.Fatalf("unmarshal canonical line: %v (raw=%q)", err, firstLine)
+	}
+	if evt["type"] != "r1.task.start" {
+		t.Errorf("canonical type=%v, want r1.task.start", evt["type"])
 	}
 	// The three optional envelope keys must NOT be present — that's
 	// the backward-compat guarantee for pre-STOKE consumers.
@@ -144,10 +167,18 @@ func TestEmitStoke_DataOverridesStampedFields(t *testing.T) {
 		"instance_id": "r1-poisoned", // caller-supplied, wins today
 		"cost_usd":    0.12,
 	})
-	got := strings.TrimSpace(buf.String())
+	// D-032: dual-emit — parse the canonical r1.* first line.
+	raw := strings.TrimSpace(buf.String())
+	firstLine := raw
+	if idx := strings.Index(raw, "\n"); idx >= 0 {
+		firstLine = raw[:idx]
+	}
 	var evt map[string]any
-	if err := json.Unmarshal([]byte(got), &evt); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err := json.Unmarshal([]byte(firstLine), &evt); err != nil {
+		t.Fatalf("unmarshal canonical line: %v (raw=%q)", err, firstLine)
+	}
+	if evt["type"] != "r1.cost" {
+		t.Errorf("canonical type=%v, want r1.cost", evt["type"])
 	}
 	if evt["instance_id"] != "r1-poisoned" {
 		t.Logf("caller data currently wins over envelope for instance_id; " +

@@ -23,11 +23,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// LegacyNDJSON reports whether the 60-day dual-emit window for NDJSON
+// event-type strings is still active (D-032). Returns false when
+// R1_NDJSON_LEGACY_DROP=1 is set, forcing canonical-only output.
+//
+// The dual-emit window opened 2026-04-25 and closes 2026-06-25 (60d).
+// After the close date, this helper will be removed and all emit sites
+// will have their legacy call deleted.
+func LegacyNDJSON() bool {
+	return os.Getenv("R1_NDJSON_LEGACY_DROP") != "1"
+}
+
+// stokeToR1Subtype converts a "stoke.*" NDJSON event subtype to its
+// canonical "r1.*" equivalent. If the subtype does not start with
+// "stoke.", it is returned unchanged.
+func stokeToR1Subtype(subtype string) string {
+	return strings.Replace(subtype, "stoke.", "r1.", 1)
+}
 
 // StokeProtocolVersion is the version string populated onto every
 // EmitStoke event under the `stoke_version` envelope field. r1-server
@@ -144,10 +164,31 @@ func (e *Emitter) Enabled() bool { return e != nil && e.enabled }
 // EmitSystem writes an event of type "system" with the given subtype
 // ("init" | "api_retry" | "compact_boundary"). Extra fields are
 // merged into the event's top-level JSON.
+//
+// D-032 dual-emit: when subtype starts with "stoke.", EmitSystem
+// transparently emits the canonical "r1.*" form first, then the
+// legacy "stoke.*" form for the 60-day window (until 2026-06-25) or
+// until R1_NDJSON_LEGACY_DROP=1. Callers that have already been
+// updated to pass "r1.*" subtypes directly are unaffected.
 func (e *Emitter) EmitSystem(subtype string, extra map[string]any) {
 	if !e.Enabled() {
 		return
 	}
+	if strings.HasPrefix(subtype, "stoke.") {
+		// Canonical form first.
+		canonical := stokeToR1Subtype(subtype)
+		e.emitSystemRaw(canonical, extra)
+		if LegacyNDJSON() {
+			e.emitSystemRaw(subtype, extra)
+		}
+		return
+	}
+	e.emitSystemRaw(subtype, extra)
+}
+
+// emitSystemRaw writes a single system event without dual-emit logic.
+// Used internally by EmitSystem to avoid recursion.
+func (e *Emitter) emitSystemRaw(subtype string, extra map[string]any) {
 	evt := map[string]any{
 		"type":       "system",
 		"subtype":    subtype,
@@ -230,6 +271,7 @@ func (e *Emitter) EmitOperator(verb string, payload any, eventID string) {
 			extra["_stoke.dev/operator.payload"] = json.RawMessage(raw)
 		}
 	}
+	// EmitSystem handles D-032 dual-emit for stoke.* subtypes.
 	e.EmitSystem("stoke.operator."+verb, extra)
 }
 
@@ -323,30 +365,47 @@ func (e *Emitter) EmitStoke(eventType string, data map[string]any) {
 	meta := e.stokeMeta
 	e.mu.Unlock()
 
-	evt := map[string]any{
-		"type":       eventType,
-		"uuid":       uuid.NewString(),
-		"session_id": e.sessionID,
-		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+	// D-032 dual-emit: when eventType starts with "stoke.", emit the
+	// canonical "r1.*" form first, then the legacy "stoke.*" form
+	// for the 60-day window (until 2026-06-25) or until
+	// R1_NDJSON_LEGACY_DROP=1. Callers already using "r1.*" are unaffected.
+	canonical := stokeToR1Subtype(eventType) // no-op when not "stoke.*"
+
+	buildEvt := func(et string) map[string]any {
+		evt := map[string]any{
+			"type":       et,
+			"uuid":       uuid.NewString(),
+			"session_id": e.sessionID,
+			"ts":         time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if meta.version != "" {
+			// S3-3 dual-emit: every EmitStoke event carries both the
+			// legacy `stoke_version` key and the canonical `r1_version`
+			// key with identical values during the 30-day rename window
+			// (work-r1-rename.md §S3-3). Consumers can read either.
+			evt["stoke_version"] = meta.version
+			evt["r1_version"] = meta.version
+		}
+		if meta.instanceID != "" {
+			evt["instance_id"] = meta.instanceID
+		}
+		if meta.traceParent != "" {
+			evt["trace_parent"] = meta.traceParent
+		}
+		for k, v := range data {
+			evt[k] = v
+		}
+		return evt
 	}
-	if meta.version != "" {
-		// S3-3 dual-emit: every EmitStoke event carries both the
-		// legacy `stoke_version` key and the canonical `r1_version`
-		// key with identical values during the 30-day rename window
-		// (work-r1-rename.md §S3-3). Consumers can read either.
-		evt["stoke_version"] = meta.version
-		evt["r1_version"] = meta.version
+
+	if strings.HasPrefix(eventType, "stoke.") {
+		e.writeEvent(buildEvt(canonical))
+		if LegacyNDJSON() {
+			e.writeEvent(buildEvt(eventType))
+		}
+		return
 	}
-	if meta.instanceID != "" {
-		evt["instance_id"] = meta.instanceID
-	}
-	if meta.traceParent != "" {
-		evt["trace_parent"] = meta.traceParent
-	}
-	for k, v := range data {
-		evt[k] = v
-	}
-	e.writeEvent(evt)
+	e.writeEvent(buildEvt(eventType))
 }
 
 // SharedAuditEvent is the canonical 9-field portfolio-aligned audit
