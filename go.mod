@@ -24,6 +24,7 @@ require (
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
+	heroa.dev/sdk-go v0.0.0
 )
 
 // TASK 7 (work-stoke) — swap mattn/go-sqlite3 for the sqlite3mc
@@ -35,6 +36,8 @@ require (
 // the on-disk cipher default. Wire-up gated at runtime by
 // `STOKE_DB_ENCRYPTION=1` in internal/wisdom and cmd/r1-server.
 replace github.com/mattn/go-sqlite3 => github.com/jgiannuzzi/go-sqlite3 v1.14.17-0.20240122133042-fb824c8e339e
+
+replace heroa.dev/sdk-go => /home/eric/repos/heroa/sdk/go
 
 require (
 	github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4 // indirect

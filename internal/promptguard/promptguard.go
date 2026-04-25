@@ -130,6 +130,9 @@ func defaultPatterns() []Pattern {
 
 // Scan returns every threat found in s, in order of appearance. An
 // empty slice means "no injection shapes detected."
+//
+// In addition to the registered regex patterns, Scan checks for leet-encoded
+// injection phrases via scanLeetspeak (see leetspeak.go).
 func Scan(s string) []Threat {
 	if len(s) == 0 {
 		return nil
@@ -148,6 +151,8 @@ func Scan(s string) []Threat {
 			})
 		}
 	}
+	// Check for leet-encoded injection phrases (digit-for-letter substitution).
+	out = append(out, scanLeetspeak(s)...)
 	return out
 }
 
