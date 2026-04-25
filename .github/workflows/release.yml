@@ -99,6 +99,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
+            ghcr.io/relayone/r1-agent:${{ steps.version.outputs.version }}
+            ghcr.io/relayone/r1-agent:latest
             ghcr.io/relayone/r1:${{ steps.version.outputs.version }}
             ghcr.io/relayone/r1:latest
             ghcr.io/ericmacdougall/stoke:${{ steps.version.outputs.version }}
