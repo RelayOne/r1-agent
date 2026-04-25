@@ -12,17 +12,24 @@ import (
 func TestDefinitions(t *testing.T) {
 	r := NewRegistry("/tmp")
 	defs := r.Definitions()
-	if len(defs) != 9 {
-		t.Errorf("expected 9 tool definitions, got %d", len(defs))
-	}
 	names := make(map[string]bool)
 	for _, d := range defs {
 		names[d.Name] = true
 	}
-	for _, name := range []string{"read_file", "edit_file", "write_file", "bash", "grep", "glob", "env_exec", "env_copy_in", "env_copy_out"} {
+	required := []string{
+		"read_file", "edit_file", "write_file", "bash", "grep", "glob",
+		"env_exec", "env_copy_in", "env_copy_out",
+		"web_fetch", "web_search",
+		"cron_create", "cron_list", "cron_delete",
+		"pdf_read",
+	}
+	for _, name := range required {
 		if !names[name] {
 			t.Errorf("missing tool definition: %s", name)
 		}
+	}
+	if len(defs) < len(required) {
+		t.Errorf("expected at least %d tool definitions, got %d", len(required), len(defs))
 	}
 }
 
@@ -70,7 +77,7 @@ func TestHandleReadMissing(t *testing.T) {
 	}
 }
 
-func TestHandleEdit(t *testing.T) {
+func TestFileEditTool(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.go")
 	os.WriteFile(path, []byte("hello world\ngoodbye world\n"), 0o600)
@@ -95,8 +102,9 @@ func TestHandleEdit(t *testing.T) {
 	}
 
 	content, _ := os.ReadFile(path)
-	if !strings.Contains(string(content), "hi world") {
-		t.Error("file should contain 'hi world'")
+	got := string(content)
+	if got != "hi world\ngoodbye world\n" {
+		t.Errorf("file content = %q, want %q", got, "hi world\ngoodbye world\n")
 	}
 }
 

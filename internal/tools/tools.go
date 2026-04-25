@@ -189,6 +189,79 @@ func (r *Registry) Definitions() []provider.ToolDef {
 				"required": []string{"src", "dst"},
 			}),
 		},
+		// T-R1P-007
+		{
+			Name:        "web_fetch",
+			Description: "Fetch a URL and return its text content (HTML stripped). Follows redirects. Body capped at 1MB with truncation marker. Use for reading API docs, GitHub issues, web pages.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"url":     map[string]string{"type": "string", "description": "The URL to fetch"},
+					"timeout": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default 30000, max 60000)"},
+				},
+				"required": []string{"url"},
+			}),
+		},
+		// T-R1P-008
+		{
+			Name:        "web_search",
+			Description: "Search the web and return up to 5 results (URL, title, excerpt). Requires TAVILY_API_KEY or WEBSEARCH_COMMAND env var. Returns structured results; call web_fetch on a URL to get full content.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query":       map[string]string{"type": "string", "description": "Search query"},
+					"max_results": map[string]interface{}{"type": "integer", "description": "Maximum number of results (default 5, max 10)"},
+				},
+				"required": []string{"query"},
+			}),
+		},
+		// T-R1P-006
+		{
+			Name:        "cron_create",
+			Description: "Create or update a scheduled cron job identified by id. Uses the system crontab. Schedule is a 5-field cron expression (min hour dom month dow).",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":          map[string]string{"type": "string", "description": "Unique identifier for this cron entry"},
+					"schedule":    map[string]string{"type": "string", "description": "5-field cron expression, e.g. '0 9 * * 1' for every Monday 09:00"},
+					"command":     map[string]string{"type": "string", "description": "Shell command to execute"},
+					"working_dir": map[string]string{"type": "string", "description": "Optional: directory to cd into before running the command"},
+				},
+				"required": []string{"id", "schedule", "command"},
+			}),
+		},
+		{
+			Name:        "cron_list",
+			Description: "List all R1-managed cron jobs in the current user's crontab.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			}),
+		},
+		{
+			Name:        "cron_delete",
+			Description: "Delete an R1-managed cron job by id.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]string{"type": "string", "description": "ID of the cron entry to remove"},
+				},
+				"required": []string{"id"},
+			}),
+		},
+		// T-R1P-023
+		{
+			Name:        "pdf_read",
+			Description: "Extract text from a local PDF file. Uses pdftotext (poppler) or mutool when available, falls back to built-in stream extraction. Output capped at 100KB.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path":  map[string]string{"type": "string", "description": "Path to the PDF file (relative to working directory or absolute under it)"},
+					"pages": map[string]string{"type": "string", "description": "Optional page range: '1-5' or '3' for a single page"},
+				},
+				"required": []string{"path"},
+			}),
+		},
 	}
 }
 
@@ -216,6 +289,18 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleEnvCopyIn(ctx, input)
 	case "env_copy_out":
 		return r.handleEnvCopyOut(ctx, input)
+	case "web_fetch", "WebFetch":
+		return r.handleWebFetch(ctx, input)
+	case "web_search", "WebSearch":
+		return r.handleWebSearch(ctx, input)
+	case "cron_create", "CronCreate":
+		return r.handleCronCreate(ctx, input)
+	case "cron_list", "CronList":
+		return r.handleCronList(ctx, input)
+	case "cron_delete", "CronDelete":
+		return r.handleCronDelete(ctx, input)
+	case "pdf_read", "PDFRead":
+		return r.handlePDFRead(input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
