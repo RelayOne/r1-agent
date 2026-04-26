@@ -270,9 +270,14 @@ func TestDesktopColorPick(t *testing.T) {
 }
 
 // TestDesktopStubBackendUnsupported confirms the build-tag-selected
-// default backend (stub or robotgo skeleton) returns ErrUnsupported on
-// every operation when the host has no GUI plumbing.
+// default backend returns ErrUnsupported on every operation when
+// the host has no GUI plumbing. Skipped when the real robotgo backend
+// is active — those operations are exercised by
+// TestDesktopRealBackendSmoke instead.
 func TestDesktopStubBackendUnsupported(t *testing.T) {
+	if BackendName == "robotgo" {
+		t.Skipf("real backend active (%s) — stub-specific test skipped", BackendName)
+	}
 	d := New()
 
 	cases := []struct {
@@ -302,14 +307,17 @@ func TestDesktopStubBackendUnsupported(t *testing.T) {
 }
 
 // TestDesktopRealBackendSmoke is a skip-aware smoke test that only
-// runs when a real display server is reachable. It does not click or
-// type — it only asks for screen size to confirm the backend wiring.
+// runs when a real display server is reachable. It exercises the
+// non-destructive read-only operations (GetScreenSize / GetWindowTitle)
+// to confirm the backend wiring works end-to-end against an actual
+// X / Wayland session. Mouse/keyboard operations are NOT tested here
+// because they would interfere with whatever the user is doing.
 //
 // Skipped when:
-//   - DISPLAY and WAYLAND_DISPLAY are both empty
-//   - or the active backend is the stub (e.g., default build)
+//   - DISPLAY and WAYLAND_DISPLAY are both empty, or
+//   - the active backend is the stub (e.g., default build).
 func TestDesktopRealBackendSmoke(t *testing.T) {
-	if BackendName == "stub" || BackendName == "robotgo-skeleton" {
+	if BackendName == "stub" {
 		t.Skipf("real desktop backend not built (active = %s)", BackendName)
 	}
 	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
@@ -322,6 +330,11 @@ func TestDesktopRealBackendSmoke(t *testing.T) {
 	}
 	if w <= 0 || h <= 0 {
 		t.Errorf("screen size = (%d, %d), want positive", w, h)
+	}
+	// Title can legitimately be empty (no focused window), so just
+	// confirm the call returns without erroring.
+	if _, err := d.GetWindowTitle(); err != nil {
+		t.Errorf("GetWindowTitle: %v", err)
 	}
 }
 
