@@ -1,0 +1,454 @@
+// Package cicd provides R1 CI/CD integration templates and validation.
+//
+// T-R1P-020: GitHub Actions integration recipe — YAML workflow template
+// T-R1P-021: GitLab CI integration recipe — .gitlab-ci.yml template
+// T-R1P-022: CircleCI integration recipe — .circleci/config.yml template
+//
+// Design:
+//   - Each provider is a Provider constant.
+//   - GenerateConfig(provider, opts) renders the YAML template with user options.
+//   - ValidateConfig(provider, yaml) lints the output for required keys.
+//   - Render is pure Go — no external tools required.
+//
+// The templates implement the three canonical R1-in-CI patterns:
+//
+//  1. Code review gate: R1 reviews every PR and posts inline comments.
+//  2. Auto-fix bot: R1 resolves failing lint/test issues and commits fixes.
+//  3. Mission runner: R1 executes a plan file and merges when all tasks pass.
+package cicd
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Provider identifies a CI/CD system.
+type Provider string
+
+const (
+	// ProviderGitHub is GitHub Actions (.github/workflows/*.yml).
+	ProviderGitHub Provider = "github"
+	// ProviderGitLab is GitLab CI/CD (.gitlab-ci.yml).
+	ProviderGitLab Provider = "gitlab"
+	// ProviderCircleCI is CircleCI (.circleci/config.yml).
+	ProviderCircleCI Provider = "circleci"
+)
+
+// AllProviders returns the supported providers in stable order.
+func AllProviders() []Provider {
+	return []Provider{ProviderGitHub, ProviderGitLab, ProviderCircleCI}
+}
+
+// Mode is the integration pattern to generate.
+type Mode string
+
+const (
+	// ModeReview: R1 reviews every PR and posts a comment with findings.
+	ModeReview Mode = "review"
+	// ModeAutoFix: R1 fixes failing lint/test issues and commits the changes.
+	ModeAutoFix Mode = "autofix"
+	// ModeMission: R1 runs a plan file and opens a PR when all tasks pass.
+	ModeMission Mode = "mission"
+)
+
+// AllModes returns the supported modes in stable order.
+func AllModes() []Mode {
+	return []Mode{ModeReview, ModeAutoFix, ModeMission}
+}
+
+// Options tunes the generated YAML.
+type Options struct {
+	// Mode is the integration pattern (default: review).
+	Mode Mode
+	// PlanFile is the path to the plan file (used by ModeMission; default: stoke-plan.json).
+	PlanFile string
+	// R1Version is the R1 binary version tag to install (default: latest).
+	R1Version string
+	// Workers is the number of parallel R1 workers (default: 1).
+	Workers int
+	// PolicyPath is the path to stoke.policy.yaml (default: stoke.policy.yaml).
+	PolicyPath string
+	// Branch is the branch filter for GitHub Actions on.push (default: main).
+	Branch string
+	// NodeLabel is the runner label (GitHub: ubuntu-latest; GitLab: docker; CircleCI: default).
+	NodeLabel string
+}
+
+func (o *Options) defaults() {
+	if o.Mode == "" {
+		o.Mode = ModeReview
+	}
+	if o.PlanFile == "" {
+		o.PlanFile = "stoke-plan.json"
+	}
+	if o.R1Version == "" {
+		o.R1Version = "latest"
+	}
+	if o.Workers < 1 {
+		o.Workers = 1
+	}
+	if o.PolicyPath == "" {
+		o.PolicyPath = "stoke.policy.yaml"
+	}
+	if o.Branch == "" {
+		o.Branch = "main"
+	}
+}
+
+// GenerateConfig renders the YAML template for the given provider and options.
+// Returns the YAML string and the canonical output path for that provider.
+func GenerateConfig(provider Provider, opts Options) (yaml string, outputPath string, err error) {
+	opts.defaults()
+	switch provider {
+	case ProviderGitHub:
+		return generateGitHub(opts)
+	case ProviderGitLab:
+		return generateGitLab(opts)
+	case ProviderCircleCI:
+		return generateCircleCI(opts)
+	default:
+		return "", "", fmt.Errorf("unsupported provider %q (supported: github, gitlab, circleci)", provider)
+	}
+}
+
+// ValidateConfig performs basic lint on a generated YAML string.
+// Returns a list of warnings (non-empty = invalid). Does not use an
+// external YAML parser so it stays dependency-free.
+func ValidateConfig(provider Provider, yaml string) []string {
+	var warns []string
+
+	switch provider {
+	case ProviderGitHub:
+		for _, key := range []string{"on:", "jobs:", "steps:", "ANTHROPIC_API_KEY"} {
+			if !strings.Contains(yaml, key) {
+				warns = append(warns, fmt.Sprintf("missing required key: %q", key))
+			}
+		}
+	case ProviderGitLab:
+		for _, key := range []string{"stages:", "script:", "ANTHROPIC_API_KEY"} {
+			if !strings.Contains(yaml, key) {
+				warns = append(warns, fmt.Sprintf("missing required key: %q", key))
+			}
+		}
+	case ProviderCircleCI:
+		for _, key := range []string{"version:", "jobs:", "steps:", "ANTHROPIC_API_KEY"} {
+			if !strings.Contains(yaml, key) {
+				warns = append(warns, fmt.Sprintf("missing required key: %q", key))
+			}
+		}
+	default:
+		warns = append(warns, fmt.Sprintf("unknown provider %q", provider))
+	}
+	return warns
+}
+
+// --- GitHub Actions ---
+
+func generateGitHub(opts Options) (string, string, error) {
+	var b strings.Builder
+
+	workflowName := modeLabel(opts.Mode)
+	trigger := githubTrigger(opts)
+
+	fmt.Fprintf(&b, `# R1 CI — %s
+# Generated by r1 cicd --provider github --mode %s
+# Docs: https://github.com/RelayOne/r1-agent/docs/cicd/github-actions.md
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   ANTHROPIC_API_KEY  — Anthropic API key for R1
+#
+# Optional secrets:
+#   R1_POLICY_PATH     — override stoke.policy.yaml path
+
+name: "R1 %s"
+%s
+jobs:
+  r1-%s:
+    name: "R1 %s"
+    runs-on: %s
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install R1
+        run: |
+          curl -fsSL https://github.com/RelayOne/r1-agent/releases/download/%s/install.sh | bash
+          echo "$HOME/.r1/bin" >> "$GITHUB_PATH"
+
+      - name: Set up R1 policy
+        run: |
+          if [ ! -f %s ]; then
+            r1 init --preset minimal
+          fi
+
+%s
+
+`, workflowName, opts.Mode, workflowName, trigger, opts.Mode, workflowName, nodeLabel(opts, ProviderGitHub), opts.R1Version, opts.PolicyPath, githubJobStep(opts))
+
+	return b.String(), ".github/workflows/r1-" + string(opts.Mode) + ".yml", nil
+}
+
+func githubTrigger(opts Options) string {
+	switch opts.Mode {
+	case ModeReview:
+		return `on:
+  pull_request:
+    types: [opened, synchronize, reopened]`
+	case ModeAutoFix:
+		return fmt.Sprintf(`on:
+  push:
+    branches: [%s]
+  pull_request:
+    types: [opened, synchronize]`, opts.Branch)
+	default: // mission
+		return fmt.Sprintf(`on:
+  push:
+    branches: [%s]
+  workflow_dispatch:
+    inputs:
+      plan_file:
+        description: "Plan file path"
+        default: "%s"`, opts.Branch, opts.PlanFile)
+	}
+}
+
+func githubJobStep(opts Options) string {
+	switch opts.Mode {
+	case ModeReview:
+		return `      - name: R1 code review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          r1 review --policy ${{ env.R1_POLICY_PATH || 'stoke.policy.yaml' }} \
+            --pr-number ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --output github-comment`
+
+	case ModeAutoFix:
+		return `      - name: R1 auto-fix
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          r1 scan-repair \
+            --policy ${{ env.R1_POLICY_PATH || 'stoke.policy.yaml' }} \
+            --auto-commit \
+            --push-fixes`
+
+	default: // mission
+		return fmt.Sprintf(`      - name: R1 mission runner
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PLAN="${{ github.event.inputs.plan_file || '%s' }}"
+          r1 build "$PLAN" \
+            --policy stoke.policy.yaml \
+            --workers %d \
+            --open-pr`, opts.PlanFile, opts.Workers)
+	}
+}
+
+// --- GitLab CI ---
+
+func generateGitLab(opts Options) (string, string, error) {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `# R1 CI — %s
+# Generated by r1 cicd --provider gitlab --mode %s
+# Docs: https://github.com/RelayOne/r1-agent/docs/cicd/gitlab-ci.md
+#
+# Required CI/CD variables (Settings → CI/CD → Variables):
+#   ANTHROPIC_API_KEY  — Anthropic API key for R1
+#
+# Add to .gitlab-ci.yml or include from a template.
+
+stages:
+  - r1-%s
+
+variables:
+  R1_VERSION: "%s"
+  R1_POLICY: "%s"
+
+.r1-setup: &r1_setup
+  before_script:
+    - curl -fsSL https://github.com/RelayOne/r1-agent/releases/download/${R1_VERSION}/install.sh | bash
+    - export PATH="$HOME/.r1/bin:$PATH"
+    - r1 --version
+
+r1-%s:
+  stage: r1-%s
+  image: %s
+  <<: *r1_setup
+%s
+`, modeLabel(opts.Mode), opts.Mode, opts.Mode, opts.R1Version, opts.PolicyPath,
+		opts.Mode, opts.Mode, nodeLabel(opts, ProviderGitLab), gitlabJobBody(opts))
+
+	return b.String(), ".gitlab-ci.yml", nil
+}
+
+func gitlabJobBody(opts Options) string {
+	switch opts.Mode {
+	case ModeReview:
+		return `  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - r1 review --policy "$R1_POLICY" --pr-number "$CI_MERGE_REQUEST_IID" --output gitlab-comment
+  artifacts:
+    reports:
+      codequality: r1-review.json`
+
+	case ModeAutoFix:
+		return `  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - r1 scan-repair --policy "$R1_POLICY" --auto-commit --push-fixes
+  variables:
+    GIT_STRATEGY: clone`
+
+	default: // mission
+		return fmt.Sprintf(`  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+  script:
+    - PLAN="${CI_R1_PLAN_FILE:-%s}"
+    - r1 build "$PLAN" --policy "$R1_POLICY" --workers %d --open-pr
+  variables:
+    GIT_STRATEGY: clone`, opts.PlanFile, opts.Workers)
+	}
+}
+
+// --- CircleCI ---
+
+func generateCircleCI(opts Options) (string, string, error) {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, `# R1 CI — %s
+# Generated by r1 cicd --provider circleci --mode %s
+# Docs: https://github.com/RelayOne/r1-agent/docs/cicd/circleci.md
+#
+# Required context variables (Organization Settings → Contexts → r1):
+#   ANTHROPIC_API_KEY  — Anthropic API key for R1
+#
+# Add this file as .circleci/config.yml (or merge into existing config).
+
+version: 2.1
+
+orbs:
+  # No external orb required — R1 self-installs.
+
+executors:
+  r1-executor:
+    machine:
+      image: %s
+    environment:
+      R1_VERSION: "%s"
+      R1_POLICY: "%s"
+
+commands:
+  install-r1:
+    description: "Install the R1 binary"
+    steps:
+      - run:
+          name: Install R1
+          command: |
+            curl -fsSL https://github.com/RelayOne/r1-agent/releases/download/${R1_VERSION}/install.sh | bash
+            echo 'export PATH="$HOME/.r1/bin:$PATH"' >> "$BASH_ENV"
+
+jobs:
+  r1-%s:
+    executor: r1-executor
+    steps:
+      - checkout
+      - install-r1
+%s
+
+workflows:
+  r1-%s:
+    jobs:
+      - r1-%s:
+          context: r1
+%s
+`, modeLabel(opts.Mode), opts.Mode, nodeLabel(opts, ProviderCircleCI), opts.R1Version, opts.PolicyPath,
+		opts.Mode, circleCIJobSteps(opts), opts.Mode, opts.Mode, circleCIWorkflowFilter(opts))
+
+	return b.String(), ".circleci/config.yml", nil
+}
+
+func circleCIJobSteps(opts Options) string {
+	switch opts.Mode {
+	case ModeReview:
+		return `      - run:
+          name: R1 code review
+          command: r1 review --policy "$R1_POLICY" --output circleci-comment`
+
+	case ModeAutoFix:
+		return `      - run:
+          name: R1 auto-fix
+          command: r1 scan-repair --policy "$R1_POLICY" --auto-commit --push-fixes`
+
+	default: // mission
+		return fmt.Sprintf(`      - run:
+          name: R1 mission runner
+          command: |
+            PLAN="${CI_R1_PLAN_FILE:-%s}"
+            r1 build "$PLAN" --policy "$R1_POLICY" --workers %d --open-pr`, opts.PlanFile, opts.Workers)
+	}
+}
+
+func circleCIWorkflowFilter(opts Options) string {
+	switch opts.Mode {
+	case ModeReview:
+		return `          filters:
+            branches:
+              ignore: main`
+	case ModeAutoFix:
+		return `          filters:
+            branches:
+              only:
+                - main
+                - /feature\/.*/`
+	default:
+		return `          filters:
+            branches:
+              only: main`
+	}
+}
+
+// --- shared helpers ---
+
+func modeLabel(m Mode) string {
+	switch m {
+	case ModeReview:
+		return "Code Review"
+	case ModeAutoFix:
+		return "Auto-Fix"
+	case ModeMission:
+		return "Mission Runner"
+	default:
+		return string(m)
+	}
+}
+
+func nodeLabel(opts Options, p Provider) string {
+	if opts.NodeLabel != "" {
+		return opts.NodeLabel
+	}
+	switch p {
+	case ProviderGitHub:
+		return "ubuntu-latest"
+	case ProviderGitLab:
+		return "ubuntu:22.04"
+	case ProviderCircleCI:
+		return "ubuntu-2204:current"
+	default:
+		return "ubuntu-latest"
+	}
+}
