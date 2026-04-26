@@ -353,6 +353,99 @@ func (r *Registry) handleBrowserEval(ctx context.Context, input json.RawMessage)
 		"JavaScript evaluation not available in stdlib-only mode", nil
 }
 
+// handleBrowserWaitFor blocks until a CSS selector appears (or timeout).
+// T-R1P-001: completes the supervisor-spec primitive set (wait_for).
+func (r *Registry) handleBrowserWaitFor(ctx context.Context, input json.RawMessage) (string, error) {
+	var args struct {
+		Session   string `json:"session"`
+		Selector  string `json:"selector"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	if strings.TrimSpace(args.Selector) == "" {
+		return "", fmt.Errorf("selector is required")
+	}
+	s, err := getBrowserSession(args.Session)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	timeout := time.Duration(args.TimeoutMs) * time.Millisecond
+	results, runErr := s.backend.RunActions(ctx, []browser.Action{
+		{Kind: browser.ActionWaitForSelector, Selector: args.Selector, Timeout: timeout},
+	})
+	if runErr != nil {
+		return fmt.Sprintf("wait_for error: %v", runErr), nil
+	}
+	if len(results) == 0 || !results[0].OK {
+		return fmt.Sprintf("wait_for failed: %v", results[0].Err), nil
+	}
+	return fmt.Sprintf("selector %q became present (%dms)", args.Selector, results[0].DurationMs), nil
+}
+
+// handleBrowserGetHTML returns the page's outer HTML.
+// T-R1P-001: completes the supervisor-spec primitive set (get_html).
+//
+// Implementation: routes through eval(document.documentElement.outerHTML)
+// when the backend supports JS evaluation (rod); falls back to extract on
+// the html element otherwise. Output is byte-capped to keep the agent
+// loop's context window healthy.
+func (r *Registry) handleBrowserGetHTML(ctx context.Context, input json.RawMessage) (string, error) {
+	var args struct {
+		Session string `json:"session"`
+		MaxKB   int    `json:"max_kb"` // optional cap (default 256KB)
+	}
+	if err := json.Unmarshal(input, &args); err != nil {
+		return "", fmt.Errorf("invalid input: %w", err)
+	}
+	s, err := getBrowserSession(args.Session)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	maxBytes := args.MaxKB * 1024
+	if maxBytes <= 0 {
+		maxBytes = 256 * 1024
+	}
+
+	// Prefer JS eval when the backend supports it (rod path).
+	type jsEvaluator interface {
+		EvalScript(ctx context.Context, script string) (string, error)
+	}
+	if ev, ok := s.backend.(jsEvaluator); ok {
+		html, evalErr := ev.EvalScript(ctx, "document.documentElement.outerHTML")
+		if evalErr == nil {
+			if len(html) > maxBytes {
+				html = html[:maxBytes] + "\n[truncated]"
+			}
+			return html, nil
+		}
+		// fall through to extract on stdlib
+	}
+
+	// stdlib fallback: extract text of <html> (no real HTML available).
+	results, runErr := s.backend.RunActions(ctx, []browser.Action{
+		{Kind: browser.ActionExtractText, Selector: "html"},
+	})
+	if runErr != nil {
+		return fmt.Sprintf("get_html error: %v", runErr), nil
+	}
+	if len(results) == 0 || !results[0].OK {
+		return fmt.Sprintf("get_html failed: %v", results[0].Err), nil
+	}
+	out := results[0].Text
+	if len(out) > maxBytes {
+		out = out[:maxBytes] + "\n[truncated]"
+	}
+	return out, nil
+}
+
 // handleBrowserClose closes and disposes a session.
 func (r *Registry) handleBrowserClose(_ context.Context, input json.RawMessage) (string, error) {
 	var args struct {

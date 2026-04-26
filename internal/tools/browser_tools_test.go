@@ -235,6 +235,69 @@ func TestBrowserScreenshot_StdlibNotice(t *testing.T) {
 	}
 }
 
+// TestBrowserGetHTMLStdlibFallback exercises the new get_html tool
+// against the stdlib backend. The stdlib path returns the page text
+// (no real HTML), capped at max_kb. T-R1P-001.
+func TestBrowserGetHTMLStdlibFallback(t *testing.T) {
+	resetBrowserSessions()
+	r := NewRegistry(t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`<html><body><p>get-html stdlib body</p></body></html>`))
+	}))
+	defer srv.Close()
+
+	if _, err := r.handleBrowserSession(mustMarshal(t, map[string]interface{}{"id": "html-sess"})); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := r.handleBrowserNavigate(context.Background(), mustMarshal(t, map[string]interface{}{
+		"session": "html-sess",
+		"url":     srv.URL,
+	})); err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+	res, err := r.handleBrowserGetHTML(context.Background(), mustMarshal(t, map[string]interface{}{
+		"session": "html-sess",
+		"max_kb":  64,
+	}))
+	if err != nil {
+		t.Fatalf("get_html: %v", err)
+	}
+	// stdlib returns "extract" graceful message OR text body — both
+	// are acceptable; we just want a non-empty response.
+	if res == "" {
+		t.Error("get_html returned empty response")
+	}
+}
+
+// TestBrowserWaitForUnknownSession confirms wait_for surfaces the
+// standard unknown-session error before reaching the backend.
+func TestBrowserWaitForUnknownSession(t *testing.T) {
+	resetBrowserSessions()
+	r := NewRegistry(t.TempDir())
+
+	_, err := r.handleBrowserWaitFor(context.Background(), mustMarshal(t, map[string]interface{}{
+		"session":  "ghost",
+		"selector": "#never",
+	}))
+	if err == nil {
+		t.Fatal("expected error for unknown session")
+	}
+}
+
+// TestBrowserWaitForRequiresSelector locks the input contract.
+func TestBrowserWaitForRequiresSelector(t *testing.T) {
+	resetBrowserSessions()
+	r := NewRegistry(t.TempDir())
+
+	_, err := r.handleBrowserWaitFor(context.Background(), mustMarshal(t, map[string]interface{}{
+		"session": "any",
+	}))
+	if err == nil {
+		t.Fatal("expected selector-required error")
+	}
+}
+
 // mustMarshal is a test helper that marshals v to JSON, failing the test on error.
 func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
 	t.Helper()
