@@ -748,6 +748,9 @@ func main() {
 		researchCmd(os.Args[2:])
 	case "browse":
 		browseCmd(os.Args[2:])
+	case "lsp":
+		// T-R1P-009: LSP server adapter — runs R1 as a Language Server over stdin/stdout.
+		lspCmd(os.Args[2:])
 	case "agent-serve":
 		agentServeCmd(os.Args[2:])
 	case "desktop-rpc":
