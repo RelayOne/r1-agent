@@ -213,6 +213,29 @@ func TestGetJobLogsReturnsRedirectURL(t *testing.T) {
 	}
 }
 
+// TestGetJobLogsFailsWhenRunMissing covers the negative path: when
+// the run id does not exist GitHub returns 404 and the SDK surfaces
+// it as a plain "unexpected status code" error (because
+// GetWorkflowRunLogs uses a redirect-following round-trip and only
+// 302 is the success path). The wrapper propagates the SDK error
+// verbatim.
+func TestGetJobLogsFailsWhenRunMissing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"message": "Not Found"}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv, "tok")
+	_, err := c.GetJobLogs(context.Background(), "o", "r", 999)
+	if err == nil {
+		t.Fatal("expected error for missing run, got nil")
+	}
+	if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "Not Found") {
+		t.Errorf("error = %v, want 404/Not Found mention", err)
+	}
+}
+
 // TestGetPullRequestDiffSendsDiffAccept verifies the diff media type
 // header is sent and the response body is returned verbatim.
 func TestGetPullRequestDiffSendsDiffAccept(t *testing.T) {

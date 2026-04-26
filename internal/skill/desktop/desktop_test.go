@@ -11,7 +11,6 @@ import (
 	"errors"
 	"image"
 	"image/color"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -304,37 +303,10 @@ func TestDesktopStubBackendUnsupported(t *testing.T) {
 	}
 }
 
-// TestDesktopRealBackendSmoke is a skip-aware smoke test that only
-// runs when a real display server is reachable. It exercises the
-// non-destructive read-only operations (GetScreenSize / GetWindowTitle)
-// to confirm the backend wiring works end-to-end against an actual
-// X / Wayland session. Mouse/keyboard operations are NOT tested here
-// because they would interfere with whatever the user is doing.
-//
-// Skipped when:
-//   - DISPLAY and WAYLAND_DISPLAY are both empty, or
-//   - the active backend is the stub (e.g., default build).
-func TestDesktopRealBackendSmoke(t *testing.T) {
-	if BackendName == "stub" {
-		t.Skipf("real desktop backend not built (active = %s)", BackendName)
-	}
-	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-		t.Skip("no display server (DISPLAY / WAYLAND_DISPLAY unset)")
-	}
-	d := New()
-	w, h, err := d.GetScreenSize()
-	if err != nil {
-		t.Fatalf("GetScreenSize: %v", err)
-	}
-	if w <= 0 || h <= 0 {
-		t.Errorf("screen size = (%d, %d), want positive", w, h)
-	}
-	// Title can legitimately be empty (no focused window), so just
-	// confirm the call returns without erroring.
-	if _, err := d.GetWindowTitle(); err != nil {
-		t.Errorf("GetWindowTitle: %v", err)
-	}
-}
+// (Real-backend tests live in desktop_real_test.go, which is build-
+// tag-gated to `desktop_robotgo` so the test file simply doesn't
+// compile when the stub backend is active. This avoids the need for
+// any "stub backend, skip" runtime check in this file.)
 
 // TestDesktopOpsConcurrencyOK confirms the public Desktop wrapper
 // serializes concurrent backend calls (sanity, since callers may share
