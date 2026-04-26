@@ -751,6 +751,9 @@ func main() {
 	case "lsp":
 		// T-R1P-009: LSP server adapter — runs R1 as a Language Server over stdin/stdout.
 		lspCmd(os.Args[2:])
+	case "cicd":
+		// T-R1P-020/021/022: CI/CD integration recipe generator.
+		cicdCmd(os.Args[2:])
 	case "agent-serve":
 		agentServeCmd(os.Args[2:])
 	case "desktop-rpc":
