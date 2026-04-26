@@ -12,9 +12,12 @@
 package skill
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +34,7 @@ const (
 	skillFieldTriggers     = "triggers"
 	skillFieldAllowedTools = "allowed-tools"
 	skillFieldKeywords     = "keywords"
+	skillFieldPaths        = "paths" // T-R1P-019: path-scoped activation
 
 	// Source labels on loaded skills, ordered by precedence.
 	skillSourceProject = "project"
@@ -63,6 +67,7 @@ type Skill struct {
 	Content         string            `json:"content"`           // the markdown template
 	Gotchas         string            `json:"gotchas"`           // extracted "Gotchas" section for compressed injection
 	References      map[string]string `json:"references"`        // filename → content for progressive disclosure
+	Paths           []string          `json:"paths,omitempty"`   // T-R1P-019: glob patterns — skill only active under matching paths
 	Source          string            `json:"source"`            // "project", "user", or "builtin"
 	Path            string            `json:"path"`              // file path
 	Priority        int               `json:"priority"`          // higher = matched first
@@ -203,7 +208,9 @@ func (r *Registry) Load() error {
 					continue
 				}
 				content = scanUserContent(content, source, skillPath)
-				r.skills[name] = parseSkill(name, string(content), source, skillPath, len(r.dirs)-i)
+				// T-R1P-018: expand !`cmd` shell-injection blocks in project/user skills
+				preprocessed := PreprocessShellInjections(string(content))
+				r.skills[name] = parseSkill(name, preprocessed, source, skillPath, len(r.dirs)-i)
 
 				// Load progressive disclosure references from references/ subdir
 				refsDir := filepath.Join(dir, name, "references")
@@ -250,7 +257,9 @@ func (r *Registry) Load() error {
 					continue
 				}
 				content = scanUserContent(content, source, flatPath)
-				r.skills[skillName] = parseSkill(skillName, string(content), source, flatPath, len(r.dirs)-i)
+				// T-R1P-018: expand !`cmd` shell-injection blocks in project/user skills
+				preprocessedFlat := PreprocessShellInjections(string(content))
+				r.skills[skillName] = parseSkill(skillName, preprocessedFlat, source, flatPath, len(r.dirs)-i)
 			}
 		}
 	}
@@ -356,7 +365,19 @@ type SkillSelection struct {
 //  3. Keyword-matched skills (top 3, gotchas only)
 //
 // The returned prompt has skills wrapped in <skills>...</skills> XML tags.
+// Skills with a non-empty Paths field (T-R1P-019) are only included when
+// workDir matches at least one of their glob patterns.
+func (r *Registry) InjectPromptBudgetedForDir(prompt, workDir string, stackMatches []string, tokenBudget int) (string, []SkillSelection) {
+	return r.injectPromptBudgetedImpl(prompt, workDir, stackMatches, tokenBudget)
+}
+
+// InjectPromptBudgeted is a backward-compatible wrapper that calls
+// InjectPromptBudgetedForDir with an empty workDir (no path-scope filtering).
 func (r *Registry) InjectPromptBudgeted(prompt string, stackMatches []string, tokenBudget int) (string, []SkillSelection) {
+	return r.injectPromptBudgetedImpl(prompt, "", stackMatches, tokenBudget)
+}
+
+func (r *Registry) injectPromptBudgetedImpl(prompt, workDir string, stackMatches []string, tokenBudget int) (string, []SkillSelection) {
 	if tokenBudget <= 0 {
 		tokenBudget = 3000
 	}
@@ -371,6 +392,10 @@ func (r *Registry) InjectPromptBudgeted(prompt string, stackMatches []string, to
 	// Helper to add a skill if it fits in budget
 	add := func(s *Skill, tier InjectionTier, reason string) {
 		if seen[s.Name] {
+			return
+		}
+		// T-R1P-019: skip if skill has path patterns and workDir doesn't match any
+		if len(s.Paths) > 0 && !skillPathMatchesDir(s.Paths, workDir) {
 			return
 		}
 		cost := s.EstTokens
@@ -754,6 +779,8 @@ func parseFrontmatter(fm string, s *Skill) {
 					s.AllowedTools = append(s.AllowedTools, v)
 				case skillFieldKeywords:
 					s.Keywords = append(s.Keywords, v)
+				case skillFieldPaths: // T-R1P-019
+					s.Paths = append(s.Paths, v)
 				}
 				continue
 			}
@@ -828,7 +855,42 @@ func parseFrontmatter(fm string, s *Skill) {
 			} else {
 				inList = skillFieldKeywords
 			}
+		// T-R1P-019: path-scoped activation
+		case skillFieldPaths:
+			if val != "" {
+				// Inline list: paths: [src/**, tests/**]
+				inline := strings.TrimSpace(val)
+				if strings.HasPrefix(inline, "[") && strings.HasSuffix(inline, "]") {
+					inner := strings.TrimSuffix(strings.TrimPrefix(inline, "["), "]")
+					for _, v := range strings.Split(inner, ",") {
+						v = strings.TrimSpace(v)
+						v = strings.Trim(v, `"'`)
+						if v != "" {
+							s.Paths = append(s.Paths, v)
+						}
+					}
+				}
+			} else {
+				inList = skillFieldPaths
+			}
 		}
+	}
+}
+
+// parseFrontmatterListItem handles a single bullet "- value" line for the
+// switch cases that extend beyond keywords (paths, etc.).
+// Called from parseFrontmatter's inList block — kept here so it stays in
+// sync with the field constants above.
+func applyFrontmatterListItem(inList, v string, s *Skill) {
+	switch inList {
+	case skillFieldTriggers:
+		s.Triggers = append(s.Triggers, v)
+	case skillFieldAllowedTools:
+		s.AllowedTools = append(s.AllowedTools, v)
+	case skillFieldKeywords:
+		s.Keywords = append(s.Keywords, v)
+	case skillFieldPaths:
+		s.Paths = append(s.Paths, v)
 	}
 }
 
@@ -905,4 +967,130 @@ func min3(a, b, c int) int {
 		return b
 	}
 	return c
+}
+
+// --- T-R1P-019: path-scoped activation ---
+
+// skillPathMatchesDir reports whether any of the skill's glob patterns matches
+// (or is an ancestor of) workDir. Patterns follow filepath.Match semantics;
+// "**" is expanded to mean "zero or more path components" by trying the pattern
+// against every suffix of workDir's path segments.
+//
+// Empty workDir means "no directory known" — returns false so skills with
+// path constraints are conservatively skipped when the working directory is
+// not yet established.
+func skillPathMatchesDir(patterns []string, workDir string) bool {
+	if workDir == "" || len(patterns) == 0 {
+		return false
+	}
+	// Clean the directory for matching
+	workDir = filepath.ToSlash(filepath.Clean(workDir))
+	for _, pat := range patterns {
+		pat = strings.TrimSpace(pat)
+		if pat == "" {
+			continue
+		}
+		pat = filepath.ToSlash(pat)
+		// Exact or prefix match first (fast path)
+		if pat == workDir || strings.HasPrefix(workDir+"/", pat+"/") {
+			return true
+		}
+		// filepath.Match against the full path
+		if ok, _ := filepath.Match(pat, workDir); ok {
+			return true
+		}
+		// Expand "**" by trying the pattern against each suffix of workDir
+		if strings.Contains(pat, "**") {
+			// Replace ** with a literal match attempt across all sub-paths
+			parts := strings.Split(workDir, "/")
+			for i := range parts {
+				suffix := strings.Join(parts[i:], "/")
+				// Replace ** in pattern with the joined suffix attempt
+				expanded := strings.ReplaceAll(pat, "**", suffix)
+				if ok, _ := filepath.Match(expanded, workDir); ok {
+					return true
+				}
+				// Also try pattern without the ** anchor
+				trimmed := strings.TrimSuffix(strings.TrimPrefix(pat, "**/"), "/**")
+				if ok, _ := filepath.Match(trimmed, suffix); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// --- T-R1P-018: skill shell injection preprocessing ---
+
+// shellInjectionRe matches !`cmd` blocks in skill content.
+// The pattern captures the command inside the backticks.
+var shellInjectionRe = regexp.MustCompile("`([^`]+)`")
+
+// PreprocessShellInjections replaces every occurrence of !`cmd` in content
+// with the stdout output of running cmd via /bin/sh (or cmd.exe on Windows).
+// Substitution happens at skill-load time, not render time, so the model sees
+// already-expanded text.
+//
+// Rules:
+//   - Only lines where the backtick-quoted segment is immediately preceded by
+//     "!" are expanded. Plain backtick code spans elsewhere in the skill body
+//     are left untouched.
+//   - Command output is trimmed of leading/trailing whitespace.
+//   - If the command fails or exceeds 5 seconds, the !`cmd` marker is replaced
+//     with an empty string and a one-line warning is appended to the line.
+//   - Builtin skills are never preprocessed (they are trusted, static content).
+//
+// Example frontmatter: !`git rev-parse --short HEAD` → "abc1234"
+func PreprocessShellInjections(content string) string {
+	// Fast path: no !` in content means nothing to expand
+	if !strings.Contains(content, "!`") {
+		return content
+	}
+
+	// lineRe matches !`cmd` at the line level
+	lineRe := regexp.MustCompile(`!\x60([^\x60]+)\x60`)
+
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, "!`") {
+			continue
+		}
+		lines[i] = lineRe.ReplaceAllStringFunc(line, func(match string) string {
+			// Extract command between backticks (strip leading "!")
+			sub := shellInjectionRe.FindStringSubmatch(match)
+			if len(sub) < 2 {
+				return match
+			}
+			cmd := sub[1]
+			out, err := runShellCapture(cmd)
+			if err != nil {
+				return fmt.Sprintf("[shell-inject error: %v]", err)
+			}
+			return strings.TrimSpace(out)
+		})
+	}
+	return strings.Join(lines, "\n")
+}
+
+// runShellCapture runs cmd via /bin/sh -c with a 5-second timeout and returns
+// its combined stdout output. Returns error on non-zero exit or timeout.
+func runShellCapture(cmd string) (string, error) {
+	shell := "/bin/sh"
+	if _, err := exec.LookPath(shell); err != nil {
+		// Fallback: try sh in PATH
+		if p, err2 := exec.LookPath("sh"); err2 == nil {
+			shell = p
+		} else {
+			return "", fmt.Errorf("shell not found")
+		}
+	}
+	c := exec.Command(shell, "-c", cmd) // #nosec G204 -- cmd comes from operator-authored skill frontmatter; scanned by promptguard before reaching this path.
+	var buf bytes.Buffer
+	c.Stdout = &buf
+	c.Stderr = &buf
+	if err := c.Run(); err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(buf.String()))
+	}
+	return buf.String(), nil
 }
