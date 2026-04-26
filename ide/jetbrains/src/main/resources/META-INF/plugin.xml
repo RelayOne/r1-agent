@@ -1,0 +1,52 @@
+<idea-plugin>
+    <id>com.relayone.r1</id>
+    <name>R1 Agent</name>
+    <vendor email="dev@relayone.ai" url="https://relayone.ai">RelayOne</vendor>
+
+    <description><![CDATA[
+        Invoke the local <b>r1-agent</b> daemon (<code>stoke agent-serve</code>)
+        from inside JetBrains IDEs. Provides a tool window chat panel,
+        a quick "Run Task" action, and an "Explain Selection" action.
+        Speaks the same HTTP contract as the VS Code extension —
+        see <code>ide/PROTOCOL.md</code> in the r1-agent repo.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="R1 Chat"
+                    anchor="right"
+                    icon="/META-INF/pluginIcon.svg"
+                    factoryClass="com.relayone.r1.R1ToolWindowFactory"/>
+
+        <applicationService serviceImplementation="com.relayone.r1.R1Settings"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="com.relayone.r1.R1SettingsConfigurable"
+                                 id="com.relayone.r1.settings"
+                                 displayName="R1 Agent"/>
+
+        <notificationGroup id="R1 Agent" displayType="BALLOON" />
+    </extensions>
+
+    <actions>
+        <action id="r1.run.task"
+                class="com.relayone.r1.RunTaskAction"
+                text="R1: Run Task..."
+                description="Submit an objective to the r1-agent daemon">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="r1.explain.selection"
+                class="com.relayone.r1.ExplainSelectionAction"
+                text="R1: Explain Selection"
+                description="Send the current editor selection to r1-agent for explanation">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action id="r1.chat.open"
+                class="com.relayone.r1.OpenChatAction"
+                text="R1: Open Chat Panel"
+                description="Open the R1 chat tool window">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>
