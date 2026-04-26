@@ -269,25 +269,23 @@ func TestDesktopColorPick(t *testing.T) {
 	}
 }
 
-// TestDesktopStubBackendUnsupported confirms the build-tag-selected
-// default backend returns ErrUnsupported on every operation when
-// the host has no GUI plumbing. Skipped when the real robotgo backend
-// is active — those operations are exercised by
-// TestDesktopRealBackendSmoke instead.
+// TestDesktopStubBackendUnsupported asserts that the stub backend
+// returns ErrUnsupported for every operation. Constructs the stub
+// directly via NewWithBackend so the test runs under every build tag
+// (default, ci_no_gui, AND desktop_robotgo) and never needs to skip.
 func TestDesktopStubBackendUnsupported(t *testing.T) {
-	if BackendName == "robotgo" {
-		t.Skipf("real backend active (%s) — stub-specific test skipped", BackendName)
-	}
-	d := New()
+	d := NewWithBackend(&stubBackend{})
 
 	cases := []struct {
 		name string
 		fn   func() error
 	}{
 		{"Screenshot", func() error { _, e := d.Screenshot(); return e }},
+		{"ScreenshotRegion", func() error { _, e := d.ScreenshotRegion(0, 0, 10, 10); return e }},
 		{"MoveCursor", func() error { return d.MoveCursor(0, 0) }},
 		{"Click", func() error { return d.Click(0, 0, ButtonLeft) }},
 		{"DoubleClick", func() error { return d.DoubleClick(0, 0) }},
+		{"TypeText", func() error { return d.TypeText("a") }},
 		{"KeyPress", func() error { return d.KeyPress("a") }},
 		{"GetWindowTitle", func() error { _, e := d.GetWindowTitle(); return e }},
 		{"GetScreenSize", func() error { _, _, e := d.GetScreenSize(); return e }},

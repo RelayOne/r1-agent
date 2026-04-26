@@ -1,18 +1,21 @@
 // github_test.go — unit tests for the GitHub Actions + PR adapter (T-R1P-021).
 //
 // All tests use httptest.NewServer to serve canned API responses. The
-// real github.com API is never contacted from this file.
+// real github.com API is never contacted from this file. The wrapper
+// is implemented on top of github.com/google/go-github/v62, so the
+// tests assert behaviour through the wrapper's surface (URL paths,
+// auth headers, parsed shapes) rather than re-asserting SDK internals.
 //
 // Coverage:
 //   - TriggerWorkflow POSTs the dispatch payload + auth header
 //   - GetRunStatus parses the workflow-run payload
 //   - WaitForCompletion polls and returns on terminal status
 //   - WaitForCompletion times out cleanly on a stuck run
-//   - GetJobLogs returns the raw log archive bytes
+//   - GetJobLogs returns the redirect URL for the log archive
 //   - GetPullRequestDiff sends the diff Accept header
 //   - ListPullRequestFiles decodes the per-file change array
 //   - PostReviewComment fetches head sha and posts the inline comment
-//   - APIError carries status + message and IsNotFound classifies 404s
+//   - go-github's *ErrorResponse is classified by IsNotFound / IsUnauthorized
 //   - Auth header (Authorization: Bearer ...) is sent on every request
 //   - RenderCommentBody formats findings deterministically (T-R1P-021 requirement)
 //   - ParseFindings reads the default LLM response shape
@@ -30,6 +33,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v62/github"
 )
 
 // newTestClient wires a Client to a httptest.Server with a short poll
@@ -58,13 +63,13 @@ func TestTriggerWorkflowSendsPayload(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer secret-xyz" {
 			t.Errorf("Authorization header = %q", got)
 		}
-		if got := r.Header.Get("X-GitHub-Api-Version"); got != "2022-11-28" {
-			t.Errorf("X-GitHub-Api-Version = %q", got)
-		}
 		if got := r.Header.Get("Accept"); !strings.Contains(got, "github") {
 			t.Errorf("Accept = %q", got)
 		}
-		var body dispatchPayload
+		// go-github sends the dispatch event as
+		// CreateWorkflowDispatchEventRequest{Ref, Inputs}; decode into
+		// the SDK shape so we don't redefine the wire payload here.
+		var body gh.CreateWorkflowDispatchEventRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
@@ -183,13 +188,18 @@ func TestPollUntilDoneTimesOut(t *testing.T) {
 	}
 }
 
-// TestGetJobLogsReturnsBody returns the raw log bytes.
-func TestGetJobLogsReturnsBody(t *testing.T) {
+// TestGetJobLogsReturnsRedirectURL verifies that GetJobLogs returns
+// the signed-URL location pointed to by GitHub's 302 redirect for
+// /actions/runs/:id/logs (go-github's idiom for streaming log
+// archives without buffering them in memory).
+func TestGetJobLogsReturnsRedirectURL(t *testing.T) {
+	const signedURL = "https://pipelines.example.com/signed/zip/abc123"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/o/r/actions/runs/9/logs" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		_, _ = io.WriteString(w, "PK\x03\x04 (fake zip bytes)")
+		w.Header().Set("Location", signedURL)
+		w.WriteHeader(http.StatusFound)
 	}))
 	defer srv.Close()
 
@@ -198,8 +208,8 @@ func TestGetJobLogsReturnsBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJobLogs: %v", err)
 	}
-	if !strings.HasPrefix(logs, "PK") {
-		t.Errorf("logs = %q, want zip-prefix", logs)
+	if logs != signedURL {
+		t.Errorf("logs URL = %q, want %q", logs, signedURL)
 	}
 }
 
@@ -296,7 +306,9 @@ func TestPostReviewCommentSendsCorrectBody(t *testing.T) {
 	}
 }
 
-// TestErrorResponseClassifies404 verifies APIError + IsNotFound.
+// TestErrorResponseClassifies404 verifies that go-github's
+// *ErrorResponse is reachable via errors.As and that IsNotFound
+// returns true for a 404.
 func TestErrorResponseClassifies404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -312,9 +324,9 @@ func TestErrorResponseClassifies404(t *testing.T) {
 	if !IsNotFound(err) {
 		t.Errorf("IsNotFound = false for: %v", err)
 	}
-	var apiErr *APIError
+	var apiErr *gh.ErrorResponse
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("error is not *APIError: %T", err)
+		t.Fatalf("error is not *gh.ErrorResponse: %T", err)
 	}
 	if apiErr.Message != "Not Found" {
 		t.Errorf("message = %q", apiErr.Message)
