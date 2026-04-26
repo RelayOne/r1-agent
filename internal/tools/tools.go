@@ -48,6 +48,36 @@ type Registry struct {
 	readFiles sync.Map // tracks files that have been read (for Edit guard)
 	environ   env.Environment // optional execution environment (nil = no env tools)
 	envHandle *env.Handle     // optional environment handle
+
+	// todo_write / todo_read / todo_update state (T-R1P-012).
+	todoOnce sync.Once
+	todos    *todoStore
+
+	// memory_store / memory_recall / memory_forget state (T-R1P-013).
+	memOnce sync.Once
+	memStore *toolMemoryStore
+
+	// mcpRegistry is an optional MCP registry used by mcp_tool_search,
+	// mcp_resource_list, and mcp_resource_read (T-R1P-010/011).
+	// Nil when no MCP registry has been configured; the tools degrade
+	// gracefully in that case.
+	mcpRegistry MCPToolSearcher
+}
+
+// MCPToolSearcher is the minimal interface the tools package needs from
+// an MCP registry to implement mcp_tool_search (T-R1P-010).
+// Satisfies *mcp.Registry without importing that package (avoids cycle).
+type MCPToolSearcher interface {
+	// SearchTools returns tool names + descriptions matching a query string.
+	// Returns (nil, nil) when no registry is wired or the query matches nothing.
+	SearchTools(ctx context.Context, query string) ([]MCPToolSummary, error)
+}
+
+// MCPToolSummary is a trimmed tool descriptor for search results.
+type MCPToolSummary struct {
+	Name        string
+	Description string
+	ServerName  string
 }
 
 // SetEnvironment configures the registry with an execution environment,
@@ -55,6 +85,12 @@ type Registry struct {
 func (r *Registry) SetEnvironment(e env.Environment, h *env.Handle) {
 	r.environ = e
 	r.envHandle = h
+}
+
+// SetMCPRegistry wires an MCP registry into the tools layer, enabling
+// mcp_tool_search, mcp_resource_list, and mcp_resource_read (T-R1P-010/011).
+func (r *Registry) SetMCPRegistry(reg MCPToolSearcher) {
+	r.mcpRegistry = reg
 }
 
 // NewRegistry creates a tool registry rooted at the given working directory.
@@ -262,6 +298,246 @@ func (r *Registry) Definitions() []provider.ToolDef {
 				"required": []string{"path"},
 			}),
 		},
+		// T-R1P-012: todo list management
+		{
+			Name:        "todo_write",
+			Description: "Replace the entire task/todo list with the provided items. Each item has id, content, status (pending|in_progress|done), and priority (high|medium|low). Call this at the start of a task to plan work, and whenever the plan changes.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"todos": map[string]interface{}{
+						"type":        "array",
+						"description": "The complete replacement todo list",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"id":       map[string]string{"type": "string", "description": "Unique identifier for this item (auto-assigned if empty)"},
+								"content":  map[string]string{"type": "string", "description": "The task description"},
+								"status":   map[string]string{"type": "string", "description": "pending | in_progress | done (default: pending)"},
+								"priority": map[string]string{"type": "string", "description": "high | medium | low (default: medium)"},
+							},
+							"required": []string{"content"},
+						},
+					},
+				},
+				"required": []string{"todos"},
+			}),
+		},
+		{
+			Name:        "todo_read",
+			Description: "Return the current task/todo list. Optionally filter by status.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"status": map[string]string{"type": "string", "description": "Optional filter: pending | in_progress | done"},
+				},
+			}),
+		},
+		{
+			Name:        "todo_update",
+			Description: "Update a single todo item's status and/or priority by id.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":       map[string]string{"type": "string", "description": "The id of the todo to update"},
+					"status":   map[string]string{"type": "string", "description": "New status: pending | in_progress | done"},
+					"priority": map[string]string{"type": "string", "description": "New priority: high | medium | low"},
+				},
+				"required": []string{"id"},
+			}),
+		},
+		// T-R1P-013: agent memory
+		{
+			Name:        "memory_store",
+			Description: "Store a memory entry for recall in future turns or sessions. Category: gotcha | pattern | preference | fact | anti_pattern | fix. Stored in .r1/agent-memory.json in the working directory.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"content":  map[string]string{"type": "string", "description": "The knowledge to remember"},
+					"category": map[string]string{"type": "string", "description": "gotcha | pattern | preference | fact | anti_pattern | fix (default: fact)"},
+					"tags":     map[string]interface{}{"type": "array", "items": map[string]string{"type": "string"}, "description": "Optional tags for retrieval"},
+					"file":     map[string]string{"type": "string", "description": "Optional related file pattern"},
+				},
+				"required": []string{"content"},
+			}),
+		},
+		{
+			Name:        "memory_recall",
+			Description: "Recall stored memory entries relevant to a query. Returns the top matches ranked by relevance and confidence.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]string{"type": "string", "description": "Query to search memories for"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Max results (default 10, max 50)"},
+				},
+				"required": []string{"query"},
+			}),
+		},
+		{
+			Name:        "memory_forget",
+			Description: "Remove a stored memory entry by id.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id": map[string]string{"type": "string", "description": "The memory id to remove"},
+				},
+				"required": []string{"id"},
+			}),
+		},
+		// T-R1P-017: declarative HTTP request
+		{
+			Name:        "http_request",
+			Description: "Make an HTTP request (GET/POST/PUT/PATCH/DELETE) and return the response status, headers, and body. Body capped at 1MB. Suitable for API calls, webhooks, and health checks.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"method":  map[string]string{"type": "string", "description": "HTTP method: GET | POST | PUT | PATCH | DELETE | HEAD (default: GET)"},
+					"url":     map[string]string{"type": "string", "description": "The request URL"},
+					"headers": map[string]interface{}{"type": "object", "description": "Optional request headers as key/value pairs", "additionalProperties": map[string]string{"type": "string"}},
+					"body":    map[string]string{"type": "string", "description": "Optional request body (for POST/PUT/PATCH)"},
+					"timeout": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default 30000, max 120000)"},
+				},
+				"required": []string{"url"},
+			}),
+		},
+		// T-R1P-010: MCP tool search
+		{
+			Name:        "mcp_tool_search",
+			Description: "Search for available MCP tools by name or description. Returns tool names and descriptions matching the query. Use this to discover what tools are available from connected MCP servers before calling them.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query":      map[string]string{"type": "string", "description": "Search query — matched against tool names and descriptions"},
+					"server":     map[string]string{"type": "string", "description": "Optional: restrict search to a specific MCP server name"},
+					"max_results": map[string]interface{}{"type": "integer", "description": "Max results to return (default 20)"},
+				},
+				"required": []string{"query"},
+			}),
+		},
+		// T-R1P-011: MCP resource list / read
+		{
+			Name:        "mcp_resource_list",
+			Description: "List resources exposed by a connected MCP server. Resources are named data objects (files, documents, API schemas) the server publishes for agent consumption.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"server": map[string]string{"type": "string", "description": "MCP server name to list resources from"},
+				},
+				"required": []string{"server"},
+			}),
+		},
+		{
+			Name:        "mcp_resource_read",
+			Description: "Read the content of a named resource from a connected MCP server.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"server": map[string]string{"type": "string", "description": "MCP server name"},
+					"uri":    map[string]string{"type": "string", "description": "Resource URI as returned by mcp_resource_list"},
+				},
+				"required": []string{"server", "uri"},
+			}),
+		},
+		// T-R1P-004: image / vision input
+		{
+			Name:        "image_read",
+			Description: "Read an image file and return its base64-encoded data URI plus metadata (MIME type, dimensions, size). The data URI can be passed to vision-capable models. Supported formats: JPEG, PNG, GIF, WebP. Size cap: 5MB.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]string{"type": "string", "description": "Path to the image file (relative to working directory or absolute under it)"},
+				},
+				"required": []string{"path"},
+			}),
+		},
+		// T-R1P-005: Jupyter notebook editing
+		{
+			Name:        "notebook_read",
+			Description: "Read a Jupyter notebook (.ipynb) and return a human-readable rendering of all cells including source and outputs. Works without Jupyter installed.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]string{"type": "string", "description": "Path to the .ipynb file (relative to working directory or absolute under it)"},
+				},
+				"required": []string{"path"},
+			}),
+		},
+		{
+			Name:        "notebook_cell_run",
+			Description: "Append a code cell to a Jupyter notebook and execute the entire notebook using `jupyter nbconvert --execute --inplace`. Requires Jupyter to be installed; gracefully returns a fallback message when unavailable.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path":   map[string]string{"type": "string", "description": "Path to the .ipynb file (created if absent)"},
+					"source": map[string]string{"type": "string", "description": "Python source code to run in the new cell"},
+				},
+				"required": []string{"path", "source"},
+			}),
+		},
+		// T-R1P-015: PowerShell tool
+		{
+			Name:        "powershell",
+			Description: "Execute a PowerShell command or script string. Uses pwsh (PowerShell Core) if available, falls back to powershell.exe on Windows. Returns a graceful 'not available' message on systems where PowerShell is not installed. Output truncated at 30KB.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"command": map[string]string{"type": "string", "description": "PowerShell command or script to execute"},
+					"timeout": map[string]interface{}{"type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)"},
+				},
+				"required": []string{"command"},
+			}),
+		},
+		// T-R1P-016: GitHub Actions / worktree hook events
+		{
+			Name:        "gh_pr_list",
+			Description: "List pull requests for the current repository (or a named repo) using the gh CLI. Returns PR number, title, author, state, branch, and URL. Requires gh CLI installed and authenticated.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo":  map[string]string{"type": "string", "description": "Optional: owner/repo (defaults to current git repo)"},
+					"state": map[string]string{"type": "string", "description": "open | closed | merged | all (default: open)"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Max PRs to return (default 20)"},
+				},
+			}),
+		},
+		{
+			Name:        "gh_pr_diff",
+			Description: "Fetch the unified diff of a pull request by number using the gh CLI. Requires gh CLI installed and authenticated.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"number": map[string]interface{}{"type": "integer", "description": "PR number"},
+					"repo":   map[string]string{"type": "string", "description": "Optional: owner/repo"},
+				},
+				"required": []string{"number"},
+			}),
+		},
+		{
+			Name:        "gh_run_list",
+			Description: "List recent GitHub Actions workflow runs for the current repo using the gh CLI. Returns run ID, workflow name, status, conclusion, branch, and URL.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo":     map[string]string{"type": "string", "description": "Optional: owner/repo"},
+					"workflow": map[string]string{"type": "string", "description": "Optional: filter by workflow filename or name"},
+					"branch":   map[string]string{"type": "string", "description": "Optional: filter by branch name"},
+					"limit":    map[string]interface{}{"type": "integer", "description": "Max runs to return (default 10)"},
+				},
+			}),
+		},
+		{
+			Name:        "gh_run_view",
+			Description: "View details (or failed logs) of a specific GitHub Actions workflow run by ID. Set log: true to fetch the failed job log output.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"run_id": map[string]interface{}{"type": "integer", "description": "Workflow run database ID (from gh_run_list)"},
+					"repo":   map[string]string{"type": "string", "description": "Optional: owner/repo"},
+					"log":    map[string]interface{}{"type": "boolean", "description": "If true, return the failed job log (default: false)"},
+				},
+				"required": []string{"run_id"},
+			}),
+		},
 	}
 }
 
@@ -301,6 +577,42 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleCronDelete(ctx, input)
 	case "pdf_read", "PDFRead":
 		return r.handlePDFRead(input)
+	case "todo_write", "TodoWrite":
+		return r.handleTodoWrite(input)
+	case "todo_read", "TodoRead":
+		return r.handleTodoRead(input)
+	case "todo_update", "TodoUpdate":
+		return r.handleTodoUpdate(input)
+	case "memory_store", "MemoryStore":
+		return r.handleMemoryStore(input)
+	case "memory_recall", "MemoryRecall":
+		return r.handleMemoryRecall(input)
+	case "memory_forget", "MemoryForget":
+		return r.handleMemoryForget(input)
+	case "http_request", "HttpRequest":
+		return r.handleHTTPRequest(ctx, input)
+	case "mcp_tool_search", "McpToolSearch":
+		return r.handleMCPToolSearch(ctx, input)
+	case "mcp_resource_list", "McpResourceList":
+		return r.handleMCPResourceList(ctx, input)
+	case "mcp_resource_read", "McpResourceRead":
+		return r.handleMCPResourceRead(ctx, input)
+	case "image_read", "ImageRead":
+		return r.handleImageRead(input)
+	case "notebook_read", "NotebookRead":
+		return r.handleNotebookRead(input)
+	case "notebook_cell_run", "NotebookCellRun":
+		return r.handleNotebookCellRun(ctx, input)
+	case "powershell", "PowerShell", "Powershell":
+		return r.handlePowerShell(ctx, input)
+	case "gh_pr_list", "GhPrList":
+		return r.handleGHPRList(ctx, input)
+	case "gh_pr_diff", "GhPrDiff":
+		return r.handleGHPRDiff(ctx, input)
+	case "gh_run_list", "GhRunList":
+		return r.handleGHRunList(ctx, input)
+	case "gh_run_view", "GhRunView":
+		return r.handleGHRunView(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
