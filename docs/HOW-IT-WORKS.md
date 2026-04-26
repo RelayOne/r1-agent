@@ -7,6 +7,29 @@ coding task through R1 — first from the operator's point of view
 reference grouped by subsystem, see [ARCHITECTURE.md](ARCHITECTURE.md).
 If you want the pitch, see [BUSINESS-VALUE.md](BUSINESS-VALUE.md).
 
+## Wave 2 (2026-04-26) — New Operator Surfaces
+
+Three things changed under the operator's hands in Wave 2:
+
+1. **Drive R1 from your IDE.** VS Code and JetBrains plugins ship in-tree
+   (`ide/vscode/`, `ide/jetbrains/`). Both speak LSP to the new
+   `stoke-lsp` server, so any LSP-enabled editor — Neovim, Helix,
+   Sublime Text — can also drive R1 with no plugin work. PRs #13, #16,
+   #17.
+2. **Drive R1 from a desktop GUI.** A Tauri-wrapped desktop shell
+   launches the orchestrator subprocess and surfaces the live mission
+   feed. The robotgo backend is real — clicks, keystrokes, screenshots
+   — instead of stubbed. PRs #18, #19. Commits `d4403b8`, `841a494`.
+3. **Drive R1 from your CI.** GitHub Actions, GitLab CI, and CircleCI
+   adapters drop into your pipeline as a single step that runs
+   `stoke task ...` on the PR diff. PR #14. Commit `f8d8d1c`.
+
+The operator also now gets **browser-driven flows** (Manus-style
+autonomous operator) and a **wider tool surface**: `image_read`,
+`notebook_read/cell_run`, `powershell`, `gh_pr/run`, `web_fetch`,
+`web_search`, `cron`, `pdf_read`. These are wired into `Handle()` and
+appear automatically in tool-pick prompts.
+
 ## User journey
 
 ### Step 1: Install and verify

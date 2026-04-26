@@ -6,6 +6,30 @@ container, and in the managed-cloud configuration. It also covers
 every environment variable R1 reads, where each one comes from,
 and how to verify a deployment is healthy.
 
+## Wave 2 (2026-04-26) Deployment Surface
+
+Wave 2 added new install surfaces and a new CI cutover:
+
+1. **VS Code + JetBrains IDE plugins** (`ide/vscode/`, `ide/jetbrains/`).
+   Build via `npm run package` (VS Code) and `./gradlew buildPlugin`
+   (JetBrains). Both plugins ship the LSP client; the LSP server binary
+   `stoke-lsp` must be on `$PATH`.
+2. **Tauri desktop GUI** (`desktop/`). Build via `npm install && npm run tauri build`.
+   Real `robotgo` backend ships in PR #19 — the GUI drives real input/output
+   instead of stubs.
+3. **Multi-CI adapters.**
+   - **GitHub Actions:** `.github/workflows/r1-pr.yml` (template lives at
+     `cmd/stoke/templates/cicd/github.yml`).
+   - **GitLab CI:** `.gitlab-ci.yml` snippet at `cmd/stoke/templates/cicd/gitlab.yml`.
+   - **CircleCI:** orb at `cmd/stoke/templates/cicd/circleci.yml`.
+4. **Cloud Build CI cutover (PR #11, commit `a883825`).** GitHub Actions
+   removed in favour of Cloud Build. Pipeline configs at
+   `cloudbuild.yaml` and `cloudbuild-release.yaml`. Local pre-push
+   verification via `scripts/install-pre-push-hook.sh`.
+5. **Veritize-Verity dual-send headers (PR #8, commit `6ed5bb8`).** Outbound
+   HTTP carries both `X-Veritize-Client` and `X-Verity-Client` for the
+   30-day rename dual-accept window.
+
 > R1 ships as the `stoke` binary today (rename to `r1` tracked in
 > `plans/work-orders/work-r1-rename.md` §S2-3). Every CLI invocation,
 > `STOKE_*` environment variable, `.stoke/` path, and `X-Stoke-*`
