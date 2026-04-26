@@ -625,6 +625,31 @@ func (r *Registry) Definitions() []provider.ToolDef {
 			}),
 		},
 		{
+			Name:        "browser_wait_for",
+			Description: "Block until a CSS selector appears in the DOM (or timeout). Use after navigation or click to synchronize on dynamic content. Optional timeout_ms (default 10s). Requires stoke_rod build tag.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session":    map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"selector":   map[string]string{"type": "string", "description": "CSS selector to wait for"},
+					"timeout_ms": map[string]string{"type": "integer", "description": "Optional per-call timeout in milliseconds (default 10000)"},
+				},
+				"required": []string{"session", "selector"},
+			}),
+		},
+		{
+			Name:        "browser_get_html",
+			Description: "Return the current page's outer HTML (capped at max_kb, default 256KB). Backed by document.documentElement.outerHTML when stoke_rod is compiled in; falls back to a text snapshot otherwise.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session": map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"max_kb":  map[string]string{"type": "integer", "description": "Optional cap on returned HTML in kilobytes (default 256)"},
+				},
+				"required": []string{"session"},
+			}),
+		},
+		{
 			Name:        "browser_close",
 			Description: "Close a browser session and release all associated resources (Chromium process, temp files). Always call this when the browser workflow is complete.",
 			InputSchema: mustJSON(map[string]interface{}{
@@ -725,6 +750,10 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleBrowserExtract(ctx, input)
 	case "browser_eval", "BrowserEval":
 		return r.handleBrowserEval(ctx, input)
+	case "browser_wait_for", "BrowserWaitFor":
+		return r.handleBrowserWaitFor(ctx, input)
+	case "browser_get_html", "BrowserGetHTML":
+		return r.handleBrowserGetHTML(ctx, input)
 	case "browser_close", "BrowserClose":
 		return r.handleBrowserClose(ctx, input)
 	default:
