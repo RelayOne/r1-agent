@@ -1,0 +1,79 @@
+# cloudbuild-release.yaml — r1 (stoke) release via goreleaser
+# Triggered on tag push matching ^v.*
+# Replaces GitHub Actions release.yml
+# Artifacts uploaded to GCS instead of GitHub Releases.
+
+substitutions:
+  _GCS_BUCKET: relayone-488319-r1-releases
+
+steps:
+  - name: 'golang:1.25'
+    id: install-deps
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        apt-get update -q && apt-get install -y -q \
+          gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu gcc
+        # Install goreleaser v2
+        curl -sSL https://github.com/goreleaser/goreleaser/releases/download/v2.9.0/goreleaser_Linux_x86_64.tar.gz \
+          | tar -xz -C /usr/local/bin goreleaser
+        goreleaser --version
+
+  - name: 'golang:1.25'
+    id: goreleaser
+    waitFor: ['install-deps']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        apt-get update -q && apt-get install -y -q \
+          gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu gcc
+        goreleaser release --skip=publish --clean
+    env:
+      - 'CGO_ENABLED=1'
+      - 'GORELEASER_CURRENT_TAG=$TAG_NAME'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: upload-gcs
+    waitFor: ['goreleaser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        TAG="$TAG_NAME"
+        echo "Uploading artifacts for ${TAG} to gs://${_GCS_BUCKET}/${TAG}/"
+        gsutil -m cp dist/*.tar.gz dist/checksums.txt \
+          gs://${_GCS_BUCKET}/${TAG}/
+        # Tag bucket objects as permanent
+        gsutil -m setmeta -h "x-goog-meta-permanent:true" \
+          "gs://${_GCS_BUCKET}/${TAG}/**" 2>/dev/null || true
+        echo "Upload complete:"
+        gsutil ls gs://${_GCS_BUCKET}/${TAG}/
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: docker-build-push
+    waitFor: ['goreleaser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        TAG="$TAG_NAME"
+        REGION=us-central1
+        PROJECT=relayone-488319
+        REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/containers"
+        docker build \
+          --build-arg VERSION="${TAG}" \
+          -t "${REGISTRY}/r1-agent:${TAG}" \
+          -t "${REGISTRY}/r1-agent:latest" .
+        docker push "${REGISTRY}/r1-agent:${TAG}"
+        docker push "${REGISTRY}/r1-agent:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+  labels:
+    permanent: 'true'
+    repo: r1
+    lang: go
+    type: release
