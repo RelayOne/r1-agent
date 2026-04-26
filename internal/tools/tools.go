@@ -538,6 +538,103 @@ func (r *Registry) Definitions() []provider.ToolDef {
 				"required": []string{"run_id"},
 			}),
 		},
+		// T-R1P-001: browser automation tools (go-rod / headless Chromium)
+		// T-R1P-002: Manus-style long-running browser operator with screenshots
+		{
+			Name:        "browser_session",
+			Description: "Open a new browser session. Returns a session ID used by all other browser_* tools. Backed by headless Chromium (go-rod) when built with -tags stoke_rod; gracefully falls back to HTTP-only mode otherwise. Call browser_close when done to release resources.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"id":       map[string]string{"type": "string", "description": "Optional session ID (auto-generated if empty)"},
+					"headless": map[string]interface{}{"type": "boolean", "description": "Run browser headless (default true)"},
+				},
+			}),
+		},
+		{
+			Name:        "browser_navigate",
+			Description: "Navigate the browser session to a URL. Waits for page load. Returns the final URL after any redirects.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session": map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"url":     map[string]string{"type": "string", "description": "URL to navigate to"},
+				},
+				"required": []string{"session", "url"},
+			}),
+		},
+		{
+			Name:        "browser_click",
+			Description: "Click an element matching a CSS selector in the browser session. Requires stoke_rod build tag for interactive pages.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session":  map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"selector": map[string]string{"type": "string", "description": "CSS selector of the element to click"},
+				},
+				"required": []string{"session", "selector"},
+			}),
+		},
+		{
+			Name:        "browser_type",
+			Description: "Type text into an element matching a CSS selector. Clears existing content first. Requires stoke_rod build tag.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session":  map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"selector": map[string]string{"type": "string", "description": "CSS selector of the input element"},
+					"text":     map[string]string{"type": "string", "description": "Text to type"},
+				},
+				"required": []string{"session", "selector", "text"},
+			}),
+		},
+		{
+			Name:        "browser_screenshot",
+			Description: "Capture a screenshot of the current browser viewport. Returns a base64 data URI (data:image/png;base64,...) suitable for vision models. Also saves to .r1/browser/<session>/ if the working directory is writable. Requires stoke_rod build tag.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session": map[string]string{"type": "string", "description": "Session ID from browser_session"},
+				},
+				"required": []string{"session"},
+			}),
+		},
+		{
+			Name:        "browser_extract",
+			Description: "Extract text content (or an attribute value) from an element matching a CSS selector. Returns the element's text when attribute is omitted.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session":   map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"selector":  map[string]string{"type": "string", "description": "CSS selector of the target element"},
+					"attribute": map[string]string{"type": "string", "description": "Optional attribute name (e.g. 'href', 'value'); omit for text content"},
+				},
+				"required": []string{"session", "selector"},
+			}),
+		},
+		{
+			Name:        "browser_eval",
+			Description: "Evaluate a JavaScript expression in the browser session and return the result as a string. Requires stoke_rod build tag; returns a graceful message in stdlib mode.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session": map[string]string{"type": "string", "description": "Session ID from browser_session"},
+					"script":  map[string]string{"type": "string", "description": "JavaScript expression to evaluate (return value serialised to string)"},
+				},
+				"required": []string{"session", "script"},
+			}),
+		},
+		{
+			Name:        "browser_close",
+			Description: "Close a browser session and release all associated resources (Chromium process, temp files). Always call this when the browser workflow is complete.",
+			InputSchema: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"session": map[string]string{"type": "string", "description": "Session ID to close"},
+				},
+				"required": []string{"session"},
+			}),
+		},
 	}
 }
 
@@ -613,6 +710,23 @@ func (r *Registry) Handle(ctx context.Context, name string, input json.RawMessag
 		return r.handleGHRunList(ctx, input)
 	case "gh_run_view", "GhRunView":
 		return r.handleGHRunView(ctx, input)
+	// T-R1P-001 / T-R1P-002: browser automation + Manus-style operator
+	case "browser_session", "BrowserSession":
+		return r.handleBrowserSession(input)
+	case "browser_navigate", "BrowserNavigate":
+		return r.handleBrowserNavigate(ctx, input)
+	case "browser_click", "BrowserClick":
+		return r.handleBrowserClick(ctx, input)
+	case "browser_type", "BrowserType":
+		return r.handleBrowserType(ctx, input)
+	case "browser_screenshot", "BrowserScreenshot":
+		return r.handleBrowserScreenshot(ctx, input)
+	case "browser_extract", "BrowserExtract":
+		return r.handleBrowserExtract(ctx, input)
+	case "browser_eval", "BrowserEval":
+		return r.handleBrowserEval(ctx, input)
+	case "browser_close", "BrowserClose":
+		return r.handleBrowserClose(ctx, input)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
