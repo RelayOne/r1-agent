@@ -25,6 +25,73 @@ strong implementer per task, pairs it with a cross-family adversarial
 reviewer, and treats the reviewer's dissent as a merge-blocking
 signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/architecture/single-strong-agent-stance.md).
 
+## What's shipping
+
+The April 2026 train extended R1 from a CLI orchestrator into a
+parity-or-better reference runtime alongside Claude Code, Cursor, and
+Manus. Recent merges to `main`:
+
+- **Browser automation + Manus-style autonomous operator** —
+  `browser_wait_for` and `browser_get_html` complete the
+  Playwright-parity tool set on top of the existing eight `browser_*`
+  tools, all backed by go-rod under the `stoke_rod` build tag in
+  [`internal/browser/`](internal/browser/). The
+  [`internal/browseragent/`](internal/browseragent/) package adds an
+  autonomous LLM-driven perceive-plan-act loop with a `Planner` and
+  `Driver` interface, a `MaxSteps` cap (default 20), per-step deadlines,
+  and nine fake-LLM-driven tests covering happy path / step-cap /
+  give_up / driver-failure recovery. Evidence: commit `f8bdd63` (PR #15).
+- **VS Code + JetBrains IDE plugins** —
+  [`ide/vscode/`](ide/vscode/) ships a buildable VS Code extension
+  (publisher `relayone`, name `r1-agent`) with chat / run-task /
+  explain-selection commands wired to `stoke agent-serve` over the
+  agentserve HTTP contract; [`ide/jetbrains/`](ide/jetbrains/) ships
+  a Kotlin Gradle plugin (`com.relayone.r1`) with tool window + three
+  actions + `PersistentStateComponent` settings;
+  [`ide/PROTOCOL.md`](ide/PROTOCOL.md) documents the shared wire
+  format. `npm run compile` + `vsce package` produce a 9.1 KB `.vsix`;
+  `./gradlew test` + `buildPlugin` produce a 1.6 MB plugin zip. Nine
+  mocha + eight JUnit tests cover the daemon-client wrapper. Evidence:
+  commit `e6393c8` (PR #16).
+- **Multi-language LSP client + GitLab CI/CD adapter** —
+  [`internal/lsp/client/`](internal/lsp/client/) is a generic LSP 3.17
+  JSON-RPC client over stdio with per-language launchers (gopls /
+  pyright-langserver | pylsp / typescript-language-server /
+  rust-analyzer). Public surface: `Initialize` / `OpenDocument` /
+  `Completion` / `Hover` / `Diagnostics` / `Shutdown`. Skill-side
+  language registry lives in `internal/skill/lsp.go`. Tests use
+  `io.Pipe`-backed fake servers.
+  [`internal/cicd/gitlab/`](internal/cicd/gitlab/) is a REST adapter
+  against `https://gitlab.com/api/v4/` with `TriggerPipeline` /
+  `GetPipelineStatus` / `WaitForCompletion` / `GetJobLog` /
+  `ListPipelineJobs`, PRIVATE-TOKEN auth from `GITLAB_TOKEN`, and a
+  typed `APIError` with `IsNotFound` classifier. Evidence: commit
+  `4042692` (PR #17).
+- **Desktop GUI automation + GitHub Actions adapter + auto-reviewer** —
+  [`internal/skill/desktop/`](internal/skill/desktop/) ships a
+  cross-platform `Backend` interface (Screenshot / ScreenshotRegion /
+  Click / DoubleClick / MoveCursor / TypeText / KeyPress /
+  GetWindowTitle / GetScreenSize / ListWindows / PickColor) with two
+  backends: a default stub returning `ErrUnsupported` (safe in CI /
+  headless / CGO-disabled), and `-tags desktop_robotgo` for the real
+  bridge to `github.com/go-vgo/robotgo`. Live-verified on a 4096×2160
+  X11 host (real `ListWindows` + cursor positioning).
+  [`internal/cicd/github/`](internal/cicd/github/) is built on
+  `go-github/v62` with `TriggerWorkflow` / `GetRunStatus` /
+  `WaitForCompletion` / `GetJobLogs` / `GetPullRequestDiff` /
+  `ListPullRequestFiles` / `PostReviewComment*`. The auto-reviewer in
+  `reviewer.go` has a pluggable `LLMFunc` + `ParserFunc` and posts
+  line-anchored inline comments. Twenty-one httptest-driven tests
+  (13 client + 8 reviewer). Evidence: commits `d4403b8`, `841a494`,
+  `bd6de28`, `2607578` (PRs #18–21).
+
+Earlier in this train R1 also shipped: `image_read` + `notebook_read` /
+`notebook_cell_run` + `powershell` + `gh_pr_*` / `gh_run_*` tools wired
+into `Handle()` (PR #9); skill shell-injection preprocessing +
+path-scoped activation (PR #10); web_fetch / web_search / cron tools +
+pdf_read (PR #7); X-Veritize-* dual-send headers (PR #8); the §S2-3
+binary rename so `r1` and `stoke` are byte-identical entry points.
+
 ## Install
 
 R1 is **free open-source software, forever**.
@@ -620,7 +687,7 @@ per-harness measurements land. Stance rationale is in
 - [SECURITY.md](SECURITY.md) — Disclosure policy, preferred channel
   (GitHub Security Advisories), threat-model scope, honor list.
 
-## Desktop App (in scoping)
+## Desktop App (in flight)
 
 R1 Desktop is a cross-platform Tauri v2 GUI for R1 — SOW tree, verification
 descent ladder, ledger browser, memory-bus viewer, skill catalog, MCP
@@ -628,16 +695,18 @@ manager, observability dashboard. Target competitive set: Claude.app,
 Hermes. R1's differentiators (SOW decomposition, T1..T8 descent,
 cryptographic ledger, memory-bus scopes) surface as first-class panels.
 
-- **Status:** SCOPED. Scaffold landed; full implementation tracked across
-  12 phases (R1D-1 through R1D-12).
+- **Status:** IN FLIGHT. R1D-1/2/3 panels (session-view + 64-test vitest
+  suite) shipped via commit `b7ad26b`; R1D-1 Tauri subprocess launcher
+  shipped via commit `693e241` (PR #6); cross-platform desktop-automation
+  Backend interface and real `robotgo` bridge merged via PRs #18–21
+  (commits `d4403b8`, `841a494`, `bd6de28`, `2607578`). The remaining
+  R1D phases (R1D-4 through R1D-12) cover the SOW tree / descent ladder /
+  ledger browser surfaces.
 - **Scaffold location:** [`desktop/`](desktop/).
 - **Roadmap:** [`desktop/PLAN.md`](desktop/PLAN.md).
 - **Architecture:** [`desktop/docs/architecture.md`](desktop/docs/architecture.md).
+- **Automation backend:** [`internal/skill/desktop/`](internal/skill/desktop/) — stub by default; `-tags desktop_robotgo` for the live X11 / Win32 / macOS bridge.
 - **Work order:** `plans/work-orders/work-r1-desktop-app.md`.
-
-The scaffold is **not yet buildable**; `cargo tauri init` in `desktop/` is
-the next action. No Go code changes are expected until the desktop app
-needs a new CLI IPC verb from `cmd/stoke/ctl_cmd.go`.
 
 ## License
 
