@@ -2,6 +2,45 @@
 
 > **Note:** R1 ships as the `stoke` binary today; the binary rename is in flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Command examples below still use `stoke` — that is the correct invocation for current builds.
 
+## Wave 2 (2026-04-26) — R1-Parity Sprint
+
+This wave completed the **R1 parity sprint** that brings stoke / R1 to
+feature-parity with R1 reference: browser tools, Manus-style autonomous
+operator, multi-language LSP client, full IDE plugin coverage, multi-CI
+adapters, real desktop GUI, plus injection preprocessing and tool surface
+expansion. Everything below shipped on `main`:
+
+- **Multi-CI parity (PR #14, commit `f8d8d1c`):** T-R1P-020/021/022 —
+  GitHub Actions, GitLab CI, and CircleCI integration.
+- **LSP server adapter (PR #13, commit `3cc1b6f`):** T-R1P-009 — speak
+  LSP to any LSP-enabled editor.
+- **Browser automation + Manus operator (PR #12, commit `7144b6f`):**
+  T-R1P-001/002 — `wait_for`, `get_html`, plus the Manus-style autonomous
+  operator. Wider browser tools follow-up in PR #15 (commit `f8dd63`).
+- **VS Code + JetBrains IDE plugins (PR #16, commit `e6393c8`):** T-R1P-003.
+- **Multi-language LSP client + GitLab CI/CD adapter (PR #17, commit `4042692`):**
+  T-R1P-020 + T-R1P-022.
+- **Desktop GUI + GitHub Actions adapter + auto-review (PR #18, commit `d4403b8`):**
+  T-R1P-009 + T-R1P-021.
+- **Real robotgo desktop backend (PR #19, commit `841a494`):** T-R1P-009
+  follow-up — the desktop GUI now drives a real robotgo backend instead of
+  the stub.
+- **Tool surface wire-up (PR #9, commit `cbe0ae1`):** T-R1P-004/005/015/016
+  — `image_read`, `notebook_read/cell_run`, `powershell`, `gh_pr/run` wired
+  into `Handle()`.
+- **web_fetch / web_search / cron / pdf_read (commit `20228bf`):** T-R1P-007/008/006/023.
+- **Shell injection preprocessing + path-scoped activation (commit `13afd78`):**
+  T-R1P-018/019.
+- **R1D-1 Tauri subprocess launcher (commit `693e241`):** R1D-1.1/1.2/1.3/1.4.
+- **Veritize-Verity dual-send headers (PR #8, commit `6ed5bb8`):** the
+  rename dual-accept window for HTTP attribution headers.
+- **Cloud Build CI cutover + local pre-push hook (PR #11, commit `a883825`).**
+- **CI/CD + desktop polish (PRs #18-21):** addressed supervisor scope and
+  rolled the runtime alternate-path test.
+
+Status sections at the end of each canonical doc reflect post-wave state.
+Most R1-parity tasks (T-R1P-001..023) are now Done.
+
 **A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**
 
 R1 drives Claude Code and Codex CLI through a deterministic
@@ -541,6 +580,44 @@ A 30-PR cleanup campaign also shipped:
   `-race` job across the full repo.
 - Package count drift check in `make check-pkg-count` asserted at 180
   internal packages.
+
+## Project Status
+
+### Done (Wave 2, 2026-04-26)
+- Browser tools `wait_for`, `get_html`, plus Manus-style autonomous operator
+  (PRs #12, #15; commits `7144b6f`, `f8d8d1c`).
+- Multi-language LSP server adapter (PRs #13, #17; commits `3cc1b6f`, `4042692`).
+- VS Code + JetBrains IDE plugins (PR #16; commit `e6393c8`).
+- Multi-CI parity — GitHub Actions, GitLab CI, CircleCI (PR #14; commit `f8d8d1c`).
+- Desktop GUI shell + real robotgo backend (PRs #18, #19; commits `d4403b8`,
+  `841a494`).
+- R1D-1 Tauri subprocess launcher (commit `693e241`).
+- web_fetch / web_search / cron / pdf_read tools (commit `20228bf`).
+- Tool surface: image_read, notebook_read/cell_run, powershell, gh_pr/run
+  wired into Handle() (PR #9; commit `cbe0ae1`).
+- Shell injection preprocessing + path-scoped activation (commit `13afd78`).
+- Veritize-Verity dual-send headers (PR #8; commit `6ed5bb8`).
+- Cloud Build CI cutover + local pre-push hook (PR #11; commit `a883825`).
+- CI/CD + desktop polish (PRs #18-21; commits `bd6de28`, `2607578`).
+
+### In Progress
+- Hardening of the Manus-style autonomous operator (current state behind a
+  per-mission toggle).
+- LSP feature coverage beyond hover/definition/diagnostics.
+
+### Scoped
+- IDE plugin marketplace publishing (VS Code Marketplace, JetBrains
+  Marketplace) — code is in-tree, publishing pipeline pending.
+- Headless desktop GUI for CI screenshot tests.
+
+### Scoping
+- Cross-machine session migration (Tauri subprocess launcher is one-host).
+- Per-tool throttling policy in `.stoke/`.
+
+### Potential-On Horizon
+- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions.
+- Native MCP server bundle for popular IDEs without a separate install step.
+- Browser tool sandboxed under a remote browser (vs current local browser).
 
 ## Docs
 

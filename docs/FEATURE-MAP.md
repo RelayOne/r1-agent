@@ -13,6 +13,41 @@ Status legend:
 - **Scoped** — spec in flight or under review.
 - **Horizon** — on the roadmap, not yet scoped.
 
+## Wave 2 (2026-04-26) — R1-Parity Sprint Additions
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| Browser tools `wait_for`, `get_html` | Tasks that need real DOM state can wait for elements and pull rendered HTML — flaky timing issues disappear. | Done | T-R1P-001/002; PR #12, commit `7144b6f`. |
+| Manus-style autonomous operator | A single agent can drive a multi-step browser flow without per-step prompts. | Done | T-R1P-002; PR #15, commit `f8d8d1c`. |
+| LSP server adapter (`stoke-lsp`) | Any LSP-enabled editor (Neovim, Helix, Sublime) drives R1 with zero plugin work. | Done | T-R1P-009; PR #13, commit `3cc1b6f`. |
+| Multi-language LSP client | LSP support spans the full set of languages R1 already lints, not just Go. | Done | T-R1P-020; PR #17, commit `4042692`. |
+| VS Code IDE plugin | Native panel inside VS Code drives R1 missions with one click. | Done | T-R1P-003; PR #16, commit `e6393c8`. |
+| JetBrains IDE plugin | Native panel inside any JetBrains IDE drives R1 missions. | Done | T-R1P-003; PR #16, commit `e6393c8`. |
+| GitHub Actions adapter | Drop R1 into a GitHub workflow with a single `uses:` step. | Done | T-R1P-021; PR #14, commit `f8d8d1c`. |
+| GitLab CI adapter | Drop R1 into a GitLab pipeline with one `include:` line. | Done | T-R1P-022; PR #14, commit `f8d8d1c`; PR #17, commit `4042692`. |
+| CircleCI adapter | Drop R1 into a CircleCI orb. | Done | T-R1P-020; PR #14, commit `f8d8d1c`. |
+| Tauri subprocess launcher | Cross-platform desktop GUI launches the orchestrator without a separate install. | Done | R1D-1.1/1.2/1.3/1.4; commit `693e241`. |
+| Real robotgo backend on the desktop GUI | Desktop GUI drives real input/output instead of a stub. | Done | T-R1P-009 follow-up; PR #19, commit `841a494`. |
+| Tool surface wired into `Handle()` | The full Wave 2 tool kit (image_read, notebook_read/cell_run, powershell, gh_pr/run) is selectable by the executor. | Done | T-R1P-004/005/015/016; PR #9, commit `cbe0ae1`. |
+| `web_fetch` / `web_search` / `cron` / `pdf_read` tools | The model can pull external context, schedule, and parse PDFs without a separate agent. | Done | T-R1P-007/008/006/023; commit `20228bf`. |
+| Shell injection preprocessing | Skill activations can carry shell snippets without injection risk. | Done | T-R1P-018; commit `13afd78`. |
+| Path-scoped skill activation | Skills can be scoped to a path glob; reduces cross-mission interference. | Done | T-R1P-019; commit `13afd78`. |
+| Veritize-Verity dual-send headers | Outbound HTTP includes both `X-Veritize-*` and `X-Verity-*` during the rename window. | Done | PR #8, commit `6ed5bb8`. |
+| Cloud Build CI cutover + local pre-push hook | CI runs in our own GCP project; developers get fast pre-push feedback. | Done | PR #11, commit `a883825`. |
+| CI/CD + desktop alternate-path test | Removed runtime alternate-path flag; added negative-path test. | Done | PRs #18-21; commits `bd6de28`, `2607578`. |
+
+## Wave 2 Status Summary
+
+- **Done:** every Wave 2 row above is on `main`.
+- **In Progress:** Manus operator hardening behind a per-mission toggle;
+  LSP feature coverage beyond hover/definition/diagnostics.
+- **Scoped:** IDE plugin marketplace publishing; headless desktop GUI for
+  CI screenshot tests.
+- **Scoping:** cross-machine session migration; per-tool throttling
+  policy in `.stoke/`.
+- **Potential-On Horizon:** BitBucket Pipelines adapter parity; native
+  MCP bundle in IDE plugins; remote-browser sandboxing for browser tools.
+
 ## The trust layer — verification descent
 
 Verification descent refuses to believe a model when it says "done."

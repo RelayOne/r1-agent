@@ -5,6 +5,44 @@ expansion. A marketer should be able to write a landing page from
 this alone. An investor should understand the opportunity from this
 alone.
 
+## What's New (April 2026) — R1 Now Lives Where Engineers Live
+
+R1 used to be a command-line tool. After the April 2026 R1-Parity
+sprint, R1 lives wherever engineers already work:
+
+- **In your IDE.** Native plugins for VS Code and every JetBrains IDE
+  drive R1 missions from the same panel as your code. Editors that
+  speak the standard editor protocol — Neovim, Helix, Sublime — work
+  with zero plugin install.
+- **On your desktop.** A real desktop app launches R1 as a subprocess
+  and shows the live mission, with real keyboard, mouse, and
+  screenshot support — not a stub.
+- **In your CI.** Drop one line into your GitHub Actions, GitLab CI,
+  or CircleCI pipeline and R1 reviews the diff on every PR.
+- **In a browser.** A built-in browser-driving toolset and an
+  autonomous operator let R1 complete tasks that touch the live web —
+  click here, wait for that, pull this rendered HTML, take that
+  screenshot — without a separate stack.
+
+In plain English: R1 stopped being something you have to remember to
+open. Wherever the engineer goes — IDE, desktop, CI pipeline,
+browser — R1 is already there.
+
+What's the take-away in business terms?
+
+1. **Bigger market.** Every JetBrains user, every VS Code user, every
+   self-hosted-CI shop, and every Manus-style web-task buyer is now
+   an addressable customer.
+2. **Stickier installs.** An IDE plugin gets used every workday. A CLI
+   tool gets used until someone forgets. The Wave 2 plugins keep R1
+   resident in the engineer's flow.
+3. **Easier proof-of-value.** A CI step that auto-reviews PRs is the
+   shortest possible path from "first install" to "first time R1
+   blocked a bad merge". Conversion improves.
+4. **Defensible breadth.** R1 is now the only single-strong-agent
+   coding orchestrator that ships native IDE plugins, a desktop GUI,
+   three CI adapters, and a browser-driving operator from one repo.
+
 ## The problem
 
 Coding agents hallucinate success. They say "I ran the tests and

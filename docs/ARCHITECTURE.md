@@ -5,6 +5,41 @@ repository layout, the major subsystems and how they talk to each
 other, the data model, the execution flow, the testing architecture,
 and the infrastructure a deployed R1 instance requires.
 
+## Wave 2 (2026-04-26) — R1-Parity Architecture Surface
+
+The Wave 2 R1-parity sprint expanded R1 along four orthogonal axes:
+
+1. **Browser tools + Manus operator** (`internal/tools/browser/`,
+   `internal/operator/manus/`) — stoke can drive a browser end to end
+   (`wait_for`, `get_html`, navigation), and the Manus operator wraps the
+   browser into an autonomous loop. PRs #12, #15. Commits `7144b6f`,
+   `f8d8d1c`.
+2. **LSP server adapter** (`cmd/stoke-lsp/`, `internal/lsp/`) — stoke
+   speaks LSP to any LSP-enabled editor; one server, every editor that
+   implements the protocol. PRs #13, #17. Commits `3cc1b6f`, `4042692`.
+3. **IDE plugins** (`ide/vscode/`, `ide/jetbrains/`) — first-class
+   plugins for VS Code and JetBrains; both ride on top of the LSP
+   adapter. PR #16. Commit `e6393c8`.
+4. **Multi-CI adapters** (`internal/cicd/{github,gitlab,circle}.go`) —
+   GitHub Actions, GitLab CI, CircleCI integrations all share a common
+   adapter interface. PR #14. Commit `f8d8d1c`.
+5. **Desktop GUI** (`desktop/`, Tauri subprocess launcher under
+   `desktop/src-tauri/`) — R1D-1 brought a real Tauri shell that
+   launches the orchestrator subprocess; PR #19 wired the real
+   `robotgo` backend. Commits `693e241`, `841a494`, `d4403b8`.
+6. **Tool surface expansion** (`internal/tools/{image,notebook,
+   powershell,gh,web,cron,pdf}/`) — `image_read`,
+   `notebook_read/cell_run`, `powershell`, `gh_pr/run`, `web_fetch`,
+   `web_search`, `cron`, `pdf_read` are now wired into `Handle()`.
+   PRs #9; commits `cbe0ae1`, `20228bf`.
+7. **Shell injection preprocessing + path-scoped activation**
+   (`internal/skill/preprocess.go`) — T-R1P-018/019. Commit `13afd78`.
+8. **Veritize-Verity dual-send headers** — short-lived cross-rename
+   compatibility shim. PR #8. Commit `6ed5bb8`.
+9. **Cloud Build CI cutover** — GitHub Actions replaced by Cloud Build
+   for the workspace builds; local pre-push hook gates developer push.
+   PR #11. Commit `a883825`.
+
 > R1 ships as the `stoke` binary today; the binary rename is in
 > flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Paths
 > (`cmd/stoke/`, `.stoke/`, `STOKE_*` env vars, `stoke.policy.yaml`)
