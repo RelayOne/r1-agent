@@ -136,8 +136,9 @@ func TestAutoReviewFullPipeline(t *testing.T) {
 	}{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptDiff := strings.Contains(r.Header.Get("Accept"), "diff")
 		switch {
-		case r.Method == http.MethodGet && r.Header.Get("Accept") == "application/vnd.github.diff" &&
+		case r.Method == http.MethodGet && acceptDiff &&
 			r.URL.Path == "/repos/o/r/pulls/3":
 			_, _ = io.WriteString(w, diff)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/3":
@@ -224,7 +225,7 @@ func TestAutoReviewCustomPromptSubstitutes(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Header.Get("Accept") == "application/vnd.github.diff":
+		case strings.Contains(r.Header.Get("Accept"), "diff"):
 			_, _ = io.WriteString(w, diff)
 		case r.URL.Path == "/repos/o/r/pulls/1":
 			w.Header().Set("Content-Type", "application/json")
@@ -258,7 +259,7 @@ func TestAutoReviewSkipsInvalidFindings(t *testing.T) {
 	postCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Header.Get("Accept") == "application/vnd.github.diff":
+		case strings.Contains(r.Header.Get("Accept"), "diff"):
 			_, _ = io.WriteString(w, "diff")
 		case r.URL.Path == "/repos/o/r/pulls/1" && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")

@@ -1,4 +1,4 @@
-// Package github is the GitHub Actions + Pull Requests REST adapter
+// Package github is the GitHub Actions + Pull Requests adapter
 // (T-R1P-021).
 //
 // It complements the YAML template generator in `internal/cicd` (which
@@ -6,13 +6,19 @@
 // runtime API surface to actually trigger workflows, poll runs, fetch
 // job logs, and post inline review comments against any GitHub repo.
 //
+// Built on top of github.com/google/go-github/v62 — the canonical Go
+// SDK for the GitHub REST API. The wrapper narrows the SDK's surface
+// to the operations the agent needs, normalises the polling /
+// timeout / batching semantics, and provides the auto-reviewer
+// pipeline in reviewer.go.
+//
 // Public surface:
 //
 //	c := github.New(github.Config{Token: os.Getenv("GITHUB_TOKEN")})
-//	r, err := c.TriggerWorkflow(ctx, "owner", "repo", "ci.yml", "main", inputs)
+//	err := c.TriggerWorkflow(ctx, "owner", "repo", "ci.yml", "main", inputs)
 //	st, err := c.GetRunStatus(ctx, "owner", "repo", runID)
 //	final, err := c.WaitForCompletion(ctx, "owner", "repo", runID, 10*time.Minute)
-//	logs, err := c.GetJobLogs(ctx, "owner", "repo", runID)
+//	logsURL, err := c.GetJobLogs(ctx, "owner", "repo", runID)
 //	err = c.PostReviewComment(ctx, "owner", "repo", prNumber, body, line, path)
 //
 // And the auto code-review helper:
@@ -20,101 +26,109 @@
 //	rev := github.NewReviewer(c)
 //	findings, err := rev.AutoReview(ctx, "owner", "repo", prNumber, llmFunc)
 //
-// Auth: a Personal Access Token (PAT) or fine-grained token is sent
-// via the `Authorization: Bearer <value>` header. The header value is
-// assigned through an intermediate variable (not a literal token=value
-// concatenation) so static credential scanners don't false-positive on
-// the source.
+// Auth: a Personal Access Token (PAT), fine-grained token, or GitHub
+// App installation token is sourced from Config.Token. The token is
+// handed to go-github via WithAuthToken, which assembles the
+// Authorization header internally — no token literal appears in this
+// package's source, keeping it clean for credential static scanners.
 //
-// Note re: dependency choice — the spec called for
-// github.com/google/go-github/v62, but pulling that in drags in
-// go-querystring + go-cleanhttp + golang-jwt + 4 transitive packages
-// just for the REST shapes we use here. Mirroring the GitLab adapter
-// pattern (`internal/cicd/gitlab/`) keeps the dep graph self-contained
-// and consistent across CI providers.
-//
-// All HTTP calls are timed by the supplied context. The default base
-// URL is https://api.github.com — swap via Config.BaseURL for GitHub
+// All HTTP calls are timed by the supplied context. The default
+// endpoint is api.github.com — swap via Config.BaseURL for GitHub
 // Enterprise.
 package github
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v62/github"
 )
 
-// DefaultBaseURL is the v3 REST endpoint for github.com.
-const DefaultBaseURL = "https://api.github.com"
+// parseURL is a thin wrapper around url.Parse used for clarity at
+// the call site (gh.Client takes a *url.URL for BaseURL/UploadURL).
+func parseURL(s string) (*url.URL, error) { return url.Parse(s) }
 
-// authHeader is the GitHub REST auth header name. Split out so we don't
-// inline a literal that resembles `Authorization: Bearer <value>`
-// token-paste anywhere in the source — the value is set via Config.Token
-// at construct time.
-const authHeader = "Authorization"
-
-// authPrefix is the bearer-token prefix sent in the Authorization
-// header. Held as a const so the construction site stays scanner-clean.
-const authPrefix = "Bearer"
+// DefaultBaseURL is the v3 REST endpoint for github.com. Mirrors
+// gh.Client's default (api.github.com).
+const DefaultBaseURL = "https://api.github.com/"
 
 // Config configures a Client.
 type Config struct {
 	// BaseURL overrides the GitHub API endpoint. Empty = DefaultBaseURL.
+	// For GitHub Enterprise, set this to the Enterprise REST root.
 	BaseURL string
 	// Token is the GitHub personal access token, fine-grained token,
 	// or GitHub App installation token. Required for any non-public op.
 	Token string
-	// HTTPClient overrides the default http.Client. Useful in tests
-	// (httptest.NewServer hands you a Server.Client()).
+	// HTTPClient overrides the default http.Client used by go-github.
+	// Useful in tests (httptest.NewServer hands you a Server.Client()).
 	HTTPClient *http.Client
 	// PollInterval is how often WaitForCompletion polls. Defaults to 5s.
 	PollInterval time.Duration
-	// UserAgent overrides the User-Agent header (GitHub requires one).
-	// Empty falls back to "r1-agent".
+	// UserAgent overrides the User-Agent header. Empty falls back to
+	// the go-github default ("go-github" / version).
 	UserAgent string
 }
 
-// Client is a GitHub REST API client.
+// Client wraps a gh.Client with the agent-friendly surface this
+// package promises. The underlying *gh.Client is exposed via Raw so
+// callers that need an SDK feature we don't wrap can drop down.
 type Client struct {
-	baseURL  string
-	token    string
-	http     *http.Client
+	gh       *gh.Client
 	pollEvry time.Duration
-	ua       string
 }
 
-// New constructs a Client from cfg, applying defaults for empty fields.
+// New constructs a Client from cfg, applying defaults for empty
+// fields. Auth wiring uses gh.Client.WithAuthToken so no token literal
+// appears in this file.
 func New(cfg Config) *Client {
-	c := &Client{
-		baseURL:  strings.TrimRight(cfg.BaseURL, "/"),
-		token:    cfg.Token,
-		http:     cfg.HTTPClient,
-		pollEvry: cfg.PollInterval,
-		ua:       cfg.UserAgent,
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	if c.baseURL == "" {
-		c.baseURL = DefaultBaseURL
+	gc := gh.NewClient(httpClient)
+	if cfg.Token != "" {
+		gc = gc.WithAuthToken(cfg.Token)
 	}
-	if c.http == nil {
-		c.http = &http.Client{Timeout: 30 * time.Second}
+	if base := strings.TrimSpace(cfg.BaseURL); base != "" {
+		// gh.Client expects a trailing slash on the base URL.
+		if !strings.HasSuffix(base, "/") {
+			base += "/"
+		}
+		// SetBaseURL shape: gh.Client takes BaseURL via WithEnterpriseURLs
+		// for GH Enterprise but for an arbitrary endpoint (e.g.,
+		// httptest.NewServer) we set it directly via the public field.
+		if u, err := parseURL(base); err == nil {
+			gc.BaseURL = u
+			gc.UploadURL = u
+		}
 	}
-	if c.pollEvry <= 0 {
-		c.pollEvry = 5 * time.Second
+	if cfg.UserAgent != "" {
+		gc.UserAgent = cfg.UserAgent
 	}
-	if c.ua == "" {
-		c.ua = "r1-agent"
+	pollEvry := cfg.PollInterval
+	if pollEvry <= 0 {
+		pollEvry = 5 * time.Second
 	}
-	return c
+	return &Client{gh: gc, pollEvry: pollEvry}
 }
+
+// Raw exposes the underlying *gh.Client for callers that need an SDK
+// feature this wrapper does not surface directly.
+func (c *Client) Raw() *gh.Client { return c.gh }
 
 // --- types ---
 
-// WorkflowRun mirrors the trimmed GitHub workflow-run payload.
+// WorkflowRun is the trimmed view of a GitHub workflow run. Mirrors
+// the fields of gh.WorkflowRun the agent cares about; the underlying
+// SDK type carries many more (event, head sha, run attempt, etc.) and
+// is reachable via Raw().Actions.
 type WorkflowRun struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
@@ -134,8 +148,34 @@ func (r WorkflowRun) IsTerminal() bool {
 	return r.Status == "completed"
 }
 
-// PullRequestFile mirrors the trimmed GitHub PR-file payload (used by
-// the auto-reviewer to enumerate changed files + their patches).
+// fromSDK converts a *gh.WorkflowRun (rich SDK type) into our trimmed
+// shape. Pointers in the SDK type are flattened with safe accessors.
+func fromSDKWorkflowRun(r *gh.WorkflowRun) *WorkflowRun {
+	if r == nil {
+		return nil
+	}
+	out := &WorkflowRun{
+		ID:         r.GetID(),
+		Name:       r.GetName(),
+		HeadBranch: r.GetHeadBranch(),
+		HeadSHA:    r.GetHeadSHA(),
+		RunNumber:  r.GetRunNumber(),
+		Event:      r.GetEvent(),
+		Status:     r.GetStatus(),
+		Conclusion: r.GetConclusion(),
+		HTMLURL:    r.GetHTMLURL(),
+	}
+	if r.CreatedAt != nil {
+		out.CreatedAt = r.CreatedAt.Time
+	}
+	if r.UpdatedAt != nil {
+		out.UpdatedAt = r.UpdatedAt.Time
+	}
+	return out
+}
+
+// PullRequestFile is the trimmed view of a PR file change. Mirrors
+// the agent-relevant fields of gh.CommitFile.
 type PullRequestFile struct {
 	SHA       string `json:"sha"`
 	Filename  string `json:"filename"`
@@ -146,9 +186,25 @@ type PullRequestFile struct {
 	Patch     string `json:"patch,omitempty"`
 }
 
-// ReviewComment is the inline-comment shape posted to
-// POST /repos/:o/:r/pulls/:n/comments. CommitID + Path + Line are
-// required by the API for line-anchored comments.
+// fromSDKCommitFile converts gh.CommitFile to our trimmed shape.
+func fromSDKCommitFile(f *gh.CommitFile) PullRequestFile {
+	if f == nil {
+		return PullRequestFile{}
+	}
+	return PullRequestFile{
+		SHA:       f.GetSHA(),
+		Filename:  f.GetFilename(),
+		Status:    f.GetStatus(),
+		Additions: f.GetAdditions(),
+		Deletions: f.GetDeletions(),
+		Changes:   f.GetChanges(),
+		Patch:     f.GetPatch(),
+	}
+}
+
+// ReviewComment describes an inline PR review comment. Uses the
+// shape required by the GitHub PR comments REST endpoint, which
+// go-github's *gh.PullRequestComment also mirrors.
 type ReviewComment struct {
 	Body     string `json:"body"`
 	CommitID string `json:"commit_id"`
@@ -157,22 +213,31 @@ type ReviewComment struct {
 	Side     string `json:"side,omitempty"` // RIGHT (default) | LEFT
 }
 
-// dispatchPayload is the body of POST /repos/:o/:r/actions/workflows/:id/dispatches.
-type dispatchPayload struct {
-	Ref    string                 `json:"ref"`
-	Inputs map[string]interface{} `json:"inputs,omitempty"`
+// toSDKComment converts to the SDK type needed by
+// PullRequestsService.CreateComment.
+func (rc ReviewComment) toSDKComment() *gh.PullRequestComment {
+	side := rc.Side
+	if side == "" {
+		side = "RIGHT"
+	}
+	body := rc.Body
+	commit := rc.CommitID
+	path := rc.Path
+	line := rc.Line
+	return &gh.PullRequestComment{
+		Body:     &body,
+		CommitID: &commit,
+		Path:     &path,
+		Line:     &line,
+		Side:     &side,
+	}
 }
 
 // --- workflow operations ---
 
 // TriggerWorkflow kicks off a workflow_dispatch event for the given
 // workflow id (numeric id or filename like "ci.yml") on the given ref.
-//
-// GitHub returns 204 No Content on success and does NOT include the
-// run id in the response — this matches the documented behavior of
-// POST /repos/:o/:r/actions/workflows/:id/dispatches. Callers that
-// need the run id should ListWorkflowRuns immediately after with a
-// matching head_sha / event=workflow_dispatch filter.
+// Inputs are passed verbatim through to the workflow.
 func (c *Client) TriggerWorkflow(ctx context.Context, owner, repo, workflowID, ref string, inputs map[string]interface{}) error {
 	if owner == "" || repo == "" {
 		return errors.New("github: TriggerWorkflow: owner and repo required")
@@ -183,9 +248,21 @@ func (c *Client) TriggerWorkflow(ctx context.Context, owner, repo, workflowID, r
 	if ref == "" {
 		return errors.New("github: TriggerWorkflow: ref required")
 	}
-	body := dispatchPayload{Ref: ref, Inputs: inputs}
-	endpoint := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, workflowID)
-	if err := c.do(ctx, http.MethodPost, endpoint, body, nil); err != nil {
+	event := gh.CreateWorkflowDispatchEventRequest{
+		Ref:    ref,
+		Inputs: inputs,
+	}
+	// If workflowID parses as an integer, use the by-id endpoint;
+	// otherwise treat it as a filename ("ci.yml", "release.yaml").
+	if id, err := strconv.ParseInt(workflowID, 10, 64); err == nil {
+		_, err := c.gh.Actions.CreateWorkflowDispatchEventByID(ctx, owner, repo, id, event)
+		if err != nil {
+			return fmt.Errorf("github: TriggerWorkflow: %w", err)
+		}
+		return nil
+	}
+	_, err := c.gh.Actions.CreateWorkflowDispatchEventByFileName(ctx, owner, repo, workflowID, event)
+	if err != nil {
 		return fmt.Errorf("github: TriggerWorkflow: %w", err)
 	}
 	return nil
@@ -193,12 +270,11 @@ func (c *Client) TriggerWorkflow(ctx context.Context, owner, repo, workflowID, r
 
 // GetRunStatus fetches a single workflow run by id.
 func (c *Client) GetRunStatus(ctx context.Context, owner, repo string, runID int64) (*WorkflowRun, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/actions/runs/%d", owner, repo, runID)
-	var out WorkflowRun
-	if err := c.do(ctx, http.MethodGet, endpoint, nil, &out); err != nil {
+	r, _, err := c.gh.Actions.GetWorkflowRunByID(ctx, owner, repo, runID)
+	if err != nil {
 		return nil, fmt.Errorf("github: GetRunStatus: %w", err)
 	}
-	return &out, nil
+	return fromSDKWorkflowRun(r), nil
 }
 
 // WaitForCompletion blocks until the run reaches a terminal status or
@@ -230,48 +306,51 @@ func (c *Client) WaitForCompletion(ctx context.Context, owner, repo string, runI
 	}
 }
 
-// GetJobLogs downloads the combined log archive for a run. GitHub
-// returns a redirect to a signed URL pointing at a zip file; this
-// helper follows the redirect via the configured http.Client and
-// returns the raw zip bytes as a string.
+// GetJobLogs returns a signed URL pointing at the combined log
+// archive for a run. GitHub answers /actions/runs/:id/logs with a
+// 302 redirect to a short-lived signed object-storage URL; this
+// helper returns that URL as a string. Callers can then HTTP GET it
+// to download the zip.
 //
-// For most agent use cases the caller wants stdout strings, not a zip
-// — use ListJobsForRun + iterate per-job logs if a parsed view is
-// needed. Returning raw bytes keeps this method dependency-free.
+// Returning the URL (not the bytes) keeps memory bounded for very
+// large logs and matches go-github's idiom.
 func (c *Client) GetJobLogs(ctx context.Context, owner, repo string, runID int64) (string, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/logs", owner, repo, runID)
-	body, err := c.doRaw(ctx, http.MethodGet, endpoint, nil)
+	u, _, err := c.gh.Actions.GetWorkflowRunLogs(ctx, owner, repo, runID, 5)
 	if err != nil {
 		return "", fmt.Errorf("github: GetJobLogs: %w", err)
 	}
-	return string(body), nil
+	if u == nil {
+		return "", errors.New("github: GetJobLogs: nil URL from SDK")
+	}
+	return u.String(), nil
 }
 
 // --- pull-request operations ---
 
-// GetPullRequestDiff fetches the unified diff for a PR using the
-// `application/vnd.github.diff` media type. The result is a plain
-// text diff suitable for feeding into an LLM code-review prompt.
+// GetPullRequestDiff fetches the unified diff for a PR via the
+// SDK's GetRaw helper with RawType=Diff (which sends
+// Accept: application/vnd.github.diff under the hood).
 func (c *Client) GetPullRequestDiff(ctx context.Context, owner, repo string, prNumber int) (string, error) {
 	if prNumber <= 0 {
 		return "", errors.New("github: GetPullRequestDiff: prNumber must be > 0")
 	}
-	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, prNumber)
-	body, err := c.doRawWithAccept(ctx, http.MethodGet, endpoint, nil, "application/vnd.github.diff")
+	diff, _, err := c.gh.PullRequests.GetRaw(ctx, owner, repo, prNumber, gh.RawOptions{Type: gh.Diff})
 	if err != nil {
 		return "", fmt.Errorf("github: GetPullRequestDiff: %w", err)
 	}
-	return string(body), nil
+	return diff, nil
 }
 
 // ListPullRequestFiles returns the per-file change summary for a PR,
-// including the patch hunks for each file. Used by the auto-reviewer
-// to attribute LLM findings back to (path, line) pairs.
+// including the patch hunks for each file.
 func (c *Client) ListPullRequestFiles(ctx context.Context, owner, repo string, prNumber int) ([]PullRequestFile, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/files", owner, repo, prNumber)
-	var out []PullRequestFile
-	if err := c.do(ctx, http.MethodGet, endpoint, nil, &out); err != nil {
+	files, _, err := c.gh.PullRequests.ListFiles(ctx, owner, repo, prNumber, nil)
+	if err != nil {
 		return nil, fmt.Errorf("github: ListPullRequestFiles: %w", err)
+	}
+	out := make([]PullRequestFile, 0, len(files))
+	for _, f := range files {
+		out = append(out, fromSDKCommitFile(f))
 	}
 	return out, nil
 }
@@ -280,25 +359,18 @@ func (c *Client) ListPullRequestFiles(ctx context.Context, owner, repo string, p
 // when posting inline review comments because the API binds the
 // comment to a specific commit.
 func (c *Client) GetPullRequestHeadSHA(ctx context.Context, owner, repo string, prNumber int) (string, error) {
-	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repo, prNumber)
-	var probe struct {
-		Head struct {
-			SHA string `json:"sha"`
-		} `json:"head"`
-	}
-	if err := c.do(ctx, http.MethodGet, endpoint, nil, &probe); err != nil {
+	pr, _, err := c.gh.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
 		return "", fmt.Errorf("github: GetPullRequestHeadSHA: %w", err)
 	}
-	if probe.Head.SHA == "" {
+	if pr == nil || pr.Head == nil || pr.Head.GetSHA() == "" {
 		return "", errors.New("github: GetPullRequestHeadSHA: head sha empty in response")
 	}
-	return probe.Head.SHA, nil
+	return pr.Head.GetSHA(), nil
 }
 
 // PostReviewComment posts a single line-anchored comment on a PR.
-// The commit SHA is fetched automatically. Use BatchPostReviewComments
-// if you have many comments — it's faster and uses the review-bundle
-// endpoint to avoid rate-limit pressure.
+// The commit SHA is fetched automatically.
 func (c *Client) PostReviewComment(ctx context.Context, owner, repo string, prNumber int, body, path string, line int) error {
 	if body == "" {
 		return errors.New("github: PostReviewComment: body required")
@@ -313,170 +385,44 @@ func (c *Client) PostReviewComment(ctx context.Context, owner, repo string, prNu
 	if err != nil {
 		return err
 	}
-	payload := ReviewComment{
+	return c.PostReviewCommentDirect(ctx, owner, repo, prNumber, ReviewComment{
 		Body:     body,
 		CommitID: sha,
 		Path:     path,
 		Line:     line,
 		Side:     "RIGHT",
-	}
-	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, prNumber)
-	if err := c.do(ctx, http.MethodPost, endpoint, payload, nil); err != nil {
-		return fmt.Errorf("github: PostReviewComment: %w", err)
-	}
-	return nil
+	})
 }
 
 // PostReviewCommentDirect is the SHA-known variant. Cheaper than
-// PostReviewComment because it skips the head-sha lookup. Used by
-// BatchPostReviewComments and the auto-reviewer (which fetches the
-// SHA once and reuses it for every finding).
+// PostReviewComment because it skips the head-sha lookup.
 func (c *Client) PostReviewCommentDirect(ctx context.Context, owner, repo string, prNumber int, comment ReviewComment) error {
 	if comment.Body == "" || comment.CommitID == "" || comment.Path == "" || comment.Line <= 0 {
 		return errors.New("github: PostReviewCommentDirect: body, commit_id, path, line all required")
 	}
-	if comment.Side == "" {
-		comment.Side = "RIGHT"
-	}
-	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, prNumber)
-	if err := c.do(ctx, http.MethodPost, endpoint, comment, nil); err != nil {
+	if _, _, err := c.gh.PullRequests.CreateComment(ctx, owner, repo, prNumber, comment.toSDKComment()); err != nil {
 		return fmt.Errorf("github: PostReviewCommentDirect: %w", err)
 	}
 	return nil
 }
 
-// --- internals ---
+// --- error classification ---
 
-// do sends an HTTP request, encoding body as JSON and decoding the
-// response into out (which may be nil to discard the body).
-func (c *Client) do(ctx context.Context, method, endpoint string, body interface{}, out interface{}) error {
-	raw, err := c.doRaw(ctx, method, endpoint, body)
-	if err != nil {
-		return err
-	}
-	if out == nil || len(raw) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("decode %s %s: %w", method, endpoint, err)
-	}
-	return nil
-}
-
-// doRaw performs the HTTP call and returns the response body bytes.
-func (c *Client) doRaw(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
-	return c.doRawWithAccept(ctx, method, endpoint, body, "application/vnd.github+json")
-}
-
-// doRawWithAccept is doRaw with an overridable Accept header. Used by
-// GetPullRequestDiff to ask for the diff media type.
-func (c *Client) doRawWithAccept(ctx context.Context, method, endpoint string, body interface{}, accept string) ([]byte, error) {
-	var reader io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("encode body: %w", err)
-		}
-		reader = strings.NewReader(string(buf))
-	}
-
-	urlStr := c.baseURL + endpoint
-	req, err := http.NewRequestWithContext(ctx, method, urlStr, reader)
-	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Accept", accept)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", c.ua)
-	c.applyAuth(req)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("transport: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		msg := extractErrorMessage(respBody)
-		return nil, &APIError{
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
-			Method:     method,
-			Path:       endpoint,
-			Message:    msg,
-			Body:       string(respBody),
-		}
-	}
-	return respBody, nil
-}
-
-// applyAuth adds the Authorization header. The header value is
-// assembled via fmt.Sprintf rather than a string-concat literal,
-// which keeps the source clean for credential static scanners.
-func (c *Client) applyAuth(req *http.Request) {
-	if c.token == "" {
-		return
-	}
-	headerValue := fmt.Sprintf("%s %s", authPrefix, c.token)
-	req.Header.Set(authHeader, headerValue)
-}
-
-// extractErrorMessage pulls a `.message` field from a JSON error body
-// when present, otherwise returns "".
-func extractErrorMessage(body []byte) string {
-	trim := strings.TrimSpace(string(body))
-	if !strings.HasPrefix(trim, "{") {
-		return ""
-	}
-	var probe struct {
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return ""
-	}
-	return probe.Message
-}
-
-// APIError represents a GitHub REST API error response.
-type APIError struct {
-	StatusCode int
-	Status     string
-	Method     string
-	Path       string
-	Message    string
-	Body       string
-}
-
-func (e *APIError) Error() string {
-	if e.Message != "" {
-		return fmt.Sprintf("github api %s %s: %d %s: %s",
-			e.Method, e.Path, e.StatusCode, e.Status, e.Message)
-	}
-	return fmt.Sprintf("github api %s %s: %d %s",
-		e.Method, e.Path, e.StatusCode, e.Status)
-}
-
-// IsNotFound reports whether the error is a 404 from the API.
+// IsNotFound reports whether the error wraps a 404 from the API.
+// Bridges go-github's *gh.ErrorResponse into a stable predicate.
 func IsNotFound(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusNotFound
+	var er *gh.ErrorResponse
+	if errors.As(err, &er) && er.Response != nil {
+		return er.Response.StatusCode == http.StatusNotFound
 	}
 	return false
 }
 
-// IsUnauthorized reports whether the error is a 401 from the API.
+// IsUnauthorized reports whether the error wraps a 401 from the API.
 func IsUnauthorized(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusUnauthorized
+	var er *gh.ErrorResponse
+	if errors.As(err, &er) && er.Response != nil {
+		return er.Response.StatusCode == http.StatusUnauthorized
 	}
 	return false
 }
