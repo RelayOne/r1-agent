@@ -1,0 +1,82 @@
+{
+  "name": "r1-agent",
+  "displayName": "R1 Agent",
+  "description": "Invoke the local r1-agent daemon from inside VS Code: chat, run tasks, explain selections.",
+  "version": "0.1.0",
+  "publisher": "relayone",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RelayOne/r1-agent.git",
+    "directory": "ide/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "activationEvents": [
+    "onCommand:r1.chat.open",
+    "onCommand:r1.run.task",
+    "onCommand:r1.explain.selection"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "r1.chat.open",
+        "title": "R1: Open Chat Panel"
+      },
+      {
+        "command": "r1.run.task",
+        "title": "R1: Run Task..."
+      },
+      {
+        "command": "r1.explain.selection",
+        "title": "R1: Explain Selection"
+      }
+    ],
+    "configuration": {
+      "title": "R1 Agent",
+      "properties": {
+        "r1.daemonUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7777",
+          "description": "Base URL of the local r1-agent daemon (stoke agent-serve)."
+        },
+        "r1.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for the daemon. When blank, R1_API_KEY env var is used. Sent as the X-Stoke-Bearer header."
+        },
+        "r1.taskType": {
+          "type": "string",
+          "default": "explain",
+          "description": "Default task_type submitted with explain/run requests. Must be advertised by /api/capabilities."
+        },
+        "r1.timeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "description": "HTTP request timeout in milliseconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "echo 'no linter configured'",
+    "test": "node ./out/test/runMocha.js",
+    "package": "npx --yes @vscode/vsce package"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.3"
+  }
+}
