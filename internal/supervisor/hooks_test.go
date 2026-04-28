@@ -147,3 +147,108 @@ func TestRegisterHookRulesRegistersOnlyHookRules(t *testing.T) {
 		}
 	}
 }
+
+// TestHookRuleActionNotInvokedOnSubscribePath is the regression test for
+// the codex-reverify HIGH on PR #24: when a rule implements HookRule the
+// bus's hook path materializes its side-effects (PauseWorker / ResumeWorker
+// / SpawnWorker / InjectEvents) before subscribers see the trigger event.
+// processEvent must therefore NOT also call rule.Action() on the
+// subscribe path, or every match would publish those side-effects twice
+// (e.g., two CTO spawns and two pauses for one snapshot violation).
+//
+// We assert that exactly one supervisor.spawn.requested event is emitted
+// per matching trigger, that exactly one worker.paused is emitted, and
+// that the subscribe-path Action() callback was never invoked.
+func TestHookRuleActionNotInvokedOnSubscribePath(t *testing.T) {
+	b, l := setupTestInfra(t)
+
+	var subscribeActionCalls atomic.Int32
+
+	hooky := &hookMockRule{
+		mockRule: mockRule{
+			name:     "gate.exact-once",
+			pattern:  bus.Pattern{TypePrefix: "worker.action."},
+			priority: 50,
+			evalFn:   func(_ context.Context, _ bus.Event, _ *ledger.Ledger) (bool, error) { return true, nil },
+			actionFn: func(_ context.Context, _ bus.Event, _ *bus.Bus) error {
+				subscribeActionCalls.Add(1)
+				return nil
+			},
+		},
+		hookPriority: 100,
+		hookActionFn: func(_ context.Context, _ bus.Event) (*bus.HookAction, error) {
+			return &bus.HookAction{
+				PauseWorker: "w-x",
+				SpawnWorker: &bus.SpawnRequest{Role: "CTO"},
+			}, nil
+		},
+	}
+
+	s := supervisor.New(supervisor.Config{
+		ID:   "exact-once-sup",
+		Type: supervisor.TypeMission,
+	}, b, l)
+	s.RegisterRules(hooky)
+
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	var mu sync.Mutex
+	var seen []bus.Event
+	b.Subscribe(bus.Pattern{}, func(e bus.Event) {
+		mu.Lock()
+		seen = append(seen, e)
+		mu.Unlock()
+	})
+
+	payload, _ := json.Marshal(map[string]any{"worker_id": "w-x"})
+	if err := b.Publish(bus.Event{
+		Type:    "worker.action.proposed",
+		Payload: payload,
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Wait for delivery to settle: trigger + pause + spawn + rule.fired = 4.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n >= 4 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Brief tail wait so any duplicate side-effects would have time to
+	// reach the subscriber too.
+	time.Sleep(150 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if got := subscribeActionCalls.Load(); got != 0 {
+		t.Errorf("HookRule's subscribe-path Action() invoked %d times; want 0 (hook path handles side-effects)", got)
+	}
+
+	count := func(want bus.EventType) int {
+		n := 0
+		for _, e := range seen {
+			if e.Type == want {
+				n++
+			}
+		}
+		return n
+	}
+	if got := count(bus.EvtWorkerPaused); got != 1 {
+		t.Errorf("worker.paused fired %d times; want 1 (duplicate side-effects on hook + subscribe path)", got)
+	}
+	if got := count(bus.EvtSupervisorSpawnRequested); got != 1 {
+		t.Errorf("supervisor.spawn.requested fired %d times; want 1 (duplicate side-effects on hook + subscribe path)", got)
+	}
+	if got := count(bus.EvtSupervisorRuleFired); got < 1 {
+		t.Errorf("supervisor.rule.fired fired %d times; want >=1 (observability must still publish for hook rules)", got)
+	}
+}
