@@ -65,10 +65,15 @@ example of R1 capabilities.
    - Append new rows in the correct category section.
 
 5. **File gap-remediation tasks**
-   - For each new GAP row (not already in work-r1.md), append a task line
-     to `/home/eric/repos/plans/work-orders/work-r1.md` under the section:
+   - Default target: `evaluation/runs/<YYYY-MM-DD-HHMM>/gap-tasks.md` inside
+     this repo (always safe to write).
+   - Optional cross-repo append: if env var `R1_GAP_WORK_ORDER_PATH` is set
+     AND that path exists AND is writable, also append the task lines to
+     it under the section:
      `## Phase R1-PARITY — Reference-runtime parity remediation (auto-filed by R1 evaluation agent)`
-   - Format: `- [ ] R1P-NNN: <one-line description> — source: <product>, citation: <URL>`
+   - **Never** assume a hard-coded host path (e.g. `/home/eric/...`). If
+     `R1_GAP_WORK_ORDER_PATH` is unset, only write the in-repo gap-tasks.md.
+   - Task line format: `- [ ] R1P-NNN: <one-line description> — source: <product>, citation: <URL>`
 
 6. **Write the run report**
    - Create directory `evaluation/runs/<YYYY-MM-DD-HHMM>/`.
@@ -93,7 +98,9 @@ example of R1 capabilities.
 - **Honest gaps.** Do not skip a GAP because it is embarrassing. List it.
 - **No interface{} hacks** in any code you write.
 - **No CLAUDE.md edits.**
-- **No other-repo edits** beyond stoke + plans/work-orders/work-r1.md.
+- **No other-repo edits** beyond this repo (RelayOne/r1-agent). The
+  optional `R1_GAP_WORK_ORDER_PATH` cross-repo append in step 5 is the
+  ONLY exception, and only when that env var is set and the path exists.
 
 ---
 
@@ -121,4 +128,6 @@ Use `bash` to confirm `go build ./...` passes after any edits.
 - Task battery: `skills/r1-evaluation-agent/tasks/task-*.md`
 - Expected outputs: `skills/r1-evaluation-agent/expected/task-*-expected.md`
 - Report template: `skills/r1-evaluation-agent/report-template.md`
-- Gap work order: `plans/work-orders/work-r1.md`
+- Gap-tasks (in-repo): `evaluation/runs/<run-id>/gap-tasks.md`
+- Optional cross-repo gap append: env `R1_GAP_WORK_ORDER_PATH` (e.g.
+  `~/repos/plans/work-orders/work-r1.md`)
