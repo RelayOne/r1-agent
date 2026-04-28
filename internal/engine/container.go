@@ -2,9 +2,36 @@ package engine
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"syscall"
 )
+
+// containerNetworkMode returns the docker --network flag value for
+// pool runs. Defaults to "none" so the container's process cannot
+// exfiltrate the mounted Claude/Codex credentials over the network.
+//
+// R1-V1 audit Domain 8 P0 #1: prior to this change, container pool
+// runs inherited the docker default network and the OAuth token in
+// the credential volume could be uploaded to any HTTPS endpoint
+// reachable from the container. With --network=none the container
+// has no network namespace at all; egress proxying through the host
+// harness is the supported way to reach upstream API providers.
+//
+// Operators that need outbound reachability (e.g. running a CLI
+// model that talks to an external API directly inside the pool
+// container) can opt out via R1_CONTAINER_NETWORK / STOKE_CONTAINER_NETWORK,
+// e.g. "host" or a docker network name. The opt-out is logged via
+// the spec metadata path used by the engine; no silent fallback.
+func containerNetworkMode() string {
+	if v := os.Getenv("R1_CONTAINER_NETWORK"); v != "" {
+		return v
+	}
+	if v := os.Getenv("STOKE_CONTAINER_NETWORK"); v != "" {
+		return v
+	}
+	return "none"
+}
 
 // wrapInDocker wraps a prepared command in a docker run invocation for
 // container pool execution. The container gets:
@@ -12,6 +39,7 @@ import (
 // - The worktree bind-mounted at the same host path
 // - The runtime dir bind-mounted at the same host path
 // - Environment variables passed through via -e flags
+// - --network=none by default (operator-overridable; see containerNetworkMode)
 func wrapInDocker(ctx context.Context, prepared PreparedCommand, spec RunSpec) *exec.Cmd {
 	configDir := spec.ContainerConfigDir
 	if configDir == "" {
@@ -22,6 +50,7 @@ func wrapInDocker(ctx context.Context, prepared PreparedCommand, spec RunSpec) *
 		"run", "--rm",
 		"--security-opt=no-new-privileges",
 		"--cap-drop=ALL",
+		"--network=" + containerNetworkMode(),
 		"-v", spec.ContainerVol + ":" + configDir,
 		"-v", spec.WorktreeDir + ":" + spec.WorktreeDir,
 		"-v", spec.RuntimeDir + ":" + spec.RuntimeDir,

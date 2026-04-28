@@ -156,3 +156,46 @@ func (r *ModificationRequiresCTO) Action(ctx context.Context, evt bus.Event, b *
 func (r *ModificationRequiresCTO) PayloadSchema() *schemaval.Schema {
 	return supervisor.WorkerPausedSchema()
 }
+
+// HookPriority places this rule near the top of the hook stack so a
+// snapshot modification is paused BEFORE any lower-priority hook can
+// inspect or annotate it. 1000 leaves room for both higher-priority
+// gates and lower-priority observers.
+func (r *ModificationRequiresCTO) HookPriority() bus.HookPriority { return 1000 }
+
+// HookAction is the gate-authority counterpart of Action. Where
+// Action publishes worker.paused + supervisor.spawn.requested AFTER
+// the triggering event has been delivered to subscribers, HookAction
+// returns those same effects as a *bus.HookAction so the bus can
+// fold them into the publish path. The materialization done inside
+// the bus's fireHooks (PauseWorker → worker.paused, SpawnWorker →
+// supervisor.spawn.requested) means callers don't need to construct
+// the events themselves.
+//
+// Returning a non-nil HookAction here makes this rule a privileged
+// hook (gate). The subscribe-path Action() still runs so observability
+// (supervisor.rule.fired) is unchanged; the hook path adds veto
+// authority on top of observation.
+func (r *ModificationRequiresCTO) HookAction(ctx context.Context, evt bus.Event) (*bus.HookAction, error) {
+	var ap actionPayload
+	if err := json.Unmarshal(evt.Payload, &ap); err != nil {
+		return nil, fmt.Errorf("hook action unmarshal: %w", err)
+	}
+	workerID := ap.WorkerID
+	if workerID == "" {
+		workerID = evt.EmitterID
+	}
+	return &bus.HookAction{
+		PauseWorker: workerID,
+		SpawnWorker: &bus.SpawnRequest{
+			Role:  "CTO",
+			Scope: evt.Scope,
+			Context: map[string]any{
+				"file_paths": ap.FilePaths,
+				"reason":     "snapshot file modification",
+				"worker_id":  workerID,
+				"rule":       r.Name(),
+			},
+		},
+	}, nil
+}

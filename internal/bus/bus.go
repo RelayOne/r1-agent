@@ -50,9 +50,10 @@ const (
 
 // Supervisor events.
 const (
-	EvtSupervisorRuleFired    EventType = "supervisor.rule.fired"
-	EvtSupervisorHookInjected EventType = "supervisor.hook.injected"
-	EvtSupervisorCheckpoint   EventType = "supervisor.checkpoint"
+	EvtSupervisorRuleFired       EventType = "supervisor.rule.fired"
+	EvtSupervisorHookInjected    EventType = "supervisor.hook.injected"
+	EvtSupervisorCheckpoint      EventType = "supervisor.checkpoint"
+	EvtSupervisorSpawnRequested  EventType = "supervisor.spawn.requested"
 )
 
 // Skill events.
@@ -431,6 +432,26 @@ func (b *Bus) lookupSubscribers(evtKey string) []*Subscription {
 // fireHooks executes matching hooks in priority order with panic recovery.
 // Injected events are collected into the provided slice for deferred delivery,
 // ensuring subscribers see the original event before any injected events.
+//
+// In addition to the explicit InjectEvents slice, a HookAction may set
+// PauseWorker, ResumeWorker, and/or SpawnWorker. These convenience fields
+// are translated into canonical bus events (worker.paused, worker.resumed,
+// supervisor.spawn.requested) and folded into the injected-events slice
+// so subscribers see them on the same deferred batch as InjectEvents. This
+// closes the historical gap where every advertised HookAction field except
+// InjectEvents was silently discarded — a 30-rule supervisor that issued
+// `action.PauseWorker = "w-1"` would publish nothing.
+//
+// Translation rules:
+//
+//   - PauseWorker = "<id>"  → Event{Type: worker.paused,  Payload: {"worker_id": id, "reason": "supervisor_hook"}}
+//   - ResumeWorker = "<id>" → Event{Type: worker.resumed, Payload: {"worker_id": id, "reason": "supervisor_hook"}}
+//   - SpawnWorker  != nil   → Event{Type: supervisor.spawn.requested, Payload: <SpawnRequest JSON>}
+//
+// Each synthesized event carries CausalRef = evt.ID so the audit chain
+// links the side-effect back to the triggering event. Order within the
+// batch: InjectEvents first (caller-controlled), then Pause, Resume,
+// Spawn (in the order the fields are documented on HookAction).
 func (b *Bus) fireHooks(hooks []Hook, evt Event, injected *[]Event) {
 	// Sort by priority descending, stable to preserve registration order for ties.
 	sorted := make([]Hook, 0, len(hooks))
@@ -455,7 +476,76 @@ func (b *Bus) fireHooks(hooks []Hook, evt Event, injected *[]Event) {
 		// Collect injected events for deferred delivery after subscribers
 		// have been notified of the original event.
 		*injected = append(*injected, action.InjectEvents...)
+		// Translate convenience fields (PauseWorker / ResumeWorker /
+		// SpawnWorker) into canonical events.
+		extra := materializeHookActionEffects(h, evt, action)
+		*injected = append(*injected, extra...)
 	}
+}
+
+// materializeHookActionEffects converts the convenience fields on a
+// HookAction (PauseWorker, ResumeWorker, SpawnWorker) into canonical
+// bus events. Returns the events the caller should append to the
+// deferred-injection slice. A nil/empty action returns nil.
+//
+// This is a pure function — no I/O, no bus state — so it is safely
+// callable from fireHooks without taking b.mu and without recursing
+// into Publish.
+func materializeHookActionEffects(h Hook, src Event, action *HookAction) []Event {
+	if action == nil {
+		return nil
+	}
+	var out []Event
+	if action.PauseWorker != "" {
+		payload, _ := json.Marshal(map[string]any{
+			"worker_id": action.PauseWorker,
+			"reason":    "supervisor_hook",
+			"hook_id":   h.ID,
+		})
+		out = append(out, Event{
+			Type:      EvtWorkerPaused,
+			EmitterID: "bus.hook",
+			Scope:     src.Scope,
+			Payload:   payload,
+			CausalRef: src.ID,
+		})
+	}
+	if action.ResumeWorker != "" {
+		payload, _ := json.Marshal(map[string]any{
+			"worker_id": action.ResumeWorker,
+			"reason":    "supervisor_hook",
+			"hook_id":   h.ID,
+		})
+		out = append(out, Event{
+			Type:      EvtWorkerResumed,
+			EmitterID: "bus.hook",
+			Scope:     src.Scope,
+			Payload:   payload,
+			CausalRef: src.ID,
+		})
+	}
+	if action.SpawnWorker != nil {
+		// Default scope to the triggering event's scope when the
+		// SpawnRequest doesn't override it.
+		spawnScope := action.SpawnWorker.Scope
+		if (spawnScope == Scope{}) {
+			spawnScope = src.Scope
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"role":    action.SpawnWorker.Role,
+			"scope":   spawnScope,
+			"context": action.SpawnWorker.Context,
+			"hook_id": h.ID,
+		})
+		out = append(out, Event{
+			Type:      EvtSupervisorSpawnRequested,
+			EmitterID: "bus.hook",
+			Scope:     spawnScope,
+			Payload:   payload,
+			CausalRef: src.ID,
+		})
+	}
+	return out
 }
 
 // invokeHook calls a hook handler with panic recovery.

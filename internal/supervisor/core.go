@@ -152,6 +152,16 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		s.processEvent(ctx, evt)
 	})
 
+	// R1-V1 audit Domain 9 P0 #1: register every rule that implements
+	// HookRule as a privileged bus hook so it can gate (veto / inject)
+	// on the publish path, not just observe. We unlock the supervisor
+	// mutex first because RegisterHookRules takes its own snapshot.
+	s.mu.Unlock()
+	if _, err := s.RegisterHookRules(ctx); err != nil {
+		log.Printf("supervisor %s: register hook rules: %v", s.config.ID, err)
+	}
+	s.mu.Lock()
+
 	// Subscribe to structural events that trigger checkpoints.
 	// This replaces the former time.NewTicker-based checkpoint loop.
 	s.checkpointSub = s.bus.Subscribe(bus.Pattern{}, func(evt bus.Event) {
@@ -236,13 +246,23 @@ func (s *Supervisor) processEvent(ctx context.Context, evt bus.Event) {
 			continue
 		}
 
-		// Execute action.
-		if err := rule.Action(ctx, evt, s.bus); err != nil {
-			log.Printf("supervisor %s: rule %s action error on evt %s (seq %d): %v",
-				s.config.ID, rule.Name(), evt.Type, evt.Sequence, err)
-			// Publish observable failure event (Fix #16).
-			s.publishRuleActionFailed(evt, rule, err)
-			continue
+		// PR #24 codex-reverify HIGH: when a rule implements HookRule,
+		// its side-effects (PauseWorker / ResumeWorker / SpawnWorker /
+		// InjectEvents) are already delivered by the bus's hook path
+		// before subscribers see the triggering event. Re-running the
+		// subscribe-path Action() would double-publish worker.paused
+		// and supervisor.spawn.requested for every match — doubling
+		// pauses and spawning two CTO workers per snapshot violation.
+		// Skip Action() for hook rules; observability (rule.fired) is
+		// still published below.
+		if _, isHook := rule.(HookRule); !isHook {
+			if err := rule.Action(ctx, evt, s.bus); err != nil {
+				log.Printf("supervisor %s: rule %s action error on evt %s (seq %d): %v",
+					s.config.ID, rule.Name(), evt.Type, evt.Sequence, err)
+				// Publish observable failure event (Fix #16).
+				s.publishRuleActionFailed(evt, rule, err)
+				continue
+			}
 		}
 
 		// Record the firing.

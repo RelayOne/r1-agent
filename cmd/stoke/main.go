@@ -667,6 +667,12 @@ func main() {
 		auditCmd(os.Args[2:])
 	case "inspect":
 		inspectCmd(os.Args[2:])
+	case "receipt":
+		// R1-V1 audit Domain 10 P0 #1 + #2: receipt verifier and
+		// receipt-viewer subcommand. Backs the marketing-page claim
+		// `r1 receipt verify path/to/receipt.json` and disambiguates
+		// from the existing codebase-scanner `inspect` verb.
+		receiptCmd(os.Args[2:])
 	case "watch":
 		watchCmd(os.Args[2:])
 	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
@@ -6671,6 +6677,7 @@ COMMANDS:
   scan            Deterministic code scan (secrets, eval, TODO, debug output)
   audit           Multi-perspective review (security, perf, reliability, ops)
   inspect         Standalone codebase audit: hygiene + integration review (no SOW)
+  receipt         Verify or inspect R1 receipts (Merkle anchors): verify | inspect
   watch           Live operator dashboard for an in-flight SOW run
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization
