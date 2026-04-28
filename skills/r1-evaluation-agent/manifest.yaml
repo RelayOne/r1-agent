@@ -1,0 +1,61 @@
+# R1 Evaluation Agent — Skill Manifest
+#
+# Stoke skill manifest format (matches internal/skillmfr/Manifest).
+# This file doubles as human documentation and is parsed by the
+# skill registry at load time.
+
+name: r1-evaluation-agent
+version: "1.0.0"
+description: >
+  Runs the R1 parity evaluation against Claude Code, Manus, and Hermes.
+  Reads the matrix config, executes the 10-task comparison battery,
+  updates evaluation/r1-vs-reference-runtimes-matrix.md, files new
+  gap-remediation tasks in plans/work-orders/work-r1.md, and writes a
+  per-run report to evaluation/runs/YYYY-MM-DD-HHMM/report.md.
+  Invoked weekly on Monday 09:00 UTC or on-demand via:
+    r1 skill run r1-evaluation-agent
+
+inputSchema:
+  type: object
+  properties:
+    context:
+      type: string
+      description: >
+        Optional override context. Pass "force-refresh" to re-fetch all
+        reference-product docs even if last-checked date is today.
+        Pass "task-only:<task-id>" to re-run a single battery task.
+  required: []
+
+outputSchema:
+  type: object
+  properties:
+    guidance:
+      type: string
+      description: >
+        Summary of the evaluation run: parity %, new gaps found,
+        new R1-ENHANCED rows found, tasks executed, report path.
+
+whenToUse:
+  - "When the weekly evaluation cadence fires (Monday 09:00 UTC)"
+  - "When any reference product (Claude Code, Manus, Hermes) ships a major release"
+  - "When product team needs an updated parity % for marketing or investor decks"
+  - "When a new R1 feature ships and the matrix needs to be updated"
+  - "When operator runs: r1 skill run r1-evaluation-agent"
+
+whenNotToUse:
+  - "When you only need to check a single ability — read the matrix directly instead"
+  - "When R1 is running in CI without network access (WebFetch will fail for reference docs)"
+  - "When the last run was less than 24 hours ago and no reference product released"
+  - "When quota is critically low — the battery uses ~$0.50-$2.00 per full run"
+
+behaviorFlags:
+  mutatesState: true
+  requiresNetwork: true
+  preferredSandbox: ""
+  costCategory: moderate
+
+recommendedFor:
+  - competitive-analysis
+  - parity-verification
+  - evaluation
+  - product-positioning
