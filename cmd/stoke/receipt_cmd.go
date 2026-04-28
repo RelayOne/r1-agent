@@ -171,6 +171,21 @@ func runReceiptVerify(args []string, stdout, stderr io.Writer) int {
 // internal hash composition. It does NOT verify the chain (the file
 // has no predecessor). For chain verification, point at the anchor
 // directory.
+//
+// Schema-version handling mirrors the canonical
+// internal/ledger.verifyAnchorHash:
+//
+//   - explicit "schema_version": null → tampered (rejected)
+//   - explicit "schema_version":   0  → tampered (rejected; field present but invalid)
+//   - explicit "schema_version":   N>0 → recomputed with the v=N composition
+//   - field genuinely absent          → legacy v1 (recomputed with v1 composition)
+//
+// Detection of the three "looks like 0" cases requires a pre-pass over
+// the raw JSON because Go's json.Unmarshal collapses null/0/missing
+// into the same int zero value. Without this pre-pass a tampered
+// anchor whose schema_version was numerically downgraded to 0 (or
+// nulled) would be silently accepted as legacy v1 — a schema-version
+// downgrade attack.
 func verifySingleAnchor(path string, stdout, stderr io.Writer) int {
 	data, err := os.ReadFile(path) // #nosec G304 -- CLI input.
 	if err != nil {
@@ -186,12 +201,48 @@ func verifySingleAnchor(path string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "receipt verify: %s: missing hash or merkle_root\n", path)
 		return 1
 	}
-	expected := computeAnchorHash(anchor)
+	// Pre-pass over the raw JSON to detect tamper variants of
+	// schema_version that json.Unmarshal collapses to 0.
+	present, isNull, err := schemaVersionPresence(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "receipt verify: parse schema_version: %v\n", err)
+		return 2
+	}
+	if isNull {
+		fmt.Fprintln(stderr, "receipt verify: SCHEMA-VERSION TAMPER")
+		fmt.Fprintf(stderr, "  file:    %s\n", path)
+		fmt.Fprintln(stderr, "  reason:  schema_version is explicit null (was numeric, now null)")
+		return 1
+	}
+	if present && anchor.SchemaVersion == 0 {
+		fmt.Fprintln(stderr, "receipt verify: SCHEMA-VERSION TAMPER")
+		fmt.Fprintf(stderr, "  file:    %s\n", path)
+		fmt.Fprintln(stderr, "  reason:  schema_version is explicit 0 (field present but invalid)")
+		return 1
+	}
+	if anchor.SchemaVersion < 0 {
+		fmt.Fprintln(stderr, "receipt verify: SCHEMA-VERSION INVALID")
+		fmt.Fprintf(stderr, "  file:    %s\n", path)
+		fmt.Fprintf(stderr, "  reason:  schema_version=%d (negative)\n", anchor.SchemaVersion)
+		return 1
+	}
+	if anchor.SchemaVersion > 2 {
+		// Forward-compat: a build that doesn't know about a future
+		// schema cannot meaningfully verify it. Fail closed.
+		fmt.Fprintln(stderr, "receipt verify: SCHEMA-VERSION UNKNOWN")
+		fmt.Fprintf(stderr, "  file:    %s\n", path)
+		fmt.Fprintf(stderr, "  reason:  schema_version=%d; this build supports v1 and v2\n", anchor.SchemaVersion)
+		return 1
+	}
+	expected := computeAnchorHash(anchor, present)
 	if expected != anchor.Hash {
 		fmt.Fprintln(stderr, "receipt verify: HASH MISMATCH")
 		fmt.Fprintf(stderr, "  file:        %s\n", path)
 		fmt.Fprintf(stderr, "  declared:    %s\n", anchor.Hash)
 		fmt.Fprintf(stderr, "  recomputed:  %s\n", expected)
+		if !present {
+			fmt.Fprintln(stderr, "  hint:        anchor has no schema_version; verified as v1 for legacy compat — a stripped v2 anchor would fail here")
+		}
 		return 1
 	}
 	fmt.Fprintf(stdout, "receipt verify: OK\n")
@@ -206,6 +257,56 @@ func verifySingleAnchor(path string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "  hash:         %s\n", anchor.Hash)
 	fmt.Fprintf(stdout, "  prev_hash:    %s\n", anchor.PrevHash)
 	return 0
+}
+
+// schemaVersionPresence inspects the raw JSON for the receipt and
+// returns whether the schema_version field was present at all, and
+// whether it was the explicit null literal. This gates the three
+// downgrade-attack vectors that json.Unmarshal collapses:
+//
+//	missing field   → present=false, isNull=false  (legacy v1)
+//	"...":null      → present=true,  isNull=true   (tampered)
+//	"...":0         → present=true,  isNull=false  (tampered: detected via SchemaVersion==0)
+//	"...":N>0       → present=true,  isNull=false  (modern record)
+func schemaVersionPresence(raw []byte) (present, isNull bool, err error) {
+	var probe struct {
+		SchemaVersion json.RawMessage `json:"schema_version,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return false, false, err
+	}
+	if len(probe.SchemaVersion) == 0 {
+		return false, false, nil
+	}
+	trim := bytesTrimSpace(probe.SchemaVersion)
+	if string(trim) == "null" {
+		return true, true, nil
+	}
+	return true, false, nil
+}
+
+// bytesTrimSpace is a tiny zero-alloc trim around the four whitespace
+// runes JSON allows around values, so we don't pull in strings just
+// for one call.
+func bytesTrimSpace(b []byte) []byte {
+	i, j := 0, len(b)
+	for i < j {
+		switch b[i] {
+		case ' ', '\t', '\r', '\n':
+			i++
+			continue
+		}
+		break
+	}
+	for j > i {
+		switch b[j-1] {
+		case ' ', '\t', '\r', '\n':
+			j--
+			continue
+		}
+		break
+	}
+	return b[i:j]
 }
 
 // verifyAnchorChain walks the entire chain via AnchorStore.VerifyChain
@@ -244,17 +345,26 @@ func verifyAnchorChain(chainDir string, stdout, stderr io.Writer) int {
 //
 // Schema versions:
 //
-//	1 (or 0 / absent for legacy ff869d1):
-//	    sha256(PrevHash || MerkleRoot || IntervalEnd RFC3339Nano)
-//	2:
-//	    sha256(PrevHash || MerkleRoot || IntervalStart || IntervalEnd) RFC3339Nano
-func computeAnchorHash(a ledger.Anchor) string {
+//	1: sha256(PrevHash || MerkleRoot || IntervalEnd) — RFC3339Nano timestamps
+//	2: sha256(PrevHash || MerkleRoot || IntervalStart || IntervalEnd)
+//
+// schemaVersionPresent is the load-bearing parameter: when SchemaVersion
+// is 0 it is interpreted as legacy v1 ONLY when the JSON field was
+// genuinely absent. A 0 with the field present (or null) must NOT
+// reach this function — verifySingleAnchor rejects those upstream as
+// downgrade-attack tampers. See HIGH-3 in PR #24.
+func computeAnchorHash(a ledger.Anchor, schemaVersionPresent bool) string {
 	end := a.IntervalEnd.UTC().Format(time.RFC3339Nano)
 	start := a.IntervalStart.UTC().Format(time.RFC3339Nano)
 	h := sha256.New()
 	h.Write([]byte(a.PrevHash))
 	h.Write([]byte(a.MerkleRoot))
-	if a.SchemaVersion >= 2 {
+	// Genuinely absent → v1 legacy. Versioned → use declared.
+	version := a.SchemaVersion
+	if version == 0 && !schemaVersionPresent {
+		version = 1
+	}
+	if version >= 2 {
 		h.Write([]byte(start))
 	}
 	h.Write([]byte(end))
@@ -334,11 +444,23 @@ func inspectSingleAnchor(path string, jsonOut bool, stdout, stderr io.Writer) in
 	fmt.Fprintf(stdout, "  merkle_root:    %s\n", anchor.MerkleRoot)
 	fmt.Fprintf(stdout, "  prev_hash:      %s\n", anchor.PrevHash)
 	fmt.Fprintf(stdout, "  hash:           %s\n", anchor.Hash)
-	recomputed := computeAnchorHash(anchor)
-	if recomputed == anchor.Hash {
-		fmt.Fprintf(stdout, "  hash_check:     OK (recomputed matches)\n")
-	} else {
-		fmt.Fprintf(stdout, "  hash_check:     MISMATCH (recomputed=%s)\n", recomputed)
+	present, isNull, err := schemaVersionPresence(data)
+	if err != nil {
+		fmt.Fprintf(stdout, "  hash_check:     SKIPPED (cannot parse schema_version: %v)\n", err)
+		return 0
+	}
+	switch {
+	case isNull:
+		fmt.Fprintf(stdout, "  hash_check:     TAMPERED (schema_version is explicit null)\n")
+	case present && anchor.SchemaVersion == 0:
+		fmt.Fprintf(stdout, "  hash_check:     TAMPERED (schema_version is explicit 0)\n")
+	default:
+		recomputed := computeAnchorHash(anchor, present)
+		if recomputed == anchor.Hash {
+			fmt.Fprintf(stdout, "  hash_check:     OK (recomputed matches)\n")
+		} else {
+			fmt.Fprintf(stdout, "  hash_check:     MISMATCH (recomputed=%s)\n", recomputed)
+		}
 	}
 	return 0
 }

@@ -1041,3 +1041,179 @@ func TestPrefixIndexWildcardSubscriber(t *testing.T) {
 		t.Errorf("specific subscriber got %d events, want 1", sc)
 	}
 }
+
+// TestFireHooksMaterializesAllActionFields covers the four HookAction
+// fields (InjectEvents, PauseWorker, ResumeWorker, SpawnWorker). Prior to
+// the fix that introduced materializeHookActionEffects, only InjectEvents
+// was honored — PauseWorker/ResumeWorker/SpawnWorker were silently
+// discarded, defeating the supervisor's veto/spawn authority.
+//
+// The test publishes a single trigger event, registers one hook that
+// returns all four fields populated, and asserts that subscribers see:
+//
+//   - the original trigger event,
+//   - the injected event verbatim,
+//   - a worker.paused event keyed to the requested worker_id,
+//   - a worker.resumed event keyed to the requested worker_id,
+//   - a supervisor.spawn.requested event with the requested role.
+//
+// Each synthesized event must carry CausalRef = trigger.ID so the audit
+// trail links the side-effect to the triggering publish.
+func TestFireHooksMaterializesAllActionFields(t *testing.T) {
+	b := tempBus(t)
+	defer b.Close()
+
+	var mu sync.Mutex
+	var seen []Event
+	b.Subscribe(Pattern{}, func(e Event) {
+		mu.Lock()
+		seen = append(seen, e)
+		mu.Unlock()
+	})
+
+	if err := b.RegisterHook(Hook{
+		ID:        "all-actions",
+		Pattern:   Pattern{TypePrefix: "trigger."},
+		Priority:  100,
+		Authority: "supervisor",
+		Handler: func(_ context.Context, _ Event) (*HookAction, error) {
+			return &HookAction{
+				InjectEvents: []Event{{Type: "injected.consequence", EmitterID: "test"}},
+				PauseWorker:  "worker-pause-1",
+				ResumeWorker: "worker-resume-1",
+				SpawnWorker: &SpawnRequest{
+					Role:    "CTO",
+					Context: map[string]any{"reason": "snapshot-modification"},
+				},
+			}, nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterHook: %v", err)
+	}
+
+	trigger := Event{Type: "trigger.test", EmitterID: "publisher", Scope: Scope{MissionID: "m1"}}
+	if err := b.Publish(trigger); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Wait for all 5 events: trigger + 4 effects.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n >= 5 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(seen) != 5 {
+		t.Fatalf("expected 5 events (trigger + inject + pause + resume + spawn), got %d: %+v",
+			len(seen), eventTypes(seen))
+	}
+	if seen[0].Type != "trigger.test" {
+		t.Errorf("seen[0].Type = %q, want trigger.test", seen[0].Type)
+	}
+	// Resolve trigger ID from delivered subscriber view (publish assigns it).
+	triggerID := seen[0].ID
+	if triggerID == "" {
+		t.Fatalf("trigger event has empty ID after publish")
+	}
+	wantTypes := []EventType{
+		"trigger.test",
+		"injected.consequence",
+		EvtWorkerPaused,
+		EvtWorkerResumed,
+		EvtSupervisorSpawnRequested,
+	}
+	for i, want := range wantTypes {
+		if seen[i].Type != want {
+			t.Errorf("seen[%d].Type = %q, want %q", i, seen[i].Type, want)
+		}
+	}
+	// Causality: every materialized side-effect should chain to trigger.
+	for _, idx := range []int{2, 3, 4} {
+		if seen[idx].CausalRef != triggerID {
+			t.Errorf("seen[%d] (%s) CausalRef = %q, want %q",
+				idx, seen[idx].Type, seen[idx].CausalRef, triggerID)
+		}
+	}
+	// Pause payload encodes worker-pause-1.
+	var pausePayload map[string]any
+	if err := json.Unmarshal(seen[2].Payload, &pausePayload); err != nil {
+		t.Fatalf("pause payload unmarshal: %v", err)
+	}
+	if pausePayload["worker_id"] != "worker-pause-1" {
+		t.Errorf("pause payload worker_id = %v, want worker-pause-1", pausePayload["worker_id"])
+	}
+	// Resume payload encodes worker-resume-1.
+	var resumePayload map[string]any
+	if err := json.Unmarshal(seen[3].Payload, &resumePayload); err != nil {
+		t.Fatalf("resume payload unmarshal: %v", err)
+	}
+	if resumePayload["worker_id"] != "worker-resume-1" {
+		t.Errorf("resume payload worker_id = %v, want worker-resume-1", resumePayload["worker_id"])
+	}
+	// Spawn payload encodes role=CTO.
+	var spawnPayload map[string]any
+	if err := json.Unmarshal(seen[4].Payload, &spawnPayload); err != nil {
+		t.Fatalf("spawn payload unmarshal: %v", err)
+	}
+	if spawnPayload["role"] != "CTO" {
+		t.Errorf("spawn payload role = %v, want CTO", spawnPayload["role"])
+	}
+}
+
+// eventTypes is a tiny test helper that returns just the .Type slice
+// for legible failure messages.
+func eventTypes(evts []Event) []EventType {
+	out := make([]EventType, 0, len(evts))
+	for _, e := range evts {
+		out = append(out, e.Type)
+	}
+	return out
+}
+
+// TestFireHooksDiscardsNothingWhenAllFieldsZero is the negative test:
+// an empty HookAction must not synthesize phantom events.
+func TestFireHooksDiscardsNothingWhenAllFieldsZero(t *testing.T) {
+	b := tempBus(t)
+	defer b.Close()
+
+	var mu sync.Mutex
+	var seen []Event
+	b.Subscribe(Pattern{}, func(e Event) {
+		mu.Lock()
+		seen = append(seen, e)
+		mu.Unlock()
+	})
+
+	if err := b.RegisterHook(Hook{
+		ID:        "noop",
+		Pattern:   Pattern{TypePrefix: "trigger."},
+		Priority:  10,
+		Authority: "supervisor",
+		Handler: func(_ context.Context, _ Event) (*HookAction, error) {
+			return &HookAction{}, nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterHook: %v", err)
+	}
+
+	if err := b.Publish(Event{Type: "trigger.noop"}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// Wait briefly to allow any spurious side-effects to propagate.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("expected 1 event (just the trigger), got %d: %+v", len(seen), eventTypes(seen))
+	}
+}

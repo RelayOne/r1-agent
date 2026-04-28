@@ -140,3 +140,35 @@ func (r *FormatterRequiresConsent) Action(ctx context.Context, evt bus.Event, b 
 func (r *FormatterRequiresConsent) PayloadSchema() *schemaval.Schema {
 	return supervisor.WorkerPausedSchema()
 }
+
+// HookPriority places this rule slightly below ModificationRequiresCTO
+// so a generic snapshot modification fires its veto before a more
+// specific formatter classification does.
+func (r *FormatterRequiresConsent) HookPriority() bus.HookPriority { return 950 }
+
+// HookAction mirrors Action() for the gate-authority surface. See
+// ModificationRequiresCTO.HookAction for the design rationale.
+func (r *FormatterRequiresConsent) HookAction(ctx context.Context, evt bus.Event) (*bus.HookAction, error) {
+	var ap actionPayload
+	if err := json.Unmarshal(evt.Payload, &ap); err != nil {
+		return nil, fmt.Errorf("hook action unmarshal: %w", err)
+	}
+	workerID := ap.WorkerID
+	if workerID == "" {
+		workerID = evt.EmitterID
+	}
+	return &bus.HookAction{
+		PauseWorker: workerID,
+		SpawnWorker: &bus.SpawnRequest{
+			Role:  "CTO",
+			Scope: evt.Scope,
+			Context: map[string]any{
+				"file_paths":  ap.FilePaths,
+				"action_type": ap.ActionType,
+				"worker_id":   workerID,
+				"reason":      "auto-formatter on snapshot file",
+				"rule":        r.Name(),
+			},
+		},
+	}, nil
+}
