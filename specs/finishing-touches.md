@@ -464,9 +464,9 @@ Nothing in this spec is tightly coupled across the four parts. The only shared c
 
 ### Part D — Redteam corpus
 
-- [ ] `TestLeetspeakRule_DetectsShiftedPhrase` — scans the advanced corpus file, expects ≥1 threat `PatternName=leetspeak-instruction-rewrite`.
-- [ ] `TestLeetspeakRule_DoesNotFalsePositiveOnVersionNumbers` — scans `"version 1.2.3 released on 2026-04-21"`, expects 0 threats.
-- [ ] `TestLeetspeakRule_DoesNotFalsePositiveOnHexLiterals` — scans `"const X = 0xDEADBEEF"`, expects 0 threats.
+- [c] `TestLeetspeakRule_DetectsShiftedPhrase` — scans the advanced corpus file, expects ≥1 threat `PatternName=leetspeak-instruction-rewrite`. (commit: aa4d6a4)
+- [c] `TestLeetspeakRule_DoesNotFalsePositiveOnVersionNumbers` — scans `"version 1.2.3 released on 2026-04-21"`, expects 0 threats. (commit: aa4d6a4)
+- [c] `TestLeetspeakRule_DoesNotFalsePositiveOnHexLiterals` — scans `"const X = 0xDEADBEEF"`, expects 0 threats. (commit: aa4d6a4)
 - [ ] `TestLeetspeakRule_DoesNotFalsePositiveOnBase64` — scans 200 chars of base64, expects 0 threats.
 - [ ] `TestRedteamCorpus_InjectionDirectDetectionRate` (existing, re-run) — detection rate ≥60%, still includes the advanced sample.
 - [ ] `TestRedteamCorpus_KnownMissesNotInMainCategories` — no filename in `injection-*/` also exists in `known-misses/` (catch stale duplicates).
