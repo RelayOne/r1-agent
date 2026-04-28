@@ -18,7 +18,7 @@ This task evaluates R1's current web-fetch capability gap.
 
 2. Check if `internal/websearch/` is wired to the agent loop:
    ```bash
-   grep -r "websearch" /home/eric/repos/stoke/internal/tools/tools.go
+   grep -r "websearch" ./internal/tools/tools.go
    ```
    Report the result.
 

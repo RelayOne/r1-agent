@@ -13,7 +13,7 @@ This task verifies the PDF-parse gap and demonstrates the Bash workaround.
 1. Check `internal/tools/tools.go` for any document-parsing tools:
    ```bash
    grep -in "pdf\|docx\|document\|parse.*doc" \
-     /home/eric/repos/stoke/internal/tools/tools.go
+     ./internal/tools/tools.go
    ```
    Expected: zero matches — confirming GAP.
 

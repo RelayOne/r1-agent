@@ -6,7 +6,7 @@
 
 ## Task description
 
-In the Stoke repo at `/home/eric/repos/stoke/`, perform:
+In the Stoke repo at `./`, perform:
 
 1. **Glob** — find all `*.go` files under `internal/ledger/` (not test files).
    Expected: 5+ files.

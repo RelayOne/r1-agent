@@ -22,14 +22,14 @@ the code and confirming the transport implementations exist.
 
 3. Check whether the MCP server binary exposes tools:
    ```bash
-   grep -n "Name:" /home/eric/repos/stoke/cmd/stoke-mcp/backends.go | head -20
+   grep -n "Name:" ./cmd/stoke-mcp/backends.go | head -20
    ```
 
 **Part B — MCP server smoke test:**
 
 4. Check if the MCP server compiles:
    ```bash
-   go build -C /home/eric/repos/stoke ./cmd/stoke-mcp/ 2>&1
+   go build -C . ./cmd/stoke-mcp/ 2>&1
    ```
    Report: PASS (exits 0) or FAIL (compile error).
 
@@ -37,7 +37,7 @@ the code and confirming the transport implementations exist.
 
 5. Check whether R1 has `ListMcpResourcesTool` equivalent:
    ```bash
-   grep -r "resource" /home/eric/repos/stoke/internal/mcp/ --include="*.go" -l
+   grep -r "resource" ./internal/mcp/ --include="*.go" -l
    ```
    If no resource listing found, confirm rows #20 and #21 as GAP.
 

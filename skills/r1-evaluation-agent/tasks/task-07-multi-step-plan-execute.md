@@ -11,8 +11,8 @@ Demonstrate R1's multi-step planning capability by:
 1. **Reading the plan package** — confirm `internal/plan/` exists and
    has load/save/validate with cycle detection:
    ```bash
-   ls /home/eric/repos/stoke/internal/plan/
-   grep -n "func.*Validate" /home/eric/repos/stoke/internal/plan/*.go | head -10
+   ls ./internal/plan/
+   grep -n "func.*Validate" ./internal/plan/*.go | head -10
    ```
 
 2. **Reading a real plan example** — read `stoke-plan.example.json` at
@@ -24,7 +24,7 @@ Demonstrate R1's multi-step planning capability by:
 3. **Confirming taskstate anti-deception gates** — read
    `internal/taskstate/` and confirm the phase-transition rules exist:
    ```bash
-   grep -n "evidence" /home/eric/repos/stoke/internal/taskstate/*.go | head -10
+   grep -n "evidence" ./internal/taskstate/*.go | head -10
    ```
 
 4. **SOW vs Claude Code TaskCreate comparison** — write a 3-line

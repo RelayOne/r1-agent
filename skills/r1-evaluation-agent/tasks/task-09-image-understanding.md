@@ -14,14 +14,14 @@ assesses the severity.
 1. Check `internal/tools/tools.go` for any image-related tools:
    ```bash
    grep -in "image\|vision\|screenshot\|png\|jpg\|jpeg" \
-     /home/eric/repos/stoke/internal/tools/tools.go
+     ./internal/tools/tools.go
    ```
    Expected: zero matches — confirming GAP.
 
 2. Check the `internal/provider/` package for vision/image API support:
    ```bash
    grep -rn "vision\|image_url\|base64" \
-     /home/eric/repos/stoke/internal/provider/ --include="*.go" | head -20
+     ./internal/provider/ --include="*.go" | head -20
    ```
    Report findings. If vision API calls exist in the provider layer,
    the gap is "not wired to agent tools" rather than "no capability at all".

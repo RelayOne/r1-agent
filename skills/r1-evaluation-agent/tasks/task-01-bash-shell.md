@@ -12,7 +12,7 @@ Run the following shell command and report:
 3. Whether the output was truncated
 
 ```
-find /home/eric/repos/stoke/internal -name "*.go" -not -name "*_test.go" | wc -l
+find ./internal -name "*.go" -not -name "*_test.go" | wc -l
 ```
 
 Then run a second command that intentionally produces large output and

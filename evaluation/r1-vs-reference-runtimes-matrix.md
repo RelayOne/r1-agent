@@ -48,7 +48,7 @@ Priority order for gap remediation:
 | Claude Code | `https://code.claude.com/docs/en/` (WebFetch, 2026-04-24) | Live docs fetch, CLI reference, tools reference, hooks reference, skills reference, memory reference | 2026-04-24 |
 | Manus | `https://manus.im/blog` (WebFetch, 2026-04-24) | Public blog + feature page | 2026-04-24 |
 | Hermes (NousResearch) | `https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B` + GitHub hermes-function-calling (WebFetch, 2026-04-24) | HuggingFace model card + function-calling repo README | 2026-04-24 |
-| R1 + Stoke | `/home/eric/repos/stoke/` source tree, CLAUDE.md, `internal/tools/tools.go`, `internal/skillmfr/`, `internal/skill/`, `cmd/` | Direct code inspection | 2026-04-24 |
+| R1 + Stoke | `./` source tree, CLAUDE.md, `internal/tools/tools.go`, `internal/skillmfr/`, `internal/skill/`, `cmd/` | Direct code inspection | 2026-04-24 |
 
 ### Ability categorization
 

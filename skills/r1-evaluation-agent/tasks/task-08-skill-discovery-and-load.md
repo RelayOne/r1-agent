@@ -11,7 +11,7 @@ Verify R1's skill system is functional:
 1. **Count built-in skills** — list all `.md` files in
    `internal/skill/builtin/` and count them:
    ```bash
-   ls /home/eric/repos/stoke/internal/skill/builtin/*.md | wc -l
+   ls ./internal/skill/builtin/*.md | wc -l
    ```
    Expected: >= 50 built-in skills.
 
