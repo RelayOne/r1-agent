@@ -38,7 +38,7 @@ import (
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/skillmfr"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 	"github.com/RelayOne/r1/internal/verify"
 )
 
@@ -73,7 +73,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stoke-mcp: init ledger: %w", err)
 	}
-	// trustplane.Client selection via the NewFromEnv factory
+	// truecom.Client selection via the NewFromEnv factory
 	// (SOW task B-5). Resolution:
 	//   - STOKE_TRUSTPLANE_MODE unset or =stub → StubClient (default
 	//     for local dev + zero-config startup).
@@ -82,7 +82,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	//     private key resolved from STOKE_TRUSTPLANE_PRIVKEY /
 	//     STOKE_TRUSTPLANE_PRIVKEY_FILE. Fatal on misconfiguration
 	//     so operators see the problem at startup, not at first RPC.
-	tp, err := trustplane.NewFromEnv()
+	tp, err := truecom.NewFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("stoke-mcp: build trustplane client: %w", err)
 	}

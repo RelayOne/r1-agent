@@ -8,7 +8,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/delegation"
 	"github.com/RelayOne/r1/internal/hire"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // ---- test doubles ----------------------------------------------------------
@@ -54,11 +54,11 @@ type stubSubmitter struct {
 }
 
 type stubSubmitterCall struct {
-	Delegation trustplane.Delegation
+	Delegation truecom.Delegation
 	Spec       []byte
 }
 
-func (s *stubSubmitter) SubmitTask(_ context.Context, d trustplane.Delegation, spec []byte) (string, error) {
+func (s *stubSubmitter) SubmitTask(_ context.Context, d truecom.Delegation, spec []byte) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, stubSubmitterCall{Delegation: d, Spec: append([]byte(nil), spec...)})
@@ -91,11 +91,11 @@ func (s *stubDelivery) Await(ctx context.Context, _ delegation.TaskHandle) ([]by
 	return s.bytes, nil
 }
 
-// revokeRecordingTP wraps a trustplane.StubClient so tests can
+// revokeRecordingTP wraps a truecom.StubClient so tests can
 // observe RevokeDelegation calls (the stub itself tracks revocations
 // internally but keeps the counter private).
 type revokeRecordingTP struct {
-	trustplane.Client
+	truecom.Client
 	mu       sync.Mutex
 	revoked  []string
 }
@@ -126,7 +126,7 @@ func buildDelegateExecutor(
 	delivery DeliveryWaiter,
 ) (*DelegateExecutor, *revokeRecordingTP) {
 	t.Helper()
-	tp := &revokeRecordingTP{Client: trustplane.NewStubClient()}
+	tp := &revokeRecordingTP{Client: truecom.NewStubClient()}
 	hirer := &hire.Engine{
 		Discoverer: &stubDiscoverer{cands: cands},
 		TP:         tp,

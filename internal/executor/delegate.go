@@ -50,7 +50,7 @@ import (
 	"github.com/RelayOne/r1/internal/delegation"
 	"github.com/RelayOne/r1/internal/hire"
 	"github.com/RelayOne/r1/internal/plan"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // DeliveryWaiter blocks until the hired agent has produced a
@@ -98,7 +98,7 @@ type DelegateExecutor struct {
 	// TP is the TrustPlane client used for reputation feedback
 	// (Hirer.Complete) and direct policy evaluations. Optional;
 	// when nil, reputation feedback is skipped.
-	TP trustplane.Client
+	TP truecom.Client
 
 	// ReviewFunc is the Hirer's LLM-backed spec-match hook. When
 	// nil, the Hirer falls back to its deterministic review heuristic

@@ -1,6 +1,6 @@
 // Package delegation implements STOKE-014: a thin Stoke-side
-// wrapper over trustplane.Client. In production the wrapped
-// client is trustplane.RealClient, which speaks to the TrustPlane
+// wrapper over truecom.Client. In production the wrapped
+// client is truecom.RealClient, which speaks to the TrustPlane
 // gateway over HTTP against a vendored OpenAPI spec — there is no
 // Go SDK dependency anywhere in this call path. All cryptographic
 // primitives (Ed25519 signing, ActClaim chain walking, attenuation
@@ -13,8 +13,8 @@
 // Scope of this file:
 //
 //   - Delegate(from, to, scope, expiry, parent?) calls
-//     trustplane.Client.CreateDelegation
-//   - Verify / Revoke call the matching trustplane.Client methods
+//     truecom.Client.CreateDelegation
+//   - Verify / Revoke call the matching truecom.Client methods
 //   - Policy template registry: maps bundle names → scope sets
 //     so callers can say "I want read-only-calendar scope"
 //     without enumerating every Cedar action name
@@ -33,7 +33,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // DefaultPolicyBundles names the templates shipped under
@@ -76,18 +76,18 @@ var DefaultPolicyBundles = map[string][]string{
 var ErrUnknownBundle = errors.New("delegation: unknown policy bundle")
 
 // Manager is the Stoke-side delegation facade. Wraps a
-// trustplane.Client so the rest of Stoke consumes one import
+// truecom.Client so the rest of Stoke consumes one import
 // (delegation.Manager) rather than juggling TrustPlane types +
 // Stoke-side metadata separately.
 type Manager struct {
-	tp      trustplane.Client
+	tp      truecom.Client
 	bundles map[string][]string
 }
 
 // NewManager returns a Manager wired to the supplied TrustPlane
 // client. The initial bundle set is DefaultPolicyBundles;
 // callers can add more via RegisterBundle.
-func NewManager(tp trustplane.Client) *Manager {
+func NewManager(tp truecom.Client) *Manager {
 	bundles := make(map[string][]string, len(DefaultPolicyBundles))
 	for k, v := range DefaultPolicyBundles {
 		// Defensive copy so mutation after NewManager doesn't
@@ -121,7 +121,7 @@ func (m *Manager) BundleScopes(name string) ([]string, error) {
 }
 
 // Request is the Stoke-flavored delegation creation request.
-// Distinct from trustplane.DelegationRequest so operators can
+// Distinct from truecom.DelegationRequest so operators can
 // name a policy BUNDLE instead of enumerating scope strings,
 // and so Stoke-specific metadata (session context, annotations)
 // is carried alongside without bleeding into the TrustPlane
@@ -139,13 +139,13 @@ type Request struct {
 // Delegate creates a delegation via TrustPlane using the named
 // bundle's scopes (plus any ExtraScopes). Returns the issued
 // delegation handle.
-func (m *Manager) Delegate(ctx context.Context, req Request) (trustplane.Delegation, error) {
+func (m *Manager) Delegate(ctx context.Context, req Request) (truecom.Delegation, error) {
 	scopes, err := m.BundleScopes(req.BundleName)
 	if err != nil {
-		return trustplane.Delegation{}, err
+		return truecom.Delegation{}, err
 	}
 	scopes = append(scopes, req.ExtraScopes...)
-	tpReq := trustplane.DelegationRequest{
+	tpReq := truecom.DelegationRequest{
 		FromDID:     req.FromDID,
 		ToDID:       req.ToDID,
 		Scopes:      scopes,
@@ -230,14 +230,14 @@ type TaskSubmitter interface {
 	// SubmitTask dispatches a task to the A2A peer identified
 	// by the delegation + opaque spec bytes. Returns the
 	// peer-assigned task ID on success.
-	SubmitTask(ctx context.Context, d trustplane.Delegation, spec []byte) (taskID string, err error)
+	SubmitTask(ctx context.Context, d truecom.Delegation, spec []byte) (taskID string, err error)
 }
 
 // TaskHandle is what DelegateTask returns on success: the
 // delegation record (so callers can audit + revoke) plus the
 // peer-assigned task ID (so callers can poll + cancel).
 type TaskHandle struct {
-	Delegation trustplane.Delegation
+	Delegation truecom.Delegation
 	TaskID     string
 }
 

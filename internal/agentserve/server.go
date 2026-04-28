@@ -30,9 +30,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/eventlog"
 	"github.com/RelayOne/r1/internal/executor"
+	"github.com/RelayOne/r1/internal/provider"
 	"github.com/google/uuid"
 )
 
@@ -98,6 +100,11 @@ type Config struct {
 	// callback to recover the original request's Extra map (e.g.
 	// contract_id) without widening this signature.
 	OnTaskComplete func(taskID string, passed bool, evidence [][]byte)
+
+	// Provider, if non-nil, is used by the /v1/chat/completions endpoint
+	// to run requests through R1's agentloop. When nil, a provider is
+	// constructed from ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL env vars.
+	Provider provider.Provider
 }
 
 // Server is an agentserve instance. Tasks + deliverables are kept
@@ -195,6 +202,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/task/{id}", s.handleGetTask)
 	mux.HandleFunc("POST /api/task/{id}/cancel", s.handleCancelTask)
 	mux.HandleFunc("GET /api/task/{id}/events", s.handleTaskEvents)
+	mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	return s.withAuth(mux)
 }
 
@@ -456,6 +464,128 @@ func parseTaskType(s string) executor.TaskType {
 	default:
 		return executor.TaskUnknown
 	}
+}
+
+// chatMessage mirrors the OpenAI ChatCompletion message shape.
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// chatCompletionRequest is the subset of the OpenAI ChatCompletion
+// request body that this handler consumes.
+type chatCompletionRequest struct {
+	Model    string        `json:"model"`
+	Messages []chatMessage `json:"messages"`
+}
+
+// chatCompletionResponse is an OpenAI-compatible non-streaming response.
+type chatCompletionResponse struct {
+	ID      string              `json:"id"`
+	Object  string              `json:"object"`
+	Created int64               `json:"created"`
+	Model   string              `json:"model"`
+	Choices []chatChoice        `json:"choices"`
+	Usage   chatCompletionUsage `json:"usage"`
+}
+
+type chatChoice struct {
+	Index        int         `json:"index"`
+	Message      chatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
+}
+
+type chatCompletionUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// handleChatCompletions implements POST /v1/chat/completions.
+//
+// The handler accepts an OpenAI-format ChatCompletion request and routes it
+// through R1's agentloop. The last user message (or all messages concatenated
+// into a single turn) is used as the task prompt. The agentloop runs
+// tool-use turns until the model emits end_turn, then the final text is
+// returned in an OpenAI-compatible response envelope.
+func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var req chatCompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "decode body: %v", err)
+		return
+	}
+	if len(req.Messages) == 0 {
+		writeErr(w, http.StatusBadRequest, "messages required")
+		return
+	}
+
+	// Build prompt: concatenate all messages in order so the agentloop
+	// has the full conversation context as a single user turn.
+	var sb strings.Builder
+	for _, m := range req.Messages {
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		role := strings.ToUpper(m.Role[:1]) + m.Role[1:]
+		sb.WriteString(role)
+		sb.WriteString(": ")
+		sb.WriteString(m.Content)
+	}
+	prompt := sb.String()
+
+	// Resolve provider: use injected provider from Config when available,
+	// otherwise build one from env vars (ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL).
+	prov := s.cfg.Provider
+	if prov == nil {
+		prov = provider.NewAnthropicProvider("", "")
+	}
+
+	model := req.Model
+	if model == "" || model == "r1" {
+		model = "claude-sonnet-4-5-20250929"
+	}
+
+	cfg := agentloop.Config{
+		Model:        model,
+		MaxTurns:     25,
+		SystemPrompt: "You are R1, an AI assistant powered by the Stoke agent loop.",
+	}
+
+	timeout := s.cfg.TaskTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+
+	loop := agentloop.New(prov, cfg, nil, nil)
+	result, err := loop.Run(ctx, prompt)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "agent loop error: %v", err)
+		return
+	}
+
+	resp := chatCompletionResponse{
+		ID:      "r1-" + uuid.NewString(),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []chatChoice{
+			{
+				Index:        0,
+				Message:      chatMessage{Role: "assistant", Content: result.FinalText},
+				FinishReason: "stop",
+			},
+		},
+		Usage: chatCompletionUsage{
+			PromptTokens:     result.TotalCost.InputTokens,
+			CompletionTokens: result.TotalCost.OutputTokens,
+			TotalTokens:      result.TotalCost.InputTokens + result.TotalCost.OutputTokens,
+		},
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

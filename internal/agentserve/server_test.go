@@ -14,6 +14,8 @@ import (
 
 	"github.com/RelayOne/r1/internal/executor"
 	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // fakeExecutor satisfies executor.Executor for tests. Configurable
@@ -347,5 +349,92 @@ func TestTaskTimeout(t *testing.T) {
 	}
 	if !strings.Contains(st.Error, "timed out") {
 		t.Errorf("error missing timeout marker: %q", st.Error)
+	}
+}
+
+// fakeProvider satisfies provider.Provider for unit tests. Returns a
+// fixed text response without hitting any external API.
+type fakeProvider struct {
+	reply string
+}
+
+func (f *fakeProvider) Name() string { return "fake" }
+
+func (f *fakeProvider) Chat(_ provider.ChatRequest) (*provider.ChatResponse, error) {
+	return &provider.ChatResponse{
+		ID:         "fake-resp",
+		Model:      "fake",
+		Content:    []provider.ResponseContent{{Type: "text", Text: f.reply}},
+		StopReason: "end_turn",
+		Usage:      stream.TokenUsage{Input: 10, Output: 5},
+	}, nil
+}
+
+func (f *fakeProvider) ChatStream(req provider.ChatRequest, onEvent func(stream.Event)) (*provider.ChatResponse, error) {
+	resp, err := f.Chat(req)
+	if err != nil {
+		return nil, err
+	}
+	if onEvent != nil {
+		onEvent(stream.Event{DeltaText: f.reply})
+	}
+	return resp, nil
+}
+
+func TestChatCompletions_ReturnsOpenAIFormat(t *testing.T) {
+	_, ts := newTestServer(t, Config{
+		Provider: &fakeProvider{reply: "hello from R1"},
+	})
+
+	body, _ := json.Marshal(chatCompletionRequest{
+		Model: "r1",
+		Messages: []chatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	})
+	resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+
+	var cr chatCompletionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if cr.Object != "chat.completion" {
+		t.Errorf("object=%q want chat.completion", cr.Object)
+	}
+	if len(cr.Choices) != 1 {
+		t.Fatalf("choices len=%d", len(cr.Choices))
+	}
+	if cr.Choices[0].Message.Role != "assistant" {
+		t.Errorf("role=%q", cr.Choices[0].Message.Role)
+	}
+	if cr.Choices[0].Message.Content != "hello from R1" {
+		t.Errorf("content=%q", cr.Choices[0].Message.Content)
+	}
+	if cr.Choices[0].FinishReason != "stop" {
+		t.Errorf("finish_reason=%q", cr.Choices[0].FinishReason)
+	}
+}
+
+func TestChatCompletions_EmptyMessagesRejects(t *testing.T) {
+	_, ts := newTestServer(t, Config{
+		Provider: &fakeProvider{reply: "x"},
+	})
+
+	body, _ := json.Marshal(chatCompletionRequest{Model: "r1"})
+	resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400", resp.StatusCode)
 	}
 }

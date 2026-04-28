@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 type fakeDiscoverer struct {
@@ -181,7 +181,7 @@ func TestHire_CostCeilingFilters(t *testing.T) {
 }
 
 func TestComplete_WritesReceiptAndRecordsReputation(t *testing.T) {
-	tp := trustplane.NewStubClient()
+	tp := truecom.NewStubClient()
 	receipts := &fakeReceipts{}
 	e := &Engine{
 		Receipts: receipts,
