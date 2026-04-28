@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 	"github.com/RelayOne/r1/internal/workunit"
 )
 
@@ -26,7 +26,7 @@ func newAcceptedUnit(t *testing.T, taskID, delegationID, policy string) *workuni
 }
 
 func TestSaga_OnRevocation_RollbackImmediately(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 
@@ -50,7 +50,7 @@ func TestSaga_OnRevocation_RollbackImmediately(t *testing.T) {
 }
 
 func TestSaga_OnRevocation_CheckpointAndRevoke(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCheckpointAndRevoke))
 
@@ -70,7 +70,7 @@ func TestSaga_OnRevocation_CheckpointAndRevoke(t *testing.T) {
 }
 
 func TestSaga_OnRevocation_CheckpointErrorCaptured(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCheckpointAndRevoke))
 
@@ -91,7 +91,7 @@ func TestSaga_OnRevocation_CheckpointErrorCaptured(t *testing.T) {
 }
 
 func TestSaga_OnRevocation_CompensatingTxnErrorsCollected(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 
@@ -110,7 +110,7 @@ func TestSaga_OnRevocation_CompensatingTxnErrorsCollected(t *testing.T) {
 }
 
 func TestSaga_OnRevocation_UnknownDelegationIsNoop(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	report := s.OnRevocation(context.Background(), "nonexistent")
 	if len(report.Outcomes) != 0 {
@@ -119,7 +119,7 @@ func TestSaga_OnRevocation_UnknownDelegationIsNoop(t *testing.T) {
 }
 
 func TestSaga_Idempotent_SecondRevokeIsNoop(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 	s.Register(u, nil, nil, nil)
@@ -133,7 +133,7 @@ func TestSaga_Idempotent_SecondRevokeIsNoop(t *testing.T) {
 }
 
 func TestSaga_MultipleUnitsUnderSameDelegation(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u1 := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 	u2 := newAcceptedUnit(t, "task-b", "del-1", string(SettleRollbackImmediately))
@@ -146,7 +146,7 @@ func TestSaga_MultipleUnitsUnderSameDelegation(t *testing.T) {
 }
 
 func TestSaga_Deregister(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 	s.Register(u, nil, nil, nil)
@@ -158,7 +158,7 @@ func TestSaga_Deregister(t *testing.T) {
 }
 
 func TestSaga_DefaultPolicyIsRollback(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", "") // empty policy
 	called := false
@@ -175,7 +175,7 @@ func TestSaga_DefaultPolicyIsRollback(t *testing.T) {
 }
 
 func TestSaga_AlreadyTerminalUnitSkipped(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 	_ = u.Complete(context.Background(), nil) // reach terminal
@@ -194,7 +194,7 @@ func TestSaga_AlreadyTerminalUnitSkipped(t *testing.T) {
 // for the same delegation must NOT run comp txns + snapshot
 // hooks twice. Per-delegation serialization fixes this.
 func TestSaga_ConcurrentDuplicateRevocation(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 
@@ -240,7 +240,7 @@ func TestSaga_ConcurrentDuplicateRevocation(t *testing.T) {
 // P1: a WorkUnit registered DURING settlement must NOT be
 // orphaned by the cleanup loop.
 func TestSaga_MidSettlementRegistrationPreserved(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 
 	// First unit registered normally.
@@ -285,7 +285,7 @@ func TestSaga_MidSettlementRegistrationPreserved(t *testing.T) {
 // delegations. Two OnRevocation calls on different IDs should
 // run in parallel.
 func TestSaga_DifferentDelegationsParallel(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u1 := newAcceptedUnit(t, "a", "del-1", string(SettleRollbackImmediately))
 	u2 := newAcceptedUnit(t, "b", "del-2", string(SettleRollbackImmediately))
@@ -311,7 +311,7 @@ func TestSaga_DifferentDelegationsParallel(t *testing.T) {
 // the anchor registered with a WorkUnit now flows into
 // WorkUnit.Revoke, so a `revoked` audit event is emitted.
 func TestSaga_AuditAnchorPlumbedIntoRevoke(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 
@@ -353,7 +353,7 @@ var _ = func() workunit.AuditAnchor { return &countingAnchor{} }
 // TestSaga_AuditAnchorErrorReportedAsString ensures the P2
 // marshal-friendly string field captures anchor failures.
 func TestSaga_AuditAnchorErrorReportedAsString(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 
@@ -372,7 +372,7 @@ func TestSaga_AuditAnchorErrorReportedAsString(t *testing.T) {
 // errors round-trip via string (not error type that marshals
 // to `{}`).
 func TestSaga_CompensatingTxnErrorAsString(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	s := NewSaga(m)
 	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleRollbackImmediately))
 

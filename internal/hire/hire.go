@@ -34,7 +34,7 @@ import (
 	"sort"
 
 	"github.com/RelayOne/r1/internal/streamjson"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // ErrNoCandidates is returned when TrustPlane discovery returns
@@ -141,7 +141,7 @@ type WorkReceipt struct {
 
 // Discoverer queries TrustPlane for candidates. Separated as
 // an interface so tests can inject mock candidates without
-// going through the trustplane.Client surface.
+// going through the truecom.Client surface.
 type Discoverer interface {
 	Discover(ctx context.Context, capability string) ([]Candidate, error)
 }
@@ -150,16 +150,16 @@ type Discoverer interface {
 // call. This is the production implementation; test scaffolds
 // use fakeDiscoverer.
 type trustplaneDiscoverer struct {
-	tp trustplane.Client
+	tp truecom.Client
 }
 
-// NewDiscoverer wraps a trustplane.Client as a Discoverer.
+// NewDiscoverer wraps a truecom.Client as a Discoverer.
 // Currently this is a thin adapter; when the TrustPlane
 // gateway exposes a richer discovery shape (filters by
 // locality, SLA tier, etc.) this is where that translation
 // lives. The RealClient implementation speaks to the gateway
 // over HTTP against the vendored OpenAPI spec — no Go SDK.
-func NewDiscoverer(tp trustplane.Client) Discoverer {
+func NewDiscoverer(tp truecom.Client) Discoverer {
 	return &trustplaneDiscoverer{tp: tp}
 }
 
@@ -180,7 +180,7 @@ func (d *trustplaneDiscoverer) Discover(ctx context.Context, capability string) 
 
 // HITLBroker escalates low-reputation or high-value hires to
 // the human operator. Returns true on approved. Implementations
-// typically proxy through trustplane.Client.RequestHITL.
+// typically proxy through truecom.Client.RequestHITL.
 type HITLBroker interface {
 	ApproveHire(ctx context.Context, candidate Candidate) (bool, error)
 }
@@ -188,16 +188,16 @@ type HITLBroker interface {
 // tpHITL is the default HITLBroker that routes approvals
 // through the TrustPlane HITL service.
 type tpHITL struct {
-	tp trustplane.Client
+	tp truecom.Client
 }
 
-// NewHITLBroker wraps a trustplane.Client.
-func NewHITLBroker(tp trustplane.Client) HITLBroker {
+// NewHITLBroker wraps a truecom.Client.
+func NewHITLBroker(tp truecom.Client) HITLBroker {
 	return &tpHITL{tp: tp}
 }
 
 func (h *tpHITL) ApproveHire(ctx context.Context, c Candidate) (bool, error) {
-	resp, err := h.tp.RequestHITL(ctx, trustplane.HITLRequest{
+	resp, err := h.tp.RequestHITL(ctx, truecom.HITLRequest{
 		AgentDID: c.AgentDID,
 		Question: fmt.Sprintf("Hire %s for %s at $%.2f, rep %.2f?", c.AgentDID, c.Capability, c.EstimatedCostUSD, c.Reputation),
 	})
@@ -220,7 +220,7 @@ func (h *tpHITL) ApproveHire(ctx context.Context, c Candidate) (bool, error) {
 type Engine struct {
 	Discoverer Discoverer
 	HITL       HITLBroker
-	TP         trustplane.Client
+	TP         truecom.Client
 	Receipts   ReceiptWriter
 	Policy     Policy
 
@@ -310,7 +310,7 @@ func (e *Engine) Complete(ctx context.Context, agentDID string, outcome string, 
 		case "partial":
 			delta = 0.0
 		}
-		if err := e.TP.RecordReputation(ctx, trustplane.ReputationEntry{
+		if err := e.TP.RecordReputation(ctx, truecom.ReputationEntry{
 			AgentDID:    agentDID,
 			Outcome:     outcome,
 			RatingDelta: delta,

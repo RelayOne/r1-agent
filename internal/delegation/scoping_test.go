@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 func TestDelegationContext_HasScope(t *testing.T) {
@@ -19,7 +19,7 @@ func TestDelegationContext_HasScope(t *testing.T) {
 }
 
 func TestAuthorize_EmptyBundleRejected(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	err := m.Authorize(context.Background(), DelegationContext{
 		DelegateeDID: "b",
 		PolicyBundle: "", // empty → default-deny
@@ -33,7 +33,7 @@ func TestAuthorize_PermissiveStubAllows(t *testing.T) {
 	// Stub eval is permissive on any non-empty bundle. A non-
 	// stub evaluator would apply real Cedar logic; we're
 	// testing that Authorize forwards correctly.
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	err := m.Authorize(context.Background(), DelegationContext{
 		DelegateeDID: "b",
 		PolicyBundle: "read-only-calendar",
@@ -46,15 +46,15 @@ func TestAuthorize_PermissiveStubAllows(t *testing.T) {
 // restrictiveStub is a Client that denies every action for
 // testing the deny path end-to-end.
 type restrictiveStub struct {
-	*trustplane.StubClient
+	*truecom.StubClient
 }
 
-func (r *restrictiveStub) EvaluatePolicy(_ context.Context, _ trustplane.PolicyRequest) error {
-	return trustplane.ErrPolicyDenied
+func (r *restrictiveStub) EvaluatePolicy(_ context.Context, _ truecom.PolicyRequest) error {
+	return truecom.ErrPolicyDenied
 }
 
 func TestAuthorize_CedarDenyWrapped(t *testing.T) {
-	m := NewManager(&restrictiveStub{trustplane.NewStubClient()})
+	m := NewManager(&restrictiveStub{truecom.NewStubClient()})
 	err := m.Authorize(context.Background(), DelegationContext{
 		DelegateeDID: "b",
 		PolicyBundle: "anything",
@@ -65,7 +65,7 @@ func TestAuthorize_CedarDenyWrapped(t *testing.T) {
 }
 
 func TestApplyPolicyBundle(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	dctx, err := m.ApplyPolicyBundle("read-only-calendar", "did:a", "did:b", "del-1")
 	if err != nil {
 		t.Fatalf("ApplyPolicyBundle: %v", err)
@@ -82,7 +82,7 @@ func TestApplyPolicyBundle(t *testing.T) {
 }
 
 func TestApplyPolicyBundle_Unknown(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	_, err := m.ApplyPolicyBundle("ghost", "a", "b", "d")
 	if !errors.Is(err, ErrUnknownBundle) {
 		t.Errorf("want ErrUnknownBundle, got %v", err)

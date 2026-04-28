@@ -17,7 +17,7 @@
 //     named policy bundle into a DelegationContext seed
 //
 // Scope: Stoke doesn't re-implement Cedar. All evaluation
-// lives in tp-policy-cedar via trustplane.Client.EvaluatePolicy.
+// lives in tp-policy-cedar via truecom.Client.EvaluatePolicy.
 // This file is the caller-side plumbing that makes each tool
 // invocation pass the right request shape.
 package delegation
@@ -27,7 +27,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // DelegationContext carries the authority state of a delegated
@@ -74,12 +74,12 @@ func (d DelegationContext) HasScope(scope string) bool {
 }
 
 // ErrActionDenied is returned by Authorize when Cedar rejects
-// the action. Wraps trustplane.ErrPolicyDenied.
+// the action. Wraps truecom.ErrPolicyDenied.
 var ErrActionDenied = errors.New("delegation: action denied by policy")
 
 // Authorize is the gate every tool invocation must pass
 // through in a delegated session. It builds a
-// trustplane.PolicyRequest from the DelegationContext +
+// truecom.PolicyRequest from the DelegationContext +
 // proposed action, then calls the TrustPlane Cedar evaluator.
 // Returns nil on allow; wrapped ErrActionDenied on deny.
 //
@@ -92,7 +92,7 @@ func (m *Manager) Authorize(ctx context.Context, dctx DelegationContext, action 
 	if dctx.PolicyBundle == "" {
 		return fmt.Errorf("%w: empty policy bundle (default-deny)", ErrActionDenied)
 	}
-	req := trustplane.PolicyRequest{
+	req := truecom.PolicyRequest{
 		PolicyBundle: dctx.PolicyBundle,
 		Delegation:   dctx.DelegationID,
 		Principal:    dctx.DelegateeDID,
@@ -100,7 +100,7 @@ func (m *Manager) Authorize(ctx context.Context, dctx DelegationContext, action 
 		Resource:     resource,
 	}
 	if err := m.tp.EvaluatePolicy(ctx, req); err != nil {
-		if errors.Is(err, trustplane.ErrPolicyDenied) {
+		if errors.Is(err, truecom.ErrPolicyDenied) {
 			return fmt.Errorf("%w: action=%q", ErrActionDenied, action)
 		}
 		return err

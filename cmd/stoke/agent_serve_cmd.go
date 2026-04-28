@@ -21,7 +21,7 @@ import (
 	"github.com/RelayOne/r1/internal/deploy"
 	"github.com/RelayOne/r1/internal/executor"
 	"github.com/RelayOne/r1/internal/r1env"
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 // agentServeCmd handles `stoke agent-serve` — the hireable-agent
@@ -197,7 +197,7 @@ func cleanCSV(in string) []string {
 // the caller can wire settlement callbacks. Fails closed only when
 // the key material is unreadable; everything else propagates as an
 // error for the caller to log-and-continue.
-func registerWithTrustPlane(ctx context.Context, opts agentServeOpts, s *agentserve.Server) (*trustplane.RealClient, string, error) {
+func registerWithTrustPlane(ctx context.Context, opts agentServeOpts, s *agentserve.Server) (*truecom.RealClient, string, error) {
 	endpoint := strings.TrimSpace(opts.trustplaneEndpoint)
 	if endpoint == "" {
 		return nil, "", errors.New("trustplane: --trustplane-endpoint (or STOKE_TRUSTPLANE_ENDPOINT) is required with --trustplane-register")
@@ -211,11 +211,11 @@ func registerWithTrustPlane(ctx context.Context, opts agentServeOpts, s *agentse
 	if err != nil {
 		return nil, "", fmt.Errorf("trustplane: load private key: %w", err)
 	}
-	signer, err := trustplane.NewIdentitySigner(did, priv)
+	signer, err := truecom.NewIdentitySigner(did, priv)
 	if err != nil {
 		return nil, "", fmt.Errorf("trustplane: identity signer: %w", err)
 	}
-	client, err := trustplane.NewRealClient(trustplane.RealClientOptions{
+	client, err := truecom.NewRealClient(truecom.RealClientOptions{
 		BaseURL:    endpoint,
 		PrivateKey: priv,
 	})
@@ -246,10 +246,10 @@ func registerWithTrustPlane(ctx context.Context, opts agentServeOpts, s *agentse
 // come from the server's advertised Capabilities (falling back to
 // the registered executors) so the wire view matches what
 // /api/capabilities returns.
-func capabilityRegistration(s *agentserve.Server, opts agentServeOpts, did string, pub ed25519.PublicKey) (trustplane.CapabilityRegistration, error) {
-	jwk, err := trustplane.BuildPublicKeyJWK(pub)
+func capabilityRegistration(s *agentserve.Server, opts agentServeOpts, did string, pub ed25519.PublicKey) (truecom.CapabilityRegistration, error) {
+	jwk, err := truecom.BuildPublicKeyJWK(pub)
 	if err != nil {
-		return trustplane.CapabilityRegistration{}, fmt.Errorf("trustplane: build JWK: %w", err)
+		return truecom.CapabilityRegistration{}, fmt.Errorf("trustplane: build JWK: %w", err)
 	}
 	taskTypes := s.Config().Capabilities.TaskTypes
 	if len(taskTypes) == 0 {
@@ -263,7 +263,7 @@ func capabilityRegistration(s *agentserve.Server, opts agentServeOpts, did strin
 		// startups with the same DID register under the same agent_id.
 		agentID = "stoke-agent-" + strconv.Itoa(len(did))
 	}
-	return trustplane.CapabilityRegistration{
+	return truecom.CapabilityRegistration{
 		DID:          did,
 		AgentID:      agentID,
 		Version:      version,
@@ -329,7 +329,7 @@ func decodeEd25519PEM(pemStr string) (ed25519.PrivateKey, error) {
 // All outbound calls run under a bounded ctx and failures log
 // through stderr — callers never see an error because the server
 // has already persisted the terminal transition.
-func buildSettlementCallback(s *agentserve.Server, tp *trustplane.RealClient, did string) func(string, bool, [][]byte) {
+func buildSettlementCallback(s *agentserve.Server, tp *truecom.RealClient, did string) func(string, bool, [][]byte) {
 	return func(taskID string, passed bool, evidence [][]byte) {
 		meta := s.TaskMetadata(taskID)
 		contractID := stringFromMeta(meta, "contract_id")
@@ -342,7 +342,7 @@ func buildSettlementCallback(s *agentserve.Server, tp *trustplane.RealClient, di
 
 		if passed {
 			amount := floatFromMeta(meta, "amount_usd")
-			if _, err := tp.Settle(ctx, trustplane.SettleRequestBody{
+			if _, err := tp.Settle(ctx, truecom.SettleRequestBody{
 				ContractID: contractID,
 				AgentDID:   did,
 				AmountUSD:  amount,
@@ -364,7 +364,7 @@ func buildSettlementCallback(s *agentserve.Server, tp *trustplane.RealClient, di
 				evidenceJSON = append(evidenceJSON, buf)
 			}
 		}
-		if _, err := tp.Dispute(ctx, trustplane.DisputeRequestBody{
+		if _, err := tp.Dispute(ctx, truecom.DisputeRequestBody{
 			ContractID:   contractID,
 			AgentDID:     did,
 			FailedReason: disputeReason,

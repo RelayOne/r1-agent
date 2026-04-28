@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RelayOne/r1/internal/trustplane"
+	"github.com/RelayOne/r1/internal/truecom"
 )
 
 func TestDefaultBundles_AtLeastFive(t *testing.T) {
@@ -25,7 +25,7 @@ func TestDefaultBundles_AtLeastFive(t *testing.T) {
 }
 
 func TestManager_BundleScopes(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	scopes, err := m.BundleScopes("read-only-calendar")
 	if err != nil {
 		t.Fatalf("BundleScopes: %v", err)
@@ -36,7 +36,7 @@ func TestManager_BundleScopes(t *testing.T) {
 }
 
 func TestManager_UnknownBundleErrors(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	_, err := m.BundleScopes("doesnt-exist")
 	if !errors.Is(err, ErrUnknownBundle) {
 		t.Errorf("want ErrUnknownBundle, got %v", err)
@@ -44,7 +44,7 @@ func TestManager_UnknownBundleErrors(t *testing.T) {
 }
 
 func TestManager_RegisterBundle(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	m.RegisterBundle("custom", []string{"scope_one", "scope_two"})
 	scopes, err := m.BundleScopes("custom")
 	if err != nil {
@@ -56,7 +56,7 @@ func TestManager_RegisterBundle(t *testing.T) {
 }
 
 func TestManager_DelegatePassesBundleScopes(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	d, err := m.Delegate(context.Background(), Request{
 		FromDID:    "did:tp:a",
 		ToDID:      "did:tp:b",
@@ -72,7 +72,7 @@ func TestManager_DelegatePassesBundleScopes(t *testing.T) {
 }
 
 func TestManager_DelegateUnknownBundleErrors(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	_, err := m.Delegate(context.Background(), Request{
 		FromDID: "a", ToDID: "b", BundleName: "ghost-bundle", Expiry: time.Hour,
 	})
@@ -82,7 +82,7 @@ func TestManager_DelegateUnknownBundleErrors(t *testing.T) {
 }
 
 func TestManager_VerifyAndRevoke(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	d, _ := m.Delegate(context.Background(), Request{
 		FromDID:    "a",
 		ToDID:      "b",
@@ -96,13 +96,13 @@ func TestManager_VerifyAndRevoke(t *testing.T) {
 		t.Fatalf("Revoke: %v", err)
 	}
 	err := m.Verify(context.Background(), d.ID, "b")
-	if !errors.Is(err, trustplane.ErrDelegationInvalid) {
+	if !errors.Is(err, truecom.ErrDelegationInvalid) {
 		t.Errorf("revoked delegation should fail verify, got %v", err)
 	}
 }
 
 func TestManager_BundlesListed(t *testing.T) {
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	got := m.Bundles()
 	if len(got) < 5 {
 		t.Errorf("expected at least 5 bundles, got %d", len(got))
@@ -120,7 +120,7 @@ func TestManager_ExtraScopesAppended(t *testing.T) {
 	// than replacing it. We can't see the underlying TP call
 	// args directly (StubClient swallows them), but we CAN
 	// verify the Delegate returns successfully with extras.
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	_, err := m.Delegate(context.Background(), Request{
 		FromDID: "a", ToDID: "b",
 		BundleName:  "read-only-calendar",
@@ -135,7 +135,7 @@ func TestManager_ExtraScopesAppended(t *testing.T) {
 func TestManager_DefensiveBundleCopy(t *testing.T) {
 	// Mutating DefaultPolicyBundles after NewManager must NOT
 	// affect the Manager's registered bundles.
-	m := NewManager(trustplane.NewStubClient())
+	m := NewManager(truecom.NewStubClient())
 	orig := DefaultPolicyBundles["read-only-calendar"]
 	DefaultPolicyBundles["read-only-calendar"] = []string{"tampered"}
 	defer func() { DefaultPolicyBundles["read-only-calendar"] = orig }()
