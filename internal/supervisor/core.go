@@ -152,6 +152,16 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		s.processEvent(ctx, evt)
 	})
 
+	// R1-V1 audit Domain 9 P0 #1: register every rule that implements
+	// HookRule as a privileged bus hook so it can gate (veto / inject)
+	// on the publish path, not just observe. We unlock the supervisor
+	// mutex first because RegisterHookRules takes its own snapshot.
+	s.mu.Unlock()
+	if _, err := s.RegisterHookRules(ctx); err != nil {
+		log.Printf("supervisor %s: register hook rules: %v", s.config.ID, err)
+	}
+	s.mu.Lock()
+
 	// Subscribe to structural events that trigger checkpoints.
 	// This replaces the former time.NewTicker-based checkpoint loop.
 	s.checkpointSub = s.bus.Subscribe(bus.Pattern{}, func(evt bus.Event) {
