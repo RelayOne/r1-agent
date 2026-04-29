@@ -477,6 +477,7 @@ type chatMessage struct {
 type chatCompletionRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
+	Stream   bool          `json:"stream,omitempty"`
 }
 
 // chatCompletionResponse is an OpenAI-compatible non-streaming response.
@@ -499,6 +500,25 @@ type chatCompletionUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+type chatCompletionChunkResponse struct {
+	ID      string            `json:"id"`
+	Object  string            `json:"object"`
+	Created int64             `json:"created"`
+	Model   string            `json:"model"`
+	Choices []chatChunkChoice `json:"choices"`
+}
+
+type chatChunkChoice struct {
+	Index        int               `json:"index"`
+	Delta        chatChunkDelta    `json:"delta"`
+	FinishReason *string           `json:"finish_reason"`
+}
+
+type chatChunkDelta struct {
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
 }
 
 // handleChatCompletions implements POST /v1/chat/completions.
@@ -561,6 +581,72 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	loop := agentloop.New(prov, cfg, nil, nil)
+	responseID := "r1-" + uuid.NewString()
+	createdAt := time.Now().Unix()
+
+	if req.Stream {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeErr(w, http.StatusInternalServerError, "streaming unsupported")
+			return
+		}
+
+		h := w.Header()
+		h.Set("Content-Type", "text/event-stream")
+		h.Set("Cache-Control", "no-cache")
+		h.Set("Connection", "keep-alive")
+
+		assistantRole := "assistant"
+		loop.SetOnText(func(delta string) {
+			chunk := chatCompletionChunkResponse{
+				ID:      responseID,
+				Object:  "chat.completion.chunk",
+				Created: createdAt,
+				Model:   model,
+				Choices: []chatChunkChoice{
+					{
+						Index: 0,
+						Delta: chatChunkDelta{
+							Role:    assistantRole,
+							Content: delta,
+						},
+						FinishReason: nil,
+					},
+				},
+			}
+			assistantRole = ""
+			writeSSEData(w, chunk)
+			flusher.Flush()
+		})
+
+		result, err := loop.Run(ctx, prompt)
+		if err != nil {
+			writeSSEData(w, map[string]string{"error": fmt.Sprintf("agent loop error: %v", err)})
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			return
+		}
+
+		finishReason := "stop"
+		writeSSEData(w, chatCompletionChunkResponse{
+			ID:      responseID,
+			Object:  "chat.completion.chunk",
+			Created: createdAt,
+			Model:   model,
+			Choices: []chatChunkChoice{
+				{
+					Index:        0,
+					Delta:        chatChunkDelta{},
+					FinishReason: &finishReason,
+				},
+			},
+		})
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		_ = result
+		return
+	}
+
 	result, err := loop.Run(ctx, prompt)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "agent loop error: %v", err)
@@ -568,9 +654,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := chatCompletionResponse{
-		ID:      "r1-" + uuid.NewString(),
+		ID:      responseID,
 		Object:  "chat.completion",
-		Created: time.Now().Unix(),
+		Created: createdAt,
 		Model:   model,
 		Choices: []chatChoice{
 			{
@@ -604,6 +690,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, format string, args ...any) {
 	writeJSON(w, status, map[string]any{"error": fmt.Sprintf(format, args...)})
+}
+
+func writeSSEData(w http.ResponseWriter, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(w, "data: %q\n\n", fmt.Sprintf("marshal error: %v", err))
+		return
+	}
+	fmt.Fprintf(w, "data: %s\n\n", body)
 }
 
 // ErrNoExecutor is returned by Dispatch when no executor is

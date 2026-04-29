@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -420,6 +421,59 @@ func TestChatCompletions_ReturnsOpenAIFormat(t *testing.T) {
 	}
 	if cr.Choices[0].FinishReason != "stop" {
 		t.Errorf("finish_reason=%q", cr.Choices[0].FinishReason)
+	}
+}
+
+func TestChatCompletions_StreamReturnsOpenAISSE(t *testing.T) {
+	_, ts := newTestServer(t, Config{
+		Provider: &fakeProvider{reply: "hello from R1"},
+	})
+
+	body, _ := json.Marshal(chatCompletionRequest{
+		Model:  "r1",
+		Stream: true,
+		Messages: []chatMessage{
+			{Role: "user", Content: "say hello"},
+		},
+	})
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type=%q", ct)
+	}
+
+	streamBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	bodyText := string(streamBody)
+	if !strings.Contains(bodyText, "\"object\":\"chat.completion.chunk\"") {
+		t.Fatalf("missing chunk envelope: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "\"role\":\"assistant\"") {
+		t.Fatalf("missing assistant role: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "\"content\":\"hello from R1\"") {
+		t.Fatalf("missing streamed content: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "\"finish_reason\":\"stop\"") {
+		t.Fatalf("missing stop chunk: %s", bodyText)
+	}
+	if !strings.Contains(bodyText, "data: [DONE]") {
+		t.Fatalf("missing done marker: %s", bodyText)
 	}
 }
 
