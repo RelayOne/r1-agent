@@ -320,19 +320,50 @@ func decodeEd25519PEM(pemStr string) (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
-// buildSettlementCallback returns an OnTaskComplete function that
-// posts Settle on pass or Dispute on fail. contract_id is pulled
-// from the task's TaskRequest.Extra (see Server.TaskMetadata);
-// tasks without a contract_id are skipped so the hook is a no-op
-// for non-TrustPlane traffic.
+// buildSettlementCallback returns an OnTaskComplete function that:
 //
-// All outbound calls run under a bounded ctx and failures log
-// through stderr — callers never see an error because the server
-// has already persisted the terminal transition.
+//  1. Posts Settle on pass or Dispute on fail for contract-bound tasks
+//     (contract_id must be present in TaskRequest.Extra).
+//  2. Emits a SOWReceipt to TrustPlane for ALL terminal tasks
+//     (fail-soft, fire-and-forget goroutine, source="r1" always set).
+//
+// contract_id is pulled from the task's TaskRequest.Extra (see
+// Server.TaskMetadata); tasks without a contract_id skip settlement
+// but still emit the SOW receipt.
+//
+// All outbound calls run under a bounded ctx and failures log through
+// stderr — callers never see an error because the server has already
+// persisted the terminal transition.
 func buildSettlementCallback(s *agentserve.Server, tp *truecom.RealClient, did string) func(string, bool, [][]byte) {
 	return func(taskID string, passed bool, evidence [][]byte) {
 		meta := s.TaskMetadata(taskID)
 		contractID := stringFromMeta(meta, "contract_id")
+
+		// --- F-W1-3: emit SOW receipt to TrustPlane for every terminal task ---
+		// Runs in a goroutine so a gateway outage never blocks the caller.
+		// source is forced to "r1" by EmitSOWReceipt regardless of what we
+		// set here; included for clarity.
+		outcome := "pass"
+		if !passed {
+			outcome = "fail"
+		}
+		go func() {
+			rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer rcancel()
+			receipt := truecom.SOWReceipt{
+				TaskID:     taskID,
+				ContractID: contractID,
+				AgentDID:   did,
+				Outcome:    outcome,
+				TaskType:   stringFromMeta(meta, "task_type"),
+				CostUSD:    floatFromMeta(meta, "amount_usd"),
+			}
+			if _, err := tp.EmitSOWReceipt(rctx, receipt); err != nil {
+				fmt.Fprintf(os.Stderr, "truecom emit receipt %s: %v\n", taskID, err)
+			}
+		}()
+
+		// --- Settlement (only for contract-bound tasks) ---
 		if contractID == "" {
 			return
 		}
