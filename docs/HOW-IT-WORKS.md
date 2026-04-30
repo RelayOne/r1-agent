@@ -11,10 +11,7 @@ plan-execute-verify loop even starts:
    what runtime state is shared.
 3. Trust-layer checks decide whether the requested action can proceed
    under the current hub/runtime context.
-4. Beacon transport envelopes carry the request over HTTP or WebSocket,
-   and the runtime bridge lands it inside the same approval,
-   notification, artifact, and ledger machinery as the rest of R1.
-5. The existing executor, reviewer, and verification descent stack run
+4. The existing executor, reviewer, and verification descent stack run
    inside that stronger envelope.
 
 The result is less "tool that launches workers" and more "runtime that
@@ -84,7 +81,7 @@ Wave B adds three explicit post-task surfaces:
 2. `stoke honesty refuse` records a refusal when R1 should not make a claim without evidence.
 3. `stoke honesty why-not` records why an action was skipped, deferred, or downgraded.
 
-`stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping and a human-minute equivalent.
+`stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping, metered-equivalent margin tracking, and a human-minute equivalent.
 
 ## Beacon Foundation (2026-04-30) — Protocol Surfaces Around The Mission Loop
 
@@ -100,13 +97,6 @@ setup that fits the same runtime thesis as the rest of the system.
 Beacon trust validation, deferred review envelopes, and beacon-aware
 notify metadata are part of the shipped baseline rather than follow-on
 placeholders.
-
-2. **Real transport and runtime wiring.** The newly landed transport
-   layer defines concrete HTTP and WebSocket envelopes, while the
-   runtime bridge reuses trust dispatch, sessionctl approvals,
-   notifications, artifact flows, and ledger persistence. That changes
-   beacon from "protocol surface exists" to "protocol surface actually
-   enters the running system."
 
 ## Wave D (2026-04-30) — Expansion Surfaces
 
