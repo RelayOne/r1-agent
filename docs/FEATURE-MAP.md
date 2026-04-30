@@ -183,6 +183,7 @@ R1 v2 wraps the execution engine in a multi-role consensus layer.
 | 11 stance roles | PO, CTO, QA Lead, Reviewer, Dev, Researcher, SDM, Deployer, Harness + per-role tool authorization | Done | [harness-stances](architecture/harness-stances.md) |
 | Concern field projection | 10 sections × 9 role templates render role-specific system prompts from ledger state | Done | [v2-overview](architecture/v2-overview.md) |
 | Skill manufacturing pipeline | 4 workflows + confidence ladder produces reusable playbooks | Done | [skill-pipeline](architecture/skill-pipeline.md) |
+| Deterministic skills substrate | Typed IR, 8-stage analyzer, compile proofs, opt-in deterministic execution for `useIR=true` manifests | In Progress | [SKILLS-DETERMINISTIC](SKILLS-DETERMINISTIC.md) |
 | V1-to-V2 bridge adapters | cost/verify/wisdom/audit emit bus events + ledger nodes automatically | Done | [bridge](architecture/bridge.md) |
 | Content-addressed ID generation | SHA256, 16 node-type prefixes, collision-safe across backends | Done | `internal/contentid/` |
 | Structured error taxonomy (10 codes) | Uniform `stokerr.Error` with code + context; `errors.As` everywhere | Done | `internal/stokerr/` |

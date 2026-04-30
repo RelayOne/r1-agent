@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "skill_id": "deterministic-echo",
+  "skill_version": 1,
+  "description": "Echo an input string through the deterministic runtime.",
+  "authors": ["operator:codex"],
+  "lineage": {
+    "kind": "human",
+    "authored_at": "2026-04-30T00:00:00Z"
+  },
+  "schemas": {
+    "inputs": {
+      "type": "record",
+      "fields": {
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "outputs": {
+      "type": "record",
+      "fields": {
+        "value": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "graph": {
+    "nodes": {
+      "echo": {
+        "kind": "pure_fn",
+        "config": {
+          "registry_ref": "stdlib:echo",
+          "input": {
+            "kind": "ref",
+            "ref": "inputs.message"
+          }
+        }
+      }
+    },
+    "return": {
+      "kind": "ref",
+      "ref": "echo"
+    }
+  }
+}

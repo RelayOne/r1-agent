@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Deterministic skills substrate (R1 deterministic-skills phase 1/2)
+
+- Added `internal/r1skill/ir` and `internal/r1skill/analyze` from the
+  deterministic-skills starter package. The analyzer now exposes the
+  8-stage compile path, constitution-binding diagnostics, and compile
+  proofs for typed skill IR.
+- Added `internal/r1skill/interp` with a minimal deterministic runtime
+  for `pure_fn` and replay-cached `llm_call`, plus replay-oriented
+  effect recording.
+- Added `internal/r1skill/registry` and `cmd/r1-skill-compile` so
+  canonical JSON IR skills can be compiled into `.proof.json`
+  artifacts and loaded back by runtime code.
+- Extended `internal/skillmfr.Manifest` with `useIR`, `irRef`, and
+  `compileProofRef` for dual-stack migration.
+- Wired `cmd/stoke-mcp/backends.go` so `stoke_invoke` executes the
+  deterministic runtime when a registered manifest sets `useIR=true`.
+- Added the example skill at `skills/deterministic-echo/skill.r1.json`
+  and its generated proof artifact.
+
 #### A2A Agent Card v1.0.0 schema + canonical path migration (WORK-stoke T22)
 
 Upgrades the Agent-to-Agent (A2A) Agent Card generator and HTTP

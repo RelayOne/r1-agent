@@ -30,6 +30,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Compile deterministic skills
+        run: go run ./cmd/r1-skill-compile --check ./skills/deterministic-echo/skill.r1.json
+
       - name: Test
         run: go test ./... -count=1 -timeout=120s
 

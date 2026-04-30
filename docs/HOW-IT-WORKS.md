@@ -128,6 +128,10 @@ tasks.
 → `internal/skillselect/` inspects the repo structure (go.mod,
 package.json, Cargo.toml, pyproject.toml, …) and infers the command
 triple. Skills register per tech stack.
+→ `internal/r1skill/` optionally loads deterministic skill IR from
+`*.r1.json`, analyzes it into a compile proof, and exposes an opt-in
+execution path for manifests carrying `useIR=true`. Markdown skills
+remain the default prompt-injection substrate during migration.
 
 **Initialize the governance layer**
 → `internal/ledger/` opens (or creates) the append-only graph.
