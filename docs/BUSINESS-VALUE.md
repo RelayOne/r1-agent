@@ -1,5 +1,7 @@
 # Business Value
 
+This cycle-close refresh keeps the commercial framing aligned with the current shipping baseline: parity claims are backed by the evaluation path, and deterministic skills are framed as an operator-facing product lane rather than buried infrastructure.
+
 ## Cycle 9 executive update
 
 R1's value proposition tightened after the cycle 7-8 merge train:

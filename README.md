@@ -1,5 +1,9 @@
 # R1 — agent runtime; previously developed at github.com/ericmacdougall/stoke; canonical home is now here.
 
+## April 30 cycle close
+
+The canonical docs for this cycle are now aligned around one product story: parity evidence, deterministic skills, and wizard/artifact packaging all describe the same shipped baseline on `main`. This refresh does not announce a new feature wave; it closes the doc gap between those already-shipped lanes and the root collateral.
+
 ## W36 parity-and-determinism update
 
 The next documentation baseline for R1 assumes two parallel planning tracks are now first-class in the product story:

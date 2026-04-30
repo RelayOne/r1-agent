@@ -1,5 +1,7 @@
 # How It Works
 
+This cycle-close refresh keeps the workflow narrative synchronized with the shipped parity program, deterministic skill lane, and wizard/artifact path already present on `main`.
+
 ## Cycle 9 operator flow changes
 
 For an operator, the biggest change from the cycle 7-8 train is that R1

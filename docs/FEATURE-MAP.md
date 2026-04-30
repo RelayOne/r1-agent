@@ -1,5 +1,7 @@
 # Feature Map
 
+This cycle-close refresh keeps the feature inventory aligned with the shipping parity, deterministic-skills, and wizard/artifact lanes already present on `main`.
+
 ## Cycle 9 shipped additions
 
 | Feature | Benefit | Status | Evidence |
