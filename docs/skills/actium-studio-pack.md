@@ -30,6 +30,15 @@ The pack is an opt-in bundle at
 stoke skills pack install --pack actium-studio
 ```
 
+Install source resolution and composition:
+
+- Lookup order is repo `.r1/skills/packs/<name>` then repo
+  `.stoke/skills/packs/<name>`, then user `~/.r1/skills/packs/<name>`,
+  then user `~/.stoke/skills/packs/<name>`.
+- Any `dependencies:` declared in the pack's `pack.yaml` are installed
+  transitively before the requested pack, with cycle detection and
+  duplicate suppression.
+
 Confirm registration:
 
 ```bash
