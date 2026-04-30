@@ -70,6 +70,27 @@ type skillPackInfoResult struct {
 	InstalledSourcePath string
 }
 
+type skillPackSearchResult struct {
+	Query      string
+	MatchCount int
+	Matches    []skillPackSearchEntry
+}
+
+type skillPackSearchEntry struct {
+	PackName           string
+	SourcePath         string
+	SourceScope        string
+	Version            string
+	Description        string
+	DeclaredSkillCount int
+	ManifestCount      int
+	Dependencies       []string
+	ManifestNames      []string
+	MatchFields        []string
+	CanonicalInstalled bool
+	LegacyInstalled    bool
+}
+
 type skillPackPublishResult struct {
 	PackName             string
 	Version              string
@@ -114,7 +135,7 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|uninstall|update")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|uninstall|update")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -128,6 +149,8 @@ func skillsPackCmd(args []string) {
 		runSkillsPackListCmd(args[1:])
 	case "publish":
 		runSkillsPackPublishCmd(args[1:])
+	case "search":
+		runSkillsPackSearchCmd(args[1:])
 	case "uninstall":
 		runSkillsPackUninstallCmd(args[1:])
 	case "update":
@@ -280,6 +303,33 @@ func runSkillsPackPublishCmd(args []string) {
 	)
 }
 
+func runSkillsPackSearchCmd(args []string) {
+	repoRoot, query := parseSkillPackSearchArgs(args)
+	result, err := searchSkillPacks(repoRoot, query)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack search: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "query: %s\nmatch_count: %d\n", result.Query, result.MatchCount)
+	for _, match := range result.Matches {
+		fmt.Fprintf(os.Stdout,
+			"pack: %s\nsource: %s\nsource_scope: %s\nversion: %s\ndescription: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\nmanifest_names: %s\nmatch_fields: %s\ncanonical_installed: %t\nlegacy_installed: %t\n",
+			match.PackName,
+			match.SourcePath,
+			match.SourceScope,
+			match.Version,
+			match.Description,
+			match.DeclaredSkillCount,
+			match.ManifestCount,
+			strings.Join(match.Dependencies, ","),
+			strings.Join(match.ManifestNames, ","),
+			strings.Join(match.MatchFields, ","),
+			match.CanonicalInstalled,
+			match.LegacyInstalled,
+		)
+	}
+}
+
 func parseSkillPackArgs(name string, args []string) (string, string) {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	repoRoot := fs.String("repo", ".", "repository root")
@@ -311,6 +361,17 @@ func parseSkillPackPublishArgs(args []string) (string, string, string, bool) {
 		os.Exit(2)
 	}
 	return *repoRoot, *packName, *destRoot, *force
+}
+
+func parseSkillPackSearchArgs(args []string) (string, string) {
+	fs := flag.NewFlagSet("skills pack search", flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "skills pack search: expected exactly one query argument")
+		os.Exit(2)
+	}
+	return *repoRoot, fs.Arg(0)
 }
 
 func parseSkillPackInitArgs(args []string) (string, string, string, string, string) {
@@ -589,6 +650,104 @@ func listInstalledSkillPacks(repoRoot string) (*skillPackListResult, error) {
 	}, nil
 }
 
+func searchSkillPacks(repoRoot, query string) (*skillPackSearchResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("query required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	loweredQuery := strings.ToLower(strings.TrimSpace(query))
+	type searchRoot struct {
+		path  string
+		scope string
+	}
+	var roots []searchRoot
+	for _, pair := range []struct {
+		rootName string
+		scope    string
+	}{
+		{rootName: r1dir.Canonical, scope: "repo_canonical"},
+		{rootName: r1dir.Legacy, scope: "repo_legacy"},
+	} {
+		roots = append(roots, searchRoot{
+			path:  filepath.Join(repoAbs, pair.rootName, "skills", "packs"),
+			scope: pair.scope,
+		})
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		for _, pair := range []struct {
+			rootName string
+			scope    string
+		}{
+			{rootName: r1dir.Canonical, scope: "user_canonical"},
+			{rootName: r1dir.Legacy, scope: "user_legacy"},
+		} {
+			roots = append(roots, searchRoot{
+				path:  filepath.Join(home, pair.rootName, "skills", "packs"),
+				scope: pair.scope,
+			})
+		}
+	}
+
+	seen := map[string]struct{}{}
+	matches := make([]skillPackSearchEntry, 0)
+	for _, root := range roots {
+		entries, err := os.ReadDir(root.path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read pack registry %q: %w", root.path, err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			packPath := filepath.Join(root.path, entry.Name())
+			pack, err := skillmfr.LoadPack(packPath)
+			if err != nil {
+				return nil, fmt.Errorf("load pack %q: %w", packPath, err)
+			}
+			if _, ok := seen[pack.Meta.Name]; ok {
+				continue
+			}
+			seen[pack.Meta.Name] = struct{}{}
+			matchFields, manifestNames := matchSkillPackQuery(pack, loweredQuery)
+			if len(matchFields) == 0 {
+				continue
+			}
+			_, canonicalInstalled, legacyInstalled, err := installedSkillPackState(repoAbs, pack.Meta.Name)
+			if err != nil {
+				return nil, err
+			}
+			matches = append(matches, skillPackSearchEntry{
+				PackName:           pack.Meta.Name,
+				SourcePath:         packPath,
+				SourceScope:        root.scope,
+				Version:            pack.Meta.Version,
+				Description:        pack.Meta.Description,
+				DeclaredSkillCount: pack.Meta.SkillCount,
+				ManifestCount:      len(pack.Manifests),
+				Dependencies:       append([]string(nil), pack.Meta.Dependencies...),
+				ManifestNames:      manifestNames,
+				MatchFields:        matchFields,
+				CanonicalInstalled: canonicalInstalled,
+				LegacyInstalled:    legacyInstalled,
+			})
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].PackName < matches[j].PackName
+	})
+	return &skillPackSearchResult{
+		Query:      query,
+		MatchCount: len(matches),
+		Matches:    matches,
+	}, nil
+}
+
 func resolveSkillPackPublishRoot(destRoot string) (string, error) {
 	if strings.TrimSpace(destRoot) != "" {
 		abs, err := filepath.Abs(destRoot)
@@ -633,6 +792,42 @@ func skillPackCandidates(repoRoot, packName string) []string {
 		)
 	}
 	return candidates
+}
+
+func matchSkillPackQuery(pack *skillmfr.LoadedPack, query string) ([]string, []string) {
+	if pack == nil {
+		return nil, nil
+	}
+	matchFields := make([]string, 0, 4)
+	manifestNames := make([]string, 0, len(pack.Manifests))
+	addField := func(name string) {
+		for _, existing := range matchFields {
+			if existing == name {
+				return
+			}
+		}
+		matchFields = append(matchFields, name)
+	}
+	if strings.Contains(strings.ToLower(pack.Meta.Name), query) {
+		addField("name")
+	}
+	if strings.Contains(strings.ToLower(pack.Meta.Description), query) {
+		addField("description")
+	}
+	for _, dependency := range pack.Meta.Dependencies {
+		if strings.Contains(strings.ToLower(dependency), query) {
+			addField("dependencies")
+			break
+		}
+	}
+	for _, manifest := range pack.Manifests {
+		if strings.Contains(strings.ToLower(manifest.Name), query) {
+			addField("manifests")
+		}
+		manifestNames = append(manifestNames, manifest.Name)
+	}
+	sort.Strings(manifestNames)
+	return matchFields, manifestNames
 }
 
 func ensureScaffoldTargetReady(packPath string) error {
