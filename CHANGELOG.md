@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+#### Canonical docs cycle close (2026-04-30)
+
+- Refreshed `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`, and `docs/BUSINESS-VALUE.md` so the parity baseline, deterministic-skills lane, and wizard/artifact packaging story use the same shipping-state framing.
+- Closed the post-cycle doc gap without introducing a new product claim beyond what is already merged on `main`.
+
 ### Added
 
 #### Beacon foundation and parity wave D docs refresh
