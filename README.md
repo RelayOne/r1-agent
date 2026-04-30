@@ -19,7 +19,7 @@ Status snapshot:
 - Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
 - Done: IR-hash-scoped deterministic replay cache keys so replay and cost attribution stay tied to the exact compiled skill/input pair.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
-- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, `stoke skills pack list` / `update` audit and refresh installed packs from the dual `.r1` / `.stoke` view, and `stoke skills pack init` now scaffolds new repo-local packs with a valid starter manifest.
+- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, `stoke skills pack list` / `update` audit and refresh installed packs from the dual `.r1` / `.stoke` view, `stoke skills pack init` scaffolds new repo-local packs with a valid starter manifest, and signed packs can now be authored and verified with `stoke skills pack sign` / `verify`.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Done: beacon trust validation plus notify and offline-review primitives.
@@ -378,7 +378,9 @@ the same `internal/` packages.
 | `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
 | `stoke skills pack list` | List installed skill packs by merging canonical `.r1/skills/*` and legacy `.stoke/skills/*` links into one operator-facing view |
 | `stoke skills pack publish` | Validate a pack and copy it into the user-level `.r1/.stoke` skill-pack library so other repos can install it without manual copying |
+| `stoke skills pack sign` | Sign a skill pack with an OpenSSH ed25519 private key, producing `pack.sig.json` for downstream integrity checks |
 | `stoke skills pack update` | Refresh an installed pack from its current source, `git pull --ff-only` for external pack repos, and re-link any newly declared dependencies without mutating repo-local bundled packs |
+| `stoke skills pack verify` | Verify a signed pack's `pack.sig.json` before install, publish, or runtime registration |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
 | `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |

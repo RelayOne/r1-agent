@@ -58,6 +58,9 @@ func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 				continue
 			}
 			packPath := filepath.Join(packRoot, entry.Name())
+			if _, err := skillmfr.VerifyPackSignatureIfPresent(packPath); err != nil {
+				return registered, skipped, fmt.Errorf("verify bundled pack %s: %w", packPath, err)
+			}
 			pack, err := skillmfr.LoadPack(packPath)
 			if err != nil {
 				return registered, skipped, fmt.Errorf("load bundled pack %s: %w", packPath, err)

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/RelayOne/r1/internal/skillmfr"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestInstallSkillPackCreatesDualLinks(t *testing.T) {
@@ -163,6 +167,25 @@ func TestInstallSkillPackRejectsDependencyCycles(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "skill pack dependency cycle") {
 		t.Fatalf("installSkillPack() error = %v, want cycle error", err)
+	}
+}
+
+func TestInstallSkillPackRejectsTamperedSignedPack(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "signed-pack")
+	writePackFixture(t, packDir, "signed-pack", nil)
+	privateKeyPath := writePackSigningKey(t)
+	if _, err := signSkillPack(repo, "signed-pack", privateKeyPath, "fixture-key"); err != nil {
+		t.Fatalf("signSkillPack() error = %v", err)
+	}
+	manifestPath := filepath.Join(packDir, "signed-pack.skill", "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"name":"signed-pack.skill","version":"0.2.0","description":"tampered","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"whenToUse":["tamper"],"whenNotToUse":["other","different"],"behaviorFlags":{"mutatesState":false,"requiresNetwork":false}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+	if _, err := installSkillPack(repo, "signed-pack"); err == nil || !strings.Contains(err.Error(), "pack signature invalid") {
+		t.Fatalf("installSkillPack() error = %v, want pack signature invalid", err)
 	}
 }
 
@@ -707,6 +730,37 @@ func TestPublishSkillPackForceReplacesPublishedCopy(t *testing.T) {
 	}
 }
 
+func TestSignAndVerifySkillPack(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "signed-pack")
+	writePackFixture(t, packDir, "signed-pack", nil)
+	privateKeyPath := writePackSigningKey(t)
+
+	signResult, err := signSkillPack(repo, "signed-pack", privateKeyPath, "")
+	if err != nil {
+		t.Fatalf("signSkillPack() error = %v", err)
+	}
+	if signResult.KeyID == "" {
+		t.Fatal("signSkillPack() KeyID empty, want derived key id")
+	}
+	if _, err := os.Stat(signResult.SignaturePath); err != nil {
+		t.Fatalf("Stat(signature): %v", err)
+	}
+
+	verifyResult, err := verifySkillPack(repo, "signed-pack")
+	if err != nil {
+		t.Fatalf("verifySkillPack() error = %v", err)
+	}
+	if verifyResult.KeyID != signResult.KeyID {
+		t.Fatalf("verifySkillPack() KeyID = %q, want %q", verifyResult.KeyID, signResult.KeyID)
+	}
+	if verifyResult.PackDigest != signResult.PackDigest {
+		t.Fatalf("verifySkillPack() PackDigest = %q, want %q", verifyResult.PackDigest, signResult.PackDigest)
+	}
+}
+
 func TestUninstallSkillPackRemovesRequestedPackOnly(t *testing.T) {
 	t.Parallel()
 
@@ -929,6 +983,24 @@ func writePackFixture(t *testing.T, packDir, name string, dependencies []string)
 	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("WriteFile(manifest): %v", err)
 	}
+}
+
+func writePackSigningKey(t *testing.T) string {
+	t.Helper()
+
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(): %v", err)
+	}
+	sshKey, err := ssh.MarshalPrivateKey(privateKey, "")
+	if err != nil {
+		t.Fatalf("MarshalPrivateKey(): %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "pack-signing-key")
+	if err := os.WriteFile(path, pem.EncodeToMemory(sshKey), 0o600); err != nil {
+		t.Fatalf("WriteFile(signing key): %v", err)
+	}
+	return path
 }
 
 func updatedPackEntry(t *testing.T, result *skillPackUpdateResult, packName string) skillPackUpdateEntry {

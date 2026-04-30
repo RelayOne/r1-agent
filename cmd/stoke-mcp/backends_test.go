@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -428,6 +430,47 @@ func TestSeedPackRegistries_PrefersRepoCanonicalOverLegacyAndUser(t *testing.T) 
 	}
 	if !strings.HasPrefix(manifest.IRRef, filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")) {
 		t.Fatalf("manifest IRRef = %q, want repo canonical path prefix", manifest.IRRef)
+	}
+}
+
+func TestSeedPackRegistriesRejectsTamperedSignedPack(t *testing.T) {
+	repo := t.TempDir()
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "signed-pack")
+	writeDeterministicPackFixture(
+		t,
+		packDir,
+		"signed-pack",
+		skillmfr.Manifest{
+			Name:        "signed.echo",
+			Version:     "1.0.0",
+			Description: "signed canonical skill",
+		},
+	)
+
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey(): %v", err)
+	}
+	signature, err := skillmfr.SignPack(packDir, "fixture-key", privateKey)
+	if err != nil {
+		t.Fatalf("SignPack(): %v", err)
+	}
+	if err := skillmfr.WritePackSignature(packDir, signature); err != nil {
+		t.Fatalf("WritePackSignature(): %v", err)
+	}
+	manifestPath := filepath.Join(packDir, "signed.echo", "manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"name":"signed.echo","version":"1.0.1","description":"tampered","inputSchema":{"type":"object"},"outputSchema":{"type":"object"},"whenToUse":["tamper"],"whenNotToUse":["other","different"],"behaviorFlags":{"mutatesState":false,"requiresNetwork":false},"useIR":true,"irRef":"skill.r1.json","compileProofRef":"skill.r1.proof.json"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	if _, _, err := backends.SeedPackRegistries(repo); err == nil || !strings.Contains(err.Error(), "pack signature invalid") {
+		t.Fatalf("SeedPackRegistries() error = %v, want pack signature invalid", err)
 	}
 }
 
