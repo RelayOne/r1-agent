@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/skillmfr"
+	"golang.org/x/crypto/ssh"
 )
 
 type skillPackInstallResult struct {
@@ -68,6 +70,8 @@ type skillPackInfoResult struct {
 	CanonicalInstalled  bool
 	LegacyInstalled     bool
 	InstalledSourcePath string
+	Signed              bool
+	SignatureKeyID      string
 }
 
 type skillPackSearchResult struct {
@@ -89,6 +93,8 @@ type skillPackSearchEntry struct {
 	MatchFields        []string
 	CanonicalInstalled bool
 	LegacyInstalled    bool
+	Signed             bool
+	SignatureKeyID     string
 }
 
 type skillPackPublishResult struct {
@@ -100,6 +106,23 @@ type skillPackPublishResult struct {
 	ManifestCount        int
 	DeclaredSkillCount   int
 	Dependencies         []string
+	Signed               bool
+	SignatureKeyID       string
+}
+
+type skillPackSignResult struct {
+	PackName      string
+	SourcePath    string
+	SignaturePath string
+	KeyID         string
+	PackDigest    string
+}
+
+type skillPackVerifyResult struct {
+	PackName   string
+	SourcePath string
+	KeyID      string
+	PackDigest string
 }
 
 type skillPackInitResult struct {
@@ -135,7 +158,7 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|uninstall|update")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|sign|uninstall|update|verify")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -151,10 +174,14 @@ func skillsPackCmd(args []string) {
 		runSkillsPackPublishCmd(args[1:])
 	case "search":
 		runSkillsPackSearchCmd(args[1:])
+	case "sign":
+		runSkillsPackSignCmd(args[1:])
 	case "uninstall":
 		runSkillsPackUninstallCmd(args[1:])
 	case "update":
 		runSkillsPackUpdateCmd(args[1:])
+	case "verify":
+		runSkillsPackVerifyCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "skills pack: unknown subcommand %q\n", args[0])
 		os.Exit(2)
@@ -186,7 +213,7 @@ func runSkillsPackInfoCmd(args []string) {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stdout,
-		"pack: %s\nsource: %s\nversion: %s\ndescription: %s\nmin_r1_version: %s\nupstream_api_version: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\ncanonical_link: %s\ncanonical_installed: %t\nlegacy_link: %s\nlegacy_installed: %t\ninstalled_source: %s\n",
+		"pack: %s\nsource: %s\nversion: %s\ndescription: %s\nmin_r1_version: %s\nupstream_api_version: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\nsigned: %t\nsignature_key_id: %s\ncanonical_link: %s\ncanonical_installed: %t\nlegacy_link: %s\nlegacy_installed: %t\ninstalled_source: %s\n",
 		result.PackName,
 		result.SourcePath,
 		result.Version,
@@ -196,6 +223,8 @@ func runSkillsPackInfoCmd(args []string) {
 		result.DeclaredSkillCount,
 		result.ManifestCount,
 		strings.Join(result.Dependencies, ","),
+		result.Signed,
+		result.SignatureKeyID,
 		result.CanonicalLinkPath,
 		result.CanonicalInstalled,
 		result.LegacyLinkPath,
@@ -291,13 +320,15 @@ func runSkillsPackPublishCmd(args []string) {
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stdout,
-		"pack: %s\nversion: %s\nsource: %s\npublished_manifest_count: %d\ndeclared_skill_count: %d\ndependencies: %s\ncanonical_publish_path: %s\nlegacy_publish_path: %s\n",
+		"pack: %s\nversion: %s\nsource: %s\npublished_manifest_count: %d\ndeclared_skill_count: %d\ndependencies: %s\nsigned: %t\nsignature_key_id: %s\ncanonical_publish_path: %s\nlegacy_publish_path: %s\n",
 		result.PackName,
 		result.Version,
 		result.SourcePath,
 		result.ManifestCount,
 		result.DeclaredSkillCount,
 		strings.Join(result.Dependencies, ","),
+		result.Signed,
+		result.SignatureKeyID,
 		result.CanonicalPublishPath,
 		result.LegacyPublishPath,
 	)
@@ -313,7 +344,7 @@ func runSkillsPackSearchCmd(args []string) {
 	fmt.Fprintf(os.Stdout, "query: %s\nmatch_count: %d\n", result.Query, result.MatchCount)
 	for _, match := range result.Matches {
 		fmt.Fprintf(os.Stdout,
-			"pack: %s\nsource: %s\nsource_scope: %s\nversion: %s\ndescription: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\nmanifest_names: %s\nmatch_fields: %s\ncanonical_installed: %t\nlegacy_installed: %t\n",
+			"pack: %s\nsource: %s\nsource_scope: %s\nversion: %s\ndescription: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\nmanifest_names: %s\nmatch_fields: %s\nsigned: %t\nsignature_key_id: %s\ncanonical_installed: %t\nlegacy_installed: %t\n",
 			match.PackName,
 			match.SourcePath,
 			match.SourceScope,
@@ -324,10 +355,43 @@ func runSkillsPackSearchCmd(args []string) {
 			strings.Join(match.Dependencies, ","),
 			strings.Join(match.ManifestNames, ","),
 			strings.Join(match.MatchFields, ","),
+			match.Signed,
+			match.SignatureKeyID,
 			match.CanonicalInstalled,
 			match.LegacyInstalled,
 		)
 	}
+}
+
+func runSkillsPackSignCmd(args []string) {
+	repoRoot, packName, keyPath, keyID := parseSkillPackSignArgs(args)
+	result, err := signSkillPack(repoRoot, packName, keyPath, keyID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack sign: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "pack: %s\nsource: %s\nsignature: %s\nkey_id: %s\npack_digest: %s\n",
+		result.PackName,
+		result.SourcePath,
+		result.SignaturePath,
+		result.KeyID,
+		result.PackDigest,
+	)
+}
+
+func runSkillsPackVerifyCmd(args []string) {
+	repoRoot, packName := parseSkillPackArgs("skills pack verify", args)
+	result, err := verifySkillPack(repoRoot, packName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack verify: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "pack: %s\nsource: %s\nkey_id: %s\npack_digest: %s\n",
+		result.PackName,
+		result.SourcePath,
+		result.KeyID,
+		result.PackDigest,
+	)
 }
 
 func parseSkillPackArgs(name string, args []string) (string, string) {
@@ -361,6 +425,24 @@ func parseSkillPackPublishArgs(args []string) (string, string, string, bool) {
 		os.Exit(2)
 	}
 	return *repoRoot, *packName, *destRoot, *force
+}
+
+func parseSkillPackSignArgs(args []string) (string, string, string, string) {
+	fs := flag.NewFlagSet("skills pack sign", flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	packName := fs.String("pack", "", "pack name under repo or user .r1|.stoke/skills/packs/")
+	keyPath := fs.String("key", "", "OpenSSH ed25519 private key path used to sign the pack")
+	keyID := fs.String("key-id", "", "stable identifier recorded in pack.sig.json (defaults to a digest-derived id)")
+	fs.Parse(args)
+	if *packName == "" {
+		fmt.Fprintln(os.Stderr, "skills pack sign: --pack is required")
+		os.Exit(2)
+	}
+	if *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "skills pack sign: --key is required")
+		os.Exit(2)
+	}
+	return *repoRoot, *packName, *keyPath, *keyID
 }
 
 func parseSkillPackSearchArgs(args []string) (string, string) {
@@ -401,7 +483,7 @@ func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	pack, err := skillmfr.LoadPack(sourcePath)
+	pack, signature, err := loadSkillPackWithSignature(sourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -424,6 +506,8 @@ func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
 		CanonicalInstalled:  canonicalInstalled,
 		LegacyInstalled:     legacyInstalled,
 		InstalledSourcePath: installedSourcePath,
+		Signed:              signature != nil,
+		SignatureKeyID:      signatureKeyID(signature),
 	}, nil
 }
 
@@ -489,7 +573,7 @@ func publishSkillPack(repoRoot, packName, destRoot string, force bool) (*skillPa
 	if err != nil {
 		return nil, err
 	}
-	pack, err := skillmfr.LoadPack(sourcePath)
+	pack, signature, err := loadSkillPackWithSignature(sourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -513,6 +597,8 @@ func publishSkillPack(repoRoot, packName, destRoot string, force bool) (*skillPa
 		ManifestCount:        len(pack.Manifests),
 		DeclaredSkillCount:   pack.Meta.SkillCount,
 		Dependencies:         append([]string(nil), pack.Meta.Dependencies...),
+		Signed:               signature != nil,
+		SignatureKeyID:       signatureKeyID(signature),
 	}, nil
 }
 
@@ -706,7 +792,7 @@ func searchSkillPacks(repoRoot, query string) (*skillPackSearchResult, error) {
 				continue
 			}
 			packPath := filepath.Join(root.path, entry.Name())
-			pack, err := skillmfr.LoadPack(packPath)
+			pack, signature, err := loadSkillPackWithSignature(packPath)
 			if err != nil {
 				return nil, fmt.Errorf("load pack %q: %w", packPath, err)
 			}
@@ -735,6 +821,8 @@ func searchSkillPacks(repoRoot, query string) (*skillPackSearchResult, error) {
 				MatchFields:        matchFields,
 				CanonicalInstalled: canonicalInstalled,
 				LegacyInstalled:    legacyInstalled,
+				Signed:             signature != nil,
+				SignatureKeyID:     signatureKeyID(signature),
 			})
 		}
 	}
@@ -940,6 +1028,62 @@ func publishSkillPackDir(sourcePath, publishPath string, force bool) error {
 	return nil
 }
 
+func signSkillPack(repoRoot, packName, keyPath, keyID string) (*skillPackSignResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	sourcePath, err := resolveSkillPackSource(repoAbs, packName)
+	if err != nil {
+		return nil, err
+	}
+	privateKey, err := readPackSigningKey(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	signature, err := skillmfr.SignPack(sourcePath, keyID, privateKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := skillmfr.WritePackSignature(sourcePath, signature); err != nil {
+		return nil, err
+	}
+	return &skillPackSignResult{
+		PackName:      packName,
+		SourcePath:    sourcePath,
+		SignaturePath: filepath.Join(sourcePath, skillmfr.PackSignatureFile),
+		KeyID:         signature.KeyID,
+		PackDigest:    signature.PackDigest,
+	}, nil
+}
+
+func verifySkillPack(repoRoot, packName string) (*skillPackVerifyResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	sourcePath, err := resolveSkillPackSource(repoAbs, packName)
+	if err != nil {
+		return nil, err
+	}
+	signature, err := skillmfr.VerifyPackSignature(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	return &skillPackVerifyResult{
+		PackName:   packName,
+		SourcePath: sourcePath,
+		KeyID:      signature.KeyID,
+		PackDigest: signature.PackDigest,
+	}, nil
+}
+
 func ensurePublishTargetReady(path string, force bool) error {
 	info, err := os.Lstat(path)
 	switch {
@@ -1024,7 +1168,7 @@ func installSkillPackRecursive(repoRoot, packName string, installed map[string]s
 	if err != nil {
 		return err
 	}
-	pack, err := skillmfr.LoadPack(sourcePath)
+	pack, _, err := loadSkillPackWithSignature(sourcePath)
 	if err != nil {
 		return err
 	}
@@ -1064,7 +1208,7 @@ func updateSkillPackRecursive(repoRoot, packName string, updated map[string]skil
 	if err != nil {
 		return err
 	}
-	pack, err := skillmfr.LoadPack(sourcePath)
+	pack, _, err := loadSkillPackWithSignature(sourcePath)
 	if err != nil {
 		return err
 	}
@@ -1091,6 +1235,44 @@ func updateSkillPackRecursive(repoRoot, packName string, updated map[string]skil
 		LegacyLinkPath:    legacyLink,
 	}
 	return nil
+}
+
+func loadSkillPackWithSignature(packPath string) (*skillmfr.LoadedPack, *skillmfr.PackSignature, error) {
+	signature, err := skillmfr.VerifyPackSignatureIfPresent(packPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	pack, err := skillmfr.LoadPack(packPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pack, signature, nil
+}
+
+func signatureKeyID(signature *skillmfr.PackSignature) string {
+	if signature == nil {
+		return ""
+	}
+	return signature.KeyID
+}
+
+func readPackSigningKey(keyPath string) (ed25519.PrivateKey, error) {
+	payload, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read signing key %q: %w", keyPath, err)
+	}
+	parsed, err := ssh.ParseRawPrivateKey(payload)
+	if err != nil {
+		return nil, fmt.Errorf("parse signing key %q: %w", keyPath, err)
+	}
+	switch privateKey := parsed.(type) {
+	case ed25519.PrivateKey:
+		return privateKey, nil
+	case *ed25519.PrivateKey:
+		return *privateKey, nil
+	default:
+		return nil, fmt.Errorf("signing key %q is %T, want ed25519 private key", keyPath, parsed)
+	}
 }
 
 func ensureSkillPackLink(linkPath, sourcePath string) error {
