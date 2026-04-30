@@ -14,6 +14,8 @@ Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
 - Done: operator receipts plus explicit honesty and cost-accounting surfaces.
+- Done: beacon protocol, trust validation, and offline review or notify primitives for governed peer coordination.
+- Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
 - Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
 - Scoped: more productized skill packaging.
@@ -117,6 +119,41 @@ In business terms, deterministic skills move R1 up the stack:
 4. **From "AI is hard to trust" to "AI can be reviewed like software."**
    Once a skill is compiled and ledgered, governance teams can inspect
    the structure instead of arguing over screenshots and anecdotes.
+
+The Wave C persistence work matters because it closes the operational
+gap between "we authored a governed skill" and "we can actually install
+and interrogate it later." Ledger-backed wizard sessions plus registry
+install make deterministic skills behave like product inventory, not
+like workshop output.
+
+## What's New (April 30, 2026) — R1 Adds A Trustable Beacon Coordination Layer
+
+The beacon work is not a side quest. It extends the same "govern the
+runtime, don't just trust the model" position into peer coordination.
+
+What shipped in practical terms:
+
+- **Protocol foundations.** Beacon identities, pairing flows, session
+  state, token handling, and ledger-native beacon records.
+- **Trust enforcement.** Pinned-root checks, nonce replay defense, and
+  signal-frame validation before inbound traffic is accepted.
+- **Deferred handoff primitives.** Offline review envelopes and
+  beacon-targeted notification metadata so asynchronous inspection can
+  happen without inventing custom glue around the runtime.
+
+Why buyers should care:
+
+1. **Safer multi-surface deployment.** Once R1 spans CLI, IDE, desktop,
+   CI, browser, and peer protocol surfaces, trust boundaries can no
+   longer stay implicit. The beacon trust layer makes those boundaries
+   explicit.
+2. **Better auditability for human review.** Offline review envelopes
+   mean a reviewer can inspect a governed package of work later, not
+   just trust a transient terminal transcript.
+3. **A path from single-runtime value to network value.** Identity,
+   pairing, session, and token primitives are the minimal substrate for
+   cross-instance or hub-style coordination without abandoning R1's
+   governance posture.
 
 ## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
 

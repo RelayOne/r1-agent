@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Beacon protocol, trust layer, and parity wave D docs refresh
+
+- Updated `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`,
+  and `docs/BUSINESS-VALUE.md` so the canonical product docs now treat
+  the beacon protocol foundation (identity, pairing, session, token,
+  ledger records), trust layer (pinned-root verification, nonce replay
+  defense, signal-frame validation), and missing primitives (beacon
+  notify metadata, offline review envelopes) as shipped scope from
+  PRs #45, #46, and #47.
+- Folded Wave C wizard ledger persistence plus deterministic registry
+  install into the top-level narrative so the wizard flow is documented
+  as durable and queryable rather than just an authoring UI.
+- Refreshed the top-level status language to show Wave D as shipped
+  alongside the beacon and trust surfaces.
+
 ### Changed
 
 #### Skill wizard operator on-ramp

@@ -10,8 +10,10 @@ The next documentation baseline for R1 assumes two parallel planning tracks are 
 Status snapshot:
 
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
+- Done: beacon protocol foundation, trust validation layer, and missing beacon primitives for notifications and offline review.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
 - Done: Wave B receipts, honesty commands, and honest-cost reports.
+- Done: Wave C wizard ledger persistence and deterministic registry install flow.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Scoped: broader skill-pack composition and operator-facing packaging.
@@ -52,6 +54,21 @@ signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/archit
 The April 2026 train extended R1 from a CLI orchestrator into a
 parity-or-better reference runtime alongside Claude Code, Cursor, and
 Manus. Recent merges to `main`:
+
+- **Beacon protocol + trust + missing primitives** —
+  the shipped beacon scope now covers identity material, pairing claims
+  plus short-auth-string confirmation, session state, token handling,
+  trust validation on inbound signal frames, and offline review
+  envelopes plus beacon-targeted notification metadata. At the product
+  level, that gives R1 a governed protocol lane for identity, trust,
+  and deferred review instead of leaving those concerns as operator
+  glue. Evidence: PRs #45, #46, #47.
+
+- **Wave C wizard ledger + deterministic registry** —
+  `stoke wizard run|migrate|query|register` now extends all the way to
+  ledger-persisted authoring sessions and stable deterministic skill
+  installation, so wizard output is queryable and registrable rather
+  than ephemeral. Evidence: commit `80f721f` (PR #44).
 
 - **Wave B receipts + honesty + cost reporting** —
   [`internal/receipts/`](internal/receipts/) adds persisted mission receipts with signing, export, and replay-linked provenance;
