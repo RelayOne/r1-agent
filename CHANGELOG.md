@@ -1,5 +1,19 @@
 # Changelog
 
+## [2026-04-30] Final docs pass after cycle-close refresh
+
+### Added
+
+- Added one more canonical docs pass across `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`, `docs/BUSINESS-VALUE.md`, and `CHANGELOG.md` so the top-level narrative explicitly includes the replay-safe deterministic caching follow-through from `#63`.
+
+### Changed
+
+- Tightened the cycle-close status language so the canonical docs describe parity, deterministic skills, beacon follow-through, and replay/cost attribution with the same wording.
+
+### Fixed
+
+- Closed the remaining consistency gap left after `#65`, where the changelog already referenced replay-safe deterministic caching but the top-level product docs did not all surface it directly.
+
 ## 2026-04-30
 
 - Merged beacon protocol foundation in PR `#45`.

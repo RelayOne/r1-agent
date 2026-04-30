@@ -89,7 +89,8 @@ The same post-task lane is now more replay-safe for deterministic
 skills: PR #63 namespaced replay cache keys by compile-proof hash and
 canonicalized cache-key inputs, which means equivalent JSON inputs
 replay identically while separate skills stop colliding in shared cache
-space.
+space. That closes an attribution gap for operators comparing multiple
+deterministic revisions of the same workflow.
 
 ## Beacon Foundation (2026-04-30) — Protocol Surfaces Around The Mission Loop
 

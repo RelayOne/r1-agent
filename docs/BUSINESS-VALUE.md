@@ -30,6 +30,7 @@ The business value of that shift is simple:
 - parity removes the objection that R1 is missing table-stakes features,
 - superiority creates a reason to switch,
 - deterministic skills turn reusable expertise into a governed product asset instead of a pile of prompts.
+- replay-safe cache and cost attribution make deterministic execution easier to trust when a buyer asks whether two runs came from the same compiled skill or from a materially different revision.
 
 Status snapshot:
 
