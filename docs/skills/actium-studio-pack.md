@@ -1,6 +1,6 @@
 # Actium Studio Skill Pack
 
-**Status (2026-04-24): In Progress — R1S-1 through R1S-5 landed; R1S-6 docs (this file) + CLI pack install command (R1S-1.4) remaining. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
+**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
 
 Operator guide for running Actium Studio capabilities as R1 skills.
 Companion to work order
@@ -27,8 +27,7 @@ The pack is an opt-in bundle at
 ## Installation
 
 ```bash
-# Manual symlink (today; the CLI subcommand lands in R1S-1.4).
-ln -s .stoke/skills/packs/actium-studio .stoke/skills/actium-studio
+stoke skills pack install --pack actium-studio
 ```
 
 Confirm registration:
@@ -163,7 +162,7 @@ No PII, no payload body, no token echo.
 | R1S-1.1 config plumbing | Landed | 88ab285 |
 | R1S-1.2 top-level config load | Inherited gap | Integration with existing `config.Policy` loader pending |
 | R1S-1.3 env resolver | Landed | 88ab285 |
-| R1S-1.4 `r1 skills pack` CLI | Inherited gap | `cmd/stoke/` subcommand scaffolding needed |
+| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio` |
 | R1S-1.5 pack dir + README | Landed | PR #55 |
 | R1S-2 HTTP transport | Landed | 1cd010e |
 | R1S-3 stdio-MCP transport | Landed | 0fb2e38 |

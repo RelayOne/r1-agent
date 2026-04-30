@@ -761,6 +761,8 @@ func main() {
 		initCmd(os.Args[2:])
 	case "wizard":
 		skillWizardCmd(os.Args[2:])
+	case "skills":
+		skillsCmd(os.Args[2:])
 	case "task-stats", "stats":
 		taskStatsCmd(os.Args[2:])
 	case "research":
@@ -6919,6 +6921,7 @@ COMMANDS:
   mcp-serve       Start the codebase MCP server (exposes project to Claude Code)
   mcp-serve-stoke Start the R1 MCP server (exposes R1 as a tool to Claude Code)
   doctor          Check tool dependencies
+  skills          Install bundled skill packs into the project skill directory
   version         Print version
 
 RUN FLAGS (legacy single-task mode):
