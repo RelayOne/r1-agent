@@ -26,7 +26,7 @@ The new planning story does not change the base deployment topology, but it does
 Status snapshot:
 
 - Done: deployable parity and deterministic-skill foundation.
-- Done: skill-pack deployment now includes bundled-pack install/list/update and recursive dependency resolution, so packaged skills can be activated, audited, and refreshed from repo or user libraries without manual symlink work.
+- Done: skill-pack deployment now includes bundled-pack info/install/list/update and recursive dependency resolution, so packaged skills can be inspected, activated, audited, and refreshed from repo or user libraries without manual symlink work.
 - In Progress: broader integration verification.
 - Scoped: stronger release checks around skill packaging and pack dependency validation.
 - Scoping: superiority publishing workflow.

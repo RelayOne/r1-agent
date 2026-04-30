@@ -32,7 +32,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 - Wave B receipts, honesty decisions, honest-cost reports, and replay-cache-key hardening.
 - Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
-- Bundled pack install, update, and recursive skill-pack composition plus shared-library distribution.
+- Bundled pack info, install, update, and recursive skill-pack composition plus shared-library distribution.
 
 ### In Progress
 
@@ -61,6 +61,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 | Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
 | `stoke skills pack install` | Bundled packs like `actium-studio` can be activated without hand-made symlinks; canonical and legacy skill dirs are linked together in one command. | Done | PR #67, commit `fc55a0d`. |
 | Recursive pack composition + shared-library resolution | Pack dependencies declared in `pack.yaml` now install transitively, and pack lookup reads both repo-local and user-level `.r1/.stoke` libraries. | Done | PR #68, commit `bf45191`. |
+| `stoke skills pack info` | Operators can inspect a pack's `pack.yaml` metadata, dependency list, manifest count, and current local install state before mutating links. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
 | `stoke skills pack list` | Operators can audit which packs are currently installed from the merged `.r1` / `.stoke` skill-link view without inspecting symlinks by hand. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
 | `stoke skills pack update` | Operators can refresh an installed pack from its current source, safely skip repo-local bundled checkouts, and fast-forward external git-backed pack repos before relinking new dependencies. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
 | Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `6eba269`. |

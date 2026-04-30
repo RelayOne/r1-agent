@@ -53,6 +53,23 @@ type skillPackListResult struct {
 	Packs     []skillPackListEntry
 }
 
+type skillPackInfoResult struct {
+	PackName            string
+	SourcePath          string
+	Version             string
+	Description         string
+	MinR1Version        string
+	UpstreamAPIVersion  string
+	DeclaredSkillCount  int
+	ManifestCount       int
+	Dependencies        []string
+	CanonicalLinkPath   string
+	LegacyLinkPath      string
+	CanonicalInstalled  bool
+	LegacyInstalled     bool
+	InstalledSourcePath string
+}
+
 type skillPackListEntry struct {
 	PackName           string
 	SourcePath         string
@@ -78,10 +95,12 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|list|uninstall|update")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|install|list|uninstall|update")
 		os.Exit(2)
 	}
 	switch args[0] {
+	case "info":
+		runSkillsPackInfoCmd(args[1:])
 	case "install":
 		runSkillsPackInstallCmd(args[1:])
 	case "list":
@@ -110,6 +129,32 @@ func runSkillsPackInstallCmd(args []string) {
 		strings.Join(result.InstalledPacks, ","),
 		result.CanonicalLinkPath,
 		result.LegacyLinkPath,
+	)
+}
+
+func runSkillsPackInfoCmd(args []string) {
+	repoRoot, packName := parseSkillPackArgs("skills pack info", args)
+	result, err := infoSkillPack(repoRoot, packName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack info: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout,
+		"pack: %s\nsource: %s\nversion: %s\ndescription: %s\nmin_r1_version: %s\nupstream_api_version: %s\ndeclared_skill_count: %d\nmanifest_count: %d\ndependencies: %s\ncanonical_link: %s\ncanonical_installed: %t\nlegacy_link: %s\nlegacy_installed: %t\ninstalled_source: %s\n",
+		result.PackName,
+		result.SourcePath,
+		result.Version,
+		result.Description,
+		result.MinR1Version,
+		result.UpstreamAPIVersion,
+		result.DeclaredSkillCount,
+		result.ManifestCount,
+		strings.Join(result.Dependencies, ","),
+		result.CanonicalLinkPath,
+		result.CanonicalInstalled,
+		result.LegacyLinkPath,
+		result.LegacyInstalled,
+		result.InstalledSourcePath,
 	)
 }
 
@@ -192,6 +237,44 @@ func parseSkillPackListArgs(args []string) string {
 	repoRoot := fs.String("repo", ".", "repository root")
 	fs.Parse(args)
 	return *repoRoot
+}
+
+func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	sourcePath, err := resolveSkillPackSource(repoAbs, packName)
+	if err != nil {
+		return nil, err
+	}
+	pack, err := skillmfr.LoadPack(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	installedSourcePath, canonicalInstalled, legacyInstalled, err := installedSkillPackState(repoAbs, pack.Meta.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &skillPackInfoResult{
+		PackName:            pack.Meta.Name,
+		SourcePath:          sourcePath,
+		Version:             pack.Meta.Version,
+		Description:         pack.Meta.Description,
+		MinR1Version:        pack.Meta.MinR1Version,
+		UpstreamAPIVersion:  pack.Meta.UpstreamAPIVersion,
+		DeclaredSkillCount:  pack.Meta.SkillCount,
+		ManifestCount:       len(pack.Manifests),
+		Dependencies:        append([]string(nil), pack.Meta.Dependencies...),
+		CanonicalLinkPath:   filepath.Join(repoAbs, r1dir.Canonical, "skills", pack.Meta.Name),
+		LegacyLinkPath:      filepath.Join(repoAbs, r1dir.Legacy, "skills", pack.Meta.Name),
+		CanonicalInstalled:  canonicalInstalled,
+		LegacyInstalled:     legacyInstalled,
+		InstalledSourcePath: installedSourcePath,
+	}, nil
 }
 
 func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error) {
@@ -535,6 +618,35 @@ func resolveInstalledSkillPackSource(repoRoot, packName string) (string, bool, e
 		}
 	}
 	return sourcePath, found, nil
+}
+
+func installedSkillPackState(repoRoot, packName string) (string, bool, bool, error) {
+	canonicalLink := filepath.Join(repoRoot, r1dir.Canonical, "skills", packName)
+	legacyLink := filepath.Join(repoRoot, r1dir.Legacy, "skills", packName)
+	canonicalPack, canonicalSource, canonicalInstalled, err := readInstalledSkillPackLink(canonicalLink)
+	if err != nil {
+		return "", false, false, err
+	}
+	if canonicalInstalled && canonicalPack != packName {
+		return "", false, false, fmt.Errorf("pack link %q resolved to %q, want %q", canonicalLink, canonicalPack, packName)
+	}
+	legacyPack, legacySource, legacyInstalled, err := readInstalledSkillPackLink(legacyLink)
+	if err != nil {
+		return "", false, false, err
+	}
+	if legacyInstalled && legacyPack != packName {
+		return "", false, false, fmt.Errorf("pack link %q resolved to %q, want %q", legacyLink, legacyPack, packName)
+	}
+	switch {
+	case canonicalInstalled && legacyInstalled && canonicalSource != legacySource:
+		return "", false, false, fmt.Errorf("installed pack %q points to multiple sources: %q and %q", packName, canonicalSource, legacySource)
+	case canonicalInstalled:
+		return canonicalSource, true, legacyInstalled, nil
+	case legacyInstalled:
+		return legacySource, canonicalInstalled, true, nil
+	default:
+		return "", false, false, nil
+	}
 }
 
 func refreshSkillPackSource(repoRoot, sourcePath string, gitRefresh map[string]skillPackRefreshState) (skillPackRefreshState, error) {

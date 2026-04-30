@@ -166,6 +166,93 @@ func TestInstallSkillPackRejectsDependencyCycles(t *testing.T) {
 	}
 }
 
+func TestInfoSkillPackReportsMetadataAndInstallState(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "shared-pack"), "shared-pack", nil)
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "base-pack"), "base-pack", nil)
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "actium-studio")
+	writePackFixture(t, packDir, "actium-studio", []string{"shared-pack", "base-pack"})
+	packYAML := strings.Join([]string{
+		"name: actium-studio",
+		"version: 1.2.3",
+		"description: Actium Studio operator pack",
+		"min_r1_version: 0.9.0",
+		"upstream_api_version: 2026-04-30",
+		"skill_count: 4",
+		"dependencies:",
+		"  - shared-pack",
+		"  - base-pack",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(packYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pack.yaml): %v", err)
+	}
+
+	if _, err := installSkillPack(repo, "actium-studio"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+
+	result, err := infoSkillPack(repo, "actium-studio")
+	if err != nil {
+		t.Fatalf("infoSkillPack() error = %v", err)
+	}
+	if result.PackName != "actium-studio" {
+		t.Fatalf("PackName = %q, want actium-studio", result.PackName)
+	}
+	if result.Version != "1.2.3" {
+		t.Fatalf("Version = %q, want 1.2.3", result.Version)
+	}
+	if result.Description != "Actium Studio operator pack" {
+		t.Fatalf("Description = %q, want Actium Studio operator pack", result.Description)
+	}
+	if result.MinR1Version != "0.9.0" {
+		t.Fatalf("MinR1Version = %q, want 0.9.0", result.MinR1Version)
+	}
+	if result.UpstreamAPIVersion != "2026-04-30" {
+		t.Fatalf("UpstreamAPIVersion = %q, want 2026-04-30", result.UpstreamAPIVersion)
+	}
+	if result.DeclaredSkillCount != 4 {
+		t.Fatalf("DeclaredSkillCount = %d, want 4", result.DeclaredSkillCount)
+	}
+	if result.ManifestCount != 1 {
+		t.Fatalf("ManifestCount = %d, want 1", result.ManifestCount)
+	}
+	if !reflect.DeepEqual(result.Dependencies, []string{"shared-pack", "base-pack"}) {
+		t.Fatalf("Dependencies = %v, want [shared-pack base-pack]", result.Dependencies)
+	}
+	if !result.CanonicalInstalled || !result.LegacyInstalled {
+		t.Fatalf("install flags = canonical:%t legacy:%t, want both true", result.CanonicalInstalled, result.LegacyInstalled)
+	}
+	if result.InstalledSourcePath != packDir {
+		t.Fatalf("InstalledSourcePath = %q, want %q", result.InstalledSourcePath, packDir)
+	}
+}
+
+func TestInfoSkillPackResolvesUserLibraryWithoutInstall(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	packDir := filepath.Join(home, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, packDir, "shared-pack", nil)
+
+	result, err := infoSkillPack(repo, "shared-pack")
+	if err != nil {
+		t.Fatalf("infoSkillPack() error = %v", err)
+	}
+	if result.SourcePath != packDir {
+		t.Fatalf("SourcePath = %q, want %q", result.SourcePath, packDir)
+	}
+	if result.CanonicalInstalled || result.LegacyInstalled {
+		t.Fatalf("install flags = canonical:%t legacy:%t, want both false", result.CanonicalInstalled, result.LegacyInstalled)
+	}
+	if result.InstalledSourcePath != "" {
+		t.Fatalf("InstalledSourcePath = %q, want empty", result.InstalledSourcePath)
+	}
+}
+
 func TestListInstalledSkillPacksReportsInstalledPacks(t *testing.T) {
 	t.Parallel()
 

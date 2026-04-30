@@ -1,6 +1,6 @@
 # Actium Studio Skill Pack
 
-**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` / `list` / `uninstall` / `update` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
+**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack info` / `install` / `list` / `uninstall` / `update` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
 
 Operator guide for running Actium Studio capabilities as R1 skills.
 Companion to work order
@@ -44,6 +44,13 @@ legacy view:
 stoke skills pack list
 ```
 
+Inspect the pack metadata that will be used for install/update, plus
+its current project-local install state:
+
+```bash
+stoke skills pack info --pack actium-studio
+```
+
 Refresh the project-local links and, for user-library packs cloned from
 their own git repo, fast-forward them from upstream before re-installing
 any newly declared dependencies:
@@ -60,6 +67,10 @@ Install source resolution and composition:
 - Any `dependencies:` declared in the pack's `pack.yaml` are installed
   transitively before the requested pack, with cycle detection and
   duplicate suppression.
+- `stoke skills pack info` reads the same source-resolution order as
+  install/update, then reports the pack version, dependency list, and
+  declared-vs-loaded manifest counts before you mutate project-local
+  links.
 - `stoke skills pack update` prefers the currently installed pack source
   when one exists, so a project linked to a user-library checkout does
   not silently switch over to a bundled repo copy on refresh.
@@ -204,7 +215,7 @@ No PII, no payload body, no token echo.
 | R1S-1.1 config plumbing | Landed | 88ab285 |
 | R1S-1.2 top-level config load | Inherited gap | Integration with existing `config.Policy` loader pending |
 | R1S-1.3 env resolver | Landed | 88ab285 |
-| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio`; `stoke skills pack list`; `stoke skills pack uninstall --pack actium-studio`; `stoke skills pack update --pack actium-studio` |
+| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack info --pack actium-studio`; `stoke skills pack install --pack actium-studio`; `stoke skills pack list`; `stoke skills pack uninstall --pack actium-studio`; `stoke skills pack update --pack actium-studio` |
 | R1S-1.5 pack dir + README | Landed | PR #55 |
 | R1S-2 HTTP transport | Landed | 1cd010e |
 | R1S-3 stdio-MCP transport | Landed | 0fb2e38 |
