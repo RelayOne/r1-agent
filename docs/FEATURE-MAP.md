@@ -1,5 +1,31 @@
 # Feature Map
 
+## W36 parity and deterministic-skills status
+
+### Done
+
+- Live parity matrix.
+- Evaluation-agent skill.
+- Manifest-enforced skill manufacturing pipeline.
+- Shell preprocessing and path-scoped skill activation.
+
+### In Progress
+
+- Parity-to-superiority execution wave.
+- Deterministic-skills integration across more user-facing surfaces.
+
+### Scoped
+
+- Richer skill-pack composition and packaging.
+
+### Scoping
+
+- More explicit superiority reporting and publish loops.
+
+### Potential-On Horizon
+
+- Portfolio-wide deterministic skill exchange and marketplace surfaces.
+
 Every feature R1 has or will have, grouped by user-visible outcome.
 For each: what it does, the benefit to the operator, current build
 status, and the spec it traces to.
