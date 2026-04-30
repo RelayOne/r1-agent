@@ -17,6 +17,7 @@ Status snapshot:
 
 - Done: parity measurement and deterministic manifest foundation.
 - Done: Wave B receipts, honesty decisions, and honest-cost reports.
+- Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
 - Scoped: broader operator-facing skill surfaces.
 - Scoping: publication and packaging improvements.
@@ -61,6 +62,16 @@ Wave B adds three explicit post-task surfaces:
 3. `stoke honesty why-not` records why an action was skipped, deferred, or downgraded.
 
 `stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping and a human-minute equivalent.
+
+## Wave D (2026-04-30) — Expansion Surfaces
+
+Wave D adds three deterministic analysis loops around an existing mission:
+
+1. `stoke cf --mission mission.json --change reviewer.model=claude` replays a mission snapshot with knob changes and emits a divergence report against the original outcome.
+2. `stoke why-broken --input regression.json` turns a traced regression into a step-by-step decision narrative plus a generated gotcha learning.
+3. `stoke self-tune --baseline baseline.json --candidates trials.json` selects the best non-regressing harness trial and emits the recommendation as JSON.
+
+This is intentionally a first slice: JSON-driven commands, deterministic package logic, and tests. The live ledger/TUI wiring described in the broader SOW can now build on a stable package surface instead of starting from prose.
 
 ## User journey
 

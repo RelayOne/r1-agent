@@ -1,0 +1,25 @@
+{
+  "mission_id": "MISSION-abc",
+  "description": "Add JWT auth",
+  "regression": "test:auth/login_test.go::TestRateLimit",
+  "decisions": [
+    {
+      "step": "AC-3",
+      "verifier_verdict": "partial"
+    },
+    {
+      "step": "policy fast preset",
+      "policy_change": "gates.fast.tier_max=T8"
+    },
+    {
+      "step": "reviewer",
+      "dissents": [
+        "missing concurrent-request handling"
+      ]
+    },
+    {
+      "step": "merge",
+      "override": "hitl-9d8e7f6a"
+    }
+  ]
+}

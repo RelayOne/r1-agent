@@ -1,0 +1,16 @@
+[
+  {
+    "id": "candidate-a",
+    "metrics": {
+      "ac_pass_rate": 0.84,
+      "false_merge_rate": 0.1
+    }
+  },
+  {
+    "id": "candidate-b",
+    "metrics": {
+      "ac_pass_rate": 0.85,
+      "false_merge_rate": 0.1
+    }
+  }
+]

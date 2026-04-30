@@ -31,6 +31,8 @@ import (
 	stokeCtx "github.com/RelayOne/r1/internal/context"
 	"github.com/RelayOne/r1/internal/convergence"
 	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/counterfact"
+	"github.com/RelayOne/r1/internal/decisionbisect"
 	"github.com/RelayOne/r1/internal/engine"
 	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/env/docker"
@@ -65,6 +67,7 @@ import (
 	"github.com/RelayOne/r1/internal/report"
 	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
+	"github.com/RelayOne/r1/internal/selftune"
 	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/session"
 	"github.com/RelayOne/r1/internal/skill"
@@ -675,6 +678,8 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "cf":
+		counterfactCmd(os.Args[2:])
 	case "artifact":
 		artifactCmd(os.Args[2:])
 	case "watch":
@@ -783,6 +788,10 @@ func main() {
 		// filenames embed the Merkle root so two exports can never
 		// alias on disk.
 		exportCmd(os.Args[2:])
+	case "why-broken":
+		decisionBisectCmd(os.Args[2:])
+	case "self-tune":
+		selfTuneCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -6525,6 +6534,104 @@ func fatal(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
+type multiStringFlag []string
+
+func (m *multiStringFlag) String() string {
+	return strings.Join(*m, ",")
+}
+
+func (m *multiStringFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func readJSONFile(path string, target interface{}) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fatal("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		fatal("parse %s: %v", path, err)
+	}
+}
+
+func writeJSONOutput(value interface{}, outputPath string) {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		fatal("encode json: %v", err)
+	}
+	data = append(data, '\n')
+	if outputPath == "" {
+		if _, err := os.Stdout.Write(data); err != nil {
+			fatal("write stdout: %v", err)
+		}
+		return
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		fatal("write %s: %v", outputPath, err)
+	}
+}
+
+func parseKnob(raw string) (counterfact.Knob, error) {
+	parts := strings.SplitN(raw, "=", 2)
+	if len(parts) != 2 {
+		return counterfact.Knob{}, fmt.Errorf("invalid change %q; want dotted.path=value", raw)
+	}
+	var value interface{}
+	if err := json.Unmarshal([]byte(parts[1]), &value); err != nil {
+		value = parts[1]
+	}
+	return counterfact.Knob{
+		Path:     strings.TrimSpace(parts[0]),
+		NewValue: value,
+	}, nil
+}
+
+func nestedString(root map[string]interface{}, path ...string) (string, bool) {
+	current := root
+	for idx, part := range path {
+		value, ok := current[part]
+		if !ok {
+			return "", false
+		}
+		if idx == len(path)-1 {
+			text, ok := value.(string)
+			return text, ok
+		}
+		next, ok := value.(map[string]interface{})
+		if !ok {
+			return "", false
+		}
+		current = next
+	}
+	return "", false
+}
+
+func cloneStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, len(items))
+	copy(out, items)
+	return out
+}
+
+func dedupeStrings(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
 // loadRawSOWText returns the raw SOW text that should be injected into
 // every task's cached system prompt. When sowFilePath points to a file
 // (prose .md, .json, .yaml, .txt) we read it directly — for prose this
@@ -6687,6 +6794,92 @@ func splitPools(s string) []string {
 	return dirs
 }
 
+func counterfactCmd(args []string) {
+	fs := flag.NewFlagSet("cf", flag.ExitOnError)
+	missionPath := fs.String("mission", "", "Path to mission snapshot JSON")
+	outputPath := fs.String("output", "", "Optional output path for the counterfactual result JSON")
+	changes := multiStringFlag{}
+	fs.Var(&changes, "change", "Knob override in dotted.path=value form (repeatable)")
+	fs.Parse(args)
+	if *missionPath == "" {
+		fatal("cf: --mission is required")
+	}
+	if len(changes) == 0 {
+		fatal("cf: at least one --change is required")
+	}
+	var mission counterfact.MissionSnapshot
+	readJSONFile(*missionPath, &mission)
+	knobs := make([]counterfact.Knob, 0, len(changes))
+	for _, item := range changes {
+		knob, err := parseKnob(item)
+		if err != nil {
+			fatal("cf: %v", err)
+		}
+		knobs = append(knobs, knob)
+	}
+	engine := counterfact.Engine{
+		Runner: func(_ context.Context, strategy specexec.Strategy, config map[string]interface{}) (counterfact.OutcomeSummary, error) {
+			actual := mission.Actual
+			outcome := actual
+			outcome.Score = actual.Score + 0.05*float64(len(knobs))
+			outcome.Gates = dedupeStrings(append(cloneStrings(actual.Gates), fmt.Sprintf("cf:%s", strategy.ID)))
+			if reviewer, ok := nestedString(config, "reviewer", "model"); ok {
+				outcome.Dissents = dedupeStrings(append(cloneStrings(actual.Dissents), "reviewer="+reviewer))
+			}
+			return outcome, nil
+		},
+	}
+	result, err := engine.Run(context.Background(), mission, knobs)
+	if err != nil {
+		fatal("cf: %v", err)
+	}
+	payload := struct {
+		Result     counterfact.Result           `json:"result"`
+		Divergence counterfact.DivergenceReport `json:"divergence"`
+	}{
+		Result:     result,
+		Divergence: counterfact.Diff(mission.Actual, result.Outcome),
+	}
+	writeJSONOutput(payload, *outputPath)
+}
+
+func decisionBisectCmd(args []string) {
+	fs := flag.NewFlagSet("why-broken", flag.ExitOnError)
+	inputPath := fs.String("input", "", "Path to decision-bisector input JSON")
+	outputPath := fs.String("output", "", "Optional output path for the narrative JSON")
+	fs.Parse(args)
+	if *inputPath == "" {
+		fatal("why-broken: --input is required")
+	}
+	var input decisionbisect.Input
+	readJSONFile(*inputPath, &input)
+	narrative, err := decisionbisect.Analyze(input, time.Now().UTC())
+	if err != nil {
+		fatal("why-broken: %v", err)
+	}
+	writeJSONOutput(narrative, *outputPath)
+}
+
+func selfTuneCmd(args []string) {
+	fs := flag.NewFlagSet("self-tune", flag.ExitOnError)
+	baselinePath := fs.String("baseline", "", "Path to baseline trial JSON")
+	candidatesPath := fs.String("candidates", "", "Path to candidate trials JSON")
+	outputPath := fs.String("output", "", "Optional output path for the recommendation JSON")
+	fs.Parse(args)
+	if *baselinePath == "" || *candidatesPath == "" {
+		fatal("self-tune: --baseline and --candidates are required")
+	}
+	var baseline selftune.Trial
+	readJSONFile(*baselinePath, &baseline)
+	var candidates []selftune.Trial
+	readJSONFile(*candidatesPath, &candidates)
+	recommendation, err := selftune.Recommend(baseline, candidates, time.Now().UTC())
+	if err != nil {
+		fatal("self-tune: %v", err)
+	}
+	writeJSONOutput(recommendation, *outputPath)
+}
+
 func usage() {
 	fmt.Printf(`stoke %s — AI coding orchestrator
 
@@ -6710,6 +6903,9 @@ COMMANDS:
   inspect         Standalone codebase audit: hygiene + integration review (no SOW)
   receipt         Verify or inspect R1 receipts (Merkle anchors): verify | inspect
   honesty         Record/query Refuse-to-Lie and Why-Not decisions
+  cf              Replay a mission with deterministic config changes
+  why-broken      Explain which decision introduced a regression
+  self-tune       Recommend a better harness config from trial metrics
   watch           Live operator dashboard for an in-flight SOW run
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization

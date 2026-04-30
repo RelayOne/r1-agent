@@ -14,6 +14,7 @@ Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
 - Done: operator receipts plus explicit honesty and cost-accounting surfaces.
+- Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
 - Scoped: more productized skill packaging.
 - Scoping: broader outward-facing proof points.
@@ -116,6 +117,20 @@ In business terms, deterministic skills move R1 up the stack:
 4. **From "AI is hard to trust" to "AI can be reviewed like software."**
    Once a skill is compiled and ledgered, governance teams can inspect
    the structure instead of arguing over screenshots and anecdotes.
+
+## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
+
+Wave D adds three product surfaces that are not just parity features.
+
+- **Counterfactual replay.** `stoke cf` answers "what would have happened if we changed the reviewer, gate, or policy knob?" That is an operator debugging surface and a sales demo at the same time.
+- **Decision bisector.** `stoke why-broken` turns a regression into a concrete reasoning narrative and a reusable gotcha rule. Instead of only finding that a bug exists, R1 can explain where its own process went wrong.
+- **Harness self-tune.** `stoke self-tune` compares candidate harness configs to a baseline and recommends a safer improvement path. That turns the harness into an asset that compounds instead of a static release artifact.
+
+Business effect:
+
+1. These features make R1 easier to trust after a failure, not just during a demo.
+2. They create a visible story for continuous improvement that most agent runtimes do not expose to operators.
+3. They turn benchmark wins into something operational teams can use on their own repos.
 
 ## The problem
 

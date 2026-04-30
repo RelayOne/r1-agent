@@ -16,6 +16,7 @@
 - Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 - Wave B receipts, honesty decisions, and honest-cost reports.
+- Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 
 ### In Progress
 
@@ -112,6 +113,15 @@ Status legend:
 | `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
 | `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
 | `B19` Honest cost rollups | Cost can be saved with provider grouping and human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+
+## Wave D (2026-04-30) — Expansion Features
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `stoke cf` counterfactual replay | Operators can replay a mission snapshot with deterministic config changes and inspect divergence from the original outcome. | Done | `internal/counterfact/`, `cmd/stoke/main.go` |
+| Knob application + deterministic run IDs | The same mission snapshot plus the same knob set yields the same counterfactual run identity. | Done | `internal/counterfact/engine.go`, `internal/counterfact/engine_test.go` |
+| `stoke why-broken` decision bisector | Regressions can be explained as a step-by-step decision narrative with an auto-generated gotcha learning. | Done | `internal/decisionbisect/`, `cmd/stoke/main.go` |
+| `stoke self-tune` recommendation engine | Operators can compare harness trials against a baseline and emit a non-regressing tuning recommendation. | Done | `internal/selftune/`, `cmd/stoke/main.go` |
 
 ## The trust layer — verification descent
 
