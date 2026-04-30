@@ -11,6 +11,7 @@ Status snapshot:
 
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
+- Done: Wave B receipts, honesty commands, and honest-cost reports.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
@@ -50,6 +51,11 @@ signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/archit
 The April 2026 train extended R1 from a CLI orchestrator into a
 parity-or-better reference runtime alongside Claude Code, Cursor, and
 Manus. Recent merges to `main`:
+
+- **Wave B receipts + honesty + cost reporting** —
+  [`internal/receipts/`](internal/receipts/) adds persisted mission receipts with signing, export, and replay-linked provenance;
+  [`internal/honesty/`](internal/honesty/) adds ledger-backed `refused` and `why_not` decisions via `stoke honesty`;
+  [`internal/costtrack/honest_cost.go`](internal/costtrack/honest_cost.go) plus [`cmd/stoke/ops_cost.go`](cmd/stoke/ops_cost.go) add saved honest-cost rollups with provider grouping and human-minute equivalents.
 
 - **Browser automation + Manus-style autonomous operator** —
   `browser_wait_for` and `browser_get_html` complete the

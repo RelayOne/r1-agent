@@ -16,6 +16,7 @@ That path shows how R1 measures parity, how it refreshes those claims, and how d
 Status snapshot:
 
 - Done: parity measurement and deterministic manifest foundation.
+- Done: Wave B receipts, honesty decisions, and honest-cost reports.
 - In Progress: parity-to-superiority execution and skill integration.
 - Scoped: broader operator-facing skill surfaces.
 - Scoping: publication and packaging improvements.
@@ -50,6 +51,16 @@ autonomous operator) and a **wider tool surface**: `image_read`,
 `notebook_read/cell_run`, `powershell`, `gh_pr/run`, `web_fetch`,
 `web_search`, `cron`, `pdf_read`. These are wired into `Handle()` and
 appear automatically in tool-pick prompts.
+
+## Wave B (2026-04-29) — Honesty In The Loop
+
+Wave B adds three explicit post-task surfaces:
+
+1. `stoke receipt record` persists a mission receipt with task id, evidence refs, replay provenance, and optional HMAC signature.
+2. `stoke honesty refuse` records a refusal when R1 should not make a claim without evidence.
+3. `stoke honesty why-not` records why an action was skipped, deferred, or downgraded.
+
+`stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping and a human-minute equivalent.
 
 ## User journey
 
