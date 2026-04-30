@@ -25,6 +25,26 @@ Status snapshot:
 
 **A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**
 
+## Cycle 9 shipped state
+
+The cycle 7-8 merge train pushed R1 past baseline parity work and into
+the first cohesive beacon runtime:
+
+- **Beacon foundation is now on `main`** with protocol, identity,
+  pairing, session, token, and ledger-node primitives from PRs
+  `#45`, `#46`, and `#47`.
+- **Wave D is now fully landed** across PRs `#48` and `#49`, adding
+  the "cool / better / bigger" expansion set plus the post-merge
+  follow-on commands and operator surfaces.
+- **Canonical docs were realigned in PR `#50` and PR `#52`**, so the
+  README, architecture, operator flow, deployment model, and business
+  case now describe the shipped beacon-era runtime rather than the
+  pre-beacon parity sprint.
+
+If you are evaluating R1 in April 2026 terms, this repo should now be
+read as: a coding orchestrator, a trust-and-ledger runtime, and a
+portable operator shell that can run from CLI, desktop, IDE, and CI.
+
 R1 drives Claude Code and Codex CLI through a deterministic
 PLAN → EXECUTE → VERIFY → COMMIT loop. It runs one strong implementer
 per task, pairs that worker with a cross-family reviewer, records

@@ -1,5 +1,22 @@
 # How It Works
 
+## Cycle 9 operator flow changes
+
+For an operator, the biggest change from the cycle 7-8 train is that R1
+can now carry a task through a richer runtime handshake before the old
+plan-execute-verify loop even starts:
+
+1. The operator enters through CLI, desktop, IDE, or CI as before.
+2. Beacon identity and session primitives establish who is acting and
+   what runtime state is shared.
+3. Trust-layer checks decide whether the requested action can proceed
+   under the current hub/runtime context.
+4. The existing executor, reviewer, and verification descent stack run
+   inside that stronger envelope.
+
+The result is less "tool that launches workers" and more "runtime that
+governs how workers, sessions, and trust-bound actions move together."
+
 ## W36 developer walkthrough: parity program plus deterministic skills
 
 If you need to understand the current direction of R1 beyond the raw code paths, read these in order:

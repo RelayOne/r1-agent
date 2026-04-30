@@ -1,5 +1,16 @@
 # Feature Map
 
+## Cycle 9 shipped additions
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| Beacon protocol foundation | Gives R1 a concrete runtime protocol instead of ad-hoc task-only coordination. | Done | PR `#45`, commit `6eba269`. |
+| Hub trust layer | Adds explicit trust semantics to cross-surface runtime actions. | Done | PR `#46`, commit `35d4fc7`. |
+| Missing beacon primitives | Closes the protocol gaps that blocked end-to-end beacon operation. | Done | PR `#47`, commit `10f00cf`. |
+| Wave D expansion | Extends the operator/runtime surface beyond parity into higher-order workflows. | Done | PR `#48`, commit `f2d30d6`. |
+| Wave D post-merge command set | Lands the follow-on command work that completes the wave. | Done | PR `#49`, commit `57906b9`. |
+| Beacon-era canonical docs | Refreshes the seven canonical docs so evaluation and onboarding match trunk reality. | Done | PR `#50`, commit `60e38a6`; PR `#52`, commit `00a34b5`. |
+
 ## W36 parity, deterministic-skills, and wizard/artifact status
 
 ### Done
