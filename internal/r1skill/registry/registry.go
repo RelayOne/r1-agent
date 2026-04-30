@@ -114,6 +114,59 @@ func LoadProof(path string) (*analyze.CompileProof, error) {
 	return &proof, nil
 }
 
+func SaveEntry(root string, skill *ir.Skill, proof *analyze.CompileProof) (Entry, error) {
+	if skill == nil {
+		return Entry{}, fmt.Errorf("r1skill/registry: skill is required")
+	}
+	if proof == nil {
+		return Entry{}, fmt.Errorf("r1skill/registry: proof is required")
+	}
+	if err := skill.Validate(); err != nil {
+		return Entry{}, err
+	}
+	if proof.IRHash == "" {
+		return Entry{}, fmt.Errorf("r1skill/registry: proof missing ir_hash")
+	}
+	dir := filepath.Join(root, skill.SkillID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return Entry{}, fmt.Errorf("r1skill/registry: mkdir %s: %w", dir, err)
+	}
+	skillPath := filepath.Join(dir, "skill.r1.json")
+	proofPath := filepath.Join(dir, "skill.r1.proof.json")
+	skillBytes, err := json.MarshalIndent(skill, "", "  ")
+	if err != nil {
+		return Entry{}, fmt.Errorf("r1skill/registry: encode %s: %w", skillPath, err)
+	}
+	if err := writeJSONFile(skillPath, skillBytes); err != nil {
+		return Entry{}, err
+	}
+	proofBytes, err := json.MarshalIndent(proof, "", "  ")
+	if err != nil {
+		return Entry{}, fmt.Errorf("r1skill/registry: encode %s: %w", proofPath, err)
+	}
+	if err := writeJSONFile(proofPath, proofBytes); err != nil {
+		return Entry{}, err
+	}
+	return Entry{
+		Skill:      skill,
+		Proof:      proof,
+		SourcePath: skillPath,
+		ProofPath:  proofPath,
+	}, nil
+}
+
+func writeJSONFile(path string, payload []byte) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("r1skill/registry: create %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.Write(append(payload, '\n')); err != nil {
+		return fmt.Errorf("r1skill/registry: write %s: %w", path, err)
+	}
+	return nil
+}
+
 func isSkillFile(path string) bool {
 	base := filepath.Base(path)
 	if strings.HasSuffix(base, ".proof.json") {

@@ -9,12 +9,18 @@
 - Manifest-enforced skill manufacturing pipeline.
 - Deterministic skills substrate: compile, analyze, interpreter, registry, and proof-emitting CLI.
 - Shell preprocessing and path-scoped skill activation.
-- Skill wizard flow: `stoke wizard run`, `migrate`, and `query`.
+- Skill wizard flow: `stoke wizard run`, `migrate`, `register`, and `query`.
 - `ask_user` primitive and decision-ledger capture inside the wizard lane.
+- Beacon protocol foundation: identity, pairing, session, token, and ledger node coverage.
+- Trust layer: pinned-root verification, nonce replay defense, and signal-frame validation.
+- Missing beacon primitives: beacon-targeted notify metadata and offline review envelopes.
 - Bulk migration adapters for Markdown, OpenAPI, Zapier, and TOML skill sources.
 - Artifact ledger nodes plus Antigravity import/export wire format.
 - Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
+- Beacon protocol foundation: identity, pairing, encrypted sessions, capability tokens, and beacon ledger nodes.
+- Wave B receipts, honesty decisions, and honest-cost reports.
+- Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 
 ### In Progress
 
@@ -40,14 +46,19 @@
 | Deterministic echo example skill | The substrate ships with a concrete example and proof file operators can inspect end-to-end. | Done | PR #34, commit `1492ab5`. |
 | `stoke wizard run` | A guided operator flow can create or refine skill configurations without hand-authoring every manifest field. | Done | PR #36, commit `98203a7`. |
 | `stoke wizard migrate` | Existing skill sources can be bulk-migrated into the new deterministic substrate. | Done | PR #36, commit `98203a7`. |
-| `stoke wizard query` | Operators can interrogate wizard state and migration outputs from the CLI. | Done | PR #36, commit `98203a7`. |
+| `stoke wizard register` | Reviewed skill IR and compile proofs can be copied into the deterministic registry in a stable on-disk layout. | Done | Wave C, local branch `feat/r1-parity-wave-c`. |
+| `stoke wizard query` | Operators can interrogate wizard state and migration outputs from the CLI, including ledger-backed sessions. | Done | Wave C, local branch `feat/r1-parity-wave-c`. |
 | `ask_user` primitive | Wizard flows can pause for operator judgment instead of guessing through trust-boundary decisions. | Done | PR #36, commit `98203a7`. |
-| Decision ledger for wizard runs | Wizard choices become durable governance data instead of disposable terminal interaction. | Done | PR #36, commit `98203a7`. |
+| Decision ledger for wizard runs | Wizard choices become durable governance data instead of disposable terminal interaction, with linked source / IR / proof refs when persisted to the ledger. | Done | Wave C, local branch `feat/r1-parity-wave-c`. |
 | Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
+| Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `ed96493`. |
+| Trust validation layer | Inbound beacon traffic can be checked against pinned roots, nonce replay defense, and signal-frame validation before it is trusted. | Done | PR #46, commit `eadf665`. |
+| Beacon review and notify primitives | Offline review envelopes and beacon-targeted notify metadata complete the first practical handoff surfaces around the beacon lane. | Done | PR #47, commit `7a8c7eb`. |
 | Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
 | Antigravity converter | External artifact formats can be converted into the R1 artifact model without ad hoc glue scripts. | Done | PR #37, commit `e8608b1`. |
 | Plan approval ledger nodes | `stoke plan --approve` now emits explicit plan and approval nodes into the governance graph. | Done | PR #37, commit `e8608b1`. |
+| Beacon protocol foundation | R1 can now model Beacon identities, `/claimme` pairing, encrypted remote sessions, signed capability tokens, and ledger-native Beacon events. | Done | PR TBD, branch `feat/r1-beacon-protocol`. |
 
 ### Potential-On Horizon
 
@@ -100,6 +111,44 @@ Status legend:
   policy in `.stoke/`.
 - **Potential-On Horizon:** BitBucket Pipelines adapter parity; native
   MCP bundle in IDE plugins; remote-browser sandboxing for browser tools.
+
+## Wave B (2026-04-29) — Receipts And Honesty
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `B1` Mission receipts index | Operators can persist, list, export, and sign task-level receipts instead of treating raw anchors as the only audit surface. | Done | `internal/receipts/`, `cmd/stoke/receipt_cmd.go` |
+| Replay-backed receipt generation | Replays can be promoted into durable receipts with task linkage and provenance. | Done | `internal/receipts/store.go`, `internal/receipts/store_test.go` |
+| `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B19` Honest cost rollups | Cost can be saved with provider grouping and human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+
+## Wave D (2026-04-30) — Expansion Features
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `stoke cf` counterfactual replay | Operators can replay a mission snapshot with deterministic config changes and inspect divergence from the original outcome. | Done | `internal/counterfact/`, `cmd/stoke/main.go` |
+| Knob application + deterministic run IDs | The same mission snapshot plus the same knob set yields the same counterfactual run identity. | Done | `internal/counterfact/engine.go`, `internal/counterfact/engine_test.go` |
+| `stoke why-broken` decision bisector | Regressions can be explained as a step-by-step decision narrative with an auto-generated gotcha learning. | Done | `internal/decisionbisect/`, `cmd/stoke/main.go` |
+| `stoke self-tune` recommendation engine | Operators can compare harness trials against a baseline and emit a non-regressing tuning recommendation. | Done | `internal/selftune/`, `cmd/stoke/main.go` |
+
+## Wave B (2026-04-29) — Receipts And Honesty
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `B1` Mission receipts index | Operators can persist, list, export, and sign task-level receipts instead of treating raw anchors as the only audit surface. | Done | `internal/receipts/`, `cmd/stoke/receipt_cmd.go` |
+| Replay-backed receipt generation | Replays can be promoted into durable receipts with task linkage and provenance. | Done | `internal/receipts/store.go`, `internal/receipts/store_test.go` |
+| `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B19` Honest cost rollups | Cost can be saved with provider grouping and human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+
+## Wave D (2026-04-30) — Expansion Features
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `stoke cf` counterfactual replay | Operators can replay a mission snapshot with deterministic config changes and inspect divergence from the original outcome. | Done | `internal/counterfact/`, `cmd/stoke/main.go` |
+| Knob application + deterministic run IDs | The same mission snapshot plus the same knob set yields the same counterfactual run identity. | Done | `internal/counterfact/engine.go`, `internal/counterfact/engine_test.go` |
+| `stoke why-broken` decision bisector | Regressions can be explained as a step-by-step decision narrative with an auto-generated gotcha learning. | Done | `internal/decisionbisect/`, `cmd/stoke/main.go` |
+| `stoke self-tune` recommendation engine | Operators can compare harness trials against a baseline and emit a non-regressing tuning recommendation. | Done | `internal/selftune/`, `cmd/stoke/main.go` |
 
 ## The trust layer — verification descent
 
@@ -339,5 +388,5 @@ Homebrew publishing, cosign keyless OIDC signing.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
-| Deterministic skill wizard | `stoke wizard run|migrate|query` with decision ledger and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |
+| Deterministic skill wizard | `stoke wizard run|migrate|register|query` with decision ledger, registry install, and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |
 | Beacon Hub Trust Layer | Signed, pinned, replay-defended trust signals can pause, rotate, attest, or request offline review without exposing Beacon session plaintext to the relay. | Done | [TRUST-LAYER.md](TRUST-LAYER.md) |
