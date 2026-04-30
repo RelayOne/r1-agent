@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -113,6 +114,13 @@ func run() error {
 	defer backends.Close()
 	registered, skipped := backends.SeedBuiltinSkillManifests()
 	fmt.Fprintf(os.Stderr, "stoke-mcp: seeded %d builtin skill manifests (%d already registered)\n", registered, skipped)
+	if wd, err := os.Getwd(); err == nil {
+		packRegistered, packSkipped, packErr := backends.SeedBundledSkillPacks(filepath.Join(wd, ".stoke", "skills", "packs"))
+		if packErr != nil {
+			return fmt.Errorf("seed bundled skill packs: %w", packErr)
+		}
+		fmt.Fprintf(os.Stderr, "stoke-mcp: seeded %d bundled pack manifests (%d already registered)\n", packRegistered, packSkipped)
+	}
 	srv := &Server{
 		out:        os.Stdout,
 		apiKey:     apiKey,
@@ -188,8 +196,8 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			"tools": map[string]any{"listChanged": false},
 		},
 		"serverInfo": map[string]any{
-			"name":    serverName,
-			"version": version,
+			"name":                     serverName,
+			"version":                  version,
 			"_stoke.dev/auth_required": s.requireKey,
 		},
 	})
