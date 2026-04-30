@@ -40,6 +40,10 @@ the first cohesive beacon runtime:
   README, architecture, operator flow, deployment model, and business
   case now describe the shipped beacon-era runtime rather than the
   pre-beacon parity sprint.
+- **Beacon transport + runtime bridge are now on `main`** via PR `#54`,
+  adding real beacon HTTP/WebSocket envelopes plus a runtime bridge
+  that reuses trust dispatch, session approvals, notifications,
+  artifacts, and ledger writes.
 
 If you are evaluating R1 in April 2026 terms, this repo should now be
 read as: a coding orchestrator, a trust-and-ledger runtime, and a
@@ -86,6 +90,14 @@ Manus. Recent merges to `main`:
   identity, session establishment, trust signaling, and deferred review
   instead of leaving those concerns as operator glue. Evidence: PRs
   #45, #46, and #47.
+
+- **Beacon transport and runtime bridge** —
+  `stoke beacon` now has claim/revoke/token operator flows plus real
+  beacon transport envelopes over HTTP and WebSocket, and the beacon
+  runtime bridge now routes through existing trust dispatch, sessionctl
+  approvals, notifications, artifacts, and ledger persistence instead
+  of stopping at protocol primitives. Evidence: PR `#54`, commit
+  `44b2712`.
 
 - **Wave C wizard ledger + deterministic registry** —
   `stoke wizard run|migrate|query|register` now extends all the way to

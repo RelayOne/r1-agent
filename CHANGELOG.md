@@ -5,6 +5,7 @@
 - Merged beacon protocol foundation in PR `#45`.
 - Merged hub trust-layer work in PR `#46`.
 - Merged missing beacon primitives in PR `#47`.
+- Merged beacon transport and runtime bridge in PR `#54`.
 - Merged Wave D expansion in PR `#48` and the follow-on command set in
   PR `#49`.
 - Refreshed the canonical seven-doc set in PR `#50` and aligned the
@@ -27,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identity, pairing, session, token, ledger records, pinned-root trust
   validation, signed signal frames, nonce replay defense, offline
   review envelopes, and beacon-aware notify metadata.
+- Extended the same canonical docs to include PR #54, which adds
+  operator-facing `stoke beacon` claim/revoke/token flows, real beacon
+  HTTP/WebSocket transport envelopes, and a runtime bridge that reuses
+  trust dispatch, approvals, notifications, artifacts, and ledger
+  writes.
 - Folded Wave C wizard ledger persistence plus deterministic registry
   install into the top-level narrative so the wizard flow is documented
   as durable and queryable rather than just an authoring UI.
