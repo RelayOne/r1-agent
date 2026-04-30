@@ -253,6 +253,81 @@ func TestInfoSkillPackResolvesUserLibraryWithoutInstall(t *testing.T) {
 	}
 }
 
+func TestInitSkillPackScaffoldsCanonicalPack(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	result, err := initSkillPack(repo, "invoice-ingestion", "", "", "")
+	if err != nil {
+		t.Fatalf("initSkillPack() error = %v", err)
+	}
+	packPath := filepath.Join(repo, ".r1", "skills", "packs", "invoice-ingestion")
+	if result.PackPath != packPath {
+		t.Fatalf("PackPath = %q, want %q", result.PackPath, packPath)
+	}
+	if result.SkillName != "invoice-ingestion_sample" {
+		t.Fatalf("SkillName = %q, want invoice-ingestion_sample", result.SkillName)
+	}
+	loaded, err := skillmfr.LoadPack(packPath)
+	if err != nil {
+		t.Fatalf("LoadPack(%q): %v", packPath, err)
+	}
+	if loaded.Meta.Name != "invoice-ingestion" {
+		t.Fatalf("Meta.Name = %q, want invoice-ingestion", loaded.Meta.Name)
+	}
+	if loaded.Meta.Version != "0.1.0" {
+		t.Fatalf("Meta.Version = %q, want 0.1.0", loaded.Meta.Version)
+	}
+	if len(loaded.Manifests) != 1 || loaded.Manifests[0].Name != "invoice-ingestion_sample" {
+		t.Fatalf("Manifests = %#v, want single starter manifest", loaded.Manifests)
+	}
+	if _, err := os.Stat(filepath.Join(packPath, "README.md")); err != nil {
+		t.Fatalf("Stat(README.md): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(packPath, "invoice-ingestion_sample", "SKILL.md")); err != nil {
+		t.Fatalf("Stat(SKILL.md): %v", err)
+	}
+}
+
+func TestInitSkillPackHonorsExplicitMetadata(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	result, err := initSkillPack(repo, "billing-pack", "1.2.3", "Billing operator pack", "billing.lookup_invoice")
+	if err != nil {
+		t.Fatalf("initSkillPack() error = %v", err)
+	}
+	if result.SkillName != "billing.lookup_invoice" {
+		t.Fatalf("SkillName = %q, want billing.lookup_invoice", result.SkillName)
+	}
+	loaded, err := skillmfr.LoadPack(result.PackPath)
+	if err != nil {
+		t.Fatalf("LoadPack(%q): %v", result.PackPath, err)
+	}
+	if loaded.Meta.Version != "1.2.3" {
+		t.Fatalf("Meta.Version = %q, want 1.2.3", loaded.Meta.Version)
+	}
+	if loaded.Meta.Description != "Billing operator pack" {
+		t.Fatalf("Meta.Description = %q, want Billing operator pack", loaded.Meta.Description)
+	}
+	if len(loaded.Manifests) != 1 || loaded.Manifests[0].Name != "billing.lookup_invoice" {
+		t.Fatalf("Manifests = %#v, want billing.lookup_invoice", loaded.Manifests)
+	}
+}
+
+func TestInitSkillPackRejectsExistingTarget(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	packPath := filepath.Join(repo, ".r1", "skills", "packs", "duplicate-pack")
+	if err := os.MkdirAll(packPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll(packPath): %v", err)
+	}
+	if _, err := initSkillPack(repo, "duplicate-pack", "", "", ""); err == nil {
+		t.Fatal("initSkillPack() error = nil, want existing-target error")
+	}
+}
+
 func TestListInstalledSkillPacksReportsInstalledPacks(t *testing.T) {
 	t.Parallel()
 

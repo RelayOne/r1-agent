@@ -19,7 +19,7 @@ Status snapshot:
 - Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
 - Done: IR-hash-scoped deterministic replay cache keys so replay and cost attribution stay tied to the exact compiled skill/input pair.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
-- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, and `stoke skills pack list` / `update` now audit and refresh installed packs from the dual `.r1` / `.stoke` view.
+- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, `stoke skills pack list` / `update` audit and refresh installed packs from the dual `.r1` / `.stoke` view, and `stoke skills pack init` now scaffolds new repo-local packs with a valid starter manifest.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Done: beacon trust validation plus notify and offline-review primitives.
@@ -374,6 +374,7 @@ the same `internal/` packages.
 | Binary / Command | Purpose |
 |---------|---------|
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
+| `stoke skills pack init` | Scaffold a new repo-local skill pack under `.r1/skills/packs/` with starter metadata, README, manifest JSON, and skill body |
 | `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
 | `stoke skills pack list` | List installed skill packs by merging canonical `.r1/skills/*` and legacy `.stoke/skills/*` links into one operator-facing view |
 | `stoke skills pack publish` | Validate a pack and copy it into the user-level `.r1/.stoke` skill-pack library so other repos can install it without manual copying |
@@ -852,12 +853,12 @@ MIT.
 
 ### Done
 
-- PR #67 (`fc55a0d`) shipped the bundled skill-pack installer, PR #68 (`bf45191`) added recursive pack install, PR #69 (`4a19231`) added pack uninstall, PR #71 (`92b6f47`) added pack list, PR #72 (`f180666`) added update, PR #74 (`80562ed`) added info, and the current lane now adds local publish into the user pack library. Together they establish the deterministic skills lane as a real shipped operator path instead of a partial prototype.
+- PR #67 (`fc55a0d`) shipped the bundled skill-pack installer, PR #68 (`bf45191`) added recursive pack install, PR #69 (`4a19231`) added pack uninstall, PR #71 (`92b6f47`) added pack list, PR #72 (`f180666`) added update, PR #74 (`80562ed`) added info, PR #75 (`1259ac3`) added local publish into the user pack library, and the current lane now adds repo-local pack scaffolding. Together they establish the deterministic skills lane as a real shipped operator path instead of a partial prototype.
 - PR #70 (`d15bee8`) already refreshed the docs for PRs #67-68; this cycle carries that forward so the canonical docs also reflect PRs #69 and #71 now on `main`.
 
 ### In Progress
 
-- The skills lane is still widening around pack lifecycle ergonomics and publishing flow, but install, list, and uninstall are already live on trunk.
+- The skills lane is shifting from lifecycle completion to broader discovery surfaces, but local authoring, publish, install, inspect, refresh, and uninstall flows are now live on trunk.
 
 ### Scoped
 
