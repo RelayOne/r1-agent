@@ -410,6 +410,127 @@ func TestSeedBundledSkillPacks_RegistersMetricsCollectionRuntime(t *testing.T) {
 	}
 }
 
+func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	ledgerRoot := filepath.Join(t.TempDir(), "ledger")
+
+	lg, err := ledger.New(ledgerRoot)
+	if err != nil {
+		t.Fatalf("ledger.New: %v", err)
+	}
+	for _, node := range []ledger.Node{
+		{
+			Type:          "decision_internal",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2026, 4, 30, 16, 0, 0, 0, time.UTC),
+			CreatedBy:     "stoke-mcp",
+			MissionID:     "mission-skill-audit",
+			Content: json.RawMessage(`{
+				"kind":"capability_invocation",
+				"capability":"metrics_collection_runtime",
+				"manifest_hash":"sha256:metrics",
+				"manifest_name":"metrics_collection_runtime",
+				"manifest_version":"0.1.0",
+				"manifest_registered":true,
+				"deterministic":true,
+				"input_bytes":31
+			}`),
+		},
+		{
+			Type:          "decision_internal",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2026, 4, 30, 16, 1, 0, 0, time.UTC),
+			CreatedBy:     "stoke-mcp",
+			MissionID:     "mission-skill-audit",
+			Content: json.RawMessage(`{
+				"kind":"capability_invocation",
+				"capability":"invoice_processor_runtime",
+				"manifest_hash":"sha256:invoice",
+				"manifest_name":"invoice_processor_runtime",
+				"manifest_version":"0.1.0",
+				"manifest_registered":true,
+				"deterministic":true,
+				"input_bytes":54
+			}`),
+		},
+		{
+			Type:          "decision_internal",
+			SchemaVersion: 1,
+			CreatedAt:     time.Date(2026, 4, 30, 16, 2, 0, 0, time.UTC),
+			CreatedBy:     "stoke-mcp",
+			MissionID:     "mission-skill-audit",
+			Content: json.RawMessage(`{
+				"kind":"audit_event",
+				"action":"unrelated"
+			}`),
+		},
+	} {
+		if _, err := lg.AddNode(context.Background(), node); err != nil {
+			t.Fatalf("AddNode(%s): %v", node.MissionID, err)
+		}
+	}
+	if err := lg.Close(); err != nil {
+		t.Fatalf("close ledger: %v", err)
+	}
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "stoke-mcp-ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 6 {
+		t.Fatalf("registered=%d skipped=%d, want at least six bundled manifests", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-skill-audit",
+		"skill_execution_audit_log",
+		json.RawMessage(fmt.Sprintf(`{"ledger_dir":%q,"mission_id":"mission-skill-audit","only_deterministic":true,"limit":10}`, ledgerRoot)),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["query_slug"] != "skill-execution-audit-log" {
+		t.Fatalf("query_slug = %#v, want skill-execution-audit-log", output["query_slug"])
+	}
+	if output["matched_count"] != float64(2) {
+		t.Fatalf("matched_count = %#v, want 2", output["matched_count"])
+	}
+	capabilities, ok := output["capabilities"].([]any)
+	if !ok || len(capabilities) != 2 {
+		t.Fatalf("capabilities = %#v, want two capability counts", output["capabilities"])
+	}
+	executions, ok := output["executions"].([]any)
+	if !ok || len(executions) != 2 {
+		t.Fatalf("executions = %#v, want two execution entries", output["executions"])
+	}
+	firstExecution, ok := executions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first execution type = %T", executions[0])
+	}
+	if firstExecution["capability"] != "metrics_collection_runtime" {
+		t.Fatalf("first execution capability = %#v, want metrics_collection_runtime", firstExecution["capability"])
+	}
+	if firstExecution["deterministic"] != true || firstExecution["manifest_registered"] != true {
+		t.Fatalf("first execution flags = %#v, want deterministic and manifest_registered true", firstExecution)
+	}
+}
+
 func TestSeedPackRegistries_LoadsUserCanonicalPacks(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()

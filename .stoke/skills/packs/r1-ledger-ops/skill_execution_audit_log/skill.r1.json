@@ -1,0 +1,235 @@
+{
+  "schema_version": 1,
+  "skill_id": "skill_execution_audit_log",
+  "skill_version": 1,
+  "description": "Read skill execution audit entries from a local R1 ledger and return a structured summary.",
+  "authors": ["operator:codex"],
+  "lineage": {
+    "kind": "human",
+    "authored_at": "2026-04-30T00:00:00Z"
+  },
+  "schemas": {
+    "inputs": {
+      "type": "record",
+      "fields": {
+        "ledger_dir": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "mission_id": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "created_by": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "since": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "until": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "limit": {
+          "type": "optional",
+          "element_type": {
+            "type": "int"
+          }
+        },
+        "only_deterministic": {
+          "type": "optional",
+          "element_type": {
+            "type": "bool"
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "record",
+      "fields": {
+        "query_slug": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "ledger_dir": {
+          "type": "string"
+        },
+        "matched_count": {
+          "type": "int"
+        },
+        "filters": {
+          "type": "named",
+          "named_ref": "filters"
+        },
+        "capabilities": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "capability_count"
+          }
+        },
+        "executions": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "execution"
+          }
+        },
+        "followups": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "named_types": {
+      "filters": {
+        "type": "record",
+        "fields": {
+          "capability": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "mission_id": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "created_by": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "since": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "until": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "int"
+          },
+          "only_deterministic": {
+            "type": "bool"
+          }
+        }
+      },
+      "capability_count": {
+        "type": "record",
+        "fields": {
+          "capability": {
+            "type": "string"
+          },
+          "count": {
+            "type": "int"
+          }
+        }
+      },
+      "execution": {
+        "type": "record",
+        "fields": {
+          "node_id": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "mission_id": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "manifest_hash": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "manifest_name": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "manifest_version": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "manifest_registered": {
+            "type": "bool"
+          },
+          "deterministic": {
+            "type": "bool"
+          },
+          "delegation_id": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "input_bytes": {
+            "type": "int"
+          }
+        }
+      }
+    }
+  },
+  "graph": {
+    "nodes": {
+      "runtime": {
+        "kind": "pure_fn",
+        "config": {
+          "registry_ref": "r1:skill_execution_audit_log",
+          "input": {
+            "kind": "ref",
+            "ref": "inputs"
+          }
+        }
+      }
+    },
+    "return": {
+      "kind": "ref",
+      "ref": "runtime"
+    }
+  }
+}

@@ -10,3 +10,6 @@ Current contents:
 - `metrics_collection_runtime` — snapshot in-process counters, gauges,
   timers, and spend metrics with optional prefix filtering for operator
   review.
+- `skill_execution_audit_log` — summarize capability invocation audit
+  entries from a local ledger, including deterministic-runtime and
+  manifest-registration metadata.

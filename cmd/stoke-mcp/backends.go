@@ -111,6 +111,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 				"cloudswarm:invoice_processor_runtime": invoiceProcessorRuntime,
 				"r1:ledger_audit_query_runtime":        ledgerAuditQueryRuntime,
 				"r1:metrics_collection_runtime":        metricsCollectionRuntime(metricsRegistry),
+				"r1:skill_execution_audit_log":         skillExecutionAuditLogRuntime,
 			},
 			LLM: func(_ context.Context, cfg interp.LLMCallConfig) (json.RawMessage, error) {
 				return json.Marshal(map[string]string{
@@ -236,11 +237,15 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 	// "who called what" from the ledger regardless of
 	// registration state).
 	content, err := json.Marshal(map[string]any{
-		"kind":          "capability_invocation",
-		"capability":    capability,
-		"manifest_hash": resp["manifest_hash"],
-		"delegation_id": delegationID,
-		"input_bytes":   len(input),
+		"kind":                "capability_invocation",
+		"capability":          capability,
+		"manifest_hash":       resp["manifest_hash"],
+		"manifest_name":       resp["manifest_name"],
+		"manifest_version":    resp["manifest_version"],
+		"manifest_registered": resp["manifest_registered"],
+		"delegation_id":       delegationID,
+		"input_bytes":         len(input),
+		"deterministic":       resp["deterministic"],
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal invoke audit content: %w", err)

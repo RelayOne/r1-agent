@@ -1,0 +1,128 @@
+{
+  "name": "skill_execution_audit_log",
+  "version": "0.1.0",
+  "description": "Deterministic read-only audit summary for skill execution entries recorded in the local R1 ledger.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["ledger_dir"],
+    "properties": {
+      "ledger_dir": {
+        "type": "string",
+        "minLength": 1
+      },
+      "capability": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mission_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "created_by": {
+        "type": "string",
+        "minLength": 1
+      },
+      "since": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "until": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      },
+      "only_deterministic": {
+        "type": "boolean"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["query_slug", "mode", "summary", "ledger_dir", "matched_count", "filters", "capabilities", "executions", "followups"],
+    "properties": {
+      "query_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "summary": { "type": "string" },
+      "ledger_dir": { "type": "string" },
+      "matched_count": { "type": "integer" },
+      "filters": {
+        "type": "object",
+        "required": ["limit", "only_deterministic"],
+        "properties": {
+          "capability": { "type": "string" },
+          "mission_id": { "type": "string" },
+          "created_by": { "type": "string" },
+          "since": { "type": "string" },
+          "until": { "type": "string" },
+          "limit": { "type": "integer" },
+          "only_deterministic": { "type": "boolean" }
+        }
+      },
+      "capabilities": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["capability", "count"],
+          "properties": {
+            "capability": { "type": "string" },
+            "count": { "type": "integer" }
+          }
+        }
+      },
+      "executions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["node_id", "capability", "created_at", "created_by", "manifest_registered", "deterministic", "input_bytes"],
+          "properties": {
+            "node_id": { "type": "string" },
+            "capability": { "type": "string" },
+            "created_at": { "type": "string" },
+            "created_by": { "type": "string" },
+            "mission_id": { "type": "string" },
+            "manifest_hash": { "type": "string" },
+            "manifest_name": { "type": "string" },
+            "manifest_version": { "type": "string" },
+            "manifest_registered": { "type": "boolean" },
+            "deterministic": { "type": "boolean" },
+            "delegation_id": { "type": "string" },
+            "input_bytes": { "type": "integer" }
+          }
+        }
+      },
+      "followups": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  },
+  "whenToUse": [
+    "You need a structured audit trail of capability invocations already recorded in a local R1 ledger.",
+    "An operator wants to confirm which deterministic runtimes executed for a mission before exporting governance evidence.",
+    "You need manifest-registration context around skill executions without hand-querying ledger files."
+  ],
+  "whenNotToUse": [
+    "You need to append new audit nodes; use a write-capable ledger or MCP audit surface instead.",
+    "You only need metrics or spend snapshots; use metrics_collection_runtime for in-process telemetry.",
+    "The ledger path is remote or unavailable on disk; this runtime reads a local ledger directory only."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "skill-audit",
+    "runtime-audit",
+    "governance",
+    "ledger",
+    "deterministic-runtime"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}
