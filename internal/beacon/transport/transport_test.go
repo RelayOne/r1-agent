@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestHTTPRoundTrip(t *testing.T) {
@@ -54,7 +55,7 @@ func TestWebSocketRoundTrip(t *testing.T) {
 		if seen.Session != "sess-1" {
 			t.Fatalf("session = %q, want sess-1", seen.Session)
 		}
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not receive websocket envelope")
 	}
 }
