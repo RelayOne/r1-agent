@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "skill_id": "metrics_collection_runtime",
+  "skill_version": 1,
+  "description": "Collect a structured read-only snapshot of in-process R1 metrics.",
+  "authors": ["operator:codex"],
+  "lineage": {
+    "kind": "human",
+    "authored_at": "2026-04-30T00:00:00Z"
+  },
+  "schemas": {
+    "inputs": {
+      "type": "record",
+      "fields": {
+        "prefix": {
+          "type": "optional",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "kinds": {
+          "type": "optional",
+          "element_type": {
+            "type": "list",
+            "element_type": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "record",
+      "fields": {
+        "query_slug": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "filters": {
+          "type": "named",
+          "named_ref": "filters"
+        },
+        "counters": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "value_entry"
+          }
+        },
+        "gauges": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "value_entry"
+          }
+        },
+        "timers": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "timer_entry"
+          }
+        },
+        "costs": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "cost_entry"
+          }
+        },
+        "followups": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "named_types": {
+      "filters": {
+        "type": "record",
+        "fields": {
+          "prefix": {
+            "type": "optional",
+            "element_type": {
+              "type": "string"
+            }
+          },
+          "kinds": {
+            "type": "optional",
+            "element_type": {
+              "type": "list",
+              "element_type": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "value_entry": {
+        "type": "record",
+        "fields": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "int"
+          }
+        }
+      },
+      "timer_entry": {
+        "type": "record",
+        "fields": {
+          "name": {
+            "type": "string"
+          },
+          "count": {
+            "type": "int"
+          },
+          "total_ns": {
+            "type": "int"
+          },
+          "min_ns": {
+            "type": "int"
+          },
+          "max_ns": {
+            "type": "int"
+          },
+          "avg_ns": {
+            "type": "int"
+          }
+        }
+      },
+      "cost_entry": {
+        "type": "record",
+        "fields": {
+          "name": {
+            "type": "string"
+          },
+          "total_usd": {
+            "type": "float"
+          },
+          "count": {
+            "type": "int"
+          }
+        }
+      }
+    }
+  },
+  "graph": {
+    "nodes": {
+      "runtime": {
+        "kind": "pure_fn",
+        "config": {
+          "registry_ref": "r1:metrics_collection_runtime",
+          "input": {
+            "kind": "ref",
+            "ref": "inputs"
+          }
+        }
+      }
+    },
+    "return": {
+      "kind": "ref",
+      "ref": "runtime"
+    }
+  }
+}
