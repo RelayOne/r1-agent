@@ -23,7 +23,7 @@
 
 - Parity-to-superiority execution wave.
 - Deterministic-skills adoption across more execution and packaging surfaces.
-- Beacon trust validation plus notify and offline-review follow-ons from open PRs #46 and #47.
+- Beacon trust validation plus notify and offline-review primitives.
 
 ### Scoped
 
@@ -54,8 +54,8 @@
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
 | Antigravity converter | External artifact formats can be converted into the R1 artifact model without ad hoc glue scripts. | Done | PR #37, commit `e8608b1`. |
 | Plan approval ledger nodes | `stoke plan --approve` now emits explicit plan and approval nodes into the governance graph. | Done | PR #37, commit `e8608b1`. |
-| Beacon trust validation layer | Inbound beacon traffic can be checked against pinned roots, nonce replay defense, and signal-frame validation before it is trusted. | In Progress | Open PR #46. |
-| Beacon review and notify primitives | Offline review envelopes and beacon-targeted notify metadata complete the first practical handoff surfaces around the beacon lane. | In Progress | Open PR #47. |
+| Beacon trust validation layer | Inbound beacon traffic is checked against pinned roots, signed signal frames, freshness windows, nonce replay defense, and hardcoded signal kinds before it is trusted. | Done | PR #46, commit `35d4fc7`. |
+| Beacon review and notify primitives | Offline review envelopes and beacon-targeted notify metadata complete the first practical handoff surfaces around the beacon lane. | Done | PR #47, commit `10f00cf`. |
 
 ### Potential-On Horizon
 

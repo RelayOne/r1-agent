@@ -16,7 +16,7 @@ Status snapshot:
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
-- In Progress: beacon trust validation and the follow-on notify or offline-review primitives tracked in open PRs.
+- Done: beacon trust validation plus notify and offline-review primitives.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
 - Potential-On Horizon: portfolio-wide deterministic skill exchange.
@@ -56,12 +56,16 @@ The April 2026 train extended R1 from a CLI orchestrator into a
 parity-or-better reference runtime alongside Claude Code, Cursor, and
 Manus. Recent merges to `main`:
 
-- **Beacon protocol foundation** —
+- **Beacon protocol foundation + trust/review follow-through** —
   the shipped beacon scope now covers identity material, pairing claims
   plus short-auth-string confirmation, session state, token handling,
-  and ledger-native beacon records. At the product level, that gives R1
-  a governed protocol lane for identity and session establishment
-  instead of leaving those concerns as operator glue. Evidence: PR #45.
+  ledger-native beacon records, pinned-root trust validation, signed
+  signal frames, freshness and nonce replay checks, ledger-native trust
+  nodes, offline review envelopes, and beacon-aware notify metadata. At
+  the product level, that gives R1 a governed protocol lane for
+  identity, session establishment, trust signaling, and deferred review
+  instead of leaving those concerns as operator glue. Evidence: PRs
+  #45, #46, and #47.
 
 - **Wave C wizard ledger + deterministic registry** —
   `stoke wizard run|migrate|query|register` now extends all the way to

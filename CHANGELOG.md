@@ -13,10 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`,
   and `docs/BUSINESS-VALUE.md` so the canonical product docs now treat
-  the beacon protocol foundation (identity, pairing, session, token,
-  ledger records) as shipped scope from PR #45, while correctly leaving
-  the trust-layer and missing-primitives follow-ons in open PRs #46 and
-  #47.
+  the full shipped beacon scope from PRs #45-#47 as merged baseline:
+  identity, pairing, session, token, ledger records, pinned-root trust
+  validation, signed signal frames, nonce replay defense, offline
+  review envelopes, and beacon-aware notify metadata.
 - Folded Wave C wizard ledger persistence plus deterministic registry
   install into the top-level narrative so the wizard flow is documented
   as durable and queryable rather than just an authoring UI.
