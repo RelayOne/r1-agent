@@ -21,7 +21,7 @@ Status snapshot:
 - Done: Wave C wizard ledger persistence and deterministic registry install path.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
-- In Progress: beacon trust validation and the deferred review or notify follow-ons.
+- Done: beacon trust validation plus deferred review and notify primitives.
 - Scoped: broader operator-facing skill surfaces.
 - Scoping: publication and packaging improvements.
 - Potential-On Horizon: portfolio-wide skill interchange.
@@ -76,9 +76,10 @@ coordination around the core mission loop:
    session state, and mint or exchange token-shaped authorization data.
 The important product shift is not just "more protocol code." R1 now
 has a plausible peer or hub story for identity and governed session
-setup that fits the same runtime thesis as the rest of the system. The
-trust-validation and deferred-review follow-ons are tracked separately
-in open PRs #46 and #47 rather than treated as shipped.
+setup that fits the same runtime thesis as the rest of the system.
+Beacon trust validation, deferred review envelopes, and beacon-aware
+notify metadata are part of the shipped baseline rather than follow-on
+placeholders.
 
 ## Wave D (2026-04-30) — Expansion Surfaces
 

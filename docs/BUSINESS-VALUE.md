@@ -18,7 +18,7 @@ Status snapshot:
 - Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
 - Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
-- In Progress: beacon trust validation plus deferred notify or offline-review follow-ons.
+- Done: beacon trust validation plus deferred notify and offline-review primitives.
 - Scoped: more productized skill packaging.
 - Scoping: broader outward-facing proof points.
 - Potential-On Horizon: network effects from shared deterministic skills.
@@ -148,9 +148,10 @@ Why buyers should care:
    cross-instance or hub-style coordination without abandoning R1's
    governance posture.
 
-The trust-validation and deferred-review layers are still in flight in
-open PRs #46 and #47. They matter commercially, but they are not part
-of the shipped baseline yet.
+The trust-validation and deferred-review layers are now shipped in PRs
+#46 and #47. That matters commercially because the beacon story moved
+from "promising foundation" to "governed coordination surface with
+actual trust checks and handoff artifacts."
 
 ## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
 
