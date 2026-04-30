@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -42,7 +43,7 @@ type betBuddiesGroupRuntimeOutput struct {
 	ApprovalRules       []betBuddiesGroupApprovalRule `json:"approval_rules"`
 }
 
-func betBuddiesGroupRuntime(input json.RawMessage) (json.RawMessage, error) {
+func betBuddiesGroupRuntime(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 	var req betBuddiesGroupRuntimeInput
 	if len(input) > 0 && string(input) != "null" {
 		if err := json.Unmarshal(input, &req); err != nil {
@@ -167,7 +168,7 @@ type dentistOutreachRuntimeOutput struct {
 	ApprovalRules       []dentistOutreachApprovalRule `json:"approval_rules"`
 }
 
-func dentistOutreachRuntime(input json.RawMessage) (json.RawMessage, error) {
+func dentistOutreachRuntime(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 	var req dentistOutreachRuntimeInput
 	if len(input) > 0 && string(input) != "null" {
 		if err := json.Unmarshal(input, &req); err != nil {
@@ -275,7 +276,7 @@ type invoiceProcessorRuntimeOutput struct {
 	ApprovalRules       []invoiceProcessorApprovalRule `json:"approval_rules"`
 }
 
-func invoiceProcessorRuntime(input json.RawMessage) (json.RawMessage, error) {
+func invoiceProcessorRuntime(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 	var req invoiceProcessorRuntimeInput
 	if len(input) > 0 && string(input) != "null" {
 		if err := json.Unmarshal(input, &req); err != nil {
