@@ -45,7 +45,7 @@ func TestRunPureFn(t *testing.T) {
 	}
 	rt := &Runtime{
 		PureFuncs: map[string]PureFunc{
-			"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
+			"stdlib:echo": func(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 				out, err := json.Marshal(map[string]string{"msg": string(input[1 : len(input)-1])})
 				return out, err
 			},
