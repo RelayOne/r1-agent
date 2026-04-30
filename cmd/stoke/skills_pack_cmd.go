@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,6 +30,22 @@ type skillPackUninstallResult struct {
 	LegacyLinkPath    string
 	RemovedCount      int
 	RemovedPaths      []string
+}
+
+type skillPackUpdateResult struct {
+	PackName      string
+	UpdatedCount  int
+	UpdatedPacks  []skillPackUpdateEntry
+	PulledGitDirs []string
+}
+
+type skillPackUpdateEntry struct {
+	PackName          string
+	SourcePath        string
+	GitRoot           string
+	PullStatus        string
+	CanonicalLinkPath string
+	LegacyLinkPath    string
 }
 
 type skillPackListResult struct {
@@ -61,7 +78,7 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|list|uninstall")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|list|uninstall|update")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -71,6 +88,8 @@ func skillsPackCmd(args []string) {
 		runSkillsPackListCmd(args[1:])
 	case "uninstall":
 		runSkillsPackUninstallCmd(args[1:])
+	case "update":
+		runSkillsPackUpdateCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "skills pack: unknown subcommand %q\n", args[0])
 		os.Exit(2)
@@ -108,6 +127,31 @@ func runSkillsPackUninstallCmd(args []string) {
 		result.CanonicalLinkPath,
 		result.LegacyLinkPath,
 	)
+}
+
+func runSkillsPackUpdateCmd(args []string) {
+	repoRoot, packName := parseSkillPackArgs("skills pack update", args)
+	result, err := updateSkillPack(repoRoot, packName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack update: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "pack: %s\nupdated: %d\npulled_git_dirs: %s\n",
+		result.PackName,
+		result.UpdatedCount,
+		strings.Join(result.PulledGitDirs, ","),
+	)
+	for _, pack := range result.UpdatedPacks {
+		fmt.Fprintf(os.Stdout,
+			"updated_pack: %s\nsource: %s\ngit_root: %s\npull_status: %s\ncanonical_link: %s\nlegacy_link: %s\n",
+			pack.PackName,
+			pack.SourcePath,
+			pack.GitRoot,
+			pack.PullStatus,
+			pack.CanonicalLinkPath,
+			pack.LegacyLinkPath,
+		)
+	}
 }
 
 func runSkillsPackListCmd(args []string) {
@@ -220,6 +264,43 @@ func uninstallSkillPack(repoRoot, packName string) (*skillPackUninstallResult, e
 	}, nil
 }
 
+func updateSkillPack(repoRoot, packName string) (*skillPackUpdateResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	updated := make(map[string]skillPackUpdateEntry)
+	gitRefresh := make(map[string]skillPackRefreshState)
+	if err := updateSkillPackRecursive(repoAbs, packName, updated, gitRefresh, nil); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(updated))
+	for name := range updated {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	rows := make([]skillPackUpdateEntry, 0, len(names))
+	for _, name := range names {
+		rows = append(rows, updated[name])
+	}
+	pulledGitDirs := make([]string, 0, len(gitRefresh))
+	for gitRoot, state := range gitRefresh {
+		if state.PullStatus == skillPackPullStatusPulled {
+			pulledGitDirs = append(pulledGitDirs, gitRoot)
+		}
+	}
+	sort.Strings(pulledGitDirs)
+	return &skillPackUpdateResult{
+		PackName:      packName,
+		UpdatedCount:  len(rows),
+		UpdatedPacks:  rows,
+		PulledGitDirs: pulledGitDirs,
+	}, nil
+}
+
 func listInstalledSkillPacks(repoRoot string) (*skillPackListResult, error) {
 	repoAbs, err := filepath.Abs(repoRoot)
 	if err != nil {
@@ -275,6 +356,18 @@ func skillPackCandidates(repoRoot, packName string) []string {
 	return candidates
 }
 
+const (
+	skillPackPullStatusPulled            = "pulled"
+	skillPackPullStatusSkippedNoGit      = "skipped_no_git"
+	skillPackPullStatusSkippedNoUpstream = "skipped_no_upstream"
+	skillPackPullStatusSkippedRepoLocal  = "skipped_repo_local"
+)
+
+type skillPackRefreshState struct {
+	GitRoot    string
+	PullStatus string
+}
+
 func installSkillPackRecursive(repoRoot, packName string, installed map[string]string, stack []string) error {
 	if _, ok := installed[packName]; ok {
 		return nil
@@ -308,6 +401,53 @@ func installSkillPackRecursive(repoRoot, packName string, installed map[string]s
 		return err
 	}
 	installed[pack.Meta.Name] = sourcePath
+	return nil
+}
+
+func updateSkillPackRecursive(repoRoot, packName string, updated map[string]skillPackUpdateEntry, gitRefresh map[string]skillPackRefreshState, stack []string) error {
+	if _, ok := updated[packName]; ok {
+		return nil
+	}
+	for _, active := range stack {
+		if active == packName {
+			cycle := append(append([]string{}, stack...), packName)
+			return fmt.Errorf("skill pack dependency cycle: %s", strings.Join(cycle, " -> "))
+		}
+	}
+	sourcePath, err := resolveInstalledOrSourceSkillPack(repoRoot, packName)
+	if err != nil {
+		return err
+	}
+	refreshState, err := refreshSkillPackSource(repoRoot, sourcePath, gitRefresh)
+	if err != nil {
+		return err
+	}
+	pack, err := skillmfr.LoadPack(sourcePath)
+	if err != nil {
+		return err
+	}
+	stack = append(stack, packName)
+	for _, dependency := range pack.Meta.Dependencies {
+		if err := updateSkillPackRecursive(repoRoot, dependency, updated, gitRefresh, stack); err != nil {
+			return fmt.Errorf("update dependency %q for pack %q: %w", dependency, packName, err)
+		}
+	}
+	canonicalLink := filepath.Join(repoRoot, r1dir.Canonical, "skills", pack.Meta.Name)
+	legacyLink := filepath.Join(repoRoot, r1dir.Legacy, "skills", pack.Meta.Name)
+	if err := ensureSkillPackLink(canonicalLink, sourcePath); err != nil {
+		return err
+	}
+	if err := ensureSkillPackLink(legacyLink, sourcePath); err != nil {
+		return err
+	}
+	updated[pack.Meta.Name] = skillPackUpdateEntry{
+		PackName:          pack.Meta.Name,
+		SourcePath:        sourcePath,
+		GitRoot:           refreshState.GitRoot,
+		PullStatus:        refreshState.PullStatus,
+		CanonicalLinkPath: canonicalLink,
+		LegacyLinkPath:    legacyLink,
+	}
 	return nil
 }
 
@@ -354,6 +494,124 @@ func removableSkillPackLink(linkPath string) (bool, error) {
 		return false, fmt.Errorf("target %q exists and is not a symlink", linkPath)
 	}
 	return true, nil
+}
+
+func resolveInstalledOrSourceSkillPack(repoRoot, packName string) (string, error) {
+	installedSource, installed, err := resolveInstalledSkillPackSource(repoRoot, packName)
+	if err != nil {
+		return "", err
+	}
+	if installed {
+		return installedSource, nil
+	}
+	return resolveSkillPackSource(repoRoot, packName)
+}
+
+func resolveInstalledSkillPackSource(repoRoot, packName string) (string, bool, error) {
+	linkPaths := []string{
+		filepath.Join(repoRoot, r1dir.Canonical, "skills", packName),
+		filepath.Join(repoRoot, r1dir.Legacy, "skills", packName),
+	}
+	var sourcePath string
+	found := false
+	for _, linkPath := range linkPaths {
+		foundPack, resolvedSource, ok, err := readInstalledSkillPackLink(linkPath)
+		if err != nil {
+			return "", false, err
+		}
+		if !ok {
+			continue
+		}
+		if foundPack != packName {
+			return "", false, fmt.Errorf("pack link %q resolved to %q, want %q", linkPath, foundPack, packName)
+		}
+		if !found {
+			sourcePath = resolvedSource
+			found = true
+			continue
+		}
+		if sourcePath != resolvedSource {
+			return "", false, fmt.Errorf("installed pack %q points to multiple sources: %q and %q", packName, sourcePath, resolvedSource)
+		}
+	}
+	return sourcePath, found, nil
+}
+
+func refreshSkillPackSource(repoRoot, sourcePath string, gitRefresh map[string]skillPackRefreshState) (skillPackRefreshState, error) {
+	if pathWithin(repoRoot, sourcePath) {
+		return skillPackRefreshState{PullStatus: skillPackPullStatusSkippedRepoLocal}, nil
+	}
+	gitRoot, ok, err := gitTopLevel(sourcePath)
+	if err != nil {
+		return skillPackRefreshState{}, err
+	}
+	if !ok {
+		return skillPackRefreshState{PullStatus: skillPackPullStatusSkippedNoGit}, nil
+	}
+	if state, ok := gitRefresh[gitRoot]; ok {
+		return state, nil
+	}
+	if pathWithin(repoRoot, gitRoot) {
+		state := skillPackRefreshState{GitRoot: gitRoot, PullStatus: skillPackPullStatusSkippedRepoLocal}
+		gitRefresh[gitRoot] = state
+		return state, nil
+	}
+	upstreamConfigured, err := gitHasUpstream(gitRoot)
+	if err != nil {
+		return skillPackRefreshState{}, err
+	}
+	if !upstreamConfigured {
+		state := skillPackRefreshState{GitRoot: gitRoot, PullStatus: skillPackPullStatusSkippedNoUpstream}
+		gitRefresh[gitRoot] = state
+		return state, nil
+	}
+	cmd := exec.Command("git", "-C", gitRoot, "pull", "--ff-only")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return skillPackRefreshState{}, fmt.Errorf("git pull --ff-only in %q: %w: %s", gitRoot, err, strings.TrimSpace(string(out)))
+	}
+	state := skillPackRefreshState{GitRoot: gitRoot, PullStatus: skillPackPullStatusPulled}
+	gitRefresh[gitRoot] = state
+	return state, nil
+}
+
+func gitTopLevel(dir string) (string, bool, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		text := string(out)
+		if strings.Contains(text, "not a git repository") {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("git rev-parse --show-toplevel in %q: %w: %s", dir, err, strings.TrimSpace(text))
+	}
+	return strings.TrimSpace(string(out)), true, nil
+}
+
+func gitHasUpstream(dir string) (bool, error) {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		text := string(out)
+		if strings.Contains(text, "no upstream configured") || strings.Contains(text, "no upstream") {
+			return false, nil
+		}
+		return false, fmt.Errorf("git rev-parse @{upstream} in %q: %w: %s", dir, err, strings.TrimSpace(text))
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+func pathWithin(root, target string) bool {
+	rootClean := filepath.Clean(root)
+	targetClean := filepath.Clean(target)
+	rel, err := filepath.Rel(rootClean, targetClean)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func collectInstalledSkillPacks(skillRoot string, canonical bool, packs map[string]skillPackListEntry) error {

@@ -19,7 +19,7 @@ Status snapshot:
 - Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
 - Done: IR-hash-scoped deterministic replay cache keys so replay and cost attribution stay tied to the exact compiled skill/input pair.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
-- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, and `stoke skills pack list` now reports installed packs from the dual `.r1` / `.stoke` view.
+- Done: PR #67 adds bundled pack install, PR #68 extends it to recursive composition across repo and user skill libraries, and `stoke skills pack list` / `update` now audit and refresh installed packs from the dual `.r1` / `.stoke` view.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Done: beacon trust validation plus notify and offline-review primitives.
@@ -50,7 +50,7 @@ the first cohesive beacon runtime:
   operator baseline uses the same status language for parity,
   deterministic skills, beacon follow-through, and replay-safe
   reporting.
-- **Bundled pack install, list, and recursive composition are now on `main`**
+- **Bundled pack install, list, update, and recursive composition are now on `main`**
   via the recent skills-pack merge train, so deterministic skills have
   a concrete operator packaging path instead of staying a registry-only
   story.
@@ -376,6 +376,7 @@ the same `internal/` packages.
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
 | `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
 | `stoke skills pack list` | List installed skill packs by merging canonical `.r1/skills/*` and legacy `.stoke/skills/*` links into one operator-facing view |
+| `stoke skills pack update` | Refresh an installed pack from its current source, `git pull --ff-only` for external pack repos, and re-link any newly declared dependencies without mutating repo-local bundled packs |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
 | `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |

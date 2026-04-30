@@ -2,10 +2,13 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/skillmfr"
 )
 
 func TestInstallSkillPackCreatesDualLinks(t *testing.T) {
@@ -360,6 +363,117 @@ func TestUninstallSkillPackRejectsNonSymlinkTargets(t *testing.T) {
 	}
 }
 
+func TestUpdateSkillPackSkipsRepoLocalGitPullAndRelinksDependencies(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "base-pack"), "base-pack", nil)
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "app-pack"), "app-pack", []string{"base-pack"})
+
+	result, err := updateSkillPack(repo, "app-pack")
+	if err != nil {
+		t.Fatalf("updateSkillPack() error = %v", err)
+	}
+	if result.UpdatedCount != 2 {
+		t.Fatalf("UpdatedCount = %d, want 2", result.UpdatedCount)
+	}
+	if len(result.PulledGitDirs) != 0 {
+		t.Fatalf("PulledGitDirs = %v, want empty", result.PulledGitDirs)
+	}
+	for _, pack := range result.UpdatedPacks {
+		if pack.PullStatus != skillPackPullStatusSkippedRepoLocal {
+			t.Fatalf("PullStatus(%s) = %q, want %q", pack.PackName, pack.PullStatus, skillPackPullStatusSkippedRepoLocal)
+		}
+		for _, linkPath := range []string{pack.CanonicalLinkPath, pack.LegacyLinkPath} {
+			resolved, err := filepath.EvalSymlinks(linkPath)
+			if err != nil {
+				t.Fatalf("EvalSymlinks(%q): %v", linkPath, err)
+			}
+			want := filepath.Join(repo, ".r1", "skills", "packs", pack.PackName)
+			if resolved != want {
+				t.Fatalf("EvalSymlinks(%q) = %q, want %q", linkPath, resolved, want)
+			}
+		}
+	}
+}
+
+func TestUpdateSkillPackPullsExternalGitSourceAndInstallsNewDependency(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	remote := filepath.Join(t.TempDir(), "shared-pack.git")
+	runGit(t, filepath.Dir(remote), "init", "--bare", remote)
+
+	author := filepath.Join(t.TempDir(), "author")
+	runGit(t, filepath.Dir(author), "clone", remote, author)
+	runGit(t, author, "config", "user.name", "Test User")
+	runGit(t, author, "config", "user.email", "test@example.com")
+	writePackFixture(t, author, "shared-pack", nil)
+	runGit(t, author, "add", ".")
+	runGit(t, author, "commit", "-m", "seed pack")
+	runGit(t, author, "push", "-u", "origin", "HEAD")
+
+	basePackDir := filepath.Join(home, ".r1", "skills", "packs", "base-pack")
+	writePackFixture(t, basePackDir, "base-pack", nil)
+
+	localPackDir := filepath.Join(home, ".r1", "skills", "packs", "shared-pack")
+	runGit(t, filepath.Dir(localPackDir), "clone", remote, localPackDir)
+
+	if _, err := installSkillPack(repo, "shared-pack"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+
+	writePackFixture(t, author, "shared-pack", []string{"base-pack"})
+	runGit(t, author, "add", ".")
+	runGit(t, author, "commit", "-m", "add dependency")
+	runGit(t, author, "push")
+
+	result, err := updateSkillPack(repo, "shared-pack")
+	if err != nil {
+		t.Fatalf("updateSkillPack() error = %v", err)
+	}
+	if result.UpdatedCount != 2 {
+		t.Fatalf("UpdatedCount = %d, want 2", result.UpdatedCount)
+	}
+	if !reflect.DeepEqual(result.PulledGitDirs, []string{localPackDir}) {
+		t.Fatalf("PulledGitDirs = %v, want [%s]", result.PulledGitDirs, localPackDir)
+	}
+
+	shared := updatedPackEntry(t, result, "shared-pack")
+	if shared.PullStatus != skillPackPullStatusPulled {
+		t.Fatalf("shared-pack PullStatus = %q, want %q", shared.PullStatus, skillPackPullStatusPulled)
+	}
+	if shared.GitRoot != localPackDir {
+		t.Fatalf("shared-pack GitRoot = %q, want %q", shared.GitRoot, localPackDir)
+	}
+	base := updatedPackEntry(t, result, "base-pack")
+	if base.PullStatus != skillPackPullStatusSkippedRepoLocal && base.PullStatus != skillPackPullStatusSkippedNoGit {
+		t.Fatalf("base-pack PullStatus = %q, want repo-local or no-git skip", base.PullStatus)
+	}
+
+	updatedPack, err := skillmfr.LoadPack(localPackDir)
+	if err != nil {
+		t.Fatalf("skillPackMetadata(localPackDir): %v", err)
+	}
+	if !reflect.DeepEqual(updatedPack.Meta.Dependencies, []string{"base-pack"}) {
+		t.Fatalf("Dependencies = %v, want [base-pack]", updatedPack.Meta.Dependencies)
+	}
+
+	for _, linkPath := range []string{
+		filepath.Join(repo, ".r1", "skills", "base-pack"),
+		filepath.Join(repo, ".stoke", "skills", "base-pack"),
+	} {
+		resolved, err := filepath.EvalSymlinks(linkPath)
+		if err != nil {
+			t.Fatalf("EvalSymlinks(%q): %v", linkPath, err)
+		}
+		if resolved != basePackDir {
+			t.Fatalf("EvalSymlinks(%q) = %q, want %q", linkPath, resolved, basePackDir)
+		}
+	}
+}
+
 func writePackFixture(t *testing.T, packDir, name string, dependencies []string) {
 	t.Helper()
 
@@ -389,5 +503,28 @@ func writePackFixture(t *testing.T, packDir, name string, dependencies []string)
 }`
 	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+}
+
+func updatedPackEntry(t *testing.T, result *skillPackUpdateResult, packName string) skillPackUpdateEntry {
+	t.Helper()
+
+	for _, entry := range result.UpdatedPacks {
+		if entry.PackName == packName {
+			return entry
+		}
+	}
+	t.Fatalf("updated pack %q not found in %#v", packName, result.UpdatedPacks)
+	return skillPackUpdateEntry{}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s (dir=%q): %v\n%s", strings.Join(args, " "), dir, err, string(out))
 	}
 }
