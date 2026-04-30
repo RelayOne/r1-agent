@@ -207,8 +207,9 @@ stoke scan --security
 r1-skill-compile --check ./skills/deterministic-echo/skill.r1.json
 
 # Start or migrate a skill through the wizard flow
-stoke wizard run
-stoke wizard migrate --from markdown --path ./docs/runbook.md
+stoke wizard run --ledger-dir ./.r1/ledger --mission-id demo-skill-authoring
+stoke wizard migrate --source-dir ./legacy-skills --source-format openapi --output-dir ./out
+stoke wizard register --skill ./out/demo-skill.r1.json --proof ./out/demo-skill.proof.json
 
 # Inspect stored artifacts such as compile proofs or approvals
 stoke artifact list
@@ -281,7 +282,7 @@ the same `internal/` packages.
 | `stoke repair` | Auto-fix common configuration issues |
 | `stoke doctor` | Tool dependency check across the 5-provider fallback chain |
 | `stoke version` | Version info (ldflags-populated) |
-| `stoke wizard` | Guided skill authoring, migration, and inspection (`run`, `migrate`, `query`) |
+| `stoke wizard` | Guided skill authoring, migration, registration, and inspection (`run`, `migrate`, `register`, `query`) |
 | `stoke artifact` | Artifact storage inspection, import/export, and replay helpers |
 
 ### Specialized CLIs
@@ -291,7 +292,8 @@ the same `internal/` packages.
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
-| `stoke wizard query` | Inspect wizard outputs, migrations, and prior decisions |
+| `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |
+| `stoke wizard query` | Inspect wizard outputs, migrations, prior decisions, or ledger-backed authoring sessions |
 | `stoke artifact` | Inspect, store, import, and export artifacts such as compile proofs and plan approvals |
 
 ### Build flags
