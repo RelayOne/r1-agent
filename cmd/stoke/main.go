@@ -746,8 +746,10 @@ func main() {
 		mcpServeCmd(os.Args[2:])
 	case "mcp-serve-stoke":
 		mcpServeStokeCmd(os.Args[2:])
-	case "init", "wizard":
+	case "init":
 		initCmd(os.Args[2:])
+	case "wizard":
+		skillWizardCmd(os.Args[2:])
 	case "task-stats", "stats":
 		taskStatsCmd(os.Args[2:])
 	case "research":

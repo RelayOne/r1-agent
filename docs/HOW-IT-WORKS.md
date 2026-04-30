@@ -391,3 +391,14 @@ can opt into full trace correlation.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
+## Deterministic Skill Wizard
+
+`stoke wizard` now targets deterministic skill authoring rather than bootstrap config.
+The command can:
+
+- convert a single source artifact into canonical `*.r1.json` IR
+- emit an analyzer proof beside the IR
+- record question/answer provenance in `*.decisions.json`
+- bulk-migrate a directory of markdown, OpenAPI, Zapier, or Codex TOML inputs
+
+`stoke init` remains the project bootstrap entrypoint.

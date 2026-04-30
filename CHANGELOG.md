@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### Skill wizard operator on-ramp
+
+- Reassigned `stoke wizard` to the deterministic-skill authoring surface while preserving the bootstrap flow under `stoke init`.
+- Added `internal/r1skill/wizard` for decision logs, question packs, source adapters, and session-to-IR generation.
+- Added the `ask_user` primitive in `internal/r1skill/interp/nodes` and wired it into the analyzer/interpreter.
+- Added the `skill_authoring_decisions` ledger node and `stoke wizard run|migrate|query` command handlers.
+- Added first-pass tests for wizard decisions, adapters, `ask_user`, and headless source conversion.
+
 #### Deterministic skills substrate (R1 deterministic-skills phase 1/2)
 
 - Added `internal/r1skill/ir` and `internal/r1skill/analyze` from the

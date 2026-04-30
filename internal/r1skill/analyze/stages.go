@@ -108,6 +108,7 @@ var knownNodeKinds = map[string]bool{
 	"assert":          true,
 	"emit_artifact":   true,
 	"emit_annotation": true,
+	"ask_user":        true,
 }
 
 // Stage 3: capability conformance. For each effect-producing node,
