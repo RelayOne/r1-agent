@@ -19,6 +19,12 @@ var allExpectedTypes = []string{
 	"branch_completion_proposal", "branch_completion_agreement", "branch_completion_dissent",
 	"sdm_advisory",
 	"memory_stored", "memory_recalled",
+	"artifact", "artifact_annotation",
+	"beacon_claim", "beacon_device_attached", "beacon_device_revoked",
+	"beacon_session_opened", "beacon_session_closed",
+	"beacon_token_issued", "beacon_token_used", "beacon_token_revoked",
+	"beacon_delegate_created", "beacon_command", "beacon_command_result",
+	"beacon_federation_handshake",
 }
 
 func TestAllTypesRegistered(t *testing.T) {
@@ -93,6 +99,20 @@ func TestNodeTyperInterface(t *testing.T) {
 	var _ NodeTyper = &SDMAdvisory{}
 	var _ NodeTyper = &MemoryStored{}
 	var _ NodeTyper = &MemoryRecalled{}
+	var _ NodeTyper = &Artifact{}
+	var _ NodeTyper = &ArtifactAnnotation{}
+	var _ NodeTyper = &BeaconClaim{}
+	var _ NodeTyper = &BeaconDeviceAttached{}
+	var _ NodeTyper = &BeaconDeviceRevoked{}
+	var _ NodeTyper = &BeaconSessionOpened{}
+	var _ NodeTyper = &BeaconSessionClosed{}
+	var _ NodeTyper = &BeaconTokenIssued{}
+	var _ NodeTyper = &BeaconTokenUsed{}
+	var _ NodeTyper = &BeaconTokenRevoked{}
+	var _ NodeTyper = &BeaconDelegateCreated{}
+	var _ NodeTyper = &BeaconCommand{}
+	var _ NodeTyper = &BeaconCommandResult{}
+	var _ NodeTyper = &BeaconFederationHandshake{}
 }
 
 // TestValidateRejectsEmpty verifies that every type's Validate rejects a zero-value instance.
