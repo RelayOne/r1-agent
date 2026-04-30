@@ -19,10 +19,11 @@ Status snapshot:
 - Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
 - Done: IR-hash-scoped deterministic replay cache keys so replay and cost attribution stay tied to the exact compiled skill/input pair.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
+- Done: PR #67 adds bundled pack install, and PR #68 extends it to recursive composition across repo and user skill libraries.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Done: beacon trust validation plus notify and offline-review primitives.
-- Scoped: broader skill-pack composition and operator-facing packaging.
+- Scoped: broader operator-facing packaging beyond the shipped pack installer and recursive composition path.
 - Scoping: more explicit superiority claims and publishing surfaces.
 - Potential-On Horizon: portfolio-wide deterministic skill exchange.
 
@@ -49,6 +50,9 @@ the first cohesive beacon runtime:
   operator baseline uses the same status language for parity,
   deterministic skills, beacon follow-through, and replay-safe
   reporting.
+- **Bundled pack install and recursive composition are now on `main`**
+  via PRs `#67` and `#68`, so deterministic skills have a concrete
+  operator packaging path instead of staying a registry-only story.
 - **Beacon transport + runtime bridge are now on `main`** via PR `#54`,
   adding real beacon HTTP/WebSocket envelopes plus a runtime bridge
   that reuses trust dispatch, session approvals, notifications,
@@ -369,7 +373,7 @@ the same `internal/` packages.
 | Binary / Command | Purpose |
 |---------|---------|
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
-| `stoke skills pack install` / `uninstall` | Activate or remove a bundled skill pack such as `actium-studio` in the project skill directory; install also resolves transitive pack dependencies from repo or user skill libraries |
+| `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
 | `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |
