@@ -105,6 +105,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 				"cloudswarm:betbuddies_group_runtime":  betBuddiesGroupRuntime,
 				"cloudswarm:dentist_outreach_runtime":  dentistOutreachRuntime,
 				"cloudswarm:invoice_processor_runtime": invoiceProcessorRuntime,
+				"r1:ledger_audit_query_runtime":        ledgerAuditQueryRuntime,
 			},
 			LLM: func(_ context.Context, cfg interp.LLMCallConfig) (json.RawMessage, error) {
 				return json.Marshal(map[string]string{
