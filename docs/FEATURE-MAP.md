@@ -382,3 +382,20 @@ Homebrew publishing, cosign keyless OIDC signing.
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
 | Deterministic skill wizard | `stoke wizard run|migrate|register|query` with decision ledger, registry install, and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |
+
+---
+
+## Cycle 29 Status Refresh
+
+### Done
+
+- Deterministic skills moved from a partial import path to a fuller pack lane on trunk: PR #67 (`fc55a0d`) bundled installer, PR #68 (`bf45191`) recursive install, PR #69 (`4a19231`) uninstall, and PR #71 (`92b6f47`) list.
+- PR #70 (`d15bee8`) refreshed docs for the first half of that work; this cycle updates the feature map so the shipped surface also includes uninstall and list.
+
+### In Progress
+
+- Pack-management ergonomics are still improving around the deterministic lane.
+
+### Scoped
+
+- Publish/update flows for skill packs remain scoped beyond the current install/list/uninstall feature set.

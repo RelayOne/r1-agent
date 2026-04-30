@@ -844,3 +844,20 @@ cryptographic ledger, memory-bus scopes) surface as first-class panels.
 ## License
 
 MIT.
+
+---
+
+## Docs Refresh Cycle 29
+
+### Done
+
+- PR #67 (`fc55a0d`) shipped the bundled skill-pack installer, PR #68 (`bf45191`) added recursive pack install, PR #69 (`4a19231`) added pack uninstall, and PR #71 (`92b6f47`) added pack list. Together they establish the deterministic skills lane as a real shipped operator path instead of a partial prototype.
+- PR #70 (`d15bee8`) already refreshed the docs for PRs #67-68; this cycle carries that forward so the canonical docs also reflect PRs #69 and #71 now on `main`.
+
+### In Progress
+
+- The skills lane is still widening around pack lifecycle ergonomics and publishing flow, but install, list, and uninstall are already live on trunk.
+
+### Scoped
+
+- The next step is the broader skill-pack management surface beyond the current deterministic install/list/uninstall baseline.

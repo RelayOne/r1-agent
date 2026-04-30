@@ -608,3 +608,20 @@ The command can:
 - bulk-migrate a directory of markdown, OpenAPI, Zapier, or Codex TOML inputs
 
 `stoke init` remains the project bootstrap entrypoint.
+
+---
+
+## Cycle 29 Refresh
+
+## Done
+
+- The deterministic skill flow now covers the practical pack lifecycle on trunk: install from bundled packs (PR #67, `fc55a0d`), recursive dependency install (PR #68, `bf45191`), uninstall (PR #69, `4a19231`), and list (PR #71, `92b6f47`).
+- PR #70 (`d15bee8`) moved the first half of that lane into the docs, and this refresh carries the operator story through the newer uninstall and list commands.
+
+## In Progress
+
+- Pack-management polish is still active, but operators already have a deterministic shipped path for bringing skills in, inspecting them, and removing them.
+
+## Scoped
+
+- Broader pack publishing and update workflows remain scoped beyond the current command set.
