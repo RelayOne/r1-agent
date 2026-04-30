@@ -1,0 +1,43 @@
+{
+  "skill_id": "deterministic-echo",
+  "skill_version": 1,
+  "ir_hash": "sha256:7cb8828652675fa7e852dc718e4ec84b00bf6756e1525820c3039fd66dfa7c5b",
+  "analyzer_version": "1.0.0",
+  "constitution_hash": "sha256:local-dev",
+  "checks": [
+    {
+      "stage": "schema",
+      "passed": true
+    },
+    {
+      "stage": "type",
+      "passed": true
+    },
+    {
+      "stage": "capability",
+      "passed": true
+    },
+    {
+      "stage": "constitution",
+      "passed": true
+    },
+    {
+      "stage": "contract",
+      "passed": true
+    },
+    {
+      "stage": "termination",
+      "passed": true
+    },
+    {
+      "stage": "replay",
+      "passed": true
+    },
+    {
+      "stage": "proof",
+      "passed": true
+    }
+  ],
+  "verified_at": "2026-04-30T03:35:05.189603211Z",
+  "verified_by": "r1skill-analyzer-1.0.0"
+}

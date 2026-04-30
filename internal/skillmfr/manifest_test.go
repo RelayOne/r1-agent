@@ -27,8 +27,8 @@ func TestValidate_Ok(t *testing.T) {
 
 func TestValidate_MissingFieldsErrors(t *testing.T) {
 	cases := []struct {
-		name  string
-		mut   func(*Manifest)
+		name string
+		mut  func(*Manifest)
 	}{
 		{"no name", func(m *Manifest) { m.Name = "" }},
 		{"no version", func(m *Manifest) { m.Version = "" }},
@@ -158,5 +158,23 @@ func TestScaffoldFromOpenAPI_FailsValidation(t *testing.T) {
 		json.RawMessage(`{"type":"object"}`))
 	if err := m.Validate(); err == nil {
 		t.Error("scaffold should fail Validate so it can't be registered without review")
+	}
+}
+
+func TestValidate_UseIRRequiresRefs(t *testing.T) {
+	m := validManifest()
+	m.UseIR = true
+	if err := m.Validate(); !errors.Is(err, ErrIncompleteManifest) {
+		t.Fatalf("want ErrIncompleteManifest, got %v", err)
+	}
+
+	m.IRRef = "skills/demo/skill.r1.json"
+	if err := m.Validate(); !errors.Is(err, ErrIncompleteManifest) {
+		t.Fatalf("want ErrIncompleteManifest for missing compileProofRef, got %v", err)
+	}
+
+	m.CompileProofRef = "skills/demo/skill.r1.proof.json"
+	if err := m.Validate(); err != nil {
+		t.Fatalf("Validate with IR refs: %v", err)
 	}
 }

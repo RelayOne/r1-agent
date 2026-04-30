@@ -95,6 +95,20 @@ type Manifest struct {
 	//
 	// Source: CLOUDSWARM-R1-INTEGRATION.md §2.9 / §5.6.
 	RecommendedFor []string `json:"recommendedFor,omitempty"`
+
+	// UseIR enables the deterministic R1Skill execution path for this
+	// capability. When false or omitted, the existing markdown/prose
+	// substrate remains in effect.
+	UseIR bool `json:"useIR,omitempty"`
+
+	// IRRef points at the canonical IR artifact for deterministic
+	// execution. Typical values are repo-relative paths under
+	// `.r1/skills/<skill>/skill.r1.json`.
+	IRRef string `json:"irRef,omitempty"`
+
+	// CompileProofRef points at the analyzer proof that must match the
+	// IR hash before runtime execution is allowed.
+	CompileProofRef string `json:"compileProofRef,omitempty"`
 }
 
 // BehaviorFlags describes non-functional aspects the
@@ -161,6 +175,14 @@ func (m Manifest) Validate() error {
 	}
 	if len(m.WhenNotToUse) < 2 {
 		return fmt.Errorf("%w: whenNotToUse needs at least 2 entries", ErrIncompleteManifest)
+	}
+	if m.UseIR {
+		if m.IRRef == "" {
+			return fmt.Errorf("%w: irRef required when useIR is true", ErrIncompleteManifest)
+		}
+		if m.CompileProofRef == "" {
+			return fmt.Errorf("%w: compileProofRef required when useIR is true", ErrIncompleteManifest)
+		}
 	}
 	return nil
 }

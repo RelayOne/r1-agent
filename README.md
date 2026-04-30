@@ -25,6 +25,10 @@ per task, pairs that worker with a cross-family reviewer, records
 every decision into an append-only Merkle-chained ledger, and enforces
 build/test/lint/scope gates before a single line is allowed to merge.
 
+It now also carries an additive deterministic-skills substrate under
+`internal/r1skill/`: typed JSON IR, an 8-stage analyzer, compile proofs,
+and an opt-in runtime path for manifests marked `useIR=true`.
+
 The thesis: **the harness is the product.** SWE-bench Pro shows the
 same underlying model swings ~15 points when you change only the
 scaffold around it. R1 reports deltas on SWE-bench Pro,
@@ -674,6 +678,7 @@ per-harness measurements land. Stance rationale is in
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Tech stack, system components, data flow
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — User journey + technical walkthrough
 - [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) — Every feature with benefit, status, and spec
+- [docs/SKILLS-DETERMINISTIC.md](docs/SKILLS-DETERMINISTIC.md) — Deterministic skills architecture, migration, compile/run flow
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Prereqs, env vars, install paths, monitoring
 - [docs/BUSINESS-VALUE.md](docs/BUSINESS-VALUE.md) — The pitch (no jargon)
 - [docs/operator-guide.md](docs/operator-guide.md) — Mode 1 vs 2, pool setup, macOS caveats, troubleshooting

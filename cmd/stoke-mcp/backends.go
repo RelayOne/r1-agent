@@ -5,18 +5,19 @@
 // rather than returning synthetic response text.
 //
 // Backing packages:
-//   stoke_invoke   →  internal/skillmfr.Registry (manifest
-//                      lookup + drift hash)
-//   stoke_verify   →  internal/verify.EvaluateRubric with
-//                      a deterministic SimpleEvaluator
-//                      (production deployments inject an
-//                      LLM-backed Evaluator via the env-
-//                      config path)
-//   stoke_audit    →  internal/ledger.Ledger.AddNode writing
-//                      a real audit node to disk
-//   stoke_delegate →  internal/delegation.Manager.Delegate
-//                      via the TrustPlane stub client
-//                      (swap for RealClient in prod)
+//
+//	stoke_invoke   →  internal/skillmfr.Registry (manifest
+//	                   lookup + drift hash)
+//	stoke_verify   →  internal/verify.EvaluateRubric with
+//	                   a deterministic SimpleEvaluator
+//	                   (production deployments inject an
+//	                   LLM-backed Evaluator via the env-
+//	                   config path)
+//	stoke_audit    →  internal/ledger.Ledger.AddNode writing
+//	                   a real audit node to disk
+//	stoke_delegate →  internal/delegation.Manager.Delegate
+//	                   via the TrustPlane stub client
+//	                   (swap for RealClient in prod)
 //
 // The Server owns one instance of each backing package.
 // Handlers call the instance methods directly; swapping
@@ -36,6 +37,8 @@ import (
 
 	"github.com/RelayOne/r1/internal/delegation"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/r1skill/interp"
+	r1registry "github.com/RelayOne/r1/internal/r1skill/registry"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/skillmfr"
 	"github.com/RelayOne/r1/internal/truecom"
@@ -52,6 +55,7 @@ type Backends struct {
 	Ledger           *ledger.Ledger
 	Delegation       *delegation.Manager
 	Evaluator        verify.Evaluator
+	SkillRuntime     *interp.Runtime
 }
 
 // NewBackends constructs the default production wiring.
@@ -93,6 +97,20 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 		Ledger:           led,
 		Delegation:       delMgr,
 		Evaluator:        SimpleEvaluator{},
+		SkillRuntime: &interp.Runtime{
+			PureFuncs: map[string]interp.PureFunc{
+				"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
+					return json.Marshal(map[string]json.RawMessage{"value": input})
+				},
+			},
+			LLM: func(_ context.Context, cfg interp.LLMCallConfig) (json.RawMessage, error) {
+				return json.Marshal(map[string]string{
+					"model":  cfg.Model,
+					"status": "stubbed",
+				})
+			},
+			Cache: interp.NewMemoryCache(),
+		},
 	}, nil
 }
 
@@ -178,10 +196,10 @@ func (SimpleEvaluator) EvaluateCriterion(_ context.Context, subject string, c ve
 // they can query.
 func (b *Backends) Invoke(ctx context.Context, missionID, capability string, input json.RawMessage, delegationID string) (map[string]any, error) {
 	resp := map[string]any{
-		"capability":              capability,
-		"_stoke.dev/capability":   capability,
-		"delegation_id":           delegationID,
-		"input_bytes":             len(input),
+		"capability":            capability,
+		"_stoke.dev/capability": capability,
+		"delegation_id":         delegationID,
+		"input_bytes":           len(input),
 	}
 	if manifest, ok := b.ManifestRegistry.Get(capability); ok {
 		hash, err := b.ManifestRegistry.RecordInvoke(capability)
@@ -192,6 +210,14 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 		resp["manifest_hash"] = hash
 		resp["manifest_name"] = manifest.Name
 		resp["manifest_version"] = manifest.Version
+		if manifest.UseIR {
+			output, runErr := b.invokeDeterministicSkill(ctx, manifest, input)
+			if runErr != nil {
+				return nil, runErr
+			}
+			resp["deterministic"] = true
+			resp["output"] = output
+		}
 	} else {
 		resp["manifest_registered"] = false
 	}
@@ -234,6 +260,22 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 	}
 	resp["audit_node_id"] = nodeID
 	return resp, nil
+}
+
+func (b *Backends) invokeDeterministicSkill(ctx context.Context, manifest skillmfr.Manifest, input json.RawMessage) (map[string]any, error) {
+	entry, err := r1registry.LoadEntry(manifest.IRRef)
+	if err != nil {
+		return nil, fmt.Errorf("load deterministic skill: %w", err)
+	}
+	res, err := interp.Run(ctx, b.SkillRuntime, entry.Skill, entry.Proof, input)
+	if err != nil {
+		return nil, fmt.Errorf("run deterministic skill: %w", err)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(res.Output, &output); err != nil {
+		return nil, fmt.Errorf("decode deterministic skill output: %w", err)
+	}
+	return output, nil
 }
 
 // Verify runs a task-class rubric against the subject via
