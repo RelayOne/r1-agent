@@ -19,6 +19,8 @@ var allExpectedTypes = []string{
 	"branch_completion_proposal", "branch_completion_agreement", "branch_completion_dissent",
 	"sdm_advisory",
 	"memory_stored", "memory_recalled",
+	"artifact", "artifact_annotation",
+	"trust_signal", "hub_ban", "hub_cooldown", "device_attestation", "federation_signal",
 }
 
 func TestAllTypesRegistered(t *testing.T) {
@@ -93,6 +95,13 @@ func TestNodeTyperInterface(t *testing.T) {
 	var _ NodeTyper = &SDMAdvisory{}
 	var _ NodeTyper = &MemoryStored{}
 	var _ NodeTyper = &MemoryRecalled{}
+	var _ NodeTyper = &Artifact{}
+	var _ NodeTyper = &ArtifactAnnotation{}
+	var _ NodeTyper = &TrustSignal{}
+	var _ NodeTyper = &HubBan{}
+	var _ NodeTyper = &HubCooldown{}
+	var _ NodeTyper = &DeviceAttestation{}
+	var _ NodeTyper = &FederationSignal{}
 }
 
 // TestValidateRejectsEmpty verifies that every type's Validate rejects a zero-value instance.

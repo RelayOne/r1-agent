@@ -219,6 +219,11 @@ With deterministic skills, the result expands again: a governed catalog
 of repeatable engineering moves your team can compile, migrate, review,
 approve, and re-run without starting from a blank prompt each time.
 
+Beacon extends that value outside the terminal. It gives R1 a secure
+operator-to-runtime trust channel where the relay can raise signed
+warnings or force a safer session posture, but cannot bypass replay
+defense or execute arbitrary tools on the agent.
+
 ## Key benefits
 
 **Ship AI-generated code without a follow-up audit pass.** The
