@@ -1,0 +1,43 @@
+{
+  "skill_id": "ledger_audit_query_runtime",
+  "skill_version": 1,
+  "ir_hash": "sha256:4b29b1481853f8fda007221c5e5ba65c93e96171d5b2a20eda75f16d89b87f2f",
+  "analyzer_version": "1.0.0",
+  "constitution_hash": "sha256:local-dev",
+  "checks": [
+    {
+      "stage": "schema",
+      "passed": true
+    },
+    {
+      "stage": "type",
+      "passed": true
+    },
+    {
+      "stage": "capability",
+      "passed": true
+    },
+    {
+      "stage": "constitution",
+      "passed": true
+    },
+    {
+      "stage": "contract",
+      "passed": true
+    },
+    {
+      "stage": "termination",
+      "passed": true
+    },
+    {
+      "stage": "replay",
+      "passed": true
+    },
+    {
+      "stage": "proof",
+      "passed": true
+    }
+  ],
+  "verified_at": "2026-04-30T12:38:02.394604391Z",
+  "verified_by": "r1skill-analyzer-1.0.0"
+}

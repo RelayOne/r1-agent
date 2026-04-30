@@ -1,0 +1,8 @@
+name: r1-ledger-ops
+version: "0.1.0"
+description: "Read-only governance and audit skills bundled for deterministic R1 invocation."
+min_r1_version: "0.1.0"
+upstream_api_version: "r1-ledger-ops-2026-04-30"
+skill_count: 1
+
+dependencies: []

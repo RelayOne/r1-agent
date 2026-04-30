@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/r1skill/analyze"
 	"github.com/RelayOne/r1/internal/r1skill/ir"
 	"github.com/RelayOne/r1/internal/skillmfr"
@@ -232,6 +235,100 @@ func TestSeedBundledSkillPacks_RegistersBetBuddiesRuntime(t *testing.T) {
 	}
 	if len(required) != 2 || required[0] != "google_oauth" || required[1] != "stripe_secret_key" {
 		t.Fatalf("required_credentials = %#v, want [google_oauth stripe_secret_key]", required)
+	}
+}
+
+func TestSeedBundledSkillPacks_RegistersLedgerAuditQueryRuntime(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	ledgerRoot := filepath.Join(t.TempDir(), "ledger")
+
+	lg, err := ledger.New(ledgerRoot)
+	if err != nil {
+		t.Fatalf("ledger.New: %v", err)
+	}
+	if _, err := lg.AddNode(context.Background(), ledger.Node{
+		Type:          "honesty_decision",
+		SchemaVersion: 1,
+		CreatedAt:     time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC),
+		CreatedBy:     "stoke honesty",
+		MissionID:     "mission-audit",
+		Content:       json.RawMessage(`{"kind":"refused","reason":"missing deploy probe"}`),
+	}); err != nil {
+		t.Fatalf("add honesty node: %v", err)
+	}
+	if _, err := lg.AddNode(context.Background(), ledger.Node{
+		Type:          "verification_evidence",
+		SchemaVersion: 1,
+		CreatedAt:     time.Date(2026, 4, 30, 12, 1, 0, 0, time.UTC),
+		CreatedBy:     "stoke verify",
+		MissionID:     "mission-audit",
+		Content:       json.RawMessage(`{"evidence":"curl https://example.test/health"}`),
+	}); err != nil {
+		t.Fatalf("add verification node: %v", err)
+	}
+	if err := lg.Close(); err != nil {
+		t.Fatalf("close ledger: %v", err)
+	}
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "stoke-mcp-ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 4 {
+		t.Fatalf("registered=%d skipped=%d, want at least four bundled manifests", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-audit",
+		"ledger_audit_query_runtime",
+		json.RawMessage(fmt.Sprintf(`{"ledger_dir":%q,"mission_id":"mission-audit","node_types":["honesty_decision","verification_evidence"],"created_by":"stoke honesty","limit":10,"include_content":true}`, ledgerRoot)),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["query_slug"] != "ledger-audit-query" {
+		t.Fatalf("query_slug = %#v, want ledger-audit-query", output["query_slug"])
+	}
+	if output["matched_count"] != float64(1) {
+		t.Fatalf("matched_count = %#v, want 1", output["matched_count"])
+	}
+	if output["ledger_dir"] != ledgerRoot {
+		t.Fatalf("ledger_dir = %#v, want %q", output["ledger_dir"], ledgerRoot)
+	}
+	summary, ok := output["summary"].(string)
+	if !ok || !strings.Contains(summary, "honesty_decision=1") {
+		t.Fatalf("summary = %#v, want honesty_decision=1", output["summary"])
+	}
+	nodes, ok := output["nodes"].([]any)
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("nodes = %#v, want one node", output["nodes"])
+	}
+	firstNode, ok := nodes[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first node type = %T", nodes[0])
+	}
+	if firstNode["type"] != "honesty_decision" {
+		t.Fatalf("first node type = %#v, want honesty_decision", firstNode["type"])
+	}
+	content, ok := firstNode["content"].(map[string]any)
+	if !ok || content["reason"] != "missing deploy probe" {
+		t.Fatalf("content = %#v, want decoded raw content", firstNode["content"])
 	}
 }
 

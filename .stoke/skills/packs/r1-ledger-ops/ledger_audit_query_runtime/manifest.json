@@ -1,0 +1,130 @@
+{
+  "name": "ledger_audit_query_runtime",
+  "version": "0.1.0",
+  "description": "Deterministic read-only audit query for local R1 ledger analysis.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["ledger_dir"],
+    "properties": {
+      "ledger_dir": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mission_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "node_types": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "created_by": {
+        "type": "string",
+        "minLength": 1
+      },
+      "since": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "until": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      },
+      "include_content": {
+        "type": "boolean"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["query_slug", "mode", "summary", "ledger_dir", "matched_count", "filters", "type_counts", "nodes", "followups"],
+    "properties": {
+      "query_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "summary": { "type": "string" },
+      "ledger_dir": { "type": "string" },
+      "matched_count": { "type": "integer" },
+      "filters": {
+        "type": "object",
+        "required": ["limit", "include_content"],
+        "properties": {
+          "mission_id": { "type": "string" },
+          "node_types": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "created_by": { "type": "string" },
+          "since": { "type": "string" },
+          "until": { "type": "string" },
+          "limit": { "type": "integer" },
+          "include_content": { "type": "boolean" }
+        }
+      },
+      "type_counts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["type", "count"],
+          "properties": {
+            "type": { "type": "string" },
+            "count": { "type": "integer" }
+          }
+        }
+      },
+      "nodes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "type", "created_at", "created_by"],
+          "properties": {
+            "id": { "type": "string" },
+            "type": { "type": "string" },
+            "created_at": { "type": "string" },
+            "created_by": { "type": "string" },
+            "mission_id": { "type": "string" },
+            "parent_hash": { "type": "string" },
+            "content_commitment": { "type": "string" },
+            "content": {}
+          }
+        }
+      },
+      "followups": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  },
+  "whenToUse": [
+    "You need a structured ledger audit slice for one mission, operator, or node family without hand-querying SQLite or JSON files.",
+    "A reviewer wants receipts, honesty decisions, approvals, or verification evidence summarized from a local ledger directory.",
+    "You need optional raw node payloads for export or forensic follow-up while keeping the query itself read-only."
+  ],
+  "whenNotToUse": [
+    "You need to mutate the ledger or append new audit nodes; use a write-capable surface instead.",
+    "You only need the receipt index under .r1/receipts; the dedicated receipt commands are a better fit.",
+    "The ledger directory is remote or unavailable on disk; this runtime reads a local ledger path only."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "ledger-audit",
+    "audit-query",
+    "receipts",
+    "honesty",
+    "governance"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}
