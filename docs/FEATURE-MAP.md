@@ -15,6 +15,7 @@
 - Artifact ledger nodes plus Antigravity import/export wire format.
 - Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
+- Beacon protocol foundation: identity, pairing, encrypted sessions, capability tokens, and beacon ledger nodes.
 
 ### In Progress
 
@@ -48,6 +49,7 @@
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
 | Antigravity converter | External artifact formats can be converted into the R1 artifact model without ad hoc glue scripts. | Done | PR #37, commit `e8608b1`. |
 | Plan approval ledger nodes | `stoke plan --approve` now emits explicit plan and approval nodes into the governance graph. | Done | PR #37, commit `e8608b1`. |
+| Beacon protocol foundation | R1 can now model Beacon identities, `/claimme` pairing, encrypted remote sessions, signed capability tokens, and ledger-native Beacon events. | Done | PR TBD, branch `feat/r1-beacon-protocol`. |
 
 ### Potential-On Horizon
 

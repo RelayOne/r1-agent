@@ -219,6 +219,20 @@ With deterministic skills, the result expands again: a governed catalog
 of repeatable engineering moves your team can compile, migrate, review,
 approve, and re-run without starting from a blank prompt each time.
 
+Beacon extends that value outside the terminal. It gives R1 a secure
+operator-to-runtime transport that can survive mobile, desktop, and
+delegated-control workflows without trusting the relay hub with session
+contents.
+
+- **Remote control without blind trust.** Pairing, session encryption,
+  and replay rejection let operators approve or steer work from another
+  device without handing plaintext control to the relay.
+- **Delegation with real boundaries.** Capability tokens make approval,
+  spend, and delegation limits explicit instead of social convention.
+- **Auditable remote operations.** Every claim, device attach, session,
+  token event, and remote command lands in the same ledger used for local
+  execution and approvals.
+
 ## Key benefits
 
 **Ship AI-generated code without a follow-up audit pass.** The
