@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,6 +88,180 @@ func TestInvokeDeterministicSkill(t *testing.T) {
 	}
 	if output["value"] != "hi" {
 		t.Fatalf("output value = %#v", output["value"])
+	}
+}
+
+func TestInvokeDeterministicSkillTimeout(t *testing.T) {
+	tmp := t.TempDir()
+	skillPath := filepath.Join(tmp, "skill.r1.json")
+	proofPath := filepath.Join(tmp, "skill.r1.proof.json")
+
+	skill := &ir.Skill{
+		SchemaVersion: ir.SchemaVersion,
+		SkillID:       "deterministic-sleep",
+		SkillVersion:  1,
+		Lineage:       ir.Lineage{Kind: "human", AuthoredAt: time.Now().UTC()},
+		Schemas: ir.Schemas{
+			Inputs:  ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"delay_ms": {Type: "int"}}},
+			Outputs: ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"delay_ms": {Type: "int"}}},
+		},
+		Graph: ir.Graph{
+			Nodes: map[string]ir.Node{
+				"sleep": {
+					Kind: "pure_fn",
+					Config: json.RawMessage(`{
+						"registry_ref":"test:sleep",
+						"input":{"kind":"ref","ref":"inputs"}
+					}`),
+				},
+			},
+			Return: ir.Expr{Kind: "ref", Ref: "sleep"},
+		},
+	}
+	proof, err := analyze.Analyze(skill, analyze.Constitution{Hash: "sha256:test"}, analyze.DefaultOptions())
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	writeJSON(t, skillPath, skill)
+	writeJSON(t, proofPath, proof)
+
+	backends, err := NewBackends(filepath.Join(tmp, "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+	backends.SkillRuntime.PureFuncs["test:sleep"] = backends.wrapRuntimePureFunc(
+		"test:sleep",
+		20*time.Millisecond,
+		func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+			var payload struct {
+				DelayMS int `json:"delay_ms"`
+			}
+			if err := json.Unmarshal(input, &payload); err != nil {
+				return nil, err
+			}
+			timer := time.NewTimer(time.Duration(payload.DelayMS) * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-timer.C:
+				return json.Marshal(map[string]int{"delay_ms": payload.DelayMS})
+			}
+		},
+	)
+
+	manifest := skillmfr.Manifest{
+		Name:            "deterministic-sleep",
+		Version:         "1.0.0",
+		Description:     "deterministic sleep",
+		InputSchema:     json.RawMessage(`{"type":"object"}`),
+		OutputSchema:    json.RawMessage(`{"type":"object"}`),
+		WhenToUse:       []string{"sleep"},
+		WhenNotToUse:    []string{"not sleep", "use markdown"},
+		UseIR:           true,
+		IRRef:           skillPath,
+		CompileProofRef: proofPath,
+	}
+	if err := backends.ManifestRegistry.Register(manifest); err != nil {
+		t.Fatalf("register manifest: %v", err)
+	}
+
+	_, err = backends.Invoke(context.Background(), "m-timeout", "deterministic-sleep", json.RawMessage(`{"delay_ms":100}`), "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("invoke error = %v, want context deadline exceeded", err)
+	}
+
+	snapshot := backends.MetricsRegistry.Snapshot()
+	if snapshot.Counters["r1skill.runtime.test.sleep.timeout"] != 1 {
+		t.Fatalf("timeout counter = %d, want 1", snapshot.Counters["r1skill.runtime.test.sleep.timeout"])
+	}
+	if snapshot.Counters["r1skill.runtime.test.sleep.calls"] != 1 {
+		t.Fatalf("calls counter = %d, want 1", snapshot.Counters["r1skill.runtime.test.sleep.calls"])
+	}
+}
+
+func TestInvokeDeterministicSkillCancellation(t *testing.T) {
+	tmp := t.TempDir()
+	skillPath := filepath.Join(tmp, "skill.r1.json")
+	proofPath := filepath.Join(tmp, "skill.r1.proof.json")
+
+	skill := &ir.Skill{
+		SchemaVersion: ir.SchemaVersion,
+		SkillID:       "deterministic-cancel",
+		SkillVersion:  1,
+		Lineage:       ir.Lineage{Kind: "human", AuthoredAt: time.Now().UTC()},
+		Schemas: ir.Schemas{
+			Inputs:  ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"message": {Type: "string"}}},
+			Outputs: ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"value": {Type: "string"}}},
+		},
+		Graph: ir.Graph{
+			Nodes: map[string]ir.Node{
+				"wait": {
+					Kind: "pure_fn",
+					Config: json.RawMessage(`{
+						"registry_ref":"test:cancel",
+						"input":{"kind":"ref","ref":"inputs"}
+					}`),
+				},
+			},
+			Return: ir.Expr{Kind: "ref", Ref: "wait"},
+		},
+	}
+	proof, err := analyze.Analyze(skill, analyze.Constitution{Hash: "sha256:test"}, analyze.DefaultOptions())
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	writeJSON(t, skillPath, skill)
+	writeJSON(t, proofPath, proof)
+
+	backends, err := NewBackends(filepath.Join(tmp, "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+	backends.SkillRuntime.PureFuncs["test:cancel"] = backends.wrapRuntimePureFunc(
+		"test:cancel",
+		200*time.Millisecond,
+		func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+				return input, nil
+			}
+		},
+	)
+
+	manifest := skillmfr.Manifest{
+		Name:            "deterministic-cancel",
+		Version:         "1.0.0",
+		Description:     "deterministic cancel",
+		InputSchema:     json.RawMessage(`{"type":"object"}`),
+		OutputSchema:    json.RawMessage(`{"type":"object"}`),
+		WhenToUse:       []string{"cancel"},
+		WhenNotToUse:    []string{"not cancel", "use markdown"},
+		UseIR:           true,
+		IRRef:           skillPath,
+		CompileProofRef: proofPath,
+	}
+	if err := backends.ManifestRegistry.Register(manifest); err != nil {
+		t.Fatalf("register manifest: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = backends.Invoke(ctx, "m-cancel", "deterministic-cancel", json.RawMessage(`{"message":"hi"}`), "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("invoke error = %v, want context canceled", err)
+	}
+
+	snapshot := backends.MetricsRegistry.Snapshot()
+	if snapshot.Counters["r1skill.runtime.test.cancel.canceled"] != 1 {
+		t.Fatalf("canceled counter = %d, want 1", snapshot.Counters["r1skill.runtime.test.cancel.canceled"])
+	}
+	if snapshot.Counters["r1skill.runtime.test.cancel.calls"] != 1 {
+		t.Fatalf("calls counter = %d, want 1", snapshot.Counters["r1skill.runtime.test.cancel.calls"])
 	}
 }
 
