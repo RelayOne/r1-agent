@@ -1,0 +1,43 @@
+{
+  "skill_id": "invoice_processor_runtime",
+  "skill_version": 1,
+  "ir_hash": "sha256:daeb6ce79a4fa96940bd1f56c7e7610b23d328a14a0c0593692dcf9c72f80ba0",
+  "analyzer_version": "1.0.0",
+  "constitution_hash": "sha256:local-dev",
+  "checks": [
+    {
+      "stage": "schema",
+      "passed": true
+    },
+    {
+      "stage": "type",
+      "passed": true
+    },
+    {
+      "stage": "capability",
+      "passed": true
+    },
+    {
+      "stage": "constitution",
+      "passed": true
+    },
+    {
+      "stage": "contract",
+      "passed": true
+    },
+    {
+      "stage": "termination",
+      "passed": true
+    },
+    {
+      "stage": "replay",
+      "passed": true
+    },
+    {
+      "stage": "proof",
+      "passed": true
+    }
+  ],
+  "verified_at": "2026-04-30T12:02:53.488262157Z",
+  "verified_by": "r1skill-analyzer-1.0.0"
+}

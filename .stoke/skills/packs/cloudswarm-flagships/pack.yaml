@@ -1,0 +1,8 @@
+name: cloudswarm-flagships
+version: "0.1.0"
+description: "Flagship CloudSwarm flow runtimes packaged for deterministic R1 invocation."
+min_r1_version: "0.1.0"
+upstream_api_version: "cloudswarm-r1-integration-2026-04-30"
+skill_count: 1
+
+dependencies: []

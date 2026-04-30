@@ -85,6 +85,56 @@ func TestInvokeDeterministicSkill(t *testing.T) {
 	}
 }
 
+func TestSeedBundledSkillPacks_RegistersInvoiceProcessorRuntime(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 1 {
+		t.Fatalf("registered=%d skipped=%d, want at least one bundled manifest", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-flagship",
+		"invoice_processor_runtime",
+		json.RawMessage(`{"accounts":["billing","ops"],"destination":"quickbooks","alert_unpaid_over_days":45}`),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["flow_slug"] != "invoice-processor" {
+		t.Fatalf("flow_slug = %#v, want invoice-processor", output["flow_slug"])
+	}
+	if output["destination"] != "quickbooks" {
+		t.Fatalf("destination = %#v, want quickbooks", output["destination"])
+	}
+	required, ok := output["required_credentials"].([]any)
+	if !ok {
+		t.Fatalf("required_credentials type = %T", output["required_credentials"])
+	}
+	if len(required) != 2 || required[0] != "gmail_oauth" || required[1] != "quickbooks_oauth" {
+		t.Fatalf("required_credentials = %#v, want [gmail_oauth quickbooks_oauth]", required)
+	}
+}
+
 func writeJSON(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)

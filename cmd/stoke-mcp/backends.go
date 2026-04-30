@@ -102,6 +102,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 				"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
 					return json.Marshal(map[string]json.RawMessage{"value": input})
 				},
+				"cloudswarm:invoice_processor_runtime": invoiceProcessorRuntime,
 			},
 			LLM: func(_ context.Context, cfg interp.LLMCallConfig) (json.RawMessage, error) {
 				return json.Marshal(map[string]string{

@@ -1,0 +1,100 @@
+{
+  "name": "invoice_processor_runtime",
+  "version": "0.1.0",
+  "description": "Deterministic runtime contract for the CloudSwarm invoice-ingestion flagship flow.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["accounts", "destination"],
+    "properties": {
+      "accounts": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "destination": {
+        "type": "string",
+        "enum": ["quickbooks", "google_sheets", "xero"]
+      },
+      "alert_unpaid_over_days": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "window_hours": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["flow_slug", "mode", "accounts", "destination", "summary", "required_credentials", "hero_skills", "phases", "approval_rules"],
+    "properties": {
+      "flow_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "accounts": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "destination": { "type": "string" },
+      "summary": { "type": "string" },
+      "required_credentials": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "hero_skills": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "phases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "purpose", "skill"],
+          "properties": {
+            "name": { "type": "string" },
+            "purpose": { "type": "string" },
+            "skill": { "type": "string" }
+          }
+        }
+      },
+      "approval_rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["condition", "action"],
+          "properties": {
+            "condition": { "type": "string" },
+            "action": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "A CloudSwarm agent needs the runtime contract for the invoice-ingestion or email-reconciliation flagship flow.",
+    "The caller must turn inbox slugs plus an accounting destination into the exact hero-skill sequence for daily invoice processing.",
+    "You need the approval and credential policy for the invoice-processor template without booting a full interactive planning session."
+  ],
+  "whenNotToUse": [
+    "You already have extracted invoice payloads and only need a destination write; call the destination-specific capability directly.",
+    "The task is dentist outreach, mobile-app scaffolding, or another flagship flow; use that flow's runtime instead.",
+    "The caller needs to execute external side effects immediately; this runtime returns the contract and step sequence, not the provider writes themselves."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "invoice-processor",
+    "invoice-ingestion",
+    "email-reconciliation",
+    "flagship-flow"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}
