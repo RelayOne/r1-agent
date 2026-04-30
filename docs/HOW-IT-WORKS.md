@@ -587,6 +587,22 @@ The command can:
 
 `stoke init` remains the project bootstrap entrypoint.
 
+## Beacon Hub Trust Layer
+
+Beacon sessions stay end-to-end encrypted, but the relay can still send
+signed trust signals out-of-band when it detects compromise, abuse, or a
+required operator action.
+
+The agent does not trust those signals blindly. It verifies a pinned hub
+key, checks frame freshness, rejects replayed nonces, rejects unknown
+kinds, and only then dispatches the signal to a hardcoded handler.
+
+That separation matters:
+
+- verification descent decides whether local work is credible,
+- the Beacon Hub Trust Layer decides whether the remote control channel
+  should be paused, rotated, escalated, or surfaced to the operator.
+
 ## Beacon MVP primitives
 
 Two small integration points now exist for Beacon-adjacent workflows:
