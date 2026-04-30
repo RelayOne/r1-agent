@@ -17,6 +17,7 @@ Status snapshot:
 - Done: beacon protocol foundation for identity, pairing, session, token, and beacon ledger nodes.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
 - Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
+- Done: IR-hash-scoped deterministic replay cache keys so replay and cost attribution stay tied to the exact compiled skill/input pair.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
@@ -44,6 +45,10 @@ the first cohesive beacon runtime:
   README, architecture, operator flow, deployment model, and business
   case now describe the shipped beacon-era runtime rather than the
   pre-beacon parity sprint.
+- **Canonical docs were tightened again in PR `#65`**, so the five-doc
+  operator baseline uses the same status language for parity,
+  deterministic skills, beacon follow-through, and replay-safe
+  reporting.
 - **Beacon transport + runtime bridge are now on `main`** via PR `#54`,
   adding real beacon HTTP/WebSocket envelopes plus a runtime bridge
   that reuses trust dispatch, session approvals, notifications,

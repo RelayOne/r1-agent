@@ -12,6 +12,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 | Wave D expansion | Extends the operator/runtime surface beyond parity into higher-order workflows. | Done | PR `#48`, commit `f2d30d6`. |
 | Wave D post-merge command set | Lands the follow-on command work that completes the wave. | Done | PR `#49`, commit `57906b9`. |
 | Beacon-era canonical docs | Refreshes the seven canonical docs so evaluation and onboarding match trunk reality. | Done | PR `#50`, commit `60e38a6`; PR `#52`, commit `00a34b5`. |
+| Replay-safe deterministic cache attribution | Keeps deterministic replay cache entries and honest-cost reporting tied to the exact compiled skill/input boundary instead of a looser mission bucket. | Done | PR `#63`, commit `2b037a3`. |
 
 ## W36 parity, deterministic-skills, and wizard/artifact status
 
