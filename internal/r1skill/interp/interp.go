@@ -55,7 +55,9 @@ type Effect struct {
 }
 
 // PureFunc executes a deterministic function registered by name.
-type PureFunc func(input json.RawMessage) (json.RawMessage, error)
+// Implementations must respect ctx cancellation so runtime timeout and
+// caller abort hooks can fail fast.
+type PureFunc func(ctx context.Context, input json.RawMessage) (json.RawMessage, error)
 
 // LLMFunc is the controlled stochastic boundary. Runtime replay forces
 // cache reuse for repeated inputs.
@@ -141,7 +143,7 @@ func runNode(ctx context.Context, rt *Runtime, irHash, name string, node ir.Node
 		if err != nil {
 			return nil, Effect{}, fmt.Errorf("r1skill/interp: pure_fn %s input: %w", name, err)
 		}
-		out, err := fn(input)
+		out, err := fn(ctx, input)
 		if err != nil {
 			return nil, Effect{}, fmt.Errorf("r1skill/interp: pure_fn %s: %w", name, err)
 		}
