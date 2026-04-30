@@ -630,7 +630,7 @@ All state is local. SQLite files live under `.stoke/`.
 
 ### Done
 
-- The deterministic skills lane now includes the full local pack lifecycle on trunk: bundled pack install in PR #67 (`fc55a0d`), recursive pack install in PR #68 (`bf45191`), pack uninstall in PR #69 (`4a19231`), pack list in PR #71 (`92b6f47`), pack update in PR #72 (`f180666`), pack info in PR #74 (`80562ed`), and pack publish on top of that local-library surface.
+- The deterministic skills lane now includes the full local pack lifecycle on trunk: bundled pack install in PR #67 (`fc55a0d`), recursive pack install in PR #68 (`bf45191`), pack uninstall in PR #69 (`4a19231`), pack list in PR #71 (`92b6f47`), pack update in PR #72 (`f180666`), pack info in PR #74 (`80562ed`), pack publish in PR #75 (`d7fc188`), and local-registry pack search across repo and user libraries.
 - PR #70 (`d15bee8`) refreshed docs after the first two pack PRs; this cycle extends the architecture baseline so uninstall and list are also part of the documented surface.
 
 ### In Progress
@@ -639,4 +639,4 @@ All state is local. SQLite files live under `.stoke/`.
 
 ### Scoped
 
-- Registry-backed search and broader marketplace loops remain scoped beyond the now-landed local publish/install/list/update architecture.
+- Broader remote marketplace loops remain scoped beyond the now-landed local publish/install/list/update/search architecture.

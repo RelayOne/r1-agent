@@ -44,6 +44,13 @@ legacy view:
 stoke skills pack list
 ```
 
+Search the repo-local and published user pack libraries before
+installing a bundle into the current project:
+
+```bash
+stoke skills pack search actium
+```
+
 Inspect the pack metadata that will be used for install/update, plus
 its current project-local install state:
 
@@ -71,6 +78,11 @@ Install source resolution and composition:
   install/update, then reports the pack version, dependency list, and
   declared-vs-loaded manifest counts before you mutate project-local
   links.
+- `stoke skills pack search <query>` scans repo `.r1/.stoke` pack
+  roots first, then user `~/.r1/.stoke` pack roots, and returns the
+  first visible pack for each name in that resolution order. Matches
+  key off pack name, description, dependency names, and bundled
+  manifest names.
 - `stoke skills pack update` prefers the currently installed pack source
   when one exists, so a project linked to a user-library checkout does
   not silently switch over to a bundled repo copy on refresh.
@@ -215,7 +227,7 @@ No PII, no payload body, no token echo.
 | R1S-1.1 config plumbing | Landed | 88ab285 |
 | R1S-1.2 top-level config load | Inherited gap | Integration with existing `config.Policy` loader pending |
 | R1S-1.3 env resolver | Landed | 88ab285 |
-| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack info --pack actium-studio`; `stoke skills pack install --pack actium-studio`; `stoke skills pack list`; `stoke skills pack uninstall --pack actium-studio`; `stoke skills pack update --pack actium-studio` |
+| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack info --pack actium-studio`; `stoke skills pack init --pack invoice-ingestion`; `stoke skills pack install --pack actium-studio`; `stoke skills pack list`; `stoke skills pack publish --pack actium-studio`; `stoke skills pack search actium`; `stoke skills pack uninstall --pack actium-studio`; `stoke skills pack update --pack actium-studio` |
 | R1S-1.5 pack dir + README | Landed | PR #55 |
 | R1S-2 HTTP transport | Landed | 1cd010e |
 | R1S-3 stdio-MCP transport | Landed | 0fb2e38 |

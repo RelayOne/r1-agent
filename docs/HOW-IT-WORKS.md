@@ -615,13 +615,13 @@ The command can:
 
 ## Done
 
-- The deterministic skill flow now covers the practical pack lifecycle on trunk: repo-local pack scaffold, install from bundled packs (PR #67, `fc55a0d`), recursive dependency install (PR #68, `bf45191`), uninstall (PR #69, `4a19231`), list (PR #71, `92b6f47`), update (PR #72, `f180666`), info (PR #74, `80562ed`), and local-library publish for cross-repo reuse.
+- The deterministic skill flow now covers the practical pack lifecycle on trunk: repo-local pack scaffold, install from bundled packs (PR #67, `fc55a0d`), recursive dependency install (PR #68, `bf45191`), uninstall (PR #69, `4a19231`), list (PR #71, `92b6f47`), update (PR #72, `f180666`), info (PR #74, `80562ed`), publish into the user pack library (PR #75, `d7fc188`), and local-registry search across repo and user pack roots.
 - PR #70 (`d15bee8`) moved the first half of that lane into the docs, and this refresh carries the operator story through the newer uninstall and list commands.
 
 ## In Progress
 
-- Discovery and marketplace surfaces are still ahead, but operators already have a deterministic shipped path for scaffolding packs, bringing them in, inspecting them, and removing them.
+- Broader marketplace surfaces are still ahead, but operators already have a deterministic shipped path for scaffolding packs, searching the local registry, bringing packs in, inspecting them, and removing them.
 
 ## Scoped
 
-- Registry search and marketplace-style distribution remain scoped beyond the current local publish/install command set.
+- Remote marketplace-style distribution remains scoped beyond the current local publish/install/search command set.

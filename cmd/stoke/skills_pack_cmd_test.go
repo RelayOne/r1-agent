@@ -444,6 +444,160 @@ func TestListInstalledSkillPacksEmpty(t *testing.T) {
 	}
 }
 
+func TestSearchSkillPacksMatchesMetadataAndManifestNames(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "shared-ledger"), "shared-ledger", nil)
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "invoice-ingestion"), "invoice-ingestion", []string{"shared-ledger"})
+	writePackFixture(t, filepath.Join(home, ".r1", "skills", "packs", "billing-ops"), "billing-ops", nil)
+
+	invoicePack := filepath.Join(repo, ".r1", "skills", "packs", "invoice-ingestion")
+	invoiceYAML := strings.Join([]string{
+		"name: invoice-ingestion",
+		"version: 1.4.0",
+		"description: OCR intake and invoice normalization",
+		"skill_count: 1",
+		"dependencies:",
+		"  - shared-ledger",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(invoicePack, "pack.yaml"), []byte(invoiceYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(invoice pack.yaml): %v", err)
+	}
+
+	billingPack := filepath.Join(home, ".r1", "skills", "packs", "billing-ops")
+	billingYAML := strings.Join([]string{
+		"name: billing-ops",
+		"version: 0.8.0",
+		"description: Searchable AP controls",
+		"skill_count: 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(billingPack, "pack.yaml"), []byte(billingYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(billing pack.yaml): %v", err)
+	}
+
+	if _, err := installSkillPack(repo, "invoice-ingestion"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+
+	result, err := searchSkillPacks(repo, "invoice")
+	if err != nil {
+		t.Fatalf("searchSkillPacks() error = %v", err)
+	}
+	if result.MatchCount != 1 {
+		t.Fatalf("MatchCount = %d, want 1", result.MatchCount)
+	}
+	got := result.Matches[0]
+	if got.PackName != "invoice-ingestion" {
+		t.Fatalf("PackName = %q, want invoice-ingestion", got.PackName)
+	}
+	if got.SourceScope != "repo_canonical" {
+		t.Fatalf("SourceScope = %q, want repo_canonical", got.SourceScope)
+	}
+	if !reflect.DeepEqual(got.MatchFields, []string{"name", "description", "manifests"}) {
+		t.Fatalf("MatchFields = %v, want [name description manifests]", got.MatchFields)
+	}
+	if !reflect.DeepEqual(got.ManifestNames, []string{"invoice-ingestion.skill"}) {
+		t.Fatalf("ManifestNames = %v, want [invoice-ingestion.skill]", got.ManifestNames)
+	}
+	if !got.CanonicalInstalled || !got.LegacyInstalled {
+		t.Fatalf("install flags = canonical:%t legacy:%t, want both true", got.CanonicalInstalled, got.LegacyInstalled)
+	}
+}
+
+func TestSearchSkillPacksDedupesByResolutionOrder(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoPack := filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")
+	userPack := filepath.Join(home, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, repoPack, "shared-pack", nil)
+	writePackFixture(t, userPack, "shared-pack", nil)
+
+	repoYAML := strings.Join([]string{
+		"name: shared-pack",
+		"version: 2.0.0",
+		"description: Repo-local override",
+		"skill_count: 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(repoPack, "pack.yaml"), []byte(repoYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(repo pack.yaml): %v", err)
+	}
+	userYAML := strings.Join([]string{
+		"name: shared-pack",
+		"version: 1.0.0",
+		"description: User library copy",
+		"skill_count: 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(userPack, "pack.yaml"), []byte(userYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(user pack.yaml): %v", err)
+	}
+
+	result, err := searchSkillPacks(repo, "shared")
+	if err != nil {
+		t.Fatalf("searchSkillPacks() error = %v", err)
+	}
+	if result.MatchCount != 1 {
+		t.Fatalf("MatchCount = %d, want 1", result.MatchCount)
+	}
+	got := result.Matches[0]
+	if got.SourcePath != repoPack {
+		t.Fatalf("SourcePath = %q, want %q", got.SourcePath, repoPack)
+	}
+	if got.Version != "2.0.0" {
+		t.Fatalf("Version = %q, want 2.0.0", got.Version)
+	}
+}
+
+func TestSearchSkillPacksMatchesDescriptionAndDependencies(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "billing-ops")
+	writePackFixture(t, packDir, "billing-ops", []string{"shared-ledger"})
+
+	packYAML := strings.Join([]string{
+		"name: billing-ops",
+		"version: 0.8.0",
+		"description: Controls for AP approval queues",
+		"skill_count: 1",
+		"dependencies:",
+		"  - shared-ledger",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(packYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pack.yaml): %v", err)
+	}
+
+	result, err := searchSkillPacks(repo, "ledger")
+	if err != nil {
+		t.Fatalf("searchSkillPacks() error = %v", err)
+	}
+	if result.MatchCount != 1 {
+		t.Fatalf("MatchCount = %d, want 1", result.MatchCount)
+	}
+	if !reflect.DeepEqual(result.Matches[0].MatchFields, []string{"dependencies"}) {
+		t.Fatalf("MatchFields = %v, want [dependencies]", result.Matches[0].MatchFields)
+	}
+
+	result, err = searchSkillPacks(repo, "approval")
+	if err != nil {
+		t.Fatalf("searchSkillPacks() error = %v", err)
+	}
+	if result.MatchCount != 1 {
+		t.Fatalf("MatchCount = %d, want 1", result.MatchCount)
+	}
+	if !reflect.DeepEqual(result.Matches[0].MatchFields, []string{"description"}) {
+		t.Fatalf("MatchFields = %v, want [description]", result.Matches[0].MatchFields)
+	}
+}
+
 func TestPublishSkillPackCopiesPackToUserLibrary(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
