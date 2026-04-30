@@ -37,6 +37,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/delegation"
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/metrics"
 	"github.com/RelayOne/r1/internal/r1skill/interp"
 	r1registry "github.com/RelayOne/r1/internal/r1skill/registry"
 	"github.com/RelayOne/r1/internal/skill"
@@ -55,6 +56,7 @@ type Backends struct {
 	Ledger           *ledger.Ledger
 	Delegation       *delegation.Manager
 	Evaluator        verify.Evaluator
+	MetricsRegistry  *metrics.Registry
 	SkillRuntime     *interp.Runtime
 }
 
@@ -91,12 +93,14 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 		return nil, fmt.Errorf("stoke-mcp: build trustplane client: %w", err)
 	}
 	delMgr := delegation.NewManager(tp)
+	metricsRegistry := metrics.NewRegistry()
 	return &Backends{
 		ManifestRegistry: skillmfr.NewRegistry(),
 		VerifyRegistry:   verify.NewRegistry(),
 		Ledger:           led,
 		Delegation:       delMgr,
 		Evaluator:        SimpleEvaluator{},
+		MetricsRegistry:  metricsRegistry,
 		SkillRuntime: &interp.Runtime{
 			PureFuncs: map[string]interp.PureFunc{
 				"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
@@ -106,6 +110,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 				"cloudswarm:dentist_outreach_runtime":  dentistOutreachRuntime,
 				"cloudswarm:invoice_processor_runtime": invoiceProcessorRuntime,
 				"r1:ledger_audit_query_runtime":        ledgerAuditQueryRuntime,
+				"r1:metrics_collection_runtime":        metricsCollectionRuntime(metricsRegistry),
 			},
 			LLM: func(_ context.Context, cfg interp.LLMCallConfig) (json.RawMessage, error) {
 				return json.Marshal(map[string]string{
