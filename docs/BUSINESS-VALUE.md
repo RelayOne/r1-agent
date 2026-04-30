@@ -61,6 +61,50 @@ What's the take-away in business terms?
    coding orchestrator that ships native IDE plugins, a desktop GUI,
    three CI adapters, and a browser-driving operator from one repo.
 
+## What's New (April 30, 2026) — Deterministic Skills Turn R1 Into A Product Layer
+
+R1 is no longer only a harness for coding agents. It now has the first
+real substrate for deterministic skills: typed skill programs that can
+be compiled, analyzed, stored, approved, and replayed.
+
+That shift matters because prompt-only skills are hard to govern. They
+live in markdown, drift quietly, and become institutional folklore. R1
+now gives teams a path to turn that folklore into productized operating
+logic.
+
+The new pieces are the whole story, not isolated features:
+
+- **A compiler lane.** `r1-skill-compile` turns a deterministic skill
+  definition into a checked artifact with a proof, instead of leaving it
+  as an unverified prompt blob.
+- **A guided operator lane.** `stoke wizard run`, `migrate`, and
+  `query` make skill creation and migration a first-class workflow,
+  including human checkpoints through the new `ask_user` primitive.
+- **A migration lane.** Markdown playbooks, OpenAPI specs, Zapier
+  automations, and TOML configuration can be converted into the same
+  deterministic substrate.
+- **An artifact lane.** `stoke artifact` and the new storage backend
+  treat skills, plans, proofs, and approvals as durable assets, not
+  temp files you lose after a terminal session.
+- **A governance lane.** Wizard choices and `stoke plan --approve`
+  results now emit ledger nodes, so the approval story is visible and
+  auditable.
+
+In business terms, deterministic skills move R1 up the stack:
+
+1. **From tool to operating system.** Customers are no longer only
+   buying safer agent execution. They are buying a way to encode and
+   preserve how their team works.
+2. **From labor substitution to knowledge capture.** Each deterministic
+   skill becomes a reusable unit of institutional process, not a one-off
+   session outcome.
+3. **From opinionated runtime to durable platform.** Compilers,
+   migration adapters, artifacts, and approvals create a foundation for
+   a skill library, distribution model, and eventually a marketplace.
+4. **From "AI is hard to trust" to "AI can be reviewed like software."**
+   Once a skill is compiled and ledgered, governance teams can inspect
+   the structure instead of arguing over screenshots and anecdotes.
+
 ## The problem
 
 Coding agents hallucinate success. They say "I ran the tests and
@@ -123,6 +167,11 @@ need to probe a realistic harness and catch prompt-injection
 bypasses before the whole industry ships them. R1 exposes every
 layer.
 
+**Platform teams and internal developer-experience groups** who want to
+standardize how engineering workflows are encoded. Deterministic skills
+give them a way to package onboarding, remediation, compliance, and
+delivery routines as governed assets instead of scattered wiki pages.
+
 ## How R1 solves it
 
 R1 runs one strong implementer per task and pairs it with a
@@ -165,6 +214,10 @@ The **result**: code you can actually merge without an after-the-
 fact human audit. A governance trace you can hand to your compliance
 officer. A cost profile that stays predictable because retry loops
 can't spin forever.
+
+With deterministic skills, the result expands again: a governed catalog
+of repeatable engineering moves your team can compile, migrate, review,
+approve, and re-run without starting from a blank prompt each time.
 
 ## Key benefits
 

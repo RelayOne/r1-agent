@@ -1,28 +1,53 @@
 # Feature Map
 
-## W36 parity and deterministic-skills status
+## W36 parity, deterministic-skills, and wizard/artifact status
 
 ### Done
 
 - Live parity matrix.
 - Evaluation-agent skill.
 - Manifest-enforced skill manufacturing pipeline.
+- Deterministic skills substrate: compile, analyze, interpreter, registry, and proof-emitting CLI.
 - Shell preprocessing and path-scoped skill activation.
+- Skill wizard flow: `stoke wizard run`, `migrate`, and `query`.
+- `ask_user` primitive and decision-ledger capture inside the wizard lane.
+- Bulk migration adapters for Markdown, OpenAPI, Zapier, and TOML skill sources.
 - Artifact ledger nodes plus Antigravity import/export wire format.
+- Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 
 ### In Progress
 
 - Parity-to-superiority execution wave.
-- Deterministic-skills integration across more user-facing surfaces.
+- Deterministic-skills adoption across more execution and packaging surfaces.
 
 ### Scoped
 
-- Richer skill-pack composition and packaging.
+- Richer skill-pack composition, packaging, and shared-library distribution.
 
 ### Scoping
 
-- More explicit superiority reporting and publish loops.
+- More explicit superiority reporting, artifact publishing, and marketplace loops.
+
+## Wave 3 (2026-04-30) — Deterministic Skills + Wizard + Artifact Ledger
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| Deterministic skill IR (`internal/r1skill`) | Skill execution can move from prompt-only interpretation to typed, inspectable, replayable programs. | Done | PR #34, commit `1492ab5`. |
+| `r1-skill-compile` CLI | Operators can compile or `--check` a deterministic skill before shipping it into a library. | Done | PR #34, commit `1492ab5`. |
+| Analyzer + compile proof output | Every deterministic skill can emit a proof artifact showing what the compiler accepted. | Done | PR #34, commit `1492ab5`. |
+| Registry-backed deterministic execution | `useIR=true` manifests route through the deterministic runtime instead of the prompt-only path. | Done | PR #34, commit `1492ab5`. |
+| Deterministic echo example skill | The substrate ships with a concrete example and proof file operators can inspect end-to-end. | Done | PR #34, commit `1492ab5`. |
+| `stoke wizard run` | A guided operator flow can create or refine skill configurations without hand-authoring every manifest field. | Done | PR #36, commit `98203a7`. |
+| `stoke wizard migrate` | Existing skill sources can be bulk-migrated into the new deterministic substrate. | Done | PR #36, commit `98203a7`. |
+| `stoke wizard query` | Operators can interrogate wizard state and migration outputs from the CLI. | Done | PR #36, commit `98203a7`. |
+| `ask_user` primitive | Wizard flows can pause for operator judgment instead of guessing through trust-boundary decisions. | Done | PR #36, commit `98203a7`. |
+| Decision ledger for wizard runs | Wizard choices become durable governance data instead of disposable terminal interaction. | Done | PR #36, commit `98203a7`. |
+| Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
+| Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
+| `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
+| Antigravity converter | External artifact formats can be converted into the R1 artifact model without ad hoc glue scripts. | Done | PR #37, commit `e8608b1`. |
+| Plan approval ledger nodes | `stoke plan --approve` now emits explicit plan and approval nodes into the governance graph. | Done | PR #37, commit `e8608b1`. |
 
 ### Potential-On Horizon
 
