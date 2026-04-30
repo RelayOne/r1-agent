@@ -10,10 +10,10 @@
 //
 // Contract:
 //   - Input:  path to a JSON file (or "-" for stdin) containing
-//             the verb's request payload.
+//     the verb's request payload.
 //   - Output: a single JSON object written to stdout followed by
-//             a newline. Exit 0 on success; non-zero with a
-//             machine-readable JSON error on stderr otherwise.
+//     a newline. Exit 0 on success; non-zero with a
+//     machine-readable JSON error on stderr otherwise.
 //
 // Each verb is a thin wrapper over an existing internal/plan
 // primitive — see decompose.go, verify.go, critique.go for the
@@ -85,6 +85,17 @@ type Response struct {
 	// Status is StatusOK on success, StatusError when the verb
 	// could not produce a result.
 	Status string `json:"status"`
+
+	// ProviderUsed names the runtime/provider that serviced the
+	// one-shot request. CloudSwarm surfaces this alongside the hero-skill
+	// result so operator traces can distinguish R1-native work from
+	// external provider-backed skills.
+	ProviderUsed string `json:"provider_used,omitempty"`
+
+	// CostEstimateUSD is the runtime's best-effort cost estimate for the
+	// one-shot. Deterministic/local verbs report 0 so callers can persist
+	// a stable numeric field without special-casing "no estimate".
+	CostEstimateUSD float64 `json:"cost_estimate_usd,omitempty"`
 
 	// Data is the verb-specific result payload. Shape depends
 	// on the verb; see each verb handler.

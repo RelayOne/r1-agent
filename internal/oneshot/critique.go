@@ -82,7 +82,13 @@ func handleCritique(payload json.RawMessage) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("oneshot: marshal critique: %w", err)
 	}
-	return Response{Verb: "critique", Status: "ok", Data: data}, nil
+	return Response{
+		Verb:            "critique",
+		Status:          StatusOK,
+		ProviderUsed:    "r1_core",
+		CostEstimateUSD: 0,
+		Data:            data,
+	}, nil
 }
 
 // critiqueScaffoldResponse returns the legacy pre-wiring scaffold shape
