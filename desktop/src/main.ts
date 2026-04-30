@@ -42,6 +42,7 @@ import {
   mountSettings,
   mountSettingsTrigger,
 } from "./panels/settings";
+import { mountOnboarding } from "./onboarding/onboarding";
 
 type PanelEntry = {
   id: string;
@@ -78,6 +79,15 @@ function mount(): void {
   const app = document.querySelector<HTMLElement>("#app");
   if (!app) {
     console.error("[r1-desktop] #app mount point missing from index.html");
+    return;
+  }
+
+  if (window.localStorage.getItem("r1.onboarded") !== "1") {
+    app.innerHTML = "";
+    const host = document.createElement("div");
+    host.id = "onboarding";
+    app.appendChild(host);
+    mountOnboarding(host);
     return;
   }
 

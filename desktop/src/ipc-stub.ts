@@ -21,15 +21,15 @@ type TauriInvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise
 export type PhaseTag =
   | "R1D-1"
   | "R1D-2"
-  | "R1D-3"
-  | "R1D-4"
-  | "R1D-5"
-  | "R1D-6"
-  | "R1D-7"
-  | "R1D-8"
-  | "R1D-9"
-  | "R1D-10"
-  | "R1D-11"
+  | "R1D-3" // SOW tree + descent ladder
+  | "R1D-4" // Skill catalog + marketplace + test modal
+  | "R1D-5" // Ledger viewer
+  | "R1D-6" // Memory inspector
+  | "R1D-7" // Settings + vault + providers + governance
+  | "R1D-8" // MCP servers panel
+  | "R1D-9" // Cost panel / observability dashboard
+  | "R1D-10" // Approval queue + scheduler
+  | "R1D-11" // Packaging / first-launch onboarding
   | "R1D-12";
 
 /**

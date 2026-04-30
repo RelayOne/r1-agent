@@ -730,6 +730,9 @@ export type InvokeMethod =
   | "schedule_update"
   | "schedule_delete"
   | "schedule_run_now"
+  // First-launch onboarding (R1D-11.6)
+  | "onboarding_pick_data_dir"
+  | "onboarding_start_demo"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
@@ -914,4 +917,31 @@ export interface ScheduleUpsertRequest {
 export interface ScheduleOkResult {
   ok: boolean;
   id?: string;
+}
+
+// ---------------------------------------------------------------------
+// First-launch onboarding (R1D-11.6)
+// ---------------------------------------------------------------------
+
+/**
+ * Result of the `onboarding_pick_data_dir` stub. `path` is the absolute
+ * directory the host opened a native picker over; `valid` indicates
+ * whether the directory is writable + free of an existing R1 ledger;
+ * `message` carries a one-line diagnostic when `valid` is false (e.g.
+ * "directory not writable", "existing ledger detected").
+ */
+export interface OnboardingDataDirResult {
+  path: string;
+  valid: boolean;
+  message?: string;
+}
+
+/**
+ * Result of the `onboarding_start_demo` stub. `ok` flips true when the
+ * "Hello R1" demo session has been spawned; `session_id` is the ledger
+ * session the wizard can deep-link into once the panel grid is mounted.
+ */
+export interface OnboardingDemoResult {
+  ok: boolean;
+  session_id?: string;
 }
