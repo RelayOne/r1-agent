@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/r1skill/analyze"
+	"github.com/RelayOne/r1/internal/r1skill/registry"
 	"github.com/RelayOne/r1/internal/r1skill/wizard"
+	"github.com/RelayOne/r1/internal/r1skill/wizard/ledgerlink"
 )
 
 func skillWizardCmd(args []string) {
@@ -23,6 +26,8 @@ func skillWizardCmd(args []string) {
 		runWizardAuthorCmd(args[1:])
 	case "migrate":
 		runWizardMigrateCmd(args[1:])
+	case "register":
+		runWizardRegisterCmd(args[1:])
 	case "query":
 		runWizardQueryCmd(args[1:])
 	default:
@@ -38,6 +43,9 @@ func runWizardAuthorCmd(args []string) {
 	skillID := fs.String("skill-id", "", "explicit skill id")
 	outDir := fs.String("out-dir", ".", "output directory")
 	operator := fs.String("operator", "", "operator id")
+	ledgerDir := fs.String("ledger-dir", "", "persist session evidence to this ledger directory")
+	missionID := fs.String("mission-id", "", "ledger mission id for persisted session evidence")
+	createdBy := fs.String("created-by", "", "ledger created_by value for persisted session evidence")
 	fs.Parse(args)
 
 	result, err := wizard.Run(context.Background(), wizard.RunOptions{
@@ -67,6 +75,15 @@ func runWizardAuthorCmd(args []string) {
 	writeJSON(proofPath, proof)
 	writeJSON(decisionsPath, result.Decisions)
 	fmt.Fprintf(os.Stdout, "skill: %s\nproof: %s\ndecisions: %s\n", skillPath, proofPath, decisionsPath)
+
+	if *ledgerDir != "" {
+		sessionID, persistErr := persistWizardSession(*ledgerDir, *missionID, nonEmptyString(*createdBy, nonEmptyString(*operator, "stoke wizard")), result, proof)
+		if persistErr != nil {
+			fmt.Fprintf(os.Stderr, "wizard ledger persist: %v\n", persistErr)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "ledger_session: %s\n", sessionID)
+	}
 }
 
 func runWizardMigrateCmd(args []string) {
@@ -101,22 +118,15 @@ func runWizardMigrateCmd(args []string) {
 func runWizardQueryCmd(args []string) {
 	fs := flag.NewFlagSet("wizard query", flag.ExitOnError)
 	file := fs.String("decisions", "", "decision log json file")
+	ledgerDir := fs.String("ledger-dir", "", "ledger directory to query instead of a decisions file")
+	sessionID := fs.String("session-id", "", "exact skill_authoring_decisions node id when querying a ledger")
 	questionID := fs.String("question-id", "", "exact question id")
 	prefix := fs.String("question-prefix", "", "question id prefix")
 	mode := fs.String("mode", "", "operator|llm-best-judgment")
 	pathPrefix := fs.String("ir-path-prefix", "", "IR path prefix")
 	fs.Parse(args)
-	if *file == "" {
-		fmt.Fprintln(os.Stderr, "wizard query: --decisions is required")
-		os.Exit(1)
-	}
-	var log wizard.SkillAuthoringDecisions
-	data, err := os.ReadFile(*file)
+	log, err := loadDecisionLog(*ledgerDir, *sessionID, *file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "wizard query: %v\n", err)
-		os.Exit(1)
-	}
-	if err := json.Unmarshal(data, &log); err != nil {
 		fmt.Fprintf(os.Stderr, "wizard query: %v\n", err)
 		os.Exit(1)
 	}
@@ -127,6 +137,34 @@ func runWizardQueryCmd(args []string) {
 		IRPathPrefix:     strings.TrimSpace(*pathPrefix),
 	})
 	writeJSONTo(os.Stdout, matches)
+}
+
+func runWizardRegisterCmd(args []string) {
+	fs := flag.NewFlagSet("wizard register", flag.ExitOnError)
+	skillPath := fs.String("skill", "", "skill.r1.json file to register")
+	proofPath := fs.String("proof", "", "compile proof json file")
+	root := fs.String("root", "skills", "registry root directory")
+	fs.Parse(args)
+	if *skillPath == "" || *proofPath == "" {
+		fmt.Fprintln(os.Stderr, "wizard register: --skill and --proof are required")
+		os.Exit(1)
+	}
+	skill, err := registry.LoadSkill(*skillPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wizard register: %v\n", err)
+		os.Exit(1)
+	}
+	proof, err := registry.LoadProof(*proofPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wizard register: %v\n", err)
+		os.Exit(1)
+	}
+	entry, err := registry.SaveEntry(*root, skill, proof)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wizard register: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "registered_skill: %s\nregistered_proof: %s\n", entry.SourcePath, entry.ProofPath)
 }
 
 func writeJSON(path string, v any) {
@@ -146,4 +184,68 @@ func writeJSONTo(f *os.File, v any) {
 		fmt.Fprintf(os.Stderr, "wizard encode: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func persistWizardSession(ledgerDir, missionID, createdBy string, result *wizard.RunResult, proof *analyze.CompileProof) (ledger.NodeID, error) {
+	lg, err := ledger.New(ledgerDir)
+	if err != nil {
+		return "", err
+	}
+	defer lg.Close()
+	artifactRoot := filepath.Join(filepath.Dir(ledgerDir), "artifacts")
+	writer, err := ledgerlink.NewWriter(lg, artifactRoot)
+	if err != nil {
+		return "", err
+	}
+	persisted, err := writer.Persist(context.Background(), result, proof, ledgerlink.PersistOptions{
+		MissionID:  missionID,
+		CreatedBy:  createdBy,
+		StanceID:   createdBy,
+		SourcePath: result.SourcePath,
+	})
+	if err != nil {
+		return "", err
+	}
+	return persisted.SessionNodeID, nil
+}
+
+func loadDecisionLog(ledgerDir, sessionID, file string) (*wizard.SkillAuthoringDecisions, error) {
+	if ledgerDir != "" {
+		if sessionID == "" {
+			return nil, fmt.Errorf("--session-id is required with --ledger-dir")
+		}
+		lg, err := ledger.New(ledgerDir)
+		if err != nil {
+			return nil, err
+		}
+		defer lg.Close()
+		node, err := lg.Get(context.Background(), sessionID)
+		if err != nil {
+			return nil, err
+		}
+		var log wizard.SkillAuthoringDecisions
+		if err := json.Unmarshal(node.Content, &log); err != nil {
+			return nil, err
+		}
+		return &log, nil
+	}
+	if file == "" {
+		return nil, fmt.Errorf("--decisions is required when --ledger-dir is unset")
+	}
+	var log wizard.SkillAuthoringDecisions
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &log); err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+func nonEmptyString(v, fallback string) string {
+	if strings.TrimSpace(v) != "" {
+		return v
+	}
+	return fallback
 }

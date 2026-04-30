@@ -1,0 +1,7 @@
+{
+  "id": "baseline",
+  "metrics": {
+    "ac_pass_rate": 0.8,
+    "false_merge_rate": 0.1
+  }
+}

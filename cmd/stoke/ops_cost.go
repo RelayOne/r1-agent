@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/costtrack"
 	"github.com/RelayOne/r1/internal/eventlog"
 )
 
@@ -45,6 +46,9 @@ type costAggregate struct {
 // runCostCmd implements `stoke cost`. Exit-code convention matches
 // runEventsCmd.
 func runCostCmd(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "report" {
+		return runCostReportCmd(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("cost", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to events.db (default: <cwd>/.stoke/events.db)")
@@ -82,6 +86,45 @@ func runCostCmd(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return renderCostTable(stdout, agg)
+}
+
+func runCostReportCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cost report", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repo := fs.String("repo", ".", "repository root")
+	taskID := fs.String("task", "", "task id")
+	humanHourly := fs.Float64("human-hourly-usd", 150, "human hourly benchmark")
+	asJSON := fs.Bool("json", false, "emit json")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	tracker := costtrack.NewTracker(0, nil)
+	resolved := resolveEventsDB("")
+	log, err := eventlog.Open(resolved)
+	if err != nil {
+		fmt.Fprintf(stderr, "cost report: open %s: %v\n", resolved, err)
+		return 1
+	}
+	defer log.Close()
+	agg, err := aggregateCost(context.Background(), log, *taskID)
+	if err != nil {
+		fmt.Fprintf(stderr, "cost report: %v\n", err)
+		return 1
+	}
+	if agg.TotalUSD > 0 {
+		tracker.RecordEnvCost(*taskID, agg.TotalUSD)
+	}
+	report := costtrack.BuildHonestCostReport(tracker, *taskID, *humanHourly)
+	if err := costtrack.SaveHonestCostReport(*repo, report); err != nil {
+		fmt.Fprintf(stderr, "cost report: save: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		return encodeJSON(stdout, report, stderr)
+	}
+	fmt.Fprintf(stdout, "task=%s total=$%.4f human_minutes=%.2f providers=%v\n",
+		report.TaskID, report.TotalUSD, report.HumanMinutes, report.ByProvider)
+	return 0
 }
 
 // aggregateCost walks every relevant event and sums cost_usd across
