@@ -15,6 +15,7 @@ type Plan struct {
 	Tasks                  []Task    `json:"tasks"`
 	CrossPhaseVerification []string  `json:"cross_phase_verification,omitempty"`
 	ShipBlockers           []string  `json:"ship_blockers,omitempty"`
+	Approval               *Approval `json:"approval,omitempty"`
 	CreatedAt              time.Time `json:"-"`
 }
 

@@ -412,6 +412,17 @@ func (l *Ledger) Query(_ context.Context, filter QueryFilter) ([]Node, error) {
 	return nodes, nil
 }
 
+// QueryNodes returns matching node IDs without loading full node payloads.
+// Callers that need content can follow up with ReadNode for each ID.
+func (l *Ledger) QueryNodes(filter QueryFilter) ([]NodeID, error) {
+	return l.index.QueryNodes(filter)
+}
+
+// ReadNode loads a single node by ID from the underlying store.
+func (l *Ledger) ReadNode(id NodeID) (Node, error) {
+	return l.store.ReadNode(id)
+}
+
 // Resolve follows the supersedes chain from the given node ID to find
 // the current effective node.
 func (l *Ledger) Resolve(_ context.Context, id NodeID) (*Node, error) {

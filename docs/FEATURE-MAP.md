@@ -8,6 +8,8 @@
 - Evaluation-agent skill.
 - Manifest-enforced skill manufacturing pipeline.
 - Shell preprocessing and path-scoped skill activation.
+- Artifact ledger nodes plus Antigravity import/export wire format.
+- Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 
 ### In Progress
 

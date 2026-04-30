@@ -22,35 +22,34 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/RelayOne/r1/internal/app"
-	"github.com/RelayOne/r1/internal/boulder"
-	"github.com/RelayOne/r1/internal/consent"
-	"github.com/RelayOne/r1/internal/logging"
-	"github.com/RelayOne/r1/internal/metrics"
 	"github.com/RelayOne/r1/internal/audit"
+	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/checkpoint"
 	"github.com/RelayOne/r1/internal/cloud"
 	"github.com/RelayOne/r1/internal/config"
+	"github.com/RelayOne/r1/internal/consent"
 	stokeCtx "github.com/RelayOne/r1/internal/context"
 	"github.com/RelayOne/r1/internal/convergence"
+	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/engine"
 	"github.com/RelayOne/r1/internal/env"
 	"github.com/RelayOne/r1/internal/env/docker"
 	"github.com/RelayOne/r1/internal/env/ember"
 	"github.com/RelayOne/r1/internal/env/fly"
 	envssh "github.com/RelayOne/r1/internal/env/ssh"
-	"github.com/RelayOne/r1/internal/engine"
 	"github.com/RelayOne/r1/internal/flowtrack"
 	"github.com/RelayOne/r1/internal/hitl"
 	"github.com/RelayOne/r1/internal/hooks"
 	"github.com/RelayOne/r1/internal/hub"
 	hubbuiltin "github.com/RelayOne/r1/internal/hub/builtin"
 	"github.com/RelayOne/r1/internal/interview"
-	litellmPkg "github.com/RelayOne/r1/internal/litellm"
 	"github.com/RelayOne/r1/internal/ledger"
+	litellmPkg "github.com/RelayOne/r1/internal/litellm"
+	"github.com/RelayOne/r1/internal/logging"
 	stokeMCP "github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/metrics"
 	"github.com/RelayOne/r1/internal/model"
 	"github.com/RelayOne/r1/internal/modelsource"
-	"github.com/RelayOne/r1/internal/smoketest"
-	"github.com/RelayOne/r1/internal/websearch"
 	"github.com/RelayOne/r1/internal/notify"
 	"github.com/RelayOne/r1/internal/orchestrate"
 	"github.com/RelayOne/r1/internal/plan"
@@ -61,17 +60,17 @@ import (
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/remote"
 	"github.com/RelayOne/r1/internal/repl"
-	"github.com/RelayOne/r1/internal/report"
-	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/replay"
 	"github.com/RelayOne/r1/internal/repomap"
+	"github.com/RelayOne/r1/internal/report"
+	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
-	"github.com/RelayOne/r1/internal/specexec"
 	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/session"
-	"github.com/RelayOne/r1/internal/costtrack"
 	"github.com/RelayOne/r1/internal/skill"
-	"github.com/RelayOne/r1/internal/wizard"
+	"github.com/RelayOne/r1/internal/smoketest"
+	"github.com/RelayOne/r1/internal/specexec"
+	"github.com/RelayOne/r1/internal/stancesign"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/streamjson"
 	"github.com/RelayOne/r1/internal/subscriptions"
@@ -79,8 +78,9 @@ import (
 	"github.com/RelayOne/r1/internal/testselect"
 	"github.com/RelayOne/r1/internal/tui"
 	"github.com/RelayOne/r1/internal/verify"
+	"github.com/RelayOne/r1/internal/websearch"
 	"github.com/RelayOne/r1/internal/wisdom"
-	"github.com/RelayOne/r1/internal/stancesign"
+	"github.com/RelayOne/r1/internal/wizard"
 	"github.com/RelayOne/r1/internal/worktree"
 )
 
@@ -673,6 +673,8 @@ func main() {
 		// `r1 receipt verify path/to/receipt.json` and disambiguates
 		// from the existing codebase-scanner `inspect` verb.
 		receiptCmd(os.Args[2:])
+	case "artifact":
+		artifactCmd(os.Args[2:])
 	case "watch":
 		watchCmd(os.Args[2:])
 	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
@@ -874,7 +876,8 @@ func mcpServeCmd(args []string) {
 // then poll stoke_get_mission_status until completion.
 //
 // Wire it into Claude Code with:
-//   { "mcpServers": { "stoke": { "command": "stoke", "args": ["mcp-serve-stoke"] } } }
+//
+//	{ "mcpServers": { "stoke": { "command": "stoke", "args": ["mcp-serve-stoke"] } } }
 func mcpServeStokeCmd(args []string) {
 	fs := flag.NewFlagSet("mcp-serve-stoke", flag.ExitOnError)
 	stokeBin := fs.String("stoke-bin", "", "Path to stoke binary used for spawned builds (default: argv[0])")
@@ -1443,13 +1446,13 @@ func exitWithStreamResult(em *streamjson.Emitter, code int, r *streamjsonResult,
 // newProviderForURL returns the right Provider based on the
 // base URL. Auto-detects the API format:
 //
-//   claude-code://          → ClaudeCodeProvider (local CLI)
-//   openrouter.ai           → OpenAI-compatible (OR speaks OpenAI format)
-//   api.openai.com          → OpenAI-compatible
-//   *minimax*               → Anthropic format (MiniMax speaks Anthropic)
-//   localhost / 127.0.0.1   → Anthropic format (litellm proxy)
-//   api.anthropic.com       → Anthropic format
-//   everything else         → try Anthropic first (most common via litellm)
+//	claude-code://          → ClaudeCodeProvider (local CLI)
+//	openrouter.ai           → OpenAI-compatible (OR speaks OpenAI format)
+//	api.openai.com          → OpenAI-compatible
+//	*minimax*               → Anthropic format (MiniMax speaks Anthropic)
+//	localhost / 127.0.0.1   → Anthropic format (litellm proxy)
+//	api.anthropic.com       → Anthropic format
+//	everything else         → try Anthropic first (most common via litellm)
 //
 // This makes stoke polyglot: operators can point --native-base-url
 // at ANY provider without litellm as a format translator.
@@ -2962,10 +2965,10 @@ func sowCmd(args []string) {
 			// log output in stream-json mode. Both fields are nil-safe
 			// on every consumer site (sow_native_streamjson.go +
 			// descent_bridge_hitl.go).
-			StreamJSON: sowStreamJSON,
-			HITL:       sowHITL,
-			Timeline:          sowTimeline,
-			ResumeState:       resumeState,
+			StreamJSON:  sowStreamJSON,
+			HITL:        sowHITL,
+			Timeline:    sowTimeline,
+			ResumeState: resumeState,
 			// H-91d: correlation IDs stamped into every worker JSONL
 			// entry (via engine.WorkerLogContext). Generated once per
 			// `stoke sow` invocation — the same RunID ties all
@@ -2974,28 +2977,28 @@ func sowCmd(args []string) {
 			// the full chain. Same RunID used by runtrack manifest
 			// so stoke-server can correlate the dashboard entry with
 			// the JSONL logs.
-			RunID:      sowRunID,
-			StokeBuild: sowStokeBuild,
-			ModelTag:   nativeModelName,
-			PID:        os.Getpid(),
-			PPID:       os.Getppid(),
+			RunID:                  sowRunID,
+			StokeBuild:             sowStokeBuild,
+			ModelTag:               nativeModelName,
+			PID:                    os.Getpid(),
+			PPID:                   os.Getppid(),
 			ContentJudgeRejections: &sync.Map{},
 			// Shared overflow budget: once a task has promoted its
 			// leftover scope to a new session, subsequent sibling
 			// reviews short-circuit. Prevents the T6-style spiral
 			// where the same reviewer-rejects-task cycle fires once
 			// per sibling directive at depth 3.
-			overflowBudget: &sync.Map{},
-			SOWDesc:           sow.Description,
-			RepoMap:           sowRepoMap,
-			RepoMapBudget:     *repomapBudget,
-			CostBudgetUSD:     *costBudget,
-			spent:             sharedSpent,
-			OverrideJudge:     overrideJudge,
-			Ignores:           ignoreList,
-			UniversalContext:  universalCtx,
-			Hooks:             hookSet,
-			OnContinuations: continuationCallback,
+			overflowBudget:   &sync.Map{},
+			SOWDesc:          sow.Description,
+			RepoMap:          sowRepoMap,
+			RepoMapBudget:    *repomapBudget,
+			CostBudgetUSD:    *costBudget,
+			spent:            sharedSpent,
+			OverrideJudge:    overrideJudge,
+			Ignores:          ignoreList,
+			UniversalContext: universalCtx,
+			Hooks:            hookSet,
+			OnContinuations:  continuationCallback,
 			// OnSessionEscalation: unconditional PlanFixDAG entry. Fires
 			// on EVERY session escalation that has sticky failing ACs,
 			// regardless of whether the CTO judge produced continuation
@@ -3155,11 +3158,11 @@ func sowCmd(args []string) {
 				}
 				return true
 			},
-			Wisdom:            wisdomStore,
-			WisdomProvider:    wisdomProv,
-			SOWID:             sow.ID,
-			ReviewProvider:    reviewProv,
-			ReviewModel:       reviewModelName,
+			Wisdom:         wisdomStore,
+			WisdomProvider: wisdomProv,
+			SOWID:          sow.ID,
+			ReviewProvider: reviewProv,
+			ReviewModel:    reviewModelName,
 			ReasoningProvider: func() provider.Provider {
 				// --no-self-review: when worker and reviewer are
 				// the same model AND no separate reasoning provider
@@ -3173,14 +3176,14 @@ func sowCmd(args []string) {
 				}
 				return reasoningProv
 			}(),
-			ReasoningModel:    reasoningModelChoice,
-			BriefingProvider:  briefingProv,
-			BriefingModel:     nativeModelName,
-			StrictScope:       *strictScope,
-			VerboseStream:     *verboseStream,
-			ParallelWorkers:   *parallelTasks,
-			CompactThreshold:  *compactThreshold,
-			RawSOWText:        rawSOWText,
+			ReasoningModel:   reasoningModelChoice,
+			BriefingProvider: briefingProv,
+			BriefingModel:    nativeModelName,
+			StrictScope:      *strictScope,
+			VerboseStream:    *verboseStream,
+			ParallelWorkers:  *parallelTasks,
+			CompactThreshold: *compactThreshold,
+			RawSOWText:       rawSOWText,
 		}
 
 		// Load up to 3 most recent meta-reports from prior runs on
@@ -3797,6 +3800,8 @@ func planCmd(args []string) {
 	task := fs.String("task", "", "High-level task description")
 	claudeBin := fs.String("claude-bin", "claude", "Claude binary")
 	claudeConfigDir := fs.String("claude-config-dir", "", "CLAUDE_CONFIG_DIR")
+	approve := fs.Bool("approve", false, "Attach operator approval and emit ledger-native plan approval events")
+	approvalReason := fs.String("approval-reason", "", "Optional reason recorded when --approve is set")
 	dryRun := fs.Bool("dry-run", false, "Show prompt without executing")
 	fs.Parse(args)
 
@@ -3891,7 +3896,28 @@ Rules:
 				if !filepath.IsAbs(outputPath) {
 					outputPath = filepath.Join(absRepo, outputPath)
 				}
-				if err := os.WriteFile(outputPath, []byte(jsonStr), 0644); err != nil { // #nosec G306 -- CLI output artefact; user-readable.
+				var parsed plan.Plan
+				if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+					fatal("parse generated plan: %v", err)
+				}
+				if parsed.ID == "" {
+					parsed.ID = plan.NewPlanID(taskPrompt)
+				}
+				var approval *plan.Approval
+				if *approve {
+					approval = &plan.Approval{
+						Actor:   os.Getenv("USER"),
+						Mode:    "cli-auto",
+						Reason:  *approvalReason,
+						At:      time.Now().UTC(),
+						EventID: fmt.Sprintf("plan-approved-%d", time.Now().UnixNano()),
+					}
+					if approval.Actor == "" {
+						approval.Actor = "operator"
+					}
+					parsed.Approval = approval
+				}
+				if err := plan.SaveWithLedger(context.Background(), absRepo, outputPath, &parsed, approval); err != nil {
 					fatal("write plan: %v", err)
 				}
 				fmt.Printf("Plan saved to %s\n", outputPath)
@@ -4041,7 +4067,7 @@ func scanCmd(args []string) {
 	if *jsonOut {
 		type scanOutput struct {
 			Scan            *scanpkg.ScanResult  `json:"scan"`
-			SecuritySurface *scanpkg.SecurityMap  `json:"security_surface,omitempty"`
+			SecuritySurface *scanpkg.SecurityMap `json:"security_surface,omitempty"`
 		}
 		output := scanOutput{Scan: result}
 		if *securityFlag {
@@ -4367,9 +4393,10 @@ func cloudCmd(args []string) {
 //     default cloud endpoint for self-hosted Stoke Cloud.
 //
 // Exit codes:
-//   0 on success (credentials written)
-//   1 on any register/save failure
-//   2 on missing STOKE_CLOUD_API_KEY
+//
+//	0 on success (credentials written)
+//	1 on any register/save failure
+//	2 on missing STOKE_CLOUD_API_KEY
 //
 // Honors the "un-managed-first" commitment: every feature
 // continues to work without this command having been run.
@@ -5300,8 +5327,8 @@ Return ONLY valid JSON:
 Review vectors:
 
 1. CODE QUALITY
-   - No place` + "holder" + ` code (` + "TO" + `DO, FIX` + "ME" + `, Not` + "Implemented" + `Error)
-   - No type bypasses (ts` + "-" + `ignore, as ` + "any" + `, eslint` + "-disable" + `)
+   - No place`+"holder"+` code (`+"TO"+`DO, FIX`+"ME"+`, Not`+"Implemented"+`Error)
+   - No type bypasses (ts`+"-"+`ignore, as `+"any"+`, eslint`+"-disable"+`)
    - No empty catch blocks
    - No hardcoded secrets
    - Error handling is real (not swallowed)
@@ -5539,10 +5566,10 @@ func gitHead(dir string) string {
 // "use all smart settings / use local litellm / use native executor" to be the
 // default behavior with zero flags.
 type SmartDefaults struct {
-	RunnerMode    string // claude, codex, native
-	NativeBaseURL string // e.g. http://localhost:8000 for LiteLLM
-	NativeAPIKey  string // from env: LITELLM_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
-	NativeModel   string // e.g. claude-sonnet-4-6
+	RunnerMode    string   // claude, codex, native
+	NativeBaseURL string   // e.g. http://localhost:8000 for LiteLLM
+	NativeAPIKey  string   // from env: LITELLM_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+	NativeModel   string   // e.g. claude-sonnet-4-6
 	Notes         []string // human-readable explanation of decisions
 }
 
@@ -5722,9 +5749,9 @@ func launchREPL() {
 
 	// /build-from-scope: paste a SOW directly or pass a file path.
 	r.Register(repl.Command{
-		Name: "build-from-scope",
+		Name:        "build-from-scope",
 		Description: "Build a project from a pasted or file-based Statement of Work",
-		Usage: "/build-from-scope [<path-to-sow.json>]\n               (with no path: paste SOW, then 'END' on a blank line)",
+		Usage:       "/build-from-scope [<path-to-sow.json>]\n               (with no path: paste SOW, then 'END' on a blank line)",
 		Run: func(args string) {
 			arg := strings.TrimSpace(args)
 			var sowText string
