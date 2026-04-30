@@ -95,7 +95,9 @@ func (r *Registry) saveTodos(items []TodoItem) {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return
 	}
-	os.Rename(tmp, path) //nolint:errcheck
+	if err := os.Rename(tmp, path); err != nil {
+		return
+	}
 }
 
 // handleTodoWrite implements todo_write (T-R1P-012).

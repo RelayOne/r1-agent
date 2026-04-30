@@ -790,6 +790,10 @@ func main() {
 		cicdCmd(os.Args[2:])
 	case "agent-serve":
 		agentServeCmd(os.Args[2:])
+	case "daemon":
+		// Long-running R1 process: persistent queue + WAL + HTTP control plane +
+		// worker pool. See cmd/stoke/daemon_cmd.go.
+		daemonCmd(os.Args[2:])
 	case "desktop-rpc":
 		// R1D-1.2: long-lived JSON-RPC 2.0 server for the Tauri desktop host.
 		// Reads NDJSON requests on stdin; writes NDJSON responses on stdout.

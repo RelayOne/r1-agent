@@ -85,7 +85,7 @@ func (r *Registry) handleHTTPRequest(ctx context.Context, input json.RawMessage)
 		bodyReader = bytes.NewBufferString(args.Body)
 	}
 
-	req, err := http.NewRequestWithContext(reqCtx, method, args.URL, bodyReader) //nolint:noctx
+	req, err := http.NewRequestWithContext(reqCtx, method, args.URL, bodyReader)
 	if err != nil {
 		return "", fmt.Errorf("http_request: build request: %w", err)
 	}
