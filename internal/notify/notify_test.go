@@ -20,7 +20,7 @@ func TestWebhookNotifierSuccess(t *testing.T) {
 	defer srv.Close()
 
 	n := NewWebhookNotifier(srv.URL, nil, nil)
-	err := n.Notify(NotifyEvent{Type: "test", Message: "hello", Timestamp: time.Now()})
+	err := n.Notify(NotifyEvent{Type: "test", BeaconID: "bc-123", SessionID: "sess-9", Message: "hello", Timestamp: time.Now()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,6 +32,9 @@ func TestWebhookNotifierSuccess(t *testing.T) {
 	json.Unmarshal(received, &evt)
 	if evt.Type != "test" {
 		t.Errorf("type = %q, want test", evt.Type)
+	}
+	if evt.BeaconID != "bc-123" || evt.SessionID != "sess-9" {
+		t.Errorf("beacon/session not preserved: %+v", evt)
 	}
 }
 
@@ -116,7 +119,7 @@ func TestWebhookNotifierCustomHeaders(t *testing.T) {
 	defer srv.Close()
 
 	headers := map[string]string{
-		"Authorization":  "Bearer test-token",
+		"Authorization":   "Bearer test-token",
 		"X-Custom-Header": "custom-value",
 	}
 	n := NewWebhookNotifier(srv.URL, headers, nil)
@@ -160,18 +163,21 @@ func TestTelegramFormat(t *testing.T) {
 
 func TestGenericFormat(t *testing.T) {
 	evt := NotifyEvent{
-		Type:      "build_complete",
-		TaskID:    "TASK-42",
-		Message:   "build passed",
-		Timestamp: time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
-		Details:   map[string]string{"duration": "5m"},
+		Type:        "build_complete",
+		TaskID:      "TASK-42",
+		BeaconID:    "bc-123",
+		SessionID:   "sess-42",
+		ArtifactRef: "sha256:artifact",
+		Message:     "build passed",
+		Timestamp:   time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC),
+		Details:     map[string]string{"duration": "5m"},
 	}
 	data, err := GenericFormat(evt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := string(data)
-	for _, field := range []string{"build_complete", "TASK-42", "build passed", "duration", "5m"} {
+	for _, field := range []string{"build_complete", "TASK-42", "bc-123", "sess-42", "sha256:artifact", "build passed", "duration", "5m"} {
 		if !strings.Contains(content, field) {
 			t.Errorf("GenericFormat output missing field %q", field)
 		}

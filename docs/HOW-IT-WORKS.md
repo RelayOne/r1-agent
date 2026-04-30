@@ -490,3 +490,12 @@ The command can:
 - bulk-migrate a directory of markdown, OpenAPI, Zapier, or Codex TOML inputs
 
 `stoke init` remains the project bootstrap entrypoint.
+
+## Beacon MVP primitives
+
+Two small integration points now exist for Beacon-adjacent workflows:
+
+- notification payloads can identify the beacon, session, and evidence
+  artifact involved in a remote event,
+- and offline review requests can be serialized as a small envelope that
+  points directly at the artifact holding the review evidence.

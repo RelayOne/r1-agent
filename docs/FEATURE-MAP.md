@@ -340,3 +340,4 @@ Homebrew publishing, cosign keyless OIDC signing.
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
 | Deterministic skill wizard | `stoke wizard run|migrate|query` with decision ledger and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |
+| Beacon MVP primitives | Notifications can now carry `beacon_id` / `session_id` / `artifact_ref`, and offline-review requests have a structured artifact-backed envelope. | Done | [BEACON-PRIMITIVES.md](BEACON-PRIMITIVES.md) |

@@ -219,6 +219,10 @@ With deterministic skills, the result expands again: a governed catalog
 of repeatable engineering moves your team can compile, migrate, review,
 approve, and re-run without starting from a blank prompt each time.
 
+The small Beacon primitives matter because they turn remote escalation
+from prose into machine-routable context: the operator can see which
+beacon, which session, and which artifact the system is talking about.
+
 ## Key benefits
 
 **Ship AI-generated code without a follow-up audit pass.** The
