@@ -130,6 +130,94 @@ If you have HITL approval enabled (`SoftPassApprovalFunc`), a
 soft-pass verdict pauses execution and waits for your thumbs-up
 before the merge proceeds.
 
+## Wizard flow — from loose source material to deterministic skill
+
+The wizard lane is now the shortest path from "we have some workflow
+knowledge" to "we have a deterministic, ledgered, replayable skill."
+
+### 1. Choose the entry mode
+
+The operator starts in one of three ways:
+
+- `stoke wizard run` when they want to create or refine a skill
+  interactively.
+- `stoke wizard migrate` when they already have source material such as
+  Markdown instructions, an OpenAPI schema, a Zapier export, or TOML
+  config and want a structured conversion path.
+- `stoke wizard query` when they need to inspect prior wizard output,
+  decisions, or migration state.
+
+`run` is authoring, `migrate` is normalization, and `query` is
+inspection.
+
+### 2. Normalize the source
+
+When the operator feeds existing material into the wizard, the adapter
+layer first translates it into a common intermediate shape. Markdown
+sources become structured steps and constraints. OpenAPI sources become
+typed operations plus inputs and outputs. Zapier sources become trigger
+and action graphs. TOML sources become schema-backed config records.
+
+This is where the wizard stops being a form-filler and becomes a
+migration tool: it pulls disparate automation formats into a single R1
+skill model.
+
+### 3. Ask the human where judgment matters
+
+The wizard now has an `ask_user` primitive. When it hits a trust
+boundary, ambiguous field, missing constraint, or packaging choice, it
+does not invent an answer and hide the guess in generated output. It
+asks. Those prompts are deliberate operator decisions, not optional
+confirmation noise.
+
+### 4. Record the decision ledger
+
+Each operator answer is recorded into the decision ledger. That turns a
+wizard session from an ephemeral terminal interaction into a governance
+event stream:
+
+- what source was imported,
+- what ambiguity was resolved by the operator,
+- what the final chosen constraints were,
+- and which generated artifact came out of that branch of decisions.
+
+The result is reproducibility. Another operator can inspect not just the
+final skill, but why it looks the way it does.
+
+### 5. Compile into deterministic form
+
+Once the wizard has a complete structured definition, the deterministic
+skill substrate takes over. `internal/r1skill/` runs the analyzer and
+compiler pipeline, emitting a typed JSON IR plus a compile proof.
+
+That proof is the machine-checkable record that the skill passed the
+deterministic compiler and is eligible for the runtime path keyed off
+`useIR=true`.
+
+### 6. Register and execute
+
+Compiled skills are discoverable through the registry layer and can be
+executed by the deterministic runtime path rather than a pure prompt
+interpretation path. The important shift is that the skill is now an
+artifact the system can inspect, reason about, store, export, and
+replay.
+
+### 7. Store, export, and approve as artifacts
+
+Wave A completed the artifact lane around the wizard:
+
+- artifact storage persists the generated assets,
+- `stoke artifact` provides an operator CLI to inspect and move them,
+- the Antigravity converter provides a normalization bridge for external
+  formats,
+- and `stoke plan --approve` now emits explicit plan and approval nodes
+  so the governance graph captures approval, not just execution.
+
+The operator story is now coherent end-to-end: import source material,
+resolve the ambiguous parts with a human, compile into deterministic
+form, store the output as an artifact, and keep the approval trail in
+the ledger.
+
 ## Technical overview
 
 ### System flow

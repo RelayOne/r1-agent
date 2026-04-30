@@ -203,6 +203,16 @@ stoke task "Fix the flaky integration test in server/handler"
 # debug prints, hard-coded creds). No LLM calls.
 stoke scan --security
 
+# Compile and check a deterministic skill
+r1-skill-compile --check ./skills/deterministic-echo/skill.r1.json
+
+# Start or migrate a skill through the wizard flow
+stoke wizard run
+stoke wizard migrate --from markdown --path ./docs/runbook.md
+
+# Inspect stored artifacts such as compile proofs or approvals
+stoke artifact list
+
 # 17-persona adversarial audit (security, performance, a11y, DX…)
 stoke audit --dry-run
 
@@ -271,6 +281,18 @@ the same `internal/` packages.
 | `stoke repair` | Auto-fix common configuration issues |
 | `stoke doctor` | Tool dependency check across the 5-provider fallback chain |
 | `stoke version` | Version info (ldflags-populated) |
+| `stoke wizard` | Guided skill authoring, migration, and inspection (`run`, `migrate`, `query`) |
+| `stoke artifact` | Artifact storage inspection, import/export, and replay helpers |
+
+### Specialized CLIs
+
+| Binary / Command | Purpose |
+|---------|---------|
+| `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
+| `stoke wizard run` | Guided operator flow for creating or refining a skill |
+| `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
+| `stoke wizard query` | Inspect wizard outputs, migrations, and prior decisions |
+| `stoke artifact` | Inspect, store, import, and export artifacts such as compile proofs and plan approvals |
 
 ### Build flags
 
