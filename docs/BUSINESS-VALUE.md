@@ -30,6 +30,7 @@ The business value of that shift is simple:
 - parity removes the objection that R1 is missing table-stakes features,
 - superiority creates a reason to switch,
 - deterministic skills turn reusable expertise into a governed product asset instead of a pile of prompts.
+- bundled pack install turns that governed skill asset into something operators can actually ship and reuse across repos,
 - replay-safe cache and cost attribution make deterministic execution easier to trust when a buyer asks whether two runs came from the same compiled skill or from a materially different revision.
 
 Status snapshot:
@@ -38,10 +39,11 @@ Status snapshot:
 - Done: operator receipts plus explicit honesty, richer cost-accounting, and replay-safe deterministic caching surfaces.
 - Done: beacon protocol foundation for governed peer identity and session setup.
 - Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
+- Done: bundled pack install and recursive composition give deterministic skills a practical distribution path instead of a registry-only story.
 - Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
 - Done: beacon trust validation plus deferred notify and offline-review primitives.
-- Scoped: more productized skill packaging.
+- Scoped: more productized skill packaging beyond the shipped bundled-pack path.
 - Scoping: broader outward-facing proof points.
 - Potential-On Horizon: network effects from shared deterministic skills.
 
