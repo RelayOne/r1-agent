@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha1" // #nosec G505 -- RFC 6455 WebSocket handshake mandates SHA1 for Sec-WebSocket-Accept; not used for cryptographic security.
 	"encoding/base64"
 	"encoding/binary"
@@ -171,7 +172,7 @@ func DialAndSendWS(ctx context.Context, url string, env Envelope) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWSTextFrame(bufrw.Writer, data); err != nil {
+	if err := writeWSTextFrame(bufrw.Writer, data, true); err != nil {
 		return err
 	}
 	return bufrw.Flush()
@@ -193,18 +194,22 @@ func computeAcceptKey(clientKey string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-func writeWSTextFrame(w *bufio.Writer, payload []byte) error {
+func writeWSTextFrame(w *bufio.Writer, payload []byte, masked bool) error {
 	if err := w.WriteByte(0x81); err != nil {
 		return err
 	}
 	length := len(payload)
+	maskBit := byte(0)
+	if masked {
+		maskBit = 0x80
+	}
 	switch {
 	case length <= 125:
-		if err := w.WriteByte(byte(length)); err != nil {
+		if err := w.WriteByte(maskBit | byte(length)); err != nil {
 			return err
 		}
 	case length <= 65535:
-		if err := w.WriteByte(126); err != nil {
+		if err := w.WriteByte(maskBit | 126); err != nil {
 			return err
 		}
 		var buf [2]byte
@@ -213,7 +218,7 @@ func writeWSTextFrame(w *bufio.Writer, payload []byte) error {
 			return err
 		}
 	default:
-		if err := w.WriteByte(127); err != nil {
+		if err := w.WriteByte(maskBit | 127); err != nil {
 			return err
 		}
 		var buf [8]byte
@@ -222,7 +227,23 @@ func writeWSTextFrame(w *bufio.Writer, payload []byte) error {
 			return err
 		}
 	}
-	_, err := w.Write(payload)
+	if !masked {
+		_, err := w.Write(payload)
+		return err
+	}
+	var mask [4]byte
+	if _, err := rand.Read(mask[:]); err != nil {
+		return err
+	}
+	if _, err := w.Write(mask[:]); err != nil {
+		return err
+	}
+	maskedPayload := make([]byte, len(payload))
+	copy(maskedPayload, payload)
+	for i := range maskedPayload {
+		maskedPayload[i] ^= mask[i%4]
+	}
+	_, err := w.Write(maskedPayload)
 	return err
 }
 
