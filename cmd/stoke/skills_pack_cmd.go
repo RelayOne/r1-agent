@@ -158,7 +158,7 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|sign|uninstall|update|verify")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|serve|sign|uninstall|update|verify")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -174,6 +174,8 @@ func skillsPackCmd(args []string) {
 		runSkillsPackPublishCmd(args[1:])
 	case "search":
 		runSkillsPackSearchCmd(args[1:])
+	case "serve":
+		runSkillsPackServeCmd(args[1:])
 	case "sign":
 		runSkillsPackSignCmd(args[1:])
 	case "uninstall":
