@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/RelayOne/r1/internal/boulder"
 	"github.com/RelayOne/r1/internal/checkpoint"
 	"github.com/RelayOne/r1/internal/cloud"
+	r1coderadar "github.com/RelayOne/r1/internal/coderadar"
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/consent"
 	stokeCtx "github.com/RelayOne/r1/internal/context"
@@ -89,6 +91,7 @@ import (
 
 // version is set at build time via ldflags.
 var version = "dev"
+var fatalReporter *r1coderadar.Client
 
 // BuildConfig holds all parameters for a build run.
 // Used by both buildCmd (CLI) and shipCmd (programmatic).
@@ -632,6 +635,16 @@ func signalContext(parent context.Context) (context.Context, context.CancelFunc)
 }
 
 func main() {
+	fatalReporter = r1coderadar.FromEnv("stoke")
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_ = fatalReporter.CaptureRecovered(context.Background(), recovered, map[string]any{
+				"phase": "main",
+			})
+			panic(recovered)
+		}
+	}()
+
 	// Initialize structured logging from STOKE_LOG_LEVEL env (default: "info").
 	logLevel := r1env.Get("R1_LOG_LEVEL", "STOKE_LOG_LEVEL")
 	if logLevel == "" {
@@ -6534,7 +6547,13 @@ func orNone(s string) string {
 }
 
 func fatal(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	if fatalReporter != nil {
+		_ = fatalReporter.CaptureError(context.Background(), errors.New(msg), map[string]any{
+			"phase": "fatal",
+		})
+	}
+	fmt.Fprintln(os.Stderr, msg)
 	os.Exit(1)
 }
 

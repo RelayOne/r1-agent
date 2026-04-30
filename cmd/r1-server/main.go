@@ -8,14 +8,14 @@
 //
 // RS-2 items covered by this file:
 //
-//	1. new binary cmd/r1-server/main.go
-//	4. HTTP server on port 3948 (override via R1_SERVER_PORT)
-//	5. API endpoints — register, health, sessions, session detail,
-//	   events, ledger, checkpoints
-//	6. Graceful shutdown on SIGINT/SIGTERM
-//	7. Single-instance guard (listener bound before Serve)
-//	8. Structured logging via log/slog to <data_dir>/r1-server.log
-//	   with 10MB rotation
+//  1. new binary cmd/r1-server/main.go
+//  4. HTTP server on port 3948 (override via R1_SERVER_PORT)
+//  5. API endpoints — register, health, sessions, session detail,
+//     events, ledger, checkpoints
+//  6. Graceful shutdown on SIGINT/SIGTERM
+//  7. Single-instance guard (listener bound before Serve)
+//  8. Structured logging via log/slog to <data_dir>/r1-server.log
+//     with 10MB rotation
 //
 // RS-2 items 2 (datadir) and 3 (DB schema) live in datadir.go + db.go.
 // RS-3 (scanner + event tailer) will be added in a follow-up commit.
@@ -40,6 +40,7 @@ import (
 	"syscall"
 	"time"
 
+	r1coderadar "github.com/RelayOne/r1/internal/coderadar"
 	"github.com/RelayOne/r1/internal/retention"
 	"github.com/RelayOne/r1/internal/session"
 )
@@ -54,7 +55,20 @@ const (
 )
 
 func main() {
+	cr := r1coderadar.FromEnv("r1-server")
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			_ = cr.CaptureRecovered(context.Background(), recovered, map[string]any{
+				"phase": "main",
+			})
+			panic(recovered)
+		}
+	}()
+
 	if err := run(); err != nil {
+		_ = cr.CaptureError(context.Background(), err, map[string]any{
+			"phase": "main",
+		})
 		fmt.Fprintf(os.Stderr, "r1-server: %v\n", err)
 		os.Exit(1)
 	}
