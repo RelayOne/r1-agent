@@ -1,0 +1,43 @@
+{
+  "skill_id": "metrics_collection_runtime",
+  "skill_version": 1,
+  "ir_hash": "sha256:1ea6e105b2814ef98d5fed043e84b16173568d0882960eb908f2aed1bbffd8aa",
+  "analyzer_version": "1.0.0",
+  "constitution_hash": "sha256:local-dev",
+  "checks": [
+    {
+      "stage": "schema",
+      "passed": true
+    },
+    {
+      "stage": "type",
+      "passed": true
+    },
+    {
+      "stage": "capability",
+      "passed": true
+    },
+    {
+      "stage": "constitution",
+      "passed": true
+    },
+    {
+      "stage": "contract",
+      "passed": true
+    },
+    {
+      "stage": "termination",
+      "passed": true
+    },
+    {
+      "stage": "replay",
+      "passed": true
+    },
+    {
+      "stage": "proof",
+      "passed": true
+    }
+  ],
+  "verified_at": "2026-04-30T15:55:05.744515239Z",
+  "verified_by": "r1skill-analyzer-1.0.0"
+}
