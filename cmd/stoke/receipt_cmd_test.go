@@ -284,3 +284,36 @@ func TestSchemaVersionPresence(t *testing.T) {
 		})
 	}
 }
+
+func TestReceiptRecordListExport(t *testing.T) {
+	repo := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := runReceiptCmd([]string{
+		"record", "--repo", repo, "--task", "task-1", "--summary", "implemented feature", "--body", "diff body", "--signing-key", "secret",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("record exit=%d stderr=%s", code, stderr.String())
+	}
+	line := strings.TrimSpace(stdout.String())
+	parts := strings.Split(line, " ")
+	if len(parts) < 1 {
+		t.Fatalf("stdout=%q", line)
+	}
+	receiptID := parts[0]
+	stdout.Reset()
+	stderr.Reset()
+	if code := runReceiptCmd([]string{"list", "--repo", repo, "--task", "task-1"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("list exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), receiptID) {
+		t.Fatalf("list missing receipt id: %s", stdout.String())
+	}
+	outPath := filepath.Join(t.TempDir(), "receipt.json")
+	stdout.Reset()
+	stderr.Reset()
+	if code := runReceiptCmd([]string{"export", "--repo", repo, "--id", receiptID, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("export exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("exported file missing: %v", err)
+	}
+}

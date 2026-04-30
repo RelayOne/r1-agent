@@ -10,7 +10,11 @@ The next documentation baseline for R1 assumes two parallel planning tracks are 
 Status snapshot:
 
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
+- Done: beacon protocol foundation, trust validation layer, and missing beacon primitives for notifications and offline review.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
+- Done: Wave B receipts, honesty commands, and honest-cost reports.
+- Done: Wave C wizard ledger persistence and deterministic registry install flow.
+- Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
@@ -50,6 +54,31 @@ signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/archit
 The April 2026 train extended R1 from a CLI orchestrator into a
 parity-or-better reference runtime alongside Claude Code, Cursor, and
 Manus. Recent merges to `main`:
+
+- **Beacon protocol + trust + missing primitives** —
+  the shipped beacon scope now covers identity material, pairing claims
+  plus short-auth-string confirmation, session state, token handling,
+  trust validation on inbound signal frames, and offline review
+  envelopes plus beacon-targeted notification metadata. At the product
+  level, that gives R1 a governed protocol lane for identity, trust,
+  and deferred review instead of leaving those concerns as operator
+  glue. Evidence: PRs #45, #46, #47.
+
+- **Wave C wizard ledger + deterministic registry** —
+  `stoke wizard run|migrate|query|register` now extends all the way to
+  ledger-persisted authoring sessions and stable deterministic skill
+  installation, so wizard output is queryable and registrable rather
+  than ephemeral. Evidence: commit `80f721f` (PR #44).
+
+- **Wave B receipts + honesty + cost reporting** —
+  [`internal/receipts/`](internal/receipts/) adds persisted mission receipts with signing, export, and replay-linked provenance;
+  [`internal/honesty/`](internal/honesty/) adds ledger-backed `refused` and `why_not` decisions via `stoke honesty`;
+  [`internal/costtrack/honest_cost.go`](internal/costtrack/honest_cost.go) plus [`cmd/stoke/ops_cost.go`](cmd/stoke/ops_cost.go) add saved honest-cost rollups with provider grouping and human-minute equivalents.
+
+- **Wave D expansion commands** —
+  [`internal/counterfact/`](internal/counterfact/) adds deterministic knob-applied mission replay plus divergence reports via `stoke cf`;
+  [`internal/decisionbisect/`](internal/decisionbisect/) adds regression decision narratives plus gotcha-learning generation via `stoke why-broken`;
+  [`internal/selftune/`](internal/selftune/) adds bounded harness trial comparison and recommendation selection via `stoke self-tune`.
 
 - **Browser automation + Manus-style autonomous operator** —
   `browser_wait_for` and `browser_get_html` complete the
@@ -207,8 +236,9 @@ stoke scan --security
 r1-skill-compile --check ./skills/deterministic-echo/skill.r1.json
 
 # Start or migrate a skill through the wizard flow
-stoke wizard run
-stoke wizard migrate --from markdown --path ./docs/runbook.md
+stoke wizard run --ledger-dir ./.r1/ledger --mission-id demo-skill-authoring
+stoke wizard migrate --source-dir ./legacy-skills --source-format openapi --output-dir ./out
+stoke wizard register --skill ./out/demo-skill.r1.json --proof ./out/demo-skill.proof.json
 
 # Inspect stored artifacts such as compile proofs or approvals
 stoke artifact list
@@ -281,7 +311,7 @@ the same `internal/` packages.
 | `stoke repair` | Auto-fix common configuration issues |
 | `stoke doctor` | Tool dependency check across the 5-provider fallback chain |
 | `stoke version` | Version info (ldflags-populated) |
-| `stoke wizard` | Guided skill authoring, migration, and inspection (`run`, `migrate`, `query`) |
+| `stoke wizard` | Guided skill authoring, migration, registration, and inspection (`run`, `migrate`, `register`, `query`) |
 | `stoke artifact` | Artifact storage inspection, import/export, and replay helpers |
 
 ### Specialized CLIs
@@ -291,7 +321,8 @@ the same `internal/` packages.
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
-| `stoke wizard query` | Inspect wizard outputs, migrations, and prior decisions |
+| `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |
+| `stoke wizard query` | Inspect wizard outputs, migrations, prior decisions, or ledger-backed authoring sessions |
 | `stoke artifact` | Inspect, store, import, and export artifacts such as compile proofs and plan approvals |
 
 ### Build flags

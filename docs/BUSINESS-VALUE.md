@@ -13,6 +13,10 @@ The business value of that shift is simple:
 Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
+- Done: operator receipts plus explicit honesty and cost-accounting surfaces.
+- Done: beacon protocol, trust validation, and offline review or notify primitives for governed peer coordination.
+- Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
+- Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
 - Scoped: more productized skill packaging.
 - Scoping: broader outward-facing proof points.
@@ -45,6 +49,17 @@ sprint, R1 lives wherever engineers already work:
 In plain English: R1 stopped being something you have to remember to
 open. Wherever the engineer goes — IDE, desktop, CI pipeline,
 browser — R1 is already there.
+
+## What's New (Late April 2026) — R1 Stops Pretending
+
+Wave B is about operational trust, not more demos.
+
+- R1 now emits operator receipts that can be signed and exported.
+- R1 can explicitly refuse a claim when evidence is missing.
+- R1 can record "why not" as structured data instead of vague commentary.
+- R1 can express spend as both dollars and a human-equivalent time estimate.
+
+That turns AI output from "believe me" into something a manager, auditor, or buyer can review after the fact.
 
 What's the take-away in business terms?
 
@@ -104,6 +119,55 @@ In business terms, deterministic skills move R1 up the stack:
 4. **From "AI is hard to trust" to "AI can be reviewed like software."**
    Once a skill is compiled and ledgered, governance teams can inspect
    the structure instead of arguing over screenshots and anecdotes.
+
+The Wave C persistence work matters because it closes the operational
+gap between "we authored a governed skill" and "we can actually install
+and interrogate it later." Ledger-backed wizard sessions plus registry
+install make deterministic skills behave like product inventory, not
+like workshop output.
+
+## What's New (April 30, 2026) — R1 Adds A Trustable Beacon Coordination Layer
+
+The beacon work is not a side quest. It extends the same "govern the
+runtime, don't just trust the model" position into peer coordination.
+
+What shipped in practical terms:
+
+- **Protocol foundations.** Beacon identities, pairing flows, session
+  state, token handling, and ledger-native beacon records.
+- **Trust enforcement.** Pinned-root checks, nonce replay defense, and
+  signal-frame validation before inbound traffic is accepted.
+- **Deferred handoff primitives.** Offline review envelopes and
+  beacon-targeted notification metadata so asynchronous inspection can
+  happen without inventing custom glue around the runtime.
+
+Why buyers should care:
+
+1. **Safer multi-surface deployment.** Once R1 spans CLI, IDE, desktop,
+   CI, browser, and peer protocol surfaces, trust boundaries can no
+   longer stay implicit. The beacon trust layer makes those boundaries
+   explicit.
+2. **Better auditability for human review.** Offline review envelopes
+   mean a reviewer can inspect a governed package of work later, not
+   just trust a transient terminal transcript.
+3. **A path from single-runtime value to network value.** Identity,
+   pairing, session, and token primitives are the minimal substrate for
+   cross-instance or hub-style coordination without abandoning R1's
+   governance posture.
+
+## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
+
+Wave D adds three product surfaces that are not just parity features.
+
+- **Counterfactual replay.** `stoke cf` answers "what would have happened if we changed the reviewer, gate, or policy knob?" That is an operator debugging surface and a sales demo at the same time.
+- **Decision bisector.** `stoke why-broken` turns a regression into a concrete reasoning narrative and a reusable gotcha rule. Instead of only finding that a bug exists, R1 can explain where its own process went wrong.
+- **Harness self-tune.** `stoke self-tune` compares candidate harness configs to a baseline and recommends a safer improvement path. That turns the harness into an asset that compounds instead of a static release artifact.
+
+Business effect:
+
+1. These features make R1 easier to trust after a failure, not just during a demo.
+2. They create a visible story for continuous improvement that most agent runtimes do not expose to operators.
+3. They turn benchmark wins into something operational teams can use on their own repos.
 
 ## The problem
 
@@ -218,6 +282,20 @@ can't spin forever.
 With deterministic skills, the result expands again: a governed catalog
 of repeatable engineering moves your team can compile, migrate, review,
 approve, and re-run without starting from a blank prompt each time.
+
+Beacon extends that value outside the terminal. It gives R1 a secure
+operator-to-runtime transport that can survive mobile, desktop, and
+delegated-control workflows without trusting the relay hub with session
+contents.
+
+- **Remote control without blind trust.** Pairing, session encryption,
+  and replay rejection let operators approve or steer work from another
+  device without handing plaintext control to the relay.
+- **Delegation with real boundaries.** Capability tokens make approval,
+  spend, and delegation limits explicit instead of social convention.
+- **Auditable remote operations.** Every claim, device attach, session,
+  token event, and remote command lands in the same ledger used for local
+  execution and approvals.
 
 The small Beacon primitives matter because they turn remote escalation
 from prose into machine-routable context: the operator can see which
