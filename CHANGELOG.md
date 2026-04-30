@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Replay cache and honest-cost follow-through
+
+- Updated `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`,
+  `docs/BUSINESS-VALUE.md`, and `CHANGELOG.md` so the canonical five-doc set now
+  includes PR #63: IR-hash-scoped deterministic replay cache keys plus
+  richer honest-cost rollups with provider groups, metered-equivalent
+  spend, and equivalent-margin reporting.
+
 #### Beacon foundation and parity wave D docs refresh
 
 - Updated `README.md`, `docs/FEATURE-MAP.md`, `docs/HOW-IT-WORKS.md`,
@@ -38,6 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as durable and queryable rather than just an authoring UI.
 - Refreshed the top-level status language to show Wave D as shipped
   alongside the beacon foundation and the Wave C operator surfaces.
+
+### Changed
+
+- Honest-cost positioning now describes provider-group and
+  subscription-vs-metered economics instead of only flat dollar totals
+  plus human-minute estimates.
+- Deterministic-skills positioning now calls out replay-cache-key
+  namespacing and canonicalized JSON cache-key inputs as part of the
+  shipped trust story.
 
 ### Changed
 

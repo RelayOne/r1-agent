@@ -33,7 +33,7 @@ That path shows how R1 measures parity, how it refreshes those claims, and how d
 Status snapshot:
 
 - Done: parity measurement and deterministic manifest foundation.
-- Done: Wave B receipts, honesty decisions, and honest-cost reports.
+- Done: Wave B receipts, honesty decisions, honest-cost reports, and IR-scoped replay-cache keys.
 - Done: beacon identity, pairing, session, token, and ledger-node foundation.
 - Done: Wave C wizard ledger persistence and deterministic registry install path.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
@@ -81,7 +81,13 @@ Wave B adds three explicit post-task surfaces:
 2. `stoke honesty refuse` records a refusal when R1 should not make a claim without evidence.
 3. `stoke honesty why-not` records why an action was skipped, deferred, or downgraded.
 
-`stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping, metered-equivalent margin tracking, and a human-minute equivalent.
+`stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping, metered-equivalent margin tracking, subscription-versus-metered comparison, and a human-minute equivalent.
+
+The same post-task lane is now more replay-safe for deterministic
+skills: PR #63 namespaced replay cache keys by compile-proof hash and
+canonicalized cache-key inputs, which means equivalent JSON inputs
+replay identically while separate skills stop colliding in shared cache
+space.
 
 ## Beacon Foundation (2026-04-30) — Protocol Surfaces Around The Mission Loop
 

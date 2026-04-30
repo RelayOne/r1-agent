@@ -32,7 +32,7 @@ The business value of that shift is simple:
 Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
-- Done: operator receipts plus explicit honesty and cost-accounting surfaces.
+- Done: operator receipts plus explicit honesty, richer cost-accounting, and replay-safe deterministic caching surfaces.
 - Done: beacon protocol foundation for governed peer identity and session setup.
 - Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
 - Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
@@ -77,7 +77,7 @@ Wave B is about operational trust, not more demos.
 - R1 now emits operator receipts that can be signed and exported.
 - R1 can explicitly refuse a claim when evidence is missing.
 - R1 can record "why not" as structured data instead of vague commentary.
-- R1 can express spend as both dollars and a human-equivalent time estimate.
+- R1 can express spend as both dollars and a human-equivalent time estimate, with provider-group and metered-margin detail instead of one flat number.
 
 That turns AI output from "believe me" into something a manager, auditor, or buyer can review after the fact.
 
@@ -145,6 +145,12 @@ gap between "we authored a governed skill" and "we can actually install
 and interrogate it later." Ledger-backed wizard sessions plus registry
 install make deterministic skills behave like product inventory, not
 like workshop output.
+
+PR #63 adds a quieter but important follow-through: deterministic replay
+cache keys are now scoped by IR hash and canonicalized input shape. In
+business terms, that lowers one of the classic trust taxes on governed
+automation: replay should mean "same program, same normalized inputs,
+same answer," not "whatever happened to be cached under a loose key."
 
 ## What's New (April 30, 2026) — R1 Adds A Beacon Coordination Foundation
 
