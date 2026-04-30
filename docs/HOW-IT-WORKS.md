@@ -17,10 +17,11 @@ Status snapshot:
 
 - Done: parity measurement and deterministic manifest foundation.
 - Done: Wave B receipts, honesty decisions, and honest-cost reports.
-- Done: beacon identity/pairing/session/token flow, trust validation, and offline review or notify primitives.
+- Done: beacon identity, pairing, session, token, and ledger-node foundation.
 - Done: Wave C wizard ledger persistence and deterministic registry install path.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
+- In Progress: beacon trust validation and the deferred review or notify follow-ons.
 - Scoped: broader operator-facing skill surfaces.
 - Scoping: publication and packaging improvements.
 - Potential-On Horizon: portfolio-wide skill interchange.
@@ -65,26 +66,19 @@ Wave B adds three explicit post-task surfaces:
 
 `stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping and a human-minute equivalent.
 
-## Beacon + Trust (2026-04-30) — Protocol Surfaces Around The Mission Loop
+## Beacon Foundation (2026-04-30) — Protocol Surfaces Around The Mission Loop
 
-R1 now has a documented first slice of beacon-native coordination around
-the core mission loop:
+R1 now has a documented first shipped slice of beacon-native
+coordination around the core mission loop:
 
 1. **Identity, pairing, session, and token primitives.** A beacon peer
    can advertise identity material, complete a pairing flow, establish
    session state, and mint or exchange token-shaped authorization data.
-2. **Trust validation before acceptance.** Incoming signal frames are
-   checked against pinned roots, nonce replay rules, and frame-shape
-   validation so the protocol lane has a concrete trust boundary instead
-   of assuming a friendly network.
-3. **Deferred review and notify handoff.** Offline review envelopes and
-   beacon-targeted notify metadata let R1 package work for asynchronous
-   inspection instead of requiring every review decision to happen live.
-
 The important product shift is not just "more protocol code." R1 now
-has a plausible peer or hub story for identity, trust, and deferred
-operator review that fits the same governed-runtime thesis as the rest
-of the system.
+has a plausible peer or hub story for identity and governed session
+setup that fits the same runtime thesis as the rest of the system. The
+trust-validation and deferred-review follow-ons are tracked separately
+in open PRs #46 and #47 rather than treated as shipped.
 
 ## Wave D (2026-04-30) — Expansion Surfaces
 
@@ -586,28 +580,3 @@ The command can:
 - bulk-migrate a directory of markdown, OpenAPI, Zapier, or Codex TOML inputs
 
 `stoke init` remains the project bootstrap entrypoint.
-
-## Beacon Hub Trust Layer
-
-Beacon sessions stay end-to-end encrypted, but the relay can still send
-signed trust signals out-of-band when it detects compromise, abuse, or a
-required operator action.
-
-The agent does not trust those signals blindly. It verifies a pinned hub
-key, checks frame freshness, rejects replayed nonces, rejects unknown
-kinds, and only then dispatches the signal to a hardcoded handler.
-
-That separation matters:
-
-- verification descent decides whether local work is credible,
-- the Beacon Hub Trust Layer decides whether the remote control channel
-  should be paused, rotated, escalated, or surfaced to the operator.
-
-## Beacon MVP primitives
-
-Two small integration points now exist for Beacon-adjacent workflows:
-
-- notification payloads can identify the beacon, session, and evidence
-  artifact involved in a remote event,
-- and offline review requests can be serialized as a small envelope that
-  points directly at the artifact holding the review evidence.

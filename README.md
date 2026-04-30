@@ -10,12 +10,13 @@ The next documentation baseline for R1 assumes two parallel planning tracks are 
 Status snapshot:
 
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
-- Done: beacon protocol foundation, trust validation layer, and missing beacon primitives for notifications and offline review.
+- Done: beacon protocol foundation for identity, pairing, session, token, and beacon ledger nodes.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
 - Done: Wave B receipts, honesty commands, and honest-cost reports.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
+- In Progress: beacon trust validation and the follow-on notify or offline-review primitives tracked in open PRs.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
 - Potential-On Horizon: portfolio-wide deterministic skill exchange.
@@ -55,14 +56,12 @@ The April 2026 train extended R1 from a CLI orchestrator into a
 parity-or-better reference runtime alongside Claude Code, Cursor, and
 Manus. Recent merges to `main`:
 
-- **Beacon protocol + trust + missing primitives** —
+- **Beacon protocol foundation** —
   the shipped beacon scope now covers identity material, pairing claims
   plus short-auth-string confirmation, session state, token handling,
-  trust validation on inbound signal frames, and offline review
-  envelopes plus beacon-targeted notification metadata. At the product
-  level, that gives R1 a governed protocol lane for identity, trust,
-  and deferred review instead of leaving those concerns as operator
-  glue. Evidence: PRs #45, #46, #47.
+  and ledger-native beacon records. At the product level, that gives R1
+  a governed protocol lane for identity and session establishment
+  instead of leaving those concerns as operator glue. Evidence: PR #45.
 
 - **Wave C wizard ledger + deterministic registry** —
   `stoke wizard run|migrate|query|register` now extends all the way to
@@ -78,7 +77,7 @@ Manus. Recent merges to `main`:
 - **Wave D expansion commands** —
   [`internal/counterfact/`](internal/counterfact/) adds deterministic knob-applied mission replay plus divergence reports via `stoke cf`;
   [`internal/decisionbisect/`](internal/decisionbisect/) adds regression decision narratives plus gotcha-learning generation via `stoke why-broken`;
-  [`internal/selftune/`](internal/selftune/) adds bounded harness trial comparison and recommendation selection via `stoke self-tune`.
+  [`internal/selftune/`](internal/selftune/) adds bounded harness trial comparison and recommendation selection via `stoke self-tune`. Evidence: PRs #48 and #49.
 
 - **Browser automation + Manus-style autonomous operator** —
   `browser_wait_for` and `browser_get_html` complete the

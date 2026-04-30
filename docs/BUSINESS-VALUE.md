@@ -14,10 +14,11 @@ Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
 - Done: operator receipts plus explicit honesty and cost-accounting surfaces.
-- Done: beacon protocol, trust validation, and offline review or notify primitives for governed peer coordination.
+- Done: beacon protocol foundation for governed peer identity and session setup.
 - Done: wizard ledger persistence plus deterministic registry install for turning authoring flows into durable assets.
 - Done: operator-visible expansion loops for replay, regression explanation, and harness tuning.
 - In Progress: superiority execution and integration.
+- In Progress: beacon trust validation plus deferred notify or offline-review follow-ons.
 - Scoped: more productized skill packaging.
 - Scoping: broader outward-facing proof points.
 - Potential-On Horizon: network effects from shared deterministic skills.
@@ -126,7 +127,7 @@ and interrogate it later." Ledger-backed wizard sessions plus registry
 install make deterministic skills behave like product inventory, not
 like workshop output.
 
-## What's New (April 30, 2026) — R1 Adds A Trustable Beacon Coordination Layer
+## What's New (April 30, 2026) — R1 Adds A Beacon Coordination Foundation
 
 The beacon work is not a side quest. It extends the same "govern the
 runtime, don't just trust the model" position into peer coordination.
@@ -135,25 +136,21 @@ What shipped in practical terms:
 
 - **Protocol foundations.** Beacon identities, pairing flows, session
   state, token handling, and ledger-native beacon records.
-- **Trust enforcement.** Pinned-root checks, nonce replay defense, and
-  signal-frame validation before inbound traffic is accepted.
-- **Deferred handoff primitives.** Offline review envelopes and
-  beacon-targeted notification metadata so asynchronous inspection can
-  happen without inventing custom glue around the runtime.
 
 Why buyers should care:
 
 1. **Safer multi-surface deployment.** Once R1 spans CLI, IDE, desktop,
    CI, browser, and peer protocol surfaces, trust boundaries can no
-   longer stay implicit. The beacon trust layer makes those boundaries
-   explicit.
-2. **Better auditability for human review.** Offline review envelopes
-   mean a reviewer can inspect a governed package of work later, not
-   just trust a transient terminal transcript.
-3. **A path from single-runtime value to network value.** Identity,
+   longer stay implicit. Beacon foundation work is the prerequisite for
+   making those boundaries explicit instead of relying on operator glue.
+2. **A path from single-runtime value to network value.** Identity,
    pairing, session, and token primitives are the minimal substrate for
    cross-instance or hub-style coordination without abandoning R1's
    governance posture.
+
+The trust-validation and deferred-review layers are still in flight in
+open PRs #46 and #47. They matter commercially, but they are not part
+of the shipped baseline yet.
 
 ## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
 
@@ -286,9 +283,7 @@ approve, and re-run without starting from a blank prompt each time.
 Beacon extends that value outside the terminal. It gives R1 a secure
 operator-to-runtime transport that can survive mobile, desktop, and
 delegated-control workflows without trusting the relay hub with session
-contents. The trust layer adds signed warnings, safer-session posture
-controls, and offline-review hooks without letting the relay bypass
-replay defense or execute arbitrary tools on the agent.
+contents.
 
 - **Remote control without blind trust.** Pairing, session encryption,
   and replay rejection let operators approve or steer work from another
@@ -296,12 +291,8 @@ replay defense or execute arbitrary tools on the agent.
 - **Delegation with real boundaries.** Capability tokens make approval,
   spend, and delegation limits explicit instead of social convention.
 - **Auditable remote operations.** Every claim, device attach, session,
-  token event, remote command, and trust event lands in the same ledger
-  used for local execution and approvals.
-
-The small Beacon primitives matter because they turn remote escalation
-from prose into machine-routable context: the operator can see which
-beacon, which session, and which artifact the system is talking about.
+  token event, and remote command lands in the same ledger used for local
+  execution and approvals.
 
 ## Key benefits
 
