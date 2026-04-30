@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -75,7 +76,7 @@ type capabilityInvocationAuditRecord struct {
 	Deterministic      bool   `json:"deterministic"`
 }
 
-func skillExecutionAuditLogRuntime(input json.RawMessage) (json.RawMessage, error) {
+func skillExecutionAuditLogRuntime(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 	var req skillExecutionAuditLogInput
 	if len(input) > 0 && string(input) != "null" {
 		if err := json.Unmarshal(input, &req); err != nil {
