@@ -155,11 +155,13 @@ The operator starts in one of three ways:
 - `stoke wizard migrate` when they already have source material such as
   Markdown instructions, an OpenAPI schema, a Zapier export, or TOML
   config and want a structured conversion path.
+- `stoke wizard register` when the reviewed skill and proof should move
+  into the live deterministic registry.
 - `stoke wizard query` when they need to inspect prior wizard output,
   decisions, or migration state.
 
-`run` is authoring, `migrate` is normalization, and `query` is
-inspection.
+`run` is authoring, `migrate` is normalization, `register` is install,
+and `query` is inspection.
 
 ### 2. Normalize the source
 
@@ -498,6 +500,8 @@ The command can:
 - convert a single source artifact into canonical `*.r1.json` IR
 - emit an analyzer proof beside the IR
 - record question/answer provenance in `*.decisions.json`
+- persist a ledger-native `skill_authoring_decisions` session plus linked source / IR / proof artifacts when `--ledger-dir` is set
+- register reviewed outputs into `skills/<skill-id>/`
 - bulk-migrate a directory of markdown, OpenAPI, Zapier, or Codex TOML inputs
 
 `stoke init` remains the project bootstrap entrypoint.
