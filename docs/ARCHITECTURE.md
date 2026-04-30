@@ -33,9 +33,9 @@ Architecture impact:
 Status snapshot:
 
 - Done: manifest-enforced skills and live parity evidence.
-- Done: bundled pack install plus recursive dependency composition across repo and user skill libraries (PRs #67 and #68).
+- Done: bundled pack install/list plus recursive dependency composition across repo and user skill libraries.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
-- Scoped: richer skill packaging and operator surfacing beyond the shipped pack installer.
+- Scoped: richer skill packaging and operator surfacing beyond the shipped pack install/list/uninstall surface.
 - Scoping: more explicit superiority reporting loops.
 - Potential-On Horizon: cross-product deterministic skill distribution.
 

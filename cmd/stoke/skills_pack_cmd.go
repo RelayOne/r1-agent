@@ -31,6 +31,20 @@ type skillPackUninstallResult struct {
 	RemovedPaths      []string
 }
 
+type skillPackListResult struct {
+	PackCount int
+	Packs     []skillPackListEntry
+}
+
+type skillPackListEntry struct {
+	PackName           string
+	SourcePath         string
+	CanonicalLinkPath  string
+	LegacyLinkPath     string
+	CanonicalInstalled bool
+	LegacyInstalled    bool
+}
+
 func skillsCmd(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "skills: expected subcommand: pack")
@@ -47,12 +61,14 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|uninstall")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|list|uninstall")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "install":
 		runSkillsPackInstallCmd(args[1:])
+	case "list":
+		runSkillsPackListCmd(args[1:])
 	case "uninstall":
 		runSkillsPackUninstallCmd(args[1:])
 	default:
@@ -94,6 +110,27 @@ func runSkillsPackUninstallCmd(args []string) {
 	)
 }
 
+func runSkillsPackListCmd(args []string) {
+	repoRoot := parseSkillPackListArgs(args)
+	result, err := listInstalledSkillPacks(repoRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack list: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "pack_count: %d\n", result.PackCount)
+	for _, pack := range result.Packs {
+		fmt.Fprintf(os.Stdout,
+			"pack: %s\nsource: %s\ncanonical_link: %s\ncanonical_installed: %t\nlegacy_link: %s\nlegacy_installed: %t\n",
+			pack.PackName,
+			pack.SourcePath,
+			pack.CanonicalLinkPath,
+			pack.CanonicalInstalled,
+			pack.LegacyLinkPath,
+			pack.LegacyInstalled,
+		)
+	}
+}
+
 func parseSkillPackArgs(name string, args []string) (string, string) {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	repoRoot := fs.String("repo", ".", "repository root")
@@ -104,6 +141,13 @@ func parseSkillPackArgs(name string, args []string) (string, string) {
 		os.Exit(2)
 	}
 	return *repoRoot, *packName
+}
+
+func parseSkillPackListArgs(args []string) string {
+	fs := flag.NewFlagSet("skills pack list", flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	fs.Parse(args)
+	return *repoRoot
 }
 
 func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error) {
@@ -173,6 +217,33 @@ func uninstallSkillPack(repoRoot, packName string) (*skillPackUninstallResult, e
 		LegacyLinkPath:    legacyLink,
 		RemovedCount:      len(removable),
 		RemovedPaths:      removable,
+	}, nil
+}
+
+func listInstalledSkillPacks(repoRoot string) (*skillPackListResult, error) {
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	packs := map[string]skillPackListEntry{}
+	for _, rootName := range []string{r1dir.Canonical, r1dir.Legacy} {
+		skillRoot := filepath.Join(repoAbs, rootName, "skills")
+		if err := collectInstalledSkillPacks(skillRoot, rootName == r1dir.Canonical, packs); err != nil {
+			return nil, err
+		}
+	}
+	names := make([]string, 0, len(packs))
+	for name := range packs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	rows := make([]skillPackListEntry, 0, len(names))
+	for _, name := range names {
+		rows = append(rows, packs[name])
+	}
+	return &skillPackListResult{
+		PackCount: len(rows),
+		Packs:     rows,
 	}, nil
 }
 
@@ -283,4 +354,80 @@ func removableSkillPackLink(linkPath string) (bool, error) {
 		return false, fmt.Errorf("target %q exists and is not a symlink", linkPath)
 	}
 	return true, nil
+}
+
+func collectInstalledSkillPacks(skillRoot string, canonical bool, packs map[string]skillPackListEntry) error {
+	repoRoot := filepath.Dir(filepath.Dir(skillRoot))
+	entries, err := os.ReadDir(skillRoot)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read skill root %q: %w", skillRoot, err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "packs" {
+			continue
+		}
+		linkPath := filepath.Join(skillRoot, entry.Name())
+		packName, sourcePath, ok, err := readInstalledSkillPackLink(linkPath)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+		row := packs[packName]
+		if row.PackName == "" {
+			row = skillPackListEntry{
+				PackName:          packName,
+				SourcePath:        sourcePath,
+				CanonicalLinkPath: filepath.Join(repoRoot, r1dir.Canonical, "skills", packName),
+				LegacyLinkPath:    filepath.Join(repoRoot, r1dir.Legacy, "skills", packName),
+			}
+		}
+		if row.SourcePath != "" && row.SourcePath != sourcePath {
+			return fmt.Errorf("installed pack %q points to multiple sources: %q and %q", packName, row.SourcePath, sourcePath)
+		}
+		if canonical {
+			row.CanonicalInstalled = true
+			row.CanonicalLinkPath = linkPath
+		} else {
+			row.LegacyInstalled = true
+			row.LegacyLinkPath = linkPath
+		}
+		packs[packName] = row
+	}
+	return nil
+}
+
+func readInstalledSkillPackLink(linkPath string) (string, string, bool, error) {
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("stat %q: %w", linkPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return "", "", false, nil
+	}
+	sourcePath, err := filepath.EvalSymlinks(linkPath)
+	if err != nil {
+		return "", "", false, fmt.Errorf("resolve symlink %q: %w", linkPath, err)
+	}
+	pack, err := skillmfr.LoadPack(sourcePath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("load pack from %q: %w", sourcePath, err)
+	}
+	if pack.Meta.Name == "" {
+		return "", "", false, fmt.Errorf("pack at %q has empty name", sourcePath)
+	}
+	if filepath.Base(linkPath) != pack.Meta.Name {
+		return "", "", false, fmt.Errorf("pack link %q points to pack %q", linkPath, pack.Meta.Name)
+	}
+	return pack.Meta.Name, sourcePath, true, nil
 }

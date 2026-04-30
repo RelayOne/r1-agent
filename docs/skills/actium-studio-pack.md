@@ -1,6 +1,6 @@
 # Actium Studio Skill Pack
 
-**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` / `uninstall` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
+**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` / `list` / `uninstall` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
 
 Operator guide for running Actium Studio capabilities as R1 skills.
 Companion to work order
@@ -35,6 +35,13 @@ repo or user library:
 
 ```bash
 stoke skills pack uninstall --pack actium-studio
+```
+
+Audit the current project-local pack links from the merged canonical +
+legacy view:
+
+```bash
+stoke skills pack list
 ```
 
 Install source resolution and composition:
@@ -181,7 +188,7 @@ No PII, no payload body, no token echo.
 | R1S-1.1 config plumbing | Landed | 88ab285 |
 | R1S-1.2 top-level config load | Inherited gap | Integration with existing `config.Policy` loader pending |
 | R1S-1.3 env resolver | Landed | 88ab285 |
-| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio`; `stoke skills pack uninstall --pack actium-studio` |
+| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio`; `stoke skills pack list`; `stoke skills pack uninstall --pack actium-studio` |
 | R1S-1.5 pack dir + README | Landed | PR #55 |
 | R1S-2 HTTP transport | Landed | 1cd010e |
 | R1S-3 stdio-MCP transport | Landed | 0fb2e38 |
