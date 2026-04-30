@@ -602,3 +602,12 @@ That separation matters:
 - verification descent decides whether local work is credible,
 - the Beacon Hub Trust Layer decides whether the remote control channel
   should be paused, rotated, escalated, or surfaced to the operator.
+
+## Beacon MVP primitives
+
+Two small integration points now exist for Beacon-adjacent workflows:
+
+- notification payloads can identify the beacon, session, and evidence
+  artifact involved in a remote event,
+- and offline review requests can be serialized as a small envelope that
+  points directly at the artifact holding the review evidence.

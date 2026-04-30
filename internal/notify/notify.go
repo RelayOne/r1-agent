@@ -9,11 +9,14 @@ import (
 
 // NotifyEvent is an event that triggers a notification.
 type NotifyEvent struct {
-	Type      string            `json:"type"` // task_complete, task_failed, build_complete, build_failed, rate_limited
-	TaskID    string            `json:"task_id,omitempty"`
-	Message   string            `json:"message"`
-	Timestamp time.Time         `json:"timestamp"`
-	Details   map[string]string `json:"details,omitempty"`
+	Type        string            `json:"type"` // task_complete, task_failed, build_complete, build_failed, rate_limited
+	TaskID      string            `json:"task_id,omitempty"`
+	BeaconID    string            `json:"beacon_id,omitempty"`
+	SessionID   string            `json:"session_id,omitempty"`
+	ArtifactRef string            `json:"artifact_ref,omitempty"`
+	Message     string            `json:"message"`
+	Timestamp   time.Time         `json:"timestamp"`
+	Details     map[string]string `json:"details,omitempty"`
 }
 
 // Notifier sends notifications.

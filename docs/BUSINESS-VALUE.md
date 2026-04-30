@@ -299,6 +299,10 @@ replay defense or execute arbitrary tools on the agent.
   token event, remote command, and trust event lands in the same ledger
   used for local execution and approvals.
 
+The small Beacon primitives matter because they turn remote escalation
+from prose into machine-routable context: the operator can see which
+beacon, which session, and which artifact the system is talking about.
+
 ## Key benefits
 
 **Ship AI-generated code without a follow-up audit pass.** The
