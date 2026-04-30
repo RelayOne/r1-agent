@@ -6,6 +6,135 @@ import (
 	"strings"
 )
 
+type betBuddiesGroupRuntimeInput struct {
+	EventTitle        string   `json:"event_title"`
+	Invitees          []string `json:"invitees"`
+	StakeAmountCents  int      `json:"stake_amount_cents"`
+	Currency          string   `json:"currency"`
+	LedgerBackend     string   `json:"ledger_backend"`
+	HouseRulesSummary string   `json:"house_rules_summary"`
+	KickoffAt         string   `json:"kickoff_at"`
+}
+
+type betBuddiesGroupRuntimeStep struct {
+	Name    string `json:"name"`
+	Purpose string `json:"purpose"`
+	Skill   string `json:"skill"`
+}
+
+type betBuddiesGroupApprovalRule struct {
+	Condition string `json:"condition"`
+	Action    string `json:"action"`
+}
+
+type betBuddiesGroupRuntimeOutput struct {
+	FlowSlug            string                        `json:"flow_slug"`
+	Mode                string                        `json:"mode"`
+	EventTitle          string                        `json:"event_title"`
+	Invitees            []string                      `json:"invitees"`
+	StakeAmountCents    int                           `json:"stake_amount_cents"`
+	Currency            string                        `json:"currency"`
+	LedgerBackend       string                        `json:"ledger_backend"`
+	Summary             string                        `json:"summary"`
+	RequiredCredentials []string                      `json:"required_credentials"`
+	HeroSkills          []string                      `json:"hero_skills"`
+	Phases              []betBuddiesGroupRuntimeStep  `json:"phases"`
+	ApprovalRules       []betBuddiesGroupApprovalRule `json:"approval_rules"`
+}
+
+func betBuddiesGroupRuntime(input json.RawMessage) (json.RawMessage, error) {
+	var req betBuddiesGroupRuntimeInput
+	if len(input) > 0 && string(input) != "null" {
+		if err := json.Unmarshal(input, &req); err != nil {
+			return nil, fmt.Errorf("decode input: %w", err)
+		}
+	}
+
+	req.EventTitle = strings.TrimSpace(req.EventTitle)
+	if req.EventTitle == "" {
+		return nil, fmt.Errorf("event_title must be provided")
+	}
+	if len(req.Invitees) == 0 {
+		return nil, fmt.Errorf("invitees must contain at least one member")
+	}
+	if req.StakeAmountCents <= 0 {
+		return nil, fmt.Errorf("stake_amount_cents must be greater than zero")
+	}
+	req.Currency = normalizePoolCurrency(req.Currency)
+	if req.Currency == "" {
+		return nil, fmt.Errorf("currency must be one of usd or cad")
+	}
+	req.LedgerBackend = normalizeLedgerBackend(req.LedgerBackend)
+	if req.LedgerBackend == "" {
+		return nil, fmt.Errorf("ledger_backend must be google_sheets")
+	}
+
+	out := betBuddiesGroupRuntimeOutput{
+		FlowSlug:         "betbuddies-group",
+		Mode:             "basic",
+		EventTitle:       req.EventTitle,
+		Invitees:         req.Invitees,
+		StakeAmountCents: req.StakeAmountCents,
+		Currency:         req.Currency,
+		LedgerBackend:    req.LedgerBackend,
+		Summary:          buildBetBuddiesGroupSummary(req),
+		RequiredCredentials: []string{
+			"google_oauth",
+			"stripe_secret_key",
+		},
+		HeroSkills: []string{
+			"gmail_draft",
+			"payment_link",
+			"google_sheets_write",
+			"google_sheets_read",
+			"stripe_charge",
+		},
+		Phases: []betBuddiesGroupRuntimeStep{
+			{
+				Name:    "draft_member_invites",
+				Skill:   "gmail_draft",
+				Purpose: fmt.Sprintf("Prepare the invite packet for %d members with event details, house rules, and a clear buy-in deadline for %s.", len(req.Invitees), req.EventTitle),
+			},
+			{
+				Name:    "generate_buy_in_links",
+				Skill:   "payment_link",
+				Purpose: fmt.Sprintf("Create Stripe payment links for a %s %s stake per entrant before any invite is approved for send.", formatPoolCurrency(req.Currency), formatStake(req.StakeAmountCents)),
+			},
+			{
+				Name:    "lock_rules_and_entries",
+				Skill:   "google_sheets_write",
+				Purpose: fmt.Sprintf("Write entrants, picks, payment state, and the locked ruleset into %s before kickoff.", req.LedgerBackend),
+			},
+			{
+				Name:    "reconcile_outcomes",
+				Skill:   "google_sheets_read",
+				Purpose: "Read the final pool ledger, compute winner balances from the frozen rules, and surface any mismatch before settlement.",
+			},
+			{
+				Name:    "execute_approved_settlement",
+				Skill:   "stripe_charge",
+				Purpose: "After human approval, issue the final Stripe collection or payout actions for the approved settlement amounts.",
+			},
+		},
+		ApprovalRules: []betBuddiesGroupApprovalRule{
+			{
+				Condition: "before any invite email is sent to a pool member",
+				Action:    "require operator approval on the final message body and recipient list",
+			},
+			{
+				Condition: "when rules, picks, or stake amounts change after the pool is marked locked",
+				Action:    "pause the flow and require an operator-approved ledger amendment",
+			},
+			{
+				Condition: "before any Stripe collection or payout action runs",
+				Action:    "present the settlement summary and require explicit human approval",
+			},
+		},
+	}
+
+	return json.Marshal(out)
+}
+
 type dentistOutreachRuntimeInput struct {
 	Markets       []string `json:"markets"`
 	Location      string   `json:"location"`
@@ -225,6 +354,26 @@ func normalizeDestination(raw string) string {
 	}
 }
 
+func normalizePoolCurrency(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "usd":
+		return "usd"
+	case "cad":
+		return "cad"
+	default:
+		return ""
+	}
+}
+
+func normalizeLedgerBackend(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "google_sheets", "google-sheets", "sheets":
+		return "google_sheets"
+	default:
+		return ""
+	}
+}
+
 func normalizeCRM(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "hubspot":
@@ -285,4 +434,28 @@ func buildDentistOutreachSummary(req dentistOutreachRuntimeInput) string {
 		req.CRM,
 		req.SequenceDays,
 	)
+}
+
+func buildBetBuddiesGroupSummary(req betBuddiesGroupRuntimeInput) string {
+	return fmt.Sprintf(
+		"Run the %s pool for %d invitees at %s %s per entry, lock the rules into %s, reconcile outcomes from the frozen ledger, and stop for approval before Stripe settlement.",
+		req.EventTitle,
+		len(req.Invitees),
+		formatPoolCurrency(req.Currency),
+		formatStake(req.StakeAmountCents),
+		req.LedgerBackend,
+	)
+}
+
+func formatPoolCurrency(currency string) string {
+	switch currency {
+	case "cad":
+		return "CAD"
+	default:
+		return "USD"
+	}
+}
+
+func formatStake(amountCents int) string {
+	return fmt.Sprintf("%.2f", float64(amountCents)/100)
 }

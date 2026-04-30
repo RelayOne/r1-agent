@@ -1,0 +1,115 @@
+{
+  "name": "betbuddies_group_runtime",
+  "version": "0.1.0",
+  "description": "Deterministic runtime contract for the CloudSwarm BetBuddies private pool flagship flow.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["event_title", "invitees", "stake_amount_cents", "currency", "ledger_backend"],
+    "properties": {
+      "event_title": {
+        "type": "string",
+        "minLength": 1
+      },
+      "invitees": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 3
+        }
+      },
+      "stake_amount_cents": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "currency": {
+        "type": "string",
+        "enum": ["usd", "cad"]
+      },
+      "ledger_backend": {
+        "type": "string",
+        "enum": ["google_sheets"]
+      },
+      "house_rules_summary": {
+        "type": "string",
+        "maxLength": 4000
+      },
+      "kickoff_at": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["flow_slug", "mode", "event_title", "invitees", "stake_amount_cents", "currency", "ledger_backend", "summary", "required_credentials", "hero_skills", "phases", "approval_rules"],
+    "properties": {
+      "flow_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "event_title": { "type": "string" },
+      "invitees": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "stake_amount_cents": { "type": "integer" },
+      "currency": { "type": "string" },
+      "ledger_backend": { "type": "string" },
+      "summary": { "type": "string" },
+      "required_credentials": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "hero_skills": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "phases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "purpose", "skill"],
+          "properties": {
+            "name": { "type": "string" },
+            "purpose": { "type": "string" },
+            "skill": { "type": "string" }
+          }
+        }
+      },
+      "approval_rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["condition", "action"],
+          "properties": {
+            "condition": { "type": "string" },
+            "action": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "A CloudSwarm agent needs the runtime contract for the BetBuddies group-pool flagship flow.",
+    "The caller must turn event details, invitees, stake size, and locked rules into a deterministic invite-to-settlement sequence.",
+    "You need the approval and credential policy for the BetBuddies template without running a longer interactive planning session."
+  ],
+  "whenNotToUse": [
+    "The task is invoice processing, sales outreach, or another flagship flow; use that runtime instead.",
+    "The caller only needs a one-off payment link or Stripe charge; call the payment capability directly.",
+    "The operator wants to change rules after kickoff without a ledger lock or approval audit; this runtime is built around frozen rules and explicit settlement review."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "betbuddies-group",
+    "betting-pool",
+    "settlement-approval",
+    "flagship-flow"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}

@@ -102,6 +102,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 				"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
 					return json.Marshal(map[string]json.RawMessage{"value": input})
 				},
+				"cloudswarm:betbuddies_group_runtime":  betBuddiesGroupRuntime,
 				"cloudswarm:dentist_outreach_runtime":  dentistOutreachRuntime,
 				"cloudswarm:invoice_processor_runtime": invoiceProcessorRuntime,
 			},
