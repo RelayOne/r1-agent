@@ -1,5 +1,26 @@
 # How It Works
 
+## W36 developer walkthrough: parity program plus deterministic skills
+
+If you need to understand the current direction of R1 beyond the raw code paths, read these in order:
+
+1. `evaluation/r1-vs-reference-runtimes-matrix.md`
+2. `skills/r1-evaluation-agent/README.md`
+3. `internal/skillmfr/manifest.go`
+4. `internal/skillmfr/manufacturer.go`
+5. `internal/skill/index.go`
+6. `internal/skillselect/`
+
+That path shows how R1 measures parity, how it refreshes those claims, and how deterministic skills move from manifest to operator-visible behavior.
+
+Status snapshot:
+
+- Done: parity measurement and deterministic manifest foundation.
+- In Progress: parity-to-superiority execution and skill integration.
+- Scoped: broader operator-facing skill surfaces.
+- Scoping: publication and packaging improvements.
+- Potential-On Horizon: portfolio-wide skill interchange.
+
 This document walks through what happens when an operator drives a
 coding task through R1 — first from the operator's point of view
 (what you type, what you see), then from the system's point of view

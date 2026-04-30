@@ -1,5 +1,20 @@
 # R1 — agent runtime; previously developed at github.com/ericmacdougall/stoke; canonical home is now here.
 
+## W36 parity-and-determinism update
+
+The next documentation baseline for R1 assumes two parallel planning tracks are now first-class in the product story:
+
+- the parity-to-superiority wave is no longer framed as ad hoc feature chase; it is treated as a canonical statement of work anchored by the shipped parity matrix in `evaluation/r1-vs-reference-runtimes-matrix.md`,
+- deterministic skills are no longer just an implementation detail in `internal/skillmfr/` and `internal/skill/`; they are a product lane with an explicit integration plan across skill manifests, auto-selection, desktop surfaces, and operator workflows.
+
+Status snapshot:
+
+- Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
+- In Progress: parity-to-superiority execution and deterministic-skills integration.
+- Scoped: broader skill-pack composition and operator-facing packaging.
+- Scoping: more explicit superiority claims and publishing surfaces.
+- Potential-On Horizon: portfolio-wide deterministic skill exchange.
+
 > **Note:** Install as `r1` (canonical). Command examples in Quick start and subcommand tables below still show `stoke` — both names invoke the same binary during the 90-day dual-accept window (through 2026-07-23). The `stoke` → `r1` binary rename is tracked at `plans/work-orders/work-r1-rename.md` §S2-3.
 
 **A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**

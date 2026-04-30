@@ -1,5 +1,25 @@
 # Architecture
 
+## W36 parity-superiority and deterministic-skills update
+
+Two system-level stories should now be read together:
+
+1. The parity program is grounded in the live matrix at `evaluation/r1-vs-reference-runtimes-matrix.md`, which describes where R1 already matches or exceeds reference runtimes.
+2. The deterministic-skills lane is grounded in the manifest-enforced skill system spanning `internal/skillmfr/`, `internal/skill/`, and `internal/skillselect/`.
+
+Architecture impact:
+
+- parity work is no longer a loose set of point features; it is a governed program that feeds desktop, IDE, CI, browser, and evaluation surfaces,
+- deterministic skills now connect authoring, selection, invocation, and governance into one product story instead of separate packages.
+
+Status snapshot:
+
+- Done: manifest-enforced skills and live parity evidence.
+- In Progress: parity-to-superiority execution and deterministic-skills integration.
+- Scoped: richer skill packaging and operator surfacing.
+- Scoping: more explicit superiority reporting loops.
+- Potential-On Horizon: cross-product deterministic skill distribution.
+
 This document covers R1's technical architecture: the stack, the
 repository layout, the major subsystems and how they talk to each
 other, the data model, the execution flow, the testing architecture,

@@ -1,5 +1,21 @@
 # Deployment
 
+## W36 deployment update
+
+The new planning story does not change the base deployment topology, but it does change what operators should verify after deployment:
+
+1. the parity evidence surfaces are present and current,
+2. the evaluation skill remains runnable,
+3. deterministic skill manifests still load and resolve correctly.
+
+Status snapshot:
+
+- Done: deployable parity and deterministic-skill foundation.
+- In Progress: broader integration verification.
+- Scoped: stronger release checks around skill packaging.
+- Scoping: superiority publishing workflow.
+- Potential-On Horizon: cross-product skill distribution pipelines.
+
 This document covers deploying R1 in development, on a single
 operator host, on a shared workstation with pool isolation, in a
 container, and in the managed-cloud configuration. It also covers

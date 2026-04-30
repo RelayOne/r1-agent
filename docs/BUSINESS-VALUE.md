@@ -1,5 +1,23 @@
 # Business Value
 
+## W36 pitch update: from parity to superiority
+
+R1 is no longer just proving that it can catch up to the best agent runtimes. It now has a visible framework for proving where it is already better and where it is going next.
+
+The business value of that shift is simple:
+
+- parity removes the objection that R1 is missing table-stakes features,
+- superiority creates a reason to switch,
+- deterministic skills turn reusable expertise into a governed product asset instead of a pile of prompts.
+
+Status snapshot:
+
+- Done: measurable parity evidence and deterministic-skill foundation.
+- In Progress: superiority execution and integration.
+- Scoped: more productized skill packaging.
+- Scoping: broader outward-facing proof points.
+- Potential-On Horizon: network effects from shared deterministic skills.
+
 This document is the pitch. No code. No jargon. No acronyms without
 expansion. A marketer should be able to write a landing page from
 this alone. An investor should understand the opportunity from this
