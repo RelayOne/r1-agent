@@ -332,6 +332,105 @@ func TestSeedBundledSkillPacks_RegistersLedgerAuditQueryRuntime(t *testing.T) {
 	}
 }
 
+func TestSeedPackRegistries_LoadsUserCanonicalPacks(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeDeterministicPackFixture(
+		t,
+		filepath.Join(home, ".r1", "skills", "packs", "user-pack"),
+		"user-pack",
+		skillmfr.Manifest{
+			Name:        "user.echo",
+			Version:     "1.0.0",
+			Description: "user canonical skill",
+		},
+	)
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedPackRegistries(repo)
+	if err != nil {
+		t.Fatalf("SeedPackRegistries: %v", err)
+	}
+	if registered != 1 || skipped != 0 {
+		t.Fatalf("registered=%d skipped=%d, want 1/0", registered, skipped)
+	}
+	manifest, ok := backends.ManifestRegistry.Get("user.echo")
+	if !ok {
+		t.Fatal("expected user.echo to be registered")
+	}
+	if manifest.Version != "1.0.0" {
+		t.Fatalf("manifest version = %q, want 1.0.0", manifest.Version)
+	}
+}
+
+func TestSeedPackRegistries_PrefersRepoCanonicalOverLegacyAndUser(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeDeterministicPackFixture(
+		t,
+		filepath.Join(home, ".r1", "skills", "packs", "shared-pack"),
+		"shared-pack",
+		skillmfr.Manifest{
+			Name:        "shared.echo",
+			Version:     "0.9.0",
+			Description: "user canonical skill",
+		},
+	)
+	writeDeterministicPackFixture(
+		t,
+		filepath.Join(repo, ".stoke", "skills", "packs", "shared-pack"),
+		"shared-pack",
+		skillmfr.Manifest{
+			Name:        "shared.echo",
+			Version:     "1.0.0",
+			Description: "repo legacy skill",
+		},
+	)
+	writeDeterministicPackFixture(
+		t,
+		filepath.Join(repo, ".r1", "skills", "packs", "shared-pack"),
+		"shared-pack",
+		skillmfr.Manifest{
+			Name:        "shared.echo",
+			Version:     "2.0.0",
+			Description: "repo canonical skill",
+		},
+	)
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedPackRegistries(repo)
+	if err != nil {
+		t.Fatalf("SeedPackRegistries: %v", err)
+	}
+	if registered != 1 || skipped != 2 {
+		t.Fatalf("registered=%d skipped=%d, want 1/2", registered, skipped)
+	}
+	manifest, ok := backends.ManifestRegistry.Get("shared.echo")
+	if !ok {
+		t.Fatal("expected shared.echo to be registered")
+	}
+	if manifest.Version != "2.0.0" {
+		t.Fatalf("manifest version = %q, want repo canonical 2.0.0", manifest.Version)
+	}
+	if !strings.HasPrefix(manifest.IRRef, filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")) {
+		t.Fatalf("manifest IRRef = %q, want repo canonical path prefix", manifest.IRRef)
+	}
+}
+
 func writeJSON(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)
@@ -341,4 +440,56 @@ func writeJSON(t *testing.T, path string, v any) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeDeterministicPackFixture(t *testing.T, packDir, packName string, manifest skillmfr.Manifest) {
+	t.Helper()
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(packDir): %v", err)
+	}
+	manifestDir := filepath.Join(packDir, manifest.Name)
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(manifestDir): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(fmt.Sprintf("name: %s\nversion: 0.1.0\nskill_count: 1\n", packName)), 0o644); err != nil {
+		t.Fatalf("WriteFile(pack.yaml): %v", err)
+	}
+
+	skill := &ir.Skill{
+		SchemaVersion: ir.SchemaVersion,
+		SkillID:       manifest.Name,
+		SkillVersion:  1,
+		Lineage:       ir.Lineage{Kind: "human", AuthoredAt: time.Now().UTC()},
+		Schemas: ir.Schemas{
+			Inputs:  ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"message": {Type: "string"}}},
+			Outputs: ir.TypeSpec{Type: "record", Fields: map[string]ir.TypeSpec{"value": {Type: "string"}}},
+		},
+		Graph: ir.Graph{
+			Nodes: map[string]ir.Node{
+				"echo": {
+					Kind: "pure_fn",
+					Config: json.RawMessage(`{
+						"registry_ref":"stdlib:echo",
+						"input":{"kind":"ref","ref":"inputs.message"}
+					}`),
+				},
+			},
+			Return: ir.Expr{Kind: "ref", Ref: "echo"},
+		},
+	}
+	proof, err := analyze.Analyze(skill, analyze.Constitution{Hash: "sha256:test"}, analyze.DefaultOptions())
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	writeJSON(t, filepath.Join(manifestDir, "skill.r1.json"), skill)
+	writeJSON(t, filepath.Join(manifestDir, "skill.r1.proof.json"), proof)
+
+	manifest.InputSchema = json.RawMessage(`{"type":"object"}`)
+	manifest.OutputSchema = json.RawMessage(`{"type":"object"}`)
+	manifest.WhenToUse = []string{"echo"}
+	manifest.WhenNotToUse = []string{"not echo", "use markdown"}
+	manifest.UseIR = true
+	manifest.IRRef = "skill.r1.json"
+	manifest.CompileProofRef = "skill.r1.proof.json"
+	writeJSON(t, filepath.Join(manifestDir, "manifest.json"), manifest)
 }
