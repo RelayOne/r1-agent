@@ -38,7 +38,7 @@ Status snapshot:
 - Done: Wave B receipts, honesty decisions, honest-cost reports, and IR-scoped replay-cache keys.
 - Done: beacon identity, pairing, session, token, and ledger-node foundation.
 - Done: Wave C wizard ledger persistence and deterministic registry install path.
-- Done: `stoke skills pack info`, `install`, `list`, and `update` now cover bundled-pack metadata inspection, activation, installed-pack audit, and safe source refresh across repo-local and user-level libraries.
+- Done: `stoke skills pack init`, `info`, `install`, `list`, and `update` now cover repo-local pack scaffolding, bundled-pack metadata inspection, activation, installed-pack audit, and safe source refresh across repo-local and user-level libraries.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
 - Done: beacon trust validation plus deferred review and notify primitives.
@@ -615,12 +615,12 @@ The command can:
 
 ## Done
 
-- The deterministic skill flow now covers the practical pack lifecycle on trunk: install from bundled packs (PR #67, `fc55a0d`), recursive dependency install (PR #68, `bf45191`), uninstall (PR #69, `4a19231`), list (PR #71, `92b6f47`), update (PR #72, `f180666`), info (PR #74, `80562ed`), and local-library publish for cross-repo reuse.
+- The deterministic skill flow now covers the practical pack lifecycle on trunk: repo-local pack scaffold, install from bundled packs (PR #67, `fc55a0d`), recursive dependency install (PR #68, `bf45191`), uninstall (PR #69, `4a19231`), list (PR #71, `92b6f47`), update (PR #72, `f180666`), info (PR #74, `80562ed`), and local-library publish for cross-repo reuse.
 - PR #70 (`d15bee8`) moved the first half of that lane into the docs, and this refresh carries the operator story through the newer uninstall and list commands.
 
 ## In Progress
 
-- Pack-management polish is still active, but operators already have a deterministic shipped path for bringing skills in, inspecting them, and removing them.
+- Discovery and marketplace surfaces are still ahead, but operators already have a deterministic shipped path for scaffolding packs, bringing them in, inspecting them, and removing them.
 
 ## Scoped
 

@@ -81,6 +81,14 @@ type skillPackPublishResult struct {
 	Dependencies         []string
 }
 
+type skillPackInitResult struct {
+	PackName     string
+	PackPath     string
+	ReadmePath   string
+	ManifestPath string
+	SkillName    string
+}
+
 type skillPackListEntry struct {
 	PackName           string
 	SourcePath         string
@@ -106,12 +114,14 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|install|list|publish|uninstall|update")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|uninstall|update")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "info":
 		runSkillsPackInfoCmd(args[1:])
+	case "init":
+		runSkillsPackInitCmd(args[1:])
 	case "install":
 		runSkillsPackInstallCmd(args[1:])
 	case "list":
@@ -168,6 +178,23 @@ func runSkillsPackInfoCmd(args []string) {
 		result.LegacyLinkPath,
 		result.LegacyInstalled,
 		result.InstalledSourcePath,
+	)
+}
+
+func runSkillsPackInitCmd(args []string) {
+	repoRoot, packName, version, description, skillName := parseSkillPackInitArgs(args)
+	result, err := initSkillPack(repoRoot, packName, version, description, skillName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack init: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout,
+		"pack: %s\npath: %s\nskill: %s\nreadme: %s\nmanifest: %s\n",
+		result.PackName,
+		result.PackPath,
+		result.SkillName,
+		result.ReadmePath,
+		result.ManifestPath,
 	)
 }
 
@@ -286,6 +313,21 @@ func parseSkillPackPublishArgs(args []string) (string, string, string, bool) {
 	return *repoRoot, *packName, *destRoot, *force
 }
 
+func parseSkillPackInitArgs(args []string) (string, string, string, string, string) {
+	fs := flag.NewFlagSet("skills pack init", flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	packName := fs.String("pack", "", "pack name to scaffold under .r1/skills/packs/")
+	version := fs.String("version", "0.1.0", "initial pack version")
+	description := fs.String("description", "", "operator-facing one-line pack summary")
+	skillName := fs.String("skill", "", "seed skill name to scaffold inside the pack")
+	fs.Parse(args)
+	if *packName == "" {
+		fmt.Fprintln(os.Stderr, "skills pack init: --pack is required")
+		os.Exit(2)
+	}
+	return *repoRoot, *packName, *version, *description, *skillName
+}
+
 func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
 	if packName == "" {
 		return nil, fmt.Errorf("pack name required")
@@ -321,6 +363,56 @@ func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
 		CanonicalInstalled:  canonicalInstalled,
 		LegacyInstalled:     legacyInstalled,
 		InstalledSourcePath: installedSourcePath,
+	}, nil
+}
+
+func initSkillPack(repoRoot, packName, version, description, skillName string) (*skillPackInitResult, error) {
+	if strings.TrimSpace(packName) == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	packPath := filepath.Join(repoAbs, r1dir.Canonical, "skills", "packs", packName)
+	if err := ensureScaffoldTargetReady(packPath); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(version) == "" {
+		version = "0.1.0"
+	}
+	if strings.TrimSpace(description) == "" {
+		description = fmt.Sprintf("%s skill pack", packName)
+	}
+	if strings.TrimSpace(skillName) == "" {
+		skillName = packName + "_sample"
+	}
+	manifestPath := filepath.Join(packPath, skillName, "manifest.json")
+	readmePath := filepath.Join(packPath, "README.md")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir %q: %w", filepath.Dir(manifestPath), err)
+	}
+	files := map[string]string{
+		filepath.Join(packPath, "pack.yaml"): scaffoldPackYAML(packName, version, description),
+		readmePath:                           scaffoldPackREADME(packName, description, skillName),
+		manifestPath:                         scaffoldPackManifest(skillName, version, description),
+		filepath.Join(packPath, skillName, "SKILL.md"): scaffoldPackSkillBody(skillName, packName),
+	}
+	for path, contents := range files {
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			return nil, fmt.Errorf("write %q: %w", path, err)
+		}
+	}
+	loaded, err := skillmfr.LoadPack(packPath)
+	if err != nil {
+		return nil, fmt.Errorf("validate scaffolded pack: %w", err)
+	}
+	return &skillPackInitResult{
+		PackName:     loaded.Meta.Name,
+		PackPath:     packPath,
+		ReadmePath:   readmePath,
+		ManifestPath: manifestPath,
+		SkillName:    skillName,
 	}, nil
 }
 
@@ -541,6 +633,106 @@ func skillPackCandidates(repoRoot, packName string) []string {
 		)
 	}
 	return candidates
+}
+
+func ensureScaffoldTargetReady(packPath string) error {
+	info, err := os.Lstat(packPath)
+	switch {
+	case err == nil:
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("skill pack scaffold target %q is a symlink; remove it manually before init", packPath)
+		case info.IsDir():
+			return fmt.Errorf("skill pack scaffold target %q already exists", packPath)
+		default:
+			return fmt.Errorf("skill pack scaffold target %q exists and is not a directory", packPath)
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("stat scaffold target %q: %w", packPath, err)
+	}
+	if err := os.MkdirAll(packPath, 0o755); err != nil {
+		return fmt.Errorf("mkdir %q: %w", packPath, err)
+	}
+	return nil
+}
+
+func scaffoldPackYAML(packName, version, description string) string {
+	return strings.Join([]string{
+		"name: " + packName,
+		"version: " + version,
+		"description: " + description,
+		"skill_count: 1",
+		"",
+	}, "\n")
+}
+
+func scaffoldPackREADME(packName, description, skillName string) string {
+	return strings.Join([]string{
+		"# " + packName,
+		"",
+		description,
+		"",
+		"## Contents",
+		"",
+		"- `" + skillName + "` - starter manifest and skill body scaffold.",
+		"",
+		"## Next steps",
+		"",
+		"1. Edit `pack.yaml` metadata to match the real service and version policy.",
+		"2. Replace the starter manifest schemas and usage guidance with real input/output contracts.",
+		"3. Add more skill directories and update `skill_count` as the pack grows.",
+		"",
+	}, "\n")
+}
+
+func scaffoldPackManifest(skillName, version, description string) string {
+	return fmt.Sprintf(`{
+  "name": %q,
+  "version": %q,
+  "description": %q,
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "request": {
+        "type": "string",
+        "description": "Operator request the skill should handle."
+      }
+    },
+    "required": ["request"]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string"
+      }
+    },
+    "required": ["status"]
+  },
+  "whenToUse": [
+    "Need the initial deterministic scaffold for this pack."
+  ],
+  "whenNotToUse": [
+    "Need the finished production skill contract.",
+    "Need a different service or capability."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false
+  }
+}
+`, skillName, version, description+" starter skill")
+}
+
+func scaffoldPackSkillBody(skillName, packName string) string {
+	return strings.Join([]string{
+		"# " + skillName,
+		"",
+		"Starter body for the `" + packName + "` pack.",
+		"",
+		"Replace this file with operator guidance, guardrails, and concrete workflow steps once the real capability is defined.",
+		"",
+	}, "\n")
 }
 
 func publishSkillPackDir(sourcePath, publishPath string, force bool) error {
