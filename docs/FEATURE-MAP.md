@@ -63,6 +63,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 | `ask_user` primitive | Wizard flows can pause for operator judgment instead of guessing through trust-boundary decisions. | Done | PR #36, commit `98203a7`. |
 | Decision ledger for wizard runs | Wizard choices become durable governance data instead of disposable terminal interaction, with linked source / IR / proof refs when persisted to the ledger. | Done | PR #44, commit `80f721f`. |
 | Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
+| `stoke skills pack install` | Bundled packs like `actium-studio` can be activated without hand-made symlinks; canonical and legacy skill dirs are linked together in one command. | Done | This PR. |
 | Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `6eba269`. |
 | Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
