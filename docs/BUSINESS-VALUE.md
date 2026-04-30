@@ -601,3 +601,20 @@ standardize on it.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
+
+---
+
+## Cycle 29 Refresh
+
+### Done
+
+- PRs #67, #68, #69, and #71 make the deterministic skills story more useful in day-to-day work: teams can bring packs in, see what is installed, and remove what they no longer trust or need.
+- PR #70 (`d15bee8`) already updated the docs after the first two pack changes; this cycle extends the business story to the now-shipped full lifecycle.
+
+### In Progress
+
+- The usability layer around pack management is still improving, but the core value proposition is already live.
+
+### Scoped
+
+- More advanced pack publishing and update workflows remain scoped beyond the current shipped lane.

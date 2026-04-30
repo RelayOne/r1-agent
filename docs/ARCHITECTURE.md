@@ -623,3 +623,20 @@ All state is local. SQLite files live under `.stoke/`.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
+
+---
+
+## Cycle 29 Status Refresh
+
+### Done
+
+- The deterministic skills lane now includes the full local pack lifecycle on trunk: bundled pack install in PR #67 (`fc55a0d`), recursive pack install in PR #68 (`bf45191`), pack uninstall in PR #69 (`4a19231`), and pack list in PR #71 (`92b6f47`).
+- PR #70 (`d15bee8`) refreshed docs after the first two pack PRs; this cycle extends the architecture baseline so uninstall and list are also part of the documented surface.
+
+### In Progress
+
+- The skill subsystem is still evolving around pack-management ergonomics, but the deterministic lane itself is shipped.
+
+### Scoped
+
+- Future pack publish/update flows remain scoped beyond the now-landed install/list/uninstall architecture.

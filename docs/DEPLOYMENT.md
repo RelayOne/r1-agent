@@ -521,3 +521,20 @@ To start fresh, point `STOKE_DATA_DIR` at a new directory.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
+
+---
+
+## Cycle 29 Status Refresh
+
+### Done
+
+- PRs #67-69 and #71 changed the practical operator deploy surface for skills: packs can now be installed recursively, listed, and removed deterministically on the machines R1 manages.
+- PR #70 (`d15bee8`) covered the earlier pack changes in docs; this refresh keeps deployment guidance aligned with the newer pack list and uninstall commands now landed on `main`.
+
+### In Progress
+
+- Deployment ergonomics for skill-pack distribution are still evolving, but the core local lifecycle is already shipped.
+
+### Scoped
+
+- Broader pack publishing/update rollout remains scoped beyond the current deterministic command set.
