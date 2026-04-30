@@ -12,6 +12,7 @@ Status snapshot:
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
 - Done: Wave B receipts, honesty commands, and honest-cost reports.
+- Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
@@ -56,6 +57,11 @@ Manus. Recent merges to `main`:
   [`internal/receipts/`](internal/receipts/) adds persisted mission receipts with signing, export, and replay-linked provenance;
   [`internal/honesty/`](internal/honesty/) adds ledger-backed `refused` and `why_not` decisions via `stoke honesty`;
   [`internal/costtrack/honest_cost.go`](internal/costtrack/honest_cost.go) plus [`cmd/stoke/ops_cost.go`](cmd/stoke/ops_cost.go) add saved honest-cost rollups with provider grouping and human-minute equivalents.
+
+- **Wave D expansion commands** —
+  [`internal/counterfact/`](internal/counterfact/) adds deterministic knob-applied mission replay plus divergence reports via `stoke cf`;
+  [`internal/decisionbisect/`](internal/decisionbisect/) adds regression decision narratives plus gotcha-learning generation via `stoke why-broken`;
+  [`internal/selftune/`](internal/selftune/) adds bounded harness trial comparison and recommendation selection via `stoke self-tune`.
 
 - **Browser automation + Manus-style autonomous operator** —
   `browser_wait_for` and `browser_get_html` complete the

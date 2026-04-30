@@ -1,0 +1,24 @@
+{
+  "mission_id": "MISSION-123",
+  "config": {
+    "reviewer": {
+      "model": "codex"
+    },
+    "verify": {
+      "tier_max": "T8"
+    }
+  },
+  "actual": {
+    "status": "success",
+    "score": 0.8,
+    "dissents": [
+      "missing concurrency coverage"
+    ],
+    "gates": [
+      "T8"
+    ],
+    "changed_files": [
+      "internal/auth/login.go"
+    ]
+  }
+}
