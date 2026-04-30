@@ -1,5 +1,19 @@
 # Business Value
 
+## Cycle 9 executive update
+
+R1's value proposition tightened after the cycle 7-8 merge train:
+
+- **From coding assistant to governed runtime.** Beacon protocol and
+  trust primitives move R1 beyond "a better wrapper around Claude Code"
+  into runtime infrastructure for controlled autonomous work.
+- **From parity narrative to platform narrative.** Wave D means the
+  roadmap is no longer only "match Cursor / Claude / Manus surfaces";
+  it is now "ship a stronger operating model around them."
+- **From tool output to defensible execution.** The ledger, reviewer,
+  and descent stack were already about truth. Beacon makes that truth
+  portable across sessions and operator surfaces.
+
 ## W36 pitch update: from parity to superiority
 
 R1 is no longer just proving that it can catch up to the best agent runtimes. It now has a visible framework for proving where it is already better and where it is going next.

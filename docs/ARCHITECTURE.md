@@ -1,5 +1,23 @@
 # Architecture
 
+## Cycle 9 architecture delta
+
+The current architecture is no longer just "single-agent coding plus
+verification descent." After the cycle 7-8 merges, R1 has three
+additional first-class planes:
+
+1. **Beacon protocol plane** for identity, pairing, session, token,
+   and shared protocol messages.
+2. **Trust plane** for hub trust decisions and missing primitives that
+   let the runtime reason about stronger cross-surface coordination.
+3. **Wave-D expansion plane** for richer operator commands and
+   post-parity runtime behaviors.
+
+Concretely, the architectural story should be read in this order:
+verification descent remains the merge gate, the ledger remains the
+source of truth, and beacon adds a transport and trust layer around the
+orchestrator so R1 can operate as a runtime, not just a local CLI.
+
 ## W36 parity-superiority and deterministic-skills update
 
 Two system-level stories should now be read together:

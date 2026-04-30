@@ -1,5 +1,20 @@
 # Deployment
 
+## Cycle 9 deployment posture
+
+Deployment planning for R1 should now assume beacon-era runtime
+surfaces are part of the shipped product:
+
+- Promote builds that include PRs `#45` through `#49` together, not as
+  isolated features. Protocol foundation without trust-layer or missing
+  primitives leaves the runtime story incomplete.
+- Treat documentation alignment from PRs `#50` and `#52` as part of the
+  release artifact. The deploy is not just binaries; it is also the
+  operator contract.
+- For downstream consumers, validate CLI, desktop, IDE, and CI entry
+  points against the same trunk version so beacon/session semantics stay
+  consistent across surfaces.
+
 ## W36 deployment update
 
 The new planning story does not change the base deployment topology, but it does change what operators should verify after deployment:

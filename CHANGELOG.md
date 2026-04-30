@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-30
+
+- Merged beacon protocol foundation in PR `#45`.
+- Merged hub trust-layer work in PR `#46`.
+- Merged missing beacon primitives in PR `#47`.
+- Merged Wave D expansion in PR `#48` and the follow-on command set in
+  PR `#49`.
+- Refreshed the canonical seven-doc set in PR `#50` and aligned the
+  cycle-8 status in PR `#52`.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
