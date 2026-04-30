@@ -20,6 +20,7 @@ type Worker struct {
 	wal     *WAL
 	exec    Executor
 	pollGap time.Duration
+	observe func(TaskLifecycleEvent)
 
 	stop   chan struct{}
 	done   chan struct{}
@@ -28,7 +29,7 @@ type Worker struct {
 
 // NewWorker constructs a worker. pollGap is how long to sleep between
 // queue polls when there is no work; default 250ms.
-func NewWorker(id string, q *Queue, w *WAL, exec Executor, pollGap time.Duration) *Worker {
+func NewWorker(id string, q *Queue, w *WAL, exec Executor, pollGap time.Duration, observe func(TaskLifecycleEvent)) *Worker {
 	if pollGap <= 0 {
 		pollGap = 250 * time.Millisecond
 	}
@@ -38,6 +39,7 @@ func NewWorker(id string, q *Queue, w *WAL, exec Executor, pollGap time.Duration
 		wal:     w,
 		exec:    exec,
 		pollGap: pollGap,
+		observe: observe,
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
 	}
@@ -95,11 +97,13 @@ func (w *Worker) runOne(ctx context.Context, t *Task) {
 	defer w.active.Store(false)
 
 	w.logIntent(t.ID, fmt.Sprintf("starting task %q (estimate=%d bytes)", t.Title, t.EstimateBytes))
+	w.observeLifecycle(t, "task.started", StateRunning, "", 0, "")
 
 	res := w.exec.Execute(ctx, t)
 	if res.Err != nil {
 		_ = w.q.Fail(t.ID, res.Err.Error())
 		w.logBlocked(t.ID, fmt.Sprintf("executor error: %v", res.Err))
+		w.observeLifecycle(t, "task.failed", StateFailed, "", 0, res.Err.Error())
 		return
 	}
 
@@ -121,6 +125,7 @@ func (w *Worker) runOne(ctx context.Context, t *Task) {
 	}
 
 	w.logDone(t.ID, fmt.Sprintf("completed (actual=%d bytes)", res.ActualBytes), evidence)
+	w.observeLifecycle(t, "task.completed", StateDone, res.ProofsPath, res.ActualBytes, "")
 }
 
 func (w *Worker) logIntent(taskID, msg string) {
@@ -144,6 +149,28 @@ func (w *Worker) logBlocked(taskID, reason string) {
 	_ = w.wal.Append(NewBlocked(taskID, w.ID, reason))
 }
 
+func (w *Worker) observeLifecycle(t *Task, eventType string, state TaskState, proofsPath string, actualBytes int64, errMsg string) {
+	if w.observe == nil || t == nil {
+		return
+	}
+	sessionID := ""
+	if t.Meta != nil {
+		sessionID = t.Meta["agent_session_id"]
+	}
+	w.observe(TaskLifecycleEvent{
+		TS:          time.Now().UTC(),
+		Type:        eventType,
+		TaskID:      t.ID,
+		SessionID:   sessionID,
+		WorkerID:    w.ID,
+		Message:     t.Title,
+		State:       state,
+		ProofsPath:  proofsPath,
+		ActualBytes: actualBytes,
+		Error:       errMsg,
+	})
+}
+
 // WorkerPool manages a set of workers. The pool can be resized at runtime
 // via Resize, which gracefully stops shrinking workers.
 type WorkerPool struct {
@@ -155,12 +182,13 @@ type WorkerPool struct {
 	ctx     context.Context
 	pollGap time.Duration
 	nextID  int
+	observe func(TaskLifecycleEvent)
 }
 
 // NewWorkerPool constructs a pool. Workers are not started until Resize.
-func NewWorkerPool(ctx context.Context, q *Queue, w *WAL, exec Executor, pollGap time.Duration) *WorkerPool {
+func NewWorkerPool(ctx context.Context, q *Queue, w *WAL, exec Executor, pollGap time.Duration, observe func(TaskLifecycleEvent)) *WorkerPool {
 	return &WorkerPool{
-		q: q, wal: w, exec: exec, ctx: ctx, pollGap: pollGap,
+		q: q, wal: w, exec: exec, ctx: ctx, pollGap: pollGap, observe: observe,
 	}
 }
 
@@ -199,7 +227,7 @@ func (p *WorkerPool) Resize(n int) {
 		for i := 0; i < n-cur; i++ {
 			p.nextID++
 			id := fmt.Sprintf("w-%d", p.nextID)
-			worker := NewWorker(id, p.q, p.wal, p.exec, p.pollGap)
+			worker := NewWorker(id, p.q, p.wal, p.exec, p.pollGap, p.observe)
 			worker.Start(p.ctx)
 			p.workers = append(p.workers, worker)
 		}
