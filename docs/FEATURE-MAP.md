@@ -10,6 +10,7 @@
 - Shell preprocessing and path-scoped skill activation.
 - Artifact ledger nodes plus Antigravity import/export wire format.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
+- Wave B receipts, honesty decisions, and honest-cost reports.
 
 ### In Progress
 
@@ -75,6 +76,16 @@ Status legend:
   policy in `.stoke/`.
 - **Potential-On Horizon:** BitBucket Pipelines adapter parity; native
   MCP bundle in IDE plugins; remote-browser sandboxing for browser tools.
+
+## Wave B (2026-04-29) — Receipts And Honesty
+
+| Feature | Benefit | Status | Evidence |
+|---------|---------|--------|----------|
+| `B1` Mission receipts index | Operators can persist, list, export, and sign task-level receipts instead of treating raw anchors as the only audit surface. | Done | `internal/receipts/`, `cmd/stoke/receipt_cmd.go` |
+| Replay-backed receipt generation | Replays can be promoted into durable receipts with task linkage and provenance. | Done | `internal/receipts/store.go`, `internal/receipts/store_test.go` |
+| `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
+| `B19` Honest cost rollups | Cost can be saved with provider grouping and human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
 
 ## The trust layer — verification descent
 

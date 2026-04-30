@@ -42,6 +42,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1/internal/receipts"
 )
 
 // receiptCmd dispatches to the `stoke receipt <verb>` subcommands.
@@ -63,11 +64,20 @@ func runReceiptCmd(args []string, stdout, stderr io.Writer) int {
 		return runReceiptVerify(args[1:], stdout, stderr)
 	case "inspect":
 		return runReceiptInspect(args[1:], stdout, stderr)
+	case "record":
+		return runReceiptRecord(args[1:], stdout, stderr)
+	case "list":
+		return runReceiptList(args[1:], stdout, stderr)
+	case "export":
+		return runReceiptExport(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, "usage: stoke receipt <verb> [flags] [path]")
 		fmt.Fprintln(stdout, "verbs:")
 		fmt.Fprintln(stdout, "  verify    walk the receipt's anchor chain; exit 1 if broken")
 		fmt.Fprintln(stdout, "  inspect   print structured per-anchor view of a receipt")
+		fmt.Fprintln(stdout, "  record    persist a Wave-B mission receipt with optional signature")
+		fmt.Fprintln(stdout, "  list      query persisted mission receipts")
+		fmt.Fprintln(stdout, "  export    export a persisted mission receipt to json")
 		return 0
 	default:
 		fmt.Fprintf(stderr, "receipt: unknown verb %q\n", args[0])
@@ -165,6 +175,98 @@ func runReceiptVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "receipt verify: internal error, unknown target kind %q\n", target.kind)
 		return 2
 	}
+}
+
+func runReceiptRecord(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("receipt record", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repo := fs.String("repo", ".", "repository root")
+	taskID := fs.String("task", "", "task id")
+	missionID := fs.String("mission", "", "mission id")
+	kind := fs.String("kind", "execution", "receipt kind")
+	summary := fs.String("summary", "", "human summary")
+	body := fs.String("body", "", "receipt body used for sha256")
+	evidence := fs.String("evidence", "", "comma-separated evidence refs")
+	replayPath := fs.String("replay", "", "replay recording path")
+	secret := fs.String("signing-key", "", "optional HMAC signing key")
+	signer := fs.String("signer", "stoke", "receipt signer id")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	receipt := receipts.New(*kind, *summary, []byte(*body))
+	receipt.TaskID = *taskID
+	receipt.MissionID = *missionID
+	receipt.Evidence = splitCSV(*evidence)
+	receipt.ReplayPath = *replayPath
+	if *secret != "" {
+		if err := receipts.Sign(&receipt, *secret, *signer); err != nil {
+			fmt.Fprintf(stderr, "receipt record: sign: %v\n", err)
+			return 1
+		}
+	}
+	if err := receipts.Append(*repo, receipt); err != nil {
+		fmt.Fprintf(stderr, "receipt record: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s %s\n", receipt.ID, receipt.SHA256)
+	return 0
+}
+
+func runReceiptList(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("receipt list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repo := fs.String("repo", ".", "repository root")
+	taskID := fs.String("task", "", "task id")
+	kind := fs.String("kind", "", "receipt kind")
+	asJSON := fs.Bool("json", false, "emit json")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	items, err := receipts.Load(*repo, receipts.Filter{TaskID: *taskID, Kind: *kind})
+	if err != nil {
+		fmt.Fprintf(stderr, "receipt list: %v\n", err)
+		return 1
+	}
+	if *asJSON {
+		return encodeJSON(stdout, items, stderr)
+	}
+	if len(items) == 0 {
+		fmt.Fprintln(stdout, "no receipts")
+		return 0
+	}
+	for _, item := range items {
+		fmt.Fprintf(stdout, "%s task=%s kind=%s sha=%s\n", item.ID, item.TaskID, item.Kind, item.SHA256)
+	}
+	return 0
+}
+
+func runReceiptExport(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("receipt export", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	repo := fs.String("repo", ".", "repository root")
+	id := fs.String("id", "", "receipt id")
+	outPath := fs.String("out", "", "output path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	items, err := receipts.Load(*repo, receipts.Filter{})
+	if err != nil {
+		fmt.Fprintf(stderr, "receipt export: %v\n", err)
+		return 1
+	}
+	for _, item := range items {
+		if item.ID != *id {
+			continue
+		}
+		if err := receipts.Export(*outPath, item); err != nil {
+			fmt.Fprintf(stderr, "receipt export: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, *outPath)
+		return 0
+	}
+	fmt.Fprintf(stderr, "receipt export: receipt %q not found\n", *id)
+	return 1
 }
 
 // verifySingleAnchor verifies a one-receipt JSON file against its own

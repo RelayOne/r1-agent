@@ -13,6 +13,7 @@ The business value of that shift is simple:
 Status snapshot:
 
 - Done: measurable parity evidence and deterministic-skill foundation.
+- Done: operator receipts plus explicit honesty and cost-accounting surfaces.
 - In Progress: superiority execution and integration.
 - Scoped: more productized skill packaging.
 - Scoping: broader outward-facing proof points.
@@ -45,6 +46,17 @@ sprint, R1 lives wherever engineers already work:
 In plain English: R1 stopped being something you have to remember to
 open. Wherever the engineer goes — IDE, desktop, CI pipeline,
 browser — R1 is already there.
+
+## What's New (Late April 2026) — R1 Stops Pretending
+
+Wave B is about operational trust, not more demos.
+
+- R1 now emits operator receipts that can be signed and exported.
+- R1 can explicitly refuse a claim when evidence is missing.
+- R1 can record "why not" as structured data instead of vague commentary.
+- R1 can express spend as both dollars and a human-equivalent time estimate.
+
+That turns AI output from "believe me" into something a manager, auditor, or buyer can review after the fact.
 
 What's the take-away in business terms?
 

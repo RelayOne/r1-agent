@@ -673,6 +673,8 @@ func main() {
 		// `r1 receipt verify path/to/receipt.json` and disambiguates
 		// from the existing codebase-scanner `inspect` verb.
 		receiptCmd(os.Args[2:])
+	case "honesty":
+		honestyCmd(os.Args[2:])
 	case "artifact":
 		artifactCmd(os.Args[2:])
 	case "watch":
@@ -6707,6 +6709,7 @@ COMMANDS:
   audit           Multi-perspective review (security, perf, reliability, ops)
   inspect         Standalone codebase audit: hygiene + integration review (no SOW)
   receipt         Verify or inspect R1 receipts (Merkle anchors): verify | inspect
+  honesty         Record/query Refuse-to-Lie and Why-Not decisions
   watch           Live operator dashboard for an in-flight SOW run
   status          Show session dashboard (progress, cost, learning)
   pool            Show subscription pool utilization
