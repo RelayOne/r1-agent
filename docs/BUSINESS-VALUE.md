@@ -286,7 +286,9 @@ approve, and re-run without starting from a blank prompt each time.
 Beacon extends that value outside the terminal. It gives R1 a secure
 operator-to-runtime transport that can survive mobile, desktop, and
 delegated-control workflows without trusting the relay hub with session
-contents.
+contents. The trust layer adds signed warnings, safer-session posture
+controls, and offline-review hooks without letting the relay bypass
+replay defense or execute arbitrary tools on the agent.
 
 - **Remote control without blind trust.** Pairing, session encryption,
   and replay rejection let operators approve or steer work from another
@@ -294,8 +296,8 @@ contents.
 - **Delegation with real boundaries.** Capability tokens make approval,
   spend, and delegation limits explicit instead of social convention.
 - **Auditable remote operations.** Every claim, device attach, session,
-  token event, and remote command lands in the same ledger used for local
-  execution and approvals.
+  token event, remote command, and trust event lands in the same ledger
+  used for local execution and approvals.
 
 ## Key benefits
 

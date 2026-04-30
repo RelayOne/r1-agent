@@ -20,6 +20,7 @@ var allExpectedTypes = []string{
 	"sdm_advisory",
 	"memory_stored", "memory_recalled",
 	"artifact", "artifact_annotation",
+	"trust_signal", "hub_ban", "hub_cooldown", "device_attestation", "federation_signal",
 	"beacon_claim", "beacon_device_attached", "beacon_device_revoked",
 	"beacon_session_opened", "beacon_session_closed",
 	"beacon_token_issued", "beacon_token_used", "beacon_token_revoked",
@@ -101,6 +102,11 @@ func TestNodeTyperInterface(t *testing.T) {
 	var _ NodeTyper = &MemoryRecalled{}
 	var _ NodeTyper = &Artifact{}
 	var _ NodeTyper = &ArtifactAnnotation{}
+	var _ NodeTyper = &TrustSignal{}
+	var _ NodeTyper = &HubBan{}
+	var _ NodeTyper = &HubCooldown{}
+	var _ NodeTyper = &DeviceAttestation{}
+	var _ NodeTyper = &FederationSignal{}
 	var _ NodeTyper = &BeaconClaim{}
 	var _ NodeTyper = &BeaconDeviceAttached{}
 	var _ NodeTyper = &BeaconDeviceRevoked{}

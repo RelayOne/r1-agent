@@ -389,3 +389,4 @@ Homebrew publishing, cosign keyless OIDC signing.
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
 | Deterministic skill wizard | `stoke wizard run|migrate|register|query` with decision ledger, registry install, and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |
+| Beacon Hub Trust Layer | Signed, pinned, replay-defended trust signals can pause, rotate, attest, or request offline review without exposing Beacon session plaintext to the relay. | Done | [TRUST-LAYER.md](TRUST-LAYER.md) |
