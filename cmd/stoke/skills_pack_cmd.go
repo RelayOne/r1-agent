@@ -23,6 +23,14 @@ type skillPackInstallResult struct {
 	InstalledPacks    []string
 }
 
+type skillPackUninstallResult struct {
+	PackName          string
+	CanonicalLinkPath string
+	LegacyLinkPath    string
+	RemovedCount      int
+	RemovedPaths      []string
+}
+
 func skillsCmd(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "skills: expected subcommand: pack")
@@ -39,12 +47,14 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: install|uninstall")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "install":
 		runSkillsPackInstallCmd(args[1:])
+	case "uninstall":
+		runSkillsPackUninstallCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "skills pack: unknown subcommand %q\n", args[0])
 		os.Exit(2)
@@ -52,15 +62,8 @@ func skillsPackCmd(args []string) {
 }
 
 func runSkillsPackInstallCmd(args []string) {
-	fs := flag.NewFlagSet("skills pack install", flag.ExitOnError)
-	repoRoot := fs.String("repo", ".", "repository root")
-	packName := fs.String("pack", "", "pack name under repo or user .r1|.stoke/skills/packs/")
-	fs.Parse(args)
-	if *packName == "" {
-		fmt.Fprintln(os.Stderr, "skills pack install: --pack is required")
-		os.Exit(2)
-	}
-	result, err := installSkillPack(*repoRoot, *packName)
+	repoRoot, packName := parseSkillPackArgs("skills pack install", args)
+	result, err := installSkillPack(repoRoot, packName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "skills pack install: %v\n", err)
 		os.Exit(1)
@@ -73,6 +76,34 @@ func runSkillsPackInstallCmd(args []string) {
 		result.CanonicalLinkPath,
 		result.LegacyLinkPath,
 	)
+}
+
+func runSkillsPackUninstallCmd(args []string) {
+	repoRoot, packName := parseSkillPackArgs("skills pack uninstall", args)
+	result, err := uninstallSkillPack(repoRoot, packName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack uninstall: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "pack: %s\nremoved: %d\npaths: %s\ncanonical_link: %s\nlegacy_link: %s\n",
+		result.PackName,
+		result.RemovedCount,
+		strings.Join(result.RemovedPaths, ","),
+		result.CanonicalLinkPath,
+		result.LegacyLinkPath,
+	)
+}
+
+func parseSkillPackArgs(name string, args []string) (string, string) {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	packName := fs.String("pack", "", "pack name under repo or user .r1|.stoke/skills/packs/")
+	fs.Parse(args)
+	if *packName == "" {
+		fmt.Fprintf(os.Stderr, "%s: --pack is required\n", name)
+		os.Exit(2)
+	}
+	return *repoRoot, *packName
 }
 
 func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error) {
@@ -106,6 +137,42 @@ func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error
 		LegacyLinkPath:    legacyLink,
 		InstalledCount:    len(installedPacks) * 2,
 		InstalledPacks:    packs,
+	}, nil
+}
+
+func uninstallSkillPack(repoRoot, packName string) (*skillPackUninstallResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	canonicalLink := filepath.Join(repoAbs, r1dir.Canonical, "skills", packName)
+	legacyLink := filepath.Join(repoAbs, r1dir.Legacy, "skills", packName)
+	linkPaths := []string{canonicalLink, legacyLink}
+
+	removable := make([]string, 0, len(linkPaths))
+	for _, linkPath := range linkPaths {
+		ok, err := removableSkillPackLink(linkPath)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			removable = append(removable, linkPath)
+		}
+	}
+	for _, linkPath := range removable {
+		if err := os.Remove(linkPath); err != nil {
+			return nil, fmt.Errorf("remove %q: %w", linkPath, err)
+		}
+	}
+	return &skillPackUninstallResult{
+		PackName:          packName,
+		CanonicalLinkPath: canonicalLink,
+		LegacyLinkPath:    legacyLink,
+		RemovedCount:      len(removable),
+		RemovedPaths:      removable,
 	}, nil
 }
 
@@ -202,4 +269,18 @@ func ensureSkillPackLink(linkPath, sourcePath string) error {
 		return fmt.Errorf("symlink %q -> %q: %w", linkPath, relTarget, err)
 	}
 	return nil
+}
+
+func removableSkillPackLink(linkPath string) (bool, error) {
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat %q: %w", linkPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return false, fmt.Errorf("target %q exists and is not a symlink", linkPath)
+	}
+	return true, nil
 }

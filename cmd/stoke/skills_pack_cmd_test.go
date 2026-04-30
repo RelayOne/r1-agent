@@ -163,6 +163,87 @@ func TestInstallSkillPackRejectsDependencyCycles(t *testing.T) {
 	}
 }
 
+func TestUninstallSkillPackRemovesRequestedPackOnly(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "base-pack"), "base-pack", nil)
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "shared-pack"), "shared-pack", []string{"base-pack"})
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "app-pack"), "app-pack", []string{"shared-pack", "base-pack"})
+
+	if _, err := installSkillPack(repo, "app-pack"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+
+	result, err := uninstallSkillPack(repo, "app-pack")
+	if err != nil {
+		t.Fatalf("uninstallSkillPack() error = %v", err)
+	}
+	if result.RemovedCount != 2 {
+		t.Fatalf("RemovedCount = %d, want 2", result.RemovedCount)
+	}
+	for _, removed := range []string{
+		filepath.Join(repo, ".r1", "skills", "app-pack"),
+		filepath.Join(repo, ".stoke", "skills", "app-pack"),
+	} {
+		if _, err := os.Lstat(removed); !os.IsNotExist(err) {
+			t.Fatalf("Lstat(%q) err = %v, want not exist", removed, err)
+		}
+	}
+	for _, remaining := range []string{
+		filepath.Join(repo, ".r1", "skills", "base-pack"),
+		filepath.Join(repo, ".stoke", "skills", "base-pack"),
+		filepath.Join(repo, ".r1", "skills", "shared-pack"),
+		filepath.Join(repo, ".stoke", "skills", "shared-pack"),
+	} {
+		info, err := os.Lstat(remaining)
+		if err != nil {
+			t.Fatalf("Lstat(%q): %v", remaining, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%q is not a symlink", remaining)
+		}
+	}
+}
+
+func TestUninstallSkillPackMissingLinksIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	result, err := uninstallSkillPack(repo, "missing-pack")
+	if err != nil {
+		t.Fatalf("uninstallSkillPack() error = %v", err)
+	}
+	if result.RemovedCount != 0 {
+		t.Fatalf("RemovedCount = %d, want 0", result.RemovedCount)
+	}
+	if len(result.RemovedPaths) != 0 {
+		t.Fatalf("RemovedPaths = %v, want empty", result.RemovedPaths)
+	}
+}
+
+func TestUninstallSkillPackRejectsNonSymlinkTargets(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	blocked := filepath.Join(repo, ".r1", "skills", "actium-studio")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatalf("MkdirAll(blocked): %v", err)
+	}
+
+	_, err := uninstallSkillPack(repo, "actium-studio")
+	if err == nil {
+		t.Fatal("uninstallSkillPack() error = nil, want non-symlink error")
+	}
+	if !strings.Contains(err.Error(), "is not a symlink") {
+		t.Fatalf("uninstallSkillPack() error = %v, want non-symlink error", err)
+	}
+
+	if _, statErr := os.Stat(blocked); statErr != nil {
+		t.Fatalf("Stat(%q): %v", blocked, statErr)
+	}
+}
+
 func writePackFixture(t *testing.T, packDir, name string, dependencies []string) {
 	t.Helper()
 
