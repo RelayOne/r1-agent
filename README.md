@@ -369,7 +369,7 @@ the same `internal/` packages.
 | Binary / Command | Purpose |
 |---------|---------|
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
-| `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
+| `stoke skills pack install` / `uninstall` | Activate or remove a bundled skill pack such as `actium-studio` in the project skill directory; install also resolves transitive pack dependencies from repo or user skill libraries |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
 | `stoke wizard register` | Copy a reviewed skill + proof into the registry root under `skills/<skill-id>/` |

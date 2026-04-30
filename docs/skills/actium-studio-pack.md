@@ -1,6 +1,6 @@
 # Actium Studio Skill Pack
 
-**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
+**Status (2026-04-30): Done — R1S-1 through R1S-6 landed, including the `stoke skills pack install` / `uninstall` operator path for the bundled pack. Hero scaffold works end-to-end; thin wrappers fixture-tested.**
 
 Operator guide for running Actium Studio capabilities as R1 skills.
 Companion to work order
@@ -30,6 +30,13 @@ The pack is an opt-in bundle at
 stoke skills pack install --pack actium-studio
 ```
 
+Remove the project-local links without touching the source pack in the
+repo or user library:
+
+```bash
+stoke skills pack uninstall --pack actium-studio
+```
+
 Install source resolution and composition:
 
 - Lookup order is repo `.r1/skills/packs/<name>` then repo
@@ -38,6 +45,9 @@ Install source resolution and composition:
 - Any `dependencies:` declared in the pack's `pack.yaml` are installed
   transitively before the requested pack, with cycle detection and
   duplicate suppression.
+- Uninstall removes only the named pack's project-local symlinks. It is
+  intentionally non-recursive so shared dependency packs stay available
+  to other installed packs.
 
 Confirm registration:
 
@@ -171,7 +181,7 @@ No PII, no payload body, no token echo.
 | R1S-1.1 config plumbing | Landed | 88ab285 |
 | R1S-1.2 top-level config load | Inherited gap | Integration with existing `config.Policy` loader pending |
 | R1S-1.3 env resolver | Landed | 88ab285 |
-| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio` |
+| R1S-1.4 `r1 skills pack` CLI | Landed | `stoke skills pack install --pack actium-studio`; `stoke skills pack uninstall --pack actium-studio` |
 | R1S-1.5 pack dir + README | Landed | PR #55 |
 | R1S-2 HTTP transport | Landed | 1cd010e |
 | R1S-3 stdio-MCP transport | Landed | 0fb2e38 |
