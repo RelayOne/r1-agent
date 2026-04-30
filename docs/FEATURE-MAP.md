@@ -32,7 +32,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 - Wave B receipts, honesty decisions, honest-cost reports, and replay-cache-key hardening.
 - Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
-- Bundled pack install plus recursive skill-pack composition and shared-library distribution.
+- Bundled pack install, update, and recursive skill-pack composition plus shared-library distribution.
 
 ### In Progress
 
@@ -62,6 +62,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 | `stoke skills pack install` | Bundled packs like `actium-studio` can be activated without hand-made symlinks; canonical and legacy skill dirs are linked together in one command. | Done | PR #67, commit `fc55a0d`. |
 | Recursive pack composition + shared-library resolution | Pack dependencies declared in `pack.yaml` now install transitively, and pack lookup reads both repo-local and user-level `.r1/.stoke` libraries. | Done | PR #68, commit `bf45191`. |
 | `stoke skills pack list` | Operators can audit which packs are currently installed from the merged `.r1` / `.stoke` skill-link view without inspecting symlinks by hand. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
+| `stoke skills pack update` | Operators can refresh an installed pack from its current source, safely skip repo-local bundled checkouts, and fast-forward external git-backed pack repos before relinking new dependencies. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
 | Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `6eba269`. |
 | Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
