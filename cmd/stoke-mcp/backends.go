@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,6 +60,8 @@ type Backends struct {
 	MetricsRegistry  *metrics.Registry
 	SkillRuntime     *interp.Runtime
 }
+
+const defaultPureFuncTimeout = 30 * time.Second
 
 // NewBackends constructs the default production wiring.
 // ledgerDir selects where the filesystem-backed ledger
@@ -94,7 +97,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	}
 	delMgr := delegation.NewManager(tp)
 	metricsRegistry := metrics.NewRegistry()
-	return &Backends{
+	backends := &Backends{
 		ManifestRegistry: skillmfr.NewRegistry(),
 		VerifyRegistry:   verify.NewRegistry(),
 		Ledger:           led,
@@ -103,7 +106,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 		MetricsRegistry:  metricsRegistry,
 		SkillRuntime: &interp.Runtime{
 			PureFuncs: map[string]interp.PureFunc{
-				"stdlib:echo": func(input json.RawMessage) (json.RawMessage, error) {
+				"stdlib:echo": func(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 					return json.Marshal(map[string]json.RawMessage{"value": input})
 				},
 				"cloudswarm:betbuddies_group_runtime":  betBuddiesGroupRuntime,
@@ -121,7 +124,11 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 			},
 			Cache: interp.NewMemoryCache(),
 		},
-	}, nil
+	}
+	for registryRef, fn := range backends.SkillRuntime.PureFuncs {
+		backends.SkillRuntime.PureFuncs[registryRef] = backends.wrapRuntimePureFunc(registryRef, defaultPureFuncTimeout, fn)
+	}
+	return backends, nil
 }
 
 // Close releases backend resources. Called from the binary
@@ -290,6 +297,66 @@ func (b *Backends) invokeDeterministicSkill(ctx context.Context, manifest skillm
 		return nil, fmt.Errorf("decode deterministic skill output: %w", err)
 	}
 	return output, nil
+}
+
+func (b *Backends) wrapRuntimePureFunc(registryRef string, timeout time.Duration, fn interp.PureFunc) interp.PureFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+		start := time.Now()
+		metricsBase := skillRuntimeMetricBase(registryRef)
+		if b != nil && b.MetricsRegistry != nil {
+			b.MetricsRegistry.Counter(metricsBase + ".calls").Inc()
+			b.MetricsRegistry.Gauge(metricsBase + ".inflight").Inc()
+			defer b.MetricsRegistry.Gauge(metricsBase + ".inflight").Dec()
+			defer b.MetricsRegistry.Timer(metricsBase + ".duration").Since(start)
+		}
+		if timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
+		type pureFuncResult struct {
+			output json.RawMessage
+			err    error
+		}
+		done := make(chan pureFuncResult, 1)
+		go func() {
+			output, err := fn(ctx, input)
+			done <- pureFuncResult{output: output, err: err}
+		}()
+		select {
+		case <-ctx.Done():
+			if b != nil && b.MetricsRegistry != nil {
+				recordRuntimeOutcome(b.MetricsRegistry, metricsBase, ctx.Err())
+			}
+			return nil, ctx.Err()
+		case res := <-done:
+			if b != nil && b.MetricsRegistry != nil {
+				recordRuntimeOutcome(b.MetricsRegistry, metricsBase, res.err)
+			}
+			return res.output, res.err
+		}
+	}
+}
+
+func recordRuntimeOutcome(reg *metrics.Registry, metricsBase string, err error) {
+	switch {
+	case err == nil:
+		reg.Counter(metricsBase + ".success").Inc()
+	case errors.Is(err, context.DeadlineExceeded):
+		reg.Counter(metricsBase + ".timeout").Inc()
+	case errors.Is(err, context.Canceled):
+		reg.Counter(metricsBase + ".canceled").Inc()
+	default:
+		reg.Counter(metricsBase + ".error").Inc()
+	}
+}
+
+func skillRuntimeMetricBase(registryRef string) string {
+	replacer := strings.NewReplacer(":", ".", "/", ".", "-", "_")
+	return "r1skill.runtime." + replacer.Replace(registryRef)
 }
 
 // Verify runs a task-class rubric against the subject via

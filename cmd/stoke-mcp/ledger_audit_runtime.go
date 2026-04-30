@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -59,7 +60,7 @@ type ledgerAuditQueryRuntimeNode struct {
 	Content           any    `json:"content,omitempty"`
 }
 
-func ledgerAuditQueryRuntime(input json.RawMessage) (json.RawMessage, error) {
+func ledgerAuditQueryRuntime(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 	var req ledgerAuditQueryRuntimeInput
 	if len(input) > 0 && string(input) != "null" {
 		if err := json.Unmarshal(input, &req); err != nil {
