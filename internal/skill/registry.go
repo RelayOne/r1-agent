@@ -25,6 +25,7 @@ import (
 	"github.com/RelayOne/r1/internal/promptguard"
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/r1env"
+	"github.com/RelayOne/r1/internal/skillmfr"
 )
 
 // Skill-frontmatter field names (parsed out of `---` YAML-ish blocks
@@ -79,8 +80,8 @@ type Skill struct {
 type Registry struct {
 	mu             sync.RWMutex
 	skills         map[string]*Skill
-	dirs           []string // search directories in priority order
-	builtinsLoaded bool     // true after LoadBuiltins() has been called
+	dirs           []string    // search directories in priority order
+	builtinsLoaded bool        // true after LoadBuiltins() has been called
 	skillIndex     *SkillIndex // multi-axis semantic index, rebuilt on Load/LoadBuiltins
 }
 
@@ -185,65 +186,9 @@ func (r *Registry) Load() error {
 		for _, entry := range entries {
 			name := entry.Name()
 
-			if entry.IsDir() {
-				// Skill directory: look for SKILL.md (Trail of Bits) or index.md (legacy)
-				candidates := []string{
-					filepath.Join(dir, name, "SKILL.md"),
-					filepath.Join(dir, name, "index.md"),
-				}
-				var content []byte
-				var skillPath string
-				for _, c := range candidates {
-					if data, err := os.ReadFile(c); err == nil {
-						content = data
-						skillPath = c
-						break
-					}
-				}
-				if skillPath == "" {
-					continue
-				}
-				// Overwrite builtins but not higher-priority project/user skills
-				if existing, exists := r.skills[name]; exists && existing.Source != sourceBuiltin {
-					continue
-				}
-				content = scanUserContent(content, source, skillPath)
-				// T-R1P-018: expand !`cmd` shell-injection blocks in project/user skills
-				preprocessed := PreprocessShellInjections(string(content))
-				r.skills[name] = parseSkill(name, preprocessed, source, skillPath, len(r.dirs)-i)
-
-				// Load progressive disclosure references from references/ subdir
-				refsDir := filepath.Join(dir, name, "references")
-				if refEntries, refErr := os.ReadDir(refsDir); refErr == nil {
-					for _, ref := range refEntries {
-						if !ref.IsDir() && strings.HasSuffix(ref.Name(), ".md") {
-							refPath := filepath.Join(refsDir, ref.Name())
-							if data, err := os.ReadFile(refPath); err == nil {
-								key := strings.TrimSuffix(ref.Name(), ".md")
-								r.skills[name].References[key] = string(scanUserContent(data, source, refPath))
-							}
-						}
-					}
-				}
-				// Load scripts/ and assets/ directories per agentskills.io
-				// spec (S-U-001). Scripts are executable helpers the skill
-				// can invoke; assets are static resources. Both are passed
-				// through as file inventories — the skill body can reference
-				// them by relative path.
-				for _, subdir := range []string{"scripts", "assets"} {
-					subPath := filepath.Join(dir, name, subdir)
-					if subEntries, subErr := os.ReadDir(subPath); subErr == nil {
-						for _, se := range subEntries {
-							if se.IsDir() {
-								continue
-							}
-							fullPath := filepath.Join(subPath, se.Name())
-							key := subdir + "/" + se.Name()
-							if data, err := os.ReadFile(fullPath); err == nil {
-								r.skills[name].References[key] = string(data)
-							}
-						}
-					}
+			if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				if err := r.loadDirectoryEntryLocked(filepath.Join(dir, name), source, len(r.dirs)-i); err != nil {
+					return err
 				}
 			} else if strings.HasSuffix(name, ".md") {
 				// Skill file: name is filename without extension
@@ -266,6 +211,106 @@ func (r *Registry) Load() error {
 	// Rebuild the multi-axis index so SearchSkills works against the
 	// freshly loaded skill set.
 	r.buildIndexLocked()
+	return nil
+}
+
+func (r *Registry) loadDirectoryEntryLocked(entryPath, source string, priority int) error {
+	info, err := os.Stat(entryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat skills entry %s: %w", entryPath, err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	resolvedPath := entryPath
+	if resolved, err := filepath.EvalSymlinks(entryPath); err == nil {
+		resolvedPath = resolved
+	}
+	if _, err := os.Stat(filepath.Join(resolvedPath, "pack.yaml")); err == nil {
+		return r.loadInstalledPackLocked(entryPath, resolvedPath, source, priority)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat pack.yaml for %s: %w", entryPath, err)
+	}
+	return r.loadSkillDirectoryLocked(filepath.Base(entryPath), resolvedPath, source, priority)
+}
+
+func (r *Registry) loadInstalledPackLocked(linkPath, packRoot, source string, priority int) error {
+	if _, err := skillmfr.VerifyPackSignatureIfPresent(packRoot); err != nil {
+		return fmt.Errorf("verify installed pack %s: %w", linkPath, err)
+	}
+	entries, err := os.ReadDir(packRoot)
+	if err != nil {
+		return fmt.Errorf("read installed pack %s: %w", packRoot, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := r.loadSkillDirectoryLocked(entry.Name(), filepath.Join(packRoot, entry.Name()), source, priority); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Registry) loadSkillDirectoryLocked(name, dirPath, source string, priority int) error {
+	// Overwrite builtins but not higher-priority project/user skills.
+	if existing, exists := r.skills[name]; exists && existing.Source != sourceBuiltin {
+		return nil
+	}
+
+	candidates := []string{
+		filepath.Join(dirPath, "SKILL.md"),
+		filepath.Join(dirPath, "index.md"),
+	}
+	var content []byte
+	var skillPath string
+	for _, candidate := range candidates {
+		if data, err := os.ReadFile(candidate); err == nil {
+			content = data
+			skillPath = candidate
+			break
+		}
+	}
+	if skillPath == "" {
+		return nil
+	}
+
+	content = scanUserContent(content, source, skillPath)
+	preprocessed := PreprocessShellInjections(string(content))
+	r.skills[name] = parseSkill(name, preprocessed, source, skillPath, priority)
+
+	refsDir := filepath.Join(dirPath, "references")
+	if refEntries, refErr := os.ReadDir(refsDir); refErr == nil {
+		for _, ref := range refEntries {
+			if !ref.IsDir() && strings.HasSuffix(ref.Name(), ".md") {
+				refPath := filepath.Join(refsDir, ref.Name())
+				if data, err := os.ReadFile(refPath); err == nil {
+					key := strings.TrimSuffix(ref.Name(), ".md")
+					r.skills[name].References[key] = string(scanUserContent(data, source, refPath))
+				}
+			}
+		}
+	}
+	for _, subdir := range []string{"scripts", "assets"} {
+		subPath := filepath.Join(dirPath, subdir)
+		if subEntries, subErr := os.ReadDir(subPath); subErr == nil {
+			for _, se := range subEntries {
+				if se.IsDir() {
+					continue
+				}
+				fullPath := filepath.Join(subPath, se.Name())
+				key := subdir + "/" + se.Name()
+				if data, err := os.ReadFile(fullPath); err == nil {
+					r.skills[name].References[key] = string(data)
+				}
+			}
+		}
+	}
 	return nil
 }
 
