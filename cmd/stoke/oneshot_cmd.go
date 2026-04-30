@@ -40,11 +40,16 @@ func runOneShotCmd(args []string, stdout, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("stoke --one-shot "+verb, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	var inputPath string
+	var (
+		inputPath string
+		jsonMode  bool
+	)
 	fs.StringVar(&inputPath, "input", "-", "path to JSON request payload; '-' for stdin")
+	fs.BoolVar(&jsonMode, "json", false, "emit JSON output (accepted for CloudSwarm compatibility; one-shot output is always JSON)")
 	if err := fs.Parse(rest); err != nil {
 		return 2
 	}
+	_ = jsonMode
 
 	if err := oneshot.RunFromFile(verb, inputPath, stdout); err != nil {
 		if errors.Is(err, oneshot.ErrUnknownVerb) {

@@ -151,7 +151,13 @@ func handleVerify(payload json.RawMessage) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("oneshot: marshal verify: %w", err)
 	}
-	return Response{Verb: "verify", Status: "ok", Data: data}, nil
+	return Response{
+		Verb:            "verify",
+		Status:          StatusOK,
+		ProviderUsed:    "r1_core",
+		CostEstimateUSD: 0,
+		Data:            data,
+	}, nil
 }
 
 // verifyScaffoldResponse returns the legacy pre-wiring scaffold shape

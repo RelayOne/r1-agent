@@ -44,6 +44,28 @@ func TestRunOneShotCmd_UnknownVerbExits2(t *testing.T) {
 	}
 }
 
+func TestRunOneShotCmd_AcceptsJSONFlag(t *testing.T) {
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "in.json")
+	if err := os.WriteFile(inPath, []byte(`{"task":"design a landing page"}`), 0o600); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := runOneShotCmd([]string{"decompose", "--json", "--input", inPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+	}
+	var resp struct {
+		Verb string `json:"verb"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
+		t.Fatalf("parse: %v (%s)", err, stdout.String())
+	}
+	if resp.Verb != "decompose" {
+		t.Errorf("verb=%q want decompose", resp.Verb)
+	}
+}
+
 func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
 	// Two paths now coexist: a real task hits the wired decomposer
 	// (Status=ok, real plan) and an empty task falls through to the
@@ -63,9 +85,11 @@ func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
 			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 		}
 		var resp struct {
-			Verb   string `json:"verb"`
-			Status string `json:"status"`
-			Data   struct {
+			Verb            string  `json:"verb"`
+			Status          string  `json:"status"`
+			ProviderUsed    string  `json:"provider_used"`
+			CostEstimateUSD float64 `json:"cost_estimate_usd"`
+			Data            struct {
 				Plan         json.RawMessage `json:"plan"`
 				StrategyUsed string          `json:"strategy_used"`
 			} `json:"data"`
@@ -75,6 +99,12 @@ func TestRunOneShotCmd_DecomposeWritesScaffoldJSON(t *testing.T) {
 		}
 		if resp.Verb != "decompose" || resp.Status != "ok" {
 			t.Errorf("got verb=%q status=%q want decompose/ok", resp.Verb, resp.Status)
+		}
+		if resp.ProviderUsed != "r1_core" {
+			t.Errorf("provider_used=%q want r1_core", resp.ProviderUsed)
+		}
+		if resp.CostEstimateUSD != 0 {
+			t.Errorf("cost_estimate_usd=%v want 0", resp.CostEstimateUSD)
 		}
 		if len(resp.Data.Plan) == 0 {
 			t.Error("data.plan should be non-empty for a real task")

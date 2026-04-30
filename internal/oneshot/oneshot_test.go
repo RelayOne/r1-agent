@@ -43,6 +43,36 @@ func TestDispatch_AllSupportedVerbsReturnScaffold(t *testing.T) {
 	}
 }
 
+func TestDispatch_RealPayloadsExposeRuntimeMetadata(t *testing.T) {
+	tests := []struct {
+		name    string
+		verb    string
+		payload string
+	}{
+		{name: "decompose", verb: "decompose", payload: `{"task":"design a landing page"}`},
+		{name: "verify", verb: "verify", payload: `{"artifact":"landing page copy","acceptance_criteria":["landing"]}`},
+		{name: "critique", verb: "critique", payload: `{"draft":"# Draft\n\nThis landing page targets dentists and explains the offer in detail."}`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := Dispatch(tt.verb, json.RawMessage(tt.payload))
+			if err != nil {
+				t.Fatalf("Dispatch(%q): %v", tt.verb, err)
+			}
+			if resp.Status != StatusOK {
+				t.Fatalf("Status=%q want %q", resp.Status, StatusOK)
+			}
+			if resp.ProviderUsed != "r1_core" {
+				t.Errorf("ProviderUsed=%q want r1_core", resp.ProviderUsed)
+			}
+			if resp.CostEstimateUSD != 0 {
+				t.Errorf("CostEstimateUSD=%v want 0", resp.CostEstimateUSD)
+			}
+		})
+	}
+}
+
 func TestDispatch_DecomposeShape(t *testing.T) {
 	resp, err := Dispatch("decompose", nil)
 	if err != nil {

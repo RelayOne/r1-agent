@@ -147,7 +147,13 @@ func handleDecompose(payload json.RawMessage) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("oneshot: marshal decompose: %w", err)
 	}
-	return Response{Verb: "decompose", Status: StatusOK, Data: data}, nil
+	return Response{
+		Verb:            "decompose",
+		Status:          StatusOK,
+		ProviderUsed:    "r1_core",
+		CostEstimateUSD: 0,
+		Data:            data,
+	}, nil
 }
 
 // decomposeScaffoldResponse emits the legacy scaffold shape that
