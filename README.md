@@ -10,6 +10,7 @@ The next documentation baseline for R1 assumes two parallel planning tracks are 
 Status snapshot:
 
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
+- Done: artifact ledger primitives and ledger-native plan approval emission.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Scoped: broader skill-pack composition and operator-facing packaging.
 - Scoping: more explicit superiority claims and publishing surfaces.
