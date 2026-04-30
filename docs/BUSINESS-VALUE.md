@@ -7,6 +7,11 @@ R1's value proposition tightened after the cycle 7-8 merge train:
 - **From coding assistant to governed runtime.** Beacon protocol and
   trust primitives move R1 beyond "a better wrapper around Claude Code"
   into runtime infrastructure for controlled autonomous work.
+- **From protocol claim to operational lane.** Beacon transport and the
+  runtime bridge mean the beacon story is no longer just foundation
+  code; it now rides real HTTP/WebSocket envelopes into the same
+  approval, notification, artifact, and ledger systems buyers already
+  evaluate.
 - **From parity narrative to platform narrative.** Wave D means the
   roadmap is no longer only "match Cursor / Claude / Manus surfaces";
   it is now "ship a stronger operating model around them."
@@ -150,6 +155,10 @@ What shipped in practical terms:
 
 - **Protocol foundations.** Beacon identities, pairing flows, session
   state, token handling, and ledger-native beacon records.
+- **Transport and runtime follow-through.** Beacon traffic now has
+  shipped HTTP and WebSocket envelopes, and the runtime bridge routes
+  that traffic through trust dispatch, session approvals, notifications,
+  artifacts, and ledger writes.
 
 Why buyers should care:
 
@@ -166,6 +175,10 @@ The trust-validation and deferred-review layers are now shipped in PRs
 #46 and #47. That matters commercially because the beacon story moved
 from "promising foundation" to "governed coordination surface with
 actual trust checks and handoff artifacts."
+
+PR #54 matters because it closes the next commercial gap: buyers can
+now read beacon as a working runtime lane rather than a mostly
+architectural promise.
 
 ## What's New (April 30, 2026) — R1 Starts Explaining And Tuning Itself
 
