@@ -1,0 +1,118 @@
+{
+  "name": "metrics_collection_runtime",
+  "version": "0.1.0",
+  "description": "Deterministic read-only snapshot of in-process R1 runtime metrics.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "prefix": {
+        "type": "string",
+        "minLength": 1
+      },
+      "kinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["counters", "gauges", "timers", "costs"]
+        }
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["query_slug", "mode", "summary", "filters", "counters", "gauges", "timers", "costs", "followups"],
+    "properties": {
+      "query_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "summary": { "type": "string" },
+      "filters": {
+        "type": "object",
+        "properties": {
+          "prefix": { "type": "string" },
+          "kinds": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "counters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "value"],
+          "properties": {
+            "name": { "type": "string" },
+            "value": { "type": "integer" }
+          }
+        }
+      },
+      "gauges": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "value"],
+          "properties": {
+            "name": { "type": "string" },
+            "value": { "type": "integer" }
+          }
+        }
+      },
+      "timers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "count", "total_ns", "min_ns", "max_ns", "avg_ns"],
+          "properties": {
+            "name": { "type": "string" },
+            "count": { "type": "integer" },
+            "total_ns": { "type": "integer" },
+            "min_ns": { "type": "integer" },
+            "max_ns": { "type": "integer" },
+            "avg_ns": { "type": "integer" }
+          }
+        }
+      },
+      "costs": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "total_usd", "count"],
+          "properties": {
+            "name": { "type": "string" },
+            "total_usd": { "type": "number" },
+            "count": { "type": "integer" }
+          }
+        }
+      },
+      "followups": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    }
+  },
+  "whenToUse": [
+    "You need a structured snapshot of runtime counters, gauges, timers, or spend inside the current R1 process.",
+    "An operator wants prefix-filtered telemetry for one subsystem without wiring an external metrics backend.",
+    "You need a deterministic latency or cost snapshot to compare before and after a change in the same process."
+  ],
+  "whenNotToUse": [
+    "You need historical time-series data; this runtime only returns the current in-process snapshot.",
+    "You need host or container metrics such as CPU or memory; use infrastructure telemetry instead.",
+    "The metrics live in a different process; this runtime reads the current process registry only."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "metrics",
+    "telemetry",
+    "runtime-ops",
+    "costs",
+    "latency"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}
