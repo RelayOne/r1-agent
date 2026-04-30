@@ -11,6 +11,9 @@
 - Shell preprocessing and path-scoped skill activation.
 - Skill wizard flow: `stoke wizard run`, `migrate`, `register`, and `query`.
 - `ask_user` primitive and decision-ledger capture inside the wizard lane.
+- Beacon protocol foundation: identity, pairing, session, token, and ledger node coverage.
+- Trust layer: pinned-root verification, nonce replay defense, and signal-frame validation.
+- Missing beacon primitives: beacon-targeted notify metadata and offline review envelopes.
 - Bulk migration adapters for Markdown, OpenAPI, Zapier, and TOML skill sources.
 - Artifact ledger nodes plus Antigravity import/export wire format.
 - Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
@@ -47,6 +50,9 @@
 | `ask_user` primitive | Wizard flows can pause for operator judgment instead of guessing through trust-boundary decisions. | Done | PR #36, commit `98203a7`. |
 | Decision ledger for wizard runs | Wizard choices become durable governance data instead of disposable terminal interaction, with linked source / IR / proof refs when persisted to the ledger. | Done | Wave C, local branch `feat/r1-parity-wave-c`. |
 | Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
+| Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `ed96493`. |
+| Trust validation layer | Inbound beacon traffic can be checked against pinned roots, nonce replay defense, and signal-frame validation before it is trusted. | Done | PR #46, commit `eadf665`. |
+| Beacon review and notify primitives | Offline review envelopes and beacon-targeted notify metadata complete the first practical handoff surfaces around the beacon lane. | Done | PR #47, commit `7a8c7eb`. |
 | Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |
 | Antigravity converter | External artifact formats can be converted into the R1 artifact model without ad hoc glue scripts. | Done | PR #37, commit `e8608b1`. |

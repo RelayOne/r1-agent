@@ -17,6 +17,8 @@ Status snapshot:
 
 - Done: parity measurement and deterministic manifest foundation.
 - Done: Wave B receipts, honesty decisions, and honest-cost reports.
+- Done: beacon identity/pairing/session/token flow, trust validation, and offline review or notify primitives.
+- Done: Wave C wizard ledger persistence and deterministic registry install path.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
 - Scoped: broader operator-facing skill surfaces.
@@ -62,6 +64,27 @@ Wave B adds three explicit post-task surfaces:
 3. `stoke honesty why-not` records why an action was skipped, deferred, or downgraded.
 
 `stoke cost report` complements those surfaces by saving an operator-readable cost rollup with provider grouping and a human-minute equivalent.
+
+## Beacon + Trust (2026-04-30) — Protocol Surfaces Around The Mission Loop
+
+R1 now has a documented first slice of beacon-native coordination around
+the core mission loop:
+
+1. **Identity, pairing, session, and token primitives.** A beacon peer
+   can advertise identity material, complete a pairing flow, establish
+   session state, and mint or exchange token-shaped authorization data.
+2. **Trust validation before acceptance.** Incoming signal frames are
+   checked against pinned roots, nonce replay rules, and frame-shape
+   validation so the protocol lane has a concrete trust boundary instead
+   of assuming a friendly network.
+3. **Deferred review and notify handoff.** Offline review envelopes and
+   beacon-targeted notify metadata let R1 package work for asynchronous
+   inspection instead of requiring every review decision to happen live.
+
+The important product shift is not just "more protocol code." R1 now
+has a plausible peer or hub story for identity, trust, and deferred
+operator review that fits the same governed-runtime thesis as the rest
+of the system.
 
 ## Wave D (2026-04-30) — Expansion Surfaces
 
@@ -225,6 +248,12 @@ executed by the deterministic runtime path rather than a pure prompt
 interpretation path. The important shift is that the skill is now an
 artifact the system can inspect, reason about, store, export, and
 replay.
+
+Wave C completed the missing persistence step in that story: wizard
+authoring sessions can now be written into the ledger with linked
+source, IR, and proof artifacts, then installed into the deterministic
+registry through `stoke wizard register`. That makes the operator path
+"author -> inspect -> query -> register -> execute" durable end-to-end.
 
 ### 7. Store, export, and approve as artifacts
 
