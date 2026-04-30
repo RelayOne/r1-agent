@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/RelayOne/r1/internal/provider"
 )
 
 // Config configures a Daemon.
@@ -21,12 +23,14 @@ import (
 // worker pool size (default 10) and can be changed at runtime via the
 // /workers endpoint or Daemon.Resize.
 type Config struct {
-	StateDir    string   // base dir for queue, wal, proofs (default $HOME/.stoke)
-	Addr        string   // http listen addr (default 127.0.0.1:9090)
-	Token       string   // bearer token for HTTP (empty = no auth)
-	MaxParallel int      // initial worker pool size (default 10)
-	PollGap     int      // worker poll interval in milliseconds (default 250)
-	Hooks       []string // shell commands to run on every task lifecycle event
+	StateDir     string            // base dir for queue, wal, proofs (default $HOME/.stoke)
+	Addr         string            // http listen addr (default 127.0.0.1:9090)
+	Token        string            // bearer token for HTTP (empty = no auth)
+	MaxParallel  int               // initial worker pool size (default 10)
+	PollGap      int               // worker poll interval in milliseconds (default 250)
+	Hooks        []string          // shell commands to run on every task lifecycle event
+	ChatProvider provider.Provider // optional provider backing /agent/chat; nil falls back to env or deterministic queueing
+	ChatModel    string            // default model for restored agent chat sessions
 }
 
 // Daemon is the long-running R1 process: queue + WAL + worker pool + HTTP.
@@ -64,8 +68,10 @@ type Daemon struct {
 	cancel  context.CancelFunc
 	started atomic.Bool
 
+	agentSessions *AgentSessionStore
+
 	mu          sync.Mutex
-	pausedSize  int      // remembered size during /pause
+	pausedSize  int // remembered size during /pause
 	hooksMu     sync.RWMutex
 	customHooks []customHook
 }
@@ -103,6 +109,10 @@ func New(cfg Config, exec Executor) (*Daemon, error) {
 	}
 	d := &Daemon{cfg: cfg, queue: q, wal: w, exec: exec}
 	d.mux = http.NewServeMux()
+	d.agentSessions, err = NewAgentSessionStore(filepath.Join(cfg.StateDir, "agent-sessions.json"), d, cfg.ChatProvider, cfg.ChatModel)
+	if err != nil {
+		return nil, fmt.Errorf("agent sessions: %w", err)
+	}
 	d.registerRoutes()
 	return d, nil
 }
@@ -149,7 +159,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		_ = d.wal.Append(WALEvent{Type: "resume", Message: fmt.Sprintf("requeued %d in-flight task(s) from prior run", n)})
 	}
 
-	d.pool = NewWorkerPool(ctx, d.queue, d.wal, d.exec, time.Duration(d.cfg.PollGap)*time.Millisecond)
+	d.pool = NewWorkerPool(ctx, d.queue, d.wal, d.exec, time.Duration(d.cfg.PollGap)*time.Millisecond, d.onTaskLifecycle)
 	d.pool.Resize(d.cfg.MaxParallel)
 
 	d.srv = &http.Server{
@@ -202,6 +212,7 @@ func (d *Daemon) registerRoutes() {
 	d.mux.HandleFunc("/tasks/cancel", d.auth(d.handleTaskCancel))
 	d.mux.HandleFunc("/wal", d.auth(d.handleWAL))
 	d.mux.HandleFunc("/hooks/install", d.auth(d.handleHookInstall))
+	d.registerAgentRoutes()
 }
 
 // Handler exposes the daemon's mux for tests / embedding.
@@ -340,6 +351,16 @@ func (d *Daemon) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if task := d.queue.Get(body.ID); task != nil && task.Meta != nil {
+		d.onTaskLifecycle(TaskLifecycleEvent{
+			TS:        time.Now().UTC(),
+			Type:      "task.cancelled",
+			TaskID:    body.ID,
+			SessionID: task.Meta["agent_session_id"],
+			Message:   "task cancelled",
+			State:     StateCancelled,
+		})
+	}
 	writeJSON(w, map[string]string{"cancelled": body.ID})
 }
 
@@ -399,4 +420,11 @@ func (d *Daemon) Hooks() []customHook {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (d *Daemon) onTaskLifecycle(ev TaskLifecycleEvent) {
+	if d.agentSessions == nil {
+		return
+	}
+	d.agentSessions.RecordTaskLifecycle(ev)
 }
