@@ -12,7 +12,7 @@ Status snapshot:
 - Done: parity matrix, evaluation agent, skill manifest pipeline, path-scoped and preprocessed skill activation.
 - Done: beacon protocol foundation for identity, pairing, session, token, and beacon ledger nodes.
 - Done: artifact ledger primitives and ledger-native plan approval emission.
-- Done: Wave B receipts, honesty commands, and honest-cost reports.
+- Done: Wave B receipts, honesty commands, and honest-cost reports with provider-group and metered-margin rollups.
 - Done: Wave C wizard ledger persistence and deterministic registry install flow.
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
@@ -108,7 +108,13 @@ Manus. Recent merges to `main`:
 - **Wave B receipts + honesty + cost reporting** —
   [`internal/receipts/`](internal/receipts/) adds persisted mission receipts with signing, export, and replay-linked provenance;
   [`internal/honesty/`](internal/honesty/) adds ledger-backed `refused` and `why_not` decisions via `stoke honesty`;
-  [`internal/costtrack/honest_cost.go`](internal/costtrack/honest_cost.go) plus [`cmd/stoke/ops_cost.go`](cmd/stoke/ops_cost.go) add saved honest-cost rollups with provider grouping and human-minute equivalents.
+  [`internal/costtrack/honest_cost.go`](internal/costtrack/honest_cost.go) plus [`cmd/stoke/ops_cost.go`](cmd/stoke/ops_cost.go) add saved honest-cost rollups with provider grouping, equivalent metered spend, margin math, and human-minute equivalents.
+
+- **Deterministic replay cache keys are now IR-scoped** —
+  `internal/r1skill/interp/` now namespaces replay cache keys by compile
+  proof hash and canonicalized cache-key inputs, so equivalent JSON
+  shapes replay bit-exactly while unrelated skills stop colliding in the
+  cache. Evidence: PR `#63`, commit `2b037a3`.
 
 - **Wave D expansion commands** —
   [`internal/counterfact/`](internal/counterfact/) adds deterministic knob-applied mission replay plus divergence reports via `stoke cf`;

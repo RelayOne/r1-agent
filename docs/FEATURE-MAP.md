@@ -27,7 +27,7 @@
 - Artifact ledger nodes plus Antigravity import/export wire format.
 - Artifact storage and `stoke artifact` CLI for import/export and inspection workflows.
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
-- Wave B receipts, honesty decisions, and honest-cost reports.
+- Wave B receipts, honesty decisions, honest-cost reports, and replay-cache-key hardening.
 - Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 
 ### In Progress
@@ -128,7 +128,8 @@ Status legend:
 | Replay-backed receipt generation | Replays can be promoted into durable receipts with task linkage and provenance. | Done | `internal/receipts/store.go`, `internal/receipts/store_test.go` |
 | `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
 | `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
-| `B19` Honest cost rollups | Cost reports now break down provider groups, metered-equivalent spend, and equivalent margin alongside human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+| `B19` Honest cost rollups | Cost reports now break down provider groups, metered-equivalent spend, subscription-vs-metered margin, and human-minute equivalents. | Done | PR #63, commit `2b037a3`; `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+| Deterministic replay cache-key namespacing | Replay cache entries are keyed by IR hash plus canonicalized cache-key inputs, so equivalent JSON shapes replay bit-exactly and unrelated skills do not share cache entries. | Done | PR #63, commit `2b037a3`; `internal/r1skill/interp/interp.go` |
 
 ## Wave D (2026-04-30) — Expansion Features
 
