@@ -19,8 +19,8 @@ func TestCloudSwarmFlagshipsPackSeed(t *testing.T) {
 	if loaded.Meta.Name != "cloudswarm-flagships" {
 		t.Fatalf("pack name = %q, want cloudswarm-flagships", loaded.Meta.Name)
 	}
-	if len(loaded.Manifests) != 2 {
-		t.Fatalf("manifest count = %d, want 2", len(loaded.Manifests))
+	if len(loaded.Manifests) != 3 {
+		t.Fatalf("manifest count = %d, want 3", len(loaded.Manifests))
 	}
 
 	manifests := map[string]skillmfr.Manifest{}
@@ -30,8 +30,17 @@ func TestCloudSwarmFlagshipsPackSeed(t *testing.T) {
 		names = append(names, manifest.Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"dentist_outreach_runtime", "invoice_processor_runtime"}) {
-		t.Fatalf("manifest names = %v, want dentist_outreach_runtime + invoice_processor_runtime", names)
+	if !reflect.DeepEqual(names, []string{"betbuddies_group_runtime", "dentist_outreach_runtime", "invoice_processor_runtime"}) {
+		t.Fatalf("manifest names = %v, want betbuddies_group_runtime + dentist_outreach_runtime + invoice_processor_runtime", names)
+	}
+
+	betBuddies := manifests["betbuddies_group_runtime"]
+	if !betBuddies.UseIR {
+		t.Fatal("betbuddies_group_runtime should enable deterministic runtime via useIR")
+	}
+	wantBetBuddiesRecommended := []string{"betbuddies-group", "betting-pool", "settlement-approval", "flagship-flow"}
+	if !reflect.DeepEqual(betBuddies.RecommendedFor, wantBetBuddiesRecommended) {
+		t.Fatalf("betbuddies recommendedFor = %v, want %v", betBuddies.RecommendedFor, wantBetBuddiesRecommended)
 	}
 
 	invoice := manifests["invoice_processor_runtime"]

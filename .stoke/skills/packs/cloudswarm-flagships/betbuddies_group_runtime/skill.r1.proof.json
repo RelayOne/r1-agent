@@ -1,0 +1,43 @@
+{
+  "skill_id": "betbuddies_group_runtime",
+  "skill_version": 1,
+  "ir_hash": "sha256:689357b7aaff3c6da5b1316dce6160d4a9e88c9fdbc88f08bcd272f2851a8384",
+  "analyzer_version": "1.0.0",
+  "constitution_hash": "sha256:local-dev",
+  "checks": [
+    {
+      "stage": "schema",
+      "passed": true
+    },
+    {
+      "stage": "type",
+      "passed": true
+    },
+    {
+      "stage": "capability",
+      "passed": true
+    },
+    {
+      "stage": "constitution",
+      "passed": true
+    },
+    {
+      "stage": "contract",
+      "passed": true
+    },
+    {
+      "stage": "termination",
+      "passed": true
+    },
+    {
+      "stage": "replay",
+      "passed": true
+    },
+    {
+      "stage": "proof",
+      "passed": true
+    }
+  ],
+  "verified_at": "2026-04-30T12:22:31.131661266Z",
+  "verified_by": "r1skill-analyzer-1.0.0"
+}

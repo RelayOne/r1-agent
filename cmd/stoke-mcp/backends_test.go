@@ -185,6 +185,56 @@ func TestSeedBundledSkillPacks_RegistersDentistOutreachRuntime(t *testing.T) {
 	}
 }
 
+func TestSeedBundledSkillPacks_RegistersBetBuddiesRuntime(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 3 {
+		t.Fatalf("registered=%d skipped=%d, want all flagship manifests", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-flagship",
+		"betbuddies_group_runtime",
+		json.RawMessage(`{"event_title":"Stanley Cup Final Pool","invitees":["a@example.com","b@example.com"],"stake_amount_cents":2500,"currency":"cad","ledger_backend":"google_sheets","house_rules_summary":"Most points wins; total goals tie-break."}`),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["flow_slug"] != "betbuddies-group" {
+		t.Fatalf("flow_slug = %#v, want betbuddies-group", output["flow_slug"])
+	}
+	if output["ledger_backend"] != "google_sheets" {
+		t.Fatalf("ledger_backend = %#v, want google_sheets", output["ledger_backend"])
+	}
+	required, ok := output["required_credentials"].([]any)
+	if !ok {
+		t.Fatalf("required_credentials type = %T", output["required_credentials"])
+	}
+	if len(required) != 2 || required[0] != "google_oauth" || required[1] != "stripe_secret_key" {
+		t.Fatalf("required_credentials = %#v, want [google_oauth stripe_secret_key]", required)
+	}
+}
+
 func writeJSON(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)
