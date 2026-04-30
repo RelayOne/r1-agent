@@ -166,6 +166,25 @@ func NewSession(p provider.Provider, cfg Config) (*Session, error) {
 	return s, nil
 }
 
+// NewSessionFromHistory constructs a chat Session and seeds it with a prior
+// message history. This is the persistence/reconnect path for daemon-hosted
+// sessions: callers can restore a session after process restart without
+// replaying the model turn-by-turn.
+func NewSessionFromHistory(p provider.Provider, cfg Config, history []provider.ChatMessage) (*Session, error) {
+	s, err := NewSession(p, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) == 0 {
+		return s, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = make([]provider.ChatMessage, len(history))
+	copy(s.messages, history)
+	return s, nil
+}
+
 // setGateForTest replaces the post-turn descent gate. Tests use this to
 // inject a fake gate that returns canned verdicts without needing a
 // real git worktree. Production code should set the gate via
