@@ -617,4 +617,4 @@ standardize on it.
 
 ### Scoped
 
-- More advanced pack publishing and update workflows remain scoped beyond the current shipped lane.
+- Registry search and broader marketplace distribution remain scoped beyond the current shipped local publish/install lane.

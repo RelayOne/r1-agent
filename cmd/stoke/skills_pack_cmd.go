@@ -70,6 +70,17 @@ type skillPackInfoResult struct {
 	InstalledSourcePath string
 }
 
+type skillPackPublishResult struct {
+	PackName             string
+	Version              string
+	SourcePath           string
+	CanonicalPublishPath string
+	LegacyPublishPath    string
+	ManifestCount        int
+	DeclaredSkillCount   int
+	Dependencies         []string
+}
+
 type skillPackListEntry struct {
 	PackName           string
 	SourcePath         string
@@ -95,7 +106,7 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|install|list|uninstall|update")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|install|list|publish|uninstall|update")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -105,6 +116,8 @@ func skillsPackCmd(args []string) {
 		runSkillsPackInstallCmd(args[1:])
 	case "list":
 		runSkillsPackListCmd(args[1:])
+	case "publish":
+		runSkillsPackPublishCmd(args[1:])
 	case "uninstall":
 		runSkillsPackUninstallCmd(args[1:])
 	case "update":
@@ -220,6 +233,26 @@ func runSkillsPackListCmd(args []string) {
 	}
 }
 
+func runSkillsPackPublishCmd(args []string) {
+	repoRoot, packName, destRoot, force := parseSkillPackPublishArgs(args)
+	result, err := publishSkillPack(repoRoot, packName, destRoot, force)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack publish: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout,
+		"pack: %s\nversion: %s\nsource: %s\npublished_manifest_count: %d\ndeclared_skill_count: %d\ndependencies: %s\ncanonical_publish_path: %s\nlegacy_publish_path: %s\n",
+		result.PackName,
+		result.Version,
+		result.SourcePath,
+		result.ManifestCount,
+		result.DeclaredSkillCount,
+		strings.Join(result.Dependencies, ","),
+		result.CanonicalPublishPath,
+		result.LegacyPublishPath,
+	)
+}
+
 func parseSkillPackArgs(name string, args []string) (string, string) {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	repoRoot := fs.String("repo", ".", "repository root")
@@ -237,6 +270,20 @@ func parseSkillPackListArgs(args []string) string {
 	repoRoot := fs.String("repo", ".", "repository root")
 	fs.Parse(args)
 	return *repoRoot
+}
+
+func parseSkillPackPublishArgs(args []string) (string, string, string, bool) {
+	fs := flag.NewFlagSet("skills pack publish", flag.ExitOnError)
+	repoRoot := fs.String("repo", ".", "repository root")
+	packName := fs.String("pack", "", "pack name under repo or user .r1|.stoke/skills/packs/")
+	destRoot := fs.String("dest-root", "", "destination root that receives .r1/.stoke skill pack copies (defaults to HOME)")
+	force := fs.Bool("force", false, "replace an already-published pack in the destination library")
+	fs.Parse(args)
+	if *packName == "" {
+		fmt.Fprintln(os.Stderr, "skills pack publish: --pack is required")
+		os.Exit(2)
+	}
+	return *repoRoot, *packName, *destRoot, *force
 }
 
 func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
@@ -274,6 +321,45 @@ func infoSkillPack(repoRoot, packName string) (*skillPackInfoResult, error) {
 		CanonicalInstalled:  canonicalInstalled,
 		LegacyInstalled:     legacyInstalled,
 		InstalledSourcePath: installedSourcePath,
+	}, nil
+}
+
+func publishSkillPack(repoRoot, packName, destRoot string, force bool) (*skillPackPublishResult, error) {
+	if packName == "" {
+		return nil, fmt.Errorf("pack name required")
+	}
+	repoAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo root: %w", err)
+	}
+	sourcePath, err := resolveSkillPackSource(repoAbs, packName)
+	if err != nil {
+		return nil, err
+	}
+	pack, err := skillmfr.LoadPack(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	destAbs, err := resolveSkillPackPublishRoot(destRoot)
+	if err != nil {
+		return nil, err
+	}
+	canonicalPublishPath := filepath.Join(destAbs, r1dir.Canonical, "skills", "packs", pack.Meta.Name)
+	legacyPublishPath := filepath.Join(destAbs, r1dir.Legacy, "skills", "packs", pack.Meta.Name)
+	for _, publishPath := range []string{canonicalPublishPath, legacyPublishPath} {
+		if err := publishSkillPackDir(sourcePath, publishPath, force); err != nil {
+			return nil, err
+		}
+	}
+	return &skillPackPublishResult{
+		PackName:             pack.Meta.Name,
+		Version:              pack.Meta.Version,
+		SourcePath:           sourcePath,
+		CanonicalPublishPath: canonicalPublishPath,
+		LegacyPublishPath:    legacyPublishPath,
+		ManifestCount:        len(pack.Manifests),
+		DeclaredSkillCount:   pack.Meta.SkillCount,
+		Dependencies:         append([]string(nil), pack.Meta.Dependencies...),
 	}, nil
 }
 
@@ -411,6 +497,24 @@ func listInstalledSkillPacks(repoRoot string) (*skillPackListResult, error) {
 	}, nil
 }
 
+func resolveSkillPackPublishRoot(destRoot string) (string, error) {
+	if strings.TrimSpace(destRoot) != "" {
+		abs, err := filepath.Abs(destRoot)
+		if err != nil {
+			return "", fmt.Errorf("resolve publish root: %w", err)
+		}
+		return abs, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve publish root from HOME: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("resolve publish root from HOME: empty home directory")
+	}
+	return home, nil
+}
+
 func resolveSkillPackSource(repoRoot, packName string) (string, error) {
 	candidates := skillPackCandidates(repoRoot, packName)
 	for _, candidate := range candidates {
@@ -437,6 +541,74 @@ func skillPackCandidates(repoRoot, packName string) []string {
 		)
 	}
 	return candidates
+}
+
+func publishSkillPackDir(sourcePath, publishPath string, force bool) error {
+	if err := ensurePublishTargetReady(publishPath, force); err != nil {
+		return err
+	}
+	if err := copySkillPackTree(sourcePath, publishPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensurePublishTargetReady(path string, force bool) error {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		if !force {
+			return fmt.Errorf("published pack target %q already exists; rerun with --force to replace it", path)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("published pack target %q is a symlink; remove it manually before publishing", path)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("published pack target %q exists and is not a directory", path)
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove existing published pack %q: %w", path, err)
+		}
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		return fmt.Errorf("stat published pack target %q: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %q: %w", filepath.Dir(path), err)
+	}
+	return nil
+}
+
+func copySkillPackTree(sourcePath, destPath string) error {
+	return filepath.WalkDir(sourcePath, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(sourcePath, path)
+		if err != nil {
+			return fmt.Errorf("relative publish path for %q: %w", path, err)
+		}
+		targetPath := filepath.Join(destPath, rel)
+		switch {
+		case d.IsDir():
+			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+				return fmt.Errorf("mkdir %q: %w", targetPath, err)
+			}
+			return nil
+		case d.Type()&os.ModeSymlink != 0:
+			return fmt.Errorf("publish pack source %q contains symlink %q", sourcePath, path)
+		case !d.Type().IsRegular():
+			return fmt.Errorf("publish pack source %q contains unsupported file %q", sourcePath, path)
+		}
+		payload, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %q: %w", path, err)
+		}
+		if err := os.WriteFile(targetPath, payload, 0o644); err != nil {
+			return fmt.Errorf("write %q: %w", targetPath, err)
+		}
+		return nil
+	})
 }
 
 const (
