@@ -1,6 +1,9 @@
 package wizard
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Question struct {
 	ID                string               `json:"id"`
@@ -52,13 +55,46 @@ func (p *Pack) Validate() error {
 	return nil
 }
 
+func (q Question) ShouldAsk(answered map[string]string) bool {
+	if len(q.DependsOn) == 0 {
+		return true
+	}
+	for _, dep := range q.DependsOn {
+		answer, ok := answered[dep.QuestionID]
+		if !ok {
+			return false
+		}
+		if dep.OperatorMust != "" && !strings.EqualFold(strings.TrimSpace(answer), strings.TrimSpace(dep.OperatorMust)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (q Question) ValidateAnswer(answer string) error {
+	answer = strings.TrimSpace(answer)
+	switch q.AnswerSchema.Type {
+	case "", "text", "list":
+		return nil
+	case "enum":
+		for _, allowed := range q.AnswerSchema.EnumValues {
+			if strings.EqualFold(answer, allowed) {
+				return nil
+			}
+		}
+		return fmt.Errorf("question %q: %q is not one of [%s]", q.ID, answer, strings.Join(q.AnswerSchema.EnumValues, ", "))
+	default:
+		return fmt.Errorf("question %q: unsupported answer schema %q", q.ID, q.AnswerSchema.Type)
+	}
+}
+
 func DefaultPack() *Pack {
 	return &Pack{
 		ID:          "default",
 		Description: "Default authoring questions for deterministic skills.",
 		Questions: []Question{
 			{ID: "source.starting_point", Stage: "source", Text: "Are you starting from an existing skill, an external spec, or scratch?", AnswerSchema: AnswerSchema{Type: "enum", EnumValues: []string{"existing", "external", "scratch"}}},
-			{ID: "source.format", Stage: "source", Text: "What format is the source in?", AnswerSchema: AnswerSchema{Type: "enum", EnumValues: []string{"r1-markdown-legacy", "openapi", "zapier", "codex-toml"}}},
+			{ID: "source.format", Stage: "source", Text: "What format is the source in?", AnswerSchema: AnswerSchema{Type: "enum", EnumValues: []string{"r1-markdown-legacy", "openapi", "zapier", "codex-toml"}}, DependsOn: []QuestionDependency{{QuestionID: "source.starting_point", OperatorMust: "external"}}},
 			{ID: "intent.purpose", Stage: "intent", Text: "In one sentence, what does this skill do?", AnswerSchema: AnswerSchema{Type: "text"}, IRPath: "description"},
 			{ID: "caps.network.domains", Stage: "caps", Text: "Which domains does it call?", AnswerSchema: AnswerSchema{Type: "list", ListOf: "text"}, AlwaysInteractive: true, IRPath: "capabilities.network.allow_domains"},
 			{ID: "caps.shell.commands", Stage: "caps", Text: "Which shell commands does it run?", AnswerSchema: AnswerSchema{Type: "list", ListOf: "text"}, AlwaysInteractive: true, IRPath: "capabilities.shell.allow_commands"},

@@ -54,6 +54,8 @@ func runWizardAuthorCmd(args []string) {
 		OperatorID:   *operator,
 		SourcePath:   *source,
 		SourceFormat: *format,
+		Stdin:        os.Stdin,
+		Stdout:       os.Stdout,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "wizard error: %v\n", err)
