@@ -682,6 +682,8 @@ func main() {
 		counterfactCmd(os.Args[2:])
 	case "artifact":
 		artifactCmd(os.Args[2:])
+	case "beacon":
+		beaconCmd(os.Args[2:])
 	case "watch":
 		watchCmd(os.Args[2:])
 	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
@@ -6903,6 +6905,7 @@ COMMANDS:
   inspect         Standalone codebase audit: hygiene + integration review (no SOW)
   receipt         Verify or inspect R1 receipts (Merkle anchors): verify | inspect
   honesty         Record/query Refuse-to-Lie and Why-Not decisions
+  beacon          Pair devices, issue/import beacon tokens, and revoke devices
   cf              Replay a mission with deterministic config changes
   why-broken      Explain which decision introduced a regression
   self-tune       Recommend a better harness config from trial metrics
