@@ -23,7 +23,7 @@ Status snapshot:
 - Done: Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
 - In Progress: parity-to-superiority execution and deterministic-skills integration.
 - Done: beacon trust validation plus notify and offline-review primitives.
-- Scoped: broader operator-facing packaging beyond the shipped pack install/list/uninstall and recursive composition path.
+- Scoped: broader operator-facing packaging beyond the shipped local publish/install/list/update and recursive composition path.
 - Scoping: more explicit superiority claims and publishing surfaces.
 - Potential-On Horizon: portfolio-wide deterministic skill exchange.
 
@@ -376,6 +376,7 @@ the same `internal/` packages.
 | `r1-skill-compile` | Compile or `--check` deterministic skill IR and emit proof artifacts |
 | `stoke skills pack install` | Activate a bundled skill pack such as `actium-studio` in the project skill directory, including transitive pack dependencies from repo or user skill libraries |
 | `stoke skills pack list` | List installed skill packs by merging canonical `.r1/skills/*` and legacy `.stoke/skills/*` links into one operator-facing view |
+| `stoke skills pack publish` | Validate a pack and copy it into the user-level `.r1/.stoke` skill-pack library so other repos can install it without manual copying |
 | `stoke skills pack update` | Refresh an installed pack from its current source, `git pull --ff-only` for external pack repos, and re-link any newly declared dependencies without mutating repo-local bundled packs |
 | `stoke wizard run` | Guided operator flow for creating or refining a skill |
 | `stoke wizard migrate` | Convert Markdown, OpenAPI, Zapier, or TOML sources into the deterministic skill lane |
@@ -851,7 +852,7 @@ MIT.
 
 ### Done
 
-- PR #67 (`fc55a0d`) shipped the bundled skill-pack installer, PR #68 (`bf45191`) added recursive pack install, PR #69 (`4a19231`) added pack uninstall, and PR #71 (`92b6f47`) added pack list. Together they establish the deterministic skills lane as a real shipped operator path instead of a partial prototype.
+- PR #67 (`fc55a0d`) shipped the bundled skill-pack installer, PR #68 (`bf45191`) added recursive pack install, PR #69 (`4a19231`) added pack uninstall, PR #71 (`92b6f47`) added pack list, PR #72 (`f180666`) added update, PR #74 (`80562ed`) added info, and the current lane now adds local publish into the user pack library. Together they establish the deterministic skills lane as a real shipped operator path instead of a partial prototype.
 - PR #70 (`d15bee8`) already refreshed the docs for PRs #67-68; this cycle carries that forward so the canonical docs also reflect PRs #69 and #71 now on `main`.
 
 ### In Progress

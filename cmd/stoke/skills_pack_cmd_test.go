@@ -369,6 +369,115 @@ func TestListInstalledSkillPacksEmpty(t *testing.T) {
 	}
 }
 
+func TestPublishSkillPackCopiesPackToUserLibrary(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, packDir, "shared-pack", []string{"base-pack"})
+
+	result, err := publishSkillPack(repo, "shared-pack", "", false)
+	if err != nil {
+		t.Fatalf("publishSkillPack() error = %v", err)
+	}
+	if result.PackName != "shared-pack" {
+		t.Fatalf("PackName = %q, want shared-pack", result.PackName)
+	}
+	if result.Version != "0.1.0" {
+		t.Fatalf("Version = %q, want 0.1.0", result.Version)
+	}
+	if result.SourcePath != packDir {
+		t.Fatalf("SourcePath = %q, want %q", result.SourcePath, packDir)
+	}
+	if result.ManifestCount != 1 {
+		t.Fatalf("ManifestCount = %d, want 1", result.ManifestCount)
+	}
+	if result.DeclaredSkillCount != 1 {
+		t.Fatalf("DeclaredSkillCount = %d, want 1", result.DeclaredSkillCount)
+	}
+	if !reflect.DeepEqual(result.Dependencies, []string{"base-pack"}) {
+		t.Fatalf("Dependencies = %v, want [base-pack]", result.Dependencies)
+	}
+	for _, publishPath := range []string{
+		filepath.Join(home, ".r1", "skills", "packs", "shared-pack"),
+		filepath.Join(home, ".stoke", "skills", "packs", "shared-pack"),
+	} {
+		publishedPack, err := skillmfr.LoadPack(publishPath)
+		if err != nil {
+			t.Fatalf("LoadPack(%q): %v", publishPath, err)
+		}
+		if publishedPack.Meta.Name != "shared-pack" {
+			t.Fatalf("published pack name at %q = %q, want shared-pack", publishPath, publishedPack.Meta.Name)
+		}
+	}
+}
+
+func TestPublishSkillPackRejectsExistingTargetWithoutForce(t *testing.T) {
+	repo := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, packDir, "shared-pack", nil)
+	writePackFixture(t, filepath.Join(home, ".r1", "skills", "packs", "shared-pack"), "shared-pack", nil)
+
+	_, err := publishSkillPack(repo, "shared-pack", "", false)
+	if err == nil {
+		t.Fatal("publishSkillPack() error = nil, want existing target error")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("publishSkillPack() error = %v, want existing target error", err)
+	}
+}
+
+func TestPublishSkillPackForceReplacesPublishedCopy(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	destRoot := t.TempDir()
+
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, packDir, "shared-pack", nil)
+	packYAML := strings.Join([]string{
+		"name: shared-pack",
+		"version: 0.2.0",
+		"description: updated pack",
+		"skill_count: 1",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(packDir, "pack.yaml"), []byte(packYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pack.yaml): %v", err)
+	}
+
+	publishedDir := filepath.Join(destRoot, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, publishedDir, "shared-pack", nil)
+
+	result, err := publishSkillPack(repo, "shared-pack", destRoot, true)
+	if err != nil {
+		t.Fatalf("publishSkillPack() error = %v", err)
+	}
+	if result.Version != "0.2.0" {
+		t.Fatalf("Version = %q, want 0.2.0", result.Version)
+	}
+
+	for _, publishPath := range []string{
+		filepath.Join(destRoot, ".r1", "skills", "packs", "shared-pack"),
+		filepath.Join(destRoot, ".stoke", "skills", "packs", "shared-pack"),
+	} {
+		publishedPack, err := skillmfr.LoadPack(publishPath)
+		if err != nil {
+			t.Fatalf("LoadPack(%q): %v", publishPath, err)
+		}
+		if publishedPack.Meta.Version != "0.2.0" {
+			t.Fatalf("published version at %q = %q, want 0.2.0", publishPath, publishedPack.Meta.Version)
+		}
+		if publishedPack.Meta.Description != "updated pack" {
+			t.Fatalf("published description at %q = %q, want updated pack", publishPath, publishedPack.Meta.Description)
+		}
+	}
+}
+
 func TestUninstallSkillPackRemovesRequestedPackOnly(t *testing.T) {
 	t.Parallel()
 
