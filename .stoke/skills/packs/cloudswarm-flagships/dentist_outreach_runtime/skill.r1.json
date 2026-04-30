@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "skill_id": "dentist_outreach_runtime",
+  "skill_version": 1,
+  "description": "Emit the deterministic runtime contract for the CloudSwarm dentist-outreach flagship flow.",
+  "authors": ["operator:codex"],
+  "lineage": {
+    "kind": "human",
+    "authored_at": "2026-04-30T00:00:00Z"
+  },
+  "schemas": {
+    "inputs": {
+      "type": "record",
+      "fields": {
+        "markets": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "location": {
+          "type": "string"
+        },
+        "crm": {
+          "type": "string"
+        },
+        "daily_new_leads": {
+          "type": "optional",
+          "element_type": {
+            "type": "int"
+          }
+        },
+        "sequence_days": {
+          "type": "optional",
+          "element_type": {
+            "type": "int"
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "record",
+      "fields": {
+        "flow_slug": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "markets": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "location": {
+          "type": "string"
+        },
+        "crm": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "required_credentials": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "hero_skills": {
+          "type": "list",
+          "element_type": {
+            "type": "string"
+          }
+        },
+        "phases": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "phase"
+          }
+        },
+        "approval_rules": {
+          "type": "list",
+          "element_type": {
+            "type": "named",
+            "named_ref": "approval_rule"
+          }
+        }
+      }
+    },
+    "named_types": {
+      "phase": {
+        "type": "record",
+        "fields": {
+          "name": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "skill": {
+            "type": "string"
+          }
+        }
+      },
+      "approval_rule": {
+        "type": "record",
+        "fields": {
+          "condition": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "graph": {
+    "nodes": {
+      "runtime": {
+        "kind": "pure_fn",
+        "config": {
+          "registry_ref": "cloudswarm:dentist_outreach_runtime",
+          "input": {
+            "kind": "ref",
+            "ref": "inputs"
+          }
+        }
+      }
+    },
+    "return": {
+      "kind": "ref",
+      "ref": "runtime"
+    }
+  }
+}
