@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/skillmfr"
@@ -18,6 +20,7 @@ type skillPackInstallResult struct {
 	CanonicalLinkPath string
 	LegacyLinkPath    string
 	InstalledCount    int
+	InstalledPacks    []string
 }
 
 func skillsCmd(args []string) {
@@ -51,7 +54,7 @@ func skillsPackCmd(args []string) {
 func runSkillsPackInstallCmd(args []string) {
 	fs := flag.NewFlagSet("skills pack install", flag.ExitOnError)
 	repoRoot := fs.String("repo", ".", "repository root")
-	packName := fs.String("pack", "", "pack name under <repo>/.r1|.stoke/skills/packs/")
+	packName := fs.String("pack", "", "pack name under repo or user .r1|.stoke/skills/packs/")
 	fs.Parse(args)
 	if *packName == "" {
 		fmt.Fprintln(os.Stderr, "skills pack install: --pack is required")
@@ -62,8 +65,14 @@ func runSkillsPackInstallCmd(args []string) {
 		fmt.Fprintf(os.Stderr, "skills pack install: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stdout, "pack: %s\nsource: %s\ninstalled: %d\ncanonical_link: %s\nlegacy_link: %s\n",
-		result.PackName, result.SourcePath, result.InstalledCount, result.CanonicalLinkPath, result.LegacyLinkPath)
+	fmt.Fprintf(os.Stdout, "pack: %s\nsource: %s\ninstalled: %d\npacks: %s\ncanonical_link: %s\nlegacy_link: %s\n",
+		result.PackName,
+		result.SourcePath,
+		result.InstalledCount,
+		strings.Join(result.InstalledPacks, ","),
+		result.CanonicalLinkPath,
+		result.LegacyLinkPath,
+	)
 }
 
 func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error) {
@@ -74,38 +83,34 @@ func installSkillPack(repoRoot, packName string) (*skillPackInstallResult, error
 	if err != nil {
 		return nil, fmt.Errorf("resolve repo root: %w", err)
 	}
+	installedPacks := make(map[string]string)
+	if err := installSkillPackRecursive(repoAbs, packName, installedPacks, nil); err != nil {
+		return nil, err
+	}
 	sourcePath, err := resolveSkillPackSource(repoAbs, packName)
 	if err != nil {
 		return nil, err
 	}
-	pack, err := skillmfr.LoadPack(sourcePath)
-	if err != nil {
-		return nil, err
-	}
-
 	canonicalLink := filepath.Join(repoAbs, r1dir.Canonical, "skills", packName)
 	legacyLink := filepath.Join(repoAbs, r1dir.Legacy, "skills", packName)
-	if err := ensureSkillPackLink(canonicalLink, sourcePath); err != nil {
-		return nil, err
+	packs := make([]string, 0, len(installedPacks))
+	for installedPack := range installedPacks {
+		packs = append(packs, installedPack)
 	}
-	if err := ensureSkillPackLink(legacyLink, sourcePath); err != nil {
-		return nil, err
-	}
+	sort.Strings(packs)
 
 	return &skillPackInstallResult{
-		PackName:          pack.Meta.Name,
+		PackName:          packName,
 		SourcePath:        sourcePath,
 		CanonicalLinkPath: canonicalLink,
 		LegacyLinkPath:    legacyLink,
-		InstalledCount:    2,
+		InstalledCount:    len(installedPacks) * 2,
+		InstalledPacks:    packs,
 	}, nil
 }
 
 func resolveSkillPackSource(repoRoot, packName string) (string, error) {
-	candidates := []string{
-		filepath.Join(repoRoot, r1dir.Canonical, "skills", "packs", packName),
-		filepath.Join(repoRoot, r1dir.Legacy, "skills", "packs", packName),
-	}
+	candidates := skillPackCandidates(repoRoot, packName)
 	for _, candidate := range candidates {
 		info, err := os.Stat(candidate)
 		if err == nil && info.IsDir() {
@@ -115,7 +120,57 @@ func resolveSkillPackSource(repoRoot, packName string) (string, error) {
 			return "", fmt.Errorf("stat pack %q: %w", candidate, err)
 		}
 	}
-	return "", fmt.Errorf("skill pack %q not found under %s or %s", packName, candidates[0], candidates[1])
+	return "", fmt.Errorf("skill pack %q not found under %s", packName, strings.Join(candidates, ", "))
+}
+
+func skillPackCandidates(repoRoot, packName string) []string {
+	candidates := []string{
+		filepath.Join(repoRoot, r1dir.Canonical, "skills", "packs", packName),
+		filepath.Join(repoRoot, r1dir.Legacy, "skills", "packs", packName),
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		candidates = append(candidates,
+			filepath.Join(home, r1dir.Canonical, "skills", "packs", packName),
+			filepath.Join(home, r1dir.Legacy, "skills", "packs", packName),
+		)
+	}
+	return candidates
+}
+
+func installSkillPackRecursive(repoRoot, packName string, installed map[string]string, stack []string) error {
+	if _, ok := installed[packName]; ok {
+		return nil
+	}
+	for _, active := range stack {
+		if active == packName {
+			cycle := append(append([]string{}, stack...), packName)
+			return fmt.Errorf("skill pack dependency cycle: %s", strings.Join(cycle, " -> "))
+		}
+	}
+	sourcePath, err := resolveSkillPackSource(repoRoot, packName)
+	if err != nil {
+		return err
+	}
+	pack, err := skillmfr.LoadPack(sourcePath)
+	if err != nil {
+		return err
+	}
+	stack = append(stack, packName)
+	for _, dependency := range pack.Meta.Dependencies {
+		if err := installSkillPackRecursive(repoRoot, dependency, installed, stack); err != nil {
+			return fmt.Errorf("install dependency %q for pack %q: %w", dependency, packName, err)
+		}
+	}
+	canonicalLink := filepath.Join(repoRoot, r1dir.Canonical, "skills", packName)
+	legacyLink := filepath.Join(repoRoot, r1dir.Legacy, "skills", packName)
+	if err := ensureSkillPackLink(canonicalLink, sourcePath); err != nil {
+		return err
+	}
+	if err := ensureSkillPackLink(legacyLink, sourcePath); err != nil {
+		return err
+	}
+	installed[pack.Meta.Name] = sourcePath
+	return nil
 }
 
 func ensureSkillPackLink(linkPath, sourcePath string) error {
