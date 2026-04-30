@@ -9,9 +9,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/RelayOne/r1/internal/eventlog"
 	"github.com/RelayOne/r1/internal/r1skill/analyze"
-	"github.com/RelayOne/r1/internal/r1skill/ir"
 	interpNodes "github.com/RelayOne/r1/internal/r1skill/interp/nodes"
+	"github.com/RelayOne/r1/internal/r1skill/ir"
 )
 
 // Cache stores deterministic results for replay.
@@ -61,12 +62,12 @@ type PureFunc func(input json.RawMessage) (json.RawMessage, error)
 type LLMFunc func(ctx context.Context, cfg LLMCallConfig) (json.RawMessage, error)
 
 type Runtime struct {
-	PureFuncs map[string]PureFunc
-	LLM       LLMFunc
-	Cache     Cache
-	Prompter  interpNodes.Prompter
-	Reasoner  interpNodes.HeadlessReasoner
-	WizardMode string
+	PureFuncs    map[string]PureFunc
+	LLM          LLMFunc
+	Cache        Cache
+	Prompter     interpNodes.Prompter
+	Reasoner     interpNodes.HeadlessReasoner
+	WizardMode   string
 	WizardPolicy *interpNodes.ConstitutionPolicy
 }
 
@@ -111,7 +112,7 @@ func Run(ctx context.Context, rt *Runtime, skill *ir.Skill, proof *analyze.Compi
 	effects := make([]Effect, 0, len(order))
 	for _, name := range order {
 		node := skill.Graph.Nodes[name]
-		out, eff, err := runNode(ctx, rt, name, node, state)
+		out, eff, err := runNode(ctx, rt, proof.IRHash, name, node, state)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +126,7 @@ func Run(ctx context.Context, rt *Runtime, skill *ir.Skill, proof *analyze.Compi
 	return &Result{Output: output, Effects: effects}, nil
 }
 
-func runNode(ctx context.Context, rt *Runtime, name string, node ir.Node, state map[string]json.RawMessage) (json.RawMessage, Effect, error) {
+func runNode(ctx context.Context, rt *Runtime, irHash, name string, node ir.Node, state map[string]json.RawMessage) (json.RawMessage, Effect, error) {
 	switch node.Kind {
 	case "pure_fn":
 		var cfg PureFnConfig
@@ -150,7 +151,10 @@ func runNode(ctx context.Context, rt *Runtime, name string, node ir.Node, state 
 		if err := json.Unmarshal(node.Config, &cfg); err != nil {
 			return nil, Effect{}, fmt.Errorf("r1skill/interp: decode llm_call config for %s: %w", name, err)
 		}
-		cacheKey := deterministicCacheKey(cfg.CacheKey, state)
+		cacheKey, err := deterministicCacheKey(irHash, name, cfg.CacheKey, state)
+		if err != nil {
+			return nil, Effect{}, fmt.Errorf("r1skill/interp: llm_call %s cache_key: %w", name, err)
+		}
 		if cached, ok := rt.Cache.Get(cacheKey); ok {
 			return cached, Effect{NodeName: name, NodeKind: node.Kind, CacheKey: cacheKey, Replay: true, Outputs: cached}, nil
 		}
@@ -168,7 +172,10 @@ func runNode(ctx context.Context, rt *Runtime, name string, node ir.Node, state 
 		if err := json.Unmarshal(node.Config, &cfg); err != nil {
 			return nil, Effect{}, fmt.Errorf("r1skill/interp: decode ask_user config for %s: %w", name, err)
 		}
-		cacheKey := deterministicCacheKey(cfg.CacheKey, state)
+		cacheKey, err := deterministicCacheKey(irHash, name, cfg.CacheKey, state)
+		if err != nil {
+			return nil, Effect{}, fmt.Errorf("r1skill/interp: ask_user %s cache_key: %w", name, err)
+		}
 		var cached *interpNodes.AskUserOutputs
 		if raw, ok := rt.Cache.Get(cacheKey); ok {
 			var parsed interpNodes.AskUserOutputs
@@ -251,14 +258,102 @@ func lookupRef(ref string, state map[string]json.RawMessage) (json.RawMessage, e
 	return out, nil
 }
 
-func deterministicCacheKey(raw json.RawMessage, state map[string]json.RawMessage) string {
-	if len(raw) > 0 {
-		sum := sha256.Sum256(raw)
-		return "sha256:" + hex.EncodeToString(sum[:])
+func deterministicCacheKey(irHash, nodeName string, raw json.RawMessage, state map[string]json.RawMessage) (string, error) {
+	var expr ir.Expr
+	if len(raw) == 0 {
+		expr = ir.Expr{Kind: "literal", Value: json.RawMessage("null")}
+	} else if err := json.Unmarshal(raw, &expr); err != nil {
+		return "", fmt.Errorf("decode expr: %w", err)
 	}
-	payload, _ := json.Marshal(state)
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	value, err := evalCacheKeyExpr(expr, state)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := eventlog.Marshal(map[string]any{
+		"ir_hash":   irHash,
+		"node_name": nodeName,
+		"value":     value,
+	})
+	if err != nil {
+		return "", fmt.Errorf("canonicalize: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func evalCacheKeyExpr(expr ir.Expr, state map[string]json.RawMessage) (any, error) {
+	switch expr.Kind {
+	case "", "ref":
+		raw, err := lookupRef(expr.Ref, state)
+		if err != nil {
+			return nil, err
+		}
+		return decodeCanonicalValue(raw)
+	case "literal":
+		return decodeCanonicalValue(expr.Value)
+	case "sha256":
+		if expr.Input == nil {
+			return nil, fmt.Errorf("sha256 cache_key missing input")
+		}
+		raw, err := evalExpr(*expr.Input, state)
+		if err != nil {
+			return nil, err
+		}
+		canonical, err := eventlog.Marshal(json.RawMessage(raw))
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(canonical)
+		return "sha256:" + hex.EncodeToString(sum[:]), nil
+	case "interp":
+		var parts strings.Builder
+		for _, part := range expr.Parts {
+			raw, err := evalExpr(part, state)
+			if err != nil {
+				return nil, err
+			}
+			text, err := rawToString(raw)
+			if err != nil {
+				return nil, err
+			}
+			parts.WriteString(text)
+		}
+		return parts.String(), nil
+	case "field":
+		raw, err := lookupRef(expr.Ref, state)
+		if err != nil {
+			return nil, err
+		}
+		return decodeCanonicalValue(raw)
+	default:
+		return nil, fmt.Errorf("unsupported cache_key expr kind %q", expr.Kind)
+	}
+}
+
+func decodeCanonicalValue(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func rawToString(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+	canonical, err := eventlog.Marshal(json.RawMessage(raw))
+	if err != nil {
+		return "", err
+	}
+	return string(canonical), nil
 }
 
 func sortedNodeNames(nodes map[string]ir.Node) []string {

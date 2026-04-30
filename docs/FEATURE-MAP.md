@@ -7,7 +7,6 @@
 | Beacon protocol foundation | Gives R1 a concrete runtime protocol instead of ad-hoc task-only coordination. | Done | PR `#45`, commit `6eba269`. |
 | Hub trust layer | Adds explicit trust semantics to cross-surface runtime actions. | Done | PR `#46`, commit `35d4fc7`. |
 | Missing beacon primitives | Closes the protocol gaps that blocked end-to-end beacon operation. | Done | PR `#47`, commit `10f00cf`. |
-| Beacon transport + runtime bridge | Turns beacon from protocol-only foundation into a runtime path with CLI flows, transport envelopes, and ledger-aware dispatch. | Done | PR `#54`, commit `44b2712`. |
 | Wave D expansion | Extends the operator/runtime surface beyond parity into higher-order workflows. | Done | PR `#48`, commit `f2d30d6`. |
 | Wave D post-merge command set | Lands the follow-on command work that completes the wave. | Done | PR `#49`, commit `57906b9`. |
 | Beacon-era canonical docs | Refreshes the seven canonical docs so evaluation and onboarding match trunk reality. | Done | PR `#50`, commit `60e38a6`; PR `#52`, commit `00a34b5`. |
@@ -30,7 +29,6 @@
 - Ledger-native plan artifact and plan approval emission from `stoke plan --approve`.
 - Wave B receipts, honesty decisions, and honest-cost reports.
 - Wave D counterfactual replay, decision-bisector narratives, and self-tune recommendations.
-- Beacon transport envelopes and runtime bridge wired through trust dispatch, approvals, notifications, artifacts, and ledger writes.
 
 ### In Progress
 
@@ -69,9 +67,6 @@
 | Plan approval ledger nodes | `stoke plan --approve` now emits explicit plan and approval nodes into the governance graph. | Done | PR #37, commit `e8608b1`. |
 | Beacon trust validation layer | Inbound beacon traffic is checked against pinned roots, signed signal frames, freshness windows, nonce replay defense, and hardcoded signal kinds before it is trusted. | Done | PR #46, commit `35d4fc7`. |
 | Beacon review and notify primitives | Offline review envelopes and beacon-targeted notify metadata complete the first practical handoff surfaces around the beacon lane. | Done | PR #47, commit `10f00cf`. |
-| `stoke beacon` claim/revoke/token flows | Operators can complete the beacon pairing and token lifecycle from the CLI instead of stitching the flow together manually. | Done | PR #54, commit `44b2712`. |
-| Beacon HTTP/WebSocket transport envelopes | Beacon messages now have shipped transport frames over both request/response and streaming lanes instead of remaining an internal protocol sketch. | Done | PR #54, commit `44b2712`. |
-| Beacon runtime bridge | Beacon events now reuse trust dispatch, session approvals, notifications, artifact handling, and ledger writes, so the beacon lane participates in the real runtime. | Done | PR #54, commit `44b2712`. |
 
 ### Potential-On Horizon
 
@@ -133,7 +128,7 @@ Status legend:
 | Replay-backed receipt generation | Replays can be promoted into durable receipts with task linkage and provenance. | Done | `internal/receipts/store.go`, `internal/receipts/store_test.go` |
 | `B17` Refuse-to-Lie decisions | R1 can refuse unsupported claims and preserve that refusal in the ledger. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
 | `B18` Why-Not decisions | Skipped, deferred, and downgraded actions become queryable records instead of loose prose. | Done | `internal/honesty/`, `cmd/stoke/honesty_cmd.go` |
-| `B19` Honest cost rollups | Cost can be saved with provider grouping and human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
+| `B19` Honest cost rollups | Cost reports now break down provider groups, metered-equivalent spend, and equivalent margin alongside human-minute equivalents. | Done | `internal/costtrack/honest_cost.go`, `cmd/stoke/ops_cost.go` |
 
 ## Wave D (2026-04-30) — Expansion Features
 

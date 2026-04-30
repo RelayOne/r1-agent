@@ -20,10 +20,10 @@ import (
 
 // Pricing holds per-million-token costs in USD.
 type Pricing struct {
-	InputPerMillion       float64 `json:"input_per_million"`
-	OutputPerMillion      float64 `json:"output_per_million"`
-	CacheReadPerMillion   float64 `json:"cache_read_per_million"`
-	CacheWritePerMillion  float64 `json:"cache_write_per_million"`
+	InputPerMillion      float64 `json:"input_per_million"`
+	OutputPerMillion     float64 `json:"output_per_million"`
+	CacheReadPerMillion  float64 `json:"cache_read_per_million"`
+	CacheWritePerMillion float64 `json:"cache_write_per_million"`
 }
 
 // ModelPricing maps model names to pricing.
@@ -62,14 +62,14 @@ var ModelPricing = map[string]Pricing{
 
 // Usage records token usage for a single request.
 type Usage struct {
-	Model       string    `json:"model"`
-	TaskID      string    `json:"task_id,omitempty"`
-	InputTokens int       `json:"input_tokens"`
-	OutputTokens int      `json:"output_tokens"`
-	CacheRead   int       `json:"cache_read,omitempty"`
-	CacheWrite  int       `json:"cache_write,omitempty"`
-	Cost        float64   `json:"cost"`
-	Timestamp   time.Time `json:"timestamp"`
+	Model        string    `json:"model"`
+	TaskID       string    `json:"task_id,omitempty"`
+	InputTokens  int       `json:"input_tokens"`
+	OutputTokens int       `json:"output_tokens"`
+	CacheRead    int       `json:"cache_read,omitempty"`
+	CacheWrite   int       `json:"cache_write,omitempty"`
+	Cost         float64   `json:"cost"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // AlertLevel for budget thresholds.
@@ -97,12 +97,12 @@ type AlertFunc func(alert Alert)
 
 // Tracker tracks costs across a session.
 type Tracker struct {
-	mu       sync.RWMutex
-	records  []Usage
-	envCost  float64 // accumulated execution environment costs
-	budget   float64
-	alertFn  AlertFunc
-	alerted  map[AlertLevel]bool
+	mu      sync.RWMutex
+	records []Usage
+	envCost float64 // accumulated execution environment costs
+	budget  float64
+	alertFn AlertFunc
+	alerted map[AlertLevel]bool
 
 	// amp is the optional amplification-budget tracker. When non-nil,
 	// every Record call forwards (inputTokens + outputTokens) to
@@ -230,6 +230,16 @@ func (t *Tracker) ByTask() map[string]float64 {
 		}
 	}
 	return m
+}
+
+// Records returns a stable snapshot of recorded token-usage events.
+func (t *Tracker) Records() []Usage {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	out := make([]Usage, len(t.records))
+	copy(out, t.records)
+	return out
 }
 
 // TokenTotals returns aggregate token counts.
