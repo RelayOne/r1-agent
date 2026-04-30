@@ -1,9 +1,11 @@
 package wizard
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +24,8 @@ type RunOptions struct {
 	SourcePath   string
 	SourceFormat string
 	Answers      map[string]string
+	Stdin        io.Reader
+	Stdout       io.Writer
 }
 
 type RunResult struct {
@@ -84,19 +88,22 @@ func Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 			Return: ir.Expr{Kind: "ref", Ref: "describe"},
 		},
 	}
-	answerMap := map[string]string{}
+	inferredAnswers := map[string]inferredAnswer{}
 	for _, inf := range inferAnswersFromSource(artifact) {
-		answerMap[inf.QuestionID] = inf.Answer
+		inferredAnswers[inf.QuestionID] = inf
 	}
-	for k, v := range opts.Answers {
-		answerMap[k] = v
+	resolvedAnswers, err := resolveAnswers(ctx, pack, inferredAnswers, opts)
+	if err != nil {
+		return nil, err
 	}
+	answerMap := map[string]string{}
 	for idx, q := range pack.Questions {
-		answer := answerMap[q.ID]
-		if answer == "" {
-			answer = defaultAnswerFor(q)
+		resolved, ok := resolvedAnswers[q.ID]
+		if !ok {
+			continue
 		}
-		if err := applyAnswer(skill, q, answer); err != nil {
+		answerMap[q.ID] = resolved.Answer
+		if err := applyAnswer(skill, q, resolved.Answer); err != nil {
 			return nil, fmt.Errorf("wizard: apply %s: %w", q.ID, err)
 		}
 		decisions.Decisions = append(decisions.Decisions, Decision{
@@ -104,12 +111,14 @@ func Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 			Stage:             q.Stage,
 			QuestionID:        q.ID,
 			QuestionText:      q.Text,
-			Mode:              decisionMode(opts.Mode),
-			OperatorAnswer:    answer,
-			InterpretedValue:  mustJSON(answer),
+			Mode:              resolved.DecisionMode,
+			OperatorAnswer:    resolved.Answer,
+			LLMReasoning:      resolved.Reasoning,
+			LLMConfidence:     resolved.Confidence,
+			InterpretedValue:  mustJSON(resolved.Answer),
 			IRPath:            nonEmpty(q.IRPath, "meta."+q.ID),
 			IRValue:           mustIRValue(skill, q),
-			OperatorConfirmed: opts.Mode != "headless",
+			OperatorConfirmed: resolved.OperatorConfirmed,
 			ConfirmedAt:       time.Now().UTC(),
 		})
 	}
@@ -120,6 +129,16 @@ func Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
 type inferredAnswer struct {
 	QuestionID string
 	Answer     string
+	Confidence float64
+	Source     string
+}
+
+type resolvedAnswer struct {
+	Answer            string
+	DecisionMode      string
+	OperatorConfirmed bool
+	Confidence        float64
+	Reasoning         string
 }
 
 func inferAnswersFromSource(src *adapter.SourceArtifact) []inferredAnswer {
@@ -131,12 +150,12 @@ func inferAnswersFromSource(src *adapter.SourceArtifact) []inferredAnswer {
 		switch inf.IRPath {
 		case "description":
 			if v, ok := inf.Value.(string); ok && v != "" {
-				out = append(out, inferredAnswer{QuestionID: "intent.purpose", Answer: v})
+				out = append(out, inferredAnswer{QuestionID: "intent.purpose", Answer: v, Confidence: inf.Confidence, Source: inf.Source})
 			}
 		case "capabilities.network.allow_domains":
 			switch v := inf.Value.(type) {
 			case []string:
-				out = append(out, inferredAnswer{QuestionID: "caps.network.domains", Answer: strings.Join(v, ",")})
+				out = append(out, inferredAnswer{QuestionID: "caps.network.domains", Answer: strings.Join(v, ","), Confidence: inf.Confidence, Source: inf.Source})
 			case []any:
 				parts := make([]string, 0, len(v))
 				for _, item := range v {
@@ -145,12 +164,78 @@ func inferAnswersFromSource(src *adapter.SourceArtifact) []inferredAnswer {
 					}
 				}
 				if len(parts) > 0 {
-					out = append(out, inferredAnswer{QuestionID: "caps.network.domains", Answer: strings.Join(parts, ",")})
+					out = append(out, inferredAnswer{QuestionID: "caps.network.domains", Answer: strings.Join(parts, ","), Confidence: inf.Confidence, Source: inf.Source})
 				}
 			}
 		}
 	}
 	return out
+}
+
+func resolveAnswers(ctx context.Context, pack *Pack, inferred map[string]inferredAnswer, opts RunOptions) (map[string]resolvedAnswer, error) {
+	answers := make(map[string]resolvedAnswer, len(pack.Questions))
+	answeredValues := map[string]string{}
+	mode := normalizedMode(opts.Mode)
+	prompter := newPrompter(opts.Stdin, opts.Stdout)
+	for _, q := range pack.Questions {
+		if !q.ShouldAsk(answeredValues) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if provided, ok := opts.Answers[q.ID]; ok {
+			if err := q.ValidateAnswer(provided); err != nil {
+				return nil, err
+			}
+			answers[q.ID] = resolvedAnswer{
+				Answer:            strings.TrimSpace(provided),
+				DecisionMode:      "operator",
+				OperatorConfirmed: true,
+			}
+			answeredValues[q.ID] = strings.TrimSpace(provided)
+			continue
+		}
+		inferredAnswer, hasInference := inferred[q.ID]
+		defaultAnswer := defaultAnswerFor(q)
+		shouldPrompt := mode == "interactive" || (mode == "hybrid" && (q.AlwaysInteractive || (!hasInference && defaultAnswer == "")))
+		if shouldPrompt {
+			answer, err := prompter.ask(ctx, q, inferredAnswer.Answer, defaultAnswer)
+			if err != nil {
+				return nil, err
+			}
+			answers[q.ID] = resolvedAnswer{
+				Answer:            answer,
+				DecisionMode:      "operator",
+				OperatorConfirmed: true,
+			}
+			answeredValues[q.ID] = answer
+			continue
+		}
+		if hasInference {
+			answers[q.ID] = resolvedAnswer{
+				Answer:            inferredAnswer.Answer,
+				DecisionMode:      "llm-best-judgment",
+				OperatorConfirmed: false,
+				Confidence:        inferredAnswer.Confidence,
+				Reasoning:         "Inferred from source artifact: " + nonEmpty(inferredAnswer.Source, "adapter"),
+			}
+			answeredValues[q.ID] = inferredAnswer.Answer
+			continue
+		}
+		if err := q.ValidateAnswer(defaultAnswer); err != nil {
+			return nil, err
+		}
+		answers[q.ID] = resolvedAnswer{
+			Answer:            defaultAnswer,
+			DecisionMode:      decisionMode(mode),
+			OperatorConfirmed: mode != "headless",
+			Confidence:        defaultConfidenceFor(q, defaultAnswer),
+			Reasoning:         defaultReasoningFor(q, defaultAnswer),
+		}
+		answeredValues[q.ID] = defaultAnswer
+	}
+	return answers, nil
 }
 
 func maybeLoadSource(ctx context.Context, sourcePath, sourceFormat string) (*adapter.SourceArtifact, error) {
@@ -206,7 +291,7 @@ func defaultAnswerFor(q Question) string {
 	case "source.starting_point":
 		return "scratch"
 	case "source.format":
-		return "custom"
+		return ""
 	case "intent.purpose":
 		return "Generated deterministic skill"
 	case "confirm.review_ir":
@@ -256,6 +341,93 @@ func decisionMode(mode string) string {
 		return "llm-best-judgment"
 	}
 	return "operator"
+}
+
+func normalizedMode(mode string) string {
+	switch mode {
+	case "headless", "hybrid", "interactive":
+		return mode
+	default:
+		return "interactive"
+	}
+}
+
+func defaultConfidenceFor(q Question, answer string) float64 {
+	if strings.TrimSpace(answer) == "" {
+		return 0
+	}
+	if q.AlwaysInteractive {
+		return 0
+	}
+	return 0.35
+}
+
+func defaultReasoningFor(q Question, answer string) string {
+	if strings.TrimSpace(answer) == "" {
+		return ""
+	}
+	if q.AlwaysInteractive {
+		return ""
+	}
+	return "Applied wizard default answer"
+}
+
+type promptSession struct {
+	reader *bufio.Reader
+	writer io.Writer
+}
+
+func newPrompter(stdin io.Reader, stdout io.Writer) *promptSession {
+	if stdin == nil {
+		stdin = os.Stdin
+	}
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	return &promptSession{
+		reader: bufio.NewReader(stdin),
+		writer: stdout,
+	}
+}
+
+func (p *promptSession) ask(ctx context.Context, q Question, inferred, fallback string) (string, error) {
+	for {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		fmt.Fprintf(p.writer, "[%s] %s\n", q.ID, q.Text)
+		if inferred != "" {
+			fmt.Fprintf(p.writer, "  inferred: %s\n", inferred)
+		}
+		if fallback != "" {
+			fmt.Fprintf(p.writer, "  default: %s\n", fallback)
+		}
+		if len(q.AnswerSchema.EnumValues) > 0 {
+			fmt.Fprintf(p.writer, "  options: %s\n", strings.Join(q.AnswerSchema.EnumValues, ", "))
+		}
+		fmt.Fprint(p.writer, "> ")
+		line, err := p.reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+		answer := strings.TrimSpace(line)
+		if answer == "" {
+			switch {
+			case inferred != "":
+				answer = inferred
+			case fallback != "":
+				answer = fallback
+			}
+		}
+		if err := q.ValidateAnswer(answer); err != nil {
+			fmt.Fprintf(p.writer, "  invalid answer: %v\n", err)
+			if err == io.EOF {
+				return "", err
+			}
+			continue
+		}
+		return answer, nil
+	}
 }
 
 func inferSkillID(sourcePath string) string {
