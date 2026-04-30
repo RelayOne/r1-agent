@@ -61,6 +61,7 @@ This cycle-close refresh keeps the feature inventory aligned with the shipping p
 | Wizard migration adapters | Markdown, OpenAPI, Zapier, and TOML sources can be normalized into the deterministic skill lane. | Done | PR #36, commit `98203a7`. |
 | `stoke skills pack install` | Bundled packs like `actium-studio` can be activated without hand-made symlinks; canonical and legacy skill dirs are linked together in one command. | Done | PR #67, commit `fc55a0d`. |
 | Recursive pack composition + shared-library resolution | Pack dependencies declared in `pack.yaml` now install transitively, and pack lookup reads both repo-local and user-level `.r1/.stoke` libraries. | Done | PR #68, commit `bf45191`. |
+| `stoke skills pack list` | Operators can audit which packs are currently installed from the merged `.r1` / `.stoke` skill-link view without inspecting symlinks by hand. | Done | `cmd/stoke/skills_pack_cmd.go`; `cmd/stoke/skills_pack_cmd_test.go` |
 | Beacon protocol foundation | Identity material, pairing claims, session state, tokens, and ledger-native beacon records are now first-class runtime surfaces instead of external glue. | Done | PR #45, commit `6eba269`. |
 | Artifact storage backend | Plans, proofs, approvals, and converted skill assets can be stored and replayed as first-class artifacts. | Done | PR #37, commit `e8608b1`. |
 | `stoke artifact` CLI | Artifact inspection, import, and export become a supported operator path instead of an internal-only primitive. | Done | PR #37, commit `e8608b1`. |

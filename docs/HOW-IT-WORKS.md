@@ -38,11 +38,11 @@ Status snapshot:
 - Done: Wave B receipts, honesty decisions, honest-cost reports, and IR-scoped replay-cache keys.
 - Done: beacon identity, pairing, session, token, and ledger-node foundation.
 - Done: Wave C wizard ledger persistence and deterministic registry install path.
-- Done: `stoke skills pack install` now installs bundled packs and their declared dependencies from repo-local or user-level libraries (PRs #67 and #68).
+- Done: `stoke skills pack install` and `stoke skills pack list` now cover bundled-pack activation plus installed-pack inspection across repo-local and user-level libraries.
 - Done: Wave D counterfactual replay, decision narratives, and harness self-tune recommendations.
 - In Progress: parity-to-superiority execution and skill integration.
 - Done: beacon trust validation plus deferred review and notify primitives.
-- Scoped: broader operator-facing skill surfaces beyond the now-shipped pack install path.
+- Scoped: broader operator-facing skill surfaces beyond the now-shipped pack install/list path.
 - Scoping: publication and packaging improvements.
 - Potential-On Horizon: portfolio-wide skill interchange.
 

@@ -163,6 +163,122 @@ func TestInstallSkillPackRejectsDependencyCycles(t *testing.T) {
 	}
 }
 
+func TestListInstalledSkillPacksReportsInstalledPacks(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "base-pack"), "base-pack", nil)
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "app-pack"), "app-pack", []string{"base-pack"})
+
+	if _, err := installSkillPack(repo, "app-pack"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+
+	result, err := listInstalledSkillPacks(repo)
+	if err != nil {
+		t.Fatalf("listInstalledSkillPacks() error = %v", err)
+	}
+	if result.PackCount != 2 {
+		t.Fatalf("PackCount = %d, want 2", result.PackCount)
+	}
+	want := []skillPackListEntry{
+		{
+			PackName:           "app-pack",
+			SourcePath:         filepath.Join(repo, ".r1", "skills", "packs", "app-pack"),
+			CanonicalLinkPath:  filepath.Join(repo, ".r1", "skills", "app-pack"),
+			LegacyLinkPath:     filepath.Join(repo, ".stoke", "skills", "app-pack"),
+			CanonicalInstalled: true,
+			LegacyInstalled:    true,
+		},
+		{
+			PackName:           "base-pack",
+			SourcePath:         filepath.Join(repo, ".r1", "skills", "packs", "base-pack"),
+			CanonicalLinkPath:  filepath.Join(repo, ".r1", "skills", "base-pack"),
+			LegacyLinkPath:     filepath.Join(repo, ".stoke", "skills", "base-pack"),
+			CanonicalInstalled: true,
+			LegacyInstalled:    true,
+		},
+	}
+	if !reflect.DeepEqual(result.Packs, want) {
+		t.Fatalf("Packs = %#v, want %#v", result.Packs, want)
+	}
+}
+
+func TestListInstalledSkillPacksIgnoresNonPackSkills(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	writePackFixture(t, filepath.Join(repo, ".r1", "skills", "packs", "listed-pack"), "listed-pack", nil)
+	if _, err := installSkillPack(repo, "listed-pack"); err != nil {
+		t.Fatalf("installSkillPack() error = %v", err)
+	}
+	manualSkill := filepath.Join(repo, ".r1", "skills", "manual-skill")
+	if err := os.MkdirAll(manualSkill, 0o755); err != nil {
+		t.Fatalf("MkdirAll(manualSkill): %v", err)
+	}
+
+	result, err := listInstalledSkillPacks(repo)
+	if err != nil {
+		t.Fatalf("listInstalledSkillPacks() error = %v", err)
+	}
+	if result.PackCount != 1 {
+		t.Fatalf("PackCount = %d, want 1", result.PackCount)
+	}
+	if len(result.Packs) != 1 || result.Packs[0].PackName != "listed-pack" {
+		t.Fatalf("Packs = %#v, want listed-pack only", result.Packs)
+	}
+}
+
+func TestListInstalledSkillPacksReportsSingleSideInstall(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	packDir := filepath.Join(repo, ".r1", "skills", "packs", "shared-pack")
+	writePackFixture(t, packDir, "shared-pack", nil)
+	canonicalLink := filepath.Join(repo, ".r1", "skills", "shared-pack")
+	if err := os.MkdirAll(filepath.Dir(canonicalLink), 0o755); err != nil {
+		t.Fatalf("MkdirAll(canonicalLink): %v", err)
+	}
+	relTarget, err := filepath.Rel(filepath.Dir(canonicalLink), packDir)
+	if err != nil {
+		t.Fatalf("filepath.Rel(): %v", err)
+	}
+	if err := os.Symlink(relTarget, canonicalLink); err != nil {
+		t.Fatalf("Symlink(): %v", err)
+	}
+
+	result, err := listInstalledSkillPacks(repo)
+	if err != nil {
+		t.Fatalf("listInstalledSkillPacks() error = %v", err)
+	}
+	if result.PackCount != 1 {
+		t.Fatalf("PackCount = %d, want 1", result.PackCount)
+	}
+	got := result.Packs[0]
+	if !got.CanonicalInstalled || got.LegacyInstalled {
+		t.Fatalf("installed flags = %#v, want canonical only", got)
+	}
+	if got.LegacyLinkPath != filepath.Join(repo, ".stoke", "skills", "shared-pack") {
+		t.Fatalf("LegacyLinkPath = %q, want %q", got.LegacyLinkPath, filepath.Join(repo, ".stoke", "skills", "shared-pack"))
+	}
+}
+
+func TestListInstalledSkillPacksEmpty(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	result, err := listInstalledSkillPacks(repo)
+	if err != nil {
+		t.Fatalf("listInstalledSkillPacks() error = %v", err)
+	}
+	if result.PackCount != 0 {
+		t.Fatalf("PackCount = %d, want 0", result.PackCount)
+	}
+	if len(result.Packs) != 0 {
+		t.Fatalf("Packs = %#v, want empty", result.Packs)
+	}
+}
+
 func TestUninstallSkillPackRemovesRequestedPackOnly(t *testing.T) {
 	t.Parallel()
 
