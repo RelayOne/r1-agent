@@ -312,3 +312,4 @@ Homebrew publishing, cosign keyless OIDC signing.
 ---
 
 *Last updated: 2026-04-23 (holistic refresh after 30-PR lint + race + OSS-hub campaign).*
+| Deterministic skill wizard | `stoke wizard run|migrate|query` with decision ledger and compile proof output | Done | [SKILL-WIZARD.md](SKILL-WIZARD.md) |

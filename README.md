@@ -678,6 +678,7 @@ per-harness measurements land. Stance rationale is in
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Tech stack, system components, data flow
 - [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — User journey + technical walkthrough
 - [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) — Every feature with benefit, status, and spec
+- [docs/SKILL-WIZARD.md](docs/SKILL-WIZARD.md) — Deterministic skill authoring and migration
 - [docs/SKILLS-DETERMINISTIC.md](docs/SKILLS-DETERMINISTIC.md) — Deterministic skills architecture, migration, compile/run flow
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Prereqs, env vars, install paths, monitoring
 - [docs/BUSINESS-VALUE.md](docs/BUSINESS-VALUE.md) — The pitch (no jargon)

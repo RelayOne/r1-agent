@@ -11,6 +11,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/r1skill/analyze"
 	"github.com/RelayOne/r1/internal/r1skill/ir"
+	interpNodes "github.com/RelayOne/r1/internal/r1skill/interp/nodes"
 )
 
 // Cache stores deterministic results for replay.
@@ -63,6 +64,10 @@ type Runtime struct {
 	PureFuncs map[string]PureFunc
 	LLM       LLMFunc
 	Cache     Cache
+	Prompter  interpNodes.Prompter
+	Reasoner  interpNodes.HeadlessReasoner
+	WizardMode string
+	WizardPolicy *interpNodes.ConstitutionPolicy
 }
 
 type Result struct {
@@ -158,6 +163,37 @@ func runNode(ctx context.Context, rt *Runtime, name string, node ir.Node, state 
 		}
 		rt.Cache.Put(cacheKey, out)
 		return out, Effect{NodeName: name, NodeKind: node.Kind, CacheKey: cacheKey, Outputs: out}, nil
+	case "ask_user":
+		var cfg interpNodes.AskUserConfig
+		if err := json.Unmarshal(node.Config, &cfg); err != nil {
+			return nil, Effect{}, fmt.Errorf("r1skill/interp: decode ask_user config for %s: %w", name, err)
+		}
+		cacheKey := deterministicCacheKey(cfg.CacheKey, state)
+		var cached *interpNodes.AskUserOutputs
+		if raw, ok := rt.Cache.Get(cacheKey); ok {
+			var parsed interpNodes.AskUserOutputs
+			if err := json.Unmarshal(raw, &parsed); err == nil {
+				cached = &parsed
+			}
+		}
+		out, err := interpNodes.Execute(ctx, cfg, interpNodes.ExecuteOpts{
+			Mode:               rt.WizardMode,
+			Prompter:           rt.Prompter,
+			Reasoner:           rt.Reasoner,
+			ConstitutionPolicy: rt.WizardPolicy,
+			CachedAnswer:       cached,
+		})
+		if err != nil {
+			return nil, Effect{}, fmt.Errorf("r1skill/interp: ask_user %s: %w", name, err)
+		}
+		raw, err := json.Marshal(out)
+		if err != nil {
+			return nil, Effect{}, fmt.Errorf("r1skill/interp: encode ask_user outputs for %s: %w", name, err)
+		}
+		if cached == nil {
+			rt.Cache.Put(cacheKey, raw)
+		}
+		return raw, Effect{NodeName: name, NodeKind: node.Kind, CacheKey: cacheKey, Replay: cached != nil, Outputs: raw}, nil
 	default:
 		return nil, Effect{}, fmt.Errorf("r1skill/interp: unsupported node kind %q", node.Kind)
 	}
