@@ -135,6 +135,56 @@ func TestSeedBundledSkillPacks_RegistersInvoiceProcessorRuntime(t *testing.T) {
 	}
 }
 
+func TestSeedBundledSkillPacks_RegistersDentistOutreachRuntime(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 2 {
+		t.Fatalf("registered=%d skipped=%d, want both flagship manifests", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-flagship",
+		"dentist_outreach_runtime",
+		json.RawMessage(`{"markets":["implants","invisalign"],"location":"Toronto, ON","crm":"hubspot","daily_new_leads":18,"sequence_days":10}`),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["flow_slug"] != "dentist-outreach" {
+		t.Fatalf("flow_slug = %#v, want dentist-outreach", output["flow_slug"])
+	}
+	if output["crm"] != "hubspot" {
+		t.Fatalf("crm = %#v, want hubspot", output["crm"])
+	}
+	required, ok := output["required_credentials"].([]any)
+	if !ok {
+		t.Fatalf("required_credentials type = %T", output["required_credentials"])
+	}
+	if len(required) != 3 || required[0] != "hunter_oauth" || required[1] != "google_oauth" || required[2] != "hubspot_oauth" {
+		t.Fatalf("required_credentials = %#v, want [hunter_oauth google_oauth hubspot_oauth]", required)
+	}
+}
+
 func writeJSON(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)

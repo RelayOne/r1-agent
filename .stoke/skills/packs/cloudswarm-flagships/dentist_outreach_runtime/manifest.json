@@ -1,0 +1,105 @@
+{
+  "name": "dentist_outreach_runtime",
+  "version": "0.1.0",
+  "description": "Deterministic runtime contract for the CloudSwarm dentist-outreach flagship flow.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["markets", "location", "crm"],
+    "properties": {
+      "markets": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "location": {
+        "type": "string",
+        "minLength": 1
+      },
+      "crm": {
+        "type": "string",
+        "enum": ["hubspot", "google_sheets", "salesforce"]
+      },
+      "daily_new_leads": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "sequence_days": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["flow_slug", "mode", "markets", "location", "crm", "summary", "required_credentials", "hero_skills", "phases", "approval_rules"],
+    "properties": {
+      "flow_slug": { "type": "string" },
+      "mode": { "type": "string" },
+      "markets": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "location": { "type": "string" },
+      "crm": { "type": "string" },
+      "summary": { "type": "string" },
+      "required_credentials": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "hero_skills": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "phases": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "purpose", "skill"],
+          "properties": {
+            "name": { "type": "string" },
+            "purpose": { "type": "string" },
+            "skill": { "type": "string" }
+          }
+        }
+      },
+      "approval_rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["condition", "action"],
+          "properties": {
+            "condition": { "type": "string" },
+            "action": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "whenToUse": [
+    "A CloudSwarm agent needs the runtime contract for the dentist-outreach flagship flow.",
+    "The caller must turn service lines plus a local market into the exact lead-sourcing, drafting, and CRM sequence for outreach operations.",
+    "You need the approval and credential policy for dentist outreach without booting a full interactive planning session."
+  ],
+  "whenNotToUse": [
+    "The task is invoice ingestion, bookkeeping reconciliation, or another finance flow; use the invoice runtime instead.",
+    "You already have approved email copy and only need a send operation; call the send-specific capability directly.",
+    "The caller needs to execute external side effects immediately; this runtime returns the contract and step sequence, not the provider writes themselves."
+  ],
+  "behaviorFlags": {
+    "mutatesState": false,
+    "requiresNetwork": false,
+    "costCategory": "free"
+  },
+  "recommendedFor": [
+    "dentist-outreach",
+    "sales-outreach",
+    "lead-generation",
+    "flagship-flow"
+  ],
+  "useIR": true,
+  "irRef": "skill.r1.json",
+  "compileProofRef": "skill.r1.proof.json"
+}
