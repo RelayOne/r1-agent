@@ -334,6 +334,82 @@ func TestSeedBundledSkillPacks_RegistersLedgerAuditQueryRuntime(t *testing.T) {
 	}
 }
 
+func TestSeedBundledSkillPacks_RegistersMetricsCollectionRuntime(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatalf("new backends: %v", err)
+	}
+	t.Cleanup(func() { _ = backends.Close() })
+
+	backends.MetricsRegistry.Counter("tasks.succeeded").Add(7)
+	backends.MetricsRegistry.Gauge("tasks.active").Set(2)
+	backends.MetricsRegistry.Timer("tasks.duration").Record(150 * time.Millisecond)
+	backends.MetricsRegistry.Cost("tasks.spend").Add(0.42)
+
+	registered, skipped, err := backends.SeedBundledSkillPacks(filepath.Join(repoRoot, ".stoke", "skills", "packs"))
+	if err != nil {
+		t.Fatalf("SeedBundledSkillPacks: %v", err)
+	}
+	if registered < 5 {
+		t.Fatalf("registered=%d skipped=%d, want at least five bundled manifests", registered, skipped)
+	}
+
+	resp, err := backends.Invoke(
+		context.Background(),
+		"m-metrics",
+		"metrics_collection_runtime",
+		json.RawMessage(`{"prefix":"tasks.","kinds":["counters","timers","costs"]}`),
+		"",
+	)
+	if err != nil {
+		t.Fatalf("invoke bundled skill: %v", err)
+	}
+	if resp["deterministic"] != true {
+		t.Fatalf("deterministic flag missing: %+v", resp)
+	}
+
+	output, ok := resp["output"].(map[string]any)
+	if !ok {
+		t.Fatalf("output type = %T", resp["output"])
+	}
+	if output["query_slug"] != "metrics-collection" {
+		t.Fatalf("query_slug = %#v, want metrics-collection", output["query_slug"])
+	}
+	if output["summary"] == "" {
+		t.Fatalf("summary missing from output: %#v", output)
+	}
+	counters, ok := output["counters"].([]any)
+	if !ok || len(counters) != 1 {
+		t.Fatalf("counters = %#v, want one counter entry", output["counters"])
+	}
+	firstCounter, ok := counters[0].(map[string]any)
+	if !ok || firstCounter["name"] != "tasks.succeeded" || firstCounter["value"] != float64(7) {
+		t.Fatalf("first counter = %#v, want tasks.succeeded=7", counters[0])
+	}
+	gauges, ok := output["gauges"].([]any)
+	if !ok || len(gauges) != 0 {
+		t.Fatalf("gauges = %#v, want empty because gauges were filtered out", output["gauges"])
+	}
+	timers, ok := output["timers"].([]any)
+	if !ok || len(timers) != 1 {
+		t.Fatalf("timers = %#v, want one timer entry", output["timers"])
+	}
+	firstTimer, ok := timers[0].(map[string]any)
+	if !ok || firstTimer["name"] != "tasks.duration" || firstTimer["count"] != float64(1) {
+		t.Fatalf("first timer = %#v, want tasks.duration count=1", timers[0])
+	}
+	costs, ok := output["costs"].([]any)
+	if !ok || len(costs) != 1 {
+		t.Fatalf("costs = %#v, want one cost entry", output["costs"])
+	}
+	firstCost, ok := costs[0].(map[string]any)
+	if !ok || firstCost["name"] != "tasks.spend" || firstCost["count"] != float64(1) {
+		t.Fatalf("first cost = %#v, want tasks.spend count=1", costs[0])
+	}
+}
+
 func TestSeedPackRegistries_LoadsUserCanonicalPacks(t *testing.T) {
 	repo := t.TempDir()
 	home := t.TempDir()
