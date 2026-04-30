@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -53,7 +54,7 @@ type metricsCostEntry struct {
 }
 
 func metricsCollectionRuntime(reg *metrics.Registry) interp.PureFunc {
-	return func(input json.RawMessage) (json.RawMessage, error) {
+	return func(_ context.Context, input json.RawMessage) (json.RawMessage, error) {
 		if reg == nil {
 			return nil, fmt.Errorf("metrics registry not configured")
 		}
