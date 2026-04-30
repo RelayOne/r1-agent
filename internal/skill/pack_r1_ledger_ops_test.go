@@ -19,8 +19,8 @@ func TestR1LedgerOpsPackSeed(t *testing.T) {
 	if loaded.Meta.Name != "r1-ledger-ops" {
 		t.Fatalf("pack name = %q, want r1-ledger-ops", loaded.Meta.Name)
 	}
-	if len(loaded.Manifests) != 2 {
-		t.Fatalf("manifest count = %d, want 2", len(loaded.Manifests))
+	if len(loaded.Manifests) != 3 {
+		t.Fatalf("manifest count = %d, want 3", len(loaded.Manifests))
 	}
 
 	manifests := map[string]skillmfr.Manifest{}
@@ -30,8 +30,8 @@ func TestR1LedgerOpsPackSeed(t *testing.T) {
 		names = append(names, manifest.Name)
 	}
 	sort.Strings(names)
-	if !reflect.DeepEqual(names, []string{"ledger_audit_query_runtime", "metrics_collection_runtime"}) {
-		t.Fatalf("manifest names = %v, want ledger_audit_query_runtime + metrics_collection_runtime", names)
+	if !reflect.DeepEqual(names, []string{"ledger_audit_query_runtime", "metrics_collection_runtime", "skill_execution_audit_log"}) {
+		t.Fatalf("manifest names = %v, want ledger_audit_query_runtime + metrics_collection_runtime + skill_execution_audit_log", names)
 	}
 
 	audit := manifests["ledger_audit_query_runtime"]
@@ -50,5 +50,14 @@ func TestR1LedgerOpsPackSeed(t *testing.T) {
 	wantMetricsRecommended := []string{"metrics", "telemetry", "runtime-ops", "costs", "latency"}
 	if !reflect.DeepEqual(metricsRuntime.RecommendedFor, wantMetricsRecommended) {
 		t.Fatalf("recommendedFor = %v, want %v", metricsRuntime.RecommendedFor, wantMetricsRecommended)
+	}
+
+	skillAudit := manifests["skill_execution_audit_log"]
+	if !skillAudit.UseIR {
+		t.Fatal("skill_execution_audit_log should enable deterministic runtime via useIR")
+	}
+	wantSkillAuditRecommended := []string{"skill-audit", "runtime-audit", "governance", "ledger", "deterministic-runtime"}
+	if !reflect.DeepEqual(skillAudit.RecommendedFor, wantSkillAuditRecommended) {
+		t.Fatalf("recommendedFor = %v, want %v", skillAudit.RecommendedFor, wantSkillAuditRecommended)
 	}
 }
