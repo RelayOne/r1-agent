@@ -1,4 +1,4 @@
-# cloudbuild.yaml — r1 (stoke) CI
+# cloudbuild.yaml — r1 CI
 # Replaces GitHub Actions ci.yml
 # Run locally: gcloud builds submit --config=cloudbuild.yaml .
 # Run remotely: triggered on every push to main via Cloud Build trigger
@@ -22,7 +22,7 @@ steps:
       - -c
       - |
         apt-get update -q && apt-get install -y -q gcc
-        go build ./cmd/stoke ./cmd/r1 ./cmd/stoke-acp
+        go build ./cmd/r1 ./cmd/stoke-acp
     env:
       - 'CGO_ENABLED=1'
 
@@ -57,7 +57,7 @@ steps:
       - 'CGO_ENABLED=1'
 
   - name: 'golang:1.25'
-    id: build-multi-platform-stoke
+    id: build-multi-platform-r1
     waitFor: ['build', 'test', 'race']
     entrypoint: bash
     args:
@@ -75,13 +75,13 @@ steps:
           CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
             -trimpath \
             -ldflags "-s -w" \
-            -o dist/stoke-$${OS}-$${ARCH}$${EXT} \
-            ./cmd/stoke
+            -o dist/r1-$${OS}-$${ARCH}$${EXT} \
+            ./cmd/r1
         done
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    id: publish-stoke-binaries
-    waitFor: ['build-multi-platform-stoke']
+    id: publish-r1-binaries
+    waitFor: ['build-multi-platform-r1']
     entrypoint: bash
     args:
       - -c

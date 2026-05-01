@@ -2,7 +2,7 @@
 
 ## Overview
 
-The wizard (`internal/wizard/`) runs `stoke init` to generate a project-specific `.stoke/config.yaml` with quality gates, model selection, security rules, and skill configuration scaled to the project's maturity stage.
+The wizard (`internal/wizard/`) runs `r1 init` to generate a project-specific `.stoke/config.yaml` with quality gates, model selection, security rules, and skill configuration scaled to the project's maturity stage.
 
 ## Maturity Classification
 

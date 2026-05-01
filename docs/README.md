@@ -1,10 +1,12 @@
 # R1
 
-> **Note:** R1 ships as the `stoke` binary today; the binary rename is in flight (see `plans/work-orders/work-r1-rename.md` §S2-3). Command examples below still use `stoke` — that is the correct invocation for current builds.
+> **Note:** R1 ships as the `r1` binary today. Legacy storage and companion
+> surfaces such as `.stoke/`, `stoke.policy.yaml`, and `stoke-acp` keep
+> their existing names where compatibility still matters.
 
 ## Wave 2 (2026-04-26) — R1-Parity Sprint
 
-This wave completed the **R1 parity sprint** that brings stoke / R1 to
+This wave completed the **R1 parity sprint** that brings R1 to
 feature-parity with R1 reference: browser tools, Manus-style autonomous
 operator, multi-language LSP client, full IDE plugin coverage, multi-CI
 adapters, real desktop GUI, plus injection preprocessing and tool surface
@@ -67,48 +69,33 @@ signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/archit
 ## Install
 
 > **Upgrading from Stoke?** Your existing `.stoke/` directory is
-> auto-detected — no migration step required. Every install method
-> below drops both the canonical `r1` binary and the legacy `stoke`
-> alias into `$PATH`, and `r1 <args>` is byte-identical to
-> `stoke <args>`. For the full rename rollout (binary, Homebrew tap,
-> Docker image, config file, MCP tool names), see
+> auto-detected — no migration step required. The examples below
+> install the canonical `r1` binary; companion binaries like
+> `stoke-acp` keep their existing names. For remaining rename notes, see
 > [docs/mintlify/rename/stoke-to-r1.mdx](mintlify/rename/stoke-to-r1.mdx).
 
-`r1` is the canonical invocation going forward; `stoke` remains a
-supported alias through the dual-accept window (at least one minor
-release past the `r1` cutover). Pick any of the four paths below —
-each installs both names side-by-side.
+`r1` is the canonical invocation going forward. Pick any of the four
+paths below.
 
 ```bash
 # 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
-# The formula installs BOTH `r1` (canonical) and `stoke` (legacy alias).
 brew install RelayOne/r1-agent/r1               # canonical tap (post §S2-2)
-# Legacy tap path (still works via Homebrew's formula redirect during
-# the 90d transition window — see work-r1-rename.md §S5-3):
-#   brew install ericmacdougall/stoke/stoke
 
 # 2. One-line installer — detects platform, verifies cosign signature
 # (keyless OIDC via sigstore) when cosign is on PATH, falls back to
 # building from source if no prebuilt binary exists for your target.
-# Installs `r1`, `stoke`, and `stoke-acp` into ${INSTALL_DIR}.
-# GitHub preserves the legacy URL via automatic redirect after §S2-2.
-curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
-# Legacy (still works via GitHub redirect):
-#   curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+# Installs `r1` and `stoke-acp` into ${INSTALL_DIR}.
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1-agent/main/install.sh | bash
 
 # 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
-# `r1` is the canonical image name going forward; the legacy `stoke`
-# tag is dual-published for a 60d transition window
-# (see work-r1-rename.md §S2-4).
+# `r1` is the canonical image name going forward.
 docker pull ghcr.io/RelayOne/r1:latest              # canonical (post §S2-2)
-docker pull ghcr.io/ericmacdougall/r1:latest        # legacy org alias (retires ~2026-06-22)
 docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name alias (retires ~2026-06-22)
 
 # 4. From source (Go 1.25 or later; CGO enabled for SQLite).
-go build ./cmd/r1               # canonical CLI (exec-shim → stoke)
-go build ./cmd/stoke            # legacy alias / primary orchestrator binary
+go build ./cmd/r1               # canonical CLI
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
-sudo mv r1 stoke stoke-acp /usr/local/bin/
+sudo mv r1 stoke-acp /usr/local/bin/
 
 # Verify a signed release tarball (cosign keyless OIDC).
 # The cert-identity regex accepts BOTH repo paths so releases signed
@@ -116,51 +103,51 @@ sudo mv r1 stoke stoke-acp /usr/local/bin/
 cosign verify-blob \
   --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
-  stoke_<ver>_<os>_<arch>.tar.gz
+  --signature r1_<ver>_<os>_<arch>.tar.gz.sig \
+  r1_<ver>_<os>_<arch>.tar.gz
 ```
 
 ## Quick start
 
 ```bash
 # Run a single task end-to-end: plan, execute, verify, commit
-stoke run --task "Add request ID middleware" --dry-run
+r1 run --task "Add request ID middleware" --dry-run
 
 # Multi-task plan with parallel agents, resume, ROI filter
-stoke build --plan stoke-plan.json --workers 4 --dry-run
+r1 build --plan stoke-plan.json --workers 4 --dry-run
 
 # Generate a task plan from codebase analysis
-stoke plan --task "Add JWT auth" --dry-run
+r1 plan --task "Add JWT auth" --dry-run
 
 # Free-text task entry — the executor router picks the right backend
-stoke task "Fix the flaky integration test in server/handler"
+r1 task "Fix the flaky integration test in server/handler"
 
 # Deterministic multi-language code scan (secrets, eval, injection,
 # debug prints, hard-coded creds). No LLM calls.
-stoke scan --security
+r1 scan --security
 
 # 17-persona adversarial audit (security, performance, a11y, DX…)
-stoke audit --dry-run
+r1 audit --dry-run
 
 # Check mission progress / resume after crash
-stoke status
+r1 status
 
 # Subscription pool utilization + circuit breaker state
-stoke pool --claude-config-dir /pool/claude-1
+r1 pool --claude-config-dir /pool/claude-1
 
 # Interactive Bubble Tea TUI (dashboard, focus, detail panes)
-stoke build --plan stoke-plan.json --interactive
+r1 build --plan stoke-plan.json --interactive
 ```
 
 ## Commands
 
-R1 ships as a monorepo of nine executables. `stoke` is the primary
-driver (it will become `r1` when §S2-3 lands); the others are
-purpose-built satellites that share the same `internal/` packages.
+R1 ships as a monorepo of nine executables. `r1` is the primary
+driver; the others are purpose-built satellites that share the same
+`internal/` packages.
 
 | Binary | Purpose |
 |--------|---------|
-| `stoke` | Primary orchestrator — 30+ subcommands below |
+| `r1` | Primary orchestrator — 30+ subcommands below |
 | `stoke-acp` | Agent Client Protocol adapter (S-U-002) — exposes R1 over ACP for editor integrations |
 | `stoke-a2a` | Agent-to-Agent peering — signed agent cards, HMAC tokens, x402 micropayments, saga compensators |
 | `stoke-mcp` | MCP codebase tool server — exposes ledger, wisdom, research, skill stores as MCP tools |
@@ -170,39 +157,39 @@ purpose-built satellites that share the same `internal/` packages.
 | `chat-probe` | Diagnostic utility for chat-descent gate and sessionctl socket |
 | `critique-compare` | Bench runner for critic/reviewer prompt tuning |
 
-### `stoke` subcommands
+### `r1` subcommands
 
 | Command | Purpose |
 |---------|---------|
-| `stoke run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
-| `stoke build` | Multi-task plan with parallel agents, resume, ROI filter |
-| `stoke plan` | Generate a task plan from codebase analysis |
-| `stoke task` | Free-text task entry; executor router classifies and dispatches |
-| `stoke scope` | Display the allowed file scope for a task |
-| `stoke ship` | End-to-end: plan → build → ship |
-| `stoke mission` | Multi-phase mission execution with convergence validation |
-| `stoke scan` | Deterministic code scan (secrets, eval, injection, debug) |
-| `stoke audit` | Multi-perspective review (17 personas, auto-selected) |
-| `stoke browse` | BrowserExecutor: fetch + HTML strip + verify-contains/regex |
-| `stoke deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare in-flight) |
-| `stoke memory` | Persistent cross-session memory (6 verbs: add, list, get, promote, delete, search) |
-| `stoke status` | Session dashboard (progress, cost, learned patterns) |
-| `stoke resume` | Resume after crash or interruption from the event log |
-| `stoke eventlog` | Inspect the append-only bus WAL at `.stoke/bus/events.log` |
-| `stoke ctl` | Session control plane over the Unix socket (8 verbs) |
-| `stoke export` | Content-addressed `.tracebundle` export for offline replay |
-| `stoke pool` | Subscription pool utilization + circuit breaker |
-| `stoke pools` | List configured pool directories |
-| `stoke add-claude` | Register a Claude pool directory |
-| `stoke add-codex` | Register a Codex pool directory |
-| `stoke remove-pool` | Remove a pool directory |
-| `stoke serve` | HTTP API server for programmatic access |
-| `stoke mcp-serve` | MCP codebase tool server (`stoke-mcp` convenience alias) |
-| `stoke mcp` | MCP client: list-servers, list-tools, test, call |
-| `stoke yolo` | Execute without verification gates (opt-in, ledgered) |
-| `stoke repair` | Auto-fix common configuration issues |
-| `stoke doctor` | Tool dependency check across the 5-provider fallback chain |
-| `stoke version` | Version info (ldflags-populated) |
+| `r1 run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
+| `r1 build` | Multi-task plan with parallel agents, resume, ROI filter |
+| `r1 plan` | Generate a task plan from codebase analysis |
+| `r1 task` | Free-text task entry; executor router classifies and dispatches |
+| `r1 scope` | Display the allowed file scope for a task |
+| `r1 ship` | End-to-end: plan → build → ship |
+| `r1 mission` | Multi-phase mission execution with convergence validation |
+| `r1 scan` | Deterministic code scan (secrets, eval, injection, debug) |
+| `r1 audit` | Multi-perspective review (17 personas, auto-selected) |
+| `r1 browse` | BrowserExecutor: fetch + HTML strip + verify-contains/regex |
+| `r1 deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare in-flight) |
+| `r1 memory` | Persistent cross-session memory (6 verbs: add, list, get, promote, delete, search) |
+| `r1 status` | Session dashboard (progress, cost, learned patterns) |
+| `r1 resume` | Resume after crash or interruption from the event log |
+| `r1 eventlog` | Inspect the append-only bus WAL at `.stoke/bus/events.log` |
+| `r1 ctl` | Session control plane over the Unix socket (8 verbs) |
+| `r1 export` | Content-addressed `.tracebundle` export for offline replay |
+| `r1 pool` | Subscription pool utilization + circuit breaker |
+| `r1 pools` | List configured pool directories |
+| `r1 add-claude` | Register a Claude pool directory |
+| `r1 add-codex` | Register a Codex pool directory |
+| `r1 remove-pool` | Remove a pool directory |
+| `r1 serve` | HTTP API server for programmatic access |
+| `r1 mcp-serve` | MCP codebase tool server (`stoke-mcp` convenience alias) |
+| `r1 mcp` | MCP client: list-servers, list-tools, test, call |
+| `r1 yolo` | Execute without verification gates (opt-in, ledgered) |
+| `r1 repair` | Auto-fix common configuration issues |
+| `r1 doctor` | Tool dependency check across the 5-provider fallback chain |
+| `r1 version` | Version info (ldflags-populated) |
 
 ### Build flags
 
@@ -220,7 +207,7 @@ purpose-built satellites that share the same `internal/` packages.
 ## How it works
 
 ```
-stoke build --plan stoke-plan.json
+r1 build --plan stoke-plan.json
   │
   ├── Load plan, validate (cycles DFS, deps, duplicate IDs)
   ├── ROI filter: remove low-value tasks
@@ -406,7 +393,7 @@ per §S2-1; Go's module proxy still serves pinned historical tags.)
 
 ```
 cmd/
-  stoke/             Primary orchestrator (30+ subcommands, ~7K LOC in main.go)
+  r1/                Primary orchestrator (30+ subcommands, ~7K LOC in main.go)
   stoke-acp/         Agent Client Protocol adapter
   stoke-a2a/         A2A peering: signed cards, HMAC tokens, x402 micropayments
   stoke-mcp/         MCP codebase tool server
@@ -526,10 +513,10 @@ non-localhost URLs must be `https://` unless the URL is
 CLI surface:
 
 ```bash
-stoke mcp list-servers                                  # configured servers + circuit state
-stoke mcp list-tools --json                             # every tool across reachable servers
-stoke mcp test linear                                   # init + list-tools + single trivial call
-stoke mcp call linear create_issue --args-json '{"title":"demo"}'
+r1 mcp list-servers                                  # configured servers + circuit state
+r1 mcp list-tools --json                             # every tool across reachable servers
+r1 mcp test linear                                   # init + list-tools + single trivial call
+r1 mcp call linear create_issue --args-json '{"title":"demo"}'
 ```
 
 Trust gating: `untrusted` workers can only invoke tools from
@@ -544,7 +531,7 @@ from advisory-logging to a hard failure.
 ## Build, test, vet — the CI gate
 
 ```bash
-go build ./cmd/stoke           # + ./cmd/stoke-acp via `make build`
+go build ./cmd/r1           # + ./cmd/r1-acp via `make build`
 go test ./...
 go vet ./...
 ```

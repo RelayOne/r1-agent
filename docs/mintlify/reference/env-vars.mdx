@@ -135,11 +135,11 @@ R1 honors the standard provider environment variables:
 <Tip>
 R1 walks the fallback chain until one works:
 Claude → Codex → OpenRouter → Direct API → lint-only. You only need
-one set — `stoke doctor` will tell you exactly which.
+one set — `r1 doctor` will tell you exactly which.
 </Tip>
 
 ## Debugging env resolution
 
-`stoke doctor` prints the resolved value of every variable R1
+`r1 doctor` prints the resolved value of every variable R1
 consulted (redacted for secrets), so you can see exactly which
 fallback fired.

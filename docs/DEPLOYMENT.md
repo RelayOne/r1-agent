@@ -6,7 +6,7 @@ This is the current deployment summary for R1 on `main`.
 
 The repo-local build gate remains the same:
 
-- `go build ./cmd/stoke`
+- `go build ./cmd/r1`
 - `go test ./...`
 - `go vet ./...`
 
@@ -16,10 +16,10 @@ Those are the core CI-quality checks documented in `CLAUDE.md`.
 
 | Surface | Best fit | Notes |
 |---|---|---|
-| CLI install | individual operators and developers | canonical `r1`, legacy `stoke` alias |
+| CLI install | individual operators and developers | canonical `r1` binary |
 | container/release artifacts | packaged distribution | release automation and signed artifacts live in repo tooling |
 | IDE and desktop adjuncts | editor and local GUI usage | layered on top of the core runtime |
-| pack registry HTTP service | deterministic skill distribution | `stoke skills pack serve` |
+| pack registry HTTP service | deterministic skill distribution | `r1 skills pack serve` |
 
 ## What Operators Should Verify Now
 

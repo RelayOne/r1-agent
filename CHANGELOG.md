@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-05-01] CLI rename: `stoke` -> `r1`
+
+### Changed
+
+- Moved the primary CLI entrypoint from `cmd/stoke/` to `cmd/r1/`.
+- Updated build, release, installer, and Docker paths so the canonical binary is `r1`.
+- Refreshed operator-facing docs so command examples use `r1` while preserving historical `stoke` references where they describe prior behavior.
+
 ## [2026-04-30] Final docs pass after cycle-close refresh
 
 ### Added

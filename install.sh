@@ -1,22 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stoke / R1 installer
-# Usage (canonical, post work-r1-rename.md §S2-2):
-#   curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
-# Legacy URL (still works via GitHub's automatic redirect):
-#   curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
-#
-# REPO default tracks the canonical RelayOne/r1 path post
-# work-r1-rename.md §S2-2 (the GitHub repo rename is an admin-side
-# operation bundled with the merge of this change). GitHub's
-# automatic redirect keeps the legacy `ericmacdougall/Stoke` URL
-# resolving to the same repo during the indefinite redirect window,
-# so REPO=ericmacdougall/Stoke can be passed to pin callers at the
-# old path if needed.
-REPO="${REPO:-RelayOne/r1}"
+# R1 installer
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/RelayOne/r1-agent/main/install.sh | bash
+REPO="${REPO:-RelayOne/r1-agent}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-BINARY="stoke"
+BINARY="r1"
 
 info() { echo "==> $*"; }
 error() { echo "ERROR: $*" >&2; exit 1; }
@@ -60,15 +50,13 @@ build_from_source() {
     trap 'rm -rf "${tmp_dir}"' EXIT
 
     info "Cloning repository..."
-    git clone --depth 1 "https://github.com/${REPO}.git" "${tmp_dir}/stoke"
+    git clone --depth 1 "https://github.com/${REPO}.git" "${tmp_dir}/r1"
 
     info "Building..."
-    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-bin" ./cmd/stoke)
-    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
-    # work-r1-rename.md S2-3: r1 shim binary (delegates to stoke).
-    (cd "${tmp_dir}/stoke" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
+    (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
+    (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
 
-    for pair in "${tmp_dir}/stoke-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp" "${tmp_dir}/r1-bin:r1"; do
+    for pair in "${tmp_dir}/r1-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp"; do
         src="${pair%%:*}"
         dst_name="${pair##*:}"
         dst="${INSTALL_DIR}/${dst_name}"
@@ -80,10 +68,9 @@ build_from_source() {
         chmod +x "${dst}"
     done
 
-    info "Built and installed stoke to ${INSTALL_DIR}/${BINARY}"
+    info "Built and installed r1 to ${INSTALL_DIR}/${BINARY}"
     info "Built and installed stoke-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/stoke-acp"
-    info "Built and installed r1 (rename transition shim) to ${INSTALL_DIR}/r1"
-    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
+    info "Run 'r1 doctor' to verify your setup."
 }
 
 main() {
@@ -104,7 +91,7 @@ main() {
 
     # Strip leading 'v' for archive name
     local ver_num="${version#v}"
-    archive_name="stoke_${ver_num}_${platform}.tar.gz"
+    archive_name="r1_${ver_num}_${platform}.tar.gz"
     url="https://github.com/${REPO}/releases/download/${version}/${archive_name}"
     checksum_url="https://github.com/${REPO}/releases/download/${version}/checksums.txt"
 
@@ -132,13 +119,8 @@ main() {
         local sig_url="${url}.sig"
         info "Verifying cosign signature..."
         if curl -fsSL -o "${tmp_dir}/${archive_name}.sig" "${sig_url}" 2>/dev/null; then
-            # work-r1-rename.md §S2-2: accept signatures from both the
-            # legacy `ericmacdougall/Stoke` release workflow AND the
-            # canonical `RelayOne/r1` release workflow so releases
-            # signed before and after the GitHub repo rename verify
-            # without script edits.
             if cosign verify-blob \
-                --certificate-identity-regexp "https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*" \
+                --certificate-identity-regexp "https://github\.com/RelayOne/r1-agent/\.github/workflows/release\.yml@refs/tags/.*" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 --signature "${tmp_dir}/${archive_name}.sig" \
                 "${tmp_dir}/${archive_name}" 2>&1; then
@@ -156,10 +138,8 @@ main() {
     info "Installing to ${INSTALL_DIR}..."
     tar -xzf "${tmp_dir}/${archive_name}" -C "${tmp_dir}"
 
-    # Install both binaries from the release archive: the main
-    # stoke CLI and the stoke-acp Agent Client Protocol adapter
-    # (S-U-002). The ACP adapter is optional — older archives
-    # won't include it, so missing stoke-acp isn't a hard error.
+    # Install the main r1 CLI and the stoke-acp Agent Client Protocol
+    # adapter. The ACP adapter is optional for older archives.
     install_one() {
         local bin_name="$1"
         local dest_name="$2"
@@ -187,14 +167,10 @@ main() {
         info "Installed ${dest_name} ${version} to ${INSTALL_DIR}/${dest_name}"
     }
 
-    install_one stoke "${BINARY}" required
+    install_one r1 "${BINARY}" required
     install_one stoke-acp stoke-acp optional
-    # work-r1-rename.md S2-3: r1 ships alongside stoke during the
-    # 60-90d transition. Optional so pre-rename archives still
-    # install cleanly (they just won't carry r1).
-    install_one r1 r1 optional
 
-    info "Run 'stoke doctor' (or 'r1 doctor') to verify your setup."
+    info "Run 'r1 doctor' to verify your setup."
 }
 
 main "$@"

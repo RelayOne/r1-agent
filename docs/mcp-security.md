@@ -3,7 +3,7 @@
 R1 sits on both sides of the Model Context Protocol wire:
 
 - **Inbound** — R1 is an MCP **client** that calls third-party MCP tool servers via `internal/mcp.StdioClient.CallTool`. Whatever those servers return (filesystem contents, DB rows, HTTP responses, scraped HTML) is attacker-influenced text.
-- **Outbound** — R1 is an MCP **server** via `internal/mcp/stoke_server.go` (the `stoke mcp-serve-stoke` path) and `cmd/stoke-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
+- **Outbound** — R1 is an MCP **server** via `internal/mcp/stoke_server.go` (the `r1 mcp-serve-stoke` path) and `cmd/stoke-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
 
 Prompt-injection defenses live at different layers on each side. This document fixes the contract.
 

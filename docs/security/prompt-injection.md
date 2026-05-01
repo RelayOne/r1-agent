@@ -11,9 +11,9 @@ will eventually hand to a model.
 Three canonical vectors:
 
 1. **Direct injection** — attacker controls the initial prompt or a
-   user-role message. Low relevance for R1 because `stoke ship`
+   user-role message. Low relevance for R1 because `r1 ship`
    takes SOW YAML from the project's trusted tree. Still scanned
-   defensively for the `stoke chat` interactive path.
+   defensively for the `r1 chat` interactive path.
 
 2. **Indirect injection via tool output** — attacker seeds a file,
    web page, or shell-command output that R1's agent reads. The

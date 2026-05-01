@@ -3,7 +3,7 @@
 ## Build / Test / Vet
 
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go test ./...
 go vet ./...
 ```
@@ -13,7 +13,7 @@ These three commands are the CI gate.
 ## Package map (132 internal + 1 cmd + 9 bench)
 
 ```
-cmd/stoke/main.go                 20 commands. --roi, --sqlite, --interactive, --specexec flags.
+cmd/r1/main.go                    20 commands. --roi, --sqlite, --interactive, --specexec flags.
 
 --- V2 GOVERNANCE ---
 contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)

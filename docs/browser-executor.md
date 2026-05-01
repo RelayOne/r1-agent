@@ -13,7 +13,7 @@ interactive browsing (click, type, wait, screenshot).
 ## CLI
 
 ```
-stoke browse <url> [--expected TEXT] [--regex PATTERN] [--timeout DUR] [--text-limit N]
+r1 browse <url> [--expected TEXT] [--regex PATTERN] [--timeout DUR] [--text-limit N]
 ```
 
 Prints status, final URL (after redirects), content-type, page
@@ -25,7 +25,7 @@ non-2xx HTTP status exits 2.
 Example:
 
 ```
-$ stoke browse https://pkg.go.dev/net/http --expected "Package http"
+$ r1 browse https://pkg.go.dev/net/http --expected "Package http"
 URL:          https://pkg.go.dev/net/http
 Status:       200
 Content-Type: text/html; charset=utf-8
@@ -81,5 +81,5 @@ backend — descent falls through to T7 / T8 until part 2 lands.
   fetches they pass the token in the URL or wait for Part 2's
   cookie-jar support.
 - The websearch allowlist (`internal/websearch/`) does NOT apply
-  to `stoke browse`. If you expose `stoke browse` over the HTTP
+  to `r1 browse`. If you expose `r1 browse` over the HTTP
   hireable agent facade, add your own allowlist.

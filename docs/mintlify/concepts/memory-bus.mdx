@@ -66,7 +66,7 @@ Session {
 
 Two backends satisfy the interface: JSON file (`Store`) and SQLite
 WAL (`SQLStore`). The JSON variant is the default for local runs;
-SQLite is used when `stoke agent-serve` or `stoke-server` needs
+SQLite is used when `r1 agent-serve` or `stoke-server` needs
 long-lived state.
 
 Resume reads the store, picks up at the first incomplete task,
@@ -78,7 +78,7 @@ and final verdict.
 
 Two systems share the SQLite database `internal/wisdom/`:
 
-### `stoke memory` (6 verbs, flagged)
+### `r1 memory` (6 verbs, flagged)
 
 `add`, `list`, `get`, `promote`, `delete`, `search`. Stores
 arbitrary user-facing memories with FTS5 indexing. The full stack
@@ -155,6 +155,6 @@ Operators can disable any of these individually via config.
 
 - `specs/memory-bus.md` — 4-tier design with scope taxonomy
 - `specs/memory-full-stack.md` — sqlite-vec + embedder + auto-retrieval
-- `specs/operator-ux-memory.md` — `stoke memory` CLI design
+- `specs/operator-ux-memory.md` — `r1 memory` CLI design
 - [`internal/wisdom/`](https://github.com/RelayOne/r1/tree/main/internal/wisdom)
 - [`internal/memory/`](https://github.com/RelayOne/r1/tree/main/internal/memory)

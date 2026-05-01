@@ -6,9 +6,7 @@ happened into a durable evidence model, and is increasingly opinionated
 about turning repeatable workflows into deterministic, inspectable skill
 artifacts.
 
-`r1` is the canonical name. `stoke` remains the compatibility alias
-through the active rename window, so most on-disk paths and many command
-examples still use `stoke`.
+`r1` is the CLI name and the primary entrypoint under `cmd/r1`.
 
 ## What Ships On `main`
 

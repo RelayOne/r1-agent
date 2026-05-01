@@ -22,10 +22,10 @@ This is the current main-branch feature inventory for R1.
 
 | Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| `stoke skills pack init` | Creates repo-local packs without hand-building directories | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `info`, `install`, `list`, `publish`, `search`, `update` | Makes pack inspection, activation, discovery, and refresh operational | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `sign` and `verify` | Adds integrity controls to pack distribution | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `serve` HTTP registry | Exposes published packs through a stable read-only registry | Done | `cmd/stoke/skills_pack_server.go` |
+| `r1 skills pack init` | Creates repo-local packs without hand-building directories | Done | `cmd/r1/skills_pack_cmd.go` |
+| `info`, `install`, `list`, `publish`, `search`, `update` | Makes pack inspection, activation, discovery, and refresh operational | Done | `cmd/r1/skills_pack_cmd.go` |
+| `sign` and `verify` | Adds integrity controls to pack distribution | Done | `cmd/r1/skills_pack_cmd.go` |
+| `serve` HTTP registry | Exposes published packs through a stable read-only registry | Done | `cmd/r1/skills_pack_server.go` |
 | Runtime signed-pack verification | Prevents runtime registration from ignoring pack integrity | Done | April 30 main-branch signed-pack verification commit |
 
 ## Runtime Helper Surfaces

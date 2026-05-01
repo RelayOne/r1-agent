@@ -1,0 +1,7 @@
+# Cloudflare dry-run preview
+# Captured from: r1 deploy --provider cloudflare --cf-mode workers --dry-run
+#
+# Cloudflare's dry-run doesn't shell out to wrangler. The adapter
+# prints the resolved flags + env + what `wrangler deploy` would be
+# invoked with.
+dry-run: cloudflare adapter not invoked

@@ -1,10 +1,11 @@
 ---
 title: "CLI reference"
-description: "Every stoke subcommand, grouped by intent. Sourced from cmd/stoke/main.go."
+description: "Every r1 subcommand, grouped by intent. Sourced from cmd/r1/main.go."
 ---
 
-R1 ships the `stoke` binary today. The rename to `r1` is in flight
-with a dual-accept shim; see the [rename notice](/mintlify/rename/stoke-to-r1).
+R1 ships the `r1` binary today. Companion assets that still carry
+legacy names, such as `.stoke/` and `stoke-acp`, are called out
+explicitly where relevant.
 
 All subcommands support `--help` to print flags.
 
@@ -12,39 +13,39 @@ All subcommands support `--help` to print flags.
 
 | Command | Purpose |
 |---|---|
-| `stoke run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
-| `stoke build` | Multi-task plan with parallel workers, resume, ROI filter |
-| `stoke plan` | Generate a task plan from codebase analysis |
-| `stoke task` | Free-text task entry; executor router classifies and dispatches |
-| `stoke mission` | Multi-phase mission execution with convergence validation |
-| `stoke ship` | End-to-end: plan → build → ship |
-| `stoke sow` | Statement-of-Work pipeline entry point |
-| `stoke scope` | Display the allowed file scope for a task |
-| `stoke plan-status` | Inspect plan validation state |
-| `stoke plan-resume` | Resume a plan from the last completed task |
+| `r1 run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
+| `r1 build` | Multi-task plan with parallel workers, resume, ROI filter |
+| `r1 plan` | Generate a task plan from codebase analysis |
+| `r1 task` | Free-text task entry; executor router classifies and dispatches |
+| `r1 mission` | Multi-phase mission execution with convergence validation |
+| `r1 ship` | End-to-end: plan → build → ship |
+| `r1 sow` | Statement-of-Work pipeline entry point |
+| `r1 scope` | Display the allowed file scope for a task |
+| `r1 plan-status` | Inspect plan validation state |
+| `r1 plan-resume` | Resume a plan from the last completed task |
 
 ## Executors — non-code task types
 
 | Command | Purpose |
 |---|---|
-| `stoke browse` | BrowserExecutor Part 1: fetch + HTML strip + verify-contains/regex |
-| `stoke deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare scoped) |
-| `stoke research` | ResearchExecutor MVP — stdlib, keyword-overlap claim verification |
+| `r1 browse` | BrowserExecutor Part 1: fetch + HTML strip + verify-contains/regex |
+| `r1 deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare scoped) |
+| `r1 research` | ResearchExecutor MVP — stdlib, keyword-overlap claim verification |
 
 ## Observability
 
 | Command | Purpose |
 |---|---|
-| `stoke status` | Session dashboard (progress, cost, learned patterns) |
-| `stoke watch` | Live session follower |
-| `stoke inspect` | Dump ledger state for a session |
-| `stoke events` | Read-only operator surface for `.stoke/events.db` |
-| `stoke tasks` | List tasks grouped from the eventlog |
-| `stoke logs` | Tail `stream.jsonl` (or eventlog fallback) |
-| `stoke cost` | Aggregate `cost_usd` across eventlog events |
-| `stoke eventlog` | Hash-chain verify + session/mission/loop listing |
-| `stoke task-stats` / `stoke stats` | Task-level statistics |
-| `stoke sessions` | List all sessions |
+| `r1 status` | Session dashboard (progress, cost, learned patterns) |
+| `r1 watch` | Live session follower |
+| `r1 inspect` | Dump ledger state for a session |
+| `r1 events` | Read-only operator surface for `.stoke/events.db` |
+| `r1 tasks` | List tasks grouped from the eventlog |
+| `r1 logs` | Tail `stream.jsonl` (or eventlog fallback) |
+| `r1 cost` | Aggregate `cost_usd` across eventlog events |
+| `r1 eventlog` | Hash-chain verify + session/mission/loop listing |
+| `r1 task-stats` / `r1 stats` | Task-level statistics |
+| `r1 sessions` | List all sessions |
 
 ## Control plane (sessionctl)
 
@@ -52,92 +53,92 @@ Over the Unix socket, 8 verbs:
 
 | Command | Purpose |
 |---|---|
-| `stoke pause <id>` | Pause at next safe boundary |
-| `stoke resume <id>` | Resume a paused session |
-| `stoke approve <id>` | Approve a pending HITL gate |
-| `stoke override <id>` | Override a soft-pass or descent verdict |
-| `stoke budget <id>` | Adjust session budget |
-| `stoke inject <id>` | Inject a message into the session |
-| `stoke takeover <id>` | Hand control over to another client |
-| `stoke status <id>` | Query session status |
+| `r1 pause <id>` | Pause at next safe boundary |
+| `r1 resume <id>` | Resume a paused session |
+| `r1 approve <id>` | Approve a pending HITL gate |
+| `r1 override <id>` | Override a soft-pass or descent verdict |
+| `r1 budget <id>` | Adjust session budget |
+| `r1 inject <id>` | Inject a message into the session |
+| `r1 takeover <id>` | Hand control over to another client |
+| `r1 status <id>` | Query session status |
 
 ## Audit, scan, quality
 
 | Command | Purpose |
 |---|---|
-| `stoke scan` | Deterministic code scan (secrets, eval, injection, debug) — 18+ rules |
-| `stoke audit` | Multi-perspective review via 17 personas (auto-selected per task) |
-| `stoke scan-repair` | Scan + auto-repair loop |
-| `stoke verify` | HTTP wrapper around `plan.VerificationDescent` — `--serve` flag |
-| `stoke repair` | Auto-fix common configuration issues |
-| `stoke yolo` | Execute without verification gates (opt-in, ledgered) |
+| `r1 scan` | Deterministic code scan (secrets, eval, injection, debug) — 18+ rules |
+| `r1 audit` | Multi-perspective review via 17 personas (auto-selected per task) |
+| `r1 scan-repair` | Scan + auto-repair loop |
+| `r1 verify` | HTTP wrapper around `plan.VerificationDescent` — `--serve` flag |
+| `r1 repair` | Auto-fix common configuration issues |
+| `r1 yolo` | Execute without verification gates (opt-in, ledgered) |
 
 ## Memory and wisdom (flagged)
 
 | Command | Purpose |
 |---|---|
-| `stoke memory` | 6 verbs: add, list, get, promote, delete, search |
+| `r1 memory` | 6 verbs: add, list, get, promote, delete, search |
 
 ## Pools and providers
 
 | Command | Purpose |
 |---|---|
-| `stoke pool` | Subscription pool utilization + circuit breaker state |
-| `stoke pools` | List configured pool directories |
-| `stoke add-claude` | Register a Claude subscription pool directory |
-| `stoke add-codex` | Register a Codex subscription pool directory |
-| `stoke remove-pool` | Remove a pool directory |
+| `r1 pool` | Subscription pool utilization + circuit breaker state |
+| `r1 pools` | List configured pool directories |
+| `r1 add-claude` | Register a Claude subscription pool directory |
+| `r1 add-codex` | Register a Codex subscription pool directory |
+| `r1 remove-pool` | Remove a pool directory |
 
 ## Servers (long-running)
 
 | Command | Purpose |
 |---|---|
-| `stoke serve` | Mission API HTTP server |
-| `stoke agent-serve` | Hireable-agent facade (POST `/api/task`, GET `/api/task/{id}`) |
-| `stoke mcp-serve` | MCP codebase tool server |
-| `stoke mcp-serve-stoke` | MCP codebase tool server (alias variant) |
+| `r1 serve` | Mission API HTTP server |
+| `r1 agent-serve` | Hireable-agent facade (POST `/api/task`, GET `/api/task/{id}`) |
+| `r1 mcp-serve` | MCP codebase tool server |
+| `r1 mcp-serve-stoke` | MCP codebase tool server (alias variant) |
 
 ## MCP client
 
 | Command | Purpose |
 |---|---|
-| `stoke mcp` | MCP client: list-servers, list-tools, test, call |
+| `r1 mcp` | MCP client: list-servers, list-tools, test, call |
 
 ## Cloud + external
 
 | Command | Purpose |
 |---|---|
-| `stoke cloud` | Managed-cloud operations (`register`, ...) |
-| `stoke policy` | Policy engine operations |
-| `stoke export` | Content-addressed `.tracebundle` producer |
+| `r1 cloud` | Managed-cloud operations (`register`, ...) |
+| `r1 policy` | Policy engine operations |
+| `r1 export` | Content-addressed `.tracebundle` producer |
 
 ## Bootstrap and health
 
 | Command | Purpose |
 |---|---|
-| `stoke init` / `stoke wizard` | First-time config wizard (minimal / balanced / strict) |
-| `stoke doctor` | Tool-dependency check across 5 fallback providers |
-| `stoke print-default-policy` | Print `stoke.policy.yaml` defaults |
-| `stoke simple-loop` | Minimal loop entry for debugging |
+| `r1 init` / `r1 wizard` | First-time config wizard (minimal / balanced / strict) |
+| `r1 doctor` | Tool-dependency check across 5 fallback providers |
+| `r1 print-default-policy` | Print `stoke.policy.yaml` defaults |
+| `r1 simple-loop` | Minimal loop entry for debugging |
 
 ## Shell and entry
 
 | Command | Purpose |
 |---|---|
-| `stoke` (no args) | Launch line REPL (composes with pipes, CI/CD logs) |
-| `stoke tui` / `stoke shell` | Launch full-screen Bubble Tea shell |
-| `stoke --one-shot` | CloudSwarm hero-skill bridge: dispatch a single R1 reasoning verb, read JSON from `--input`/stdin, write JSON to stdout |
+| `r1` (no args) | Launch line REPL (composes with pipes, CI/CD logs) |
+| `r1 tui` / `r1 shell` | Launch full-screen Bubble Tea shell |
+| `r1 --one-shot` | CloudSwarm hero-skill bridge: dispatch a single R1 reasoning verb, read JSON from `--input`/stdin, write JSON to stdout |
 
 ## Version / help
 
 | Command | Purpose |
 |---|---|
-| `stoke version` | Print version (ldflags-populated) |
-| `stoke help` | Usage text |
+| `r1 version` | Print version (ldflags-populated) |
+| `r1 help` | Usage text |
 
 ## Sibling binaries
 
-Installed alongside `stoke` when you build the source:
+Installed alongside `r1` when you build the source:
 
 | Binary | Purpose |
 |---|---|
@@ -150,6 +151,6 @@ Installed alongside `stoke` when you build the source:
 
 ## Further reading
 
-- [README → Commands table](https://github.com/RelayOne/r1/blob/main/README.md#commands) — upstream commands section
-- [`cmd/stoke/main.go`](https://github.com/RelayOne/r1/blob/main/cmd/stoke/main.go) — dispatch source
+- [README → Commands table](https://github.com/RelayOne/r1-agent/blob/main/README.md#commands) — upstream commands section
+- [`cmd/r1/main.go`](https://github.com/RelayOne/r1-agent/blob/main/cmd/r1/main.go) — dispatch source
 - [Env vars](/mintlify/reference/env-vars) — STOKE_* / R1_* env variables

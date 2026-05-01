@@ -12,7 +12,7 @@ technical reference, see [Architecture](/mintlify/architecture).
 <Steps>
   <Step title="Install and verify">
     Install via Homebrew, curl-pipe, Docker, or
-    `go build ./cmd/stoke`. Run `stoke doctor` to check Git, the
+    `go build ./cmd/r1`. Run `r1 doctor` to check Git, the
     LLM CLIs (`claude`, `codex`), every configured provider in the
     fallback chain, and the OAuth usage endpoint.
   </Step>
@@ -20,8 +20,8 @@ technical reference, see [Architecture](/mintlify/architecture).
     Three entry points:
 
     - hand-write a plan at `stoke-plan.json`
-    - `stoke plan --task "Add JWT auth"` — R1 generates the plan from codebase analysis
-    - `stoke task "Fix the flaky integration test in server/handler"` — free-text; the executor router classifies and dispatches
+    - `r1 plan --task "Add JWT auth"` — R1 generates the plan from codebase analysis
+    - `r1 task "Fix the flaky integration test in server/handler"` — free-text; the executor router classifies and dispatches
   </Step>
   <Step title="Dry-run first">
     `--dry-run` validates the plan and shows dispatch order, file
@@ -32,14 +32,14 @@ technical reference, see [Architecture](/mintlify/architecture).
     Drop `--dry-run`, add `--workers N`. R1 opens a live dashboard:
     one-line-per-event on piped stderr, a multi-line ANSI TUI on a
     TTY, or a full-screen Bubble Tea UI with `--interactive`. Cost
-    accrues in the corner; `stoke attach <id>` tails from another
+    accrues in the corner; `r1 attach <id>` tails from another
     terminal.
   </Step>
   <Step title="Intervene if needed">
-    - `stoke ctl pause <session>` pauses at the next safe boundary via the sessionctl Unix socket
-    - `stoke ctl inspect <session>` dumps current ledger state
+    - `r1 ctl pause <session>` pauses at the next safe boundary via the sessionctl Unix socket
+    - `r1 ctl inspect <session>` dumps current ledger state
     - if `r1-server` is installed, open <code>http://localhost:3948/</code> for the live stream view and 3D ledger visualizer
-    - `stoke ctl resume --reject-softpass` replays from the last checkpoint if you disagree with a soft-pass
+    - `r1 ctl resume --reject-softpass` replays from the last checkpoint if you disagree with a soft-pass
   </Step>
   <Step title="Completion">
     Each task merges via `git merge-tree --write-tree` pre-validation
@@ -52,7 +52,7 @@ technical reference, see [Architecture](/mintlify/architecture).
 
 ## The system flow
 
-A successful `stoke build` traces through ~40 subsystems. Below is
+A successful `r1 build` traces through ~40 subsystems. Below is
 the chain in order.
 
 ### Config load + plan validation

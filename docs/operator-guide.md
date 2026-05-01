@@ -9,7 +9,7 @@ R1 supports two authentication modes for Claude Code and Codex CLI.
 Uses OAuth-based subscription accounts. Each agent runs inside an isolated `CLAUDE_CONFIG_DIR` or `CODEX_HOME` with its own credentials. API keys are stripped from the environment to prevent accidental leakage.
 
 ```bash
-stoke build --mode mode1 \
+r1 build --mode mode1 \
   --claude-config-dir /pool/claude-1 \
   --codex-home /pool/codex-1
 ```
@@ -28,7 +28,7 @@ Uses API keys directly. The full environment is passed through, plus any extra v
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-stoke build --mode mode2
+r1 build --mode mode2
 ```
 
 ## Pool Setup
@@ -64,7 +64,7 @@ Codex stores `auth.json` under `CODEX_HOME`. Set `cli_auth_credentials_store` to
 ### Pool utilization
 
 ```bash
-stoke pool --claude-config-dir /pool/claude-1
+r1 pool --claude-config-dir /pool/claude-1
 ```
 
 Output:
@@ -89,17 +89,17 @@ Output:
 docker pull ghcr.io/ericmacdougall/stoke-pool:latest
 
 # Initialize container pools (runs interactive login inside the container)
-stoke pool init --container --name "Claude Max Account 1"
-stoke pool init --container --name "Claude Max Account 2"
+r1 pool init --container --name "Claude Max Account 1"
+r1 pool init --container --name "Claude Max Account 2"
 
 # List all pools (shows runtime type)
-stoke pools
+r1 pools
 
 # Remove a container pool (also removes the Docker volume)
-stoke remove-pool claude-3
+r1 remove-pool claude-3
 ```
 
-Each `stoke pool init --container` invocation:
+Each `r1 pool init --container` invocation:
 1. Creates a Docker volume for isolated credential storage
 2. Runs `claude login` inside a temporary container with the volume mounted
 3. Registers the pool with `runtime: container` in the manifest
@@ -129,8 +129,8 @@ You can mix host-direct and container pools. R1's pool manager treats them ident
 If you prefer running directly on the host (e.g., on Linux where Keychain isn't an issue):
 
 ```bash
-stoke add-claude    # runs claude login directly
-stoke add-codex     # runs codex auth login directly
+r1 add-claude    # runs claude login directly
+r1 add-codex     # runs codex auth login directly
 ```
 
 ### Codex on macOS (host-direct workaround)
@@ -195,7 +195,7 @@ Or pass explicit paths: `--claude-bin /usr/local/bin/claude`
 ```
 
 R1 rotates pools when one is rate-limited. If all pools are exhausted:
-1. Check `stoke pool` for utilization
+1. Check `r1 pool` for utilization
 2. Wait for the 5-hour window to reset
 3. Add more pool slots
 
@@ -215,7 +215,7 @@ git worktree prune
 git branch -D stoke/<name>
 ```
 
-Or just run `stoke build` again -- it resumes from the last saved state.
+Or just run `r1 build` again -- it resumes from the last saved state.
 
 ### Merge conflicts
 
@@ -230,7 +230,7 @@ This means two parallel tasks modified the same file. Fix: declare `files` in yo
 If you see `ANTHROPIC_API_KEY` leaking into Mode 1 runs:
 1. Verify `--mode mode1` is set
 2. Check that `CLAUDE_CONFIG_DIR` points to a valid pool
-3. Run `stoke doctor` to verify tool availability
+3. Run `r1 doctor` to verify tool availability
 
 ### Session state corruption
 
@@ -239,7 +239,7 @@ If you see `ANTHROPIC_API_KEY` leaking into Mode 1 runs:
 rm -rf .stoke/session.json .stoke/history/
 
 # Or check status
-stoke status
+r1 status
 ```
 
 ## CI/CD Integration
@@ -249,7 +249,7 @@ stoke status
 ```yaml
 - name: Run R1
   run: |
-    stoke build --plan stoke-plan.json --workers 2 --mode mode2
+    r1 build --plan stoke-plan.json --workers 2 --mode mode2
     cat .stoke/reports/latest.json
 
 - name: Check results
@@ -262,7 +262,7 @@ stoke status
 R1's headless TUI runner works in any terminal without special requirements. All output goes to stdout/stderr as structured text.
 
 ```bash
-stoke build --plan stoke-plan.json 2>&1 | tee build.log
+r1 build --plan stoke-plan.json 2>&1 | tee build.log
 ```
 
 The structured report at `.stoke/reports/latest.json` is the primary CI artifact.
@@ -274,9 +274,9 @@ The structured report at `.stoke/reports/latest.json` is the primary CI artifact
 Filter out low-value tasks before execution. Default: `medium`.
 
 ```bash
-stoke build --plan stoke-plan.json --roi high    # only security/correctness
-stoke build --plan stoke-plan.json --roi medium   # default: skip formatting only
-stoke build --plan stoke-plan.json --roi skip     # run everything
+r1 build --plan stoke-plan.json --roi high    # only security/correctness
+r1 build --plan stoke-plan.json --roi medium   # default: skip formatting only
+r1 build --plan stoke-plan.json --roi skip     # run everything
 ```
 
 Tasks are classified as high (security, correctness, tests), medium (refactoring, features, types), low (docs, cosmetic renames), or skip (formatting). The filter removes tasks below the threshold.
@@ -286,7 +286,7 @@ Tasks are classified as high (security, correctness, tests), medium (refactoring
 Use SQLite instead of JSON files for session persistence. Better for large plans and concurrent access.
 
 ```bash
-stoke build --plan stoke-plan.json --sqlite
+r1 build --plan stoke-plan.json --sqlite
 ```
 
 Creates `.stoke/session.db` with WAL mode and 5s busy timeout. Both stores implement the same `SessionStore` interface, so crash recovery and learned patterns work identically.
@@ -296,7 +296,7 @@ Creates `.stoke/session.db` with WAL mode and 5s busy timeout. Both stores imple
 Launch an interactive terminal UI instead of headless text output.
 
 ```bash
-stoke build --plan stoke-plan.json --interactive
+r1 build --plan stoke-plan.json --interactive
 ```
 
 Three modes: Dashboard (task board + pool status), Focus (follow one agent's streaming output), Detail (drill into completed/failed task). Keyboard-driven: Tab switches modes, 1-9 focuses on agents, Enter drills down, q quits.

@@ -16,7 +16,7 @@ and `npm test` and the flow is identical.
 
 ## Prerequisites
 
-- R1 installed (`stoke version` prints something).
+- R1 installed (`r1 version` prints something).
 - Claude Code or Codex authenticated.
 - A git repo to work in.
 
@@ -25,7 +25,7 @@ and `npm test` and the flow is identical.
     From the repo root:
 
     ```bash
-    stoke init
+    r1 init
     ```
 
     The wizard asks for a preset (minimal / balanced / strict) and
@@ -33,11 +33,11 @@ and `npm test` and the flow is identical.
   </Step>
   <Step title="Verify your setup">
     ```bash
-    stoke doctor
+    r1 doctor
     ```
 
     All rows must be green. If a provider row is red, follow the
-    "how to fix" line — usually `stoke add-claude` or setting
+    "how to fix" line — usually `r1 add-claude` or setting
     `ANTHROPIC_API_KEY`.
   </Step>
   <Step title="Write the SOW">
@@ -73,7 +73,7 @@ and `npm test` and the flow is identical.
     Always dry-run first:
 
     ```bash
-    stoke build --plan stoke-plan.json --dry-run
+    r1 build --plan stoke-plan.json --dry-run
     ```
 
     R1 prints the dispatch order, the file scope, which provider
@@ -86,7 +86,7 @@ and `npm test` and the flow is identical.
   </Step>
   <Step title="Run for real">
     ```bash
-    stoke build --plan stoke-plan.json --workers 1
+    r1 build --plan stoke-plan.json --workers 1
     ```
 
     On a TTY, R1 opens a multi-line dashboard. Watch the phase
@@ -182,12 +182,12 @@ File-scope conflicts are also resolved automatically: if two tasks
 write the same file, R1 serializes them. If one reads and one
 writes, the writer runs first.
 
-## Using `stoke task` for free-text entry
+## Using `r1 task` for free-text entry
 
 If you don't want to author a plan, drop straight in:
 
 ```bash
-stoke task "Add a /healthz endpoint that returns {\"ok\":true}; wire it into the existing router; add a unit test"
+r1 task "Add a /healthz endpoint that returns {\"ok\":true}; wire it into the existing router; add a unit test"
 ```
 
 The executor router classifies the free-text description and

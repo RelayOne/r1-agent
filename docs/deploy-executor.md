@@ -2,7 +2,7 @@
 
 Track B Task 22 ships the first real deploy adapter for R1:
 fly.io via `flyctl`. This document is the operator-facing reference
-for the `stoke deploy` command and the `internal/executor`
+for the `r1 deploy` command and the `internal/executor`
 `DeployExecutor`.
 
 ## Provider status
@@ -26,7 +26,7 @@ Authentication is delegated to `flyctl`'s existing mechanisms:
 
 - Interactive: `flyctl auth login` (stored under `~/.fly/`).
 - CI / non-interactive: export `FLY_API_TOKEN` (or `FLY_ACCESS_TOKEN`)
-  before invoking `stoke deploy`. R1 does NOT read this token
+  before invoking `r1 deploy`. R1 does NOT read this token
   itself — it is passed through to the child `flyctl` process via
   the inherited environment.
 
@@ -36,7 +36,7 @@ passes it on the command line.
 ## Dry-run
 
 ```bash
-stoke deploy --provider fly --app my-app --dry-run
+r1 deploy --provider fly --app my-app --dry-run
 ```
 
 Renders a minimal `fly.toml` preview to stdout and exits 0. No
@@ -73,7 +73,7 @@ itself would emit.
 ## Verify-only
 
 ```bash
-stoke deploy --verify-only --health-url https://my-app.fly.dev --expected-body "OK"
+r1 deploy --verify-only --health-url https://my-app.fly.dev --expected-body "OK"
 ```
 
 Skips the deploy entirely and runs a single HTTP GET against the
@@ -92,7 +92,7 @@ your scheduler to alert on exit code 1.
 ## Real deploy
 
 ```bash
-stoke deploy --provider fly --app my-app --region iad
+r1 deploy --provider fly --app my-app --region iad
 ```
 
 Runs in cwd by default; pass `--dir path/to/service` when the
@@ -119,7 +119,7 @@ than a shell `Command`:
 | `DEPLOY-COMMIT-MATCH` | Local `git rev-parse HEAD` agrees with the deploy's captured SHA. |
 | `DEPLOY-HEALTH-200`   | GET deployed URL → 200, non-empty body, substring match.          |
 
-`DEPLOY-COMMIT-MATCH` soft-passes in dry-run mode so `stoke deploy
+`DEPLOY-COMMIT-MATCH` soft-passes in dry-run mode so `r1 deploy
 --dry-run` stays a read-only preview.
 
 The descent engine's repair tier (`BuildRepairFunc`) retries the

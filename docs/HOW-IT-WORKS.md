@@ -24,7 +24,7 @@ That foundation did not change in the latest cycle.
 
 The newer trunk story begins before execution:
 
-1. scaffold or author a pack with `stoke skills pack init`
+1. scaffold or author a pack with `r1 skills pack init`
 2. inspect or publish it with `info` and `publish`
 3. sign and verify it with `sign` and `verify`
 4. activate it with `install`
@@ -37,7 +37,7 @@ checks.
 
 ## Journey 3: Expose A Pack Registry
 
-`stoke skills pack serve` now turns the published pack library into a
+`r1 skills pack serve` now turns the published pack library into a
 small read-only HTTP registry:
 
 - `/healthz`
