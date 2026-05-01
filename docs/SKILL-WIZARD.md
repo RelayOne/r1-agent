@@ -5,10 +5,10 @@ The deterministic skill wizard converts source artifacts into canonical `*.r1.js
 Primary commands:
 
 ```bash
-stoke wizard run --from ./legacy-skill.md --source-format r1-markdown-legacy --mode headless --out-dir ./out --ledger-dir ./.r1/ledger --mission-id skill-migrate
-stoke wizard migrate --source-dir ./old-skills --source-format codex-toml --output-dir ./out --mode headless
-stoke wizard register --skill ./out/my-skill.r1.json --proof ./out/my-skill.proof.json
-stoke wizard query --ledger-dir ./.r1/ledger --session-id skill_authoring_decisions-1234abcd --question-prefix caps.
+r1 wizard run --from ./legacy-skill.md --source-format r1-markdown-legacy --mode headless --out-dir ./out --ledger-dir ./.r1/ledger --mission-id skill-migrate
+r1 wizard migrate --source-dir ./old-skills --source-format codex-toml --output-dir ./out --mode headless
+r1 wizard register --skill ./out/my-skill.r1.json --proof ./out/my-skill.proof.json
+r1 wizard query --ledger-dir ./.r1/ledger --session-id skill_authoring_decisions-1234abcd --question-prefix caps.
 ```
 
 Current implementation:
@@ -19,13 +19,13 @@ Current implementation:
 - `internal/r1skill/wizard/ledgerlink/nodes.go` registers `skill_authoring_decisions` as a ledger node type.
 - `internal/r1skill/wizard/ledgerlink/writer.go` persists source, IR, proof, and session refs into the ledger graph.
 
-Outputs written by `stoke wizard run`:
+Outputs written by `r1 wizard run`:
 
 - `<skill-id>.r1.json`
 - `<skill-id>.proof.json`
 - `<skill-id>.decisions.json`
 - optional `skill_authoring_decisions` ledger node plus referenced source / IR / proof artifacts when `--ledger-dir` is supplied
 
-`stoke wizard register` installs reviewed outputs under `skills/<skill-id>/skill.r1.json` and `skills/<skill-id>/skill.r1.proof.json`, which makes the deterministic registry load path explicit and repeatable.
+`r1 wizard register` installs reviewed outputs under `skills/<skill-id>/skill.r1.json` and `skills/<skill-id>/skill.r1.proof.json`, which makes the deterministic registry load path explicit and repeatable.
 
 This is the operator on-ramp for the deterministic-skill substrate added in PR `#34`.

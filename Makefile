@@ -3,12 +3,13 @@
 # Default: run the CI gate
 all: build test vet
 
-# Build all binaries. Primary is ./cmd/stoke; ./cmd/stoke-acp is
-# the Agent Client Protocol adapter (S-U-002). Both land in the
-# repo root so `./stoke` and `./stoke-acp` work after `make build`.
+# Build all binaries. Primary is ./cmd/r1; ./cmd/stoke-acp is
+# the Agent Client Protocol adapter (S-U-002). Outputs land in
+# ./bin/ so build artifacts do not clutter the repo root.
 build:
-	go build ./cmd/stoke
-	go build ./cmd/stoke-acp
+	mkdir -p bin
+	go build -o ./bin/r1 ./cmd/r1
+	go build -o ./bin/stoke-acp ./cmd/stoke-acp
 
 # Run all tests
 test:
@@ -33,10 +34,8 @@ bench-cache:
 	go run ./bench/prompt_cache
 
 # Build Docker image
-# S2-4 (work-r1-rename): tag under both the legacy `stoke` name and the
-# canonical `r1` name so local workflows match what CI publishes to GHCR.
 docker:
-	docker build -t stoke:latest -t r1:latest .
+	docker build -t r1:latest .
 
 # Build release artifacts via goreleaser
 release:
@@ -44,7 +43,7 @@ release:
 
 # Clean build artifacts
 clean:
-	rm -f stoke stoke-acp
+	rm -f ./bin/r1 ./bin/stoke-acp
 	rm -rf dist/
 	rm -f coverage.out
 

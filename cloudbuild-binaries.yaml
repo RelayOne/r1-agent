@@ -3,7 +3,7 @@ substitutions:
 
 steps:
   - name: 'golang:1.25'
-    id: build-multi-platform-stoke
+    id: build-multi-platform-r1
     entrypoint: bash
     args:
       - -ceu
@@ -14,7 +14,7 @@ steps:
         fi
         cd "$$ROOT"
 
-        # `cmd/stoke` does not import the private Heroa or CodeRadar SDKs,
+        # `cmd/r1` does not import the private Heroa or CodeRadar SDKs,
         # but the module file can still force Cloud Build to resolve them.
         # Strip those requirements when the sibling checkout is absent so
         # trigger builds from the standalone GitHub repo remain reproducible.
@@ -42,14 +42,14 @@ steps:
             CGO_ENABLED=0 GOOS="$$OS" GOARCH="$$ARCH" go build \
               -trimpath \
               -ldflags "-s -w" \
-              -o "dist/stoke-$$OS-$$ARCH$$EXT" \
-              ./cmd/stoke
+              -o "dist/r1-$$OS-$$ARCH$$EXT" \
+              ./cmd/r1
           done
         done
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    id: publish-stoke-binaries
-    waitFor: ['build-multi-platform-stoke']
+    id: publish-r1-binaries
+    waitFor: ['build-multi-platform-r1']
     entrypoint: bash
     args:
       - -ceu

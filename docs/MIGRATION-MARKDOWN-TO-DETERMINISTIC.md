@@ -3,7 +3,7 @@
 Use the wizard when migrating legacy markdown skills:
 
 ```bash
-stoke wizard run \
+r1 wizard run \
   --from ./legacy/check-pr-coverage.md \
   --source-format r1-markdown-legacy \
   --mode headless \
@@ -20,5 +20,5 @@ What happens:
 For bulk migration:
 
 ```bash
-stoke wizard migrate --source-dir ./legacy --source-format r1-markdown-legacy --output-dir ./converted
+r1 wizard migrate --source-dir ./legacy --source-format r1-markdown-legacy --output-dir ./converted
 ```

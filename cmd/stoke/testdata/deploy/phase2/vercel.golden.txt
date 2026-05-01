@@ -1,7 +1,0 @@
-# Vercel dry-run preview
-# Captured from: stoke deploy --provider vercel --dry-run
-#
-# Vercel's dry-run doesn't run the CLI (would require VERCEL_TOKEN).
-# Instead the adapter prints the resolved flags + env + what
-# `vercel deploy` would be invoked with.
-dry-run: vercel adapter not invoked

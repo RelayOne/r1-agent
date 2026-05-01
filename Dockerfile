@@ -13,12 +13,12 @@ COPY . .
 RUN CGO_ENABLED=1 go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /out/stoke \
-    ./cmd/stoke
+    -o /out/r1 \
+    ./cmd/r1
 
 # Final stage: distroless with glibc (needed for CGO/SQLite)
 FROM gcr.io/distroless/base-debian12:nonroot
 
-COPY --from=builder /out/stoke /usr/local/bin/stoke
+COPY --from=builder /out/r1 /usr/local/bin/r1
 
-ENTRYPOINT ["stoke"]
+ENTRYPOINT ["r1"]

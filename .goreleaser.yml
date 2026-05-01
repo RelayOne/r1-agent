@@ -9,9 +9,9 @@ before:
     - go test ./... -count=1 -timeout=120s
 
 builds:
-  - id: stoke
-    main: ./cmd/stoke
-    binary: stoke
+  - id: r1
+    main: ./cmd/r1
+    binary: r1
     env:
       - CGO_ENABLED=1
     flags:
@@ -43,7 +43,7 @@ builds:
           - CC=o64-clang
   - id: stoke-acp
     # Agent Client Protocol adapter (S-U-002). Pure-Go JSON-RPC
-    # stdio transport; no CGO dependency unlike the main stoke
+    # stdio transport; no CGO dependency unlike the main r1
     # binary, so cross-compiles without the gcc overrides.
     main: ./cmd/stoke-acp
     binary: stoke-acp
@@ -59,28 +59,6 @@ builds:
     goarch:
       - amd64
       - arm64
-  - id: r1
-    # r1 shim binary (work-r1-rename.md S2-3). Thin exec-shim that
-    # delegates to the sibling `stoke` binary; no CGO, so it cross-
-    # compiles without the gcc overrides the main stoke build uses.
-    # Shipped alongside `stoke` during the 60-90d transition window
-    # so both names work; once S5-* tap-rename lands, `r1` becomes
-    # canonical and `stoke` retires.
-    main: ./cmd/r1
-    binary: r1
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w -X main.version={{.Version}}
-    goos:
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-
 archives:
   - format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
@@ -113,41 +91,6 @@ release:
   prerelease: auto
 
 brews:
-  # S2-4 (work-r1-rename): dual-publish under both the legacy `stoke`
-  # formula and the canonical `r1` formula during the 90d transition
-  # window. Both formulae install identical binaries; the legacy
-  # `stoke` formula's caveats message points users at `r1` as the
-  # canonical name going forward.
-  - name: stoke
-    repository:
-      owner: ericmacdougall
-      name: homebrew-stoke
-      branch: main
-    directory: Formula
-    homepage: https://github.com/RelayOne/r1-agent
-    description: "Stoke — agentic coding orchestrator (R1)"
-    license: "Apache-2.0"
-    install: |
-      bin.install "stoke"
-      bin.install "stoke-acp" if File.exist?("stoke-acp")
-      # work-r1-rename.md S2-3: ship `r1` alongside `stoke` during
-      # the 60-90d rename transition. `r1` is a thin exec-shim that
-      # delegates to the sibling `stoke` binary in the same bindir.
-      bin.install "r1" if File.exist?("r1")
-    caveats: |
-      Stoke is being renamed to R1. Install the canonical formula with:
-        brew install RelayOne/r1-agent/r1
-      Legacy alias still works during the transition window:
-        brew install ericmacdougall/stoke/r1
-      The `stoke` formula will remain available as an alias through
-      2026-07-22 (90d from the rename commit).
-    test: |
-      system "#{bin}/stoke", "--version"
-      system "#{bin}/r1", "--version" if File.exist?("#{bin}/r1")
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-    commit_msg_template: "chore(brew): stoke {{ .Tag }}"
   - name: r1
     repository:
       owner: ericmacdougall
@@ -155,11 +98,11 @@ brews:
       branch: main
     directory: Formula
     homepage: https://github.com/RelayOne/r1-agent
-    description: "R1 — agentic coding orchestrator (formerly Stoke)"
+    description: "R1 — agentic coding orchestrator"
     license: "Apache-2.0"
     install: |
-      bin.install "stoke" => "r1"
-      bin.install "stoke-acp" => "r1-acp" if File.exist?("stoke-acp")
+      bin.install "r1"
+      bin.install "stoke-acp" if File.exist?("stoke-acp")
     test: |
       system "#{bin}/r1", "--version"
     commit_author:

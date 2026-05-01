@@ -85,7 +85,7 @@ export STOKE_PROVIDERS='[
   {"name":"ollama","url":"http://localhost:11434","key":"","models":["llama3:70b","mistral"],"role":"worker"}
 ]'
 
-stoke repl
+r1
 ```
 
 Worker dispatches go to Ollama; planning / review go to Anthropic.
@@ -126,7 +126,7 @@ is built. Surfaces a clear error on:
 
 The pool sits **in front of** `detectSmartDefaults()` — when set, the
 single-provider SmartDefaults path is not consulted for the REPL /
-shell TUI entry points. Explicit command-line flags on `stoke sow`
+shell TUI entry points. Explicit command-line flags on `r1 sow`
 (`--native-api-key`, `--native-model`, `--reasoning-model`, etc.) are
 unaffected by the pool; those flags remain the most specific source
 of provider configuration.

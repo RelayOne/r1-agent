@@ -11,11 +11,8 @@ gates, no telemetry, no phone-home.
 Published by goreleaser on each tag.
 
 ```bash
-# Canonical tap (post work-r1-rename.md §S2-2).
+# Canonical tap.
 brew install RelayOne/r1-agent/r1
-
-# Legacy tap (still works via Homebrew redirect during the transition):
-# brew install ericmacdougall/stoke/stoke
 ```
 
 ## One-line installer
@@ -25,12 +22,7 @@ OIDC via sigstore) when cosign is on PATH, and falls back to
 building from source if no prebuilt binary exists for your target.
 
 ```bash
-# Canonical URL (post work-r1-rename.md §S2-2). GitHub preserves the
-# legacy URL via automatic redirect, so either line below works.
-curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
-
-# Legacy URL (redirected):
-# curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/RelayOne/r1-agent/main/install.sh | bash
 ```
 
 ## Docker
@@ -38,12 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/RelayOne/r1/main/install.sh | bash
 linux/amd64 + linux/arm64; distroless; multi-stage.
 
 ```bash
-# Canonical image (post work-r1-rename.md §S2-2).
 docker pull ghcr.io/RelayOne/r1:latest
-
-# Legacy tags (dual-published for 60d after §S2-2):
-# docker pull ghcr.io/ericmacdougall/r1:latest
-# docker pull ghcr.io/ericmacdougall/stoke:latest
 ```
 
 ## From source
@@ -51,27 +38,26 @@ docker pull ghcr.io/RelayOne/r1:latest
 Requires Go 1.25+ (1.25 minimum); CGO enabled for SQLite.
 
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go build ./cmd/stoke-acp        # Agent Client Protocol adapter
-sudo mv stoke stoke-acp /usr/local/bin/
+sudo mv r1 stoke-acp /usr/local/bin/
 ```
 
 ## Verify a signed release tarball
 
-Cosign keyless OIDC. The cert-identity regex accepts both the legacy
-`ericmacdougall/Stoke` workflow and the canonical `RelayOne/r1`
-workflow so releases signed before and after §S2-2 verify without
-script edits.
+Cosign keyless OIDC pinned to the canonical `RelayOne/r1-agent`
+release workflow.
 
 ```bash
 cosign verify-blob \
-  --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-identity-regexp 'https://github\.com/RelayOne/r1-agent/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --signature stoke_<ver>_<os>_<arch>.tar.gz.sig \
-  stoke_<ver>_<os>_<arch>.tar.gz
+  --signature r1_<ver>_<os>_<arch>.tar.gz.sig \
+  r1_<ver>_<os>_<arch>.tar.gz
 ```
 
 <Note>
-R1 ships as the `stoke` binary today. The binary rename is
-in flight — see the [rename notice](/mintlify/rename/stoke-to-r1).
+R1 ships as the `r1` binary today. Legacy storage and companion
+surfaces such as `.stoke/` and `stoke-acp` keep their existing names
+where compatibility still matters.
 </Note>

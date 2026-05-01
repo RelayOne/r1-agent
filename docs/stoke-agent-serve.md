@@ -1,14 +1,14 @@
 # R1 agent-serve (Task 24)
 
-`stoke agent-serve` exposes an R1 instance as an HTTP endpoint
+`r1 agent-serve` exposes an R1 instance as an HTTP endpoint
 so other agents — or TrustPlane — can hire it and receive a
-verified result back. Distinct from `stoke serve` which runs the
+verified result back. Distinct from `r1 serve` which runs the
 mission-orchestrator API consumed by stoke-server / dashboards.
 
 ## CLI
 
 ```
-stoke agent-serve [--addr :8440] [--task-timeout 10m] [--caps CSV]
+r1 agent-serve [--addr :8440] [--task-timeout 10m] [--caps CSV]
 ```
 
 - `--addr` — listen address. Default `:8440`. Point a reverse
@@ -81,7 +81,7 @@ today it just re-reads the state you already got from POST.
 Set `STOKE_SERVE_TOKENS` to a comma-separated token list:
 
 ```
-STOKE_SERVE_TOKENS="sk-partnerA,sk-partnerB" stoke agent-serve --addr :8440
+STOKE_SERVE_TOKENS="sk-partnerA,sk-partnerB" r1 agent-serve --addr :8440
 ```
 
 Requests must include `X-Stoke-Bearer: <token>` where `<token>` is
@@ -120,9 +120,9 @@ Future async mode will:
 
 ## Related subcommands
 
-- `stoke serve` — mission-orchestrator API + dashboard. Different
+- `r1 serve` — mission-orchestrator API + dashboard. Different
   binary surface entirely.
-- `stoke mcp-serve` — MCP protocol server. A separate protocol
+- `r1 mcp-serve` — MCP protocol server. A separate protocol
   with its own auth + semantics.
-- `stoke task` — local CLI task dispatch. Same executor registry,
+- `r1 task` — local CLI task dispatch. Same executor registry,
   same task types, no network surface.

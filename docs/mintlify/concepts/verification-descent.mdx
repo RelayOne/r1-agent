@@ -132,7 +132,7 @@ expect this flip in a minor release.
 
 ```bash
 export STOKE_DESCENT=1
-stoke build --plan stoke-plan.json --workers 4
+r1 build --plan stoke-plan.json --workers 4
 ```
 
 Or pass `--descent` explicitly on the command line. The session
@@ -145,5 +145,5 @@ will print:
 ## Further reading
 
 - `specs/descent-hardening.md` — full H-91 series spec
-- [`cmd/stoke/descent_bridge.go`](https://github.com/RelayOne/r1/blob/main/cmd/stoke/descent_bridge.go) — opt-in bridge
+- [`cmd/r1/descent_bridge.go`](https://github.com/RelayOne/r1/blob/main/cmd/r1/descent_bridge.go) — opt-in bridge
 - [Architecture → Verification Descent](/mintlify/architecture#verification-descent-h-91-series)

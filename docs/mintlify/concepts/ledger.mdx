@@ -127,9 +127,9 @@ audit surfaces also emit ledger nodes — no subsystem is "off-ledger."
 
 Operators have three doors:
 
-- `stoke eventlog` — inspect the append-only bus WAL, which
+- `r1 eventlog` — inspect the append-only bus WAL, which
   references ledger nodes by ID.
-- `stoke inspect <session>` — dump ledger state for a specific
+- `r1 inspect <session>` — dump ledger state for a specific
   session.
 - **r1-server** (port 3948) — HTTP API + SSE + 3D viz:
   `GET /api/session/{id}/ledger` returns the DAG.

@@ -1,4 +1,4 @@
-# cloudbuild-release.yaml — r1 (stoke) release via goreleaser
+# cloudbuild-release.yaml — r1 release via goreleaser
 # Triggered on tag push matching ^v.*
 # Replaces GitHub Actions release.yml
 # Artifacts uploaded to GCS instead of GitHub Releases.

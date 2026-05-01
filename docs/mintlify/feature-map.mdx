@@ -50,7 +50,7 @@ for the T1–T8 ladder.
 | Feature | Status |
 |---|---|
 | Executor interface + router | Done |
-| `stoke task` free-text entry | Done |
+| `r1 task` free-text entry | Done |
 | CodeExecutor (SOW-backed) | Done |
 | ResearchExecutor MVP (stdlib-only, keyword-overlap verification) | Done |
 | Research lead+subagent orchestrator (Anthropic-style) | Scoped |
@@ -69,7 +69,7 @@ for the T1–T8 ladder.
 | STOKE envelope v1.0 (`stoke_version`, `instance_id`, `trace_parent`, `ledger_node_id`) | Done |
 | r1-server binary + web dashboard MVP | Done |
 | r1-server UI v2 (waterfall + 3D) | Scoped |
-| `stoke agent-serve` HTTP MVP | Done |
+| `r1 agent-serve` HTTP MVP | Done |
 | Agent-serve async (worker pool + SSE + webhooks + crash recovery) | Scoped |
 | MCP client (GitHub, Linear, Slack, Postgres, custom) | Flagged |
 | MCP trust gating + circuit breaker | Done |
@@ -86,10 +86,10 @@ for the T1–T8 ladder.
 | Bubble Tea interactive TUI (Dashboard / Focus / Detail) | Done |
 | Multi-provider pool (`STOKE_PROVIDERS`) | Done |
 | HITL soft-pass approval | Done |
-| `stoke doctor` (5-provider tool-dependency check) | Done |
-| `stoke repair` (auto-fix common config issues) | Done |
-| `stoke memory` CLI (6 verbs) | Flagged |
-| `stoke attach` + `stoke replay` | Scoped |
+| `r1 doctor` (5-provider tool-dependency check) | Done |
+| `r1 repair` (auto-fix common config issues) | Done |
+| `r1 memory` CLI (6 verbs) | Flagged |
+| `r1 attach` + `r1 replay` | Scoped |
 | Chat descent control + sessionctl socket (8 verbs) | Scoped |
 
 ## Memory — persistent cross-session knowledge
@@ -97,7 +97,7 @@ for the T1–T8 ladder.
 | Feature | Status |
 |---|---|
 | Memory store MVP (`stoke_memories` + FTS5 + triggers) | Done |
-| Memory full stack (sqlite-vec + 3-way embedder + consolidation + `stoke memory` CLI) | Scoped |
+| Memory full stack (sqlite-vec + 3-way embedder + consolidation + `r1 memory` CLI) | Scoped |
 | Scoped memory bus (6 visibility scopes; writer-goroutine + batched INSERTs; 10k+ ops/sec) | Scoped |
 | Wisdom temporal validity (`ValidFrom`/`ValidUntil`, `AsOf()`, `Invalidate()`) | Done |
 
