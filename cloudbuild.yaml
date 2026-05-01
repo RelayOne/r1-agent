@@ -56,6 +56,42 @@ steps:
     env:
       - 'CGO_ENABLED=1'
 
+  - name: 'golang:1.25'
+    id: build-multi-platform-stoke
+    waitFor: ['build', 'test', 'race']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euxo pipefail
+        mkdir -p dist
+        for OS_ARCH in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+          OS=${OS_ARCH%/*}
+          ARCH=${OS_ARCH#*/}
+          EXT=""
+          if [ "$OS" = "windows" ]; then
+            EXT=".exe"
+          fi
+          CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build \
+            -trimpath \
+            -ldflags "-s -w" \
+            -o dist/stoke-${OS}-${ARCH}${EXT} \
+            ./cmd/stoke
+        done
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: publish-stoke-binaries
+    waitFor: ['build-multi-platform-stoke']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euxo pipefail
+        for f in dist/*; do
+          gcloud storage cp "$f" "${_PUBLIC_BUCKET}/${SHORT_SHA}/$(basename "$f")"
+          gcloud storage cp "$f" "${_PUBLIC_BUCKET}/latest/$(basename "$f")"
+        done
+
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8
@@ -63,3 +99,6 @@ options:
     permanent: 'true'
     repo: r1
     lang: go
+
+substitutions:
+  _PUBLIC_BUCKET: gs://relayone-488319-public/r1
