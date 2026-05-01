@@ -14,21 +14,20 @@ steps:
         fi
         cd "$$ROOT"
 
-        # `r1-agent` currently depends on sibling checkouts for both the
-        # Heroa SDK and the private CodeRadar Go SDK. Manual Cloud Build
-        # submit from /home/eric/repos uploads those siblings into
-        # /workspace, so rewrite the existing absolute replace targets
-        # onto relative workspace paths before cross-compiling.
+        # `cmd/stoke` does not import the private Heroa or CodeRadar SDKs,
+        # but the module file can still force Cloud Build to resolve them.
+        # Strip those requirements when the sibling checkout is absent so
+        # trigger builds from the standalone GitHub repo remain reproducible.
         if [ -d ../CodeRadar/sdks/go/coderadar ]; then
           go mod edit -replace github.com/RelayOne/coderadar/sdks/go/coderadar=../CodeRadar/sdks/go/coderadar
         else
-          go mod edit -dropreplace github.com/RelayOne/coderadar/sdks/go/coderadar
-          go mod download github.com/RelayOne/coderadar/sdks/go/coderadar
+          go mod edit -replace github.com/RelayOne/coderadar/sdks/go/coderadar=./third_party/coderadar-go-sdk
         fi
         if [ -d ../heroa/sdk/go ]; then
           go mod edit -replace heroa.dev/sdk-go=../heroa/sdk/go
         else
           go mod edit -dropreplace heroa.dev/sdk-go
+          go mod edit -droprequire heroa.dev/sdk-go
         fi
         mkdir -p dist
         for OS in linux darwin windows; do
