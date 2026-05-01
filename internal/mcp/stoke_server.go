@@ -43,10 +43,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1dir"
 )
 
@@ -773,7 +773,7 @@ func realSpawn(bin string, args []string, workdir string, env []string, stdout, 
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -806,9 +806,7 @@ func (h *realHandle) Kill() error {
 	// entirely and return the default (nil) error. We log the
 	// lookup error so an unexpected failure (not just ESRCH) is
 	// still visible in operator logs.
-	pgid, pgidErr := syscall.Getpgid(h.cmd.Process.Pid)
-	if pgidErr == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	if err := procutil.Terminate(h.cmd); err == nil {
 		// Give the subprocess a moment to flush and exit cleanly.
 		done := make(chan struct{})
 		go func() {
@@ -818,11 +816,11 @@ func (h *realHandle) Kill() error {
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = procutil.Kill(h.cmd)
 		}
 	} else {
-		logging.Global().Info("mcp.stoke_server: Kill() Getpgid failed; treating as process-already-gone",
-			"pid", h.cmd.Process.Pid, "err", pgidErr)
+		logging.Global().Info("mcp.stoke_server: Kill() terminate failed; treating as process-already-gone",
+			"pid", h.cmd.Process.Pid, "err", err)
 	}
 	return nil
 }

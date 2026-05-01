@@ -60,6 +60,7 @@ import (
 	"github.com/RelayOne/r1/internal/pools"
 	"github.com/RelayOne/r1/internal/progress"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1dir"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/remote"
@@ -1558,7 +1559,7 @@ func ensureR1ServerRunning() {
 		return // not installed — zero-dep fallback
 	}
 	cmd := exec.Command(bin) // #nosec G204 -- Stoke self-invocation or dev-tool binary with Stoke-generated args.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	procutil.ConfigureDetachedProcess(cmd)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil

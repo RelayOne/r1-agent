@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/config"
 	"github.com/RelayOne/r1/internal/hooks"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/stream"
 )
 
@@ -134,7 +134,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	}
 
 	// Process group isolation: prevents orphaned claude/node subprocesses (#33979)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -202,12 +202,10 @@ func killProcessGroup(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
 	}
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
+	if err := procutil.Terminate(cmd); err != nil {
 		cmd.Process.Kill()
 		return
 	}
-	syscall.Kill(-pgid, syscall.SIGTERM)
 	time.Sleep(3 * time.Second)
-	syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = procutil.Kill(cmd)
 }

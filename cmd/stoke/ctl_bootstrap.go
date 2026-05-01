@@ -22,8 +22,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"syscall"
 
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/sessionctl"
 )
@@ -47,7 +47,7 @@ func startSessionCtlServer(mode string, repoRoot string) (*sessionctl.Server, st
 		SessionID: sessID,
 		Router:    sessionctl.NewApprovalRouter(),
 		Signaler:  sessionctl.NewPGIDSignaler(),
-		PGID:      syscall.Getpgrp(),
+		PGID:      procutil.CurrentProcessGroupID(),
 		Status: func() sessionctl.StatusSnapshot {
 			return sessionctl.StatusSnapshot{
 				State: "executing",
