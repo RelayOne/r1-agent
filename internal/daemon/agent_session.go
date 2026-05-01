@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/chat"
+	"github.com/RelayOne/r1/internal/failure"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/google/uuid"
 )
@@ -58,6 +59,7 @@ type AgentSession struct {
 	History       []provider.ChatMessage `json:"history,omitempty"`
 	Events        []AgentEvent           `json:"events,omitempty"`
 	NextEventSeq  int64                  `json:"next_event_seq"`
+	NextTaskSeq   int                    `json:"next_task_seq"`
 
 	runtime *agentSessionRuntime `json:"-"`
 }
@@ -180,6 +182,9 @@ func (s *AgentSessionStore) ensureRuntimeLocked(sess *AgentSession) {
 	}
 	if sess.CurrentState == "" {
 		sess.CurrentState = "ready"
+	}
+	if sess.NextTaskSeq <= 0 && len(sess.TaskIDs) > 0 {
+		sess.NextTaskSeq = failure.NextStableSequence(sess.ID, sess.TaskIDs) - 1
 	}
 }
 
@@ -524,15 +529,17 @@ func (s *AgentSessionStore) abortLocked(sess *AgentSession, message string) (str
 }
 
 func (s *AgentSessionStore) enqueueSessionTaskLocked(sess *AgentSession, action, prompt string, meta map[string]string) (string, error) {
-	id := "task-" + uuid.NewString()
+	nextSeq := sess.NextTaskSeq + 1
+	id := failure.StableTaskID(sess.ID, nextSeq)
 	title := fmt.Sprintf("%s: %s", strings.ReplaceAll(action, "_", " "), oneLine(prompt, 72))
 	if title == "" {
 		title = action
 	}
 	taskMeta := map[string]string{
-		"agent_session_id": sess.ID,
-		"agent_action":     action,
-		"agent_id":         sess.AgentID,
+		"agent_session_id":    sess.ID,
+		"agent_action":        action,
+		"agent_id":            sess.AgentID,
+		"agent_task_sequence": fmt.Sprintf("%d", nextSeq),
 	}
 	for k, v := range meta {
 		if strings.TrimSpace(k) != "" && v != "" {
@@ -540,26 +547,40 @@ func (s *AgentSessionStore) enqueueSessionTaskLocked(sess *AgentSession, action,
 		}
 	}
 	task := &Task{
-		ID:       id,
-		Title:    title,
-		Prompt:   strings.TrimSpace(prompt),
-		Runner:   "hybrid",
-		Priority: 50,
-		State:    StateQueued,
-		Meta:     taskMeta,
-		Tags:     []string{"agent-session", action},
+		ID:             id,
+		IdempotencyKey: failure.DeriveIdempotencyKey(sess.ID, action, prompt, "", "hybrid", taskMeta),
+		Title:          title,
+		Prompt:         strings.TrimSpace(prompt),
+		Runner:         "hybrid",
+		Priority:       50,
+		State:          StateQueued,
+		Meta:           taskMeta,
+		Tags:           []string{"agent-session", action},
 	}
 	if task.Prompt == "" {
 		task.Prompt = title
 	}
-	if err := s.daemon.Enqueue(task); err != nil {
+	stored, deduplicated, err := s.daemon.EnqueueTask(task)
+	if err != nil {
 		return "", err
 	}
-	sess.TaskIDs = append(sess.TaskIDs, id)
-	sess.ActiveTaskIDs = append(sess.ActiveTaskIDs, id)
+	id = stored.ID
+	if !deduplicated {
+		sess.NextTaskSeq = nextSeq
+	}
+	if !containsString(sess.TaskIDs, id) {
+		sess.TaskIDs = append(sess.TaskIDs, id)
+	}
+	if stored.State != StateDone && stored.State != StateFailed && stored.State != StateCancelled && !containsString(sess.ActiveTaskIDs, id) {
+		sess.ActiveTaskIDs = append(sess.ActiveTaskIDs, id)
+	}
 	sess.CurrentState = "running"
+	eventType := "task.enqueued"
+	if deduplicated {
+		eventType = "task.deduplicated"
+	}
 	if err := s.publishEventLocked(sess, AgentEvent{
-		Type:         "task.enqueued",
+		Type:         eventType,
 		TaskID:       id,
 		CurrentState: sess.CurrentState,
 		Message:      title,

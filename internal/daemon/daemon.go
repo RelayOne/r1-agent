@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/RelayOne/r1/internal/failure"
 	"github.com/RelayOne/r1/internal/provider"
 )
 
@@ -126,15 +127,58 @@ func (d *Daemon) WAL() *WAL { return d.wal }
 
 // Enqueue adds a task to the queue and writes an enqueue WAL event.
 func (d *Daemon) Enqueue(t *Task) error {
-	if err := d.queue.Enqueue(t); err != nil {
-		return err
+	_, _, err := d.EnqueueTask(t)
+	return err
+}
+
+// EnqueueTask persists a task, deduplicating by idempotency key when present.
+func (d *Daemon) EnqueueTask(t *Task) (*Task, bool, error) {
+	if t == nil {
+		return nil, false, errors.New("nil task")
+	}
+	prepareTaskForEnqueue(t)
+	stored, deduplicated, err := d.queue.EnqueueOrGet(t)
+	if err != nil {
+		return nil, false, err
+	}
+	if deduplicated {
+		_ = d.wal.Append(WALEvent{
+			Type:    "enqueue",
+			TaskID:  stored.ID,
+			Message: fmt.Sprintf("deduplicated enqueue for %q", stored.Title),
+			Evidence: map[string]string{
+				"idempotency_key": stored.IdempotencyKey,
+			},
+		})
+		return stored, true, nil
 	}
 	_ = d.wal.Append(WALEvent{
 		Type:    "enqueue",
-		TaskID:  t.ID,
-		Message: fmt.Sprintf("enqueued %q (estimate=%d)", t.Title, t.EstimateBytes),
+		TaskID:  stored.ID,
+		Message: fmt.Sprintf("enqueued %q (estimate=%d)", stored.Title, stored.EstimateBytes),
+		Evidence: map[string]string{
+			"idempotency_key": stored.IdempotencyKey,
+		},
 	})
-	return nil
+	return stored, false, nil
+}
+
+func prepareTaskForEnqueue(t *Task) {
+	if t.Runner == "" {
+		t.Runner = "hybrid"
+	}
+	if t.MaxAttempts <= 0 {
+		t.MaxAttempts = 3
+	}
+	if t.IdempotencyKey == "" {
+		namespace := "daemon"
+		action := t.Title
+		if t.Meta != nil && t.Meta["agent_session_id"] != "" {
+			namespace = t.Meta["agent_session_id"]
+			action = t.Meta["agent_action"]
+		}
+		t.IdempotencyKey = failure.DeriveIdempotencyKey(namespace, action, t.Prompt, t.Repo, t.Runner, t.Meta)
+	}
 }
 
 // Resize changes worker pool size at runtime.
@@ -155,8 +199,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 	ctx, d.cancel = context.WithCancel(ctx)
 
 	// Resume any tasks left in StateRunning from a prior run.
+	checkpoints := d.recoverFromWAL()
 	if n, err := d.queue.ResumeRunning(); err == nil && n > 0 {
 		_ = d.wal.Append(WALEvent{Type: "resume", Message: fmt.Sprintf("requeued %d in-flight task(s) from prior run", n)})
+	}
+	if len(checkpoints) > 0 {
+		_ = d.queue.ApplyRecoveryCheckpoints(checkpoints)
+		_ = d.wal.Append(WALEvent{Type: "recovery", Message: fmt.Sprintf("restored %d WAL checkpoint(s)", len(checkpoints))})
 	}
 
 	d.pool = NewWorkerPool(ctx, d.queue, d.wal, d.exec, time.Duration(d.cfg.PollGap)*time.Millisecond, d.onTaskLifecycle)
@@ -250,12 +299,17 @@ func (d *Daemon) handleEnqueue(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "title and prompt required", http.StatusBadRequest)
 		return
 	}
-	if err := d.Enqueue(&t); err != nil {
+	stored, deduplicated, err := d.EnqueueTask(&t)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, t)
+	if deduplicated {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+	writeJSON(w, stored)
 }
 
 func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -427,4 +481,33 @@ func (d *Daemon) onTaskLifecycle(ev TaskLifecycleEvent) {
 		return
 	}
 	d.agentSessions.RecordTaskLifecycle(ev)
+}
+
+func (d *Daemon) recoverFromWAL() map[string]string {
+	if d.wal == nil {
+		return nil
+	}
+	events, err := d.wal.ReadAll()
+	if err != nil {
+		return nil
+	}
+	recoveryEvents := make([]failure.RecoveryEvent, 0, len(events))
+	for _, ev := range events {
+		recoveryEvents = append(recoveryEvents, failure.RecoveryEvent{
+			TS:       ev.TS,
+			Type:     ev.Type,
+			TaskID:   ev.TaskID,
+			WorkerID: ev.WorkerID,
+			Message:  ev.Message,
+			Evidence: ev.Evidence,
+		})
+	}
+	checkpoints := failure.DetectPartialState(recoveryEvents)
+	out := make(map[string]string, len(checkpoints))
+	for id, cp := range checkpoints {
+		if cp.ResumeFrom != "" {
+			out[id] = cp.ResumeFrom
+		}
+	}
+	return out
 }

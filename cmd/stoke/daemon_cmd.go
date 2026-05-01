@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/RelayOne/r1/internal/daemon"
 )
@@ -51,7 +53,7 @@ func daemonCmd(args []string) {
 }
 
 func daemonUsage() {
-	fmt.Println(`stoke daemon — R1 long-running queue + WAL + workers
+	fmt.Print(`stoke daemon — R1 long-running queue + WAL + workers
 
 USAGE:
   stoke daemon start [flags]            Start the daemon (default if no subcmd)
@@ -69,7 +71,7 @@ START FLAGS:
   --max-parallel <n>      Initial worker count (default 10)
   --state-dir <path>      State dir for queue/wal/proofs (default ~/.stoke)
   --poll-gap <ms>         Worker poll interval ms (default 250)
-  --executor <name>       Executor: noop (default; safe smoke run)
+  --executor <name>       Executor: noop|codex|claude-code|bash (default noop)
 
 CLIENT FLAGS (apply to enqueue/status/workers/pause/resume/wal/tasks):
   --addr <host:port>      Daemon URL host:port (default 127.0.0.1:9090)
@@ -96,12 +98,9 @@ func daemonStartCmd(args []string) {
 		*stateDir = filepath.Join(home, ".stoke")
 	}
 
-	var exec daemon.Executor
-	switch *executor {
-	case "noop":
-		exec = daemon.NoopExecutor{OutBase: filepath.Join(*stateDir, "proofs")}
-	default:
-		fmt.Fprintf(os.Stderr, "unknown executor %q (only 'noop' supported in this build)\n", *executor)
+	exec, err := loadDaemonExecutor(*executor, *stateDir, time.Duration(*pollGap)*time.Millisecond)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 
@@ -133,6 +132,56 @@ func daemonStartCmd(args []string) {
 	<-sig
 	fmt.Println("\nshutting down...")
 	d.Stop()
+}
+
+func loadDaemonExecutor(name, stateDir string, pollGap time.Duration) (daemon.Executor, error) {
+	switch strings.TrimSpace(name) {
+	case "", "noop":
+		return daemon.NoopExecutor{OutBase: filepath.Join(stateDir, "proofs")}, nil
+	case "codex":
+		jobsDir := os.Getenv("STOKE_CODEXJOB_JOBS_DIR")
+		if strings.TrimSpace(jobsDir) == "" {
+			jobsDir = filepath.Join(stateDir, "codex-jobs")
+		}
+		return daemon.NewCodexExecutor(daemon.CodexExecutorConfig{
+			Binary:         os.Getenv("STOKE_CODEXJOB_BIN"),
+			JobsDir:        jobsDir,
+			DefaultEffort:  os.Getenv("STOKE_CODEXJOB_EFFORT"),
+			PollInterval:   maxDuration(pollGap, 100*time.Millisecond),
+			StartTimeout:   15 * time.Second,
+			DefaultTimeout: time.Hour,
+		}), nil
+	case "claude-code":
+		return daemon.NewClaudeCodeExecutor(daemon.ClaudeCodeExecutorConfig{
+			Binary:         firstNonEmpty(os.Getenv("STOKE_CLAUDE_BIN"), "claude"),
+			OutBase:        filepath.Join(stateDir, "proofs", "claude-code"),
+			DefaultTimeout: 20 * time.Minute,
+		}), nil
+	case "bash":
+		return daemon.NewBashExecutor(daemon.BashExecutorConfig{
+			Shell:          firstNonEmpty(os.Getenv("STOKE_BASH_SHELL"), "/bin/bash"),
+			OutBase:        filepath.Join(stateDir, "proofs", "bash"),
+			DefaultTimeout: 10 * time.Minute,
+		}), nil
+	default:
+		return nil, fmt.Errorf("unknown executor %q (supported: noop, codex, claude-code, bash)", name)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // ---- client subcommands (use HTTP to talk to a running daemon) ----

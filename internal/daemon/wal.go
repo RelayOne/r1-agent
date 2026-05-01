@@ -18,7 +18,7 @@ import (
 // (NewIntent / NewDone / NewBlocked) to ensure a consistent shape.
 type WALEvent struct {
 	TS       time.Time         `json:"ts"`
-	Type     string            `json:"type"` // intent | done | blocked | enqueue | start | complete | fail | hook_install | parallelism_change | pause | resume
+	Type     string            `json:"type"` // intent | done | blocked | enqueue | start | retry | complete | fail | hook_install | parallelism_change | pause | resume | recovery
 	TaskID   string            `json:"task_id,omitempty"`
 	WorkerID string            `json:"worker_id,omitempty"`
 	Message  string            `json:"message,omitempty"`
@@ -89,9 +89,18 @@ func (w *WAL) Close() error {
 // Tail returns up to n most recent events, newest last.
 // Reading is lock-free with respect to writes — we open a fresh read handle.
 func (w *WAL) Tail(n int) ([]WALEvent, error) {
-	if n <= 0 {
-		n = 100
+	all, err := w.ReadAll()
+	if err != nil {
+		return nil, err
 	}
+	if n <= 0 || len(all) <= n {
+		return all, nil
+	}
+	return all[len(all)-n:], nil
+}
+
+// ReadAll returns every valid WAL event in append order.
+func (w *WAL) ReadAll() ([]WALEvent, error) {
 	f, err := os.Open(w.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -120,10 +129,7 @@ func (w *WAL) Tail(n int) ([]WALEvent, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	if len(all) <= n {
-		return all, nil
-	}
-	return all[len(all)-n:], nil
+	return all, nil
 }
 
 // NewIntent constructs a "INTENT" event — recorded BEFORE an action.
