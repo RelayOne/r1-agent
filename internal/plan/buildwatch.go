@@ -38,8 +38,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/RelayOne/r1/internal/procutil"
 )
 
 // Watcher-specific ExecutorKind constants. These identify the
@@ -395,7 +396,7 @@ func (w *BuildWatcher) runOnce(ctx context.Context) error {
 
 	cmd := exec.CommandContext(ctx, spec.program, spec.args...) // #nosec G204 -- language toolchain binary invoked with Stoke-generated args.
 	cmd.Dir = w.repoRoot
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -773,12 +774,10 @@ func killWatcherProcessGroup(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
+	if err := procutil.Terminate(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		return
 	}
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	done := make(chan struct{})
 	go func() {
 		_, _ = cmd.Process.Wait()
@@ -789,5 +788,5 @@ func killWatcherProcessGroup(cmd *exec.Cmd) {
 		return
 	case <-time.After(3 * time.Second):
 	}
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = procutil.Kill(cmd)
 }

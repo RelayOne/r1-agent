@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/RelayOne/r1/internal/procutil"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpproto "github.com/mark3labs/mcp-go/mcp"
@@ -115,7 +116,7 @@ func (s *StdioTransport) Initialize(ctx context.Context) error {
 		// arg when cmdFunc is absent; we replicate that here because
 		// we're overriding the default cmd construction.
 		cmd.Env = append(os.Environ(), env...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		procutil.ConfigureProcessGroup(cmd)
 
 		s.cmdMu.Lock()
 		s.cmd = cmd
@@ -147,7 +148,7 @@ func (s *StdioTransport) Initialize(ctx context.Context) error {
 		// Spawn failed: nothing to clean up on the mcp-go side yet,
 		// but the cmdFunc may have captured a zombie. Signal the
 		// group so we don't leak. Safe no-op when cmd is nil.
-		s.killGroup(syscall.SIGKILL)
+		s.killGroup(true)
 		return fmt.Errorf("mcp stdio: start transport for %q: %w", s.cfg.Name, err)
 	}
 
@@ -166,7 +167,7 @@ func (s *StdioTransport) Initialize(ctx context.Context) error {
 		// it down, ignore any secondary error from the tear-down
 		// since the primary failure is the one the caller needs.
 		_ = c.Close()
-		s.killGroup(syscall.SIGKILL)
+		s.killGroup(true)
 		return fmt.Errorf("mcp stdio: initialize %q: %w", s.cfg.Name, err)
 	}
 
@@ -270,7 +271,7 @@ func (s *StdioTransport) doClose() error {
 		// Prefer addressing the process *group* so forked grandchildren
 		// die with their parent. Fall back to Signal on the single
 		// process if Getpgid fails (shouldn't happen with Setpgid).
-		if err := killGroup(cmd, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := killGroup(cmd, false); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			// Non-fatal: record but keep tearing down.
 			waitErr = err
 		}
@@ -290,7 +291,7 @@ func (s *StdioTransport) doClose() error {
 
 		// If still alive, escalate to SIGKILL on the group.
 		if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {
-			_ = killGroup(cmd, syscall.SIGKILL)
+			_ = killGroup(cmd, true)
 		}
 	}
 
@@ -320,26 +321,23 @@ func (s *StdioTransport) doClose() error {
 // reaped) it falls back to signaling the single pid so the caller
 // gets consistent semantics. errors.Is(err, os.ErrProcessDone) is
 // the normal shape returned when the kernel already reaped.
-func killGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+func killGroup(cmd *exec.Cmd, force bool) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		// Process likely already gone; signal the pid directly as a
-		// best-effort and let the caller treat ProcessDone as success.
-		return cmd.Process.Signal(sig)
+	if force {
+		return procutil.Kill(cmd)
 	}
-	return syscall.Kill(-pgid, sig)
+	return procutil.Terminate(cmd)
 }
 
 // killGroup wrapper used in error paths where we don't care about the
 // return value but want the group-level behavior.
-func (s *StdioTransport) killGroup(sig syscall.Signal) {
+func (s *StdioTransport) killGroup(force bool) {
 	s.cmdMu.Lock()
 	cmd := s.cmd
 	s.cmdMu.Unlock()
-	_ = killGroup(cmd, sig)
+	_ = killGroup(cmd, force)
 }
 
 // marshalInputSchema re-serializes an mcp-go Tool's input schema to

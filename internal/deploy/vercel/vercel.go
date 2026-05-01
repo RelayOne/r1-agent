@@ -42,10 +42,10 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/deploy"
+	"github.com/RelayOne/r1/internal/procutil"
 )
 
 // vercelBinEnv names the env override operators and tests use to point
@@ -316,7 +316,7 @@ func runVercel(ctx context.Context, cfg deploy.DeployConfig, args ...string) (st
 
 	// Setpgid gives the child its own process group so the runner
 	// can kill the whole tree (the CLI may spawn helper processes).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout

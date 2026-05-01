@@ -10,10 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/costtrack"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/stream"
 )
 
@@ -73,7 +73,7 @@ func (r *CodexRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFunc
 		cmd.Dir = prepared.Dir
 		cmd.Env = prepared.Env
 	}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

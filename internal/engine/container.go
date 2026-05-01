@@ -4,7 +4,8 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"syscall"
+
+	"github.com/RelayOne/r1/internal/procutil"
 )
 
 // containerNetworkMode returns the docker --network flag value for
@@ -73,6 +74,6 @@ func wrapInDocker(ctx context.Context, prepared PreparedCommand, spec RunSpec) *
 	args = append(args, prepared.Args...)
 
 	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- CLI runner launches vetted provider binary with Stoke-generated args.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	return cmd
 }

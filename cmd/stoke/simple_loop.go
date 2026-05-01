@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/perflog"
 	"github.com/RelayOne/r1/internal/plan"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1env"
 )
 
@@ -267,15 +267,13 @@ func killChildProcessGroup(cmd *exec.Cmd, gracePeriod time.Duration) bool {
 	if cmd == nil || cmd.Process == nil {
 		return false
 	}
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
+	if err := procutil.Terminate(cmd); err != nil {
 		// Fall back to direct kill; Setpgid might have failed.
 		_ = cmd.Process.Kill()
 		return false
 	}
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	time.Sleep(gracePeriod)
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	_ = procutil.Kill(cmd)
 	return true
 }
 
@@ -1699,7 +1697,7 @@ func claudeCall(bin, dir, prompt string) string {
 	// `kill -PGID` when stdout goes silent. Without this, a SIGKILL
 	// to the parent can leave orphans that keep writing to the log
 	// and confuse the outer loop's mtime-based watchdog.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	var out bytes.Buffer
 	// pipeWatcher wraps the buffer so every byte that arrives on
 	// CC's stdout updates the lastActivity timestamp. The silence

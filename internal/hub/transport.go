@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/RelayOne/r1/internal/procutil"
 )
 
 // scriptInput is the JSON payload sent to script hooks via stdin.
@@ -56,10 +57,10 @@ func (b *Bus) invokeScript(ctx context.Context, sub *Subscriber, ev *Event) *Hoo
 
 	// Run via shell to support pipes, quoting, etc.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cfg.Command) // #nosec G204 -- binary name is hardcoded; args come from Stoke-internal orchestration, not external input.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		// Kill entire process group on timeout
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		return procutil.Kill(cmd)
 	}
 
 	// Pipe event as JSON to stdin

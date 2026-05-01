@@ -51,12 +51,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/deploy"
 	"github.com/RelayOne/r1/internal/logging"
+	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1env"
 )
 
@@ -256,7 +256,7 @@ func (*cloudflareDeployer) Deploy(ctx context.Context, cfg deploy.DeployConfig) 
 	cmd.Dir = cfg.Dir
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	cmd.Env = buildChildEnv(cfg, ndjsonPath)
 
 	runErr := cmd.Run()
@@ -366,7 +366,7 @@ func (*cloudflareDeployer) Rollback(ctx context.Context, cfg deploy.DeployConfig
 
 	cmd := exec.CommandContext(ctx, wranglerBin, args...) // #nosec G204 -- deploy tool binary invoked with Stoke-generated args.
 	cmd.Dir = cfg.Dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.ConfigureProcessGroup(cmd)
 	cmd.Env = buildChildEnv(cfg, "") // no NDJSON tail for rollback
 
 	var stdout, stderr strings.Builder
