@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -30,7 +31,42 @@ type ExecutionResult struct {
 //
 // Implementations MUST be safe to call from multiple goroutines.
 type Executor interface {
+	Type() string
+	Capabilities() []string
 	Execute(ctx context.Context, t *Task) ExecutionResult
+}
+
+// NormalizeRunner canonicalizes task runner names into the daemon's routing vocabulary.
+func NormalizeRunner(runner string) string {
+	runner = strings.ToLower(strings.TrimSpace(runner))
+	switch runner {
+	case "", "hybrid":
+		return "hybrid"
+	case "claude":
+		return "claude-code"
+	case "native", "shell":
+		return "bash"
+	default:
+		return runner
+	}
+}
+
+// SupportsRunner reports whether exec can satisfy the requested runner.
+func SupportsRunner(exec Executor, runner string) bool {
+	if exec == nil {
+		return false
+	}
+	normalized := NormalizeRunner(runner)
+	if normalized == "hybrid" {
+		return true
+	}
+	for _, capability := range exec.Capabilities() {
+		capability = NormalizeRunner(capability)
+		if capability == "*" || capability == normalized {
+			return true
+		}
+	}
+	return false
 }
 
 // ProofRecord is one entry in proofs.json: a single claim and its evidence.
@@ -78,6 +114,10 @@ func WriteProofs(outDir, taskID string, records []ProofRecord) (string, error) {
 type NoopExecutor struct {
 	OutBase string // base dir for proof output; tasks land under <OutBase>/<task-id>/
 }
+
+func (n NoopExecutor) Type() string { return "noop" }
+
+func (n NoopExecutor) Capabilities() []string { return []string{"*"} }
 
 func (n NoopExecutor) Execute(ctx context.Context, t *Task) ExecutionResult {
 	out := filepath.Join(n.OutBase, t.ID)
