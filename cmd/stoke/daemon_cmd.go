@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/daemon"
-	"github.com/RelayOne/r1/internal/rules"
 )
 
 func daemonCmd(args []string) {
@@ -103,12 +102,6 @@ func daemonStartCmd(args []string) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
-	}
-	exec = daemon.GuardedExecutor{
-		Base: exec,
-		Checker: daemon.RulesToolChecker{
-			Registry: rules.NewFSRegistry(*stateDir, nil),
-		},
 	}
 
 	d, err := daemon.New(daemon.Config{
