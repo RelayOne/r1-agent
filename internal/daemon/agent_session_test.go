@@ -80,9 +80,7 @@ func newAgentDaemon(t *testing.T, exec Executor, prov provider.Provider, workers
 	if err := d.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if workers > 0 {
-		d.Resize(workers)
-	}
+	d.Resize(workers)
 	ts := httptest.NewServer(d.Handler())
 	t.Cleanup(func() {
 		ts.Close()
