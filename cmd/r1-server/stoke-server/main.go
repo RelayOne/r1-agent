@@ -57,10 +57,10 @@ func main() {
 	if err != nil {
 		// Singleton behavior: silently exit if another server is bound.
 		if isAddrInUse(err) {
-			fmt.Fprintf(os.Stderr, "stoke-server: another instance already bound to %s — exiting silently\n", addr)
+			fmt.Fprintf(os.Stderr, "r1-server: another instance already bound to %s — exiting silently\n", addr)
 			os.Exit(0)
 		}
-		fmt.Fprintf(os.Stderr, "stoke-server: listen %s: %v\n", addr, err)
+		fmt.Fprintf(os.Stderr, "r1-server: listen %s: %v\n", addr, err)
 		os.Exit(2)
 	}
 
@@ -81,10 +81,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	fmt.Printf("stoke-server listening on %s (instances dir: %s)\n", addr, runtrack.InstancesDir())
+	fmt.Printf("r1-server listening on %s (instances dir: %s)\n", addr, runtrack.InstancesDir())
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(os.Stderr, "stoke-server: serve: %v\n", err)
+			fmt.Fprintf(os.Stderr, "r1-server: serve: %v\n", err)
 		}
 	}()
 

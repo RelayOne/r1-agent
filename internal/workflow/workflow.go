@@ -295,7 +295,7 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 		}
 		handle = worktree.Handle{
 			Name:       name,
-			Branch:     "stoke/" + name,
+			Branch:     "r1/" + name,
 			Path:       r1dir.JoinFor(e.RepoRoot, "worktrees", name),
 			RuntimeDir: runtimeDir,
 		}

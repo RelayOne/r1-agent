@@ -210,7 +210,7 @@ mcp_servers:
     command: ./bin/linear-mcp
     timeout: 20s
 `
-	path := filepath.Join(dir, "stoke.policy.yaml")
+	path := filepath.Join(dir, "r1.policy.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ mcp_servers:
     transport: stdio
     command: ./x
 `
-	path := filepath.Join(dir, "stoke.policy.yaml")
+	path := filepath.Join(dir, "r1.policy.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}

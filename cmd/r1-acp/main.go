@@ -122,7 +122,7 @@ func main() {
 	}
 	// Log to stderr per ACP convention; stdout reserved for RPC.
 	if err := srv.serve(os.Stdin); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-acp:", err)
+		fmt.Fprintln(os.Stderr, "r1-acp:", err)
 		os.Exit(1)
 	}
 }
@@ -223,7 +223,7 @@ func (s *Server) handleInitialize(req jsonRPCRequest) {
 			},
 		},
 		"serverInfo": map[string]any{
-			"name":             "stoke-acp",
+			"name":             "r1-acp",
 			"version":          version,
 			"_stoke.dev/phase": "1",
 			"_stoke.dev/note":  "Phase 1 transport + session lifecycle. session/prompt currently echoes; Phase 2 delegates to Stoke's mission runner.",
@@ -420,7 +420,7 @@ func (s *Server) write(resp jsonRPCResponse) {
 	enc := json.NewEncoder(s.out)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(resp); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-acp: write response:", err)
+		fmt.Fprintln(os.Stderr, "r1-acp: write response:", err)
 	}
 }
 
@@ -432,6 +432,6 @@ func (s *Server) writeRaw(obj any) {
 	enc := json.NewEncoder(s.out)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(obj); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-acp: write notification:", err)
+		fmt.Fprintln(os.Stderr, "r1-acp: write notification:", err)
 	}
 }

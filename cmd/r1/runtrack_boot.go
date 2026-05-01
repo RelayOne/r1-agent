@@ -67,12 +67,12 @@ func serverAlive(port int) bool {
 //  3. Hard-coded /home/eric/repos/r1-agent/stoke-server for dev
 func findStokeServer() string {
 	if exe, err := os.Executable(); err == nil {
-		cand := filepath.Join(filepath.Dir(exe), "stoke-server")
+		cand := filepath.Join(filepath.Dir(exe), "r1-server")
 		if _, err := os.Stat(cand); err == nil {
 			return cand
 		}
 	}
-	if p, err := exec.LookPath("stoke-server"); err == nil {
+	if p, err := exec.LookPath("r1-server"); err == nil {
 		return p
 	}
 	cand := "/home/eric/repos/r1-agent/stoke-server"

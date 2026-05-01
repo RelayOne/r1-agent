@@ -55,7 +55,7 @@ func run() error {
 	)
 	flag.Parse()
 	if *showVer {
-		fmt.Println("stoke-gateway", version)
+		fmt.Println("r1-gateway", version)
 		return nil
 	}
 
@@ -100,7 +100,7 @@ func run() error {
 
 	httpSrv := &http.Server{Addr: *httpAddr, Handler: mux}
 	go func() {
-		log.Printf("stoke-gateway %s listening on %s (platforms: %v)",
+		log.Printf("r1-gateway %s listening on %s (platforms: %v)",
 			version, *httpAddr, router.Registered())
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("http: %v", err)

@@ -159,7 +159,7 @@ func (w *Wizard) Run() error {
 
 	// Phase 3: Generate config
 	yaml := w.GenerateYAML()
-	outPath := filepath.Join(w.ProjectDir, "stoke.policy.yaml")
+	outPath := filepath.Join(w.ProjectDir, "r1.policy.yaml")
 
 	// Check for existing config
 	if _, err := os.Stat(outPath); err == nil {
@@ -193,7 +193,7 @@ func (w *Wizard) RunAutoDetect() error {
 	w.applyDefaults()
 
 	yaml := w.GenerateYAML()
-	outPath := filepath.Join(w.ProjectDir, "stoke.policy.yaml")
+	outPath := filepath.Join(w.ProjectDir, "r1.policy.yaml")
 	if err := os.WriteFile(outPath, []byte(yaml), 0644); err != nil { // #nosec G306 -- wizard-generated config consumed by user tooling; 0644 is appropriate.
 		return fmt.Errorf("write config: %w", err)
 	}

@@ -51,7 +51,7 @@ func readFirstLine(b []byte) ([]byte, []byte) {
 func newTestServer() *Server {
 	t := testBackendsTempDir
 	if t == "" {
-		dir, err := os.MkdirTemp("", "stoke-mcp-test-")
+		dir, err := os.MkdirTemp("", "r1-mcp-test-")
 		if err != nil {
 			panic("newTestServer: MkdirTemp: " + err.Error())
 		}

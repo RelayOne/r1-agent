@@ -317,7 +317,7 @@ func TestApiKeyHelperIsJSONNull(t *testing.T) {
 // ===========================================================================
 
 func TestProtectedFileRejection(t *testing.T) {
-	protected := []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"}
+	protected := []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "r1.policy.yaml"}
 
 	tests := []struct {
 		file string
@@ -329,7 +329,7 @@ func TestProtectedFileRejection(t *testing.T) {
 		{".env", true},
 		{".env.local", true},
 		{".env.production", true},
-		{"stoke.policy.yaml", true},
+		{"r1.policy.yaml", true},
 		{"src/auth.ts", false},
 		{"README.md", false},
 		{"package.json", false},

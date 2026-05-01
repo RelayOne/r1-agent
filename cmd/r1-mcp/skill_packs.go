@@ -34,7 +34,7 @@ func (b *Backends) SeedPackRegistries(repoRoot string) (int, int, error) {
 // deterministic invocation keeps working after registration.
 func (b *Backends) SeedSkillPackRoots(packRoots []string) (int, int, error) {
 	if b == nil || b.ManifestRegistry == nil {
-		return 0, 0, fmt.Errorf("stoke-mcp: manifest registry not initialized")
+		return 0, 0, fmt.Errorf("r1-mcp: manifest registry not initialized")
 	}
 	if len(packRoots) == 0 {
 		return 0, 0, nil

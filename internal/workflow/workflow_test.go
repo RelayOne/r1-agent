@@ -248,7 +248,7 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 	if out, err := exec.Command("git", "-C", path, "rev-parse", "HEAD").Output(); err == nil {
 		baseCommit = strings.TrimSpace(string(out))
 	}
-	return worktree.Handle{Name: explicitName, Branch: "stoke/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: baseCommit, RepoRoot: s.repo, GitBinary: "git"}, nil
+	return worktree.Handle{Name: explicitName, Branch: "r1/" + explicitName, Path: path, RuntimeDir: runtimeDir, BaseCommit: baseCommit, RepoRoot: s.repo, GitBinary: "git"}, nil
 }
 
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }

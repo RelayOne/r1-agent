@@ -68,7 +68,7 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	if name == "" {
 		name = "task"
 	}
-	branch := "stoke/" + name
+	branch := "r1/" + name
 	path := filepath.Join(m.WorktreeBase, name)
 
 	// RuntimeDir is OUTSIDE the worktree. The agent cannot influence harness

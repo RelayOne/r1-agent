@@ -144,7 +144,7 @@ func TestAutoLoadPolicyExplicitOverrides(t *testing.T) {
 
 func TestLoadPolicyYAML(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "stoke.policy.yaml")
+	path := filepath.Join(dir, "r1.policy.yaml")
 	if err := os.WriteFile(path, []byte(DefaultPolicyYAML()), 0o600); err != nil {
 		t.Fatal(err)
 	}
