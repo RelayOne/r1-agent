@@ -49,26 +49,33 @@ const (
 // Hooks (queue/start/done/fail) are local to a single task; the daemon
 // itself maintains a separate global hook list managed via /hooks/install.
 type Task struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Prompt        string            `json:"prompt"`
-	Repo          string            `json:"repo,omitempty"`
-	Runner        string            `json:"runner,omitempty"`         // claude | codex | hybrid | native (default: hybrid)
-	EstimateBytes int64             `json:"estimate_bytes,omitempty"` // 0 = no delta check
-	ActualBytes   int64             `json:"actual_bytes"`
-	DeltaPct      *int              `json:"delta_pct,omitempty"`
-	Underdelivered bool             `json:"underdelivered"`
-	Priority      int               `json:"priority"` // higher = sooner
-	State         TaskState         `json:"state"`
-	EnqueuedAt    time.Time         `json:"enqueued_at"`
-	StartedAt     *time.Time        `json:"started_at,omitempty"`
-	FinishedAt    *time.Time        `json:"finished_at,omitempty"`
-	WorkerID      string            `json:"worker_id,omitempty"`
-	MissionID     string            `json:"mission_id,omitempty"`
-	Error         string            `json:"error,omitempty"`
-	ProofsPath    string            `json:"proofs_path,omitempty"`
-	Tags          []string          `json:"tags,omitempty"`
-	Meta          map[string]string `json:"meta,omitempty"`
+	ID               string            `json:"id"`
+	IdempotencyKey   string            `json:"idempotency_key,omitempty"`
+	Title            string            `json:"title"`
+	Prompt           string            `json:"prompt"`
+	Repo             string            `json:"repo,omitempty"`
+	Runner           string            `json:"runner,omitempty"`         // claude | codex | hybrid | native (default: hybrid)
+	EstimateBytes    int64             `json:"estimate_bytes,omitempty"` // 0 = no delta check
+	ActualBytes      int64             `json:"actual_bytes"`
+	DeltaPct         *int              `json:"delta_pct,omitempty"`
+	Underdelivered   bool              `json:"underdelivered"`
+	Priority         int               `json:"priority"` // higher = sooner
+	State            TaskState         `json:"state"`
+	Attempts         int               `json:"attempts"`
+	MaxAttempts      int               `json:"max_attempts,omitempty"`
+	LastAttemptAt    *time.Time        `json:"last_attempt_at,omitempty"`
+	NextRetryAt      *time.Time        `json:"next_retry_at,omitempty"`
+	LastErrorClass   string            `json:"last_error_class,omitempty"`
+	ResumeCheckpoint string            `json:"resume_checkpoint,omitempty"`
+	EnqueuedAt       time.Time         `json:"enqueued_at"`
+	StartedAt        *time.Time        `json:"started_at,omitempty"`
+	FinishedAt       *time.Time        `json:"finished_at,omitempty"`
+	WorkerID         string            `json:"worker_id,omitempty"`
+	MissionID        string            `json:"mission_id,omitempty"`
+	Error            string            `json:"error,omitempty"`
+	ProofsPath       string            `json:"proofs_path,omitempty"`
+	Tags             []string          `json:"tags,omitempty"`
+	Meta             map[string]string `json:"meta,omitempty"`
 }
 
 // Queue is a persistent FIFO+priority queue. Mutations are serialized through
@@ -113,27 +120,47 @@ func NewQueue(path string) (*Queue, error) {
 var ErrDuplicateID = errors.New("task id already in queue")
 
 func (q *Queue) Enqueue(t *Task) error {
+	_, _, err := q.EnqueueOrGet(t)
+	return err
+}
+
+// EnqueueOrGet adds a task unless an existing task already owns the same
+// idempotency key. Returns the stored task and whether the request deduplicated.
+func (q *Queue) EnqueueOrGet(t *Task) (*Task, bool, error) {
 	if t == nil {
-		return errors.New("nil task")
+		return nil, false, errors.New("nil task")
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if t.ID == "" {
 		t.ID = fmt.Sprintf("t-%d", time.Now().UnixNano())
 	}
+	if t.IdempotencyKey != "" {
+		if existing := q.findByIdempotencyKeyLocked(t.IdempotencyKey); existing != nil {
+			cp := *existing
+			return &cp, true, nil
+		}
+	}
 	for _, existing := range q.tasks {
 		if existing.ID == t.ID {
-			return ErrDuplicateID
+			return nil, false, ErrDuplicateID
 		}
 	}
 	if t.State == "" {
 		t.State = StateQueued
 	}
+	if t.MaxAttempts <= 0 {
+		t.MaxAttempts = 3
+	}
 	if t.EnqueuedAt.IsZero() {
 		t.EnqueuedAt = time.Now().UTC()
 	}
 	q.tasks = append(q.tasks, t)
-	return q.flushLocked()
+	if err := q.flushLocked(); err != nil {
+		return nil, false, err
+	}
+	cp := *t
+	return &cp, false, nil
 }
 
 // Next returns the highest-priority queued task and marks it Running.
@@ -144,7 +171,7 @@ func (q *Queue) Next(workerID string) (*Task, error) {
 	// Sort a snapshot of indices so we don't disturb on-disk order.
 	queued := []int{}
 	for i, t := range q.tasks {
-		if t.State == StateQueued {
+		if t.State == StateQueued && !isWaitingForRetry(t, time.Now().UTC()) {
 			queued = append(queued, i)
 		}
 	}
@@ -161,7 +188,10 @@ func (q *Queue) Next(workerID string) (*Task, error) {
 	t := q.tasks[queued[0]]
 	t.State = StateRunning
 	now := time.Now().UTC()
+	t.Attempts++
+	t.LastAttemptAt = &now
 	t.StartedAt = &now
+	t.NextRetryAt = nil
 	t.WorkerID = workerID
 	if err := q.flushLocked(); err != nil {
 		return nil, err
@@ -206,7 +236,32 @@ func (q *Queue) Fail(id, errMsg string) error {
 	t.State = StateFailed
 	now := time.Now().UTC()
 	t.FinishedAt = &now
+	t.NextRetryAt = nil
 	t.Error = errMsg
+	return q.flushLocked()
+}
+
+// Retry requeues a running task for another attempt after a backoff delay.
+func (q *Queue) Retry(id, errMsg, errorClass, resumeCheckpoint string, nextRetry time.Time) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	t := q.findLocked(id)
+	if t == nil {
+		return fmt.Errorf("task %s not found", id)
+	}
+	t.State = StateQueued
+	t.WorkerID = ""
+	t.StartedAt = nil
+	t.FinishedAt = nil
+	t.Error = errMsg
+	t.LastErrorClass = errorClass
+	t.ResumeCheckpoint = resumeCheckpoint
+	if !nextRetry.IsZero() {
+		next := nextRetry.UTC()
+		t.NextRetryAt = &next
+	} else {
+		t.NextRetryAt = nil
+	}
 	return q.flushLocked()
 }
 
@@ -225,6 +280,7 @@ func (q *Queue) Cancel(id string) error {
 	t.State = StateCancelled
 	now := time.Now().UTC()
 	t.FinishedAt = &now
+	t.WorkerID = ""
 	return q.flushLocked()
 }
 
@@ -266,6 +322,20 @@ func (q *Queue) Counts() map[TaskState]int {
 	return out
 }
 
+// ReadyQueuedCount returns queued tasks whose retry window has elapsed.
+func (q *Queue) ReadyQueuedCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	now := time.Now().UTC()
+	count := 0
+	for _, t := range q.tasks {
+		if t.State == StateQueued && !isWaitingForRetry(t, now) {
+			count++
+		}
+	}
+	return count
+}
+
 // ResumeRunning reverts every task currently marked Running back to Queued.
 // Called once at daemon startup so a crashed-mid-task resumes cleanly.
 func (q *Queue) ResumeRunning() (int, error) {
@@ -286,9 +356,45 @@ func (q *Queue) ResumeRunning() (int, error) {
 	return n, q.flushLocked()
 }
 
+// ApplyRecoveryCheckpoints annotates queued tasks with restart checkpoints derived from the WAL.
+func (q *Queue) ApplyRecoveryCheckpoints(checkpoints map[string]string) error {
+	if len(checkpoints) == 0 {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	changed := 0
+	for id, checkpoint := range checkpoints {
+		t := q.findLocked(id)
+		if t == nil || checkpoint == "" {
+			continue
+		}
+		t.ResumeCheckpoint = checkpoint
+		if t.Meta == nil {
+			t.Meta = map[string]string{}
+		}
+		t.Meta["resume_checkpoint"] = checkpoint
+		t.Meta["recovered_from_wal"] = "true"
+		changed++
+	}
+	if changed == 0 {
+		return nil
+	}
+	return q.flushLocked()
+}
+
 func (q *Queue) findLocked(id string) *Task {
 	for _, t := range q.tasks {
 		if t.ID == id {
+			return t
+		}
+	}
+	return nil
+}
+
+func (q *Queue) findByIdempotencyKeyLocked(key string) *Task {
+	for _, t := range q.tasks {
+		if t.IdempotencyKey == key && t.State != StateFailed && t.State != StateCancelled {
 			return t
 		}
 	}
@@ -310,4 +416,8 @@ func (q *Queue) flushLocked() error {
 		return fmt.Errorf("rename queue: %w", err)
 	}
 	return nil
+}
+
+func isWaitingForRetry(t *Task, now time.Time) bool {
+	return t.NextRetryAt != nil && t.NextRetryAt.After(now)
 }
