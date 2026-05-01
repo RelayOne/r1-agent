@@ -9,6 +9,7 @@ steps:
       - -ceu
       - |
         go mod edit -dropreplace github.com/RelayOne/coderadar/sdks/go/coderadar
+        go mod download github.com/RelayOne/coderadar/sdks/go/coderadar
         mkdir -p dist
         for OS in linux darwin windows; do
           for ARCH in amd64 arm64; do
