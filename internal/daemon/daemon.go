@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/failure"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/rules"
 )
 
 // Config configures a Daemon.
@@ -64,6 +66,7 @@ type Daemon struct {
 	wal     *WAL
 	pool    *WorkerPool
 	exec    Executor
+	Rules   *rules.Registry
 	srv     *http.Server
 	mux     *http.ServeMux
 	cancel  context.CancelFunc
@@ -108,7 +111,14 @@ func New(cfg Config, exec Executor) (*Daemon, error) {
 	if exec == nil {
 		exec = NoopExecutor{OutBase: filepath.Join(cfg.StateDir, "proofs")}
 	}
-	d := &Daemon{cfg: cfg, queue: q, wal: w, exec: exec}
+	ruleRegistry := rules.NewFSRegistry(cfg.StateDir, nil)
+	d := &Daemon{
+		cfg:   cfg,
+		queue: q,
+		wal:   w,
+		exec:  WrapExecutorWithRules(exec, ruleRegistry),
+		Rules: ruleRegistry,
+	}
 	d.mux = http.NewServeMux()
 	d.agentSessions, err = NewAgentSessionStore(filepath.Join(cfg.StateDir, "agent-sessions.json"), d, cfg.ChatProvider, cfg.ChatModel)
 	if err != nil {
@@ -253,6 +263,8 @@ func (d *Daemon) registerRoutes() {
 	d.mux.HandleFunc("/health", d.handleHealth)
 	d.mux.HandleFunc("/enqueue", d.auth(d.handleEnqueue))
 	d.mux.HandleFunc("/status", d.auth(d.handleStatus))
+	d.mux.HandleFunc("/rules", d.auth(d.handleRules))
+	d.mux.HandleFunc("/rules/", d.auth(d.handleRuleByID))
 	d.mux.HandleFunc("/workers", d.auth(d.handleWorkers))
 	d.mux.HandleFunc("/pause", d.auth(d.handlePause))
 	d.mux.HandleFunc("/resume", d.auth(d.handleResume))
@@ -321,6 +333,100 @@ func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (d *Daemon) handleRules(w http.ResponseWriter, r *http.Request) {
+	if d.Rules == nil {
+		http.Error(w, "rules registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		list, err := d.Rules.List()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, list)
+	case http.MethodPost:
+		var body struct {
+			Text       string `json:"text"`
+			Scope      string `json:"scope"`
+			ToolFilter string `json:"tool_filter"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		rule, err := d.Rules.AddWithOptions(r.Context(), rules.AddRequest{
+			Text:       body.Text,
+			Scope:      body.Scope,
+			ToolFilter: body.ToolFilter,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		writeJSON(w, rule)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (d *Daemon) handleRuleByID(w http.ResponseWriter, r *http.Request) {
+	if d.Rules == nil {
+		http.Error(w, "rules registry unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/rules/"), "/")
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) > 2 {
+		http.NotFound(w, r)
+		return
+	}
+
+	id := parts[0]
+	action := ""
+	if len(parts) == 2 {
+		action = parts[1]
+	}
+
+	switch {
+	case r.Method == http.MethodGet && action == "":
+		rule, err := d.Rules.Get(id)
+		if err != nil {
+			writeRuleError(w, err)
+			return
+		}
+		writeJSON(w, rule)
+	case r.Method == http.MethodDelete && action == "":
+		if err := d.Rules.Delete(id); err != nil {
+			writeRuleError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && action == "pause":
+		if err := d.Rules.Pause(id); err != nil {
+			writeRuleError(w, err)
+			return
+		}
+		writeJSON(w, map[string]string{"id": id, "status": rules.StatusPaused})
+	case r.Method == http.MethodPost && action == "resume":
+		if err := d.Rules.Resume(id); err != nil {
+			writeRuleError(w, err)
+			return
+		}
+		writeJSON(w, map[string]string{"id": id, "status": rules.StatusActive})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func (d *Daemon) handleWorkers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -386,7 +492,14 @@ func (d *Daemon) handleTaskGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, t)
+	type taskGetResponse struct {
+		*Task
+		Status TaskState `json:"status"`
+	}
+	writeJSON(w, taskGetResponse{
+		Task:   t,
+		Status: t.State,
+	})
 }
 
 func (d *Daemon) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
@@ -474,6 +587,14 @@ func (d *Daemon) Hooks() []customHook {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeRuleError(w http.ResponseWriter, err error) {
+	if errors.Is(err, os.ErrNotExist) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 
 func (d *Daemon) onTaskLifecycle(ev TaskLifecycleEvent) {
