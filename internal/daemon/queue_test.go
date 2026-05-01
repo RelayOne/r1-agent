@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func tempQueue(t *testing.T) *Queue {
@@ -72,6 +73,27 @@ func TestDuplicateID(t *testing.T) {
 	}
 	if err := q.Enqueue(&Task{ID: "x"}); err != ErrDuplicateID {
 		t.Fatalf("expected ErrDuplicateID, got %v", err)
+	}
+}
+
+func TestIdempotencyKeyDeduplicatesLiveTask(t *testing.T) {
+	q := tempQueue(t)
+	first, dedup, err := q.EnqueueOrGet(&Task{ID: "x1", IdempotencyKey: "same", Title: "first"})
+	if err != nil || dedup {
+		t.Fatalf("first enqueue err=%v dedup=%v", err, dedup)
+	}
+	second, dedup, err := q.EnqueueOrGet(&Task{ID: "x2", IdempotencyKey: "same", Title: "second"})
+	if err != nil {
+		t.Fatalf("second enqueue err=%v", err)
+	}
+	if !dedup {
+		t.Fatalf("expected second enqueue to deduplicate")
+	}
+	if second.ID != first.ID {
+		t.Fatalf("dedup reused id %q want %q", second.ID, first.ID)
+	}
+	if got := len(q.List("")); got != 1 {
+		t.Fatalf("queue len = %d want 1", got)
 	}
 }
 
@@ -183,6 +205,53 @@ func TestResumeRunning(t *testing.T) {
 		if got := q2.Get(id); got.State != StateQueued || got.WorkerID != "" {
 			t.Fatalf("task %s not reset: %+v", id, got)
 		}
+	}
+}
+
+func TestRetryRequeuesTaskWithDelay(t *testing.T) {
+	q := tempQueue(t)
+	q.Enqueue(&Task{ID: "retry", MaxAttempts: 3})
+	task, err := q.Next("w")
+	if err != nil || task == nil {
+		t.Fatalf("Next err=%v task=%+v", err, task)
+	}
+	when := time.Now().UTC().Add(2 * time.Second)
+	if err := q.Retry("retry", "timed out", "transient_timeout", "write proofs", when); err != nil {
+		t.Fatalf("Retry: %v", err)
+	}
+	got := q.Get("retry")
+	if got.State != StateQueued {
+		t.Fatalf("state = %s want queued", got.State)
+	}
+	if got.NextRetryAt == nil || got.NextRetryAt.Before(when.Add(-time.Second)) {
+		t.Fatalf("next retry = %+v want around %s", got.NextRetryAt, when)
+	}
+	if got.ResumeCheckpoint != "write proofs" {
+		t.Fatalf("resume checkpoint = %q", got.ResumeCheckpoint)
+	}
+	if ready := q.ReadyQueuedCount(); ready != 0 {
+		t.Fatalf("ready queued count = %d want 0 before retry window", ready)
+	}
+}
+
+func TestIdempotencyKeyAllowsReenqueueAfterFailure(t *testing.T) {
+	q := tempQueue(t)
+	if _, _, err := q.EnqueueOrGet(&Task{ID: "once", IdempotencyKey: "same"}); err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	q.Next("w")
+	if err := q.Fail("once", "permanent"); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	again, dedup, err := q.EnqueueOrGet(&Task{ID: "twice", IdempotencyKey: "same"})
+	if err != nil {
+		t.Fatalf("second enqueue: %v", err)
+	}
+	if dedup {
+		t.Fatalf("failed task should not deduplicate future enqueue")
+	}
+	if again.ID != "twice" {
+		t.Fatalf("new task id = %q want twice", again.ID)
 	}
 }
 
