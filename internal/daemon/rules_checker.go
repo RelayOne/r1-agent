@@ -10,6 +10,22 @@ type RulesToolChecker struct {
 	Registry *rules.Registry
 }
 
+func WrapExecutorWithRules(base Executor, registry *rules.Registry) Executor {
+	switch guarded := base.(type) {
+	case GuardedExecutor:
+		guarded.Checker = RulesToolChecker{Registry: registry}
+		return guarded
+	case *GuardedExecutor:
+		guarded.Checker = RulesToolChecker{Registry: registry}
+		return guarded
+	default:
+		return GuardedExecutor{
+			Base:    base,
+			Checker: RulesToolChecker{Registry: registry},
+		}
+	}
+}
+
 func (c RulesToolChecker) CheckTool(ctx context.Context, req ToolCheckRequest) (ToolCheckResult, error) {
 	if c.Registry == nil {
 		return ToolCheckResult{Verdict: "PASS"}, nil

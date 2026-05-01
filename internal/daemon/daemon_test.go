@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/RelayOne/r1/internal/rules"
 )
 
 func newDaemonForTest(t *testing.T) (*Daemon, func()) {
@@ -222,6 +224,123 @@ func TestDaemonHTTPPauseResume(t *testing.T) {
 	}
 }
 
+func TestDaemonHTTPRulesCRUD(t *testing.T) {
+	d, cleanup := newDaemonForTest(t)
+	defer cleanup()
+	ts := httptest.NewServer(d.Handler())
+	defer ts.Close()
+
+	createResp, err := http.Post(ts.URL+"/rules", "application/json", strings.NewReader(`{
+		"text":"never call tool delete_branch with name matching ^prod$",
+		"scope":"global",
+		"tool_filter":"^delete_branch$"
+	}`))
+	if err != nil {
+		t.Fatalf("POST /rules: %v", err)
+	}
+	if createResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /rules status = %d, want %d", createResp.StatusCode, http.StatusOK)
+	}
+	var created rules.Rule
+	if err := json.NewDecoder(createResp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created rule: %v", err)
+	}
+	createResp.Body.Close()
+	if created.ID == "" {
+		t.Fatalf("created rule missing ID")
+	}
+	if created.Scope != rules.ScopeGlobal {
+		t.Fatalf("created scope = %q, want %q", created.Scope, rules.ScopeGlobal)
+	}
+	if created.ToolFilter != "^delete_branch$" {
+		t.Fatalf("created tool filter = %q, want %q", created.ToolFilter, "^delete_branch$")
+	}
+
+	listResp, err := http.Get(ts.URL + "/rules")
+	if err != nil {
+		t.Fatalf("GET /rules: %v", err)
+	}
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /rules status = %d, want %d", listResp.StatusCode, http.StatusOK)
+	}
+	var listed []rules.Rule
+	if err := json.NewDecoder(listResp.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode rules list: %v", err)
+	}
+	listResp.Body.Close()
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("listed rules = %+v, want created rule %q", listed, created.ID)
+	}
+
+	getResp, err := http.Get(ts.URL + "/rules/" + created.ID)
+	if err != nil {
+		t.Fatalf("GET /rules/:id: %v", err)
+	}
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /rules/:id status = %d, want %d", getResp.StatusCode, http.StatusOK)
+	}
+	var fetched rules.Rule
+	if err := json.NewDecoder(getResp.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode fetched rule: %v", err)
+	}
+	getResp.Body.Close()
+	if fetched.ID != created.ID {
+		t.Fatalf("fetched ID = %q, want %q", fetched.ID, created.ID)
+	}
+
+	pauseResp, err := http.Post(ts.URL+"/rules/"+created.ID+"/pause", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /rules/:id/pause: %v", err)
+	}
+	var paused map[string]string
+	if err := json.NewDecoder(pauseResp.Body).Decode(&paused); err != nil {
+		t.Fatalf("decode pause response: %v", err)
+	}
+	pauseResp.Body.Close()
+	if paused["status"] != rules.StatusPaused {
+		t.Fatalf("pause status = %q, want %q", paused["status"], rules.StatusPaused)
+	}
+
+	resumeResp, err := http.Post(ts.URL+"/rules/"+created.ID+"/resume", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /rules/:id/resume: %v", err)
+	}
+	var resumed map[string]string
+	if err := json.NewDecoder(resumeResp.Body).Decode(&resumed); err != nil {
+		t.Fatalf("decode resume response: %v", err)
+	}
+	resumeResp.Body.Close()
+	if resumed["status"] != rules.StatusActive {
+		t.Fatalf("resume status = %q, want %q", resumed["status"], rules.StatusActive)
+	}
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, ts.URL+"/rules/"+created.ID, nil)
+	if err != nil {
+		t.Fatalf("new DELETE /rules/:id request: %v", err)
+	}
+	deleteResp, err := http.DefaultClient.Do(deleteReq)
+	if err != nil {
+		t.Fatalf("DELETE /rules/:id: %v", err)
+	}
+	if deleteResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE /rules/:id status = %d, want %d", deleteResp.StatusCode, http.StatusNoContent)
+	}
+	deleteResp.Body.Close()
+
+	emptyResp, err := http.Get(ts.URL + "/rules")
+	if err != nil {
+		t.Fatalf("GET /rules after delete: %v", err)
+	}
+	var empty []rules.Rule
+	if err := json.NewDecoder(emptyResp.Body).Decode(&empty); err != nil {
+		t.Fatalf("decode empty rules list: %v", err)
+	}
+	emptyResp.Body.Close()
+	if len(empty) != 0 {
+		t.Fatalf("len(rules after delete) = %d, want 0", len(empty))
+	}
+}
+
 func TestDaemonHTTPHookInstallValidatesShellMeta(t *testing.T) {
 	d, cleanup := newDaemonForTest(t)
 	defer cleanup()
@@ -294,6 +413,81 @@ func TestDaemonHTTPAuth(t *testing.T) {
 		t.Errorf("/enqueue with token expected 201, got %d", r3.StatusCode)
 	}
 	r3.Body.Close()
+}
+
+func TestDaemonUsesSharedRulesRegistryForExecution(t *testing.T) {
+	dir := t.TempDir()
+	base := &stubExecutor{}
+	d, err := New(Config{StateDir: dir, Addr: "127.0.0.1:0", MaxParallel: 0, PollGap: 20}, base)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer d.Stop()
+
+	rule, err := d.Rules.AddWithOptions(context.Background(), rules.AddRequest{
+		Text: "never call tool delete_branch with name matching ^prod$",
+	})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := d.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	d.Resize(1)
+
+	if err := d.Enqueue(&Task{
+		ID:     "blocked-task",
+		Title:  "blocked",
+		Prompt: "blocked prompt",
+		Meta: map[string]string{
+			"tool_name": "delete_branch",
+			"tool_args": `{"name":"prod"}`,
+		},
+	}); err != nil {
+		t.Fatalf("enqueue blocked task: %v", err)
+	}
+	if err := pollUntilDone(d, []string{"blocked-task"}, 3*time.Second); err != nil {
+		t.Fatalf("poll blocked task: %v", err)
+	}
+	blocked := d.Queue().Get("blocked-task")
+	if blocked.State != StateFailed {
+		t.Fatalf("blocked task state = %s, want %s", blocked.State, StateFailed)
+	}
+	if !strings.Contains(blocked.Error, `user rule blocked tool "delete_branch"`) {
+		t.Fatalf("blocked task error = %q, want user rule block message", blocked.Error)
+	}
+	if base.calls != 0 {
+		t.Fatalf("base.calls after blocked task = %d, want 0", base.calls)
+	}
+
+	if err := d.Rules.Delete(rule.ID); err != nil {
+		t.Fatalf("Delete rule: %v", err)
+	}
+
+	if err := d.Enqueue(&Task{
+		ID:     "allowed-task",
+		Title:  "allowed",
+		Prompt: "allowed prompt",
+		Meta: map[string]string{
+			"tool_name": "delete_branch",
+			"tool_args": `{"name":"feature/foo"}`,
+		},
+	}); err != nil {
+		t.Fatalf("enqueue allowed task: %v", err)
+	}
+	if err := pollUntilDone(d, []string{"allowed-task"}, 3*time.Second); err != nil {
+		t.Fatalf("poll allowed task: %v", err)
+	}
+	allowed := d.Queue().Get("allowed-task")
+	if allowed.State != StateDone {
+		t.Fatalf("allowed task state = %s, want %s", allowed.State, StateDone)
+	}
+	if base.calls != 1 {
+		t.Fatalf("base.calls after allowed task = %d, want 1", base.calls)
+	}
 }
 
 func TestDaemonExecutorRecordsActualBytes(t *testing.T) {

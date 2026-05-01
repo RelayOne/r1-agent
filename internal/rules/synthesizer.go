@@ -85,6 +85,9 @@ func (HeuristicSynthesizer) Synthesize(_ context.Context, req SynthesisRequest) 
 }
 
 func inferStrategy(text string) string {
+	if extractMatchingRegex(text) != "" {
+		return StrategyArgumentValidate
+	}
 	lower := strings.ToLower(text)
 	switch {
 	case strings.Contains(lower, "matching"), strings.Contains(lower, "regex"), strings.Contains(lower, "starts with"), strings.Contains(lower, "ends with"):
@@ -140,6 +143,8 @@ func inferArgumentConstraints(text string) []ArgumentConstraint {
 func inferFieldName(text string) string {
 	lower := strings.ToLower(text)
 	switch {
+	case strings.Contains(lower, " cmd "), strings.Contains(lower, "cmd "), strings.Contains(lower, " cmd"):
+		return "cmd"
 	case strings.Contains(lower, " branch "), strings.Contains(lower, "branch name"), strings.Contains(lower, " name "):
 		return "name"
 	case strings.Contains(lower, " path "):
@@ -164,6 +169,9 @@ func inferVerdict(text string) Verdict {
 }
 
 func extractMatchingRegex(text string) string {
+	if value := extractSlashRegex(text); value != "" {
+		return value
+	}
 	re := regexp.MustCompile(`(?i)\bmatching\s+(.+)$`)
 	match := re.FindStringSubmatch(strings.TrimSpace(text))
 	if len(match) != 2 {
@@ -173,4 +181,13 @@ func extractMatchingRegex(text string) string {
 	value = strings.Trim(value, `"`)
 	value = strings.Trim(value, `'`)
 	return value
+}
+
+func extractSlashRegex(text string) string {
+	re := regexp.MustCompile(`/((?:\\.|[^/])*)/`)
+	match := re.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
 }
