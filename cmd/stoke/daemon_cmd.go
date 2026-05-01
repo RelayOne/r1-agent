@@ -70,6 +70,7 @@ START FLAGS:
   --token <s>             Bearer token for HTTP (default: empty = no auth)
   --max-parallel <n>      Initial worker count (default 10)
   --state-dir <path>      State dir for queue/wal/proofs (default ~/.stoke)
+  --codex-jobs-dir <path> Codex job artifacts dir (default ~/repos/plans/codex-jobs)
   --poll-gap <ms>         Worker poll interval ms (default 250)
   --executor <name>       Executor: noop|codex|claude-code|bash (default noop)
 
@@ -87,6 +88,7 @@ func daemonStartCmd(args []string) {
 	token := fs.String("token", "", "")
 	max := fs.Int("max-parallel", 10, "")
 	stateDir := fs.String("state-dir", "", "")
+	codexJobsDir := fs.String("codex-jobs-dir", "", "")
 	pollGap := fs.Int("poll-gap", 250, "")
 	executor := fs.String("executor", "noop", "")
 	if err := fs.Parse(args); err != nil {
@@ -98,7 +100,7 @@ func daemonStartCmd(args []string) {
 		*stateDir = filepath.Join(home, ".stoke")
 	}
 
-	exec, err := loadDaemonExecutor(*executor, *stateDir, time.Duration(*pollGap)*time.Millisecond)
+	exec, err := loadDaemonExecutor(*executor, *stateDir, *codexJobsDir, time.Duration(*pollGap)*time.Millisecond)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -134,18 +136,14 @@ func daemonStartCmd(args []string) {
 	d.Stop()
 }
 
-func loadDaemonExecutor(name, stateDir string, pollGap time.Duration) (daemon.Executor, error) {
+func loadDaemonExecutor(name, stateDir, codexJobsDir string, pollGap time.Duration) (daemon.Executor, error) {
 	switch strings.TrimSpace(name) {
 	case "", "noop":
 		return daemon.NoopExecutor{OutBase: filepath.Join(stateDir, "proofs")}, nil
 	case "codex":
-		jobsDir := os.Getenv("STOKE_CODEXJOB_JOBS_DIR")
-		if strings.TrimSpace(jobsDir) == "" {
-			jobsDir = filepath.Join(stateDir, "codex-jobs")
-		}
 		return daemon.NewCodexExecutor(daemon.CodexExecutorConfig{
 			Binary:         os.Getenv("STOKE_CODEXJOB_BIN"),
-			JobsDir:        jobsDir,
+			JobsDir:        firstNonEmpty(codexJobsDir, os.Getenv("STOKE_CODEXJOB_JOBS_DIR"), defaultCodexJobsDir()),
 			DefaultEffort:  os.Getenv("STOKE_CODEXJOB_EFFORT"),
 			PollInterval:   maxDuration(pollGap, 100*time.Millisecond),
 			StartTimeout:   15 * time.Second,
@@ -182,6 +180,14 @@ func maxDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+func defaultCodexJobsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join("~", "repos", "plans", "codex-jobs")
+	}
+	return filepath.Join(home, "repos", "plans", "codex-jobs")
 }
 
 // ---- client subcommands (use HTTP to talk to a running daemon) ----

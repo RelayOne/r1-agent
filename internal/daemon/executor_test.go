@@ -353,6 +353,17 @@ echo "${2:-}" >> "$JOBS_DIR/calls.log"
 	}
 }
 
+func TestNewCodexExecutorDefaultsSharedJobsDir(t *testing.T) {
+	exec := NewCodexExecutor(CodexExecutorConfig{})
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("UserHomeDir: %v", err)
+	}
+	if exec.jobsDir != filepath.Join(home, "repos", "plans", "codex-jobs") {
+		t.Fatalf("jobs dir = %q want %q", exec.jobsDir, filepath.Join(home, "repos", "plans", "codex-jobs"))
+	}
+}
+
 func TestDaemonCodexExecutorDispatchesRealJobWrapper(t *testing.T) {
 	dir := t.TempDir()
 	codexjobBin := writeExecutable(t, dir, "codexjob-stub.sh", `#!/bin/bash

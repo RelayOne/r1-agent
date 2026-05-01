@@ -50,6 +50,13 @@ func NewCodexExecutor(cfg CodexExecutorConfig) CodexExecutor {
 	if binary == "" {
 		binary = "/home/eric/.local/bin/codexjob"
 	}
+	jobsDir := strings.TrimSpace(cfg.JobsDir)
+	if jobsDir == "" {
+		home, err := os.UserHomeDir()
+		if err == nil && strings.TrimSpace(home) != "" {
+			jobsDir = filepath.Join(home, "repos", "plans", "codex-jobs")
+		}
+	}
 	effort := strings.TrimSpace(cfg.DefaultEffort)
 	if effort == "" {
 		effort = "medium"
@@ -68,7 +75,7 @@ func NewCodexExecutor(cfg CodexExecutorConfig) CodexExecutor {
 	}
 	return CodexExecutor{
 		binary:         binary,
-		jobsDir:        cfg.JobsDir,
+		jobsDir:        jobsDir,
 		defaultEffort:  effort,
 		pollInterval:   pollInterval,
 		startTimeout:   startTimeout,
