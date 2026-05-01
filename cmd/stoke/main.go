@@ -5779,6 +5779,9 @@ func launchREPL() {
 	fmt.Println()
 
 	r := repl.New(absRepo)
+	if r.Reader == nil {
+		r.Reader = bufio.NewScanner(os.Stdin)
+	}
 	r.RegisterBuiltins()
 
 	// /build-from-scope: paste a SOW directly or pass a file path.
@@ -5953,8 +5956,13 @@ func launchREPL() {
 		Name: "rules", Description: "Manage user-defined rules enforcement",
 		Usage: "/rules list | add \"text\" | delete <id> | pause <id> | resume <id>",
 		Run: func(args string) {
-			runRulesCommand(absRepo, args, func(format string, args ...interface{}) {
-				fmt.Printf("  "+format+"\n", args...)
+			runRulesCommand(absRepo, args, rulesCommandOptions{
+				printLine: func(format string, args ...interface{}) {
+					fmt.Printf("  "+format+"\n", args...)
+				},
+				confirmDelete: func(prompt string) bool {
+					return confirmDeleteWithScanner(prompt, r.Reader)
+				},
 			})
 		},
 	})
@@ -6204,8 +6212,14 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 		statusCmd([]string{"--repo", absRepo})
 		return "status shown"
 	case "rules":
-		return runRulesCommand(absRepo, rest, func(format string, args ...interface{}) {
-			sh.Append(format, args...)
+		return runRulesCommand(absRepo, rest, rulesCommandOptions{
+			printLine: func(format string, args ...interface{}) {
+				sh.Append(format, args...)
+			},
+			confirmDelete: func(prompt string) bool {
+				answer := strings.TrimSpace(sh.Prompt(prompt))
+				return answer == "" || strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
+			},
 		})
 	case "pool":
 		poolCmd([]string{})
