@@ -98,3 +98,37 @@ func TestRegistryCRUDAndCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryCommandRegexRuleBlocksExecBash(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	reg := NewRepoRegistry(repo, nil)
+
+	rule, err := reg.AddWithOptions(context.Background(), AddRequest{
+		Text:       "never call exec_bash with cmd /^rm -rf/",
+		ToolFilter: "^exec_bash$",
+	})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+	if rule.EnforcementStrategy != StrategyArgumentValidate {
+		t.Fatalf("strategy = %q, want %q", rule.EnforcementStrategy, StrategyArgumentValidate)
+	}
+
+	blocked, err := reg.Check(context.Background(), "exec_bash", json.RawMessage(`{"cmd":"rm -rf /tmp/foo"}`), CheckContext{RepoRoot: repo, TaskID: "t-block"})
+	if err != nil {
+		t.Fatalf("Check blocked: %v", err)
+	}
+	if blocked.Verdict != VerdictBlock {
+		t.Fatalf("blocked verdict = %q, want %q", blocked.Verdict, VerdictBlock)
+	}
+
+	allowed, err := reg.Check(context.Background(), "exec_bash", json.RawMessage(`{"cmd":"echo safe"}`), CheckContext{RepoRoot: repo, TaskID: "t-allow"})
+	if err != nil {
+		t.Fatalf("Check allowed: %v", err)
+	}
+	if allowed.Verdict != VerdictPass {
+		t.Fatalf("allowed verdict = %q, want %q", allowed.Verdict, VerdictPass)
+	}
+}
