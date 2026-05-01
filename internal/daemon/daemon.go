@@ -492,7 +492,14 @@ func (d *Daemon) handleTaskGet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, t)
+	type taskGetResponse struct {
+		*Task
+		Status TaskState `json:"status"`
+	}
+	writeJSON(w, taskGetResponse{
+		Task:   t,
+		Status: t.State,
+	})
 }
 
 func (d *Daemon) handleTaskCancel(w http.ResponseWriter, r *http.Request) {
