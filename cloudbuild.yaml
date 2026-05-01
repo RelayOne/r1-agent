@@ -66,16 +66,16 @@ steps:
         set -euxo pipefail
         mkdir -p dist
         for OS_ARCH in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-          OS=${OS_ARCH%/*}
-          ARCH=${OS_ARCH#*/}
+          OS=$${OS_ARCH%/*}
+          ARCH=$${OS_ARCH#*/}
           EXT=""
-          if [ "$OS" = "windows" ]; then
+          if [ "$$OS" = "windows" ]; then
             EXT=".exe"
           fi
-          CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build \
+          CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
             -trimpath \
             -ldflags "-s -w" \
-            -o dist/stoke-${OS}-${ARCH}${EXT} \
+            -o dist/stoke-$${OS}-$${ARCH}$${EXT} \
             ./cmd/stoke
         done
 
@@ -88,8 +88,8 @@ steps:
       - |
         set -euxo pipefail
         for f in dist/*; do
-          gcloud storage cp "$f" "${_PUBLIC_BUCKET}/${SHORT_SHA}/$(basename "$f")"
-          gcloud storage cp "$f" "${_PUBLIC_BUCKET}/latest/$(basename "$f")"
+          gcloud storage cp "$$f" "${_PUBLIC_BUCKET}/${SHORT_SHA}/$$(basename "$$f")"
+          gcloud storage cp "$$f" "${_PUBLIC_BUCKET}/latest/$$(basename "$$f")"
         done
 
 options:
