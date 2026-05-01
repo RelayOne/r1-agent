@@ -15,6 +15,7 @@ import (
 	"github.com/RelayOne/r1/internal/mcp"
 	"github.com/RelayOne/r1/internal/plan"
 	"github.com/RelayOne/r1/internal/provider"
+	"github.com/RelayOne/r1/internal/rules"
 	"github.com/RelayOne/r1/internal/stream"
 	"github.com/RelayOne/r1/internal/tools"
 )
@@ -37,9 +38,9 @@ type MCPRegistry interface {
 // the Anthropic Messages API directly. No Claude Code CLI needed.
 type NativeRunner struct {
 	apiKey   string
-	BaseURL  string             // empty = default Anthropic URL; set for LiteLLM or custom proxy
-	model    string             // e.g. "claude-sonnet-4-5"
-	EventBus *hub.Bus           // optional: publishes tool use events
+	BaseURL  string   // empty = default Anthropic URL; set for LiteLLM or custom proxy
+	model    string   // e.g. "claude-sonnet-4-5"
+	EventBus *hub.Bus // optional: publishes tool use events
 	// ProviderOverride, when set, is used instead of
 	// constructing an AnthropicProvider from apiKey/BaseURL.
 	// Used for claude-code:// mode.
@@ -109,6 +110,7 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 
 	// Create the tool registry
 	toolRegistry := tools.NewRegistry(spec.WorktreeDir)
+	ruleRegistry := rules.NewRepoRegistry(rules.InferRepoRoot(spec.WorktreeDir), nil)
 	allDefs := toolRegistry.Definitions()
 
 	// Filter tools based on phase restrictions.
@@ -275,6 +277,15 @@ func (n *NativeRunner) Run(ctx context.Context, spec RunSpec, onEvent OnEventFun
 	handler := func(ctx context.Context, name string, input json.RawMessage) (string, error) {
 		if !allowedTools[name] {
 			return "", fmt.Errorf("tool %q not allowed in phase %q (read_only=%v)", name, spec.Phase.Name, spec.Phase.ReadOnly)
+		}
+		ruleVerdict, ruleErr := ruleRegistry.Check(ctx, name, input, rules.CheckContext{
+			RepoRoot: rules.InferRepoRoot(spec.WorktreeDir),
+		})
+		if ruleErr != nil {
+			return "", fmt.Errorf("user rules check failed for %q: %w", name, ruleErr)
+		}
+		if ruleVerdict.Verdict == rules.VerdictBlock {
+			return "", fmt.Errorf("user rule blocked tool %q: %s", name, ruleVerdict.Reason)
 		}
 		// POL-7: fail-closed policy gate. For bash / file_read /
 		// file_write / mcp_* tool names, consult the policy backend

@@ -5775,7 +5775,7 @@ func launchREPL() {
 	} else {
 		fmt.Println("  Type naturally to kick off a /run task — or use slash commands directly.")
 	}
-	fmt.Println("  Slash commands: /ship /build /scope /run /plan /audit /scan /status /help /quit")
+	fmt.Println("  Slash commands: /ship /build /scope /run /plan /audit /scan /status /rules /help /quit")
 	fmt.Println()
 
 	r := repl.New(absRepo)
@@ -5946,6 +5946,16 @@ func launchREPL() {
 		Name: "status", Description: "Show session dashboard",
 		Run: func(args string) {
 			statusCmd([]string{"--repo", absRepo})
+		},
+	})
+
+	r.Register(repl.Command{
+		Name: "rules", Description: "Manage user-defined rules enforcement",
+		Usage: "/rules list | add \"text\" | delete <id> | pause <id> | resume <id>",
+		Run: func(args string) {
+			runRulesCommand(absRepo, args, func(format string, args ...interface{}) {
+				fmt.Printf("  "+format+"\n", args...)
+			})
 		},
 	})
 
@@ -6130,6 +6140,7 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 		sh.Append("  /scan [--security]        Deterministic code scan")
 		sh.Append("  /audit                    Multi-persona review")
 		sh.Append("  /status                   Show session dashboard")
+		sh.Append("  /rules list|add|delete    Manage user-defined rules")
 		sh.Append("  /pool                     Show subscription utilization")
 		sh.Append("  /pools                    List all pools")
 		sh.Append("  /quit                     Exit")
@@ -6192,6 +6203,10 @@ func dispatchSlash(sh *tui.Shell, absRepo string, defaults SmartDefaults, input 
 	case "status":
 		statusCmd([]string{"--repo", absRepo})
 		return "status shown"
+	case "rules":
+		return runRulesCommand(absRepo, rest, func(format string, args ...interface{}) {
+			sh.Append(format, args...)
+		})
 	case "pool":
 		poolCmd([]string{})
 		return "pool shown"
@@ -7111,6 +7126,7 @@ func serveCmd(args []string) {
 
 	// Register dashboard API (works even without orchestrator).
 	server.RegisterDashboardAPI(srv, nil, nil, dashState)
+	server.RegisterRulesAPI(srv, absRepo)
 	server.RegisterDashboardUI(srv)
 
 	fmt.Fprintf(os.Stderr, "stoke serve listening on :%d\n", *port)
