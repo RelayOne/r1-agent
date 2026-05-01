@@ -157,6 +157,34 @@ func TestDaemonHTTPEnqueueStatusWAL(t *testing.T) {
 	}
 }
 
+func TestDaemonHTTPTaskGetIncludesStatusAlias(t *testing.T) {
+	d, cleanup := newDaemonForTest(t)
+	defer cleanup()
+	ts := httptest.NewServer(d.Handler())
+	defer ts.Close()
+
+	if err := d.Enqueue(&Task{ID: "task-get-1", Title: "alias", Prompt: "x", State: StateDone}); err != nil {
+		t.Fatalf("enqueue task: %v", err)
+	}
+
+	resp, err := http.Get(ts.URL + "/tasks/get?id=task-get-1")
+	if err != nil {
+		t.Fatalf("GET /tasks/get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /tasks/get body: %v", err)
+	}
+	if got := body["state"]; got != string(StateDone) {
+		t.Fatalf("state = %v, want %q", got, StateDone)
+	}
+	if got := body["status"]; got != string(StateDone) {
+		t.Fatalf("status = %v, want %q", got, StateDone)
+	}
+}
+
 func TestDaemonHTTPWorkersResize(t *testing.T) {
 	d, cleanup := newDaemonForTest(t)
 	defer cleanup()
