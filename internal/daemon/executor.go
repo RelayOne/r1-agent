@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +37,60 @@ type Executor interface {
 	Execute(ctx context.Context, t *Task) ExecutionResult
 }
 
+type ToolCheckRequest struct {
+	ToolName string
+	ToolArgs json.RawMessage
+	RepoRoot string
+	TaskID   string
+}
+
+type ToolCheckResult struct {
+	Verdict string
+	Reason  string
+}
+
+type ToolChecker interface {
+	CheckTool(ctx context.Context, req ToolCheckRequest) (ToolCheckResult, error)
+}
+
+type GuardedExecutor struct {
+	Base    Executor
+	Checker ToolChecker
+}
+
+func (g GuardedExecutor) Type() string {
+	if g.Base == nil {
+		return "guarded"
+	}
+	return g.Base.Type()
+}
+
+func (g GuardedExecutor) Capabilities() []string {
+	if g.Base == nil {
+		return nil
+	}
+	return g.Base.Capabilities()
+}
+
+func (g GuardedExecutor) Execute(ctx context.Context, t *Task) ExecutionResult {
+	if g.Base == nil {
+		return ExecutionResult{Err: errors.New("guarded executor: base executor is nil")}
+	}
+	if g.Checker != nil {
+		req, ok := taskToolCheckRequest(t)
+		if ok {
+			res, err := g.Checker.CheckTool(ctx, req)
+			if err != nil {
+				return ExecutionResult{Err: fmt.Errorf("user rules check failed: %w", err)}
+			}
+			if strings.EqualFold(strings.TrimSpace(res.Verdict), "BLOCK") {
+				return ExecutionResult{Err: fmt.Errorf("user rule blocked tool %q: %s", req.ToolName, strings.TrimSpace(res.Reason))}
+			}
+		}
+	}
+	return g.Base.Execute(ctx, t)
+}
+
 // NormalizeRunner canonicalizes task runner names into the daemon's routing vocabulary.
 func NormalizeRunner(runner string) string {
 	runner = strings.ToLower(strings.TrimSpace(runner))
@@ -67,6 +122,32 @@ func SupportsRunner(exec Executor, runner string) bool {
 		}
 	}
 	return false
+}
+
+func taskToolCheckRequest(t *Task) (ToolCheckRequest, bool) {
+	if t == nil || t.Meta == nil {
+		return ToolCheckRequest{}, false
+	}
+	toolName := strings.TrimSpace(t.Meta["tool_name"])
+	if toolName == "" {
+		toolName = strings.TrimSpace(t.Meta["proposed_tool_name"])
+	}
+	if toolName == "" {
+		return ToolCheckRequest{}, false
+	}
+	rawArgs := strings.TrimSpace(t.Meta["tool_args"])
+	if rawArgs == "" {
+		rawArgs = strings.TrimSpace(t.Meta["proposed_tool_args"])
+	}
+	if rawArgs == "" {
+		rawArgs = "{}"
+	}
+	return ToolCheckRequest{
+		ToolName: toolName,
+		ToolArgs: json.RawMessage(rawArgs),
+		RepoRoot: strings.TrimSpace(t.Repo),
+		TaskID:   t.ID,
+	}, true
 }
 
 // ProofRecord is one entry in proofs.json: a single claim and its evidence.
