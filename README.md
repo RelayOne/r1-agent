@@ -1,76 +1,89 @@
 # R1
 
-R1 is a governed agent runtime for software work. It runs strong coding
-agents through a plan, execute, verify, and review loop, records what
-happened into a durable evidence model, and is increasingly opinionated
-about turning repeatable workflows into deterministic, inspectable skill
-artifacts.
+**A governed coding-agent runtime built to prove what happened, not just produce an answer.**
 
-`r1` is the canonical name. `stoke` remains the compatibility alias
-through the active rename window, so most on-disk paths and many command
-examples still use `stoke`.
+R1 runs software work through a plan, execute, verify, and review loop, records durable evidence for the run, and turns repeatable workflows into deterministic skill packs that can be inspected, signed, and distributed.
 
-## What Ships On `main`
+## Why R1
 
-- core mission loop with planning, execution, verification, and review
-- content-addressed ledger and WAL-backed runtime evidence
-- benchmark and parity evidence under `evaluation/`
-- deterministic skill manufacturing, registry, and selection surfaces
-- skill-pack lifecycle commands including `init`, `info`, `install`,
-  `list`, `publish`, `search`, `sign`, `verify`, `update`, and `serve`
-- seeded repo/user skill-pack registries and signed-pack runtime
-  verification
-- new runtime helpers for ledger audit, execution audit, metrics
-  collection, timeout/cancel behavior, oneshot runtime cost metadata,
-  and flagship deterministic runtimes
+Coding agents are useful, but most of them still leave too little evidence behind and make it too hard to repeat the same workflow safely across teams. Developers, platform teams, and organizations that want coding agents with stronger governance and repeatability.
 
-## What Changed In The Last 30 Days
+## Key Benefits
 
-The most important main-branch change is that deterministic skills
-stopped being only an authoring/compiler story and became a real
-distribution and runtime story:
+- Govern the whole mission: planning, execution, verification, and review are explicit runtime phases.
+- Keep receipts: ledger, WAL, and runtime evidence are core design elements.
+- Productize repetition: deterministic skill packs let teams standardize proven workflows.
+- Distribute safely: packs can be signed, verified, served, and installed instead of copied ad hoc.
 
-- packs can be created, searched, published, signed, verified, updated,
-  and served over HTTP
-- installed signed packs can be verified at runtime
-- `stoke-mcp` gained runtime functions for metrics, audit, timeout, and
-  cancellation-aware behavior
-- the repo and user pack libraries are now first-class runtime inputs
+## Quick Start
 
-## Where To Start
+```bash
+go test ./...
+make test || true
+```
 
-- Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- Workflow narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md)
-- Feature inventory: [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md)
-- Deployment posture: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-- Commercial framing: [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md)
-- Main evaluation artifact:
-  [`evaluation/r1-vs-reference-runtimes-matrix.md`](evaluation/r1-vs-reference-runtimes-matrix.md)
+## How It Works
 
-## Status
+1. Accept a mission and force it through planning before execution starts.
+2. Run the work while emitting evidence, receipts, and governance artifacts.
+3. Verify and review the result with explicit runtime helpers and audit surfaces.
+4. Package repeatable workflows into deterministic skills and distribute them through registries.
 
-### Done
+## Features
 
-- governed plan/execute/verify runtime
-- parity evidence and deterministic skill substrate
-- signed skill-pack lifecycle and HTTP registry surface
-- runtime audit, metrics, timeout/cancel, and cost metadata helpers
+### Governed Runtime
+- Plan, execute, verify, and review mission loop.
+- Evidence-first execution with ledger and WAL support.
+
+### Deterministic Skills
+- Skill manufacturing, registry, selection, and runtime verification.
+- Pack lifecycle commands for install, publish, sign, verify, update, and serve.
+
+### Runtime Extensions
+- Metrics, audit, cancellation, and timeout-aware helpers.
+- MCP-backed runtime surfaces for governed automation.
+
+### Commercial Story
+- Provable software work and repeatable governed execution.
+- Positioning against weaker black-box coding agents.
+
+## Project Status
+
+### Shipped
+
+- Mission runtime with planning, execution, verification, and review.
+- Ledger and evidence model.
+- Deterministic skill-pack lifecycle and registry surfaces.
 
 ### In Progress
 
-- parity-to-superiority execution and broader deterministic-skill
-  adoption across more product surfaces
+- Daemon and runtime policy work are active in the current checkout.
+- Broader portfolio adoption of deterministic skills is still unfolding.
 
-### Scoped
+### Coming Next
 
-- more productized pack distribution and publishing loops
-- stronger release checks around skill packaging and dependency
-  validation
+- Wider skill distribution, stronger release checks, and portfolio exchange of governed workflows.
+- Sharper superiority reporting against peer coding-agent runtimes.
 
-### Scoping
+## Documentation
 
-- broader outward-facing superiority reporting
+| Document | Purpose |
+|---|---|
+| [`README.md`](docs/README.md) | Launch-page narrative for the product. |
+| [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Codebase shape, runtime layers, and key subsystems. |
+| [`HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) | User and system flow from input to value. |
+| [`FEATURE-MAP.md`](docs/FEATURE-MAP.md) | Shipped capabilities grouped by outcome. |
+| [`DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Local, staging, and production deployment posture. |
+| [`BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md) | Buyer narrative, differentiation, and commercial framing. |
 
-### Potential-On Horizon
 
-- cross-product deterministic skill exchange and marketplace dynamics
+## Development
+
+```bash
+go test ./...
+make test || true
+```
+
+---
+
+Last updated: 2026-05-01

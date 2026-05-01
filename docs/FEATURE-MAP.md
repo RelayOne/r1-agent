@@ -1,65 +1,37 @@
 # Feature Map
 
-This is the current main-branch feature inventory for R1.
+This map captures the shipped and near-term feature surface for R1.
 
-## Mission Runtime
+## Governed Runtime
 
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Plan/execute/verify workflow | Keeps agent output tied to explicit execution and verification gates | Done | `app/`, `workflow/`, `verify/` |
-| Adversarial review posture | Favors reviewable output over ungoverned autonomous edits | Done | `critic/`, `convergence/`, `engine/` |
-| Evidence model | Persists what happened instead of trusting session memory | Done | `ledger/`, `bus/`, `session/` |
+- Plan, execute, verify, and review mission loop. Status: shipped or actively represented in the current repo/product surface.
+- Evidence-first execution with ledger and WAL support. Status: shipped or actively represented in the current repo/product surface.
 
 ## Deterministic Skills
 
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Deterministic skill manufacture | Turns reusable workflows into governed artifacts | Done | `internal/skillmfr/` |
-| Registry and selection | Lets runtime behavior map to explicit skill assets | Done | `internal/skill/`, `internal/skillselect/` |
-| Flagship deterministic runtimes | Shows concrete packaged uses of the deterministic runtime path | Done | April 30 main-branch skill runtime commits |
+- Skill manufacturing, registry, selection, and runtime verification. Status: shipped or actively represented in the current repo/product surface.
+- Pack lifecycle commands for install, publish, sign, verify, update, and serve. Status: shipped or actively represented in the current repo/product surface.
 
-## Skill Pack Lifecycle
+## Runtime Extensions
 
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| `stoke skills pack init` | Creates repo-local packs without hand-building directories | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `info`, `install`, `list`, `publish`, `search`, `update` | Makes pack inspection, activation, discovery, and refresh operational | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `sign` and `verify` | Adds integrity controls to pack distribution | Done | `cmd/stoke/skills_pack_cmd.go` |
-| `serve` HTTP registry | Exposes published packs through a stable read-only registry | Done | `cmd/stoke/skills_pack_server.go` |
-| Runtime signed-pack verification | Prevents runtime registration from ignoring pack integrity | Done | April 30 main-branch signed-pack verification commit |
+- Metrics, audit, cancellation, and timeout-aware helpers. Status: shipped or actively represented in the current repo/product surface.
+- MCP-backed runtime surfaces for governed automation. Status: shipped or actively represented in the current repo/product surface.
 
-## Runtime Helper Surfaces
+## Commercial Story
 
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Ledger audit runtime | Lets deterministic flows query ledger-backed audit evidence | Done | April 30 main-branch ledger audit runtime commit |
-| Skill execution audit runtime | Makes runtime execution behavior inspectable | Done | April 30 main-branch execution audit runtime commit |
-| Metrics collection runtime | Exposes runtime metrics snapshots to deterministic flows | Done | `cmd/stoke-mcp/metrics_runtime.go` |
-| Timeout and cancellation hooks | Keeps deterministic runtime calls bounded and cancellation-aware | Done | `cmd/stoke-mcp/backends.go` |
-| Oneshot runtime cost metadata | Makes runtime cost visible to callers and operators | Done | April 30 main-branch oneshot cost metadata commit |
+- Provable software work and repeatable governed execution. Status: shipped or actively represented in the current repo/product surface.
+- Positioning against weaker black-box coding agents. Status: shipped or actively represented in the current repo/product surface.
 
-## Status
+## In Progress
 
-### Done
+- Daemon and runtime policy work are active in the current checkout.
+- Broader portfolio adoption of deterministic skills is still unfolding.
 
-- governed mission runtime
-- deterministic skill substrate
-- full pack lifecycle including signing, verification, and HTTP serving
-- runtime metrics/audit/timeout/cancel/cost helper surfaces
+## Coming Next
 
-### In Progress
+- Wider skill distribution, stronger release checks, and portfolio exchange of governed workflows.
+- Sharper superiority reporting against peer coding-agent runtimes.
 
-- broader runtime-wide adoption of deterministic skills
+---
 
-### Scoped
-
-- stronger publishing and release-check loops for pack distribution
-
-### Scoping
-
-- more outward-facing superiority reporting and proof surfaces
-
-### Potential-On Horizon
-
-- cross-product distribution and exchange of governed deterministic
-  skills
+Last updated: 2026-05-01

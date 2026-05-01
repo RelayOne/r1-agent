@@ -1,99 +1,69 @@
-# Architecture
+# R1 Architecture
 
-This is the trunk architecture view for R1.
+This document describes the current product architecture as represented in `/home/eric/repos/r1-agent` on 2026-05-01.
 
-## Audience
+## Architectural Thesis
 
-- engineers maintaining the runtime
-- reviewers checking whether docs match the current deterministic-skill
-  and registry work
-- stakeholders who need the system shape without reading every package
+R1 runs software work through a plan, execute, verify, and review loop, records durable evidence for the run, and turns repeatable workflows into deterministic skill packs that can be inspected, signed, and distributed.
 
-## Core System Planes
+## Core Notes
 
-R1 currently has four architectural planes that matter together:
+- Go runtime focused on governed software execution rather than general chat UX.
+- Evidence and deterministic skills are distinct architectural planes beside the mission loop.
+- Distribution of governed skill packs is now a live subsystem, not just an aspiration.
 
-1. Mission execution: planning, execution, verification, review
-2. Governance and evidence: ledger, WAL, receipts, honesty, cost
-3. Deterministic skills: compile, manufacture, register, select, run
-4. Distribution and runtime extension: packs, registries, MCP-backed
-   runtime functions
+## Repo Map
 
-## Execution Core
+| Path | Role |
+|---|---|
+| `cmd` | CLI and runtime entry points. |
+| `internal` | Daemon, execution, cloud, and governance internals. |
+| `docs` | Canonical narrative set. |
+| `bench` | Benchmarks and supporting evaluation inputs. |
+| `desktop` | Desktop-facing docs and surfaces. |
 
-The execution core still centers on the orchestrator packages:
+## Runtime and Product Layers
 
-- `app/`, `workflow/`, `mission/`
-- `engine/`, `agentloop/`
-- `verify/`, `critic/`, `convergence/`
-- `scheduler/`, `plan/`, `taskstate/`
+### Governed Runtime
+- Plan, execute, verify, and review mission loop.
+- Evidence-first execution with ledger and WAL support.
 
-That is the original runtime thesis: one strong implementer, explicit
-verification, and adversarial review instead of loose multi-agent
-consensus.
+### Deterministic Skills
+- Skill manufacturing, registry, selection, and runtime verification.
+- Pack lifecycle commands for install, publish, sign, verify, update, and serve.
 
-## Evidence Core
+### Runtime Extensions
+- Metrics, audit, cancellation, and timeout-aware helpers.
+- MCP-backed runtime surfaces for governed automation.
 
-The evidence plane gives R1 its governance posture:
+### Commercial Story
+- Provable software work and repeatable governed execution.
+- Positioning against weaker black-box coding agents.
 
-- content-addressed ledger
-- WAL-backed event surfaces
-- receipts and honesty artifacts
-- cost and replay evidence
+## Operator and Delivery Considerations
 
-This is why new runtime features keep adding audit and metrics hooks
-instead of only new prompts.
+- Go test remains the primary validation spine.
+- Current checkout has active daemon and rules work plus untracked local artifacts outside this docs commit.
+- Deployment narrative should stay focused on governed runtime packaging rather than generic SaaS operations.
 
-## Deterministic Skill Plane
+## Current State
 
-The deterministic skill lane now spans more than compilation:
+### Stable
 
-- manufacturing and manifest enforcement
-- registry and selection
-- seeded repo/user pack libraries
-- signed pack authoring and verification
-- runtime registration and verification hooks
+- Mission runtime with planning, execution, verification, and review.
+- Ledger and evidence model.
+- Deterministic skill-pack lifecycle and registry surfaces.
 
-The important architectural shift on April 30 is that pack distribution
-is now a real subsystem, not just a future direction.
+### Moving
 
-## Runtime Extension Plane
+- Daemon and runtime policy work are active in the current checkout.
+- Broader portfolio adoption of deterministic skills is still unfolding.
 
-`cmd/stoke-mcp/backends.go` is now a practical bridge between the core
-runtime and deterministic helpers:
+### Likely Next
 
-- metrics collection runtime
-- skill execution audit runtime
-- ledger audit query runtime
-- timeout and cancellation-aware runtime wrappers
-- oneshot runtime cost metadata
-- flagship runtimes and pack-registry-backed behavior
+- Wider skill distribution, stronger release checks, and portfolio exchange of governed workflows.
+- Sharper superiority reporting against peer coding-agent runtimes.
 
-These let deterministic workflows observe and prove more about their own
-execution.
+---
 
-## Status
-
-### Done
-
-- mission runtime and verification core
-- evidence and governance plane
-- deterministic skill and pack-registry foundations
-- runtime audit/metrics/cancel/timeout extension surfaces
-
-### In Progress
-
-- wider product adoption of the deterministic skill lane
-
-### Scoped
-
-- stronger distribution, publishing, and release checks for pack flows
-
-### Scoping
-
-- broader superiority reporting against peer runtimes
-
-### Potential-On Horizon
-
-- portfolio-wide exchange of deterministic skills and governed runtime
-  assets
+Last updated: 2026-05-01

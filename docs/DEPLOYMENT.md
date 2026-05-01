@@ -1,71 +1,42 @@
-# Deployment
+# R1 Deployment
 
-This is the current deployment summary for R1 on `main`.
+This document summarizes how `R1` is developed, validated, and prepared for production from the current repo state.
 
-## Build And Verification Gate
+## Local and Validation Commands
 
-The repo-local build gate remains the same:
+```bash
+go test ./...
+make test || true
+```
 
-- `go build ./cmd/stoke`
-- `go test ./...`
-- `go vet ./...`
+## Deployment Posture
 
-Those are the core CI-quality checks documented in `CLAUDE.md`.
+- Go test remains the primary validation spine.
+- Current checkout has active daemon and rules work plus untracked local artifacts outside this docs commit.
+- Deployment narrative should stay focused on governed runtime packaging rather than generic SaaS operations.
 
-## Deployment Surfaces
+## Surfaces That Matter Most
 
-| Surface | Best fit | Notes |
-|---|---|---|
-| CLI install | individual operators and developers | canonical `r1`, legacy `stoke` alias |
-| container/release artifacts | packaged distribution | release automation and signed artifacts live in repo tooling |
-| IDE and desktop adjuncts | editor and local GUI usage | layered on top of the core runtime |
-| pack registry HTTP service | deterministic skill distribution | `stoke skills pack serve` |
+| Path | Role |
+|---|---|
+| `cmd` | CLI and runtime entry points. |
+| `internal` | Daemon, execution, cloud, and governance internals. |
+| `docs` | Canonical narrative set. |
+| `bench` | Benchmarks and supporting evaluation inputs. |
+| `desktop` | Desktop-facing docs and surfaces. |
 
-## What Operators Should Verify Now
+## Release Readiness Checklist
 
-The latest main-branch pack/runtime work changes post-deploy checks:
+- Confirm the canonical docs and root README match the shipped repo state.
+- Run the product's build, test, and lint or equivalent validation path.
+- Smoke-check the highest-intent user surfaces after structural edits.
+- Keep domain, auth, billing, and compliance language aligned with what is actually live.
 
-- the pack libraries are seeded or reachable where expected
-- signed packs verify correctly before runtime registration
-- runtime helper surfaces for metrics, audit, timeout, and cancellation
-  behave correctly
-- evaluation artifacts and parity evidence still line up with the build
-  being promoted
+## Current Caveats
 
-## Runtime Inputs
+- Daemon and runtime policy work are active in the current checkout.
+- Broader portfolio adoption of deterministic skills is still unfolding.
 
-Deployment still depends on the existing R1 runtime basics:
+---
 
-- Git
-- at least one execution engine/provider path
-- writable runtime state directories
-- whatever model/provider credentials the chosen execution path needs
-
-The new pack-registry surface adds one more optional operational input:
-where deterministic packs live and how they are served or consumed.
-
-## Status
-
-### Done
-
-- stable build/test/vet gate
-- deployable CLI/runtime baseline
-- pack registry HTTP surface
-- runtime verification hooks for signed packs and helper functions
-
-### In Progress
-
-- broader integration verification across more deterministic-skill use
-  cases
-
-### Scoped
-
-- stronger release checks around pack packaging and dependencies
-
-### Scoping
-
-- broader outward-facing publish and distribution workflows
-
-### Potential-On Horizon
-
-- richer cross-product deterministic distribution pipelines
+Last updated: 2026-05-01
