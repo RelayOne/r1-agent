@@ -83,7 +83,7 @@ additive and do not bump the version.
 
 ## 2. Method table
 
-Thirteen methods across five categories. Each row lists:
+Eleven methods across five categories (3 Session + 2 Ledger + 2 Memory + 2 Cost + 2 Descent — matches §2.6 Total). Each row lists:
 
 - **Method** — the JSON-RPC `method` string (also the Tauri command
   name and the Go `Handler` method name after conversion).

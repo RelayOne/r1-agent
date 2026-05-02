@@ -1,27 +1,28 @@
-# Research Index — Stoke Full Agent Scoping (2026-04-20)
+# Research Index — r1 Cortex / Lanes / Multi-Surface Scope (2026-05-02)
+
+Scope-set: parallel-cognition foundation (cortex + concerns + lanes) and the surfaces that consume it (TUI, r1d daemon, web UI, desktop, agentic test harness).
 
 ## Raw research files
 
 | File | Topic | Key recommendation | Primary spec consumer |
-|------|-------|-------------------|----------------------|
-| RT-CLOUDSWARM-MAP.md | CloudSwarm integration surface | `stoke run --output stream-json` is the primary gap; `hitl_required` is the only protocol-critical event; Stoke is opaque to Cedar | spec-2 |
-| RT-STOKE-SURFACE.md | Current Stoke state | Descent + AgentLoop + StreamJSON all wired; memory/delegation/trustplane exist but unwired; bus has zero publishers | all |
-| RT-01-playwright-go.md | Headless browser | `github.com/go-rod/rod` (MIT, pool-ready, pure Go) | spec-4, spec-6 |
-| RT-02-cedar-policy.md | Policy engine | cedar-agent HTTP sidecar + `github.com/cedar-policy/cedar-go` v1.6.0; local YAML fallback for standalone | spec-2 (deferred) |
-| RT-03-a2a-protocol.md | Agent-to-agent | A2A v1.0 (LF, 2026-03-12); `github.com/a2aproject/a2a-go` v2.2.0; TrustPlane via a2a-x402 extension URI | spec-5 |
-| RT-04-ndjson-patterns.md | NDJSON streaming | Two-lane emitter (critical blocks, observability drop-oldest); `os.Stdout` unbuffered in Go; mutex-serialized `json.Encoder`; SIGSTOP-survivable | spec-2 |
-| RT-05-stateless-harness.md | Event log | SQLite+WAL single `events` table, ULID + hash-chained; call/result two-phase; `BranchID` for speculative execution | spec-3 |
-| RT-06-anti-deception-prompts.md | Worker honesty | TRUTHFULNESS_CONTRACT (260 words, ready-to-paste); PRE_COMPLETION_GATE with `<pre_completion>` XML (280 words, ready-to-paste); BLOCKED: escape hatch | spec-1 |
-| RT-07-multi-agent-research.md | Lead+subagent research | Opus 4.7 lead + Sonnet 4.5 subagents; filesystem as comm channel; 4-stage claim verify; effort scaling (1/2-4/10+) | spec-4 |
-| RT-08-memory-consolidation.md | Persistent memory | Stoke's memory/ already has CoALA tiers + contradiction; add scope hierarchy + auto-retrieval + SQLite+FTS5+sqlite-vec + live meta-reasoner | spec-7 |
-| RT-09-delegation-trust.md | Trust-clamped delegation | Extend `internal/delegation/scoping.go`; HMAC real-verifier from day 1 (not CloudSwarm's V-114 stub); macaroons as inspiration; MAX_DEPTH=3 | spec-5 |
-| RT-10-deploy-providers.md | Deploy targets | Fly.io first (widest languages, explicit rollback, NDJSON matches our engine/stream model); Vercel second; Cloudflare third | spec-6 |
-| RT-11-planning-modes.md | Planning + ask/notify | Devin 3-mode + `<think>` gate; Manus notify/ask; Factory DROID Intent Gate (verbatim); Cursor per-file cap (3) | spec-1, spec-7 |
+|------|-------|--------------------|-----------------------|
+| RT-EXISTING-CONCURRENCY.md | Inventory of existing parallelism in r1 | WaitGroup tool exec (agentloop) + winner-take-all specexec + scheduler fan-out exist; **no shared-state workspace, no live cross-thread comms** — that's the gap | spec 1, 2 |
+| RT-PARALLEL-COGNITION.md | SoM, GWT, CoALA, Hearsay-II, LangGraph, AutoGen, Swarm, Theater-of-Mind | GWT broadcast cycle on top of CoALA memory tiers, scheduled in LangGraph-style supersteps with Hearsay-II agenda. Closest analog: "Theater of Mind for LLMs" (arXiv 2604.08206). Anthropic multi-agent is the *contrast* (parallel but isolated). Avoid AutoGen GroupChat (turn-based) and Swarm (sequential handoff) | spec 1 |
+| RT-CONCURRENT-CLAUDE-API.md | Concurrent Anthropic API + cache + rate limits | Pre-warm cache before launching concerns; Tier 4 supports 5–6 concurrent Haiku threads + main; mid-stream cancel does NOT refund tokens; serialize tool writes, parallelize reads; expected cache-hit ~40–60% with pre-warm | spec 1, 2 |
+| RT-CANCEL-INTERRUPT.md | Mid-stream cancel + replay safety | Drop-partial pattern: never persist partial assistant message. `context.WithCancel` per turn + drain SSE goroutine on interrupt. 30s ping watchdog. Synthetic tool_result repair only as fallback. Orphan tool_use is the #1 break (issue #3003: 2.4–14% rate) | spec 1 |
+| RT-TUI-LANES.md | TUI lane layout patterns | Adaptive hybrid: columns when width ≥ N×32, vertical list otherwise. Bubble Tea v2 + bubblelayout for grid. lipgloss AdaptiveColor + glyphs (▸⏸✓✗·). Cache per-lane render strings; coalesce upstream events at 200–300 ms. Anti-pattern: repaint every lane on every tick | spec 4 |
+| RT-R1D-DAEMON.md | Multi-instance daemon architecture | Watchman pattern: per-user singleton, on-demand spawn, tmux-style detachable sessions as goroutines (each carries SessionRoot via cmd.Dir). Unix socket + loopback HTTP+WS, token auth, Origin pinning. JSON-RPC 2.0 over WS, monotonic seqnos, replay from bus/ WAL on reconnect. **Risk: os.Chdir is process-global — must audit all 132 packages before turning on multi-session** | spec 5 |
+| RT-DESKTOP-TAURI.md | Tauri 2 multi-session + sidecar | External `r1 serve` daemon as primary, Tauri sidecar as first-run fallback. tauri-plugin-websocket sidesteps `https://tauri.localhost` → `ws://` mixed-content block. Single primary window + session sidebar + drag-and-drop panes. Pop-out into `WebviewWindow` for power users. tauri-plugin-store for per-session workdir persistence | spec 7 |
+| RT-WEB-UX.md | Web chat UX + WS auth + library refs | Copy Cursor 3 "Glass" (Apr 2026): right-sidebar Agents Window with status dots, "Agent Tabs" tile mode in main pane. WS auth via `Sec-WebSocket-Protocol` subprotocol token. streamdown for streaming markdown, @ai-sdk/elements for tool/reasoning/plan cards. Strict Origin/Host allowlist for CSWSH | spec 6 |
+| RT-AGENTIC-TEST.md | Agent-driveable UIs | MCP-primary. One r1 MCP server exposing lanes/cortex/sessions/missions/worktrees/bus/verify/TUI as goal-shaped tools. Playwright MCP for web. teatest+JSON-RPC shim for TUI. Storybook MCP for component contracts. Gherkin markdown (`*.agent.feature.md`) as test DSL. **Governing principle: every UI action has an idempotent schema-validated MCP equivalent — UI is a view over the API, never the reverse.** CI lint enforces | spec 8 (cross-cutting) |
 
-## Synthesized summaries
+## Synthesized clusters
 
-See `specs/research/synthesized/` for per-topic consolidations with cross-references.
+- `synthesized/cortex.md` — cognitive architecture decisions (RT-PARALLEL-COGNITION + RT-EXISTING-CONCURRENCY + RT-CONCURRENT-CLAUDE-API + RT-CANCEL-INTERRUPT)
+- `synthesized/surfaces.md` — UI surface decisions (RT-TUI-LANES + RT-WEB-UX + RT-DESKTOP-TAURI)
+- `synthesized/transport.md` — daemon + transport decisions (RT-R1D-DAEMON)
+- `synthesized/agentic.md` — agentic test harness (RT-AGENTIC-TEST)
 
 ## Open questions
 
-See `specs/research/open-questions/index.md` for decisions needed from operator before final spec write.
+See `open-questions/index.md`.
