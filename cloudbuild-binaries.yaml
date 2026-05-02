@@ -2,7 +2,7 @@ substitutions:
   _PUBLIC_BUCKET: gs://relayone-488319-public/r1
 
 steps:
-  - name: 'golang:1.25'
+  - name: 'golang:1.26'
     id: build-multi-platform-r1
     entrypoint: bash
     args:
