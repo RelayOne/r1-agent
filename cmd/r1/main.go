@@ -715,6 +715,8 @@ func main() {
 	case "logs":
 		// OPSUX-tail: tail stream.jsonl (or eventlog fallback).
 		os.Exit(runLogsCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "rules":
+		rulesCmd(os.Args[2:])
 	case "cost":
 		// OPSUX-tail: aggregate cost_usd across eventlog events.
 		os.Exit(runCostCmd(os.Args[2:], os.Stdout, os.Stderr))
