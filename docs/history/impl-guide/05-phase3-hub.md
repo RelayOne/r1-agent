@@ -1640,7 +1640,7 @@ The existing `internal/hooks/hooks.go` and `internal/lifecycle/hooks.go` should 
 ## Validation gate for Phase 3
 
 1. `go vet ./...` clean, `go test ./internal/hub/...` passes with >70% coverage
-2. `go build ./cmd/stoke` succeeds
+2. `go build ./cmd/r1` succeeds
 3. Existing bash hooks still fire correctly (run an existing mission with bash hooks installed and verify they execute)
 4. New in-process honesty hook denies a file write containing `panic("not implemented")`
 5. Cost tracker updates after a model call

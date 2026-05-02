@@ -3,7 +3,7 @@
 R1 sits on both sides of the Model Context Protocol wire:
 
 - **Inbound** — R1 is an MCP **client** that calls third-party MCP tool servers via `internal/mcp.StdioClient.CallTool`. Whatever those servers return (filesystem contents, DB rows, HTTP responses, scraped HTML) is attacker-influenced text.
-- **Outbound** — R1 is an MCP **server** via `internal/mcp/stoke_server.go` (the `r1 mcp-serve-stoke` path) and `cmd/stoke-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
+- **Outbound** — R1 is an MCP **server** via `internal/mcp/stoke_server.go` (the `r1 mcp-serve-stoke` path) and `cmd/r1-mcp/` (the standalone primitives binary). The responses those servers emit can contain repo content, user SOW text, build logs, and agent output.
 
 Prompt-injection defenses live at different layers on each side. This document fixes the contract.
 
@@ -44,7 +44,7 @@ If a reviewer sees a `CallTool` call with no matching `mcp-sanitization-audit:` 
 
 ## Outbound (R1 as MCP server)
 
-**Rule.** R1's MCP servers (`internal/mcp/stoke_server.go` and `cmd/stoke-mcp/`) return tool results **verbatim**. They do NOT strip, escape, or rewrite attacker-influenced substrings before sending them to the MCP client.
+**Rule.** R1's MCP servers (`internal/mcp/stoke_server.go` and `cmd/r1-mcp/`) return tool results **verbatim**. They do NOT strip, escape, or rewrite attacker-influenced substrings before sending them to the MCP client.
 
 **Why not pre-sanitize outbound.**
 
@@ -61,7 +61,7 @@ If a reviewer sees a `CallTool` call with no matching `mcp-sanitization-audit:` 
 - `docs/security/prompt-injection.md` — the cross-product prompt-injection playbook. **Not yet present.** Track A Task 25 will create it.
 - `internal/mcp/client.go` — `CallTool` docstring with the inbound sanitization note.
 - `internal/mcp/stoke_server.go` — package doc with the outbound policy.
-- `cmd/stoke-mcp/main.go` — package doc with the outbound policy.
+- `cmd/r1-mcp/main.go` — package doc with the outbound policy.
 
 ---
 

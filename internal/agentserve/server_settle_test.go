@@ -2,7 +2,7 @@ package agentserve
 
 // server_settle_test.go — TASK-T20 settlement callback coverage.
 //
-// The callback is the seam `cmd/stoke/agent_serve_cmd.go` uses to
+// The callback is the seam `cmd/r1/agent_serve_cmd.go` uses to
 // drive TrustPlane Settle/Dispute from a terminal task transition.
 // This test does not touch TrustPlane; it asserts the seam fires
 // after a real task completes through the HTTP surface, with the

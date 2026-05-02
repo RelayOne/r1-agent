@@ -347,7 +347,7 @@ the result to PACKAGE-AUDIT.md following the template format.
 
 ### CLI command
 
-Add `stoke audit` to `cmd/stoke/main.go`:
+Add `stoke audit` to `cmd/r1/main.go`:
 
 ```go
 case "audit":
@@ -459,7 +459,7 @@ Recommended follow-ups:
 ## Validation gate for Phase 5
 
 1. `go vet ./...` clean, full test suite passes
-2. `go build ./cmd/stoke` succeeds
+2. `go build ./cmd/r1` succeeds
 3. `stoke audit` produces `PACKAGE-AUDIT.md` with all packages tagged
 4. Wisdom learnings persist across `stoke` invocations: add a learning, exit, restart, query, learning is still there
 5. Cache hit rate audit passes (cache_read_input_tokens > 80% by turn 3 in a multi-turn session)

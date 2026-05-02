@@ -101,7 +101,7 @@ This section maps what existing packages need to be modified vs. what's new.
 | `internal/provider/anthropic.go` | Add tool_use support to existing `Chat`/`ChatStream` | 4 | Medium |
 | `internal/costtrack/` | Subscribe to hub events for `model.post_call` to track per-call costs | 3 | Low |
 | `internal/scan/` | Subscribe to hub events for `tool.post_use` to scan file writes | 3 | Low |
-| `cmd/stoke/main.go` | Add `wizard` command, `audit` command for package audit | 2, 5 | Low |
+| `cmd/r1/main.go` | Add `wizard` command, `audit` command for package audit | 2, 5 | Low |
 
 ### Files to create at repo root
 
@@ -138,7 +138,7 @@ Create `STOKE-IMPL-NOTES.md` at the repo root on day 1. After every meaningful c
 - Wired `SkillRegistry` into `OrchestratorConfig`
 - Open question: should skills be hot-reloaded on file change? Filewatcher exists but not used. **Default: no, requires explicit `stoke skill reload`.**
 - Tests passing: `go test ./internal/skill/... ./internal/skillselect/... ./internal/app/...`
-- Build clean: `go build ./cmd/stoke`
+- Build clean: `go build ./cmd/r1`
 ```
 
 ## Now go read the phase you're starting with.

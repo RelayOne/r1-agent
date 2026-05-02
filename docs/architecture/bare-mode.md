@@ -19,7 +19,7 @@ Grep of `--bare` across the codebase:
 | `docs/stoke-spec-final.md` | Design decision documentation | OK — documents the prohibition |
 | `internal/engine/claude.go` | Not used | OK — uses `-p` without `--bare` |
 | `internal/engine/codex.go` | Not used | OK — uses `exec` subcommand |
-| `cmd/stoke/main.go` | Not used | OK |
+| `cmd/r1/main.go` | Not used | OK |
 
 ## Conclusion
 

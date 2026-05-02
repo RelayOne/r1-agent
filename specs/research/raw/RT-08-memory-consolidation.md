@@ -110,7 +110,7 @@ Stoke's `tiers.go` already declares this mapping in the package docs. The right 
 5. `internal/memory/hygiene.go` — decay / dedupe / retention-tier ports of the CloudSwarm activities.
 6. `internal/memory/retrieve.go` — `CoreAndQuery(ctx, scope, query, coreLimit, queryLimit)` returning the two-slice result; wire into `prompts.BuildPlanPrompt / BuildExecutePrompt / BuildReviewPrompt`.
 7. `internal/wisdom` and `internal/skill` — add thin `memory.Storage` adapters; register them in `app/` startup.
-8. `cmd/stoke memory {list,consolidate,dedupe,export}` — operator CLI, following `cmd/stoke wisdom` pattern.
+8. `cmd/r1 memory {list,consolidate,dedupe,export}` — operator CLI, following `cmd/r1 wisdom` pattern.
 9. Live meta-reasoner — new `internal/metareason/` package; subscribe to `bus` session-complete events; gated by `STOKE_META_LIVE`.
 
 ---

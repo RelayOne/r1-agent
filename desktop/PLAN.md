@@ -250,7 +250,7 @@ R1D-8 → R1D-9 → R1D-10 → R1D-11 → R1D-12`.
   before R1D-7.4 (the `.stoke/` → `.r1/` migration tool).
 - **work-r1-actium-studio-skills.md R1S-1..R1S-4** must be committed before
   R1D-4.4 (bundled pack install).
-- R1's `cmd/stoke/ctl_cmd.go` IPC surface must be stable — it is the
+- R1's `cmd/r1/ctl_cmd.go` IPC surface must be stable — it is the
   ground-truth for R1D-1.4 RPC verbs.
 
 ## Skills required

@@ -244,6 +244,6 @@ See `internal/desktopapi/desktopapi.go` for the Go side and
 
 - Architecture: `docs/architecture.md` §1 (tiers), §4 (RPC surface).
 - Phase plan: `PLAN.md` R1D-1.4 (MVP invoke) → R1D-10.5 (multi-session).
-- Upstream CLI IPC: `cmd/stoke/ctl_cmd.go` (wire-match target).
+- Upstream CLI IPC: `cmd/r1/ctl_cmd.go` (wire-match target).
 - Error taxonomy: `internal/stokerr/errors.go`.
 - Work order: `plans/work-orders/work-r1-desktop-app.md` §5.2.

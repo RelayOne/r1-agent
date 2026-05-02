@@ -59,7 +59,7 @@ is now a real subsystem, not just a future direction.
 
 ## Runtime Extension Plane
 
-`cmd/stoke-mcp/backends.go` is now a practical bridge between the core
+`cmd/r1-mcp/backends.go` is now a practical bridge between the core
 runtime and deterministic helpers:
 
 - metrics collection runtime

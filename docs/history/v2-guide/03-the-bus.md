@@ -225,7 +225,7 @@ The bus carries the *runtime stream of what is happening right now*. Everything 
 Before any other component depends on the bus, the bus has to pass its own validation gate. The gate is:
 
 1. ✅ `go vet ./...` clean, `go test ./internal/bus/...` passes with >70% coverage
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ Publish persists events to durable storage before returning (verified by crash-during-publish test)
 4. ✅ Two subscribers to the same pattern receive events in the same order
 5. ✅ Hooks fire before passive subscribers see the event

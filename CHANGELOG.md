@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Moved the primary CLI entrypoint from `cmd/stoke/` to `cmd/r1/`.
+- Moved the primary CLI entrypoint from `cmd/r1/` to `cmd/r1/`.
 - Updated build, release, installer, and Docker paths so the canonical binary is `r1`.
 - Refreshed operator-facing docs so command examples use `r1` while preserving historical `stoke` references where they describe prior behavior.
 
@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifacts and loaded back by runtime code.
 - Extended `internal/skillmfr.Manifest` with `useIR`, `irRef`, and
   `compileProofRef` for dual-stack migration.
-- Wired `cmd/stoke-mcp/backends.go` so `stoke_invoke` executes the
+- Wired `cmd/r1-mcp/backends.go` so `stoke_invoke` executes the
   deterministic runtime when a registered manifest sets `useIR=true`.
 - Added the example skill at `skills/deterministic-echo/skill.r1.json`
   and its generated proof artifact.
@@ -229,7 +229,7 @@ when r1-server isn't installed (silent fallback).
   (instance list, 5s poll) and `/session/{id}` (live-tailing stream
   view, 2s poll with ?after= cursor, event-type filter, auto-scroll).
   3D ledger visualizer deferred to a follow-up.
-- `cmd/stoke/main.go` — `ensureR1ServerRunning()` probes
+- `cmd/r1/main.go` — `ensureR1ServerRunning()` probes
   localhost:3948 and, if absent, spawns r1-server detached via
   `exec.LookPath` + `Setsid:true`. Silent no-op when r1-server is
   not on PATH. Disabled via `STOKE_NO_R1_SERVER=1`.
@@ -275,7 +275,7 @@ a multi-line progress view to stderr during `stoke ship`. Consumes
 / `stoke.cost` events from the event bus and maintains a minimal
 state model (sessions, active task, active descent tier, running
 cost vs budget). ANSI cursor-up redraw when stderr is a TTY; plain
-one-line-per-event when not. Wire-up into `cmd/stoke/main.go`
+one-line-per-event when not. Wire-up into `cmd/r1/main.go`
 deferred to a follow-up.
 
 ### Changed

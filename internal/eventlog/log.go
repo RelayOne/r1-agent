@@ -360,7 +360,7 @@ func (l *Log) readFromPage(ctx context.Context, cur uint64, yield func(bus.Event
 
 // ReplaySession yields every event whose session_id, mission_id, task_id,
 // or loop_id matches sessionID, in ascending sequence order. Matches the
-// heuristic in cmd/stoke/resume_cmd.go's eventMatchesSession.
+// heuristic in cmd/r1/resume_cmd.go's eventMatchesSession.
 func (l *Log) ReplaySession(ctx context.Context, sessionID string) iter.Seq2[bus.Event, error] {
 	return func(yield func(bus.Event, error) bool) {
 		if sessionID == "" {

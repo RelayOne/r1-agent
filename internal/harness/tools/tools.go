@@ -53,7 +53,7 @@ const (
 	// ToolReportEnvIssue is the descent-hardening spec-1 item 6 tool.
 	// Dev and Reviewer stances advertise it so a worker can declare
 	// an environment blocker without burning LLM reasoning budget.
-	// The native-runtime handler lives in cmd/stoke/sow_env_issue.go.
+	// The native-runtime handler lives in cmd/r1/sow_env_issue.go.
 	ToolReportEnvIssue ToolName = "report_env_issue"
 )
 

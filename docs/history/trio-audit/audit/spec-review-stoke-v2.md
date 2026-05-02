@@ -35,7 +35,7 @@ Every item specifies exact file paths. The spec consistently names both the targ
 
 All referenced files were verified to exist in the codebase at the paths stated (e.g., `stoke/internal/hooks/hooks.go`, `stoke/internal/config/policy.go`, `stoke/internal/workflow/workflow.go`, `stoke/internal/engine/types.go`).
 
-Two items reference `main.go` without the full path -- this is `stoke/cmd/stoke/main.go` in every case. A subagent could locate it via the `cmd/stoke` convention, but explicit full paths would be cleaner.
+Two items reference `main.go` without the full path -- this is `stoke/cmd/r1/main.go` in every case. A subagent could locate it via the `cmd/r1` convention, but explicit full paths would be cleaner.
 
 ---
 

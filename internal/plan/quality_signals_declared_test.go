@@ -360,13 +360,13 @@ func TestExtractDeclaredFiles_ExplicitPaths(t *testing.T) {
 	// SOW prose with 3 distinct explicit paths inline. All three
 	// should surface.
 	prose := "We need to write app/api/v1/users/route.ts and " +
-		"packages/ui/src/Button.tsx plus cmd/stoke/main.go to " +
+		"packages/ui/src/Button.tsx plus cmd/r1/main.go to " +
 		"complete this."
 	got := ExtractDeclaredFiles(prose)
 	want := []string{
 		"app/api/v1/users/route.ts",
 		"packages/ui/src/Button.tsx",
-		"cmd/stoke/main.go",
+		"cmd/r1/main.go",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d paths, want %d: %v", len(got), len(want), got)

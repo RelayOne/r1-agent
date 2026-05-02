@@ -8,7 +8,7 @@
 - `stoke run "free text task"` → routes to chat-intent classifier → dispatches to appropriate executor
 - `stoke run --sow path.md` → routes to existing SOW executor
 **Owners:** spec-2 (CloudSwarm Protocol), spec-3 (Executor Foundation — task router)
-**Implications:** `cmd/stoke/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
+**Implications:** `cmd/r1/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
 
 ### D-2026-04-20-02 — `STOKE_DESCENT` stays opt-in through Q2
 **Context:** H-91 verification descent engine just shipped (commit 8611d48); still stabilizing. Spec-1 adds anti-deception + per-file cap + bootstrap-per-cycle hardening.

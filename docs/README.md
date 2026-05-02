@@ -94,7 +94,7 @@ docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name alias (retires
 
 # 4. From source (Go 1.25 or later; CGO enabled for SQLite).
 go build ./cmd/r1               # canonical CLI
-go build ./cmd/stoke-acp        # Agent Client Protocol adapter
+go build ./cmd/r1-acp        # Agent Client Protocol adapter
 sudo mv r1 stoke-acp /usr/local/bin/
 
 # Verify a signed release tarball (cosign keyless OIDC).

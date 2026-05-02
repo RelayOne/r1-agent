@@ -712,7 +712,7 @@
 ### STOKE-023: MapSecuritySurface error silently discarded
 - **Severity**: MEDIUM
 - **Tier**: 2
-- **File**: stoke/cmd/stoke/main.go:1469
+- **File**: stoke/cmd/r1/main.go:1469
 - **Issue**: `secMap, _ = scanpkg.MapSecuritySurface(...)`. If it fails, secMap is nil and downstream code may panic.
 - **Fix**: Log the error.
 - **Effort**: trivial

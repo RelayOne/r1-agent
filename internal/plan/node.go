@@ -9,7 +9,7 @@
 // into a Node tree incrementally.
 //
 // Why additive rather than replacing: plan.SOW is consumed by
-// dozens of files across cmd/stoke/ + scheduler/ + orchestrate/ +
+// dozens of files across cmd/r1/ + scheduler/ + orchestrate/ +
 // workflow/ + session/. Any breaking rename would touch the
 // critical path. The Node type sits alongside the existing model
 // so the migration can land in small, reviewable pieces rather

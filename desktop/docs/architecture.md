@@ -185,7 +185,7 @@ The same verbs round-trip to the r1 subprocess over stdin/stdout JSON.
 | `config.get()` → `Config` | WebView → host | No r1 round-trip; host owns config |
 | `config.set(patch)` | WebView → host | Persists to `config.json` |
 
-Verbs wire-match `cmd/stoke/ctl_cmd.go` IPC where possible; new verbs are
+Verbs wire-match `cmd/r1/ctl_cmd.go` IPC where possible; new verbs are
 additive and ship behind an `X-R1-RPC-Version: 1` header for future
 compatibility.
 

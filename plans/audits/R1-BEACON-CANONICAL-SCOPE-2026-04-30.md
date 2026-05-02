@@ -193,7 +193,7 @@ Some of these are already partially present:
 - `internal/beacon/hub`
 - `internal/ledger/nodes/beacon.go`
 - `internal/ledger/nodes/trust.go`
-- `cmd/r1` or `cmd/stoke` subcommands for operator workflows, depending on existing CLI ownership
+- `cmd/r1` or `cmd/r1` subcommands for operator workflows, depending on existing CLI ownership
 - `docs/BEACON-PROTOCOL.md`
 - `docs/TRUST-LAYER.md`
 

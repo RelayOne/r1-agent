@@ -17,7 +17,7 @@
 //
 // Exposed as a standalone function + a `stoke ledger
 // migrate` CLI subcommand. The CLI wrapper lives in
-// cmd/stoke/ledger_migrate.go; this file has the engine so
+// cmd/r1/ledger_migrate.go; this file has the engine so
 // tests can invoke it directly without shelling out.
 package ledger
 

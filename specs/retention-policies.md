@@ -10,7 +10,7 @@
 
 Stoke today retains every memory row, stream file, ledger node, checkpoint entry, and prompt/response record indefinitely. This posture is incompatible with the compliance frameworks that operators ask us about: HIPAA's six-year retention ceiling on PHI-adjacent audit data, GDPR Articles 5(1)(e) and 17 (storage limitation and right-to-erasure), SOC 2 CC6.5 (secure disposal), and — most concretely — **EU AI Act Article 12 (record-keeping), which becomes enforceable for general-purpose AI systems on 2026-08-02**. Without configurable retention, regulated operators cannot deploy Stoke at all, and unregulated operators cannot honor individual erasure requests.
 
-The target state is a **retention-policy engine** that reads operator config at `~/.r1/config.yaml` (with per-repo override at `<repo>/.stoke/config.yaml`), maps each retained surface (ephemeral/session/persistent/permanent memories, stream files, ledger content, checkpoint files, prompts) to a `Duration`, and enforces the policy in two passes: (a) **on-session-end** via a hook in `cmd/stoke/sow_native.go`, and (b) **hourly sweep** via a background goroutine in `cmd/r1-server/main.go`. Content wipes never touch the ledger chain tier — they call `ledger.Store.Redact()` from `specs/ledger-redaction.md`, which crypto-shreds the content tier and leaves the Merkle chain verifiable. The engine ships behind `STOKE_RETENTION=1` so default behavior stays retain-forever until operators opt in.
+The target state is a **retention-policy engine** that reads operator config at `~/.r1/config.yaml` (with per-repo override at `<repo>/.stoke/config.yaml`), maps each retained surface (ephemeral/session/persistent/permanent memories, stream files, ledger content, checkpoint files, prompts) to a `Duration`, and enforces the policy in two passes: (a) **on-session-end** via a hook in `cmd/r1/sow_native.go`, and (b) **hourly sweep** via a background goroutine in `cmd/r1-server/main.go`. Content wipes never touch the ledger chain tier — they call `ledger.Store.Redact()` from `specs/ledger-redaction.md`, which crypto-shreds the content tier and leaves the Merkle chain verifiable. The engine ships behind `STOKE_RETENTION=1` so default behavior stays retain-forever until operators opt in.
 
 ## 2. Policy types and defaults
 
@@ -71,7 +71,7 @@ internal/retention/
 
 Integration sites:
 
-- **`cmd/stoke/sow_native.go`** — at the session-end path (after `ended_at` is stamped) call `retention.EnforceOnSessionEnd(ctx, session.ID)`. Errors are logged and **do not fail the session** — retention is best-effort on the hot path.
+- **`cmd/r1/sow_native.go`** — at the session-end path (after `ended_at` is stamped) call `retention.EnforceOnSessionEnd(ctx, session.ID)`. Errors are logged and **do not fail the session** — retention is best-effort on the hot path.
 - **`cmd/r1-server/main.go`** — spawn `go retention.SweepLoop(ctx)` which runs `EnforceSweep(ctx)` on an hourly `time.NewTicker(time.Hour)`. Respect `ctx.Done()` for graceful shutdown; log one line per sweep with counts per surface.
 
 ## 5. Per-surface enforcement logic
@@ -199,7 +199,7 @@ Each item is self-contained and independently mergeable.
 - [ ] 29. Unit test: `TestGetSignerPrefsKeyring` — mock `crypto.GetRedactionSigner` returning a key.
 - [ ] 30. Unit test: `TestGetSignerFallbackGenerates` — tempdir without keyring produces a valid PEM.
 - [ ] 31. Unit test: `TestGetSignerFallbackRejectsLoosePerms` — refuses to read a 0o644 PEM.
-- [ ] 32. Integrate `EnforceOnSessionEnd` into `cmd/stoke/sow_native.go` at the session-end path (gated on `STOKE_RETENTION=1`).
+- [ ] 32. Integrate `EnforceOnSessionEnd` into `cmd/r1/sow_native.go` at the session-end path (gated on `STOKE_RETENTION=1`).
 - [ ] 33. Integrate `SweepLoop` into `cmd/r1-server/main.go` startup (gated on `STOKE_RETENTION=1`).
 - [ ] 34. Add `GET /api/settings/retention` handler returning merged policy + source provenance.
 - [ ] 35. Add `POST /api/settings/retention` handler with YAML round-trip write preserving comments.

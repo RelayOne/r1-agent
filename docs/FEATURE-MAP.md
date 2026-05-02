@@ -34,8 +34,8 @@ This is the current main-branch feature inventory for R1.
 |---|---|---|---|
 | Ledger audit runtime | Lets deterministic flows query ledger-backed audit evidence | Done | April 30 main-branch ledger audit runtime commit |
 | Skill execution audit runtime | Makes runtime execution behavior inspectable | Done | April 30 main-branch execution audit runtime commit |
-| Metrics collection runtime | Exposes runtime metrics snapshots to deterministic flows | Done | `cmd/stoke-mcp/metrics_runtime.go` |
-| Timeout and cancellation hooks | Keeps deterministic runtime calls bounded and cancellation-aware | Done | `cmd/stoke-mcp/backends.go` |
+| Metrics collection runtime | Exposes runtime metrics snapshots to deterministic flows | Done | `cmd/r1-mcp/metrics_runtime.go` |
+| Timeout and cancellation hooks | Keeps deterministic runtime calls bounded and cancellation-aware | Done | `cmd/r1-mcp/backends.go` |
 | Oneshot runtime cost metadata | Makes runtime cost visible to callers and operators | Done | April 30 main-branch oneshot cost metadata commit |
 
 ## Status

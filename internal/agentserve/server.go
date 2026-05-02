@@ -184,7 +184,7 @@ func (s *Server) TaskMetadata(id string) map[string]any {
 }
 
 // SetOnTaskComplete swaps the terminal-transition callback after
-// construction. Wired by cmd/stoke/agent_serve_cmd.go when
+// construction. Wired by cmd/r1/agent_serve_cmd.go when
 // --trustplane-register is set: the callback needs the *Server so it
 // can look up TaskMetadata, which is only available post-NewServer.
 // Safe to call before the server receives its first task.

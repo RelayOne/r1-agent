@@ -122,7 +122,7 @@ Custom UnmarshalJSON (sow.go:98-146) handles LLM-emitted malformed shapes.
 
 ## 2. WORKER PROMPT PIPELINE
 
-**Location**: `cmd/stoke/sow_native.go`
+**Location**: `cmd/r1/sow_native.go`
 
 ### buildSOWNativePromptsWithOpts (lines 3729-3950+)
 
@@ -322,7 +322,7 @@ type ContentJudgeVerdict struct {
 
 ## 6. INTERACTIVE CHAT
 
-**Location**: `internal/chat/` + `cmd/stoke/chat.go`
+**Location**: `internal/chat/` + `cmd/r1/chat.go`
 
 ### Status: FULLY WIRED AND OPERATIONAL
 
@@ -338,11 +338,11 @@ type ContentJudgeVerdict struct {
 
 ### Wire-up
 
-- `cmd/stoke/chat.go:398` — `buildChatSession(defaults)`
-- `cmd/stoke/chat.go:431` — `chatOnceREPL` (streaming REPL)
-- `cmd/stoke/chat.go:485` — `chatOnceShell` (TUI shell)
-- `cmd/stoke/main.go:5279` — `launchREPL` creates session
-- `cmd/stoke/main.go:5571` — `launchShell` creates session
+- `cmd/r1/chat.go:398` — `buildChatSession(defaults)`
+- `cmd/r1/chat.go:431` — `chatOnceREPL` (streaming REPL)
+- `cmd/r1/chat.go:485` — `chatOnceShell` (TUI shell)
+- `cmd/r1/main.go:5279` — `launchREPL` creates session
+- `cmd/r1/main.go:5571` — `launchShell` creates session
 
 ### Functionality
 

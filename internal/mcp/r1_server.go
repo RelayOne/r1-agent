@@ -3,7 +3,7 @@
 //
 // This is the inverse of codebase_server.go. Where codebase_server gives
 // Claude Code read access to a project's symbols/dependencies/content,
-// stoke_server gives Claude Code the ability to ASK Stoke to build a project
+// r1_server gives Claude Code the ability to ASK Stoke to build a project
 // from a Statement of Work and report progress.
 //
 // The user's flow:
@@ -819,7 +819,7 @@ func (h *realHandle) Kill() error {
 			_ = procutil.Kill(h.cmd)
 		}
 	} else {
-		logging.Global().Info("mcp.stoke_server: Kill() terminate failed; treating as process-already-gone",
+		logging.Global().Info("mcp.r1_server: Kill() terminate failed; treating as process-already-gone",
 			"pid", h.cmd.Process.Pid, "err", err)
 	}
 	return nil
