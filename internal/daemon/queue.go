@@ -196,7 +196,12 @@ func (q *Queue) Next(workerID string) (*Task, error) {
 	if err := q.flushLocked(); err != nil {
 		return nil, err
 	}
-	return t, nil
+	// Return a deep copy so the worker's local mutations (Meta init,
+	// resume_checkpoint key, etc.) don't race with concurrent Queue.Get/List
+	// readers that snapshot under q.mu. Persistent state changes (Complete,
+	// Fail, Retry) go back to the queue via the dedicated mutator methods,
+	// which all acquire q.mu and operate on q.tasks[i] directly.
+	return cloneTask(t), nil
 }
 
 // Complete marks a task done with the actual touched-byte count. If actual
