@@ -352,6 +352,12 @@ func (c *Cortex) Stop(stopCtx context.Context) error {
 	return nil
 }
 
+// Static assertion: *Cortex satisfies agentloop.CortexHook so callers
+// can assign a *Cortex to agentloop.Config.Cortex without an explicit
+// adapter. The interface lives in agentloop/ to break the import cycle
+// (cortex imports agentloop for Message); see agentloop/loop.go.
+var _ agentloop.CortexHook = (*Cortex)(nil)
+
 // MidturnNote runs one cortex superstep and returns a formatted block
 // of Notes for injection into the agent's mid-turn supervisor channel.
 //
