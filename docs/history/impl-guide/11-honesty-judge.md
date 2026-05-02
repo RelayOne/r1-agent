@@ -737,7 +737,7 @@ The wizard (Phase 2) should auto-enable claim decomposition and confession for n
 ## Validation gate for Phase 7 (Honesty Judge extension)
 
 1. ✅ `go vet ./...` clean, `go test ./internal/hub/builtin/honesty/...` passes with >70% coverage
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ TestIntegrityChecker denies a write that drops `assert.Equal` calls from a `_test.go` file
 4. ✅ ImportChecker denies a Go file write that imports `github.com/fake/nonexistent`
 5. ✅ ImportChecker allows real packages (verified against pypi.org and proxy.golang.org)

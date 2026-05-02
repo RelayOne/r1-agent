@@ -330,7 +330,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// ResolveRole is the entry point used by cmd/stoke. flagValues takes
+// ResolveRole is the entry point used by cmd/r1. flagValues takes
 // precedence over envValues; both fall back to the provided legacy
 // values so existing `--native-*` / `--reasoning-*` behavior is
 // preserved when the new flags/env are absent.

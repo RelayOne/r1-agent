@@ -31,7 +31,7 @@
 // Scope of this file intentionally stays minimal: LoadPack +
 // PackMeta + a typed error for bad input. Discovery /
 // registry-integration lives in the command layer
-// (cmd/stoke/skills_pack.go in phase R1S-1.4).
+// (cmd/r1/skills_pack.go in phase R1S-1.4).
 package skillmfr
 
 import (

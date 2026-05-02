@@ -400,7 +400,7 @@ Fanout adds two atomics per `Charge` + one CAS; against a workload where each ch
 - `go test ./internal/plan/... -run TestSessionSchedulerParallelEmitsFanoutEvents`
 - `go test ./... -race -run TestFanOut`  (race detector clean on all fanout tests)
 - `go vet ./internal/fanout/...`
-- `go build ./cmd/stoke`
+- `go build ./cmd/r1`
 
 WHEN `cfg.FailFast == true` and any child returns a non-nil error, THE SYSTEM SHALL cancel the fan-out context within 10ms and every non-completed child SHALL observe `ctx.Done()`.
 
@@ -434,6 +434,6 @@ WHEN `session_scheduler_parallel.go` migrates to consume `fanout.FanOut`, the ex
 
 11. [ ] **Document** the new package in `CLAUDE.md` package map under "AGENT BEHAVIOR" (one line: `fanout/  Generic parallel child-task fan-out (budget, trust-clamp, fail-fast, cancellation)`).
 
-12. [ ] **Run** `go build ./cmd/stoke`, `go test ./... -race`, `go vet ./...` — the CI gate. Fix any surfaced races.
+12. [ ] **Run** `go build ./cmd/r1`, `go test ./... -race`, `go vet ./...` — the CI gate. Fix any surfaced races.
 
 13. [ ] **Smoke test** — existing mission SOW with `--parallel 4` completes identically to pre-migration (same pass/fail pattern, same session order in output). No new bus events from scheduler if `BusPublisher == nil` (back-compat).

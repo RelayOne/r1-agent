@@ -366,17 +366,17 @@ the header when the content-tier file is absent and `Redacted` is
 41. Edit `internal/ledger/ledger.go`: remove `Node.Content` from `computeID`; `computeID` now wraps header+commitment and returns `type + "-" + hex(sha256(canonical(header)||commitment))[:8]`.
 42. Edit `ledger.go`: `AddNode` calls `store.WriteNode(&n, WriteOptions{NonSensitiveMeta: …})`; delete the old `hashNodeForChain` call — `ParentHash` is now simply the predecessor's **ID** (which is itself a hash of header+commitment), matching the spec's `assert header.parent_hash == previous_node_id`.
 43. Edit `ledger.go`: `Ledger.Verify` delegates to `store.Verify`; keep the existing index-vs-store reachability check as a second pass.
-44. Add `cmd/stoke/ledger_migrate.go`: subcommand `stoke ledger migrate [--dry-run]` wires `MigrateToV2`.
-45. Add `cmd/stoke/ledger_verify.go`: subcommand `stoke ledger verify` calls `Store.Verify` and prints pass/fail with the first failing ID.
-46. Add `cmd/stoke/ledger_redact.go`: subcommand `stoke ledger redact --id X --reason "..." [--key-file PATH]` — loads the ed25519 key, calls `Store.Redact`, prints the new redaction-event node ID.
-47. Register all three subcommands under the existing `stoke ledger` command group in `cmd/stoke/main.go`.
+44. Add `cmd/r1/ledger_migrate.go`: subcommand `stoke ledger migrate [--dry-run]` wires `MigrateToV2`.
+45. Add `cmd/r1/ledger_verify.go`: subcommand `stoke ledger verify` calls `Store.Verify` and prints pass/fail with the first failing ID.
+46. Add `cmd/r1/ledger_redact.go`: subcommand `stoke ledger redact --id X --reason "..." [--key-file PATH]` — loads the ed25519 key, calls `Store.Redact`, prints the new redaction-event node ID.
+47. Register all three subcommands under the existing `stoke ledger` command group in `cmd/r1/main.go`.
 48. Add unit tests `internal/ledger/chain_test.go`, `content_test.go`, `redact_test.go`, `verify_test.go`, `migrate_v2_test.go` — each ≥80% line coverage of its own file.
 49. Add an integration test `internal/ledger/ledger_redaction_integration_test.go` that (a) writes 100 mixed-sensitivity nodes across 3 missions, (b) redacts 50 of them, (c) asserts `Store.Verify()` returns nil, (d) flips one byte in a random `chain/{id}.json` and asserts `Verify()` returns an error naming that ID.
 50. Add a migration fixture at `internal/ledger/testdata/migrate_v1_fixture/` with ~20 legacy `nodes/{id}.json` files across 2 missions; add `migrate_v2_fixture_test.go` asserting end-to-end migration + `Verify()` pass with `STOKE_LEDGER_V1=1`.
 
 ## 10. Acceptance Criteria
 
-- `go build ./cmd/stoke`, `go test ./...`, `go vet ./...` all pass.
+- `go build ./cmd/r1`, `go test ./...`, `go vet ./...` all pass.
 - `Store.Verify(ctx)` returns `nil` on (a) an empty ledger, (b) a fresh 100-node chain, (c) a 100-node chain where exactly 50 randomly-chosen sensitive nodes have been redacted.
 - `Store.Verify(ctx)` returns a `fmt.Errorf` naming the offending node ID when any byte of any `chain/{id}.json` is flipped.
 - `Store.Redact(ctx, id, reason, key)` leaves `chain/{id}.json` readable, populates its `redaction` field with a valid ed25519 signature, removes `content/{id}.json`, and appends a `redaction`-type node to the chain tier.

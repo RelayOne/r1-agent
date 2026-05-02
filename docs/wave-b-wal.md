@@ -7,7 +7,7 @@ Evidence:
 - `internal/receipts/`
 - `internal/honesty/`
 - `internal/costtrack/honest_cost.go`
-- `cmd/stoke/receipt_cmd.go`
-- `cmd/stoke/honesty_cmd.go`
-- `cmd/stoke/ops_cost.go`
+- `cmd/r1/receipt_cmd.go`
+- `cmd/r1/honesty_cmd.go`
+- `cmd/r1/ops_cost.go`
 - `docs/wave-b-receipts-honesty.md`

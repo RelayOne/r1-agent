@@ -39,11 +39,11 @@ TOTAL: PASS 57 (42%) · PARTIAL 9 · MISSING 81
 
 ## Top 5 gaps by blast radius
 
-1. **S-U-012e stancesign not wired into commit sites** — the whole anti-deception story has a documented hole: signing keys exist but commits are NOT signed per-stance. `internal/worktree/` + `cmd/stoke/sow_native.go` grep for `stancesign` shows zero imports.
+1. **S-U-012e stancesign not wired into commit sites** — the whole anti-deception story has a documented hole: signing keys exist but commits are NOT signed per-stance. `internal/worktree/` + `cmd/r1/sow_native.go` grep for `stancesign` shows zero imports.
 2. **S-U-004 redact wiring incomplete** — shipped but only plugged into `internal/logging/`, not `internal/replay/`, `internal/stream/`, or hub events. Secrets can still pin to disk through replay recordings and bus payloads.
 3. **S-U-011 progressive disclosure not the default** — new InjectCatalogBudgeted exists but active prompt builders still use InjectPromptBudgeted. Skill library growth will pressure token budgets.
 4. **S-U-017 experiment never run** — measurement harness ready for months; no result artifacts in `docs/` or `bench/` so no defensible "Claude implements, Codex reviews" numbers.
-5. **S-U-002 ACP adapter missing entirely** — `cmd/stoke-acp/` doesn't exist. Every editor integration is still custom per-editor.
+5. **S-U-002 ACP adapter missing entirely** — `cmd/r1-acp/` doesn't exist. Every editor integration is still custom per-editor.
 
 ## Tier 4/5 status (honest)
 

@@ -69,7 +69,7 @@ in `internal/router/`, its user-facing surface is operator-UX.
   the same package (do NOT create `internal/metareason/`).
 - TUI progress renderer: `internal/tui/progress.go:1-835`. Nested panes
   extend this file's state model rather than replacing it.
-- Command scaffolding: `cmd/stoke/run_cmd.go` is the canonical pattern for
+- Command scaffolding: `cmd/r1/run_cmd.go` is the canonical pattern for
   a new top-level subcommand (flags, NDJSON emitter, HITL reader wiring).
 
 ---
@@ -449,7 +449,7 @@ spec owns the checklist items.
 ## IG.1 Placement
 
 New file: `internal/router/intent_gate.go`. Extends the router already
-used by `cmd/stoke/run_cmd.go`.
+used by `cmd/r1/run_cmd.go`.
 
 ## IG.2 Classifier — two stages
 
@@ -498,11 +498,11 @@ mirror, test to add.
 
 ### Part A — `stoke plan` command
 
-1. [ ] **`cmd/stoke/plan_cmd.go`** — new file. `func RunPlan(ctx,
+1. [ ] **`cmd/r1/plan_cmd.go`** — new file. `func RunPlan(ctx,
    args) error` — flags `--sow`, `--repo`, `--out`, `--approve`,
-   `--json`. Mirror flag-wiring pattern from `cmd/stoke/run_cmd.go:1-80`.
+   `--json`. Mirror flag-wiring pattern from `cmd/r1/run_cmd.go:1-80`.
    Add `plan_cmd_test.go` verifying flag parsing.
-2. [ ] **`cmd/stoke/plan_cmd.go`** — `func buildPlanArtifact(ctx,
+2. [ ] **`cmd/r1/plan_cmd.go`** — `func buildPlanArtifact(ctx,
    sowPath, repoPath) (*PlanArtifact, error)`. Loads SOW via existing
    `plan.LoadSOW`, runs existing plan builder + `PreflightACCommands`.
    Test: `TestBuildPlanArtifact_FromFixture` loads a fixture SOW and
@@ -517,43 +517,43 @@ mirror, test to add.
 5. [ ] **`internal/plan/artifact.go`** — `func NewPlanID(sowHash string,
    ts time.Time) string` — returns `pln_<first 8 hex of sha256(sowHash +
    ts)>`. Test: `TestNewPlanID_Deterministic`.
-6. [ ] **`cmd/stoke/plan_cmd.go`** — `func writePlanAtomic(path string,
+6. [ ] **`cmd/r1/plan_cmd.go`** — `func writePlanAtomic(path string,
    artifact *PlanArtifact) error` — uses `internal/atomicfs/`. Test:
    mock fs failure → returns error without leaving tmp files.
-7. [ ] **`cmd/stoke/plan_cmd.go`** — `func emitPlanReady(bus,
+7. [ ] **`cmd/r1/plan_cmd.go`** — `func emitPlanReady(bus,
    streamjson, artifact)` — emits `stoke.plan.ready` via both the bus
    and the streamjson emitter (reusing `EventStokePlanReady` constant
    from `internal/tui/progress.go`). Test:
    `TestEmitPlanReady_BothChannels` via fake emitter.
-8. [ ] **`cmd/stoke/plan_cmd.go`** — `func confirmInteractive(ctx,
+8. [ ] **`cmd/r1/plan_cmd.go`** — `func confirmInteractive(ctx,
    hitlReader, artifact) (approved bool, err error)` — uses
    `internal/hitl/hitl.go` Ask/Confirm. Falls through to stdin prompt
    when not a TTY. Test:
    `TestConfirmInteractive_TTY_and_NonTTY` with fake hitl.
-9. [ ] **`cmd/stoke/plan_cmd.go`** — `func attachApproval(artifact,
+9. [ ] **`cmd/r1/plan_cmd.go`** — `func attachApproval(artifact,
    actor, mode) *ApprovalBlock` + rewrite plan.json. Test: approval
    round-trip via fixture.
-10. [ ] **`cmd/stoke/plan_cmd.go`** — `func emitPlanApproved(bus,
+10. [ ] **`cmd/r1/plan_cmd.go`** — `func emitPlanApproved(bus,
     eventlog, plan_id, sow_hash, approval)` — writes `plan.approved`
     event. Test:
     `TestEmitPlanApproved_PersistsToEventLog`.
-11. [ ] **`cmd/stoke/execute_cmd.go`** — extend existing execute path
+11. [ ] **`cmd/r1/execute_cmd.go`** — extend existing execute path
     (reuses `run_cmd.go` scaffold). On `--plan PATH`, call
     `verifyApproved(plan_id, currentSowHash)` which queries event log
     for a matching `plan.approved` row and asserts hashes. Test:
     `TestExecuteVerifyApproved_MatchAndMismatch`.
-12. [ ] **`cmd/stoke/execute_cmd.go`** — `--resume` path: replay event
+12. [ ] **`cmd/r1/execute_cmd.go`** — `--resume` path: replay event
     log up to last `task.completed` / `session.completed`, dispatch
     next DAG node. Test:
     `TestExecuteResume_SkipsCompleted`.
-13. [ ] **`cmd/stoke/plan_cmd.go`** — `func renderSummary(w io.Writer,
+13. [ ] **`cmd/r1/plan_cmd.go`** — `func renderSummary(w io.Writer,
     artifact *PlanArtifact)` — human-readable plan summary (sessions,
     task counts, cost). Test: golden-file output comparison.
-14. [ ] **`cmd/stoke/plan_cmd.go`** — `--json` envelope writer: single
+14. [ ] **`cmd/r1/plan_cmd.go`** — `--json` envelope writer: single
     line to stdout `{plan_path, plan_id, sow_hash, approved,
     cost_estimate, dag_summary}`. Test:
     `TestPlanCmd_JSONEnvelope`.
-15. [ ] **`cmd/stoke/main.go`** — wire `plan` subcommand into the top
+15. [ ] **`cmd/r1/main.go`** — wire `plan` subcommand into the top
     dispatcher (same place `run` is registered).
 
 ### Part C — Execute-phase TUI panes
@@ -594,7 +594,7 @@ mirror, test to add.
 26. [ ] **`internal/tui/panes_test.go`** — `teatest` snapshot test:
     drive a sequence of events (2 sessions, 5 tasks, 3 ACs each) and
     assert final screenshot matches golden.
-27. [ ] **`cmd/stoke/main.go`** — on TUI startup, check
+27. [ ] **`cmd/r1/main.go`** — on TUI startup, check
     `EnvTUIPanesEnabled()` → instantiate `PaneModel` or fall through
     to existing `ProgressRenderer`-only path.
 28. [ ] **`internal/tui/panes.go`** — `func (m *PaneModel) handleCostPane(snap
@@ -719,7 +719,7 @@ mirror, test to add.
     `task.sow.updated` → re-classify + `scheduler.Requeue`. Emit
     `task.intent.changed`. Test:
     `TestTaskSowUpdated_TriggersReclassify`.
-60. [ ] **`cmd/stoke/plan_cmd.go`** — on each DAG node build,
+60. [ ] **`cmd/r1/plan_cmd.go`** — on each DAG node build,
     populate `node.intent` from `ClassifyIntent`. Test:
     `TestBuildPlan_PopulatesIntent`.
 
@@ -737,7 +737,7 @@ mirror, test to add.
 64. [ ] **Integration test**: same mission, assert `progress.md`
     exists at repo root, matches golden, contains magic comment on
     line 1. Part F end-to-end.
-65. [ ] **`go build ./cmd/stoke && go test ./... && go vet ./...`** —
+65. [ ] **`go build ./cmd/r1 && go test ./... && go vet ./...`** —
     all green before marking spec done.
 
 ---
@@ -790,7 +790,7 @@ go test ./internal/plan/... -run TestProgressRenderer
 go test ./internal/tui/... -run TestPaneModel
 go test ./internal/router/... -run TestClassifyIntent
 go test ./internal/harness/tools/... -run TestToolMask_DIAGNOSE
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 ```
 

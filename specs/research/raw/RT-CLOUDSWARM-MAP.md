@@ -325,7 +325,7 @@ Plus:
 | Requirement | Status | Evidence |
 |---|---|---|
 | Binary at `$PATH` | ✅ Expected | `execute_stoke.py:168` `shutil.which("stoke")` |
-| `run` subcommand | ❌ MISSING | not in `cmd/stoke/` |
+| `run` subcommand | ❌ MISSING | not in `cmd/r1/` |
 | `--output stream-json` | ❌ MISSING | no flag in main.go |
 | `--repo` flag | ❌ MISSING | not implemented |
 | `--branch` flag | ❌ MISSING | not implemented |
@@ -351,7 +351,7 @@ Plus:
 
 To integrate Stoke with CloudSwarm, Stoke must implement:
 
-- [ ] `stoke run` subcommand in `cmd/stoke/`
+- [ ] `stoke run` subcommand in `cmd/r1/`
 - [ ] `--output stream-json` flag (NDJSON streaming)
 - [ ] `--repo <url>` flag
 - [ ] `--branch <name>` flag

@@ -94,7 +94,7 @@ Served at `/.well-known/agent-card.json`. See §"A2A card example" for full sign
 ## API / CLI Surface
 
 ### `stoke serve` — Hireable mode
-**File:** `cmd/stoke/serve_cmd.go` (new)
+**File:** `cmd/r1/serve_cmd.go` (new)
 
 ```
 stoke serve --port 8080 --caps code,research,browser,deploy [--card-key $STOKE_A2A_CARD_KEY]
@@ -110,7 +110,7 @@ stoke serve --port 8080 --caps code,research,browser,deploy [--card-key $STOKE_A
 | `--healthz` | bool | true | Register `/healthz` + `/readyz` |
 
 ### `stoke delegate` — dry-run / ad-hoc
-**File:** `cmd/stoke/delegate_cmd.go` (new)
+**File:** `cmd/r1/delegate_cmd.go` (new)
 
 ```
 stoke delegate --spec "translate README to ja" --budget 5.00 --trust 3 [--dry-run]
@@ -273,7 +273,7 @@ func(ctx, directive) error {
 ### Part 7 — `stoke serve` wiring
 
 ```go
-// cmd/stoke/serve_cmd.go
+// cmd/r1/serve_cmd.go
 cardKeyPEM := os.Getenv("STOKE_A2A_CARD_KEY")
 edPriv := ed25519.PrivateKey(parsePEM(cardKeyPEM))
 card := buildSignedCard(caps, edPriv, publicURL)  // signs card JSON with edPriv
@@ -566,7 +566,7 @@ curl -s http://localhost:8080/.well-known/jwks.json | jq -e '.keys[0].kty == "OK
 
 8. [ ] **Create `internal/executor/delegate.go`**: `DelegateExecutor` struct implements `Executor` from spec-3. `Execute(ctx, plan, effort)` flow per Part 6 (FindCapable → select → NewDelegation → FetchCard → SendStreamingMessage → collect artifacts → reconcile). `BuildCriteria(task, deliverable)` returns delivery-complete + delivery-matches-spec + task-type-specific ACs (translation len ratio, image dims, audit symbol coverage, research citation 200). `BuildRepairFunc(plan)` sends A2A REVISE or disputes + hires different agent. `BuildEnvFixFunc()` retries with different agent.
 
-9. [ ] **Create `cmd/stoke/serve_cmd.go`**: `stoke serve --port --caps --card-key --extension --bind --healthz` flags. Loads Ed25519 key from `$STOKE_A2A_CARD_KEY`, builds signed card via `buildSignedCard(caps, edPriv, publicURL)`, registers mux handlers `/.well-known/agent-card.json`, `/.well-known/jwks.json`, `/a2a/`, `/a2a/jsonrpc`, `/healthz`, `/readyz`. Refuses to start with clear error if `STOKE_A2A_CARD_KEY` unset.
+9. [ ] **Create `cmd/r1/serve_cmd.go`**: `stoke serve --port --caps --card-key --extension --bind --healthz` flags. Loads Ed25519 key from `$STOKE_A2A_CARD_KEY`, builds signed card via `buildSignedCard(caps, edPriv, publicURL)`, registers mux handlers `/.well-known/agent-card.json`, `/.well-known/jwks.json`, `/a2a/`, `/a2a/jsonrpc`, `/healthz`, `/readyz`. Refuses to start with clear error if `STOKE_A2A_CARD_KEY` unset.
 
 10. [ ] **Create `internal/a2a/server.go`**: `stokeServerExecutor` implements `a2asrv.AgentExecutor`. `Execute(ctx, msg)` translates A2A `Message` into `mission.Runner` invocation (or `internal/executor/code.Execute` if spec-3 is merged). Emits `TaskArtifactUpdateEvent` for each diff/log. Terminal state from `verify.Pipeline`: `COMPLETED` on all-pass, `FAILED` on code_bug, `REJECTED` on out-of-scope skill.
 
@@ -576,10 +576,10 @@ curl -s http://localhost:8080/.well-known/jwks.json | jq -e '.keys[0].kty == "OK
 
 13. [ ] **CloudSwarm signer adapter** in `internal/delegation/signer_cloudswarm.go`: when `STOKE_DELEGATION_SIGNER=cloudswarm`, POST payload to `$CLOUDSWARM_DELEGATION_ENDPOINT/sign`, receive token back. Key cache from `$CLOUDSWARM_DELEGATION_ENDPOINT/jwks` with 10min TTL. Local `VerifyDelegation` still runs regardless. Default `local` signer uses env-var key directly.
 
-14. [ ] **Create `cmd/stoke/delegate_cmd.go`**: `stoke delegate --spec --budget --trust --dry-run` prints delegation plan (candidate URLs, clamp values, reserved budget, token payload) without calling SendMessage. Used for smoke tests + operator visibility.
+14. [ ] **Create `cmd/r1/delegate_cmd.go`**: `stoke delegate --spec --budget --trust --dry-run` prints delegation plan (candidate URLs, clamp values, reserved budget, token payload) without calling SendMessage. Used for smoke tests + operator visibility.
 
 15. [ ] **Bus event emission**: ensure all six lifecycle events (`cs.delegation.started`, `cs.delegation.completed`, `cs.delegation.budget_exceeded`, `cs.delegation.failed`, `cs.delegation.expired`, `delegation.budget_refunded`) publish via `internal/bus`. Mirror to `internal/streamjson` as `_stoke.dev/delegation.*` subtypes per decision C1.
 
-16. [ ] **Tests** in `internal/delegation/token_test.go`, `budget_test.go`, `nonces_test.go`, `internal/a2a/client_test.go`, `internal/executor/delegate_test.go`, `cmd/stoke/serve_cmd_test.go`. Each AC listed above must have a matching `go test -run` target. Integration smoke: boot `stoke serve`, curl card, verify signature, send a test message, assert lifecycle events emitted in order.
+16. [ ] **Tests** in `internal/delegation/token_test.go`, `budget_test.go`, `nonces_test.go`, `internal/a2a/client_test.go`, `internal/executor/delegate_test.go`, `cmd/r1/serve_cmd_test.go`. Each AC listed above must have a matching `go test -run` target. Integration smoke: boot `stoke serve`, curl card, verify signature, send a test message, assert lifecycle events emitted in order.
 
 17. [ ] **Documentation**: update `specs/stoke-api.yaml` with `/delegate` and `/serve` surface. Add README section on `STOKE_DELEGATION_SECRET` rotation. Document env vars: `STOKE_DELEGATION_SECRET`, `STOKE_DELEGATION_SECRET_OLD`, `STOKE_DELEGATION_SIGNER`, `STOKE_A2A_CARD_KEY`, `CLOUDSWARM_DELEGATION_ENDPOINT`.

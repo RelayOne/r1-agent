@@ -492,7 +492,7 @@ All `streamjson` events pass through `logging.RedactEvent` before emit. Add test
 - [ ] `Names()` returns sorted slice.
 - [ ] Default registrations after all inits: `["cloudflare", "fly", "vercel"]`.
 
-### `cmd/stoke/deploy_cmd_test.go` (extend spec-6's)
+### `cmd/r1/deploy_cmd_test.go` (extend spec-6's)
 
 - [ ] `--provider vercel --dry-run` prints vercel argv preview; no network.
 - [ ] `--provider cloudflare --dry-run` prints wrangler argv + NDJSON temp path preview.
@@ -507,8 +507,8 @@ Run from repo root; all must exit 0.
 
 ```bash
 # 1. Packages build and vet
-go build ./internal/deploy/vercel/... ./internal/deploy/cloudflare/... ./cmd/stoke
-go vet ./internal/deploy/... ./cmd/stoke
+go build ./internal/deploy/vercel/... ./internal/deploy/cloudflare/... ./cmd/r1
+go vet ./internal/deploy/... ./cmd/r1
 
 # 2. Adapter tests
 go test ./internal/deploy/... -run TestVercelDeployer
@@ -543,8 +543,8 @@ go test ./internal/executor/... -run TestDeployExecutor_MultiProvider
 7. [ ] Extend `internal/deploy/detect.go` (spec-6) with Vercel + Cloudflare signal branches BEFORE Fly-native. Add `DetectResult.Signals []string`. Implement ambiguity rules (vercel+fly → vercel+warn; vercel+cf → Operator.Ask).
 8. [ ] Create `internal/deploy/templates_phase2.go` with Vercel + Cloudflare config templates (verbatim from §Config File Templates). `Render(provider, stack, params) (path, content string, err error)`. Never overwrite; use `atomicfs`.
 9. [ ] Extend `logging/redact.go` with Vercel + Cloudflare token patterns (literal env assignments, `--token`/`--api-token` flags, Bearer). Unit test `TestRedact_PhaseTwo`.
-10. [ ] Extend `cmd/stoke/deploy_cmd.go` (spec-6) with `--provider` validation against `deploy.Names()`, `--auto`, `--env`/`--prod` mapping, `--cf-mode`, `--write-config`, `--prebuilt`. Dispatch via registry. Mutual exclusion checks.
+10. [ ] Extend `cmd/r1/deploy_cmd.go` (spec-6) with `--provider` validation against `deploy.Names()`, `--auto`, `--env`/`--prod` mapping, `--cf-mode`, `--write-config`, `--prebuilt`. Dispatch via registry. Mutual exclusion checks.
 11. [ ] Extend `internal/executor/deploy.go` (spec-6) to accept a `Deployer` selected from the registry (remove the hard-coded FlyDeployer construction; keep spec-6 behavior identical when `provider=="fly"`). All event payloads stay identical; only adapter implementation differs.
-12. [ ] Golden fixtures: `cmd/stoke/testdata/deploy/phase2/*.golden.txt` for `--dry-run` output of each provider.
+12. [ ] Golden fixtures: `cmd/r1/testdata/deploy/phase2/*.golden.txt` for `--dry-run` output of each provider.
 13. [ ] Mock binaries: `internal/deploy/vercel/vercel_mock_test.go` + `internal/deploy/cloudflare/cloudflare_mock_test.go` that stamp fake `vercel`/`wrangler` into `testing.TempDir()` and set `STOKE_VERCEL_BIN` / `STOKE_WRANGLER_BIN`. No real network in tests.
 14. [ ] Update `CLAUDE.md` package map: under the "DEPLOYMENT" section added in spec-6, add `deploy/vercel/` (Vercel adapter), `deploy/cloudflare/` (Cloudflare Workers adapter + NDJSON parser), `deploy/registry.go` (provider factory registry). One-line descriptions only.

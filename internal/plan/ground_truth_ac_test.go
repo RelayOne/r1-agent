@@ -18,7 +18,7 @@ func TestIsGroundTruthACCommand(t *testing.T) {
 		"pytest tests/",
 		"cargo test",
 		"go test ./...",
-		"go build ./cmd/stoke",
+		"go build ./cmd/r1",
 		"cd /x && pnpm install && pnpm build",
 	}
 	for _, cmd := range groundTruth {

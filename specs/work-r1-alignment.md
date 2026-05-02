@@ -280,7 +280,7 @@ needs a way to preseed R1's memory bus from a JSON snapshot and capture
 the delta at session end.
 
 **Target files.**
-- `cmd/stoke/main.go` — add `--import-memory <path>` flag; on parse,
+- `cmd/r1/main.go` — add `--import-memory <path>` flag; on parse,
   read JSON and populate `membus.Bus` via Remember before the main loop.
 - `internal/memory/membus/bus.go` — `ExportDelta(since time.Time) map[Scope][]MemoryRow`
   for dumping changed scopes.
@@ -299,7 +299,7 @@ the delta at session end.
 exits. Currently `streamjson.EmitSystem("stoke.session.end", ...)` is
 emitted but without a canonical shape.
 
-**Target file.** `cmd/stoke/sow_native_streamjson.go` — extend the
+**Target file.** `cmd/r1/sow_native_streamjson.go` — extend the
 session.end emit.
 
 **Fix.** At session end emit:

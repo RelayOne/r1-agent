@@ -24,7 +24,7 @@ execution environment.
 
 | Transition | Required evidence | Enforcement status | Notes |
 |---|---|---|---|
-| **Task dispatch → task complete** | Worker declares `tr.Success=true` AND reviewer verdict `Complete=true` | ✅ `reviewAndFollowupRecursive` ([sow_native.go:3127](../cmd/stoke/sow_native.go)); LLM reviewer required | Since `866fe57` the LLM verdict is cross-checked by the zombie classifier (3-state) and content-faithfulness judge on already-done cases. |
+| **Task dispatch → task complete** | Worker declares `tr.Success=true` AND reviewer verdict `Complete=true` | ✅ `reviewAndFollowupRecursive` ([sow_native.go:3127](../cmd/r1/sow_native.go)); LLM reviewer required | Since `866fe57` the LLM verdict is cross-checked by the zombie classifier (3-state) and content-faithfulness judge on already-done cases. |
 | **Zombie override** | Task declared ≥1 file AND 0 writes attributed this dispatch AND ≥1 declared file missing/empty | ✅ `classifyZombie` deterministic check cannot be overridden by the LLM | No LLM can talk its way past the stat-based file check. |
 | **Declared-files-present but LLM verdict=Complete** | Deterministic stub scan + LLM content-faithfulness judge agree it's real | ✅ `taskOutputsLookComplete` + `JudgeDeclaredContent` both consulted | Fake content must pass both a regex stub scan and a second-opinion LLM. |
 | **Decomposer abandon** | Decomposer returns `Abandon=true` with reason | ✅ `⛔ BLOCKED` marker surfaced; no silent accept | Changed in `d1872a2`: was `⏹` (neutral); now `⛔ BLOCKED, not complete`. |
@@ -48,7 +48,7 @@ execution environment.
    primitive exists (`internal/stancesign/`). Wiring it into the
    actual commit sites is a follow-up that touches `internal/worktree`
    and any direct `exec.Command("git", "commit", ...)` in
-   `cmd/stoke/sow_native.go`. When that lands, a commit with author
+   `cmd/r1/sow_native.go`. When that lands, a commit with author
    `stoke-reviewer` and a valid signature from the reviewer key
    becomes a cryptographic attestation; a commit with that author
    but no signature or a mismatching signature is immediately

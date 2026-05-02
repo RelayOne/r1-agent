@@ -385,7 +385,7 @@ Grammar rules:
 
 1. **Phase 1 — landed behind flag.** New `internal/providerpool/` package + `stoke providers` subcommand ships first. Default-off: `STOKE_PROVIDER_POOL=1` env or `--provider-pool` flag opts in. Legacy `engine.NativeRunner.BaseURL` sniff stays default.
 
-2. **Phase 2 — parallel shim.** `engine.NativeRunner` gains optional `PoolOverride providerpool.Pool` field. When set (callers opt in when `STOKE_PROVIDER_POOL=1`), the runner's provider-construction block at `native_runner.go:70-85` is replaced with `pool.Acquire(ctx, req)`. Mission dispatch (`cmd/stoke/main.go`), SOW dispatch (`cmd/stoke/sow_native.go`), and research executor (RT-07) populate the override.
+2. **Phase 2 — parallel shim.** `engine.NativeRunner` gains optional `PoolOverride providerpool.Pool` field. When set (callers opt in when `STOKE_PROVIDER_POOL=1`), the runner's provider-construction block at `native_runner.go:70-85` is replaced with `pool.Acquire(ctx, req)`. Mission dispatch (`cmd/r1/main.go`), SOW dispatch (`cmd/r1/sow_native.go`), and research executor (RT-07) populate the override.
 
 3. **Phase 3 — default on.** After 2 weeks of green runs with `STOKE_PROVIDER_POOL=1`, flip default and keep env var as escape hatch for rollback. `BaseURL` field on `NativeRunner` is preserved and honored when pool is absent — legacy CLI invocations keep working.
 
@@ -464,7 +464,7 @@ Zero forced migration for existing users. `.stoke/config.yaml` without a `provid
 - [ ] `TestFallbackFor`: provider `fallback_for:[research-subagent]` is last in candidate list
 - [ ] `TestCacheAffinity`: same fingerprint in 2 successive Acquires pins same provider
 
-### `cmd/stoke/providers_test.go`
+### `cmd/r1/providers_test.go`
 - [ ] `stoke providers list` prints JSON with name/enabled/models/last-cost
 - [ ] `stoke providers test <name>` runs `HealthCheck` and prints pass/fail
 
@@ -481,7 +481,7 @@ Zero forced migration for existing users. `.stoke/config.yaml` without a `provid
 
 ### Bash gate (CI-runnable)
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./internal/providerpool/...
 go test ./internal/providerpool/... -run TestCapabilityMatch
 go test ./internal/providerpool/... -run TestFailover
@@ -513,11 +513,11 @@ STOKE_PROVIDER_POOL=0 ./stoke run --dry-run "hello" | jq -e '.type'   # legacy p
 14. [ ] Add `internal/providerpool/config.go`: struct mirroring the YAML grammar above; `LoadFromFile(path)`, `BuildFromConfig(cfg) (Pool, error)`. Honor the `verificationExplicit` pattern. Unit test round-trip.
 15. [ ] Add `internal/providerpool/events.go` with `EmitCallComplete(bus, response)`, `EmitFailover`, `EmitCircuitOpened`, `EmitExhausted`, `EmitHealthDegraded`. Wire to both `internal/hub/bus.go` and `internal/bus/bus.go`.
 16. [ ] Extend `internal/engine/native_runner.go`: add optional field `PoolOverride providerpool.Pool`. When non-nil AND `STOKE_PROVIDER_POOL=1`, replace the provider-construction block (lines 70-85) with `p, err := providerpool.Call(...)`. Preserve legacy default. Add table-driven test covering both paths.
-17. [ ] Add `cmd/stoke/providers.go` subcommand group: `providers list`, `providers test <name>`, `providers enable <name>`, `providers disable <name>`. `list` prints table + JSON via `--json`. `test` calls `HealthCheck`.
+17. [ ] Add `cmd/r1/providers.go` subcommand group: `providers list`, `providers test <name>`, `providers enable <name>`, `providers disable <name>`. `list` prints table + JSON via `--json`. `test` calls `HealthCheck`.
 18. [ ] Register streamjson mapper in `internal/streamjson/emitter.go` that converts `provider.call.complete` → Claude-Code-style `system.api_cost` NDJSON line so `STOKE_PROVIDER_POOL=1 stoke run --output-format=stream-json` stays wire-compatible.
 19. [ ] Write `internal/providerpool/capability_test.go`, `failover_test.go`, `cost_test.go`, `integration_test.go`, `registry_test.go` per the Testing section.
-20. [ ] Write `cmd/stoke/providers_test.go` covering `list` + `test` subcommands against a fake pool.
-21. [ ] Add end-to-end test `cmd/stoke/pool_smoke_test.go`: run `STOKE_PROVIDER_POOL=1 ./stoke run --dry-run "hello"`, assert stream-json output includes `provider.call.complete`.
+20. [ ] Write `cmd/r1/providers_test.go` covering `list` + `test` subcommands against a fake pool.
+21. [ ] Add end-to-end test `cmd/r1/pool_smoke_test.go`: run `STOKE_PROVIDER_POOL=1 ./stoke run --dry-run "hello"`, assert stream-json output includes `provider.call.complete`.
 22. [ ] Update `CLAUDE.md` package map with new `providerpool/` entry (single-line add; no other doc edits).
 23. [ ] Feature-flag integration: env var `STOKE_PROVIDER_POOL=1` + CLI flag `--provider-pool` mirror each other; CLI wins. Default-off.
-24. [ ] Verify CI gate: `go build ./cmd/stoke && go test ./... && go vet ./...` green at every commit. Leave `internal/provider/`, `internal/subscriptions/`, `internal/pools/`, `internal/model/` source files untouched.
+24. [ ] Verify CI gate: `go build ./cmd/r1 && go test ./... && go vet ./...` green at every commit. Leave `internal/provider/`, `internal/subscriptions/`, `internal/pools/`, `internal/model/` source files untouched.

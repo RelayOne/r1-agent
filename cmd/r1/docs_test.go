@@ -13,7 +13,7 @@ import (
 // file must exist on disk.
 //
 // Walks upward from the test working directory to locate the repo root
-// (cmd/stoke is two levels deep), so this test does not depend on `go test`
+// (cmd/r1 is two levels deep), so this test does not depend on `go test`
 // being invoked from any particular directory.
 func TestSecurityMD_CrossLinks(t *testing.T) {
 	repoRoot := findRepoRoot(t)

@@ -1359,7 +1359,7 @@ Apply defaults in the existing config-loading function (find where defaults are 
 
 ## Step 7: Add `stoke skill` CLI commands
 
-**File:** `cmd/stoke/main.go`
+**File:** `cmd/r1/main.go`
 
 Add a new top-level command `skill` with subcommands `list`, `add`, `remove`, `show`, `reload`, `select`. The `select` subcommand runs `skillselect.DetectProfile` and prints the matched skills.
 
@@ -1429,7 +1429,7 @@ func runSkillCmd(args []string) error {
 Before moving to Phase 2/3:
 
 1. `go vet ./...` passes with zero output
-2. `go build ./cmd/stoke` succeeds
+2. `go build ./cmd/r1` succeeds
 3. `go test ./internal/skill/... ./internal/skillselect/... ./internal/app/... ./internal/workflow/...` passes
 4. `stoke skill list` shows the loaded skills
 5. `stoke skill select` on the Stoke repo itself prints `["go"]` as a detected language and matches the `go`, `agent-discipline`, etc. skills

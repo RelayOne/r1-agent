@@ -92,17 +92,17 @@ func TestScopeCheck_ExactFilesOnly(t *testing.T) {
 // TestScopeCheck_DirPrefix verifies that allowed entries ending in "/"
 // match any file under that directory.
 func TestScopeCheck_DirPrefix(t *testing.T) {
-	allowed := []string{"internal/worktree/", "cmd/stoke/main.go"}
+	allowed := []string{"internal/worktree/", "cmd/r1/main.go"}
 	files := []string{
 		"internal/worktree/helpers.go",  // OK (dir prefix)
 		"internal/worktree/sub/deep.go", // OK (dir prefix)
-		"cmd/stoke/main.go",             // OK (exact)
-		"cmd/stoke/other.go",            // VIOLATION (not the exact match)
+		"cmd/r1/main.go",             // OK (exact)
+		"cmd/r1/other.go",            // VIOLATION (not the exact match)
 		"internal/other/pkg.go",         // VIOLATION (outside prefix)
 	}
 	got := ScopeCheck(files, allowed)
 	sort.Strings(got)
-	want := []string{"cmd/stoke/other.go", "internal/other/pkg.go"}
+	want := []string{"cmd/r1/other.go", "internal/other/pkg.go"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("violations = %v, want %v", got, want)
 	}

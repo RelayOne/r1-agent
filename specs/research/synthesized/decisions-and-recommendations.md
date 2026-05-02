@@ -51,7 +51,7 @@ Cross-spec decisions with rationale. Read before final spec write.
 
 ### D6. `stoke run` command: NEW subcommand, not alias for `stoke ship`
 **Rationale:** RT-CLOUDSWARM-MAP §8. CloudSwarm calls `stoke run --output stream-json [--repo URL] [--branch NAME] [--model MODEL] TASK_SPEC`. Different signature from `stoke ship` (which is SOW-based). A `run` command that takes a free-text task spec (like Claude Code) is the correct surface.
-**Action:** New `cmd/stoke/run_cmd.go`. Internally routes to: clone repo → create session → execute via existing SOW or chat-intent mechanism. Emits streamjson events throughout.
+**Action:** New `cmd/r1/run_cmd.go`. Internally routes to: clone repo → create session → execute via existing SOW or chat-intent mechanism. Emits streamjson events throughout.
 
 ### D7. `hitl_required` is the ONLY mandatory protocol event
 **Evidence:** RT-CLOUDSWARM-MAP §2-3. CloudSwarm stores all other events verbatim under `stoke_events` but only actions on `hitl_required`.
@@ -157,7 +157,7 @@ type Executor interface {
 
 ### D27. `stoke plan`: separate command, produces `plan.json`
 **Evidence:** RT-11.
-**Action:** New `cmd/stoke/plan_cmd.go`. Emits `plan.ready` event. `stoke ship --sow …` remains the combined path.
+**Action:** New `cmd/r1/plan_cmd.go`. Emits `plan.ready` event. `stoke ship --sow …` remains the combined path.
 **Resumability:** `bus.Event{Kind:"plan.approved"}` persisted in event log (from spec-3); `stoke execute --plan plan.json` picks up.
 
 ### D28. Ask/Notify split: `Operator` interface, two implementations

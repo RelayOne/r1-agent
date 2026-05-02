@@ -279,7 +279,7 @@ The wizard records the user's choices in `.stoke/config.yaml` under a `superviso
 Before any other component depends on the supervisor, the supervisor has to pass its own validation gate. The gate is:
 
 1. ✅ `go vet ./...` clean, `go test ./internal/supervisor/...` passes with >70% coverage on the core and >90% coverage on each rule file
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ The supervisor core loop reads events from the bus, matches against rules, and fires hooks deterministically (verified by an integration test that runs a synthetic event sequence and asserts the expected hook fires)
 4. ✅ Every rule in the rule taxonomy has a unit test in its file
 5. ✅ The mission supervisor manifest loads the correct rules; the branch supervisor manifest loads the correct rules; the SDM supervisor manifest loads the correct rules

@@ -9,9 +9,9 @@ Generated: 2026-04-06
 | agentloop | 2 | 592 | 1 | CORE | Native agent loop used by engine/native_runner |
 | agentmsg | 1 | 263 | 1 | HELPFUL | Inter-agent messaging; only used by scheduler |
 | apiclient | 1 | 530 | 1 | CORE | SSE streaming API client; used by engine/api_runner |
-| app | 1 | 324 | 1 | CORE | Top-level orchestrator wiring; called from cmd/stoke |
+| app | 1 | 324 | 1 | CORE | Top-level orchestrator wiring; called from cmd/r1 |
 | atomicfs | 1 | 332 | 1 | HELPFUL | Atomic file edits; only used by worktree/helpers |
-| audit | 1 | 245 | 1 | HELPFUL | 17 review personas; called from cmd/stoke |
+| audit | 1 | 245 | 1 | HELPFUL | 17 review personas; called from cmd/r1 |
 | autofix | 1 | 217 | 1 | HELPFUL | Auto-lint-fix loop; called from workflow |
 | baseline | 1 | 318 | 2 | CORE | Build/test state capture; used by verify + workflow |
 | boulder | 1 | 315 | 3 | CORE | Idle detection + continuation enforcement; 3 callers |
@@ -26,7 +26,7 @@ Generated: 2026-04-06
 | conflictres | 1 | 320 | 1 | HELPFUL | Merge conflict resolution; only used by worktree |
 | consent | 1 | 244 | 2 | CORE | Human-in-the-loop approval; used by hooks + workflow |
 | contentid | 1 | 150 | 6 | CORE | Content-addressed ID generation (SHA256, 16 prefixes) |
-| context | 2 | 473 | 1 | CORE | 3-tier context budget; called from cmd/stoke |
+| context | 2 | 473 | 1 | CORE | 3-tier context budget; called from cmd/r1 |
 | convergence | 7 | 4794 | 6 | CORE | Adversarial self-audit; heavily used (6 callers) |
 | conversation | 1 | 266 | 1 | HELPFUL | Multi-turn state; only used by repl |
 | costtrack | 1 | 296 | 6 | CORE | Real-time cost tracking; 6 callers across system |
@@ -58,34 +58,34 @@ Generated: 2026-04-06
 | logging | 1 | 111 | 2 | CORE | Structured logging; used by workflow + cmd |
 | mcp | 2 | 1316 | 2 | CORE | MCP codebase tool server; 2 callers |
 | memory | 1 | 388 | 1 | HELPFUL | Cross-session knowledge; only used by app |
-| metrics | 1 | 221 | 1 | HELPFUL | Thread-safe counters; only used from cmd/stoke |
+| metrics | 1 | 221 | 1 | HELPFUL | Thread-safe counters; only used from cmd/r1 |
 | microcompact | 1 | 312 | 1 | HELPFUL | Cache-aligned compaction; only used by workflow |
 | mission | 8 | 5458 | 5 | CORE | Mission execution pipeline; 5 callers |
 | model | 3 | 511 | 4 | CORE | Model resolution + fallback chain; 4 callers |
-| notify | 2 | 134 | 1 | HELPFUL | Event notification; only used from cmd/stoke |
+| notify | 2 | 134 | 1 | HELPFUL | Event notification; only used from cmd/r1 |
 | orchestrate | 2 | 1336 | 3 | CORE | Mission pipeline integrator; 3 callers |
 | patchapply | 1 | 495 | 1 | HELPFUL | Unified diff parsing; only used by workflow |
 | plan | 3 | 545 | 5 | CORE | Plan load/save/validate; 5 callers |
 | plugins | 1 | 95 | 1 | HELPFUL | Plugin manifest/loading; only used by app |
-| pools | 1 | 437 | 1 | HELPFUL | Worker pool management; only used from cmd/stoke |
+| pools | 1 | 437 | 1 | HELPFUL | Worker pool management; only used from cmd/r1 |
 | preflight | 1 | 226 | 1 | HELPFUL | Pre-flight assertions; only used by app |
-| progress | 1 | 398 | 1 | HELPFUL | ETA estimation; only used from cmd/stoke |
+| progress | 1 | 398 | 1 | HELPFUL | ETA estimation; only used from cmd/r1 |
 | prompt | 1 | 177 | 1 | HELPFUL | Prompt fingerprinting; only used by prompts/ |
 | promptcache | 1 | 264 | 1 | HELPFUL | Cache-aligned prompt construction; only used by workflow |
 | prompts | 2 | 1986 | 3 | CORE | Build plan/execute/review prompts; 3 callers |
 | provider | 1 | 459 | 4 | CORE | AI model API clients; 4 callers |
 | rbac | 1 | 199 | 1 | HELPFUL | RBAC enforcement; only used by app |
-| remote | 1 | 170 | 1 | HELPFUL | Dashboard progress reporting; only from cmd/stoke |
-| repl | 1 | 286 | 1 | HELPFUL | Interactive REPL; only from cmd/stoke |
+| remote | 1 | 170 | 1 | HELPFUL | Dashboard progress reporting; only from cmd/r1 |
+| repl | 1 | 286 | 1 | HELPFUL | Interactive REPL; only from cmd/r1 |
 | replay | 1 | 258 | 3 | HELPFUL | Session recording; 3 callers |
 | repomap | 1 | 430 | 3 | CORE | PageRank-based repo map; 3 callers |
-| report | 1 | 96 | 1 | HELPFUL | BuildReport output; only from cmd/stoke |
+| report | 1 | 96 | 1 | HELPFUL | BuildReport output; only from cmd/r1 |
 | research | 1 | 615 | 2 | HELPFUL | Persistent research storage; 2 callers |
 | scan | 2 | 354 | 3 | CORE | 18 deterministic security rules; 3 callers |
-| scheduler | 2 | 675 | 1 | CORE | GRPW priority ordering; called from cmd/stoke |
+| scheduler | 2 | 675 | 1 | CORE | GRPW priority ordering; called from cmd/r1 |
 | schemaval | 1 | 254 | 1 | HELPFUL | Structured output validation; only used by workflow |
 | semdiff | 1 | 782 | 1 | HELPFUL | Semantic diff analysis; only used by workflow |
-| server | 2 | 507 | 1 | HELPFUL | HTTP API endpoints; only from cmd/stoke |
+| server | 2 | 507 | 1 | HELPFUL | HTTP API endpoints; only from cmd/r1 |
 | session | 4 | 839 | 1 | CORE | JSON + SQLite session storage; critical persistence layer |
 | skill | 3 | 905 | 6 | CORE | Reusable workflow patterns; 6 callers |
 | skillmfr | 2 | 400 | 2 | CORE | Skill manufacturing pipeline (4 workflows, confidence ladder) |
@@ -104,7 +104,7 @@ Generated: 2026-04-06
 | tfidf | 1 | 329 | 2 | HELPFUL | TF-IDF search; 2 callers |
 | tokenest | 1 | 241 | 1 | HELPFUL | Token count estimation; only used by workflow |
 | tools | 2 | 613 | 1 | CORE | Tool execution layer for native agent loop; used by engine |
-| tui | 2 | 600 | 1 | HELPFUL | Bubble Tea TUI; only from cmd/stoke |
+| tui | 2 | 600 | 1 | HELPFUL | Bubble Tea TUI; only from cmd/r1 |
 | validation | 1 | 100 | 1 | HELPFUL | Input validation; only used by app |
 | vecindex | 1 | 299 | 2 | HELPFUL | Vector search; 2 callers |
 | verify | 3 | 494 | 4 | CORE | Build/test/lint pipeline; 4 callers |

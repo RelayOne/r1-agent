@@ -33,7 +33,7 @@
 // Scope boundaries (per DP2-6):
 //
 //   - Does NOT modify ndjson.go (DP2-5's helper is consumed as-is).
-//   - Does NOT add CLI wiring (DP2-10 owns `cmd/stoke deploy` flags).
+//   - Does NOT add CLI wiring (DP2-10 owns `cmd/r1 deploy` flags).
 //   - Does NOT import any third-party SDK (spec §Library Preferences).
 //     Uses stdlib + internal/bus + internal/deploy + internal/logging.
 package cloudflare

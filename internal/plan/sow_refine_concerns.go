@@ -588,7 +588,7 @@ func cmHasContent(cm *ContentMatchCriterion) bool {
 //     common legitimate reviewer-driven refine — fixing a generic,
 //     unrunnable, or malformed command). Within-kind weakenings
 //     like `npm test` → `true` are caught by the existing AC-command
-//     scrubber in cmd/stoke that strips fake / bypass patterns
+//     scrubber in cmd/r1 that strips fake / bypass patterns
 //     pre-dispatch. The kind itself, however, must NOT change to a
 //     weaker verifier (no command → file_exists, no command → desc).
 //

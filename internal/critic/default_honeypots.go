@@ -14,7 +14,7 @@
 //   - internal/agentloop/loop.go (HoneypotCheckFn Config field)
 //   - internal/engine/types.go  (HoneypotCheckFn RunSpec field)
 //   - internal/engine/native_runner.go (forwarder)
-//   - cmd/stoke/sow_native.go (canary injection + registry wiring)
+//   - cmd/r1/sow_native.go (canary injection + registry wiring)
 package critic
 
 import (
@@ -138,7 +138,7 @@ func (r *HoneypotRegistry) Evaluate(ctx HoneypotContext) HoneypotVerdict {
 // know the system prompt is leaking into assistant output — a
 // classic extraction / context-boundary-breach signal.
 //
-// Exported so the canary-injection site (cmd/stoke/sow_native.go)
+// Exported so the canary-injection site (cmd/r1/sow_native.go)
 // and the rule agree on a single string constant.
 const CanaryToken = "STOKE_CANARY_DO_NOT_EMIT" // #nosec G101 -- canary honeypot marker, not a credential.
 
