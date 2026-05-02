@@ -7,8 +7,8 @@ through this document, not shared code (the two ecosystems use
 different runtimes; sharing types would force a build-time bridge).
 
 The wire format is the **agentserve** API exposed by
-`stoke agent-serve` (source: `internal/agentserve/server.go`,
-CLI: `cmd/stoke/agent_serve_cmd.go`).
+`r1 agent-serve` (source: `internal/agentserve/server.go`,
+CLI: `cmd/r1/agent_serve_cmd.go`).
 
 ## Daemon endpoint
 
@@ -17,11 +17,11 @@ CLI: `cmd/stoke/agent_serve_cmd.go`).
 | `r1.daemonUrl` | `http://127.0.0.1:7777` | Override via IDE settings or the `R1_DAEMON_URL` env var. |
 | `r1.apiKey` | empty | Falls back to the `R1_API_KEY` env var. Sent as `X-Stoke-Bearer` (during the rename window R1 keeps the legacy header). |
 
-> **Discrepancy with stoke default:** `stoke agent-serve --addr` defaults
+> **Discrepancy with r1 default:** `r1 agent-serve --addr` defaults
 > to `:8440`. The IDE protocol publishes `127.0.0.1:7777` so users
-> running multiple stoke instances can pin a stable IDE-only port.
+> running multiple r1 instances can pin a stable IDE-only port.
 > Operators must therefore start the daemon with
-> `stoke agent-serve --addr :7777` (or override `r1.daemonUrl`).
+> `r1 agent-serve --addr :7777` (or override `r1.daemonUrl`).
 > When the rename to r1-agent finalises (work-r1-rename.md) we expect
 > the new default to be `7777`; the IDE protocol is forward-aligned.
 
