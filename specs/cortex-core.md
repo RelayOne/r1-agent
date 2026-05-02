@@ -1,4 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_STARTED: 2026-05-02 -->
+<!-- BUILD_COMPLETED: 2026-05-02 -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: (foundation — none in this scope) -->
 <!-- BUILD_ORDER: 1 -->

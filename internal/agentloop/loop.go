@@ -33,6 +33,15 @@ const (
 	blockToolUse = "tool_use"
 )
 
+// CortexHook is the agentloop's view into a parallel-cognition substrate.
+// internal/cortex.Cortex satisfies this interface automatically. The
+// interface lives here (not in cortex/) to avoid an import cycle since
+// cortex imports agentloop for Message.
+type CortexHook interface {
+	MidturnNote(messages []Message, turn int) string
+	PreEndTurnGate(messages []Message) string
+}
+
 // Config configures the agent loop.
 type Config struct {
 	Model              string        // e.g. "claude-sonnet-4-5-20250929"
@@ -111,6 +120,18 @@ type Config struct {
 	//
 	// nil = no honeypot evaluation (default).
 	HoneypotCheckFn func(messages []Message) string
+
+	// Cortex is an optional CortexHook (typically *cortex.Cortex) that
+	// participates in the MidturnCheckFn and PreEndTurnCheckFn pipelines.
+	// The Cortex hook fires FIRST; operator hooks (existing fields) fire
+	// SECOND. Outputs are joined with "\n\n" for MidturnCheckFn;
+	// PreEndTurnCheckFn short-circuits on the first non-empty return.
+	Cortex CortexHook
+
+	// defaultsApplied guards defaults() against double-wrap when the
+	// method is invoked more than once on the same Config (e.g. test
+	// helpers that re-init or call defaults() before passing to New).
+	defaultsApplied bool
 }
 
 // MidturnCheckFunc is the signature for the between-turn supervisor
@@ -127,6 +148,9 @@ type MidturnCheckFunc func(messages []Message, turn int) string
 type CompactFunc func(messages []Message, estimatedTokens int) []Message
 
 func (c *Config) defaults() {
+	if c.defaultsApplied {
+		return
+	}
 	if c.MaxTurns == 0 {
 		c.MaxTurns = 25
 	}
@@ -139,6 +163,44 @@ func (c *Config) defaults() {
 	if c.Timeout == 0 {
 		c.Timeout = 5 * time.Minute
 	}
+
+	// Compose Cortex with operator hooks. Cortex fires FIRST per
+	// spec §"Integration points" §2 and §3:
+	//   - MidturnCheckFn: outputs joined with "\n\n" (cortex first, operator second)
+	//   - PreEndTurnCheckFn: short-circuits on cortex non-empty return
+	if c.Cortex != nil {
+		cortex := c.Cortex
+		operatorMid := c.MidturnCheckFn
+		c.MidturnCheckFn = func(msgs []Message, turn int) string {
+			cx := cortex.MidturnNote(msgs, turn)
+			var op string
+			if operatorMid != nil {
+				op = operatorMid(msgs, turn)
+			}
+			switch {
+			case cx == "" && op == "":
+				return ""
+			case cx == "":
+				return op
+			case op == "":
+				return cx
+			default:
+				return cx + "\n\n" + op
+			}
+		}
+		operatorEnd := c.PreEndTurnCheckFn
+		c.PreEndTurnCheckFn = func(msgs []Message) string {
+			if cx := cortex.PreEndTurnGate(msgs); cx != "" {
+				return cx // critical Note refuses end_turn — short-circuit
+			}
+			if operatorEnd != nil {
+				return operatorEnd(msgs)
+			}
+			return ""
+		}
+	}
+
+	c.defaultsApplied = true
 }
 
 // ContentBlock is a typed content block in a message.
@@ -320,6 +382,32 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 
 		// Accumulate cost
 		result.TotalCost.Add(resp.Usage)
+
+		// TASK-24: emit EventModelPostCall with Model.Role="main" so a
+		// Cortex (or any other subscriber) can track main-turn token
+		// usage from the bus. Gated on l.eventBus != nil so loops
+		// without a bus stay zero-overhead. This is the ONE site where
+		// the agentloop accounts for its own API call; other emitters
+		// (workflow.go, builtin/cost_tracker, tui/cost_dashboard) are
+		// downstream of this signal in different roles and will not
+		// collide because Role differs.
+		if l.eventBus != nil {
+			l.eventBus.EmitAsync(&hub.Event{
+				Type:      hub.EventModelPostCall,
+				Timestamp: time.Now(),
+				MissionID: l.config.SessionID,
+				TaskID:    l.config.TaskID,
+				AgentID:   l.config.AgentID,
+				Model: &hub.ModelEvent{
+					Model:        l.config.Model,
+					Role:         "main",
+					InputTokens:  resp.Usage.Input,
+					OutputTokens: resp.Usage.Output,
+					CachedTokens: resp.Usage.CacheRead,
+					StopReason:   resp.StopReason,
+				},
+			})
+		}
 
 		// Convert response content to our ContentBlock format
 		for _, rc := range resp.Content {
