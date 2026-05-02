@@ -82,18 +82,31 @@ type Workspace struct {
 	durable      *bus.Bus
 	subs         map[uint64]func(Note)
 	subsSeq      uint64
+	spotlight    *Spotlight
 }
 
 // NewWorkspace constructs a Workspace bound to the given event hub and
 // durable bus. Either argument may be nil: a nil events hub disables
 // live notifications, and a nil durable bus selects in-memory mode
 // with no WAL persistence (per TASK-22 contract).
+//
+// A Spotlight is constructed alongside the Workspace and wired so that
+// every successful Publish updates the spotlight ranking (TASK-7).
 func NewWorkspace(events *hub.Bus, durable *bus.Bus) *Workspace {
 	return &Workspace{
-		events:  events,
-		durable: durable,
-		subs:    make(map[uint64]func(Note)),
+		events:    events,
+		durable:   durable,
+		subs:      make(map[uint64]func(Note)),
+		spotlight: NewSpotlight(events),
 	}
+}
+
+// Spotlight returns the Spotlight tracker bound to this Workspace. The
+// returned pointer is stable for the lifetime of the Workspace, so callers
+// may cache it. The Spotlight is updated on every successful Publish via
+// maybeUpdate; see TASK-7 in specs/cortex-core.md.
+func (w *Workspace) Spotlight() *Spotlight {
+	return w.spotlight
 }
 
 // Subscribe registers fn to receive every Published Note. Subscribers fire
@@ -160,6 +173,13 @@ func (w *Workspace) Publish(n Note) error {
 		subs = append(subs, fn)
 	}
 	w.mu.Unlock()
+
+	// TASK-7: Spotlight update happens AFTER persistence and BEFORE the
+	// subs fan-out. maybeUpdate is responsible for emitting its own
+	// "cortex.spotlight.changed" event when an upgrade occurs.
+	if w.spotlight != nil {
+		w.spotlight.maybeUpdate(n)
+	}
 
 	if w.events != nil {
 		w.events.EmitAsync(&hub.Event{
@@ -239,4 +259,176 @@ func (w *Workspace) Drain(sinceRound uint64) ([]Note, uint64) {
 		w.drainedUpTo = next
 	}
 	return out, w.drainedUpTo
+}
+
+// severityRank maps a Severity to a numeric ordering. Higher values rank
+// higher: SevCritical(4) > SevWarning(3) > SevAdvice(2) > SevInfo(1).
+// Unknown severities collapse to 0, which intentionally never out-ranks
+// any well-formed Note (Validate would have rejected such a Note before
+// publication, so this branch is defensive only).
+func severityRank(s Severity) int {
+	switch s {
+	case SevCritical:
+		return 4
+	case SevWarning:
+		return 3
+	case SevAdvice:
+		return 2
+	case SevInfo:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// Spotlight tracks the single "loudest" unresolved Note in a Workspace.
+// At each Publish the Workspace calls maybeUpdate, which compares the new
+// Note against the current spotlight and upgrades when the new Note ranks
+// higher (Critical > Warning > Advice > Info; ties broken by EmittedAt
+// desc) OR when the current spotlight has been resolved by a follow-on
+// Note.
+//
+// The TUI/UI surface reads Current() to display the most pressing concern
+// the model should address; the orchestrator (TASK-25 integration) wires
+// Subscribe to react when the spotlight changes.
+//
+// Concurrency: a single sync.Mutex guards every field. The hub emit and
+// subscriber fan-out are performed AFTER the lock has been released so
+// downstream handlers cannot deadlock callers blocked behind the same
+// mutex (mirrors the Workspace.Publish pattern).
+type Spotlight struct {
+	mu          sync.Mutex
+	current     Note
+	subs        map[uint64]func(Note)
+	subsSeq     uint64
+	bus         *hub.Bus
+	resolvedIDs map[string]bool
+}
+
+// NewSpotlight constructs a Spotlight bound to the given event bus. The
+// bus argument may be nil, in which case Spotlight upgrades emit no hub
+// events but still fan out to subscribers registered via Subscribe.
+func NewSpotlight(bus *hub.Bus) *Spotlight {
+	return &Spotlight{
+		subs:        make(map[uint64]func(Note)),
+		bus:         bus,
+		resolvedIDs: make(map[string]bool),
+	}
+}
+
+// Current returns a copy of the Note currently held in the spotlight.
+// If no Note has ever been spotlighted, the zero-value Note is returned.
+// The returned value is a copy: callers may mutate it without affecting
+// internal state.
+func (sp *Spotlight) Current() Note {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	return sp.current
+}
+
+// Subscribe registers fn to receive every spotlight Note that becomes the
+// new current value (i.e. fires only on upgrade, not on every Publish).
+// Subscribers fire SYNCHRONOUSLY after the Spotlight mutex is released;
+// they MUST return promptly or they will block subsequent Publishes for
+// all callers.
+//
+// The returned cancel closure removes fn from the subscriber set in O(1).
+// It is safe to call cancel multiple times: the second and subsequent
+// calls are no-ops.
+func (sp *Spotlight) Subscribe(fn func(Note)) (cancel func()) {
+	sp.mu.Lock()
+	key := sp.subsSeq
+	sp.subsSeq++
+	if sp.subs == nil {
+		sp.subs = make(map[uint64]func(Note))
+	}
+	sp.subs[key] = fn
+	sp.mu.Unlock()
+
+	return func() {
+		sp.mu.Lock()
+		delete(sp.subs, key)
+		sp.mu.Unlock()
+	}
+}
+
+// maybeUpdate is invoked by Workspace.Publish after persistence. It
+// implements the spotlight upgrade rules:
+//
+//  1. If n.Resolves is non-empty, mark that ID as resolved. If the
+//     currently-spotlighted Note was the one being resolved, treat the
+//     spotlight as empty so the new Note (or any future candidate) can
+//     take its place.
+//  2. Compute candidate-vs-current rank:
+//     - higher rank wins outright;
+//     - same rank: newer EmittedAt wins (ties broken by emit order in
+//       practice because Workspace stamps EmittedAt monotonically);
+//     - if the current spotlight is now resolved, the new candidate
+//       takes over regardless of rank, provided n itself is unresolved
+//       (a resolution Note can carry SevInfo and still legitimately
+//       become the spotlight as the "next-best unresolved" Note).
+//
+// On upgrade the previous and new IDs are captured; after the lock is
+// released we emit "cortex.spotlight.changed" via the hub (if non-nil)
+// and fan out to subscribers synchronously.
+func (sp *Spotlight) maybeUpdate(n Note) {
+	sp.mu.Lock()
+
+	// Step 1: track resolutions.
+	if n.Resolves != "" {
+		sp.resolvedIDs[n.Resolves] = true
+	}
+
+	// Decide whether to upgrade. Three independent conditions can trigger
+	// an upgrade; we evaluate them in order of decreasing strength.
+	currentResolved := sp.current.ID != "" && sp.resolvedIDs[sp.current.ID]
+	newRank := severityRank(n.Severity)
+	curRank := severityRank(sp.current.Severity)
+
+	upgrade := false
+	switch {
+	case sp.current.ID == "":
+		// Spotlight is empty (no Note has ever held it). Take the new one.
+		upgrade = true
+	case currentResolved:
+		// The current spotlight has been resolved out from under us. The
+		// new Note becomes the spotlight as long as it itself is not the
+		// one that resolved an already-empty pointer (n.Resolves field
+		// targets some other Note, not n.ID, so this is safe).
+		upgrade = true
+	case newRank > curRank:
+		upgrade = true
+	case newRank == curRank && n.EmittedAt.After(sp.current.EmittedAt):
+		upgrade = true
+	}
+
+	if !upgrade {
+		sp.mu.Unlock()
+		return
+	}
+
+	prev := sp.current.ID
+	sp.current = n
+
+	// Snapshot subscribers under the lock; fire after release.
+	subs := make([]func(Note), 0, len(sp.subs))
+	for _, fn := range sp.subs {
+		subs = append(subs, fn)
+	}
+	bus := sp.bus
+	sp.mu.Unlock()
+
+	if bus != nil {
+		bus.EmitAsync(&hub.Event{
+			Type: hub.EventCortexSpotlightChanged,
+			Custom: map[string]any{
+				"from": prev,
+				"to":   n.ID,
+				"note": n,
+			},
+		})
+	}
+	for _, sub := range subs {
+		sub(n)
+	}
 }

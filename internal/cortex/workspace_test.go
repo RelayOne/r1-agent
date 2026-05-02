@@ -1,9 +1,13 @@
 package cortex
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 func validPublishNote() Note {
@@ -399,5 +403,223 @@ func TestNoteValidate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSpotlightUpgrade publishes four Notes of strictly increasing
+// severity and asserts Workspace.Spotlight().Current() tracks the highest
+// rank at every step.
+func TestSpotlightUpgrade(t *testing.T) {
+	w := NewWorkspace(hub.New(), nil)
+
+	// Step 1: SevInfo -> spotlight = info Note.
+	n1 := validPublishNote()
+	n1.Severity = SevInfo
+	n1.Title = "info"
+	if err := w.Publish(n1); err != nil {
+		t.Fatalf("Publish n1: %v", err)
+	}
+	if got := w.Spotlight().Current().Severity; got != SevInfo {
+		t.Fatalf("after info publish: spotlight severity=%q, want %q", got, SevInfo)
+	}
+
+	// Step 2: SevAdvice -> spotlight upgrades.
+	n2 := validPublishNote()
+	n2.Severity = SevAdvice
+	n2.Title = "advice"
+	if err := w.Publish(n2); err != nil {
+		t.Fatalf("Publish n2: %v", err)
+	}
+	if got := w.Spotlight().Current().Severity; got != SevAdvice {
+		t.Fatalf("after advice publish: spotlight severity=%q, want %q", got, SevAdvice)
+	}
+
+	// Step 3: SevWarning -> upgrade.
+	n3 := validPublishNote()
+	n3.Severity = SevWarning
+	n3.Title = "warning"
+	if err := w.Publish(n3); err != nil {
+		t.Fatalf("Publish n3: %v", err)
+	}
+	if got := w.Spotlight().Current().Severity; got != SevWarning {
+		t.Fatalf("after warning publish: spotlight severity=%q, want %q", got, SevWarning)
+	}
+
+	// Step 4: SevCritical -> upgrade.
+	n4 := validPublishNote()
+	n4.Severity = SevCritical
+	n4.Title = "critical"
+	if err := w.Publish(n4); err != nil {
+		t.Fatalf("Publish n4: %v", err)
+	}
+	if got := w.Spotlight().Current().Severity; got != SevCritical {
+		t.Fatalf("after critical publish: spotlight severity=%q, want %q", got, SevCritical)
+	}
+	if got := w.Spotlight().Current().Title; got != "critical" {
+		t.Fatalf("after critical publish: spotlight title=%q, want %q", got, "critical")
+	}
+}
+
+// TestSpotlightTieBrokenByEmittedAt publishes two SevWarning Notes whose
+// EmittedAt timestamps are explicitly ordered (older first). The newer
+// Note must take the spotlight per the tie-break rule.
+func TestSpotlightTieBrokenByEmittedAt(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	older := validPublishNote()
+	older.Severity = SevWarning
+	older.Title = "older"
+	older.EmittedAt = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if err := w.Publish(older); err != nil {
+		t.Fatalf("Publish older: %v", err)
+	}
+
+	newer := validPublishNote()
+	newer.Severity = SevWarning
+	newer.Title = "newer"
+	newer.EmittedAt = time.Date(2026, 1, 1, 12, 0, 1, 0, time.UTC)
+	if err := w.Publish(newer); err != nil {
+		t.Fatalf("Publish newer: %v", err)
+	}
+
+	cur := w.Spotlight().Current()
+	if cur.Title != "newer" {
+		t.Fatalf("spotlight title=%q, want %q (tie should break to newer EmittedAt)",
+			cur.Title, "newer")
+	}
+}
+
+// TestSpotlightResolvedDowngrades publishes a SevCritical Note, then a
+// SevInfo Note that resolves it. The spotlight must downgrade to the
+// info Note (the only unresolved Note remaining).
+func TestSpotlightResolvedDowngrades(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	c1 := validPublishNote()
+	c1.Severity = SevCritical
+	c1.Title = "the sky is falling"
+	if err := w.Publish(c1); err != nil {
+		t.Fatalf("Publish c1: %v", err)
+	}
+	c1ID := w.Spotlight().Current().ID
+	if c1ID == "" {
+		t.Fatalf("c1 has empty ID after publish")
+	}
+
+	i1 := validPublishNote()
+	i1.Severity = SevInfo
+	i1.Title = "fixed it"
+	i1.Resolves = c1ID
+	if err := w.Publish(i1); err != nil {
+		t.Fatalf("Publish i1: %v", err)
+	}
+
+	cur := w.Spotlight().Current()
+	if cur.Title != "fixed it" {
+		t.Fatalf("spotlight title=%q, want %q (resolved critical must yield to info resolver)",
+			cur.Title, "fixed it")
+	}
+	if cur.Severity != SevInfo {
+		t.Fatalf("spotlight severity=%q, want %q", cur.Severity, SevInfo)
+	}
+}
+
+// TestSpotlightSubscribeFanout subscribes to spotlight upgrades, publishes
+// a SevWarning Note that triggers an upgrade, and asserts the subscriber
+// observed the new spotlight Note.
+func TestSpotlightSubscribeFanout(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	var (
+		mu       sync.Mutex
+		received []Note
+	)
+	cancel := w.Spotlight().Subscribe(func(n Note) {
+		mu.Lock()
+		received = append(received, n)
+		mu.Unlock()
+	})
+	defer cancel()
+
+	n := validPublishNote()
+	n.Severity = SevWarning
+	n.Title = "loud"
+	if err := w.Publish(n); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]Note(nil), received...)
+	mu.Unlock()
+
+	if len(got) != 1 {
+		t.Fatalf("subscriber received %d Notes, want 1", len(got))
+	}
+	if got[0].Title != "loud" {
+		t.Fatalf("subscriber Note title=%q, want %q", got[0].Title, "loud")
+	}
+	if got[0].Severity != SevWarning {
+		t.Fatalf("subscriber Note severity=%q, want %q", got[0].Severity, SevWarning)
+	}
+}
+
+// TestSpotlightEmitsHubEvent verifies that an upgrade emits a
+// "cortex.spotlight.changed" event via the hub bus, with from/to IDs.
+func TestSpotlightEmitsHubEvent(t *testing.T) {
+	bus := hub.New()
+	w := NewWorkspace(bus, nil)
+
+	var (
+		mu     sync.Mutex
+		events []*hub.Event
+	)
+	bus.Register(hub.Subscriber{
+		ID:     "spotlight-test-observer",
+		Events: []hub.EventType{hub.EventCortexSpotlightChanged},
+		Mode:   hub.ModeObserve,
+		Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+			mu.Lock()
+			events = append(events, ev)
+			mu.Unlock()
+			return nil
+		},
+	})
+
+	n := validPublishNote()
+	n.Severity = SevCritical
+	n.Title = "boom"
+	if err := w.Publish(n); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	// EmitAsync schedules the dispatch on a goroutine; poll briefly.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		mu.Lock()
+		count := len(events)
+		mu.Unlock()
+		if count >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for cortex.spotlight.changed event")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	ev := events[0]
+	if ev.Type != hub.EventCortexSpotlightChanged {
+		t.Fatalf("event type=%q, want %q", ev.Type, hub.EventCortexSpotlightChanged)
+	}
+	if ev.Custom == nil {
+		t.Fatalf("event Custom is nil")
+	}
+	if from, ok := ev.Custom["from"].(string); !ok || from != "" {
+		t.Fatalf("event Custom[from]=%v, want empty string (no prior spotlight)", ev.Custom["from"])
+	}
+	if to, ok := ev.Custom["to"].(string); !ok || to == "" {
+		t.Fatalf("event Custom[to]=%v, want non-empty Note ID", ev.Custom["to"])
 	}
 }
