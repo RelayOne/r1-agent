@@ -19,10 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
@@ -104,6 +107,13 @@ type Cortex struct {
 	cancel   context.CancelFunc
 	started  atomic.Bool
 	stopOnce sync.Once
+
+	// roundCounter is the monotonic source of round ids handed to
+	// Round.Open by MidturnNote (TASK-14). It starts at zero so the
+	// first AddUint64 returns 1 — Round.Open requires roundID > 0
+	// because NewRound's "current" zero-value would otherwise reject
+	// it (Open panics on roundID <= current).
+	roundCounter atomic.Uint64
 }
 
 // New constructs a Cortex from cfg, validates required fields, applies
@@ -184,7 +194,12 @@ func New(cfg Config) (*Cortex, error) {
 
 	runners := make([]*LobeRunner, 0, len(cfg.Lobes))
 	for _, l := range cfg.Lobes {
-		runners = append(runners, NewLobeRunner(l, ws, sem, cfg.EventBus))
+		runner := NewLobeRunner(l, ws, sem, cfg.EventBus)
+		// Wire the Round barrier so each runner reports completion
+		// via Round.Done(roundID, lobeID) from runOnce, letting
+		// Cortex.MidturnNote (TASK-14) wait on the per-round barrier.
+		runner.SetRound(r)
+		runners = append(runners, runner)
 	}
 
 	return &Cortex{
@@ -335,4 +350,116 @@ func (c *Cortex) Stop(stopCtx context.Context) error {
 		}
 	})
 	return nil
+}
+
+// MidturnNote runs one cortex superstep and returns a formatted block
+// of Notes for injection into the agent's mid-turn supervisor channel.
+//
+// The dance, per spec item 14:
+//
+//  1. Allocate a fresh round id from the monotonic counter.
+//  2. Open the Round with len(c.runners) expected participants. With
+//     zero runners we skip the dance entirely and return "" — Round.Open
+//     would still close the done channel immediately, but tests and
+//     callers expect a fast no-op when no Lobes are registered.
+//  3. Stamp Workspace.SetRound so every Note Published during this
+//     round carries roundID. (Note.Round drives Drain filtering.)
+//  4. Tick every LobeRunner with TickRound(roundID). The runner stamps
+//     currentRoundID and signals its tick channel. After each lobe.Run
+//     returns, the runner calls Round.Done(roundID, lobeID).
+//  5. Wait on the Round barrier with cfg.RoundDeadline. Per spec
+//     gotcha #6, slow Lobes are NOT cancelled — their Notes simply land
+//     on a future round. ErrRoundDeadlineExceeded therefore proceeds to
+//     drain whatever has arrived; ctx errors do the same so a cancelled
+//     parent does not leave the supervisor with a stale block.
+//  6. Drain Notes for this round from the Workspace. Drain returns
+//     everything with Round >= roundID; we filter to exactly roundID
+//     defensively in case a future round has already produced Notes
+//     (shouldn't happen given the synchronous shape, but cheap guard).
+//  7. Sort by Severity desc (Critical > Warning > Advice > Info), with
+//     EmittedAt asc as the tiebreaker so within a severity bucket the
+//     reader sees Notes in the order they fired.
+//  8. Close the Round so subsequent ids strictly advance.
+//  9. Format. Empty result returns "" so the caller's hook composer
+//     does not inject a leading "[CORTEX NOTES — round N]\n" with no
+//     bullets underneath.
+//
+// The returned string format:
+//
+//	[CORTEX NOTES — round %d]
+//	- [%s] %s: %s
+//	- ...
+//
+// where the per-line fields are Severity, LobeID, Title.
+func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
+	_ = messages // history payload not consumed at this layer; reserved for future per-round LobeInput wiring.
+	_ = turn     // turn number not used yet; surfaces in the agentloop.MidturnCheckFn signature for parity.
+
+	// No runners → no round to drive. Skipping the Open call avoids a
+	// trivial (immediately-closed) Round entry in the bookkeeping maps
+	// and matches the spec contract "" on empty.
+	if len(c.runners) == 0 {
+		return ""
+	}
+
+	roundID := c.roundCounter.Add(1)
+
+	c.round.Open(roundID, len(c.runners))
+	c.workspace.SetRound(roundID)
+
+	for _, r := range c.runners {
+		r.TickRound(roundID)
+	}
+
+	waitCtx := c.ctx
+	if waitCtx == nil {
+		// Cortex was constructed but never Started. Fall back to a
+		// background context so Round.Wait still respects the
+		// deadline; tests that exercise MidturnNote without Start
+		// rely on this path.
+		waitCtx = context.Background()
+	}
+	if err := c.round.Wait(waitCtx, roundID, c.cfg.RoundDeadline); err != nil {
+		// Slow Lobes are NOT cancelled per spec gotcha #6. We log the
+		// timeout/cancel cause and proceed to drain whatever Notes did
+		// land; late Notes will surface on a future round's Drain.
+		slog.Warn("cortex/MidturnNote: round wait did not complete cleanly",
+			"component", "cortex",
+			"round", roundID,
+			"err", err,
+		)
+	}
+
+	notes, _ := c.workspace.Drain(roundID)
+
+	// Defensive filter: Drain returns Round >= roundID; restrict to
+	// exactly roundID so a future round's Notes (shouldn't exist yet,
+	// but cheap guard) never pollute this round's block.
+	rn := make([]Note, 0, len(notes))
+	for _, n := range notes {
+		if n.Round == roundID {
+			rn = append(rn, n)
+		}
+	}
+
+	sort.SliceStable(rn, func(i, j int) bool {
+		ri, rj := severityRank(rn[i].Severity), severityRank(rn[j].Severity)
+		if ri != rj {
+			return ri > rj
+		}
+		return rn[i].EmittedAt.Before(rn[j].EmittedAt)
+	})
+
+	c.round.Close(roundID)
+
+	if len(rn) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[CORTEX NOTES — round %d]\n", roundID)
+	for _, n := range rn {
+		fmt.Fprintf(&b, "- [%s] %s: %s\n", n.Severity, n.LobeID, n.Title)
+	}
+	return b.String()
 }

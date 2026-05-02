@@ -3,9 +3,11 @@ package cortex
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/stream"
@@ -278,4 +280,209 @@ func TestStartPreWarmFires(t *testing.T) {
 	if ev := (*events)[0]; ev.Type != hub.EventCortexPreWarmFired {
 		t.Fatalf("event type = %q, want %q", ev.Type, hub.EventCortexPreWarmFired)
 	}
+}
+
+// midturnLobe is a deterministic Lobe used by the MidturnNote tests. It
+// publishes a single configured Note when ticked. Run blocks on a per-
+// instance gate channel so the test can prove "ticked then completed"
+// rather than racing the runner goroutine. Each Run call closes a fresh
+// gate (via the once.Do path) so a subsequent tick does not deadlock.
+type midturnLobe struct {
+	id       string
+	severity Severity
+	title    string
+	ws       *Workspace
+
+	// startedOnce captures Run entry exactly once, for tests that want
+	// to assert the runner reached lobe.Run before the round closed.
+	startedOnce sync.Once
+	started     chan struct{}
+}
+
+func newMidturnLobe(id string, sev Severity, title string, ws *Workspace) *midturnLobe {
+	return &midturnLobe{
+		id:       id,
+		severity: sev,
+		title:    title,
+		ws:       ws,
+		started:  make(chan struct{}),
+	}
+}
+
+func (l *midturnLobe) ID() string          { return l.id }
+func (l *midturnLobe) Description() string { return "midturn test lobe" }
+func (l *midturnLobe) Kind() LobeKind      { return KindDeterministic }
+func (l *midturnLobe) Run(ctx context.Context, in LobeInput) error {
+	l.startedOnce.Do(func() { close(l.started) })
+	if l.ws == nil {
+		return nil
+	}
+	return l.ws.Publish(Note{
+		LobeID:   l.id,
+		Severity: l.severity,
+		Title:    l.title,
+	})
+}
+
+// TestMidturnNoteFormat exercises the happy path of TASK-14:
+//
+//   - Build a Cortex with two fake Lobes that each Publish one
+//     predictable Note when ticked.
+//   - Start the cortex so the LobeRunner goroutines are live.
+//   - Call MidturnNote and assert the returned string opens with the
+//     "[CORTEX NOTES — round 1]" header and contains both LobeIDs and
+//     Note titles.
+//
+// The fake Lobes are KindDeterministic so the LobeSemaphore is not on
+// the critical path; the round completes as soon as both Publish calls
+// land and the runners signal Round.Done.
+func TestMidturnNoteFormat(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	w := NewWorkspace(bus, nil)
+
+	loA := newMidturnLobe("lobe-A", SevAdvice, "alpha-title", w)
+	loB := newMidturnLobe("lobe-B", SevWarning, "beta-title", w)
+
+	c, err := New(Config{
+		EventBus:        bus,
+		Provider:        &startStopProvider{},
+		Lobes:           []Lobe{loA, loB},
+		PreWarmInterval: time.Hour,
+		RoundDeadline:   2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Wire the lobes' workspace to the cortex's workspace so Publish
+	// stamps the round id MidturnNote sets via SetRound.
+	loA.ws = c.workspace
+	loB.ws = c.workspace
+
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	out := c.MidturnNote([]agentloop.Message{}, 0)
+	if out == "" {
+		t.Fatalf("MidturnNote returned empty string; expected formatted block")
+	}
+	if !strings.HasPrefix(out, "[CORTEX NOTES — round 1]\n") {
+		t.Fatalf("MidturnNote prefix = %q, want \"[CORTEX NOTES — round 1]\\n\" prefix; full=%q",
+			firstLine(out), out)
+	}
+	if !strings.Contains(out, "lobe-A") {
+		t.Fatalf("output missing lobe-A: %q", out)
+	}
+	if !strings.Contains(out, "lobe-B") {
+		t.Fatalf("output missing lobe-B: %q", out)
+	}
+	if !strings.Contains(out, "alpha-title") {
+		t.Fatalf("output missing alpha-title: %q", out)
+	}
+	if !strings.Contains(out, "beta-title") {
+		t.Fatalf("output missing beta-title: %q", out)
+	}
+	if !strings.Contains(out, string(SevAdvice)) {
+		t.Fatalf("output missing %q severity tag: %q", SevAdvice, out)
+	}
+	if !strings.Contains(out, string(SevWarning)) {
+		t.Fatalf("output missing %q severity tag: %q", SevWarning, out)
+	}
+}
+
+// TestMidturnNoteEmptyOnNoLobes asserts the spec contract that a
+// Cortex with zero registered Lobes returns "" without ever opening a
+// Round. This is the no-op fast path: callers chain MidturnNote into
+// every turn's mid-turn hook, and an empty cortex must not pollute the
+// hook composer with a "[CORTEX NOTES — round N]\n" header.
+func TestMidturnNoteEmptyOnNoLobes(t *testing.T) {
+	t.Parallel()
+
+	c, err := New(Config{
+		EventBus:        hub.New(),
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	if got := c.MidturnNote([]agentloop.Message{}, 0); got != "" {
+		t.Fatalf("MidturnNote (no lobes) = %q, want empty", got)
+	}
+
+	// Round counter must remain zero — no Round.Open was issued, so the
+	// next call (with lobes) would still allocate roundID 1. This is an
+	// implementation-detail check but cheap to assert and guards the
+	// "skip the round dance" branch.
+	if got := c.roundCounter.Load(); got != 0 {
+		t.Fatalf("roundCounter = %d, want 0 after empty MidturnNote", got)
+	}
+}
+
+// TestMidturnNoteSortsBySeverity asserts that the formatted block is
+// sorted Severity desc (Critical > Warning > Advice > Info), with
+// EmittedAt asc as the tiebreaker. We seed two Lobes — one Critical,
+// one Info — and require the Critical line to appear strictly before
+// the Info line in the output.
+func TestMidturnNoteSortsBySeverity(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	w := NewWorkspace(bus, nil)
+
+	// Order the lobes Info-first in the slice so the test would fail if
+	// MidturnNote naively preserved registration order.
+	loInfo := newMidturnLobe("lobe-info", SevInfo, "info-title", w)
+	loCrit := newMidturnLobe("lobe-crit", SevCritical, "crit-title", w)
+
+	c, err := New(Config{
+		EventBus:        bus,
+		Provider:        &startStopProvider{},
+		Lobes:           []Lobe{loInfo, loCrit},
+		PreWarmInterval: time.Hour,
+		RoundDeadline:   2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	loInfo.ws = c.workspace
+	loCrit.ws = c.workspace
+
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	out := c.MidturnNote([]agentloop.Message{}, 0)
+	if out == "" {
+		t.Fatalf("MidturnNote returned empty; expected formatted block")
+	}
+
+	critIdx := strings.Index(out, "lobe-crit")
+	infoIdx := strings.Index(out, "lobe-info")
+	if critIdx < 0 || infoIdx < 0 {
+		t.Fatalf("output missing one of the lobes: %q", out)
+	}
+	if !(critIdx < infoIdx) {
+		t.Fatalf("Critical line (%d) must precede Info line (%d): %q", critIdx, infoIdx, out)
+	}
+}
+
+// firstLine returns the first \n-terminated line of s for diagnostic
+// formatting; falls back to s entire if no newline is present.
+func firstLine(s string) string {
+	if i := strings.Index(s, "\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

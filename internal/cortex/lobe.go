@@ -114,11 +114,24 @@ type LobeRunner struct {
 	bus  *hub.Bus
 
 	// tick signals "Cortex has started a new round; please run once".
-	// Producers (TASK-14 Cortex.scheduleRound) send non-blockingly; the
+	// Producers (TASK-14 Cortex.MidturnNote) send non-blockingly; the
 	// runner consumes one tick per round inside its main select loop.
 	// Buffered with capacity 1 so a producer never blocks while the
 	// runner is mid-Run: a second tick before consumption is coalesced.
 	tick chan struct{}
+
+	// round is the optional Round barrier. When non-nil, the runner
+	// calls round.Done(currentRoundID, lobe.ID()) after each runOnce
+	// returns so Cortex.MidturnNote (TASK-14) can wait on the barrier.
+	// Set via SetRound; nil for tests that drive ticks without a Round.
+	round *Round
+
+	// currentRoundID carries the Round id stamped onto the most recent
+	// tick. Producers (Cortex via TickRound) atomically store the id
+	// alongside the tick send; the runner reads it atomically inside
+	// runOnce after the lobe.Run returns. The legacy Tick() path leaves
+	// this at zero, which is harmless because round is nil in that case.
+	currentRoundID atomic.Uint64
 
 	started  atomic.Bool
 	stopOnce sync.Once
@@ -141,11 +154,40 @@ func NewLobeRunner(lobe Lobe, ws *Workspace, sem *LobeSemaphore, bus *hub.Bus) *
 	}
 }
 
-// Tick returns the runner's tick channel. Cortex (TASK-14) calls this
-// to signal "begin a new round" by performing a non-blocking send.
+// Tick returns the runner's tick channel. Test callers send on this
+// directly when they do not need Round.Done bookkeeping. Cortex
+// production code uses TickRound instead so the runner can signal the
+// Round barrier when the lobe completes.
+//
 // Exposed as a method rather than an exported field so callers cannot
 // close the channel — only the runner controls its lifecycle.
 func (r *LobeRunner) Tick() chan<- struct{} { return r.tick }
+
+// SetRound binds the runner to a Round barrier. After this call, every
+// runOnce that completes will signal round.Done(currentRoundID, lobe.ID())
+// so Cortex.MidturnNote (TASK-14) can wait on the barrier. Calling with
+// nil clears the binding. Safe to call before Start; not safe to call
+// concurrently with TickRound or runOnce (callers are expected to bind
+// once at construction time, which Cortex.New does).
+func (r *LobeRunner) SetRound(round *Round) { r.round = round }
+
+// TickRound signals the runner to begin a round, atomically stamping
+// the supplied roundID so the runner can call Round.Done with the
+// matching id when its work completes. The send is non-blocking and
+// idempotent: if a tick is already pending, the new one is coalesced
+// (the runner only consumes one tick per round; a second producer that
+// loses the race is dropped on purpose).
+//
+// TickRound replaces the bare-channel send pattern used by the legacy
+// Tick() accessor. The legacy accessor is preserved for tests that do
+// not exercise Round.
+func (r *LobeRunner) TickRound(roundID uint64) {
+	r.currentRoundID.Store(roundID)
+	select {
+	case r.tick <- struct{}{}:
+	default:
+	}
+}
 
 // Start launches the runner goroutine. It is idempotent: only the first
 // call after construction launches the goroutine; subsequent calls are
@@ -199,6 +241,18 @@ func (r *LobeRunner) run(ctx context.Context) {
 // (e.g. panic during Acquire), which would otherwise terminate the
 // goroutine with the user-supplied recovered value.
 func (r *LobeRunner) runOnce(ctx context.Context) {
+	// Capture the round id at entry so a stray TickRound that lands
+	// after lobe.Run finishes cannot retarget the Done signal at a
+	// different round.
+	roundID := r.currentRoundID.Load()
+
+	// Round.Done MUST fire even if lobe.Run panics or the goroutine
+	// later exits via ctx.Done — otherwise Cortex.MidturnNote would
+	// hang on Round.Wait. The deferred call is sequenced before the
+	// panic-recover defer below (defers run in LIFO order, so the
+	// recover registered later runs first); if the recover swallows
+	// the panic, signalDone still fires on the way out.
+	defer r.signalDone(roundID)
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.emitPanic(rec)
@@ -209,14 +263,28 @@ func (r *LobeRunner) runOnce(ctx context.Context) {
 		if err := r.sem.Acquire(ctx); err != nil {
 			// Context cancelled during Acquire: drop the round
 			// silently. The outer select will observe ctx.Done()
-			// on the next iteration and exit.
+			// on the next iteration and exit. The deferred
+			// signalDone above still fires so the Round barrier
+			// does not stall on a cancelled tick.
 			return
 		}
 		defer r.sem.Release()
 	}
 
 	in := r.buildInput(ctx)
+	in.Round = roundID
 	_ = r.lobe.Run(ctx, in)
+}
+
+// signalDone reports completion of a round to the bound Round barrier.
+// Safe with a nil round (legacy tests drive ticks without a Round) and
+// with roundID==0 (the legacy Tick() path leaves currentRoundID at zero;
+// Round.Done silently ignores unknown round ids).
+func (r *LobeRunner) signalDone(roundID uint64) {
+	if r.round == nil {
+		return
+	}
+	r.round.Done(roundID, r.lobe.ID())
 }
 
 // buildInput constructs the per-round LobeInput. The Workspace is
