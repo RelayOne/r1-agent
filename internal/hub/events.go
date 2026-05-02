@@ -125,9 +125,12 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
-// --- Cortex (1 event) ---
+// --- Cortex (4 events) ---
 const (
 	EventCortexNotePublished EventType = "cortex.note.published"
+	EventCortexPreWarmFired  EventType = "cortex.prewarm.fired"
+	EventCortexPreWarmFailed EventType = "cortex.prewarm.failed"
+	EventCortexRouterDecided EventType = "cortex.router.decided"
 )
 
 // Mode determines how the hook participates.
