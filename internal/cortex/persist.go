@@ -13,8 +13,8 @@
 //     caller, which surfaces them through Workspace.Publish.
 //
 //  2. In-memory mode (durable == nil): no-op. The Workspace constructor
-//     accepts a nil bus to support tests, the prewarm harness, and
-//     ephemeral runs that intentionally skip persistence.
+//     accepts a nil bus to support unit harnesses, the prewarm pump, and
+//     ephemeral runs that deliberately omit persistence.
 package cortex
 
 import (
