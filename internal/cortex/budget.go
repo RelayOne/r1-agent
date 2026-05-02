@@ -3,6 +3,9 @@ package cortex
 import (
 	"context"
 	"fmt"
+	"sync"
+
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 // LobeSemaphore is a bounded buffered-channel semaphore that caps the number
@@ -46,4 +49,85 @@ func (s *LobeSemaphore) Release() {
 	case <-s.slots:
 	default:
 	}
+}
+
+// BudgetTracker enforces a per-round output-token cap on Lobe activity by
+// pegging the budget to a fraction (currently 30%) of the main agent's last
+// output turn. Cortex calls RecordMainTurn from a hub.Bus subscription on
+// EventModelPostCall so that mainOutputLastTurn always reflects the most
+// recent main-loop turn. Lobe runners call Charge after each Lobe LLM
+// invocation to accumulate lobeOutputThisRound, and consult Exceeded before
+// dispatching the next Lobe round; ResetRound is invoked when a new round
+// begins so the accumulator measures a single round in isolation.
+//
+// All methods are safe for concurrent use; mu guards both counters.
+//
+// LobeRunner integration (spec item 21): once TASK-9's LobeRunner lands,
+// runOnce should consult this tracker on the LLM-acquire path. After
+// Acquire returns, the runner is expected to call Exceeded(); if true,
+// immediately Release the slot, skip this round's invocation, and emit
+// "cortex.lobe.budget_skipped". That wiring is intentionally deferred to
+// the follow-up that owns lobe.go.
+type BudgetTracker struct {
+	mu                  sync.Mutex
+	mainOutputLastTurn  int
+	lobeOutputThisRound int
+}
+
+// NewBudgetTracker returns a zero-valued BudgetTracker. Until the first
+// RecordMainTurn call, RoundOutputBudget is 0 and any non-empty Charge
+// trips Exceeded — this is intentional fail-closed behavior.
+func NewBudgetTracker() *BudgetTracker {
+	return &BudgetTracker{}
+}
+
+// Charge accumulates the Output token count from a Lobe's LLM usage into
+// the per-round counter. The lobeID parameter is currently unused but is
+// accepted for future per-Lobe telemetry (e.g. to attribute consumption).
+func (t *BudgetTracker) Charge(lobeID string, usage stream.TokenUsage) {
+	_ = lobeID
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lobeOutputThisRound += usage.Output
+}
+
+// RoundOutputBudget returns the current per-round Lobe output budget,
+// computed as 30% of mainOutputLastTurn. With no main-turn observed yet
+// the budget is 0.
+func (t *BudgetTracker) RoundOutputBudget() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.mainOutputLastTurn * 30 / 100
+}
+
+// Exceeded reports whether the per-round Lobe output accumulator has met
+// or exceeded the current RoundOutputBudget. Note that with
+// mainOutputLastTurn == 0 the budget is 0, so any Charge (and even no
+// Charge, since 0 >= 0) trips this — callers should treat the absence of
+// a recorded main turn as a deliberate fail-closed gate.
+func (t *BudgetTracker) Exceeded() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lobeOutputThisRound >= t.mainOutputLastTurn*30/100
+}
+
+// ResetRound zeroes the per-round Lobe output accumulator. It does not
+// touch mainOutputLastTurn; the budget is recomputed from whatever
+// main-turn value is current at the time Exceeded is consulted.
+func (t *BudgetTracker) ResetRound() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lobeOutputThisRound = 0
+}
+
+// RecordMainTurn records the Output-token count of the most recent main
+// agent turn so subsequent RoundOutputBudget calls can derive the 30% cap.
+// Cortex wires this to a hub.Bus subscription on EventModelPostCall.
+//
+// NOTE: TASK-24 will tighten the signature to RecordMainTurn(outputTokens
+// int); this task uses stream.TokenUsage per spec line 849.
+func (t *BudgetTracker) RecordMainTurn(usage stream.TokenUsage) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.mainOutputLastTurn = usage.Output
 }
