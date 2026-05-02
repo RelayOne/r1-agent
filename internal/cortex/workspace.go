@@ -2,8 +2,12 @@ package cortex
 
 import (
 	"errors"
+	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/RelayOne/r1/internal/bus"
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // Severity tags drive both supervisor injection priority and the
@@ -53,4 +57,35 @@ func (n Note) Validate() error {
 		return errors.New("note: unknown Severity")
 	}
 	return nil
+}
+
+// Workspace is the append-only Note store that backs the cortex Round
+// pipeline. Lobes Publish Notes; the supervisor and PreEndTurnCheckFn
+// read snapshots; subscribers receive each Note as it lands.
+//
+// Concurrency model: a sync.RWMutex guards every field. Readers (Snapshot,
+// Drain) take RLock and copy; writers (Publish, round bumps) take Lock.
+// The pattern mirrors internal/conversation/runtime.go:67-99.
+//
+// The events handle is the in-process typed hub used for live UI/log
+// updates. The durable handle is the WAL-backed bus used for crash
+// recovery and post-mortem replay; it is allowed to be nil, in which
+// case the Workspace runs in pure in-memory mode (per spec item 22).
+type Workspace struct {
+	mu           sync.RWMutex
+	notes        []Note
+	seq          uint64
+	drainedUpTo  uint64
+	currentRound uint64
+	events       *hub.Bus
+	durable      *bus.Bus
+	subs         []func(Note)
+}
+
+// NewWorkspace constructs a Workspace bound to the given event hub and
+// durable bus. Either argument may be nil: a nil events hub disables
+// live notifications, and a nil durable bus selects in-memory mode
+// with no WAL persistence (per TASK-22 contract).
+func NewWorkspace(events *hub.Bus, durable *bus.Bus) *Workspace {
+	return &Workspace{events: events, durable: durable}
 }
