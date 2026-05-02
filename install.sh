@@ -54,9 +54,9 @@ build_from_source() {
 
     info "Building..."
     (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-bin" ./cmd/r1)
-    (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/stoke-acp-bin" ./cmd/stoke-acp)
+    (cd "${tmp_dir}/r1" && go build -trimpath -ldflags="-s -w" -o "${tmp_dir}/r1-acp-bin" ./cmd/r1-acp)
 
-    for pair in "${tmp_dir}/r1-bin:${BINARY}" "${tmp_dir}/stoke-acp-bin:stoke-acp"; do
+    for pair in "${tmp_dir}/r1-bin:${BINARY}" "${tmp_dir}/r1-acp-bin:r1-acp"; do
         src="${pair%%:*}"
         dst_name="${pair##*:}"
         dst="${INSTALL_DIR}/${dst_name}"
@@ -69,7 +69,7 @@ build_from_source() {
     done
 
     info "Built and installed r1 to ${INSTALL_DIR}/${BINARY}"
-    info "Built and installed stoke-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/stoke-acp"
+    info "Built and installed r1-acp (Agent Client Protocol adapter) to ${INSTALL_DIR}/r1-acp"
     info "Run 'r1 doctor' to verify your setup."
 }
 
@@ -138,7 +138,7 @@ main() {
     info "Installing to ${INSTALL_DIR}..."
     tar -xzf "${tmp_dir}/${archive_name}" -C "${tmp_dir}"
 
-    # Install the main r1 CLI and the stoke-acp Agent Client Protocol
+    # Install the main r1 CLI and the r1-acp Agent Client Protocol
     # adapter. The ACP adapter is optional for older archives.
     install_one() {
         local bin_name="$1"
@@ -168,7 +168,7 @@ main() {
     }
 
     install_one r1 "${BINARY}" required
-    install_one stoke-acp stoke-acp optional
+    install_one r1-acp r1-acp optional
 
     info "Run 'r1 doctor' to verify your setup."
 }

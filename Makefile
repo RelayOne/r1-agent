@@ -3,13 +3,13 @@
 # Default: run the CI gate
 all: build test vet
 
-# Build all binaries. Primary is ./cmd/r1; ./cmd/stoke-acp is
+# Build all binaries. Primary is ./cmd/r1; ./cmd/r1-acp is
 # the Agent Client Protocol adapter (S-U-002). Outputs land in
 # ./bin/ so build artifacts do not clutter the repo root.
 build:
 	mkdir -p bin
 	go build -o ./bin/r1 ./cmd/r1
-	go build -o ./bin/stoke-acp ./cmd/stoke-acp
+	go build -o ./bin/r1-acp ./cmd/r1-acp
 
 # Run all tests
 test:
@@ -43,7 +43,7 @@ release:
 
 # Clean build artifacts
 clean:
-	rm -f ./bin/r1 ./bin/stoke-acp
+	rm -f ./bin/r1 ./bin/r1-acp
 	rm -rf dist/
 	rm -f coverage.out
 
