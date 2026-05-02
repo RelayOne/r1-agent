@@ -116,7 +116,7 @@ func DefaultPolicy() Policy {
 				MCPEnabled:   false,
 			},
 		},
-		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"}},
+		Files:        FilesPolicy{Protected: []string{".claude/", ".stoke/", "CLAUDE.md", ".env*", "r1.policy.yaml"}},
 		Verification: VerificationPolicy{Build: true, Tests: true, Lint: true, CrossModelReview: true, ScopeCheck: true},
 		Skills:       DefaultSkillsConfig(),
 	}
@@ -167,7 +167,7 @@ func DefaultPolicyYAML() string {
     mcp_enabled: false
 
 files:
-  protected: [".claude/", ".stoke/", "CLAUDE.md", ".env*", "stoke.policy.yaml"]
+  protected: [".claude/", ".stoke/", "CLAUDE.md", ".env*", "r1.policy.yaml"]
 
 verification:
   build: required
@@ -225,7 +225,7 @@ var policySearchNames = []string{
 	"stoke.yml",
 	".stoke.yaml",
 	".stoke.yml",
-	"stoke.policy.yaml",
+	"r1.policy.yaml",
 	"stoke.policy.yml",
 }
 

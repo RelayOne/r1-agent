@@ -447,7 +447,7 @@ func TestSeedBundledSkillPacks_RegistersLedgerAuditQueryRuntime(t *testing.T) {
 		t.Fatalf("close ledger: %v", err)
 	}
 
-	backends, err := NewBackends(filepath.Join(t.TempDir(), "stoke-mcp-ledger"))
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "r1-mcp-ledger"))
 	if err != nil {
 		t.Fatalf("new backends: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
 			Type:          "decision_internal",
 			SchemaVersion: 1,
 			CreatedAt:     time.Date(2026, 4, 30, 16, 0, 0, 0, time.UTC),
-			CreatedBy:     "stoke-mcp",
+			CreatedBy:     "r1-mcp",
 			MissionID:     "mission-skill-audit",
 			Content: json.RawMessage(`{
 				"kind":"capability_invocation",
@@ -615,7 +615,7 @@ func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
 			Type:          "decision_internal",
 			SchemaVersion: 1,
 			CreatedAt:     time.Date(2026, 4, 30, 16, 1, 0, 0, time.UTC),
-			CreatedBy:     "stoke-mcp",
+			CreatedBy:     "r1-mcp",
 			MissionID:     "mission-skill-audit",
 			Content: json.RawMessage(`{
 				"kind":"capability_invocation",
@@ -632,7 +632,7 @@ func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
 			Type:          "decision_internal",
 			SchemaVersion: 1,
 			CreatedAt:     time.Date(2026, 4, 30, 16, 2, 0, 0, time.UTC),
-			CreatedBy:     "stoke-mcp",
+			CreatedBy:     "r1-mcp",
 			MissionID:     "mission-skill-audit",
 			Content: json.RawMessage(`{
 				"kind":"audit_event",
@@ -648,7 +648,7 @@ func TestSeedBundledSkillPacks_RegistersSkillExecutionAuditLog(t *testing.T) {
 		t.Fatalf("close ledger: %v", err)
 	}
 
-	backends, err := NewBackends(filepath.Join(t.TempDir(), "stoke-mcp-ledger"))
+	backends, err := NewBackends(filepath.Join(t.TempDir(), "r1-mcp-ledger"))
 	if err != nil {
 		t.Fatalf("new backends: %v", err)
 	}

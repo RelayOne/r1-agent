@@ -13,7 +13,7 @@
 // dependency-free for container deployment):
 //
 //   STOKE_A2A_ADDR        listen address (default :7430)
-//   STOKE_A2A_NAME        agent name (default "stoke-a2a")
+//   STOKE_A2A_NAME        agent name (default "r1-a2a")
 //   STOKE_A2A_DESC        human description
 //   STOKE_A2A_VERSION     semver (default "dev")
 //   STOKE_A2A_URL         external URL (for the card)
@@ -49,7 +49,7 @@ func main() {
 	// S1-1 env rename: canonical R1_A2A_* with STOKE_A2A_* fallback
 	// through the 2026-07-23 dual-accept window.
 	addr := envOr("R1_A2A_ADDR", "STOKE_A2A_ADDR", ":7430")
-	name := envOr("R1_A2A_NAME", "STOKE_A2A_NAME", "stoke-a2a")
+	name := envOr("R1_A2A_NAME", "STOKE_A2A_NAME", "r1-a2a")
 	version := envOr("R1_A2A_VERSION", "STOKE_A2A_VERSION", "dev")
 	desc := r1env.Get("R1_A2A_DESC", "STOKE_A2A_DESC")
 	url := r1env.Get("R1_A2A_URL", "STOKE_A2A_URL")
@@ -72,7 +72,7 @@ func main() {
 	store := a2a.NewInMemoryTaskStore()
 	srv := a2a.NewServer(card, store, token)
 
-	fmt.Fprintf(os.Stderr, "stoke-a2a: listening on %s (capabilities=%d, auth=%t)\n",
+	fmt.Fprintf(os.Stderr, "r1-a2a: listening on %s (capabilities=%d, auth=%t)\n",
 		addr, len(caps), token != "")
 
 	// Own the http.Server directly so SIGINT/SIGTERM can
@@ -83,13 +83,13 @@ func main() {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		<-c
-		fmt.Fprintln(os.Stderr, "stoke-a2a: shutdown signal, draining")
+		fmt.Fprintln(os.Stderr, "r1-a2a: shutdown signal, draining")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = hs.Shutdown(shutCtx)
 	}()
 	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintln(os.Stderr, "stoke-a2a:", err)
+		fmt.Fprintln(os.Stderr, "r1-a2a:", err)
 		os.Exit(1)
 	}
 }
@@ -112,7 +112,7 @@ func parseCapabilities(s string) []a2a.CapabilityRef {
 		}
 		parts := strings.SplitN(raw, "@", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			fmt.Fprintf(os.Stderr, "stoke-a2a: skip malformed capability %q (want name@version)\n", raw)
+			fmt.Fprintf(os.Stderr, "r1-a2a: skip malformed capability %q (want name@version)\n", raw)
 			continue
 		}
 		out = append(out, a2a.CapabilityRef{Name: parts[0], Version: parts[1]})

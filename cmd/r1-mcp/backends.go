@@ -73,14 +73,14 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 		if err != nil {
 			cache = os.TempDir()
 		}
-		ledgerDir = filepath.Join(cache, "stoke-mcp", "ledger")
+		ledgerDir = filepath.Join(cache, "r1-mcp", "ledger")
 	}
 	if err := os.MkdirAll(ledgerDir, 0o755); err != nil {
-		return nil, fmt.Errorf("stoke-mcp: mkdir ledger: %w", err)
+		return nil, fmt.Errorf("r1-mcp: mkdir ledger: %w", err)
 	}
 	led, err := ledger.New(ledgerDir)
 	if err != nil {
-		return nil, fmt.Errorf("stoke-mcp: init ledger: %w", err)
+		return nil, fmt.Errorf("r1-mcp: init ledger: %w", err)
 	}
 	// truecom.Client selection via the NewFromEnv factory
 	// (SOW task B-5). Resolution:
@@ -93,7 +93,7 @@ func NewBackends(ledgerDir string) (*Backends, error) {
 	//     so operators see the problem at startup, not at first RPC.
 	tp, err := truecom.NewFromEnv()
 	if err != nil {
-		return nil, fmt.Errorf("stoke-mcp: build trustplane client: %w", err)
+		return nil, fmt.Errorf("r1-mcp: build trustplane client: %w", err)
 	}
 	delMgr := delegation.NewManager(tp)
 	metricsRegistry := metrics.NewRegistry()
@@ -151,12 +151,12 @@ func (b *Backends) Close() error {
 func (b *Backends) SeedBuiltinSkillManifests() (int, int) {
 	sr := skill.NewRegistry()
 	if err := sr.LoadBuiltins(); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp: load builtin skills:", err)
+		fmt.Fprintln(os.Stderr, "r1-mcp: load builtin skills:", err)
 		return 0, 0
 	}
 	registered, skipped, err := skill.BackfillManifests(sr, b.ManifestRegistry)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp: backfill manifest:", err)
+		fmt.Fprintln(os.Stderr, "r1-mcp: backfill manifest:", err)
 	}
 	return registered, skipped
 }
@@ -265,7 +265,7 @@ func (b *Backends) Invoke(ctx context.Context, missionID, capability string, inp
 		Type:          "decision_internal",
 		SchemaVersion: 1,
 		CreatedAt:     time.Now().UTC(),
-		CreatedBy:     "stoke-mcp",
+		CreatedBy:     "r1-mcp",
 		MissionID:     bucket,
 		Content:       content,
 	})
@@ -410,7 +410,7 @@ func (b *Backends) Audit(ctx context.Context, missionID, action string, evidence
 		Type:          "decision_internal",
 		SchemaVersion: 1,
 		CreatedAt:     time.Now().UTC(),
-		CreatedBy:     "stoke-mcp",
+		CreatedBy:     "r1-mcp",
 		MissionID:     bucket,
 		Content:       content,
 	})
@@ -451,7 +451,7 @@ func (b *Backends) Delegate(ctx context.Context, missionID, toDID, bundleName st
 	if marshalErr != nil {
 		// Delegation succeeded; log but don't fail the caller
 		// on a marshal error for the audit record.
-		fmt.Fprintln(os.Stderr, "stoke-mcp: delegate audit marshal:", marshalErr)
+		fmt.Fprintln(os.Stderr, "r1-mcp: delegate audit marshal:", marshalErr)
 	} else {
 		bucket := strings.TrimSpace(missionID)
 		if bucket == "" {
@@ -461,11 +461,11 @@ func (b *Backends) Delegate(ctx context.Context, missionID, toDID, bundleName st
 			Type:          "decision_internal",
 			SchemaVersion: 1,
 			CreatedAt:     time.Now().UTC(),
-			CreatedBy:     "stoke-mcp",
+			CreatedBy:     "r1-mcp",
 			MissionID:     bucket,
 			Content:       auditContent,
 		}); lerr != nil {
-			fmt.Fprintln(os.Stderr, "stoke-mcp: delegate audit write:", lerr)
+			fmt.Fprintln(os.Stderr, "r1-mcp: delegate audit write:", lerr)
 		}
 	}
 	return map[string]any{

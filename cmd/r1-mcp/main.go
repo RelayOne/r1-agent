@@ -46,7 +46,7 @@ import (
 
 const (
 	protocolVersion = "2024-11-05"
-	serverName      = "stoke-mcp"
+	serverName      = "r1-mcp"
 )
 
 // version is the stoke-mcp build version. Set via -ldflags at
@@ -98,7 +98,7 @@ type Server struct {
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp:", err)
+		fmt.Fprintln(os.Stderr, "r1-mcp:", err)
 		os.Exit(1)
 	}
 }
@@ -112,13 +112,13 @@ func run() error {
 	}
 	defer backends.Close()
 	registered, skipped := backends.SeedBuiltinSkillManifests()
-	fmt.Fprintf(os.Stderr, "stoke-mcp: seeded %d builtin skill manifests (%d already registered)\n", registered, skipped)
+	fmt.Fprintf(os.Stderr, "r1-mcp: seeded %d builtin skill manifests (%d already registered)\n", registered, skipped)
 	if wd, err := os.Getwd(); err == nil {
 		packRegistered, packSkipped, packErr := backends.SeedPackRegistries(wd)
 		if packErr != nil {
 			return fmt.Errorf("seed bundled skill packs: %w", packErr)
 		}
-		fmt.Fprintf(os.Stderr, "stoke-mcp: seeded %d skill-pack manifests from repo/user registries (%d already registered)\n", packRegistered, packSkipped)
+		fmt.Fprintf(os.Stderr, "r1-mcp: seeded %d skill-pack manifests from repo/user registries (%d already registered)\n", packRegistered, packSkipped)
 	}
 	srv := &Server{
 		out:        os.Stdout,
@@ -580,6 +580,6 @@ func (s *Server) write(resp rpcResponse) {
 	enc := json.NewEncoder(s.out)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(resp); err != nil {
-		fmt.Fprintln(os.Stderr, "stoke-mcp: write:", err)
+		fmt.Fprintln(os.Stderr, "r1-mcp: write:", err)
 	}
 }

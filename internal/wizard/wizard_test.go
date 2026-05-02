@@ -19,7 +19,7 @@ func TestWizardAutoDetect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "stoke.policy.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "r1.policy.yaml"))
 	if err != nil {
 		t.Fatal("expected stoke.policy.yaml to be created")
 	}
@@ -106,7 +106,7 @@ func TestWizardInteractive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "stoke.policy.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "r1.policy.yaml"))
 	if err != nil {
 		t.Fatal("expected stoke.policy.yaml")
 	}

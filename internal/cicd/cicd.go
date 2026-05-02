@@ -88,7 +88,7 @@ func (o *Options) defaults() {
 		o.Workers = 1
 	}
 	if o.PolicyPath == "" {
-		o.PolicyPath = "stoke.policy.yaml"
+		o.PolicyPath = "r1.policy.yaml"
 	}
 	if o.Branch == "" {
 		o.Branch = "main"

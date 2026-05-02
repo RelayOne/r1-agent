@@ -30,7 +30,7 @@ import (
 // behavior.
 func writePolicyFixture(t *testing.T, dir string) string {
 	t.Helper()
-	path := filepath.Join(dir, "stoke.policy.yaml")
+	path := filepath.Join(dir, "r1.policy.yaml")
 	body := `phases:
   execute:
     builtin_tools: [Read]

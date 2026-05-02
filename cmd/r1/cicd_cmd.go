@@ -30,7 +30,7 @@ func cicdCmd(args []string) {
 	workers := fs.Int("workers", 1, "Number of parallel R1 workers (mission mode)")
 	output := fs.String("output", "", "Output file path (default: provider-canonical path)")
 	r1Version := fs.String("r1-version", "latest", "R1 binary version to install in CI")
-	policyPath := fs.String("policy", "stoke.policy.yaml", "R1 policy file path")
+	policyPath := fs.String("policy", "r1.policy.yaml", "R1 policy file path")
 	branch := fs.String("branch", "main", "Branch filter for push triggers")
 	list := fs.Bool("list", false, "List supported providers and modes, then exit")
 	stdout := fs.Bool("stdout", false, "Write to stdout instead of a file")
