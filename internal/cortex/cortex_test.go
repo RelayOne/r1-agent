@@ -486,3 +486,98 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// TestPreEndTurnGateEmpty asserts the green-light contract from TASK-15:
+// a freshly-constructed Cortex with no Notes in its Workspace must return
+// "" so the agentloop can honour the model's end_turn without injecting a
+// supervisor follow-up. We deliberately skip Start here because the gate
+// is purely Workspace-driven and must not depend on the lifecycle.
+func TestPreEndTurnGateEmpty(t *testing.T) {
+	t.Parallel()
+
+	c, err := New(Config{
+		EventBus:        hub.New(),
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if got := c.PreEndTurnGate([]agentloop.Message{}); got != "" {
+		t.Fatalf("PreEndTurnGate (no notes) = %q, want empty", got)
+	}
+}
+
+// TestPreEndTurnGateBlocks exercises the spec-mandated blocking behaviour
+// of TASK-15:
+//
+//  1. Publish a SevCritical Note via the Workspace; assert PreEndTurnGate
+//     returns a non-empty block containing both the "CRITICAL CORTEX NOTES"
+//     header and the publishing LobeID.
+//  2. Publish a follow-on Note with Resolves=<critID>; assert
+//     PreEndTurnGate flips back to "" because the only critical Note is
+//     now resolved.
+//
+// Workspace.Publish takes the Note by value and assigns the ID internally,
+// so we recover the assigned ID via Snapshot — mirroring the established
+// pattern in workspace_test.go::TestUnresolvedCriticalFilter.
+func TestPreEndTurnGateBlocks(t *testing.T) {
+	t.Parallel()
+
+	c, err := New(Config{
+		EventBus:        hub.New(),
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ws := c.Workspace()
+	if err := ws.Publish(Note{
+		LobeID:   "test-crit-lobe",
+		Title:    "the sky is falling",
+		Severity: SevCritical,
+	}); err != nil {
+		t.Fatalf("Publish critical: %v", err)
+	}
+
+	// Recover the ID assigned by Workspace.Publish (by-value receiver).
+	snap := ws.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("expected 1 Note after Publish, got %d", len(snap))
+	}
+	critID := snap[0].ID
+	if critID == "" {
+		t.Fatalf("Publish did not assign an ID: %+v", snap[0])
+	}
+
+	got := c.PreEndTurnGate([]agentloop.Message{})
+	if got == "" {
+		t.Fatalf("PreEndTurnGate after critical Publish = empty; want non-empty block")
+	}
+	if !strings.Contains(got, "CRITICAL") {
+		t.Fatalf("PreEndTurnGate output missing \"CRITICAL\" marker: %q", got)
+	}
+	if !strings.Contains(got, "test-crit-lobe") {
+		t.Fatalf("PreEndTurnGate output missing LobeID \"test-crit-lobe\": %q", got)
+	}
+	if !strings.Contains(got, "the sky is falling") {
+		t.Fatalf("PreEndTurnGate output missing Title: %q", got)
+	}
+
+	// Publish a resolving Note targeting the critical Note's ID.
+	if err := ws.Publish(Note{
+		LobeID:   "resolver",
+		Title:    "patched it",
+		Severity: SevInfo,
+		Resolves: critID,
+	}); err != nil {
+		t.Fatalf("Publish resolver: %v", err)
+	}
+
+	if got := c.PreEndTurnGate([]agentloop.Message{}); got != "" {
+		t.Fatalf("PreEndTurnGate after resolution = %q, want empty", got)
+	}
+}

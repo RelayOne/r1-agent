@@ -463,3 +463,35 @@ func (c *Cortex) MidturnNote(messages []agentloop.Message, turn int) string {
 	}
 	return b.String()
 }
+
+// PreEndTurnGate returns a non-empty string when there are unresolved
+// SevCritical Notes in the Workspace; the agentloop should refuse end_turn
+// while the gate is non-empty (TASK-16 wires this into PreEndTurnCheckFn
+// composition).
+//
+// Empty result is the green-light signal: the loop is free to honour the
+// model's end_turn. A non-empty block is intentionally formatted so the
+// caller can splice it directly into a follow-up user message:
+//
+//	[CRITICAL CORTEX NOTES — resolve before ending turn]
+//	- LobeID: Title
+//	- ...
+//
+// The messages argument mirrors agentloop.PreEndTurnCheckFn for parity;
+// this implementation does not consume it (the gate is purely Workspace-
+// driven), but the parameter is preserved so future revisions can correlate
+// Notes with the message history without breaking the public signature.
+func (c *Cortex) PreEndTurnGate(messages []agentloop.Message) string {
+	_ = messages // history payload not consumed at this layer; parity with agentloop.PreEndTurnCheckFn signature.
+
+	notes := c.workspace.UnresolvedCritical()
+	if len(notes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[CRITICAL CORTEX NOTES — resolve before ending turn]\n")
+	for _, n := range notes {
+		fmt.Fprintf(&b, "- %s: %s\n", n.LobeID, n.Title)
+	}
+	return b.String()
+}
