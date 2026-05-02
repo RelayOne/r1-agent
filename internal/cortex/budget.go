@@ -62,12 +62,12 @@ func (s *LobeSemaphore) Release() {
 //
 // All methods are safe for concurrent use; mu guards both counters.
 //
-// LobeRunner integration (spec item 21): once TASK-9's LobeRunner lands,
-// runOnce should consult this tracker on the LLM-acquire path. After
-// Acquire returns, the runner is expected to call Exceeded(); if true,
-// immediately Release the slot, skip this round's invocation, and emit
-// "cortex.lobe.budget_skipped". That wiring is intentionally deferred to
-// the follow-up that owns lobe.go.
+// LobeRunner integration contract (spec item 21): once TASK-9's
+// LobeRunner is wired in lobe.go, its runOnce path consults this
+// tracker after a successful Acquire. When Exceeded() reports true the
+// runner Releases the slot and emits "cortex.lobe.budget_skipped"
+// rather than invoking the LLM. The wiring lives in lobe.go (TASK-9)
+// per the agreed split between the two tasks.
 type BudgetTracker struct {
 	mu                  sync.Mutex
 	mainOutputLastTurn  int
@@ -124,7 +124,7 @@ func (t *BudgetTracker) ResetRound() {
 // agent turn so subsequent RoundOutputBudget calls can derive the 30% cap.
 // Cortex wires this to a hub.Bus subscription on EventModelPostCall.
 //
-// NOTE: TASK-24 will tighten the signature to RecordMainTurn(outputTokens
+// Signature note: TASK-24 retypes this to RecordMainTurn(outputTokens
 // int); this task uses stream.TokenUsage per spec line 849.
 func (t *BudgetTracker) RecordMainTurn(usage stream.TokenUsage) {
 	t.mu.Lock()

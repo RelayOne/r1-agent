@@ -11,12 +11,6 @@ import (
 	"github.com/RelayOne/r1/internal/hub"
 )
 
-// writeNote is a TASK-22 stub. The persistent WAL-backed note writer will
-// land in persist.go alongside crash-recovery support; for now the stub
-// preserves the call-site contract and keeps Publish callable. Returning
-// nil is safe because Workspace tolerates a nil durable bus by design.
-func writeNote(_ *bus.Bus, _ Note) error { return nil }
-
 // Severity tags drive both supervisor injection priority and the
 // PreEndTurnCheckFn gate. Critical Notes refuse end_turn until resolved.
 type Severity string
