@@ -48,6 +48,50 @@ func TestPublish(t *testing.T) {
 	}
 }
 
+// TestPublishStampsRound verifies that after SetRound(roundID), the next
+// Publish call stamps the current round on the Note. Spec item 11: Round
+// is wired to Workspace via SetRound, which is the writer; Publish reads
+// w.currentRound under lock and copies it onto the Note.
+func TestPublishStampsRound(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	w.SetRound(7)
+
+	n := validPublishNote()
+	if err := w.Publish(n); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	snap := w.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("len(Snapshot)=%d, want 1", len(snap))
+	}
+	if got := snap[0].Round; got != 7 {
+		t.Fatalf("Note.Round=%d, want 7", got)
+	}
+
+	// SetRound is monotonic-by-caller: a subsequent SetRound stamps later
+	// Notes with the new value while previously published Notes retain
+	// their original stamp.
+	w.SetRound(9)
+	n2 := validPublishNote()
+	n2.Title = "round-9 note"
+	if err := w.Publish(n2); err != nil {
+		t.Fatalf("Publish n2: %v", err)
+	}
+
+	snap2 := w.Snapshot()
+	if len(snap2) != 2 {
+		t.Fatalf("len(Snapshot)=%d after second publish, want 2", len(snap2))
+	}
+	if got := snap2[0].Round; got != 7 {
+		t.Fatalf("snap2[0].Round=%d, want 7 (must not retro-stamp)", got)
+	}
+	if got := snap2[1].Round; got != 9 {
+		t.Fatalf("snap2[1].Round=%d, want 9", got)
+	}
+}
+
 func TestPublishValidates(t *testing.T) {
 	w := NewWorkspace(nil, nil)
 	bad := validPublishNote()

@@ -109,6 +109,18 @@ func (w *Workspace) Spotlight() *Spotlight {
 	return w.spotlight
 }
 
+// SetRound updates the round stamp applied to subsequent Publish calls.
+// Called by Cortex.MidturnNote (TASK-14) at the start of each round.
+//
+// Per spec item 11, Round.Open is the only writer that should invoke this,
+// so that every Note published within a round carries that round's ID
+// (Publish reads w.currentRound while holding the write lock; see item 4).
+func (w *Workspace) SetRound(roundID uint64) {
+	w.mu.Lock()
+	w.currentRound = roundID
+	w.mu.Unlock()
+}
+
 // Subscribe registers fn to receive every Published Note. Subscribers fire
 // SYNCHRONOUSLY inside Publish after the workspace mutex is released;
 // subscribers MUST return within ~1ms or they will block subsequent
