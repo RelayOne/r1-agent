@@ -77,7 +77,7 @@ steps:
           CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
             -mod=vendor \
             -trimpath \
-            -ldflags "-s -w" \
+            -ldflags "-s -w -X main.version=$SHORT_SHA" \
             -o dist/r1-$${OS}-$${ARCH}$${EXT} \
             ./cmd/r1
         done
