@@ -249,6 +249,86 @@ func TestDrainAdvancesCursor(t *testing.T) {
 	}
 }
 
+func TestSubscribeUnsubscribe(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	var got1, got2, got3 []Note
+	cancel1 := w.Subscribe(func(n Note) { got1 = append(got1, n) })
+	cancel2 := w.Subscribe(func(n Note) { got2 = append(got2, n) })
+	cancel3 := w.Subscribe(func(n Note) { got3 = append(got3, n) })
+	_ = cancel1
+	_ = cancel3
+
+	first := validPublishNote()
+	first.Title = "first"
+	if err := w.Publish(first); err != nil {
+		t.Fatalf("Publish first: %v", err)
+	}
+	if len(got1) != 1 {
+		t.Fatalf("sub#1 len=%d after first publish, want 1", len(got1))
+	}
+	if len(got2) != 1 {
+		t.Fatalf("sub#2 len=%d after first publish, want 1", len(got2))
+	}
+	if len(got3) != 1 {
+		t.Fatalf("sub#3 len=%d after first publish, want 1", len(got3))
+	}
+
+	// Cancel subscriber #2; subsequent Publish must skip it.
+	cancel2()
+
+	second := validPublishNote()
+	second.Title = "second"
+	if err := w.Publish(second); err != nil {
+		t.Fatalf("Publish second: %v", err)
+	}
+	if len(got1) != 2 {
+		t.Fatalf("sub#1 len=%d after second publish, want 2", len(got1))
+	}
+	if len(got2) != 1 {
+		t.Fatalf("sub#2 len=%d after cancel+publish, want 1 (must not fire)", len(got2))
+	}
+	if len(got3) != 2 {
+		t.Fatalf("sub#3 len=%d after second publish, want 2", len(got3))
+	}
+
+	// Calling cancel a second time must be a no-op.
+	cancel2()
+
+	// Sanity: the workspace map should now hold only two live entries.
+	w.mu.RLock()
+	liveSubs := len(w.subs)
+	w.mu.RUnlock()
+	if liveSubs != 2 {
+		t.Fatalf("len(w.subs)=%d after cancel, want 2", liveSubs)
+	}
+}
+
+func TestSubscribeMultiplePublishes(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	var got []Note
+	w.Subscribe(func(n Note) { got = append(got, n) })
+
+	titles := []string{"one", "two", "three", "four", "five"}
+	for _, title := range titles {
+		n := validPublishNote()
+		n.Title = title
+		if err := w.Publish(n); err != nil {
+			t.Fatalf("Publish %q: %v", title, err)
+		}
+	}
+
+	if len(got) != len(titles) {
+		t.Fatalf("subscriber received %d Notes, want %d", len(got), len(titles))
+	}
+	for i, want := range titles {
+		if got[i].Title != want {
+			t.Fatalf("got[%d].Title=%q, want %q (order violated)", i, got[i].Title, want)
+		}
+	}
+}
+
 func TestNoteValidate(t *testing.T) {
 	validNote := func() Note {
 		return Note{

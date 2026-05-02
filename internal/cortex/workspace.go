@@ -86,7 +86,8 @@ type Workspace struct {
 	currentRound uint64
 	events       *hub.Bus
 	durable      *bus.Bus
-	subs         []func(Note)
+	subs         map[uint64]func(Note)
+	subsSeq      uint64
 }
 
 // NewWorkspace constructs a Workspace bound to the given event hub and
@@ -94,7 +95,39 @@ type Workspace struct {
 // live notifications, and a nil durable bus selects in-memory mode
 // with no WAL persistence (per TASK-22 contract).
 func NewWorkspace(events *hub.Bus, durable *bus.Bus) *Workspace {
-	return &Workspace{events: events, durable: durable}
+	return &Workspace{
+		events:  events,
+		durable: durable,
+		subs:    make(map[uint64]func(Note)),
+	}
+}
+
+// Subscribe registers fn to receive every Published Note. Subscribers fire
+// SYNCHRONOUSLY inside Publish after the workspace mutex is released;
+// subscribers MUST return within ~1ms or they will block subsequent
+// publishes for all callers. For long-running consumers, use Subscribe to
+// enqueue onto a channel and process asynchronously elsewhere.
+//
+// The returned cancel closure removes fn from the subscriber set in O(1).
+// It is safe to call cancel multiple times: the second and subsequent
+// calls are no-ops. cancel is safe to call from any goroutine, including
+// from inside fn itself, because it acquires the same write mutex that
+// Publish releases before invoking subscribers.
+func (w *Workspace) Subscribe(fn func(Note)) (cancel func()) {
+	w.mu.Lock()
+	key := w.subsSeq
+	w.subsSeq++
+	if w.subs == nil {
+		w.subs = make(map[uint64]func(Note))
+	}
+	w.subs[key] = fn
+	w.mu.Unlock()
+
+	return func() {
+		w.mu.Lock()
+		delete(w.subs, key)
+		w.mu.Unlock()
+	}
 }
 
 // Publish validates the supplied Note, assigns it a Workspace-monotonic
@@ -128,8 +161,10 @@ func (w *Workspace) Publish(n Note) error {
 		w.mu.Unlock()
 		return err
 	}
-	subs := make([]func(Note), len(w.subs))
-	copy(subs, w.subs)
+	subs := make([]func(Note), 0, len(w.subs))
+	for _, fn := range w.subs {
+		subs = append(subs, fn)
+	}
 	w.mu.Unlock()
 
 	if w.events != nil {
