@@ -114,6 +114,141 @@ func TestPublishConcurrent(t *testing.T) {
 	}
 }
 
+func TestSnapshotDeepCopy(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	n1 := validPublishNote()
+	n1.Title = "first"
+	if err := w.Publish(n1); err != nil {
+		t.Fatalf("Publish n1: %v", err)
+	}
+	n2 := validPublishNote()
+	n2.Title = "second"
+	if err := w.Publish(n2); err != nil {
+		t.Fatalf("Publish n2: %v", err)
+	}
+
+	out := w.Snapshot()
+	if got := len(out); got != 2 {
+		t.Fatalf("len(Snapshot)=%d, want 2", got)
+	}
+	if out[0].Title != "first" {
+		t.Fatalf("out[0].Title=%q, want %q", out[0].Title, "first")
+	}
+
+	// Mutate the returned slice; assert internal state untouched.
+	out[0].Title = "MUTATED"
+	out = append(out, validPublishNote())
+
+	out2 := w.Snapshot()
+	if got := len(out2); got != 2 {
+		t.Fatalf("second Snapshot len=%d, want 2 (append must not leak)", got)
+	}
+	if out2[0].Title != "first" {
+		t.Fatalf("out2[0].Title=%q, want %q (mutation leaked back)", out2[0].Title, "first")
+	}
+	if out2[1].Title != "second" {
+		t.Fatalf("out2[1].Title=%q, want %q", out2[1].Title, "second")
+	}
+}
+
+func TestUnresolvedCriticalFilter(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	c1 := validPublishNote()
+	c1.Severity = SevCritical
+	c1.Title = "the sky is falling"
+	if err := w.Publish(c1); err != nil {
+		t.Fatalf("Publish c1: %v", err)
+	}
+
+	// Capture the assigned ID via Snapshot.
+	snap := w.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("expected 1 Note after publishing critical, got %d", len(snap))
+	}
+	c1ID := snap[0].ID
+
+	got := w.UnresolvedCritical()
+	if len(got) != 1 {
+		t.Fatalf("UnresolvedCritical len=%d, want 1", len(got))
+	}
+	if got[0].ID != c1ID {
+		t.Fatalf("UnresolvedCritical[0].ID=%q, want %q", got[0].ID, c1ID)
+	}
+
+	// Publish a resolving Note targeting c1.
+	resolver := validPublishNote()
+	resolver.Title = "fixed it"
+	resolver.Resolves = c1ID
+	if err := w.Publish(resolver); err != nil {
+		t.Fatalf("Publish resolver: %v", err)
+	}
+
+	got2 := w.UnresolvedCritical()
+	if len(got2) != 0 {
+		t.Fatalf("UnresolvedCritical len=%d after resolution, want 0", len(got2))
+	}
+}
+
+func TestDrainAdvancesCursor(t *testing.T) {
+	w := NewWorkspace(nil, nil)
+
+	// Round 0 Note (will not be drained at sinceRound=1).
+	n0 := validPublishNote()
+	n0.Title = "round-0 note"
+	if err := w.Publish(n0); err != nil {
+		t.Fatalf("Publish n0: %v", err)
+	}
+
+	// Advance to round 1 and publish.
+	w.mu.Lock()
+	w.currentRound = 1
+	w.mu.Unlock()
+	n1 := validPublishNote()
+	n1.Title = "round-1 note"
+	if err := w.Publish(n1); err != nil {
+		t.Fatalf("Publish n1: %v", err)
+	}
+
+	// Advance to round 2 and publish.
+	w.mu.Lock()
+	w.currentRound = 2
+	w.mu.Unlock()
+	n2 := validPublishNote()
+	n2.Title = "round-2 note"
+	if err := w.Publish(n2); err != nil {
+		t.Fatalf("Publish n2: %v", err)
+	}
+
+	drained, cursor := w.Drain(1)
+	if len(drained) != 2 {
+		t.Fatalf("Drain(1) len=%d, want 2", len(drained))
+	}
+	for _, n := range drained {
+		if n.Round < 1 {
+			t.Fatalf("Drain(1) returned Note with Round=%d, want >=1", n.Round)
+		}
+	}
+	if cursor != 2 {
+		t.Fatalf("Drain(1) cursor=%d, want 2", cursor)
+	}
+
+	// drainedUpTo must have advanced internally.
+	w.mu.RLock()
+	if w.drainedUpTo != 2 {
+		w.mu.RUnlock()
+		t.Fatalf("w.drainedUpTo=%d after Drain(1), want 2", w.drainedUpTo)
+	}
+	w.mu.RUnlock()
+
+	// Calling Drain with a smaller sinceRound must NOT regress drainedUpTo.
+	_, cursor2 := w.Drain(0)
+	if cursor2 != 2 {
+		t.Fatalf("Drain(0) cursor=%d, want 2 (must not regress)", cursor2)
+	}
+}
+
 func TestNoteValidate(t *testing.T) {
 	validNote := func() Note {
 		return Note{

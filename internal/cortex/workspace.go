@@ -143,3 +143,71 @@ func (w *Workspace) Publish(n Note) error {
 	}
 	return nil
 }
+
+// Snapshot returns a deep copy of every Note currently stored in the
+// Workspace. The caller is free to mutate the returned slice or any
+// element header without affecting the Workspace's internal state,
+// because each Note is a value type that is copied by the builtin copy.
+//
+// Per spec item 5: readers acquire RLock so concurrent Publishers (which
+// take the write lock) cannot observe a torn slice header. Returning a
+// fresh slice means callers can sort, filter, or truncate the result
+// without coordinating with other readers.
+func (w *Workspace) Snapshot() []Note {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make([]Note, len(w.notes))
+	copy(out, w.notes)
+	return out
+}
+
+// UnresolvedCritical returns the subset of Notes with Severity==SevCritical
+// whose ID is not referenced by any later Note's Resolves field. The
+// PreEndTurnCheckFn (TASK-9) consults this list to refuse end_turn until
+// the model addresses every outstanding critical concern.
+//
+// Resolution is direction-agnostic in storage but order-sensitive in
+// intent: a follow-on Note declares Resolves=parentID, so any Note whose
+// Resolves field is non-empty is treated as resolving its parent. We
+// build the resolved-ID set in a single pass over w.notes and then
+// filter critical Notes against it.
+func (w *Workspace) UnresolvedCritical() []Note {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	resolved := make(map[string]bool, len(w.notes))
+	for _, n := range w.notes {
+		if n.Resolves != "" {
+			resolved[n.Resolves] = true
+		}
+	}
+	out := make([]Note, 0)
+	for _, n := range w.notes {
+		if n.Severity == SevCritical && !resolved[n.ID] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// Drain returns every Note whose Round >= sinceRound and advances the
+// internal drainedUpTo cursor to sinceRound+1 (clamped non-decreasing).
+// MidturnCheckFn (TASK-9) calls Drain to format the supervisor injection
+// block: each turn drains everything emitted in the round just past so
+// the next prompt sees fresh Notes exactly once.
+//
+// Drain takes the write lock because it mutates drainedUpTo. The returned
+// slice is freshly allocated; callers may mutate it freely.
+func (w *Workspace) Drain(sinceRound uint64) ([]Note, uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]Note, 0)
+	for _, n := range w.notes {
+		if n.Round >= sinceRound {
+			out = append(out, n)
+		}
+	}
+	if next := sinceRound + 1; next > w.drainedUpTo {
+		w.drainedUpTo = next
+	}
+	return out, w.drainedUpTo
+}
