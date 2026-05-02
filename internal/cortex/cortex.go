@@ -114,6 +114,15 @@ type Cortex struct {
 	// because NewRound's "current" zero-value would otherwise reject
 	// it (Open panics on roundID <= current).
 	roundCounter atomic.Uint64
+
+	// budgetSubID is the hub.Bus subscriber ID registered by Start
+	// (TASK-24) so the BudgetTracker observes main-turn output tokens
+	// from EventModelPostCall events. Stop unregisters it via
+	// Bus.Unregister(budgetSubID). The empty string means no
+	// subscriber is currently registered (Start was never called, or
+	// the registration failed silently — neither path ever happens
+	// today, but the empty-string guard lets Stop be a safe no-op).
+	budgetSubID string
 }
 
 // New constructs a Cortex from cfg, validates required fields, applies
@@ -271,6 +280,41 @@ func (c *Cortex) Start(parentCtx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(parentCtx)
 
+	// TASK-24: subscribe BudgetTracker to main-turn token usage. The
+	// agentloop emits EventModelPostCall after each successful API
+	// response with Model.Role="main"; we filter to events that
+	// match this Cortex's SessionID (when one is configured) and
+	// feed Model.OutputTokens into RecordMainTurn so subsequent
+	// RoundOutputBudget calls can derive the 30% cap.
+	//
+	// SessionID gating semantics: when c.cfg.SessionID is empty
+	// (typical for tests and standalone runs that do not propagate a
+	// session id), every main-role event is consumed; this matches
+	// the spec's "best-effort cross-correlation" stance and keeps
+	// tests free of mandatory session-id boilerplate. When SessionID
+	// IS set, only events with the same MissionID land — events from
+	// other sessions sharing the bus are silently ignored.
+	c.budgetSubID = fmt.Sprintf("cortex.budget.%s.%d", c.cfg.SessionID, time.Now().UnixNano())
+	c.cfg.EventBus.Register(hub.Subscriber{
+		ID:       c.budgetSubID,
+		Events:   []hub.EventType{hub.EventModelPostCall},
+		Mode:     hub.ModeObserve,
+		Priority: 9000,
+		Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+			if ev == nil || ev.Model == nil {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if ev.Model.Role != "main" {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if c.cfg.SessionID != "" && ev.MissionID != c.cfg.SessionID {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			c.tracker.RecordMainTurn(ev.Model.OutputTokens)
+			return &hub.HookResponse{Decision: hub.Allow}
+		},
+	})
+
 	// Synchronous initial pre-warm: best-effort. runPreWarmOnce already
 	// emits EventCortexPreWarmFailed on the bus; we log at WARN so the
 	// failure surfaces in operator logs without aborting Start.
@@ -334,6 +378,16 @@ func (c *Cortex) Stop(stopCtx context.Context) error {
 	c.stopOnce.Do(func() {
 		if c.cancel != nil {
 			c.cancel()
+		}
+
+		// TASK-24: unregister the budget subscriber so a Cortex that has
+		// been Stopped no longer pulls main-turn events off a bus that
+		// outlives it. Empty subID means Start never registered (e.g.
+		// Stop-before-Start), so the call is a safe no-op via the empty
+		// guard inside Bus.Unregister.
+		if c.budgetSubID != "" && c.cfg.EventBus != nil {
+			c.cfg.EventBus.Unregister(c.budgetSubID)
+			c.budgetSubID = ""
 		}
 
 		// Single cumulative deadline shared across all runners. We

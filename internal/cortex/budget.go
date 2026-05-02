@@ -122,12 +122,18 @@ func (t *BudgetTracker) ResetRound() {
 
 // RecordMainTurn records the Output-token count of the most recent main
 // agent turn so subsequent RoundOutputBudget calls can derive the 30% cap.
-// Cortex wires this to a hub.Bus subscription on EventModelPostCall.
+// Cortex wires this to a hub.Bus subscription on EventModelPostCall;
+// see Cortex.Start for the subscriber registration that pulls
+// hub.ModelEvent.OutputTokens off the bus and feeds it here.
 //
-// Signature note: TASK-24 retypes this to RecordMainTurn(outputTokens
-// int); this task uses stream.TokenUsage per spec line 849.
-func (t *BudgetTracker) RecordMainTurn(usage stream.TokenUsage) {
+// Signature note: TASK-24 retyped this from
+// RecordMainTurn(usage stream.TokenUsage) to RecordMainTurn(outputTokens int)
+// because the hub event already exposes OutputTokens as an int — wrapping it
+// back into stream.TokenUsage just to unwrap it on the other side added no
+// value and forced the bus subscriber to take a stream dependency. The
+// previous signature is callable as bt.RecordMainTurn(usage.Output).
+func (t *BudgetTracker) RecordMainTurn(outputTokens int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.mainOutputLastTurn = usage.Output
+	t.mainOutputLastTurn = outputTokens
 }

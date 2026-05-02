@@ -94,7 +94,7 @@ func TestSemaphorePanicsOversize(t *testing.T) {
 // and that Exceeded trips when the accumulator meets the 30%-of-main cap.
 func TestBudgetTrackerCharge(t *testing.T) {
 	bt := NewBudgetTracker()
-	bt.RecordMainTurn(stream.TokenUsage{Output: 1000})
+	bt.RecordMainTurn(1000)
 
 	if got, want := bt.RoundOutputBudget(), 300; got != want {
 		t.Fatalf("RoundOutputBudget after RecordMainTurn(1000): got %d, want %d", got, want)
@@ -114,7 +114,7 @@ func TestBudgetTrackerCharge(t *testing.T) {
 // per-round accumulator without disturbing mainOutputLastTurn.
 func TestBudgetTrackerResetRound(t *testing.T) {
 	bt := NewBudgetTracker()
-	bt.RecordMainTurn(stream.TokenUsage{Output: 1000})
+	bt.RecordMainTurn(1000)
 
 	for i := 0; i < 3; i++ {
 		bt.Charge("lobe-x", stream.TokenUsage{Output: 100})

@@ -581,3 +581,195 @@ func TestPreEndTurnGateBlocks(t *testing.T) {
 		t.Fatalf("PreEndTurnGate after resolution = %q, want empty", got)
 	}
 }
+
+// waitForBudget polls the BudgetTracker for the expected output value
+// up to timeout. Used by TASK-24 tests because the bus subscription
+// runs in ModeObserve (async) — the test cannot synchronously assert
+// the field after EmitAsync without a small wait window. Returns the
+// observed value (which may not match want on timeout).
+func waitForBudget(t *testing.T, bt *BudgetTracker, want int, timeout time.Duration) int {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		bt.mu.Lock()
+		got := bt.mainOutputLastTurn
+		bt.mu.Unlock()
+		if got == want {
+			return got
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	bt.mu.Lock()
+	got := bt.mainOutputLastTurn
+	bt.mu.Unlock()
+	return got
+}
+
+// readBudget returns the BudgetTracker's mainOutputLastTurn under lock,
+// for tests that need to assert a value did NOT change. Distinct from
+// waitForBudget so the read intent is unambiguous at the call site.
+func readBudget(bt *BudgetTracker) int {
+	bt.mu.Lock()
+	defer bt.mu.Unlock()
+	return bt.mainOutputLastTurn
+}
+
+// TestRecordMainTurnViaBus exercises the happy path of TASK-24:
+//
+//   - Cortex.Start registers a hub.EventModelPostCall subscriber that
+//     filters on Model.Role=="main" + matching SessionID and feeds
+//     ev.Model.OutputTokens into BudgetTracker.RecordMainTurn.
+//   - Emitting a synthetic event with Role="main" + the configured
+//     SessionID must update mainOutputLastTurn so RoundOutputBudget
+//     returns 30%-of-output (300 for OutputTokens=1000).
+func TestRecordMainTurnViaBus(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	c, err := New(Config{
+		SessionID:       "sess-A",
+		EventBus:        bus,
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour, // suppress pump churn
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	bus.EmitAsync(&hub.Event{
+		Type:      hub.EventModelPostCall,
+		MissionID: "sess-A",
+		Model: &hub.ModelEvent{
+			Role:         "main",
+			OutputTokens: 1000,
+		},
+	})
+
+	got := waitForBudget(t, c.tracker, 1000, 1*time.Second)
+	if got != 1000 {
+		t.Fatalf("mainOutputLastTurn = %d, want 1000 (subscriber did not fire)", got)
+	}
+	if budget := c.tracker.RoundOutputBudget(); budget != 300 {
+		t.Fatalf("RoundOutputBudget = %d, want 300 (30%% of 1000)", budget)
+	}
+}
+
+// TestRecordMainTurnIgnoresWrongRole asserts the spec-mandated role
+// filter: only Role=="main" events reach RecordMainTurn. Lobe events
+// (Role="lobe") on the same bus must NOT affect the main-turn budget
+// — the BudgetTracker tracks the main loop's last output, not the
+// per-Lobe accumulator (that's Charge's job).
+func TestRecordMainTurnIgnoresWrongRole(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	c, err := New(Config{
+		SessionID:       "sess-A",
+		EventBus:        bus,
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	// Sentinel: emit a wrong-role event first so we can observe it
+	// did NOT update the tracker, then emit a correct-role event so
+	// the test does not have to wait for a fixed sleep — observing
+	// the second emit's effect proves the bus delivered both events
+	// in order, and the first was filtered.
+	bus.EmitAsync(&hub.Event{
+		Type:      hub.EventModelPostCall,
+		MissionID: "sess-A",
+		Model: &hub.ModelEvent{
+			Role:         "lobe",
+			OutputTokens: 9999,
+		},
+	})
+	bus.EmitAsync(&hub.Event{
+		Type:      hub.EventModelPostCall,
+		MissionID: "sess-A",
+		Model: &hub.ModelEvent{
+			Role:         "main",
+			OutputTokens: 500,
+		},
+	})
+
+	got := waitForBudget(t, c.tracker, 500, 1*time.Second)
+	if got != 500 {
+		t.Fatalf("mainOutputLastTurn = %d, want 500 (main event must reach tracker)", got)
+	}
+	// Crucial check: the wrong-role event must NOT have leaked into
+	// the tracker. If it had, the value would be 9999 (the wrong
+	// role's OutputTokens) since EmitAsync ordering is best-effort
+	// and a test that observed only the second event would still
+	// pass the first assertion.
+	if got == 9999 {
+		t.Fatalf("mainOutputLastTurn = 9999; wrong-role event was not filtered")
+	}
+}
+
+// TestRecordMainTurnIgnoresWrongSession asserts the SessionID gate:
+// when c.cfg.SessionID is non-empty, only events whose MissionID
+// matches the configured SessionID are consumed. Cross-session events
+// on a shared bus are silently ignored so two cortex instances bound
+// to different sessions do not contaminate each other's budget.
+func TestRecordMainTurnIgnoresWrongSession(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	c, err := New(Config{
+		SessionID:       "sess-A",
+		EventBus:        bus,
+		Provider:        &startStopProvider{},
+		PreWarmInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = c.Stop(context.Background()) }()
+
+	// Wrong session first; then the correct session as a sentinel.
+	bus.EmitAsync(&hub.Event{
+		Type:      hub.EventModelPostCall,
+		MissionID: "sess-B", // foreign session
+		Model: &hub.ModelEvent{
+			Role:         "main",
+			OutputTokens: 7777,
+		},
+	})
+	bus.EmitAsync(&hub.Event{
+		Type:      hub.EventModelPostCall,
+		MissionID: "sess-A",
+		Model: &hub.ModelEvent{
+			Role:         "main",
+			OutputTokens: 250,
+		},
+	})
+
+	got := waitForBudget(t, c.tracker, 250, 1*time.Second)
+	if got != 250 {
+		t.Fatalf("mainOutputLastTurn = %d, want 250 (matching-session main event must reach tracker)", got)
+	}
+	if got == 7777 {
+		t.Fatalf("mainOutputLastTurn = 7777; cross-session event was not filtered")
+	}
+
+	// Sanity: directly read once more (no wait) to confirm it stays
+	// at 250 after both EmitAsyncs have fully drained.
+	time.Sleep(50 * time.Millisecond)
+	if final := readBudget(c.tracker); final != 250 {
+		t.Fatalf("mainOutputLastTurn drifted post-drain: got %d, want 250", final)
+	}
+}

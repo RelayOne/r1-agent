@@ -383,6 +383,32 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 		// Accumulate cost
 		result.TotalCost.Add(resp.Usage)
 
+		// TASK-24: emit EventModelPostCall with Model.Role="main" so a
+		// Cortex (or any other subscriber) can track main-turn token
+		// usage from the bus. Gated on l.eventBus != nil so loops
+		// without a bus stay zero-overhead. This is the ONE site where
+		// the agentloop accounts for its own API call; other emitters
+		// (workflow.go, builtin/cost_tracker, tui/cost_dashboard) are
+		// downstream of this signal in different roles and will not
+		// collide because Role differs.
+		if l.eventBus != nil {
+			l.eventBus.EmitAsync(&hub.Event{
+				Type:      hub.EventModelPostCall,
+				Timestamp: time.Now(),
+				MissionID: l.config.SessionID,
+				TaskID:    l.config.TaskID,
+				AgentID:   l.config.AgentID,
+				Model: &hub.ModelEvent{
+					Model:        l.config.Model,
+					Role:         "main",
+					InputTokens:  resp.Usage.Input,
+					OutputTokens: resp.Usage.Output,
+					CachedTokens: resp.Usage.CacheRead,
+					StopReason:   resp.StopReason,
+				},
+			})
+		}
+
 		// Convert response content to our ContentBlock format
 		for _, rc := range resp.Content {
 			block := ContentBlock{Type: rc.Type}
