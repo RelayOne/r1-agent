@@ -82,6 +82,7 @@ type EnforcementConfig struct {
 
 type Rule struct {
 	ID                  string            `json:"id"`
+	Name                string            `json:"name,omitempty"`
 	Text                string            `json:"text"`
 	CreatedAt           time.Time         `json:"created_at"`
 	Scope               string            `json:"scope"`
@@ -108,6 +109,7 @@ type fileDocument struct {
 }
 
 type AddRequest struct {
+	Name             string
 	Text             string
 	Scope            string
 	ToolFilter       string
@@ -200,6 +202,7 @@ func (r *Registry) AddWithOptions(ctx context.Context, req AddRequest) (Rule, er
 	}
 	rule := Rule{
 		ID:                  "rule-" + uuid.NewString(),
+		Name:                uniqueRuleName(doc.Rules, req.Name, text),
 		Text:                text,
 		CreatedAt:           time.Now().UTC(),
 		Scope:               synth.Scope,
@@ -247,6 +250,23 @@ func (r *Registry) Get(id string) (Rule, error) {
 	return Rule{}, os.ErrNotExist
 }
 
+func (r *Registry) Resolve(ref string) (Rule, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	doc, err := r.loadLocked()
+	if err != nil {
+		return Rule{}, err
+	}
+	ref = strings.TrimSpace(ref)
+	for _, rule := range doc.Rules {
+		if rule.ID == ref || rule.Name == ref {
+			return rule, nil
+		}
+	}
+	return Rule{}, os.ErrNotExist
+}
+
 func (r *Registry) Delete(id string) error {
 	return r.updateRule(id, "delete", func(doc *fileDocument, idx int) error {
 		rule := doc.Rules[idx]
@@ -270,6 +290,15 @@ func (r *Registry) Resume(id string) error {
 		doc.Rules[idx].Status = StatusActive
 		rule := doc.Rules[idx]
 		r.appendHistory(doc, "resume", &rule)
+		return nil
+	})
+}
+
+func (r *Registry) Disable(ref string) error {
+	return r.updateRule(ref, "disable", func(doc *fileDocument, idx int) error {
+		doc.Rules[idx].Status = StatusPaused
+		rule := doc.Rules[idx]
+		r.appendHistory(doc, "disable", &rule)
 		return nil
 	})
 }
@@ -331,7 +360,7 @@ func (r *Registry) Check(ctx context.Context, toolName string, toolArgs json.Raw
 	return result, nil
 }
 
-func (r *Registry) updateRule(id, action string, fn func(doc *fileDocument, idx int) error) error {
+func (r *Registry) updateRule(ref, action string, fn func(doc *fileDocument, idx int) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -340,7 +369,7 @@ func (r *Registry) updateRule(id, action string, fn func(doc *fileDocument, idx 
 		return err
 	}
 	for idx := range doc.Rules {
-		if doc.Rules[idx].ID != id {
+		if doc.Rules[idx].ID != ref && doc.Rules[idx].Name != ref {
 			continue
 		}
 		if err := fn(&doc, idx); err != nil {
@@ -351,7 +380,7 @@ func (r *Registry) updateRule(id, action string, fn func(doc *fileDocument, idx 
 		}
 		return nil
 	}
-	return fmt.Errorf("%s rule %q: %w", action, id, os.ErrNotExist)
+	return fmt.Errorf("%s rule %q: %w", action, ref, os.ErrNotExist)
 }
 
 func (r *Registry) loadLocked() (fileDocument, error) {
@@ -392,6 +421,7 @@ func (r *Registry) appendHistory(doc *fileDocument, action string, snapshot *Rul
 func migrate(doc fileDocument) (fileDocument, error) {
 	for i := range doc.Rules {
 		doc.Rules[i].Scope = normalizeScope(doc.Rules[i].Scope)
+		doc.Rules[i].Name = uniqueRuleName(doc.Rules[:i], doc.Rules[i].Name, doc.Rules[i].Text)
 		if strings.TrimSpace(doc.Rules[i].ToolFilter) == "" {
 			doc.Rules[i].ToolFilter = ".*"
 		}
@@ -476,6 +506,56 @@ func rollingAverage(current, sample float64, count int64) float64 {
 		return sample
 	}
 	return current + ((sample - current) / float64(count))
+}
+
+func uniqueRuleName(existing []Rule, preferred, text string) string {
+	base := slugifyRuleName(preferred)
+	if base == "" {
+		base = slugifyRuleName(text)
+	}
+	if base == "" {
+		base = "rule"
+	}
+	name := base
+	suffix := 2
+	for hasRuleName(existing, name) {
+		name = fmt.Sprintf("%s-%d", base, suffix)
+		suffix++
+	}
+	return name
+}
+
+func hasRuleName(existing []Rule, name string) bool {
+	for _, rule := range existing {
+		if rule.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func slugifyRuleName(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			lastDash = false
+		case !lastDash:
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 48 {
+		out = strings.Trim(out[:48], "-")
+	}
+	return out
 }
 
 type repoStore struct {

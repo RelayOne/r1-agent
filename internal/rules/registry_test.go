@@ -31,6 +31,9 @@ func TestRegistryCRUDAndCheck(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("len(List) = %d, want 1", len(list))
 	}
+	if list[0].Name == "" {
+		t.Fatal("rule name should be populated")
+	}
 
 	blocked, err := reg.Check(context.Background(), "delete_branch", json.RawMessage(`{"name":"staging"}`), CheckContext{RepoRoot: repo, TaskID: "t1"})
 	if err != nil {
@@ -96,6 +99,40 @@ func TestRegistryCRUDAndCheck(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
 			t.Fatalf("stat %s: %v", rel, err)
 		}
+	}
+}
+
+func TestRegistryResolveAndDisableByName(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	reg := NewRepoRegistry(repo, nil)
+
+	rule, err := reg.AddWithOptions(context.Background(), AddRequest{
+		Name: "block-prod-branch",
+		Text: "never call tool delete_branch with name matching ^prod$",
+	})
+	if err != nil {
+		t.Fatalf("AddWithOptions: %v", err)
+	}
+
+	resolved, err := reg.Resolve("block-prod-branch")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if resolved.ID != rule.ID {
+		t.Fatalf("Resolve ID = %q, want %q", resolved.ID, rule.ID)
+	}
+
+	if err := reg.Disable("block-prod-branch"); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	disabled, err := reg.Resolve(rule.ID)
+	if err != nil {
+		t.Fatalf("Resolve disabled: %v", err)
+	}
+	if disabled.Status != StatusPaused {
+		t.Fatalf("status = %q, want %q", disabled.Status, StatusPaused)
 	}
 }
 
