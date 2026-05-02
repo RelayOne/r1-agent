@@ -2,6 +2,7 @@ package cortex
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -9,6 +10,12 @@ import (
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
 )
+
+// writeNote is a TASK-22 stub. The persistent WAL-backed note writer will
+// land in persist.go alongside crash-recovery support; for now the stub
+// preserves the call-site contract and keeps Publish callable. Returning
+// nil is safe because Workspace tolerates a nil durable bus by design.
+func writeNote(_ *bus.Bus, _ Note) error { return nil }
 
 // Severity tags drive both supervisor injection priority and the
 // PreEndTurnCheckFn gate. Critical Notes refuse end_turn until resolved.
@@ -88,4 +95,51 @@ type Workspace struct {
 // with no WAL persistence (per TASK-22 contract).
 func NewWorkspace(events *hub.Bus, durable *bus.Bus) *Workspace {
 	return &Workspace{events: events, durable: durable}
+}
+
+// Publish validates the supplied Note, assigns it a Workspace-monotonic
+// ID, stamps EmittedAt and Round, appends it to the Workspace, persists
+// it through the durable bus (TASK-22), and finally fans the Note out to
+// every registered subscriber and the event hub.
+//
+// Per spec item 4: the write-side mutex is acquired only across the
+// validate/assign/append/persist critical section. Hub emission and
+// subscriber fan-out happen *after* the lock has been released so that
+// downstream handlers cannot deadlock callers blocked behind the same
+// mutex (e.g. a subscriber calling Snapshot).
+//
+// The first published Note in a Workspace receives ID "note-0"; the
+// counter is post-incremented after the assignment so that seq always
+// equals len(notes) after a successful Publish.
+func (w *Workspace) Publish(n Note) error {
+	if err := n.Validate(); err != nil {
+		return err
+	}
+
+	w.mu.Lock()
+	n.ID = fmt.Sprintf("note-%d", w.seq)
+	w.seq++
+	if n.EmittedAt.IsZero() {
+		n.EmittedAt = time.Now().UTC()
+	}
+	n.Round = w.currentRound
+	w.notes = append(w.notes, n)
+	if err := writeNote(w.durable, n); err != nil {
+		w.mu.Unlock()
+		return err
+	}
+	subs := make([]func(Note), len(w.subs))
+	copy(subs, w.subs)
+	w.mu.Unlock()
+
+	if w.events != nil {
+		w.events.EmitAsync(&hub.Event{
+			Type:   hub.EventCortexNotePublished,
+			Custom: map[string]any{"note": n},
+		})
+	}
+	for _, sub := range subs {
+		sub(n)
+	}
+	return nil
 }

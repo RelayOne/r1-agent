@@ -125,6 +125,11 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
+// --- Cortex (1 event) ---
+const (
+	EventCortexNotePublished EventType = "cortex.note.published"
+)
+
 // Mode determines how the hook participates.
 type Mode string
 
