@@ -105,8 +105,35 @@ func (m *Manager) Prepare(ctx context.Context, explicitName string) (Handle, err
 	cmd.Dir = m.RepoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		os.RemoveAll(runtimeDir)
-		return Handle{}, fmt.Errorf("git worktree add: %w: %s", err, string(out))
+		// Auto-recover from "branch already exists" — common when a prior R1 run was killed
+		// before cleanup. Force-remove the stale worktree + branch and retry once.
+		// Fixes the recurring "branch named 'stoke/...' already exists" failure pattern.
+		if strings.Contains(string(out), "already exists") {
+			cleanupBranch := exec.CommandContext(ctx, m.GitBinary, "branch", "-D", branch)
+			cleanupBranch.Dir = m.RepoRoot
+			_ = cleanupBranch.Run()
+			cleanupWT := exec.CommandContext(ctx, m.GitBinary, "worktree", "remove", "--force", path)
+			cleanupWT.Dir = m.RepoRoot
+			_ = cleanupWT.Run()
+			pruneCmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "prune")
+			pruneCmd.Dir = m.RepoRoot
+			_ = pruneCmd.Run()
+			os.RemoveAll(path)
+			retryCmd := exec.CommandContext(ctx, m.GitBinary, "worktree", "add", path, "-b", branch, defaultBranch)
+			retryCmd.Dir = m.RepoRoot
+			retryOut, retryErr := retryCmd.CombinedOutput()
+			if retryErr == nil {
+				out = retryOut
+				err = nil
+			} else {
+				out = retryOut
+				err = retryErr
+			}
+		}
+		if err != nil {
+			os.RemoveAll(runtimeDir)
+			return Handle{}, fmt.Errorf("git worktree add: %w: %s", err, string(out))
+		}
 	}
 	handle := Handle{
 		Name: name, Branch: branch, Path: path, RuntimeDir: runtimeDir,
