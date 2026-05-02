@@ -130,9 +130,21 @@ func runWithProvider(t *testing.T, n *NativeRunner, spec RunSpec, p *fakeMCPProv
 	return n.Run(context.Background(), spec, nil)
 }
 
+// alwaysAvailableMCPTools are the discovery primitives registered unconditionally
+// (see internal/tools/mcp_search_tools.go) — they return graceful-degradation
+// responses when the registry is nil or returns an error, like web_search does
+// without TAVILY_API_KEY. They are NOT registry-dependent tools.
+var alwaysAvailableMCPTools = map[string]bool{
+	"mcp_tool_search":   true,
+	"mcp_resource_list": true,
+	"mcp_resource_read": true,
+}
+
 func TestNativeRunner_MCP_NilRegistry_NoOp(t *testing.T) {
 	// Legacy path: RunSpec.MCPRegistry nil AND NativeRunner.MCPRegistry
-	// nil → no mcp_* tools advertised, no handler wiring.
+	// nil → no registry-dependent mcp_* tools advertised. The 3 always-available
+	// discovery primitives (mcp_tool_search, mcp_resource_list, mcp_resource_read)
+	// are still present and return informational "unavailable" messages.
 	runner := NewNativeRunner("", "claude-sonnet-4-5")
 	spec := newMinimalRunSpec(t)
 
@@ -146,8 +158,8 @@ func TestNativeRunner_MCP_NilRegistry_NoOp(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	for _, td := range fp.seenTools {
-		if strings.HasPrefix(td.Name, "mcp_") {
-			t.Errorf("nil registry should not advertise mcp_* tools, saw %q", td.Name)
+		if strings.HasPrefix(td.Name, "mcp_") && !alwaysAvailableMCPTools[td.Name] {
+			t.Errorf("nil registry should not advertise registry-dependent mcp_* tools, saw %q", td.Name)
 		}
 	}
 }
@@ -342,8 +354,8 @@ func TestNativeRunner_MCP_AllToolsForTrustError_NonFatal(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	for _, td := range fp.seenTools {
-		if strings.HasPrefix(td.Name, "mcp_") {
-			t.Errorf("listing error should produce no mcp_* tools, saw %q", td.Name)
+		if strings.HasPrefix(td.Name, "mcp_") && !alwaysAvailableMCPTools[td.Name] {
+			t.Errorf("listing error should produce no registry-dependent mcp_* tools, saw %q", td.Name)
 		}
 	}
 }
