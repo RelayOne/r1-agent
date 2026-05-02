@@ -672,6 +672,10 @@ func main() {
 		os.Exit(runOneShotCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "tui", "--tui", "shell":
 		launchShell(os.Args[2:])
+	case "chat-interactive":
+		if err := runChatInteractiveCmd(os.Args[2:]); err != nil {
+			fatal("chat-interactive: %v", err)
+		}
 	case "run":
 		runCmdDispatch(os.Args[2:])
 	case "build":
@@ -6937,6 +6941,7 @@ COMMANDS:
   (no args)       Launch the line REPL with smart defaults
   tui             Launch the full-screen Bubble Tea shell (command input +
                   live mission monitoring). Falls back to line REPL if no TTY.
+  chat-interactive Start the interactive chat workflow shell
   run             Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
   build           Execute multi-task plan with parallel agents
   sow             Execute Statement of Work (multi-session with acceptance gates)
