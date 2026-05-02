@@ -148,10 +148,15 @@ func TestDaemonHTTPEnqueueStatusWAL(t *testing.T) {
 	}
 
 	// GET /wal
-	resp3, _ := http.Get(ts.URL + "/wal?n=20")
+	resp3, err := http.Get(ts.URL + "/wal?n=20")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp3.Body.Close()
 	var walResp map[string]any
-	json.NewDecoder(resp3.Body).Decode(&walResp)
+	if err := json.NewDecoder(resp3.Body).Decode(&walResp); err != nil {
+		t.Fatal(err)
+	}
 	if int(walResp["count"].(float64)) < 2 {
 		t.Fatalf("expected wal events, got %+v", walResp)
 	}
