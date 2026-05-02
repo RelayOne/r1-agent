@@ -15,9 +15,11 @@
 package cortex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +27,13 @@ import (
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
 )
+
+// cortexStopTimeout is the upper bound for the cumulative shutdown wait
+// across every LobeRunner.Stop call. Cortex.Stop derives a single
+// context.WithTimeout from this constant and hands the resulting
+// deadline to each runner so the total stop budget is bounded even
+// when several runners are wedged simultaneously.
+const cortexStopTimeout = 10 * time.Second
 
 // Config carries cortex construction parameters. Field names mirror
 // specs/cortex-core.md §"Cortex — the bundle" exactly. EventBus and
@@ -75,7 +84,26 @@ type Cortex struct {
 	sem       *LobeSemaphore
 	tracker   *BudgetTracker
 	runners   []*LobeRunner
-	started   atomic.Bool
+
+	// Lifecycle state owned by Start/Stop (TASK-13).
+	//
+	// ctx/cancel are captured at Start: every spawned goroutine (the
+	// pre-warm pump and each LobeRunner) derives from this ctx so a
+	// single cancel() winds the world down. Stop is the only writer;
+	// Start sets these once under the started CAS.
+	//
+	// started gates Start with atomic.CompareAndSwap so a concurrent
+	// double-Start collapses into a single launch sequence; subsequent
+	// Start calls become silent no-ops.
+	//
+	// stopOnce gates Stop so concurrent shutdown paths converge on a
+	// single cancel() + wait sequence; subsequent Stop calls become
+	// silent no-ops without re-cancelling an already-cancelled ctx or
+	// re-waiting on already-stopped runners.
+	ctx      context.Context
+	cancel   context.CancelFunc
+	started  atomic.Bool
+	stopOnce sync.Once
 }
 
 // New constructs a Cortex from cfg, validates required fields, applies
@@ -196,3 +224,115 @@ func (c *Cortex) Round() *Round { return c.round }
 // SessionID returns the configured session id (zero-value if unset).
 // Surfaces in telemetry and audit events emitted by the cortex.
 func (c *Cortex) SessionID() string { return c.cfg.SessionID }
+
+// Start launches the cortex lifecycle: it captures a cancellable
+// child of parentCtx, performs a single synchronous initial pre-warm
+// (best-effort — failures are logged but never abort Start), launches
+// the periodic pre-warm pump goroutine, and starts every registered
+// LobeRunner against the same context.
+//
+// Start is idempotent. The first call after construction wins the
+// atomic.CompareAndSwap on c.started and runs the launch sequence;
+// subsequent calls observe the flag already set and return nil
+// without touching ctx, runners, or the pump. This matches the spec
+// contract: "Cortex.Start may run after a daemon resume" — re-entry
+// must be a no-op, not a panic.
+//
+// Pre-warm is best-effort by design (spec gotcha #8). The synchronous
+// initial fire serves only to seed the cache as early as possible; on
+// failure runPreWarmOnce already emits EventCortexPreWarmFailed via
+// the bus, and Cortex.Start logs at WARN so operators see the cause
+// without bringing down the loop.
+//
+// The supplied parentCtx becomes the lifetime context for every
+// goroutine the cortex spawns; cancelling it (or calling Stop) winds
+// the pump and every LobeRunner down. Start does NOT block on
+// completion — runners drive their own goroutines and the pre-warm
+// pump runs until its ctx is cancelled.
+func (c *Cortex) Start(parentCtx context.Context) error {
+	if !c.started.CompareAndSwap(false, true) {
+		return nil
+	}
+
+	c.ctx, c.cancel = context.WithCancel(parentCtx)
+
+	// Synchronous initial pre-warm: best-effort. runPreWarmOnce already
+	// emits EventCortexPreWarmFailed on the bus; we log at WARN so the
+	// failure surfaces in operator logs without aborting Start.
+	if err := runPreWarmOnce(
+		c.ctx,
+		c.cfg.Provider,
+		c.cfg.PreWarmModel,
+		"",  // SystemPrompt: not on Config; cache parity handled by callers wiring through agentloop.
+		nil, // Tools: not on Config; same parity contract.
+		c.cfg.EventBus,
+	); err != nil {
+		slog.Warn("cortex/Start: initial pre-warm failed",
+			"component", "cortex",
+			"err", err,
+		)
+	}
+
+	// Pre-warm pump: runs until c.ctx is cancelled. The pump never
+	// terminates on a fire error, only on ctx cancellation, matching
+	// the runPreWarmPump contract.
+	go runPreWarmPump(c.ctx, c.cfg.PreWarmInterval, func(ctx context.Context) error {
+		return runPreWarmOnce(
+			ctx,
+			c.cfg.Provider,
+			c.cfg.PreWarmModel,
+			"",
+			nil,
+			c.cfg.EventBus,
+		)
+	})
+
+	// Launch every runner against the shared lifetime ctx.
+	for _, r := range c.runners {
+		r.Start(c.ctx)
+	}
+
+	return nil
+}
+
+// Stop cancels the cortex's internal context (signalling every
+// goroutine spawned by Start to wind down) and then blocks while
+// each LobeRunner exits, bounded by a single cumulative
+// cortexStopTimeout (10s).
+//
+// Stop is idempotent via sync.Once: only the first invocation runs
+// the cancel + wait sequence. Subsequent calls return nil
+// immediately. If Stop is called before Start, the sync.Once still
+// fires, but cancel is nil and there are no runners to wait on, so
+// the call is a safe no-op.
+//
+// stopCtx is the caller-supplied shutdown ctx; the 10s deadline is
+// derived from it via context.WithTimeout. Cancelling stopCtx aborts
+// the wait early; runners that have not yet exited will be observed
+// as wedged via slog.Warn inside LobeRunner.Stop.
+//
+// Individual runner errors are not returned: each LobeRunner.Stop
+// already logs its own timeout warning, and the cortex contract is
+// "best-effort, bounded shutdown". Callers that need finer-grained
+// error reporting should subscribe to the hub event stream.
+func (c *Cortex) Stop(stopCtx context.Context) error {
+	c.stopOnce.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+
+		// Single cumulative deadline shared across all runners. We
+		// pass the same derived context into every Stop call so the
+		// total stop budget is bounded even when several runners are
+		// wedged simultaneously (LobeRunner.Stop has its own per-call
+		// lobeStopTimeout, but the cortex-level deadline takes
+		// precedence via ctx.Done()).
+		deadline, deadlineCancel := context.WithTimeout(stopCtx, cortexStopTimeout)
+		defer deadlineCancel()
+
+		for _, r := range c.runners {
+			r.Stop(deadline)
+		}
+	})
+	return nil
+}
