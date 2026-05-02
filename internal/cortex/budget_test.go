@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/RelayOne/r1/internal/stream"
 )
 
 func TestSemaphoreCapacity(t *testing.T) {
@@ -85,5 +87,75 @@ func TestSemaphorePanicsOversize(t *testing.T) {
 			}()
 			_ = NewLobeSemaphore(c)
 		})
+	}
+}
+
+// TestBudgetTrackerCharge verifies that Charge accumulates Output tokens
+// and that Exceeded trips when the accumulator meets the 30%-of-main cap.
+func TestBudgetTrackerCharge(t *testing.T) {
+	bt := NewBudgetTracker()
+	bt.RecordMainTurn(stream.TokenUsage{Output: 1000})
+
+	if got, want := bt.RoundOutputBudget(), 300; got != want {
+		t.Fatalf("RoundOutputBudget after RecordMainTurn(1000): got %d, want %d", got, want)
+	}
+
+	// Three Charges of 100 each -> 300 total, which equals the budget.
+	for i := 0; i < 3; i++ {
+		bt.Charge("lobe-x", stream.TokenUsage{Output: 100})
+	}
+
+	if !bt.Exceeded() {
+		t.Fatalf("Exceeded after 3x100 charges against budget 300: got false, want true")
+	}
+}
+
+// TestBudgetTrackerResetRound verifies that ResetRound zeroes the
+// per-round accumulator without disturbing mainOutputLastTurn.
+func TestBudgetTrackerResetRound(t *testing.T) {
+	bt := NewBudgetTracker()
+	bt.RecordMainTurn(stream.TokenUsage{Output: 1000})
+
+	for i := 0; i < 3; i++ {
+		bt.Charge("lobe-x", stream.TokenUsage{Output: 100})
+	}
+	if !bt.Exceeded() {
+		t.Fatalf("pre-reset: Exceeded should be true after charging 300/300")
+	}
+
+	bt.ResetRound()
+
+	if bt.Exceeded() {
+		t.Fatalf("post-reset: Exceeded should be false (0 < 300)")
+	}
+	if got, want := bt.RoundOutputBudget(), 300; got != want {
+		t.Fatalf("post-reset: RoundOutputBudget mutated: got %d, want %d", got, want)
+	}
+
+	// New round behaves identically to the first.
+	for i := 0; i < 3; i++ {
+		bt.Charge("lobe-x", stream.TokenUsage{Output: 100})
+	}
+	if !bt.Exceeded() {
+		t.Fatalf("post-reset second-round: Exceeded should be true after re-charging 300")
+	}
+}
+
+// TestBudgetTrackerEmptyMainTurn documents the fail-closed behavior: with
+// no RecordMainTurn observation, RoundOutputBudget is 0 and Exceeded is
+// immediately true (lobeOutputThisRound >= 0).
+func TestBudgetTrackerEmptyMainTurn(t *testing.T) {
+	bt := NewBudgetTracker()
+
+	if got, want := bt.RoundOutputBudget(), 0; got != want {
+		t.Fatalf("RoundOutputBudget on fresh tracker: got %d, want %d", got, want)
+	}
+	if !bt.Exceeded() {
+		t.Fatalf("Exceeded on fresh tracker: got false, want true (fail-closed)")
+	}
+
+	bt.Charge("lobe-x", stream.TokenUsage{Output: 500})
+	if !bt.Exceeded() {
+		t.Fatalf("Exceeded after Charge with no main turn: got false, want true")
 	}
 }
