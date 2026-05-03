@@ -706,6 +706,11 @@ func main() {
 		watchCmd(os.Args[2:])
 	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
 		os.Exit(runCtlCmd(os.Args[1], os.Args[2:], os.Stdout, os.Stderr))
+	case "ctl":
+		// TASK-36: r1 ctl <verb> — operator control of the per-user
+		// `r1 serve` daemon. Distinct from the legacy session-scoped
+		// ctl verbs above (which target a sessionctl socket).
+		os.Exit(runCtlDaemonCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "events":
 		// OPSUX-events: thin read-only operator surface for .stoke/events.db.
 		os.Exit(runEventsCmd(os.Args[2:], os.Stdout, os.Stderr))
