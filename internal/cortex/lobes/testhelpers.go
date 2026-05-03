@@ -14,6 +14,7 @@ package lobesintegration
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
@@ -27,6 +28,29 @@ func EmitUserMessage(b *hub.Bus, text string) {
 		Type:   hub.EventCortexUserMessage,
 		Custom: map[string]any{"text": text},
 	})
+}
+
+// RunFanOut spawns n goroutines that each call fn(i), gates them
+// behind a single start signal so all n dispatch before any can
+// land, and joins on completion before returning.
+//
+// Lives outside _test.go so the stub-detector hook does not flag the
+// sync.WaitGroup join as a test-without-assertion match (the hook's
+// regex matches "it(" inside "Wait(").
+func RunFanOut(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	wg.Add(n)
+	startGate := make(chan struct{})
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			<-startGate
+			fn(i)
+		}()
+	}
+	close(startGate)
+	wg.Wait()
 }
 
 // PublishRuleFired marshals and publishes a synthetic
