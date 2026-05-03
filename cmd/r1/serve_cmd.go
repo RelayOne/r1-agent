@@ -30,7 +30,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,7 +184,7 @@ func runServeLoop(opts serveOptions) {
 	server.RegisterDashboardUI(srv)
 
 	// Optional /v1/agent/ + /v1/queue/ mounts (TASK-34/35).
-	muxAlias := getServeMux(srv)
+	muxAlias := srv.Mux()
 	if muxAlias != nil && opts.EnableAgentRoutes {
 		ag := agentserve.NewServer(agentserve.Config{Version: version})
 		server.MountAgentServe(muxAlias, ag, opts.Token)
@@ -276,19 +275,3 @@ func portFromAddr(addr string) int {
 	return p
 }
 
-// getServeMux returns the inner *http.ServeMux of a server.Server when
-// possible, so MountAgentServe / MountDaemonQueue can register routes
-// alongside the dashboard handlers. The Server type doesn't currently
-// expose its mux directly; we cast through Handler() which returns
-// *http.ServeMux today. If the type changes we fall back to nil and
-// the agent / queue mounts skip silently with a warning.
-func getServeMux(srv *server.Server) *http.ServeMux {
-	if srv == nil {
-		return nil
-	}
-	h := srv.Handler()
-	if mux, ok := h.(*http.ServeMux); ok {
-		return mux
-	}
-	return nil
-}

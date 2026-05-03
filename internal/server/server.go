@@ -144,6 +144,16 @@ func (s *Server) Handler() http.Handler {
 	return s.mux
 }
 
+// Mux returns the underlying *http.ServeMux so callers can register
+// additional routes alongside the dashboard handlers (used by
+// MountAgentServe + MountDaemonQueue). Returns nil when s is nil.
+func (s *Server) Mux() *http.ServeMux {
+	if s == nil {
+		return nil
+	}
+	return s.mux
+}
+
 func (s *Server) ListenAndServe() error {
 	// Use a configured *http.Server (not the bare http.ListenAndServe
 	// helper) so we can set ReadHeaderTimeout — the bare helper gives

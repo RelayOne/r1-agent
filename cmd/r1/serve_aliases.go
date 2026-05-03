@@ -3,51 +3,44 @@ package main
 // serve_aliases.go — TASK-41: keep `r1 daemon` and `r1 agent-serve`
 // working as deprecated aliases of `r1 serve`.
 //
-// The spec says: "register `serve` → serveCmd(args). Keep `daemon` →
+// Spec: "register `serve` → serveCmd(args). Keep `daemon` →
 // daemonCmd(args) and `agent-serve` → agentServeCmd(args) as alias
 // paths (each prints a one-line deprecation hint to stderr and
 // forwards args to serveCmd with the right flag prefix)."
 //
-// Implementation. Each alias function:
-//
-//   1. Writes a single-line deprecation hint to stderr (named the
-//      replacement command + the cutoff). Predictable wording lets
-//      tests grep for the exact hint without coupling to log format.
-//   2. Forwards to the legacy implementation (daemonCmd /
+// Each alias:
+//   1. Writes a single-line deprecation hint to stderr naming the
+//      replacement command (`r1 serve --enable-queue-routes` for
+//      daemon, `r1 serve --enable-agent-routes` for agent-serve).
+//   2. Forwards args to the legacy implementation (daemonCmd /
 //      agentServeCmd) so existing scripts pinning the legacy verb
-//      keep working — no functional regression. The "right flag
-//      prefix" the spec mentions (--enable-queue-routes for daemon,
-//      --enable-agent-routes for agent-serve) is implemented via
-//      forwardArgsToServe when callers explicitly opt into the new
-//      verb.
+//      keep working without functional regression.
 //
-// We intentionally do NOT silently rewrite `r1 daemon start` → `r1
-// serve --enable-queue-routes` today: the daemon's subcommand
-// structure (start/enqueue/status/wal/...) doesn't map 1:1 to serve's
-// flag surface. The deprecation hint nudges operators to migrate
-// manually, and the legacy code keeps the queue/WAL behavior
-// available during the transition.
-//
-// stdout/stderr are injected so tests can capture the hint.
+// We do NOT silently rewrite `r1 daemon start` → `r1 serve
+// --enable-queue-routes`: the daemon's subcommand structure
+// (start/enqueue/status/wal/...) does not map 1:1 to serve's flag
+// surface. Operators read the hint and migrate at their own pace.
+// The forwarder indirections (daemonForwarder / agentServeForwarder)
+// are exported as package vars so tests can replace them with
+// recorder closures that capture the args without invoking the
+// legacy commands (which os.Exit on flag errors).
 
 import (
 	"io"
 	"os"
 )
 
-// daemonDeprecationHint is the one-line stderr message printed by the
-// daemon alias before delegating. Matches the regex
-// `^r1 daemon: deprecated;` used by TestMain_DaemonAlias_PrintsDeprecationStderr.
+// daemonDeprecationHint is the one-line stderr message printed by
+// runDaemonAlias before forwarding.
 const daemonDeprecationHint = "r1 daemon: deprecated; use `r1 serve --enable-queue-routes` instead. Forwarding to legacy daemon command.\n"
 
 // agentServeDeprecationHint mirrors daemonDeprecationHint for the
 // agent-serve alias.
 const agentServeDeprecationHint = "r1 agent-serve: deprecated; use `r1 serve --enable-agent-routes` instead. Forwarding to legacy agent-serve command.\n"
 
-// daemonForwarder is the function the daemon alias calls after
-// emitting the deprecation hint. Production points it at the real
-// daemonCmd; tests inject a stub so they can verify ordering without
-// invoking the legacy command (which os.Exits on flag errors).
+// daemonForwarder is the function runDaemonAlias calls after emitting
+// the deprecation hint. Production points it at daemonCmd; tests swap
+// it for a recorder.
 var daemonForwarder = daemonCmd
 
 // agentServeForwarder is the analogous indirection for the

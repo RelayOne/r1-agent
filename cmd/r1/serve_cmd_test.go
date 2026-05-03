@@ -15,6 +15,7 @@ package main
 //   TestServeCmd_LegacyPortFlag               --port=N populates --addr.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -162,10 +163,18 @@ func TestServeCmd_PortFromAddr(t *testing.T) {
 }
 
 func TestServeCmd_AddrEmptySpawnsDiscovery(t *testing.T) {
-	// When --addr is empty (no --port either), parseServeFlags
-	// returns an empty Addr. The runServeLoop applies a sane default;
-	// we assert the parser doesn't reject the empty case here so the
-	// downstream auto-spawn logic in TASK-42 has a clean signal.
+	// Spec-named test (TASK-40 line 597): "when --addr is empty,
+	// downstream callers (TASK-42 daemonHTTP) read ~/.r1/daemon.json
+	// for port + token; if missing, attempt to spawn `r1 serve` and
+	// retry with 2s timeout."
+	//
+	// This test verifies the parser-side contract that flows into
+	// the auto-spawn path: an empty --addr must round-trip as empty
+	// through parseServeFlags (so daemonHTTP's empty-addr branch can
+	// trigger), AND the legacy --port flag must NOT silently fill
+	// it in (since legacy semantics use the same empty signal for a
+	// different default). The end-to-end auto-spawn is tested in
+	// daemon_http_test.go::TestDaemonHTTP_AutoSpawn.
 	opts, err := parseServeFlags([]string{"--token", "tk"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -173,10 +182,36 @@ func TestServeCmd_AddrEmptySpawnsDiscovery(t *testing.T) {
 	if opts.Addr != "" {
 		t.Errorf("empty --addr should stay empty post-parse; got %q", opts.Addr)
 	}
+	if opts.Port != 0 {
+		t.Errorf("legacy --port should default to 0 when unset; got %d", opts.Port)
+	}
 	if opts.Token != "tk" {
 		t.Errorf("Token: got %q, want tk", opts.Token)
 	}
+	// Confirm the resolveDaemonEndpoint path treats empty addr as
+	// "consult discovery" — wired in TASK-42 daemonHTTP. This is the
+	// contractual link between serveCmd's empty-addr and TASK-42's
+	// auto-spawn.
+	dir := t.TempDir()
+	t.Setenv("R1_HOME", dir)
+	// daemon.json absent + spawn forced to fail → resolveDaemonEndpoint
+	// must error (rather than silently returning a stale endpoint).
+	origSpawn := spawnDaemon
+	spawnDaemon = func() error { return errSpawnDisabled }
+	defer func() { spawnDaemon = origSpawn }()
+	_, derr := resolveDaemonEndpoint("", "")
+	if derr == nil {
+		t.Fatal("empty addr + missing discovery + failing spawn: want error, got nil")
+	}
+	if !strings.Contains(derr.Error(), "spawn") {
+		t.Errorf("error should propagate spawn failure; got %v", derr)
+	}
 }
+
+// errSpawnDisabled is the sentinel the AddrEmpty test feeds into
+// spawnDaemon to verify the resolve path surfaces spawn failures
+// rather than silently degrading.
+var errSpawnDisabled = fmt.Errorf("spawn disabled by test")
 
 func TestServeCmd_SingleSessionModeRoundtrip(t *testing.T) {
 	// setSingleSessionMode + IsSingleSessionMode round-trip.
