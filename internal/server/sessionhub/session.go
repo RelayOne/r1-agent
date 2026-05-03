@@ -268,8 +268,18 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 	s.cancel = cancel
 	// Snapshot hooks under the lock so the rest of Run sees a stable
 	// view even if SetOnEvent / SetDispatchHook fire concurrently.
+	//
+	// TASK-25: when no dispatchHook was installed, fall back to
+	// defaultDispatchHook (assertCwd) so the cwd-drift sentinel is
+	// active by default. Operators MUST explicitly call
+	// SetDispatchHook(nil) to disable it (no test in production code
+	// does that — the override only matters for unit tests that
+	// capture invocations).
 	onEvent := s.onEvent
 	dispatchHook := s.dispatchHook
+	if dispatchHook == nil {
+		dispatchHook = defaultDispatchHook
+	}
 	s.State = SessionStateRunning
 	s.runMu.Unlock()
 
