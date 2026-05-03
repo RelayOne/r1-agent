@@ -418,9 +418,127 @@ func (s *LanesServer) fetchTail(ctx context.Context, sessionID, laneID string, l
 	return ring, nil
 }
 
-// handleKill is implemented in TASK-22.
-func (s *LanesServer) handleKill(_ context.Context, _ map[string]interface{}) (string, error) {
-	return s.envelopeError("not_implemented", "r1.lanes.kill scaffold; implementation in TASK-22"), nil
+// handleKill implements r1.lanes.kill per spec §7.4 (TASK-22). Cancels
+// a running or pending lane; cascades to descendants by default.
+//
+// Idempotent: invoking on a terminal lane returns
+// {ok:true, data:{killed_lane_ids:[], already_terminal:true}}. The
+// MCP server is the operator-facing path so the killed_lane_ids list
+// is empty in the idempotent case (no events emitted) — surfaces use
+// the already_terminal flag to suppress kill animations.
+//
+// Cascade walks the parent_id graph BFS-style. Each cancelled lane
+// emits lane.killed (actor=operator) followed by the terminal
+// lane.status(cancelled_by_operator). The reason argument is surfaced
+// in lane.killed.data.reason verbatim.
+func (s *LanesServer) handleKill(_ context.Context, args map[string]interface{}) (string, error) {
+	if s.backend == nil {
+		return s.envelopeError("internal", "lanes backend not configured"), nil
+	}
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return s.envelopeError("invalid_request", "session_id is required"), nil
+	}
+	laneID, _ := args["lane_id"].(string)
+	if laneID == "" {
+		return s.envelopeError("invalid_request", "lane_id is required"), nil
+	}
+	reason, _ := args["reason"].(string)
+	cascade := true
+	if v, ok := args["cascade"].(bool); ok {
+		cascade = v
+	}
+
+	if backendSession := s.backend.SessionID(); backendSession != "" && backendSession != sessionID {
+		return s.envelopeError("not_found", fmt.Sprintf("session %q not bound to this lanes server", sessionID)), nil
+	}
+
+	root, ok := s.backend.GetLane(laneID)
+	if !ok || root == nil {
+		return s.envelopeError("not_found", fmt.Sprintf("lane %q not found", laneID)), nil
+	}
+
+	// Idempotent terminal short-circuit. Spec §7.4 mandates the exact
+	// payload shape: {ok:true, data:{already_terminal:true}}.
+	if root.IsTerminal() {
+		return s.envelopeOK(map[string]any{
+			"already_terminal": true,
+			"killed_lane_ids":  []string{},
+		}), nil
+	}
+
+	// Walk descendants when cascading. Children look up by ParentID;
+	// we collect the targets before killing so a child whose parent is
+	// already-cancelled-by-cascade doesn't see its own kill error.
+	targets := []*cortex.Lane{root}
+	if cascade {
+		targets = append(targets, s.descendantsOf(root.ID)...)
+	}
+
+	killed := make([]string, 0, len(targets))
+	for _, l := range targets {
+		if l == nil || l.IsTerminal() {
+			continue
+		}
+		if err := l.Kill(reason); err != nil {
+			// One failed kill should not stop the cascade — partial
+			// success is documented behaviour (the operator can re-
+			// invoke to clean up; the second invocation hits the
+			// idempotent path for already-killed children).
+			continue
+		}
+		killed = append(killed, l.ID)
+	}
+
+	return s.envelopeOK(map[string]any{
+		"killed_lane_ids":  killed,
+		"already_terminal": false,
+	}), nil
+}
+
+// descendantsOf returns every lane whose parent chain leads back to
+// rootID, in BFS order. Used by handleKill to collect cascade targets
+// before mutating any of them so a transient ParentID race does not
+// cause the cascade to miss a child.
+//
+// Walk is safe under the workspace mutex because Lanes() takes the
+// read lock and copies the pointer list; subsequent reads of l.ID and
+// l.ParentID are fields on the canonical workspace records (no struct
+// copying), but those fields are immutable after lane creation
+// (ParentID is set once at NewLane and never re-written) so the read
+// is safe.
+func (s *LanesServer) descendantsOf(rootID string) []*cortex.Lane {
+	if s.backend == nil {
+		return nil
+	}
+	all := s.backend.Lanes()
+
+	// Build child index: parent_id -> []*Lane.
+	children := make(map[string][]*cortex.Lane, len(all))
+	for _, l := range all {
+		if l == nil || l.ParentID == "" {
+			continue
+		}
+		children[l.ParentID] = append(children[l.ParentID], l)
+	}
+
+	// BFS from rootID.
+	out := []*cortex.Lane{}
+	queue := []string{rootID}
+	seen := map[string]bool{rootID: true}
+	for len(queue) > 0 {
+		head := queue[0]
+		queue = queue[1:]
+		for _, child := range children[head] {
+			if child == nil || seen[child.ID] {
+				continue
+			}
+			seen[child.ID] = true
+			out = append(out, child)
+			queue = append(queue, child.ID)
+		}
+	}
+	return out
 }
 
 // handlePin is implemented in TASK-23.
