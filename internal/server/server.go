@@ -51,6 +51,20 @@ type Server struct {
 	Bus      *EventBus
 	StatusFn func() interface{} // returns current build status
 	mux      *http.ServeMux
+
+	// Lanes is the optional lanes-protocol wiring (specs/lanes-protocol.md
+	// §6). When non-nil the server registers /v1/sessions/{id}/events
+	// (HTTP+SSE, TASK-13) and /v1/sessions/{id}/ws (WebSocket+JSON-RPC,
+	// TASK-14/15). nil disables both endpoints. The wiring is split out
+	// from the existing /api/events SSE so the lanes contract (X-R1-Lanes-Version,
+	// Last-Event-ID replay, session_id filter) does not bleed into the
+	// existing dashboard SSE stream.
+	Lanes *LanesWiring
+
+	// AllowedOrigins, when non-empty, pins WS upgrade Origin to one of
+	// these values. Loopback origins (http(s)://localhost*, http(s)://127.0.0.1*)
+	// are always permitted. Empty (the default) means loopback-only.
+	AllowedOrigins []string
 }
 
 func New(port int, token string, bus *EventBus) *Server {
@@ -60,6 +74,18 @@ func New(port int, token string, bus *EventBus) *Server {
 	s.mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
+	// Lanes-protocol HTTP+SSE (TASK-13) and WebSocket (TASK-14) endpoints.
+	// Both gate on s.Lanes != nil at request time (set via WithLanes
+	// after construction) so callers that do not opt in pay no overhead.
+	s.mux.HandleFunc("/v1/lanes/events", s.authWrap(s.handleLaneEvents))
+	s.mux.HandleFunc("/v1/lanes/ws", s.handleLaneWS)
+	return s
+}
+
+// WithLanes attaches the lanes-protocol wiring to the server. Returns the
+// server so it composes with chained construction. Pass nil to disable.
+func (s *Server) WithLanes(l *LanesWiring) *Server {
+	s.Lanes = l
 	return s
 }
 
