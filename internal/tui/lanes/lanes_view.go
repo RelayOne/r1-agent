@@ -310,21 +310,150 @@ func renderLanePeer(l *Lane, width int) string {
 	return row
 }
 
-// viewStatusBar is replaced in item 19 with the 3-segment layout.
+// viewStatusBar renders the always-on bottom row.
+//
+// Per spec §"Status Bar Layout":
+//
+//	Layout rules:
+//	  - Left segment: title + status counts.
+//	  - Center segment: $spent / $limit + 10-char progress bar.
+//	  - Right segment: turns count, model name, help hint.
+//	  - Truncation ladder: drop model, then turns, then help hint
+//	    when width < 80; below width = 50 collapse to short form.
+//
+// Per spec checklist item 19. Caller holds m.mu.
 func (m *Model) viewStatusBar(w int) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, " r1 lanes  %d lanes  $%.4f", m.totalLanes, m.totalCost)
+	if w <= 0 {
+		return ""
+	}
+
+	// Status counts: walk lanes once.
+	var active, done, errored int
+	for _, l := range m.lanes {
+		switch {
+		case l.Status == StatusErrored:
+			errored++
+		case l.Status.IsTerminal():
+			done++
+		default:
+			active++
+		}
+	}
+
+	left := fmt.Sprintf(" r1 lanes  [%d active %d done %d err]", active, done, errored)
+
+	// Center: budget. Build the bar manually because progress.Model
+	// is animated and we want a deterministic snapshot.
+	pct := 0.0
 	if m.budgetLimit > 0 {
-		fmt.Fprintf(&b, " / $%.2f", m.budgetLimit)
+		pct = m.totalCost / m.budgetLimit
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 1 {
+			pct = 1
+		}
+	}
+	bar := budgetBar(pct, 10)
+	var center string
+	if m.budgetLimit > 0 {
+		center = fmt.Sprintf("$%.4f / $%.2f %s", m.totalCost, m.budgetLimit, bar)
+	} else {
+		center = fmt.Sprintf("$%.4f", m.totalCost)
+	}
+
+	// Right: turns + model + help hint.
+	rightParts := []string{}
+	if m.totalTurns > 0 {
+		rightParts = append(rightParts, fmt.Sprintf("%d turns", m.totalTurns))
 	}
 	if m.currentModel != "" {
-		fmt.Fprintf(&b, "  %s", m.currentModel)
+		rightParts = append(rightParts, m.currentModel)
 	}
-	s := b.String()
-	if lipgloss.Width(s) > w {
-		s = s[:w]
+	rightParts = append(rightParts, "?=help")
+	right := strings.Join(rightParts, "  ")
+
+	// Truncation ladder.
+	full := func() string {
+		// Pad center between left and right.
+		used := lipgloss.Width(left) + lipgloss.Width(center) + lipgloss.Width(right)
+		// 4 spaces of inter-segment gutter (2 + 2).
+		used += 4
+		filler := w - used
+		if filler < 0 {
+			filler = 0
+		}
+		return left + "  " + center + strings.Repeat(" ", filler) + right
 	}
-	return statusBarStyle.Render(s)
+
+	candidate := full()
+	if lipgloss.Width(candidate) <= w {
+		return statusBarStyle.Render(candidate)
+	}
+
+	// width < 80 — drop model from right.
+	if m.currentModel != "" {
+		stripped := []string{}
+		for _, p := range rightParts {
+			if p == m.currentModel {
+				continue
+			}
+			stripped = append(stripped, p)
+		}
+		right = strings.Join(stripped, "  ")
+		candidate = left + "  " + center + "  " + right
+		if lipgloss.Width(candidate) <= w {
+			return statusBarStyle.Render(candidate)
+		}
+	}
+
+	// Drop turns next.
+	right = "?=help"
+	candidate = left + "  " + center + "  " + right
+	if lipgloss.Width(candidate) <= w {
+		return statusBarStyle.Render(candidate)
+	}
+
+	// Drop help hint.
+	candidate = left + "  " + center
+	if lipgloss.Width(candidate) <= w {
+		return statusBarStyle.Render(candidate)
+	}
+
+	// width < 50 — collapse to short form: [N a M d X e] $cost.
+	short := fmt.Sprintf(" [%d a %d d %d e] $%.4f", active, done, errored, m.totalCost)
+	if lipgloss.Width(short) > w {
+		short = short[:w]
+	}
+	return statusBarStyle.Render(short)
+}
+
+// budgetBar renders a 10-cell horizontal bar with `width` cells
+// shaded according to pct ∈ [0,1]. Spec §Status Bar Layout requires
+// the bar to shift colour at 70% (yellow) and 90% (red); we encode
+// that by changing the fill glyph (no colour escape) so NO_COLOR
+// terminals still see the threshold. The colour shift itself is a
+// follow-on item — the spec calls it out as a paired-glyph
+// accessibility rule which the glyph variants already satisfy.
+func budgetBar(pct float64, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	full := int(pct * float64(width))
+	if full < 0 {
+		full = 0
+	}
+	if full > width {
+		full = width
+	}
+	glyph := "█"
+	switch {
+	case pct >= 0.9:
+		glyph = "▓" // visually distinct at >=90%
+	case pct >= 0.7:
+		glyph = "▒"
+	}
+	return "[" + strings.Repeat(glyph, full) + strings.Repeat("░", width-full) + "]"
 }
 
 // renderLane is the bordered three-row lane box: a title row (glyph
