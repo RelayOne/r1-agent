@@ -1,0 +1,19 @@
+{
+  "name": "r1-web",
+  "version": "0.0.0-web-chat-ui-1",
+  "private": true,
+  "description": "Cross-platform web UI for r1 serve (web-chat-ui spec). Cursor 3 Glass layout: session list / chat pane / lanes sidebar.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "lint": "eslint . --ext .ts,.tsx"
+  }
+}
