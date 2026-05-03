@@ -412,22 +412,31 @@ func TestCompat_LegacyClientStillWorks(t *testing.T) {
 // TestCompat_LastEventIDReplaySpansBoth verifies that a lanes-aware
 // client subscribing via the new `/v1/lanes/events` endpoint with a
 // Last-Event-ID cursor correctly replays past lane.delta events AND
-// continues to see live ones. The dual-emit does NOT inject session.delta
-// onto the lanes endpoint (it's a separate stream); but live deltas
-// pushed AFTER subscription complete fire the dual-emit so any
-// cross-attached legacy client receives both.
+// that LIVE deltas published through the SAME bus that powers the SSE
+// endpoint also fire the dual-emit so a parallel legacy client sees
+// session.delta envelopes for the same content.
+//
+// This is the integration test for the dual-emit path: it uses the
+// REAL *hub.Bus (which satisfies the LanesHub interface) instead of a
+// mock, and it asserts that both the lanes SSE stream AND the legacy
+// EventBus see live deltas with consistent payload text. Replay
+// continues to use a deterministic fakeLanesWAL because the production
+// WAL is an on-disk NDJSON file — out of scope for a unit test, but
+// the SSE handler's WAL replay codepath is the same regardless of WAL
+// implementation.
 func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 	t.Parallel()
 	eventBus := NewEventBus()
-	_, teardown := installCompatBridge(t, eventBus)
+	bus, teardown := installCompatBridge(t, eventBus)
 	defer teardown()
 
-	// The lanes SSE endpoint reads from a hub-shaped LanesHub, not the
-	// real *hub.Bus. We use the existing fakeLanesHub plus fakeLanesWAL
-	// patterns from sibling tests so we can drive replay deterministically.
-	wal := newFakeLanesWAL()
 	const sessionID = "sess_compat_replay"
 	const laneID = "lane_main_replay"
+
+	// Pre-seed the WAL with seq=1..5 so the replay window is
+	// deterministic. The WAL contents are ground-truth events the
+	// server emitted earlier — the replay codepath reads them verbatim.
+	wal := newFakeLanesWAL()
 	for i := uint64(1); i <= 5; i++ {
 		wal.Append(&hub.Event{
 			ID:        "evt-replay-" + itoa(int(i)),
@@ -447,15 +456,23 @@ func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 		})
 	}
 
-	fakeHub := newFakeLanesHub()
-	srv := New(0, "", eventBus).WithLanes(&LanesWiring{Hub: fakeHub, WAL: wal})
+	// Wire the REAL hub.Bus as both LanesHub (for the SSE handler's
+	// live subscription) AND the dual-emit subscriber's bus. This is
+	// the production wiring: production code calls
+	// New(...).WithLanes(&LanesWiring{Hub: realBus, WAL: realBus}).
+	srv := New(0, "", eventBus).WithLanes(&LanesWiring{Hub: bus, WAL: wal})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
+
+	// Attach an EventBus subscriber so we can observe the legacy
+	// session.delta envelopes the dual-emit publishes for live deltas.
+	legacyCh := eventBus.Subscribe()
+	defer eventBus.Unsubscribe(legacyCh)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Subscribe with Last-Event-ID: 2 — should replay seq=3,4,5 then go live.
+	// Subscribe via SSE with Last-Event-ID: 2 — replay seq=3,4,5 then live.
 	req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"/v1/lanes/events?session_id="+sessionID, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -481,8 +498,10 @@ func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 		t.Errorf("first event = %q, want session.bound", rec["event"])
 	}
 
-	// Then: replay events 3,4,5 in order.
+	// Then: replay events 3,4,5 in order. Each MUST carry the source
+	// content_block.text (chunk-3, chunk-4, chunk-5).
 	wantSeqs := []string{"3", "4", "5"}
+	wantTexts := []string{"chunk-3", "chunk-4", "chunk-5"}
 	for i, want := range wantSeqs {
 		rec, err := readSSERecord(br)
 		if err != nil {
@@ -498,48 +517,71 @@ func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 		if jerr := json.Unmarshal([]byte(rec["data"]), &data); jerr != nil {
 			t.Fatalf("decode replay[%d] data: %v", i, jerr)
 		}
-		// Per spec §4.3 the data payload carries content_block.text.
 		dbody, _ := data["data"].(map[string]any)
 		cb, _ := dbody["content_block"].(map[string]any)
 		if cb == nil {
 			t.Fatalf("replay[%d] missing content_block: %v", i, data)
 		}
-		if cb["text"] == nil || cb["text"] == "" {
-			t.Errorf("replay[%d] content_block.text empty: %v", i, cb)
+		if got, _ := cb["text"].(string); got != wantTexts[i] {
+			t.Errorf("replay[%d] content_block.text = %q, want %q", i, got, wantTexts[i])
 		}
 	}
 
-	// Now drive a LIVE event via the fake hub at seq=6. The lanes SSE
-	// must deliver it as `id: 6`. The dual-emit doesn't run here
-	// (fakeLanesHub bypasses the real Bus) — what matters is the
-	// replay-then-live transition is contiguous and the new client
-	// sees uninterrupted lane.delta coverage.
+	// Drive a LIVE event through the REAL bus at seq=6. The lanes SSE
+	// MUST deliver it (lane.delta), AND the dual-emit MUST publish a
+	// session.delta envelope to the legacy EventBus. Both observations
+	// are required; this is the cross-stream coherence assertion.
 	time.Sleep(30 * time.Millisecond)
-	fakeHub.Send(&hub.Event{
-		ID:        "evt-live",
-		Type:      hub.EventLaneDelta,
-		Timestamp: time.Now(),
-		Lane: &hub.LaneEvent{
-			LaneID:    laneID,
-			SessionID: sessionID,
-			Seq:       6,
-			Kind:      hub.LaneKindMain,
-			DeltaSeq:  6,
-			Block: &hub.LaneContentBlock{
-				Type: "text_delta",
-				Text: "live-chunk",
-			},
-		},
-	})
+	publishOnBus(bus, buildMainLaneDeltaEvent(sessionID, laneID, "live-chunk", 6, 6))
 
+	// Lane SSE record.
 	rec, err = readSSERecord(br)
 	if err != nil {
-		t.Fatalf("read live: %v", err)
+		t.Fatalf("read live SSE: %v", err)
 	}
 	if rec["id"] != "6" {
 		t.Errorf("live id = %q, want 6", rec["id"])
 	}
 	if rec["event"] != "lane.delta" {
 		t.Errorf("live event = %q, want lane.delta", rec["event"])
+	}
+	var ldata map[string]any
+	if jerr := json.Unmarshal([]byte(rec["data"]), &ldata); jerr != nil {
+		t.Fatalf("decode live SSE data: %v", jerr)
+	}
+	ldbody, _ := ldata["data"].(map[string]any)
+	lcb, _ := ldbody["content_block"].(map[string]any)
+	if got, _ := lcb["text"].(string); got != "live-chunk" {
+		t.Errorf("live lane.delta text = %q, want live-chunk", got)
+	}
+
+	// Legacy EventBus envelope. The dual-emit fires under ModeObserve
+	// (async fan-out) so we may need to wait briefly. We deliberately
+	// do NOT poll forever — a 1-second deadline is plenty if wiring
+	// works; missing the envelope is a real bug.
+	deadline := time.After(1 * time.Second)
+	var sawLegacy bool
+	for !sawLegacy {
+		select {
+		case msg := <-legacyCh:
+			if !strings.Contains(msg, `"session.delta"`) {
+				continue
+			}
+			var env map[string]any
+			if jerr := json.Unmarshal([]byte(msg), &env); jerr != nil {
+				t.Fatalf("decode legacy envelope %q: %v", msg, jerr)
+			}
+			pl, _ := env["payload"].(map[string]any)
+			if got, _ := pl["text"].(string); got != "live-chunk" {
+				t.Errorf("legacy session.delta text = %q, want live-chunk (must match lane.delta)", got)
+				continue
+			}
+			if env["session_id"] != sessionID {
+				t.Errorf("legacy session.delta session_id = %v, want %s", env["session_id"], sessionID)
+			}
+			sawLegacy = true
+		case <-deadline:
+			t.Fatalf("legacy EventBus did not receive session.delta within deadline (dual-emit not firing for live deltas)")
+		}
 	}
 }
