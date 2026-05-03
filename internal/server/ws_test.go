@@ -235,15 +235,13 @@ func TestLaneWSAuthSubprotocolToken(t *testing.T) {
 // JSON-RPC notifications on its own cadence and that a pong reply keeps
 // the connection alive past the idle deadline.
 //
-// The production interval is 15s. Tests can't comfortably wait for that;
-// instead we wait long enough to receive at least one $/ping (the loop
-// fires immediately after the upgrade handshake on the next tick) and
-// confirm the JSON shape.
+// The production interval is 15s. The test waits long enough to receive
+// at least one $/ping and confirms the JSON shape. The 15s wait is
+// real — `-short` does NOT bypass it because the spec contract being
+// asserted (the heartbeat exists and follows the 15s cadence) is a
+// non-negotiable wire-level invariant, not an optimisation.
 func TestLaneWSPingPongKeepsAlive(t *testing.T) {
 	t.Parallel()
-	if testing.Short() {
-		t.Skip("ping interval is 15s; skip in -short")
-	}
 
 	srv := New(0, "", NewEventBus()).WithLanes(&LanesWiring{Hub: newFakeLanesHub()})
 	ts := httptest.NewServer(srv.Handler())
@@ -291,13 +289,11 @@ func TestLaneWSPingPongKeepsAlive(t *testing.T) {
 }
 
 // TestLaneWSIdleTimeoutCloses verifies that 30s of silence closes the
-// connection with code 4408. This test is also -short-skipped because
-// of the 30s wait.
+// connection with code 4408. The 30s wait is real and -short does NOT
+// bypass it: the spec contract being asserted (idle close at exactly
+// 30s) is a wire-level invariant.
 func TestLaneWSIdleTimeoutCloses(t *testing.T) {
 	t.Parallel()
-	if testing.Short() {
-		t.Skip("idle timeout is 30s; skip in -short")
-	}
 
 	srv := New(0, "", NewEventBus()).WithLanes(&LanesWiring{Hub: newFakeLanesHub()})
 	ts := httptest.NewServer(srv.Handler())

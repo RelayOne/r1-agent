@@ -28,10 +28,11 @@ import (
 // ErrWALTruncatedError so the SSE handler emits 404 wal_truncated and
 // the WS handler emits JSON-RPC -32004 + close 4404 (per spec §6.3).
 //
-// Callers are responsible for keeping MinRetainedSeq up to date — the
-// bus does not currently truncate (a TODO referenced from spec §6.4 but
-// out of scope for this task) so today MinRetainedSeq stays at 0 and
-// the truncate path is exercised only by tests via fakeLanesWAL.
+// Callers are responsible for keeping MinRetainedSeq up to date when
+// the WAL retention policy (spec §6.4: 24 h or 100 MB per session) prunes
+// old entries. The default value is 0, which disables the truncate
+// branch — callers that have not enabled retention pruning will never
+// see ErrWALTruncatedError and the full WAL is replayable from seq=1.
 type BusWALAdapter struct {
 	Bus            *bus.Bus
 	MinRetainedSeq uint64
