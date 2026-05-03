@@ -143,6 +143,19 @@ const (
 	EventLaneKilled  EventType = "lane.killed"
 )
 
+// --- Legacy compat-window event (1 event) ---
+//
+// EventSessionDelta is the pre-lanes assistant-text delta event. Per
+// specs/lanes-protocol.md §"Out of scope" item 1 and §10.5, the main lane
+// continues to emit session.delta in parallel with lane.delta for one
+// minor release so existing desktop clients keep working without code
+// changes. Removal is a follow-up minor release; do NOT add new emitters
+// of this event — the only producer is the dual-emit bridge in
+// internal/server/lanes_compat.go.
+const (
+	EventSessionDelta EventType = "session.delta"
+)
+
 // --- Cortex (9 events) ---
 const (
 	EventCortexNotePublished           EventType = "cortex.note.published"
