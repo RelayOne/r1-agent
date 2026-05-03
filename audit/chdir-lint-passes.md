@@ -22,7 +22,12 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 
 ## Pass 2 — `worktree/`, `verify/`, `baseline/`, `gitblame/`, `git*/`
 
-(filled in when the pass-2 commit lands)
+- **Hits found:** 1
+- **Disposition:**
+  - `internal/verify/gates_yaml_test.go:252` `os.Getwd` — test helper that walks up from the test cwd to find `go.mod`. Legitimate test-only use: runs inside `go test`, never inside a session goroutine. Annotated `// LINT-ALLOW chdir-test: ...`.
+- **Refactors:** none
+- **Hits remaining:** 0
+- Note: `internal/worktree/`, `internal/baseline/`, `internal/gitblame/`, and the other `git*` packages are all clean.
 
 ## Pass 3 — `goast/`, `repomap/`, `symindex/`, `chunker/`, `tfidf/`, `vecindex/`
 
@@ -41,7 +46,7 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 | pass | hits at start | annotated | refactored | hits at end |
 | ---- | ------------- | --------- | ---------- | ----------- |
 | 1    | 0             | 0         | 0          | 0           |
-| 2    | tbd           | tbd       | tbd        | tbd         |
+| 2    | 1             | 1         | 0          | 0           |
 | 3    | tbd           | tbd       | tbd        | tbd         |
 | 4    | tbd           | tbd       | tbd        | tbd         |
 | 5    | tbd           | tbd       | tbd        | tbd         |
