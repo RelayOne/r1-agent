@@ -4,11 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/memory"
 	"github.com/RelayOne/r1/internal/wisdom"
 )
+
+// userTurn builds a single-message history slice with one user-role
+// agentloop.Message carrying text. Centralized so tests stay readable.
+func userTurn(text string) []agentloop.Message {
+	return []agentloop.Message{
+		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: text}}},
+	}
+}
 
 // fakeMemoryStore is the in-memory test double. Real *memory.Store would
 // also work but pulling in the on-disk JSON path complicates the test
@@ -23,14 +32,56 @@ func (f *fakeMemoryStore) Recall(query string, limit int) []memory.Entry {
 		return nil
 	}
 	out := make([]memory.Entry, 0, len(f.entries))
+	// Tokenize the query on whitespace; an entry matches if ANY token is
+	// present (substring) in Content or Context. This mimics the real
+	// memory.Store.Recall behaviour (token-level scoring) closely enough
+	// for unit tests without pulling in the full TF-IDF path.
 	for _, e := range f.entries {
-		// naive "any word matches" — enough for unit tests.
-		if query == "" || containsAny(e.Content, query) || containsAny(e.Context, query) {
+		if query == "" {
+			out = append(out, e)
+			if len(out) == limit {
+				break
+			}
+			continue
+		}
+		matched := false
+		for _, tok := range fields(query) {
+			if containsAny(e.Content, tok) || containsAny(e.Context, tok) {
+				matched = true
+				break
+			}
+		}
+		if matched {
 			out = append(out, e)
 			if len(out) == limit {
 				break
 			}
 		}
+	}
+	return out
+}
+
+// fields splits s on whitespace; standalone helper so the test file
+// stays free of a strings import noise. Returns at most 16 tokens.
+func fields(s string) []string {
+	out := make([]string, 0, 4)
+	cur := make([]byte, 0, 16)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || c == '\t' || c == '\n' {
+			if len(cur) > 0 {
+				out = append(out, string(cur))
+				cur = cur[:0]
+			}
+			continue
+		}
+		cur = append(cur, c)
+	}
+	if len(cur) > 0 {
+		out = append(out, string(cur))
+	}
+	if len(out) > 16 {
+		out = out[:16]
 	}
 	return out
 }
@@ -106,6 +157,126 @@ func TestMemoryRecallLobe_BuildsIndexOnStart(t *testing.T) {
 	if got := lobe.DocCount(); got != want {
 		t.Fatalf("DocCount = %d, want %d", got, want)
 	}
+}
+
+// TestMemoryRecallLobe_PublishesTopThreeNotes asserts that for a query
+// matching multiple entries, exactly 3 SevInfo Notes land in the
+// Workspace (the spec cap). Spec item 7.
+func TestMemoryRecallLobe_PublishesTopThreeNotes(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{ID: "m1", Category: memory.CatGotcha, Content: "deadlock on close goroutine"},
+			{ID: "m2", Category: memory.CatGotcha, Content: "deadlock when channel unbuffered"},
+			{ID: "m3", Category: memory.CatPattern, Content: "deadlock avoided via select default"},
+			{ID: "m4", Category: memory.CatFix, Content: "deadlock fix: drain channel before close"},
+			{ID: "m5", Category: memory.CatFact, Content: "deadlock detection requires runtime trace"},
+		},
+	}
+	wis := &fakeWisdomStore{}
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, wis, bus)
+
+	in := cortex.LobeInput{History: userTurn("how do I avoid a deadlock")}
+	if err := lobe.Run(context.Background(), in); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := ws.Snapshot()
+	// Filter out anything not from this lobe (defensive — should all be
+	// memory-recall in this test).
+	mine := make([]cortex.Note, 0, len(got))
+	for _, n := range got {
+		if n.LobeID == "memory-recall" {
+			mine = append(mine, n)
+		}
+	}
+	if len(mine) != 3 {
+		t.Fatalf("published %d Notes, want 3 (got titles: %v)", len(mine), titlesOf(mine))
+	}
+	for _, n := range mine {
+		if n.Severity != cortex.SevInfo {
+			t.Errorf("note %s: severity=%v, want SevInfo", n.ID, n.Severity)
+		}
+	}
+}
+
+// TestMemoryRecallLobe_DedupesAcrossSources asserts that when the same
+// content lands in BOTH memory and wisdom, only one Note is published.
+// Spec item 7 (dedup clause).
+func TestMemoryRecallLobe_DedupesAcrossSources(t *testing.T) {
+	shared := "always close the response body"
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{ID: "m1", Category: memory.CatGotcha, Content: shared},
+		},
+	}
+	wis := &fakeWisdomStore{
+		items: []wisdom.Learning{
+			{TaskID: "t1", Description: shared, Category: wisdom.Gotcha},
+		},
+	}
+
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, wis, bus)
+
+	in := cortex.LobeInput{History: userTurn("close the response body")}
+	if err := lobe.Run(context.Background(), in); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mine := mineNotes(ws.Snapshot())
+	if len(mine) != 1 {
+		t.Fatalf("dedup failed: published %d Notes, want 1 (titles: %v)", len(mine), titlesOf(mine))
+	}
+}
+
+// TestMemoryRecallLobe_NoOpWithoutUserMessage asserts that a Round with
+// no user-role messages publishes nothing. Defensive: the trigger must
+// never fire on assistant-only history (e.g. tool results).
+func TestMemoryRecallLobe_NoOpWithoutUserMessage(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{ID: "m1", Category: memory.CatGotcha, Content: "x"},
+		},
+	}
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, &fakeWisdomStore{}, bus)
+
+	in := cortex.LobeInput{
+		History: []agentloop.Message{
+			{Role: "assistant", Content: []agentloop.ContentBlock{{Type: "text", Text: "x"}}},
+		},
+	}
+	if err := lobe.Run(context.Background(), in); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := len(mineNotes(ws.Snapshot())); got != 0 {
+		t.Fatalf("expected 0 Notes, got %d", got)
+	}
+}
+
+// titlesOf is a tiny diagnostic helper for assertion failures.
+func titlesOf(ns []cortex.Note) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
+		out[i] = n.Title
+	}
+	return out
+}
+
+// mineNotes filters a Workspace.Snapshot to only Notes from this lobe.
+func mineNotes(all []cortex.Note) []cortex.Note {
+	out := make([]cortex.Note, 0, len(all))
+	for _, n := range all {
+		if n.LobeID == "memory-recall" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // TestMemoryRecallLobe_LobeInterfaceShape pins the cortex.Lobe contract

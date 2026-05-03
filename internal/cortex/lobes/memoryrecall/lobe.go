@@ -36,8 +36,10 @@ package memoryrecall
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/memory"
@@ -139,10 +141,16 @@ func (l *MemoryRecallLobe) Description() string {
 // Kind satisfies cortex.Lobe. Deterministic — no LLM calls, no semaphore.
 func (l *MemoryRecallLobe) Kind() cortex.LobeKind { return cortex.KindDeterministic }
 
-// Run is the per-Round entry point. Spec items 6–7: build the index on
-// first call (lazy), then publish the top-3 Notes for the latest user
-// message. TASK-7 (publish + dedup) and TASK-9 (privacy redaction) layer
-// on top of this scaffold and are added in subsequent commits.
+// Run is the per-Round entry point. Spec items 6–7:
+//
+//  1. Lazily build the tfidf index on first call.
+//  2. Extract the last user message from in.History (last 1000 chars).
+//  3. Query both mem.Recall(query, 5) AND idx.Search(query, 5).
+//  4. Dedup hits across the two sources by Body text.
+//  5. Publish the top-3 deduped hits as SevInfo Notes.
+//
+// A nil Workspace is treated as a no-op publish target (test harnesses
+// that exercise indexing without Publish use this path).
 func (l *MemoryRecallLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	if err := ctx.Err(); err != nil {
 		return nil
@@ -154,9 +162,25 @@ func (l *MemoryRecallLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	}
 	l.mu.Unlock()
 
-	// Publish logic lands in TASK-7. Scaffold returns nil so the runner
-	// observes a clean Run.
-	_ = in
+	query := lastUserMessage(in.History)
+	if query == "" {
+		return nil
+	}
+
+	hits := l.searchAndDedup(query, 3)
+	if l.ws == nil {
+		return nil
+	}
+	for _, doc := range hits {
+		note := l.docToNote(doc)
+		if err := l.ws.Publish(note); err != nil {
+			// Publish errors here are not fatal — spec contract only
+			// requires "Lobe MUST observe ctx.Done() and return nil".
+			// A failed Publish (validation or persistence) should not
+			// crash the runner; log via the bus and continue.
+			continue
+		}
+	}
 	return nil
 }
 
@@ -247,6 +271,161 @@ func learningToDoc(i int, lr wisdom.Learning) indexedDoc {
 		file:   lr.File,
 		source: "wisdom",
 	}
+}
+
+// searchAndDedup queries both data sources (memory.Recall + tfidf.Search)
+// for query, dedups results across the two sources by Body text, and
+// returns up to limit indexedDoc records ranked memory-first then by
+// tfidf score. Acquires l.mu in read shape to read the index/docs slice
+// (the underlying tfidf.Index is read-only after Finalize, so a single
+// lock acquisition for the whole search is sufficient).
+func (l *MemoryRecallLobe) searchAndDedup(query string, limit int) []indexedDoc {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.idx == nil {
+		return nil
+	}
+
+	out := make([]indexedDoc, 0, limit)
+	seenBody := make(map[string]bool)
+
+	// Memory.Recall first — its scoring is content-aware (UseCount,
+	// Confidence) so it tends to surface authoritative entries before
+	// the unweighted tfidf signal does.
+	if l.mem != nil {
+		for _, e := range l.mem.Recall(query, 5) {
+			doc := entryToDoc(e)
+			if seenBody[doc.body] {
+				continue
+			}
+			seenBody[doc.body] = true
+			out = append(out, doc)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+
+	// tfidf fills any remaining slots. Result.Path is the synthetic id
+	// we stamped during AddDocument; map back through l.docs.
+	idByDoc := make(map[string]int, len(l.docs))
+	for i, d := range l.docs {
+		idByDoc[d.id] = i
+	}
+	for _, r := range l.idx.Search(query, 5) {
+		idx, ok := idByDoc[r.Path]
+		if !ok {
+			continue
+		}
+		doc := l.docs[idx]
+		if seenBody[doc.body] {
+			continue
+		}
+		seenBody[doc.body] = true
+		out = append(out, doc)
+		if len(out) >= limit {
+			return out
+		}
+	}
+	return out
+}
+
+// docToNote renders an indexedDoc into a cortex.Note ready for Publish.
+// Title is a short summary derived from Body (first 80 runes capped per
+// Note.Validate). Body is the full doc body; tags carry the source plus
+// the original entry tags so dashboards can filter ("source:memory" /
+// "source:wisdom"). The privacy redaction (TASK-9) layers on top of
+// this in a later commit.
+func (l *MemoryRecallLobe) docToNote(d indexedDoc) cortex.Note {
+	title := truncateRunes(firstLine(d.body), 80)
+	if title == "" {
+		title = "memory-recall hit"
+	}
+	tags := make([]string, 0, len(d.tags)+1)
+	if d.source != "" {
+		tags = append(tags, "source:"+d.source)
+	}
+	tags = append(tags, d.tags...)
+	return cortex.Note{
+		LobeID:   l.ID(),
+		Severity: cortex.SevInfo,
+		Title:    title,
+		Body:     d.body,
+		Tags:     tags,
+	}
+}
+
+// lastUserMessage extracts the most recent user-role message text from
+// the LobeInput.History slice and clips it to the last 1000 chars. If no
+// user message is present, returns "" — the caller treats that as a
+// no-op Round.
+func lastUserMessage(history []agentloop.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		if m.Role != "user" {
+			continue
+		}
+		text := extractText(m.Content)
+		if text == "" {
+			continue
+		}
+		if len(text) > 1000 {
+			text = text[len(text)-1000:]
+		}
+		return text
+	}
+	return ""
+}
+
+// extractText collapses a slice of agentloop.ContentBlock into a single
+// concatenated string of every "text"-typed block. Tool-result and
+// tool-use blocks are skipped — they never carry a user-typed message
+// in the cortex pipeline.
+func extractText(blocks []agentloop.ContentBlock) string {
+	var b strings.Builder
+	for _, blk := range blocks {
+		if blk.Type != "" && blk.Type != "text" {
+			continue
+		}
+		if blk.Text == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(blk.Text)
+	}
+	return b.String()
+}
+
+// firstLine returns the substring up to the first newline, with leading
+// and trailing whitespace trimmed. Empty input returns "".
+func firstLine(s string) string {
+	if s == "" {
+		return ""
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
+
+// truncateRunes returns at most n runes from s. The Note.Validate
+// invariant is that Title <= 80 runes, so this is the canonical cap
+// used at the publish boundary.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }
 
 // registerReindexSubscriber wires the hub.Subscriber that triggers a
