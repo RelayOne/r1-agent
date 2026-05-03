@@ -17,9 +17,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/cortex/lobes/llm"
@@ -139,16 +139,23 @@ func (l *ClarifyingQLobe) haikuOnce(ctx context.Context, userMsg string, history
 // publishQuestionFromToolUse extracts the question text and metadata
 // from a single tool_use ResponseContent block, generates a question_id,
 // and Publishes a clarifying-question Note. The mapping
-// question_id -> note_id is recorded in l.outstanding so TASK-25 can
-// resolve the Note when the user answers.
+// question_id -> note_id is recorded in l.outstanding so the resolve
+// path can match the Note when the user answers.
 //
 // Workspace.Publish does not return the assigned Note ID. To recover it
 // for the outstanding map, we use a one-shot Subscribe registered just
 // before Publish: the subscriber fires synchronously with the Note that
 // carries our question_id in Meta, captures the assigned ID, and
 // unregisters itself.
+//
+// ctx is honored at entry: a cancelled context drops the publication
+// without partial state mutation (no Subscribe, no Publish, no
+// outstanding-map entry).
 func (l *ClarifyingQLobe) publishQuestionFromToolUse(ctx context.Context, blk provider.ResponseContent) {
 	if l.ws == nil {
+		return
+	}
+	if err := ctx.Err(); err != nil {
 		return
 	}
 	question, _ := blk.Input["question"].(string)
@@ -213,23 +220,22 @@ func (l *ClarifyingQLobe) publishQuestionFromToolUse(ctx context.Context, blk pr
 	l.mu.Lock()
 	l.outstanding[questionID] = captured
 	l.mu.Unlock()
-
-	_ = ctx
 }
 
-// truncateTitle clips s to a maximum of n bytes (not runes; the
-// cortex.Note Title cap is 80 runes but we use a byte-conservative
-// cap so a multi-byte rune at the boundary cannot bust the
-// Validate() rune-count check). Adds an ellipsis only when truncation
-// happens.
+// truncateTitle clips s so its rune count does not exceed n. cortex.Note
+// Validate enforces a Title cap of 80 runes (not bytes); this helper
+// counts runes and slices on rune boundaries so a multi-byte glyph at
+// the boundary does not produce an invalid Title or trip Validate.
+// Adds an ellipsis only when truncation happens.
 func truncateTitle(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
 	if n <= 3 {
-		return s[:n]
+		return string(runes[:n])
 	}
-	return s[:n-3] + "..."
+	return string(runes[:n-3]) + "..."
 }
 
 // newQuestionID is the question identifier factory. Production uses a
@@ -247,31 +253,21 @@ var newQuestionID = func() string {
 }
 
 // fallbackQuestionCounter is a process-local monotonic source used only
-// when crypto/rand fails. Implemented as a closure over a package-level
-// counter so the function can be referenced from newQuestionID without
-// holding a mutex (atomic int64 inside a closure).
+// when crypto/rand fails. Backed by sync/atomic so concurrent triggers
+// (multiple haikuOnce calls overlapping a transient rand.Read failure)
+// cannot collide on the same fallback ID.
 var fallbackQuestionCounter = func() func() uint64 {
-	var n uint64
+	var n atomic.Uint64
 	return func() uint64 {
-		n++
-		return n
+		return n.Add(1)
 	}
 }()
 
 // handleAnsweredQuestion is the cortex.user.answered_question subscriber
-// body. TASK-25 implements it as a Note resolver; TASK-24 leaves it as
-// a no-op stub so subscribe() can register both handlers atomically.
-// Concrete implementation lands in resolve.go.
-//
-// Defined here (rather than as an unimplemented method) so the cap test
-// in TASK-24 can register the subscriber without TASK-25's resolve.go
-// needing to exist yet — the per-task commit ordering keeps each
-// commit independently buildable + testable.
+// body. The concrete resolution logic lives in resolve.go
+// (resolveAnsweredQuestion); this thin wrapper keeps the subscriber
+// registration site (subscribeImpl) independent from the resolution
+// implementation, so changes to one do not perturb the other.
 func (l *ClarifyingQLobe) handleAnsweredQuestion(ev *hub.Event) {
 	l.resolveAnsweredQuestion(ev)
 }
-
-// _ = json.Marshal compile-time usage to keep encoding/json in the
-// import set even when haikuOnce never marshals (json is reserved for
-// future tool_use input parsing fallbacks). Build tag-friendly.
-var _ = json.Marshal

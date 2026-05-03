@@ -66,10 +66,10 @@ type ClarifyingQLobe struct {
 	mu          sync.Mutex
 	outstanding map[string]string
 
-	// subscribed guards subscribe(): tests may invoke Run multiple times
-	// across the same Lobe, but registering twice on the bus would
-	// produce duplicate handlers (hub.Bus dedups by ID, but we still
-	// guard the call site for clarity).
+	// subscribed guards subscribeImpl: tests may invoke Run multiple
+	// times across the same Lobe, but registering twice on the bus
+	// would produce duplicate handlers (hub.Bus dedups by ID, but we
+	// still guard the call site for clarity).
 	subscribed bool
 }
 
@@ -139,6 +139,11 @@ func (l *ClarifyingQLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 // production path calls this from Run; the constructor leaves
 // subscription registration deferred so tests that never call Run can
 // inspect the Lobe without bus side effects.
+//
+// The actual subscriber registration (cap-at-3 trigger and
+// resolve-on-answer handler) lives in trigger.go's subscribeImpl —
+// keeping the side-effect logic in its own file lets the Lobe
+// scaffold stay small and unit-testable in isolation.
 func (l *ClarifyingQLobe) ensureSubscribed() {
 	l.mu.Lock()
 	if l.subscribed || l.hubBus == nil {
@@ -147,13 +152,6 @@ func (l *ClarifyingQLobe) ensureSubscribed() {
 	}
 	l.subscribed = true
 	l.mu.Unlock()
-	l.subscribe()
-}
-
-// subscribe wires the hub subscribers required by TASK-24 + TASK-25.
-// Implemented in trigger.go via subscribeImpl so the cap-at-3 + resolve
-// logic stays in its own file.
-func (l *ClarifyingQLobe) subscribe() {
 	l.subscribeImpl()
 }
 
