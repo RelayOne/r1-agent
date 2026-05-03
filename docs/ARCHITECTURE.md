@@ -332,6 +332,71 @@ before multi-session is enabled. A per-session sentinel checks
 `os.Getwd() == SessionRoot` before each tool dispatch and panics on
 mismatch.
 
+### `r1 serve` topology (TASK-54)
+
+This is the unified subcommand that replaces `r1 daemon` + `r1
+agent-serve`. The legacy commands print a one-line deprecation hint
+to stderr and forward to `serve` with the appropriate flag prefix.
+Detailed ASCII topology lives in `specs/r1d-server.md` §4 — the
+condensed shape is:
+
+```
++-------------+         +-------------+         +-------------+
+| Browser/Tau |         |  CLI/r1 ctl |         |  TUI lanes  |
++------+------+         +------+------+         +------+------+
+       | ws://127.0.0.1:p     | unix sock /            | unix sock
+       | + Bearer + Origin    | npipe + peer-cred      | + peer-cred
+       v                      v                        v
++----------------------------------------------------------+
+|             r1 serve  (one process per user)             |
+|                                                          |
+|  +---------+   +-------+      +---------------------+   |
+|  | IPC mux |   | HTTP+WS|     |   SessionHub        |   |
+|  | unix    |   | random |     |  sync.Map<id,*Sess> |   |
+|  | npipe   |   | ephem  |     |  + workdir validate |   |
+|  +----+----+   +---+----+     +----------+----------+   |
+|       |            |                     |              |
+|       +-----+------+--------+------------+              |
+|             v               v            v              |
+|        +---------+    +---------+   +---------+         |
+|        |Session A|    |Session B|   |Session C|         |
+|        |goroutine|    |goroutine|   |goroutine|         |
+|        |SessionR |    |SessionR |   |SessionR |         |
+|        |=/path/A |    |=/path/B |   |=/path/C |         |
+|        |journal  |    |journal  |   |journal  |         |
+|        | .ndjson |    | .ndjson |   | .ndjson |         |
+|        +---------+    +---------+   +---------+         |
+|                                                          |
+|  ~/.r1/daemon.lock (gofrs/flock)                         |
+|  ~/.r1/daemon.json (port + 256-bit token, mode 0600)     |
+|  ~/.r1/sessions-index.json (replay manifest)             |
++----------------------------------------------------------+
+                          |
+                          v
+                +----------------------+
+                | os/exec.Cmd          |
+                | cmd.Dir = SessionRoot|
+                +----------------------+
+```
+
+Key rules embedded in the topology (cross-linked to spec sections):
+
+- **Single-instance**: `~/.r1/daemon.lock` flock acquired before any
+  listener binds; second `r1 serve` exits 1 with `daemon already
+  running, pid=<N>, sock=<path>` (TASK-50, daemonlock package).
+- **Authentication split**: peer-cred on the unix socket / named
+  pipe (no token); 256-bit Bearer on the loopback HTTP/WS surface
+  (Origin + Host pinned to loopback).
+- **Per-session journal**: append-only ndjson at
+  `~/.r1/sessions/<id>/journal.ndjson`; terminal kinds fsync, others
+  flush. Replay reconstructs sessions on daemon restart and fans
+  `daemon.reloaded` to reconnecting clients before any live delta.
+- **`cmd.Dir = SessionRoot`** is the load-bearing isolation
+  primitive. The `chdir-lint` AST-based scanner at
+  `tools/cmd/chdir-lint/` blocks every unannotated `os.Chdir /
+  os.Getwd / filepath.Abs("") / os.Open("./...")` call site; the
+  per-session sentinel panics on `os.Getwd() != SessionRoot`.
+
 ### Listeners
 
 | Surface | Endpoint | Auth |
