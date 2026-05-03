@@ -296,9 +296,126 @@ func sortLanesByStartedAt(lanes []map[string]any) {
 	}
 }
 
-// handleGet is implemented in TASK-21.
-func (s *LanesServer) handleGet(_ context.Context, _ map[string]interface{}) (string, error) {
-	return s.envelopeError("not_implemented", "r1.lanes.get scaffold; implementation in TASK-21"), nil
+// handleGet implements r1.lanes.get per spec §7.3 (TASK-21). Returns
+// the current snapshot of one lane plus an optional bounded tail of
+// recent events read from the WAL.
+//
+// tail=0 (or no WAL configured) returns the snapshot only. tail>0 with
+// a configured WAL replays the lane's events backwards from now and
+// returns the most recent N. Events are returned in chronological
+// (oldest-first) order so consumers can render them as a transcript
+// without reversing.
+func (s *LanesServer) handleGet(ctx context.Context, args map[string]interface{}) (string, error) {
+	if s.backend == nil {
+		return s.envelopeError("internal", "lanes backend not configured"), nil
+	}
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return s.envelopeError("invalid_request", "session_id is required"), nil
+	}
+	laneID, _ := args["lane_id"].(string)
+	if laneID == "" {
+		return s.envelopeError("invalid_request", "lane_id is required"), nil
+	}
+	tail := 0
+	if v, ok := args["tail"].(float64); ok {
+		tail = int(v)
+	}
+	if tail < 0 {
+		tail = 0
+	}
+	if tail > 500 {
+		tail = 500
+	}
+
+	// Session-id mismatch returns not_found rather than empty so the
+	// caller distinguishes "you asked the wrong server" from "lane
+	// genuinely doesn't exist". Spec §7.3 lists no enum constraint on
+	// error_code for this tool, so the bare not_found is fine.
+	if backendSession := s.backend.SessionID(); backendSession != "" && backendSession != sessionID {
+		return s.envelopeError("not_found", fmt.Sprintf("session %q not bound to this lanes server", sessionID)), nil
+	}
+
+	l, ok := s.backend.GetLane(laneID)
+	if !ok || l == nil {
+		return s.envelopeError("not_found", fmt.Sprintf("lane %q not found", laneID)), nil
+	}
+
+	laneSnapshot := map[string]any{
+		"lane_id":    l.ID,
+		"kind":       string(l.Kind),
+		"status":     string(l.Status),
+		"started_at": l.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
+		"pinned":     l.Pinned,
+		"last_seq":   l.LastSeq,
+	}
+	if l.Label != "" {
+		laneSnapshot["label"] = l.Label
+	}
+	if l.Kind == hub.LaneKindLobe && l.Label != "" {
+		laneSnapshot["lobe_name"] = l.Label
+	}
+	if l.ParentID != "" {
+		laneSnapshot["parent_lane_id"] = l.ParentID
+	}
+	if !l.EndedAt.IsZero() {
+		laneSnapshot["ended_at"] = l.EndedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+	}
+
+	data := map[string]any{"lane": laneSnapshot}
+
+	if tail > 0 && s.wal != nil {
+		tailEvents, err := s.fetchTail(ctx, sessionID, laneID, tail)
+		if err != nil {
+			return s.envelopeError("internal", "tail fetch failed: "+err.Error()), nil
+		}
+		data["tail"] = tailEvents
+	} else {
+		data["tail"] = []map[string]any{}
+	}
+
+	return s.envelopeOK(data), nil
+}
+
+// fetchTail walks the WAL for the given lane in seq order, keeping the
+// most recent `limit` matching events, then returns them in oldest-
+// first order. Implements spec §7.3 "optional bounded tail of its
+// recent events".
+//
+// We replay from seq=1 (the floor immediately after the synthetic
+// session.bound). For lanes with very long histories this could be
+// expensive; production callers should keep `tail` <= 500 (enforced
+// by the spec). A future optimisation could index the WAL by lane_id;
+// not in scope for TASK-21.
+func (s *LanesServer) fetchTail(ctx context.Context, sessionID, laneID string, limit int) ([]map[string]any, error) {
+	// Ring buffer to retain only the most-recent `limit` matches.
+	ring := make([]map[string]any, 0, limit)
+	err := s.wal.ReplayLane(ctx, sessionID, 1, func(ev *hub.Event) error {
+		if ev == nil || ev.Lane == nil || ev.Lane.LaneID != laneID {
+			return nil
+		}
+		entry := map[string]any{
+			"event":      string(ev.Type),
+			"event_id":   ev.ID,
+			"session_id": ev.Lane.SessionID,
+			"lane_id":    ev.Lane.LaneID,
+			"seq":        ev.Lane.Seq,
+			"at":         laneEventAt(ev),
+			"data":       buildLaneEventData(ev),
+		}
+		if len(ring) < limit {
+			ring = append(ring, entry)
+		} else {
+			// Slide the window: drop the oldest, append the newest.
+			copy(ring, ring[1:])
+			ring[len(ring)-1] = entry
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ring, nil
 }
 
 // handleKill is implemented in TASK-22.
