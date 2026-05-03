@@ -71,7 +71,6 @@ import (
 	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
 	"github.com/RelayOne/r1/internal/selftune"
-	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/session"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/smoketest"
@@ -7108,67 +7107,9 @@ QUICKSTART:
 `, version)
 }
 
-// serveCmd starts the R1 HTTP API server with optional mission orchestration.
-func serveCmd(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	port := fs.Int("port", 8420, "HTTP server port")
-	token := fs.String("token", r1env.Get("R1_API_TOKEN", "STOKE_API_TOKEN"), "Bearer token for auth (or R1_API_TOKEN / legacy STOKE_API_TOKEN through 2026-07-23)")
-	repo := fs.String("repo", ".", "Repository root")
-	dataDir := fs.String("data-dir", ".stoke", "Data directory for mission/research stores")
-	fs.Parse(args)
-
-	absRepo, err := filepath.Abs(*repo)
-	if err != nil {
-		fatal("resolve repo: %v", err)
-	}
-
-	bus := server.NewEventBus()
-	srv := server.New(*port, *token, bus)
-
-	// Dashboard state: created early so both orchestrator and API can use it.
-	dashState := server.NewDashboardState()
-
-	// Try to create orchestrator for mission API
-	orch, orchErr := createOrchestrator(absRepo, *dataDir)
-	if orchErr != nil {
-		fmt.Fprintf(os.Stderr, "warn: mission API disabled: %v\n", orchErr)
-	} else {
-		server.RegisterMissionAPI(srv, orch)
-		defer orch.Close()
-		fmt.Fprintf(os.Stderr, "mission API enabled\n")
-
-		// Bridge hub events to the server's EventBus for SSE/WebSocket clients
-		// and to the dashboard state for REST API queries.
-		if orch.EventBus() != nil {
-			server.BridgeHubToEventBus(orch.EventBus(), bus)
-			server.BridgeHubToDashboard(orch.EventBus(), dashState)
-		}
-	}
-
-	// Register dashboard API (works even without orchestrator).
-	server.RegisterDashboardAPI(srv, nil, nil, dashState)
-	server.RegisterRulesAPI(srv, absRepo)
-	server.RegisterDashboardUI(srv)
-
-	fmt.Fprintf(os.Stderr, "r1 serve listening on :%d\n", *port)
-	fmt.Fprintf(os.Stderr, "dashboard: http://localhost:%d/\n", *port)
-
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-
-	// Run server in goroutine, shut down on signal
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-
-	select {
-	case <-sigCtx.Done():
-		fmt.Fprintf(os.Stderr, "r1 serve: shutting down\n")
-	case err := <-errCh:
-		if err != nil {
-			fatal("serve: %v", err)
-		}
-	}
-}
+// serveCmd is implemented in serve_cmd.go (TASK-40). Kept as a one-line
+// reference here so a future grep for "serveCmd" lands on the canonical
+// location.
 
 // provisionEnv creates and provisions an execution environment from BuildConfig.
 func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.Environment, *env.Handle, error) {
