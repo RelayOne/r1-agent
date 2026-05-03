@@ -186,17 +186,127 @@ func (m *Model) placeOverlay(base, overlay string, w, h int) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, overlay)
 }
 
-// viewFocus, viewStatusBar, renderLane, renderHelpOverlay, and
-// renderKillConfirm are minimal stand-ins here; the per-item commits
-// (16, 17, 19, 24, 25) replace each one with its full layout. The
-// stand-ins type-check end-to-end after item 14+15 and produce a
-// readable view, so View() always returns something valid even before
-// the later commits land.
+// viewStatusBar, renderLane, renderHelpOverlay, and renderKillConfirm
+// are minimal stand-ins; the per-item commits (17, 19, 24, 25) replace
+// each one with its full layout. The stand-ins type-check end-to-end
+// and produce a readable view, so View() always returns something
+// valid even before the later commits land.
 
-// viewFocus is the 65/35 split renderer. Replaced in item 16 with
-// the spec's hand-rolled JoinHorizontal layout.
+// viewFocus is the hand-rolled 65/35 horizontal split renderer.
+//
+// Per spec §"Layout algorithm" final paragraph and §"Implementation
+// Checklist" item 16:
+//
+//	modeFocus does NOT use bubblelayout; it's a hand-rolled
+//	lipgloss.JoinHorizontal(Top, focusedBox, peerStack) because
+//	the 65/35 split is fixed and changes only on resize.
+//
+// Layout: focused lane on the left at 65% width, peers stacked on
+// the right at 35% width using renderLanePeer for the one-liner
+// summary rows. The focused lane uses renderLane with focused=true
+// so the spec's heavier border weight surfaces.
 func (m *Model) viewFocus(w, h int) string {
-	return m.viewOverview(w, h)
+	lanes := m.sortedLanesLocked()
+	if len(lanes) == 0 {
+		return m.viewEmpty(w, h)
+	}
+
+	// Locate the focused lane. Fall back to cursor if the focusID
+	// reference disappeared (lane completed and was reaped between
+	// the user pressing 'enter' and View running).
+	focusedIdx := -1
+	for i, l := range lanes {
+		if l.ID == m.focusID {
+			focusedIdx = i
+			break
+		}
+	}
+	if focusedIdx < 0 {
+		if m.cursor >= 0 && m.cursor < len(lanes) {
+			focusedIdx = m.cursor
+		} else {
+			focusedIdx = 0
+		}
+	}
+
+	// 65/35 split with one column gap. The gap is implicit in the
+	// rounding (mainW + peerW + 1 == w) so adjacent borders don't
+	// touch.
+	mainW := (w * 65) / 100
+	if mainW < LANE_MIN_WIDTH {
+		mainW = LANE_MIN_WIDTH
+	}
+	peerW := w - mainW - 1
+	if peerW < 8 {
+		// Terminal too narrow for a useful peer column; collapse
+		// back to overview-style single-column rendering.
+		return m.viewOverview(w, h)
+	}
+
+	main := m.renderLaneCachedLocked(lanes[focusedIdx], mainW, true)
+
+	peerLines := make([]string, 0, len(lanes)-1)
+	for i, l := range lanes {
+		if i == focusedIdx {
+			continue
+		}
+		peerLines = append(peerLines, renderLanePeer(l, peerW))
+	}
+	peerStack := strings.Join(peerLines, "\n")
+
+	// Pad peerStack to the same height as main if needed so the
+	// horizontal join doesn't tear when one column is taller. We
+	// don't pad main because the focused box already encodes a
+	// fixed border + body height.
+	mainH := lipgloss.Height(main)
+	peerH := lipgloss.Height(peerStack)
+	if peerH < mainH && peerH > 0 {
+		peerStack += strings.Repeat("\n", mainH-peerH)
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, main, " ", peerStack)
+}
+
+// renderLanePeer is the 1-line, no-border peer row used in focus mode.
+//
+// Per spec §"Implementation Checklist" item 18:
+//
+//	1-line row, no border, used in focus mode peer column.
+//
+// Layout: glyph, name, ellipsised activity, cost — all on one line,
+// truncated to fit width.
+func renderLanePeer(l *Lane, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	// Reserve room for glyph (1) + spacing (1) + cost suffix (~10).
+	costStr := fmt.Sprintf("$%6.4f", l.CostUSD)
+	costW := lipgloss.Width(costStr)
+	// 4 = glyph + space + space + space-before-cost.
+	bodyW := width - costW - 4
+	if bodyW < 4 {
+		bodyW = 4
+	}
+	body := l.Title
+	if l.Activity != "" {
+		body = l.Title + " · " + l.Activity
+	}
+	body = truncate(body, bodyW)
+	// Pad body to fixed width so cost right-aligns.
+	pad := bodyW - lipgloss.Width(body)
+	if pad < 0 {
+		pad = 0
+	}
+	row := fmt.Sprintf("%s %s%s  %s",
+		l.Status.Glyph(),
+		body,
+		strings.Repeat(" ", pad),
+		costStr,
+	)
+	if lipgloss.Width(row) > width {
+		row = row[:width]
+	}
+	return row
 }
 
 // viewStatusBar is replaced in item 19 with the 3-segment layout.
