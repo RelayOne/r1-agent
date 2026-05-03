@@ -502,6 +502,103 @@ func TestAllLobes_RespectCostBudget(t *testing.T) {
 	}
 }
 
+// TestAllLobes_SurviveDaemonRestart covers TASK-35 (D-C3
+// write-through). Populate a Workspace with several unresolved Notes,
+// stop the cortex, build a fresh Workspace pointing at the same
+// durable bus directory, call Replay, and assert all Notes restored.
+//
+// The test is structured around the durable-bus dir handoff: stage 1
+// publishes Notes through a Workspace + Lobes wired to a bus.Bus
+// rooted at dir; stage 2 closes that bus, opens a fresh bus.Bus at the
+// same dir, builds a new Workspace against it, and asserts every Note
+// from stage 1 is restored.
+//
+// We use the existing Workspace.Replay path (cortex/persist.go); the
+// integration is a smoke test of the full write-through chain.
+func TestAllLobes_SurviveDaemonRestart(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	// --- Stage 1: populate the workspace + WAL.
+	durable1, err := bus.New(dir)
+	if err != nil {
+		t.Fatalf("bus.New stage1: %v", err)
+	}
+
+	hubBus1 := hub.New()
+	ws1 := cortex.NewWorkspace(hubBus1, durable1)
+
+	// Publish three distinct Notes spanning multiple severities. None
+	// resolves another, so all three count as "unresolved" by the
+	// PreEndTurnGate criterion.
+	stage1Notes := []cortex.Note{
+		{LobeID: "rule-check", Severity: cortex.SevCritical, Title: "trust violation A"},
+		{LobeID: "plan-update", Severity: cortex.SevAdvice, Title: "plan delta B"},
+		{LobeID: "memory-curator", Severity: cortex.SevInfo, Title: "fact C"},
+	}
+	for _, n := range stage1Notes {
+		if err := ws1.Publish(n); err != nil {
+			t.Fatalf("Publish stage1: %v", err)
+		}
+	}
+
+	// Sanity check on stage 1: 3 Notes recorded.
+	if got := len(ws1.Snapshot()); got != len(stage1Notes) {
+		t.Fatalf("stage1 ws Snapshot len = %d, want %d", got, len(stage1Notes))
+	}
+
+	// Close the durable bus to flush + release the WAL files.
+	if err := durable1.Close(); err != nil {
+		t.Fatalf("durable1.Close: %v", err)
+	}
+
+	// --- Stage 2: re-open the bus and rebuild the workspace.
+	durable2, err := bus.New(dir)
+	if err != nil {
+		t.Fatalf("bus.New stage2: %v", err)
+	}
+	t.Cleanup(func() { _ = durable2.Close() })
+
+	ws2 := cortex.NewWorkspace(hub.New(), durable2)
+
+	// Replay must be fast (spec: "WHEN the cortex restarts THE SYSTEM
+	// SHALL replay all unresolved Notes from the WAL within 500 ms").
+	t0 := time.Now()
+	if err := ws2.Replay(); err != nil {
+		t.Fatalf("ws2.Replay: %v", err)
+	}
+	elapsed := time.Since(t0)
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Replay took %v, want <500ms (spec acceptance criterion)", elapsed)
+	}
+
+	restored := ws2.Snapshot()
+	if got := len(restored); got != len(stage1Notes) {
+		t.Errorf("stage2 Snapshot len = %d, want %d (restored notes mismatch)",
+			got, len(stage1Notes))
+	}
+
+	// Cross-check: every stage1 Title appears in the restored set.
+	titleSet := make(map[string]bool, len(restored))
+	for _, n := range restored {
+		titleSet[n.Title] = true
+	}
+	for _, n := range stage1Notes {
+		if !titleSet[n.Title] {
+			t.Errorf("missing restored Note: title=%q", n.Title)
+		}
+	}
+
+	// Cross-check: the critical Note still surfaces in
+	// UnresolvedCritical so PreEndTurnGate would still block end_turn
+	// after a daemon restart.
+	uc := ws2.UnresolvedCritical()
+	if len(uc) != 1 {
+		t.Errorf("UnresolvedCritical len = %d, want 1", len(uc))
+	}
+}
+
 // TestAllLobes_HonorEnableFlags covers TASK-34. For each Lobe ID,
 // disable that single Lobe via the fixture's EnableFlags map and
 // assert the resulting Cortex never invokes the disabled Lobe's Run
