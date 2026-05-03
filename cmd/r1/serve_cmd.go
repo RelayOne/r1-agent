@@ -28,6 +28,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/agentserve"
 	"github.com/RelayOne/r1/internal/daemon"
+	"github.com/RelayOne/r1/internal/daemonlock"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/server"
 )
@@ -142,6 +144,30 @@ func serveCmd(args []string) {
 // so it's separately testable (parseServeFlags + the install path can
 // be exercised without ever calling Listen).
 func runServeLoop(opts serveOptions) {
+	// Phase 0: single-instance enforcement (TASK-50). Acquire the
+	// per-user `~/.r1/daemon.lock` BEFORE binding any listener so a
+	// second `r1 serve` exits non-zero with a discoverable
+	// "already running" message and does NOT race the first instance
+	// to bind a port. The lock auto-releases on process exit; we keep
+	// a reference in dlock so deferred Release fires on graceful
+	// shutdown.
+	dlock, lockErr := daemonlock.Acquire()
+	if lockErr != nil {
+		// On contention, daemonlock returns ErrAlreadyRunning wrapping
+		// a multi-line message ("daemon already running, pid=N,
+		// sock=...\nuse 'r1 ctl' to talk to it."). Print the message
+		// and exit 1 — non-zero per spec item 50.
+		if errors.Is(lockErr, daemonlock.ErrAlreadyRunning) {
+			fmt.Fprintln(os.Stderr, lockErr.Error())
+			os.Exit(1)
+		}
+		// Other errors (mkdir failure, flock IO error) are also
+		// fatal; print and exit 1 with the wrapped message.
+		fmt.Fprintf(os.Stderr, "serve: %v\n", lockErr)
+		os.Exit(1)
+	}
+	defer func() { _ = dlock.Release() }()
+
 	// Default --addr to a stable port if neither --addr nor --port was
 	// supplied. The legacy serveCmd defaulted to 8420; we preserve that
 	// behavior so existing scripts keep working. The new
