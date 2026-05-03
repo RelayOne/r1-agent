@@ -38,7 +38,15 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 
 ## Pass 4 — `memory/`, `wisdom/`, `research/`, `replay/`, `lsp/`, `mcp/`
 
-(filled in when the pass-4 commit lands)
+- **Hits found:** 3
+- **Disposition:**
+  - `internal/lsp/lsp.go:87` `os.Getwd` — **refactored**. The previous code fell back to `os.Getwd()` when the LSP server was constructed with `s.root == ""`. That fallback is exactly the cwd-leak surface the audit exists to eliminate (two concurrent sessions racing on the process-wide cwd inside the multi-session daemon). The `cmd/r1/lsp_cmd.go` caller already resolves a root before constructing the server, so the in-server fallback is dead defensive code; replaced with a log-and-bail.
+  - `internal/memory/scope.go:207` `os.Getwd` — **annotated** `// LINT-ALLOW chdir-fallback`. Documented step-3 fallback in the `RepoHashAt(ctx, dir)` ladder; multi-session callers can avoid it by passing a non-empty `dir`. The function-level doc comment already states this.
+  - `internal/memory/reconciler.go:90` `os.Getwd` — **refactored + annotated**. Added a `RepoRoot string` field on `Reconciler`; `Reconcile()` prefers it when set and falls back to the existing `reconcilerRepoRoot` hook only when empty. The hook itself keeps `os.Getwd()` as the legacy single-process default and is annotated `// LINT-ALLOW chdir-fallback`. Multi-session callers MUST set `RepoRoot` (documented on the struct).
+- **Refactors:** 2 (`lsp/lsp.go`, `memory/reconciler.go`)
+- **Annotations:** 2 (`memory/scope.go`, `memory/reconciler.go` fallback hook)
+- **Hits remaining:** 0
+- Note: `internal/wisdom/`, `internal/research/`, `internal/replay/`, `internal/mcp/` are all clean.
 
 ## Pass 5 — remaining packages
 
@@ -51,5 +59,5 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 | 1    | 0             | 0         | 0          | 0           |
 | 2    | 1             | 1         | 0          | 0           |
 | 3    | 0             | 0         | 0          | 0           |
-| 4    | tbd           | tbd       | tbd        | tbd         |
+| 4    | 3             | 2         | 2          | 0           |
 | 5    | tbd           | tbd       | tbd        | tbd         |

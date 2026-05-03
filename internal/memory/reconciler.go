@@ -41,8 +41,15 @@ type Drift struct {
 }
 
 // Reconciler validates a bounded sample of artifact-backed memories for drift.
+//
+// RepoRoot is the absolute repo root used to resolve file-kind memories.
+// If empty, Reconcile() falls back to the package-level reconcilerRepoRoot
+// hook (defaults to os.Getwd) — that path is unsafe in the multi-session
+// daemon (specs/r1d-server.md §10) and callers running in that context
+// MUST set RepoRoot explicitly.
 type Reconciler struct {
 	Memories []Memory
+	RepoRoot string
 }
 
 const reconcilerSampleSize = 5
@@ -87,6 +94,7 @@ var (
 		return false, nil
 	}
 	reconcilerRepoRoot = func() (string, error) {
+		// LINT-ALLOW chdir-fallback: legacy single-process default; multi-session callers MUST set Reconciler.RepoRoot to bypass this branch (see Reconciler doc).
 		return os.Getwd()
 	}
 )
@@ -98,9 +106,13 @@ func (r Reconciler) Reconcile(ctx context.Context) ([]Drift, error) {
 		limit = reconcilerSampleSize
 	}
 
-	root, err := reconcilerRepoRoot()
-	if err != nil {
-		return nil, fmt.Errorf("resolve repo root: %w", err)
+	root := r.RepoRoot
+	if root == "" {
+		var err error
+		root, err = reconcilerRepoRoot()
+		if err != nil {
+			return nil, fmt.Errorf("resolve repo root: %w", err)
+		}
 	}
 
 	drifts := make([]Drift, 0, limit)
