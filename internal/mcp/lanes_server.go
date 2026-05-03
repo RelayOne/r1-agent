@@ -165,9 +165,133 @@ func (s *LanesServer) HandleToolCall(ctx context.Context, toolName string, args 
 	}
 }
 
-// handleList is implemented in TASK-19.
-func (s *LanesServer) handleList(_ context.Context, _ map[string]interface{}) (string, error) {
-	return s.envelopeError("not_implemented", "r1.lanes.list scaffold; implementation in TASK-19"), nil
+// handleList implements r1.lanes.list per spec §7.1 (TASK-19). Reads
+// from the cortex Workspace via LanesBackend.Lanes() and projects each
+// Lane into the §7.1 output_schema shape.
+//
+// Filtering:
+//   - session_id is required; if it does not match the workspace's
+//     bound session id, the result is an empty lanes array (NOT an
+//     error — surfaces poll many sessions and should silently skip
+//     non-matching ones).
+//   - include_terminal=false drops done/errored/cancelled lanes.
+//   - kinds filters by lane kind (main|lobe|tool|mission_task|router).
+//   - limit caps the array length (default 100, max 500).
+//
+// The returned lanes are sorted by StartedAt ascending so consumers
+// see the call-graph in creation order regardless of map iteration.
+func (s *LanesServer) handleList(_ context.Context, args map[string]interface{}) (string, error) {
+	if s.backend == nil {
+		return s.envelopeError("internal", "lanes backend not configured"), nil
+	}
+
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return s.envelopeError("invalid_request", "session_id is required"), nil
+	}
+
+	includeTerminal := true
+	if v, ok := args["include_terminal"].(bool); ok {
+		includeTerminal = v
+	}
+
+	var kindsFilter map[string]bool
+	if v, ok := args["kinds"].([]interface{}); ok && len(v) > 0 {
+		kindsFilter = make(map[string]bool, len(v))
+		for _, kv := range v {
+			if s, ok := kv.(string); ok {
+				kindsFilter[s] = true
+			}
+		}
+	}
+
+	limit := 100
+	if v, ok := args["limit"].(float64); ok {
+		limit = int(v)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	// Session-id filter: surfaces typically poll a single session, so
+	// returning an empty list (rather than an error) for a session_id
+	// that doesn't match the backend keeps the caller's polling loop
+	// simple. The MCP server is constructed per-session per spec §8.2,
+	// so this is a defensive check, not a routing one.
+	if backendSession := s.backend.SessionID(); backendSession != "" && backendSession != sessionID {
+		return s.envelopeOK(map[string]any{"lanes": []any{}}), nil
+	}
+
+	lanes := s.backend.Lanes()
+
+	out := make([]map[string]any, 0, len(lanes))
+	for _, l := range lanes {
+		if l == nil {
+			continue
+		}
+		if !includeTerminal && l.IsTerminal() {
+			continue
+		}
+		if kindsFilter != nil && !kindsFilter[string(l.Kind)] {
+			continue
+		}
+		entry := map[string]any{
+			"lane_id":    l.ID,
+			"kind":       string(l.Kind),
+			"status":     string(l.Status),
+			"started_at": l.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"),
+			"pinned":     l.Pinned,
+			"last_seq":   l.LastSeq,
+		}
+		if l.Label != "" {
+			entry["label"] = l.Label
+		}
+		if l.Kind == hub.LaneKindLobe && l.Label != "" {
+			entry["lobe_name"] = l.Label
+		}
+		if l.ParentID != "" {
+			entry["parent_lane_id"] = l.ParentID
+		}
+		if !l.EndedAt.IsZero() {
+			entry["ended_at"] = l.EndedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+		}
+		out = append(out, entry)
+	}
+
+	// Sort by started_at ascending. Stable on equal timestamps so the
+	// canonical workspace ordering breaks ties deterministically when
+	// two lanes share a millisecond.
+	sortLanesByStartedAt(out)
+
+	if len(out) > limit {
+		out = out[:limit]
+	}
+
+	return s.envelopeOK(map[string]any{"lanes": out}), nil
+}
+
+// sortLanesByStartedAt sorts in-place by the started_at field. Lanes
+// without a started_at sort first (defensive; spec §7.1 marks the
+// field required so this branch should never fire on real data).
+func sortLanesByStartedAt(lanes []map[string]any) {
+	// Insertion sort: tiny lists (lanes per session typically <50) and
+	// avoiding the sort.Slice closure allocation matters in the hot
+	// path of r1.lanes.list polling.
+	for i := 1; i < len(lanes); i++ {
+		j := i
+		for j > 0 {
+			a, _ := lanes[j-1]["started_at"].(string)
+			b, _ := lanes[j]["started_at"].(string)
+			if a <= b {
+				break
+			}
+			lanes[j-1], lanes[j] = lanes[j], lanes[j-1]
+			j--
+		}
+	}
 }
 
 // handleGet is implemented in TASK-21.

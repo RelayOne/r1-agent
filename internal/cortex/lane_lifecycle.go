@@ -48,6 +48,54 @@ func (w *Workspace) SessionID() string {
 	return w.sessionID
 }
 
+// Lanes returns a snapshot of every lane currently registered in the
+// Workspace. The returned slice is freshly allocated; callers may sort
+// or filter without coordinating with other readers. The *Lane values
+// inside the slice point at the canonical workspace store; consumers
+// MUST treat them as read-only or use Lane.Clone before mutating.
+//
+// Order is unspecified — Workspace stores lanes in a map keyed by
+// lane_id and snapshot order follows map iteration. Surfaces that
+// require deterministic ordering (e.g. r1.lanes.list returning lanes
+// in start-time order) sort the returned slice themselves. Spec §7.1
+// only requires the lanes array to be present, not ordered, so this
+// matches the contract.
+//
+// Spec: specs/lanes-protocol.md §8.1 / TASK-19.
+func (w *Workspace) Lanes() []*Lane {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make([]*Lane, 0, len(w.lanes))
+	for _, l := range w.lanes {
+		out = append(out, l)
+	}
+	return out
+}
+
+// GetLane returns the canonical *Lane for laneID, or (nil, false) if
+// the lane is not registered. Spec §7.3 / TASK-21 uses this to back
+// r1.lanes.get; spec §7.4 / TASK-22 uses it to back r1.lanes.kill.
+//
+// The returned pointer is the canonical workspace record; the caller
+// must NOT mutate fields directly (use Transition / Kill / Pin).
+func (w *Workspace) GetLane(laneID string) (*Lane, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	l, ok := w.lanes[laneID]
+	return l, ok
+}
+
+// Bus returns the in-process event hub bound to this workspace.
+// Returns nil when the workspace was constructed with NewWorkspace(nil, ...).
+// Spec §7.2 / TASK-20 uses this to back r1.lanes.subscribe so the MCP
+// server can register a hub subscriber against the same bus that
+// produced the event stream the lanes were emitted on.
+func (w *Workspace) Bus() *hub.Bus {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.events
+}
+
 // laneTransitionTable encodes the §3.3 transition table. A transition from
 // row to column is allowed iff the bool is true. Terminal-state rows are
 // all-false. The pin operation is orthogonal and does not flow through
