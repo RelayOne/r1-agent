@@ -37,11 +37,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/hub"
 )
 
@@ -65,14 +67,14 @@ func installCompatBridge(t *testing.T, eventBus *EventBus) (*hub.Bus, func()) {
 // captureSessionDeltas registers a passive observer for EventSessionDelta
 // events on the bus. It returns a snapshot func that drains the captured
 // events under lock so test assertions get a stable view.
-func captureSessionDeltas(t *testing.T, bus *hub.Bus) (snapshot func() []*hub.Event, stop func()) {
+func captureSessionDeltas(t *testing.T, hb *hub.Bus) (snapshot func() []*hub.Event, stop func()) {
 	t.Helper()
 	var (
 		mu       sync.Mutex
 		captured []*hub.Event
 	)
 	id := "test.capture.session_delta"
-	bus.Register(hub.Subscriber{
+	hb.Register(hub.Subscriber{
 		ID:       id,
 		Events:   []hub.EventType{hub.EventSessionDelta},
 		Mode:     hub.ModeObserve,
@@ -91,20 +93,20 @@ func captureSessionDeltas(t *testing.T, bus *hub.Bus) (snapshot func() []*hub.Ev
 		copy(out, captured)
 		return out
 	}
-	stop = func() { bus.Unregister(id) }
+	stop = func() { hb.Unregister(id) }
 	return
 }
 
 // captureLaneDeltas registers a passive observer for EventLaneDelta on
 // the bus. Mirrors captureSessionDeltas.
-func captureLaneDeltas(t *testing.T, bus *hub.Bus) (snapshot func() []*hub.Event, stop func()) {
+func captureLaneDeltas(t *testing.T, hb *hub.Bus) (snapshot func() []*hub.Event, stop func()) {
 	t.Helper()
 	var (
 		mu       sync.Mutex
 		captured []*hub.Event
 	)
 	id := "test.capture.lane_delta"
-	bus.Register(hub.Subscriber{
+	hb.Register(hub.Subscriber{
 		ID:       id,
 		Events:   []hub.EventType{hub.EventLaneDelta},
 		Mode:     hub.ModeObserve,
@@ -123,7 +125,7 @@ func captureLaneDeltas(t *testing.T, bus *hub.Bus) (snapshot func() []*hub.Event
 		copy(out, captured)
 		return out
 	}
-	stop = func() { bus.Unregister(id) }
+	stop = func() { hb.Unregister(id) }
 	return
 }
 
@@ -416,51 +418,60 @@ func TestCompat_LegacyClientStillWorks(t *testing.T) {
 // endpoint also fire the dual-emit so a parallel legacy client sees
 // session.delta envelopes for the same content.
 //
-// This is the integration test for the dual-emit path: it uses the
-// REAL *hub.Bus (which satisfies the LanesHub interface) instead of a
-// mock, and it asserts that both the lanes SSE stream AND the legacy
-// EventBus see live deltas with consistent payload text. Replay
-// continues to use a deterministic fakeLanesWAL because the production
-// WAL is an on-disk NDJSON file — out of scope for a unit test, but
-// the SSE handler's WAL replay codepath is the same regardless of WAL
-// implementation.
+// This is the integration test for the dual-emit path: every component
+// is the production type — *hub.Bus (LanesHub), *bus.Bus + BusWALAdapter
+// (LanesWAL with on-disk NDJSON), and the real /api/events EventBus.
+// The test pre-seeds the WAL by Publishing five lane events, then
+// subscribes with Last-Event-ID and asserts both the replay batch and
+// the live event are delivered, with the live event also producing a
+// legacy session.delta envelope on the EventBus.
 func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 	t.Parallel()
 	eventBus := NewEventBus()
-	bus, teardown := installCompatBridge(t, eventBus)
+	hubBus, teardown := installCompatBridge(t, eventBus)
 	defer teardown()
 
 	const sessionID = "sess_compat_replay"
 	const laneID = "lane_main_replay"
 
-	// Pre-seed the WAL with seq=1..5 so the replay window is
-	// deterministic. The WAL contents are ground-truth events the
-	// server emitted earlier — the replay codepath reads them verbatim.
-	wal := newFakeLanesWAL()
-	for i := uint64(1); i <= 5; i++ {
-		wal.Append(&hub.Event{
-			ID:        "evt-replay-" + itoa(int(i)),
-			Type:      hub.EventLaneDelta,
-			Timestamp: time.Now(),
-			Lane: &hub.LaneEvent{
-				LaneID:    laneID,
-				SessionID: sessionID,
-				Seq:       i,
-				Kind:      hub.LaneKindMain,
-				DeltaSeq:  i,
-				Block: &hub.LaneContentBlock{
-					Type: "text_delta",
-					Text: "chunk-" + itoa(int(i)),
-				},
-			},
-		})
+	// Pre-seed a REAL *bus.Bus WAL with seq=1..5 by Publishing lane
+	// events. BusWALAdapter then surfaces them via the LanesWAL
+	// contract exactly as production does.
+	walDir := filepath.Join(t.TempDir(), "wal")
+	durableBus, err := bus.New(walDir)
+	if err != nil {
+		t.Fatalf("bus.New: %v", err)
 	}
+	defer durableBus.Close()
+	for i := uint64(1); i <= 5; i++ {
+		lane := hub.LaneEvent{
+			LaneID:    laneID,
+			SessionID: sessionID,
+			Seq:       i,
+			Kind:      hub.LaneKindMain,
+			DeltaSeq:  i,
+			Block: &hub.LaneContentBlock{
+				Type: "text_delta",
+				Text: "chunk-" + itoa(int(i)),
+			},
+		}
+		body, _ := json.Marshal(lane)
+		if perr := durableBus.Publish(bus.Event{
+			Type:      bus.EventType("lane.delta"),
+			Timestamp: time.Now(),
+			EmitterID: "test",
+			Payload:   body,
+		}); perr != nil {
+			t.Fatalf("publish seed %d: %v", i, perr)
+		}
+	}
+	wal := NewBusWALAdapter(durableBus)
 
-	// Wire the REAL hub.Bus as both LanesHub (for the SSE handler's
-	// live subscription) AND the dual-emit subscriber's bus. This is
-	// the production wiring: production code calls
-	// New(...).WithLanes(&LanesWiring{Hub: realBus, WAL: realBus}).
-	srv := New(0, "", eventBus).WithLanes(&LanesWiring{Hub: bus, WAL: wal})
+	// Wire the REAL hub.Bus as LanesHub (for the SSE handler's live
+	// subscription) AND the dual-emit subscriber's bus. This is the
+	// production wiring: New(...).WithLanes(&LanesWiring{Hub: hubBus,
+	// WAL: NewBusWALAdapter(durableBus)}).
+	srv := New(0, "", eventBus).WithLanes(&LanesWiring{Hub: hubBus, WAL: wal})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -532,7 +543,7 @@ func TestCompat_LastEventIDReplaySpansBoth(t *testing.T) {
 	// session.delta envelope to the legacy EventBus. Both observations
 	// are required; this is the cross-stream coherence assertion.
 	time.Sleep(30 * time.Millisecond)
-	publishOnBus(bus, buildMainLaneDeltaEvent(sessionID, laneID, "live-chunk", 6, 6))
+	publishOnBus(hubBus, buildMainLaneDeltaEvent(sessionID, laneID, "live-chunk", 6, 6))
 
 	// Lane SSE record.
 	rec, err = readSSERecord(br)
