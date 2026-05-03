@@ -23,34 +23,34 @@ Spec: `specs/cortex-concerns.md`. Branch: `build/cortex-concerns`. Started 2026-
 - [x] TASK-12: Restart-replay verification (commit: 67d68bf1)
 
 **RuleCheck Lobe (TASKs 13-15):**
-- [x] TASK-13: Subscribe to supervisor.rule.fired
-- [x] TASK-14: severityFor mapping
-- [x] TASK-15: Convert to sticky Notes
+- [x] TASK-13: Subscribe to supervisor.rule.fired (commit: bfba13c6)
+- [x] TASK-14: severityFor mapping (commit: 8b4169a2)
+- [x] TASK-15: Convert to sticky Notes (commit: b263e58e)
 
 **PlanUpdate Lobe (TASKs 16-20):**
-- [ ] TASK-16: Scaffold
-- [ ] TASK-17: Trigger cadence (every 3rd turn or verb-scan)
-- [ ] TASK-18: Haiku call + system prompt verbatim
-- [ ] TASK-19: JSON parse + auto-apply edits, queue adds/removes
-- [ ] TASK-20: Apply on user confirmation
+- [x] TASK-16: Scaffold (commit: fc91f638)
+- [x] TASK-17: Trigger cadence (every 3rd turn or verb-scan) (commit: 542c485d)
+- [x] TASK-18: Haiku call + system prompt verbatim (commit: a7a55542)
+- [x] TASK-19: JSON parse + auto-apply edits, queue adds/removes (commit: b6594d20)
+- [x] TASK-20: Apply on user confirmation (commit: 564b267d)
 
 **ClarifyingQ Lobe (TASKs 21-25):**
-- [ ] TASK-21: Scaffold
-- [ ] TASK-22: tool schema verbatim
-- [ ] TASK-23: system prompt verbatim
-- [ ] TASK-24: Turn-after-user trigger + cap-3
-- [ ] TASK-25: Resolve on user-answer
+- [x] TASK-21: Scaffold (commit: 137b277d)
+- [x] TASK-22: tool schema verbatim (commit: 6c6c19c4)
+- [x] TASK-23: system prompt verbatim (commit: a1180b34)
+- [x] TASK-24: Turn-after-user trigger + cap-3 (commit: 62cdebf5 + 0deef8e5)
+- [x] TASK-25: Resolve on user-answer (commit: f8c64307)
 
 **MemoryCurator Lobe (TASKs 26-31):**
-- [ ] TASK-26: Scaffold + PrivacyConfig
-- [ ] TASK-27: tool schema verbatim
-- [ ] TASK-28: system prompt verbatim
-- [ ] TASK-29: Trigger every 5 turns
-- [ ] TASK-30: Privacy filter + audit log
-- [ ] TASK-31: r1 cortex memory audit CLI
+- [x] TASK-26: Scaffold + PrivacyConfig (commit: a0222ba5)
+- [x] TASK-27: tool schema verbatim (commit: 16560fc1)
+- [x] TASK-28: system prompt verbatim (commit: 923c1739)
+- [x] TASK-29: Trigger every 5 turns (commit: c2741f21)
+- [x] TASK-30: Privacy filter + audit log (commit: 0e08a42f)
+- [x] TASK-31: r1 cortex memory audit CLI (commit: 3a5774cd)
 
 **Cross-cutting integration (TASKs 32-36):**
-- [ ] TASK-32: All-lobes integration test (no goroutine leaks)
+- [x] TASK-32: All-lobes integration test (no goroutine leaks)
 - [ ] TASK-33: Cost budget honored
 - [ ] TASK-34: Enable flags honored
 - [ ] TASK-35: Daemon-restart Note recovery

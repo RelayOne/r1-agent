@@ -367,6 +367,16 @@ func (l *WALKeeperLobe) PendingLen() int {
 	return len(l.pending)
 }
 
+// ForceDroppedForTest preloads the dropped-events counter so the next
+// fire of the backpressure-note ticker emits a warning Note without
+// needing to flood the in-process hub past 0.9*pendingCap. Exposed for
+// cross-package integration tests (internal/cortex/lobes/all_integration_test.go);
+// production callers must not invoke this — the counter is otherwise
+// driven solely by the backpressure drop path.
+func (l *WALKeeperLobe) ForceDroppedForTest(n uint64) {
+	l.dropped.Store(n)
+}
+
 // eventSeverity classifies a hub.Event into one of "info" | "warning"
 // | "critical" for backpressure purposes. The cortex spec does not
 // mandate a hub-side severity field, so the keeper applies a simple
