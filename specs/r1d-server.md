@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-05-03 -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: lanes-protocol (for WS event subprotocol) -->
 <!-- BUILD_ORDER: 5 -->
@@ -600,19 +601,19 @@ The following are deliberately **not** addressed by this spec. Each is a follow-
 
 ### Phase I — Tests + benchmarks
 
-43. [ ] `internal/server/sessionhub/sessionhub_test.go` — concurrent Create/Get/Delete with race detector.
-44. [ ] `internal/server/ws/ws_test.go` — round-trip subscribe / receive / reconnect with `since_seq`. Uses `httptest.NewServer` + `coder/websocket.Dial`.
-45. [ ] `internal/server/auth_test.go` — Origin / Host / token rejection matrix.
-46. [ ] `internal/journal/journal_test.go` — append, replay, truncate-at-last-valid-line on corruption, fsync semantics on terminal events.
-47. [ ] `cmd/r1/serve_integration_test.go::TestMultiSession_RaceFree` — 8 concurrent sessions × 8 distinct workdirs, run `bash echo $PWD` in each, assert correct PWD for each session. Run with `go test -race -count=10`.
-48. [ ] `cmd/r1/serve_integration_test.go::TestChdirSentinel_PanicsOnStrayChdir` — under build tag `chdirleak_test`, inject a goroutine that calls `os.Chdir`; assert the per-session sentinel panics with the expected message.
-49. [ ] `cmd/r1/serve_integration_test.go::TestKillAndResume` — start daemon, create 3 sessions, exchange events, SIGTERM daemon, restart, verify journal replay reconstructs sessions, verify reconnecting WS clients see `daemon.reloaded` then resumed deltas with monotonic seq.
-50. [ ] `cmd/r1/serve_integration_test.go::TestSingleInstance` — second `r1 serve` exits non-zero with "already running" message.
-51. [ ] `tools/cmd/chdir-lint/lint_test.go` — fixture file with mixed annotated/unannotated calls; assert exact violation list.
-52. [ ] `bench/r1d_serve_bench_test.go` — 50 sessions × 100 messages soak; assert p99 dispatch < 50ms, FD count stable, journal write throughput >= 5MB/s.
+43. [x] `internal/server/sessionhub/sessionhub_test.go` — concurrent Create/Get/Delete with race detector.
+44. [x] `internal/server/ws/ws_test.go` — round-trip subscribe / receive / reconnect with `since_seq`. Uses `httptest.NewServer` + `coder/websocket.Dial`.
+45. [x] `internal/server/auth_test.go` — Origin / Host / token rejection matrix.
+46. [x] `internal/journal/journal_test.go` — append, replay, truncate-at-last-valid-line on corruption, fsync semantics on terminal events.
+47. [x] `cmd/r1/serve_integration_test.go::TestMultiSession_RaceFree` — 8 concurrent sessions × 8 distinct workdirs, run `bash echo $PWD` in each, assert correct PWD for each session. Run with `go test -race -count=10`.
+48. [x] `cmd/r1/serve_integration_test.go::TestChdirSentinel_PanicsOnStrayChdir` — under build tag `chdirleak_test`, inject a goroutine that calls `os.Chdir`; assert the per-session sentinel panics with the expected message.
+49. [x] `cmd/r1/serve_integration_test.go::TestKillAndResume` — start daemon, create 3 sessions, exchange events, SIGTERM daemon, restart, verify journal replay reconstructs sessions, verify reconnecting WS clients see `daemon.reloaded` then resumed deltas with monotonic seq.
+50. [x] `cmd/r1/serve_integration_test.go::TestSingleInstance` — second `r1 serve` exits non-zero with "already running" message.
+51. [x] `tools/cmd/chdir-lint/lint_test.go` — fixture file with mixed annotated/unannotated calls; assert exact violation list.
+52. [x] `bench/r1d_serve_bench_test.go` — 50 sessions × 100 messages soak; assert p99 dispatch < 50ms, FD count stable, journal write throughput >= 5MB/s.
 
 ### Phase J — Documentation + decisions
 
-53. [ ] Update `docs/decisions/index.md` with `D-D6` confirming `coder/websocket` choice + rationale.
-54. [ ] Update `docs/architecture.md` with the new `r1 serve` topology diagram (cross-link the ASCII diagram in §4 of this spec).
-55. [ ] Write `docs/r1-serve.md` operator guide: discovery, install, troubleshooting "daemon already running", token rotation, journal location.
+53. [x] Update `docs/decisions/index.md` with `D-D6` confirming `coder/websocket` choice + rationale.
+54. [x] Update `docs/architecture.md` with the new `r1 serve` topology diagram (cross-link the ASCII diagram in §4 of this spec).
+55. [x] Write `docs/r1-serve.md` operator guide: discovery, install, troubleshooting "daemon already running", token rotation, journal location.
