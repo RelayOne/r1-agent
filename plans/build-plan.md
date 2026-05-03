@@ -24,7 +24,7 @@ Spec: `specs/cortex-concerns.md`. Branch: `build/cortex-concerns`. Started 2026-
 
 **RuleCheck Lobe (TASKs 13-15):**
 - [x] TASK-13: Subscribe to supervisor.rule.fired
-- [ ] TASK-14: severityFor mapping
+- [x] TASK-14: severityFor mapping
 - [ ] TASK-15: Convert to sticky Notes
 
 **PlanUpdate Lobe (TASKs 16-20):**
