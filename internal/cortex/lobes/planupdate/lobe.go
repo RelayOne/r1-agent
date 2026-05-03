@@ -65,10 +65,26 @@ type PlanUpdateLobe struct {
 	// in tests that exercise only Run/triggers without confirmation.
 	durable *bus.Bus
 
-	// turnCount counts the number of triggered Run() calls. It drives
+	// turnCount counts the number of Run() ticks observed. It drives
 	// the every-3rd-tick cadence in TASK-17. Stored atomically so tests
-	// can inspect it without taking a lock.
+	// can inspect it without taking a lock. NOTE: turnCount is bumped
+	// on EVERY Run, not just triggered ones — that is what makes the
+	// "every 3rd boundary" cadence well-defined.
 	turnCount atomic.Uint64
+
+	// triggerCount counts the number of times the trigger predicate
+	// fired (i.e. the number of times the Lobe would have called
+	// Haiku). Test-facing accessor exposes it via TriggerCount; the
+	// production code path increments it just before invoking
+	// onTrigger.
+	triggerCount atomic.Uint64
+
+	// onTrigger is the per-Run callback invoked when the trigger
+	// predicate evaluates true. TASK-18 lands the default (the actual
+	// Haiku call); TASK-17 leaves it nil so triggered ticks are
+	// observable via triggerCount without the LLM round trip. Tests
+	// can override via SetOnTrigger to assert call cadence.
+	onTrigger func(ctx context.Context, in cortex.LobeInput)
 
 	// queuedMu guards queued. Maps queue_id -> the proposed adds/removes
 	// awaiting user confirmation. TASK-19 populates the map; TASK-20's
@@ -139,16 +155,68 @@ func (l *PlanUpdateLobe) Description() string {
 // Haiku call gated by the shared LLM-Lobe semaphore.
 func (l *PlanUpdateLobe) Kind() cortex.LobeKind { return cortex.KindLLM }
 
-// Run is the per-Round entry point. TASK-16 lands the scaffold with a
-// stub Run that increments the turn counter and returns nil; trigger,
-// Haiku call, JSON parsing, and confirmation handling land in TASKs
-// 17–20 in subsequent commits.
+// Run is the per-Round entry point. TASK-17 lands the trigger logic:
+// every 3rd tick fires the Haiku path, OR any tick whose last user
+// message contains an action-verb. The actual Haiku call is wired in
+// TASK-18 as the default onTrigger; TASK-17 simply increments
+// triggerCount and invokes onTrigger when set, so the cadence test can
+// observe the trigger predicate independently of the LLM round trip.
+//
+// ctx.Done is observed defensively — a cancelled tick drops out
+// without firing the trigger so the LobeRunner contract holds.
 func (l *PlanUpdateLobe) Run(ctx context.Context, in cortex.LobeInput) error {
-	_ = ctx
-	_ = in
-	l.turnCount.Add(1)
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+
+	turn := l.turnCount.Add(1)
+	if !l.shouldTrigger(turn, in) {
+		return nil
+	}
+
+	l.triggerCount.Add(1)
+	if l.onTrigger != nil {
+		l.onTrigger(ctx, in)
+	}
 	return nil
 }
+
+// shouldTrigger evaluates the spec-item-17 trigger predicate:
+//
+//	turn % 3 == 0  OR  lastUserText(in.History) contains an actionVerb
+//
+// The first clause expresses "every 3rd assistant turn boundary":
+// LobeRunner.Tick fires once per Round, and a Round corresponds to one
+// assistant turn boundary in the cortex.MidturnNote pipeline (TASK-14
+// of cortex-core). Counting from 1, turns 3/6/9/... satisfy turn%3==0.
+//
+// The second clause uses the verb-scan helper in verbs.go. Because the
+// verb-scan looks at ONLY the last user message, ticks that arrive
+// without a fresh user turn (e.g. tool-result rounds) never re-fire on
+// the same prior message — by the time a verb-bearing user turn shows
+// up, the message has already been observed by the previous tick's
+// turn%3 cadence or one of its own (the test asserts both paths).
+func (l *PlanUpdateLobe) shouldTrigger(turn uint64, in cortex.LobeInput) bool {
+	if turn > 0 && turn%3 == 0 {
+		return true
+	}
+	if scanVerbs(lastUserText(in.History), actionVerbs) {
+		return true
+	}
+	return false
+}
+
+// SetOnTrigger overrides the per-trigger callback. Production code calls
+// this from the constructor (TASK-18) to install the Haiku-call closure;
+// tests call it to inject a counting hook so they can assert TASK-17's
+// trigger cadence without a real provider.
+func (l *PlanUpdateLobe) SetOnTrigger(fn func(ctx context.Context, in cortex.LobeInput)) {
+	l.onTrigger = fn
+}
+
+// TriggerCount reports the number of ticks that satisfied the trigger
+// predicate. Test-facing accessor for the cadence test.
+func (l *PlanUpdateLobe) TriggerCount() uint64 { return l.triggerCount.Load() }
 
 // PlanPath returns the configured plan.json path. Test-facing accessor
 // so tests can assert constructor parameter capture without reaching
