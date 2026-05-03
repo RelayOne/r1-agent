@@ -521,11 +521,27 @@ func renderLane(l *Lane, cellW int, focused bool, spinnerFrame string) string {
 	return box.Width(cellW).Render(body)
 }
 
-// renderHelpOverlay is replaced in item 25 with the help.Model
-// FullHelpView. Stand-in is a one-line hint.
+// renderHelpOverlay is the full-screen help modal toggled by '?'.
+//
+// Per spec checklist item 25: full-screen modal showing every
+// keybinding. Uses help.Model.FullHelpView so the rendered surface
+// stays in sync with the keyMap declarations in lanes_keys.go.
 func (m *Model) renderHelpOverlay(w, _ int) string {
-	hint := "press ? to close help"
-	return modalStyle.Render(hint)
+	body := m.help.FullHelpView(m.keys.FullHelp())
+	if body == "" {
+		body = "(no help bindings)"
+	}
+	// Append the dismiss hint as a footer line so the user can find
+	// the close key without scrolling the keyMap.
+	footer := "press ? or esc to close"
+	body = lipgloss.JoinVertical(lipgloss.Left, body, "", footer)
+	rendered := modalStyle.Render(body)
+	// Width-clamp: lipgloss.Place handles centring; we just stop the
+	// modal from exceeding the terminal width.
+	if w > 0 && lipgloss.Width(rendered) > w {
+		rendered = modalStyle.Render(footer) // fallback to one-liner.
+	}
+	return rendered
 }
 
 // renderKillConfirm is replaced in item 24 with the styled modal
