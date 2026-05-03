@@ -68,6 +68,13 @@ type Lane struct {
 	// without scanning the WAL.
 	LastSeq uint64
 
+	// deltaSeq is the per-lane content stream counter incremented on
+	// each EmitDelta call. Distinct from session-wide LastSeq; lets the
+	// surface detect intra-lane gaps independent of the session-wide
+	// seq (spec §4.3). Atomic so EmitDelta does not need the workspace
+	// mutex.
+	deltaSeq uint64
+
 	// workspace back-pointer used by Transition and Emit*. Unexported
 	// because the public type is value-shaped; consumers should never
 	// reach back into the workspace from a copy.

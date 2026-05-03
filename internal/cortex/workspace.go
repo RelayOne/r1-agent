@@ -83,6 +83,27 @@ type Workspace struct {
 	subs         map[uint64]func(Note)
 	subsSeq      uint64
 	spotlight    *Spotlight
+
+	// --- Lanes protocol fields (specs/lanes-protocol.md §8) ---
+	//
+	// sessionID is the session identifier stamped on every emitted lane
+	// event. Empty until SetSessionID is called; lane events emitted with
+	// an empty sessionID still validate but surfaces will see them as
+	// orphaned. Set once at session bind time.
+	sessionID string
+
+	// lanes is the canonical store of every Lane created in this
+	// Workspace. Keyed by Lane.ID. Mutated under w.mu. Lanes are never
+	// removed; terminal lanes remain so r1.lanes.list can return them.
+	lanes map[string]*Lane
+
+	// laneSeq is the per-session monotonic seq counter. seq=0 is reserved
+	// for the synthetic session.bound event per spec §5.5; therefore the
+	// first lane event allocated through nextLaneSeq() returns 1.
+	//
+	// In TASK-7 this counter is allocated via a single-writer goroutine;
+	// the goroutine plumbing lives in seq_allocator.go.
+	laneSeq uint64
 }
 
 // NewWorkspace constructs a Workspace bound to the given event hub and
