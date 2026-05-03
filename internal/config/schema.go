@@ -1,20 +1,24 @@
 package config
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 // CortexConfig configures the cortex package and its Lobes.
 //
 // The on-disk YAML form lives under the top-level `cortex:` key in
-// `~/.r1/config.yaml` per specs/cortex-concerns.md §Privacy & Opt-Out.
-// Operators disable individual Lobes by setting `enabled: false`; the
-// MemoryCurator additionally accepts a category allow-list and a
-// privacy switch.
+// r1.policy.yaml / `~/.r1/config.yaml` per specs/cortex-concerns.md
+// §Privacy & Opt-Out. Operators disable individual Lobes by setting
+// `enabled: false`; the MemoryCurator additionally accepts a category
+// allow-list and a privacy switch.
 //
-// This struct is currently consumed by callers that load the cortex
-// section directly via yaml.v3 (see TestConfig_LobeFlagsParse). It is
-// intentionally separate from internal/config.Policy because Policy is
-// loaded by a custom line-scanner that does not understand arbitrary
-// nesting; threading cortex.* through that scanner is out of scope per
-// the spec ("Config hot-reload is intentionally out of scope — adding
-// one is a separate spec.").
+// CortexConfig is hooked into the top-level Policy struct as
+// Policy.Cortex. The Policy YAML loader uses a custom line scanner that
+// does not understand arbitrary nested maps, so the `cortex:` block is
+// skipped by parsePolicyYAML and reparsed by parseCortexBlock (yaml.v3)
+// — exactly the same pattern used for `mcp_servers:`.
 //
 // Spec: specs/cortex-concerns.md item 3.
 type CortexConfig struct {
@@ -58,12 +62,26 @@ type MemoryCuratorFlag struct {
 	SkipPrivateMessages  bool     `yaml:"skip_private_messages" json:"skip_private_messages"`
 }
 
-// CortexConfigSchema is the top-level container used by tests and any
-// future loader that wants to round-trip the `cortex:` section by
-// itself. It exists solely to give yaml.v3 a struct to anchor the
-// `cortex:` key against without forcing the wider Policy type to grow
-// a Cortex field (the Policy YAML is parsed by a custom line scanner
-// that does not yet support arbitrary nested maps).
+// CortexConfigSchema is the top-level container used by
+// TestConfig_LobeFlagsParse and any caller that wants to round-trip the
+// `cortex:` section by itself (without the surrounding Policy fields).
+// parseCortexBlock uses it internally to extract the section out of the
+// raw YAML bytes via yaml.v3.
 type CortexConfigSchema struct {
 	Cortex CortexConfig `yaml:"cortex" json:"cortex"`
+}
+
+// parseCortexBlock extracts the `cortex:` top-level mapping from the raw
+// policy YAML bytes using yaml.v3. Returns the zero CortexConfig (and
+// nil error) when the block is absent. Mirrors parseMCPServersBlock —
+// see mcp_servers.go for the same pattern.
+//
+// Structural errors (bad yaml, wrong node kind) bubble up as errors so
+// the loader can surface them to the operator.
+func parseCortexBlock(raw []byte) (CortexConfig, error) {
+	var doc CortexConfigSchema
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return CortexConfig{}, fmt.Errorf("cortex: yaml parse: %w", err)
+	}
+	return doc.Cortex, nil
 }

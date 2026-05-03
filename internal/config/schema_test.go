@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -61,6 +63,44 @@ cortex:
 			cfg.Cortex.Lobes.MemoryCurator.AutoCurateCategories)
 	}
 	if !cfg.Cortex.Lobes.MemoryCurator.SkipPrivateMessages {
+		t.Fatal("skip_private_messages should be true")
+	}
+}
+
+// TestConfig_LobeFlagsParse_ViaLoadPolicy verifies that the cortex.*
+// block is hooked into Policy.Cortex by the YAML loader. parsePolicyYAML
+// skips the `cortex:` block (same as `mcp_servers:`) and parseCortexBlock
+// reparses it with yaml.v3 in LoadPolicy.
+func TestConfig_LobeFlagsParse_ViaLoadPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "r1.policy.yaml")
+	body := DefaultPolicyYAML() + `
+cortex:
+  lobes:
+    memory_recall:
+      enabled: true
+    memory_curator:
+      enabled: false
+      auto_curate_categories: ["fact"]
+      skip_private_messages: true
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("LoadPolicy: %v", err)
+	}
+	if !p.Cortex.Lobes.MemoryRecall.Enabled {
+		t.Fatal("Policy.Cortex.Lobes.MemoryRecall.Enabled should be true")
+	}
+	if p.Cortex.Lobes.MemoryCurator.Enabled {
+		t.Fatal("Policy.Cortex.Lobes.MemoryCurator.Enabled should be false")
+	}
+	if got := p.Cortex.Lobes.MemoryCurator.AutoCurateCategories; len(got) != 1 || got[0] != "fact" {
+		t.Fatalf("auto_curate_categories: got %#v, want [fact]", got)
+	}
+	if !p.Cortex.Lobes.MemoryCurator.SkipPrivateMessages {
 		t.Fatal("skip_private_messages should be true")
 	}
 }
