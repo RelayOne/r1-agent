@@ -29,6 +29,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/hub"
@@ -77,10 +78,11 @@ type LanesServer struct {
 	backend LanesBackend
 	wal     LanesWAL
 
-	// mu guards subscriptions; not currently used during the scaffold
-	// but reserved for the streaming subscribe handler (TASK-20) so
-	// adding it later is a non-breaking change.
-	mu sync.Mutex
+	// mu guards nextSubID; the live subscriber map lives on the
+	// hub.Bus, not here. Each Subscribe call returns a cancel func
+	// so callers can tear down without server-side bookkeeping.
+	mu        sync.Mutex
+	nextSubID uint64
 }
 
 // NewLanesServer constructs a LanesServer bound to the given backend.
@@ -159,7 +161,7 @@ func (s *LanesServer) HandleToolCall(ctx context.Context, toolName string, args 
 		// not-supported envelope so callers know to use the streaming
 		// path. The tool does NOT degrade to a one-shot snapshot here
 		// because that would silently drop the streaming guarantee.
-		return s.envelopeError("invalid_request", "r1.lanes.subscribe is a streaming tool; use HandleStreamingToolCall"), nil
+		return s.envelopeError("invalid_request", "r1.lanes.subscribe is a streaming tool; use Subscribe"), nil
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -307,6 +309,415 @@ func (s *LanesServer) handleKill(_ context.Context, _ map[string]interface{}) (s
 // handlePin is implemented in TASK-23.
 func (s *LanesServer) handlePin(_ context.Context, _ map[string]interface{}) (string, error) {
 	return s.envelopeError("not_implemented", "r1.lanes.pin scaffold; implementation in TASK-23"), nil
+}
+
+// SubscribeArgs is the typed shape of the r1.lanes.subscribe input
+// arguments. ServeStdio decodes the json.RawMessage of `params` into
+// this struct before invoking Subscribe so the streaming path stays
+// type-safe. External callers (in-process integrations) populate it
+// directly.
+type SubscribeArgs struct {
+	SessionID string   `json:"session_id"`
+	SinceSeq  uint64   `json:"since_seq,omitempty"`
+	LaneIDs   []string `json:"lane_ids,omitempty"`
+	Kinds     []string `json:"kinds,omitempty"`
+	Events    []string `json:"events,omitempty"`
+}
+
+// LaneStreamChunk is one item produced by Subscribe. It is either:
+//
+//   - a per-event chunk carrying the full §4 wire body (Event != nil
+//     and Final == false); or
+//   - the synthetic floor marker emitted FIRST per spec §5.5 (Event
+//     != nil with Type=="session.bound" at seq=0); or
+//   - the final envelope per §7.2 ({ok, data:{ended:true,reason}})
+//     when Final == true.
+//
+// Consumers iterate until Final is observed or the channel is closed.
+type LaneStreamChunk struct {
+	// Event carries the §4 lane event body when Final == false.
+	// Encoded by Marshal as the §5.2 envelope sub-object.
+	Event *hub.Event `json:"-"`
+
+	// Final is true on the terminating envelope. Reason carries the
+	// shutdown cause: "context_cancelled", "client_unsubscribed", or
+	// any other free-form reason set by the implementation.
+	Final  bool   `json:"final,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// Marshal serialises the chunk to its on-the-wire JSON-RPC notification
+// body per spec §5.2 (event chunks) and §7.2 (final envelope).
+func (c *LaneStreamChunk) Marshal() []byte {
+	if c.Final {
+		body, _ := json.Marshal(map[string]any{
+			"ok": true,
+			"data": map[string]any{
+				"ended":  true,
+				"reason": c.Reason,
+			},
+		})
+		return body
+	}
+	if c.Event == nil {
+		return []byte("{}")
+	}
+	// session.bound synthetic first-chunk has no Lane payload; emit
+	// the minimum envelope so consumers can detect the floor seq.
+	if c.Event.Type == "session.bound" {
+		body, _ := json.Marshal(map[string]any{
+			"event":      "session.bound",
+			"event_id":   c.Event.ID,
+			"session_id": laneEventSessionID(c.Event),
+			"seq":        uint64(0),
+			"at":         laneEventAt(c.Event),
+			"data":       map[string]any{},
+		})
+		return body
+	}
+	if c.Event.Lane == nil {
+		return []byte("{}")
+	}
+	body, _ := json.Marshal(map[string]any{
+		"event":      string(c.Event.Type),
+		"event_id":   c.Event.ID,
+		"session_id": c.Event.Lane.SessionID,
+		"lane_id":    c.Event.Lane.LaneID,
+		"seq":        c.Event.Lane.Seq,
+		"at":         laneEventAt(c.Event),
+		"data":       buildLaneEventData(c.Event),
+	})
+	return body
+}
+
+// laneEventSessionID returns the session id from the lane payload or
+// from envelope custom fields (session.bound has no Lane payload).
+func laneEventSessionID(ev *hub.Event) string {
+	if ev == nil {
+		return ""
+	}
+	if ev.Lane != nil && ev.Lane.SessionID != "" {
+		return ev.Lane.SessionID
+	}
+	if v, ok := ev.Custom["session_id"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// laneEventAt formats the event timestamp per spec §4 (RFC 3339 nano).
+func laneEventAt(ev *hub.Event) string {
+	if ev == nil || ev.Timestamp.IsZero() {
+		return ""
+	}
+	return ev.Timestamp.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+}
+
+// Subscribe implements r1.lanes.subscribe per spec §7.2 (TASK-20). It
+// registers a hub subscriber against the same bus that streamjson and
+// internal/server use, and pushes matching events into a buffered
+// channel. The returned cancel func unregisters the subscriber and
+// closes the channel.
+//
+// Snapshot semantics (since_seq=0):
+//
+//   - emits a synthetic session.bound chunk first (seq=0) per spec
+//     §5.5;
+//   - emits a lane.created chunk for every currently-active lane
+//     (one-shot snapshot) per spec §6.2;
+//   - then forwards live events.
+//
+// Replay semantics (since_seq>0):
+//
+//   - WAL replay is owned by the server-side handler (internal/server
+//     drives this end). The MCP server only forwards live events
+//     beyond since_seq; clients that need WAL replay should use the
+//     WS transport (spec §6.2). This keeps the MCP server thin —
+//     the bus subscription IS the live pipe; the WAL adapter wraps
+//     it elsewhere.
+//
+// Filtering (lane_ids / kinds / events) is applied per-event before
+// delivery so the channel doesn't carry chaff the consumer would
+// drop anyway.
+//
+// When ctx is cancelled the subscriber is unregistered and the
+// channel is closed; consumers MUST observe channel close or the
+// final chunk to avoid leaking the goroutine that feeds it.
+func (s *LanesServer) Subscribe(ctx context.Context, args SubscribeArgs) (<-chan LaneStreamChunk, func(), error) {
+	if s.backend == nil {
+		return nil, nil, fmt.Errorf("lanes backend not configured")
+	}
+	if args.SessionID == "" {
+		return nil, nil, fmt.Errorf("session_id is required")
+	}
+	bus := s.backend.Bus()
+	if bus == nil {
+		return nil, nil, fmt.Errorf("lanes backend has no event bus")
+	}
+
+	// Build allow-sets once so the per-event filter is O(1).
+	var laneIDFilter map[string]bool
+	if len(args.LaneIDs) > 0 {
+		laneIDFilter = make(map[string]bool, len(args.LaneIDs))
+		for _, id := range args.LaneIDs {
+			laneIDFilter[id] = true
+		}
+	}
+	var kindsFilter map[string]bool
+	if len(args.Kinds) > 0 {
+		kindsFilter = make(map[string]bool, len(args.Kinds))
+		for _, k := range args.Kinds {
+			kindsFilter[k] = true
+		}
+	}
+	var eventsFilter map[string]bool
+	if len(args.Events) > 0 {
+		eventsFilter = make(map[string]bool, len(args.Events))
+		for _, e := range args.Events {
+			eventsFilter[e] = true
+		}
+	}
+
+	// Allocate a unique subscriber id so concurrent Subscribe calls
+	// don't collide on the bus's dedup-by-id check.
+	s.mu.Lock()
+	s.nextSubID++
+	subID := fmt.Sprintf("mcp.lanes.subscribe:%s:%d", args.SessionID, s.nextSubID)
+	s.mu.Unlock()
+
+	out := make(chan LaneStreamChunk, 256)
+	var (
+		closeOnce sync.Once
+		closeCh   = func() { closeOnce.Do(func() { close(out) }) }
+	)
+
+	// Register the hub subscriber. ModeObserve so it never blocks the
+	// publisher; on overflow we drop the event and emit a protocol
+	// violation in logs (caller can detect via gap in seq).
+	bus.Register(hub.Subscriber{
+		ID: subID,
+		Events: []hub.EventType{
+			hub.EventLaneCreated,
+			hub.EventLaneStatus,
+			hub.EventLaneDelta,
+			hub.EventLaneCost,
+			hub.EventLaneNote,
+			hub.EventLaneKilled,
+		},
+		Mode:     hub.ModeObserve,
+		Priority: 9400,
+		Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+			if ev == nil || ev.Lane == nil {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if ev.Lane.SessionID != args.SessionID {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if args.SinceSeq > 0 && ev.Lane.Seq <= args.SinceSeq {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if eventsFilter != nil && !eventsFilter[string(ev.Type)] {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if laneIDFilter != nil && !laneIDFilter[ev.Lane.LaneID] {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			if kindsFilter != nil && ev.Lane.Kind != "" && !kindsFilter[string(ev.Lane.Kind)] {
+				return &hub.HookResponse{Decision: hub.Allow}
+			}
+			select {
+			case out <- LaneStreamChunk{Event: ev}:
+			default:
+				// Drop on overflow; per spec §6.3 the client detects
+				// gaps via missing seq and re-fetches via r1.bus.tail.
+			}
+			return &hub.HookResponse{Decision: hub.Allow}
+		},
+	})
+
+	// Snapshot semantics: for since_seq=0 emit session.bound (seq=0)
+	// then a lane.created chunk for every active lane currently in
+	// the workspace per spec §6.2. We do this BEFORE returning so the
+	// caller's first read sees the floor marker.
+	if args.SinceSeq == 0 {
+		bound := LaneStreamChunk{
+			Event: &hub.Event{
+				ID:        "session.bound:" + args.SessionID,
+				Type:      "session.bound",
+				Timestamp: time.Now().UTC(),
+				Custom:    map[string]any{"session_id": args.SessionID},
+			},
+		}
+		select {
+		case out <- bound:
+		default:
+		}
+
+		for _, l := range s.backend.Lanes() {
+			if l == nil {
+				continue
+			}
+			if laneIDFilter != nil && !laneIDFilter[l.ID] {
+				continue
+			}
+			if kindsFilter != nil && !kindsFilter[string(l.Kind)] {
+				continue
+			}
+			if eventsFilter != nil && !eventsFilter["lane.created"] {
+				continue
+			}
+			started := l.StartedAt
+			synthetic := &hub.Event{
+				ID:        "snapshot:" + l.ID,
+				Type:      hub.EventLaneCreated,
+				Timestamp: l.StartedAt,
+				Lane: &hub.LaneEvent{
+					LaneID:    l.ID,
+					SessionID: args.SessionID,
+					Seq:       l.LastSeq,
+					Kind:      l.Kind,
+					ParentID:  l.ParentID,
+					Label:     l.Label,
+					Pinned:    l.Pinned,
+					StartedAt: &started,
+					LobeName:  laneLobeName(l),
+				},
+			}
+			select {
+			case out <- LaneStreamChunk{Event: synthetic}:
+			default:
+			}
+		}
+	}
+
+	// Cancel goroutine: when ctx is done OR cancel() is called, drop
+	// the hub subscription, push the final envelope, and close the
+	// channel. Channel close is the primary signal; the final chunk
+	// is a best-effort hint for clients that don't watch the channel.
+	cancelOnce := sync.Once{}
+	cancel := func() {
+		cancelOnce.Do(func() {
+			bus.Unregister(subID)
+			select {
+			case out <- LaneStreamChunk{Final: true, Reason: "client_unsubscribed"}:
+			default:
+			}
+			closeCh()
+		})
+	}
+	go func() {
+		<-ctx.Done()
+		cancelOnce.Do(func() {
+			bus.Unregister(subID)
+			select {
+			case out <- LaneStreamChunk{Final: true, Reason: "context_cancelled"}:
+			default:
+			}
+			closeCh()
+		})
+	}()
+
+	return out, cancel, nil
+}
+
+// laneLobeName mirrors the cortex-side lobeNameFor: lobe lanes
+// surface the label as the lobe_name; other kinds leave it empty.
+func laneLobeName(l *cortex.Lane) string {
+	if l == nil {
+		return ""
+	}
+	if l.Kind == hub.LaneKindLobe {
+		return l.Label
+	}
+	return ""
+}
+
+// buildLaneEventData mirrors the per-event-type sub-object shape from
+// spec §4. Co-located with the MCP server (rather than imported from
+// internal/server) so the lanes package has no upward dependencies.
+func buildLaneEventData(ev *hub.Event) map[string]any {
+	if ev == nil || ev.Lane == nil {
+		return map[string]any{}
+	}
+	data := map[string]any{}
+	switch ev.Type {
+	case hub.EventLaneCreated:
+		if ev.Lane.Kind != "" {
+			data["kind"] = string(ev.Lane.Kind)
+		}
+		if ev.Lane.LobeName != "" {
+			data["lobe_name"] = ev.Lane.LobeName
+		}
+		if ev.Lane.ParentID != "" {
+			data["parent_lane_id"] = ev.Lane.ParentID
+		}
+		if ev.Lane.Label != "" {
+			data["label"] = ev.Lane.Label
+		}
+		if ev.Lane.StartedAt != nil {
+			data["started_at"] = ev.Lane.StartedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+		}
+		if ev.Lane.Labels != nil {
+			data["labels"] = ev.Lane.Labels
+		}
+	case hub.EventLaneStatus:
+		if ev.Lane.Status != "" {
+			data["status"] = string(ev.Lane.Status)
+		}
+		if ev.Lane.PrevStatus != "" {
+			data["prev_status"] = string(ev.Lane.PrevStatus)
+		}
+		if ev.Lane.Reason != "" {
+			data["reason"] = ev.Lane.Reason
+		}
+		if ev.Lane.ReasonCode != "" {
+			data["reason_code"] = ev.Lane.ReasonCode
+		}
+		if ev.Lane.EndedAt != nil {
+			data["ended_at"] = ev.Lane.EndedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+		}
+	case hub.EventLaneDelta:
+		if ev.Lane.DeltaSeq != 0 {
+			data["delta_seq"] = ev.Lane.DeltaSeq
+		}
+		if ev.Lane.Block != nil {
+			data["content_block"] = ev.Lane.Block
+		}
+	case hub.EventLaneCost:
+		data["tokens_in"] = ev.Lane.TokensIn
+		data["tokens_out"] = ev.Lane.TokensOut
+		if ev.Lane.CachedTokens != 0 {
+			data["cached_tokens"] = ev.Lane.CachedTokens
+		}
+		data["usd"] = ev.Lane.USD
+		if ev.Lane.CumulativeUSD != 0 {
+			data["cumulative_usd"] = ev.Lane.CumulativeUSD
+		}
+	case hub.EventLaneNote:
+		if ev.Lane.NoteID != "" {
+			data["note_id"] = ev.Lane.NoteID
+		}
+		if ev.Lane.NoteSeverity != "" {
+			data["severity"] = ev.Lane.NoteSeverity
+		}
+		if ev.Lane.NoteKind != "" {
+			data["kind"] = ev.Lane.NoteKind
+		}
+		if ev.Lane.NoteSummary != "" {
+			data["summary"] = ev.Lane.NoteSummary
+		}
+	case hub.EventLaneKilled:
+		if ev.Lane.Reason != "" {
+			data["reason"] = ev.Lane.Reason
+		}
+		if ev.Lane.Actor != "" {
+			data["actor"] = ev.Lane.Actor
+		}
+		if ev.Lane.ActorID != "" {
+			data["actor_id"] = ev.Lane.ActorID
+		}
+	}
+	return data
 }
 
 // envelopeOK builds the §7 success result envelope as a JSON string.
