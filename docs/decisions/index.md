@@ -1,5 +1,40 @@
 # Decisions Log
 
+## 2026-05-03 — Build progress
+
+### D-2026-05-03-01 — Specs 1, 2, 3 SHIPPED
+- specs/cortex-core.md — STATUS:done, 34 commits on build/cortex-core, merged.
+- specs/cortex-concerns.md — STATUS:done, 36 tasks + 5 integration tests, merged.
+- specs/lanes-protocol.md — STATUS:in-progress (40 tasks shipping incrementally), all critical paths landed.
+
+### D-2026-05-03-02 — Anti-truncation enforcement (BUILD_ORDER 9) added
+New spec `specs/anti-truncation.md` filed in response to observation that
+Claude self-reduces scope to fit imagined Anthropic load-balance limits, and
+that prompt-level instructions to defeat this are unreliable. The enforcement
+is layered (deterministic phrase detector + scope-completion gate +
+AntiTruncLobe + supervisor rules + agentloop wiring + post-commit hook +
+`r1 antitrunc verify` CLI + MCP tool) so no single layer can be bypassed.
+27 checklist items; runs after agentic-test-harness lands.
+
+### D-2026-05-03-03 — `X-R1-Lanes-Version` orthogonal versioning
+desktop/IPC-CONTRACT.md §1.5 documents the orthogonal lanes-version header.
+RPC version and lanes version bump on independent cadences. Confirmed by the
+desktop tier 2 contract.
+
+### D-2026-05-03-04 — `session.delta` compat-window dual-emit
+For the duration of the lanes-protocol compat window, the main lane emits
+BOTH `session.delta` (legacy) AND `lane.delta` (new). Pre-lanes clients
+(Tauri R1D-1..R1D-12 phase consumers) keep working unchanged. Removal of
+`session.delta` is a follow-up minor release per spec §"Out of scope" item 1.
+
+### D-2026-05-03-05 — Lane-event bypass lint
+`scripts/lint-lane-events.sh` greps internal/streamjson/ for direct lane.*
+event-type literals outside the canonical adapter. Wired into cloudbuild.yaml
+alongside `go vet`. Allowed files explicit; new emitters require either an
+allow-list entry with justification or routing through the adapter.
+
+---
+
 ## 2026-05-02 — Cortex / Lanes / Multi-Surface Scope
 
 ### D-2026-05-02-01 — Spec split = 8 specs
