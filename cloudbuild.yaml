@@ -38,6 +38,19 @@ steps:
     entrypoint: bash
     args: ['scripts/lint-lane-events.sh']
 
+  # r1d-server Phase A audit gate (specs/r1d-server.md §10).
+  # Flags every unannotated os.Chdir / os.Getwd / filepath.Abs("") /
+  # os.Open("./...") call in ./internal/... and ./cmd/... — this is the
+  # BLOCKING precondition before the multi-session daemon (Phase E) is
+  # enabled. A single stray cwd-mutating call inside a goroutine handler
+  # silently leaks workdir between concurrent sessions (risk R1, see
+  # spec §11.5). Fails the build red on any unannotated hit.
+  - name: 'golang:1.25'
+    id: lint-chdir
+    waitFor: ['mod-tidy-check']
+    entrypoint: bash
+    args: ['tools/lint-no-chdir.sh']
+
   - name: 'golang:1.25'
     id: test
     waitFor: ['vet']
