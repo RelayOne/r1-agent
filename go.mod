@@ -43,6 +43,7 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.13 // indirect
 	github.com/gofrs/flock v0.12.1 // indirect
+	github.com/kardianos/service v1.2.4 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 )
 
