@@ -161,9 +161,11 @@ func NewMemoryCuratorLobe(
 		ws:       ws,
 		hubBus:   hubBus,
 	}
-	// Default onTrigger is wired in TASK-30 (haikuCall pipeline);
-	// TASK-26's scaffold leaves it nil so the cadence test in TASK-29
-	// can observe trigger fires without the LLM round trip.
+	// Default onTrigger is the TASK-30 pipeline: privacy gate +
+	// haikuCall + per-candidate auto-apply / confirm-queue + audit log.
+	// Tests SetOnTrigger to a counting hook to assert TASK-29 cadence
+	// in isolation.
+	l.onTrigger = l.defaultOnTrigger
 	return l
 }
 
