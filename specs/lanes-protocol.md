@@ -1,4 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_STARTED: 2026-05-02 -->
+<!-- BUILD_COMPLETED: 2026-05-03 -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: cortex-core -->
 <!-- BUILD_ORDER: 3 -->

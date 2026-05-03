@@ -33,6 +33,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,27 @@ type StokeServer struct {
 	spawner spawnFunc
 	// now is the clock source. Tests can override.
 	now func() time.Time
+
+	// lanes optionally aggregates the lanes-protocol MCP server's
+	// five tools (specs/lanes-protocol.md §7) into this StokeServer's
+	// tools/list and tools/call handlers. Wired via WithLanesServer
+	// per TASK-24; nil disables lane-tool exposure (the StokeServer
+	// behaves exactly as before).
+	lanes *LanesServer
+}
+
+// WithLanesServer attaches a *LanesServer so this StokeServer's
+// MCP tools/list and tools/call dispatch include the five
+// r1.lanes.* tools alongside the stoke_*/r1_* tools. Spec
+// TASK-24 calls for "one-line addition to the MCP registry init";
+// callers achieve that by chaining: NewStokeServer(bin).WithLanesServer(ls).
+//
+// Passing nil clears any previously-attached lanes server.
+func (s *StokeServer) WithLanesServer(ls *LanesServer) *StokeServer {
+	s.mu.Lock()
+	s.lanes = ls
+	s.mu.Unlock()
+	return s
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -119,6 +141,10 @@ func NewStokeServer(stokeBin string) *StokeServer {
 // which normalizes the prefix before switching. The canonical r1_*
 // entry is emitted first in each pair so clients that pick the first
 // match prefer it.
+//
+// When a LanesServer is attached via WithLanesServer (TASK-24), the
+// five r1.lanes.* tools are appended after the stoke/r1 build tools
+// so a single MCP endpoint exposes both surfaces.
 func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 	base := s.baseToolDefinitions()
 	out := make([]ToolDefinition, 0, len(base)*2)
@@ -129,6 +155,12 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 			out = append(out, alias)
 		}
 		out = append(out, t)
+	}
+	s.mu.Lock()
+	lanes := s.lanes
+	s.mu.Unlock()
+	if lanes != nil {
+		out = append(out, lanes.ToolDefinitions()...)
 	}
 	return out
 }
@@ -286,7 +318,23 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 // handler. S1-4 dual-accept: canonical r1_* and legacy stoke_* names
 // both resolve here; legacyStokeServerToolName normalizes the prefix
 // so each case arm handles the pair.
+//
+// When a LanesServer is attached via WithLanesServer (TASK-24), tool
+// names with the r1.lanes.* prefix are routed to the lanes server so
+// a single StokeServer endpoint serves both surfaces.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
+	// Lane-tool prefix routing. Checked before the stoke switch so a
+	// future legacy stoke tool that happens to share a name with a
+	// lane tool cannot accidentally shadow it.
+	if strings.HasPrefix(toolName, "r1.lanes.") {
+		s.mu.Lock()
+		lanes := s.lanes
+		s.mu.Unlock()
+		if lanes != nil {
+			return lanes.HandleToolCall(context.Background(), toolName, args)
+		}
+		return "", fmt.Errorf("unknown tool: %s (lanes server not wired)", toolName)
+	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
 		return s.handleBuildFromSOW(args)
@@ -860,11 +908,19 @@ func (s *StokeServer) ServeStdio() error {
 			tools := s.ToolDefinitions()
 			var toolList []map[string]interface{}
 			for _, t := range tools {
-				toolList = append(toolList, map[string]interface{}{
+				entry := map[string]interface{}{
 					"name":        t.Name,
 					"description": t.Description,
 					"inputSchema": t.InputSchema,
-				})
+				}
+				// Lane tools (TASK-24) advertise an output_schema per
+				// spec §7. Other stoke/r1 tools omit it, so the shape
+				// stays additive: clients that don't understand
+				// outputSchema simply ignore the extra key.
+				if len(t.OutputSchema) > 0 {
+					entry["outputSchema"] = t.OutputSchema
+				}
+				toolList = append(toolList, entry)
 			}
 			writeJSONRPC(os.Stdout, req.ID, map[string]interface{}{"tools": toolList}, nil)
 		case "tools/call":

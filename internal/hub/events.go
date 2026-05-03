@@ -125,6 +125,37 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
+// --- Lanes (6 events) ---
+//
+// Lanes are the per-surface-visible thread of activity inside a single r1d
+// session: the main agent thread, a cortex Lobe, an in-flight tool call, or
+// a mission-task. Cortex-core (specs/cortex-core.md) owns the lifecycle;
+// this taxonomy freezes the wire-level event family.
+//
+// See specs/lanes-protocol.md §4 for the full event-type catalog. Adding a
+// seventh event type is a wire-version bump per spec §5.6.
+const (
+	EventLaneCreated EventType = "lane.created"
+	EventLaneStatus  EventType = "lane.status"
+	EventLaneDelta   EventType = "lane.delta"
+	EventLaneCost    EventType = "lane.cost"
+	EventLaneNote    EventType = "lane.note"
+	EventLaneKilled  EventType = "lane.killed"
+)
+
+// --- Legacy compat-window event (1 event) ---
+//
+// EventSessionDelta is the pre-lanes assistant-text delta event. Per
+// specs/lanes-protocol.md §"Out of scope" item 1 and §10.5, the main lane
+// continues to emit session.delta in parallel with lane.delta for one
+// minor release so existing desktop clients keep working without code
+// changes. Removal is a follow-up minor release; do NOT add new emitters
+// of this event — the only producer is the dual-emit bridge in
+// internal/server/lanes_compat.go.
+const (
+	EventSessionDelta EventType = "session.delta"
+)
+
 // --- Cortex (9 events) ---
 const (
 	EventCortexNotePublished           EventType = "cortex.note.published"
@@ -201,6 +232,7 @@ type Event struct {
 	Lifecycle *LifecycleEvent `json:"lifecycle,omitempty"`
 	Test      *TestEvent      `json:"test,omitempty"`
 	Security  *SecurityEvent  `json:"security,omitempty"`
+	Lane      *LaneEvent      `json:"lane,omitempty"`
 	Custom    map[string]any  `json:"custom,omitempty"`
 }
 
@@ -304,6 +336,155 @@ type SecurityEvent struct {
 	Details  string `json:"details"`
 	FilePath string `json:"file_path,omitempty"`
 	Rule     string `json:"rule,omitempty"`
+}
+
+// LaneContentBlock carries one streamed content block for a lane.delta
+// event. It mirrors the shape of Anthropic's content blocks (see
+// agentloop.ContentBlock) so renderers can pass through, but is defined
+// inside hub to avoid an import cycle (agentloop imports hub for event
+// emission). Conversions are defined in cortex's lane.go.
+//
+// See specs/lanes-protocol.md §4.3 for the content_block.type enum
+// (text_delta, thinking_delta, tool_use_start, tool_use_input_delta,
+// tool_use_end, tool_result, note_ref).
+type LaneContentBlock struct {
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Input     []byte `json:"input,omitempty"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	NoteID    string `json:"note_id,omitempty"` // for note_ref
+}
+
+// LaneEvent is the unified payload for the six EventLane* event types
+// declared above. Fields are populated based on the event Type; consumers
+// should branch on Event.Type and read only the relevant fields.
+//
+// See specs/lanes-protocol.md §4 for per-type field requirements. The
+// JSON encoding follows §4 verbatim (omitempty on every optional field).
+type LaneEvent struct {
+	// Common fields, present on every lane event.
+
+	// LaneID identifies the lane. ULID, monotonic-by-time per session.
+	LaneID string `json:"lane_id"`
+
+	// SessionID names the session this lane belongs to. The value is
+	// duplicated at the envelope level by the wire formatter; this field
+	// is used by hub-only consumers that don't see the wire envelope.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Seq is the per-session monotonic sequence number assigned by the
+	// single-writer goroutine in the cortex Workspace. seq=0 is reserved
+	// for the synthetic session.bound event per spec §5.5.
+	Seq uint64 `json:"seq,omitempty"`
+
+	// --- lane.created fields (spec §4.1) ---
+
+	// Kind is the lane category. Required on lane.created.
+	Kind LaneKind `json:"kind,omitempty"`
+
+	// ParentID is the parent lane's ID. Empty for the main lane and for
+	// top-level mission tasks; required on every other lane.
+	ParentID string `json:"parent_id,omitempty"`
+
+	// Label is the human-readable label shown in surfaces.
+	Label string `json:"label,omitempty"`
+
+	// LobeName names the cortex Lobe when Kind == "lobe".
+	LobeName string `json:"lobe_name,omitempty"`
+
+	// Labels is the structured label map (per spec §4.1 example: model,
+	// deterministic). Free-form k/v.
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// StartedAt is the lane creation timestamp. Set on lane.created.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+
+	// EndedAt is the lane termination timestamp. Set on terminal
+	// lane.status events.
+	EndedAt *time.Time `json:"ended_at,omitempty"`
+
+	// --- lane.status fields (spec §4.2) ---
+
+	// Status is the new lifecycle state. Required on lane.status.
+	Status LaneStatus `json:"status,omitempty"`
+
+	// PrevStatus is the previous lifecycle state. Set on lane.status to
+	// help surfaces detect transitions without keeping local state.
+	PrevStatus LaneStatus `json:"prev_status,omitempty"`
+
+	// Reason is the human-readable explanation for the transition.
+	Reason string `json:"reason,omitempty"`
+
+	// ReasonCode is the stable enum tag (started, tool_dispatch,
+	// awaiting_user, awaiting_review, awaiting_dependency, unblocked,
+	// ok, cancelled_by_operator, cancelled_by_parent,
+	// cancelled_by_budget, errored, plus stokerr codes). See spec §4.2.
+	ReasonCode string `json:"reason_code,omitempty"`
+
+	// --- orthogonal flag (spec §3.2) ---
+
+	// Pinned reflects the orthogonal pinned flag. Mirrored on
+	// lane.created snapshots; mutations flow through the r1.lanes.pin
+	// MCP tool, not via lane events.
+	Pinned bool `json:"pinned,omitempty"`
+
+	// --- lane.delta fields (spec §4.3) ---
+
+	// DeltaSeq is the per-lane monotonic sequence for content streams.
+	// Distinct from the session-wide Seq; lets the surface detect
+	// intra-lane gaps.
+	DeltaSeq uint64 `json:"delta_seq,omitempty"`
+
+	// Block carries the streamed content block on lane.delta.
+	Block *LaneContentBlock `json:"content_block,omitempty"`
+
+	// --- lane.cost fields (spec §4.4) ---
+
+	// TokensIn is the input tokens consumed in this tick.
+	TokensIn int `json:"tokens_in,omitempty"`
+
+	// TokensOut is the output tokens produced in this tick.
+	TokensOut int `json:"tokens_out,omitempty"`
+
+	// CachedTokens is the prompt-cache hit count for this tick.
+	CachedTokens int `json:"cached_tokens,omitempty"`
+
+	// USD is the dollar cost of this tick.
+	USD float64 `json:"usd,omitempty"`
+
+	// CumulativeUSD is the running total dollar cost for the lane.
+	CumulativeUSD float64 `json:"cumulative_usd,omitempty"`
+
+	// --- lane.note fields (spec §4.5) ---
+
+	// NoteID points at the cortex Note. The full Note is fetched via the
+	// r1.cortex.notes MCP tool; this event is a lightweight pointer.
+	NoteID string `json:"note_id,omitempty"`
+
+	// NoteSeverity is the cortex Note severity (info|warn|critical).
+	// "critical" gates end_turn per cortex D-C4.
+	NoteSeverity string `json:"note_severity,omitempty"`
+
+	// NoteKind is the cortex Note kind (e.g. memory_recall).
+	NoteKind string `json:"note_kind,omitempty"`
+
+	// NoteSummary is the short human-readable summary surfaced to the
+	// renderer. The full body is in the cortex Note.
+	NoteSummary string `json:"note_summary,omitempty"`
+
+	// --- lane.killed fields (spec §4.6) ---
+
+	// Actor names who killed the lane (operator, parent, budget).
+	Actor string `json:"actor,omitempty"`
+
+	// ActorID is the principal id (user ULID, parent lane id, etc).
+	ActorID string `json:"actor_id,omitempty"`
 }
 
 // HookResponse is the structured response from any hook.

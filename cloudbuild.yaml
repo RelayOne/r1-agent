@@ -33,6 +33,12 @@ steps:
     args: ['vet', './...']
 
   - name: 'golang:1.25'
+    id: lint-lane-events
+    waitFor: ['mod-tidy-check']
+    entrypoint: bash
+    args: ['scripts/lint-lane-events.sh']
+
+  - name: 'golang:1.25'
     id: test
     waitFor: ['vet']
     entrypoint: bash
