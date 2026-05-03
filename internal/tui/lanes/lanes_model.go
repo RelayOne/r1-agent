@@ -136,10 +136,3 @@ type keyMap struct{}
 // renderCache is forward-declared here for the same reason. The
 // implementation lands with checklist item 20 (lanes_cache.go).
 type renderCache struct{}
-
-// Transport is forward-declared so Model.transport type-checks before
-// the concrete implementations land in lanes_transport.go (checklist
-// item 8). The full contract is documented there.
-type Transport interface {
-	transportSentinel()
-}
