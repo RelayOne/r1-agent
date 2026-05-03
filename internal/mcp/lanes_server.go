@@ -8,10 +8,11 @@
 //   - r1.lanes.kill      (mutation, idempotent, cascades)
 //   - r1.lanes.pin       (mutation, idempotent)
 //
-// This file is the scaffold (TASK-18). Tool definitions carry the §7
-// JSON Schema draft 2020-12 documents verbatim as json.RawMessage in
-// ToolDefinition.InputSchema / OutputSchema. Per-tool handler bodies
-// land in subsequent TASKs (TASK-19..23).
+// Tool definitions carry the §7 JSON Schema draft 2020-12 documents
+// verbatim as json.RawMessage in ToolDefinition.InputSchema and
+// ToolDefinition.OutputSchema. Each handler implements the matching
+// §7 contract: list (§7.1), subscribe (§7.2), get (§7.3), kill (§7.4),
+// pin (§7.5).
 //
 // SECURITY (outbound sanitization policy): same as stoke_server.go.
 // Tool responses are NOT pre-sanitized for prompt-injection because
@@ -140,12 +141,10 @@ const (
 )
 
 // HandleToolCall dispatches a non-streaming tool invocation. Streaming
-// tools (r1.lanes.subscribe) are handled by HandleStreamingToolCall.
-//
-// During the TASK-18 scaffold all handlers return a "not implemented"
-// envelope so the caller sees a structured error rather than an empty
-// response. Subsequent TASKs (19..23) replace the bodies with real
-// implementations.
+// (r1.lanes.subscribe) flows through Subscribe; calling HandleToolCall
+// with that name returns an invalid_request envelope pointing the
+// caller at Subscribe so the streaming guarantee is not silently
+// downgraded.
 func (s *LanesServer) HandleToolCall(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	switch toolName {
 	case lanesListToolName:

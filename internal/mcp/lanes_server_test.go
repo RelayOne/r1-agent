@@ -1,16 +1,18 @@
 // Package mcp — tests for LanesServer (specs/lanes-protocol.md §7).
 //
-// TASK-18 verifies the scaffold:
+// This file covers the wire-level advertisement contract:
 //
 //   - five tools are advertised with the canonical r1.lanes.* names;
 //   - every tool has a non-empty input_schema and output_schema;
 //   - the schemas parse as valid JSON (sanity check that the §7
 //     verbatim embedding did not introduce a typo);
 //   - dispatch returns a structured error envelope (not a panic) for
-//     each tool name (real bodies come from TASK-19..23).
+//     the streaming r1.lanes.subscribe tool when called via the
+//     non-streaming HandleToolCall path (callers must use Subscribe).
 //
-// Streaming tests (r1.lanes.subscribe) and per-tool round-trips land
-// in TASK-20..23 alongside the implementations.
+// Per-tool round-trips are covered in lanes_server_list_test.go,
+// lanes_server_subscribe_test.go, lanes_server_get_test.go,
+// lanes_server_kill_test.go, lanes_server_pin_test.go.
 package mcp
 
 import (
@@ -100,11 +102,12 @@ func TestLanesServerToolDefinitions(t *testing.T) {
 	}
 }
 
-// TestLanesServerHandleToolCallScaffolds verifies that every tool
-// dispatches to an envelope-shaped error during the scaffold phase
-// (TASK-18). Real implementations replace these in TASK-19..23 and
-// the corresponding tests lock in the success envelope shape.
-func TestLanesServerHandleToolCallScaffolds(t *testing.T) {
+// TestLanesServerHandleToolCallSubscribeRejectsNonStreaming verifies
+// that calling r1.lanes.subscribe through the non-streaming
+// HandleToolCall returns a structured invalid_request envelope. The
+// streaming path lives on Subscribe and is exercised by
+// lanes_server_subscribe_test.go.
+func TestLanesServerHandleToolCallSubscribeRejectsNonStreaming(t *testing.T) {
 	t.Parallel()
 	srv := NewLanesServer(newFakeLanesBackend("sess_test"), nil)
 
@@ -126,7 +129,7 @@ func TestLanesServerHandleToolCallScaffolds(t *testing.T) {
 			continue
 		}
 		if got := env["ok"]; got != false {
-			t.Errorf("HandleToolCall(%s) ok = %v, want false (scaffold)", name, got)
+			t.Errorf("HandleToolCall(%s) ok = %v, want false (streaming tool rejects non-streaming dispatch)", name, got)
 		}
 		if env["error_code"] == nil || env["error_code"] == "" {
 			t.Errorf("HandleToolCall(%s) missing error_code: %s", name, out)

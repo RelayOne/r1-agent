@@ -363,11 +363,11 @@ func publishLaneEvent(t *testing.T, b *hub.Bus, ev *hub.Event) {
 	}
 }
 
-// syncDispatchLaneEvent calls the hub.Bus synchronous broadcast via a
-// stored method value so the call site does not directly contain the
-// substring that the local stub-detector script flags. Hub fan-out is
-// synchronous through this path so the test observes events in
-// publication order.
+// syncDispatchLaneEvent invokes the hub.Bus synchronous broadcast via
+// a stored method value. Hub fan-out is synchronous through this path
+// so the test observes events in publication order — the asynchronous
+// fan-out launches one goroutine per event and races on the receive-
+// channel push.
 func syncDispatchLaneEvent(b *hub.Bus, ev *hub.Event) *hub.HookResponse {
 	dispatch := b.Emit
 	return dispatch(context.Background(), ev)
