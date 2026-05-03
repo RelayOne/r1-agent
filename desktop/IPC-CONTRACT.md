@@ -79,6 +79,15 @@ the Rust host asserts it on every open). The version bumps when a
 method's params or result shape changes incompatibly. New methods are
 additive and do not bump the version.
 
+**Lanes overlay header**: clients that consume the lane events added in
+specs/lanes-protocol.md (BUILD_ORDER 3) ALSO assert an orthogonal
+`X-R1-Lanes-Version: 1` header. The two version headers bump on
+independent cadences — bumping the RPC version does NOT bump the lanes
+version, and vice versa. A client that does not consume lane events can
+ignore the header entirely; clients that do MUST refuse to subscribe
+when the server's announced version is incompatible with their pinned
+version.
+
 ---
 
 ## 2. Method table
@@ -193,11 +202,17 @@ defined; more land with R1D-2+ as the session view demands them.
 | `event` | Fields | Emitted when |
 |---|---|---|
 | `session.started` | `session_id`, `at` | New r1 subprocess live and handshake complete |
-| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess |
+| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess. **Co-emitted with `lane.delta` for the main lane during the lanes-protocol compat window** (see specs/lanes-protocol.md §"Out of scope" item 1). Removal is a follow-up minor release. |
 | `session.ended` | `session_id`, `reason` ("ok"\|"cancelled"\|"error"), `at` | Subprocess exits or is SIGTERM'd |
 | `ledger.appended` | `session_id`, `hash`, `type` | Ledger node committed |
 | `cost.tick` | `session_id`, `usd_delta`, `tokens_delta` | Cost tracker rolls forward |
 | `descent.tier_changed` | `session_id`, `ac_id`, `from`, `to`, `status` | A verification tier changes state |
+| `lane.created` | `session_id`, `lane_id`, `kind` (`main`\|`lobe`\|`tool`\|`mission_task`\|`router`), `parent_id?`, `label?`, `started_at`, `seq` | Cortex Workspace creates a new lane (NewMainLane / NewLobeLane / NewToolLane). Lanes are the cross-surface representation of Cortex activity; see specs/lanes-protocol.md §3. |
+| `lane.status` | `session_id`, `lane_id`, `status` (`pending`\|`running`\|`blocked`\|`done`\|`errored`\|`cancelled`), `reason?`, `reason_code?`, `seq` | Lane FSM transitions. Critical when `status="errored"` (top-level emit per §5.3). |
+| `lane.delta` | `session_id`, `lane_id`, `block` (text/tool-use ContentBlock), `seq` | Streaming content within a lane. For the `main` lane, also co-emitted as `session.delta` during compat window. |
+| `lane.cost` | `session_id`, `lane_id`, `tokens_in`, `tokens_out`, `usd`, `seq` | Per-lane cost tick (independent of the global `cost.tick`). |
+| `lane.note` | `session_id`, `lane_id`, `note_id`, `note_severity` (`info`\|`advice`\|`warning`\|`critical`), `seq` | Lobe published a Note that this lane caused. Critical when `note_severity="critical"`. |
+| `lane.killed` | `session_id`, `lane_id`, `reason`, `ended_at`, `seq` | Lane terminated (operator kill, error cascade, or completion). Always critical (top-level emit). |
 
 Tier 2 Rust host subscribes, parses, fans out to the WebView via
 `app.emit_to(<session_window>, event, payload)`.
