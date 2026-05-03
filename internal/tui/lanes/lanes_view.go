@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
@@ -326,26 +327,69 @@ func (m *Model) viewStatusBar(w int) string {
 	return statusBarStyle.Render(s)
 }
 
-// renderLane is replaced in item 17 with the bordered three-row box.
-// The shim version preserves the glyph-pairing accessibility rule.
+// renderLane is the bordered three-row lane box: a title row (glyph
+// + spinner if Running + name + role), a single-line activity row
+// (truncate with ellipsis), and a footer (tokens · cost · elapsed ·
+// model).
+//
+// Per spec §"Implementation Checklist" item 17. Uses
+// laneBoxFocusedStyle (thick border) when focused and laneBoxStyle
+// (rounded) otherwise; both pick up the status colour via
+// BorderForeground for the glyph-pairing accessibility rule.
 func renderLane(l *Lane, cellW int, focused bool, spinnerFrame string) string {
-	_ = spinnerFrame
-	prefix := " "
+	if cellW <= 0 {
+		return ""
+	}
+
+	box := laneBoxStyle
 	if focused {
-		prefix = ">"
+		box = laneBoxFocusedStyle
 	}
-	line := fmt.Sprintf("%s %s %-16s %-9s %5d tok  $%6.4f",
-		prefix,
-		l.Status.Glyph(),
-		truncate(l.Title, 16),
-		l.Status.String(),
-		l.Tokens,
-		l.CostUSD,
-	)
-	if cellW > 0 && lipgloss.Width(line) > cellW {
-		line = line[:cellW]
+	color := statusColor(l.Status)
+	box = box.BorderForeground(color)
+
+	// Inside-box content width: subtract horizontal frame (border +
+	// padding). lipgloss reports this via GetHorizontalFrameSize.
+	innerW := cellW - box.GetHorizontalFrameSize()
+	if innerW < 4 {
+		innerW = 4
 	}
-	return line
+
+	// Title row: glyph + (optional spinner) + title + role.
+	var titleParts []string
+	titleParts = append(titleParts, l.Status.Glyph())
+	if l.Status == StatusRunning && spinnerFrame != "" {
+		titleParts = append(titleParts, spinnerFrame)
+	}
+	titleParts = append(titleParts, l.Title)
+	if l.Role != "" {
+		titleParts = append(titleParts, "·", l.Role)
+	}
+	titleRow := laneTitleStyle.Render(truncate(strings.Join(titleParts, " "), innerW))
+
+	// Activity row: single line, ellipsised. Empty string when no
+	// activity yet — keeps a stable three-row height.
+	activity := l.Activity
+	if activity == "" {
+		activity = " "
+	}
+	activityRow := laneActivityStyle.Render(truncate(activity, innerW))
+
+	// Footer: tokens · $cost · elapsed · model. Each segment is
+	// dropped when empty rather than rendering a stale value.
+	var footerParts []string
+	footerParts = append(footerParts, fmt.Sprintf("%d tok", l.Tokens))
+	footerParts = append(footerParts, fmt.Sprintf("$%.4f", l.CostUSD))
+	if l.Elapsed > 0 {
+		footerParts = append(footerParts, l.Elapsed.Round(time.Second).String())
+	}
+	if l.Model != "" {
+		footerParts = append(footerParts, l.Model)
+	}
+	footerRow := laneFooterStyle.Render(truncate(strings.Join(footerParts, " · "), innerW))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, titleRow, activityRow, footerRow)
+	return box.Width(cellW).Render(body)
 }
 
 // renderHelpOverlay is replaced in item 25 with the help.Model
