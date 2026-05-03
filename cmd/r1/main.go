@@ -818,6 +818,11 @@ func main() {
 		decisionBisectCmd(os.Args[2:])
 	case "self-tune":
 		selfTuneCmd(os.Args[2:])
+	case "cortex":
+		// Cortex subcommand family. Today only `r1 cortex memory audit`
+		// (TASK-31 of cortex-concerns) is wired; future cortex subcommands
+		// extend cortexCmd's dispatch in cortex_memory_audit.go.
+		cortexCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
