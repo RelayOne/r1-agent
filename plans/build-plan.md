@@ -52,7 +52,7 @@ Spec: `specs/cortex-concerns.md`. Branch: `build/cortex-concerns`. Started 2026-
 **Cross-cutting integration (TASKs 32-36):**
 - [x] TASK-32: All-lobes integration test (no goroutine leaks)
 - [x] TASK-33: Cost budget honored
-- [ ] TASK-34: Enable flags honored
+- [x] TASK-34: Enable flags honored
 - [ ] TASK-35: Daemon-restart Note recovery
 - [ ] TASK-36: Cache-hit verification under fan-out
 

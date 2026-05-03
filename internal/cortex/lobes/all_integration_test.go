@@ -502,6 +502,114 @@ func TestAllLobes_RespectCostBudget(t *testing.T) {
 	}
 }
 
+// TestAllLobes_HonorEnableFlags covers TASK-34. For each Lobe ID,
+// disable that single Lobe via the fixture's EnableFlags map and
+// assert the resulting Cortex never invokes the disabled Lobe's Run
+// (no Note from the disabled Lobe; the others continue to fire).
+//
+// The fixture honors EnableFlags by skipping the constructor for any
+// Lobe whose flag is false. This mirrors the production wiring contract:
+// cmd/r1's cortex bootstrap reads config.CortexConfig.Lobes.<name>.Enabled
+// and conditionally appends the Lobe to cortex.Config.Lobes — disabled
+// Lobes never enter the Cortex's runner list, so their Run is never
+// invoked.
+func TestAllLobes_HonorEnableFlags(t *testing.T) {
+	t.Parallel()
+
+	for _, disabled := range allLobeIDs {
+		disabled := disabled
+		t.Run("disable_"+disabled, func(t *testing.T) {
+			t.Parallel()
+
+			flags := map[string]bool{}
+			for _, id := range allLobeIDs {
+				flags[id] = id != disabled
+			}
+
+			f := newAllLobesFixture(t, allLobesOptions{EnableFlags: flags})
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := f.cortex.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer func() { _ = f.cortex.Stop(context.Background()) }()
+
+			f.cortex.Tracker().RecordMainTurn(10000)
+
+			// The fixture handle for the disabled Lobe must be nil —
+			// constructor was skipped because the EnableFlag is false.
+			switch disabled {
+			case "memory-recall":
+				if f.memRecall != nil {
+					t.Errorf("memory-recall constructor ran despite Enable=false")
+				}
+			case "wal-keeper":
+				if f.walKeeper != nil {
+					t.Errorf("wal-keeper constructor ran despite Enable=false")
+				}
+			case "rule-check":
+				if f.ruleCheck != nil {
+					t.Errorf("rule-check constructor ran despite Enable=false")
+				}
+			case "plan-update":
+				if f.planUpd != nil {
+					t.Errorf("plan-update constructor ran despite Enable=false")
+				}
+			case "clarifying-q":
+				if f.clarify != nil {
+					t.Errorf("clarifying-q constructor ran despite Enable=false")
+				}
+			case "memory-curator":
+				if f.curator != nil {
+					t.Errorf("memory-curator constructor ran despite Enable=false")
+				}
+			}
+
+			// Drive 10 rounds; the disabled Lobe must not produce any
+			// Notes. This is the "Run is never called" assertion: a
+			// Lobe that never reaches Run cannot Publish a Note with
+			// its LobeID.
+			f.driveSyntheticConversation(t, 10)
+
+			// Allow async handlers (rule-check / clarifying-q
+			// subscribers, wal-keeper backpressure ticker) to settle.
+			time.Sleep(300 * time.Millisecond)
+
+			notes := f.ws.Snapshot()
+			for _, n := range notes {
+				if n.LobeID == disabled {
+					t.Errorf("disabled Lobe %q published Note: %+v", disabled, n)
+				}
+			}
+
+			// Sanity: the OTHER Lobes still fire (otherwise the test
+			// would silently pass on a totally-broken fixture). We
+			// only require ≥1 other Lobe's Note to keep the assertion
+			// resilient to per-Lobe quirks (e.g. rule-check's
+			// subscribe-and-hold path does not always land its Note
+			// before the snapshot when run in isolation).
+			seen := make(map[string]bool)
+			for _, n := range notes {
+				seen[n.LobeID] = true
+			}
+			otherFired := 0
+			for _, id := range allLobeIDs {
+				if id == disabled {
+					continue
+				}
+				if seen[id] {
+					otherFired++
+				}
+			}
+			if otherFired == 0 {
+				t.Errorf("no other Lobe fired with %q disabled — fixture wiring may be broken; notes=%v",
+					disabled, seen)
+			}
+		})
+	}
+}
+
 // TestAllLobes_BootInFakeCortex covers TASK-32. Boot a Cortex with all
 // six Lobes, drive a 10-message synthetic conversation, then assert at
 // least one Note from each Lobe published, no panics, goroutine count
