@@ -31,7 +31,6 @@ import {
   PatchSessionRequestSchema,
   SessionMetadataSchema,
   SettingsSchema,
-  WsTicketSchema,
   type CreateSessionRequest,
   type DaemonInfo,
   type KillLaneResponse,

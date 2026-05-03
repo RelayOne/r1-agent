@@ -7,12 +7,13 @@
 //
 // Plugins:
 // - @vitejs/plugin-react-swc — React with SWC (faster than Babel).
-// - @tailwindcss/vite (Tailwind 3.4 path) — registered via PostCSS in
-//   postcss.config.cjs; we wire Tailwind through the vite plugin slot
-//   for forward-compat with shadcn's preferred plumbing.
+//
+// Tailwind 3.4 is wired through PostCSS (see postcss.config.cjs); the
+// `@tailwindcss/vite` plugin is a Tailwind v4 surface and is NOT
+// loaded here per spec §Risks ("Vite 6 + Tailwind 3 compatibility:
+// stay on v3 until shadcn migrates; do not mix").
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
-import tailwindcss from "@tailwindcss/vite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,7 +21,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   base: "/",
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": resolve(root, "src"),

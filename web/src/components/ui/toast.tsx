@@ -1,5 +1,6 @@
 // shadcn/ui Toast — generated from `npx shadcn@latest add toast`.
-// Pairs with sonner-style hook in @/components/ui/use-toast (later phase).
+// The companion useToast() hook (item 47 wire-up) consumes these
+// primitives; this file ships only the rendering primitives.
 import * as React from "react";
 import * as ToastPrimitives from "@radix-ui/react-toast";
 import { cva, type VariantProps } from "class-variance-authority";
