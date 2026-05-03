@@ -117,12 +117,13 @@ func bytesAsUint64(b []byte) uint64 {
 }
 
 // nextLaneSeq allocates the next per-session monotonic seq for a lane
-// event. TASK-7 of specs/lanes-protocol.md §11 routes this through a
-// single-writer goroutine; this commit uses an atomic counter and TASK-7
-// substitutes the channel-backed allocator while preserving the same
-// {seq=0 reserved, first call returns 1} contract.
+// event by routing through the single-writer goroutine in
+// seq_allocator.go (per specs/lanes-protocol.md §5.5 / TASK-7).
+//
+// The first call returns 1; seq=0 is reserved for the synthetic
+// session.bound event.
 func (w *Workspace) nextLaneSeq() uint64 {
-	return atomic.AddUint64(&w.laneSeq, 1)
+	return w.startSeqAllocator().next()
 }
 
 // emitLaneEvent is the single chokepoint that publishes a LaneEvent

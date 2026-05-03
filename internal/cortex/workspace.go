@@ -97,13 +97,13 @@ type Workspace struct {
 	// removed; terminal lanes remain so r1.lanes.list can return them.
 	lanes map[string]*Lane
 
-	// laneSeq is the per-session monotonic seq counter. seq=0 is reserved
-	// for the synthetic session.bound event per spec §5.5; therefore the
-	// first lane event allocated through nextLaneSeq() returns 1.
+	// laneSeqAlloc is the per-session single-writer seq allocator
+	// goroutine. Lazily started on first lane-event emission via
+	// startSeqAllocator (see seq_allocator.go).
 	//
-	// In TASK-7 this counter is allocated via a single-writer goroutine;
-	// the goroutine plumbing lives in seq_allocator.go.
-	laneSeq uint64
+	// seq=0 is reserved for the synthetic session.bound event per spec
+	// §5.5; the first allocated lane-event seq is 1.
+	laneSeqAlloc *seqAllocator
 }
 
 // NewWorkspace constructs a Workspace bound to the given event hub and
