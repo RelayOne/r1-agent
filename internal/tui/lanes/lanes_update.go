@@ -201,20 +201,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
-	// --- Keys (full bindings land in items 22 + 23; item 12
-	// only owns the dispatch shell). The 'q'/'ctrl+c' branch is
-	// here so the panel quits cleanly and the producer ctx is
-	// cancelled. ---
+	// --- Keys (item 20 + 23 + 24): cursor / mode / jump-to-lane /
+	// focus / kill confirm / help / quit. Matching follows the spec
+	// §"Keybinding Map" mode-scoped table.
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			if m.cancel != nil {
-				m.cancel()
-			}
-			return m, tea.Quit
-		}
-		return m, nil
+		return m.handleKey(msg)
 	}
 
 	return m, nil
