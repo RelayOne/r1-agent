@@ -1,9 +1,7 @@
 package lanes
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -241,50 +239,11 @@ func (m *Model) recalcAggregates() {
 	m.totalLanes = len(m.lanes)
 }
 
-// View renders the panel as one vertical join of per-lane summary
-// rows followed by a single-line status bar. This is the foundation
-// view that satisfies the tea.Model interface end-to-end after item
-// 12; checklist items 14–19 (viewEmpty, viewOverview, viewFocus,
-// renderLane, renderLanePeer, viewStatusBar) replace this body with
-// the layout-aware variants that branch on m.mode and read from the
-// renderCache. The behaviour delivered here is the always-correct
-// fallback: list every lane in stable order with glyph + title +
-// status + tokens + cost, plus an aggregate footer. It honours the
-// glyph-pairing accessibility rule from the package doc (every
-// status string is preceded by its single-cell glyph).
-func (m *Model) View() tea.View {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var b strings.Builder
-	if len(m.lanes) == 0 {
-		b.WriteString("(no lanes)\n")
-	} else {
-		for _, l := range m.lanes {
-			fmt.Fprintf(&b, "%s %-20s %-9s %5d tok  $%6.4f  %s\n",
-				l.Status.Glyph(),
-				truncate(l.Title, 20),
-				l.Status.String(),
-				l.Tokens,
-				l.CostUSD,
-				truncate(l.Activity, max(0, m.width-60)),
-			)
-			// Clear Dirty after consuming it (item 12 contract:
-			// View resets the bit so the next Update mutation is
-			// the only trigger for re-render).
-			l.Dirty = false
-		}
-	}
-	// Status bar (always rendered; not cached per spec
-	// §"Render-Cache Contract" final paragraph).
-	fmt.Fprintf(&b, "\n  r1 lanes  %d lanes  $%.4f / $%.2f  %s\n",
-		m.totalLanes, m.totalCost, m.budgetLimit, m.currentModel,
-	)
-	return tea.NewView(b.String())
-}
-
 // truncate returns s clipped to n cells with an ellipsis suffix when
-// it had to clip. n<=0 returns the empty string.
+// clipping was needed. n<=0 returns the empty string.
+//
+// Used by lanes_view.go renderers; lives here so tests in any sibling
+// file pick it up without import cycles.
 func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
