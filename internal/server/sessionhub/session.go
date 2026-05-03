@@ -103,12 +103,18 @@ type Session struct {
 // session's hot path. Lifecycle (Open, Close, Truncate, Replay) is
 // owned by the daemon's startup/shutdown glue and accessed via the
 // concrete *journal.Writer there, not through this interface.
+//
+// Note the Append return signature: the concrete *journal.Writer
+// returns (uint64, error) where the first value is the assigned seq.
+// The interface here also returns (uint64, error) so callers that
+// care about the seq (e.g. the WS subscriber's "since_seq" replay
+// boundary) can read it without a type assertion.
 type Journal interface {
-	// Append writes one journal record for the given event. The kind
-	// is the journal's wire type ("event", "tool_pre", etc.); data is
-	// the JSON-encoded payload. Append fsyncs on terminal kinds (the
-	// concrete impl decides which kinds qualify).
-	Append(kind string, data any) error
+	// Append writes one journal record for the given kind+data. The
+	// kind is the journal's classification token (used by the
+	// concrete writer to decide whether to fsync); data is the
+	// payload. Returns the assigned monotonic seq.
+	Append(kind string, data any) (uint64, error)
 }
 
 // OnEventFunc is the per-session event hook. The Session's Run loop
@@ -329,19 +335,21 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 	return loop.Run(ctx, opts.UserMessage)
 }
 
-// dispatchEvent is the public entry point the daemon's bus subscriber
+// DispatchEvent is the public entry point the daemon's bus subscriber
 // calls when a hub event fires for this session. It enforces the
-// journal-first invariant from item 24:
+// journal-first invariant from spec §11.24:
 //
-//   - First, persist the event via the OnEvent hook (which TASK-24
-//     wires to journal.Append).
+//   - First, persist the event via the OnEvent hook (TASK-24 wires
+//     this to journal.Append).
 //   - On hook error, ABORT — return the error to the caller. The
 //     caller (the bus subscriber) MUST NOT fan out the event to any
 //     downstream subscriber when this returns non-nil. This is the
-//     load-bearing consistency guarantee.
+//     load-bearing consistency guarantee that lets replay reconstruct
+//     exactly what subscribers saw: a subscriber can never observe an
+//     event the journal lost.
 //
 // Returns nil on success (caller may proceed with subscriber fanout).
-func (s *Session) dispatchEvent(ctx context.Context, ev *hub.Event) error {
+func (s *Session) DispatchEvent(ctx context.Context, ev *hub.Event) error {
 	s.runMu.Lock()
 	hook := s.onEvent
 	s.runMu.Unlock()
@@ -349,6 +357,40 @@ func (s *Session) dispatchEvent(ctx context.Context, ev *hub.Event) error {
 		return nil
 	}
 	return hook(ctx, ev)
+}
+
+// JournalFirstHook returns an OnEventFunc that:
+//
+//  1. Calls journal.Append("hub.event", ev) FIRST. If Append returns
+//     an error, the hook returns it and the caller (DispatchEvent)
+//     MUST NOT fan out the event. This is the spec §11.24 invariant.
+//  2. After the journal write succeeds, calls the optional fanout
+//     callback (typically the WS subscriber publish path).
+//
+// The fanout callback may be nil — in which case the hook is
+// journal-only. Pass it as a parameter (rather than reading it off
+// Session) so unit tests can drive the path without a real bus.
+//
+// The returned function captures j by reference; calling SetJournal
+// after this hook is built does NOT update the captured journal.
+// The daemon's startup glue therefore calls SetJournal first, THEN
+// SetOnEvent(JournalFirstHook(j, ...)) — that ordering is the only
+// supported wiring.
+func JournalFirstHook(j Journal, fanout OnEventFunc) OnEventFunc {
+	return func(ctx context.Context, ev *hub.Event) error {
+		if j != nil {
+			if _, err := j.Append("hub.event", ev); err != nil {
+				// Journal failed — refuse to fan out. The caller
+				// surfaces this error; downstream subscribers see
+				// nothing for this event.
+				return errWrap("journal append", err)
+			}
+		}
+		if fanout != nil {
+			return fanout(ctx, ev)
+		}
+		return nil
+	}
 }
 
 // wrapHandler returns an agentloop.ToolHandler that fires the
