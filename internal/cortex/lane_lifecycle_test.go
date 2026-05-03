@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/hub"
@@ -364,6 +367,108 @@ func TestLaneKill(t *testing.T) {
 	if after != before {
 		t.Errorf("re-kill should be a no-op; events grew %d→%d", before, after)
 	}
+}
+
+// TestLaneIDIsULID asserts that lane IDs (TASK-8) are valid ULIDs that
+// parse cleanly and are monotonic-by-time. The lane_id wire format is
+// "lane_<26-char ULID>"; event_id (the hub.Event.ID stamp) is a bare
+// 26-char ULID so it can be parsed by any ULID-aware consumer.
+//
+// Spec: specs/lanes-protocol.md §2 (IDs) — "ULID (oklog/ulid/v2 v2.1.1)
+// for lane_id and event_id so every emitted ID is monotonic-by-time and
+// lex-sortable".
+func TestLaneIDIsULID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("lane_id_parses_as_ulid", func(t *testing.T) {
+		w, _ := newTestWorkspace(t)
+		l := w.NewMainLane(context.Background())
+		const prefix = "lane_"
+		if !strings.HasPrefix(l.ID, prefix) {
+			t.Fatalf("lane ID missing %q prefix: %q", prefix, l.ID)
+		}
+		body := strings.TrimPrefix(l.ID, prefix)
+		if _, err := ulid.Parse(body); err != nil {
+			t.Errorf("lane id body %q does not parse as ULID: %v", body, err)
+		}
+	})
+
+	t.Run("lane_ids_are_monotonic", func(t *testing.T) {
+		w, _ := newTestWorkspace(t)
+		const prefix = "lane_"
+		const n = 64
+		ids := make([]string, n)
+		for i := 0; i < n; i++ {
+			l := w.NewMainLane(context.Background())
+			ids[i] = strings.TrimPrefix(l.ID, prefix)
+		}
+		// ULIDs minted within the same ms must be strictly increasing
+		// thanks to ulid.Monotonic.
+		for i := 1; i < n; i++ {
+			a, errA := ulid.Parse(ids[i-1])
+			b, errB := ulid.Parse(ids[i])
+			if errA != nil || errB != nil {
+				t.Fatalf("parse error: %v / %v", errA, errB)
+			}
+			if a.Compare(b) >= 0 {
+				t.Errorf("lane ULIDs not monotonic at index %d: %s >= %s", i, a.String(), b.String())
+			}
+		}
+	})
+
+	t.Run("event_id_parses_as_ulid", func(t *testing.T) {
+		// Capture the raw hub.Event so we can read .ID directly. The
+		// laneEventRecorder only keeps the LaneEvent payload; for this
+		// test we wire up our own subscriber that retains the envelope.
+		bus := hub.New()
+		var captured []*hub.Event
+		var capturedMu sync.Mutex
+		bus.Register(hub.Subscriber{
+			ID:   "event-id-capture",
+			Mode: hub.ModeObserve,
+			Events: []hub.EventType{
+				hub.EventLaneCreated, hub.EventLaneStatus,
+			},
+			Handler: func(_ context.Context, ev *hub.Event) *hub.HookResponse {
+				capturedMu.Lock()
+				captured = append(captured, ev)
+				capturedMu.Unlock()
+				return &hub.HookResponse{Decision: hub.Allow}
+			},
+		})
+		w := NewWorkspace(bus, nil)
+		w.SetSessionID("sess_test")
+		l := w.NewMainLane(context.Background())
+		_ = l.Transition(hub.LaneStatusRunning, "started", "started")
+
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			capturedMu.Lock()
+			n := len(captured)
+			capturedMu.Unlock()
+			if n >= 2 {
+				break
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		capturedMu.Lock()
+		defer capturedMu.Unlock()
+		if len(captured) < 2 {
+			t.Fatalf("expected >=2 captured events, got %d", len(captured))
+		}
+		var prev ulid.ULID
+		for i, ev := range captured {
+			id, err := ulid.Parse(ev.ID)
+			if err != nil {
+				t.Errorf("event[%d] ID %q does not parse as ULID: %v", i, ev.ID, err)
+				continue
+			}
+			if i > 0 && id.Compare(prev) <= 0 {
+				t.Errorf("event[%d] ULID not monotonic: %s <= %s", i, id.String(), prev.String())
+			}
+			prev = id
+		}
+	})
 }
 
 // TestLaneConstructorsKindAndParent asserts the three Workspace.NewLane*

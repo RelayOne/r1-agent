@@ -19,9 +19,11 @@ package cortex
 import (
 	"context"
 	"crypto/rand"
-	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/oklog/ulid/v2"
 
 	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/hub"
@@ -85,35 +87,55 @@ func allowedTransition(oldS, newS hub.LaneStatus) bool {
 	return row[newS]
 }
 
-// generateLaneID returns a monotonic-by-time identifier for a lane. The
-// format is the prefix followed by a hex-encoded UnixNano timestamp and 8
-// bytes of crypto/rand entropy, giving lex-sortable IDs that are unique
-// across the session. TASK-8 of specs/lanes-protocol.md §11 swaps this
-// for oklog/ulid/v2's MonotonicEntropy generator; until then the prefix
-// keeps the "lane_" namespace so logs can grep one source and the
-// timestamp-prefix preserves lex-ordering.
-func generateLaneID(prefix string) string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// Entropy unavailable: fall back to a timestamp-only identifier.
-		// Two lanes created in the same nanosecond would collide, but the
-		// caller (newLane) holds the workspace mutex across allocation so
-		// in practice the OS clock advances between calls.
-		now := time.Now().UnixNano()
-		return fmt.Sprintf("%s%016x", prefix, now)
-	}
-	return fmt.Sprintf("%s%016x%016x", prefix, time.Now().UnixNano(), bytesAsUint64(b[:8]))
+// laneULIDMu guards laneULIDEntropy. The MonotonicEntropy reader is
+// stateful — concurrent reads corrupt the internal counter — so we
+// serialize ULID allocation behind this mutex. The single-writer seq
+// allocator already serializes most callers, but generateULID is called
+// for both lane_id and event_id from multiple goroutines (event_id is
+// stamped during EmitAsync fan-out), so the lock is required.
+var (
+	laneULIDMu      sync.Mutex
+	laneULIDEntropy = ulid.Monotonic(&ulidEntropyReader{}, 0)
+)
+
+// ulidEntropyReader is a crypto/rand-backed io.Reader satisfying the
+// signature ulid.Monotonic expects. Using crypto/rand keeps the random
+// bytes high-quality even under test load (matches the eventlog
+// pattern in internal/eventlog/log.go).
+type ulidEntropyReader struct{}
+
+func (r *ulidEntropyReader) Read(p []byte) (int, error) {
+	return rand.Read(p)
 }
 
-func bytesAsUint64(b []byte) uint64 {
-	if len(b) < 8 {
-		return 0
+// generateULID returns a fresh ULID string. Monotonic-by-time within a
+// single millisecond and globally unique across processes thanks to 80
+// bits of entropy. Used for both lane_id (TASK-8) and event_id.
+//
+// On the rare case that monotonic entropy overflows in a single
+// millisecond (caller minted >2^80 IDs in one ms — practically
+// impossible), we fall back to a fresh non-monotonic ULID so the call
+// still succeeds. Callers that depend on strict monotonicity within a
+// burst should serialize their calls; the per-session seq allocator
+// already does this for lane events.
+func generateULID() string {
+	laneULIDMu.Lock()
+	defer laneULIDMu.Unlock()
+	id, err := ulid.New(ulid.Timestamp(time.Now()), laneULIDEntropy)
+	if err != nil {
+		id = ulid.MustNew(ulid.Timestamp(time.Now()), &ulidEntropyReader{})
 	}
-	var u uint64
-	for i := 0; i < 8; i++ {
-		u = (u << 8) | uint64(b[i])
-	}
-	return u
+	return id.String()
+}
+
+// generateLaneID returns a monotonic-by-time identifier for a lane in
+// the form `<prefix><ULID>`. ULIDs are 26-character Crockford base32
+// strings that are lex-sortable by time (per specs/lanes-protocol.md
+// §2 IDs requirement: "ULID (oklog/ulid/v2 v2.1.1, already in go.mod)
+// for lane_id and event_id so every emitted ID is monotonic-by-time
+// and lex-sortable").
+func generateLaneID(prefix string) string {
+	return prefix + generateULID()
 }
 
 // nextLaneSeq allocates the next per-session monotonic seq for a lane
@@ -150,7 +172,12 @@ func (w *Workspace) emitLaneEvent(eventType hub.EventType, l *Lane, ev *hub.Lane
 	if ev.SessionID == "" {
 		ev.SessionID = sid
 	}
+	// TASK-8: stamp event_id with a ULID so the wire-level event identifier
+	// is monotonic-by-time and lex-sortable per specs/lanes-protocol.md §2.
+	// hub.Bus.ensureID would otherwise mint a non-ULID synthetic identifier;
+	// pre-stamping here keeps lane events conformant to the wire contract.
 	w.events.EmitAsync(&hub.Event{
+		ID:   generateULID(),
 		Type: eventType,
 		Lane: ev,
 	})
