@@ -125,15 +125,16 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
-// --- Cortex (7 events) ---
+// --- Cortex (8 events) ---
 const (
-	EventCortexNotePublished     EventType = "cortex.note.published"
-	EventCortexPreWarmFired      EventType = "cortex.prewarm.fired"
-	EventCortexPreWarmFailed     EventType = "cortex.prewarm.failed"
-	EventCortexRouterDecided     EventType = "cortex.router.decided"
-	EventCortexLobeStarted       EventType = "cortex.lobe.started"
-	EventCortexLobePanic         EventType = "cortex.lobe.panic"
-	EventCortexSpotlightChanged  EventType = "cortex.spotlight.changed"
+	EventCortexNotePublished           EventType = "cortex.note.published"
+	EventCortexPreWarmFired            EventType = "cortex.prewarm.fired"
+	EventCortexPreWarmFailed           EventType = "cortex.prewarm.failed"
+	EventCortexRouterDecided           EventType = "cortex.router.decided"
+	EventCortexLobeStarted             EventType = "cortex.lobe.started"
+	EventCortexLobePanic               EventType = "cortex.lobe.panic"
+	EventCortexSpotlightChanged        EventType = "cortex.spotlight.changed"
+	EventCortexWorkspaceMemoryAdded    EventType = "cortex.workspace.memory_added"
 )
 
 // Mode determines how the hook participates.
