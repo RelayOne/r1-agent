@@ -113,6 +113,7 @@ func run() error {
 	defer backends.Close()
 	registered, skipped := backends.SeedBuiltinSkillManifests()
 	fmt.Fprintf(os.Stderr, "r1-mcp: seeded %d builtin skill manifests (%d already registered)\n", registered, skipped)
+	// LINT-ALLOW chdir-cli-entry: r1-mcp is a single-process MCP server; cwd is read once at startup to seed pack registries, never re-read inside request handlers.
 	if wd, err := os.Getwd(); err == nil {
 		packRegistered, packSkipped, packErr := backends.SeedPackRegistries(wd)
 		if packErr != nil {

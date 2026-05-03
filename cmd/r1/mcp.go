@@ -103,6 +103,7 @@ Reads stoke.policy.yaml's mcp_servers block. Exit codes:
 // block, constructs a Registry with a nil emitter (CLI is outside the
 // SOW event bus), and returns a Close closure for deferred cleanup.
 func loadMCPRegistry(policyPath string) (*mcp.Registry, []mcp.ServerConfig, func(), error) {
+	// LINT-ALLOW chdir-cli-entry: invoked from r1 mcp subcommand entry; cwd is the policy-discovery anchor, captured once and passed to AutoLoadPolicy.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("getwd: %w", err)

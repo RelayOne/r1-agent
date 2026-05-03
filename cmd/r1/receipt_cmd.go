@@ -115,6 +115,7 @@ func resolveReceiptTarget(rawPath, ledgerOverride string) (receiptTarget, error)
 
 	// "." or unset → try ledger subdir under cwd.
 	if candidate == "." {
+		// LINT-ALLOW chdir-cli-entry: r1 receipt subcommand; cwd anchors the .r1/ledger discovery path when no explicit override is set.
 		cwd, err := os.Getwd()
 		if err != nil {
 			return receiptTarget{}, fmt.Errorf("getwd: %w", err)

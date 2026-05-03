@@ -48,9 +48,31 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 - **Hits remaining:** 0
 - Note: `internal/wisdom/`, `internal/research/`, `internal/replay/`, `internal/mcp/` are all clean.
 
-## Pass 5 — remaining packages
+## Pass 5 — remaining packages (cmd/* and internal/scan)
 
-(filled in when the pass-5 commit lands)
+- **Hits found:** 18 — all in `cmd/r1`, `cmd/r1-acp`, `cmd/r1-mcp`, plus one test helper in `internal/scan/selfscan_test.go`.
+- **Disposition:** all annotated; none refactored. CLI subcommand entries get `// LINT-ALLOW chdir-cli-entry: <reason>` because the cwd is the user's invocation directory, captured once before any goroutine spawns and stored in `repoRoot` / `cwd` for the rest of the call. Test helpers get `// LINT-ALLOW chdir-test: <reason>` because they run serially under `go test`, never inside a session goroutine.
+- **Per-file annotations:**
+  - `cmd/r1-acp/main.go:248` — chdir-cli-entry (per-editor adapter)
+  - `cmd/r1-mcp/main.go:117` — chdir-cli-entry (single-process MCP server, startup-only)
+  - `cmd/r1/docs_test.go:42` — chdir-test (repo-root locator)
+  - `cmd/r1/export_cmd.go:84` — chdir-cli-entry
+  - `cmd/r1/lsp_cmd.go:54` — chdir-cli-entry (paired with internal/lsp pass-4 refactor)
+  - `cmd/r1/main.go:840` — chdir-cli-entry (`r1 init`)
+  - `cmd/r1/mcp.go:107` — chdir-cli-entry (policy-discovery anchor)
+  - `cmd/r1/mcp_cmd_test.go:169,174,178` — chdir-test (policy-discovery fixture chdir + restore)
+  - `cmd/r1/mission_cmd.go:76` — chdir-cli-entry
+  - `cmd/r1/ops_events.go:97` — chdir-cli-entry
+  - `cmd/r1/ops_logs.go:94` — chdir-cli-entry
+  - `cmd/r1/ops_memory.go:98` — chdir-cli-entry
+  - `cmd/r1/receipt_cmd.go:119` — chdir-cli-entry
+  - `cmd/r1/task_cmd.go:39` — chdir-cli-entry (captured into CodeExecutor.repoRoot)
+  - `cmd/r1/verify_cmd.go:138` — chdir-cli-entry (captured into verifyServer.repoRoot)
+  - `internal/scan/selfscan_test.go:80` — chdir-test
+- **Refactors:** 0
+- **Hits remaining:** 0
+
+After this pass `make lint-chdir` exits 0.
 
 ## Running totals
 
@@ -60,4 +82,6 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 | 2    | 1             | 1         | 0          | 0           |
 | 3    | 0             | 0         | 0          | 0           |
 | 4    | 3             | 2         | 2          | 0           |
-| 5    | tbd           | tbd       | tbd        | tbd         |
+| 5    | 18            | 18        | 0          | 0           |
+
+Repo-wide totals across Phase A: **22 unannotated hits at start, 21 annotated, 2 refactored (one was both annotated AND refactored), 0 remaining.** `make lint-chdir` is green; the audit gate is satisfied.

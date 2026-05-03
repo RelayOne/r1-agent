@@ -77,6 +77,7 @@ func TestSelfScan(t *testing.T) {
 // findRepoRoot walks up from the working directory looking for go.mod.
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
+	// LINT-ALLOW chdir-test: test-only repo-root locator under `go test`.
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""

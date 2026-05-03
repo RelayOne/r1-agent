@@ -837,6 +837,7 @@ func main() {
 // --- init/wizard: project configuration wizard ---
 
 func initCmd(args []string) {
+	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
 	projectDir, _ := os.Getwd()
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		projectDir = args[0]
