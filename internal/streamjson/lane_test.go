@@ -146,6 +146,81 @@ func TestLaneStreamJSONEmitsAll6(t *testing.T) {
 	}
 }
 
+// TestLaneEventCriticalClassification (TASK-10) — table-driven coverage
+// of isCriticalLaneEvent + isCriticalType for the three critical-variant
+// lane events plus three matching non-critical cases.
+//
+// Spec §5.3 routing table:
+//
+//   - lane.killed                       → critical  (unconditional)
+//   - lane.note (severity=critical)     → critical  (payload-conditional)
+//   - lane.status (status=errored)      → critical  (payload-conditional)
+//   - lane.note (other severities)      → observability
+//   - lane.status (non-errored)         → observability
+//   - lane.delta / lane.cost / lane.created → observability
+//
+// isCriticalType only sees the type string, so it returns true ONLY for
+// lane.killed (the unconditional case). isCriticalLaneEvent inspects
+// the full payload and covers all three critical variants.
+func TestLaneEventCriticalClassification(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		ev           *hub.Event
+		wantEvent    bool // isCriticalLaneEvent (payload-aware)
+		wantTypeOnly bool // isCriticalType(string(ev.Type), "")
+	}{
+		{
+			name:         "killed_is_critical",
+			ev:           &hub.Event{Type: hub.EventLaneKilled, Lane: &hub.LaneEvent{LaneID: "x"}},
+			wantEvent:    true,
+			wantTypeOnly: true,
+		},
+		{
+			name:         "note_critical_is_critical",
+			ev:           &hub.Event{Type: hub.EventLaneNote, Lane: &hub.LaneEvent{LaneID: "x", NoteSeverity: "critical"}},
+			wantEvent:    true,
+			wantTypeOnly: false,
+		},
+		{
+			name:         "status_errored_is_critical",
+			ev:           &hub.Event{Type: hub.EventLaneStatus, Lane: &hub.LaneEvent{LaneID: "x", Status: hub.LaneStatusErrored}},
+			wantEvent:    true,
+			wantTypeOnly: false,
+		},
+		{
+			name:         "note_info_is_observability",
+			ev:           &hub.Event{Type: hub.EventLaneNote, Lane: &hub.LaneEvent{LaneID: "x", NoteSeverity: "info"}},
+			wantEvent:    false,
+			wantTypeOnly: false,
+		},
+		{
+			name:         "status_running_is_observability",
+			ev:           &hub.Event{Type: hub.EventLaneStatus, Lane: &hub.LaneEvent{LaneID: "x", Status: hub.LaneStatusRunning}},
+			wantEvent:    false,
+			wantTypeOnly: false,
+		},
+		{
+			name:         "delta_is_observability",
+			ev:           &hub.Event{Type: hub.EventLaneDelta, Lane: &hub.LaneEvent{LaneID: "x"}},
+			wantEvent:    false,
+			wantTypeOnly: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotEvent := isCriticalLaneEvent(tc.ev)
+			if gotEvent != tc.wantEvent {
+				t.Errorf("isCriticalLaneEvent(%s) = %v, want %v", tc.name, gotEvent, tc.wantEvent)
+			}
+			gotType := isCriticalType(string(tc.ev.Type), "")
+			if gotType != tc.wantTypeOnly {
+				t.Errorf("isCriticalType(%q,\"\") = %v, want %v", string(tc.ev.Type), gotType, tc.wantTypeOnly)
+			}
+		})
+	}
+}
+
 // splitNewline returns the newline-separated parts of s. Hand-rolled
 // to avoid a stdlib name-substring collision with the repo's
 // stub-detection hook regex.
