@@ -31,7 +31,10 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 
 ## Pass 3 — `goast/`, `repomap/`, `symindex/`, `chunker/`, `tfidf/`, `vecindex/`
 
-(filled in when the pass-3 commit lands)
+- **Hits found:** 0
+- **Disposition:** none required.
+- **Hits remaining:** 0
+- Note: these analysis packages already accept `repoRoot string` (or equivalent file paths) at every public entry point — no implicit cwd reads. Verified by grep over `os.Chdir` / `os.Getwd` / `filepath.Abs("")` / `os.Open("./...")`.
 
 ## Pass 4 — `memory/`, `wisdom/`, `research/`, `replay/`, `lsp/`, `mcp/`
 
@@ -47,6 +50,6 @@ The repo-wide running total appears at the bottom and ticks down to 0 by TASK-9 
 | ---- | ------------- | --------- | ---------- | ----------- |
 | 1    | 0             | 0         | 0          | 0           |
 | 2    | 1             | 1         | 0          | 0           |
-| 3    | tbd           | tbd       | tbd        | tbd         |
+| 3    | 0             | 0         | 0          | 0           |
 | 4    | tbd           | tbd       | tbd        | tbd         |
 | 5    | tbd           | tbd       | tbd        | tbd         |
