@@ -150,12 +150,11 @@ func (l *ClarifyingQLobe) ensureSubscribed() {
 	l.subscribe()
 }
 
-// subscribe is the no-op stub for TASK-21. TASK-24 and TASK-25 register
-// the user-message and answered-question subscribers here. Defining
-// the method now keeps the Run scaffolding stable across the per-task
-// commits.
+// subscribe wires the hub subscribers required by TASK-24 + TASK-25.
+// Implemented in trigger.go via subscribeImpl so the cap-at-3 + resolve
+// logic stays in its own file.
 func (l *ClarifyingQLobe) subscribe() {
-	// TASK-24 / TASK-25 land here.
+	l.subscribeImpl()
 }
 
 // OutstandingCount reports the number of unresolved clarifying-question
