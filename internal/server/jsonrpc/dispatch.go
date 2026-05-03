@@ -159,6 +159,9 @@ func stokeCodeFor(c stokerr.Code) int {
 
 // ErrorFromGo translates an arbitrary Go error to a JSON-RPC error.
 //
+//   - *paramsError    -> CodeInvalidParams (jsonrpc-internal sentinel for
+//     params decode failures from RegisterDesktopAPI's adapters; -32602
+//     per JSON-RPC §5.1)
 //   - *stokerr.Error  -> taxonomy-mapped numeric code, data.stoke_code = .Code
 //   - desktopapi.ErrNotImplemented (matched via errors.Is) -> CodeNotImplemented
 //   - any other       -> CodeInternalError, data.stoke_code = "internal"
@@ -167,6 +170,17 @@ func stokeCodeFor(c stokerr.Code) int {
 func ErrorFromGo(err error) *Error {
 	if err == nil {
 		return nil
+	}
+	// Params decode failure — must come BEFORE the stokerr.Error path
+	// because paramsError doesn't carry a stokerr.Code (it's a
+	// transport-layer concern, not an application taxonomy).
+	var pe *paramsError
+	if errors.As(err, &pe) {
+		return &Error{
+			Code:    CodeInvalidParams,
+			Message: err.Error(),
+			Data:    map[string]any{"stoke_code": "validation"},
+		}
 	}
 	// errors.Is for the desktopapi sentinel — it's a *stokerr.Error so
 	// the type-assert path also handles it, but we keep the explicit
