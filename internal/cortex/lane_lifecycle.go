@@ -409,6 +409,23 @@ func (l *Lane) EmitNote(noteID, severity string) {
 	})
 }
 
+// SetPinned toggles the orthogonal pinned flag on the lane. Per spec
+// §3.2 / §7.5 / TASK-23 this MUST emit no event — surfaces re-fetch
+// via r1.lanes.list which is cheap. Idempotent: setting pinned to its
+// current value is a no-op (no mutation, no error).
+//
+// SetPinned is goroutine-safe via the workspace mutex; it does not
+// run any state-machine validation because pinned is orthogonal to
+// Status (a terminal lane may still be pinned/unpinned for audit).
+func (l *Lane) SetPinned(pinned bool) {
+	if l == nil || l.ws == nil {
+		return
+	}
+	l.ws.mu.Lock()
+	l.Pinned = pinned
+	l.ws.mu.Unlock()
+}
+
 // Kill emits lane.killed and follows it with a lane.status transition to
 // cancelled. Spec §4.6 says lane.killed is REDUNDANT with the terminal
 // lane.status carrying status=cancelled; surfaces use lane.killed for

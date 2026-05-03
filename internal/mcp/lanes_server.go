@@ -437,11 +437,14 @@ func (s *LanesServer) handleKill(_ context.Context, args map[string]interface{})
 	}
 	sessionID, _ := args["session_id"].(string)
 	if sessionID == "" {
-		return s.envelopeError("invalid_request", "session_id is required"), nil
+		// Spec §7.4 error_code enum: [not_found, permission_denied,
+		// internal]. Validation errors map to "internal" so we stay
+		// inside the enum.
+		return s.envelopeError("internal", "session_id is required"), nil
 	}
 	laneID, _ := args["lane_id"].(string)
 	if laneID == "" {
-		return s.envelopeError("invalid_request", "lane_id is required"), nil
+		return s.envelopeError("internal", "lane_id is required"), nil
 	}
 	reason, _ := args["reason"].(string)
 	cascade := true
@@ -541,9 +544,55 @@ func (s *LanesServer) descendantsOf(rootID string) []*cortex.Lane {
 	return out
 }
 
-// handlePin is implemented in TASK-23.
-func (s *LanesServer) handlePin(_ context.Context, _ map[string]interface{}) (string, error) {
-	return s.envelopeError("not_implemented", "r1.lanes.pin scaffold; implementation in TASK-23"), nil
+// handlePin implements r1.lanes.pin per spec §7.5 (TASK-23). Sets or
+// clears the pinned flag on a lane. Idempotent — setting pinned to
+// its current value still returns ok:true.
+//
+// Per spec: this MUST NOT emit an event. Surfaces re-fetch via
+// r1.lanes.list (cheap) when their pin command returns ok. The
+// rationale is that pinning is a UI affordance, not a workflow event;
+// adding it to the event stream would inflate the WAL with state
+// noise that every consumer would discard.
+func (s *LanesServer) handlePin(_ context.Context, args map[string]interface{}) (string, error) {
+	if s.backend == nil {
+		return s.envelopeError("internal", "lanes backend not configured"), nil
+	}
+	sessionID, _ := args["session_id"].(string)
+	if sessionID == "" {
+		return s.envelopeError("internal", "session_id is required"), nil
+	}
+	laneID, _ := args["lane_id"].(string)
+	if laneID == "" {
+		return s.envelopeError("internal", "lane_id is required"), nil
+	}
+	pinnedRaw, ok := args["pinned"]
+	if !ok {
+		return s.envelopeError("internal", "pinned is required"), nil
+	}
+	pinned, ok := pinnedRaw.(bool)
+	if !ok {
+		return s.envelopeError("internal", "pinned must be a boolean"), nil
+	}
+
+	if backendSession := s.backend.SessionID(); backendSession != "" && backendSession != sessionID {
+		return s.envelopeError("not_found", fmt.Sprintf("session %q not bound to this lanes server", sessionID)), nil
+	}
+
+	l, ok := s.backend.GetLane(laneID)
+	if !ok || l == nil {
+		return s.envelopeError("not_found", fmt.Sprintf("lane %q not found", laneID)), nil
+	}
+
+	// LaneBackend gives us a *cortex.Lane; SetPinned is exported on
+	// that type and goroutine-safe via the workspace mutex. The
+	// fakeLanesBackend used in tests holds a *cortex.Lane directly so
+	// the mutation flows through too.
+	l.SetPinned(pinned)
+
+	return s.envelopeOK(map[string]any{
+		"lane_id": l.ID,
+		"pinned":  pinned,
+	}), nil
 }
 
 // SubscribeArgs is the typed shape of the r1.lanes.subscribe input
