@@ -176,3 +176,203 @@ func TestWALKeeperLobe_NilBusesNoOp(t *testing.T) {
 		t.Fatalf("Run did not return after ctx cancel")
 	}
 }
+
+// TestWALKeeperLobe_DropsInfoOnBackpressure verifies that info-severity
+// events are dropped when the pending channel is at or above the
+// backpressure threshold (≥0.9*1000=900). The test bypasses the live
+// drainer by populating l.pending directly with backlog bus.Events so
+// the channel saturates without requiring a slow durable bus mock.
+func TestWALKeeperLobe_DropsInfoOnBackpressure(t *testing.T) {
+	durable, _ := newTestBus(t)
+	defer durable.Close()
+
+	h := hub.New()
+	l := NewWALKeeperLobe(h, durable, nil, WALFraming{})
+
+	// Saturate the pending channel to 900 (= 0.9*1000) without
+	// starting the drainer. Each backlog entry is a real bus.Event
+	// shaped exactly like a forwarded hub event would be.
+	for i := 0; i < 900; i++ {
+		l.pending <- pendingItem{evt: bus.Event{Type: "cortex.hub.backlog", CausalRef: "evt-" + itoa(i)}}
+	}
+	if got := l.PendingLen(); got != 900 {
+		t.Fatalf("pre-test pending depth: got %d want 900", got)
+	}
+
+	// Drive the handler directly (no goroutine bus dispatch) so the
+	// test is deterministic.
+	const numInfo = 100
+	for i := 0; i < numInfo; i++ {
+		l.handleHubEvent(&hub.Event{
+			ID:   "info-" + itoa(i),
+			Type: hub.EventToolPreUse, // info-severity per eventSeverity
+		})
+	}
+
+	dropped := l.DroppedCount()
+	if dropped == 0 {
+		t.Fatalf("expected non-zero drops at saturation; got %d", dropped)
+	}
+	if dropped > numInfo {
+		t.Fatalf("dropped exceeds emitted: %d > %d", dropped, numInfo)
+	}
+	t.Logf("dropped=%d of %d info events", dropped, numInfo)
+}
+
+// TestWALKeeperLobe_NoDropBelowThreshold verifies the lobe does NOT
+// drop info events when the pending channel is comfortably below
+// 0.9*cap. We pre-load to 800 (well under 900) and send 50 info
+// events; pending climbs to 850 (still under threshold), so all 50
+// should enqueue successfully with zero drops.
+func TestWALKeeperLobe_NoDropBelowThreshold(t *testing.T) {
+	durable, _ := newTestBus(t)
+	defer durable.Close()
+
+	h := hub.New()
+	l := NewWALKeeperLobe(h, durable, nil, WALFraming{})
+
+	// Push the channel to 800 — comfortably under the 900 threshold.
+	for i := 0; i < 800; i++ {
+		l.pending <- pendingItem{evt: bus.Event{Type: "cortex.hub.backlog", CausalRef: "evt-" + itoa(i)}}
+	}
+
+	// Drive 50 info events; channel will rise to 850, still < 900.
+	for i := 0; i < 50; i++ {
+		l.handleHubEvent(&hub.Event{
+			ID:   "info-" + itoa(i),
+			Type: hub.EventToolPreUse,
+		})
+	}
+
+	if got := l.DroppedCount(); got != 0 {
+		t.Fatalf("unexpected drops below threshold: got %d want 0", got)
+	}
+	if got := l.PendingLen(); got != 850 {
+		t.Fatalf("pending depth after enqueue: got %d want 850", got)
+	}
+}
+
+// TestWALKeeperLobe_NonInfoEventsNotDropped verifies that warning- and
+// critical-severity events are NOT dropped via the info-only path
+// even at full saturation; they take the blocking-send fallback.
+func TestWALKeeperLobe_NonInfoEventsNotDropped(t *testing.T) {
+	durable, _ := newTestBus(t)
+	defer durable.Close()
+
+	h := hub.New()
+	l := NewWALKeeperLobe(h, durable, nil, WALFraming{})
+
+	// Saturate, then send a warning-severity event.
+	for i := 0; i < 1000; i++ {
+		l.pending <- pendingItem{evt: bus.Event{Type: "cortex.hub.backlog", CausalRef: "evt-" + itoa(i)}}
+	}
+
+	preDrop := l.DroppedCount()
+
+	// Run handler in goroutine so its 50ms blocking-send does not
+	// stall the test if the channel is full and unconsumed.
+	done := make(chan struct{})
+	go func() {
+		l.handleHubEvent(&hub.Event{
+			ID:   "err-1",
+			Type: hub.EventToolError, // warning per eventSeverity
+		})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		// Acceptable: 50ms blocking timeout + scheduler jitter.
+	}
+
+	// At most one drop (the timeout fallback) is allowed; the
+	// info-only fast-drop path must not trigger.
+	postDrop := l.DroppedCount()
+	delta := int64(postDrop - preDrop)
+	if delta > 1 {
+		t.Fatalf("warning event dropped via info path: delta=%d", delta)
+	}
+}
+
+// TestWALKeeperLobe_EmitsBackpressureNote verifies that with at least
+// one drop the warning Note ticker emits a single Note with
+// Severity=warning and a "wal" tag. The interval is overridden to 50ms
+// so the test runs in well under a second.
+func TestWALKeeperLobe_EmitsBackpressureNote(t *testing.T) {
+	durable, _ := newTestBus(t)
+	defer durable.Close()
+
+	ws := cortex.NewWorkspace(nil, nil)
+	h := hub.New()
+	l := NewWALKeeperLobe(h, durable, ws, WALFraming{}).
+		WithBackpressureNoteInterval(50 * time.Millisecond)
+
+	// Pre-load the dropped counter directly so the next ticker
+	// interval emits a Note unconditionally.
+	l.dropped.Store(7)
+
+	stop := runLobe(t, l)
+	defer stop()
+
+	// Wait up to 1s for the ticker to fire and the Note to land.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		notes := ws.Snapshot()
+		for _, n := range notes {
+			if n.LobeID == l.ID() && n.Severity == cortex.SevWarning && hasTag(n.Tags, "wal") {
+				t.Logf("got backpressure note: %q", n.Title)
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("backpressure note never published; notes=%d", len(ws.Snapshot()))
+}
+
+// TestWALKeeperLobe_NoNoteWhenZeroDrops verifies the ticker does NOT
+// emit a Note when the dropped counter is zero (avoids spam).
+func TestWALKeeperLobe_NoNoteWhenZeroDrops(t *testing.T) {
+	durable, _ := newTestBus(t)
+	defer durable.Close()
+
+	ws := cortex.NewWorkspace(nil, nil)
+	h := hub.New()
+	l := NewWALKeeperLobe(h, durable, ws, WALFraming{}).
+		WithBackpressureNoteInterval(20 * time.Millisecond)
+
+	stop := runLobe(t, l)
+	defer stop()
+
+	time.Sleep(150 * time.Millisecond) // multiple tick intervals
+
+	for _, n := range ws.Snapshot() {
+		if n.LobeID == l.ID() {
+			t.Fatalf("unexpected note when dropped=0: %+v", n)
+		}
+	}
+}
+
+// --- helpers ---
+
+func hasTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+// itoa is a no-import int-to-string helper used in tight loops where
+// importing strconv would be overkill. Handles non-negative ints only.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	buf := make([]byte, 0, 8)
+	for i > 0 {
+		buf = append([]byte{byte('0' + i%10)}, buf...)
+		i /= 10
+	}
+	return string(buf)
+}

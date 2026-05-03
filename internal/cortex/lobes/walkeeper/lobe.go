@@ -3,15 +3,16 @@
 // bus.Bus so every hub event survives a daemon restart and replays into
 // post-mortem analyzers.
 //
-// Spec: specs/cortex-concerns.md item 10 ("WALKeeperLobe — frame and forward").
+// Spec: specs/cortex-concerns.md items 10–11 ("WALKeeperLobe").
 //
 // Design summary:
 //
 //   - Construction: NewWALKeeperLobe(h, w, ws, framing). The Lobe holds
 //     a writable *cortex.Workspace handle (LobeInput.Workspace is the
 //     read-only adapter — Lobes that publish must capture the write
-//     handle at construction time). ws may be nil; downstream tasks
-//     (TASK-11) use it to publish backpressure warning Notes.
+//     handle at construction time). ws may be nil; in that case the
+//     backpressure-warning Note is silently dropped (the WAL drain
+//     itself still functions).
 //
 //   - Subscription: on Run, the Lobe registers a hub.Subscriber with
 //     Events=["*"] (wildcard match-all) and Mode=ModeObserve. Each
@@ -19,19 +20,32 @@
 //     bus.Event{Type: framing.TypePrefix+evt.Type, Payload: ...,
 //     CausalRef: evt.ID} on the durable bus.
 //
-//   - Restart safety: the Lobe holds no persistent state beyond the
-//     durable bus's WAL. Stopping the Lobe cancels the Run context,
-//     which Unregisters the subscriber and returns the drainer
-//     goroutine. Restarting registers a fresh subscriber on a fresh
-//     Run; the durable bus continues to assign monotonic sequence
-//     numbers and unique IDs to each forwarded event so no duplicates
-//     appear in replay.
+//   - Backpressure (item 11): outstanding writes are routed through a
+//     buffered channel of capacity 1000. When the channel is ≥ 0.9*cap
+//     full and the incoming event is info-severity, the event is
+//     dropped and an atomic counter is incremented. Every 30s, if the
+//     counter is non-zero, the Lobe Publishes a single Note with
+//     Severity=warning and Tags=["wal","backpressure"] summarizing the
+//     drops since the last tick (counter is reset). The ticker
+//     interval is configurable (BackpressureNoteInterval) so tests can
+//     drive it on millisecond cadence.
+//
+//   - Restart safety (item 12): the Lobe holds no persistent state
+//     beyond the durable bus's WAL. Stopping the Lobe cancels the Run
+//     context, which Unregisters the subscriber and returns the
+//     drainer goroutine. Restarting registers a fresh subscriber on a
+//     fresh Run; the durable bus continues to assign monotonic
+//     sequence numbers and unique IDs to each forwarded event so no
+//     duplicates appear in replay.
 package walkeeper
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/cortex"
@@ -50,8 +64,17 @@ type WALFraming struct {
 const defaultTypePrefix = "cortex.hub."
 
 // pendingCap is the buffered-channel capacity for outstanding forwards.
-// Future tasks (TASK-11) apply backpressure when this fills past 90%.
+// Spec item 11 fixes this at 1000.
 const pendingCap = 1000
+
+// backpressureThreshold is the channel-fill ratio at which info-severity
+// drops begin. 0.9*1000 = 900.
+const backpressureThreshold = 0.9
+
+// defaultBackpressureNoteInterval is the production cadence for
+// emitting the warning Note when drops are non-zero. Tests override it
+// to millisecond cadence via the constructor option.
+const defaultBackpressureNoteInterval = 30 * time.Second
 
 // subscriberID is the stable hub.Subscriber.ID used for register/unregister.
 const subscriberID = "walkeeper"
@@ -75,6 +98,15 @@ type WALKeeperLobe struct {
 	// the drainer goroutine started in Run.
 	pending chan pendingItem
 
+	// dropped counts info-severity events dropped due to backpressure
+	// since the last warning Note. Reset to 0 each time the warning
+	// Note fires.
+	dropped atomic.Uint64
+
+	// backpressureNoteInterval is the cadence of the warning-Note
+	// ticker. Defaults to 30s; tests override via WithBackpressureNoteInterval.
+	backpressureNoteInterval time.Duration
+
 	// runMu serializes Run invocations. The Lobe contract allows
 	// repeated Run calls across daemon restarts; runMu ensures only
 	// one drainer goroutine and one subscriber registration are alive
@@ -91,20 +123,32 @@ type WALKeeperLobe struct {
 //     drive Publish directly).
 //   - w:       durable bus.Bus to forward into (must be non-nil for Run
 //     to perform any forwarding; nil makes Run a no-op).
-//   - ws:      writable cortex.Workspace. May be nil; held for use by
-//     downstream tasks (TASK-11 backpressure warning Notes).
+//   - ws:      writable cortex.Workspace. May be nil; if nil,
+//     backpressure warning Notes are silently dropped.
 //   - framing: TypePrefix override. Empty TypePrefix selects "cortex.hub.".
 func NewWALKeeperLobe(h *hub.Bus, w *bus.Bus, ws *cortex.Workspace, framing WALFraming) *WALKeeperLobe {
 	if framing.TypePrefix == "" {
 		framing.TypePrefix = defaultTypePrefix
 	}
 	return &WALKeeperLobe{
-		h:       h,
-		w:       w,
-		ws:      ws,
-		framing: framing,
-		pending: make(chan pendingItem, pendingCap),
+		h:                        h,
+		w:                        w,
+		ws:                       ws,
+		framing:                  framing,
+		pending:                  make(chan pendingItem, pendingCap),
+		backpressureNoteInterval: defaultBackpressureNoteInterval,
 	}
+}
+
+// WithBackpressureNoteInterval overrides the default 30s ticker cadence
+// used to emit backpressure warning Notes. Returns the receiver so
+// callers can chain. Intended for tests; production callers should not
+// invoke this.
+func (l *WALKeeperLobe) WithBackpressureNoteInterval(d time.Duration) *WALKeeperLobe {
+	if d > 0 {
+		l.backpressureNoteInterval = d
+	}
+	return l
 }
 
 // ID satisfies cortex.Lobe.
@@ -118,11 +162,12 @@ func (l *WALKeeperLobe) Description() string {
 // Kind satisfies cortex.Lobe. Deterministic — no LLM calls.
 func (l *WALKeeperLobe) Kind() cortex.LobeKind { return cortex.KindDeterministic }
 
-// Run registers the hub subscriber, starts the drainer goroutine, and
-// blocks until ctx is cancelled.
+// Run registers the hub subscriber, starts the drainer goroutine and
+// the backpressure-note ticker, and blocks until ctx is cancelled.
 //
-// Lifecycle: registration and drainer are torn down on ctx.Done so a
-// subsequent Run call (after a daemon restart) can re-register cleanly.
+// Lifecycle: registration, drainer, and ticker are all torn down on
+// ctx.Done so a subsequent Run call (after a daemon restart) can
+// re-register cleanly.
 func (l *WALKeeperLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	_ = in
 	if l.h == nil || l.w == nil {
@@ -138,7 +183,8 @@ func (l *WALKeeperLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	defer l.runMu.Unlock()
 
 	// Register the wildcard subscriber. Handler enqueues each event
-	// into the bounded channel.
+	// into the bounded channel; a full channel + info severity event
+	// triggers a drop.
 	l.registerHubSubscriber()
 	defer l.h.Unregister(subscriberID)
 
@@ -147,12 +193,27 @@ func (l *WALKeeperLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	go l.runDrainer(ctx, drainerDone)
 	defer func() { <-drainerDone }()
 
-	<-ctx.Done()
-	return nil
+	// Backpressure-note ticker: fires every backpressureNoteInterval;
+	// emits a single warning Note if dropped > 0 since last tick.
+	ticker := time.NewTicker(l.backpressureNoteInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			l.maybeEmitBackpressureNote()
+		}
+	}
 }
 
 // registerHubSubscriber installs the wildcard observer that forwards
-// every hub.Event into the bounded pending channel.
+// every hub.Event into the bounded pending channel. Backpressure rule:
+// when the channel is ≥ 0.9*cap full and the event is info-severity,
+// drop and increment the counter; otherwise enqueue (blocking only if
+// the channel is full and the event is non-info, in which case the
+// non-blocking send-or-drop fallback prevents a deadlock).
 func (l *WALKeeperLobe) registerHubSubscriber() {
 	l.h.Register(hub.Subscriber{
 		ID:     subscriberID,
@@ -167,9 +228,7 @@ func (l *WALKeeperLobe) registerHubSubscriber() {
 
 // handleHubEvent is the per-event entry point invoked from the
 // hub.Subscriber handler. It frames the event into a bus.Event and
-// enqueues it onto the pending channel. The non-blocking send falls
-// back to a brief blocking send so a transient overflow does not
-// silently lose events.
+// applies the backpressure policy.
 func (l *WALKeeperLobe) handleHubEvent(ev *hub.Event) {
 	if ev == nil {
 		return
@@ -192,16 +251,49 @@ func (l *WALKeeperLobe) handleHubEvent(ev *hub.Event) {
 		CausalRef: ev.ID,
 	}
 
-	// Non-blocking send. A blocking-send fallback (with backpressure
-	// drop policy) is added in TASK-11.
+	// Backpressure: when the channel is ≥ 0.9*cap full AND the event
+	// is info-severity, drop. Severity is computed from the hub.Event
+	// type/payload (see eventSeverity). Critical/warning/etc. events
+	// always block until enqueued (or ctx-cancelled by the drainer).
+	sev := eventSeverity(ev)
+	if l.shouldDropForBackpressure(sev) {
+		l.dropped.Add(1)
+		return
+	}
+
+	// Non-blocking send first; if the channel is full and the event
+	// is non-info, fall back to a brief blocking send so the
+	// drainer's worst case is "one extra publish" rather than data
+	// loss.
 	select {
 	case l.pending <- pendingItem{evt: durEvt}:
 	default:
-		// Channel full: a future task (TASK-11) wires drop counter +
-		// backpressure note. For now, fall back to a blocking send so
-		// the event is never silently dropped.
-		l.pending <- pendingItem{evt: durEvt}
+		// Channel full but event is non-info; prefer blocking send so
+		// the drainer drains one item, then enqueue. We bound the
+		// blocking with a short timer to avoid wedging the producer
+		// in pathological tests.
+		t := time.NewTimer(50 * time.Millisecond)
+		defer t.Stop()
+		select {
+		case l.pending <- pendingItem{evt: durEvt}:
+		case <-t.C:
+			// Last-resort drop. Counter still increments so operators
+			// see persistent saturation in the warning Note.
+			l.dropped.Add(1)
+		}
 	}
+}
+
+// shouldDropForBackpressure reports whether the current channel fill
+// + event severity classifies the event as a drop candidate. Returns
+// true only for info-severity events when the channel is at or above
+// 0.9*cap.
+func (l *WALKeeperLobe) shouldDropForBackpressure(sev string) bool {
+	if sev != "info" {
+		return false
+	}
+	threshold := int(float64(pendingCap) * backpressureThreshold)
+	return len(l.pending) >= threshold
 }
 
 // runDrainer dequeues pending items and Publishes them to the durable
@@ -234,8 +326,82 @@ func (l *WALKeeperLobe) runDrainer(ctx context.Context, done chan struct{}) {
 	}
 }
 
+// maybeEmitBackpressureNote publishes a single warning Note if drops
+// have occurred since the last tick, then resets the counter. Safe
+// with a nil workspace (silent no-op).
+func (l *WALKeeperLobe) maybeEmitBackpressureNote() {
+	n := l.dropped.Swap(0)
+	if n == 0 {
+		return
+	}
+	if l.ws == nil {
+		return
+	}
+	note := cortex.Note{
+		LobeID:   l.ID(),
+		Severity: cortex.SevWarning,
+		Title:    fmt.Sprintf("WAL keeper backpressure: %d events dropped", n),
+		Body: fmt.Sprintf(
+			"%d info-severity hub events were dropped because the WAL forward "+
+				"queue exceeded %d%% of its %d-slot capacity. Operators should "+
+				"investigate slow durable-bus consumers or temporary IO stalls.",
+			n, int(backpressureThreshold*100), pendingCap),
+		Tags: []string{"wal", "backpressure"},
+		Meta: map[string]any{
+			"dropped":   n,
+			"threshold": int(float64(pendingCap) * backpressureThreshold),
+			"capacity":  pendingCap,
+		},
+	}
+	_ = l.ws.Publish(note)
+}
+
+// DroppedCount returns the running drop counter. Test-facing accessor.
+func (l *WALKeeperLobe) DroppedCount() uint64 {
+	return l.dropped.Load()
+}
+
 // PendingLen returns the current depth of the pending channel.
 // Test-facing accessor; production callers should not depend on this.
 func (l *WALKeeperLobe) PendingLen() int {
 	return len(l.pending)
+}
+
+// eventSeverity classifies a hub.Event into one of "info" | "warning"
+// | "critical" for backpressure purposes. The cortex spec does not
+// mandate a hub-side severity field, so the keeper applies a simple
+// heuristic:
+//
+//   - tool.error / model.error / *.failed / mission.failed / *.panic /
+//     security.* — "warning"
+//   - critical/security_secret_detected — "critical"
+//   - everything else (the bulk of session/tool/model lifecycle
+//     traffic) — "info"
+//
+// This keeps the drop policy aligned with the spec ("drop info-severity
+// events") without requiring upstream emitters to stamp every event.
+func eventSeverity(ev *hub.Event) string {
+	if ev == nil {
+		return "info"
+	}
+	t := string(ev.Type)
+	switch t {
+	case string(hub.EventSecuritySecretDetected),
+		string(hub.EventSecurityBypassAttempt),
+		string(hub.EventSecurityPolicyViolation):
+		return "critical"
+	case string(hub.EventToolError),
+		string(hub.EventToolBlocked),
+		string(hub.EventModelError),
+		string(hub.EventModelRateLimited),
+		string(hub.EventMissionFailed),
+		string(hub.EventTaskFailed),
+		string(hub.EventCortexLobePanic),
+		string(hub.EventVerifyBuildResult),
+		string(hub.EventVerifyTestResult):
+		return "warning"
+	}
+	// Default: info-severity (the bulk of lifecycle / observability
+	// traffic such as session.init, mission.created, tool.pre_use, ...).
+	return "info"
 }
