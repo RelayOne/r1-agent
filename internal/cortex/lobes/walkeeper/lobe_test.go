@@ -352,6 +352,131 @@ func TestWALKeeperLobe_NoNoteWhenZeroDrops(t *testing.T) {
 	}
 }
 
+// TestWALKeeperLobe_SurvivesRestartNoDup verifies item 12: emit 100
+// hub events through a running Lobe, stop the Lobe (cancel Run ctx),
+// restart with a fresh Lobe on the same durable bus, emit a sentinel
+// event, and assert that the WAL contains exactly the 100 originals
+// + the sentinel with no duplicate IDs. Idempotency comes from the
+// durable bus auto-assigning a unique uuid per Publish (see
+// internal/bus/bus.go publishInternal), so the same hub.Event ID
+// arriving twice cannot collide on the durable side.
+//
+// The test also closes-and-reopens the durable bus in a third stage
+// to confirm WAL durability across the simulated process boundary.
+func TestWALKeeperLobe_SurvivesRestartNoDup(t *testing.T) {
+	dir := t.TempDir()
+	durable, err := bus.New(dir)
+	if err != nil {
+		t.Fatalf("bus.New: %v", err)
+	}
+
+	h := hub.New()
+	l1 := NewWALKeeperLobe(h, durable, nil, WALFraming{})
+	stop1 := runLobe(t, l1)
+
+	// Emit 100 hub events. EventSessionInit is info-severity; under
+	// the threshold (< 900 pending) so none should drop.
+	for i := 0; i < 100; i++ {
+		h.Emit(context.Background(), &hub.Event{
+			ID:   "evt-" + itoa(i),
+			Type: hub.EventSessionInit,
+		})
+	}
+
+	// Wait until all 100 land in the WAL.
+	wantPrefix := defaultTypePrefix + string(hub.EventSessionInit)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got := replayDurable(t, durable, defaultTypePrefix)
+		if countWithType(got, wantPrefix) >= 100 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	got := replayDurable(t, durable, defaultTypePrefix)
+	if c := countWithType(got, wantPrefix); c != 100 {
+		t.Fatalf("first run: got %d events with type %q, want 100", c, wantPrefix)
+	}
+
+	// Stop the Lobe (graceful: cancels Run ctx, drains pending,
+	// unregisters subscriber).
+	stop1()
+
+	// Restart with a fresh Lobe on the SAME durable bus + hub.
+	l2 := NewWALKeeperLobe(h, durable, nil, WALFraming{})
+	stop2 := runLobe(t, l2)
+	defer stop2()
+
+	// Sentinel event after restart.
+	h.Emit(context.Background(), &hub.Event{
+		ID:   "marker",
+		Type: hub.EventTaskCompleted,
+	})
+
+	// Wait for the marker to land.
+	wantMarker := defaultTypePrefix + string(hub.EventTaskCompleted)
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got = replayDurable(t, durable, defaultTypePrefix)
+		if countWithType(got, wantMarker) >= 1 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	// Final assertions: 100 originals + 1 marker = 101 events,
+	// and every durable event has a unique ID (bus assigns IDs).
+	got = replayDurable(t, durable, defaultTypePrefix)
+	originals := countWithType(got, wantPrefix)
+	markers := countWithType(got, wantMarker)
+	if originals != 100 {
+		t.Fatalf("post-restart originals: got %d want 100", originals)
+	}
+	if markers != 1 {
+		t.Fatalf("post-restart markers: got %d want 1", markers)
+	}
+
+	// No duplicate IDs.
+	seen := make(map[string]bool, len(got))
+	for _, e := range got {
+		if seen[e.ID] {
+			t.Fatalf("duplicate ID in WAL: %q", e.ID)
+		}
+		seen[e.ID] = true
+	}
+
+	if err := durable.Close(); err != nil {
+		t.Fatalf("durable.Close: %v", err)
+	}
+
+	// Re-open the bus and verify the WAL still replays all 101 events
+	// (durability across process boundary, simulated by close+reopen).
+	reopen, err := bus.New(dir)
+	if err != nil {
+		t.Fatalf("bus.New reopen: %v", err)
+	}
+	defer reopen.Close()
+	replayed := replayDurable(t, reopen, defaultTypePrefix)
+	if c := countWithType(replayed, wantPrefix); c != 100 {
+		t.Fatalf("reopen originals: got %d want 100", c)
+	}
+	if c := countWithType(replayed, wantMarker); c != 1 {
+		t.Fatalf("reopen markers: got %d want 1", c)
+	}
+}
+
+// countWithType counts events whose Type string equals t. Used by
+// the restart-replay test to verify exact counts in the durable WAL.
+func countWithType(events []bus.Event, t string) int {
+	n := 0
+	for _, e := range events {
+		if string(e.Type) == t {
+			n++
+		}
+	}
+	return n
+}
+
 // --- helpers ---
 
 func hasTag(tags []string, want string) bool {
