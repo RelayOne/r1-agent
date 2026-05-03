@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -302,6 +303,55 @@ func TestCtl_UnknownVerbRejected(t *testing.T) {
 	}
 }
 
+func TestCtl_UnixSocketPreferred(t *testing.T) {
+	// When the daemon advertises a unix socket that's reachable,
+	// pickClientAndURL routes through unix transport and drops the
+	// Bearer header (peer-cred handles auth).
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "test.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer ln.Close()
+
+	tx := &ctlTransport{
+		BaseURL: "http://127.0.0.1:1",
+		Token:   "tk",
+		Sock:    sockPath,
+	}
+	client, url, token := pickClientAndURL(tx, "/v1/queue/status")
+	if client == nil {
+		t.Fatal("pickClientAndURL: expected unix client when sock is alive")
+	}
+	if !strings.HasPrefix(url, "http://unix") {
+		t.Errorf("url: got %q, want http://unix prefix", url)
+	}
+	if token != "" {
+		t.Errorf("unix path: token should be dropped; got %q", token)
+	}
+}
+
+func TestCtl_LoopbackFallback(t *testing.T) {
+	// When the unix socket is missing, pickClientAndURL falls back
+	// to loopback HTTP with the Bearer token preserved.
+	tx := &ctlTransport{
+		BaseURL: "http://127.0.0.1:9091",
+		Token:   "tk-loopback",
+		Sock:    "/tmp/does-not-exist.sock",
+	}
+	client, url, token := pickClientAndURL(tx, "/v1/queue/status")
+	if client != nil {
+		t.Error("pickClientAndURL: expected nil client (default loopback) when sock is missing")
+	}
+	if url != "http://127.0.0.1:9091/v1/queue/status" {
+		t.Errorf("url: got %q", url)
+	}
+	if token != "tk-loopback" {
+		t.Errorf("token: got %q, want tk-loopback", token)
+	}
+}
+
 func TestCtl_DiscoveryMissing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("R1_HOME", dir)
@@ -314,5 +364,4 @@ func TestCtl_DiscoveryMissing(t *testing.T) {
 	if !strings.Contains(stderr, "discovery") {
 		t.Errorf("missing discovery: stderr should mention discovery; got %q", stderr)
 	}
-	_ = filepath.Join // keep import
 }

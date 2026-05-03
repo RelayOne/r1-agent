@@ -99,26 +99,39 @@ func spawnDaemonInBackground() error {
 	return spawnDaemon()
 }
 
-// realSpawnDaemon starts `r1 serve` as a detached child. The
-// child inherits stdio for ease of debugging today; a future cycle
-// redirects them to a log file under ~/.r1/logs/. We use the same
-// executable we're currently running so the spawn re-enters the
-// canonical r1 binary and not a stale one on PATH.
+// realSpawnDaemon starts `r1 serve` as a detached child. The child's
+// stdio is redirected to the platform null device (/dev/null on
+// POSIX, NUL on Windows) so the daemon doesn't write into the
+// parent's terminal. We use the same executable we're currently
+// running so the spawn re-enters the canonical r1 binary and not a
+// stale one on PATH.
 func realSpawnDaemon() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve exe: %w", err)
 	}
 	cmd := exec.Command(exe, "serve")
-	// Detach from our process group so the child survives a
-	// Ctrl-C of the parent. SysProcAttr.Setsid is POSIX-only;
-	// the windows path inherits the parent's group (acceptable
-	// since `r1 daemon status` on Windows usually runs from a
-	// shell that already has its own console).
+	// Detach from our process group so the child survives a Ctrl-C
+	// of the parent. applyDetachAttrs is platform-specific
+	// (Setsid on POSIX, CREATE_NEW_PROCESS_GROUP on Windows).
 	applyDetachAttrs(cmd)
+
+	// Redirect stdio to the null device. Open it once for both
+	// stdout + stderr; close on the parent side after Start (the
+	// kernel keeps the FD live for the child).
+	devnull, derr := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if derr != nil {
+		return fmt.Errorf("open %s: %w", os.DevNull, derr)
+	}
+	cmd.Stdin = devnull
+	cmd.Stdout = devnull
+	cmd.Stderr = devnull
+
 	if err := cmd.Start(); err != nil {
+		_ = devnull.Close()
 		return fmt.Errorf("start: %w", err)
 	}
+	_ = devnull.Close()
 	return nil
 }
 

@@ -75,24 +75,42 @@ func TestMain_AgentServeAlias_PrintsDeprecationStderr(t *testing.T) {
 	}
 }
 
-func TestMain_DaemonAliasDefault_DoesNotPanic(t *testing.T) {
-	// Drive the wrapper with `help` — daemonCmd's help path doesn't
-	// open listeners and returns cleanly. Asserts the alias wires up
-	// without a crash on the dispatch boundary.
+func TestMain_DaemonAlias_WritesHintBeforeForward(t *testing.T) {
+	// Drive runDaemonAlias with `help` — daemonCmd's help path
+	// invokes daemonUsage() which writes to os.Stdout and returns
+	// without calling os.Exit. The alias writes the deprecation hint
+	// to our captured stderr BEFORE the forward, so the buffer
+	// contents prove the ordering: hint first, then legacy command.
+	var stderr bytes.Buffer
 	defer func() {
 		if r := recover(); r != nil {
-			t.Errorf("runDaemonAliasDefault(help) panicked: %v", r)
+			t.Errorf("runDaemonAlias(help): panicked: %v", r)
 		}
 	}()
-	// We can't actually invoke the alias because daemonCmd may
-	// os.Exit; verify the wrapper has the expected wiring shape via
-	// the captured-buffer flavor.
+	runDaemonAlias([]string{"help"}, &stderr)
+	got := stderr.String()
+	if !strings.HasPrefix(got, "r1 daemon: deprecated") {
+		t.Errorf("hint not at head of stderr; got %q", got)
+	}
+}
+
+func TestMain_AgentServeAlias_HintShape(t *testing.T) {
+	// agentServeCmd unconditionally binds a listener and calls
+	// fatal() on flag errors (os.Exit), so we can't drive
+	// runAgentServeAlias end-to-end inside a single test process.
+	// We instead capture the stderr the wrapper emits BEFORE
+	// forwarding by writing it to a buffer using io.WriteString —
+	// the same call the wrapper uses — and confirm the captured
+	// content matches the alias's hint contract.
 	var stderr bytes.Buffer
-	// Reproduce the head of runDaemonAlias. The Forward step is
-	// skipped intentionally — the legacy command isn't part of the
-	// alias contract test.
-	stderr.WriteString(daemonDeprecationHint)
-	if stderr.Len() == 0 {
-		t.Error("alias did not write to stderr")
+	if _, err := stderr.WriteString(agentServeDeprecationHint); err != nil {
+		t.Fatalf("write hint: %v", err)
+	}
+	got := stderr.String()
+	if !strings.HasPrefix(got, "r1 agent-serve: deprecated") {
+		t.Errorf("hint prefix: got %q", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Error("hint must end with newline (single-line stderr)")
 	}
 }

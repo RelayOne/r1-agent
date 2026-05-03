@@ -156,8 +156,18 @@ func resolveTransport() (*ctlTransport, error) {
 
 // httpDoCtl runs an HTTP request against the daemon, returns the body.
 // timeout is applied per-request; the default is 10s, override via the
-// caller for long polls.
+// caller for long polls. When tx.Sock is non-empty AND points at an
+// existing unix socket we dial that instead of loopback TCP — peer-cred
+// auth means no Bearer header is required on the unix path. We fall
+// back to loopback HTTP when the unix socket is missing (e.g. on a
+// daemon that hasn't wired the unix-side server yet).
 func httpDoCtl(method, fullURL, token string, body []byte) ([]byte, int, error) {
+	return httpDoCtlVia(nil, method, fullURL, token, body)
+}
+
+// httpDoCtlVia is the variant that takes a pre-built client. When
+// nil, a default 10s-timeout loopback client is used.
+func httpDoCtlVia(client *http.Client, method, fullURL, token string, body []byte) ([]byte, int, error) {
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)
@@ -172,7 +182,9 @@ func httpDoCtl(method, fullURL, token string, body []byte) ([]byte, int, error) 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -185,10 +197,13 @@ func httpDoCtl(method, fullURL, token string, body []byte) ([]byte, int, error) 
 	return out, resp.StatusCode, nil
 }
 
-// dialUnix is reserved for the Phase-H unix-socket transport. It dials
-// the per-user control socket and returns a *http.Client that speaks
-// HTTP over it. Currently unused by ctl verbs — kept here so the
-// switch-over is a localized change.
+// dialUnix returns an http.Client whose Transport dials the supplied
+// unix-domain socket path on every request. When the daemon binds a
+// unix-side HTTP server (matching ipc.Listen() in
+// internal/server/ipc), `r1 ctl` reaches it via this client and the
+// peer-cred check on the daemon side authenticates without a Bearer
+// header. The host portion of the URL ("unix") is ignored by the
+// dialer; we use it to satisfy http.NewRequest's URL parser.
 func dialUnix(sockPath string) *http.Client {
 	return &http.Client{
 		Timeout: 10 * time.Second,
@@ -200,7 +215,20 @@ func dialUnix(sockPath string) *http.Client {
 	}
 }
 
-var _ = dialUnix // suppress unused-warning; reserved for Phase H.
+// unixSocketAlive returns true when sockPath exists and is dialable.
+// Used by ctl verbs to decide between unix-socket and loopback
+// transports at request time.
+func unixSocketAlive(sockPath string) bool {
+	if sockPath == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
 
 // prettyOrRaw pretty-prints JSON when the body parses, otherwise
 // returns the raw string. Helps when the daemon returns plain-text
@@ -216,6 +244,21 @@ func prettyOrRaw(b []byte) string {
 
 // ---- generic verbs --------------------------------------------------
 
+// pickClientAndURL chooses between unix-socket and loopback transports
+// based on whether the daemon's unix socket is reachable. Returns the
+// http.Client to use, the URL to dial, and the bearer token (empty
+// when peer-cred handles auth on the unix path).
+func pickClientAndURL(tx *ctlTransport, path string) (*http.Client, string, string) {
+	if unixSocketAlive(tx.Sock) {
+		// Unix-socket path: peer-cred auth on the daemon side
+		// authenticates the caller; no Bearer needed. The URL host
+		// is "unix" purely so http.NewRequest's URL parser
+		// tolerates it (the dialer ignores the host).
+		return dialUnix(tx.Sock), "http://unix" + path, ""
+	}
+	return nil, tx.BaseURL + path, tx.Token
+}
+
 // ctlGet performs a GET against the daemon at path and prints the
 // result. extra is consumed only to trap stray flags so the verb fails
 // loud on misuse.
@@ -229,7 +272,8 @@ func ctlGet(path string, extra []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	body, code, err := httpDoCtl("GET", tx.BaseURL+path, tx.Token, nil)
+	client, url, token := pickClientAndURL(tx, path)
+	body, code, err := httpDoCtlVia(client, "GET", url, token, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "ctl %s: %v\n", path, err)
 		return 1
@@ -261,7 +305,8 @@ func ctlPost(path string, payload any, extra []string, stdout, stderr io.Writer)
 			return 1
 		}
 	}
-	out, code, err := httpDoCtl("POST", tx.BaseURL+path, tx.Token, body)
+	client, url, token := pickClientAndURL(tx, path)
+	out, code, err := httpDoCtlVia(client, "POST", url, token, body)
 	if err != nil {
 		fmt.Fprintf(stderr, "ctl %s: %v\n", path, err)
 		return 1

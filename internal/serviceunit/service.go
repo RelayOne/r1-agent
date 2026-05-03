@@ -110,24 +110,38 @@ func Defaults() Config {
 
 // Service is the façade. It owns a kardianos/service.Service for the
 // life of the program and exposes the Install/Uninstall/Start/Stop/Status
-// methods the CLI needs.
+// methods the CLI needs (TASK-37 spec scope).
+//
+// Note on lifecycle. This package owns the install-plumbing surface.
+// When the platform service manager actually launches `r1 serve` from
+// the installed unit, the binary runs `runServeLoop` directly (in
+// cmd/r1/serve_cmd.go) — the listener is the long-running blocking
+// call and platform-level stop is delivered as a signal handled by
+// the existing signalContext path. This means the kardianos
+// program-Interface callbacks below are not the run-loop; they exist
+// because kardianos requires a non-nil program to construct a
+// service.Service. The Start callback returns nil immediately and
+// the Stop callback is unused. The actual run loop is the HTTP
+// server, supervised by the platform via process exit.
 type Service struct {
 	cfg Config
 	svc service.Service
-	// program is the kardianos/service.Interface that gets
-	// Start()/Stop() callbacks. We supply a no-op program because
-	// install/uninstall plumbing doesn't need a real loop.
-	program *noopProgram
+	// program is the kardianos/service.Interface registered with the
+	// upstream library. It is intentionally a no-op: see the lifecycle
+	// note on Service for why the run-loop is owned by serve_cmd.go
+	// rather than by service.Run.
+	program *unitProgram
 }
 
-// noopProgram is a kardianos/service.Interface that does nothing.
-// Real run-loop wiring lives in cmd/r1/serve_cmd.go where the
-// service.Run() invocation passes a different program with a real
-// blocking loop.
-type noopProgram struct{}
+// unitProgram satisfies kardianos/service.Interface. Start returns
+// nil so the binary's main goroutine continues into runServeLoop;
+// Stop returns nil so a service-manager-issued Stop signal is
+// graceful (the OS still delivers SIGTERM to the process which the
+// signalContext handler in serve_cmd.go observes).
+type unitProgram struct{}
 
-func (*noopProgram) Start(service.Service) error { return nil }
-func (*noopProgram) Stop(service.Service) error  { return nil }
+func (*unitProgram) Start(service.Service) error { return nil }
+func (*unitProgram) Stop(service.Service) error  { return nil }
 
 // New constructs a Service ready to drive Install / Uninstall.
 // Returns an error when kardianos/service can't synthesize a config
@@ -169,7 +183,7 @@ func New(cfg Config) (*Service, error) {
 		Option:      uOption,
 	}
 
-	prog := &noopProgram{}
+	prog := &unitProgram{}
 	svc, err := service.New(prog, scfg)
 	if err != nil {
 		return nil, fmt.Errorf("serviceunit: kardianos/service.New: %w", err)

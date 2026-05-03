@@ -178,6 +178,20 @@ func TestServeCmd_AddrEmptySpawnsDiscovery(t *testing.T) {
 	}
 }
 
+func TestServeCmd_SingleSessionModeRoundtrip(t *testing.T) {
+	// setSingleSessionMode + IsSingleSessionMode round-trip.
+	prev := IsSingleSessionMode()
+	defer setSingleSessionMode(prev)
+	setSingleSessionMode(true)
+	if !IsSingleSessionMode() {
+		t.Error("after set(true): IsSingleSessionMode = false")
+	}
+	setSingleSessionMode(false)
+	if IsSingleSessionMode() {
+		t.Error("after set(false): IsSingleSessionMode = true")
+	}
+}
+
 func TestServeCmd_UnknownFlagRejected(t *testing.T) {
 	_, err := parseServeFlags([]string{"--no-such-flag"})
 	if err == nil {

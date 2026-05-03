@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/RelayOne/r1/internal/agentserve"
 	"github.com/RelayOne/r1/internal/daemon"
@@ -191,30 +192,37 @@ func runServeLoop(opts serveOptions) {
 		fmt.Fprintf(os.Stderr, "agent routes mounted at /v1/agent/ (alias: /api/*)\n")
 	}
 	if muxAlias != nil && opts.EnableQueueRoutes {
-		// Build a daemon scoped to the data dir so /v1/queue/* maps to
-		// a real queue. The daemon is NOT Started here — the operator
-		// can opt into background workers later via `r1 ctl workers
-		// --count N`. We keep the surface read-only by default.
+		// Build a daemon scoped to the data dir so /v1/queue/* maps
+		// to a real queue. We Start the daemon so the worker pool is
+		// initialized (handlers like /status read d.pool); MaxParallel
+		// is the operator-supplied flag (default 1 keeps a usable
+		// worker available without surprising memory pressure).
+		// Operators can resize via `r1 ctl workers --count N`.
 		d, derr := daemon.New(daemon.Config{
 			StateDir:    filepath.Join(absRepo, opts.DataDir),
 			Addr:        "127.0.0.1:0", // unused; handler is mounted directly
 			Token:       "",            // outer middleware enforces auth
-			MaxParallel: 0,             // 0 workers until explicitly resized
+			MaxParallel: 1,
 		}, nil)
 		if derr != nil {
 			fmt.Fprintf(os.Stderr, "warn: queue routes disabled: %v\n", derr)
+		} else if startErr := d.Start(context.Background()); startErr != nil {
+			fmt.Fprintf(os.Stderr, "warn: queue routes disabled (daemon start: %v)\n", startErr)
 		} else {
+			defer d.Stop()
 			server.MountDaemonQueue(muxAlias, d, opts.Token)
 			fmt.Fprintf(os.Stderr, "queue routes mounted at /v1/queue/ (alias: /api/*)\n")
 		}
 	}
 
-	// Single-session guard. The hub doesn't know about session counts
-	// directly; we expose the flag here as a server tag so future
-	// SessionHub.Create can read it. Today it's documentary — tests
-	// for the rejection path land alongside SessionHub work in Phase I.
+	// Single-session guard. Records the operator's choice on a
+	// package-level flag so SessionHub.Create (when wired by Phase I
+	// integration) can read it. Reading the flag from a package-level
+	// holder rather than threading it through every constructor keeps
+	// the diff small for the inevitable Phase-I follow-up.
 	if opts.SingleSession {
-		fmt.Fprintln(os.Stderr, "single-session mode: 2nd session.start will be rejected")
+		setSingleSessionMode(true)
+		fmt.Fprintln(os.Stderr, "single-session mode: enabled")
 	}
 
 	fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
@@ -235,6 +243,21 @@ func runServeLoop(opts serveOptions) {
 		}
 	}
 }
+
+// singleSessionMode is the package-level holder for the
+// --single-session flag. The SessionHub integration reads this to
+// reject a 2nd session.start. atomic.Bool gives a lock-free
+// reader/writer pair so handler goroutines can read without a mutex.
+var singleSessionMode atomic.Bool
+
+// setSingleSessionMode is the writer used by runServeLoop. The
+// getter/setter pair lets tests flip the flag without poking package
+// state directly.
+func setSingleSessionMode(v bool) { singleSessionMode.Store(v) }
+
+// IsSingleSessionMode is the read-side accessor used by SessionHub
+// integration.
+func IsSingleSessionMode() bool { return singleSessionMode.Load() }
 
 // portFromAddr extracts the integer port from a host:port string.
 // Returns 0 on parse failure (the caller's server.New treats 0 as
