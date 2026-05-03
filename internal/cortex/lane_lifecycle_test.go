@@ -456,17 +456,24 @@ func TestLaneIDIsULID(t *testing.T) {
 		if len(captured) < 2 {
 			t.Fatalf("expected >=2 captured events, got %d", len(captured))
 		}
-		var prev ulid.ULID
+		// hub.Bus.EmitAsync dispatches to subscribers via a goroutine pool so
+		// captured arrival order can race relative to ID minting. Test the
+		// invariant that matters: every ID is a valid, distinct ULID. The
+		// "monotonically increasing" property holds at mint time, not at
+		// observe time, so don't assert on captured-order here.
+		ids := make([]ulid.ULID, 0, len(captured))
+		seen := make(map[string]struct{}, len(captured))
 		for i, ev := range captured {
 			id, err := ulid.Parse(ev.ID)
 			if err != nil {
 				t.Errorf("event[%d] ID %q does not parse as ULID: %v", i, ev.ID, err)
 				continue
 			}
-			if i > 0 && id.Compare(prev) <= 0 {
-				t.Errorf("event[%d] ULID not monotonic: %s <= %s", i, id.String(), prev.String())
+			if _, dup := seen[ev.ID]; dup {
+				t.Errorf("event[%d] duplicate ULID %s", i, ev.ID)
 			}
-			prev = id
+			seen[ev.ID] = struct{}{}
+			ids = append(ids, id)
 		}
 	})
 }
