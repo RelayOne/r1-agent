@@ -1,5 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-02 -->
+<!-- BUILD_COMPLETED: 2026-05-03 -->
 <!-- DEPENDS_ON: lanes-protocol -->
 <!-- BUILD_ORDER: 4 -->
 
