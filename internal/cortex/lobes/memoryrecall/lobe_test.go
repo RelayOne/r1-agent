@@ -3,6 +3,7 @@ package memoryrecall
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/cortex"
@@ -229,6 +230,59 @@ func TestMemoryRecallLobe_DedupesAcrossSources(t *testing.T) {
 	mine := mineNotes(ws.Snapshot())
 	if len(mine) != 1 {
 		t.Fatalf("dedup failed: published %d Notes, want 1 (titles: %v)", len(mine), titlesOf(mine))
+	}
+}
+
+// TestMemoryRecallLobe_ReindexesOnMemoryAdded asserts that publishing a
+// hub.EventCortexWorkspaceMemoryAdded event after the lobe has built
+// its index causes the next Run to surface a freshly added entry.
+//
+// The subscriber registered in NewMemoryRecallLobe rebuilds the index
+// from the underlying store, which the test mutates between events.
+//
+// Spec item 8.
+func TestMemoryRecallLobe_ReindexesOnMemoryAdded(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{ID: "m1", Category: memory.CatGotcha, Content: "initial deadlock entry"},
+		},
+	}
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, &fakeWisdomStore{}, bus)
+
+	// First Run builds the initial index (size 1).
+	if err := lobe.Run(context.Background(), cortex.LobeInput{History: userTurn("anything")}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if got := lobe.DocCount(); got != 1 {
+		t.Fatalf("initial DocCount = %d, want 1", got)
+	}
+
+	// Mutate the store and publish the reindex event. The handler runs
+	// in observe mode — bus.Emit dispatches it inline (the runtime
+	// invokes observers in goroutines but bus.Emit waits inside Phase 3
+	// only via spawn). Use Emit synchronously so we can deterministically
+	// observe the rebuild.
+	mem.entries = append(mem.entries, memory.Entry{
+		ID: "m2", Category: memory.CatPattern, Content: "added after first Run",
+	})
+
+	// Observe-mode handlers fire async. Use a sync gate by directly
+	// invoking the subscriber: bus.Emit returns once gate+transform are
+	// done but observers run in goroutines. Replace with a deterministic
+	// rebuild trigger: emit and wait on DocCount.
+	bus.EmitAsync(&hub.Event{Type: hub.EventCortexWorkspaceMemoryAdded})
+
+	// Poll up to 2s for the observer to land. Production code does not
+	// block on this — TASK-8 only requires "next Run uses the new entry".
+	deadline := time.Now().Add(2 * time.Second)
+	for lobe.DocCount() < 2 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := lobe.DocCount(); got != 2 {
+		t.Fatalf("after memory_added DocCount = %d, want 2", got)
 	}
 }
 
