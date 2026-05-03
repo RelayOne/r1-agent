@@ -798,11 +798,15 @@ func main() {
 		// T-R1P-020/021/022: CI/CD integration recipe generator.
 		cicdCmd(os.Args[2:])
 	case "agent-serve":
-		agentServeCmd(os.Args[2:])
+		// TASK-41: deprecated alias of `r1 serve --enable-agent-routes`.
+		// runAgentServeAliasDefault prints a one-line deprecation hint
+		// to stderr then forwards to the legacy agentServeCmd so
+		// existing scripts keep working during the transition.
+		runAgentServeAliasDefault(os.Args[2:])
 	case "daemon":
-		// Long-running R1 process: persistent queue + WAL + HTTP control plane +
-		// worker pool. See cmd/r1/daemon_cmd.go.
-		daemonCmd(os.Args[2:])
+		// TASK-41: deprecated alias of `r1 serve --enable-queue-routes`.
+		// Same alias treatment as agent-serve.
+		runDaemonAliasDefault(os.Args[2:])
 	case "desktop-rpc":
 		// R1D-1.2: long-lived JSON-RPC 2.0 server for the Tauri desktop host.
 		// Reads NDJSON requests on stdin; writes NDJSON responses on stdout.
