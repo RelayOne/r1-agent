@@ -125,6 +125,21 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
+// --- Daemon lifecycle (1 event) ---
+//
+// EventDaemonReloaded fires once on r1d-server daemon startup, after
+// session-replay (specs/r1d-server.md §11.27) finishes and the WS
+// listener is up. Subscribers (the WS server's "broadcast on connect"
+// handler) treat it as "every paused-reattachable session is now
+// listed by SessionHub.List(); any reconnecting client may reattach".
+//
+// The Custom["sessions"] field carries the slice of resumed session
+// IDs so subscribers can build a "welcome back" preamble without
+// hitting the hub.
+const (
+	EventDaemonReloaded EventType = "daemon.reloaded"
+)
+
 // --- Lanes (6 events) ---
 //
 // Lanes are the per-surface-visible thread of activity inside a single r1d
