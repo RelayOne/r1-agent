@@ -196,18 +196,55 @@ func (l *MemoryCuratorLobe) TriggerCount() uint64 { return l.triggerCount.Load()
 // TurnCount reports the current per-Run tick counter. Test-facing.
 func (l *MemoryCuratorLobe) TurnCount() uint64 { return l.turnCount.Load() }
 
-// Run is the per-Round entry point. The full trigger + privacy filter
-// + auto-apply + audit-log pipeline lands in TASK-29 and TASK-30. The
-// scaffold here ensures the hub subscription is installed exactly once
-// (deferred until the first Run so tests that never call Run can
-// inspect the Lobe without bus side effects), and otherwise returns
-// nil. ctx.Done is observed defensively per the LobeRunner contract.
+// Run is the per-Round entry point. TASK-29 wires the every-5-turns
+// trigger: each Run increments turnCount; turns at indexes 5/10/15/...
+// satisfy the predicate and fire onTrigger (the haikuCall pipeline once
+// TASK-30 lands). The task.completed event additionally fires
+// onTrigger out-of-cadence via the hub subscriber installed in
+// ensureSubscribed.
+//
+// ctx.Done is observed defensively — a cancelled tick returns nil so
+// the LobeRunner contract holds. The hub subscription is installed
+// exactly once on the first call (deferred so tests that never call
+// Run can inspect the Lobe without bus side effects).
 func (l *MemoryCuratorLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	if err := ctx.Err(); err != nil {
 		return nil
 	}
 	l.ensureSubscribed()
+
+	turn := l.turnCount.Add(1)
+	if !l.shouldTrigger(turn) {
+		return nil
+	}
+
+	l.fireTrigger(ctx, in)
 	return nil
+}
+
+// shouldTrigger evaluates the spec-item-29 trigger predicate:
+//
+//	turn % curatorTurnInterval == 0
+//
+// LobeRunner.Tick fires once per Round, and a Round corresponds to one
+// assistant turn boundary in the cortex.MidturnNote pipeline (TASK-14
+// of cortex-core). Counting from 1, turns 5/10/15/... satisfy
+// turn%5==0. The task.completed event is a separate trigger handled
+// in trigger.go's subscriber — it fires fireTrigger directly so it is
+// not gated by this predicate.
+func (l *MemoryCuratorLobe) shouldTrigger(turn uint64) bool {
+	return turn > 0 && turn%uint64(curatorTurnInterval) == 0
+}
+
+// fireTrigger increments triggerCount and dispatches to onTrigger if
+// set. Used by both the per-Run cadence path (Run) and the
+// task.completed subscriber (handleTaskCompleted) so the trigger
+// counter sees both paths uniformly.
+func (l *MemoryCuratorLobe) fireTrigger(ctx context.Context, in cortex.LobeInput) {
+	l.triggerCount.Add(1)
+	if l.onTrigger != nil {
+		l.onTrigger(ctx, in)
+	}
 }
 
 // ensureSubscribed registers the hub subscriber exactly once across the
@@ -226,10 +263,6 @@ func (l *MemoryCuratorLobe) ensureSubscribed() {
 	l.subscribeImpl()
 }
 
-// subscribeImpl is overridden in TASK-29's trigger.go to register the
-// EventTaskCompleted subscriber. The default in TASK-26's scaffold is
-// a no-op so the package compiles before the trigger logic lands.
-//
-// Implemented as a method (not a function variable) so TASK-29 can
-// override without touching the TASK-26 commit.
-func (l *MemoryCuratorLobe) subscribeImpl() {}
+// subscribeImpl is implemented in trigger.go (TASK-29). Defined as a
+// method on *MemoryCuratorLobe in this file's sister source so the
+// scaffold here can call it from ensureSubscribed.
