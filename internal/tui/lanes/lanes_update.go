@@ -173,8 +173,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.mu.Lock()
+		prevWidth, prevCols, prevMode := m.width, m.cols, m.mode
 		m.width = msg.Width
 		m.height = msg.Height
+		cols, mode := decideMode(msg.Width, msg.Height, len(m.lanes), m.mode)
+		m.cols = cols
+		m.mode = mode
+		// Cache invalidation rule §6: drop entire cache when width or
+		// cols (or mode) changed. We just stored a fresh width/cols/
+		// mode; compare against the snapshot we took above.
+		if m.cache != nil && (prevWidth != msg.Width || prevCols != cols || prevMode != mode) {
+			m.cache.Clear()
+		}
 		m.mu.Unlock()
 		// Window-size messages do NOT come from m.sub — no re-arm.
 		return m, nil

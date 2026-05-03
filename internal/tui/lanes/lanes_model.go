@@ -137,13 +137,7 @@ type Model struct {
 	budgetLimit  float64
 }
 
-// keyMap is forward-declared in this file so the Model struct can hold
-// it. The concrete bindings + help.KeyMap impl live in lanes_keys.go
-// (delivered in a later checklist item). Until that file lands, an
-// empty struct is sufficient — every Update branch that uses keys
-// type-checks against this name.
-type keyMap struct{}
-
-// renderCache is forward-declared here for the same reason. The
-// implementation lands with checklist item 20 (lanes_cache.go).
-type renderCache struct{}
+// keyMap and renderCache are concrete types defined in their own
+// files (lanes_keys.go and lanes_cache.go respectively). They land in
+// the same compilation unit so the Model struct above can name them
+// directly.

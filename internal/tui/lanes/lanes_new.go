@@ -67,12 +67,11 @@ func New(sessionID string, t Transport, opts ...Option) *Model {
 		budget:  progress.New(progress.WithWidth(10), progress.WithoutPercentage()),
 		vp:      viewport.New(),
 		help:    help.New(),
-		keys:    keyMap{},
+		keys:    defaultKeyMap(),
 
-		// Cache and bubblelayout — concrete impls land in their own
-		// commits (items 20 + 13). New still constructs both so the
-		// model invariant "non-nil cache" holds end-to-end.
-		cache:  &renderCache{},
+		// Cache and bubblelayout. The cache is initialised via its
+		// constructor so Get/Put/Invalidate can assume non-nil maps.
+		cache:  newRenderCache(),
 		layout: bubblelayout.New(),
 	}
 	for _, opt := range opts {
