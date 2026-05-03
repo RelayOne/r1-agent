@@ -95,7 +95,23 @@ type SessionHub struct {
 	// the IndexEntry then records an empty JournalPath, which the
 	// index manager will reject. Set via SetJournalDir.
 	journalDir string
+
+	// singleSession, when true, causes Create to reject the 2nd
+	// session with ErrSingleSessionExceeded. The flag is set from
+	// the operator's `r1 serve --single-session` flag (TASK-40)
+	// via SetSingleSession. We count active sessions by walking the
+	// sync.Map under the create-mutex; the cost is acceptable
+	// because Create is low-frequency and single-session mode is
+	// opt-in (development-only).
+	singleSession bool
 }
+
+// ErrSingleSessionExceeded is returned by Create when single-session
+// mode is enabled (`r1 serve --single-session`) and a second
+// session.start arrives while a prior session is still live. Callers
+// can errors.Is against it to surface a clear "single-session" reason
+// to the operator.
+var ErrSingleSessionExceeded = errors.New("sessionhub: single-session mode active; a session is already running")
 
 // NewHub constructs a SessionHub. Resolves `~/.r1/` once and stashes
 // it for the workdir-overlap check. Returns an error if the home dir
@@ -156,6 +172,31 @@ func (h *SessionHub) SetJournalDir(dir string) {
 	h.journalDir = dir
 }
 
+// SetSingleSession toggles single-session mode. When true, Create
+// rejects a 2nd session.start with ErrSingleSessionExceeded as long
+// as a prior session is still live (Delete clears the count). Wired
+// from `r1 serve --single-session` (TASK-40).
+func (h *SessionHub) SetSingleSession(v bool) {
+	h.singleSession = v
+}
+
+// SingleSession returns the current single-session-mode setting.
+func (h *SessionHub) SingleSession() bool {
+	return h.singleSession
+}
+
+// activeSessionCount returns the number of currently-live sessions.
+// O(N) walk of sync.Map; acceptable because it's only called when
+// singleSession is true and Create is low-frequency.
+func (h *SessionHub) activeSessionCount() int {
+	n := 0
+	h.sessions.Range(func(_, _ any) bool {
+		n++
+		return true
+	})
+	return n
+}
+
 // Create registers a new session after validating its workdir. The
 // returned *Session is registered in the hub's sync.Map and reachable
 // via Get(id). The Session is NOT started — the caller invokes
@@ -173,21 +214,38 @@ func (h *SessionHub) Create(opts CreateOptions) (*Session, error) {
 	if err := h.validateWorkdir(opts.Workdir); err != nil {
 		return nil, err
 	}
+	// We hold idMu across the gate check + Store so single-session
+	// mode is race-deterministic: exactly one concurrent Create can
+	// observe count==0 and proceed to Store. Without this lock, two
+	// goroutines could both pass the count check before either
+	// Store, producing two live sessions.
+	h.idMu.Lock()
+	if h.singleSession && h.activeSessionCount() >= 1 {
+		h.idMu.Unlock()
+		return nil, ErrSingleSessionExceeded
+	}
 	id := opts.ID
 	if id == "" {
-		id = h.mintID()
+		// mintID acquires idMu internally; we already hold it, so
+		// inline the increment to avoid a deadlock. Format string
+		// matches mintID's "s-%d" exactly.
+		h.idSeq++
+		id = fmt.Sprintf("s-%d", h.idSeq)
 	}
 	if _, loaded := h.sessions.Load(id); loaded {
+		h.idMu.Unlock()
 		return nil, fmt.Errorf("%w: id=%s", ErrSessionExists, id)
 	}
 	abs, _ := filepath.Abs(opts.Workdir)
 	s := newSession(id, filepath.Clean(abs), opts.Model)
-	// LoadOrStore guards against a goroutine race: two Creates with the
-	// same caller-supplied id should land deterministically on
-	// ErrSessionExists, not silently overwrite.
+	// LoadOrStore under the lock keeps the count check + insertion
+	// atomic. Concurrent Creates with the same caller-supplied id
+	// still resolve to ErrSessionExists.
 	if _, loaded := h.sessions.LoadOrStore(id, s); loaded {
+		h.idMu.Unlock()
 		return nil, fmt.Errorf("%w: id=%s", ErrSessionExists, id)
 	}
+	h.idMu.Unlock()
 	// Best-effort index append. On failure roll back the in-memory
 	// entry so the caller sees one error and Create is observably
 	// transactional.

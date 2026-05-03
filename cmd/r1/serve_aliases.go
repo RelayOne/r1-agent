@@ -44,18 +44,29 @@ const daemonDeprecationHint = "r1 daemon: deprecated; use `r1 serve --enable-que
 // agent-serve alias.
 const agentServeDeprecationHint = "r1 agent-serve: deprecated; use `r1 serve --enable-agent-routes` instead. Forwarding to legacy agent-serve command.\n"
 
+// daemonForwarder is the function the daemon alias calls after
+// emitting the deprecation hint. Production points it at the real
+// daemonCmd; tests inject a stub so they can verify ordering without
+// invoking the legacy command (which os.Exits on flag errors).
+var daemonForwarder = daemonCmd
+
+// agentServeForwarder is the analogous indirection for the
+// agent-serve alias.
+var agentServeForwarder = agentServeCmd
+
 // runDaemonAlias prints the deprecation hint and forwards to the
-// legacy daemonCmd. stderr is written to before the forward so the
-// hint reaches the operator even when the legacy command os.Exits.
+// legacy daemon command. stderr is written to before the forward so
+// the hint reaches the operator even when the legacy command
+// os.Exits.
 func runDaemonAlias(args []string, stderr io.Writer) {
 	io.WriteString(stderr, daemonDeprecationHint)
-	daemonCmd(args)
+	daemonForwarder(args)
 }
 
 // runAgentServeAlias is the analogous wrapper for `r1 agent-serve`.
 func runAgentServeAlias(args []string, stderr io.Writer) {
 	io.WriteString(stderr, agentServeDeprecationHint)
-	agentServeCmd(args)
+	agentServeForwarder(args)
 }
 
 // runDaemonAliasDefault uses os.Stderr — convenience wrapper for the

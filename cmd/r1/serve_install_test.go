@@ -129,21 +129,45 @@ func TestInheritEnvForUnit_AllowList(t *testing.T) {
 	}
 }
 
-func TestRunServeStatus_DoesNotPanic(t *testing.T) {
-	// This drives the runServeStatus path without actually installing.
-	// Status on a (probably) not-installed r1-serve unit should
-	// return one of {StatusNotInstalled, StatusStopped, StatusUnknown}
-	// and exit with a documented non-zero code. The test asserts the
-	// function runs to completion and writes something to stdout.
+func TestRunServeStatus_ReportsKnownState(t *testing.T) {
+	// Drive the runServeStatus path without actually installing.
+	// Status on a (probably) not-installed r1-serve unit must:
+	//
+	//   1. Run to completion (no panic).
+	//   2. Write a `<name>: <status> (<platform>)` line to stdout.
+	//   3. Return a documented exit code (0, 3, 4, or 5 — never 2,
+	//      which is reserved for usage errors that this verb has
+	//      none of).
 	var so, se bytes.Buffer
 	code := runServeStatus(&so, &se)
-	// Acceptable codes: 0 (running), 3 (stopped), 4 (not installed),
-	// 1 or 5 (errors / unknown). We just assert it didn't panic.
 	if code == 2 {
 		t.Errorf("status: returned usage code 2; got stderr=%q", se.String())
 	}
-	if so.Len() == 0 && se.Len() == 0 {
-		t.Error("status: produced no output")
+	// Exit code must be in the documented set.
+	allowed := map[int]bool{0: true, 1: true, 3: true, 4: true, 5: true}
+	if !allowed[code] {
+		t.Errorf("status: undocumented exit code %d (allowed: 0/1/3/4/5)", code)
+	}
+	out := so.String() + se.String()
+	if out == "" {
+		t.Fatal("status: produced no output")
+	}
+	// stdout should contain the unit name (default DefaultName from
+	// internal/serviceunit) AND a status word from our typed string
+	// set so operators see actionable information.
+	if !strings.Contains(out, "r1-serve") {
+		t.Errorf("status output should contain unit name r1-serve; got %q", out)
+	}
+	knownStatusWords := []string{"running", "stopped", "not-installed", "unknown"}
+	sawStatusWord := false
+	for _, w := range knownStatusWords {
+		if strings.Contains(out, w) {
+			sawStatusWord = true
+			break
+		}
+	}
+	if !sawStatusWord {
+		t.Errorf("status output should contain one of %v; got %q", knownStatusWords, out)
 	}
 }
 

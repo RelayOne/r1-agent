@@ -215,13 +215,15 @@ func runServeLoop(opts serveOptions) {
 		}
 	}
 
-	// Single-session guard. Records the operator's choice on a
-	// package-level flag so SessionHub.Create (when wired by Phase I
-	// integration) can read it. Reading the flag from a package-level
-	// holder rather than threading it through every constructor keeps
-	// the diff small for the inevitable Phase-I follow-up.
+	// Single-session guard. setSingleSessionMode persists the
+	// operator's choice on a package-level atomic.Bool that
+	// SessionHub.Create reads via IsSingleSessionMode() to reject a
+	// 2nd session.start. Package-level state is the deliberate choice
+	// (vs. threading the flag through every Server constructor) so
+	// the existing Server / SessionHub call sites don't have to grow
+	// a new parameter.
+	setSingleSessionMode(opts.SingleSession)
 	if opts.SingleSession {
-		setSingleSessionMode(true)
 		fmt.Fprintln(os.Stderr, "single-session mode: enabled")
 	}
 
@@ -245,18 +247,20 @@ func runServeLoop(opts serveOptions) {
 }
 
 // singleSessionMode is the package-level holder for the
-// --single-session flag. The SessionHub integration reads this to
-// reject a 2nd session.start. atomic.Bool gives a lock-free
-// reader/writer pair so handler goroutines can read without a mutex.
+// --single-session flag. The cmd/r1 layer reads it when constructing
+// a sessionhub.SessionHub so the hub's SetSingleSession setter can
+// be applied at the source. atomic.Bool gives a lock-free
+// reader/writer pair so a session-handler goroutine can read it
+// without a mutex.
 var singleSessionMode atomic.Bool
 
-// setSingleSessionMode is the writer used by runServeLoop. The
-// getter/setter pair lets tests flip the flag without poking package
-// state directly.
+// setSingleSessionMode is the writer used by runServeLoop.
 func setSingleSessionMode(v bool) { singleSessionMode.Store(v) }
 
-// IsSingleSessionMode is the read-side accessor used by SessionHub
-// integration.
+// IsSingleSessionMode is the read-side accessor consumed by sessionhub
+// construction. The actual rejection of a 2nd session.start is
+// implemented by sessionhub.SessionHub.SetSingleSession +
+// sessionhub.ErrSingleSessionExceeded.
 func IsSingleSessionMode() bool { return singleSessionMode.Load() }
 
 // portFromAddr extracts the integer port from a host:port string.
