@@ -125,7 +125,7 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
-// --- Cortex (8 events) ---
+// --- Cortex (9 events) ---
 const (
 	EventCortexNotePublished           EventType = "cortex.note.published"
 	EventCortexPreWarmFired            EventType = "cortex.prewarm.fired"
@@ -135,6 +135,12 @@ const (
 	EventCortexLobePanic               EventType = "cortex.lobe.panic"
 	EventCortexSpotlightChanged        EventType = "cortex.spotlight.changed"
 	EventCortexWorkspaceMemoryAdded    EventType = "cortex.workspace.memory_added"
+
+	// EventCortexUserConfirmedPlanChange is emitted when the user
+	// confirms a queued PlanUpdateLobe proposal. Custom["queue_id"]
+	// carries the queue identifier the Lobe stamped onto the
+	// user-confirm Note's Meta. Spec: specs/cortex-concerns.md item 20.
+	EventCortexUserConfirmedPlanChange EventType = "cortex.user.confirmed_plan_change"
 )
 
 // Mode determines how the hook participates.

@@ -17,12 +17,12 @@
 // apiclient.Client type. The Lobe also needs a writable *cortex.Workspace
 // (LobeInput.Workspace is the read-only adapter — Lobes that publish must
 // capture the write handle at construction time, mirroring the
-// MemoryRecallLobe pattern). The durable bus.Bus is needed for the
+// MemoryRecallLobe pattern). The in-process hub.Bus is needed for the
 // confirmation-event subscriber in TASK-20.
 //
 // The actual constructor used in production is therefore:
 //
-//	NewPlanUpdateLobe(planPath, runtime, client, escalate, ws, durable)
+//	NewPlanUpdateLobe(planPath, runtime, client, escalate, ws, hubBus)
 //
 // The "watch conversation; propose plan deltas; auto-apply edits;
 // queue adds+removes for user confirmation" contract from the spec is
@@ -39,10 +39,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/RelayOne/r1/internal/bus"
 	"github.com/RelayOne/r1/internal/conversation"
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/cortex/lobes/llm"
+	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
 )
 
@@ -61,10 +61,10 @@ type PlanUpdateLobe struct {
 	// pass the cortex's own Workspace through here).
 	ws *cortex.Workspace
 
-	// durable is the WAL-backed bus.Bus the Lobe subscribes to for
-	// "cortex.user.confirmed_plan_change" events (TASK-20). May be nil
+	// hubBus is the in-process hub.Bus the Lobe subscribes to for
+	// EventCortexUserConfirmedPlanChange events (TASK-20). May be nil
 	// in tests that exercise only Run/triggers without confirmation.
-	durable *bus.Bus
+	hubBus *hub.Bus
 
 	// turnCount counts the number of Run() ticks observed. It drives
 	// the every-3rd-tick cadence in TASK-17. Stored atomically so tests
@@ -123,7 +123,7 @@ type planChange struct {
 //     the Lobe on Haiku.
 //   - ws: writable cortex.Workspace handle for Publish. May be nil in
 //     tests that drive Run without observing Notes.
-//   - durable: durable bus.Bus for the confirmation-event subscriber.
+//   - hubBus: in-process hub.Bus for the confirmation-event subscriber.
 //     May be nil; the Lobe simply skips subscription registration.
 func NewPlanUpdateLobe(
 	planPath string,
@@ -131,7 +131,7 @@ func NewPlanUpdateLobe(
 	client provider.Provider,
 	escalate llm.Escalator,
 	ws *cortex.Workspace,
-	durable *bus.Bus,
+	hubBus *hub.Bus,
 ) *PlanUpdateLobe {
 	l := &PlanUpdateLobe{
 		planPath: planPath,
@@ -139,13 +139,17 @@ func NewPlanUpdateLobe(
 		client:   client,
 		escalate: escalate,
 		ws:       ws,
-		durable:  durable,
+		hubBus:   hubBus,
 		queued:   make(map[string]planChange),
 	}
 	// Default onTrigger: invoke haikuCall, parse output, auto-apply
 	// edits, queue adds/removes for user-confirm. Tests SetOnTrigger
 	// to a counting hook to assert TASK-17 cadence in isolation.
 	l.onTrigger = l.defaultOnTrigger
+	// TASK-20: subscribe to the user-confirmed event so queued
+	// proposals get applied when the user confirms. Safe with a nil
+	// bus (skipped).
+	l.registerConfirmSubscriber()
 	return l
 }
 
