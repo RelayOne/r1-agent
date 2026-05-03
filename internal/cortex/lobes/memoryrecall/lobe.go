@@ -331,16 +331,60 @@ func (l *MemoryRecallLobe) searchAndDedup(query string, limit int) []indexedDoc 
 	return out
 }
 
+// privateTag is the entry tag that opts an indexed entry into the
+// privacy redaction described in spec item 9. When present, the
+// Published Note never contains the raw entry body — only a short
+// pointer to the file or context that holds the private memory.
+const privateTag = "private"
+
+// privateRedactionBody renders the redacted body line per spec item 9:
+// "private memory exists about: <File or first 30 chars of context>".
+// File takes precedence; if File is empty, the first 30 runes of body
+// are used as the context hint. If both are empty, returns a generic
+// "private memory exists" line so the Note is still publishable
+// (Note.Validate requires non-empty Title but tolerates any Body).
+func privateRedactionBody(d indexedDoc) string {
+	hint := d.file
+	if hint == "" {
+		hint = truncateRunes(d.body, 30)
+	}
+	if hint == "" {
+		return "private memory exists"
+	}
+	return "private memory exists about: " + hint
+}
+
+// hasPrivateTag reports whether the doc carries the "private" tag.
+func hasPrivateTag(d indexedDoc) bool {
+	for _, t := range d.tags {
+		if t == privateTag {
+			return true
+		}
+	}
+	return false
+}
+
 // docToNote renders an indexedDoc into a cortex.Note ready for Publish.
 // Title is a short summary derived from Body (first 80 runes capped per
-// Note.Validate). Body is the full doc body; tags carry the source plus
-// the original entry tags so dashboards can filter ("source:memory" /
-// "source:wisdom"). The privacy redaction (TASK-9) layers on top of
-// this in a later commit.
+// Note.Validate). Body is either the full doc body OR — when the entry
+// is tagged "private" (spec item 9) — a redacted pointer line that
+// reveals only the source File or a 30-char context hint.
+//
+// Tags carry the source plus the original entry tags so dashboards can
+// filter ("source:memory" / "source:wisdom") and so the "private" tag
+// is preserved on the Note for downstream consumers (UI suppression,
+// audit log filtering, etc.).
 func (l *MemoryRecallLobe) docToNote(d indexedDoc) cortex.Note {
 	title := truncateRunes(firstLine(d.body), 80)
 	if title == "" {
 		title = "memory-recall hit"
+	}
+	body := d.body
+	if hasPrivateTag(d) {
+		// Privacy redaction: replace title AND body so neither leaks
+		// the underlying content. Title falls back to a generic label.
+		body = privateRedactionBody(d)
+		title = "private memory"
 	}
 	tags := make([]string, 0, len(d.tags)+1)
 	if d.source != "" {
@@ -351,7 +395,7 @@ func (l *MemoryRecallLobe) docToNote(d indexedDoc) cortex.Note {
 		LobeID:   l.ID(),
 		Severity: cortex.SevInfo,
 		Title:    title,
-		Body:     d.body,
+		Body:     body,
 		Tags:     tags,
 	}
 }

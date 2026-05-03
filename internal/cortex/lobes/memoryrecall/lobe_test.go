@@ -333,6 +333,136 @@ func mineNotes(all []cortex.Note) []cortex.Note {
 	return out
 }
 
+// TestMemoryRecallLobe_RedactsPrivateEntries asserts that an entry
+// tagged "private" produces a Note whose Body is the redacted pointer
+// line, NOT the entry content. Spec item 9.
+func TestMemoryRecallLobe_RedactsPrivateEntries(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{
+				ID:       "p1",
+				Category: memory.CatPreference,
+				Content:  "PASSWORD=hunter2 — never share with anyone",
+				File:     "secrets/notes.md",
+				Tags:     []string{"private"},
+			},
+		},
+	}
+
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, &fakeWisdomStore{}, bus)
+
+	if err := lobe.Run(context.Background(), cortex.LobeInput{History: userTurn("password share")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mine := mineNotes(ws.Snapshot())
+	if len(mine) != 1 {
+		t.Fatalf("got %d Notes, want 1", len(mine))
+	}
+	n := mine[0]
+
+	// The body MUST NOT contain the secret content.
+	if containsAny(n.Body, "hunter2") || containsAny(n.Body, "PASSWORD") {
+		t.Fatalf("private content leaked into Note.Body: %q", n.Body)
+	}
+
+	wantBody := "private memory exists about: secrets/notes.md"
+	if n.Body != wantBody {
+		t.Fatalf("Body = %q, want %q", n.Body, wantBody)
+	}
+
+	// The "private" tag must be preserved so downstream consumers can
+	// filter the Note out of UI surfaces if they choose.
+	hasPriv := false
+	for _, tag := range n.Tags {
+		if tag == "private" {
+			hasPriv = true
+		}
+	}
+	if !hasPriv {
+		t.Errorf("expected 'private' tag preserved on Note, got tags=%v", n.Tags)
+	}
+}
+
+// TestMemoryRecallLobe_RedactionFallsBackToBodyHint asserts the
+// fallback behaviour when File is empty: the first 30 runes of body
+// are used as the context hint. Spec item 9.
+func TestMemoryRecallLobe_RedactionFallsBackToBodyHint(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{
+				ID:       "p2",
+				Category: memory.CatPreference,
+				Content:  "abcdefghijklmnopqrstuvwxyz0123456789",
+				Tags:     []string{"private"},
+				// File intentionally empty
+			},
+		},
+	}
+
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, &fakeWisdomStore{}, bus)
+
+	if err := lobe.Run(context.Background(), cortex.LobeInput{History: userTurn("abcdefghij")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mine := mineNotes(ws.Snapshot())
+	if len(mine) != 1 {
+		t.Fatalf("got %d Notes, want 1", len(mine))
+	}
+
+	wantPrefix := "private memory exists about: "
+	if !startsWith(mine[0].Body, wantPrefix) {
+		t.Fatalf("Body = %q, want prefix %q", mine[0].Body, wantPrefix)
+	}
+	// Hint must be exactly 30 runes (the spec cap).
+	hint := mine[0].Body[len(wantPrefix):]
+	runeCount := 0
+	for range hint {
+		runeCount++
+	}
+	if runeCount != 30 {
+		t.Errorf("hint runes = %d, want 30 (hint=%q)", runeCount, hint)
+	}
+}
+
+func startsWith(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	return s[:len(prefix)] == prefix
+}
+
+// TestMemoryRecallLobe_NonPrivateEntriesAreNotRedacted asserts the
+// negative case: entries WITHOUT the "private" tag pass through
+// unredacted (Body == Content).
+func TestMemoryRecallLobe_NonPrivateEntriesAreNotRedacted(t *testing.T) {
+	mem := &fakeMemoryStore{
+		entries: []memory.Entry{
+			{ID: "n1", Category: memory.CatPattern, Content: "use defer cancel for ctx"},
+		},
+	}
+	bus := hub.New()
+	ws := cortex.NewWorkspace(bus, nil)
+	lobe := newMemoryRecallLobeForTest(ws, mem, &fakeWisdomStore{}, bus)
+
+	if err := lobe.Run(context.Background(), cortex.LobeInput{History: userTurn("defer cancel ctx")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mine := mineNotes(ws.Snapshot())
+	if len(mine) != 1 {
+		t.Fatalf("got %d Notes, want 1", len(mine))
+	}
+	if !containsAny(mine[0].Body, "defer cancel") {
+		t.Fatalf("non-private body should preserve content, got %q", mine[0].Body)
+	}
+}
+
 // TestMemoryRecallLobe_LobeInterfaceShape pins the cortex.Lobe contract
 // at compile-time. If the interface drifts, this fails to build.
 func TestMemoryRecallLobe_LobeInterfaceShape(t *testing.T) {
