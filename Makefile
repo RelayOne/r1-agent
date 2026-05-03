@@ -1,7 +1,11 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count
 
 # Default: run the CI gate
 all: build test vet
+
+# CI gate (per CLAUDE.md): build + test + vet + chdir-lint.
+# lint-chdir is the r1d-server Phase A audit gate — see specs/r1d-server.md §10.
+ci: build test vet lint-chdir
 
 # Build all binaries. Primary is ./cmd/r1; ./cmd/r1-acp is
 # the Agent Client Protocol adapter (S-U-002). Outputs land in
@@ -22,6 +26,12 @@ vet:
 # Run golangci-lint (requires golangci-lint installed)
 lint:
 	golangci-lint run ./...
+
+# r1d-server Phase A audit gate — flags every unannotated cwd-mutating
+# call (os.Chdir / os.Getwd / filepath.Abs("") / os.Open("./...")).
+# Must be green before the multi-session daemon (Phase E) is enabled.
+lint-chdir:
+	./tools/lint-no-chdir.sh
 
 # Run the bench corpus
 bench:
