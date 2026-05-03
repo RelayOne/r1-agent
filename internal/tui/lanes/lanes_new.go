@@ -5,6 +5,7 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/winder/bubblelayout"
 )
 
@@ -51,7 +52,7 @@ func New(sessionID string, t Transport, opts ...Option) *Model {
 		// frame. The buffer size matches PRODUCER_TICK_MS rate × 4
 		// = 16 messages, plenty of headroom for one frame's worth of
 		// coalesced ticks.
-		sub:       make(chan laneTickMsg, 16),
+		sub:       make(chan tea.Msg, 16),
 		laneIndex: make(map[string]int),
 		// Default to overview with 1 column at 80x24 — the spec's
 		// fallback for "no WindowSizeMsg yet". decideMode will fix

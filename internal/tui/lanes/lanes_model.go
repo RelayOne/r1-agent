@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/winder/bubblelayout"
 )
 
@@ -79,8 +80,18 @@ type Model struct {
 	// --- Identity / config ---
 	sessionID string
 	transport Transport
-	sub       chan laneTickMsg
-	cancel    context.CancelFunc
+	// sub is the single fan-in channel from runProducer. Per spec
+	// §"waitForLaneTick — the canonical realtime cmd", every
+	// streaming message type (laneTickMsg, laneStartMsg, laneEndMsg,
+	// laneListMsg, killAckMsg, budgetMsg) flows through this one
+	// channel and is read by a single re-armed waitForLaneTick cmd.
+	// Carrying tea.Msg (rather than a typed laneTickMsg) lets the
+	// same channel carry every variant; the spec's "map[laneID]
+	// laneTickMsg" coalescer wording in §"Subscription Wiring"
+	// describes the producer's INTERNAL queue, not the channel
+	// element type.
+	sub    chan tea.Msg
+	cancel context.CancelFunc
 
 	// --- Lane state (ordered by createdAt then LaneID) ---
 	lanes     []*Lane
