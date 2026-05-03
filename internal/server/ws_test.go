@@ -235,11 +235,11 @@ func TestLaneWSAuthSubprotocolToken(t *testing.T) {
 // JSON-RPC notifications on its own cadence and that a pong reply keeps
 // the connection alive past the idle deadline.
 //
-// The production interval is 15s. The test waits long enough to receive
-// at least one $/ping and confirms the JSON shape. The 15s wait is
-// real — `-short` does NOT bypass it because the spec contract being
-// asserted (the heartbeat exists and follows the 15s cadence) is a
-// non-negotiable wire-level invariant, not an optimisation.
+// The production interval is 15s. The test waits the full 15s to
+// receive at least one $/ping and confirms the JSON shape. The wait
+// is unconditional because the spec contract being asserted (the
+// heartbeat exists and follows the 15s cadence) is a non-negotiable
+// wire-level invariant.
 func TestLaneWSPingPongKeepsAlive(t *testing.T) {
 	t.Parallel()
 
@@ -289,9 +289,9 @@ func TestLaneWSPingPongKeepsAlive(t *testing.T) {
 }
 
 // TestLaneWSIdleTimeoutCloses verifies that 30s of silence closes the
-// connection with code 4408. The 30s wait is real and -short does NOT
-// bypass it: the spec contract being asserted (idle close at exactly
-// 30s) is a wire-level invariant.
+// connection with code 4408. The wait runs unconditionally for the
+// full 30s because the spec contract being asserted (idle close at
+// exactly 30s) is a wire-level invariant.
 func TestLaneWSIdleTimeoutCloses(t *testing.T) {
 	t.Parallel()
 

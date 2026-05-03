@@ -227,7 +227,8 @@ func TestSessionBoundOverWS(t *testing.T) {
 
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 
-	// Frame 1: subscribe result (skip).
+	// Frame 1: subscribe result — read and discard; the assertion is
+	// on Frame 2 (the session.bound notification) below.
 	if _, _, err := readWSFrameAsClient(br); err != nil {
 		t.Fatalf("read result: %v", err)
 	}
