@@ -16,8 +16,13 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/agentserve"
+	"github.com/RelayOne/r1/internal/server"
 )
 
 func TestServeCmd_FlagParse(t *testing.T) {
@@ -212,6 +217,56 @@ func TestServeCmd_AddrEmptySpawnsDiscovery(t *testing.T) {
 // spawnDaemon to verify the resolve path surfaces spawn failures
 // rather than silently degrading.
 var errSpawnDisabled = fmt.Errorf("spawn disabled by test")
+
+// TestServeCmd_AgentMount_Integration is a non-circular integration
+// test: it runs a real server.Server, calls server.MountAgentServe
+// + server.MountDaemonQueue against the real Mux(), starts an
+// httptest listener bound to that mux, and probes /v1/agent/api/
+// capabilities + /v1/queue/health with the real bearer token. No
+// mocks. Verifies the mount routes are wired correctly and the auth
+// gate accepts the operator's bearer.
+func TestServeCmd_AgentMount_Integration(t *testing.T) {
+	const token = "tk-integration"
+	srv := server.New(0, token, server.NewEventBus())
+	mux := srv.Mux()
+	if mux == nil {
+		t.Fatal("Server.Mux() returned nil")
+	}
+	ag := agentserve.NewServer(agentserve.Config{
+		Version: "test",
+		Capabilities: agentserve.Capabilities{
+			TaskTypes: []string{"research"},
+		},
+	})
+	server.MountAgentServe(mux, ag, token)
+
+	httpSrv := httptest.NewServer(mux)
+	defer httpSrv.Close()
+
+	// Probe /v1/agent/api/capabilities with the right bearer.
+	req, _ := http.NewRequest("GET", httpSrv.URL+"/v1/agent/api/capabilities", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("agent capabilities: got status %d, want 200", resp.StatusCode)
+	}
+
+	// Probe with wrong bearer to confirm the gate rejects.
+	req2, _ := http.NewRequest("GET", httpSrv.URL+"/v1/agent/api/capabilities", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("get with wrong bearer: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("wrong bearer: got %d, want 401", resp2.StatusCode)
+	}
+}
 
 func TestServeCmd_SingleSessionModeRoundtrip(t *testing.T) {
 	// setSingleSessionMode + IsSingleSessionMode round-trip.

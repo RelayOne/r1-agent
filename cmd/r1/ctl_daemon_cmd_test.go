@@ -352,6 +352,66 @@ func TestCtl_LoopbackFallback(t *testing.T) {
 	}
 }
 
+// TestCtl_UnixSocketEndToEnd is the non-circular companion to
+// TestCtl_UnixSocketPreferred. Stands up a REAL HTTP server bound to
+// a unix-domain socket, points discovery at it, and verifies that an
+// `r1 ctl` verb (status) reaches the server and returns its JSON
+// response. No mocks: the test exercises pickClientAndURL +
+// httpDoCtlVia + dialUnix end-to-end against the real transport.
+func TestCtl_UnixSocketEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "r1.sock")
+
+	// Real HTTP server bound to the unix socket. It records the
+	// request path + Authorization header so we can confirm the
+	// ctl client (a) reached it via the unix transport, and (b) did
+	// NOT send a Bearer header (peer-cred handles auth on the unix
+	// path).
+	var sawAuth string
+	var sawPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/queue/status", func(w http.ResponseWriter, r *http.Request) {
+		sawAuth = r.Header.Get("Authorization")
+		sawPath = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workers":3,"active":1}`))
+	})
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	defer ln.Close()
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
+	defer srv.Close()
+
+	// Discovery file pointing at the unix socket. We fill in a fake
+	// loopback Port + Token so resolveTransport returns a complete
+	// ctlTransport; the unix-socket Path being alive is what gates
+	// the unix-transport route.
+	t.Setenv("R1_HOME", dir)
+	if _, err := daemondisco.WriteDiscoveryTo(dir, 99, sockPath, 65535, "tk-must-not-be-sent", "r1-test"); err != nil {
+		t.Fatalf("write discovery: %v", err)
+	}
+
+	stdout, stderr, code := runCtl("status")
+	if code != 0 {
+		t.Fatalf("ctl status: exit %d (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stdout, "workers") {
+		t.Errorf("response: missing 'workers' field; got %q", stdout)
+	}
+	if sawPath != "/v1/queue/status" {
+		t.Errorf("server saw path %q, want /v1/queue/status", sawPath)
+	}
+	// Critical contract: the unix transport drops the Bearer header
+	// because peer-cred is the authentication mechanism. If the
+	// header arrived, the route is leaking the token.
+	if sawAuth != "" {
+		t.Errorf("unix path leaked Authorization header: %q", sawAuth)
+	}
+}
+
 func TestCtl_DiscoveryMissing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("R1_HOME", dir)
