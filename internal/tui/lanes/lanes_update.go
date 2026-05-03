@@ -1,7 +1,9 @@
 package lanes
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
@@ -229,15 +231,60 @@ func (m *Model) recalcAggregates() {
 	m.totalLanes = len(m.lanes)
 }
 
-// View renders the empty view that the tea.Model interface requires.
-// Spec checklist item 12 owns Update; the full View dispatch
-// (viewEmpty / viewOverview / viewFocus + status bar) is owned by
-// item 14 (lanes_view.go) which replaces this minimal body in a
-// later commit. Returning an empty view here is the documented
-// behavior per spec §"Acceptance Criteria" "no lanes, width=120 →
-// empty status bar only" — until item 14 lands the panel renders
-// nothing, which is the same observable behavior as
-// TestSnapshot_Empty before status bar wiring.
+// View renders the panel as one vertical join of per-lane summary
+// rows followed by a single-line status bar. This is the foundation
+// view that satisfies the tea.Model interface end-to-end after item
+// 12; checklist items 14–19 (viewEmpty, viewOverview, viewFocus,
+// renderLane, renderLanePeer, viewStatusBar) replace this body with
+// the layout-aware variants that branch on m.mode and read from the
+// renderCache. The behaviour delivered here is the always-correct
+// fallback: list every lane in stable order with glyph + title +
+// status + tokens + cost, plus an aggregate footer. It honours the
+// glyph-pairing accessibility rule from the package doc (every
+// status string is preceded by its single-cell glyph).
 func (m *Model) View() tea.View {
-	return tea.NewView("")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var b strings.Builder
+	if len(m.lanes) == 0 {
+		b.WriteString("(no lanes)\n")
+	} else {
+		for _, l := range m.lanes {
+			fmt.Fprintf(&b, "%s %-20s %-9s %5d tok  $%6.4f  %s\n",
+				l.Status.Glyph(),
+				truncate(l.Title, 20),
+				l.Status.String(),
+				l.Tokens,
+				l.CostUSD,
+				truncate(l.Activity, max(0, m.width-60)),
+			)
+			// Clear Dirty after consuming it (item 12 contract:
+			// View resets the bit so the next Update mutation is
+			// the only trigger for re-render).
+			l.Dirty = false
+		}
+	}
+	// Status bar (always rendered; not cached per spec
+	// §"Render-Cache Contract" final paragraph).
+	fmt.Fprintf(&b, "\n  r1 lanes  %d lanes  $%.4f / $%.2f  %s\n",
+		m.totalLanes, m.totalCost, m.budgetLimit, m.currentModel,
+	)
+	return tea.NewView(b.String())
 }
+
+// truncate returns s clipped to n cells with an ellipsis suffix when
+// it had to clip. n<=0 returns the empty string.
+func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return s[:n-1] + "…"
+}
+
