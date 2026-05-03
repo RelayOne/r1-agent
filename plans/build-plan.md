@@ -6,24 +6,24 @@ Spec: `specs/cortex-concerns.md`. Branch: `build/cortex-concerns`. Started 2026-
 
 **Shared LLM infra (TASKs 1-5):**
 - [x] TASK-1: LobePromptBuilder (cache-aligned) (commit: 6692660b)
-- [ ] TASK-2: Escalator (Haiku → Sonnet flag)
-- [ ] TASK-3: Lobe enable-flags config schema
-- [ ] TASK-4: Note.Meta key conventions
-- [ ] TASK-5: AcquireLLMSlot wrapper
+- [x] TASK-2: Escalator (Haiku → Sonnet flag) (commit: 7f4ef58)
+- [x] TASK-3: Lobe enable-flags config schema (commit: 125fb969 + 02f78795)
+- [x] TASK-4: Note.Meta key conventions (commit: e79cbc41)
+- [x] TASK-5: AcquireLLMSlot wrapper (commit: f9cfee63)
 
 **MemoryRecall Lobe (TASKs 6-9):**
-- [ ] TASK-6: MemoryRecallLobe scaffold + tfidf
-- [ ] TASK-7: OnRound publishes top-3
-- [ ] TASK-8: Subscribe + reindex on memory_added
-- [ ] TASK-9: Privacy redaction
+- [x] TASK-6: MemoryRecallLobe scaffold + tfidf (commit: 83340679)
+- [x] TASK-7: OnRound publishes top-3 (commit: ef71372f)
+- [x] TASK-8: Subscribe + reindex on memory_added (commit: 3a492b3f)
+- [x] TASK-9: Privacy redaction (commit: 2c45c935)
 
 **WALKeeper Lobe (TASKs 10-12):**
-- [ ] TASK-10: WALKeeperLobe scaffold + framing
-- [ ] TASK-11: Backpressure
-- [ ] TASK-12: Restart-replay verification
+- [x] TASK-10: WALKeeperLobe scaffold + framing (commit: d67f2c0b)
+- [x] TASK-11: Backpressure (commit: e29640bb)
+- [x] TASK-12: Restart-replay verification (commit: 67d68bf1)
 
 **RuleCheck Lobe (TASKs 13-15):**
-- [ ] TASK-13: Subscribe to supervisor.rule.fired
+- [x] TASK-13: Subscribe to supervisor.rule.fired
 - [ ] TASK-14: severityFor mapping
 - [ ] TASK-15: Convert to sticky Notes
 
