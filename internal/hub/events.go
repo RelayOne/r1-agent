@@ -125,15 +125,37 @@ const (
 	EventCustom EventType = "custom.event"
 )
 
-// --- Cortex (7 events) ---
+// --- Cortex (9 events) ---
 const (
-	EventCortexNotePublished     EventType = "cortex.note.published"
-	EventCortexPreWarmFired      EventType = "cortex.prewarm.fired"
-	EventCortexPreWarmFailed     EventType = "cortex.prewarm.failed"
-	EventCortexRouterDecided     EventType = "cortex.router.decided"
-	EventCortexLobeStarted       EventType = "cortex.lobe.started"
-	EventCortexLobePanic         EventType = "cortex.lobe.panic"
-	EventCortexSpotlightChanged  EventType = "cortex.spotlight.changed"
+	EventCortexNotePublished           EventType = "cortex.note.published"
+	EventCortexPreWarmFired            EventType = "cortex.prewarm.fired"
+	EventCortexPreWarmFailed           EventType = "cortex.prewarm.failed"
+	EventCortexRouterDecided           EventType = "cortex.router.decided"
+	EventCortexLobeStarted             EventType = "cortex.lobe.started"
+	EventCortexLobePanic               EventType = "cortex.lobe.panic"
+	EventCortexSpotlightChanged        EventType = "cortex.spotlight.changed"
+	EventCortexWorkspaceMemoryAdded    EventType = "cortex.workspace.memory_added"
+
+	// EventCortexUserConfirmedPlanChange is emitted when the user
+	// confirms a queued PlanUpdateLobe proposal. Custom["queue_id"]
+	// carries the queue identifier the Lobe stamped onto the
+	// user-confirm Note's Meta. Spec: specs/cortex-concerns.md item 20.
+	EventCortexUserConfirmedPlanChange EventType = "cortex.user.confirmed_plan_change"
+
+	// EventCortexUserMessage is emitted by the orchestrator after each
+	// user turn lands. ClarifyingQLobe subscribes to this to drive the
+	// once-per-user-turn Haiku call that drafts clarifying questions.
+	// Custom["text"] carries the raw user message text; Custom["history"]
+	// carries the recent provider.ChatMessage tail when available.
+	// Spec: specs/cortex-concerns.md item 24.
+	EventCortexUserMessage EventType = "cortex.user.message"
+
+	// EventCortexUserAnsweredQuestion is emitted when the user answers
+	// a queued clarifying question. Custom["question_id"] carries the
+	// identifier the Lobe stamped on the original question Note's Meta.
+	// ClarifyingQLobe resolves the matching outstanding Note when this
+	// event fires. Spec: specs/cortex-concerns.md item 25.
+	EventCortexUserAnsweredQuestion EventType = "cortex.user.answered_question"
 )
 
 // Mode determines how the hook participates.
