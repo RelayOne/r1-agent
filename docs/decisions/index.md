@@ -82,6 +82,14 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - D-D3: IPC = unix socket / Windows named pipe for CLI; loopback HTTP+WS for browsers. JSON-RPC 2.0 envelope, monotonic seq, replay-on-reconnect.
 - D-D4: os.Chdir audit + CI lint required before turning on multi-session (RT-R1D-DAEMON central risk).
 - D-D5: Single-instance via `gofrs/flock` on `~/.r1/daemon.lock` plus socket exclusivity.
+- D-D6: WebSocket library = `github.com/coder/websocket` v1.8.x (formerly `nhooyr/websocket`). Confirmed during r1d-server Phase E build (TASK-29). Rationale:
+  - **Active maintenance.** `nhooyr/websocket` was the de-facto idiomatic Go-2026 WS library; the original author retired it and the Coder org adopted the repo, keeping the API identical and shipping security patches. `gorilla/websocket` was archived in 2022 — disqualifying for a long-running daemon.
+  - **`context.Context` on Read/Write.** Native cancellation across our session-lifetime contexts; `gorilla` requires a manual ping-loop and SetReadDeadline pattern.
+  - **`wsjson.Read/Write` helpers.** JSON-RPC 2.0 framing is one-line; matches our `internal/server/jsonrpc/dispatch.go` shape.
+  - **RFC 6455 + permessage-deflate** built in. No need to roll our own.
+  - **Single allocation per frame.** Important for the 50-session × 100-message soak (TASK-52); confirmed at 262 MB/s journal throughput, 852µs p99 dispatch latency.
+  - **Smaller surface area** than gorilla's archive (less code to audit). Trade-off: less StackOverflow coverage; accepted because the API is small and well-documented.
+  - Tested against the WS upgrade rejection matrix (no-subproto / wrong-subproto / wrong-token / Origin / Host) in `internal/server/ws/handler_test.go` and the subscribe/replay/reconnect contract in `internal/server/ws_replay_test.go`.
 
 **Agentic:**
 - D-A1: MCP-primary, single wire protocol for all programmatic surfaces.
