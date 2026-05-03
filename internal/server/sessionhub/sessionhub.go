@@ -82,6 +82,19 @@ type SessionHub struct {
 	// race-free under concurrent Create calls.
 	idMu  sync.Mutex
 	idSeq uint64
+
+	// index is the optional `~/.r1/sessions-index.json` writer. When
+	// set (via SetSessionsIndex), Create appends an entry and Delete
+	// marks the entry deleted, so daemon-restart replay (TASK-27) can
+	// reconstruct the session list. nil = no index updates (used by
+	// unit tests that don't care about persistence).
+	index *SessionsIndex
+
+	// journalDir is the absolute directory under which Create allocates
+	// per-session journal paths. Empty = no journal-path allocation;
+	// the IndexEntry then records an empty JournalPath, which the
+	// index manager will reject. Set via SetJournalDir.
+	journalDir string
 }
 
 // NewHub constructs a SessionHub. Resolves `~/.r1/` once and stashes
@@ -129,6 +142,20 @@ type CreateOptions struct {
 	ID string
 }
 
+// SetSessionsIndex installs the `~/.r1/sessions-index.json` writer.
+// Subsequent Create / Delete calls update the index atomically; a
+// nil argument disables index updates.
+func (h *SessionHub) SetSessionsIndex(idx *SessionsIndex) {
+	h.index = idx
+}
+
+// SetJournalDir sets the directory under which per-session journal
+// files live. Create derives `<journalDir>/<id>.jsonl` and stamps it
+// onto the IndexEntry. Empty = no journal-path allocation.
+func (h *SessionHub) SetJournalDir(dir string) {
+	h.journalDir = dir
+}
+
 // Create registers a new session after validating its workdir. The
 // returned *Session is registered in the hub's sync.Map and reachable
 // via Get(id). The Session is NOT started — the caller invokes
@@ -137,6 +164,11 @@ type CreateOptions struct {
 // Workdir validation runs first (spec §11.21). On any failure, no
 // session is registered and ErrInvalidWorkdir is returned wrapping the
 // specific reason.
+//
+// When SetSessionsIndex was called, an entry is appended to
+// `sessions-index.json` AFTER the in-memory registration succeeds. An
+// index-write error rolls back the in-memory registration so the
+// daemon's on-disk and in-memory views stay consistent.
 func (h *SessionHub) Create(opts CreateOptions) (*Session, error) {
 	if err := h.validateWorkdir(opts.Workdir); err != nil {
 		return nil, err
@@ -156,7 +188,34 @@ func (h *SessionHub) Create(opts CreateOptions) (*Session, error) {
 	if _, loaded := h.sessions.LoadOrStore(id, s); loaded {
 		return nil, fmt.Errorf("%w: id=%s", ErrSessionExists, id)
 	}
+	// Best-effort index append. On failure roll back the in-memory
+	// entry so the caller sees one error and Create is observably
+	// transactional.
+	if h.index != nil {
+		journalPath := h.journalPathFor(id)
+		entry := IndexEntry{
+			ID:          id,
+			Workdir:     s.SessionRoot,
+			Model:       opts.Model,
+			JournalPath: journalPath,
+		}
+		if err := h.index.Append(entry); err != nil {
+			h.sessions.Delete(id)
+			return nil, fmt.Errorf("sessionhub: index append: %w", err)
+		}
+	}
 	return s, nil
+}
+
+// journalPathFor returns the per-session journal path. Empty when no
+// journal directory was configured; the index manager rejects an
+// empty JournalPath, so callers without a journal dir must also leave
+// the SessionsIndex unset.
+func (h *SessionHub) journalPathFor(id string) string {
+	if h.journalDir == "" {
+		return ""
+	}
+	return filepath.Join(h.journalDir, id+".jsonl")
 }
 
 // Get returns the session with the given id, or ErrSessionNotFound.
@@ -177,6 +236,13 @@ func (h *SessionHub) Get(id string) (*Session, error) {
 // Delete removes a session from the hub. Returns ErrSessionNotFound if
 // the id is unknown. The session's cancel func (if any) is invoked so
 // any in-flight Run goroutine winds down before the caller proceeds.
+//
+// When SetSessionsIndex was called, the index entry is mark-deleted
+// atomically. An index-write error is surfaced to the caller; the
+// in-memory deletion still happens (we cannot un-cancel a Run, and
+// keeping the in-memory entry while the user thinks Delete failed
+// would be more confusing than an "in-memory deleted, on-disk
+// inconsistent" error message).
 func (h *SessionHub) Delete(id string) error {
 	v, ok := h.sessions.LoadAndDelete(id)
 	if !ok {
@@ -184,6 +250,11 @@ func (h *SessionHub) Delete(id string) error {
 	}
 	if s, ok := v.(*Session); ok {
 		s.cancelRun()
+	}
+	if h.index != nil {
+		if err := h.index.MarkDeleted(id); err != nil {
+			return fmt.Errorf("sessionhub: index mark-deleted: %w", err)
+		}
 	}
 	return nil
 }
