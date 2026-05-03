@@ -35,6 +35,7 @@ package planupdate
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 
@@ -132,7 +133,7 @@ func NewPlanUpdateLobe(
 	ws *cortex.Workspace,
 	durable *bus.Bus,
 ) *PlanUpdateLobe {
-	return &PlanUpdateLobe{
+	l := &PlanUpdateLobe{
 		planPath: planPath,
 		runtime:  runtime,
 		client:   client,
@@ -141,6 +142,11 @@ func NewPlanUpdateLobe(
 		durable:  durable,
 		queued:   make(map[string]planChange),
 	}
+	// Default onTrigger: invoke haikuCall, parse output, auto-apply
+	// edits, queue adds/removes for user-confirm. Tests SetOnTrigger
+	// to a counting hook to assert TASK-17 cadence in isolation.
+	l.onTrigger = l.defaultOnTrigger
+	return l
 }
 
 // ID satisfies cortex.Lobe. Stable string used as Note.LobeID.
@@ -217,6 +223,51 @@ func (l *PlanUpdateLobe) SetOnTrigger(fn func(ctx context.Context, in cortex.Lob
 // TriggerCount reports the number of ticks that satisfied the trigger
 // predicate. Test-facing accessor for the cadence test.
 func (l *PlanUpdateLobe) TriggerCount() uint64 { return l.triggerCount.Load() }
+
+// defaultOnTrigger is the production trigger callback installed by
+// the constructor. It runs the spec-item-19 pipeline:
+//
+//  1. Acquire one LLM-Lobe slot via in.Provider/Bus side effects (the
+//     LobeRunner already wraps Run in semaphore Acquire/Release for
+//     KindLLM Lobes, so this method does NOT take the slot itself).
+//  2. Call haikuCall to get the raw model output text.
+//  3. parsePlanUpdate -> on error log + return (no Note, no plan
+//     change).
+//  4. confidence < 0.6 -> return (the model self-suppressed).
+//  5. applyEditsAndSave for any edits (auto-apply).
+//  6. queuePendingNote for additions+removals (user-confirm).
+//
+// All errors are logged at warn level; none escalate to crash the
+// runner — the LobeRunner contract is "Run MUST observe ctx.Done() and
+// return nil on graceful shutdown".
+func (l *PlanUpdateLobe) defaultOnTrigger(ctx context.Context, in cortex.LobeInput) {
+	raw, err := l.haikuCall(ctx, in)
+	if err != nil {
+		// haikuCall already logged; just bail.
+		return
+	}
+	parsed, err := parsePlanUpdate(raw)
+	if err != nil {
+		slog.Warn("plan-update: malformed model output",
+			"err", err, "lobe", l.ID(), "raw_len", len(raw))
+		return
+	}
+	if parsed.Confidence < 0.6 {
+		// Model self-suppressed per the system-prompt rule
+		// "If confidence < 0.6, return empty arrays".
+		return
+	}
+
+	if applied, err := applyEditsAndSave(l.planPath, parsed.Edits); err != nil {
+		slog.Warn("plan-update: apply edits failed", "err", err, "lobe", l.ID())
+	} else if applied > 0 {
+		slog.Debug("plan-update: applied edits", "count", applied, "lobe", l.ID())
+	}
+
+	if len(parsed.Additions) > 0 || len(parsed.Removals) > 0 {
+		l.queuePendingNote(parsed.Additions, parsed.Removals, parsed.Rationale)
+	}
+}
 
 // PlanPath returns the configured plan.json path. Test-facing accessor
 // so tests can assert constructor parameter capture without reaching

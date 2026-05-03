@@ -27,6 +27,13 @@ func readFileBytes(path string) ([]byte, error) {
 	return os.ReadFile(path) // #nosec G304 -- planPath is a config-controlled path.
 }
 
+// writeFileBytesImpl is the parse-layer's IO sink. Defined here
+// because os is already imported. Used by writeFileBytes in parse.go
+// when planPath does not end in stoke-plan.json.
+func writeFileBytesImpl(path string, data []byte) error {
+	return os.WriteFile(path, data, 0644) // #nosec G306 -- plan artefact, user-readable.
+}
+
 // haikuCall executes one Haiku request for the supplied LobeInput. The
 // system prompt is the verbatim planUpdateSystemPrompt; the user
 // message is buildPlanContext(in) — a compact summary of the current
