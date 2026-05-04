@@ -18,6 +18,7 @@
 
 mod discovery;
 mod ipc;
+mod lanes;
 mod subprocess;
 mod transport;
 
