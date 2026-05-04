@@ -38,6 +38,21 @@ This is the current main-branch feature inventory for R1.
 | Timeout and cancellation hooks | Keeps deterministic runtime calls bounded and cancellation-aware | Done | `cmd/r1-mcp/backends.go` |
 | Oneshot runtime cost metadata | Makes runtime cost visible to callers and operators | Done | April 30 main-branch oneshot cost metadata commit |
 
+## Agentic Test Harness
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `r1.*` MCP catalog (38 tools across 10 categories) | One namespace; every UI action reachable through MCP | Done (catalog only; back-end pending specs 1-7) | `internal/mcp/r1_server_catalog.go` |
+| Slack-style envelope + stokerr/ taxonomy | Predictable wire shape; no raw Go errors leak | Done | `internal/mcp/envelope.go`, `internal/mcp/stokerr_map.go` |
+| `r1 mcp serve --print-tools [--markdown]` | Lint + docs generator have a stable input | Done | `cmd/r1/mcp.go` |
+| `internal/tui/teatest_shim.go` | Bubble Tea drivable through MCP without a terminal emulator | Done (in-process driver; teatest swap pending dep) | `internal/tui/teatest_shim.go` |
+| `A11yEmitter` + JSONPath evaluator | Synthetic a11y trees + structural assertions | Done | `internal/tui/a11y.go`, `internal/tui/jsonpath.go` |
+| `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched to MCP catalog | Done | `tools/agent-feature-runner/` |
+| 8 seed feature fixtures across all 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
+| `lint-view-without-api` + allowlist | UI without API is a build break | Done (Go scanner active; React + Tauri scanners blocked on specs 6/7 merge) | `tools/lint-view-without-api/` |
+| `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | One-line CI/local recipes | Done | `Makefile` |
+| `docs/AGENTIC-API.md` + D-A1..D-A5 acceptance | External-agent contract + decisions log | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
+
 ## Status
 
 ### Done
@@ -46,10 +61,14 @@ This is the current main-branch feature inventory for R1.
 - deterministic skill substrate
 - full pack lifecycle including signing, verification, and HTTP serving
 - runtime metrics/audit/timeout/cancel/cost helper surfaces
+- agentic test harness wire surface (38 r1.* tools, parser/dispatcher,
+  TUI shim, lint scanner, 8 seed fixtures, AGENTIC-API.md, D-A1..D-A5)
 
 ### In Progress
 
 - broader runtime-wide adoption of deterministic skills
+- agentic test harness back-end wiring (depends on specs 1-7 merging
+  the cortex/lanes/TUI/r1d/web/desktop sources)
 
 ### Scoped
 
