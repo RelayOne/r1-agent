@@ -21,6 +21,10 @@ artifacts.
 - new runtime helpers for ledger audit, execution audit, metrics
   collection, timeout/cancel behavior, oneshot runtime cost metadata,
   and flagship deterministic runtimes
+- **anti-truncation enforcement** — a layered, machine-mechanical
+  defense against LLM self-truncation. Refuses end-turn while plan
+  items are unchecked or truncation phrases are emitted. See
+  [`docs/ANTI-TRUNCATION.md`](docs/ANTI-TRUNCATION.md).
 
 ## What Changed In The Last 30 Days
 

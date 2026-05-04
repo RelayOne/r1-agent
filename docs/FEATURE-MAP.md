@@ -9,6 +9,7 @@ This is the current main-branch feature inventory for R1.
 | Plan/execute/verify workflow | Keeps agent output tied to explicit execution and verification gates | Done | `app/`, `workflow/`, `verify/` |
 | Adversarial review posture | Favors reviewable output over ungoverned autonomous edits | Done | `critic/`, `convergence/`, `engine/` |
 | Evidence model | Persists what happened instead of trusting session memory | Done | `ledger/`, `bus/`, `session/` |
+| Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases are emitted; layered machine-mechanical defense against LLM self-reduction. | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
 
 ## Deterministic Skills
 
