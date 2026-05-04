@@ -3,3 +3,5 @@
 // concrete component lands so intermediate commits still typecheck.
 
 export { statusGlyph, statusColorToken } from "./statusTokens";
+export { LaneCard } from "./LaneCard";
+export type { LaneCardProps } from "./LaneCard";
