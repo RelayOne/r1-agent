@@ -5,3 +5,5 @@
 export { statusGlyph, statusColorToken } from "./statusTokens";
 export { LaneCard } from "./LaneCard";
 export type { LaneCardProps } from "./LaneCard";
+export { LaneSidebar } from "./LaneSidebar";
+export type { LaneSidebarProps, LaneSidebarItem } from "./LaneSidebar";
