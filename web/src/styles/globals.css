@@ -136,3 +136,26 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+@layer utilities {
+  @keyframes reasoning-shimmer-anim {
+    0%   { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+  }
+  .reasoning-shimmer {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--muted) / 0) 0%,
+      hsl(var(--muted) / 0.6) 50%,
+      hsl(var(--muted) / 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: reasoning-shimmer-anim 2.4s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reasoning-shimmer {
+      animation: none;
+      background-image: none;
+    }
+  }
+}
