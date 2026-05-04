@@ -12,7 +12,8 @@
     "tauri": "node -e \"console.error('[r1-desktop] Tauri runtime not yet wired; see desktop/PLAN.md R1D-1.1 / R1D-4. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\""
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@r1/web-components": "workspace:*"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

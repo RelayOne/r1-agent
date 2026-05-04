@@ -47,5 +47,9 @@ export default defineConfig({
       "@panels": resolve(root, "src/panels"),
       "@types": resolve(root, "src/types"),
     },
+    // Dedupe React + ReactDOM so the workspace package and the desktop
+    // app share a single copy. Without this Vite would bundle React twice
+    // (once for desktop, once via @r1/web-components) and break hooks.
+    dedupe: ["react", "react-dom"],
   },
 });
