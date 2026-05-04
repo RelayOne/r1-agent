@@ -19,6 +19,7 @@
 mod discovery;
 mod ipc;
 mod subprocess;
+mod transport;
 
 use subprocess::SubprocessManager;
 
