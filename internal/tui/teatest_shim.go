@@ -325,9 +325,18 @@ func (s *shimImpl) Snapshot(id TUISessionID) (Snapshot, error) {
 	}
 	tree := []A11yNode{}
 	if em, ok := model.(A11yEmitter); ok {
-		tree = []A11yNode{em.A11y()}
+		root := em.A11y()
+		tree = []A11yNode{root}
+		// Prefer the explicit focused field from the session (set by
+		// FocusLane). Fall back to the A11y root's StableID, which
+		// emitters use to advertise the currently-focused element.
+		// Final fallback is the model's StableID() — for emitters that
+		// don't track focus (read-only views).
 		if focus == "" {
-			focus = em.StableID()
+			focus = root.StableID
+			if focus == "" {
+				focus = em.StableID()
+			}
 		}
 	}
 	return Snapshot{
