@@ -13,7 +13,11 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@r1/web-components": "workspace:*"
+    "@r1/web-components": "workspace:*",
+    "@tauri-apps/plugin-websocket": "^2.0.0",
+    "@tauri-apps/plugin-store": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-autostart": "^2.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
