@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate
 
 # Default: run the CI gate
 all: build test vet
@@ -85,6 +85,18 @@ agent-features-update:
 # web/src/, internal/tui/, or desktop/src-tauri/.
 agent-features-drift-check:
 	./tools/agent-feature-runner/snapshot_drift_check.sh
+
+# Storybook MCP contract validator (spec 8 §7 + item 34).
+# Pinned to ^9 per the §10a "Playwright/Storybook MCP version churn"
+# mitigation. STATUS: BLOCKED on spec 6 merge — this target prints a
+# notice and exits 0 until web/src/components/*.tsx exists.
+storybook-mcp-validate:
+	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
+	    cd web && npx storybook-mcp@^9 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
+	else \
+	    echo "storybook-mcp-validate: SKIP — web/src/components/*.tsx not present (spec 6 web-chat-ui not merged)"; \
+	    echo "  see web/.storybook/STATUS-BLOCKED-item-33.md for resolution path"; \
+	fi
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
