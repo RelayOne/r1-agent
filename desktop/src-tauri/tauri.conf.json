@@ -22,7 +22,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ipc: https://ipc.localhost"
+      "_comment_csp": "ws://127.0.0.1:* added so tauri-plugin-websocket can reach the r1 daemon on a loopback port chosen at runtime. Loopback only — explicitly NOT a ws: wildcard. Per spec desktop-cortex-augmentation §2.",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ipc: https://ipc.localhost ws://127.0.0.1:*"
     }
   },
   "bundle": {
