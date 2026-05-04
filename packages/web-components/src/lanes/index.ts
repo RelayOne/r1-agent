@@ -9,3 +9,5 @@ export { LaneSidebar } from "./LaneSidebar";
 export type { LaneSidebarProps, LaneSidebarItem } from "./LaneSidebar";
 export { LaneDetail } from "./LaneDetail";
 export type { LaneDetailProps } from "./LaneDetail";
+export { PoppedLaneApp } from "./PoppedLaneApp";
+export type { PoppedLaneAppProps, LaneSubscribeFn } from "./PoppedLaneApp";
