@@ -366,31 +366,8 @@ func (s *shimImpl) GetModel(id TUISessionID, jsonPath string) (json.RawMessage, 
 	if err != nil {
 		return nil, fmt.Errorf("marshal model: %w", err)
 	}
-	jsonPath = strings.TrimSpace(jsonPath)
-	if jsonPath == "" || jsonPath == "$" {
-		return json.RawMessage(raw), nil
-	}
-	// Item 15 wires the actual JSONPath evaluator (gjson). Until then
-	// only top-level field projection is supported here.
-	return projectTopLevel(raw, jsonPath)
-}
-
-// projectTopLevel handles "$.field" against a JSON object. Used until
-// the full JSONPath evaluator is wired (item 15).
-func projectTopLevel(raw json.RawMessage, jsonPath string) (json.RawMessage, error) {
-	field := strings.TrimPrefix(jsonPath, "$.")
-	if field == jsonPath || field == "" {
-		return nil, fmt.Errorf("unsupported jsonpath %q in this checkpoint", jsonPath)
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, fmt.Errorf("not a JSON object; cannot project %q: %w", jsonPath, err)
-	}
-	val, ok := obj[field]
-	if !ok {
-		return nil, fmt.Errorf("field %q not present in model", field)
-	}
-	return val, nil
+	// Delegate to the JSONPath evaluator in jsonpath.go (item 15).
+	return EvalJSONPath(json.RawMessage(raw), jsonPath)
 }
 
 // FocusLane drives "down" presses up to N times until the snapshot's
