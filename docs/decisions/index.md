@@ -38,6 +38,44 @@ so collapsed tiles shrink to a 32 px header strip without claiming
 full row height. Pin order is in `ui.tilePinnedBySession`; reorder
 via HTML5 DnD or Cmd/Ctrl+Shift+arrow.
 
+### D-2026-05-04-05 — Routing on react-router v7 (TanStack rejection final)
+The spec floated TanStack Router as an alternative; we shipped on
+react-router v7 (already pinned in items 9-10). The deciding factor
+was that react-router v7 ships `createBrowserRouter` + nested
+`<Outlet>` + `useParams<RouteParams>()` with the exact
+daemon → session → lane structure the spec requires (item 41).
+TanStack Router's typed-route advantage doesn't outweigh the cost
+of swapping deps after fifteen items had already imported
+`react-router-dom`. `web/src/routes/index.tsx` exports
+`buildRoutes()` so any future migration is one swap-in factory
+away.
+
+### D-2026-05-04-06 — Streamdown pinned at ~1.2.0 (tilde-minor)
+`web/package.json` pins `streamdown: ~1.2.0`. The tilde-minor pin
+locks us to the 1.2.x line; pin will re-evaluate when Shiki 4 lands
+(Streamdown 2 plans to vendor that). ShikiThemeContext is re-exported
+from the markdown wrapper so ThemeProvider (item 21) plumbs the
+active theme without prop drilling.
+
+### D-2026-05-04-07 — Coverage + stories manifests as enforcement
+Items 45 + 47 ship runtime manifests
+(`web/src/test/coverage-manifest.test.ts` and
+`web/src/test/stories-manifest.test.ts`) that walk
+src/components / hooks / lib at test-run time and fail when a
+shipped source file is missing its sibling .test.tsx (or
+.stories.tsx, scoped to components only). Cheaper than enforcing
+via lint (no AST traversal needed) and red-CI-fast: the manifest
+itself runs in <100 ms.
+
+### D-2026-05-04-08 — Custom eslint rule via flat config local plugin
+Spec called for `web/eslint-rules/`; we kept that path and wired
+the rule via the eslint flat-config `plugins: { local: ... }`
+shape rather than publishing it as a standalone npm package.
+The rule lives at `web/eslint-rules/require-data-testid.js` and
+is referenced by `web/eslint.config.js` as
+`local/require-data-testid: error`. Test files and stories are
+exempt; spread props short-circuit the check.
+
 ## 2026-05-03 — Build progress
 
 ### D-2026-05-03-01 — Specs 1, 2, 3 SHIPPED
