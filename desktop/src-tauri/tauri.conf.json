@@ -22,7 +22,6 @@
       }
     ],
     "security": {
-      "_comment_csp": "ws://127.0.0.1:* added so tauri-plugin-websocket can reach the r1 daemon on a loopback port chosen at runtime. Loopback only — explicitly NOT a ws: wildcard. Per spec desktop-cortex-augmentation §2.",
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ipc: https://ipc.localhost ws://127.0.0.1:*"
     }
   },
@@ -38,7 +37,6 @@
     "category": "DeveloperTool",
     "shortDescription": "R1 Desktop - agentic runtime GUI",
     "longDescription": "Scaffold only. Full implementation: see desktop/PLAN.md and plans/work-orders/work-r1-desktop-app.md.",
-    "_comment_externalBin": "Bundles the r1 daemon as a sidecar fallback per spec desktop-cortex-augmentation §2 + §5. Tauri appends the host triple to the prefix at bundle time and resolves the matching file from desktop/src-tauri/binaries/. The five triples cover Linux x86_64, macOS arm64+x86_64, and Windows x86_64+arm64. Source binaries are produced by `desktop/scripts/copy-r1-binaries.sh` ahead of `cargo tauri build`.",
     "externalBin": [
       "binaries/r1"
     ]
