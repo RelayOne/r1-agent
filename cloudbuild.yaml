@@ -4,6 +4,21 @@
 # Run remotely: triggered on every push to main via Cloud Build trigger
 
 steps:
+  # web/ build + test runs first so the dist/ output is in place
+  # before the Go build embeds it (per spec web-chat-ui item 50).
+  # Failure here fails CI before any Go gate runs.
+  - name: 'node:20'
+    id: web-build
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        cd web
+        npm ci --no-audit --no-fund
+        npm run build
+        npm run test
+    waitFor: ['-']
+
   - name: 'golang:1.25'
     id: mod-tidy-check
     entrypoint: bash
@@ -16,7 +31,7 @@ steps:
 
   - name: 'golang:1.25'
     id: build
-    waitFor: ['mod-tidy-check']
+    waitFor: ['mod-tidy-check', 'web-build']
     entrypoint: bash
     args:
       - -c
