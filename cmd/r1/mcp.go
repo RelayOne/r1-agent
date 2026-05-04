@@ -78,6 +78,8 @@ func runMCPCmd(args []string, stdout, stderr io.Writer, loader registryLoader) i
 		return runMCPTest(rest, stdout, stderr, loader)
 	case "call":
 		return runMCPCall(rest, stdout, stderr, loader)
+	case "serve":
+		return runMCPServe(rest, stdout, stderr)
 	case "-h", "--help", "help":
 		fmt.Fprintln(stdout, mcpUsage)
 		return 0
@@ -87,6 +89,42 @@ func runMCPCmd(args []string, stdout, stderr io.Writer, loader registryLoader) i
 	}
 }
 
+// runMCPServe handles `r1 mcp serve` — the consolidated MCP server entry
+// point per spec 8 §12 item 9. The --print-tools flag short-circuits the
+// server boot and emits the static r1.* catalog as JSON; this output is
+// consumed by the lint at tools/lint-view-without-api/ which has to know
+// every tool name without spawning the daemon.
+//
+// When --print-tools is not set, this command currently prints a notice
+// and returns non-zero so callers know the server back-end (sessions,
+// lanes, cortex daemon wiring) is not yet wired here. Once the daemon
+// merges, the no-flag path serves the full r1 surface; today only the
+// catalog metadata is canonical here.
+//
+// The Markdown output (used by `make docs-agentic`) is wired separately
+// in item 10 via the --markdown flag.
+func runMCPServe(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mcp serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	printTools := fs.Bool("print-tools", false, "print the r1.* tool catalog and exit")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if !*printTools {
+		fmt.Fprintln(stderr, "r1 mcp serve: server back-end not yet wired in this checkpoint; "+
+			"use --print-tools to emit the static catalog")
+		return 1
+	}
+	cat := mcp.R1ToolCatalog()
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(cat); err != nil {
+		fmt.Fprintf(stderr, "encode: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 const mcpUsage = `r1 mcp — MCP client management
 
 USAGE:
@@ -94,9 +132,12 @@ USAGE:
   r1 mcp list-tools   [--server NAME] [--json] [--policy PATH] [--timeout DUR]
   r1 mcp test <server>            [--policy PATH] [--timeout DUR]
   r1 mcp call <server> <tool> [--args-json JSON] [--policy PATH] [--timeout DUR]
+  r1 mcp serve [--print-tools [--markdown]]
 
 Reads stoke.policy.yaml's mcp_servers block. Exit codes:
-  0 success   1 usage/config   2 transport/connect   3 tool call`
+  0 success   1 usage/config   2 transport/connect   3 tool call
+
+  serve --print-tools          emit the r1.* catalog as JSON`
 
 // loadMCPRegistry is the production registryLoader: discovers the
 // policy file via config.AutoLoadPolicy, validates the mcp_servers
