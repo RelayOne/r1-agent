@@ -134,12 +134,13 @@ function applyEvent(
   return { changed: true, state: { ...state, items: next } };
 }
 
-function describeDeltaPreview(
-  payload: LaneEvent extends { kind: "delta" } ? unknown : never,
-): string {
+function describeDeltaPreview(payload: unknown): string {
   // payload shape is per LaneDeltaPayload — `{kind, ...}`. Surface a
   // short human label for the rail; LaneDetail (focus view) renders
-  // the full content.
+  // the full content. We type the parameter as `unknown` because the
+  // discriminator narrowing happens at the call site (only `delta`
+  // events feed in here); over-narrowing here via a conditional type
+  // collapses to `never` against the LaneEvent union.
   if (payload && typeof payload === "object" && "kind" in payload) {
     const k = String((payload as { kind?: unknown }).kind);
     return k;

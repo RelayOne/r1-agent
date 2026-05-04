@@ -11,6 +11,7 @@
 
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import * as readline from "node:readline";
+import type { Readable } from "node:stream";
 
 import type {
   DesktopApp,
@@ -55,7 +56,7 @@ export async function launch(opts: LaunchOptions): Promise<DesktopApp> {
   return makeHandle(driver);
 }
 
-function makeHandle(driver: ChildProcessByStdio<null, NodeJS.ReadableStream, NodeJS.ReadableStream>): DesktopApp {
+function makeHandle(driver: ChildProcessByStdio<null, Readable, Readable>): DesktopApp {
   let closed = false;
 
   return {

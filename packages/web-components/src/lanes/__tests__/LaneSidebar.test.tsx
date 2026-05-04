@@ -22,7 +22,7 @@ import { render, cleanup } from "@testing-library/react";
 // element so React Testing Library can find them; the spy itself
 // records each render's props so we can assert per-card render
 // counts.
-const renderSpy = vi.fn<[unknown], void>();
+const renderSpy = vi.fn((_props: unknown): void => undefined);
 vi.mock("../LaneCard", async () => {
   const React = await import("react");
   function MockLaneCard(props: { laneId: string; title: string }) {
