@@ -19,6 +19,7 @@
 mod discovery;
 mod ipc;
 mod lanes;
+mod menu;
 mod popout;
 mod subprocess;
 mod transport;
