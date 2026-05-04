@@ -326,6 +326,8 @@ func runAntiTruncTail(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	repo := fs.String("repo", ".", "repository root")
 	follow := fs.Bool("follow", false, "follow new files indefinitely")
+	jsonOut := fs.Bool("json", false, "emit one JSON line per file (for programmatic consumers)")
+	since := fs.String("since", "", "only files whose name lexicographically sorts >= this value")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -340,17 +342,35 @@ func runAntiTruncTail(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
+	emit := func(name string, body []byte) {
+		if *jsonOut {
+			rec := map[string]any{
+				"name":      name,
+				"body":      string(body),
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+			}
+			b, _ := json.Marshal(rec)
+			fmt.Fprintln(stdout, string(b))
+		} else {
+			fmt.Fprintln(stdout, "==", name, "==")
+			fmt.Fprintln(stdout, string(body))
+		}
+	}
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		fmt.Fprintln(stdout, "==", e.Name(), "==")
+		if *since != "" && e.Name() < *since {
+			continue
+		}
 		body, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			fmt.Fprintf(stderr, "read %s: %v\n", e.Name(), err)
 			continue
 		}
-		fmt.Fprintln(stdout, string(body))
+		emit(e.Name(), body)
 	}
 	if *follow {
 		fmt.Fprintln(stderr, "tail --follow: polling, ctrl-c to exit")
@@ -370,9 +390,8 @@ func runAntiTruncTail(args []string, stdout, stderr io.Writer) int {
 					continue
 				}
 				seen[e.Name()] = true
-				fmt.Fprintln(stdout, "==", e.Name(), "==")
 				body, _ := os.ReadFile(filepath.Join(dir, e.Name()))
-				fmt.Fprintln(stdout, string(body))
+				emit(e.Name(), body)
 			}
 		}
 	}

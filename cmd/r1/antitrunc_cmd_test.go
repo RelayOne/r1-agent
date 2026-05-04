@@ -234,3 +234,45 @@ func TestRunAntiTruncTail_StreamsExisting(t *testing.T) {
 		t.Errorf("missing body: %s", stdout.String())
 	}
 }
+
+func TestRunAntiTruncTail_JSON(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "audit", "antitrunc")
+	os.MkdirAll(out, 0o755)
+	os.WriteFile(filepath.Join(out, "post-commit-bbb.md"), []byte("# json-mode\nhi"), 0o644)
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncTail([]string{"-repo", dir, "-json"}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rec); err != nil {
+		t.Fatalf("expected JSON line, got: %s\nerr=%v", stdout.String(), err)
+	}
+	if rec["name"] != "post-commit-bbb.md" {
+		t.Errorf("name = %v", rec["name"])
+	}
+	if !strings.Contains(rec["body"].(string), "json-mode") {
+		t.Errorf("body missing content: %v", rec["body"])
+	}
+}
+
+func TestRunAntiTruncTail_SinceFilter(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "audit", "antitrunc")
+	os.MkdirAll(out, 0o755)
+	os.WriteFile(filepath.Join(out, "post-commit-aaa.md"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(out, "post-commit-zzz.md"), []byte("new"), 0o644)
+
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncTail([]string{"-repo", dir, "-since", "post-commit-mmm.md"}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("rc = %d", rc)
+	}
+	if strings.Contains(stdout.String(), "post-commit-aaa.md") {
+		t.Errorf("aaa should be filtered out by --since: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "post-commit-zzz.md") {
+		t.Errorf("zzz should be present: %s", stdout.String())
+	}
+}
