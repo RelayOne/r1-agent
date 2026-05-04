@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update
 
 # Default: run the CI gate
 all: build test vet
@@ -71,6 +71,14 @@ security:
 # AND spec 5 has merged.
 agent-features:
 	go run ./tools/agent-feature-runner --root tests/agent || true
+
+# Re-record golden a11y snapshots (spec 8 §10a "Snapshot drift"
+# mitigation, §12 item 21). Run when an intentional UI redesign means
+# the prior snapshots no longer match. The resulting diff MUST be
+# reviewed alongside the source-code diff in the same PR (the lint at
+# §22 fails when source diff is empty + snapshot diff is non-empty).
+agent-features-update:
+	go run ./tools/agent-feature-runner --root tests/agent --update || true
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
