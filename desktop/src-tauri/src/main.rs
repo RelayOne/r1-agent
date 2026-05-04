@@ -22,7 +22,25 @@ mod subprocess;
 use subprocess::SubprocessManager;
 
 fn main() {
-    ipc::register_handlers()
+    let mut builder = ipc::register_handlers()
+        // Six Tauri 2 plugins from spec desktop-cortex-augmentation §2.
+        // Order matches the dependency block in desktop/Cargo.toml.
+        .plugin(tauri_plugin_websocket::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init());
+
+    // tauri-plugin-autostart wants the args the binary should be relaunched
+    // with at login. Empty list = launch with no extra flags. The plugin
+    // itself is a no-op until the user toggles "Start at login" in
+    // Settings → Auto-start (item 27/29).
+    builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        Some(vec![]),
+    ));
+
+    builder
         .manage(SubprocessManager::new())
         .run(tauri::generate_context!())
         .expect("error while running R1 Desktop application");
