@@ -45,6 +45,9 @@ fn main() {
 
     builder
         .manage(SubprocessManager::new())
+        // Spec desktop-cortex-augmentation §8 — host-side
+        // subscription registry consulted by session.lanes.unsubscribe.
+        .manage(lanes::LanesState::new())
         .run(tauri::generate_context!())
         .expect("error while running R1 Desktop application");
 }
