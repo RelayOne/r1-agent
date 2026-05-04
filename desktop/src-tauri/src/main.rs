@@ -17,6 +17,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod discovery;
+mod errors;
 mod ipc;
 mod lanes;
 mod menu;

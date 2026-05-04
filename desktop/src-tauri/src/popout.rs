@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::Mutex;
 
-use crate::ipc::{IpcError, IpcResult};
+use crate::errors::{IpcError, IpcResult};
 
 // ---------------------------------------------------------------------------
 // Registry

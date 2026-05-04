@@ -21,44 +21,11 @@ use tauri::{AppHandle, State};
 use crate::subprocess::SubprocessManager;
 
 // ---------------------------------------------------------------------------
-// Shared error types (§3.2 of IPC-CONTRACT.md)
+// Shared error types — re-exported from crate::errors so the bin
+// surface keeps the historical `ipc::IpcError` import path working.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcError {
-    pub code: i32,
-    pub stoke_code: String,
-    pub message: String,
-}
-
-impl IpcError {
-    #[allow(dead_code)]
-    pub fn not_implemented(method: &'static str) -> Self {
-        Self {
-            code: -32010,
-            stoke_code: "not_implemented".to_string(),
-            message: format!("{method}: not implemented"),
-        }
-    }
-
-    pub fn not_found(what: impl std::fmt::Display) -> Self {
-        Self {
-            code: -32002,
-            stoke_code: "not_found".to_string(),
-            message: format!("not found: {what}"),
-        }
-    }
-
-    pub fn internal(msg: impl std::fmt::Display) -> Self {
-        Self {
-            code: -32603,
-            stoke_code: "internal".to_string(),
-            message: msg.to_string(),
-        }
-    }
-}
-
-pub type IpcResult<T> = Result<T, IpcError>;
+pub use crate::errors::{IpcError, IpcResult};
 
 // Helper: deserialise a Value into T, wrapping errors.
 fn from_val<T: serde::de::DeserializeOwned>(v: Value) -> IpcResult<T> {

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::ipc::IpcError;
+use crate::errors::IpcError;
 
 // ---------------------------------------------------------------------------
 // LaneEvent — wire shape mirroring TS LaneEvent in
