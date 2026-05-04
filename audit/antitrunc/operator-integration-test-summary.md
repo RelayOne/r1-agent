@@ -78,6 +78,33 @@ Three additional integration tests cover the configuration matrix:
 - `go vet ./...` → clean
 - `go test ./...` → all green (full repo test pass took ~30s)
 
+## Soak verification (item 26)
+
+- Default unit-test soak: 5000 iterations across 40 legitimate-corpus
+  entries × 3-entry concatenation, 0 FP. Runs in <100ms in
+  `go test ./...`.
+- Extended soak (build-tagged `soak`): 1,000,000 iterations randomly
+  mixing legitimate-corpus phrasings with truncation-pattern salting.
+  Result: 0 FP, 0 FN, 499,888 TP, throughput 16,891 iter/sec, total
+  duration 59 seconds. Invocation:
+  `go test -tags=soak -timeout=12h ./internal/antitrunc/...`.
+
+## Cortex-mission integration (item 25)
+
+`internal/cortex/lobes/antitrunc/mission_integration_test.go` drives:
+
+1. Construct Workspace.
+2. Construct AntiTruncLobe wired to a partial plan.
+3. Run with truncation phrase in History → Lobe publishes 2
+   SevCritical Notes (assistant_output + plan_unchecked).
+4. PreEndTurnGate refuses end_turn (returns non-empty refusal
+   containing both phrase ID and plan count).
+5. "Model fix": rewrite plan to fully checked + emit clean text.
+6. Re-run Lobe with fresh Workspace → no Notes published, gate
+   allows end_turn.
+
+PASS — the spec §item 25 contract is satisfied.
+
 ## Coverage
 
 Truncation-phrase coverage list (regexes shipped in
