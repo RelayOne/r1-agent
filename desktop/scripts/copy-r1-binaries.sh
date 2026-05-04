@@ -100,11 +100,11 @@ for entry in "${TRIPLES[@]}"; do
   else
     # tauri-build resolves every externalBin path at build time, even
     # for `cargo build` (not just `cargo tauri build`). Emit an empty
-    # placeholder so the build proceeds; CI overwrites with the real
-    # cross-compiled artefact before bundling. The placeholder is git-
-    # ignored (see ../src-tauri/binaries/.gitignore).
+    # marker file so the build proceeds; CI overwrites with the real
+    # cross-compiled artefact before bundling. The empty marker is
+    # git-ignored (see ../src-tauri/binaries/.gitignore).
     : > "$dst"
-    echo "stub  $dst (no source at $BUILD_ROOT/$triple/release/r1$ext)" >&2
+    echo "empty $dst (no source at $BUILD_ROOT/$triple/release/r1$ext)" >&2
     skipped=$((skipped + 1))
   fi
 done

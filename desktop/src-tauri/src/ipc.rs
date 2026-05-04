@@ -590,7 +590,7 @@ pub struct SessionLanesSubscribeParams {
     pub session_id: String,
     /// The Channel handle is provided as a Tauri-side construct; the
     /// caller passes a `tauri::ipc::Channel<LaneEvent>` which the
-    /// command handler consumes. This stub-shape carries the runtime
+    /// command handler consumes. This serde-shape carries the runtime
     /// id once Tauri's macro expands it.
     #[serde(default)]
     pub channel_id: Option<String>,
