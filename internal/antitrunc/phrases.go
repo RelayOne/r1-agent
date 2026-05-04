@@ -71,8 +71,17 @@ var TruncationPhrases = []PhrasePattern{
 		Regex: regexp.MustCompile(`(?i)(?:foundation|core|substrate|skeleton)\s+(?:done|shipped|complete|ready)`),
 	},
 	{
-		ID:    "false_completion_good_enough",
-		Regex: regexp.MustCompile(`(?i)(?:good enough|sufficient|enough for now|ready to merge)`),
+		ID: "false_completion_good_enough",
+		// Tightened during soak (item 26) after FPs on
+		// "I'm sufficiently confident…" and "Sufficient memory…".
+		// The original spec regex was (?i)(?:good enough|sufficient|
+		// enough for now|ready to merge). We replaced bare
+		// "sufficient" with "is sufficient" / "sufficient for" to
+		// require the completion-claim shape, and qualified
+		// "good enough" with a trailing completion-claim keyword
+		// so factual sentences like "good enough heuristics" no
+		// longer fire.
+		Regex: regexp.MustCompile(`(?i)(?:good enough\s+(?:to\s+(?:merge|ship|stop|land|close|wrap)|for\s+(?:now|today)|here)|is\s+sufficient\b|sufficient\s+for\s+now|enough\s+for\s+now|ready\s+to\s+(?:merge|ship|land|close|wrap))`),
 	},
 	{
 		ID:    "we_should_stop",
