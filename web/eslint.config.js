@@ -11,6 +11,11 @@ import tsEslint from "@typescript-eslint/eslint-plugin";
 import tsParser from "@typescript-eslint/parser";
 import reactPlugin from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
+import requireDataTestid from "./eslint-rules/require-data-testid.js";
+
+const localRules = {
+  rules: { "require-data-testid": requireDataTestid },
+};
 
 export default [
   {
@@ -71,6 +76,7 @@ export default [
       "@typescript-eslint": tsEslint,
       react: reactPlugin,
       "react-hooks": reactHooks,
+      local: localRules,
     },
     settings: {
       react: { version: "18.3" },
@@ -90,6 +96,7 @@ export default [
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-empty-object-type": "off",
       "no-empty-pattern": "off",
+      "local/require-data-testid": "error",
     },
   },
   {
@@ -97,12 +104,14 @@ export default [
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "react-hooks/rules-of-hooks": "off",
+      "local/require-data-testid": "off",
     },
   },
   {
     files: ["src/**/*.stories.{ts,tsx}"],
     rules: {
       "react-hooks/rules-of-hooks": "off",
+      "local/require-data-testid": "off",
     },
   },
 ];

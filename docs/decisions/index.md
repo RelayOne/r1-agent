@@ -1,5 +1,43 @@
 # Decisions Log
 
+## 2026-05-04 — web-chat-ui (spec 6) decisions
+
+### D-2026-05-04-01 — eslint custom rule `require-data-testid`
+Every interactive JSX element (button/input/textarea/select/summary,
+plus role="button"/link/menuitem/checkbox/switch/tab and clickable
+anchors) MUST carry a `data-testid`. Implemented as a flat-config
+local rule at `web/eslint-rules/require-data-testid.js` and wired via
+`web/eslint.config.js`. Rationale: the spec 8 agentic harness scans for
+interactive components and fails when no MCP tool exists for them;
+without testids the scan cannot bind a tool call to a specific
+surface. Test files and Storybook stories are exempt — their job is
+to drive the surfaces, not own them.
+
+### D-2026-05-04-02 — Embed handler rewrite to fix 301 loop
+`internal/server/embed.go` was rewritten to ReadFile-and-write
+`static/dist/index.html` for `/` and `/dashboard` instead of
+rewriting the request URL into `/index.html` and delegating to
+`http.FileServer`. The FileServer auto-canonicalizes `/index.html`
+back to `/`, which collided with the rewrite and produced a 301
+loop. Surfaced by the spec'd embed_test (item 51); fix preserved
+the legacy fallback to `static/index.html` when the dist bundle is
+absent.
+
+### D-2026-05-04-03 — CSP via meta tag, not response header
+The SPA ships its CSP via `<meta http-equiv="Content-Security-Policy">`
+in `web/index.html` rather than a server-side response header.
+`cmd/r1/serve_smoke_test.go` (item 52) accepts either channel so
+future deployments that want to add a header don't need a test
+update; the Playwright route walker (items 43+44) enforces zero
+violations regardless of channel.
+
+### D-2026-05-04-04 — Tile collapse persists in zustand `ui` slice
+Per-tile collapse state lives in `ui.tileCollapsedBySession[sessionId]`
+keyed by laneId. Reflows via `grid-auto-rows: minmax(min-content, 1fr)`
+so collapsed tiles shrink to a 32 px header strip without claiming
+full row height. Pin order is in `ui.tilePinnedBySession`; reorder
+via HTML5 DnD or Cmd/Ctrl+Shift+arrow.
+
 ## 2026-05-03 — Build progress
 
 ### D-2026-05-03-01 — Specs 1, 2, 3 SHIPPED
