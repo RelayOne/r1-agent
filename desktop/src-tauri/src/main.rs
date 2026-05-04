@@ -19,6 +19,7 @@
 mod discovery;
 mod ipc;
 mod lanes;
+mod popout;
 mod subprocess;
 mod transport;
 
@@ -48,6 +49,10 @@ fn main() {
         // Spec desktop-cortex-augmentation §8 — host-side
         // subscription registry consulted by session.lanes.unsubscribe.
         .manage(lanes::LanesState::new())
+        // Spec §6.1 — open lane pop-out windows are tracked here so
+        // app.popout_lane is idempotent (focus existing) and the
+        // menu's "Lane Pop-Outs" submenu can enumerate them.
+        .manage(popout::PopoutRegistry::new())
         .run(tauri::generate_context!())
         .expect("error while running R1 Desktop application");
 }

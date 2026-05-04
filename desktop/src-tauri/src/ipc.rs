@@ -829,17 +829,24 @@ pub struct AppPopoutLaneResult {
     pub window_label: String,
 }
 
-/// `app.popout_lane` — open a new WebviewWindow for one lane. The
-/// real window-builder body lives in popout.rs (item 23); this verb
-/// hands off to it once that module lands. Until then the verb
-/// returns the synthesised label so the wire shape is observable
-/// from tests + UI.
+/// `app.popout_lane` — open (or focus) a `WebviewWindow` for one
+/// lane. Delegates to `popout::open_or_focus_lane_popout`, which
+/// builds the window with label `"lane:<session>:<lane>"` and
+/// registers it with `PopoutRegistry` so the menu's "Lane Pop-Outs"
+/// submenu (item 25) can enumerate live pop-outs.
 #[tauri::command]
 pub async fn app_popout_lane(
     params: AppPopoutLaneParams,
-    _app: AppHandle,
+    app: AppHandle,
+    registry: State<'_, crate::popout::PopoutRegistry>,
 ) -> IpcResult<AppPopoutLaneResult> {
-    let label = format!("lane:{}:{}", params.session_id, params.lane_id);
+    let label = crate::popout::open_or_focus_lane_popout(
+        &app,
+        &registry,
+        &params.session_id,
+        &params.lane_id,
+    )
+    .await?;
     Ok(AppPopoutLaneResult {
         window_label: label,
     })
