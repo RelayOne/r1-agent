@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RelayOne/r1/internal/antitrunc"
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/stream"
@@ -111,6 +112,40 @@ type Config struct {
 	//
 	// nil = no honeypot evaluation (default).
 	HoneypotCheckFn func(messages []Message) string
+
+	// AntiTruncEnforce, when true, prepends an antitrunc.Gate to
+	// PreEndTurnCheckFn. The gate refuses end_turn while the
+	// model has emitted truncation phrases or while plan / spec
+	// items remain unchecked. See internal/agentloop/antitrunc.go
+	// and internal/antitrunc/gate.go for the layered defense.
+	//
+	// Default false during rollout; flips to true once the
+	// integration test suite (item 25) passes in CI for one full
+	// week without false positives.
+	AntiTruncEnforce bool
+
+	// AntiTruncPlanPath is the path the gate reads to count
+	// unchecked items. Empty disables plan scanning.
+	AntiTruncPlanPath string
+
+	// AntiTruncSpecPaths are the spec markdown files the gate
+	// scans for STATUS:in-progress + unchecked items.
+	AntiTruncSpecPaths []string
+
+	// AntiTruncCommitLookbackFn returns recent commit bodies for
+	// the gate's false-completion check. nil = skip commit scan.
+	AntiTruncCommitLookbackFn func(n int) ([]string, error)
+
+	// AntiTruncAdvisory demotes the gate to advisory-only:
+	// findings are forwarded to AntiTruncAdvisoryFn but the gate
+	// returns "" so the loop is not blocked. This is the operator
+	// override (`--no-antitrunc-enforce`).
+	AntiTruncAdvisory bool
+
+	// AntiTruncAdvisoryFn receives findings when AntiTruncAdvisory
+	// is true. nil = silently dropped (the gate still detects but
+	// does nothing observable).
+	AntiTruncAdvisoryFn func(antitrunc.Finding)
 }
 
 // MidturnCheckFunc is the signature for the between-turn supervisor
@@ -139,6 +174,11 @@ func (c *Config) defaults() {
 	if c.Timeout == 0 {
 		c.Timeout = 5 * time.Minute
 	}
+	// Anti-truncation: install the gate BEFORE any user-supplied
+	// PreEndTurnCheckFn so it composes first in the chain. The
+	// gate is the load-bearing layer in the layered defense; see
+	// internal/agentloop/antitrunc.go.
+	c.installAntiTruncGate()
 }
 
 // ContentBlock is a typed content block in a message.
