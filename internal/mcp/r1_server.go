@@ -279,6 +279,42 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 				"properties": {}
 			}`),
 		},
+		{
+			// Anti-truncation verifier (spec-9 item 24). External
+			// agents call this to query enforcement state — used
+			// by the agentic-test-harness governance principle.
+			Name: "stoke_antitrunc_verify",
+			Description: "Run the R1 anti-truncation verifier against the repo. " +
+				"Cross-checks recent commit completion claims against plan / spec " +
+				"checklist state and classifies each commit as verified, " +
+				"unverified, or lying. Returns a JSON object with results, " +
+				"plan summary, and a lying_count tally. lying_count > 0 means " +
+				"at least one commit claimed completion without backing scope.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"repo_root": {
+						"type": "string",
+						"description": "Absolute path to the repo to verify. Defaults to the server's working directory."
+					},
+					"n": {
+						"type": "integer",
+						"description": "Number of recent commits to inspect (default 20).",
+						"default": 20
+					},
+					"plan_path": {
+						"type": "string",
+						"description": "Plan markdown path relative to repo_root (default plans/build-plan.md).",
+						"default": "plans/build-plan.md"
+					},
+					"spec_glob": {
+						"type": "string",
+						"description": "Glob for spec markdown files (default specs/*.md).",
+						"default": "specs/*.md"
+					}
+				}
+			}`),
+		},
 	}
 }
 
@@ -298,6 +334,8 @@ func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{
 		return s.handleCancelMission(args)
 	case "stoke_list_missions":
 		return s.handleListMissions()
+	case "stoke_antitrunc_verify":
+		return s.handleAntiTruncVerify(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
