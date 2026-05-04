@@ -297,23 +297,76 @@ The enforcement is machine-mechanical at the host process layer because Claude w
 
 ---
 
-## Branch state at handoff
+## Branch state at handoff (verified by `git log` 2026-05-04)
 
-```
-build/cortex-core             (merged, 34 commits)
-build/cortex-concerns          (merged, 42 commits)
-build/lanes-protocol           (merged, 40+ commits)
-build/tui-lanes                (merged, 25 commits)
-build/r1d-server               (merged, 57 commits)
-build/web-chat-ui              ← CURRENT, 17 commits, 38 items remaining
-```
+| Branch                            | Commits since parent | Merged into working? | Status         |
+|-----------------------------------|---------------------:|----------------------|----------------|
+| `build/cortex-core`               | 37                   | ✓ via `b8b25868`     | spec 1 done    |
+| `build/cortex-concerns`           | 42                   | ✓ via `c3e4e99d`     | spec 2 done    |
+| `build/lanes-protocol`            | 44                   | ✓ via `33264051`     | spec 3 done    |
+| `build/tui-lanes`                 | 27                   | ✓ via `d5139db2`     | spec 4 done    |
+| `build/r1d-server`                | 62                   | **NO formal merge**  | spec 5 done — code in working branch but no `--no-ff` commit |
+| `build/web-chat-ui`               | 18 (incl handoff)    | not yet              | **spec 6 in progress (15/55 items)** |
 
-Working branch: **`claude/w521-eliminate-stoke-leftovers-2026-05-02`** (recreated from `build/r1d-server` tip after a stray branch-delete during spec 5 merge).
+**Working branch: `claude/w521-eliminate-stoke-leftovers-2026-05-02`** (recreated from `build/r1d-server` tip after the original was lost when running `git branch | grep w521` returned nothing — likely deleted by an earlier merge cleanup script). The recreation was done via `git checkout -b claude/w521-eliminate-stoke-leftovers-2026-05-02 build/r1d-server`, so the working branch's tip BEFORE the web-chat-ui work is `11909d25` (= r1d-server's tip).
+
+**Important:** the working branch does NOT have a formal `Merge branch 'build/r1d-server'` commit. The r1d-server commits are linear ancestors of the working tip rather than a merge bubble. If you want a clean merge bubble for spec 5, do:
+
+```bash
+# Optional: backfill formal merge for spec 5
+git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
+# (already contains r1d-server commits as linear ancestors)
+# To create a marker merge commit for spec 5 separately:
+git commit --allow-empty -m "Marker: spec 5 r1d-server done (linear merge from build/r1d-server, 62 commits)"
+```
 
 To merge spec 6 once complete:
 ```bash
 git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
 git merge --no-ff build/web-chat-ui -m "Merge branch 'build/web-chat-ui' — Cursor-3-Glass React UI"
+```
+
+### Audit trail per spec
+
+Audit reports from `/scope` review pass live in `audit/`:
+- `audit/spec-review-cortex-core.md`
+- `audit/spec-review-cortex-concerns.md`
+- `audit/spec-review-lanes-protocol.md`
+- `audit/spec-review-tui-lanes.md`
+- `audit/spec-review-r1d-server.md`
+- `audit/spec-review-web-chat-ui.md`
+- `audit/spec-review-desktop-cortex-augmentation.md`
+- `audit/spec-review-agentic-test-harness.md`
+- `audit/chdir-lint-passes.md` (Phase A audit results from r1d-server spec 5)
+
+No audit for `specs/anti-truncation.md` yet — written 2026-05-03 mid-build, hasn't gone through `/review-spec`.
+
+### Test status snapshot (2026-05-04 12:30 PT)
+
+```
+go build ./...   — clean
+go vet ./...     — clean
+
+Cortex packages (all -race clean):
+  internal/cortex                        ok 0.193s
+  internal/cortex/lobes                  ok 5.436s
+  internal/cortex/lobes/clarifyq         ok 0.067s
+  internal/cortex/lobes/llm              ok 0.055s
+  internal/cortex/lobes/memorycurator    ok 0.021s
+  internal/cortex/lobes/memoryrecall     ok 0.031s
+  internal/cortex/lobes/planupdate       ok 0.119s
+  internal/cortex/lobes/rulecheck        ok 2.092s
+  internal/cortex/lobes/walkeeper        ok 0.498s
+
+Daemon + transport (all -race clean):
+  internal/streamjson                    ok 0.373s
+  internal/server (incl ws, sse)         ok 31.114s
+  internal/agentloop                     ok 0.169s
+  internal/hub                           ok 3.689s
+
+Pre-existing failures (NOT introduced by cortex work):
+  internal/worktree (3 tests)            FAIL — git/tmp safe.directory
+  cmd/r1 (1 test)                        FAIL — HOME-isolated git safe.directory
 ```
 
 ---
@@ -338,16 +391,178 @@ When you're ready:
 
 1. `cd /home/eric/repos/r1-agent`
 2. `git checkout build/web-chat-ui` (if not already there)
-3. `git log --oneline -5` — confirm at `f1e712c1`.
+3. `git log --oneline -5` — confirm tip is `b3a3f60b` (this handoff doc) on top of `f1e712c1`.
 4. `go build ./... && go vet ./...` — confirm clean.
 5. Read `specs/web-chat-ui.md` items 16-55 + risks/gotchas section.
-6. Dispatch the subagent prompt above (or paste it directly).
+6. Dispatch the subagent prompt in the next subsection (verbatim).
 7. After items 16-35 land: dispatch B3 (36-40), B4 (41-44), B5 (45-47), B6 (48-52), B7 (53-55).
 8. After spec 6 done: branch `build/desktop-cortex-augmentation` and run spec 7.
 9. After spec 7: branch `build/agentic-test-harness` and run spec 8.
 10. After spec 8: branch `build/antitrunc` and run spec 9.
 
 Each spec has a `STATUS: ready` frontmatter; mark `done` + `BUILD_COMPLETED` per spec when finished, then merge.
+
+### Subagent dispatch templates for remaining specs
+
+Paste these verbatim into the next session's `Agent` calls (general-purpose subagent type).
+
+#### Spec 6 — web-chat-ui (resuming from item 16)
+
+For items 16-35 (component tree, ~20 commits):
+
+```
+Implement items 16-35 of web-chat-ui spec at /home/eric/repos/r1-agent/. Branch build/web-chat-ui. Test mode active. ONE commit per item (20 commits).
+
+Spec: /home/eric/repos/r1-agent/specs/web-chat-ui.md, items 16-35.
+
+Items 16-35 cover the React component tree:
+16. src/lib/store/daemonStore.ts zustand factory.
+17. src/hooks/useDaemonSocket.ts.
+18. src/hooks/useChat.ts wrapping @ai-sdk/react useChat.
+19. src/hooks/useLanes.ts, useSession.ts, useWorkdir.ts, useKeybindings.ts.
+20. src/lib/render/markdown.tsx Streamdown wrapper.
+21. <ThemeProvider>.
+22. <ThreeColumnShell>.
+23. <SessionList> + <SessionItem>.
+24. <NewSessionDialog>.
+25. <ChatPane>.
+26. <MessageLog>.
+27. <MessageBubble>.
+28. <ToolCard>.
+29. <ReasoningCard>.
+30. <PlanCard>.
+31. <DiffCard>.
+32. <Composer>.
+33. <StopButton>.
+34. <LanesSidebar> + <LaneRow>.
+35. <LaneTile>.
+
+All interactive elements MUST have data-testid + aria-label. Each component gets <Component>.test.tsx + <Component>.stories.tsx (CSF 3).
+
+Continue at HEAD b3a3f60b on branch build/web-chat-ui (after the handoff doc).
+Return commit hashes + signature deviations.
+```
+
+For items 36-40 (TileGrid + workdir + status bar), 41-44 (routing + reliability), 45-47 (tests), 48-52 (build + CI), 53-55 (lint + QA): dispatch in similar batches per the spec's checklist.
+
+#### Spec 7 — desktop-cortex-augmentation (after spec 6 merges)
+
+```
+Implement spec 7 (desktop-cortex-augmentation) at /home/eric/repos/r1-agent/.
+
+git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
+git checkout -b build/desktop-cortex-augmentation
+git commit --allow-empty -m "checkpoint: start build desktop-cortex-augmentation"
+
+Spec: /home/eric/repos/r1-agent/specs/desktop-cortex-augmentation.md.
+
+40 items. Augments existing Tauri 2 desktop app at desktop/. Critical:
+AUGMENTS the existing 12 R1D phases, does NOT replace them.
+
+Key requirements:
+- External `r1 serve` daemon as primary transport, Tauri sidecar fallback on first run.
+- tauri-plugin-websocket (sidesteps Windows mixed-content block).
+- tauri-plugin-store for per-session workdir (NOT localStorage).
+- tauri::ipc::Channel<LaneEvent> per session at 10 Hz.
+- Component sharing via npm workspace packages/web-components (highest-risk
+  platform: macOS — tauri-apps/tauri#11992 notarization).
+- Update desktop/IPC-CONTRACT.md additions are already in (lane verbs from spec 3).
+- Native menu bar; auto-start option per OS.
+
+Read the spec for the verbatim 40-item checklist. Dispatch in 4-6 batches
+of 5-10 items each. ONE commit per item.
+
+Each commit must build cleanly (`cd desktop && cargo build` for Rust, `cd desktop && npm run build` for the webview, plus `go build ./cmd/r1`).
+
+After all 40 land:
+- Mark spec STATUS:done + BUILD_COMPLETED in frontmatter.
+- Merge to working branch with `--no-ff`.
+
+Return commit count + signature deviations + macOS notarization status.
+```
+
+#### Spec 8 — agentic-test-harness (after spec 7 merges)
+
+```
+Implement spec 8 (agentic-test-harness) at /home/eric/repos/r1-agent/.
+
+git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
+git checkout -b build/agentic-test-harness
+git commit --allow-empty -m "checkpoint: start build agentic-test-harness"
+
+Spec: /home/eric/repos/r1-agent/specs/agentic-test-harness.md.
+
+40 items. The "every UI action has an MCP equivalent" governance principle.
+
+Key components:
+- Extend internal/mcp/r1_server.go with sessions/lanes/cortex/missions/
+  worktrees/bus/verify/TUI tool surface (38 MCP tools across 10 categories
+  — 5 lane tools already shipped in spec 3).
+- internal/tui/teatest_shim.go wrapping charmbracelet/x/exp/teatest under MCP.
+- Playwright MCP recipes in tests/agent/web/*.agent.feature.md.
+- Storybook MCP for component contracts (depends on web-chat-ui Storybook
+  stories from spec 6 item 47).
+- tools/lint-view-without-api/main.go CI lint that scans React + Bubble Tea
+  + Tauri for interactive components and fails when no MCP tool exists.
+- docs/AGENTIC-API.md already has the Lanes section from spec 3; spec 8
+  fills in the rest (sessions, missions, worktrees, bus, verify, TUI, web,
+  CLI sections).
+- Auto-snapshot mitigation for lint-drift risk (per audit).
+
+Dispatch in 4-6 batches. ONE commit per item.
+
+After all 40 land:
+- Mark spec STATUS:done + BUILD_COMPLETED.
+- Merge to working branch with --no-ff.
+
+Return commit count + MCP tool count + lint findings.
+```
+
+#### Spec 9 — anti-truncation (after spec 8 merges)
+
+```
+Implement spec 9 (anti-truncation) at /home/eric/repos/r1-agent/.
+
+git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
+git checkout -b build/antitrunc
+git commit --allow-empty -m "checkpoint: start build anti-truncation"
+
+Spec: /home/eric/repos/r1-agent/specs/anti-truncation.md.
+
+27 items. 7-layer defense against the documented Claude pattern of
+self-reducing scope to fit imagined Anthropic load-balance limits.
+
+7 layers (each independently effective so no single bypass works):
+1. internal/antitrunc/phrases.go — regex over assistant output.
+2. internal/antitrunc/gate.go — refuses end_turn while plan items unchecked.
+3. internal/cortex/lobes/antitrunc/ AntiTruncLobe (publishes critical
+   Workspace Notes).
+4. internal/supervisor/rules/antitrunc/ — 3 supervisor rules.
+5. agentloop wiring — gate composes BEFORE cortex hook.
+6. scripts/git-hooks/post-commit-antitrunc.sh.
+7. cmd/r1/antitrunc_cmd.go — `r1 antitrunc verify` CLI + r1.antitrunc.verify
+   MCP tool.
+
+The enforcement is machine-mechanical at the host process layer because
+Claude will ignore prompt-level instructions to defeat self-truncation.
+
+Builds AFTER spec 8 because it consumes the MCP tool surface for the
+r1.antitrunc.verify agentic interface.
+
+Dispatch in 3-4 batches. ONE commit per item.
+
+After all 27 land:
+- Mark spec STATUS:done + BUILD_COMPLETED.
+- Merge to working branch with --no-ff.
+- Operator integration test: drive a synthetic conversation that includes
+  truncation phrases; assert the gate fires and forces continuation.
+- Update docs/decisions/index.md with anti-truncation enforcement decisions.
+- Update root README + docs/FEATURE-MAP + docs/ARCHITECTURE for the new
+  defense layer.
+
+Return commit count + truncation-phrase coverage + a summary of the
+operator integration test results.
+```
 
 ---
 
@@ -365,10 +580,75 @@ Each spec has a `STATUS: ready` frontmatter; mark `done` + `BUILD_COMPLETED` per
 - `docs/decisions/index.md` (records every architectural decision through 2026-05-03)
 - `docs/AGENTIC-API.md` (Lanes section live; rest fills in spec 8)
 
-## Operator notes
+## Operator notes (preserve across sessions)
 
 - You explicitly said: "do not impose your own time limit/budgets... do not limit scope to meet your own time limit/budgets... scope must be complete from what i specified, use as many turns and tokens as needed."
 - And: "make r1 force the work to fully get complete and bypass those limits and prevent claude from cheating like this" → that's spec 9 (anti-truncation).
 - And: "make it aware that claude will ignore requests to defeat these limits, and that it must self-enforce completion and deep checking of work vs scope" → spec 9 ships a deterministic supervisor + critic Lobe + agentloop gate, not a prompt instruction.
 
 The work pace was governed solely by Anthropic-side rate limits on subagent dispatches, not by self-imposed scope reduction. Each rate-limit interruption was followed by manual recovery (revert partial files, re-dispatch the same task) rather than scope cutting.
+
+## Known risks for the next session
+
+1. **TASK-30 of cortex-core (CLAUDE.md package map line)**: BLOCKED on harness permission settings preventing CLAUDE.md edit. Add manually with one-time permission override:
+   ```
+   cortex/                            Parallel-cognition substrate (Workspace, Lobe, Round, Spotlight, Router) — GWT-style shared workspace
+   ```
+   Insert between the `concern/templates/` line and the `harness/` line in the V2 GOVERNANCE section.
+
+2. **Working branch was recreated**: `claude/w521-eliminate-stoke-leftovers-2026-05-02` was deleted at some point; recreated from `build/r1d-server` tip. If the original branch resurfaces (e.g. via reflog or another clone), reconcile the histories before continuing. Reflog entry: `HEAD@{78}: checkout: moving from claude/w521-eliminate-stoke-leftovers-2026-05-02 to build/r1d-server`.
+
+3. **Pre-existing test failures NOT introduced by cortex work**: see "Pre-existing failures" section above. Document but do not block on these.
+
+4. **Spec 6 (web-chat-ui) requires Node.js / npm**: items 9-10 install React + Vite deps; items 45-47 run vitest + Playwright. The build is gated on `cd web && npm ci && npm run build` per item 50. Subsequent sessions need a working Node 20+ environment to actually verify the web build.
+
+5. **Spec 7 (desktop) requires Rust + Tauri toolchain**: items reference `cargo tauri build`. macOS notarization is the critical path (Tauri issue #11992).
+
+6. **Spec 8 (agentic harness) lint depends on spec 6 + spec 7 component IDs**: the `lint-view-without-api` rule scans for interactive components. Don't run it before spec 6 + spec 7 ship the actual UI surfaces.
+
+7. **Build durations** to set expectations:
+   - cortex-core: ~30 min wall clock if subagent dispatch is uninterrupted
+   - cortex-concerns: ~45 min (6 Lobes × 5 items each)
+   - lanes-protocol: ~2 hours (40 items + integration)
+   - tui-lanes: ~30 min
+   - r1d-server: ~3 hours (62 commits, Phase A audit alone is ~10 commits)
+   - web-chat-ui: ~3-4 hours (estimated from items 1-15 took 1 hour)
+   - desktop-cortex-augmentation: ~2 hours (40 items)
+   - agentic-test-harness: ~2 hours (40 items, mostly MCP wiring)
+   - anti-truncation: ~1.5 hours (27 items)
+
+   Total remaining (specs 6 b2-b7, 7, 8, 9): ~10-12 hours of subagent compute. Plan for rate-limit recovery cycles every ~30-45 min.
+
+8. **Cleanup before final merge**: untracked `cmd/r1/.stoke/`, `r1`, `bin/`, `tmp-go/`, `.tmp-go/` artifacts accumulate; remove before each `git status --short` audit.
+
+## Final dispatch flow when all specs done
+
+After spec 9 merges:
+
+```bash
+git checkout claude/w521-eliminate-stoke-leftovers-2026-05-02
+
+# Verify all 9 specs are STATUS:done
+for s in cortex-core cortex-concerns lanes-protocol tui-lanes r1d-server web-chat-ui desktop-cortex-augmentation agentic-test-harness anti-truncation; do
+  grep -m1 "STATUS:" specs/$s.md
+done
+
+# Full CI gate per CLAUDE.md
+go build ./cmd/r1
+go test ./... -count=1 -timeout=120s
+go vet ./...
+cd web && npm ci && npm run build && npm run test
+cd ../desktop && cargo test
+
+# Update root README + 6 docs to reflect the shipped state
+# (root README must be updated FIRST per /scope guidance)
+# Then `cp README.md docs/README.md` to mirror.
+
+# Final commit + push
+git push origin claude/w521-eliminate-stoke-leftovers-2026-05-02
+
+# Open PR with the full 9-spec story
+gh pr create --title "feat: Cortex / Lanes / Multi-Surface (9 specs)" --body "..."
+```
+
+That's the path to "deployed/tested/proven/working" as you originally asked.
