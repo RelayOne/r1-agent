@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate lint-views
 
 # Default: run the CI gate
 all: build test vet
@@ -90,6 +90,17 @@ agent-features-drift-check:
 # Pinned to ^9 per the §10a "Playwright/Storybook MCP version churn"
 # mitigation. STATUS: BLOCKED on spec 6 merge — this target prints a
 # notice and exits 0 until web/src/components/*.tsx exists.
+# Run the lint-view-without-api scanner (spec 8 §8 + item 37). Spawns
+# `r1 mcp serve --print-tools` to load the catalog, then walks the
+# React, Bubble Tea, and Tauri source trees per §8.1. Exits non-zero
+# on any FAIL finding.
+#
+# Until specs 1-7 ship the UI surfaces, this target's output includes
+# legitimate FAILs against legacy internal/tui/ models that do not
+# yet implement A11yEmitter — those are real findings, not noise.
+lint-views:
+	go run ./tools/lint-view-without-api --root . --catalog <(go run ./cmd/r1 mcp serve --print-tools)
+
 storybook-mcp-validate:
 	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
 	    cd web && npx storybook-mcp@^9 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
