@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features
 
 # Default: run the CI gate
 all: build test vet
@@ -60,6 +60,17 @@ test-cover:
 security:
 	govulncheck ./...
 	gosec ./...
+
+# Run the agent feature meta-test (spec 8 §10/§12 item 20). Walks
+# tests/agent/**/*.agent.feature.md and dispatches every scenario
+# through the r1.* MCP catalog. Requires the r1d daemon (spec 5);
+# until that merges this target prints parsed-step counts.
+#
+# The `|| true` swallows the runner's exit code while seed fixtures
+# land in items 23-30; remove it once all 8 fixtures are committed
+# AND spec 5 has merged.
+agent-features:
+	go run ./tools/agent-feature-runner --root tests/agent || true
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
