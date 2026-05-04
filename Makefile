@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check
 
 # Default: run the CI gate
 all: build test vet
@@ -79,6 +79,12 @@ agent-features:
 # §22 fails when source diff is empty + snapshot diff is non-empty).
 agent-features-update:
 	go run ./tools/agent-feature-runner --root tests/agent --update || true
+
+# CI guard against accidental snapshot updates (spec 8 §10a + item 22).
+# Fails when golden snapshots changed without any source change in
+# web/src/, internal/tui/, or desktop/src-tauri/.
+agent-features-drift-check:
+	./tools/agent-feature-runner/snapshot_drift_check.sh
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
