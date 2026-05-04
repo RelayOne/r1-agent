@@ -88,7 +88,7 @@ var TruncationPhrases = []PhrasePattern{
 	},
 	{
 		ID:    "classify_as_skip",
-		Regex: regexp.MustCompile(`(?i)classify(?:ing|ed)?\s+as\s+(?:out of scope|pre[- ]existing|user[- ]skipped|nice to have)`),
+		Regex: regexp.MustCompile(`(?i)(?:classifying|classified|classify)\s+as\s+(?:out of scope|pre[- ]existing|user[- ]skipped|nice to have)`),
 	},
 	{
 		ID:    "anthropic_load_balance_fiction",
