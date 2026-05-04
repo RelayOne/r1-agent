@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate lint-views
+.PHONY: all build test vet lint bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate lint-views docs-agentic
 
 # Default: run the CI gate
 all: build test vet
@@ -100,6 +100,15 @@ agent-features-drift-check:
 # yet implement A11yEmitter — those are real findings, not noise.
 lint-views:
 	go run ./tools/lint-view-without-api --root . --catalog <(go run ./cmd/r1 mcp serve --print-tools)
+
+# Regenerate the tool-catalog section of docs/AGENTIC-API.md from the
+# live r1.* catalog (spec 8 §9 + item 41). Writes the Markdown form
+# emitted by `r1 mcp serve --print-tools --markdown` to
+# docs/AGENTIC-API-CATALOG.md so reviewers can see the per-tool
+# input-schema diff in PRs.
+docs-agentic:
+	go run ./cmd/r1 mcp serve --print-tools --markdown > docs/AGENTIC-API-CATALOG.md
+	@echo "wrote docs/AGENTIC-API-CATALOG.md ($$(wc -l < docs/AGENTIC-API-CATALOG.md) lines)"
 
 storybook-mcp-validate:
 	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
