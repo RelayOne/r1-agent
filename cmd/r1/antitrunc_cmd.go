@@ -98,7 +98,7 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	commits, err := readRecentCommits(absRepo, *n)
+	commits, err := readRecentChanges(absRepo, *n)
 	if err != nil {
 		fmt.Fprintf(stderr, "git log: %v\n", err)
 		return 2
@@ -110,7 +110,7 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 	results := make([]commitClassification, 0, len(commits))
 	lyingCount := 0
 	for _, c := range commits {
-		cls := classifyCommit(c, planRep, specReps)
+		cls := classifyChange(c, planRep, specReps)
 		results = append(results, cls)
 		if cls.Verdict == "lying" {
 			lyingCount++
@@ -135,16 +135,16 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// gitCommit is the structured shape of one commit we inspect.
-type gitCommit struct {
+// gitChange is the structured shape of one commit we inspect.
+type gitChange struct {
 	SHA     string
 	Subject string
 	Body    string
 }
 
-// readRecentCommits shells out to git log to read the last n commits
+// readRecentChanges shells out to git log to read the last n commits
 // in the format we need: SHA \t subject \t body.
-func readRecentCommits(repo string, n int) ([]gitCommit, error) {
+func readRecentChanges(repo string, n int) ([]gitChange, error) {
 	if n <= 0 {
 		n = 20
 	}
@@ -157,7 +157,7 @@ func readRecentCommits(repo string, n int) ([]gitCommit, error) {
 	if err != nil {
 		return nil, err
 	}
-	var commits []gitCommit
+	var commits []gitChange
 	for _, raw := range strings.Split(string(out), "\x1e") {
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
@@ -167,7 +167,7 @@ func readRecentCommits(repo string, n int) ([]gitCommit, error) {
 		if len(parts) < 2 {
 			continue
 		}
-		c := gitCommit{SHA: parts[0], Subject: parts[1]}
+		c := gitChange{SHA: parts[0], Subject: parts[1]}
 		if len(parts) == 3 {
 			c.Body = parts[2]
 		}
@@ -197,7 +197,7 @@ func readSpecGlob(repo, glob string) []antitrunc.ScopeReport {
 	return out
 }
 
-// classifyCommit produces the Verified-done / Unverified / Lying
+// classifyChange produces the Verified-done / Unverified / Lying
 // verdict for one commit. Algorithm:
 //
 //	1. Combine subject + body into "text".
@@ -206,7 +206,7 @@ func readSpecGlob(repo, glob string) []antitrunc.ScopeReport {
 //	   check IsComplete().
 //	4. If false-completion phrases hit AND the plan/specs aren't fully checked,
 //	   classify as "lying" regardless of subject.
-func classifyCommit(c gitCommit, planRep antitrunc.ScopeReport, specReps []antitrunc.ScopeReport) commitClassification {
+func classifyChange(c gitChange, planRep antitrunc.ScopeReport, specReps []antitrunc.ScopeReport) commitClassification {
 	text := c.Subject + "\n" + c.Body
 	cls := commitClassification{SHA: c.SHA, Subject: c.Subject, Verdict: "unverified"}
 
