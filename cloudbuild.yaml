@@ -59,8 +59,26 @@ steps:
       - 'CGO_ENABLED=1'
 
   - name: 'golang:1.25'
+    id: antitrunc-verify
+    waitFor: ['test']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # Anti-truncation gate: cross-check recent commit "spec N done"
+        # claims against the underlying plan / spec checklist state.
+        # Exits non-zero if any commit is classified Lying. See
+        # docs/ANTI-TRUNCATION.md and specs/anti-truncation.md.
+        set -euo pipefail
+        go run -mod=vendor ./cmd/r1 antitrunc verify -n 20 || {
+          echo "antitrunc verify failed — at least one commit claims completion"
+          echo "without a corresponding checked plan / spec line."
+          exit 1
+        }
+
+  - name: 'golang:1.25'
     id: build-multi-platform-r1
-    waitFor: ['build', 'test', 'race']
+    waitFor: ['build', 'test', 'race', 'antitrunc-verify']
     entrypoint: bash
     args:
       - -c
