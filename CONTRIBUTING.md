@@ -31,6 +31,22 @@ make          # runs build, test, vet
 make lint     # runs golangci-lint (requires golangci-lint installed)
 ```
 
+### Anti-truncation git hooks (recommended)
+
+R1 ships a layered defense against LLM self-truncation. One layer is
+a post-commit git hook that scans commit bodies for false-completion
+phrases (e.g. "spec 9 done", "all items complete"). Install it with:
+
+```bash
+bash scripts/install-hooks.sh           # install
+bash scripts/install-hooks.sh --check   # report current state
+bash scripts/install-hooks.sh --uninstall
+```
+
+The hook is non-blocking — it writes warnings to `audit/antitrunc/`
+but never fails a commit. The full layered defense is documented in
+`docs/ANTI-TRUNCATION.md`.
+
 ## Submitting Changes
 
 ### Branch Naming

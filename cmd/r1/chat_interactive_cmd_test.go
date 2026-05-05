@@ -3,12 +3,42 @@ package main
 import (
 	"bufio"
 	"context"
+	"flag"
 	"strings"
 	"testing"
 
 	"github.com/RelayOne/r1/internal/conversation"
 	"github.com/RelayOne/r1/internal/workflow"
 )
+
+// TestCortexFlagParse verifies the --cortex bool flag parses correctly
+// and defaults to false.
+//
+// Spec: specs/cortex-core.md item 28.
+func TestCortexFlagParse(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "default-off", args: []string{}, want: false},
+		{name: "explicit-true", args: []string{"--cortex"}, want: true},
+		{name: "explicit-false", args: []string{"--cortex=false"}, want: false},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("chat-interactive", flag.ContinueOnError)
+			cortexEnabled := fs.Bool("cortex", false, "Enable parallel-cognition Lobes")
+			if err := fs.Parse(tc.args); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if *cortexEnabled != tc.want {
+				t.Fatalf("cortex flag = %v, want %v", *cortexEnabled, tc.want)
+			}
+		})
+	}
+}
 
 func TestChatInteractiveApprovalLoop(t *testing.T) {
 	tests := []struct {

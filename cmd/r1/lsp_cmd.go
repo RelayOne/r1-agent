@@ -50,6 +50,7 @@ func lspCmd(args []string) {
 
 	if *root == "" {
 		var err error
+		// LINT-ALLOW chdir-cli-entry: r1 lsp subcommand; cwd captured once before lsp.NewServer and never re-read inside request handlers (see internal/lsp pass-4 refactor).
 		*root, err = os.Getwd()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "r1 lsp: getwd: %v\n", err)

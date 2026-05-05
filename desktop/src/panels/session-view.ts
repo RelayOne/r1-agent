@@ -27,6 +27,7 @@ import type {
   SessionSendParams,
   SessionSummary,
 } from "../types/ipc";
+import { mountLaneRail, type LaneRailHandle } from "./lane-rail";
 
 // -------------------------------------------------------------------
 // Types
@@ -62,6 +63,7 @@ interface PanelState {
   sessions: Map<string, SessionView>;
   activeId: string | null;
   nextTurnCounter: number;
+  laneRail: LaneRailHandle | null;
 }
 
 // -------------------------------------------------------------------
@@ -73,6 +75,7 @@ export function renderPanel(root: HTMLElement): void {
     sessions: new Map(),
     activeId: null,
     nextTurnCounter: 0,
+    laneRail: null,
   };
 
   root.classList.add("r1-panel", "r1-panel-session-view");
@@ -102,6 +105,12 @@ export function renderPanel(root: HTMLElement): void {
           <li class="r1-empty r1-sv-no-sessions">No sessions yet.</li>
         </ul>
       </nav>
+      <aside
+        class="r1-sv-lane-rail"
+        aria-label="Cognition lanes"
+        data-role="lane-rail"
+        hidden
+      ></aside>
       <div class="r1-sv-main" data-role="session-main">
         <div class="r1-sv-empty-state" data-role="empty-state">
           <p>Select a session or start a new one.</p>
@@ -172,6 +181,7 @@ export function renderPanel(root: HTMLElement): void {
   wireSidebarControls(root, state);
   wireChatControls(root, state);
   wireComposer(root, state);
+  wireLaneRail(root, state);
 }
 
 // -------------------------------------------------------------------
@@ -453,6 +463,30 @@ function setActive(root: HTMLElement, state: PanelState, sessionId: string): voi
   state.activeId = sessionId;
   refreshSidebar(root, state);
   refreshChatPane(root, state);
+  refreshLaneRail(root, state);
+}
+
+// -------------------------------------------------------------------
+// Lane rail mount (R1D-augmentation: spec §8 + checklist item 22)
+// -------------------------------------------------------------------
+
+function wireLaneRail(root: HTMLElement, state: PanelState): void {
+  const railEl = root.querySelector<HTMLElement>('[data-role="lane-rail"]');
+  if (!railEl) return;
+  state.laneRail = mountLaneRail(railEl);
+}
+
+function refreshLaneRail(root: HTMLElement, state: PanelState): void {
+  const railEl = root.querySelector<HTMLElement>('[data-role="lane-rail"]');
+  if (!railEl || !state.laneRail) return;
+  const view = activeView(state);
+  if (!view) {
+    railEl.hidden = true;
+    state.laneRail.attach(null);
+    return;
+  }
+  railEl.hidden = false;
+  state.laneRail.attach(view.sessionId);
 }
 
 // -------------------------------------------------------------------

@@ -94,6 +94,7 @@ func resolveMemoryDB(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
+	// LINT-ALLOW chdir-cli-entry: r1 ops memory subcommand; cwd is the memory.db discovery anchor when --explicit is unset.
 	cwd, err := os.Getwd()
 	if err != nil {
 		// Surface the failure via the later Stat / Open; keep

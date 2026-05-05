@@ -1,0 +1,13 @@
+{
+  "event": "lane.killed",
+  "event_id": "01J0K3M4PAQABCDEFGHJKMNPQR",
+  "session_id": "sess_01J0K3M4",
+  "seq": 200,
+  "at": "2026-05-02T18:33:25.000000Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "reason": "cancelled_by_operator",
+    "actor": "operator",
+    "actor_id": "user_01J0K"
+  }
+}

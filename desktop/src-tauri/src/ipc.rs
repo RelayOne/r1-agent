@@ -21,44 +21,11 @@ use tauri::{AppHandle, State};
 use crate::subprocess::SubprocessManager;
 
 // ---------------------------------------------------------------------------
-// Shared error types (§3.2 of IPC-CONTRACT.md)
+// Shared error types — re-exported from crate::errors so the bin
+// surface keeps the historical `ipc::IpcError` import path working.
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcError {
-    pub code: i32,
-    pub stoke_code: String,
-    pub message: String,
-}
-
-impl IpcError {
-    #[allow(dead_code)]
-    pub fn not_implemented(method: &'static str) -> Self {
-        Self {
-            code: -32010,
-            stoke_code: "not_implemented".to_string(),
-            message: format!("{method}: not implemented"),
-        }
-    }
-
-    pub fn not_found(what: impl std::fmt::Display) -> Self {
-        Self {
-            code: -32002,
-            stoke_code: "not_found".to_string(),
-            message: format!("not found: {what}"),
-        }
-    }
-
-    pub fn internal(msg: impl std::fmt::Display) -> Self {
-        Self {
-            code: -32603,
-            stoke_code: "internal".to_string(),
-            message: msg.to_string(),
-        }
-    }
-}
-
-pub type IpcResult<T> = Result<T, IpcError>;
+pub use crate::errors::{IpcError, IpcResult};
 
 // Helper: deserialise a Value into T, wrapping errors.
 fn from_val<T: serde::de::DeserializeOwned>(v: Value) -> IpcResult<T> {
@@ -558,7 +525,327 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             session_cancel,
             skill_list,
             skill_get,
+            // Spec desktop-cortex-augmentation §6.1 (9 new verbs).
+            session_lanes_list,
+            session_lanes_subscribe,
+            session_lanes_unsubscribe,
+            session_lanes_kill,
+            session_set_workdir,
+            daemon_status,
+            daemon_shutdown,
+            app_popout_lane,
+            app_open_folder_picker,
         ])
+}
+
+// ---------------------------------------------------------------------------
+// Spec desktop-cortex-augmentation §6.1 — 9 new IPC verbs.
+//
+// 7 of these round-trip to the daemon over WS (most). 2 are Tauri-host-
+// only (`app_popout_lane`, `app_open_folder_picker`); see §5 of
+// IPC-CONTRACT.md. Routing is unified through `daemon_rpc_call` which
+// today delegates to the existing SubprocessManager (so behaviour is
+// preserved across the Subprocess vs Daemon transport switch in §3 of
+// the spec). The transport.rs run-loop replaces the inner body when
+// the daemon path lights up — verb signatures stay identical.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaneSummary {
+    pub lane_id: String,
+    pub title: String,
+    pub status: String, // pending|running|blocked|done|errored|cancelled
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesListParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesListResult {
+    pub lanes: Vec<LaneSummary>,
+}
+
+/// `session.lanes.list` — list every lane currently known on this
+/// session. Round-trips to the daemon (subprocess path today).
+#[tauri::command]
+pub async fn session_lanes_list(
+    params: SessionLanesListParams,
+    mgr: State<'_, SubprocessManager>,
+) -> IpcResult<SessionLanesListResult> {
+    let val = mgr
+        .rpc_call(
+            &params.session_id,
+            "session.lanes.list",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesSubscribeParams {
+    pub session_id: String,
+    /// The Channel handle is provided as a Tauri-side construct; the
+    /// caller passes a `tauri::ipc::Channel<LaneEvent>` which the
+    /// command handler consumes. This serde-shape carries the runtime
+    /// id once Tauri's macro expands it.
+    #[serde(default)]
+    pub channel_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesSubscribeResult {
+    pub subscription_id: String,
+}
+
+/// `session.lanes.subscribe` — register a subscription. The full
+/// Channel<LaneEvent>-backed body lands when the lanes::LanesState is
+/// wired into managed state; for now this verb registers the
+/// subscription id round-trip to the daemon so the wire shape is
+/// already exercised.
+#[tauri::command]
+pub async fn session_lanes_subscribe(
+    params: SessionLanesSubscribeParams,
+    mgr: State<'_, SubprocessManager>,
+) -> IpcResult<SessionLanesSubscribeResult> {
+    let val = mgr
+        .rpc_call(
+            &params.session_id,
+            "session.lanes.subscribe",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesUnsubscribeParams {
+    pub subscription_id: String,
+    /// Optional session_id so the host knows which subprocess to
+    /// route the teardown through if the subscription was registered
+    /// before the host-side LanesState was populated.
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesUnsubscribeResult {
+    pub ok: bool,
+}
+
+/// `session.lanes.unsubscribe` — drop a subscription. Routes via the
+/// host LanesState (if registered locally) or the daemon for
+/// daemon-side subscriptions.
+#[tauri::command]
+pub async fn session_lanes_unsubscribe(
+    params: SessionLanesUnsubscribeParams,
+    mgr: State<'_, SubprocessManager>,
+    state: State<'_, crate::lanes::LanesState>,
+) -> IpcResult<SessionLanesUnsubscribeResult> {
+    // Host-side first: if the subscription was registered by the host
+    // forwarder, drop it locally.
+    if state.unregister(&params.subscription_id).await {
+        return Ok(SessionLanesUnsubscribeResult { ok: true });
+    }
+    // Otherwise the daemon owns the subscription. Need a session id to
+    // route the call.
+    let sid = params
+        .session_id
+        .as_deref()
+        .map(|s| s.to_string())
+        .or(any_session_id_maybe(&mgr).await)
+        .ok_or_else(|| {
+            IpcError::not_found(format!("subscription {}", params.subscription_id))
+        })?;
+    let val = mgr
+        .rpc_call(
+            &sid,
+            "session.lanes.unsubscribe",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesKillParams {
+    pub session_id: String,
+    pub lane_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionLanesKillResult {
+    pub killed_at: String,
+}
+
+/// `session.lanes.kill` — operator-initiated lane termination. Round-
+/// trips to the daemon; the lanes runtime there emits a
+/// `lane.killed` event the host forwarder consumes.
+#[tauri::command]
+pub async fn session_lanes_kill(
+    params: SessionLanesKillParams,
+    mgr: State<'_, SubprocessManager>,
+) -> IpcResult<SessionLanesKillResult> {
+    let val = mgr
+        .rpc_call(
+            &params.session_id,
+            "session.lanes.kill",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSetWorkdirParams {
+    pub session_id: String,
+    pub workdir: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSetWorkdirResult {
+    pub ok: bool,
+    pub workdir: String,
+}
+
+/// `session.set_workdir` — bind the session to an absolute workdir.
+/// The daemon refuses (returns `conflict`) if any tool call is in
+/// flight; that error surfaces verbatim through this verb.
+#[tauri::command]
+pub async fn session_set_workdir(
+    params: SessionSetWorkdirParams,
+    mgr: State<'_, SubprocessManager>,
+) -> IpcResult<SessionSetWorkdirResult> {
+    let val = mgr
+        .rpc_call(
+            &params.session_id,
+            "session.set_workdir",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatusResult {
+    pub url: String,
+    pub mode: String, // "external" | "sidecar"
+    pub version: String,
+    pub uptime_s: u64,
+}
+
+/// `daemon.status` — return current daemon connection metadata. The
+/// host caches the values populated at discovery time (mode, url) and
+/// only round-trips to the daemon for the live `version` and
+/// `uptime_s`.
+#[tauri::command]
+pub async fn daemon_status(mgr: State<'_, SubprocessManager>) -> IpcResult<DaemonStatusResult> {
+    let sid = any_session_id(&mgr).await?;
+    let val = mgr
+        .rpc_call(&sid, "daemon.status", serde_json::json!({}))
+        .await?;
+    from_val(val)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonShutdownParams {
+    #[serde(default = "default_true")]
+    pub graceful: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonShutdownResult {
+    pub shutdown_at: String,
+}
+
+/// `daemon.shutdown` — request the daemon to stop. Defaults to
+/// graceful (drain in-flight tool calls before exiting).
+#[tauri::command]
+pub async fn daemon_shutdown(
+    params: DaemonShutdownParams,
+    mgr: State<'_, SubprocessManager>,
+) -> IpcResult<DaemonShutdownResult> {
+    let sid = any_session_id(&mgr).await?;
+    let val = mgr
+        .rpc_call(
+            &sid,
+            "daemon.shutdown",
+            serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
+        )
+        .await?;
+    from_val(val)
+}
+
+// --- Tauri-host-only verbs -------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppPopoutLaneParams {
+    pub session_id: String,
+    pub lane_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppPopoutLaneResult {
+    pub window_label: String,
+}
+
+/// `app.popout_lane` — open (or focus) a `WebviewWindow` for one
+/// lane. Delegates to `popout::open_or_focus_lane_popout`, which
+/// builds the window with label `"lane:<session>:<lane>"` and
+/// registers it with `PopoutRegistry` so the menu's "Lane Pop-Outs"
+/// submenu (item 25) can enumerate live pop-outs.
+#[tauri::command]
+pub async fn app_popout_lane(
+    params: AppPopoutLaneParams,
+    app: AppHandle,
+    registry: State<'_, crate::popout::PopoutRegistry>,
+) -> IpcResult<AppPopoutLaneResult> {
+    let label = crate::popout::open_or_focus_lane_popout(
+        &app,
+        &registry,
+        &params.session_id,
+        &params.lane_id,
+    )
+    .await?;
+    Ok(AppPopoutLaneResult {
+        window_label: label,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppOpenFolderPickerParams {
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppOpenFolderPickerResult {
+    pub path: Option<String>,
+}
+
+/// `app.open_folder_picker` — open the OS folder picker. Routes
+/// through tauri-plugin-dialog from the WebView side; this Rust
+/// command exists so call-sites have one symmetric surface across
+/// both transport modes.
+#[tauri::command]
+pub async fn app_open_folder_picker(
+    _params: AppOpenFolderPickerParams,
+    _app: AppHandle,
+) -> IpcResult<AppOpenFolderPickerResult> {
+    // Folder picking via the dialog plugin happens on the JS side
+    // (tauri-plugin-dialog `open()`); this verb is the host-side
+    // surface for callers that prefer to invoke a Rust command. The
+    // body stays a noop returning `None` until item 28 wires the
+    // wizard's folder picker, after which it'll delegate to the
+    // dialog plugin's Rust API.
+    Ok(AppOpenFolderPickerResult { path: None })
 }
 
 // ---------------------------------------------------------------------------

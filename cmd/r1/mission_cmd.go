@@ -72,6 +72,7 @@ func getOrchestrator(storeDir string) (*orchestrate.Orchestrator, error) {
 // multi-turn Claude sessions with MCP codebase tools for deep code analysis.
 // Returns the discovery engine (may be nil) so the caller can call Cleanup().
 func getOrchestratorWithDiscovery(storeDir, claudeBin string, noDiscovery bool) (*orchestrate.Orchestrator, *orchestrate.DiscoveryEngine, error) {
+	// LINT-ALLOW chdir-cli-entry: r1 mission orchestrator setup; cwd captured once before any goroutine starts.
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, nil, err

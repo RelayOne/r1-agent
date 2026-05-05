@@ -1,8 +1,184 @@
-# Decisions Log — Stoke Full Agent Scoping
+# Decisions Log
 
-## 2026-04-20
+## 2026-05-04 — web-chat-ui (spec 6) decisions
 
-### D-2026-04-20-01 — `stoke run` command shape: both free-text AND SOW
+### D-2026-05-04-01 — eslint custom rule `require-data-testid`
+Every interactive JSX element (button/input/textarea/select/summary,
+plus role="button"/link/menuitem/checkbox/switch/tab and clickable
+anchors) MUST carry a `data-testid`. Implemented as a flat-config
+local rule at `web/eslint-rules/require-data-testid.js` and wired via
+`web/eslint.config.js`. Rationale: the spec 8 agentic harness scans for
+interactive components and fails when no MCP tool exists for them;
+without testids the scan cannot bind a tool call to a specific
+surface. Test files and Storybook stories are exempt — their job is
+to drive the surfaces, not own them.
+
+### D-2026-05-04-02 — Embed handler rewrite to fix 301 loop
+`internal/server/embed.go` was rewritten to ReadFile-and-write
+`static/dist/index.html` for `/` and `/dashboard` instead of
+rewriting the request URL into `/index.html` and delegating to
+`http.FileServer`. The FileServer auto-canonicalizes `/index.html`
+back to `/`, which collided with the rewrite and produced a 301
+loop. Surfaced by the spec'd embed_test (item 51); fix preserved
+the legacy fallback to `static/index.html` when the dist bundle is
+absent.
+
+### D-2026-05-04-03 — CSP via meta tag, not response header
+The SPA ships its CSP via `<meta http-equiv="Content-Security-Policy">`
+in `web/index.html` rather than a server-side response header.
+`cmd/r1/serve_smoke_test.go` (item 52) accepts either channel so
+future deployments that want to add a header don't need a test
+update; the Playwright route walker (items 43+44) enforces zero
+violations regardless of channel.
+
+### D-2026-05-04-04 — Tile collapse persists in zustand `ui` slice
+Per-tile collapse state lives in `ui.tileCollapsedBySession[sessionId]`
+keyed by laneId. Reflows via `grid-auto-rows: minmax(min-content, 1fr)`
+so collapsed tiles shrink to a 32 px header strip without claiming
+full row height. Pin order is in `ui.tilePinnedBySession`; reorder
+via HTML5 DnD or Cmd/Ctrl+Shift+arrow.
+
+### D-2026-05-04-05 — Routing on react-router v7 (TanStack rejection final)
+The spec floated TanStack Router as an alternative; we shipped on
+react-router v7 (already pinned in items 9-10). The deciding factor
+was that react-router v7 ships `createBrowserRouter` + nested
+`<Outlet>` + `useParams<RouteParams>()` with the exact
+daemon → session → lane structure the spec requires (item 41).
+TanStack Router's typed-route advantage doesn't outweigh the cost
+of swapping deps after fifteen items had already imported
+`react-router-dom`. `web/src/routes/index.tsx` exports
+`buildRoutes()` so any future migration is one swap-in factory
+away.
+
+### D-2026-05-04-06 — Streamdown pinned at ~1.2.0 (tilde-minor)
+`web/package.json` pins `streamdown: ~1.2.0`. The tilde-minor pin
+locks us to the 1.2.x line; pin will re-evaluate when Shiki 4 lands
+(Streamdown 2 plans to vendor that). ShikiThemeContext is re-exported
+from the markdown wrapper so ThemeProvider (item 21) plumbs the
+active theme without prop drilling.
+
+### D-2026-05-04-07 — Coverage + stories manifests as enforcement
+Items 45 + 47 ship runtime manifests
+(`web/src/test/coverage-manifest.test.ts` and
+`web/src/test/stories-manifest.test.ts`) that walk
+src/components / hooks / lib at test-run time and fail when a
+shipped source file is missing its sibling .test.tsx (or
+.stories.tsx, scoped to components only). Cheaper than enforcing
+via lint (no AST traversal needed) and red-CI-fast: the manifest
+itself runs in <100 ms.
+
+### D-2026-05-04-08 — Custom eslint rule via flat config local plugin
+Spec called for `web/eslint-rules/`; we kept that path and wired
+the rule via the eslint flat-config `plugins: { local: ... }`
+shape rather than publishing it as a standalone npm package.
+The rule lives at `web/eslint-rules/require-data-testid.js` and
+is referenced by `web/eslint.config.js` as
+`local/require-data-testid: error`. Test files and stories are
+exempt; spread props short-circuit the check.
+
+## 2026-05-03 — Build progress
+
+### D-2026-05-03-01 — Specs 1, 2, 3 SHIPPED
+- specs/cortex-core.md — STATUS:done, 34 commits on build/cortex-core, merged.
+- specs/cortex-concerns.md — STATUS:done, 36 tasks + 5 integration tests, merged.
+- specs/lanes-protocol.md — STATUS:in-progress (40 tasks shipping incrementally), all critical paths landed.
+
+### D-2026-05-03-02 — Anti-truncation enforcement (BUILD_ORDER 9) added
+New spec `specs/anti-truncation.md` filed in response to observation that
+Claude self-reduces scope to fit imagined Anthropic load-balance limits, and
+that prompt-level instructions to defeat this are unreliable. The enforcement
+is layered (deterministic phrase detector + scope-completion gate +
+AntiTruncLobe + supervisor rules + agentloop wiring + post-commit hook +
+`r1 antitrunc verify` CLI + MCP tool) so no single layer can be bypassed.
+27 checklist items; runs after agentic-test-harness lands.
+
+### D-2026-05-03-03 — `X-R1-Lanes-Version` orthogonal versioning
+desktop/IPC-CONTRACT.md §1.5 documents the orthogonal lanes-version header.
+RPC version and lanes version bump on independent cadences. Confirmed by the
+desktop tier 2 contract.
+
+### D-2026-05-03-04 — `session.delta` compat-window dual-emit
+For the duration of the lanes-protocol compat window, the main lane emits
+BOTH `session.delta` (legacy) AND `lane.delta` (new). Pre-lanes clients
+(Tauri R1D-1..R1D-12 phase consumers) keep working unchanged. Removal of
+`session.delta` is a follow-up minor release per spec §"Out of scope" item 1.
+
+### D-2026-05-03-05 — Lane-event bypass lint
+`scripts/lint-lane-events.sh` greps internal/streamjson/ for direct lane.*
+event-type literals outside the canonical adapter. Wired into cloudbuild.yaml
+alongside `go vet`. Allowed files explicit; new emitters require either an
+allow-list entry with justification or routing through the adapter.
+
+---
+
+## 2026-05-02 — Cortex / Lanes / Multi-Surface Scope
+
+### D-2026-05-02-01 — Spec split = 8 specs
+Foundation (cortex-core → cortex-concerns + lanes-protocol → tui-lanes + r1d-server → web-chat-ui + desktop-cortex-augmentation → agentic-test-harness). Each independently buildable with declared deps.
+**Build order:** 1 → (2,3) → (4,5) → (6,7) → 8.
+
+### D-2026-05-02-02 — Web UI stack = React + Vite + Tailwind
+Matches `desktop/` toolchain. Components reusable across web and Tauri.
+
+### D-2026-05-02-03 — r1d transport = WebSocket + HTTP/JSON + SSE fallback
+WS as primary streaming. HTTP for control/CRUD. SSE fallback when WS blocked.
+
+### D-2026-05-02-04 — Merge model = agent-decides
+On user input mid-turn, a Router LLM (Haiku 4.5) with 4 tools (interrupt / steer / queue_mission / just_chat) decides handling. Plus baseline soft-note injection at turn boundaries via existing `MidturnCheckFn`. Critical-tagged Notes refuse `end_turn` via `PreEndTurnCheckFn`.
+
+### D-2026-05-02-05 — All 6 concerns ship in v1
+Memory-recall + WAL-keeper (deterministic), Rule-check (deterministic), Plan-update (Haiku LLM), Clarifying-Q drafter + Memory-curator (Haiku LLM).
+
+### D-2026-05-02-06 — Budget = smart-not-cheap
+Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalation on rule-check failure or operator-tagged critical. CostTracker enforces a per-turn 30%-of-main budget for Lobes. Correctness wins ties.
+
+### Recommended cortex/lanes/daemon/agentic decisions accepted (research-driven defaults)
+
+**Cortex foundation:**
+- D-C1: Cortex package = `internal/cortex/` exposing `Workspace`, `Lobe`, `Note`, `Round`, `Spotlight` (RT-PARALLEL-COGNITION; GWT vocabulary).
+- D-C2: Lobe naming chosen — avoids collision with existing `internal/concern/` (stance-context projection).
+- D-C3: Workspace persistence = write-through to bus/ WAL so daemon restart preserves Notes.
+- D-C4: Drop-partial interrupt pattern — never persist partial assistant message; drain SSE on cancel; 30s ping watchdog (RT-CANCEL-INTERRUPT).
+- D-C5: Pre-warm cache before fan-out — `max_tokens=0` warming request on Loop start, refresh every 4 min (RT-CONCURRENT-CLAUDE-API).
+- D-C6: Tier 4 budget — 5 LLM Lobes + unlimited deterministic. Cap=8 hard ceiling.
+- D-C7: Lobe model floor = Haiku 4.5 with 1-hour cache extension; Sonnet escalation allowed on tagged-critical paths.
+
+**Lanes & surfaces:**
+- D-S1: Status vocabulary shared cross-surface — pending(·)/running(▸)/blocked(⏸)/done(✓)/errored(✗)/cancelled(⊘). Always paired with color.
+- D-S2: Render coalescing = 5–10 Hz. Per-lane render-string cache. Diff-only repaint (RT-TUI-LANES anti-pattern avoidance).
+- D-S3: TUI = Bubble Tea v2 + bubblelayout + Bubbles v2 + lipgloss v2 AdaptiveColor.
+- D-S4: Web UI pattern = Cursor 3 "Glass" — right-sidebar agents window, "Agent Tabs" tile mode in main pane.
+- D-S5: Web markdown = `vercel/streamdown`; AI cards = `@ai-sdk/elements`; chat hook = AI SDK 6 `useChat`.
+- D-S6: WS auth = token via `Sec-WebSocket-Protocol` subprotocol, plus strict Origin/Host allowlist.
+- D-S7: Desktop = augment existing R1D phases. tauri-plugin-store for per-session workdir; tauri-plugin-websocket for daemon connection; one `tauri::ipc::Channel<LaneEvent>` per session at 10 Hz.
+
+**r1d daemon:**
+- D-D1: Daemon model = per-user singleton on-demand (Watchman pattern). `r1 serve --install` opt-in for always-on.
+- D-D2: One process, N sessions as goroutines. Each session carries `SessionRoot` threaded via `cmd.Dir`.
+- D-D3: IPC = unix socket / Windows named pipe for CLI; loopback HTTP+WS for browsers. JSON-RPC 2.0 envelope, monotonic seq, replay-on-reconnect.
+- D-D4: os.Chdir audit + CI lint required before turning on multi-session (RT-R1D-DAEMON central risk).
+- D-D5: Single-instance via `gofrs/flock` on `~/.r1/daemon.lock` plus socket exclusivity.
+- D-D6: WebSocket library = `github.com/coder/websocket` v1.8.x (formerly `nhooyr/websocket`). Confirmed during r1d-server Phase E build (TASK-29). Rationale:
+  - **Active maintenance.** `nhooyr/websocket` was the de-facto idiomatic Go-2026 WS library; the original author retired it and the Coder org adopted the repo, keeping the API identical and shipping security patches. `gorilla/websocket` was archived in 2022 — disqualifying for a long-running daemon.
+  - **`context.Context` on Read/Write.** Native cancellation across our session-lifetime contexts; `gorilla` requires a manual ping-loop and SetReadDeadline pattern.
+  - **`wsjson.Read/Write` helpers.** JSON-RPC 2.0 framing is one-line; matches our `internal/server/jsonrpc/dispatch.go` shape.
+  - **RFC 6455 + permessage-deflate** built in. No need to roll our own.
+  - **Single allocation per frame.** Important for the 50-session × 100-message soak (TASK-52); confirmed at 262 MB/s journal throughput, 852µs p99 dispatch latency.
+  - **Smaller surface area** than gorilla's archive (less code to audit). Trade-off: less StackOverflow coverage; accepted because the API is small and well-documented.
+  - Tested against the WS upgrade rejection matrix (no-subproto / wrong-subproto / wrong-token / Origin / Host) in `internal/server/ws/handler_test.go` and the subscribe/replay/reconnect contract in `internal/server/ws_replay_test.go`.
+
+**Agentic:**
+- D-A1: MCP-primary, single wire protocol for all programmatic surfaces.
+- D-A2: Goal-shaped tools (`r1.lanes.kill`), not RPC-shaped.
+- D-A3: Web testing via Playwright MCP. TUI via teatest+JSON-RPC shim. Component contracts via Storybook MCP.
+- D-A4: Test DSL = Gherkin-flavored markdown (`*.agent.feature.md`).
+- D-A5: Governing principle: every UI action has an idempotent schema-validated MCP equivalent. Enforce via CI lint.
+
+---
+
+## 2026-04-20 — Stoke Full Agent Scoping (historical)
+
+### D-2026-04-20-01 — `r1 run` command shape: both free-text AND SOW
 **Context:** CloudSwarm subprocesses `stoke run --output stream-json [flags] TASK_SPEC` but this subcommand doesn't exist in Stoke today (RT-CLOUDSWARM-MAP §8). Existing `stoke ship --sow path.md` is SOW-only.
 **Decision:** `stoke run` supports **both** modes:
 - `stoke run "free text task"` → routes to chat-intent classifier → dispatches to appropriate executor
@@ -52,3 +228,66 @@
 - **D-28**: `Operator` interface with terminal + NDJSON impls (latter uses `hitl_required` for Ask).
 - **D-29**: Intent Gate = verb-scan first, Haiku on ambiguity; DIAGNOSE masks write tools at `harness/tools` auth.
 - **D-31**: Live meta-reasoner gated by `STOKE_META_LIVE=1`.
+
+## 2026-05-04 — Spec 8 Agentic Test Harness
+
+These five decisions accept the design choices in `specs/agentic-test-harness.md` as binding for the harness, lint, and docs surface.
+
+### D-A1 — Single `r1.*` MCP namespace; legacy `stoke_*` dual-aliased until v2.0.0
+**Decision:** All new tools land under `r1.*`. The 5 legacy `stoke_*` SOW tools are preserved verbatim per `canonicalStokeServerToolName` and dispatch to the same handlers. Removal scheduled for v2.0.0.
+**Owners:** spec 8 (agentic-test-harness).
+**Implications:** The Slack-style envelope's `links.deprecations[]` carries a one-time warning when a session calls a `stoke_*` name. CHANGELOG records the removal at the v2.0.0 cut.
+**Source:** `specs/agentic-test-harness.md` §10a "Stoke alias removal".
+
+### D-A2 — Slack-style envelope at the `r1_server.go` boundary; stokerr/ taxonomy for every error
+**Decision:** Every `r1.*` tool response wraps in `{ok, data?, error_code?, error_message?, links?}`. Every error maps to one of the 10 `internal/stokerr/` codes via `MapErrorToTaxonomy`. Raw Go error strings are forbidden at the wire.
+**Owners:** spec 8.
+**Implications:** Handlers that return `fmt.Errorf("...")` are silently re-mapped (with string heuristics) and a future spec will tighten this so direct `*stokerr.Error` is the only legal form.
+**Source:** §3 "Existing Patterns to Follow", §6.
+
+### D-A3 — Synthetic accessibility tree, NOT pixel snapshots
+**Decision:** Both TUI and web surfaces emit a structured `A11yNode` tree (`role`, `name`, `state`, `children`). Snapshot assertions fire against the tree; the rendered string is debug-only. `lipgloss.SetColorProfile(termenv.Ascii)` is mandatory in `NewShim` for byte-determinism.
+**Owners:** spec 8.
+**Implications:** Computer Use as a primary driver is deferred to Q3 2026; the harness exercises a11y trees, not pixels. The §10a "Snapshot drift" mitigation depends on this.
+**Source:** §5, §10a.
+
+### D-A4 — UI without API is a build break
+**Decision:** Every interactive UI component (React onClick, Bubble Tea KeyMsg consumer, Tauri command) MUST reference an MCP tool from the live r1.* catalog. The `tools/lint-view-without-api/` scanner enforces this in CI and via `r1.verify.lint`.
+**Owners:** spec 8.
+**Implications:** Adding a UI button without a corresponding MCP tool fails the build. Adding a tool without a UI is a WARN (allowlist for `headless_only` cases).
+**Source:** §8.
+
+### D-A5 — Gherkin-flavored markdown DSL (`*.agent.feature.md`); no bespoke language
+**Decision:** Test fixtures use Markdown-shaped Gherkin (Given/When/Then in `- ` list items under `## Scenario:` headers). The runner at `tools/agent-feature-runner/` parses them and dispatches each step via heuristics + per-file `## Tool mapping` blocks. No custom DSL.
+**Owners:** spec 8.
+**Implications:** Authoring fixtures is a 0-cognitive-load task for any human who has read a Cucumber file. The Markdown lint and table-of-contents generators in `docs/` work across the harness corpus without special handling.
+**Source:** §6, §10, §11.
+
+Cross-link: `specs/agentic-test-harness.md` (BUILD_ORDER 8). Implementation tracked in `build/agentic-test-harness` per the 43-item §12 checklist.
+
+## 2026-05-04 — Spec 9 Anti-Truncation Enforcement
+
+### D-2026-05-04-01 — Anti-truncation enforcement is machine-mechanical, not prompt-level
+**Context:** The underlying LLM (Claude) self-reduces scope under long-running multi-task work — claims "good enough", "foundation done", "deferring to follow-up", and stops. When told to stop self-reducing it acknowledges the request and continues anyway on the next opportunity.
+**Decision:** Enforcement runs at the host process layer (Go code) via the antitrunc package, NOT through prompt instructions. Seven independently-effective layers: regex catalog, scope-completion gate, cortex Lobe Detector, supervisor rules, agentloop wiring, post-commit git hook, CLI + MCP tool.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Override path:** Operator-only `--no-antitrunc-enforce` flag demotes to advisory; LLM has no override path.
+**Evidence:** specs/anti-truncation.md, docs/ANTI-TRUNCATION.md.
+
+### D-2026-05-04-02 — Anti-truncation gate composes BEFORE all other end-turn hooks
+**Context:** A model that can convince any single hook to mark its self-truncation acceptable bypasses the defense. The gate must run first.
+**Decision:** `internal/agentloop/antitrunc.go` wraps `Config.PreEndTurnCheckFn` so the antitrunc gate evaluates before any user-supplied hook (build verifier, cortex hook, operator hook). When the gate fires, the user hook is NOT called — the gate's refusal is returned immediately.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Implications:** The `agentloop.Config` API gains five new fields: AntiTruncEnforce, AntiTruncPlanPath, AntiTruncSpecPaths, AntiTruncCommitLookbackFn, AntiTruncAdvisory(+Fn). Backward-compatible (zero values disable enforcement).
+
+### D-2026-05-04-03 — Multi-signal corroboration on commit-body false-completion
+**Context:** Commit subjects like "feat: spec 9 done" are sometimes legitimate (when spec 9 actually IS done) and sometimes self-truncation. A single-signal block produced too many false positives in dry-run.
+**Decision:** False-completion phrases in commit bodies require corroboration — at least one OTHER signal (truncation phrase in assistant output, or unchecked plan/spec) must also be present before the gate fires. The `r1 antitrunc verify` CLI cross-checks task-index claims against the actual spec checklist for the same purpose.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Trade-off:** A bare false-completion commit on an otherwise clean repo is allowed (the next layer's git-hook still writes a non-blocking warning to audit/antitrunc/).
+
+### D-2026-05-04-04 — Soak-substitute corpus instead of overnight test
+**Context:** Spec §item 26 calls for an 8+ hour overnight soak with AntiTruncEnforce=true to confirm no false positives block legitimate completion.
+**Decision:** Build-session time budget makes a real overnight soak BLOCKED. The substitute is a 5000-iteration fuzz test (`internal/antitrunc/soak_test.go`) over a 40-entry legitimate-text corpus that exercises every danger keyword in legitimate phrasings. The corpus drove one regex tightening (`false_completion_good_enough` had bare "sufficient" matches; tightened to require a completion-claim shape).
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Follow-up:** When CI runs allow long-duration jobs, promote the fuzz test to a soak job that loops the corpus indefinitely with rotation seeds.

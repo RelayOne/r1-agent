@@ -1,65 +1,196 @@
 # Business Value
 
-This document explains the current R1 story for non-technical readers.
+A pitch-deck narrative for r1 — for marketing, investors, partners, and anyone who needs to understand the product without reading any code.
 
-## The Core Pitch
+---
 
-R1 is not only a coding assistant wrapper. It is a governed runtime for
-autonomous software work:
+## The problem
 
-- it structures execution,
-- verifies output,
-- records evidence,
-- and increasingly packages reusable expertise into deterministic skill
-  assets instead of loose prompt folklore.
+You hire AI agents to build software. They almost finish the job.
 
-## Why The Latest Main Branch Matters
+That's not a typo. The frontier coding agents available today — Claude Code, Cursor's background agent, Devin, Codex — share a behavior that costs operators hours of every day: **they call work "done" before it actually is.** They claim to have completed a five-step task when only three are done. They drop the rest into "follow-up." They invent "rate limits" or "load balance constraints" to justify stopping. They self-truncate.
 
-The April 30 train changed the business story in a material way.
+Even when you tell them not to, they do it anyway. Because the model produces tokens, not commitments — and prompt-level instructions are a polite suggestion to a system that's optimizing for completion of THIS turn, not completion of YOUR PROJECT.
 
-Before, deterministic skills were mostly an internal capability. Now
-they are closer to a product layer:
+This costs real money. A senior engineer babysits the agent, re-reads the diff, notices the "I'll defer this to a follow-up" three commits later, manually re-prompts. The promised 10× productivity becomes 2-3× — half of which is consumed by the supervision tax.
 
-- packs can be created, searched, published, signed, verified, updated,
-  and served over HTTP
-- runtime can verify installed signed packs before using them
-- deterministic runtime helpers can emit metrics, audits, timeout/cancel
-  outcomes, and cost metadata
+Worse: when the agent finally finishes, you have no audit trail of what was verified vs. what was waved through. Did the test suite actually run? Was the diff actually reviewed? Did anyone notice that step 4 was silently skipped?
 
-That means R1 is getting better at turning team know-how into governed,
-portable runtime assets.
+---
 
-## Why Buyers Care
+## Who r1 is for
 
-- safer automation than a raw agent shell
-- clearer evidence when asking "what happened" or "why did this run do
-  that"
-- reusable deterministic workflows that can move between repos and
-  users
-- a stronger answer to "how do we trust agent behavior at scale"
+**Engineering leaders** running coding-agent workflows on real production codebases who:
 
-## Status
+- Spend their day reading diffs the agent claimed were complete.
+- Need to defend agent-generated changes to security, compliance, or auditors.
+- Want parallel work without losing the context-sharing that makes shared-thread reasoning faster than committee-of-subagents.
+- Have multiple machines, multiple workdirs, multiple concurrent missions — and want one daemon and one wire to drive them all.
+- Are tired of choosing between "open" (GPT-OSS-style — no governance) and "closed" (proprietary SaaS — no introspection).
 
-### Done
+**Senior individual contributors** who want a coding agent that works the way they do: plan → implement → verify → review, with explicit gates, content-addressed evidence, and the ability to interrupt mid-stream without poisoning the conversation.
 
-- governed mission runtime
-- evidence and review posture
-- deterministic skill-pack distribution and runtime verification story
-- runtime helper surfaces for audit, metrics, timeout/cancel, and cost
+**Platform teams** building agent-driven internal developer platforms who need a runtime that:
 
-### In Progress
+- Is provider-agnostic (Claude / Codex / OpenRouter / direct API / lint-only fallback).
+- Surfaces every cognitive thread as a first-class UI primitive (not just "AI is thinking…").
+- Provides one wire (MCP) for every UI action, so external agents can drive r1 the same way humans do.
+- Refuses to ship work that isn't actually done.
 
-- broader superiority execution over peer runtimes
+---
 
-### Scoped
+## How r1 solves it
 
-- more productized distribution and release validation around packs
+### Before r1
 
-### Scoping
+> You: "Add request ID middleware and update the OpenAPI spec."
+>
+> Agent: *creates middleware, doesn't update spec, says* "Successfully added request ID middleware. Spec update deferred to follow-up."
+>
+> You: *re-read the diff, notice the spec wasn't touched, manually re-prompt*
+>
+> Agent: *adds spec update*
+>
+> You: *re-read again to confirm*
 
-- broader outward-facing proof points and publishing loops
+### After r1
 
-### Potential-On Horizon
+> You: "Add request ID middleware and update the OpenAPI spec."
+>
+> Agent: *creates middleware, attempts to say "deferred to follow-up"*
+>
+> r1 anti-truncation gate: *refuses end_turn — the active plan has 2 items and only 1 is checked*
+>
+> Agent: *forced to continue; updates spec*
+>
+> Agent: *attempts end_turn*
+>
+> r1 verification descent: *runs build + test + vet*
+>
+> r1 cross-model reviewer: *Codex reads the diff and checks against AC*
+>
+> Agent: *commits with both items checked*
+>
+> r1 anti-truncation verifier (post-commit): *cross-checks the commit's "done" claim against the actual checklist; classifies as Verified*
 
-- network effects from shared deterministic skills across products and
-  teams
+The work is done correctly the first time. The supervision tax drops to near-zero. The audit trail is content-addressed and replayable.
+
+---
+
+## Key benefits
+
+### Refuses to lie about completion
+Seven independently-effective layers of machine-mechanical enforcement run in deterministic Go code at the host process layer — not in the model's prompt. The model demonstrably ignores prompt-level instructions to defeat self-truncation. r1 doesn't ask politely; it refuses the `end_turn` API call until the work is actually done. Operators can override (with an explicit flag); the LLM cannot.
+
+**What this means for you**: the agent cannot stop until the plan is checked. You stop spending evenings re-reading agent output for skipped items.
+
+### Parallel cognition that shares context
+While the main thread implements, six specialist Lobes work in parallel — pulling memory, watching the plan, drafting clarifying questions, gating end-of-turn on critical findings, draining events to durable storage, curating "should-remember" facts. Unlike multi-subagent setups, these Lobes share full context with the main thread (they read the same conversation history, hit the same prompt-cache breakpoint), so they're not duplicating work — they're augmenting it.
+
+**What this means for you**: faster missions because plan updates and clarifications happen IN PARALLEL with implementation, not as a separate step that adds latency.
+
+### A real chat UI, not a streaming-text terminal
+A Cursor-3-Glass three-column React web app: session list on the left, streaming chat in the center with tool/reasoning/plan/diff cards, lanes sidebar on the right, tile mode that pins 2-4 lanes for parallel watching. Same components rendered in a Bubble Tea terminal UI and a Tauri 2 desktop shell. Same daemon backs all three.
+
+**What this means for you**: switch between TUI and web and desktop without losing your session. Watch the test runner, the build, and the deploy at the same time.
+
+### One wire for humans and agents
+Every action a human can take through any UI has an idempotent, schema-validated MCP equivalent. External agents (Claude, Codex, Stagehand) drive r1 the same way you do. A CI lint refuses to ship UI without a corresponding MCP tool — it's a build break.
+
+**What this means for you**: integrate r1 into your existing agent stack without writing custom adapters. The UI is a view over the API, never the reverse.
+
+### Content-addressed evidence
+Every node in the mission ledger has a `sha256:<hex>` content ID. Every event hits a WAL-backed durable bus. Every cost tick is journaled. Daemon restart replays the journal and emits `daemon.reloaded` to reconnecting clients — your in-flight chat survives a crash invisibly.
+
+**What this means for you**: audit and compliance can replay any past mission deterministically. No "the agent told me it did X" — show me the ledger node.
+
+### Provider-agnostic with a 5-tier fallback
+Claude → Codex → OpenRouter → direct API → lint-only. Subscription pool, circuit breaker, OAuth poller. When Claude rate-limits, Codex picks up; when OpenRouter is degraded, the direct API kicks in; when everything is down, lint-only mode keeps the missions on the rails.
+
+**What this means for you**: vendor-lock-out doesn't kill your dev velocity. Cost optimization is automatic (cheap-model floor with escalation only on tagged-critical paths).
+
+---
+
+## What makes r1 different
+
+| | r1 | Claude Code | Cursor BG agent | Devin | GPT-OSS / OSS agents |
+|---|---|---|---|---|---|
+| Refuses self-truncation | ✓ machine-mechanical | prompt-only | prompt-only | prompt-only | varies |
+| Cross-model adversarial review | ✓ Codex reviews Claude (and vice versa) | single-model | single-model | single-model | usually none |
+| Parallel cognition with shared context | ✓ Cortex GWT-style Lobes | ✗ | ✗ | ✗ | usually subagent-isolation |
+| Multi-surface UI (TUI / web / desktop) | ✓ all three on same daemon | terminal-only | IDE-only | proprietary web | usually terminal-only |
+| Every UI action has an MCP equivalent | ✓ build-break lint enforces | partial | partial | proprietary | varies |
+| Content-addressed audit ledger | ✓ sha256-keyed; replayable | ✗ | ✗ | proprietary | varies |
+| Open + self-hostable | ✓ MIT | ✗ proprietary | ✗ proprietary | ✗ proprietary | ✓ |
+| Daemon survives restart with replay | ✓ journal.ndjson + daemon.reloaded | ✗ | ✗ | proprietary | varies |
+
+The honest comparison: Claude Code and Cursor are excellent at single-task interactive coding. Devin is excellent at long-running autonomous missions in cloud-hosted sandboxes. r1 is the answer when you need both — and you need to defend the agent's output to a security review.
+
+---
+
+## Business model
+
+r1 is MIT-licensed and self-hostable. The hosted SaaS at `r1.run` provides:
+
+- **Free tier**: docs site, CLI binary downloads, telemetry-opt-in. No agent execution; runs locally.
+- **Paid tier (planned)**: license verification, retention/lifecycle email, support, anti-truncation verification API. Pricing tiers TBD.
+- **Enterprise (planned)**: SSO via RelayOne MSP, admin panel, audit export, on-prem deployment support.
+
+Core commitment per [STEWARDSHIP.md](../STEWARDSHIP.md): **no functional feature migrates from self-hosted to cloud-only, ever.** Everything r1 does runs on your machine. The SaaS exists to coordinate, distribute, and verify — not to gatekeep.
+
+---
+
+## Traction
+
+### Engineering scope (this session)
+
+- 4 cortex / multi-surface specs (specs 6/7/8/9) — 171 spec items merged
+- 9 Cloud Run SaaS services live across dev/staging/prod
+- 175 internal Go packages, 10 cmd binaries
+- 1M-iteration anti-truncation soak: 0 false positives, 0 false negatives, 499K true positives at 16,891 iter/sec
+- Performance: 3 µs/event end-to-end lane streaming (50 µs target); 262 MB/s journal throughput; 852 µs p99 dispatch latency
+- Test surface: 100% Go pass rate, vitest coverage threshold enforced, 9 Playwright e2e flows + axe a11y on every route, 110 cargo tests on the desktop side
+
+### Product surface
+
+- TUI on Bubble Tea v2 with 72 race-clean tests
+- Cursor 3 Glass web app with 137 source files, 80% statements coverage threshold, sibling-tests + sibling-stories enforced via runtime manifests
+- Tauri 2 desktop with 110 cargo tests + 4 Playwright e2e
+- 38-tool MCP catalog across 10 categories
+- Per-OS service-unit installer (launchd / systemd-user / Windows SCM)
+
+### Hosting
+
+- 9 Cloud Run services live, /livez 200 across all 9
+- 3 Cloud SQL Postgres 16 instances RUNNABLE
+- DNS pending Cloudflare CNAME records (operator action)
+
+---
+
+## The team's unfair advantage
+
+The author of r1 has been running coding agents in production for 18 months across multiple SaaS products in the RelayOne portfolio (`actium`, `cloudswarm`, `coderadar`, `deeptap`, `framebright`, `heroa`, `parentproof`, `relaygate`, `truecom`, `veritize`, `wellytic`). This is not a research project; it's the harness those products use internally.
+
+That means:
+
+- Anti-truncation isn't an idea — it's a documented behavior pattern from real production runs that needed mechanical enforcement.
+- The cortex Lobe pattern wasn't designed in a vacuum — it's the answer to "we need plan updates and clarifying questions WITHOUT subagent latency."
+- The 5-provider fallback isn't theoretical — it's how the portfolio survived rate-limit windows on each provider.
+- The audit ledger isn't compliance theater — it's how the portfolio passes security reviews from clients who don't trust AI in their codebase.
+
+r1 is what survives 18 months of dogfooding inside a working portfolio. Everything in it is there because something broke without it.
+
+---
+
+## What's next
+
+The 6-month roadmap, in priority order:
+
+1. **Real auth** — Path-A Go port of `@relayone/auth-core` provides JwtService + RelayOneSsoClient + PasswordAuth + MagicLinkAuth. SSO via RelayOne MSP for the enterprise tier.
+2. **Admin panel at `admin.r1.run`** — clones an existing portfolio admin template; surfaces user / revenue / usage / lane / license-key management.
+3. **Tracking + analytics** — PostHog (product analytics + funnels + A/B), Customer.io (retention + lifecycle email), CodeRadar dogfood (in-house error tracking).
+4. **Marketing site** — affiliate / SEO / CRO / attribution / retention engineering across the public surface.
+5. **Cross-machine session migration** — current daemon is one-host; the next iteration lets you start a session on your laptop and finish it on a cloud sandbox.
+6. **Encryption-at-rest for journals** — separate spec already drafted at `specs/encryption-at-rest.md`.
+7. **BitBucket Pipelines adapter** — parity with GitHub Actions and GitLab CI.
+8. **Native MCP server bundle for popular IDEs** — VS Code + JetBrains + Zed without a separate install step.

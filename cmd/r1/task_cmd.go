@@ -36,6 +36,7 @@ func buildDefaultTaskRouter() *router.Router {
 	r := router.New()
 	// TaskCode routes through the CodeExecutor fallback — prints
 	// the operator-friendly "use `r1 ship`" message.
+	// LINT-ALLOW chdir-cli-entry: r1 task subcommand; cwd captured once and embedded in the CodeExecutor as repoRoot, never re-read at dispatch time.
 	repoRoot, _ := os.Getwd()
 	r.Register(executor.TaskCode, executor.NewCodeExecutor(repoRoot))
 	r.Register(executor.TaskResearch, &executor.ResearchExecutor{})

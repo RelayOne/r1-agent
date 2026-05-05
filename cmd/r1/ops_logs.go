@@ -90,6 +90,7 @@ func resolveStreamJSONL(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
+	// LINT-ALLOW chdir-cli-entry: r1 ops logs subcommand; cwd is the stream.jsonl discovery anchor when --explicit is unset.
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."

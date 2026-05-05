@@ -93,6 +93,7 @@ func resolveEventsDB(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
+	// LINT-ALLOW chdir-cli-entry: r1 ops events subcommand; cwd is the events.db discovery anchor when --explicit is unset.
 	cwd, err := os.Getwd()
 	if err != nil {
 		// Fall through to a relative path; Stat will surface the failure.

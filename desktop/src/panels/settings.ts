@@ -44,6 +44,9 @@ type SectionId =
   | "ledger"
   | "memory"
   | "governance"
+  | "daemon"
+  | "autostart"
+  | "lanes"
   | "advanced";
 
 interface SectionDef {
@@ -71,6 +74,24 @@ interface GovernanceState {
   crypto_shred: boolean;
 }
 
+type LaneDensity = "verbose" | "normal" | "summary";
+
+interface DaemonInfoState {
+  url: string;
+  mode: "external" | "sidecar" | "unknown";
+  version: string;
+  uptimeS: number;
+}
+
+interface AutostartState {
+  enabled: boolean;
+  loaded: boolean; // true once isEnabled() resolved on first visit
+}
+
+interface LanesPrefsState {
+  density: LaneDensity;
+}
+
 interface SettingsState {
   active: SectionId;
   providers: ProviderRow[];
@@ -79,6 +100,9 @@ interface SettingsState {
   vault: VaultEntry[];
   revealedVaultIds: Set<string>;
   governance: GovernanceState;
+  daemon: DaemonInfoState;
+  autostart: AutostartState;
+  lanes: LanesPrefsState;
 }
 
 const SEED_PROVIDERS: ProviderRow[] = [
@@ -158,6 +182,12 @@ const SECTIONS: SectionDef[] = [
   { id: "ledger", label: "Ledger", render: renderLedgerStub },
   { id: "memory", label: "Memory", render: renderMemoryStub },
   { id: "governance", label: "Governance", render: renderGovernance },
+  // Spec desktop-cortex-augmentation §10 + checklist item 27 — three
+  // new sub-sections augmenting the R1D-7 settings panel without
+  // touching its existing tabs.
+  { id: "daemon", label: "Daemon", render: renderDaemon },
+  { id: "autostart", label: "Auto-start", render: renderAutostart },
+  { id: "lanes", label: "Lanes", render: renderLanes },
   { id: "advanced", label: "Advanced", render: renderAdvanced },
 ];
 
@@ -175,6 +205,14 @@ function newState(): SettingsState {
     vault: [],
     revealedVaultIds: new Set(),
     governance: { ...DEFAULT_GOVERNANCE },
+    daemon: {
+      url: "",
+      mode: "unknown",
+      version: "",
+      uptimeS: 0,
+    },
+    autostart: { enabled: false, loaded: false },
+    lanes: { density: "normal" },
   };
 }
 
@@ -1040,6 +1078,315 @@ function buildInnerModal(opts: InnerModalOpts): HTMLElement {
       }
     });
   return modal;
+}
+
+// ---------------------------------------------------------------------
+// Daemon (spec desktop-cortex-augmentation §5 + item 27)
+// ---------------------------------------------------------------------
+
+function renderDaemon(body: HTMLElement, s: SettingsState): void {
+  const d = s.daemon;
+  const modeLabel =
+    d.mode === "external"
+      ? "External (r1 serve)"
+      : d.mode === "sidecar"
+        ? "Bundled sidecar"
+        : "Unknown — not yet probed";
+  body.innerHTML = `
+    <header class="r1-settings-section-header">
+      <h3>Daemon</h3>
+      <p class="r1-settings-section-hint">
+        Connection to the r1 daemon. The desktop prefers an externally-installed
+        daemon (faster startup) and falls back to the bundled sidecar.
+      </p>
+    </header>
+    <div class="r1-settings-form">
+      <label class="r1-settings-field">
+        <span class="r1-settings-field-label">URL</span>
+        <code class="r1-settings-field-value" data-role="daemon-url">${escapeHtml(d.url || "—")}</code>
+      </label>
+      <label class="r1-settings-field">
+        <span class="r1-settings-field-label">Mode</span>
+        <code class="r1-settings-field-value" data-role="daemon-mode">${escapeHtml(modeLabel)}</code>
+      </label>
+      <label class="r1-settings-field">
+        <span class="r1-settings-field-label">Version</span>
+        <code class="r1-settings-field-value" data-role="daemon-version">${escapeHtml(d.version || "—")}</code>
+      </label>
+      <label class="r1-settings-field">
+        <span class="r1-settings-field-label">Uptime</span>
+        <code class="r1-settings-field-value" data-role="daemon-uptime">${escapeHtml(formatUptime(d.uptimeS))}</code>
+      </label>
+    </div>
+    <footer class="r1-settings-section-footer">
+      <button type="button" class="r1-btn" data-role="daemon-reconnect">Reconnect</button>
+      <button type="button" class="r1-btn" data-role="daemon-install">Install as service…</button>
+      <span class="r1-settings-save-status" data-role="daemon-status" aria-live="polite"></span>
+    </footer>
+  `;
+
+  body
+    .querySelector<HTMLButtonElement>('[data-role="daemon-reconnect"]')
+    ?.addEventListener("click", () => {
+      void runDaemonReconnect(body);
+    });
+
+  body
+    .querySelector<HTMLButtonElement>('[data-role="daemon-install"]')
+    ?.addEventListener("click", () => {
+      openDaemonInstallHelp();
+    });
+}
+
+async function runDaemonReconnect(body: HTMLElement): Promise<void> {
+  const status = body.querySelector<HTMLSpanElement>(
+    '[data-role="daemon-status"]',
+  );
+  if (status) {
+    status.className = "r1-settings-save-status is-running";
+    status.textContent = "Reconnecting…";
+  }
+  const response = await invokeStub<{
+    url: string;
+    mode: "external" | "sidecar";
+    version: string;
+    uptime_s: number;
+  }>(
+    "daemon_status",
+    "R1D-augmentation",
+    {
+      url: state.daemon.url,
+      mode: state.daemon.mode === "unknown" ? "external" : state.daemon.mode,
+      version: state.daemon.version,
+      uptime_s: state.daemon.uptimeS,
+    },
+  );
+  state.daemon = {
+    url: response.url,
+    mode: response.mode,
+    version: response.version,
+    uptimeS: response.uptime_s,
+  };
+  if (state.active === "daemon") activateSection("daemon");
+  if (status) {
+    status.className = "r1-settings-save-status is-pass";
+    status.textContent = "Connected";
+  }
+}
+
+function openDaemonInstallHelp(): void {
+  // The host emits the platform-appropriate `r1 serve --install`
+  // string via discovery::install_command_for_host_os; UI shows it
+  // in a copy-paste box. Until the wizard verb is wired, we surface
+  // the three known shapes so the user can pick one.
+  const modal = buildInnerModal({
+    title: "Install r1 as a system service",
+    bodyHtml: `
+      <p class="r1-modal-body">
+        Run the appropriate command in your terminal so r1 starts at login
+        and the desktop attaches faster on subsequent launches.
+      </p>
+      <pre class="r1-modal-pre"><code>r1 serve --install --launchd          # macOS
+r1 serve --install --systemd-user      # Linux
+r1 serve --install --task-scheduler    # Windows</code></pre>
+    `,
+    primaryLabel: "Got it",
+    onPrimary: async () => true,
+  });
+  document.body.appendChild(modal);
+}
+
+function formatUptime(seconds: number): string {
+  if (!seconds || seconds < 0) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+// ---------------------------------------------------------------------
+// Auto-start (spec §10 + item 27)
+// ---------------------------------------------------------------------
+
+function renderAutostart(body: HTMLElement, s: SettingsState): void {
+  const a = s.autostart;
+  body.innerHTML = `
+    <header class="r1-settings-section-header">
+      <h3>Auto-start</h3>
+      <p class="r1-settings-section-hint">
+        Start R1 Desktop at login. Uses the OS-appropriate hook
+        (Login Items on macOS, Run-key on Windows, XDG autostart on Linux).
+      </p>
+    </header>
+    <div class="r1-settings-form">
+      <label class="r1-settings-field r1-settings-field-inline">
+        <input
+          type="checkbox"
+          data-role="autostart-toggle"
+          ${a.enabled ? "checked" : ""}
+        />
+        <span>
+          <strong>Start R1 Desktop at login</strong>
+          <span class="r1-settings-field-hint">
+            ${a.loaded
+              ? "Reflects the current OS-side hook state."
+              : "Probing OS state… (this loads on first visit)"}
+          </span>
+        </span>
+      </label>
+    </div>
+    <footer class="r1-settings-section-footer">
+      <span class="r1-settings-save-status" data-role="autostart-status" aria-live="polite"></span>
+    </footer>
+  `;
+
+  body
+    .querySelector<HTMLInputElement>('[data-role="autostart-toggle"]')
+    ?.addEventListener("change", (event) => {
+      const next = (event.target as HTMLInputElement).checked;
+      void setAutostart(body, next);
+    });
+
+  if (!a.loaded) void loadAutostartProbe(body);
+}
+
+async function loadAutostartProbe(body: HTMLElement): Promise<void> {
+  // The plugin-autostart `isEnabled` check round-trips to the OS via
+  // tauri-plugin-autostart. Through invokeStub we get a deterministic
+  // false until the wired-up call lands; once it does the toggle
+  // reflects the real state.
+  const enabled = await invokeStub<boolean>(
+    "autostart_is_enabled",
+    "R1D-augmentation",
+    false,
+  );
+  state.autostart = { enabled, loaded: true };
+  if (state.active === "autostart") activateSection("autostart");
+  void body; // body closure no longer needed; activateSection re-renders.
+}
+
+async function setAutostart(body: HTMLElement, enabled: boolean): Promise<void> {
+  const status = body.querySelector<HTMLSpanElement>(
+    '[data-role="autostart-status"]',
+  );
+  if (status) {
+    status.className = "r1-settings-save-status is-running";
+    status.textContent = enabled ? "Enabling…" : "Disabling…";
+  }
+  const response = await invokeStub<{ ok: boolean }>(
+    enabled ? "autostart_enable" : "autostart_disable",
+    "R1D-augmentation",
+    { ok: true },
+  );
+  state.autostart = {
+    enabled: response.ok ? enabled : !enabled,
+    loaded: true,
+  };
+  if (status) {
+    status.className = response.ok
+      ? "r1-settings-save-status is-pass"
+      : "r1-settings-save-status is-fail";
+    status.textContent = response.ok ? "Saved" : "Failed";
+  }
+  if (state.active === "autostart") activateSection("autostart");
+}
+
+// ---------------------------------------------------------------------
+// Lanes density (spec §8 + item 27)
+// ---------------------------------------------------------------------
+
+function renderLanes(body: HTMLElement, s: SettingsState): void {
+  const density = s.lanes.density;
+  const choices: Array<{ value: LaneDensity; label: string; hint: string }> = [
+    {
+      value: "verbose",
+      label: "Verbose",
+      hint: "Lane card shows full last-event preview + status text.",
+    },
+    {
+      value: "normal",
+      label: "Normal",
+      hint: "Lane card shows last-event preview (default).",
+    },
+    {
+      value: "summary",
+      label: "Summary",
+      hint: "Lane card shows just status glyph + title.",
+    },
+  ];
+  body.innerHTML = `
+    <header class="r1-settings-section-header">
+      <h3>Lanes</h3>
+      <p class="r1-settings-section-hint">
+        Control how much detail each lane card renders in the sidebar
+        and pop-out windows.
+      </p>
+    </header>
+    <fieldset class="r1-settings-form" data-role="lanes-density">
+      <legend class="r1-visually-hidden">Lane density</legend>
+      ${choices
+        .map(
+          (c) => `
+            <label class="r1-settings-field r1-settings-field-inline">
+              <input
+                type="radio"
+                name="r1-settings-lane-density"
+                value="${c.value}"
+                ${density === c.value ? "checked" : ""}
+              />
+              <span>
+                <strong>${escapeHtml(c.label)}</strong>
+                <span class="r1-settings-field-hint">${escapeHtml(c.hint)}</span>
+              </span>
+            </label>
+          `,
+        )
+        .join("")}
+    </fieldset>
+    <footer class="r1-settings-section-footer">
+      <span class="r1-settings-save-status" data-role="lanes-status" aria-live="polite"></span>
+    </footer>
+  `;
+
+  body
+    .querySelectorAll<HTMLInputElement>(
+      'input[name="r1-settings-lane-density"]',
+    )
+    .forEach((input) => {
+      input.addEventListener("change", (event) => {
+        const value = (event.target as HTMLInputElement).value as LaneDensity;
+        void setLaneDensity(body, value);
+      });
+    });
+}
+
+async function setLaneDensity(
+  body: HTMLElement,
+  density: LaneDensity,
+): Promise<void> {
+  const status = body.querySelector<HTMLSpanElement>(
+    '[data-role="lanes-status"]',
+  );
+  if (status) {
+    status.className = "r1-settings-save-status is-running";
+    status.textContent = "Saving…";
+  }
+  state.lanes.density = density;
+  const response = await invokeStub<{ ok: boolean }>(
+    "prefs_set_lane_density",
+    "R1D-augmentation",
+    { ok: true },
+    { density },
+  );
+  if (status) {
+    status.className = response.ok
+      ? "r1-settings-save-status is-pass"
+      : "r1-settings-save-status is-fail";
+    status.textContent = response.ok ? "Saved" : "Failed";
+  }
 }
 
 // ---------------------------------------------------------------------

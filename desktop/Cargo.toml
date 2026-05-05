@@ -23,3 +23,19 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+# Six new Tauri 2 plugins introduced by spec desktop-cortex-augmentation §2.
+# Pinned to ^2 — once the matching exact 2.0.x lines stabilise (R8
+# mitigation in the spec) these will be downgraded to "= 2.0.x" and
+# Cargo.lock will be the source of truth.
+tauri-plugin-websocket = { version = "2" }
+tauri-plugin-store = { version = "2" }
+# tauri-plugin-dialog requires a backend feature ("gtk3" or "xdg-portal");
+# without one the rfd build script panics. gtk3 is the upstream default
+# and matches what `cargo info tauri-plugin-dialog` reports as the most
+# stable Linux backend at Tauri 2.x.
+tauri-plugin-dialog = { version = "2", features = ["gtk3"] }
+tauri-plugin-shell = { version = "2" }
+tauri-plugin-fs = { version = "2" }
+tauri-plugin-autostart = { version = "2" }
+thiserror = "1"
+futures = "0.3"

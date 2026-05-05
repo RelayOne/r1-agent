@@ -80,6 +80,7 @@ func runExportCmd(args []string, stdout, stderr io.Writer) int {
 
 	repoRoot := *repoFlag
 	if repoRoot == "" {
+		// LINT-ALLOW chdir-cli-entry: subcommand entry; cwd resolved once before any goroutine spawns and stored in repoRoot for the rest of the call.
 		cwd, err := os.Getwd()
 		if err != nil {
 			fmt.Fprintf(stderr, "export: getwd: %v\n", err)
