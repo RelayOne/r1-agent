@@ -51,7 +51,7 @@ use tokio::sync::{mpsc, Mutex};
 /// a doubling sequence capped at `max`. Jitter is applied per-attempt
 /// at the call site (we keep the schedule itself deterministic so
 /// tests can assert exact step values).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackoffPolicy {
     pub initial: Duration,
     pub max: Duration,
