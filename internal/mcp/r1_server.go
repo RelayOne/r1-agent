@@ -72,6 +72,11 @@ type StokeServer struct {
 	spawner spawnFunc
 	// now is the clock source. Tests can override.
 	now func() time.Time
+	// lanes optionally exposes the lanes-protocol MCP surface alongside
+	// the stoke_/r1_ build tools/list and tools/call handlers. Wired via
+	// WithLanesServer per spec 3 TASK-24; nil disables lane-tool exposure
+	// (the StokeServer behaves exactly as before).
+	lanes *LanesServer
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -110,6 +115,22 @@ func NewStokeServer(stokeBin string) *StokeServer {
 		spawner:  realSpawn,
 		now:      time.Now,
 	}
+}
+
+// WithLanesServer attaches a *LanesServer so this StokeServer's
+// MCP tools/list and tools/call dispatch include the five
+// r1.lanes.* tools alongside the stoke_*/r1_* tools. Spec 3
+// TASK-24 calls for "one-line addition to the MCP registry init";
+// callers achieve that by chaining:
+//
+//	NewStokeServer(bin).WithLanesServer(NewLanesServer(ws, wal))
+//
+// Passing nil clears any previously-attached lanes server.
+func (s *StokeServer) WithLanesServer(ls *LanesServer) *StokeServer {
+	s.mu.Lock()
+	s.lanes = ls
+	s.mu.Unlock()
+	return s
 }
 
 // ToolDefinitions returns the MCP tool definitions for Stoke build
