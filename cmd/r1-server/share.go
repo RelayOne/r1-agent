@@ -27,7 +27,6 @@ package main
 import (
 	"html/template"
 	"net/http"
-	"os"
 	"regexp"
 )
 
@@ -74,12 +73,12 @@ type shareView struct {
 }
 
 // shareEnabled reports whether the per-config share toggle is on.
-// Reads R1_SERVER_SHARE_ENABLED on each call so tests + ops can flip
-// without restart. Once r1-server gains a YAML config surface this
-// becomes a struct field read; the env-var fallback stays as the
-// operator escape hatch.
+// Backed by LoadV2Config().ShareEnabled — Spec 4 §10 T2 centralises
+// env reads behind that helper. Once r1-server gains a YAML config
+// surface this becomes a struct field read; the env-var fallback
+// stays as the operator escape hatch.
 func shareEnabled() bool {
-	return os.Getenv("R1_SERVER_SHARE_ENABLED") == "1"
+	return LoadV2Config().ShareEnabled
 }
 
 // serveShare renders the share view when both feature gates are on
@@ -125,10 +124,14 @@ func serveShare(w http.ResponseWriter, r *http.Request) {
 }
 
 // v2Enabled reports whether the spec-27 v2 UI handlers should serve
-// content. Reads R1_SERVER_UI_V2 on each call so tests + ops can flip
-// the flag without restart. Per spec §2.3 the flag stays off-by-default
-// for two release weeks, then defaults on with R1_SERVER_UI_V2=0 as
-// the documented escape hatch.
+// content. Thin pass-through over LoadV2Config().Renderable() — kept
+// as a function so existing callsites compile without the touch-30-
+// callsites-now refactor; future work can inline this once the
+// surrounding code threads V2Config through context.
+//
+// Spec 4 §10 T2: the strict-"1" semantics live in LoadV2Config; this
+// function MUST NOT read os.Getenv directly so the no_direct_env_test
+// grep guard stays clean.
 func v2Enabled() bool {
-	return os.Getenv("R1_SERVER_UI_V2") == "1"
+	return LoadV2Config().Renderable()
 }
