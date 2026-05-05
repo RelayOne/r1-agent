@@ -2,7 +2,7 @@
 //
 // Basic usage:
 //
-//	client := coderadar.NewClient(os.Getenv("CODERADAR_API_KEY"), "https://ingest.coderadar.app/v1")
+//	client := coderadar.NewClient(os.Getenv("CODERADAR_API_KEY"), "https://api.coderadar.app/v1")
 //	err := client.CaptureError(ctx, someError, coderadar.ErrorOpts{
 //	    Tags: map[string]string{"feature": "checkout"},
 //	    User: "user-123",
@@ -26,7 +26,7 @@ import (
 )
 
 // DefaultEndpoint is the production CodeRadar ingest base URL.
-const DefaultEndpoint = "https://ingest.coderadar.app/v1"
+const DefaultEndpoint = "https://api.coderadar.app/v1"
 
 // ErrorOpts is per-call enrichment data attached to a captured error.
 type ErrorOpts struct {
