@@ -33,14 +33,34 @@
 // worker can recycle the allocation; first tick uses a freshly-allocated
 // buffer.
 
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-} from 'd3-force-3d';
+// d3-force-3d is loaded lazily so test environments that mock the
+// simulation can drop in their own factory without dragging in the
+// UMD bundle. The default factory uses the import map.
+let simulationFactory = null;
+async function getSimulationFactory() {
+  if (simulationFactory) return simulationFactory;
+  // Path used at runtime in the browser.
+  if (typeof window !== 'undefined' || typeof importScripts !== 'undefined') {
+    const m = await import('d3-force-3d');
+    simulationFactory = (nodes, edges) => m.forceSimulation(nodes, 3)
+      .force('charge', m.forceManyBody().strength(-30))
+      .force('link', m.forceLink(edges).id(d => d.id).distance(40))
+      .force('center', m.forceCenter(0, 0, 0))
+      .alpha(1).alphaDecay(0.04).stop();
+    return simulationFactory;
+  }
+  throw new Error('no simulationFactory configured for this environment');
+}
 
-const POS_FLOATS_PER_NODE = 3; // x, y, z
+// setSimulationFactory lets tests inject a deterministic stub
+// without importing d3-force-3d (which is the UMD build and not
+// vitest-friendly). The factory's signature is (nodes, edges) →
+// { tick(), nodes(arr), alpha(v?), alphaDecay(v), stop(), restart() }.
+export function setSimulationFactory(fn) {
+  simulationFactory = fn;
+}
+
+export const POS_FLOATS_PER_NODE = 3; // x, y, z exported for tests.
 
 const state = {
   sim: null,
@@ -52,6 +72,18 @@ const state = {
   frozen: false,
 };
 
+export function _resetState() {
+  state.sim = null;
+  state.nodes = [];
+  state.edges = [];
+  state.useSAB = false;
+  state.sabPositions = null;
+  state.recyclable = null;
+  state.frozen = false;
+}
+
+export function _getState() { return state; }
+
 function postError(where, err) {
   self.postMessage({
     kind: 'error',
@@ -60,21 +92,23 @@ function postError(where, err) {
   });
 }
 
-function ensureSimulation() {
+async function ensureSimulation() {
   if (state.sim) return state.sim;
-  state.sim = forceSimulation(state.nodes, 3)
-    .force('charge', forceManyBody().strength(-30))
-    .force('link', forceLink(state.edges).id(d => d.id).distance(40))
-    .force('center', forceCenter(0, 0, 0))
-    .alpha(1)
-    .alphaDecay(0.04)
-    .stop();
+  const factory = await getSimulationFactory();
+  state.sim = factory(state.nodes, state.edges);
   return state.sim;
 }
 
-function writePositions(out) {
-  for (let i = 0; i < state.nodes.length; i++) {
-    const n = state.nodes[i];
+export function _ensureSimulationSync() {
+  if (state.sim) return state.sim;
+  if (!simulationFactory) throw new Error('simulationFactory not set');
+  state.sim = simulationFactory(state.nodes, state.edges);
+  return state.sim;
+}
+
+export function writePositions(out, nodes = state.nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
     const o = i * POS_FLOATS_PER_NODE;
     out[o] = n.x || 0;
     out[o + 1] = n.y || 0;
@@ -82,21 +116,88 @@ function writePositions(out) {
   }
 }
 
-function tickOnce() {
+async function tickOnce() {
   if (state.frozen) return;
-  ensureSimulation().tick();
+  const sim = await ensureSimulation();
+  sim.tick();
 }
 
-function emitPositions() {
+
+export async function handleMessage(msg, self_) {
+  const sf = self_ || self;
+  switch (msg.kind) {
+    case 'init': {
+      state.nodes = (msg.nodes || []).map(n => ({ ...n }));
+      state.edges = (msg.edges || []).map(e => ({ ...e }));
+      state.useSAB = !!msg.useSAB && typeof SharedArrayBuffer !== 'undefined';
+      state.frozen = false;
+      if (state.useSAB) {
+        const sab = new SharedArrayBuffer(state.nodes.length * POS_FLOATS_PER_NODE * 4);
+        state.sabPositions = new Float32Array(sab);
+      }
+      await ensureSimulation();
+      _emit(sf);
+      return;
+    }
+    case 'tick': {
+      if (msg.buffer instanceof ArrayBuffer) state.recyclable = msg.buffer;
+      await tickOnce();
+      _emit(sf);
+      return;
+    }
+    case 'add': {
+      const node = msg.node;
+      if (!node || !node.id) return;
+      const neigh = (msg.neighbors || []).filter(Boolean);
+      let cx = 0, cy = 0, cz = 0;
+      for (const n of neigh) { cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; }
+      if (neigh.length) { cx /= neigh.length; cy /= neigh.length; cz /= neigh.length; }
+      state.nodes.push({ ...node, x: cx, y: cy, z: cz });
+      const sim = await ensureSimulation();
+      sim.nodes(state.nodes).alpha(0.3).restart().stop();
+      if (state.useSAB) {
+        const sab = new SharedArrayBuffer(state.nodes.length * POS_FLOATS_PER_NODE * 4);
+        state.sabPositions = new Float32Array(sab);
+      }
+      _emit(sf);
+      return;
+    }
+    case 'remove': {
+      const idx = state.nodes.findIndex(n => n.id === msg.nodeId);
+      if (idx < 0) return;
+      state.nodes.splice(idx, 1);
+      const sim = await ensureSimulation();
+      sim.nodes(state.nodes).alpha(0.1).restart().stop();
+      _emit(sf);
+      return;
+    }
+    case 'set-alpha': {
+      if (state.sim) state.sim.alpha(Math.max(0, Math.min(1, msg.alpha || 0)));
+      return;
+    }
+    case 'freeze': {
+      state.frozen = true;
+      if (state.sim) state.sim.alpha(0);
+      return;
+    }
+    case 'shutdown': {
+      if (state.sim) state.sim.stop();
+      if (sf && typeof sf.close === 'function') sf.close();
+      return;
+    }
+    default:
+      throw new Error('unknown message kind: ' + msg.kind);
+  }
+}
+
+function _emit(sf) {
   const count = state.nodes.length;
   const alpha = state.sim ? state.sim.alpha() : 0;
-
   if (state.useSAB && state.sabPositions) {
     writePositions(state.sabPositions);
-    self.postMessage({ kind: 'positions', alpha, count });
+    sf.postMessage({ kind: 'positions', alpha, count });
     return;
   }
-
   let buf = state.recyclable;
   state.recyclable = null;
   const wantBytes = count * POS_FLOATS_PER_NODE * 4;
@@ -105,75 +206,11 @@ function emitPositions() {
   }
   const view = new Float32Array(buf, 0, count * POS_FLOATS_PER_NODE);
   writePositions(view);
-  self.postMessage({ kind: 'positions', positions: view, alpha, count }, [buf]);
+  sf.postMessage({ kind: 'positions', positions: view, alpha, count }, [buf]);
 }
 
-self.onmessage = (ev) => {
-  const msg = ev.data || {};
-  try {
-    switch (msg.kind) {
-      case 'init': {
-        state.nodes = (msg.nodes || []).map(n => ({ ...n }));
-        state.edges = (msg.edges || []).map(e => ({ ...e }));
-        state.useSAB = !!msg.useSAB && typeof SharedArrayBuffer !== 'undefined';
-        state.frozen = false;
-        if (state.useSAB) {
-          const sab = new SharedArrayBuffer(state.nodes.length * POS_FLOATS_PER_NODE * 4);
-          state.sabPositions = new Float32Array(sab);
-        }
-        ensureSimulation();
-        emitPositions();
-        return;
-      }
-      case 'tick': {
-        if (msg.buffer instanceof ArrayBuffer) state.recyclable = msg.buffer;
-        tickOnce();
-        emitPositions();
-        return;
-      }
-      case 'add': {
-        const node = msg.node;
-        if (!node || !node.id) return;
-        // Spec §3.2: insert at mean of neighbours, restart at α=0.3.
-        const neigh = (msg.neighbors || []).filter(Boolean);
-        let cx = 0, cy = 0, cz = 0;
-        for (const n of neigh) { cx += n.x || 0; cy += n.y || 0; cz += n.z || 0; }
-        if (neigh.length) { cx /= neigh.length; cy /= neigh.length; cz /= neigh.length; }
-        state.nodes.push({ ...node, x: cx, y: cy, z: cz });
-        state.sim.nodes(state.nodes).alpha(0.3).restart().stop();
-        if (state.useSAB) {
-          const sab = new SharedArrayBuffer(state.nodes.length * POS_FLOATS_PER_NODE * 4);
-          state.sabPositions = new Float32Array(sab);
-        }
-        emitPositions();
-        return;
-      }
-      case 'remove': {
-        const idx = state.nodes.findIndex(n => n.id === msg.nodeId);
-        if (idx < 0) return;
-        state.nodes.splice(idx, 1);
-        state.sim.nodes(state.nodes).alpha(0.1).restart().stop();
-        emitPositions();
-        return;
-      }
-      case 'set-alpha': {
-        if (state.sim) state.sim.alpha(Math.max(0, Math.min(1, msg.alpha || 0)));
-        return;
-      }
-      case 'freeze': {
-        state.frozen = true;
-        if (state.sim) state.sim.alpha(0);
-        return;
-      }
-      case 'shutdown': {
-        if (state.sim) state.sim.stop();
-        self.close();
-        return;
-      }
-      default:
-        postError('onmessage', new Error('unknown message kind: ' + msg.kind));
-    }
-  } catch (err) {
-    postError('onmessage:' + msg.kind, err);
-  }
-};
+if (typeof self !== 'undefined' && typeof self.onmessage !== 'undefined') {
+  self.onmessage = (ev) => {
+    handleMessage(ev.data || {}, self).catch(err => postError('onmessage:' + (ev.data && ev.data.kind), err));
+  };
+}
