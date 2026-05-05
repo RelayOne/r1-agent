@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { Composer } from "./Composer";
@@ -17,7 +18,7 @@ function Demo({
 }: {
   streaming?: boolean;
   characterLimit?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const [v, setV] = useState("");
   const [last, setLast] = useState<string | null>(null);
   return (

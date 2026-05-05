@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { ThreeColumnShell } from "./ThreeColumnShell";
@@ -13,7 +14,7 @@ function mkStore(): DaemonStore {
   return createDaemonStore("daemon-storybook", NOOP);
 }
 
-function SessionsList(): JSX.Element {
+function SessionsList(): React.JSX.Element {
   return (
     <nav className="p-3 text-sm space-y-1">
       <p className="font-semibold mb-2 text-xs uppercase tracking-wide text-muted-foreground">
@@ -40,7 +41,7 @@ function SessionsList(): JSX.Element {
   );
 }
 
-function ChatPaneSample(): JSX.Element {
+function ChatPaneSample(): React.JSX.Element {
   return (
     <div className="h-full flex flex-col p-4 gap-3 overflow-y-auto">
       <article className="rounded-md border border-border p-3">
@@ -58,7 +59,7 @@ function ChatPaneSample(): JSX.Element {
   );
 }
 
-function LanesList(): JSX.Element {
+function LanesList(): React.JSX.Element {
   return (
     <aside className="p-3 text-sm space-y-2">
       <p className="font-semibold mb-2 text-xs uppercase tracking-wide text-muted-foreground">
@@ -82,7 +83,7 @@ function LanesList(): JSX.Element {
   );
 }
 
-function Demo({ store }: { store: DaemonStore }): JSX.Element {
+function Demo({ store }: { store: DaemonStore }): React.JSX.Element {
   return (
     <div className="h-[480px] w-[960px] border border-border rounded-md overflow-hidden">
       <ThreeColumnShell

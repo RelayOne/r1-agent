@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { StopButton } from "./StopButton";
@@ -11,7 +12,7 @@ const meta: Meta<typeof StopButton> = {
 export default meta;
 type Story = StoryObj<typeof StopButton>;
 
-function Demo({ keepPartial }: { keepPartial?: boolean }): JSX.Element {
+function Demo({ keepPartial }: { keepPartial?: boolean }): React.JSX.Element {
   const [streaming, setStreaming] = useState(true);
   const [last, setLast] = useState<boolean | null>(null);
   return (

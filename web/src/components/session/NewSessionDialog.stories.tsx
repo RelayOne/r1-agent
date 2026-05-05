@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { NewSessionDialog } from "./NewSessionDialog";
@@ -21,7 +22,7 @@ function Demo({
   presets,
 }: {
   presets?: ReadonlyArray<{ value: string; label: string }>;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(true);
   const [created, setCreated] = useState<CreateSessionRequest | null>(null);
   return (

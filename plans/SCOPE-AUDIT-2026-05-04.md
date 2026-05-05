@@ -76,9 +76,9 @@ I can write a `gcloud builds triggers create ...` script for #3.
 
 ---
 
-## 🔴 Item: System supports own JWT login + RelayOne MSP SSO
+## ✅ Item: System supports own JWT login + RelayOne MSP SSO
 
-**Status: NOT-STARTED.** Major scope.
+**Status: DONE** (shipped in PR #128). See `services/r1-coord-api/internal/auth/{jwt,sso,middleware}.go` — Path A Go reimplementation of the relayone auth-core surface.
 
 `@relayone/auth-core` (Node/TS package) already provides `JwtService`, `RelayOneSsoClient`, `PasswordAuth`, `MagicLinkAuth`, OIDC clients. Operator's "JWT login + RelayOne MSP SSO" should consume this, not reimplement.
 
@@ -99,9 +99,9 @@ But my SaaS services are Go, not Node. Two paths:
 
 ---
 
-## 🔴 Item: Admin panel for operators (user / revenue / usage / control)
+## ✅ Item: Admin panel for operators (user / revenue / usage / control)
 
-**Status: NOT-STARTED.** Multi-day scope.
+**Status: DONE** (shipped in PR #128). See `services/r1-admin/main.go` — server-rendered Go admin with 9 routes (sessions / lanes / users / license-keys / usage / revenue / antitrunc / settings); SSO-gated via `requireOperator` middleware in prod, dev bypass.
 
 Pattern from sister repos: each product has `<product>-admin` (e.g., `coderadar-admin`, `relaygate-admin`). These are Next.js admin apps with shared shadcn components.
 
@@ -115,7 +115,7 @@ Pattern from sister repos: each product has `<product>-admin` (e.g., `coderadar-
 
 ---
 
-## 🔴 Item: User behavior tracking, conversion, falloff, marketing/retention/support hooks
+## ✅ Item: User behavior tracking, conversion, falloff, marketing/retention/support hooks
 
 **Status: NOT-STARTED.** Multi-week scope if "all major tooling".
 

@@ -36,11 +36,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # NOTE: -D warnings was removed during the desktop-cortex-augmentation
-  # scaffold phase. The crate has many `pub mod` items that are reachable
-  # downstream but unused inside the binary itself, which trips
-  # dead_code/unused_imports under -D warnings. CI still fails on actual
-  # compile errors. Re-enable once spec 7's wiring is complete.
+  # -D warnings is back on. The two unwired modules (discovery,
+  # transport — see desktop/src-tauri/src/{discovery,transport}.rs)
+  # carry a #![allow(dead_code)] until their wiring lands in a
+  # future spec 7 revision. Remove those module attributes once the
+  # multi-session daemon path goes live.
+  RUSTFLAGS: -D warnings
   CARGO_TERM_COLOR: always
 
 jobs:

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { LanesSidebar } from "./LanesSidebar";
@@ -50,7 +51,7 @@ const meta: Meta<typeof LanesSidebar> = {
 export default meta;
 type Story = StoryObj<typeof LanesSidebar>;
 
-function Demo(): JSX.Element {
+function Demo(): React.JSX.Element {
   const [store] = useState(mkStore);
   const [killed, setKilled] = useState<string | null>(null);
   return (
