@@ -13,10 +13,14 @@ steps:
     args:
       - -c
       - |
-        cd web
-        npm ci --no-audit --no-fund
-        npm run build
-        npm run test
+        # Root package.json declares workspaces (web, desktop, packages/*).
+        # npm ci in web/ would walk up to the workspace root and fail
+        # because the root has no lockfile (workspaces install via the
+        # root's hoisted node_modules). Use the workspace-aware flow
+        # that desktop-augmentation.yml uses successfully.
+        npm install --workspaces --include-workspace-root --no-audit --no-fund
+        npm run build --workspace=web
+        npm run test --workspace=web
     waitFor: ['-']
 
   - name: 'golang:1.25'

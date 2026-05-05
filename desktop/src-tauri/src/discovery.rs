@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandChild;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
