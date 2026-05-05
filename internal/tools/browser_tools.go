@@ -349,7 +349,7 @@ func (r *Registry) handleBrowserEval(ctx context.Context, input json.RawMessage)
 		}
 		return res, nil
 	}
-	return "browser_eval requires the stoke_rod build tag (rebuild with -tags stoke_rod ./cmd/stoke); " +
+	return "browser_eval requires the stoke_rod build tag (rebuild with -tags stoke_rod ./cmd/r1); " +
 		"JavaScript evaluation not available in stdlib-only mode", nil
 }
 

@@ -117,10 +117,10 @@ Sync path keeps the existing `runTask` function as-is (in-handler `Execute` call
 44. [ ] Add `TestBackwardsCompat_DefaultIsSync` — with `STOKE_SERVE_ASYNC` unset, POST returns 200 + final state regardless of header.
 45. [ ] Add `TestGracefulShutdown_DrainsInflight` — submit 5 slow jobs, call Shutdown with 10 s deadline, assert all 5 complete before shutdown returns.
 46. [ ] Add `TestGracefulShutdown_HardCancelPastDeadline` — submit 1 infinite job, Shutdown with 50 ms deadline, assert `ErrShutdownDeadline` and job's ctx.Err() is ctx.Canceled.
-47. [ ] Wire `Pool.Shutdown` into `cmd/stoke/serve_cmd.go` (or existing serve command) on SIGINT/SIGTERM signal handler.
+47. [ ] Wire `Pool.Shutdown` into `cmd/r1/serve_cmd.go` (or existing serve command) on SIGINT/SIGTERM signal handler.
 48. [ ] Document `STOKE_SERVE_ASYNC`, `STOKE_WEBHOOK_ALLOW_PRIVATE`, `Config.WorkerCount`, `Config.ShutdownDeadline`, `Config.DeadLetterPath` env + config surface in `internal/agentserve/server.go` package doc comment.
 49. [ ] Run `gofmt -w ./internal/agentserve/` and `go vet ./...`; fix any reported issues.
-50. [ ] Run `go build ./cmd/stoke && go test ./internal/agentserve/... -race && go vet ./...`; all must exit 0.
+50. [ ] Run `go build ./cmd/r1 && go test ./internal/agentserve/... -race && go vet ./...`; all must exit 0.
 
 ## 8. Security
 
@@ -159,7 +159,7 @@ Build + vet + test gates (same as every Stoke spec):
 
 - `go build ./...` clean with and without `STOKE_SERVE_ASYNC` set.
 - `go vet ./...` clean.
-- `go test -race -count=1 ./internal/agentserve/... ./cmd/stoke/...` green in both sync (default) and async (`STOKE_SERVE_ASYNC=1`) modes.
+- `go test -race -count=1 ./internal/agentserve/... ./cmd/r1/...` green in both sync (default) and async (`STOKE_SERVE_ASYNC=1`) modes.
 
 Behavioral acceptance:
 

@@ -19,7 +19,7 @@ on-disk layout.
 These three commands are the CI gate. All must pass before submitting a PR.
 
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go test ./...
 go vet ./...
 ```
@@ -43,7 +43,7 @@ make lint     # runs golangci-lint (requires golangci-lint installed)
 ### Pull Request Process
 
 1. Fork the repository and create your branch from `main`.
-2. Ensure `go build ./cmd/stoke`, `go test ./...`, and `go vet ./...` all pass.
+2. Ensure `go build ./cmd/r1`, `go test ./...`, and `go vet ./...` all pass.
 3. Add tests for any new functionality.
 4. Update documentation if your change affects the public API or user-facing behavior.
 5. Write a clear PR description explaining what changed and why.
@@ -61,7 +61,7 @@ How was this tested?
 
 ## Checklist
 
-- [ ] `go build ./cmd/stoke` passes
+- [ ] `go build ./cmd/r1` passes
 - [ ] `go test ./...` passes
 - [ ] `go vet ./...` passes
 - [ ] New tests added for new functionality

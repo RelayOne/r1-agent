@@ -1,0 +1,59 @@
+# tools/lint-view-without-api/allowlist.yaml
+#
+# Allowlist for the lint-view-without-api scanner per spec 8 §8.3.
+#
+# Tools listed under headless_only: are exempt from the §8.2 step 5
+# unused-tool warning. Each entry MUST carry a non-empty justification
+# and an issue / spec reference. The scanner reads this file and
+# silently treats the listed tool names as "deliberately not exposed
+# to any UI surface".
+#
+# Any agent / contributor adding a new entry MUST:
+#   1. Provide a sentence explaining why the tool is headless-only.
+#   2. Link to the spec section, ADR, or GitHub issue that mandates
+#      the headless-only status.
+#   3. Open a tracking issue if the headless-only status should
+#      eventually become "wired into UI" — leaving the entry without
+#      a tracking link is a smell.
+
+headless_only:
+  # r1.bus.replay is a deterministic event replayer used by the
+  # agent-feature-runner failure-capture step. Surfacing it as a UI
+  # button would invite operators to "rewind" production sessions,
+  # which the WAL semantics do not actually support.
+  r1.bus.replay: "headless-only per spec 8 §4.6 (deterministic replay; not a user action). See specs/agentic-test-harness.md §10."
+
+  # r1.bus.tail is a streaming subscription consumed by the runner
+  # itself; the UI uses r1.lanes.subscribe for the user-visible
+  # equivalent. Listing here keeps the §8.2 unused-tool warning quiet.
+  r1.bus.tail: "headless-only — runner consumes for failure capture. UI exposes lanes.subscribe instead. See spec 8 §10."
+
+  # r1.cli.invoke is the headless wrapper around r1 <args>. By
+  # construction it has no UI surface; it IS the surface for
+  # process-level callers.
+  r1.cli.invoke: "headless-only by definition (CLI shell). See spec 8 §4.10."
+
+  # r1.verify.{build,test,lint} are infrastructure tools called by
+  # the workflow phase machine. The web/TUI surface a single 'verify'
+  # button that fans out to all three; individual addressability is
+  # only useful for headless agents.
+  r1.verify.build: "headless-only — UI surfaces a unified verify button. See spec 8 §4.7."
+  r1.verify.test:  "headless-only — UI surfaces a unified verify button. See spec 8 §4.7."
+  r1.verify.lint:  "headless-only — UI surfaces a unified verify button. See spec 8 §4.7."
+
+  # r1.tui.* tools have no Web/Tauri counterpart by design; they
+  # ARE the UI for the TUI surface. The scanner cannot detect that
+  # internal/tui/ source IS the UI here, so we flag them as
+  # headless-only-from-the-other-surfaces' perspective.
+  r1.tui.press_key:  "TUI is the surface; web/tauri have no equivalent. See spec 8 §4.8."
+  r1.tui.snapshot:   "TUI is the surface; web/tauri have no equivalent. See spec 8 §4.8."
+  r1.tui.get_model:  "TUI is the surface; web/tauri have no equivalent. See spec 8 §4.8."
+  r1.tui.focus_lane: "TUI is the surface; web/tauri have no equivalent. See spec 8 §4.8."
+
+  # r1.web.* tools are the wrappers around Playwright MCP. They are
+  # invoked by the runner to drive the web UI; the web UI itself
+  # does not call them (would create a self-loop).
+  r1.web.navigate: "agent driver only — invoked by tests, not by UI. See spec 8 §4.9."
+  r1.web.click:    "agent driver only — invoked by tests, not by UI. See spec 8 §4.9."
+  r1.web.fill:     "agent driver only — invoked by tests, not by UI. See spec 8 §4.9."
+  r1.web.snapshot: "agent driver only — invoked by tests, not by UI. See spec 8 §4.9."

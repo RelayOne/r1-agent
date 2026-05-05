@@ -150,7 +150,7 @@ func isKnownFalsePositive(f Finding) bool {
 	// checks for. The strings appear inside string-literal arrays
 	// used by the detector; they aren't actual empty catches in
 	// Go code (Go doesn't even have try/catch syntax).
-	if f.Rule == "no-empty-catch" && strings.HasSuffix(f.File, "cmd/stoke/sow_native.go") {
+	if f.Rule == "no-empty-catch" && strings.HasSuffix(f.File, "cmd/r1/sow_native.go") {
 		return true
 	}
 	// no-placeholder-code triggers on files that legitimately use the word "placeholder"
@@ -163,7 +163,7 @@ func isKnownFalsePositive(f Finding) bool {
 			"internal/ledger/nodes/", // decision node types reference placeholder fields
 			"internal/harness/",      // stance prompts reference placeholder patterns
 			"internal/taskstate/",    // failure codes include PLACEHOLDER_CODE
-			"cmd/stoke/",             // references placeholder detection in scan output
+			"cmd/r1/",             // references placeholder detection in scan output
 			// plan/ stubs-out anti-pattern checker and emits
 			// warning strings containing the word "placeholder"
 			// as part of user-facing guidance; they're content,
@@ -220,7 +220,7 @@ func isKnownFalsePositive(f Finding) bool {
 	//   - cmd/r1-server/import.go: tolerate corrupt memory.json so the
 	//     session + events + ledger still import even when one subfile
 	//     is malformed (see ingestMemorySnapshot doc).
-	//   - cmd/stoke/export_cmd.go: schema-drift tolerance on older rows
+	//   - cmd/r1/export_cmd.go: schema-drift tolerance on older rows
 	//     that lack content_hash; return empty set instead of failing
 	//     the whole export.
 	// The `nilerr` linter triggers on the (err != nil { return nil })
@@ -229,7 +229,7 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/r1-server/import.go") {
 		return true
 	}
-	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/stoke/export_cmd.go") {
+	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/r1/export_cmd.go") {
 		return true
 	}
 	return false

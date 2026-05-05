@@ -79,7 +79,7 @@ You can run **Phase 1 + Phase 8 + Phase 12** in parallel (one agent on code, two
 1. **Never delete existing packages or break existing tests.** This is a long-running production codebase. Add new code, refactor surgically, but preserve backward compatibility unless explicitly told otherwise.
 2. **Every new package must have unit tests with >70% coverage.** Run `go test ./...` after every meaningful change.
 3. **Run `go vet ./...` and fix anything it catches.**
-4. **Run `go build ./cmd/stoke` after every meaningful change.** Build breakage is a hard stop.
+4. **Run `go build ./cmd/r1` after every meaningful change.** Build breakage is a hard stop.
 5. **Don't invent imports.** Every import must reference a package that actually exists. Check `go.mod` and verify with `go doc <package>`.
 6. **Don't write placeholder code.** No `TODO`, `FIXME`, `panic("not implemented")`, or empty function bodies. If something can't be done now, write a note to Eric in `STOKE-IMPL-NOTES.md` at the repo root explaining what's blocked and why.
 7. **Don't rewrite tests to make them pass.** If a test fails after your change, the implementation is wrong, not the test.

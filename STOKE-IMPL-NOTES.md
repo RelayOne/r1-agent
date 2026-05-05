@@ -88,7 +88,7 @@ before v0.1.0 tag.
 
 ### Phase 8: End-to-end Validation
 - `go vet ./...` — clean across entire codebase
-- `go build ./cmd/stoke` — produces binary
+- `go build ./cmd/r1` — produces binary
 - `go test` — 30 v2 packages pass (22 with tests, 8 exercised through parents)
 - All v2 packages compile and interoperate correctly
 

@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-Stoke runs parallel workers inside a single SOW session (`cmd/stoke/sow_native.go` `ParallelWorkers`, currently ~8 concurrent). Today those workers share nothing mid-session except the filesystem: worker A can discover "this monorepo uses `workspace:*` pnpm refs" or "the integration suite flakes on `TestFoo`", and that knowledge does not reach worker B until the post-session wisdom extraction writes a row to `stoke_memories` — i.e., *next* session. The cost is duplicated budget on the same mistakes, duplicated tool calls, and silent divergence between workers on ambiguous codebase facts.
+Stoke runs parallel workers inside a single SOW session (`cmd/r1/sow_native.go` `ParallelWorkers`, currently ~8 concurrent). Today those workers share nothing mid-session except the filesystem: worker A can discover "this monorepo uses `workspace:*` pnpm refs" or "the integration suite flakes on `TestFoo`", and that knowledge does not reach worker B until the post-session wisdom extraction writes a row to `stoke_memories` — i.e., *next* session. The cost is duplicated budget on the same mistakes, duplicated tool calls, and silent divergence between workers on ambiguous codebase facts.
 
 RS-7 adds a **scoped memory bus**: a live, session-scoped worker-to-worker communication layer with 6 visibility scopes (session, session-step, worker, all-sessions, global, always). It is deliberately distinct from the cross-session knowledge store in `specs/memory-full-stack.md`. The two stores share the same SQLite database handle (same process, same WAL) but occupy different tables with different retrieval semantics, different lifetimes, and different operator controls. The bus is transient-by-default; the memory-full-stack store is long-lived-by-default.
 
@@ -334,7 +334,7 @@ Tag filter (when `req.Tags` non-empty) applies as an `AND` on top of the scope c
 
 ## 8. Injection into worker prompts
 
-In `cmd/stoke/sow_native.go` `buildSOWNativePromptsWithOpts()`, **after** the wisdom injection block (~line 3892 per current tree; search for `## Relevant learnings` to locate the insertion point), add a new H2 block. The block is elided entirely when `Recall` returns zero rows.
+In `cmd/r1/sow_native.go` `buildSOWNativePromptsWithOpts()`, **after** the wisdom injection block (~line 3892 per current tree; search for `## Relevant learnings` to locate the insertion point), add a new H2 block. The block is elided entirely when `Recall` returns zero rows.
 
 ```go
 // After wisdom injection, before skills/canonical-names block.
@@ -497,10 +497,10 @@ Contract only (r1-server-ui-v2 owns the actual rendering code):
 
 ### 11.8 Worker prompt integration
 
-35. [ ] `cmd/stoke/sow_native.go:buildSOWNativePromptsWithOpts()` — add `## Active Memories` block after the wisdom injection (search for `## Relevant learnings` to find the insertion point ~line 3892). Code matches the §8 snippet. Only emits the block when `len(mems) > 0`. Test: `cmd/stoke/sow_native_bus_test.go:TestPromptInjectionWhenMemoriesPresent`, `TestPromptInjectionSkippedWhenEmpty`.
-36. [ ] `cmd/stoke/sow_native.go` — token-cap the injected block via `tokenest.Count`; drop oldest first when over cap. Hard cap default 1200 tokens (reuse constant from memory-full-stack hook 2). Test: `TestActiveMemoriesBlock1200Cap`.
-37. [ ] `cmd/stoke/sow_native.go` — flag guard: when `os.Getenv("STOKE_MEMORY_BUS") != "1"`, `bus` is nil and the injection block is skipped entirely. Test: `TestPromptInjectionGatedByEnvVar`.
-38. [ ] `cmd/stoke/sow_native.go` — pass the `*memory.Bus` down from main into `buildSOWNativePromptsWithOpts` via the options struct. Construct the bus once in `main.go` and share across workers. Test: `TestBusPassedToWorkers`.
+35. [ ] `cmd/r1/sow_native.go:buildSOWNativePromptsWithOpts()` — add `## Active Memories` block after the wisdom injection (search for `## Relevant learnings` to find the insertion point ~line 3892). Code matches the §8 snippet. Only emits the block when `len(mems) > 0`. Test: `cmd/r1/sow_native_bus_test.go:TestPromptInjectionWhenMemoriesPresent`, `TestPromptInjectionSkippedWhenEmpty`.
+36. [ ] `cmd/r1/sow_native.go` — token-cap the injected block via `tokenest.Count`; drop oldest first when over cap. Hard cap default 1200 tokens (reuse constant from memory-full-stack hook 2). Test: `TestActiveMemoriesBlock1200Cap`.
+37. [ ] `cmd/r1/sow_native.go` — flag guard: when `os.Getenv("STOKE_MEMORY_BUS") != "1"`, `bus` is nil and the injection block is skipped entirely. Test: `TestPromptInjectionGatedByEnvVar`.
+38. [ ] `cmd/r1/sow_native.go` — pass the `*memory.Bus` down from main into `buildSOWNativePromptsWithOpts` via the options struct. Construct the bus once in `main.go` and share across workers. Test: `TestBusPassedToWorkers`.
 
 ### 11.9 HITL + descent integration
 
@@ -515,12 +515,12 @@ Contract only (r1-server-ui-v2 owns the actual rendering code):
 44. [ ] `cmd/r1-server/bus_reader.go:handleFsnotifyFallback()` — when UDS is not active, subscribe to fsnotify `WRITE` events on `<db>-wal`. Same wake semantics. Test: `TestBusReaderFsnotifyWake` (skipped on platforms without fsnotify).
 45. [ ] `cmd/r1-server/bus_reader.go` — ingest polled rows into r1-server's `session_events` table with `event_type='memory.stored'` + a separate table `memory_bus_rows` for the full bus row (ui-v2 spec consumes this). Test: `TestBusReaderIngest`.
 46. [ ] `cmd/r1-server/bus_reader.go` — coordinate with `r1-server-ui-v2.md`: the UI owns rendering, this reader only lands rows. Do not add any HTML/CSS here.
-47. [ ] `cmd/stoke/main.go` — after `bus.NewBus`, best-effort dial the UDS at `<data_dir>/r1-server.sock` and stash the conn on the Bus; `flushBatch` writes one byte per flush. Silent failure when socket is missing. Test: `TestBusSignalsUDS`.
+47. [ ] `cmd/r1/main.go` — after `bus.NewBus`, best-effort dial the UDS at `<data_dir>/r1-server.sock` and stash the conn on the Bus; `flushBatch` writes one byte per flush. Silent failure when socket is missing. Test: `TestBusSignalsUDS`.
 
 ### 11.11 Wiring + lifecycle
 
-48. [ ] `cmd/stoke/main.go` — open the wisdom SQLite handle (or reuse the existing one from `internal/wisdom/sqlite.go`), pass it into `memory.NewBus`. Defer `bus.Close(ctx)` at process exit. Test: `TestMainBusLifecycle`.
-49. [ ] `cmd/stoke/main.go` — `STOKE_MEMORY_BUS` flag check: when unset or `"0"`, skip `memory.NewBus` entirely and pass `nil` down. All Remember/Recall call sites must no-op safely on `bus == nil`. Test: `TestBusFlagOffNoOps`.
+48. [ ] `cmd/r1/main.go` — open the wisdom SQLite handle (or reuse the existing one from `internal/wisdom/sqlite.go`), pass it into `memory.NewBus`. Defer `bus.Close(ctx)` at process exit. Test: `TestMainBusLifecycle`.
+49. [ ] `cmd/r1/main.go` — `STOKE_MEMORY_BUS` flag check: when unset or `"0"`, skip `memory.NewBus` entirely and pass `nil` down. All Remember/Recall call sites must no-op safely on `bus == nil`. Test: `TestBusFlagOffNoOps`.
 50. [ ] `internal/memory/bus.go` — `(*Bus) Remember` / `Recall` short-circuit on `b == nil`: return `nil` / `[]Memory{}` respectively. Covers the flag-off path. Test: `TestNilBusRemember`, `TestNilBusRecall`.
 51. [ ] `app/` startup — construct `hub.MemoryStoredEvent` and `hub.MemoryRecalledEvent` types, register them in `internal/hub/events.go`. Test: `internal/hub/memory_events_test.go`.
 
@@ -532,11 +532,11 @@ Contract only (r1-server-ui-v2 owns the actual rendering code):
 55. [ ] `internal/memory/bus_expiry_test.go` — insert a row with `expires_at = now - 1s`, assert Recall does not return it; with `expires_at = now + 1h`, assert it does.
 56. [ ] `internal/memory/bus_ledger_test.go` — Remember → one `memory_stored` node, correct `content_hash`. Recall returning 3 rows → one `memory_recalled` node + 3 `references` edges.
 57. [ ] `internal/memory/bus_bench_test.go` — `BenchmarkRememberBatched` targets ≥10k ops/sec under 8 concurrent senders. `BenchmarkRecallReadonly` targets ≥100k ops/sec on a prewarmed 10k-row table.
-58. [ ] `cmd/stoke/sow_native_bus_test.go` — end-to-end: spin up bus, Remember a ScopeSession memory, build a worker prompt for a second worker in the same session, assert the `## Active Memories` block contains the Content.
+58. [ ] `cmd/r1/sow_native_bus_test.go` — end-to-end: spin up bus, Remember a ScopeSession memory, build a worker prompt for a second worker in the same session, assert the `## Active Memories` block contains the Content.
 
 ## 12. Acceptance criteria
 
-- `go build ./cmd/stoke && go build ./cmd/r1-server && go test ./... && go vet ./...` all green.
+- `go build ./cmd/r1 && go build ./cmd/r1-server && go test ./... && go vet ./...` all green.
 - `go test -race ./internal/memory -run TestBusRace` with 4 writers × 250 Remember calls → 1000 rows committed, all unique IDs, no deadlock, elapsed time within 2 s.
 - Cross-process read works: with stoke actively writing, a second process opens the DB via `file:/.../wisdom.db?mode=ro&_journal_mode=WAL&_busy_timeout=5000` + `PRAGMA query_only=1`, reads rows, never blocks the writer.
 - Ledger emits one `memory_stored` node per `Remember` call, with `content_hash = sha256(content)` (never raw content). `go test ./internal/ledger/nodes -run TestMemoryStoredValidates` green.

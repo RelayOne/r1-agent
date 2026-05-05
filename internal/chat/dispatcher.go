@@ -6,7 +6,7 @@ import (
 	"github.com/RelayOne/r1/internal/provider"
 )
 
-// Dispatcher is what cmd/stoke implements to connect chat tool calls to
+// Dispatcher is what cmd/r1 implements to connect chat tool calls to
 // the real Stoke pipeline. Each method takes a plain description string
 // (what the model paraphrased out of the conversation) and runs the
 // corresponding command. The returned string is surfaced back to the

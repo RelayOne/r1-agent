@@ -7,7 +7,7 @@ This is a reference document. It collects the per-phase validation gates from th
 ### Phase 1: Skills
 
 1. ✅ `go vet ./...` clean
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ `go test ./internal/skill/... ./internal/skillselect/... ./internal/app/... ./internal/workflow/...` passes
 4. ✅ `stoke skill list` shows the loaded skills
 5. ✅ `stoke skill select` on the Stoke repo prints `["go"]` as a detected language
@@ -18,7 +18,7 @@ This is a reference document. It collects the per-phase validation gates from th
 
 1. ✅ `go vet ./...` clean
 2. ✅ `go test ./internal/wizard/...` passes
-3. ✅ `go build ./cmd/stoke` succeeds
+3. ✅ `go build ./cmd/r1` succeeds
 4. ✅ `stoke wizard --auto` on Stoke itself produces `.stoke/config.yaml` and `.stoke/wizard-rationale.md`
 5. ✅ `stoke wizard --interactive` walks through every group without crashing
 6. ✅ `stoke wizard --yes` produces config without prompts
@@ -29,7 +29,7 @@ This is a reference document. It collects the per-phase validation gates from th
 
 1. ✅ `go vet ./...` clean
 2. ✅ `go test ./internal/hub/...` passes with >70% coverage
-3. ✅ `go build ./cmd/stoke` succeeds
+3. ✅ `go build ./cmd/r1` succeeds
 4. ✅ Existing bash hooks fire correctly via the script transport adapter
 5. ✅ In-process honesty hook denies a write containing `panic("not implemented")`
 6. ✅ Cost tracker updates after a model call
@@ -64,7 +64,7 @@ This is a reference document. It collects the per-phase validation gates from th
 
 1. ✅ `go vet ./...` clean
 2. ✅ Full test suite passes
-3. ✅ `go build ./cmd/stoke` succeeds
+3. ✅ `go build ./cmd/r1` succeeds
 4. ✅ `stoke audit` produces `PACKAGE-AUDIT.md` with all packages tagged
 5. ✅ Wisdom learnings persist across `stoke` invocations
 6. ✅ Cache hit rate audit passes (≥80% by turn 3)
@@ -100,7 +100,7 @@ The bench framework was previously blocked on 7 missing research prompts. **All 
 Phase 7 extends Phase 3's hub with the 7-layer Honesty Judge architecture from the deception research. Full spec is in `11-honesty-judge.md`. The validation gate from that file:
 
 1. ✅ `go vet ./...` clean, `go test ./internal/hub/builtin/honesty/...` passes with >70% coverage
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ TestIntegrityChecker denies a write that drops `assert.Equal` calls from a `_test.go` file
 4. ✅ ImportChecker denies a Go file write that imports `github.com/fake/nonexistent`
 5. ✅ ImportChecker allows real packages (verified against pypi.org and proxy.golang.org)

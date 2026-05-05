@@ -20,32 +20,34 @@ steps:
     waitFor: ['-']
 
   - name: 'golang:1.25'
-    id: mod-tidy-check
+    id: vendor-check
     entrypoint: bash
     args:
       - -c
       - |
-        apt-get update -q && apt-get install -y -q gcc
-        go mod tidy
-        git diff --exit-code go.mod go.sum
+        # Vendored mode — no network fetches, deps live in vendor/.
+        # Private RelayOne modules (heroa, coderadar) cannot be fetched on CI
+        # without GH auth; vendoring is the workaround. See
+        # plans/grand-plan/F-N+45-1-r1-agent-CI-needs-private-repo-auth.md.
+        ls vendor/modules.txt > /dev/null
 
   - name: 'golang:1.25'
     id: build
-    waitFor: ['mod-tidy-check', 'web-build']
+    waitFor: ['mod-tidy-check', 'web-build', 'vendor-check']
     entrypoint: bash
     args:
       - -c
       - |
         apt-get update -q && apt-get install -y -q gcc
-        go build ./cmd/r1 ./cmd/r1-acp
+        go build -mod=vendor ./cmd/r1 ./cmd/r1-acp
     env:
       - 'CGO_ENABLED=1'
 
   - name: 'golang:1.25'
     id: vet
-    waitFor: ['mod-tidy-check']
+    waitFor: ['vendor-check']
     entrypoint: go
-    args: ['vet', './...']
+    args: ['vet', '-mod=vendor', './...']
 
   - name: 'golang:1.25'
     id: lint-lane-events
@@ -74,7 +76,7 @@ steps:
       - -c
       - |
         apt-get update -q && apt-get install -y -q gcc
-        go test ./... -count=1 -timeout=120s
+        go test -mod=vendor ./... -count=1 -timeout=120s
     env:
       - 'CGO_ENABLED=1'
 
@@ -86,7 +88,7 @@ steps:
       - -c
       - |
         apt-get update -q && apt-get install -y -q gcc
-        go test ./... -race -count=1 -timeout=300s
+        go test -mod=vendor ./... -race -count=1 -timeout=300s
     env:
       - 'CGO_ENABLED=1'
 
@@ -107,8 +109,9 @@ steps:
             EXT=".exe"
           fi
           CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH go build \
+            -mod=vendor \
             -trimpath \
-            -ldflags "-s -w" \
+            -ldflags "-s -w -X main.version=$SHORT_SHA" \
             -o dist/r1-$${OS}-$${ARCH}$${EXT} \
             ./cmd/r1
         done

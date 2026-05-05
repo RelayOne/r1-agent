@@ -9,7 +9,7 @@
 - Transport implementation present (at minimum stdio)
 
 ### Part B — MCP server build
-- `go build ./cmd/stoke-mcp/` exits with code 0
+- `go build ./cmd/r1-mcp/` exits with code 0
 - No compile errors
 
 ### Part C — resource gap

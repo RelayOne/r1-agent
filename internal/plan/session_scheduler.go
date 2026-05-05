@@ -64,7 +64,7 @@ type SessionScheduler struct {
 	// continue; StaticOnly is surfaced in the end-of-run banner so the
 	// operator knows what wasn't runtime-verified.
 	//
-	// Injected by cmd/stoke when --smoke (default on) is configured;
+	// Injected by cmd/r1 when --smoke (default on) is configured;
 	// leaving it nil preserves exact pre-smoke behavior.
 	SmokeGate func(session Session) (kind string, reason string, output string)
 	// ParallelSessions, when >= 2, enables DAG-driven parallel session

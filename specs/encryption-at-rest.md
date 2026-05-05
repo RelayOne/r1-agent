@@ -142,7 +142,7 @@ New files:
 - `internal/crypto/stream.go` — per-line JSONL encrypt/decrypt helpers.
 - `internal/crypto/keyring_test.go`, `stream_test.go` — unit tests.
 - `internal/wisdom/sqlite_cipher_test.go` — SQLCipher open/roundtrip/rekey tests.
-- `cmd/stoke/encryption_cmd.go` — `stoke encryption enable|disable|rotate|status|export-backup`.
+- `cmd/r1/encryption_cmd.go` — `stoke encryption enable|disable|rotate|status|export-backup`.
 - `docs/runbooks/encryption.md` — operator runbook (first-run, backup, recovery failure modes, Windows service caveat).
 
 Edits:
@@ -206,7 +206,7 @@ Edits:
 49. [ ] Modify `writeEvent` to route the marshaled JSON through `crypto.EncryptLine` before writing when a key is set.
 50. [ ] Unit test emitter roundtrip: encrypt, reopen with a `bufio.Scanner`, `DecryptLine` each line, compare to original events.
 51. [ ] r1-server scanner: open `<path>.jsonl.enc` first; fall back to `<path>.jsonl`; document precedence in the scanner doc comment.
-52. [ ] Add `cmd/stoke/encryption_cmd.go` with subcommands `enable`, `disable`, `rotate`, `status`, `export-backup`.
+52. [ ] Add `cmd/r1/encryption_cmd.go` with subcommands `enable`, `disable`, `rotate`, `status`, `export-backup`.
 53. [ ] `enable` implements the full migration path: integrity check → rekey → read-back → sentinel → config flip.
 54. [ ] `disable` warns loudly and requires `--yes-i-understand-the-risk`; runs `PRAGMA rekey=''` to decrypt in place; flips config.
 55. [ ] `rotate` calls `RotateMasterKey()` then rekeys every DB under management.
@@ -219,7 +219,7 @@ Edits:
 
 ## 9. Acceptance criteria
 
-- `go build ./cmd/stoke`, `go test ./...`, and `go vet ./...` all pass on linux-amd64, macos-arm64, and windows-amd64 CI runners.
+- `go build ./cmd/r1`, `go test ./...`, and `go vet ./...` all pass on linux-amd64, macos-arm64, and windows-amd64 CI runners.
 - `stoke encryption enable` on an existing plaintext `wisdom.db` produces a cipher DB that answers every pre-existing integration test's SELECTs identically, with p50 read latency ≤ 1.15× the plaintext baseline on the 10k-row benchmark.
 - A JSONL line whose Poly1305 tag has been flipped raises `stream: auth tag mismatch on line N` with the offset included; the scanner surfaces this rather than silently skipping.
 - With `encryption.enabled=true` and the keyring entry deleted out-of-band, Stoke exits 1 at startup with exactly `database is encrypted; keyring entry missing at <backend>:<service>:<account>`.
@@ -236,7 +236,7 @@ Per-file unit tests:
 - `internal/memory/bus_encrypted_test.go` — write plaintext → reopen encrypted → read matches; content column NULL when encrypted column populated.
 - `internal/streamjson/emitter_encrypt_test.go` — emit 100 events with `STOKE_ENCRYPT_STREAM=1`, reopen with scanner + `DecryptLine`, full equality.
 
-End-to-end test `cmd/stoke/encryption_e2e_test.go`:
+End-to-end test `cmd/r1/encryption_e2e_test.go`:
 
 1. Build a throwaway repo with plaintext wisdom + plaintext stream.
 2. Run `stoke encryption enable`.

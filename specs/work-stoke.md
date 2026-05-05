@@ -27,7 +27,7 @@ Compared to first audit: 12 previously-MISSING tasks are now VERIFIED. 7 remain 
 
 | Task | Gap | Size |
 |---|---|---|
-| T3 CostDashboard | widget exists; not wired into `cmd/stoke` when `-v` verbose flag is set | 20-40 LOC |
+| T3 CostDashboard | widget exists; not wired into `cmd/r1` when `-v` verbose flag is set | 20-40 LOC |
 | T5 memory-bus | writer-goroutine + 256-batch + 5ms tick pattern not yet implemented; ≥20k/sec bench not demonstrable | ~150 LOC |
 | T6 two-level Merkle | store split (chain/ + content/) + content_commitment field + node_id recompute + migration absent | ~250 LOC |
 | T7 SQLCipher | `go.mod` replace directive for `jgiannuzzi/go-sqlite3` not yet landed; DSN helper not wired into any `sql.Open` | ~80 LOC + 1 go.mod change |
@@ -103,7 +103,7 @@ full task-by-task verification table.
 
 ### Phase 1 — Close-Out (Week 1)
 
-- **TASK 1** — `nativeCfg` wiring (S-0 + S-2 last-mile) — **MISSING** — 6 lines, 1 hour. Wire `StreamJSON` + `HITL` fields into production `sowNativeConfig{}` literal at `cmd/stoke/main.go:2774`.
+- **TASK 1** — `nativeCfg` wiring (S-0 + S-2 last-mile) — **MISSING** — 6 lines, 1 hour. Wire `StreamJSON` + `HITL` fields into production `sowNativeConfig{}` literal at `cmd/r1/main.go:2774`.
 - **TASK 2** — Real `DelegateExecutor` — **MISSING** — ~200 LOC, 2 days. Create `internal/executor/delegate.go` that wires existing Hirer + Delegator + A2A + TrustPlane + VerifyAndSettle behind the Executor interface.
 - **TASK 3** — Cost dashboard TUI widget — **MISSING** — ~300 LOC, 2 days. Create `internal/tui/cost_dashboard.go` subscribing to `hub.Bus` EventCostUpdated.
 
@@ -113,7 +113,7 @@ full task-by-task verification table.
 - **TASK 5** — Scoped memory bus — **PARTIAL** (commit 870a11d). Missing: writer-goroutine batch pattern + ledger emission + 20k inserts/sec bench.
 - **TASK 6** — Ledger two-level Merkle (crypto-shred) — **PARTIAL** (commit e1edcf1). Missing: node ID split into structural header + content_commitment; `internal/ledger/verify.go` no-content chain verification; migration path.
 - **TASK 7** — SQLCipher migration — **MISSING** — 2 days. `go.mod` replace directive for `jgiannuzzi/go-sqlite3`, `internal/encryption/sqlcipher.go` DSN helper, hex-dump test.
-- **TASK 8** — Per-line XChaCha20-Poly1305 on JSONL — **VERIFIED** (commit b246ddf). Only gap: `cmd/stoke-stream-decrypt/` utility binary not shipped.
+- **TASK 8** — Per-line XChaCha20-Poly1305 on JSONL — **VERIFIED** (commit b246ddf). Only gap: `cmd/r1-stream-decrypt/` utility binary not shipped.
 - **TASK 9** — 99designs keyring integration — **MISSING** — 1 day. `internal/encryption/backend_99designs.go` + go.mod dep. Coexists with existing file-backed keyring.
 - **TASK 10** — Retention policies + crypto-shredding — **PARTIAL** (commits c624905, 522a17c). Missing: Task 6 crypto-shred integration; r1-server hourly sweep goroutine; `--retention-permanent` flag.
 - **TASK 11** — Memory ledger node types (memory_stored, memory_recalled) — **MISSING** — 1 day. `internal/ledger/nodes/memory.go` + emit from `internal/memory/bus.go` on every Remember/Recall.
@@ -121,7 +121,7 @@ full task-by-task verification table.
 - **TASK 13** — Waterfall + indented tree default trace view — **MISSING** — 2 days. `internal/server/templates/trace_{waterfall,tree}.tmpl` (gated on Task 12 template infra).
 - **TASK 14** — Memory explorer CRUD — **PARTIAL** (commit 4e582cc). `/memories` read-only view exists; POST/PUT/DELETE + passphrase-gated ScopeAlways writes absent.
 - **TASK 15** — 3D graph visualizer (vendored ESM) — **PARTIAL** (commit a8138d2). `cmd/r1-server/ui/graph.js` exists but uses CDN (no `ui/vendor/` tree) + no Web-Worker layout script.
-- **TASK 16** — STOKE protocol + `.tracebundle` exporter — **PARTIAL**. `docs/stoke-protocol.md` shipped; `cmd/stoke/export_cmd.go` absent, no `r1-server import` subcommand.
+- **TASK 16** — STOKE protocol + `.tracebundle` exporter — **PARTIAL**. `docs/stoke-protocol.md` shipped; `cmd/r1/export_cmd.go` absent, no `r1-server import` subcommand.
 
 ### Phase 3 — Full Agent Depth
 
@@ -129,7 +129,7 @@ full task-by-task verification table.
 - **TASK 18** — Browser interactive mode (go-rod backend) — **MISSING** — 3 days. `internal/executor/browser.go:50` returns ErrNotWired; go-rod not in go.mod.
 - **TASK 19** — Deploy: Vercel + Cloudflare providers — **VERIFIED** (multi-spec batch). `internal/deploy/{vercel,cloudflare}/` both shipped with tests.
 - **TASK 20** — `r1 serve` TrueCom integration — **MISSING** — 2-3 days. `--trustplane-register` flag; four `X-TrustPlane-*` identity headers on outbound `/v1/hire`; settlement callback hook.
-- **TASK 21** — `r1 verify --serve` HTTP endpoint — **MISSING** — 2-3 days. `cmd/stoke/verify_cmd.go` wrapping `verification_descent.go` as HTTP service at port 9944.
+- **TASK 21** — `r1 verify --serve` HTTP endpoint — **MISSING** — 2-3 days. `cmd/r1/verify_cmd.go` wrapping `verification_descent.go` as HTTP service at port 9944.
 - **TASK 22** — A2A v1.0.0 agent-card schema + path migration — **MISSING** — 0.5 day. `/.well-known/agent-card.json` canonical + 308 from `/.well-known/agent.json` for 30 days; v1.0 schema fields.
 - **TASK 23** — Truecom Go SDK `WithControlPlane` routing — **BLOCKED** — 0.5 day. Gated on upstream Truecom Task 7/B8 landing.
 
@@ -138,7 +138,7 @@ full task-by-task verification table.
 <details>
 <summary>TASK 1 — nativeCfg wiring (6 lines, 1 hour)</summary>
 
-**Problem.** `cmd/stoke/main.go` `sowNativeConfig{…}` literal near line 2774 has no `StreamJSON:` or `HITL:` assignments (grep verified). Fields exist at `sow_native.go:568,574`; all 6 consumer sites in `sow_native_streamjson.go` guard on `cfg.StreamJSON == nil`, so production `stoke sow` / `stoke ship` never emit Stoke NDJSON and never engage HITL soft-pass.
+**Problem.** `cmd/r1/main.go` `sowNativeConfig{…}` literal near line 2774 has no `StreamJSON:` or `HITL:` assignments (grep verified). Fields exist at `sow_native.go:568,574`; all 6 consumer sites in `sow_native_streamjson.go` guard on `cfg.StreamJSON == nil`, so production `stoke sow` / `stoke ship` never emit Stoke NDJSON and never engage HITL soft-pass.
 
 **Fix.**
 ```go
@@ -157,7 +157,7 @@ nativeCfg := sowNativeConfig{
 1. `stoke sow --output-format stream-json --file spec.yaml | grep -c '"type":"stoke.session.start"'` ≥ 1.
 2. Enterprise gov-tier + T8 soft-pass → `stoke ship` blocks on `hitl_required` NDJSON line until stdin decision.
 3. `go test ./...` passes.
-4. Commit: `feat(cmd/stoke): S-0/S-2 wire StreamJSON+HITL into nativeCfg`.
+4. Commit: `feat(cmd/r1): S-0/S-2 wire StreamJSON+HITL into nativeCfg`.
 
 **Dependencies.** None. Do first.
 </details>
@@ -173,7 +173,7 @@ nativeCfg := sowNativeConfig{
 
 **Files (modify).**
 - `internal/executor/scaffold.go:55-88` — remove stub.
-- `cmd/stoke/main.go` — wire via `rtr.Register(executor.TaskDelegate, delegExec)`.
+- `cmd/r1/main.go` — wire via `rtr.Register(executor.TaskDelegate, delegExec)`.
 
 **Signature.**
 ```go
@@ -249,7 +249,7 @@ research-validated upgrades the portfolio specs did not target.
 
 See full prohibitions in the original work order (item 7) — summary:
 
-- No refactor of `cmd/stoke/main.go` (6705 LOC).
+- No refactor of `cmd/r1/main.go` (6705 LOC).
 - No rename of `stoke` in code (CLI alias only).
 - No touch of ship convergence loop at `main.go:4741`.
 - No new deps except `99designs/keyring` (T9), `jgiannuzzi/go-sqlite3` replace (T7), `go-rod/rod` (T18).

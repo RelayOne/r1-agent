@@ -10,7 +10,7 @@ it sits beside it during migration.
 - 8-stage analyzer in `internal/r1skill/analyze`
 - Compile proof generation via `cmd/r1-skill-compile`
 - Minimal deterministic runtime in `internal/r1skill/interp`
-- Opt-in execution path in `cmd/stoke-mcp/backends.go` for manifests
+- Opt-in execution path in `cmd/r1-mcp/backends.go` for manifests
   with `useIR=true`
 
 ## Dual-stack migration

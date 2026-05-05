@@ -58,7 +58,7 @@ const MigrationManifestName = "MIGRATED-FROM-STOKE.txt"
 //
 // The operation is opt-in (per the work-order) -- nothing in the
 // runtime calls this implicitly. The CLI helper `r1 migrate-session`
-// is the user-facing entry point and is wired into cmd/stoke in the
+// is the user-facing entry point and is wired into cmd/r1 in the
 // follow-up; this function ships the contract.
 //
 // repo == "" is treated as ".".

@@ -184,7 +184,7 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - `stoke run "free text task"` → routes to chat-intent classifier → dispatches to appropriate executor
 - `stoke run --sow path.md` → routes to existing SOW executor
 **Owners:** spec-2 (CloudSwarm Protocol), spec-3 (Executor Foundation — task router)
-**Implications:** `cmd/stoke/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
+**Implications:** `cmd/r1/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
 
 ### D-2026-04-20-02 — `STOKE_DESCENT` stays opt-in through Q2
 **Context:** H-91 verification descent engine just shipped (commit 8611d48); still stabilizing. Spec-1 adds anti-deception + per-file cap + bootstrap-per-cycle hardening.
@@ -228,3 +228,39 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - **D-28**: `Operator` interface with terminal + NDJSON impls (latter uses `hitl_required` for Ask).
 - **D-29**: Intent Gate = verb-scan first, Haiku on ambiguity; DIAGNOSE masks write tools at `harness/tools` auth.
 - **D-31**: Live meta-reasoner gated by `STOKE_META_LIVE=1`.
+
+## 2026-05-04 — Spec 8 Agentic Test Harness
+
+These five decisions accept the design choices in `specs/agentic-test-harness.md` as binding for the harness, lint, and docs surface.
+
+### D-A1 — Single `r1.*` MCP namespace; legacy `stoke_*` dual-aliased until v2.0.0
+**Decision:** All new tools land under `r1.*`. The 5 legacy `stoke_*` SOW tools are preserved verbatim per `canonicalStokeServerToolName` and dispatch to the same handlers. Removal scheduled for v2.0.0.
+**Owners:** spec 8 (agentic-test-harness).
+**Implications:** The Slack-style envelope's `links.deprecations[]` carries a one-time warning when a session calls a `stoke_*` name. CHANGELOG records the removal at the v2.0.0 cut.
+**Source:** `specs/agentic-test-harness.md` §10a "Stoke alias removal".
+
+### D-A2 — Slack-style envelope at the `r1_server.go` boundary; stokerr/ taxonomy for every error
+**Decision:** Every `r1.*` tool response wraps in `{ok, data?, error_code?, error_message?, links?}`. Every error maps to one of the 10 `internal/stokerr/` codes via `MapErrorToTaxonomy`. Raw Go error strings are forbidden at the wire.
+**Owners:** spec 8.
+**Implications:** Handlers that return `fmt.Errorf("...")` are silently re-mapped (with string heuristics) and a future spec will tighten this so direct `*stokerr.Error` is the only legal form.
+**Source:** §3 "Existing Patterns to Follow", §6.
+
+### D-A3 — Synthetic accessibility tree, NOT pixel snapshots
+**Decision:** Both TUI and web surfaces emit a structured `A11yNode` tree (`role`, `name`, `state`, `children`). Snapshot assertions fire against the tree; the rendered string is debug-only. `lipgloss.SetColorProfile(termenv.Ascii)` is mandatory in `NewShim` for byte-determinism.
+**Owners:** spec 8.
+**Implications:** Computer Use as a primary driver is deferred to Q3 2026; the harness exercises a11y trees, not pixels. The §10a "Snapshot drift" mitigation depends on this.
+**Source:** §5, §10a.
+
+### D-A4 — UI without API is a build break
+**Decision:** Every interactive UI component (React onClick, Bubble Tea KeyMsg consumer, Tauri command) MUST reference an MCP tool from the live r1.* catalog. The `tools/lint-view-without-api/` scanner enforces this in CI and via `r1.verify.lint`.
+**Owners:** spec 8.
+**Implications:** Adding a UI button without a corresponding MCP tool fails the build. Adding a tool without a UI is a WARN (allowlist for `headless_only` cases).
+**Source:** §8.
+
+### D-A5 — Gherkin-flavored markdown DSL (`*.agent.feature.md`); no bespoke language
+**Decision:** Test fixtures use Markdown-shaped Gherkin (Given/When/Then in `- ` list items under `## Scenario:` headers). The runner at `tools/agent-feature-runner/` parses them and dispatches each step via heuristics + per-file `## Tool mapping` blocks. No custom DSL.
+**Owners:** spec 8.
+**Implications:** Authoring fixtures is a 0-cognitive-load task for any human who has read a Cucumber file. The Markdown lint and table-of-contents generators in `docs/` work across the harness corpus without special handling.
+**Source:** §6, §10, §11.
+
+Cross-link: `specs/agentic-test-harness.md` (BUILD_ORDER 8). Implementation tracked in `build/agentic-test-harness` per the 43-item §12 checklist.

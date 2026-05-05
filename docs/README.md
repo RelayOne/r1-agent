@@ -1,233 +1,116 @@
-# r1
+# R1
 
-**A parallel-cognition runtime with a Claude-chat-style multi-instance UI.**
+> **Note:** R1 ships as the `r1` binary today. Legacy storage and companion
+> surfaces such as `.stoke/`, `stoke.policy.yaml`, and `stoke-acp` keep
+> their existing names where compatibility still matters.
 
-r1 is a governed coding agent that thinks in parallel. The main action thread
-drives the work. A shared **Cortex** workspace runs a half-dozen specialist
-"Lobes" alongside it — pulling memory, watching the plan, drafting clarifying
-questions, gating end-of-turn on critical findings — and feeds findings back
-into the main thread at safe checkpoints. When you type something mid-turn,
-an LLM-driven Router decides whether to interrupt, steer, queue, or just chat.
-Every cognitive thread, every tool call, and every mission task becomes a
-**Lane** — a first-class UI primitive rendered identically across a Bubble Tea
-TUI, a React + Vite web app, and a Tauri 2 desktop shell. All three surfaces
-talk to a single per-user **r1d daemon** that hosts N concurrent sessions
-bound to working directories.
+## Wave 2 (2026-04-26) — R1-Parity Sprint
 
-`r1` is the CLI name and the primary entrypoint under `cmd/r1`.
+This wave completed the **R1 parity sprint** that brings R1 to
+feature-parity with R1 reference: browser tools, Manus-style autonomous
+operator, multi-language LSP client, full IDE plugin coverage, multi-CI
+adapters, real desktop GUI, plus injection preprocessing and tool surface
+expansion. Everything below shipped on `main`:
 
-## What r1 actually does for you
+- **Multi-CI parity (PR #14, commit `f8d8d1c`):** T-R1P-020/021/022 —
+  GitHub Actions, GitLab CI, and CircleCI integration.
+- **LSP server adapter (PR #13, commit `3cc1b6f`):** T-R1P-009 — speak
+  LSP to any LSP-enabled editor.
+- **Browser automation + Manus operator (PR #12, commit `7144b6f`):**
+  T-R1P-001/002 — `wait_for`, `get_html`, plus the Manus-style autonomous
+  operator. Wider browser tools follow-up in PR #15 (commit `f8dd63`).
+- **VS Code + JetBrains IDE plugins (PR #16, commit `e6393c8`):** T-R1P-003.
+- **Multi-language LSP client + GitLab CI/CD adapter (PR #17, commit `4042692`):**
+  T-R1P-020 + T-R1P-022.
+- **Desktop GUI + GitHub Actions adapter + auto-review (PR #18, commit `d4403b8`):**
+  T-R1P-009 + T-R1P-021.
+- **Real robotgo desktop backend (PR #19, commit `841a494`):** T-R1P-009
+  follow-up — the desktop GUI now drives a real robotgo backend instead of
+  the stub.
+- **Tool surface wire-up (PR #9, commit `cbe0ae1`):** T-R1P-004/005/015/016
+  — `image_read`, `notebook_read/cell_run`, `powershell`, `gh_pr/run` wired
+  into `Handle()`.
+- **web_fetch / web_search / cron / pdf_read (commit `20228bf`):** T-R1P-007/008/006/023.
+- **Shell injection preprocessing + path-scoped activation (commit `13afd78`):**
+  T-R1P-018/019.
+- **R1D-1 Tauri subprocess launcher (commit `693e241`):** R1D-1.1/1.2/1.3/1.4.
+- **Veritize-Verity dual-send headers (PR #8, commit `6ed5bb8`):** the
+  rename dual-accept window for HTTP attribution headers.
+- **Cloud Build CI cutover + local pre-push hook (PR #11, commit `a883825`).**
+- **CI/CD + desktop polish (PRs #18-21):** addressed supervisor scope and
+  rolled the runtime alternate-path test.
 
-- **Plans and executes coding work** through a deterministic plan → execute →
-  verify → review loop, one strong implementer per task plus an adversarial
-  cross-model reviewer. The harness is the product.
-- **Refuses to believe "done"** without evidence. The verification descent
-  engine cross-checks against git state, AC, and the tool-call log. Honeypot
-  gates abort end-of-turn on canary leaks, markdown-image exfil, and
-  destructive-without-consent shell.
-- **Runs N cognitions per turn instead of one.** Memory recall, plan-update,
-  rule-check, clarifying-Q, memory-curator, and WAL-keeper Lobes share full
-  context with the main thread (no subagent isolation), publish typed Notes
-  into a shared Workspace, and surface as live lanes in your UI.
-- **Ships a real chat UI**, not a streaming-text terminal. The web app is
-  styled after Cursor 3 "Glass": a session list on the left, a streaming
-  chat in the center with tool/reasoning/plan cards, a lanes sidebar on the
-  right, and a tile mode that pins 2-4 lanes into the main pane for parallel
-  watching.
-- **Speaks every surface through one wire.** Every UI action has an idempotent
-  schema-validated MCP equivalent. The UI is a view over the API; never the
-  reverse. External agents (Claude, Codex, Stagehand) drive r1 the same way
-  you do.
+Status sections at the end of each canonical doc reflect post-wave state.
+Most R1-parity tasks (T-R1P-001..023) are now Done.
 
-## Status — What ships on `main` today
+**A single-strong-agent coding orchestrator with an adversarial reviewer, content-addressed governance ledger, and a verification descent engine that refuses to believe a model when it says "done".**
 
-The cortex / lanes / multi-surface scope below is **scoped, not yet built**.
-What's running on `main` right now:
+R1 drives Claude Code and Codex CLI through a deterministic
+PLAN → EXECUTE → VERIFY → COMMIT loop. It runs one strong implementer
+per task, pairs that worker with a cross-family reviewer, records
+every decision into an append-only Merkle-chained ledger, and enforces
+build/test/lint/scope gates before a single line is allowed to merge.
 
-- The governed plan / execute / verify / review mission loop with cross-model
-  reviewer gating.
-- The append-only content-addressed ledger, WAL-backed event bus, and the
-  STOKE event envelope.
-- The deterministic skill substrate: manufacture, registry, selection,
-  signed-pack distribution, and an HTTP pack registry served by `r1 skills
-  pack serve`.
-- A 30+ subcommand `r1` CLI plus eight purpose-built satellite binaries
-  (`stoke-acp`, `stoke-a2a`, `stoke-mcp`, `stoke-server`, `stoke-gateway`,
-  `r1-server`, `chat-probe`, `critique-compare`).
-- Wave 2 R1-parity: browser tools, Manus-style autonomous operator,
-  multi-language LSP client, VS Code + JetBrains plugins, multi-CI parity
-  (GitHub Actions, GitLab CI, CircleCI), a Tauri 2 desktop shell with the
-  R1D-1..R1D-12 phases (scaffold, session view, SOW tree, descent ladder,
-  skill catalog, ledger, memory, settings, MCP servers, observability,
-  multi-session, signing).
-- Prompt-injection hardening across four ingest paths plus tool-output
-  sanitization, honeypot pre-end-turn gates, and a 58-sample red-team corpus.
-- A 5-provider model resolver (Claude → Codex → OpenRouter → direct API →
-  lint-only) with subscription pool, circuit breaker, and OAuth poller.
+The thesis: **the harness is the product.** SWE-bench Pro shows the
+same underlying model swings ~15 points when you change only the
+scaffold around it. R1 reports deltas on SWE-bench Pro,
+SWE-rebench, and Terminal-Bench — not contaminated Verified numbers.
+See [docs/benchmark-stance.md](docs/benchmark-stance.md) for the full
+published evaluation stance.
 
-## Roadmap — Cortex / Lanes / Multi-Surface
+R1 is explicitly **not** a multi-agent committee. The published
+MAST data (41–86.7% failure rates in real multi-agent deployments;
+70% accuracy degradation from blind agent-adding) says the prevailing
+"many cooperating agents" pattern is how you lose. R1 runs one
+strong implementer per task, pairs it with a cross-family adversarial
+reviewer, and treats the reviewer's dissent as a merge-blocking
+signal. Rationale: [docs/architecture/single-strong-agent-stance.md](docs/architecture/single-strong-agent-stance.md).
 
-Eight specs in `specs/` define the next slice. Build order is a strict DAG:
+## Install
 
-```
-1. cortex-core              ──► foundation: Workspace, Lobes, Round, Spotlight,
-                                Router, drop-partial interrupt, pre-warm pump
-                                ┌───────────────────┐
-                                ▼                   ▼
-2. cortex-concerns          3. lanes-protocol
-   six v1 Lobes                 wire format + 5 MCP tools
-                                ┌───────────────────┐
-                                ▼                   ▼
-4. tui-lanes                5. r1d-server
-   Bubble Tea v2 panel         per-user singleton daemon
-                                ┌───────────────────┐
-                                ▼                   ▼
-6. web-chat-ui              7. desktop-cortex-augmentation
-   React + Vite + Tailwind     Tauri 2 augmentation
-                                └─────────┬─────────┘
-                                          ▼
-                                8. agentic-test-harness
-                                   every UI action has an MCP tool
-```
+> **Upgrading from Stoke?** Your existing `.stoke/` directory is
+> auto-detected — no migration step required. The examples below
+> install the canonical `r1` binary; companion binaries like
+> `stoke-acp` keep their existing names. For remaining rename notes, see
+> [docs/mintlify/rename/stoke-to-r1.mdx](mintlify/rename/stoke-to-r1.mdx).
 
-### Cortex — parallel cognition (specs 1, 2)
-
-A new `internal/cortex/` package introduces a Global Workspace Theory-style
-shared mutable view. The main `agentloop.Loop` keeps doing what it does;
-alongside it run six concurrent specialist **Lobes**:
-
-- **MemoryRecallLobe** (deterministic) — TF-IDF over the memory + wisdom
-  store, surfaces top-3 prior findings as `info` Notes per round.
-- **WALKeeperLobe** (deterministic) — drains every hub event into the durable
-  bus WAL with backpressure-shed semantics, so cortex Notes survive daemon
-  restart.
-- **RuleCheckLobe** (deterministic) — converts supervisor-rule fires into
-  Notes; `trust.*` and `consensus.dissent.*` are tagged `critical` and refuse
-  `end_turn` until acknowledged.
-- **PlanUpdateLobe** (Haiku 4.5) — every third turn or on action-verb input,
-  proposes `plan.json` deltas; auto-applies edits, queues adds and removes
-  for user confirmation.
-- **ClarifyingQLobe** (Haiku 4.5) — detects actionable ambiguity, drafts up
-  to 3 clarifying questions, surfaces them at idle.
-- **MemoryCuratorLobe** (Haiku 4.5) — every fifth turn, extracts
-  "should-remember" facts; auto-writes only the `fact` category, queues
-  others. Privacy filter drops `private`-tagged source messages and writes
-  every auto-curate to `~/.r1/cortex/curator-audit.jsonl`.
-
-Lobes share full context (read-only message history, the same model breakpoint,
-the same tool ordering — pre-warmed via a `max_tokens=1` cache request every
-4 minutes). They publish typed `Notes` into the `Workspace`; the main thread
-drains them at `MidturnCheckFn`, gates end-of-turn at `PreEndTurnCheckFn`, and
-on mid-turn user input invokes the **Router**: a Haiku 4.5 call with four
-tools — `interrupt`, `steer`, `queue_mission`, `just_chat` — that decides how
-your message is merged. Interrupts use the drop-partial protocol (cancel the
-turn context, drain SSE, never persist the partial assistant message, append
-a synthetic user message describing the interrupt).
-
-Defaults: 5 concurrent LLM Lobes, hard cap 8. Per-turn budget caps Lobe output
-at 30% of main-thread output tokens. Sonnet escalation only on tagged-critical
-paths or operator-flagged Lobes.
-
-### Lanes — the cross-surface UI primitive (spec 3)
-
-A **Lane** is the per-surface visible thread of activity inside a single r1d
-session. The main agent thread is a lane. Each Lobe is a lane. A long-running
-tool call gets promoted to its own lane. Lanes have a six-state machine
-(`pending → running → blocked → done | errored | cancelled`) plus an orthogonal
-`pinned` flag. Six event types stream over JSON-RPC 2.0 with monotonic per-
-session `seq`: `lane.created`, `lane.status`, `lane.delta`, `lane.cost`,
-`lane.note`, `lane.killed`. Replay uses `Last-Event-ID` (SSE) or `since_seq`
-(JSON-RPC). The WebSocket subprotocol is `r1.lanes.v1`. Five MCP tools
-(`r1.lanes.list`, `subscribe`, `get`, `kill`, `pin`) make every lane action
-agent-driveable.
-
-### Surfaces — TUI, Web, Desktop (specs 4, 6, 7)
-
-- **TUI** (`internal/tui/lanes/` — Bubble Tea v2): adaptive lane columns when
-  the terminal is wide, vertical stack when narrow, focus mode at 65/35
-  main+peers. Single fan-in `chan laneTickMsg` coalesced to 5 Hz. Keys
-  `1`–`9` jump-to-lane, `tab` cycles, `enter` focuses, `x` kills, `K`
-  kills-all, `?` opens help. Per-lane render-string cache; diff-only repaint.
-- **Web** (`web/` — React 18 + Vite 6 + Tailwind 3 + shadcn/ui): three-column
-  Cursor 3 "Glass" layout. Streaming markdown via `vercel/streamdown`. Tool /
-  reasoning / plan / diff cards via `@ai-sdk/elements`. Tile mode pins 2-4
-  lanes into the center pane. WS subprotocol-token auth; reconnect with
-  `Last-Event-ID`. Keyboard-only flows; high-contrast mode; CSP locked to
-  loopback.
-- **Desktop** (`desktop/` — Tauri 2 augmentation): keeps the existing 12-phase
-  R1D shell intact. Adds discovery-or-spawn (probes `~/.r1/daemon.json`,
-  falls back to bundled-binary sidecar via `ShellExt::sidecar`). Per-session
-  workdir via `tauri-plugin-store`. Per-session `tauri::ipc::Channel<LaneEvent>`
-  at 10 Hz. `Cmd+\` pops a lane into its own `WebviewWindow`. Lane components
-  shared with web via a `packages/web-components/` workspace package.
-
-### r1d daemon — one process, N sessions (spec 5)
-
-`r1 serve` becomes a per-user singleton on-demand daemon (the Watchman
-pattern). One process holds N concurrent sessions as goroutines, each bound
-to a working directory carried via `cmd.Dir`. Single-instance enforcement via
-`gofrs/flock` on `~/.r1/daemon.lock`. Discovery via `~/.r1/daemon.json`
-(mode 0600, token rotated on every start). IPC: unix socket / Windows named
-pipe for CLI (peer-cred check; no token), loopback HTTP+WS for browsers and
-desktop (Origin pin + Host pin + WS subprotocol token + 256-bit Bearer).
-Each session writes a `journal.ndjson` under `<workdir>/.r1/sessions/<id>/`;
-daemon restart replays the journal and emits `daemon.reloaded` to reconnecting
-clients. A pre-multisession **`os.Chdir` audit + CI lint** is the gate before
-multi-session is enabled — one stray `os.Chdir` would silently leak workdir
-across goroutines.
-
-### Agentic test harness — every UI action is a tool (spec 8)
-
-The governing principle: every action a human can take through a UI MUST
-have a documented, idempotent, schema-validated agent equivalent reachable
-through MCP. A consolidated `internal/mcp/r1_server.go` publishes the full
-catalog (`r1.session.*`, `r1.lanes.*`, `r1.cortex.*`, `r1.mission.*`,
-`r1.worktree.*`, `r1.bus.tail`, `r1.verify.*`, `r1.tui.*`). A
-`teatest_shim.go` exposes the TUI under MCP without a real terminal. Web is
-covered by Playwright MCP; component contracts by Storybook MCP. A CI lint
-(`tools/lint-view-without-api/`) scans React, Bubble Tea, and Tauri sources
-for interactive elements that lack MCP counterparts. Test scenarios live as
-Gherkin-flavored markdown in `*.agent.feature.md` files.
-
-## Where to start
-
-- **Architecture**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- **Workflow narrative**: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md)
-- **Feature inventory**: [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md)
-- **Deployment posture**: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-- **Commercial framing**: [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md)
-- **Decisions log**: [`docs/decisions/index.md`](docs/decisions/index.md)
-- **Specs (1–8)**: [`specs/`](specs/) — `cortex-core.md`, `cortex-concerns.md`,
-  `lanes-protocol.md`, `tui-lanes.md`, `r1d-server.md`, `web-chat-ui.md`,
-  `desktop-cortex-augmentation.md`, `agentic-test-harness.md`
-- **Synthesized research**: [`specs/research/synthesized/`](specs/research/synthesized/)
-- **Main evaluation artifact**:
-  [`evaluation/r1-vs-reference-runtimes-matrix.md`](evaluation/r1-vs-reference-runtimes-matrix.md)
-
-## Install (today, on `main`)
+`r1` is the canonical invocation going forward. Pick any of the four
+paths below.
 
 ```bash
-# Homebrew (macOS + Linux) — published by goreleaser on each tag.
-brew install RelayOne/r1-agent/r1
+# 1. Homebrew (macOS + Linux) — published by goreleaser on each tag.
+brew install RelayOne/r1-agent/r1               # canonical tap (post §S2-2)
 
-# One-line installer — detects platform, verifies cosign signature
-# (keyless OIDC via sigstore) when cosign is on PATH.
+# 2. One-line installer — detects platform, verifies cosign signature
+# (keyless OIDC via sigstore) when cosign is on PATH, falls back to
+# building from source if no prebuilt binary exists for your target.
+# Installs `r1` and `stoke-acp` into ${INSTALL_DIR}.
 curl -fsSL https://raw.githubusercontent.com/RelayOne/r1-agent/main/install.sh | bash
 
-# From source (Go 1.26+, CGO enabled for SQLite).
-go build ./cmd/r1
-sudo mv r1 /usr/local/bin/
-```
+# 3. Docker (linux/amd64 + linux/arm64; distroless, multi-stage).
+# `r1` is the canonical image name going forward.
+docker pull ghcr.io/RelayOne/r1:latest              # canonical (post §S2-2)
+docker pull ghcr.io/ericmacdougall/stoke:latest     # legacy name alias (retires ~2026-06-22)
 
-Once spec 5 (r1d-server) lands, `r1 serve` becomes the canonical entrypoint
-for long-running daemons; `r1 chat` connects to it; `r1 serve --install`
-opts into a per-OS service unit (launchd / systemd-user / Windows SCM) for
-always-on operation.
+# 4. From source (Go 1.25 or later; CGO enabled for SQLite).
+go build ./cmd/r1               # canonical CLI
+go build ./cmd/r1-acp        # Agent Client Protocol adapter
+sudo mv r1 stoke-acp /usr/local/bin/
+
+# Verify a signed release tarball (cosign keyless OIDC).
+# The cert-identity regex accepts BOTH repo paths so releases signed
+# before and after the §S2-2 repo rename verify without script edits.
+cosign verify-blob \
+  --certificate-identity-regexp 'https://github\.com/(RelayOne/r1|ericmacdougall/Stoke)/\.github/workflows/release\.yml@refs/tags/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature r1_<ver>_<os>_<arch>.tar.gz.sig \
+  r1_<ver>_<os>_<arch>.tar.gz
+```
 
 ## Quick start
 
 ```bash
-# Single task end-to-end: plan, execute, verify, commit
+# Run a single task end-to-end: plan, execute, verify, commit
 r1 run --task "Add request ID middleware" --dry-run
 
 # Multi-task plan with parallel agents, resume, ROI filter
@@ -239,79 +122,521 @@ r1 plan --task "Add JWT auth" --dry-run
 # Free-text task entry — the executor router picks the right backend
 r1 task "Fix the flaky integration test in server/handler"
 
-# Deterministic security scan (secrets, eval, injection, debug)
+# Deterministic multi-language code scan (secrets, eval, injection,
+# debug prints, hard-coded creds). No LLM calls.
 r1 scan --security
 
-# 17-persona adversarial audit
+# 17-persona adversarial audit (security, performance, a11y, DX…)
 r1 audit --dry-run
 
-# Interactive Bubble Tea TUI (dashboard, focus, detail panes)
-r1 build --plan stoke-plan.json --interactive
+# Check mission progress / resume after crash
+r1 status
 
 # Subscription pool utilization + circuit breaker state
 r1 pool --claude-config-dir /pool/claude-1
+
+# Interactive Bubble Tea TUI (dashboard, focus, detail panes)
+r1 build --plan stoke-plan.json --interactive
 ```
+
+## Commands
+
+R1 ships as a monorepo of nine executables. `r1` is the primary
+driver; the others are purpose-built satellites that share the same
+`internal/` packages.
+
+| Binary | Purpose |
+|--------|---------|
+| `r1` | Primary orchestrator — 30+ subcommands below |
+| `stoke-acp` | Agent Client Protocol adapter (S-U-002) — exposes R1 over ACP for editor integrations |
+| `stoke-a2a` | Agent-to-Agent peering — signed agent cards, HMAC tokens, x402 micropayments, saga compensators |
+| `stoke-mcp` | MCP codebase tool server — exposes ledger, wisdom, research, skill stores as MCP tools |
+| `stoke-server` | Mission API HTTP server for programmatic access and dashboards |
+| `stoke-gateway` | Managed-cloud gateway: hosted session state, centralized pool management |
+| `r1-server` | Per-machine dashboard (port 3948) — discovers running R1 instances, live event stream, 3D ledger visualizer |
+| `chat-probe` | Diagnostic utility for chat-descent gate and sessionctl socket |
+| `critique-compare` | Bench runner for critic/reviewer prompt tuning |
+
+### `r1` subcommands
+
+| Command | Purpose |
+|---------|---------|
+| `r1 run` | Single task: PLAN → EXECUTE → VERIFY → COMMIT |
+| `r1 build` | Multi-task plan with parallel agents, resume, ROI filter |
+| `r1 plan` | Generate a task plan from codebase analysis |
+| `r1 task` | Free-text task entry; executor router classifies and dispatches |
+| `r1 scope` | Display the allowed file scope for a task |
+| `r1 ship` | End-to-end: plan → build → ship |
+| `r1 mission` | Multi-phase mission execution with convergence validation |
+| `r1 scan` | Deterministic code scan (secrets, eval, injection, debug) |
+| `r1 audit` | Multi-perspective review (17 personas, auto-selected) |
+| `r1 browse` | BrowserExecutor: fetch + HTML strip + verify-contains/regex |
+| `r1 deploy` | DeployExecutor (Fly.io today; Vercel + Cloudflare in-flight) |
+| `r1 memory` | Persistent cross-session memory (6 verbs: add, list, get, promote, delete, search) |
+| `r1 status` | Session dashboard (progress, cost, learned patterns) |
+| `r1 resume` | Resume after crash or interruption from the event log |
+| `r1 eventlog` | Inspect the append-only bus WAL at `.stoke/bus/events.log` |
+| `r1 ctl` | Session control plane over the Unix socket (8 verbs) |
+| `r1 export` | Content-addressed `.tracebundle` export for offline replay |
+| `r1 pool` | Subscription pool utilization + circuit breaker |
+| `r1 pools` | List configured pool directories |
+| `r1 add-claude` | Register a Claude pool directory |
+| `r1 add-codex` | Register a Codex pool directory |
+| `r1 remove-pool` | Remove a pool directory |
+| `r1 serve` | HTTP API server for programmatic access |
+| `r1 mcp-serve` | MCP codebase tool server (`stoke-mcp` convenience alias) |
+| `r1 mcp` | MCP client: list-servers, list-tools, test, call |
+| `r1 yolo` | Execute without verification gates (opt-in, ledgered) |
+| `r1 repair` | Auto-fix common configuration issues |
+| `r1 doctor` | Tool dependency check across the 5-provider fallback chain |
+| `r1 version` | Version info (ldflags-populated) |
+
+### Build flags
+
+```
+--plan <path>        Plan file (default: stoke-plan.json)
+--workers <n>        Max parallel agents (default: 4)
+--roi <level>        ROI filter: high, medium, low, skip (default: medium)
+--sqlite             Use SQLite session store instead of JSON
+--interactive        Launch interactive Bubble Tea TUI
+--specexec           Enable speculative parallel execution (4 strategies, pick winner)
+--descent            Enable 8-tier verification descent (STOKE_DESCENT=1 equivalent)
+--dry-run            Show the plan without executing
+```
+
+## How it works
+
+```
+r1 build --plan stoke-plan.json
+  │
+  ├── Load plan, validate (cycles DFS, deps, duplicate IDs)
+  ├── ROI filter: remove low-value tasks
+  ├── Auto-detect build/test/lint commands from repo structure
+  ├── Sort tasks by GRPW priority (critical path first)
+  │
+  ├── For each dispatchable task (parallel, file-scope conflicts respected):
+  │    │
+  │    ├── Resolve provider: Claude → Codex → OpenRouter → Direct API → lint-only
+  │    ├── Acquire pool worker (least loaded, circuit breaker, OAuth poller)
+  │    ├── Create git worktree + install enforcer hooks (PreToolUse + PostToolUse)
+  │    ├── Write r1.session.json signature; heartbeat every 30s
+  │    │
+  │    ├── PLAN phase     Claude read-only, MCP disabled, repomap injected
+  │    ├── EXECUTE phase  Claude or Codex per task type, sandbox on, verification
+  │    │                  descent + honeypot gate on each end-of-turn
+  │    ├── VERIFY phase   Build + test + lint + scope check + protected-file check
+  │    │                  + AST-aware critic (secrets, injection, debug prints)
+  │    ├── REVIEW         Cross-model gate (Claude implements → Codex reviews, or vice versa)
+  │    ├── MERGE          git merge-tree validation, serialized merge, worktree cleanup
+  │    └── Save attempt + session state + learned patterns + ledger node
+  │
+  │    On failure: classify (10 classes), extract specifics,
+  │                discard worktree, create fresh, inject retry brief + diff summary.
+  │                Max 3 attempts. Same error twice → escalate (failure fingerprint dedup).
+  │
+  ├── Emit structured events to .stoke/bus/events.log (WAL, NDJSON, hash-chained)
+  ├── Generate BuildReport at .stoke/reports/latest.json
+  └── Fire event-driven reminders (context >60%, error 3×, test-write, turn-drift, etc.)
+```
+
+## Governance architecture
+
+R1 wraps its execution engine in a multi-role consensus layer
+rooted in an append-only content-addressed graph.
+
+- **Ledger** — Append-only Merkle-chained graph of nodes and edges.
+  Content-addressed IDs, 16 node type prefixes, no updates, no deletes.
+  Filesystem + SQLite backends via a single interface. Redaction uses a
+  two-level Merkle commitment so content tier wipes preserve chain
+  integrity forever (scoped: `specs/ledger-redaction.md`).
+- **Bus** — Durable WAL-backed event system with hooks, delayed events,
+  and parent-hash causality chains. ULID-indexed. Every event carries
+  a STOKE protocol envelope (`stoke_version`, `instance_id`,
+  `trace_parent`, optional `ledger_node_id`).
+- **Supervisor** — Deterministic rules engine. 30 rules across 10
+  categories (consensus, drift, hierarchy, research, skill, snapshot,
+  SDM, cross-team, trust, lifecycle) and 3 per-tier manifests
+  (mission, branch, session).
+- **Consensus loops** — 7-state machine (`PRD → SOW → ticket → PR →
+  landed`). Structured agreement that survives worker churn.
+- **Stances** — 11 role templates (PO, CTO, QA Lead, Reviewer, Dev,
+  Researcher, SDM, ...). Each stance has a dedicated concern field
+  projection (10 sections, 9 role templates) that constrains what the
+  worker sees.
+- **Harness** — Stance lifecycle management. Spawn / pause / resume /
+  terminate. Per-stance tool authorization so a Reviewer can never
+  invoke `Write` and a PO can never invoke `Bash`.
+- **Bridge** — Adapters wire v1 subsystems (cost tracking, verification,
+  wisdom, audit) into the v2 event bus and ledger so every existing
+  gate automatically emits governance-grade traces.
+- **Snapshot** — Protected baseline manifest (file paths + content
+  hashes). Pre-merge snapshots, restore-on-failure, rollback safety.
+- **Skill manufacturing** — 4-workflow pipeline with a confidence
+  ladder that produces reusable playbooks out of repeated task
+  patterns.
+- **Memory** — SQLite-backed episodic / semantic / procedural store
+  with FTS5, scope-aware retrieval, and 3-way embedder fallback
+  (scoped: `specs/memory-full-stack.md`, `specs/memory-bus.md`).
+
+## Verification descent — the trust layer
+
+Workers routinely claim "done" when they aren't. R1's verification
+descent engine refuses to believe them.
+
+- **Anti-deception contract** injected into every worker prompt at
+  dispatch — workers cannot silently fake completion.
+- **Forced self-check before turn end.** The model must signal
+  tangible completion evidence; a parser cross-checks against git
+  state, acceptance criteria, and the tool-call log.
+- **Ghost-write detector.** Post-tool supervisor hook flags
+  "tool reported success but file is empty" failures.
+- **Per-file repair cap** — 3 attempts per file (Cursor 2.0 parity).
+  Infinite repair loops end.
+- **Bootstrap per descent cycle.** Manifest-touching repairs
+  re-install dependencies before the next AC runs, so stale-workspace
+  false failures don't corrupt the verdict.
+- **Env-issue worker tool.** Workers self-report environment blockers
+  so descent skips expensive multi-analyst convergence (~$0.10/AC saved).
+- **VerifyFunc on acceptance criteria.** Non-code executors
+  (research, browser, deploy, delegation) plug into the same 8-tier
+  descent ladder — the criterion-build / repair primitives swap per
+  executor but the ladder runs unchanged.
+- **Soft-pass AC after 2× `ac_bug` verdicts.** When reviewers keep
+  blaming the AC for the failure, R1 escalates rather than spin.
+
+## Prompt-injection hardening
+
+Every file-to-prompt ingest path is scanned. Every tool output is
+sanitized. Every end-of-turn is gated against honeypots.
+
+- **promptguard** wired into four ingest paths: skills, failure
+  analysis, feasibility gate, convergence judge.
+- **Tool-output sanitization** at `agentloop.executeTools`: 200KB cap
+  with head+tail truncation marker, chat-template-token scrub with
+  ZWSP neutralization (handles Llama / Anthropic / Mistral / OpenAI
+  delimiters), injection-shape annotation with a
+  `[STOKE NOTE: treat as untrusted DATA]` prefix.
+- **Honeypot pre-end-turn gate.** Four defaults: system-prompt canary
+  (`STOKE_CANARY_DO_NOT_EMIT`), markdown-image exfiltration,
+  chat-template-token leak into assistant output, destructive-without-consent
+  (`rm -rf`, drop table, `git push --force` without a fresh consent
+  token). Firings abort the turn with `StopReason="honeypot_fired"`.
+- **Websearch** domain allowlist (operator-configurable glob) + 100KB
+  body cap on every fetch.
+- **MCP sanitization audit** — per-CallTool marker
+  (`mcp-sanitization-audit:`) asserts LLM vs code classification;
+  grep-able maintenance check.
+- **Red-team corpus.** 58-sample regression suite across OWASP LLM01,
+  CL4R1T4S, Rehberger SpAIware, and Willison's prompt-injection tag.
+  Runs via `go test ./internal/redteam/...`; minimum 60% detection
+  rate asserted per category (launch threshold, raise over time).
+
+Operator-facing threat model and defense-layer inventory:
+[docs/security/prompt-injection.md](docs/security/prompt-injection.md).
+Disclosure policy: [SECURITY.md](SECURITY.md).
+
+## What's enforced
+
+**Before every commit/merge:**
+
+- Protected file check: `.claude/`, `.stoke/`, `CLAUDE.md`, `.env*`,
+  `stoke.policy.yaml`.
+- Scope check: the agent can only modify files declared in
+  `task.files`.
+- Build / test / lint verification pipeline (race detector green across
+  the full repo; any new race is a real regression, not advisory).
+- Cross-model review gate (blocks merge on execution failure or
+  reviewer rejection).
+- AST-aware critic gate (secrets, SQL injection, empty catches) runs
+  before build/test.
+
+**Auth isolation (Mode 1):**
+
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, cloud provider vars stripped
+  from the child env.
+- `apiKeyHelper: null` in settings (repo helpers cannot override OAuth).
+- Each pool runs in its own `CLAUDE_CONFIG_DIR` / `CODEX_HOME`.
+
+**MCP isolation (plan + verify phases):**
+
+- `--strict-mcp-config --mcp-config <empty.json>`.
+- `--disallowedTools mcp__*`.
+- Trust gating: `untrusted` workers can only invoke tools from
+  `untrusted` servers.
+
+**Sandbox:**
+
+- `sandbox.failIfUnavailable: true` — fail-closed.
+- Filesystem writes restricted to the worktree.
+
+**11-layer policy engine:** `--tools`, MCP isolation,
+`--disallowedTools`, `--allowedTools`, `settings.json`, worktree
+isolation, sandbox, `--max-turns`, enforcer hooks (PreToolUse +
+PostToolUse), verify pipeline, git ownership. Each layer is independent;
+defense in depth.
+
+**Retry intelligence:**
+
+- 10 failure classes with TS / Go / Python / Rust / Clippy parsers.
+- 9 policy violation patterns.
+- Clean worktree per retry (learning is in instructions, not code state).
+- DiffSummary injected into retry prompt.
+- Same-error-twice escalation (`failure.Compute()` fingerprint dedup).
+- Cross-task learned patterns persisted via the wisdom store.
+
+## Repository map
+
+R1 is one Go module (`github.com/RelayOne/r1`), Go 1.25,
+organized around a small `cmd/` tree and a large `internal/` tree.
+(The legacy `github.com/ericmacdougall/stoke` module path is retracted
+per §S2-1; Go's module proxy still serves pinned historical tags.)
+
+```
+cmd/
+  r1/                Primary orchestrator (30+ subcommands, ~7K LOC in main.go)
+  stoke-acp/         Agent Client Protocol adapter
+  stoke-a2a/         A2A peering: signed cards, HMAC tokens, x402 micropayments
+  stoke-mcp/         MCP codebase tool server
+  stoke-server/      Mission API HTTP server
+  stoke-gateway/     Managed-cloud gateway
+  r1-server/         Per-machine dashboard (port 3948)
+  chat-probe/        Chat-descent + sessionctl probe
+  critique-compare/  Bench runner for reviewer prompt tuning
+
+internal/            180 packages — see PACKAGE-AUDIT.md for the full table
+bench/               11 subpackages — golden mission bench, cost tracker, evolver, judge
+corpus/              Independent bench modules with their own go.mod
+```
+
+### `internal/` at a glance
+
+**Governance v2** (append-only, content-addressed):
+`contentid`, `stokerr`, `ledger`, `ledger/nodes`, `ledger/loops`,
+`bus`, `supervisor` (+ 9 rule subpackages), `concern`, `harness`,
+`snapshot`, `wizard`, `skillmfr`, `bench`, `bridge`.
+
+**Core workflow**:
+`agentloop`, `app`, `hub`, `hub/builtin`, `mission`, `workflow`,
+`engine`, `orchestrate`, `scheduler`, `plan`, `taskstate`.
+
+**Planning and decomposition**:
+`interview`, `intent`, `conversation`, `skillselect`, `chat`,
+`operator`, `hire`.
+
+**Code analysis**:
+`goast`, `repomap`, `symindex`, `depgraph`, `chunker`, `tfidf`,
+`vecindex`, `semdiff`, `diffcomp`, `gitblame`, `depcheck`.
+
+**File and workspace**:
+`atomicfs`, `fileutil`, `filewatcher`, `worktree`, `branch`, `hashline`.
+
+**Testing and verification**:
+`baseline`, `verify`, `convergence`, `testgen`, `testselect`, `critic`,
+`reviewereval`, `smoketest`.
+
+**Error handling**:
+`failure`, `errtaxonomy`, `checkpoint`.
+
+**Code generation**:
+`patchapply`, `extract`, `autofix`, `conflictres`, `tools`.
+
+**Agent behavior**:
+`boulder`, `specexec`, `handoff`, `consolidation`.
+
+**Knowledge and learning**:
+`memory`, `wisdom`, `research`, `flowtrack`, `replay`, `sharedmem`,
+`stancesign`.
+
+**Executors (multi-task agent)**:
+`executor`, `router`, `browser`, `deploy`, `websearch`, `delegation`,
+`fanout`, `oneshot`.
+
+**LLM integration**:
+`apiclient`, `provider`, `modelsource`, `mcp`, `model`, `prompt`,
+`prompts`, `promptcache`, `promptguard`, `microcompact`, `ctxpack`,
+`tokenest`, `costtrack`, `litellm`.
+
+**Permissions and security**:
+`consent`, `rbac`, `hooks`, `hitl`, `scan`, `secrets`, `redact`,
+`redteam`, `policy`, `encryption`, `retention`.
+
+**Config and session**:
+`config`, `session`, `sessionctl`, `subscriptions`, `pools`, `context`,
+`env`, `eventlog`, `runtrack`, `correlation`.
+
+**Infrastructure**:
+`agentmsg`, `dispatch`, `logging`, `metrics`, `telemetry`, `notify`,
+`stream`, `streamjson`, `jsonutil`, `schemaval`, `validation`,
+`perflog`, `topology`, `gateway`, `cloud`, `trustplane`, `a2a`,
+`agentserve`.
+
+**UI and interfaces**:
+`tui`, `viewport`, `repl`, `server`, `remote`, `report`, `progress`,
+`audit`, `skill`, `plugins`, `preflight`, `taskstats`.
+
+Package count is verified in CI via `make check-pkg-count` against the
+Makefile's expected value.
+
+## MCP servers
+
+R1 can connect to Model Context Protocol (MCP) servers — GitHub,
+Linear, Slack, Postgres, or any custom server — and expose their tools
+to workers as `mcp_<server>_<tool>` calls. Configure in
+`stoke.policy.yaml`:
+
+```yaml
+mcp_servers:
+  - name: linear
+    transport: stdio
+    command: linear-mcp-server
+    auth_env: LINEAR_API_KEY
+    trust: untrusted
+    max_concurrent: 4
+  - name: github
+    transport: http
+    url: https://api.github.com/mcp
+    auth_env: GITHUB_TOKEN
+    trust: trusted
+    timeout: 30s
+  - name: docs
+    transport: sse
+    url: https://docs.example.com/mcp/events
+    trust: untrusted
+```
+
+Each server config supports `stdio` / `http` / `streamable-http` / `sse`
+transports, per-server trust label (`trusted` / `untrusted`),
+concurrency caps, and auth env vars. HTTP/HTTPS enforcement:
+non-localhost URLs must be `https://` unless the URL is
+`http://localhost:*` or `http://127.0.0.1:*`.
+
+CLI surface:
+
+```bash
+r1 mcp list-servers                                  # configured servers + circuit state
+r1 mcp list-tools --json                             # every tool across reachable servers
+r1 mcp test linear                                   # init + list-tools + single trivial call
+r1 mcp call linear create_issue --args-json '{"title":"demo"}'
+```
+
+Trust gating: `untrusted` workers can only invoke tools from
+`untrusted` servers; `trusted` workers see everything. The MCP gate
+pairs with a per-server circuit breaker (closed → open → half-open
+with exponential cooldown) and a redactor that registers every
+`auth_env` value so tokens never leak into log output.
+`STOKE_MCP_STRICT=1` upgrades MCP ghost-call detection (a worker
+claiming to have called a tool without a matching `<mcp_result>` trace)
+from advisory-logging to a hard failure.
 
 ## Build, test, vet — the CI gate
 
 ```bash
-go build ./cmd/r1
+go build ./cmd/r1           # + ./cmd/r1-acp via `make build`
 go test ./...
 go vet ./...
 ```
 
-These three commands are the gate. They must be green on every PR. CI also
-runs the race detector, `golangci-lint` (advisory), `govulncheck`, and
-`gosec`.
+These three commands are the CI gate. They must be green on every PR.
+
+CI (`.github/workflows/ci.yml`) pins Go 1.25.5 and adds:
+
+- `race:` a second job that runs the full suite under `-race`. The
+  streamjson TwoLane stop-channel fix made the race detector green
+  across the entire repo; any new race is a real regression, not
+  advisory.
+- `lint:` `golangci-lint` builds from source against Go 1.25.5 (the
+  pre-built v1.64.8 binaries ship with Go 1.24 and refuse to run
+  against a 1.25.5 target). Findings surface as `::warning::`
+  annotations and are **advisory** — a 30-PR lint-cleanup campaign
+  (#5 through #29) closed 600+ findings across unused, revive,
+  prealloc, nilerr, govet, exhaustive, goconst, predeclared, gocritic,
+  errorlint, errname, forcetypeassert, gosec, noctx, staticcheck,
+  gosimple, makezero, ineffassign, wastedassign, unconvert,
+  exitAfterDefer, indent-error-flow. New lint findings are welcomed
+  as separate cleanup PRs; they do not block feature work.
+- `security:` `govulncheck` + `gosec` (built from source to match Go
+  1.25.5). Findings surface as warnings; stdlib vulnerabilities
+  trigger a Go-version upgrade PR rather than a code change.
+
+A 30-PR cleanup campaign also shipped:
+
+- OSS-hub governance addendum: `GOVERNANCE.md`, `CONTRIBUTING.md`,
+  `CLA.md`, `CODE_OF_CONDUCT.md`, `STEWARDSHIP.md`, `SECURITY.md`,
+  goreleaser Homebrew publishing, cosign keyless OIDC signing.
+- Race-clean gate: `streamjson` TwoLane stop-channel fix unblocks the
+  `-race` job across the full repo.
+- Package count drift check in `make check-pkg-count` asserted at 180
+  internal packages.
+
+## Project Status
+
+### Done (Wave 2, 2026-04-26)
+- Browser tools `wait_for`, `get_html`, plus Manus-style autonomous operator
+  (PRs #12, #15; commits `7144b6f`, `f8d8d1c`).
+- Multi-language LSP server adapter (PRs #13, #17; commits `3cc1b6f`, `4042692`).
+- VS Code + JetBrains IDE plugins (PR #16; commit `e6393c8`).
+- Multi-CI parity — GitHub Actions, GitLab CI, CircleCI (PR #14; commit `f8d8d1c`).
+- Desktop GUI shell + real robotgo backend (PRs #18, #19; commits `d4403b8`,
+  `841a494`).
+- R1D-1 Tauri subprocess launcher (commit `693e241`).
+- web_fetch / web_search / cron / pdf_read tools (commit `20228bf`).
+- Tool surface: image_read, notebook_read/cell_run, powershell, gh_pr/run
+  wired into Handle() (PR #9; commit `cbe0ae1`).
+- Shell injection preprocessing + path-scoped activation (commit `13afd78`).
+- Veritize-Verity dual-send headers (PR #8; commit `6ed5bb8`).
+- Cloud Build CI cutover + local pre-push hook (PR #11; commit `a883825`).
+- CI/CD + desktop polish (PRs #18-21; commits `bd6de28`, `2607578`).
+
+### In Progress
+- Hardening of the Manus-style autonomous operator (current state behind a
+  per-mission toggle).
+- LSP feature coverage beyond hover/definition/diagnostics.
+
+### Scoped
+- IDE plugin marketplace publishing (VS Code Marketplace, JetBrains
+  Marketplace) — code is in-tree, publishing pipeline pending.
+- Headless desktop GUI for CI screenshot tests.
+
+### Scoping
+- Cross-machine session migration (Tauri subprocess launcher is one-host).
+- Per-tool throttling policy in `.stoke/`.
+
+### Potential-On Horizon
+- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions.
+- Native MCP server bundle for popular IDEs without a separate install step.
+- Browser tool sandboxed under a remote browser (vs current local browser).
+
+## Docs
+
+- [docs/README.md](docs/README.md) — Navigable index (mirror of this file)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Tech stack, system components, data flow
+- [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — User journey + technical walkthrough
+- [docs/FEATURE-MAP.md](docs/FEATURE-MAP.md) — Every feature with benefit, status, and spec
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Prereqs, env vars, install paths, monitoring
+- [docs/BUSINESS-VALUE.md](docs/BUSINESS-VALUE.md) — The pitch (no jargon)
+- [docs/operator-guide.md](docs/operator-guide.md) — Mode 1 vs 2, pool setup, macOS caveats, troubleshooting
+- [docs/stoke-spec-final.md](docs/stoke-spec-final.md) — 1,091-line frozen spec with 3 adversarial reviews
+- [docs/stoke-protocol.md](docs/stoke-protocol.md) — STOKE envelope v1.0 (the wire format)
+- [docs/benchmark-stance.md](docs/benchmark-stance.md) — Why we report SWE-bench Pro, SWE-rebench, Terminal-Bench deltas
+- [docs/architecture/](docs/architecture/) — 19 sub-docs: v2-overview, ledger, bus, supervisor, harness-stances, providers, bare-mode, context-budget, policy-engine, bridge, wizard, oauth-usage-endpoint, failure-recovery, single-strong-agent-stance, etc.
+- [docs/decisions/](docs/decisions/) — Architecture Decision Records
+- [docs/history/](docs/history/) — Preserved historical design documents
+- [docs/security/](docs/security/) — Threat model, prompt-injection, MCP-security
+- [specs/](specs/) — Scoped specs (ready / in-flight / shipped)
 
 ## Governance
 
-- [GOVERNANCE.md](GOVERNANCE.md) — Roles (Contributor / Maintainer / BDFL),
-  decision process, maintainer path.
-- [STEWARDSHIP.md](STEWARDSHIP.md) — Core commitment: no functional feature
-  migrates from self-hosted to cloud-only, ever.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — How to contribute, branch naming, PR
-  template, DCO signoff.
-- [SECURITY.md](SECURITY.md) — Disclosure policy, threat-model scope.
-
-## Status — sectioned
-
-### Done
-- Governed plan/execute/verify mission runtime with cross-model reviewer gate.
-- Content-addressed ledger, WAL-backed event bus, STOKE envelope.
-- Deterministic skill substrate + signed pack distribution + HTTP registry.
-- Wave 2 R1-parity: browser tools, Manus operator, LSP client, VS Code +
-  JetBrains plugins, multi-CI parity, Tauri desktop R1D-1..R1D-12.
-- Prompt-injection hardening across ingest paths, honeypot gates, red-team
-  corpus.
-
-### In Progress
-- Hardening of the Manus-style autonomous operator (per-mission toggle).
-- LSP feature coverage beyond hover/definition/diagnostics.
-- Race-clean regression sweep across `internal/`.
-
-### Scoped
-- **cortex-core** (spec 1) — Workspace + Lobe interface + Round + Router +
-  drop-partial interrupt + pre-warm pump.
-- **cortex-concerns** (spec 2) — six v1 Lobes.
-- **lanes-protocol** (spec 3) — six event types, JSON-RPC envelope, five MCP
-  tools.
-- **tui-lanes** (spec 4) — Bubble Tea v2 lanes panel.
-- **r1d-server** (spec 5) — `r1 serve` per-user singleton daemon.
-- **web-chat-ui** (spec 6) — React + Vite + Tailwind + shadcn web app.
-- **desktop-cortex-augmentation** (spec 7) — Tauri 2 augmentation.
-- **agentic-test-harness** (spec 8) — every UI action reachable via MCP.
-
-### Scoping
-- Cross-machine session migration (current daemon is one-host).
-- Per-tool throttling policy in `.stoke/`.
-- Encryption-at-rest for journals (separate `specs/encryption-at-rest.md`).
-
-### Potential — On Horizon
-- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions.
-- Native MCP server bundle for popular IDEs without a separate install step.
-- Browser tool sandboxed under a remote browser.
-- Cross-product deterministic skill exchange and marketplace dynamics.
+- [GOVERNANCE.md](GOVERNANCE.md) — Roles (Contributor / Maintainer /
+  BDFL), decision process (small / architecture / breaking), maintainer path.
+- [STEWARDSHIP.md](STEWARDSHIP.md) — The core commitment: no
+  functional feature migrates from self-hosted to cloud-only, ever.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — How to contribute, branch naming,
+  PR template, DCO signoff.
+- [CLA.md](CLA.md) — Individual Contributor License Agreement
+  (Apache-style, MIT-licensed outbound).
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — Contributor Covenant 2.1.
+- [SECURITY.md](SECURITY.md) — Disclosure policy, preferred channel
+  (GitHub Security Advisories), threat-model scope, honor list.
 
 ## License
 

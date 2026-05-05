@@ -55,7 +55,7 @@ Sources:
 - Policy YAML parser: `internal/config/` (existing `stoke.policy.yaml` loader)
 - Bus event shapes: `internal/bus/bus.go:31-69`; new `mcp.*` types follow the same `Type + Data map[string]any` convention
 - StreamJSON subtypes: `_stoke.dev/mcp_*` extensions on `EmitSystem` / `EmitUser` per spec-2
-- Truthfulness-contract injection: `cmd/stoke/sow_native.go:3906-3918` (spec-1 established this slot)
+- Truthfulness-contract injection: `cmd/r1/sow_native.go:3906-3918` (spec-1 established this slot)
 - Content judge: `internal/plan/content_judge.go:54-154`
 - Trust-level plumbing (when spec-10 lands): `internal/rbac/`
 
@@ -257,7 +257,7 @@ State is per-`Registry` (per-process) with a `sync.Mutex`; each state change pub
 
 ### Contract addition
 
-Add this line to `truthfulnessContract` constant in `cmd/stoke/sow_native.go` (established by spec-1 at lines 3906-3918):
+Add this line to `truthfulnessContract` constant in `cmd/r1/sow_native.go` (established by spec-1 at lines 3906-3918):
 
 > `- Never fabricate MCP tool responses. If an MCP call fails, say so explicitly (e.g. "mcp_github_create_issue returned circuit_open"). Do not invent issue numbers, URLs, ticket IDs, message IDs, or other outputs you did not receive from a real MCP tool_use/tool_result pair.`
 
@@ -298,7 +298,7 @@ StreamJSON mirror: `subtype:"stoke.mcp.<event>"`, payload in `_stoke.dev/mcp`.
 - If `internal/rbac` exposes `worker.TrustLevel` (already present) the registry consults it. If not available, default trust=2.
 - Escape hatch: `STOKE_MCP_UNGATED=1` bypasses all trust checks, always emits `mcp.policy.override`, and is banned in CI via `scan/` rule (`rule: env_mcp_ungated`).
 
-## CLI Surface (`cmd/stoke/mcp.go` new)
+## CLI Surface (`cmd/r1/mcp.go` new)
 
 | Command | Behavior |
 |---|---|
@@ -311,7 +311,7 @@ All commands read `stoke.policy.yaml` via the existing config loader; no new fla
 
 ## Wiring Into `native_runner.go`
 
-1. On worker spawn, `NativeRunner` receives the process-wide `*mcp.Registry` (constructed once in `cmd/stoke/main.go` after config load).
+1. On worker spawn, `NativeRunner` receives the process-wide `*mcp.Registry` (constructed once in `cmd/r1/main.go` after config load).
 2. Before calling `agentloop.Run`, `NativeRunner` calls `registry.AllToolsForTrust(workerTrust)` to get `[]agentloop.Tool` filtered by trust.
 3. The agentloop tool handler for any name matching `mcp_*` dispatches to `registry.Call(ctx, name, args)`; every other name routes as today.
 4. Tool-result content is wrapped `<mcp_result server="X" tool="Y" call_id="Z">…</mcp_result>` before being appended to the conversation (reinforces that it came from outside the model).
@@ -373,7 +373,7 @@ All commands read `stoke.policy.yaml` via the existing config loader; no new fla
 - [ ] Assistant text mentions `issue #4242` without any `mcp.call.complete` event → `Real=false`, `FakeFile="<mcp_ghost_call>"`.
 - [ ] Assistant text mentions `issue #4242` with matching event whose result body contains `4242` → `Real=true`.
 
-### `cmd/stoke/mcp_cmd_test.go`
+### `cmd/r1/mcp_cmd_test.go`
 - [ ] `stoke mcp list-servers` prints table, exit 0 even when circuit is open.
 - [ ] `stoke mcp test bogus` → exit 2, stderr contains `server not configured`.
 
@@ -390,7 +390,7 @@ All commands read `stoke.policy.yaml` via the existing config loader; no new fla
 ### Bash-check acceptance (CI gate)
 
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go test ./internal/mcp/... -run TestMCPClientStdio
 go test ./internal/mcp/... -run TestMCPClientSSE
 go test ./internal/mcp/... -run TestMCPClientStreamableHTTP
@@ -398,7 +398,7 @@ go test ./internal/mcp/... -run TestCircuitBreaker
 go test ./internal/mcp/... -run TestRegistryTrustFilter
 go test ./internal/mcp/... -run TestAuthRedaction
 go test ./internal/plan/... -run TestContentJudgeGhostMCP
-go vet ./internal/mcp/... ./cmd/stoke/...
+go vet ./internal/mcp/... ./cmd/r1/...
 ./stoke mcp list-servers | head -3
 ./stoke mcp test github --timeout 5s
 ./stoke mcp list-tools linear --json | jq -e '.[0].name | startswith("mcp_linear_")'
@@ -420,11 +420,11 @@ sqlite3 .stoke/events.db 'SELECT COUNT(*) FROM events WHERE type = "mcp.call.sta
 10. [ ] Implement `internal/mcp/events.go`: `publishStart`, `publishComplete`, `publishError` helpers that pack the defined payload shape onto bus and streamjson. Never include args / bodies / tokens.
 11. [ ] Wire `stoke.policy.yaml` loader: extend `internal/config` to parse `mcp_servers:`, validate (regex on name, http→https rule, required-fields-per-transport). Add golden-file test.
 12. [ ] Wire `internal/engine/native_runner.go`: accept `*mcp.Registry` in the runner constructor, call `AllToolsForTrust` before `agentloop.Run`, register a dispatch func for `mcp_*` names that routes to `registry.Call`. Wrap results in `<mcp_result server=… tool=… call_id=…>…</mcp_result>`.
-13. [ ] Add `cmd/stoke/mcp.go`: `list-servers`, `list-tools`, `test`, `call` subcommands; register under `stoke mcp` parent. Include `--json` on `list-tools`. Respect `--timeout`.
+13. [ ] Add `cmd/r1/mcp.go`: `list-servers`, `list-tools`, `test`, `call` subcommands; register under `stoke mcp` parent. Include `--json` on `list-tools`. Respect `--timeout`.
 14. [ ] Extend spec-1's truthfulness contract constant with the MCP line (see §Anti-Deception Integration); no new flag.
 15. [ ] Extend `internal/plan/content_judge.go` with the MCP ghost-call check (§Anti-Deception Integration). Gate via `STOKE_MCP_STRICT=1` env for blocking behavior; default non-gating advisory.
 16. [ ] Add `scan/` rule `env_mcp_ungated` that rejects any commit containing `STOKE_MCP_UNGATED=1` in files under `.github/` or `scripts/ci/`.
 17. [ ] Tests: `client_stdio_test.go`, `client_http_test.go`, `client_sse_test.go`, `circuit_test.go`, `registry_test.go`, `security_test.go`, `redact_test.go`, `content_judge_mcp_test.go`, `mcp_cmd_test.go`. All listed in §Testing, all self-contained (fixtures inline).
 18. [ ] Docs: update `README.md` section "MCP Servers" with the policy example and three CLI commands. Do not create a new MD file.
 19. [ ] Smoke: run `./stoke mcp test <server>` against a local `linear-mcp-server` fake; capture sqlite event counts as in §Acceptance-Criteria Bash block.
-20. [ ] Final CI gate: `go build ./cmd/stoke && go test ./... && go vet ./...` — all green.
+20. [ ] Final CI gate: `go build ./cmd/r1 && go test ./... && go vet ./...` — all green.

@@ -33,7 +33,7 @@ external notice before the v2.0.0 cutover. Merge this branch when:
 
 **Surfaces dropped:**
 
-- `cmd/stoke-mcp/main.go`:
+- `cmd/r1-mcp/main.go`:
   - `baseTools` var (legacy stoke_* primitive list) renamed and
     re-named to `tools` with r1_* canonical names in place. The
     canonical list contains exactly the 4 primitives:
@@ -48,7 +48,7 @@ external notice before the v2.0.0 cutover. Merge this branch when:
     clients see the canonical name in the error text.
   - 14 `stoke_*: <error>` response-text prefixes flipped to
     `r1_*: <error>` across the four primitive handlers.
-- `cmd/stoke-mcp/main_test.go`:
+- `cmd/r1-mcp/main_test.go`:
   - `TestToolsList_Returns4Primitives` asserts exactly 4 tools
     (down from 8) and that all carry the r1_ prefix.
   - Payload names in `TestToolsCall_Invoke`, `_Verify`, `_Audit`,
