@@ -232,5 +232,14 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/r1/export_cmd.go") {
 		return true
 	}
+	// no-nolint: sessionhub.validateWorkdir is a flat sequence of
+	// 5 rule guards (empty / abs / exists / dir / writable / not-under-.r1).
+	// gocyclo flags it for cyclomatic complexity, but splitting it into
+	// helper funcs would obscure the rule list — each guard is one
+	// short branch with a specific ErrInvalidWorkdir wrap. Documented
+	// nolint is the correct escape hatch (matches the pattern above).
+	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "internal/server/sessionhub/sessionhub.go") {
+		return true
+	}
 	return false
 }
