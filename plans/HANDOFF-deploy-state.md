@@ -10,7 +10,37 @@
 
 Cloud Run reserves `/healthz` on this org's frontend; r1 services additionally answer `/livez`, `/readyz`, `/v1/version`, and `/`.
 
-## Custom-domain mappings on r1.run (all 12 created; cert provisioning ~5-15 min)
+## Custom-domain mappings on r1.run (7/12 HTTPS-live; 5 still issuing)
+
+### Cert state at last check (UTC ~06:30, after recreation fix)
+
+LIVE on HTTPS (200 on /livez):
+  - platform.r1.run
+  - downloads.r1.run
+  - admin.r1.run
+  - platform.staging.r1.run
+  - api.staging.r1.run
+  - admin.staging.r1.run
+  - admin.dev.r1.run
+
+CertificatePending (typical 5-15 min after recreation; should be live by next check):
+  - api.r1.run
+  - downloads.staging.r1.run
+  - platform.dev.r1.run
+  - api.dev.r1.run
+  - downloads.dev.r1.run
+
+### Root cause of the original stalled state
+
+9 mappings were created at 04:09 UTC during initial deploy. The matching
+Cloudflare CNAMEs weren't added until 05:30 UTC. Cloud Run's first ACME
+challenge attempts at 04:09 saw NXDOMAIN; the system entered exponential
+backoff. By the time the next retry slot opened, the backoff window was
+much longer than the 90-second DNS round-trip, so the certs sat in
+"WaitingForOperation" indefinitely. Fix: deleted + recreated all 9
+stuck mappings — with CNAMEs already in place, fresh ACME challenges
+resolved immediately. 7 of those 9 already provisioned; the rest are
+within typical issuance window.
 
 | URL                          | Cloud Run service           |
 |------------------------------|-----------------------------|
