@@ -1,109 +1,110 @@
-# r1.run Deployment State — Snapshot 2026-05-04 ~20:55 PDT (all envs LIVE)
+# r1.run Deployment State — Snapshot 2026-05-05 ~05:25 UTC (12/12 LIVE, prod auth wired)
 
-## Live URLs (all 200 on /livez)
+## Live URLs (all 12 services 200 on /livez + /readyz)
 
-| Env     | r1-coord-api | r1-docs | r1-downloads-cdn |
-|---------|--------------|---------|------------------|
-| dev     | r1-coord-api-dev-2sobff3gmq-uc.a.run.app | r1-docs-dev-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-dev-2sobff3gmq-uc.a.run.app |
-| staging | r1-coord-api-staging-2sobff3gmq-uc.a.run.app | r1-docs-staging-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-staging-2sobff3gmq-uc.a.run.app |
-| prod    | r1-coord-api-prod-2sobff3gmq-uc.a.run.app | r1-docs-prod-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-prod-2sobff3gmq-uc.a.run.app |
+| Env     | r1-coord-api                                  | r1-docs                                  | r1-downloads-cdn                                  | r1-admin                                  |
+|---------|-----------------------------------------------|------------------------------------------|---------------------------------------------------|-------------------------------------------|
+| dev     | r1-coord-api-dev-2sobff3gmq-uc.a.run.app      | r1-docs-dev-2sobff3gmq-uc.a.run.app      | r1-downloads-cdn-dev-2sobff3gmq-uc.a.run.app      | r1-admin-dev-2sobff3gmq-uc.a.run.app      |
+| staging | r1-coord-api-staging-2sobff3gmq-uc.a.run.app  | r1-docs-staging-2sobff3gmq-uc.a.run.app  | r1-downloads-cdn-staging-2sobff3gmq-uc.a.run.app  | r1-admin-staging-2sobff3gmq-uc.a.run.app  |
+| prod    | r1-coord-api-prod-2sobff3gmq-uc.a.run.app     | r1-docs-prod-2sobff3gmq-uc.a.run.app     | r1-downloads-cdn-prod-2sobff3gmq-uc.a.run.app     | r1-admin-prod-2sobff3gmq-uc.a.run.app     |
 
-Cloud Run reserves `/healthz` on this org's frontend; my services additionally answer
-`/livez`, `/readyz`, `/v1/version`, and `/`.
+Cloud Run reserves `/healthz` on this org's frontend; r1 services additionally answer `/livez`, `/readyz`, `/v1/version`, and `/`.
 
-## Pending operator actions for r1.run domain mapping
+## Deployed image tags (all 3 envs identical)
 
-1. Verify ownership of `r1.run`:
-   ```bash
-   gcloud domains verify r1.run
-   ```
-   Adds a TXT record requirement at the Search Console; copy the value.
+| Service            | Tag        | Notes                                                                |
+|--------------------|------------|----------------------------------------------------------------------|
+| r1-coord-api       | `244f87d8` | Includes JwtService, RelayOneSsoClient, PostHog/CustomerIO/CodeRadar |
+| r1-docs            | `bf49ec45` | Static-rendered Markdown docs                                        |
+| r1-downloads-cdn   | `bf49ec45` | Streams gs://relayone-488319-r1-releases                             |
+| r1-admin           | `57f88598` | Server-rendered Go admin (9 routes; `requireOperator` middleware)    |
 
-2. Add the TXT record to Cloudflare (your `r1.run` zone, root):
-   - Type: TXT
-   - Host: `@` (or `r1.run`)
-   - Value: `google-site-verification=<TOKEN>`
-   - TTL: auto
+`/v1/version` confirms `244f87d8` reporting from coord-api in all 3 envs.
 
-3. Wait for DNS propagation (~5-10 min), then click verify in Search Console.
+## Secrets in Secret Manager (Cloud Run SA `188548470397-compute@…` has `secretAccessor`)
 
-4. Create the 9 domain mappings:
-   ```bash
-   for ENV in prod staging dev; do
-     SUB=""
-     [ "$ENV" = "staging" ] && SUB=".staging"
-     [ "$ENV" = "dev" ] && SUB=".dev"
-     gcloud beta run domain-mappings create --service=r1-docs-$ENV          --domain=platform$SUB.r1.run    --region=us-central1
-     gcloud beta run domain-mappings create --service=r1-coord-api-$ENV     --domain=api$SUB.r1.run         --region=us-central1
-     gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV --domain=downloads$SUB.r1.run   --region=us-central1
-   done
-   ```
+Per env (`{prod,staging,dev}`):
+- `r1-<env>-shared-DATABASE_URL` — Cloud SQL DSN (placeholder; operator must populate before real DB use)
+- `r1-<env>-shared-ANTHROPIC_API_KEY` — Anthropic key (placeholder)
+- `r1-<env>-shared-AUTH_JWT_SECRET` — 48 random base64 bytes generated 2026-05-05 (live; coord-api uses these for HS256)
 
-5. Each mapping returns CNAME records you add to Cloudflare for the corresponding subdomains.
+Wiring in `services/deploy.sh`:
+```
+r1-coord-api → DATABASE_URL=…:latest, AUTH_JWT_SECRET=…:latest
+```
 
-# Original snapshot 2026-05-04 ~20:30 PDT
+## Pending operator actions
 
-## Where we are
+### 1. Domain mappings to r1.run (DNS only)
+After `gcloud domains verify r1.run` is complete in Search Console, run:
+```bash
+for ENV in prod staging dev; do
+  SUB=""
+  [ "$ENV" = "staging" ] && SUB=".staging"
+  [ "$ENV" = "dev" ]     && SUB=".dev"
+  gcloud beta run domain-mappings create --service=r1-docs-$ENV          --domain=platform$SUB.r1.run    --region=us-central1
+  gcloud beta run domain-mappings create --service=r1-coord-api-$ENV     --domain=api$SUB.r1.run         --region=us-central1
+  gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV --domain=downloads$SUB.r1.run   --region=us-central1
+  gcloud beta run domain-mappings create --service=r1-admin-$ENV         --domain=admin$SUB.r1.run       --region=us-central1
+done
+```
+Each mapping returns CNAME records — add them to Cloudflare with **proxy=OFF (gray cloud)**, otherwise Cloud Run cannot terminate TLS.
 
-### Code
-- 4 specs (6/7/8/9) merged into `claude/w521-eliminate-stoke-leftovers-2026-05-02`
-- Pushed to `origin/claude/w521-eliminate-stoke-leftovers-2026-05-02`
-- `go build ./...` clean, `go vet ./...` clean
-- 99% Go tests pass — 2 pre-existing failures unrelated to merges:
-  - `internal/coderadar`: `TestParseDSNRawKey` (test/code drift on baseURL)
-  - `internal/scan`: `TestSelfScan` (1 nolint flagged in `internal/server/sessionhub/sessionhub.go:351`)
+### 2. Populate real secret values (currently placeholders)
+- `DATABASE_URL` — once Cloud SQL is finished provisioning, run `gcloud sql users set-password` and form the DSN: `postgresql://r1@/r1?host=/cloudsql/relayone-488319:us-central1:r1-<env>-pg`
+- `ANTHROPIC_API_KEY` — paste the workspace key
+- `AUTH_JWT_SECRET` — already populated with a 48-byte random value (rotate via `gcloud secrets versions add`)
 
-### Infrastructure on `relayone-488319`
-- Cloud SQL: `r1-prod-pg` RUNNABLE (POSTGRES_16, db-g1-small, `136.113.29.19`)
-- Cloud SQL: `r1-staging-pg` PENDING_CREATE (db-f1-micro, `35.239.73.209`)
-- Cloud SQL: `r1-dev-pg` PENDING_CREATE (db-f1-micro, `34.41.150.94`)
-- Artifact Registry: `us-central1-docker.pkg.dev/relayone-488319/r1` created
-- Secrets: 6 placeholders created
-  - `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY}` — values are "placeholder-set-by-operator"
-- Container images: 3 builds in progress (Cloud Build IDs 418c3541, 6823f209, 55ba4721)
-  - `r1-coord-api:bf49ec45`
-  - `r1-docs:bf49ec45`
-  - `r1-downloads-cdn:bf49ec45`
+### 3. Wire Cloud Build triggers
+```bash
+./services/scripts/setup-cloudbuild-triggers.sh
+```
+Creates 3 triggers: `r1-deploy-prod` (push to `main`), `r1-deploy-staging` (push to `staging`), `r1-deploy-dev` (push to `dev`).
 
-### Services scaffolded on `claude/w521-…`
-- `services/r1-coord-api/` — Go service, ~150 LOC, /healthz + /v1/license/verify + /v1/telemetry/opt-in stubs
-- `services/r1-docs/` — Go service that embeds docs/*.md and renders to HTML
-- `services/r1-downloads-cdn/` — Go service streaming gs://relayone-488319-r1-releases/{env}/<asset>
-- `services/deploy.sh` — `./services/deploy.sh {prod|staging|dev|all}` driver
+### 4. Apply branch protection
+```bash
+./scripts/setup-branch-protection.sh
+```
+Creates `dev` + `staging` if missing; sets required-PR-review + status-checks on `main` and `staging`; leaves `dev` open for direct commits.
 
-### What still needs to happen (in order)
-1. ⏳ Cloud SQL r1-staging-pg + r1-dev-pg → RUNNABLE (~5 more min)
-2. ⏳ Container image builds → SUCCESS (~3 more min)
-3. ⏯ Operator action: set real values for the 6 secret placeholders
-4. ⏯ Operator action: add Cloud Run domain-verification TXT record to `r1.run` zone on Cloudflare
-5. Run `./services/deploy.sh all` — 9 Cloud Run services come up
-6. /healthz smoke check across all 9
-7. After DNS verifies: create domain mappings
-   - `platform.r1.run` → `r1-docs-prod`
-   - `platform.staging.r1.run` → `r1-docs-staging`
-   - `platform.dev.r1.run` → `r1-docs-dev`
-   - `api.r1.run` → `r1-coord-api-prod`
-   - `api.staging.r1.run` → `r1-coord-api-staging`
-   - `api.dev.r1.run` → `r1-coord-api-dev`
-   - `downloads.r1.run` → `r1-downloads-cdn-prod`
-   - `downloads.staging.r1.run` → `r1-downloads-cdn-staging`
-   - `downloads.dev.r1.run` → `r1-downloads-cdn-dev`
-8. `gcloud beta run domain-mappings create …` × 9
-9. Final verification: `curl https://platform.r1.run/healthz` etc.
+### 5. CLAUDE.md package map (harness blocks agent edits to CLAUDE.md)
+Insert the following line after the existing `handoff/` line in `/home/eric/repos/r1-agent/CLAUDE.md`:
+```
+antitrunc/                         Anti-truncation enforcement (layered defense against scope self-reduction)
+```
 
-### Known blockers (need operator action)
-- Spec 9 item 21: CLAUDE.md package map line; harness denies CLAUDE.md edits to agents. Operator adds the line manually:
-  ```
-  antitrunc/                         Anti-truncation enforcement (layered defense against scope self-reduction)
-  ```
-  Insert after `handoff/` line in `/home/eric/repos/r1-agent/CLAUDE.md`.
+## Smoke check output (most recent run)
 
-- DNS verification on `r1.run`: Cloud Run won't accept domain mappings until ownership is verified.
-  Operator needs to:
-  1. `gcloud domains verify r1.run` — produces a TXT record value.
-  2. Add the TXT record to Cloudflare DNS (`r1.run` zone).
-  3. `gcloud run domain-mappings list` will then accept new mappings.
+```
+=== /v1/version on coord-api (all 3 envs) ===
+r1-coord-api-dev      {"env":"dev","service":"r1-coord-api","version":"244f87d8"}
+r1-coord-api-staging  {"env":"staging","service":"r1-coord-api","version":"244f87d8"}
+r1-coord-api-prod     {"env":"prod","service":"r1-coord-api","version":"244f87d8"}
 
-### Pre-existing test failures to triage
-- `TestParseDSNRawKey`: expects `https://ingest.coderadar.app/v1`, code returns `https://api.coderadar.app/v1`. Test fixture stale OR coderadar package's parsing logic regressed. Either fix the test or the parsing code (whichever matches actual contract with the coderadar service).
-- `TestSelfScan`: `internal/server/sessionhub/sessionhub.go:351` carries `//nolint:gocyclo // straight-line guard sequence — splitting it would obscure the rule list.` The selfscan rule blocks any `//nolint` directive. Resolution: either refactor `validateWorkdir` to avoid gocyclo, OR add an exception to the selfscan rule for this specific case.
+=== /livez + /readyz on all 12 services ===
+r1-coord-api-dev          livez=OK readyz=OK
+r1-docs-dev               livez=OK readyz=OK
+r1-downloads-cdn-dev      livez=OK readyz=OK
+r1-admin-dev              livez=OK readyz=OK
+r1-coord-api-staging      livez=OK readyz=OK
+r1-docs-staging           livez=OK readyz=OK
+r1-downloads-cdn-staging  livez=OK readyz=OK
+r1-admin-staging          livez=OK readyz=OK
+r1-coord-api-prod         livez=OK readyz=OK
+r1-docs-prod              livez=OK readyz=OK
+r1-downloads-cdn-prod     livez=OK readyz=OK
+r1-admin-prod             livez=OK readyz=OK
+```
+
+## Recent fixes (this session)
+
+- `services/deploy.sh`: per-service tag resolution via `resolve_tag()` (was applying one global TAG, broke services not yet rebuilt at the requested SHA).
+- `services/deploy.sh`: bound `AUTH_JWT_SECRET=r1-<env>-shared-AUTH_JWT_SECRET:latest` to all coord-api envs (prev only DATABASE_URL).
+- Created `r1-{prod,staging,dev}-shared-AUTH_JWT_SECRET` in Secret Manager + granted Cloud Run SA `secretAccessor`. Without this, `r1-coord-api-prod` Fatalfs at startup with `AUTH_JWT_SECRET must be set in prod`.
+- Upgraded coord-api in all 3 envs from `bf49ec45` (no auth) to `244f87d8` (full auth + tracking).
+- Created `r1-admin-{dev,staging,prod}` services with image `57f88598`.
+
+## Known pre-existing test failures (separate triage)
+
+- `internal/coderadar`: `TestParseDSNRawKey` expects `https://ingest.coderadar.app/v1`, code returns `https://api.coderadar.app/v1`. Either the test fixture is stale or the parsing code regressed; pick whichever matches the actual coderadar contract.
+- `internal/scan`: `TestSelfScan` blocks the `//nolint:gocyclo` directive at `internal/server/sessionhub/sessionhub.go:351`. Either refactor `validateWorkdir` to fall under the gocyclo threshold OR add a selfscan exception for this exact directive.
