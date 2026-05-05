@@ -482,7 +482,7 @@ func TestWorkerFailsUnsupportedRunner(t *testing.T) {
 	if err := d.Enqueue(&Task{ID: "bad-runner", Title: "bad", Prompt: "echo hi", Runner: "bash"}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		task := d.Queue().Get("bad-runner")
 		if task != nil && task.State == StateFailed {

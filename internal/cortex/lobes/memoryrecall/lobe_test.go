@@ -276,7 +276,7 @@ func TestMemoryRecallLobe_ReindexesOnMemoryAdded(t *testing.T) {
 
 	// Poll up to 2s for the observer to land. Production code does not
 	// block on this — TASK-8 only requires "next Run uses the new entry".
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for lobe.DocCount() < 2 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}

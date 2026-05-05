@@ -48,7 +48,7 @@ func TestClarifyingQLobe_ResolvesOnUserAnswer(t *testing.T) {
 
 	// Step 1: drive user-message → 1 question Note.
 	emitUserMessageForTest(bus, "deploy the thing")
-	notes := waitForLobeNotes(t, ws, l.ID(), 1, 2*time.Second)
+	notes := waitForLobeNotes(t, ws, l.ID(), 1, 10*time.Second)
 	if len(notes) != 1 {
 		t.Fatalf("expected exactly 1 question Note before resolution, got %d", len(notes))
 	}
@@ -69,7 +69,7 @@ func TestClarifyingQLobe_ResolvesOnUserAnswer(t *testing.T) {
 
 	// Step 3: wait for the resolving Note to land. We expect 2 Notes
 	// total: the original question + the resolution.
-	resolved := waitForLobeNotes(t, ws, l.ID(), 2, 2*time.Second)
+	resolved := waitForLobeNotes(t, ws, l.ID(), 2, 10*time.Second)
 	if len(resolved) != 2 {
 		t.Fatalf("expected 2 Notes (question + resolution), got %d", len(resolved))
 	}

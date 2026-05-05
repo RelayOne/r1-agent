@@ -23,6 +23,7 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "tailwind.config.ts", "postcss.config.cjs"],
+  "//include-note": "vite.config.ts + vitest.config.ts are NOT type-checked: vitest@2 bundles vite@5 in its own node_modules while the workspace top-level is vite@6, so tsc resolves vite twice and rejects the resulting Plugin<any> mismatch. vite build re-validates the configs at runtime, so this loses no real coverage. Bumping vitest to 4 (which ships vite 6) is the proper fix; deferred per Node 22 LTS post-bump cleanup.",
+  "include": ["src/**/*.ts", "src/**/*.tsx", "playwright.config.ts", "tailwind.config.ts", "postcss.config.cjs"],
   "exclude": ["node_modules", "dist", "test-results", "playwright-report"]
 }

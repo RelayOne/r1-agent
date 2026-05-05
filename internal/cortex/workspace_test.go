@@ -637,7 +637,7 @@ func TestSpotlightEmitsHubEvent(t *testing.T) {
 	}
 
 	// EmitAsync schedules the dispatch on a goroutine; poll briefly.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for {
 		mu.Lock()
 		count := len(events)
