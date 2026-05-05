@@ -187,6 +187,22 @@ r1 antitrunc verify -n 20                   # spec 9 false-completion gate
 
 These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, `gosec`, and `make check-pkg-count`.
 
+## Environments
+
+This repo follows the portfolio env-branch convention:
+
+| Branch    | Environment | Service / target                                    |
+|-----------|-------------|-----------------------------------------------------|
+| `dev`     | dev         | `r1-{coord-api,docs,downloads-cdn,admin}-dev` (auto-deploy on push to `dev`) |
+| `staging` | staging     | `r1-{coord-api,docs,downloads-cdn,admin}-staging` (auto-deploy on push to `staging`) |
+| `main`    | prod        | `r1-{coord-api,docs,downloads-cdn,admin}-prod` (auto-deploy on push to `main`) |
+
+**Branch protection on `main` and `staging`:** PR-required, no force-push, no delete, required check is `r1-agent-pr (relayone-488319)`. `dev` allows direct commits.
+
+**Forward-merge flow:** `dev` → `staging` → `main`. Direct pushes to `main`/`staging` are blocked by branch protection.
+
+**Per-env data isolation:** Each env has its own Secret Manager entries (`r1-<env>-shared-<VAR>`), Cloud SQL Postgres instance (`r1-<env>-pg`), and Cloud Run service revisions. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full operator runbook.
+
 ## Operations
 
 After PR #128 merges:
