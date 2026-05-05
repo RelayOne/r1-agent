@@ -55,6 +55,13 @@ export function ThreeColumnShell({
       className="flex h-full w-full bg-background text-foreground"
       data-testid="three-column-shell"
     >
+      <a
+        href="#three-column-shell-center"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-3 focus:py-2 focus:bg-background focus:text-foreground focus:rounded-md focus:ring-2 focus:ring-ring"
+        data-testid="skip-to-main"
+      >
+        Skip to main content
+      </a>
       <aside
         role="navigation"
         aria-label="Sessions rail"
@@ -85,6 +92,7 @@ export function ThreeColumnShell({
       </aside>
 
       <main
+        id="three-column-shell-center"
         role="main"
         aria-label="Chat"
         data-testid="three-column-shell-center"
