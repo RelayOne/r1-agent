@@ -19,7 +19,7 @@ ship, this plan is archived to `plans/archive/`.
 - `go build ./cmd/r1-server/...` must remain clean.
 - Commit message: `feat(TASK-1): scaffold cmd/r1-server/ui/web/ directory tree`
 
-- [ ] T1 done
+- [x] T1 done
 
 ### T2 — Write `scripts/vendor-ui.sh`
 
@@ -35,7 +35,7 @@ ship, this plan is archived to `plans/archive/`.
 - If network is unavailable in this environment, mark BLOCKED — do not fake the blobs.
 - Commit message: `feat(TASK-2): vendor-ui.sh + initial vendored htmx/three/d3 blobs`
 
-- [ ] T2 done
+- [x] T2 done
 
 ### T3 — Fill SRI table in `vendor-ui.sh` + write `web/vendor/README.md`
 
@@ -45,7 +45,7 @@ ship, this plan is archived to `plans/archive/`.
 - Write `cmd/r1-server/ui/web/vendor/README.md` listing each file: source URL, version, license, SRI hash. Include the regenerate command (`bash scripts/vendor-ui.sh`).
 - Commit message: `feat(TASK-3): real SRI hashes + vendor README`
 
-- [ ] T3 done
+- [x] T3 done
 
 ### T4 — Add `cmd/r1-server/sri_test.go`
 
@@ -57,7 +57,7 @@ ship, this plan is archived to `plans/archive/`.
 - `go test ./cmd/r1-server/...` clean.
 - Commit message: `feat(TASK-4): sri_test.go guards vendored blob integrity`
 
-- [ ] T4 done
+- [x] T4 done
 
 ### T5 — Write `cmd/r1-server/ui/web/base.html`
 
@@ -71,7 +71,7 @@ ship, this plan is archived to `plans/archive/`.
 - A CSP header is added in T7 (Go handler), not here — but base.html must NOT use inline scripts.
 - Commit message: `feat(TASK-5): base.html htmx + SSE + import-map shell`
 
-- [ ] T5 done
+- [x] T5 done
 
 ### T6 — Write `cmd/r1-server/ui/web/partials/import-map.html`
 
@@ -81,7 +81,7 @@ ship, this plan is archived to `plans/archive/`.
 - Paths must resolve to `/ui/web/vendor/...` files vendored in T2.
 - Commit message: `feat(TASK-6): import-map partial template`
 
-- [ ] T6 done
+- [x] T6 done
 
 ### T7 — Add `cmd/r1-server/ui_v2_foundation.go`
 
@@ -94,7 +94,7 @@ ship, this plan is archived to `plans/archive/`.
 - `go build ./cmd/r1-server/...` clean.
 - Commit message: `feat(TASK-7): parseV2Templates + webFS embed + CSP header`
 
-- [ ] T7 done
+- [x] T7 done
 
 ### T8 — Add `cmd/r1-server/ui_attr_lint_test.go`
 
@@ -106,7 +106,7 @@ ship, this plan is archived to `plans/archive/`.
 - `go test ./cmd/r1-server/...` clean.
 - Commit message: `feat(TASK-8): ui_attr_lint_test.go pins data-state convention`
 
-- [ ] T8 done
+- [x] T8 done
 
 ### T9 — Write `cmd/r1-server/ui/web/css/base.css`
 
@@ -119,7 +119,7 @@ ship, this plan is archived to `plans/archive/`.
 - No tailwind, no preprocessor — plain CSS.
 - Commit message: `feat(TASK-9): base.css scaffold + theme custom-properties`
 
-- [ ] T9 done
+- [x] T9 done
 
 ### T10 — Write `cmd/r1-server/ui/web/README.md`
 
@@ -129,7 +129,7 @@ ship, this plan is archived to `plans/archive/`.
 - Verbose, paragraph-style — not a brief checklist.
 - Commit message: `feat(TASK-10): web/README.md contributor onboarding`
 
-- [ ] T10 done
+- [x] T10 done
 
 ## Supervisor verification (after all 10)
 
