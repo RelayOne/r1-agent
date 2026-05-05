@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, State};
 
+use crate::discovery_state::{DaemonStatusSnapshot, DiscoveryState};
 use crate::subprocess::SubprocessManager;
 
 // ---------------------------------------------------------------------------
@@ -506,6 +507,23 @@ pub async fn skill_get(
 // Dispatch registration
 // ---------------------------------------------------------------------------
 
+/// `app.discovery_status` — snapshot of the daemon-discovery state.
+///
+/// Distinct from `daemon_status`, which RPCs the daemon for its
+/// session-side view. This verb returns the host-side discovery
+/// result (whether `discover_or_spawn` succeeded at startup, what
+/// transport mode the desktop is using, last error if any). Backs
+/// the React DaemonStatus banner per spec desktop-cortex-augmentation
+/// §5 lifecycle steps 1-4.
+///
+/// Tracked: GH issue #145.
+#[tauri::command]
+pub async fn app_discovery_status(
+    state: State<'_, DiscoveryState>,
+) -> IpcResult<DaemonStatusSnapshot> {
+    Ok(state.snapshot())
+}
+
 /// Register all IPC commands with the Tauri builder.
 pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
@@ -535,6 +553,8 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             daemon_shutdown,
             app_popout_lane,
             app_open_folder_picker,
+            // Spec §5 (issue #145) — host-side daemon-discovery state.
+            app_discovery_status,
         ])
 }
 

@@ -379,8 +379,8 @@ All handlers live in `cmd/r1-server/memories.go` and call into the memory-bus-pr
 
 ### Skill-loaded / skill-unloaded emission + rendering
 
-- [ ] `ledger/nodes/skill_loaded.go` with struct + `NodeType()` method.
-- [ ] `ledger/nodes/skill_unloaded.go` same.
+- [x] `ledger/nodes/skill_loaded.go` with struct + `NodeType()` method. (SkillLoaded type already exists in skill.go with NodeType()/Validate(); covered by TestSkillLoadedValidate in nodes_test.go)
+- [x] `ledger/nodes/skill_unloaded.go` same. (SkillUnloaded type added in skill.go alongside SkillLoaded; skill_unloaded_test.go covers Validate + registry round-trip — 9 cases pass)
 - [ ] `internal/hub/builtin/skill_injector.go`: emit both node + bus event on load.
 - [ ] Locate compactor callsite (grep `microcompact` + `context/compact*`) and emit `skill_unloaded` for each dropped skill.
 - [ ] Fixture session test `TestSkillLoadUnloadEmission` in `internal/hub/builtin/` — asserts both events land on the bus.
