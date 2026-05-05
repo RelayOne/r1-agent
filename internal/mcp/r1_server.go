@@ -33,6 +33,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,6 +151,15 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 			out = append(out, alias)
 		}
 		out = append(out, t)
+	}
+	// Spec 3 TASK-24: when a LanesServer is wired via WithLanesServer,
+	// expose its 5 r1.lanes.* tools alongside the stoke_/r1_ build tools
+	// so a single StokeServer endpoint serves both surfaces.
+	s.mu.Lock()
+	lanes := s.lanes
+	s.mu.Unlock()
+	if lanes != nil {
+		out = append(out, lanes.ToolDefinitions()...)
 	}
 	return out
 }
@@ -343,7 +353,21 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 // handler. S1-4 dual-accept: canonical r1_* and legacy stoke_* names
 // both resolve here; legacyStokeServerToolName normalizes the prefix
 // so each case arm handles the pair.
+//
+// Spec 3 TASK-24: tool names with the r1.lanes.* prefix route to the
+// attached LanesServer (when one is wired via WithLanesServer). This
+// is checked BEFORE the stoke switch so a future legacy tool can't
+// accidentally shadow a lane tool.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
+	if strings.HasPrefix(toolName, "r1.lanes.") {
+		s.mu.Lock()
+		lanes := s.lanes
+		s.mu.Unlock()
+		if lanes != nil {
+			return lanes.HandleToolCall(context.Background(), toolName, args)
+		}
+		return "", fmt.Errorf("unknown tool: %s (lanes server not wired)", toolName)
+	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
 		return s.handleBuildFromSOW(args)
