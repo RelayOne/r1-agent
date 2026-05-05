@@ -186,21 +186,24 @@ steps:
     args:
       - -c
       - |
+        # All $$… here are escaped Cloud Build substitutions, so the
+        # literal $… reaches bash for runtime expansion. ${_ENV} is a
+        # genuine Cloud Build sub.
         set -euo pipefail
         for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
-          URL=$(gcloud run services describe $SVC-${_ENV} --region=us-central1 --format='value(status.url)')
-          echo "smoke: $SVC-${_ENV} $URL"
+          URL=$(gcloud run services describe $$SVC-${_ENV} --region=us-central1 --format='value(status.url)')
+          echo "smoke: $$SVC-${_ENV} $$URL"
           CODE=""
           for i in 1 2 3 4 5; do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL/livez")
-            if [ "$CODE" = "200" ]; then
-              echo "  livez=200 (attempt $i)"
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$URL/livez")
+            if [ "$$CODE" = "200" ]; then
+              echo "  livez=200 (attempt $$i)"
               break
             fi
-            echo "  livez=$CODE — retrying"
+            echo "  livez=$$CODE — retrying"
             sleep 2
           done
-          if [ "$CODE" != "200" ]; then
+          if [ "$$CODE" != "200" ]; then
             echo "  smoke FAILED"
             exit 1
           fi
