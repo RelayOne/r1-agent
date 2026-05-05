@@ -7,19 +7,23 @@
 //     template tree. Kept separate from the legacy `uiFS` so the
 //     vanilla-JS SPA at /ui/* keeps serving its own bundle while the
 //     v2 handlers iterate templates independently.
-//  2. parseV2Templates — single-shot parse via template.ParseFS,
-//     cached behind sync.Once. Panics on parse error (this is build-
-//     time-broken HTML, not runtime state).
+//  2. parseV2Templates — per-page map keyed by basename without
+//     extension. html/template registers blocks globally inside a
+//     tree, so two pages each defining a "main" or "scripts" block
+//     in one shared tree step on each other; the per-page parse keeps
+//     them isolated.
 //  3. setV2CSP — Content-Security-Policy headers for v2 responses.
 //     Strict by default: default-src 'self'; no inline scripts.
-//
-// The v2 handler wiring (calling parseV2Templates() from a real
-// HTTP handler) is left for Spec 4. This task only sets up the
-// helpers + asserts they compile + load successfully.
+//  4. setV2CrossOriginIsolation — COOP + COEP headers required for
+//     `crossOriginIsolated` to enable SharedArrayBuffer (Spec 2).
+//  5. V2BaseContext + newV2BaseContext — shared shell context every
+//     v2 page template embeds via composition.
+//  6. serveSessionGraph — Spec 2's 3D graph entry point.
 package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -27,12 +31,10 @@ import (
 	"sync"
 )
 
-// webFS embeds the v2 template tree. The vendor blobs live under
+// webFS embeds the v2 template tree. Vendor blobs live under
 // cmd/r1-server/ui/web/vendor/ but are served by the existing /ui/
 // static file handler via uiFS in ui.go — keeping them out of webFS
-// avoids loading 200 KB of JS into the html/template parser by
-// mistake when Spec 4 calls ParseFS(webFS, "*.html"). The embed
-// pattern is therefore template-only.
+// avoids loading 200 KB of JS into the html/template parser.
 //
 //go:embed ui/web/*.html ui/web/partials/*.html
 var webFS embed.FS
@@ -46,10 +48,10 @@ var (
 // parseV2Templates parses each top-level page template separately,
 // pairing it with base.html + every partial. Returning a per-page
 // map (rather than a single shared *template.Template) avoids
-// `{{ define "main" }}` style block-name collisions between page
-// templates — html/template registers blocks globally inside a tree,
-// so two pages each defining a "main" block in one shared tree
-// step on each other's render contexts.
+// `{{ define "main" }}` and `{{ define "scripts" }}` style block-name
+// collisions between page templates — html/template registers blocks
+// globally inside a tree, so two pages each defining the same block
+// in one shared tree step on each other's render contexts.
 //
 // Result keys are the basename without ".html" (e.g. "session-graph").
 // parseV2Template(name) is a convenience that returns one template.
@@ -92,6 +94,8 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 		if p.IsDir() || !strings.HasSuffix(p.Name(), ".html") {
 			continue
 		}
+		// base.html holds the {{ define "base" }} block; every page
+		// is parsed alongside it + every partial.
 		t := template.New(p.Name()).Option("missingkey=error")
 		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/"+p.Name(), "ui/web/partials/*.html")
 		if err != nil {
@@ -101,6 +105,8 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 		out[key] = t
 	}
 	if _, ok := out["base"]; !ok {
+		// "base" is referenced as a stand-alone template by tests
+		// that exercise the shell only.
 		t := template.New("base.html").Option("missingkey=error")
 		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/partials/*.html")
 		if err != nil {
@@ -112,8 +118,7 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 }
 
 // V2BaseContext is the minimum context every base.html-extending
-// template needs. Page-specific contexts (e.g. session-stream)
-// embed it via composition.
+// template needs. Page-specific contexts embed it via composition.
 type V2BaseContext struct {
 	Title      string
 	HtmxSRI    string
@@ -121,8 +126,8 @@ type V2BaseContext struct {
 	SessionID  string
 }
 
-// newV2BaseContext seeds the V2BaseContext with the SRI values
-// baked into LoadV2Config + the session id and title.
+// newV2BaseContext seeds V2BaseContext with the SRI baked into
+// LoadV2Config + the session id and title.
 func newV2BaseContext(sessionID, title string) V2BaseContext {
 	cfg := LoadV2Config()
 	return V2BaseContext{
@@ -138,10 +143,6 @@ func newV2BaseContext(sessionID, title string) V2BaseContext {
 // drift toward `unsafe-inline` would break the page rather than
 // silently degrade. img-src 'self' data: allows base64-encoded SVG
 // glyphs (Spec 3's redaction lock) without external image loads.
-//
-// Handlers added by Specs 2-4 call this before WriteHeader. Kept as
-// a tiny standalone helper so the policy stays in one place and any
-// future relaxation is reviewed in isolation.
 func setV2CSP(h http.Header) {
 	h.Set("Content-Security-Policy",
 		"default-src 'self'; "+
@@ -153,4 +154,67 @@ func setV2CSP(h http.Header) {
 			"object-src 'none'; "+
 			"base-uri 'self'; "+
 			"frame-ancestors 'none'")
+}
+
+// setV2CrossOriginIsolation attaches the COOP + COEP + CORP headers
+// required for `crossOriginIsolated` to evaluate true in the browser,
+// which is the gate the Spec 2 graph-worker uses to decide between
+// SharedArrayBuffer and transferable-ArrayBuffer transports.
+//
+// Spec 2 §3.2; RT-D3-FORCE-WEBWORKER recommendation. The fallback
+// transferable path keeps working when these headers are absent — so
+// this is an opt-in perf flag, not a hard requirement.
+func setV2CrossOriginIsolation(h http.Header) {
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Embedder-Policy", "require-corp")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+}
+
+// SessionGraphContext is the template context for session-graph.html.
+// GraphData is the marshaled {nodes, edges} JSON the page hydrates
+// from before graph.js runs.
+type SessionGraphContext struct {
+	V2BaseContext
+	GraphData template.JS
+}
+
+// serveSessionGraph renders the v2 3D graph view at
+// /session/{id}/graph when R1_SERVER_UI_V2=1. Sets COOP/COEP so the
+// worker can use SharedArrayBuffer where supported.
+func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
+	if !v2Enabled() {
+		serveGraphIndex(w, r)
+		return
+	}
+	tmpl, err := parseV2Template("session-graph")
+	if err != nil {
+		http.Error(w, "v2 templates: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sid := r.PathValue("id")
+	if sid == "" {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 2 {
+			sid = parts[1]
+		}
+	}
+	// Spec 4 will replace this stub with a real lookup against the
+	// SQLite ledger. For now, emit an empty graph payload — graph.js
+	// + the SSE stream will populate the scene as events arrive.
+	graphJSON, _ := json.Marshal(struct {
+		Nodes []struct{} `json:"nodes"`
+		Edges []struct{} `json:"edges"`
+	}{})
+	ctx := SessionGraphContext{
+		V2BaseContext: newV2BaseContext(sid, "Session "+sid+" — Graph"),
+		GraphData:     template.JS(graphJSON),
+	}
+	setV2CSP(w.Header())
+	setV2CrossOriginIsolation(w.Header())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	if err := tmpl.ExecuteTemplate(w, "session-graph", ctx); err != nil {
+		http.Error(w, "render session-graph: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
