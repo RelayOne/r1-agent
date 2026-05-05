@@ -1,5 +1,7 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-05 -->
+<!-- BUILD_STARTED: 2026-05-05 -->
+<!-- BUILD_COMPLETED: 2026-05-05 -->
 <!-- DEPENDS_ON: r1-server-ui-v2-foundation -->
 <!-- BUILD_ORDER: 29 -->
 
