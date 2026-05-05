@@ -1,0 +1,35 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/skill-unloaded-detail.html
+
+  Spec 3 §7. Renders inside the side panel when the selected node is
+  a skill_unloaded. Receives a *nodes.SkillUnloaded as the dot
+  context. The HumanReason mapping is applied caller-side
+  (skills.go HumanSkillReason) and threaded as .HumanReason — falling
+  back to .Reason if the caller didn't pre-render it.
+*/ -}}
+{{- define "skill-unloaded-detail" -}}
+{{- if . }}
+<dl class="skill-detail">
+  <dt>skill</dt><dd><code>{{ .SkillRef }}</code></dd>
+  <dt>unloaded from</dt>
+  <dd>
+    {{ .StanceRole }}
+    <code class="muted">{{ .StanceID }}</code>
+  </dd>
+  <dt>load ref</dt><dd><code>{{ .LoadRef }}</code></dd>
+  <dt>reason</dt>
+  <dd>
+    <span data-state="warning">{{ .Reason }}</span>
+  </dd>
+  {{- if gt .BudgetTokensFreed 0 }}
+  <dt>tokens freed</dt><dd>{{ .BudgetTokensFreed }}</dd>
+  {{- end }}
+  <dt>unloaded at</dt>
+  <dd>
+    <time datetime="{{ .CreatedAt.UTC.Format "2006-01-02T15:04:05Z" }}">
+      {{ .CreatedAt.UTC.Format "2006-01-02 15:04:05" }} UTC
+    </time>
+  </dd>
+</dl>
+{{- end }}
+{{- end -}}

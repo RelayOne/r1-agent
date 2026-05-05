@@ -156,6 +156,59 @@ button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1
   white-space: nowrap; border: 0;
 }
 
+/* -------------------- Redaction (Spec 3 §8) -------------------- */
+/* Per RT-REDACTION-UI-PATTERNS: desaturate, do NOT use red/yellow
+ * (reserved for failure/warning), do NOT collapse rows — transparency
+ * about absence is the goal. The lock glyph carries no semantic
+ * weight on its own (aria-hidden); the visible "[content redacted]"
+ * text is what screen readers read. */
+.row--redacted .title { opacity: 0.7; }
+.row--redacted .icon, .row--redacted .duration, .row--redacted .cost {
+  filter: grayscale(0.85) brightness(0.85);
+}
+.icon-lock {
+  width: 12px; height: 12px;
+  vertical-align: -2px;
+  color: var(--color-muted);
+}
+.row--redaction-anomaly .redacted-slot { color: var(--color-warning); font-weight: 600; }
+
+.redacted-placeholder {
+  margin: 12px 0;
+}
+.redacted-block {
+  padding: 1em;
+  background: var(--color-redacted-overlay);
+  color: var(--color-fg);
+  font-style: italic;
+  border-radius: 4px;
+  /* WCAG AA: redacted-block content is the literal text "[content
+   * redacted]" — visible to SR users. The overlay background is set
+   * via CSS custom property so theme tokens (auto / dark / hc) all
+   * paint with ≥4.5:1 contrast against --color-fg. */
+}
+.redacted-anomaly {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--color-warning);
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg));
+}
+
+.redaction-events__list { padding-left: 16px; margin: 4px 0; }
+.redaction-events__entry { margin: 4px 0; line-height: 1.6; }
+.redaction-events__entry .reason { margin-left: 8px; }
+.redaction-events__entry .signer { margin-left: 8px; color: var(--color-muted); }
+.redaction-events__entry .sig    { margin-left: 8px; color: var(--color-muted); }
+
+/* -------------------- Skill events (Spec 3 §8) -------------------- */
+/* The 🧬 emoji + 🧬❌ are sufficient on their own as visual markers;
+ * no color override here so they stay legible in any theme. The
+ * skill-detail dl picks up the default body font via base. */
+.skill-detail { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.skill-detail dt { color: var(--color-muted); }
+.skill-detail dd { margin: 0; }
+
 /* -------------------- Reduced motion -------------------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
