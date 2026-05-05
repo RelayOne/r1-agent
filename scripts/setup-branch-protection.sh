@@ -38,12 +38,15 @@ apply_protection() {
 
   # GitHub Branches API uses PUT with a JSON body; build it.
   local body
+  # Required checks are the Cloud Build app's main CI + binaries triggers
+  # (these are what actually run on every push/PR for this repo).
+  local checks='["r1-agent-ci (relayone-488319)", "r1-agent-binaries (relayone-488319)"]'
   if [[ "$allow_direct" == "true" ]]; then
     # dev: looser — status checks only, no required reviews
-    body=$(jq -n --argjson reviewers "$reviewers" '{
+    body=$(jq -n --argjson checks "$checks" '{
       required_status_checks: {
         strict: true,
-        contexts: ["build", "test", "vet"]
+        contexts: $checks
       },
       enforce_admins: false,
       required_pull_request_reviews: null,
@@ -53,10 +56,10 @@ apply_protection() {
     }')
   else
     # main + staging: PR-only with reviewer enforcement
-    body=$(jq -n --argjson reviewers "$reviewers" '{
+    body=$(jq -n --argjson reviewers "$reviewers" --argjson checks "$checks" '{
       required_status_checks: {
         strict: true,
-        contexts: ["build", "test", "vet"]
+        contexts: $checks
       },
       enforce_admins: false,
       required_pull_request_reviews: {
