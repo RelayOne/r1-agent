@@ -25,6 +25,11 @@ export default defineConfig({
       input: {
         // Main composed app (loaded by index.html).
         main: resolve(root, "index.html"),
+        // Pop-out window entry (spec desktop-cortex-augmentation §6.1
+        // + item 24). Loaded by index.html when the URL carries
+        // ?popout=lane; lives as a separate Rollup input so the
+        // popout bundle can be code-split from the main app.
+        popout: resolve(root, "src/popout.tsx"),
         // Per-panel entry points — usable by tests + future per-window
         // Tauri surfaces (e.g., detached cost dashboard).
         "panel-session-view": resolve(root, "src/panels/session-view.ts"),
@@ -47,5 +52,9 @@ export default defineConfig({
       "@panels": resolve(root, "src/panels"),
       "@types": resolve(root, "src/types"),
     },
+    // Dedupe React + ReactDOM so the workspace package and the desktop
+    // app share a single copy. Without this Vite would bundle React twice
+    // (once for desktop, once via @r1/web-components) and break hooks.
+    dedupe: ["react", "react-dom"],
   },
 });

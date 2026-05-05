@@ -12,7 +12,14 @@
     "tauri": "node -e \"console.error('[r1-desktop] Tauri runtime not yet wired; see desktop/PLAN.md R1D-1.1 / R1D-4. Run cargo tauri init in this directory to bootstrap.'); process.exit(1)\""
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@r1/web-components": "workspace:*",
+    "@tauri-apps/plugin-websocket": "^2.0.0",
+    "@tauri-apps/plugin-store": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-autostart": "^2.0.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

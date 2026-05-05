@@ -69,6 +69,16 @@ The desktop app **does not embed** an R1 runtime in-process. It launches the
 stdin/stdout JSON event protocol — the same interface CloudSwarm's Temporal
 workers use. Zero code duplication between CLI and GUI.
 
+- **Cortex augmentation** (`specs/desktop-cortex-augmentation.md`):
+  the desktop now treats `r1 serve` as the primary transport via
+  `tauri-plugin-websocket`, with the bundled per-OS sidecar binary
+  as fallback. New cortex-aware UI primitives (LaneSidebar, lane
+  pop-out windows, daemon discovery wizard, native menu, auto-start)
+  layer on top of the original 12 R1D phases without rewriting any
+  R1D-* file. Components consumed via the workspace package
+  `@r1/web-components` so the upcoming web surface (spec 6) shares
+  the same lane render path.
+
 Full architecture: `docs/architecture.md`.
 
 ## Roadmap
