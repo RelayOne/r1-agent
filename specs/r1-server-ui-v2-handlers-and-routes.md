@@ -1,7 +1,10 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-05 -->
+<!-- BUILD_STARTED: 2026-05-05 -->
+<!-- BUILD_COMPLETED: 2026-05-05 -->
 <!-- DEPENDS_ON: r1-server-ui-v2-foundation -->
 <!-- BUILD_ORDER: 31 -->
+<!-- BLOCKED_PARTIAL: T11 (memory graph view — defers to post-merge integration with Spec 2) + T15-T17 caller wiring (serveTracebundle is ready, the production TracebundleSource implementation against ledger.Store waits on Spec 5's fixture loader). -->
 
 # r1-server UI v2 — Handlers & Routes (filling the gaps)
 
