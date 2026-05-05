@@ -16,6 +16,8 @@
 package main
 
 import (
+	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/RelayOne/r1-coord-api/internal/auth"
 )
 
 const serviceName = "r1-coord-api"
@@ -120,8 +124,142 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// authService builds the JwtService from env.
+//   - Prod: AUTH_JWT_SECRET MUST be set; fatal if missing.
+//   - Dev:  if AUTH_JWT_SECRET is empty, mint a random per-process key.
+//     This means tokens issued by one dev process don't verify on
+//     another, which is the right failure mode for a dev surface.
+func authService() *auth.JwtService {
+	key := []byte(os.Getenv("AUTH_JWT_SECRET"))
+	if len(key) == 0 {
+		if envName == "prod" {
+			log.Fatalf("AUTH_JWT_SECRET must be set in prod (got empty)")
+		}
+		buf := make([]byte, 32)
+		if _, err := cryptorand.Read(buf); err != nil {
+			log.Fatalf("generate per-process JWT key: %v", err)
+		}
+		key = buf
+		log.Printf("WARNING: AUTH_JWT_SECRET unset; minted a random %d-byte per-process key (dev only)", len(key))
+	}
+	issuer := getenv("AUTH_JWT_ISSUER", "r1-coord-api")
+	audience := getenv("AUTH_JWT_AUDIENCE", "r1-coord-api")
+	return auth.NewJwtServiceHS256(issuer, audience, key)
+}
+
+// ssoClient builds the RelayOneSsoClient from env. Returns nil when the
+// SSO env block is unset — the auth handlers will return 503 in that case.
+func ssoClient() *auth.RelayOneSsoClient {
+	base := os.Getenv("RELAYONE_SSO_BASE")
+	id := os.Getenv("RELAYONE_SSO_CLIENT_ID")
+	secret := os.Getenv("RELAYONE_SSO_CLIENT_SECRET")
+	redirect := os.Getenv("RELAYONE_SSO_REDIRECT_URI")
+	if base == "" || id == "" || secret == "" || redirect == "" {
+		return nil
+	}
+	return auth.NewRelayOneSsoClient(base, id, secret, redirect)
+}
+
+// handleSsoStart redirects the user to the RelayOne SSO authorize URL.
+func handleSsoStart(sso *auth.RelayOneSsoClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if sso == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok":    false,
+				"error": "SSO not configured (RELAYONE_SSO_* env unset)",
+			})
+			return
+		}
+		state, err := auth.GenerateState()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		// Stash state in a short-lived cookie for CSRF protection.
+		http.SetCookie(w, &http.Cookie{
+			Name: "r1_sso_state", Value: state, Path: "/", HttpOnly: true,
+			SameSite: http.SameSiteLaxMode, Secure: true, MaxAge: 600,
+		})
+		url, err := sso.AuthorizeURL(state)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		http.Redirect(w, r, url, http.StatusFound)
+	}
+}
+
+// handleSsoCallback completes the OIDC handshake and issues an r1 JWT.
+func handleSsoCallback(sso *auth.RelayOneSsoClient, jwt *auth.JwtService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if sso == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok":    false,
+				"error": "SSO not configured (RELAYONE_SSO_* env unset)",
+			})
+			return
+		}
+		// Validate state matches the cookie we set in /sso/start.
+		c, err := r.Cookie("r1_sso_state")
+		if err != nil || c.Value == "" || c.Value != r.URL.Query().Get("state") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "state mismatch (CSRF)"})
+			return
+		}
+		// Clear the cookie.
+		http.SetCookie(w, &http.Cookie{Name: "r1_sso_state", Value: "", Path: "/", MaxAge: -1})
+
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "missing code"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		tok, ui, err := sso.Login(ctx, code, jwt)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    true,
+			"jwt":   tok,
+			"sub":   ui.Sub,
+			"email": ui.Email,
+			"msp":   ui.MSP,
+			"org":   ui.Org,
+			"roles": ui.Roles,
+		})
+	}
+}
+
+// handleAuthRefresh extends a JWT's expiry without re-authenticating.
+func handleAuthRefresh(jwt *auth.JwtService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "missing token"})
+			return
+		}
+		fresh, err := jwt.Refresh(req.Token)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jwt": fresh})
+	}
+}
+
 func main() {
 	port := getenv("PORT", "8080")
+	jwt := authService()
+	sso := ssoClient()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/livez", handleHealthz)
@@ -129,17 +267,34 @@ func main() {
 	mux.HandleFunc("/v1/version", handleVersion)
 	mux.HandleFunc("/v1/license/verify", handleLicenseVerify)
 	mux.HandleFunc("/v1/telemetry/opt-in", handleTelemetryOptIn)
+	mux.HandleFunc("/v1/auth/sso/start", handleSsoStart(sso))
+	mux.HandleFunc("/v1/auth/sso/callback", handleSsoCallback(sso, jwt))
+	mux.HandleFunc("/v1/auth/refresh", handleAuthRefresh(jwt))
 	mux.HandleFunc("/", handleRoot)
+
+	// Wrap the mux in the auth middleware. Public paths (health probes,
+	// version, license verify, telemetry, SSO start/callback, auth
+	// refresh) bypass the middleware via the optional list.
+	publicPaths := []string{
+		"/", "/healthz", "/livez", "/readyz",
+		"/v1/version",
+		"/v1/license/verify",
+		"/v1/telemetry/opt-in",
+		"/v1/auth/sso/start",
+		"/v1/auth/sso/callback",
+		"/v1/auth/refresh",
+	}
+	handler := auth.Middleware(jwt, publicPaths...)(mux)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	log.Printf("%s listening on :%s (env=%s version=%s)", serviceName, port, envName, versionStr)
+	log.Printf("%s listening on :%s (env=%s version=%s sso=%v)", serviceName, port, envName, versionStr, sso != nil)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}
