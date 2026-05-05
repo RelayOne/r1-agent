@@ -72,3 +72,20 @@ distribution and runtime story:
 ### Potential-On Horizon
 
 - cross-product deterministic skill exchange and marketplace dynamics
+
+## Environments
+
+This repo follows the portfolio env-branch convention:
+
+| Branch | Environment | Service / target |
+|---|---|---|
+| `dev` | dev | `r1-agent-dev` (auto-deploys on push) |
+| `staging` | staging | `r1-agent-staging` (auto-deploys on push) |
+| `main` | prod | `r1-agent` (auto-deploys on push to `main`) |
+
+**Branch protection on `main`:** PR-required, no force-push, no delete (`gh api repos/RelayOne/r1-agent/branches/main/protection`).
+
+**Forward-merge flow:** `dev` -> `staging` -> `main`. Direct pushes to `main` are blocked by branch protection.
+
+**Per-env data isolation:** Each env has its own Secret Manager entries (`<project>-<env>-shared-<VAR>`) and database. See `DEPLOYMENT.md`.
+
