@@ -592,13 +592,21 @@ export class GraphRenderer {
 }
 
 // Auto-bootstrap when the page declares <canvas data-island="graph">
-// and exposes window.__GRAPH_DATA__ = { nodes, edges } from the
-// server-rendered template.
+// and ships a JSON data island at <script type="application/json"
+// id="graph-data">. The JSON block is data, not executable code, so
+// it satisfies the strict no-inline-scripts CSP set by setV2CSP.
 if (typeof document !== 'undefined') {
   const canvas = document.querySelector('canvas[data-island="graph"]');
-  if (canvas && window.__GRAPH_DATA__) {
-    const renderer = new GraphRenderer(canvas);
-    renderer.init(window.__GRAPH_DATA__.nodes || [], window.__GRAPH_DATA__.edges || []);
-    window.__GRAPH_RENDERER__ = renderer;
+  const dataNode = document.getElementById('graph-data');
+  if (canvas && dataNode) {
+    let data = null;
+    try { data = JSON.parse(dataNode.textContent || '{}'); }
+    catch (err) { console.error('graph-data JSON parse failed:', err && err.message); }
+    if (data) {
+      const sessionId = canvas.dataset && canvas.dataset.sessionId;
+      const renderer = new GraphRenderer(canvas, { sessionId });
+      renderer.init(data.nodes || [], data.edges || []);
+      window.__GRAPH_RENDERER__ = renderer;
+    }
   }
 }
