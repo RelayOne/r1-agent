@@ -213,6 +213,19 @@ export class GraphRenderer {
       this.nodes.set(n.id, { shape, poolIdx: idx });
       this.shapeByNodeId.set(n.id, shape);
     }
+    // T7: cache the edge adjacency list so BFS traversal in
+    // focusSubtree() doesn't need to re-walk a flat array on every
+    // click. Map<nodeId, Set<neighbourId>>.
+    this.adjacency = new Map();
+    for (const e of edges || []) {
+      const src = typeof e.source === 'object' ? e.source.id : e.source;
+      const dst = typeof e.target === 'object' ? e.target.id : e.target;
+      if (!src || !dst) continue;
+      if (!this.adjacency.has(src)) this.adjacency.set(src, new Set());
+      if (!this.adjacency.has(dst)) this.adjacency.set(dst, new Set());
+      this.adjacency.get(src).add(dst);
+      this.adjacency.get(dst).add(src);
+    }
     // Spin up the worker.
     this.worker = new Worker('/ui/web/js/graph-worker.js', { type: 'module' });
     this.worker.onmessage = (ev) => this._onWorkerMessage(ev);
@@ -366,9 +379,92 @@ export class GraphRenderer {
       .catch(() => { /* network errors are not fatal */ });
   }
 
-  // Stub for T7 — implemented later in this branch. Lets the click
-  // handler reference focusSubtree without a runtime ReferenceError.
-  focusSubtree(_nodeId) { /* T7 fills this in */ }
+  // T7: BFS 1-3 hops from the seed node, fade non-focused instances
+  // by lerping their per-instance color toward grey at 0.85, scale
+  // their matrix to 0.15. Animate camera to the focused subtree's
+  // bounding box with an 800 ms ease-out. clearFocus() restores.
+  focusSubtree(nodeId, hops = 2) {
+    if (!this.nodes.has(nodeId)) return;
+    if (!this.adjacency) return;
+    const focused = new Set([nodeId]);
+    let frontier = new Set([nodeId]);
+    for (let h = 0; h < hops; h++) {
+      const next = new Set();
+      for (const id of frontier) {
+        for (const neigh of this.adjacency.get(id) || []) {
+          if (!focused.has(neigh)) {
+            next.add(neigh);
+            focused.add(neigh);
+          }
+        }
+      }
+      frontier = next;
+      if (frontier.size === 0) break;
+    }
+    this._setFocus(focused);
+  }
+
+  clearFocus() {
+    this._setFocus(null);
+  }
+
+  _setFocus(focusedSet) {
+    const tmpPos = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion();
+    const sFocused = new THREE.Vector3(8, 8, 8);
+    const sFaded = new THREE.Vector3(2.5, 2.5, 2.5);
+    const grey = new THREE.Color(0x4a4e58);
+    const fullColor = new THREE.Color(0xffffff);
+    const targetMin = new THREE.Vector3(Infinity, Infinity, Infinity);
+    const targetMax = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+    let touched = 0;
+    for (const [nodeId, info] of this.nodes) {
+      const pool = this.pools.get(info.shape);
+      if (!pool) continue;
+      pool.mesh.getMatrixAt(info.poolIdx, pool._tmp);
+      tmpPos.setFromMatrixPosition(pool._tmp);
+      const inFocus = !focusedSet || focusedSet.has(nodeId);
+      pool._tmp.compose(tmpPos, tmpQuat, inFocus ? sFocused : sFaded);
+      pool.mesh.setMatrixAt(info.poolIdx, pool._tmp);
+      if (pool.mesh.instanceColor) {
+        pool.mesh.setColorAt(info.poolIdx, inFocus ? fullColor : grey);
+      }
+      if (inFocus && focusedSet) {
+        targetMin.min(tmpPos);
+        targetMax.max(tmpPos);
+        touched++;
+      }
+    }
+    for (const pool of this.pools.values()) {
+      pool.flush();
+      if (pool.mesh.instanceColor) pool.mesh.instanceColor.needsUpdate = true;
+    }
+    if (focusedSet && touched > 0) {
+      const center = new THREE.Vector3().addVectors(targetMin, targetMax).multiplyScalar(0.5);
+      const size = new THREE.Vector3().subVectors(targetMax, targetMin).length();
+      const dist = Math.max(80, size * 1.6);
+      this._animateCamera(center, dist, 800);
+    }
+  }
+
+  _animateCamera(target, distance, durationMs) {
+    const startPos = this.camera.position.clone();
+    const startTarget = this.controls.target.clone();
+    const offset = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    const endPos = target.clone().add(offset.multiplyScalar(distance));
+    const endTarget = target.clone();
+    const t0 = performance.now();
+    const ease = (t) => 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const step = () => {
+      const t = Math.min(1, (performance.now() - t0) / durationMs);
+      const k = ease(t);
+      this.camera.position.lerpVectors(startPos, endPos, k);
+      this.controls.target.lerpVectors(startTarget, endTarget, k);
+      this.controls.update();
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
 
   _applyVisibility(detail) {
     if (!detail || !detail.visibility || !detail.nodeIds) return;
