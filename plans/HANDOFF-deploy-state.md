@@ -10,7 +10,7 @@
 
 Cloud Run reserves `/healthz` on this org's frontend; r1 services additionally answer `/livez`, `/readyz`, `/v1/version`, and `/`.
 
-## Custom-domain mappings on r1.run (7/12 HTTPS-live; 5 still issuing)
+## Custom-domain mappings on r1.run (12/12 HTTPS-live)
 
 ### Cert state — 12/12 LIVE on HTTPS (verified 200 on /livez)
 
