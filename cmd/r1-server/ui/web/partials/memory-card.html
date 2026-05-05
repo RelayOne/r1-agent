@@ -1,0 +1,30 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/memory-card.html
+
+  Spec 4 §5.4 — one memory in the grouped list.
+
+  Context shape (MemoryCard):
+    .ID            int64
+    .Key           string
+    .Scope         string
+    .Snippet       string  (truncated content; full content fetched
+                            into the side panel via hx-get)
+    .CreatedAtISO  string
+    .ContentEncrypted bool
+*/ -}}
+{{- define "memory-card" -}}
+<button type="button"
+        class="memory-card"
+        data-testid="memory-card"
+        data-memory-id="{{ .ID }}"
+        data-hx-get="/api/memories/{{ .ID }}/panel"
+        data-hx-target="#side-panel">
+  <div class="memory-card__key">{{ .Key }}</div>
+  {{ if .ContentEncrypted }}
+    <div class="memory-card__snippet muted" data-state="redacted">[encrypted — unlock keyring]</div>
+  {{ else }}
+    <div class="memory-card__snippet">{{ .Snippet }}</div>
+  {{ end }}
+  <time datetime="{{ .CreatedAtISO }}" class="muted">{{ .CreatedAtISO }}</time>
+</button>
+{{- end -}}

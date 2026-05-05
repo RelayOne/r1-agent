@@ -78,9 +78,24 @@ func handleEventsStream(db *DB, logger *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		// Cursor negotiation: Last-Event-ID beats ?after= beats zero.
+		// Cursor negotiation (Spec 4 §8.1):
+		//   Last-Event-ID header  beats
+		//   ?last_event_id=       beats
+		//   ?after=               beats
+		//   zero
+		//
+		// The ?last_event_id= form exists because htmx-ext-sse 2.2.4
+		// constructs a fresh EventSource on reconnect and resets
+		// EventSource.lastEventId to "" — which means the server never
+		// sees the Last-Event-ID header. The htmx-sse-shim.js client
+		// shim (TASK-20) writes the cached value into the URL query
+		// instead. Per RT-HTMX-SSE-DATA-ATTRS finding 2.
 		var cursor int64
 		if raw := r.Header.Get("Last-Event-ID"); raw != "" {
+			if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v >= 0 {
+				cursor = v
+			}
+		} else if raw := r.URL.Query().Get("last_event_id"); raw != "" {
 			if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v >= 0 {
 				cursor = v
 			}
@@ -95,6 +110,26 @@ func handleEventsStream(db *DB, logger *slog.Logger) http.HandlerFunc {
 		if _, err := db.GetSession(id); err != nil {
 			writeErr(w, http.StatusNotFound, "session not found: %v", err)
 			return
+		}
+
+		// Spec 4 §8.2: detect when the supplied cursor has fallen
+		// below the retention floor (oldest event still in the DB).
+		// Emit a single `event: resync` frame and close — the client
+		// shim listens for it and triggers window.location.reload().
+		if cursor > 0 {
+			oldest, err := db.OldestEventID(id)
+			if err == nil && oldest > 0 && cursor < oldest {
+				h := w.Header()
+				h.Set("Content-Type", "text/event-stream")
+				h.Set("Cache-Control", "no-cache, no-transform")
+				w.WriteHeader(http.StatusOK)
+				fmt.Fprintf(w, "event: resync\n")
+				fmt.Fprintf(w, "data: {\"reason\":\"cursor_pruned\",\"oldest_available\":%d}\n\n", oldest)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				return
+			}
 		}
 
 		// SSE headers. No-transform stops compression proxies from

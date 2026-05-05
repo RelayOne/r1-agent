@@ -3,7 +3,8 @@
 <!-- CREATED: 2026-04-21 -->
 <!-- DEPENDS_ON: memory-bus (emits memory_stored/recalled nodes), ledger-redaction (redacted-node rendering), retention-policies (settings page HTTP handlers) -->
 <!-- BUILD_ORDER: 27 -->
-<!-- AUDIT_2026-05-05: 24 items reconciled against shipping code (handlers / SSE / memory CRUD / settings / share / trace export). The remaining unchecked items are genuine unbuilt UI features (3D worker InstancedMesh refactor, vendored htmx/three.js scripts, redacted-node rendering, run-diff view, skill-load/unload visualization). Tracked in issue #144. The chat-style use case is covered by the new web/ React SPA (web-chat-ui spec); these UI v2 retrofits are r1-server-specific and non-blocking. -->
+<!-- AUDIT_2026-05-05: 24 items reconciled against shipping code (handlers / SSE / memory CRUD / settings / share / trace export). -->
+<!-- SPLIT_INTO_2026-05-05: 61 remaining items split into 5 sub-specs — see r1-server-ui-v2-foundation.md, r1-server-ui-v2-3d-perf.md, r1-server-ui-v2-event-rendering.md, r1-server-ui-v2-handlers-and-routes.md, r1-server-ui-v2-tests.md. Build order: foundation → (3d-perf, event-rendering, handlers-and-routes parallel) → tests. -->
 
 # r1-server UI v2 retrofit
 

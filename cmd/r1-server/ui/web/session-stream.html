@@ -1,0 +1,48 @@
+{{- /*
+  cmd/r1-server/ui/web/session-stream.html
+
+  Spec 4 §5.3 — raw event stream view. SSE-streamed pre-block,
+  deliberate "raw mode" for power users debugging the chain tier.
+
+  Context shape:
+    .V2BaseContext
+    .Session       { ID, Name, StartedAtUnix, UpdatedAtUnix }
+    .LastEventID   string
+*/ -}}
+{{- define "session-stream" -}}
+{{ template "base" . }}
+{{- end -}}
+
+{{- define "title" -}}{{ .Session.Name }} — stream — r1{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <nav class="topbar__nav" aria-label="Session views">
+    <a href="/session/{{ .SessionID }}" data-testid="tab-waterfall">Waterfall</a>
+    <a href="/session/{{ .SessionID }}/graph" data-testid="tab-graph">3D Graph</a>
+    <a href="/session/{{ .SessionID }}/stream" aria-current="page" data-testid="tab-stream">Stream</a>
+    <a href="/memories?session={{ .SessionID }}" data-testid="tab-memories">Memories</a>
+  </nav>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section class="pane pane--primary" data-testid="raw-stream">
+  <header style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Raw stream</h1>
+    <span class="muted mono" id="stream-state" aria-live="polite">connecting…</span>
+  </header>
+  <pre class="raw-stream-pre mono"
+       data-testid="stream-pre"
+       hx-ext="sse"
+       sse-connect="/api/session/{{ .SessionID }}/events/stream?last_event_id={{ .LastEventID }}"
+       sse-swap="message"
+       hx-swap="beforeend"
+       style="background:var(--color-row-zebra);padding:12px;border-radius:4px;
+              font-size:12px;line-height:1.4;max-height:calc(100vh - 120px);
+              overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+</section>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

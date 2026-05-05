@@ -86,8 +86,10 @@ var (
 // traceV2Enabled reports whether the spec-27 trace views should serve
 // content for /session/{id}. Off-by-default matches every other v2
 // surface (memories, share) so MVP clients keep seeing the SPA shell.
+//
+// Spec 4 §10 T2: backed by LoadV2Config() to centralise env reads.
 func traceV2Enabled() bool {
-	return os.Getenv("R1_SERVER_UI_V2") == "1"
+	return LoadV2Config().Renderable()
 }
 
 // traceStubEnabled reports whether the handler should fabricate demo

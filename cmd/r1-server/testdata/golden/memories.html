@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>memories — r1</title>
+  <link rel="stylesheet" href="/ui/web/css/base.css">
+
+  <script type="importmap">{
+  "imports": {
+    "three": "/ui/web/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/web/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/web/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/web/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/web/vendor/three-spritetext.js"
+  }
+}</script>
+
+  <script src="/ui/web/vendor/htmx.min.js"
+          integrity="sha384-FAKEHTMX"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/web/vendor/htmx-ext-sse.js"
+          integrity="sha384-FAKESSE"
+          crossorigin="anonymous"
+          defer></script>
+  
+  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="sess-fixture">
+  <header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <nav class="topbar__nav" aria-label="Primary">
+    <a href="/" data-testid="nav-instances">Instances</a>
+    <a href="/memories" aria-current="page" data-testid="nav-memories">Memories</a>
+    <a href="/settings" data-testid="nav-settings">Settings</a>
+  </nav>
+  <button type="button"
+          data-testid="btn-add-memory"
+          data-hx-get="/api/memories/new"
+          data-hx-target="#side-panel">
+    + Add memory
+  </button>
+</header>
+  <main id="main">
+    <section class="pane pane--primary">
+  <header style="display:flex;gap:12px;align-items:center;margin-bottom:8px;">
+    <div class="chips" role="group" aria-label="Filter">
+  
+  <button type="button"
+          class="chip"
+          data-testid="chip-scope"
+          data-state="active"
+          data-hx-get="/memories?scope=session"
+          data-hx-target="[data-testid='waterfall-rows']"
+          data-hx-trigger="click"
+          name="types"
+          value="session">
+    session
+  </button>
+  
+</div>
+    <input type="search" name="q" placeholder="Search FTS5..."
+           data-testid="search-memories"
+           data-hx-get="/memories"
+           data-hx-trigger="input changed delay:300ms"
+           data-hx-target="#groups"
+           data-hx-include="[name='scope']" />
+  </header>
+  <div id="groups" data-testid="memory-groups">
+    <details class="memory-group" data-testid="memory-group" data-scope="session" open>
+  <summary>
+    <span class="memory-group__scope">session</span>
+    <span class="muted">(1)</span>
+  </summary>
+  <ul class="memory-group__cards">
+    
+    <li><button type="button"
+        class="memory-card"
+        data-testid="memory-card"
+        data-memory-id="1"
+        data-hx-get="/api/memories/1/panel"
+        data-hx-target="#side-panel">
+  <div class="memory-card__key">feedback_test</div>
+  
+    <div class="memory-card__snippet">snippet</div>
+  
+  <time datetime="2026-01-01T12:00:00Z" class="muted">2026-01-01T12:00:00Z</time>
+</button></li>
+    
+  </ul>
+</details>
+    
+  </div>
+</section>
+<aside id="side-panel" class="pane pane--side" role="complementary">
+  <div class="muted" data-testid="memory-side-panel-empty" style="padding:16px;">
+  <p>Click a memory to inspect.</p>
+</div>
+</aside>
+  </main>
+  
+</body>
+</html>
