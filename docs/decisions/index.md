@@ -291,3 +291,83 @@ Cross-link: `specs/agentic-test-harness.md` (BUILD_ORDER 8). Implementation trac
 **Decision:** Build-session time budget makes a real overnight soak BLOCKED. The substitute is a 5000-iteration fuzz test (`internal/antitrunc/soak_test.go`) over a 40-entry legitimate-text corpus that exercises every danger keyword in legitimate phrasings. The corpus drove one regex tightening (`false_completion_good_enough` had bare "sufficient" matches; tightened to require a completion-claim shape).
 **Owners:** spec-9 (Anti-Truncation Enforcement).
 **Follow-up:** When CI runs allow long-duration jobs, promote the fuzz test to a soak job that loops the corpus indefinitely with rotation seeds.
+
+---
+
+## 2026-05-05 — UI v2 retrofit scope (D-UI2)
+
+Append entry recording the decisions taken during the `/scope all remaining 66 items etc` scoping session for the 61 unchecked items in `specs/r1-server-ui-v2.md`.
+
+### D-UI2-1 — Node 22 LTS precursor bump
+
+**Decision:** bump CI runners from Node 20.18 → Node 22.13 LTS in a small precursor PR before the UI v2 retrofit specs build.
+
+**Rationale:**
+- Node 20 LTS went EOL 2026-04-30 (5 days before this scope was filed).
+- jsdom 27+, vitest 4, vite 7 are all blocked on Node 20.18; bumping unblocks them in a single change.
+- Spec 5's 3D-worker vitest test needs Worker support that is reliable on Node 22 (jsdom 29) but bumpy on Node 20 (jsdom 26 worker shim).
+- Node 22.13 is what jsdom 29 explicitly tests against per RT-JSDOM-VITEST-NODE22.
+
+**Consequences:**
+- One small CI-only PR before any UI v2 retrofit spec can build.
+- Unblocks 4 deferred dependabot bumps (jsdom 29, vitest 4, vite 7, @vitest/coverage-v8 4) — separate follow-up PRs.
+- Cloud Build base image: `node:20` → `node:22.13-bookworm-slim`.
+- GitHub Actions matrix: `ubuntu-22.04` → `ubuntu-24.04`, `node-version: '20'` → `'22'`.
+
+### D-UI2-2 — Three.js ESM cutover
+
+**Decision:** in the UI v2 vendor tree (`cmd/r1-server/ui/web/vendor/`), ship three.js 0.170.0 ESM module form (`three.module.js`) + import map. The legacy global-`THREE` 0.x bundle in `cmd/r1-server/ui/vendor/` is unaffected (different path) and is consumed only by the v1 SPA at `/ui/`.
+
+**Rationale:**
+- Original UI v2 spec §2.1 calls for `three.module.js` + import map; the existing vendor blob disagrees with that plan.
+- ESM is required for the Web Worker pattern (Spec 2's `graph-worker.js` imports `d3-force-3d` through the import map).
+- InstancedMesh + `OrbitControls` are easier to author against the typed module interface.
+
+**Consequences:**
+- ~150 KB ESM bundle vs the existing ~125 KB global bundle — slight vendor budget increase but still inside the 250 KB total.
+- Spec 2's graph.js can `import * as THREE from 'three'` — no namespace pollution.
+
+### D-UI2-3 — Spec splitting
+
+**Decision:** split the 61 unchecked items in `r1-server-ui-v2.md` into 5 sub-specs:
+1. `r1-server-ui-v2-foundation` — vendor scripts + htmx base.html (10 items)
+2. `r1-server-ui-v2-3d-perf` — InstancedMesh + Web Worker (11 items)
+3. `r1-server-ui-v2-event-rendering` — skill load/unload + redaction (12 items)
+4. `r1-server-ui-v2-handlers-and-routes` — feature flag + page templates + memory + share + tracebundle + SSE polish (22 items)
+5. `r1-server-ui-v2-tests` — golden + worker fixture + Playwright E2E + axe (6 items)
+
+**Build order:** `1 → (2, 3, 4 parallel) → 5`.
+
+**Rationale:**
+- Spec 1 is foundation — vendor blobs + base.html that everything else extends.
+- Specs 2-4 are independent slices; can build in parallel without conflict (Spec 2 owns `web/js/`, Spec 3 owns Go helpers + partials, Spec 4 owns page templates + handlers).
+- Spec 5 references all four; gates merge.
+
+**Consequences:**
+- 5 PRs instead of 1. More merge orchestration but cleaner blame.
+- `r1-server-ui-v2.md` (the master spec) gets a `<!-- SPLIT_INTO -->` frontmatter pointer.
+
+### D-UI2-4 — Vendoring strategy
+
+**Decision:** Strategy A from RT-VENDOR-SCRIPT-PATTERNS — curl + per-file SRI shell script + committed blobs. Pinned versions: htmx 2.0.4, htmx-ext-sse 2.2.4, three 0.170.0 (ESM), three-spritetext 1.9.5, 3d-force-graph 1.77.0, d3-force-3d 3.0.5.
+
+**Rationale:**
+- Smallest moving parts. No Node toolchain at build time.
+- Real upstream-author SRI cross-check (htmx publishes SRI in release notes verbatim).
+- Air-gap-friendly: blobs committed; CI runs script in `--check` mode (no network) to verify SRI.
+
+**Consequences:**
+- ~250 KB gzipped chrome (right at spec budget).
+- Per-vendor-update flow: bump version → run `vendor-ui.sh` → commit diff. Idempotent.
+
+### D-UI2-5 — Waterfall density
+
+**Decision:** Strategy G (content-visibility:auto + htmx server-paged chunks + server-side aggregation) primary; Strategy H (Clusterize.js fallback) gated behind a feature flag if FPS telemetry shows <50 on scroll.
+
+**Rationale:** RT-WATERFALL-DENSITY benchmark — pure DOM busts at ~3k rows; Strategy G is htmx-native, zero JS, degrades to plain pagination.
+
+### D-UI2-6 — Redaction UI
+
+**Decision:** SVG lock glyph (NOT emoji); desaturate to ~15% saturation × 0.7 lightness; specific reason wording (`"redacted by retention policy (90d)"`); edges remain at full opacity; `aria-hidden="true"` on the lock SVG; reserved ⚠ overlay for `isRedacted=true && len(events)==0` (anomaly).
+
+**Rationale:** RT-REDACTION-UI-PATTERNS — Sentry's `[Filtered]` placeholder + tooltip-with-reason is the closest precedent; emoji rendering and SR pronunciation vary across platforms; transparency about absence > concealment.
