@@ -111,6 +111,28 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 	return out, nil
 }
 
+// V2BaseContext is the minimum context every base.html-extending
+// template needs. Page-specific contexts (e.g. session-stream)
+// embed it via composition.
+type V2BaseContext struct {
+	Title      string
+	HtmxSRI    string
+	HtmxSseSRI string
+	SessionID  string
+}
+
+// newV2BaseContext seeds the V2BaseContext with the SRI values
+// baked into LoadV2Config + the session id and title.
+func newV2BaseContext(sessionID, title string) V2BaseContext {
+	cfg := LoadV2Config()
+	return V2BaseContext{
+		Title:      title,
+		HtmxSRI:    cfg.HtmxSRI,
+		HtmxSseSRI: cfg.HtmxSseSRI,
+		SessionID:  sessionID,
+	}
+}
+
 // setV2CSP attaches the Content-Security-Policy header used by every
 // v2 response. Spec §4 explicitly forbids inline scripts so any
 // drift toward `unsafe-inline` would break the page rather than
