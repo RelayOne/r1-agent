@@ -79,8 +79,9 @@ deploy_one() {
       args+=(--set-env-vars="R1_BUCKET=relayone-488319-r1-releases")
       ;;
     r1-coord-api)
-      # Coord API needs DB + JWT secret in every env.
+      # Coord API needs DB + JWT secret + Cloud SQL unix socket mount.
       args+=(--set-secrets="DATABASE_URL=r1-$env-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-$env-shared-AUTH_JWT_SECRET:latest")
+      args+=(--add-cloudsql-instances="$PROJECT:$REGION:r1-$env-pg")
       ;;
     r1-admin)
       # Admin needs the coord-api URL so its widgets can hit /api/sessions etc.

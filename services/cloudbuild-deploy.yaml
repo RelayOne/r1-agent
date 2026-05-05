@@ -107,7 +107,8 @@ steps:
           --port=8080 \
           --no-cpu-throttling \
           --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA \
-          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
+          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest \
+          --add-cloudsql-instances=$PROJECT_ID:us-central1:r1-${_ENV}-pg
 
   - id: deploy-docs
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
