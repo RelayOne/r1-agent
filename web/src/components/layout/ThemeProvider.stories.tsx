@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { ThemeProvider, useTheme } from "./ThemeProvider";
 
-function Demo(): JSX.Element {
+function Demo(): React.JSX.Element {
   const { theme, resolvedDark, resolvedHighContrast, setTheme } = useTheme();
   return (
     <div className="p-4 space-y-2 bg-background text-foreground border rounded-md">

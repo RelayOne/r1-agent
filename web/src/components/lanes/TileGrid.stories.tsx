@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { TileGrid } from "./TileGrid";
@@ -45,7 +46,7 @@ const meta: Meta<typeof TileGrid> = {
 export default meta;
 type Story = StoryObj<typeof TileGrid>;
 
-function Demo({ count }: { count: number }): JSX.Element {
+function Demo({ count }: { count: number }): React.JSX.Element {
   const [store] = useState(() => mkStore(count));
   return (
     <div className="w-[860px] h-[520px] border border-border rounded-md overflow-hidden bg-background">

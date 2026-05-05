@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { ToolCard } from "./ToolCard";
 import type { MessagePart } from "@/lib/api/types";
@@ -47,7 +48,7 @@ const errored: ToolPart = {
   errorText: "package ./broken: cannot find package",
 };
 
-function Wrap({ part }: { part: ToolPart }): JSX.Element {
+function Wrap({ part }: { part: ToolPart }): React.JSX.Element {
   return (
     <div className="w-[640px]">
       <ToolCard part={part} />

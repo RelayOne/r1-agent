@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { SettingsPage } from "./SettingsPage";
@@ -38,7 +39,7 @@ const meta: Meta<typeof SettingsPage> = {
 export default meta;
 type Story = StoryObj<typeof SettingsPage>;
 
-function Demo(): JSX.Element {
+function Demo(): React.JSX.Element {
   const [store] = useState(mkStore);
   return (
     <ThemeProvider defaultTheme="light">

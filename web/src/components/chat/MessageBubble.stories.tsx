@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { MessageBubble } from "./MessageBubble";
 import type { ChatMessage } from "@/lib/store/daemonStore";
@@ -24,7 +25,7 @@ function ToolStub({
   part,
 }: {
   part: Extract<MessagePart, { kind: "tool" }>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <pre className="bg-muted/60 rounded p-2 text-xs overflow-x-auto">
       ▶ {part.toolName}
@@ -40,7 +41,7 @@ function ReasoningStub({
   part,
 }: {
   part: Extract<MessagePart, { kind: "reasoning" }>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <blockquote className="text-xs italic text-muted-foreground border-l-2 pl-2">
       {part.text}
@@ -52,7 +53,7 @@ function PlanStub({
   part,
 }: {
   part: Extract<MessagePart, { kind: "plan" }>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <ul className="text-sm list-disc pl-4 space-y-1">
       {part.items.map((it) => (

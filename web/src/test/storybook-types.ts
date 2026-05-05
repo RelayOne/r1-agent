@@ -13,6 +13,7 @@
 // Storybook 8.4 (May 2026): `Meta<typeof Component>` and
 // `StoryObj<typeof Meta>`. When spec 8 swaps these for the real
 // imports, the story files require no edits.
+import * as React from "react";
 import type { ComponentType } from "react";
 
 /** CSF 3 `Meta` for a component. */
@@ -27,7 +28,7 @@ export interface Meta<TComponent extends ComponentType<never> = ComponentType<ne
   /** Per-meta parameters (layout, docs, msw, etc.). */
   parameters?: Record<string, unknown>;
   /** Decorators applied to all stories. */
-  decorators?: Array<(Story: ComponentType) => JSX.Element>;
+  decorators?: Array<(Story: ComponentType) => React.JSX.Element>;
   /** Tags (autodocs etc.). */
   tags?: string[];
 }
@@ -46,11 +47,11 @@ interface StoryShape<TArgs> {
   args?: Partial<TArgs>;
   argTypes?: Record<string, unknown>;
   parameters?: Record<string, unknown>;
-  decorators?: Array<(Story: ComponentType) => JSX.Element>;
+  decorators?: Array<(Story: ComponentType) => React.JSX.Element>;
   name?: string;
   tags?: string[];
   /** Optional render override. */
-  render?: (args: TArgs) => JSX.Element;
+  render?: (args: TArgs) => React.JSX.Element;
   /** Optional play function for interaction tests. */
   play?: (ctx: { canvasElement: HTMLElement }) => Promise<void> | void;
 }

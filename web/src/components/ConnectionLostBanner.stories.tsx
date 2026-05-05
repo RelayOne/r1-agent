@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { ConnectionLostBanner } from "./ConnectionLostBanner";
@@ -23,7 +24,7 @@ const meta: Meta<typeof ConnectionLostBanner> = {
 export default meta;
 type Story = StoryObj<typeof ConnectionLostBanner>;
 
-function Demo({ hardCapped }: { hardCapped: boolean }): JSX.Element {
+function Demo({ hardCapped }: { hardCapped: boolean }): React.JSX.Element {
   const [store] = useState(() => mkStore(hardCapped));
   const [reconnects, setReconnects] = useState(0);
   return (

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { ChatPane } from "./ChatPane";
@@ -14,7 +15,7 @@ function mkStore(): DaemonStore {
   return createDaemonStore("daemon-storybook", NOOP);
 }
 
-function MessageColumn(): JSX.Element {
+function MessageColumn(): React.JSX.Element {
   return (
     <div className="h-full flex flex-col p-4 gap-3 overflow-y-auto">
       <article className="rounded-md border border-border p-3">
@@ -39,7 +40,7 @@ function TileGrid({
   laneIds,
 }: {
   laneIds: ReadonlyArray<string>;
-}): JSX.Element {
+}): React.JSX.Element {
   return (
     <div className="grid grid-cols-2 gap-2 p-2 h-full">
       {laneIds.map((id) => (
@@ -54,7 +55,7 @@ function TileGrid({
   );
 }
 
-function Demo({ initiallyPinned }: { initiallyPinned: boolean }): JSX.Element {
+function Demo({ initiallyPinned }: { initiallyPinned: boolean }): React.JSX.Element {
   const [store] = useState(() => {
     const s = mkStore();
     if (initiallyPinned) {

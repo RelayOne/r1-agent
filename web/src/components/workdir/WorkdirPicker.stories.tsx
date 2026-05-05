@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import {
@@ -18,7 +19,7 @@ function Demo({
   fsaAvailable,
 }: {
   fsaAvailable: boolean;
-}): JSX.Element {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [workdir, setWorkdir] = useState<string | null>("/repo/web");
   return (

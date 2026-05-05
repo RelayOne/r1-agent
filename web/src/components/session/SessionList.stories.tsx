@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { SessionList } from "./SessionList";
@@ -87,7 +88,7 @@ function mkStore(): DaemonStore {
   return s;
 }
 
-function Demo({ active }: { active: string | null }): JSX.Element {
+function Demo({ active }: { active: string | null }): React.JSX.Element {
   const [store] = useState(mkStore);
   const [selected, setSelected] = useState<string | null>(active);
   return (

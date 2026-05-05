@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useEffect, useState } from "react";
 import { LaneTile } from "./LaneTile";
@@ -54,7 +55,7 @@ const STATIC_RENDER = [
   "✓ done in 18 ms",
 ].join("\n");
 
-function StreamingDemo(): JSX.Element {
+function StreamingDemo(): React.JSX.Element {
   const [store] = useState(() => mkStore("starting…"));
   useEffect(() => {
     let i = 0;
