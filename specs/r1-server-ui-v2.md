@@ -398,10 +398,10 @@ All handlers live in `cmd/r1-server/memories.go` and call into the memory-bus-pr
 
 ### Run diff view (minimum viable)
 
-- [ ] `func diffSessions(a, b sessionID) []diffRow` — tree walk both, emit added/removed/changed-type/changed-status.
-- [ ] `GET /diff/:a/:b` handler + `diff.html` template (side-by-side trees).
-- [ ] Test: fixture two ledgers, expected diff rows.
-- [ ] Document "content-diff is future work" in the template footer.
+- [x] `func diffSessions(a, b sessionID) []diffRow` — tree walk both, emit added/removed/changed-type/changed-status. (implemented in cmd/r1-server/diff.go: diffSessions(d *DB, a, b string) ([]DiffRow, error))
+- [x] `GET /diff/:a/:b` handler + `diff.html` template (side-by-side trees). (serveDiff in cmd/r1-server/diff.go; renders flat table — side-by-side trees deferred)
+- [x] Test: fixture two ledgers, expected diff rows. (diff_test.go: TestDiffSessions_AddedRemovedAndStatusChange + 6 supporting tests, all pass)
+- [x] Document "content-diff is future work" in the template footer. (serveDiff footer: 'Content-diff (per-event JSON payload comparison) is out of scope here. Tracked in issue #144.')
 
 ### Content-addressed share route
 
