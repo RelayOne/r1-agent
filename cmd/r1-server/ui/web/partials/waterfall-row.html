@@ -1,0 +1,33 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/waterfall-row.html
+
+  Spec 4 §5.2 — minimal waterfall-row partial. Spec 3's branch ships
+  the full redacted/skill-aware version with lock SVG + 🧬 icons
+  + data-state="redacted" wiring. This branch (Spec 4) carries the
+  data-cursor/data-node-type baseline so the page templates parse +
+  serve, then merges with Spec 3's richer version when both branches
+  land on dev.
+
+  Context shape (subset; Spec 3's version reads more):
+    .NodeID        string
+    .NodeType      string
+    .CreatedAtUnix int64
+    .Title         string
+    .DurationStr   string
+    .CostStr       string
+    .TypeIcon      string
+*/ -}}
+{{- define "waterfall-row" -}}
+<tr class="row" data-testid="waterfall-row"
+    data-node-id="{{ .NodeID }}"
+    data-node-type="{{ .NodeType }}"
+    data-cursor="{{ .CreatedAtUnix }}"
+    style="content-visibility: auto;">
+  <td class="indent" aria-hidden="true"></td>
+  <td class="icon" aria-hidden="true">{{ .TypeIcon }}</td>
+  <td class="title">{{ .Title }}</td>
+  <td class="duration">{{ .DurationStr }}</td>
+  <td class="cost">{{ .CostStr }}</td>
+  <td class="redacted-slot"></td>
+</tr>
+{{- end -}}
