@@ -235,6 +235,29 @@ export class GraphRenderer {
       typeof SharedArrayBuffer !== 'undefined';
     this.worker.postMessage({ kind: 'init', nodes, edges, useSAB });
 
+    // T8: streaming insert. When the server SSE endpoint pushes a new
+    // ledger.node.append event, parse the payload, find existing
+    // neighbour positions in our cached side table, and forward to
+    // the worker as {kind:'add', node, neighbors}. The server URL is
+    // /api/session/{sid}/stream (existing SSE endpoint shipped by the
+    // r1-server-ui-v2 master spec). Disabled when sessionId is empty
+    // (e.g. during the vitest harness in TASK-10).
+    if (this.sessionId && typeof EventSource !== 'undefined' && !this.options.disableStreaming) {
+      const url = '/api/session/' + this.sessionId + '/stream';
+      try {
+        this._stream = new EventSource(url);
+        this._stream.addEventListener('ledger.node.append', (ev) => {
+          this._onStreamingNode(ev);
+        });
+        this._stream.onerror = () => {
+          // EventSource auto-reconnects; just log the disconnect.
+          console.warn('graph stream disconnected');
+        };
+      } catch (err) {
+        console.warn('graph stream init failed:', err && err.message);
+      }
+    }
+
     // Drive ticks at requestAnimationFrame cadence.
     const _frustum = new THREE.Frustum();
     const _projViewMatrix = new THREE.Matrix4();
@@ -522,9 +545,47 @@ export class GraphRenderer {
     for (const pool of this.pools.values()) pool.flush();
   }
 
+  _onStreamingNode(ev) {
+    let payload;
+    try { payload = JSON.parse(ev.data); } catch (_) { return; }
+    if (!payload || !payload.node || !payload.node.id) return;
+    if (this.nodes.has(payload.node.id)) return; // dedup re-emits.
+    const node = payload.node;
+    const neighborIds = payload.neighbors || [];
+    const tmpPos = new THREE.Vector3();
+    const neighbors = [];
+    for (const nid of neighborIds) {
+      const info = this.nodes.get(nid);
+      if (!info) continue;
+      const pool = this.pools.get(info.shape);
+      if (!pool) continue;
+      pool.mesh.getMatrixAt(info.poolIdx, pool._tmp);
+      tmpPos.setFromMatrixPosition(pool._tmp);
+      neighbors.push({ id: nid, x: tmpPos.x, y: tmpPos.y, z: tmpPos.z });
+    }
+    // Allocate a slot in the right shape pool first so the worker's
+    // next positions message can write into it.
+    const shape = node.shape || 'sphere';
+    const pool = this.pools.get(shape) || this.pools.get('sphere');
+    const idx = pool.add(node.id);
+    this.nodes.set(node.id, { shape, poolIdx: idx });
+    this.shapeByNodeId.set(node.id, shape);
+    if (this.adjacency) {
+      this.adjacency.set(node.id, new Set(neighborIds));
+      for (const nid of neighborIds) {
+        if (this.adjacency.has(nid)) this.adjacency.get(nid).add(node.id);
+      }
+    }
+    if (this.worker) {
+      this.worker.postMessage({ kind: 'add', node, neighbors });
+    }
+  }
+
   shutdown() {
     if (this._raf) cancelAnimationFrame(this._raf);
     if (this.worker) this.worker.postMessage({ kind: 'shutdown' });
+    if (this._stream) this._stream.close();
+    document.removeEventListener('graph:visibility', this._onVisibility);
     window.removeEventListener('resize', this._handleResize);
     this.renderer.dispose();
   }
