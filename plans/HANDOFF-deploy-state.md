@@ -1,6 +1,6 @@
-# r1.run Deployment State — Snapshot 2026-05-05 ~05:25 UTC (12/12 LIVE, prod auth wired)
+# r1.run Deployment State — Snapshot 2026-05-05 ~05:45 UTC (12/12 LIVE, DNS + triggers + protection wired)
 
-## Live URLs (all 12 services 200 on /livez + /readyz)
+## Live URLs (all 12 services 200 on /livez + /readyz on the .run.app URL)
 
 | Env     | r1-coord-api                                  | r1-docs                                  | r1-downloads-cdn                                  | r1-admin                                  |
 |---------|-----------------------------------------------|------------------------------------------|---------------------------------------------------|-------------------------------------------|
@@ -10,70 +10,109 @@
 
 Cloud Run reserves `/healthz` on this org's frontend; r1 services additionally answer `/livez`, `/readyz`, `/v1/version`, and `/`.
 
+## Custom-domain mappings on r1.run (all 12 created; cert provisioning ~5-15 min)
+
+| URL                          | Cloud Run service           |
+|------------------------------|-----------------------------|
+| platform.r1.run              | r1-docs-prod                |
+| platform.staging.r1.run      | r1-docs-staging             |
+| platform.dev.r1.run          | r1-docs-dev                 |
+| api.r1.run                   | r1-coord-api-prod           |
+| api.staging.r1.run           | r1-coord-api-staging        |
+| api.dev.r1.run               | r1-coord-api-dev            |
+| downloads.r1.run             | r1-downloads-cdn-prod       |
+| downloads.staging.r1.run     | r1-downloads-cdn-staging    |
+| downloads.dev.r1.run         | r1-downloads-cdn-dev        |
+| admin.r1.run                 | r1-admin-prod               |
+| admin.staging.r1.run         | r1-admin-staging            |
+| admin.dev.r1.run             | r1-admin-dev                |
+
+DNS in Cloudflare: 12 CNAME records → `ghs.googlehosted.com.`, **proxied=OFF (gray cloud)** (mandatory; Cloudflare proxy mode breaks Cloud Run cert provisioning).
+
+To poll cert state:
+```bash
+gcloud beta run domain-mappings describe --domain=api.r1.run \
+  --region=us-central1 --project=relayone-488319 \
+  --format='value(status.conditions[].type,status.conditions[].status,status.conditions[].reason)'
+```
+When `Ready=True` and `CertificateProvisioned=True`, the URL serves HTTPS.
+
 ## Deployed image tags (all 3 envs identical)
 
 | Service            | Tag        | Notes                                                                |
 |--------------------|------------|----------------------------------------------------------------------|
-| r1-coord-api       | `244f87d8` | Includes JwtService, RelayOneSsoClient, PostHog/CustomerIO/CodeRadar |
+| r1-coord-api       | `244f87d8` | JwtService, RelayOneSsoClient, PostHog/CustomerIO/CodeRadar          |
 | r1-docs            | `bf49ec45` | Static-rendered Markdown docs                                        |
 | r1-downloads-cdn   | `bf49ec45` | Streams gs://relayone-488319-r1-releases                             |
 | r1-admin           | `57f88598` | Server-rendered Go admin (9 routes; `requireOperator` middleware)    |
 
-`/v1/version` confirms `244f87d8` reporting from coord-api in all 3 envs.
+`/v1/version` confirms `244f87d8` from coord-api in all 3 envs.
 
-## Secrets in Secret Manager (Cloud Run SA `188548470397-compute@…` has `secretAccessor`)
+## Secrets in Secret Manager
 
 Per env (`{prod,staging,dev}`):
-- `r1-<env>-shared-DATABASE_URL` — Cloud SQL DSN (placeholder; operator must populate before real DB use)
-- `r1-<env>-shared-ANTHROPIC_API_KEY` — Anthropic key (placeholder)
-- `r1-<env>-shared-AUTH_JWT_SECRET` — 48 random base64 bytes generated 2026-05-05 (live; coord-api uses these for HS256)
+- `r1-<env>-shared-DATABASE_URL` — **placeholder** (Cloud SQL not yet active; populate when DSN known)
+- `r1-<env>-shared-ANTHROPIC_API_KEY` — **populated** from existing project keys (`ANTHROPIC_API_KEY`, `_STAGING`, `_DEV`)
+- `r1-<env>-shared-AUTH_JWT_SECRET` — **populated** with 48 random base64 bytes (rotate via `gcloud secrets versions add`)
 
-Wiring in `services/deploy.sh`:
+Wiring in `services/deploy.sh` and `services/cloudbuild-deploy.yaml`:
 ```
 r1-coord-api → DATABASE_URL=…:latest, AUTH_JWT_SECRET=…:latest
 ```
 
+Cloud Run SA `188548470397-compute@…` has `roles/secretmanager.secretAccessor` on every r1-* secret.
+
+## Cloud Build triggers (live; v2 connection-based)
+
+| Name                          | Branch  | _ENV     | Repo connection           |
+|-------------------------------|---------|----------|---------------------------|
+| r1-services-prod-deploy       | main    | prod     | relayone-github-conn / r1-agent-repo |
+| r1-services-staging-deploy    | staging | staging  | relayone-github-conn / r1-agent-repo |
+| r1-services-dev-deploy        | dev     | dev      | relayone-github-conn / r1-agent-repo |
+
+All run `services/cloudbuild-deploy.yaml` and execute as `claude-eric-agent@relayone-488319.iam.gserviceaccount.com`.
+
+## Branch protection (applied)
+
+| Branch  | Required reviews | Status checks                | Direct pushes | Force push | Delete |
+|---------|------------------|------------------------------|---------------|-----------|--------|
+| main    | 1                | build, test, vet (strict)    | blocked       | no        | no     |
+| staging | 1                | build, test, vet (strict)    | blocked       | no        | no     |
+| dev     | 0                | build, test, vet (strict)    | allowed       | no        | no     |
+
 ## Pending operator actions
 
-### 1. Domain mappings to r1.run (DNS only)
-After `gcloud domains verify r1.run` is complete in Search Console, run:
+### 1. Populate DATABASE_URL secrets (3 envs)
+Cloud SQL instances: `r1-prod-pg` RUNNABLE, `r1-staging-pg` + `r1-dev-pg` PENDING_CREATE last we checked. Once all RUNNABLE:
 ```bash
-for ENV in prod staging dev; do
-  SUB=""
-  [ "$ENV" = "staging" ] && SUB=".staging"
-  [ "$ENV" = "dev" ]     && SUB=".dev"
-  gcloud beta run domain-mappings create --service=r1-docs-$ENV          --domain=platform$SUB.r1.run    --region=us-central1
-  gcloud beta run domain-mappings create --service=r1-coord-api-$ENV     --domain=api$SUB.r1.run         --region=us-central1
-  gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV --domain=downloads$SUB.r1.run   --region=us-central1
-  gcloud beta run domain-mappings create --service=r1-admin-$ENV         --domain=admin$SUB.r1.run       --region=us-central1
-done
+# For each env:
+gcloud sql users set-password r1 --instance=r1-<env>-pg --password='<generated>' --project=relayone-488319
+gcloud sql databases create r1 --instance=r1-<env>-pg --project=relayone-488319
+echo -n 'postgresql://r1:<password>@/r1?host=/cloudsql/relayone-488319:us-central1:r1-<env>-pg' \
+  | gcloud secrets versions add r1-<env>-shared-DATABASE_URL --data-file=- --project=relayone-488319
+gcloud run services update r1-coord-api-<env> --region=us-central1 --project=relayone-488319 \
+  --add-cloudsql-instances=relayone-488319:us-central1:r1-<env>-pg
 ```
-Each mapping returns CNAME records — add them to Cloudflare with **proxy=OFF (gray cloud)**, otherwise Cloud Run cannot terminate TLS.
 
-### 2. Populate real secret values (currently placeholders)
-- `DATABASE_URL` — once Cloud SQL is finished provisioning, run `gcloud sql users set-password` and form the DSN: `postgresql://r1@/r1?host=/cloudsql/relayone-488319:us-central1:r1-<env>-pg`
-- `ANTHROPIC_API_KEY` — paste the workspace key
-- `AUTH_JWT_SECRET` — already populated with a 48-byte random value (rotate via `gcloud secrets versions add`)
+### 2. Wait on Cloud Run cert provisioning (auto)
+Currently CertificatePending across all 12 mappings. Typical 5-15 min after DNS is correct. No operator action needed unless certs fail to provision after 30 min — in which case re-check that the CNAME really is `ghs.googlehosted.com.` with **proxy=OFF**.
 
-### 3. Wire Cloud Build triggers
-```bash
-./services/scripts/setup-cloudbuild-triggers.sh
-```
-Creates 3 triggers: `r1-deploy-prod` (push to `main`), `r1-deploy-staging` (push to `staging`), `r1-deploy-dev` (push to `dev`).
-
-### 4. Apply branch protection
-```bash
-./scripts/setup-branch-protection.sh
-```
-Creates `dev` + `staging` if missing; sets required-PR-review + status-checks on `main` and `staging`; leaves `dev` open for direct commits.
-
-### 5. CLAUDE.md package map (harness blocks agent edits to CLAUDE.md)
+### 3. CLAUDE.md package map (harness blocks agent edits to CLAUDE.md)
 Insert the following line after the existing `handoff/` line in `/home/eric/repos/r1-agent/CLAUDE.md`:
 ```
 antitrunc/                         Anti-truncation enforcement (layered defense against scope self-reduction)
 ```
 
-## Smoke check output (most recent run)
+### 4. Merge PR #128 once reviewed
+Branch `claude/w521-eliminate-stoke-leftovers-2026-05-02` carries:
+- Specs 6/7/8/9 implementation (web-chat-ui, desktop-cortex-augmentation, agentic-test-harness, anti-truncation)
+- 4 SaaS service scaffolds + Dockerfiles + cloudbuild
+- 3 ops scripts (`deploy.sh`, `setup-cloudbuild-triggers.sh`, `setup-branch-protection.sh`)
+- Doc refresh (README + 6 docs in `docs/`)
+- Auth (Path A): `internal/auth` package + `internal/tracking` (PostHog + Customer.io + CodeRadar)
+- `internal/admin` (server-rendered Go admin panel)
+
+## Smoke check output (most recent)
 
 ```
 === /v1/version on coord-api (all 3 envs) ===
@@ -100,9 +139,16 @@ r1-admin-prod             livez=OK readyz=OK
 
 - `services/deploy.sh`: per-service tag resolution via `resolve_tag()` (was applying one global TAG, broke services not yet rebuilt at the requested SHA).
 - `services/deploy.sh`: bound `AUTH_JWT_SECRET=r1-<env>-shared-AUTH_JWT_SECRET:latest` to all coord-api envs (prev only DATABASE_URL).
-- Created `r1-{prod,staging,dev}-shared-AUTH_JWT_SECRET` in Secret Manager + granted Cloud Run SA `secretAccessor`. Without this, `r1-coord-api-prod` Fatalfs at startup with `AUTH_JWT_SECRET must be set in prod`.
+- Created `r1-{prod,staging,dev}-shared-AUTH_JWT_SECRET` in Secret Manager + granted Cloud Run SA `secretAccessor`.
 - Upgraded coord-api in all 3 envs from `bf49ec45` (no auth) to `244f87d8` (full auth + tracking).
 - Created `r1-admin-{dev,staging,prod}` services with image `57f88598`.
+- Created 12 Cloud Run domain mappings on `*.r1.run` + 12 matching CNAMEs in Cloudflare (proxied=off).
+- Populated `r1-<env>-shared-ANTHROPIC_API_KEY` from existing project keys.
+- Wrote `cloudbuild-deploy.yaml` to include r1-admin builds + AUTH_JWT_SECRET binding + 4-service smoke step.
+- Switched `setup-cloudbuild-triggers.sh` to Cloud Build v2 connection-based form + service account.
+- Wired 3 Cloud Build triggers (prod/staging/dev → main/staging/dev).
+- Created `staging` and `dev` branches on origin at current main tip.
+- Applied branch protection: main + staging strict (PR + 1 review + 3 status checks), dev permissive (3 status checks only).
 
 ## Known pre-existing test failures (separate triage)
 
