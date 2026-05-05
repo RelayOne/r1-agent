@@ -15,31 +15,29 @@ import (
 )
 
 func TestParseV2Templates_ParsesCleanly(t *testing.T) {
-	tmpl, err := parseV2Templates()
+	tmpls, err := parseV2Templates()
 	if err != nil {
 		t.Fatalf("parseV2Templates: %v", err)
 	}
-	if tmpl == nil {
-		t.Fatal("parseV2Templates returned nil template")
+	if tmpls == nil {
+		t.Fatal("parseV2Templates returned nil map")
+	}
+	if _, ok := tmpls["base"]; !ok {
+		t.Errorf("base template missing")
 	}
 	for _, want := range []string{"base", "import-map"} {
-		if got := tmpl.Lookup(want); got == nil {
-			t.Errorf("template %q not registered (defined templates: %v)", want, tmpl.DefinedTemplates())
+		if got := tmpls["base"].Lookup(want); got == nil {
+			t.Errorf("template %q not registered (defined: %v)", want, tmpls["base"].DefinedTemplates())
 		}
 	}
 }
 
 func TestParseV2Templates_BaseRenderShape(t *testing.T) {
-	tmpl, err := parseV2Templates()
+	tmpl, err := parseV2Template("base")
 	if err != nil {
-		t.Fatalf("parseV2Templates: %v", err)
+		t.Fatalf("parseV2Template(base): %v", err)
 	}
-	ctx := struct {
-		Title       string
-		HtmxSRI     string
-		HtmxSseSRI  string
-		SessionID   string
-	}{
+	ctx := V2BaseContext{
 		Title:      "test",
 		HtmxSRI:    "sha384-AAAA",
 		HtmxSseSRI: "sha384-BBBB",
@@ -95,5 +93,19 @@ func TestSetV2CSP_StrictPolicy(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("setV2CSP unexpectedly wrote status code %d", rec.Code)
+	}
+}
+
+func TestSetV2CrossOriginIsolation_HeadersForSAB(t *testing.T) {
+	rec := httptest.NewRecorder()
+	setV2CrossOriginIsolation(rec.Header())
+	for h, want := range map[string]string{
+		"Cross-Origin-Opener-Policy":   "same-origin",
+		"Cross-Origin-Embedder-Policy": "require-corp",
+		"Cross-Origin-Resource-Policy": "same-origin",
+	} {
+		if got := rec.Header().Get(h); got != want {
+			t.Errorf("%s: got %q, want %q", h, got, want)
+		}
 	}
 }
