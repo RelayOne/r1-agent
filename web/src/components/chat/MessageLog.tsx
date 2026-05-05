@@ -27,6 +27,11 @@ import type { SessionId } from "@/lib/api/types";
 const STICK_THRESHOLD_PX = 64;
 const ROW_ESTIMATE_PX = 96;
 
+// Stable empty array reference — required so the `?? []` fallback in
+// the order selector doesn't return a fresh array each render and
+// trip Zustand into an infinite useStore loop.
+const EMPTY_MESSAGE_IDS: readonly string[] = Object.freeze([]);
+
 export interface MessageLogProps {
   store: DaemonStore;
   sessionId: SessionId;
@@ -44,7 +49,7 @@ export function MessageLog({
 }: MessageLogProps): ReactElement {
   const order = useStore(
     store,
-    (s) => s.messages.orderBySession[sessionId] ?? [],
+    (s) => s.messages.orderBySession[sessionId] ?? EMPTY_MESSAGE_IDS,
   );
   const byKey = useStore(store, (s) => s.messages.byKey);
 

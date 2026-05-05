@@ -31,6 +31,9 @@ export interface GlobalKeybindingsProps {
   onSwitchDaemon?: (index: number) => void;
   /** Test injection forwarded to the hook. */
   target?: EventTarget;
+  /** Override platform detection. Tests pass `isMac` so they can fire
+   *  metaKey events without depending on `navigator.platform`. */
+  isMac?: boolean;
 }
 
 export function GlobalKeybindings(
@@ -94,6 +97,7 @@ export function GlobalKeybindings(
     bindings,
     enabled: props.enabled,
     target: props.target,
+    isMac: props.isMac,
     // Global handlers must NOT fire when typing in inputs — Composer
     // owns its own Cmd+Enter. The "/" + "?" shortcuts also need this
     // behaviour or they'd intercept normal typing.

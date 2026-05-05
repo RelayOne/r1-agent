@@ -38,7 +38,7 @@ describe("<Composer>", () => {
   });
 
   it("disables Send while the input is empty (whitespace counts as empty)", () => {
-    render(<Harness onSend={() => {}} initial="   \n\t  " />);
+    render(<Harness onSend={() => {}} initial={"   \n\t  "} />);
     const send = screen.getByTestId("composer-send");
     expect(send.hasAttribute("disabled")).toEqual(true);
   });

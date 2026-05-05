@@ -134,6 +134,13 @@ export interface LanesSidebarProps {
   onFocus?: (laneId: LaneId) => void;
 }
 
+// Stable empty array reference — without this, the `?? []` fallback in
+// the selectors below creates a fresh array each render, which Zustand
+// sees as a change and re-renders, triggering useStore to call the
+// selector again, looping until React aborts with "Maximum update
+// depth exceeded".
+const EMPTY_LANE_IDS: readonly LaneId[] = Object.freeze([]);
+
 export function LanesSidebar({
   store,
   sessionId,
@@ -142,12 +149,12 @@ export function LanesSidebar({
 }: LanesSidebarProps): ReactElement {
   const order = useStore(
     store,
-    (s) => s.lanes.orderBySession[sessionId] ?? [],
+    (s) => s.lanes.orderBySession[sessionId] ?? EMPTY_LANE_IDS,
   );
   const byKey = useStore(store, (s) => s.lanes.byKey);
   const pinnedIds = useStore(
     store,
-    (s) => s.ui.tilePinnedBySession[sessionId] ?? [],
+    (s) => s.ui.tilePinnedBySession[sessionId] ?? EMPTY_LANE_IDS,
   );
   const pinLane = useStore(store, (s) => s.pinLane);
   const unpinLane = useStore(store, (s) => s.unpinLane);

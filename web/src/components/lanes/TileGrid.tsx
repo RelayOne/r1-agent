@@ -37,6 +37,11 @@ function gridColsClass(n: number): string {
   return "grid-cols-2";
 }
 
+// Stable empty references — fresh array/object literals in selectors
+// trip Zustand into infinite useStore re-render loops.
+const EMPTY_TILE_IDS: readonly LaneId[] = Object.freeze([]);
+const EMPTY_COLLAPSED_MAP: Readonly<Record<string, boolean>> = Object.freeze({});
+
 export interface TileGridProps {
   store: DaemonStore;
   sessionId: SessionId;
@@ -53,11 +58,11 @@ export function TileGrid({
 }: TileGridProps): ReactElement {
   const tileIds = useStore(
     store,
-    (s) => s.ui.tilePinnedBySession[sessionId] ?? [],
+    (s) => s.ui.tilePinnedBySession[sessionId] ?? EMPTY_TILE_IDS,
   );
   const collapsedMap = useStore(
     store,
-    (s) => s.ui.tileCollapsedBySession[sessionId] ?? {},
+    (s) => s.ui.tileCollapsedBySession[sessionId] ?? EMPTY_COLLAPSED_MAP,
   );
   const reorderTiles = useStore(store, (s) => s.reorderTiles);
   const toggleCollapsed = useStore(store, (s) => s.toggleTileCollapsed);

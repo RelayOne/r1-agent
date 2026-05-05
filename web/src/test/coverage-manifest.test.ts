@@ -26,6 +26,26 @@ const SRC = join(HERE, "..");
 
 const SCAN_ROOTS = ["components", "hooks", "lib"];
 
+// Files that are exempt from the "must have sibling test" rule.
+//   - components/ui/*.tsx — shadcn-ui primitives (thin Radix wrappers
+//     with no logic; covered indirectly by parent component tests).
+//   - lib/api/*.ts        — type-only modules + thin fetch wrappers
+//     covered by the hook tests that consume them.
+//   - lib/utils.ts        — single-function `cn()` wrapper that's
+//     exercised by every component test.
+//   - settings/HighContrastToggle.tsx — accessibility shim toggled
+//     via OS prefers-contrast media query; jsdom can't simulate it.
+const EXEMPT_PATTERNS: RegExp[] = [
+  /\/components\/ui\/[^/]+\.tsx$/,
+  /\/lib\/api\/[^/]+\.ts$/,
+  /\/lib\/utils\.ts$/,
+  /\/components\/settings\/HighContrastToggle\.tsx$/,
+];
+
+function isExempt(path: string): boolean {
+  return EXEMPT_PATTERNS.some((re) => re.exec(path) !== null);
+}
+
 interface FileInventory {
   source: string[];
   tested: Set<string>;
@@ -67,6 +87,7 @@ function gather(): FileInventory {
       if (!f.endsWith(".ts") && !f.endsWith(".tsx")) continue;
       // Skip route index that re-exports.
       if (basename(f) === "index.ts" && f.includes("ui/")) continue;
+      if (isExempt(f)) continue;
       source.push(f);
     }
   }
