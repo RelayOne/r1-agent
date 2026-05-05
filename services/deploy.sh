@@ -40,7 +40,7 @@ deploy_one() {
     --max-instances=10
     --concurrency=80
     --cpu=1
-    --memory=256Mi
+    --memory=512Mi
     --port=8080
     --no-cpu-throttling
     --set-env-vars="R1_ENV=$env,R1_VERSION=$TAG"
@@ -99,10 +99,11 @@ main() {
       local url
       url="$(gcloud run services describe "$svc-$env" --region="$REGION" --project="$PROJECT" --format='value(status.url)')"
       printf "%-30s %-50s " "$svc-$env" "$url"
-      if curl -sSf -m 10 "$url/healthz" >/dev/null 2>&1; then
-        echo "OK"
+      # Cloud Run org policy intercepts /healthz on this project; use /livez.
+      if curl -sSf -m 10 "$url/livez" >/dev/null 2>&1; then
+        echo "OK ($url/livez)"
       else
-        echo "FAIL"
+        echo "FAIL ($url/livez)"
       fi
     done
   done

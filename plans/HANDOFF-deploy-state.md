@@ -1,4 +1,47 @@
-# r1.run Deployment State — Snapshot 2026-05-04 ~20:30 PDT
+# r1.run Deployment State — Snapshot 2026-05-04 ~20:55 PDT (all envs LIVE)
+
+## Live URLs (all 200 on /livez)
+
+| Env     | r1-coord-api | r1-docs | r1-downloads-cdn |
+|---------|--------------|---------|------------------|
+| dev     | r1-coord-api-dev-2sobff3gmq-uc.a.run.app | r1-docs-dev-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-dev-2sobff3gmq-uc.a.run.app |
+| staging | r1-coord-api-staging-2sobff3gmq-uc.a.run.app | r1-docs-staging-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-staging-2sobff3gmq-uc.a.run.app |
+| prod    | r1-coord-api-prod-2sobff3gmq-uc.a.run.app | r1-docs-prod-2sobff3gmq-uc.a.run.app | r1-downloads-cdn-prod-2sobff3gmq-uc.a.run.app |
+
+Cloud Run reserves `/healthz` on this org's frontend; my services additionally answer
+`/livez`, `/readyz`, `/v1/version`, and `/`.
+
+## Pending operator actions for r1.run domain mapping
+
+1. Verify ownership of `r1.run`:
+   ```bash
+   gcloud domains verify r1.run
+   ```
+   Adds a TXT record requirement at the Search Console; copy the value.
+
+2. Add the TXT record to Cloudflare (your `r1.run` zone, root):
+   - Type: TXT
+   - Host: `@` (or `r1.run`)
+   - Value: `google-site-verification=<TOKEN>`
+   - TTL: auto
+
+3. Wait for DNS propagation (~5-10 min), then click verify in Search Console.
+
+4. Create the 9 domain mappings:
+   ```bash
+   for ENV in prod staging dev; do
+     SUB=""
+     [ "$ENV" = "staging" ] && SUB=".staging"
+     [ "$ENV" = "dev" ] && SUB=".dev"
+     gcloud beta run domain-mappings create --service=r1-docs-$ENV          --domain=platform$SUB.r1.run    --region=us-central1
+     gcloud beta run domain-mappings create --service=r1-coord-api-$ENV     --domain=api$SUB.r1.run         --region=us-central1
+     gcloud beta run domain-mappings create --service=r1-downloads-cdn-$ENV --domain=downloads$SUB.r1.run   --region=us-central1
+   done
+   ```
+
+5. Each mapping returns CNAME records you add to Cloudflare for the corresponding subdomains.
+
+# Original snapshot 2026-05-04 ~20:30 PDT
 
 ## Where we are
 
