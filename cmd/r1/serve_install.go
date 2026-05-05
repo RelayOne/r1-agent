@@ -99,27 +99,46 @@ func runServeUninstall(stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runServeStatus reports the unit's current state.
+// runServeStatus reports the unit's current state. Always prints the
+// unit name + a status word on stdout so callers (operators + the
+// TestRunServeStatus_ReportsKnownState test) can parse it
+// unconditionally — even when the service-manager probe fails (e.g.
+// in a CI container without systemctl/launchctl).
+//
+// Exit codes:
+//   0 — running
+//   1 — running error path (Service constructor failed; no probe done)
+//   3 — stopped
+//   4 — not-installed
+//   5 — unknown (probe error or any other non-typed state)
 func runServeStatus(stdout, stderr io.Writer) int {
 	cfg := serviceunit.Defaults()
 	svc, err := serviceunit.New(cfg)
 	if err != nil {
+		// We don't have a Service handle, so we can't use svc.Name()
+		// or svc.Platform(). Fall back to the cfg defaults so the
+		// output still contains "r1-serve" + "unknown" — keeps
+		// downstream scripts that grep for the unit name working.
 		fmt.Fprintf(stderr, "serve --status: %v\n", err)
+		fmt.Fprintf(stdout, "%s: unknown (constructor-failed)\n",
+			fallbackName(cfg))
 		return 1
 	}
 	st, err := svc.Status()
 	if err != nil {
-		fmt.Fprintf(stderr, "serve --status: %v\n", err)
-		return 1
+		// Probe failed — typical in container CI without a service
+		// manager. Surface the error to stderr for ops triage but
+		// still emit the unit name + "unknown" status word on stdout
+		// so the response is always parseable.
+		fmt.Fprintf(stderr, "serve --status: probe failed: %v\n", err)
+		fmt.Fprintf(stdout, "%s: unknown (%s)\n", svc.Name(), svc.Platform())
+		return 5
 	}
 	fmt.Fprintf(stdout, "%s: %s (%s)\n", svc.Name(), st, svc.Platform())
 	switch st {
 	case serviceunit.StatusRunning:
 		return 0
 	case serviceunit.StatusStopped, serviceunit.StatusNotInstalled:
-		// Stopped + NotInstalled are non-error reports; exit 3 + 4
-		// give scripts an actionable distinction without relying on
-		// stdout-parsing.
 		if st == serviceunit.StatusStopped {
 			return 3
 		}
@@ -127,6 +146,16 @@ func runServeStatus(stdout, stderr io.Writer) int {
 	default:
 		return 5
 	}
+}
+
+// fallbackName returns the unit name from cfg, defaulting to
+// serviceunit.DefaultName when cfg.Name is empty (matches the
+// fall-through serviceunit.New does internally).
+func fallbackName(cfg serviceunit.Config) string {
+	if cfg.Name == "" {
+		return serviceunit.DefaultName
+	}
+	return cfg.Name
 }
 
 // stripInstallFlags removes --install / --uninstall / --status from
