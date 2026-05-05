@@ -13,7 +13,7 @@
 #   * desktop-vitest: desktop/ existing R1D-* tests
 #
 # E2E job runs after the three above succeed, on each of macOS-latest
-# / ubuntu-22.04 / windows-latest. Spec §11.5 says the e2e suite
+# / ubuntu-24.04 / windows-latest. Spec §11.5 says the e2e suite
 # blocks merge on red.
 
 name: desktop-augmentation
@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -83,12 +83,12 @@ jobs:
 
   components:
     name: components (vitest)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: npm install (workspace root)
         run: npm install --workspaces --include-workspace-root
       - name: npm test (web-components)
@@ -96,12 +96,12 @@ jobs:
 
   desktop-vitest:
     name: desktop (vitest)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: npm install (workspace root)
         run: npm install --workspaces --include-workspace-root
       - name: npm test (desktop)
@@ -114,12 +114,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.95'
