@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-05-04 — 55/55 items on build/web-chat-ui, tip 3561c37b -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: lanes-protocol, r1d-server -->
 <!-- BUILD_ORDER: 6 -->
