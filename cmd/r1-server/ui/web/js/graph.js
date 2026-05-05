@@ -152,6 +152,17 @@ export class GraphRenderer {
     this.worker = null;
     this.recyclableBuf = null;
 
+    // T4: hover/click picking via THREE.Raycaster. Built-in raycaster
+    // is sufficient at 3k nodes per RT-INSTANCEDMESH-PERF. The hover
+    // path is rAF-throttled so we never pick more than once per frame.
+    this.raycaster = new THREE.Raycaster();
+    this._pointer = new THREE.Vector2();
+    this._pendingPick = null;     // { x, y, kind: 'hover' | 'click' | 'shift-click' }
+    this.hoverNodeId = null;
+    this.sessionId = options.sessionId || (canvas.dataset && canvas.dataset.sessionId) || '';
+    canvas.addEventListener('pointermove', (e) => this._queuePick(e, 'hover'));
+    canvas.addEventListener('click', (e) => this._queuePick(e, e.shiftKey ? 'shift-click' : 'click'));
+
     this._handleResize = this._handleResize.bind(this);
     window.addEventListener('resize', this._handleResize);
     this._handleResize();
@@ -187,11 +198,76 @@ export class GraphRenderer {
     // Drive ticks at requestAnimationFrame cadence.
     const loop = () => {
       this.controls.update();
+      this._drainPick();
       this.renderer.render(this.scene, this.camera);
       this._raf = requestAnimationFrame(loop);
     };
     this._raf = requestAnimationFrame(loop);
   }
+
+  _queuePick(ev, kind) {
+    const rect = this.canvas.getBoundingClientRect();
+    this._pendingPick = {
+      x: ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+      y: -((ev.clientY - rect.top) / rect.height) * 2 + 1,
+      kind,
+    };
+  }
+
+  _drainPick() {
+    const p = this._pendingPick;
+    if (!p) return;
+    this._pendingPick = null;
+    this._pointer.set(p.x, p.y);
+    this.raycaster.setFromCamera(this._pointer, this.camera);
+    let nearest = null;
+    for (const pool of this.pools.values()) {
+      if (pool.mesh.count === 0) continue;
+      const hit = this.raycaster.intersectObject(pool.mesh, false);
+      if (hit.length === 0) continue;
+      const h = hit[0];
+      if (!nearest || h.distance < nearest.distance) {
+        nearest = { distance: h.distance, instanceId: h.instanceId, pool };
+      }
+    }
+    if (!nearest || nearest.instanceId === undefined) {
+      if (p.kind === 'hover') this.hoverNodeId = null;
+      return;
+    }
+    const nodeId = nearest.pool.nodeIdByIndex[nearest.instanceId];
+    if (!nodeId) return;
+    if (p.kind === 'hover') {
+      if (this.hoverNodeId === nodeId) return;
+      this.hoverNodeId = nodeId;
+      this.canvas.style.cursor = 'pointer';
+    }
+    if (p.kind === 'click' || p.kind === 'shift-click') {
+      this._swapSidePanel(nodeId);
+      if (p.kind === 'shift-click') this.focusSubtree(nodeId);
+    }
+  }
+
+  _swapSidePanel(nodeId) {
+    const target = document.querySelector('#side-panel');
+    const sid = this.sessionId;
+    if (!target || !sid) return;
+    if (typeof window.htmx !== 'undefined' && typeof window.htmx.ajax === 'function') {
+      window.htmx.ajax('GET', '/api/session/' + sid + '/node/' + nodeId, {
+        target: '#side-panel',
+        swap: 'innerHTML',
+      });
+      return;
+    }
+    // Fallback (no htmx loaded yet, e.g. during tests).
+    fetch('/api/session/' + sid + '/node/' + nodeId, { credentials: 'same-origin' })
+      .then(r => r.text())
+      .then(html => { target.innerHTML = html; })
+      .catch(() => { /* network errors are not fatal */ });
+  }
+
+  // Stub for T7 — implemented later in this branch. Lets the click
+  // handler reference focusSubtree without a runtime ReferenceError.
+  focusSubtree(_nodeId) { /* T7 fills this in */ }
 
   _onWorkerMessage(ev) {
     const msg = ev.data || {};
