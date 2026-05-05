@@ -182,6 +182,14 @@ export class GraphRenderer {
     canvas.addEventListener('pointermove', (e) => this._queuePick(e, 'hover'));
     canvas.addEventListener('click', (e) => this._queuePick(e, e.shiftKey ? 'shift-click' : 'click'));
 
+    // T6: scrubber visibility events. The scrubber.js island dispatches
+    // a CustomEvent on document with detail.visibility (Uint8Array) and
+    // detail.nodeIds (string[]). graph.js applies it as a per-instance
+    // scale toggle — frozen positions stay put, just the rendered scale
+    // flips between styled and 0.
+    this._onVisibility = (ev) => this._applyVisibility(ev.detail);
+    document.addEventListener('graph:visibility', this._onVisibility);
+
     this._handleResize = this._handleResize.bind(this);
     window.addEventListener('resize', this._handleResize);
     this._handleResize();
@@ -361,6 +369,27 @@ export class GraphRenderer {
   // Stub for T7 — implemented later in this branch. Lets the click
   // handler reference focusSubtree without a runtime ReferenceError.
   focusSubtree(_nodeId) { /* T7 fills this in */ }
+
+  _applyVisibility(detail) {
+    if (!detail || !detail.visibility || !detail.nodeIds) return;
+    const vis = detail.visibility;
+    const ids = detail.nodeIds;
+    const tmpPos = new THREE.Vector3();
+    const tmpQuat = new THREE.Quaternion();
+    const sShown = new THREE.Vector3(8, 8, 8);
+    const sHidden = new THREE.Vector3(0, 0, 0);
+    for (let i = 0; i < ids.length; i++) {
+      const info = this.nodes.get(ids[i]);
+      if (!info) continue;
+      const pool = this.pools.get(info.shape);
+      if (!pool) continue;
+      pool.mesh.getMatrixAt(info.poolIdx, pool._tmp);
+      tmpPos.setFromMatrixPosition(pool._tmp);
+      pool._tmp.compose(tmpPos, tmpQuat, vis[i] ? sShown : sHidden);
+      pool.mesh.setMatrixAt(info.poolIdx, pool._tmp);
+    }
+    for (const pool of this.pools.values()) pool.flush();
+  }
 
   _onWorkerMessage(ev) {
     const msg = ev.data || {};
