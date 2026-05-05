@@ -147,13 +147,18 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 
 | Area | Status | What it means |
 |---|---|---|
-| Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — 171/172 items + 1 BLOCKED on operator action** | Merged to working branch, pushed to GitHub PR #128. |
-| 9 Cloud Run SaaS services | **Live — 200 OK on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn. DNS pending Cloudflare CNAMEs. |
-| Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; secrets bound via Secret Manager. |
-| `go build`/`vet`/`test` | **All green** | 100% of test suite passes; 2 pre-existing failures fixed. |
-| JWT login + RelayOne MSP SSO | **Scoped (Path A — Go reimpl)** | Uses `@relayone/auth-core` contract; Go port pending. |
-| Admin panel (admin.r1.run) | **Scoped** | Will clone an existing `*-admin` template + customize for r1 routes. |
-| PostHog + Customer.io + CodeRadar tracking | **Scoped** | CodeRadar already in-house; PostHog + Customer.io vendor integrations pending. |
+| Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — merged to main** | Specs 6/7/8/9 + r1.run SaaS shipped via PRs #128 / #143 / #150 / #151. |
+| 12 Cloud Run SaaS surfaces (4 services × 3 envs) | **Live — 12/12 HTTPS-200 on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. All r1.run subdomains resolve. |
+| Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; DSN secrets in Secret Manager + bound via `--add-cloudsql-instances`. |
+| `go build`/`vet`/`test` | **All green** | 245 packages green; sequential test suite passes; race-detector clean on the bus. |
+| Web + desktop + web-components vitest | **All green** | 295 tests pass (web 212 + components 19 + desktop 64). React 19 + jsdom 26 stack. |
+| JWT login + RelayOne MSP SSO | **Done — Path A Go reimpl** | `services/r1-coord-api/internal/auth/{jwt,sso,middleware}.go`; HS256 + RS256; OIDC code flow. |
+| Admin panel (admin.r1.run) | **Done** | `services/r1-admin/main.go` — server-rendered Go admin; SSO-gated `requireOperator` middleware in prod. |
+| PostHog + Customer.io + CodeRadar tracking | **Done** | `services/r1-coord-api/internal/tracking/` — three vendor clients, nil-safe. |
+| Nightly benchmark cron | **Done** | `services/cloudbuild-bench-nightly.yaml` + Cloud Scheduler `r1-bench-nightly-cron` (04:00 UTC daily); reports upload to `gs://relayone-488319-r1-bench-reports/<date>/`. |
+| Spec 7 desktop daemon discovery wiring | **Done** | `desktop/src-tauri/src/discovery_state.rs` — Tauri-managed state + `app.discovery_status` IPC verb. |
+| `r1-server-ui-v2` retrofit (61 items) | **Scoped — 5 sub-specs ready for /build** | foundation + 3d-perf + event-rendering + handlers-and-routes + tests. Build order: foundation → (3d-perf, event-rendering, handlers-and-routes parallel) → tests. |
+| Node 22 LTS CI bump | **Scoped (precursor to UI v2 retrofit)** | Node 20 LTS EOL 2026-04-30; bump unblocks jsdom 29 + vitest 4 + vite 7. Single small CI-only PR. |
 | Marketing site + affiliate / SEO / CRO / attribution | **On horizon** | Multi-week marketing-engineering effort; deferred. |
 
 ## Documentation
@@ -186,6 +191,22 @@ r1 antitrunc verify -n 20                   # spec 9 false-completion gate
 ```
 
 These commands are the gate. They must be green on every PR. CI also runs `-race`, `golangci-lint` (advisory), `govulncheck`, `gosec`, and `make check-pkg-count`.
+
+## Environments
+
+This repo follows the portfolio env-branch convention:
+
+| Branch    | Environment | Service / target                                    |
+|-----------|-------------|-----------------------------------------------------|
+| `dev`     | dev         | `r1-{coord-api,docs,downloads-cdn,admin}-dev` (auto-deploy on push to `dev`) |
+| `staging` | staging     | `r1-{coord-api,docs,downloads-cdn,admin}-staging` (auto-deploy on push to `staging`) |
+| `main`    | prod        | `r1-{coord-api,docs,downloads-cdn,admin}-prod` (auto-deploy on push to `main`) |
+
+**Branch protection on `main` and `staging`:** PR-required, no force-push, no delete, required check is `r1-agent-pr (relayone-488319)`. `dev` allows direct commits.
+
+**Forward-merge flow:** `dev` → `staging` → `main`. Direct pushes to `main`/`staging` are blocked by branch protection.
+
+**Per-env data isolation:** Each env has its own Secret Manager entries (`r1-<env>-shared-<VAR>`), Cloud SQL Postgres instance (`r1-<env>-pg`), and Cloud Run service revisions. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full operator runbook.
 
 ## Operations
 

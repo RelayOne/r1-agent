@@ -207,6 +207,14 @@ Complete feature inventory for r1 as of 2026-05-04. Status reflects the merged s
 - PostHog product analytics integration
 - Customer.io retention + lifecycle email integration
 - CodeRadar dogfood event streaming (already in-house; just turn on per env)
+- **r1-server UI v2 retrofit** — five sub-specs scoped 2026-05-05 (61 items split out of `r1-server-ui-v2.md`):
+  - **Foundation** (`r1-server-ui-v2-foundation.md`): vendored htmx 2.0.4 + htmx-ext-sse 2.2.4 + three.js 0.170.0 ESM + d3-force-3d 3.0.5 + import map; SRI hashes verified at vendor time + at every CI run; `base.html` htmx layout that all v2 pages extend; `data-hx-*` attribute convention pinned. **Why operators care:** an air-gapped r1-server build with no CDN dependencies; ≤250 KB gzipped chrome.
+  - **3D perf** (`r1-server-ui-v2-3d-perf.md`): InstancedMesh refactor + Web Worker for d3-force-3d + frozen-position time scrubber. **Why operators care:** the ledger 3D viewer scales from ~500 to ~3000 nodes at ≥30 FPS without freezing the page during simulation.
+  - **Event rendering** (`r1-server-ui-v2-event-rendering.md`): typed `IsRedacted` / `SkillEventMap` Go helpers + waterfall 🔒 lock + side-panel `[content redacted]` + skill 🧬 row icons + 3D desaturation/opacity transitions; emission paths for `skill_loaded` (skill_injector) + `skill_unloaded` (compactor + scope-exit). **Why operators care:** redaction events show up exactly where the lawyer expects them; skill load/unload tells you *why* a stance changed behavior mid-task.
+  - **Handlers + routes** (`r1-server-ui-v2-handlers-and-routes.md`): centralised `V2Config` flag (replaces ad-hoc `os.Getenv` calls); `index.html` + `session.html` + `session-stream.html` + `memories.html` + `share.html` + `diff.html` page templates; memory-side-panel + memory-graph view; `.tracebundle` export route; SSE `last_event_id` URL-query fallback + `event: resync` frame on cursor pruning. **Why operators care:** read-only share links work, traces export to disk for offline analysis, SSE reconnects don't lose events.
+  - **Tests** (`r1-server-ui-v2-tests.md`): golden test suite for every page template (auto-update via `-update`); 3D worker fixture test (vitest); Playwright + axe-core E2E in a separate Go submodule; vendor freshness CI guard. **Why operators care:** every UI change has a deterministic golden + an accessibility audit + an E2E smoke; regressions get caught at PR time, not in production.
+  - **Build order:** `foundation → (3d-perf, event-rendering, handlers-and-routes parallel) → tests`. Total: 61 items.
+- **Node 22 LTS CI bump** (precursor to UI v2 retrofit): Node 20 went EOL 2026-04-30; bump unblocks jsdom 29, vitest 4, vite 7. Single small CI-only PR (`cloudbuild.yaml` + `desktop-augmentation.yml`).
 
 ### Scoping
 - Cross-machine session migration

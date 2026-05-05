@@ -1,0 +1,57 @@
+{{- /*
+  cmd/r1-server/ui/web/memories.html
+
+  Spec 4 §5.4 — memory explorer.
+
+  Context shape:
+    .V2BaseContext
+    .Filters  FilterChipSet
+    .Groups   []MemoryGroup  (Scope, Cards []MemoryCard)
+*/ -}}
+{{- define "memories" -}}
+{{ template "base" . }}
+{{- end -}}
+
+{{- define "title" -}}memories — r1{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <nav class="topbar__nav" aria-label="Primary">
+    <a href="/" data-testid="nav-instances">Instances</a>
+    <a href="/memories" aria-current="page" data-testid="nav-memories">Memories</a>
+    <a href="/settings" data-testid="nav-settings">Settings</a>
+  </nav>
+  <button type="button"
+          data-testid="btn-add-memory"
+          data-hx-get="/api/memories/new"
+          data-hx-target="#side-panel">
+    + Add memory
+  </button>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section class="pane pane--primary">
+  <header style="display:flex;gap:12px;align-items:center;margin-bottom:8px;">
+    {{ template "filter-chips" .Filters }}
+    <input type="search" name="q" placeholder="Search FTS5..."
+           data-testid="search-memories"
+           data-hx-get="/memories"
+           data-hx-trigger="input changed delay:300ms"
+           data-hx-target="#groups"
+           data-hx-include="[name='scope']" />
+  </header>
+  <div id="groups" data-testid="memory-groups">
+    {{ range .Groups }}{{ template "memory-group" . }}{{ end }}
+    {{ if eq (len .Groups) 0 }}
+      <p class="muted">No memories.</p>
+    {{ end }}
+  </div>
+</section>
+<aside id="side-panel" class="pane pane--side" role="complementary">
+  {{ template "memory-side-panel-empty" . }}
+</aside>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

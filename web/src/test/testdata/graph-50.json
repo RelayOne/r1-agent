@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    {"id": "n0"},  {"id": "n1"},  {"id": "n2"},  {"id": "n3"},  {"id": "n4"},
+    {"id": "n5"},  {"id": "n6"},  {"id": "n7"},  {"id": "n8"},  {"id": "n9"},
+    {"id": "n10"}, {"id": "n11"}, {"id": "n12"}, {"id": "n13"}, {"id": "n14"},
+    {"id": "n15"}, {"id": "n16"}, {"id": "n17"}, {"id": "n18"}, {"id": "n19"},
+    {"id": "n20"}, {"id": "n21"}, {"id": "n22"}, {"id": "n23"}, {"id": "n24"},
+    {"id": "n25"}, {"id": "n26"}, {"id": "n27"}, {"id": "n28"}, {"id": "n29"},
+    {"id": "n30"}, {"id": "n31"}, {"id": "n32"}, {"id": "n33"}, {"id": "n34"},
+    {"id": "n35"}, {"id": "n36"}, {"id": "n37"}, {"id": "n38"}, {"id": "n39"},
+    {"id": "n40"}, {"id": "n41"}, {"id": "n42"}, {"id": "n43"}, {"id": "n44"},
+    {"id": "n45"}, {"id": "n46"}, {"id": "n47"}, {"id": "n48"}, {"id": "n49"}
+  ],
+  "edges": [
+    {"source": "n0", "target": "n1"}, {"source": "n1", "target": "n2"},
+    {"source": "n2", "target": "n3"}, {"source": "n3", "target": "n4"},
+    {"source": "n4", "target": "n5"}, {"source": "n5", "target": "n6"},
+    {"source": "n6", "target": "n7"}, {"source": "n7", "target": "n8"},
+    {"source": "n8", "target": "n9"}, {"source": "n9", "target": "n10"},
+    {"source": "n0", "target": "n10"}, {"source": "n5", "target": "n15"},
+    {"source": "n10", "target": "n20"}, {"source": "n15", "target": "n25"},
+    {"source": "n20", "target": "n30"}, {"source": "n25", "target": "n35"},
+    {"source": "n30", "target": "n40"}, {"source": "n35", "target": "n45"}
+  ]
+}
