@@ -137,7 +137,7 @@ func TestWALKeeperLobe_CustomFramingPrefix(t *testing.T) {
 		Type: hub.EventSessionInit,
 	})
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	var got []bus.Event
 	for time.Now().Before(deadline) {
 		got = replayDurable(t, durable, "myapp.hub.")
