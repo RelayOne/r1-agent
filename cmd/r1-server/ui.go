@@ -118,6 +118,12 @@ func mountUI(mux *http.ServeMux, db *DB) {
 		mux.HandleFunc("POST /api/memories", db.serveMemoryCreate)
 		mux.HandleFunc("PUT /api/memories/{id}", db.serveMemoryUpdate)
 		mux.HandleFunc("DELETE /api/memories/{id}", db.serveMemoryDelete)
+
+		// Spec r1-server-ui-v2 §"Run diff view (minimum viable)".
+		// Compares two sessions' event streams and reports
+		// added/removed/changed-status rows. Content-diff is out of
+		// scope here — see the footer + issue #144.
+		mux.HandleFunc("GET /diff/{a}/{b}", db.serveDiff)
 	}
 
 	// Spec 27 §10 read-only settings viewer. Reads ~/.r1/config.yaml
