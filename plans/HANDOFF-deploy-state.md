@@ -1,4 +1,14 @@
-# r1.run Deployment State — Snapshot 2026-05-05 ~05:45 UTC (12/12 LIVE, DNS + triggers + protection wired)
+# r1.run Deployment State — 2026-05-05 ~08:14 UTC (PR #128 MERGED, prod auto-redeployed, 12/12 HTTPS-LIVE)
+
+## Status: complete
+
+- PR #128 (Cortex/Lanes/Multi-Surface specs 6/7/8/9 + r1.run SaaS deploy) merged to main as `6e1009c4`
+- Hotfixes merged: PR #140 (`d3790826`) + PR #141 (`6200b25d`) — escape Cloud Build sub-preprocessor false-positives in `cloudbuild-deploy.yaml`
+- `r1-services-prod-deploy` trigger fired on the #141 merge, completed SUCCESS (build `17f65cdc`)
+- Prod coord-api now serving from revision `r1-coord-api-prod-00005-l4l`; `https://api.r1.run/v1/version` reports `{"env":"prod","service":"r1-coord-api","version":"6200b25"}`
+- All 12 r1.run subdomains return 200 on /livez (verified 2026-05-05 08:14 UTC)
+
+The CI pipeline is now fully self-managing: any push to `main` triggers `r1-services-prod-deploy`, which builds + pushes 4 Docker images, deploys 4 Cloud Run services with `--add-cloudsql-instances` + `--set-secrets`, and smoke-tests /livez before returning success.
 
 ## Live URLs (all 12 services 200 on /livez + /readyz on the .run.app URL)
 
