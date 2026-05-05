@@ -24,6 +24,13 @@ type Policy struct {
 	// loader in mcp_servers.go; validated by ValidateMCPServers.
 	MCPServers []mcp.ServerConfig `json:"mcp_servers,omitempty" yaml:"mcp_servers,omitempty"`
 
+	// Cortex carries per-Lobe enable / privacy flags loaded from the
+	// top-level `cortex:` block in r1.policy.yaml. Parsed by the
+	// yaml.v3-backed loader in schema.go; the custom line-scanner in
+	// parsePolicyYAML skips the `cortex:` section the same way it skips
+	// `mcp_servers:`. See specs/cortex-concerns.md item 3.
+	Cortex CortexConfig `json:"cortex,omitempty" yaml:"cortex,omitempty"`
+
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
 	verificationExplicit bool
@@ -215,6 +222,13 @@ func LoadPolicy(path string) (Policy, error) {
 		}
 		p.MCPServers = servers
 	}
+	// Parse the cortex top-level block (if any) via yaml.v3; the
+	// custom line-scanner above skips its contents.
+	cortex, err := parseCortexBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.Cortex = cortex
 	return normalizePolicy(p), nil
 }
 
@@ -308,6 +322,12 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// mcp_servers is a yaml-sequence block; the custom
 			// scanner skips all its contents (any indent >0) and
 			// leaves parsing to parseMCPServersBlock (yaml.v3).
+			continue
+		case section == "cortex":
+			// cortex is a nested-map block (cortex.lobes.<name>.<flags>);
+			// the custom scanner skips all its contents (any indent >0)
+			// and leaves parsing to parseCortexBlock (yaml.v3).
+			// See specs/cortex-concerns.md item 3.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")

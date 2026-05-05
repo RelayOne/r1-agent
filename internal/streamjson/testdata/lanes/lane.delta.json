@@ -1,0 +1,15 @@
+{
+  "event": "lane.delta",
+  "event_id": "01J0K3M4P7QABCDEFGHJKMNPQR",
+  "session_id": "sess_01J0K3M4",
+  "seq": 144,
+  "at": "2026-05-02T18:33:21.512000Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "delta_seq": 7,
+    "content_block": {
+      "type": "text_delta",
+      "text": "found 3 matching memories: "
+    }
+  }
+}

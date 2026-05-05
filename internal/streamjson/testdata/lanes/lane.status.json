@@ -1,0 +1,14 @@
+{
+  "event": "lane.status",
+  "event_id": "01J0K3M4P6QABCDEFGHJKMNPQR",
+  "session_id": "sess_01J0K3M4",
+  "seq": 143,
+  "at": "2026-05-02T18:33:21.491000Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "status": "running",
+    "prev_status": "pending",
+    "reason": "started",
+    "reason_code": "started"
+  }
+}

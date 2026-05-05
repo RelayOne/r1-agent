@@ -249,6 +249,7 @@ func TestLoadGatesPresetDir_MissingDir(t *testing.T) {
 // and validate. If a future edit breaks the schema, this guards it.
 func TestCommittedPresetsLoad(t *testing.T) {
 	// Find repo root by walking up until we see go.mod.
+	// LINT-ALLOW chdir-test: test-only repo-root locator; runs in `go test` cwd, never inside a session goroutine.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

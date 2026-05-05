@@ -1,0 +1,19 @@
+{
+  "name": "r1-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "R1 monorepo workspace root. Hosts desktop, web, and shared packages. Created by spec desktop-cortex-augmentation item 1/40.",
+  "workspaces": [
+    "desktop",
+    "web",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:desktop": "npm run build --workspace=desktop",
+    "build:components": "npm run build --workspace=@r1/web-components",
+    "test:components": "npm run test --workspace=@r1/web-components"
+  }
+}

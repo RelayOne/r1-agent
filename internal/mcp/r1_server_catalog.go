@@ -1,0 +1,344 @@
+// r1_server_catalog.go — full r1.* MCP tool catalog per
+// specs/agentic-test-harness.md §4.
+//
+// This file registers the 38-tool catalog spanning sessions, lanes, cortex,
+// missions, worktrees, bus, verify, TUI, web, and CLI. Each tool ships under
+// the canonical r1.* namespace (dot-separated, per the spec's §4 schemas).
+//
+// Why a separate file from the existing legacy stoke handlers:
+//   - The legacy r1_server.go exposes 5 stoke_*/r1_* underscore-named tools
+//     for the SOW build path. Those remain dual-name aliased per
+//     canonicalStokeServerToolName until v2.0.0.
+//   - The §4 catalog is a NEW dotted namespace (r1.session.start, etc.). To
+//     avoid intermingling the two, the catalog and its handlers live here.
+//
+// The handlers are deliberately surface-only: they validate inputs, normalize
+// to the Slack-style envelope (see envelope.go), and route to a back-end
+// resolver supplied by the daemon at construction time. Surface validation
+// and shape are testable WITHOUT the cortex/lanes/sessions back-ends; the
+// resolver returns ErrNotImplemented when the daemon hasn't wired the
+// concrete back-end yet.
+package mcp
+
+import (
+	"encoding/json"
+)
+
+// R1ToolCatalog returns the 38 r1.* tool definitions per spec §4.
+// Categories: sessions(6) + lanes(5) + cortex(5) + missions(4) + worktrees(4)
+// + bus(2) + verify(3) + tui(4) + web(4) + cli(1) = 38.
+func R1ToolCatalog() []ToolDefinition {
+	out := make([]ToolDefinition, 0, 38)
+	out = append(out, r1SessionTools()...)
+	out = append(out, r1LaneTools()...)
+	out = append(out, r1CortexTools()...)
+	out = append(out, r1MissionTools()...)
+	out = append(out, r1WorktreeTools()...)
+	out = append(out, r1BusTools()...)
+	out = append(out, r1VerifyTools()...)
+	out = append(out, r1TUITools()...)
+	out = append(out, r1WebTools()...)
+	out = append(out, r1CLITools()...)
+	return out
+}
+
+// R1ToolNames returns just the tool names from R1ToolCatalog, useful for
+// the lint at tools/lint-view-without-api.
+func R1ToolNames() []string {
+	cat := R1ToolCatalog()
+	names := make([]string, 0, len(cat))
+	for _, t := range cat {
+		names = append(names, t.Name)
+	}
+	return names
+}
+
+// --- 4.1 Sessions (6) ---
+
+func r1SessionTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.session.start",
+			Description: "Start a new r1 session bound to a workdir. Returns session_id used by every other r1.* tool.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"workdir": {"type": "string", "description": "Absolute path. Becomes SessionRoot per D-D2."},
+					"model":   {"type": "string", "description": "Model alias (e.g. 'claude-sonnet-4-6'). Defaults to config.", "default": ""},
+					"resume_session_id": {"type": "string", "description": "If set, resume the prior session instead of creating a new one."}
+				},
+				"required": ["workdir"]
+			}`),
+		},
+		{
+			Name:        "r1.session.send",
+			Description: "Send a user message to a session. Returns message_id. Idempotent on (session_id, client_message_id).",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"session_id": {"type": "string"},
+					"message":    {"type": "string"},
+					"client_message_id": {"type": "string", "description": "Caller-chosen idempotency key."}
+				},
+				"required": ["session_id", "message"]
+			}`),
+		},
+		{
+			Name:        "r1.session.cancel",
+			Description: "Cancel the in-flight turn for a session. Per D-C4, drops partial assistant message; drains SSE; never persists partial state.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.session.list",
+			Description: "List sessions on this daemon. Read-only.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"include_finished":{"type":"boolean","default":false}}}`),
+		},
+		{
+			Name:        "r1.session.get",
+			Description: "Get full session state: workdir, model, status, last seq, lane summary.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.session.resume",
+			Description: "Resume a paused or disconnected session. Replays bus events since last_seq.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"since_seq":{"type":"integer","default":0}},"required":["session_id"]}`),
+		},
+	}
+}
+
+// --- 4.2 Lanes (5) ---
+// NOTE: the 5 lane tools are also published from internal/mcp/lanes_server.go
+// when spec 3 (lanes-protocol) is merged. The catalog declarations here are
+// authoritative for tools/list output; the back-end is delegated.
+
+func r1LaneTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.lanes.list",
+			Description: "List lanes for a session with status (pending|running|blocked|done|errored|cancelled — D-S1).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.lanes.subscribe",
+			Description: "Stream lane events (SSE/WS). Server emits LaneEvent at 5–10 Hz coalesced (D-S2). Client must consume or back-pressure.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"since_seq":{"type":"integer","default":0}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.lanes.get",
+			Description: "Fetch one lane: status, model, started_at, message tail, latest Note refs.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"lane_id":{"type":"string"}},"required":["session_id","lane_id"]}`),
+		},
+		{
+			Name:        "r1.lanes.kill",
+			Description: "Terminate a lane (SIGTERM → SIGKILL via procutil). Idempotent: no-op if lane already finished.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"lane_id":{"type":"string"}},"required":["session_id","lane_id"]}`),
+		},
+		{
+			Name:        "r1.lanes.pin",
+			Description: "Pin a lane to the spotlight (TUI focus + web sidebar). Per D-C1 GWT spotlight semantics.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"lane_id":{"type":"string"},"pinned":{"type":"boolean","default":true}},"required":["session_id","lane_id"]}`),
+		},
+	}
+}
+
+// --- 4.3 Cortex (5) ---
+
+func r1CortexTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.cortex.notes",
+			Description: "Read the Workspace: list of Notes published by Lobes this turn (and prior turns within the cache window).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"since_seq":{"type":"integer","default":0}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.cortex.publish",
+			Description: "Publish a Note to the Workspace from an external agent. Useful for tests and human-in-the-loop hints.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"session_id":{"type":"string"},
+				"note":{"type":"object","properties":{"text":{"type":"string"},"tags":{"type":"array","items":{"type":"string"}},"critical":{"type":"boolean","default":false}},"required":["text"]}
+			},"required":["session_id","note"]}`),
+		},
+		{
+			Name:        "r1.cortex.lobes_list",
+			Description: "List Lobes (memory-recall, rule-check, plan-update, clarifying-Q, memory-curator, WAL-keeper). Status + last activity.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.cortex.lobe_pause",
+			Description: "Pause a specific Lobe for a session (e.g. silence the rule-check Lobe during a known-good test).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"lobe":{"type":"string"}},"required":["session_id","lobe"]}`),
+		},
+		{
+			Name:        "r1.cortex.lobe_resume",
+			Description: "Resume a previously-paused Lobe.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"lobe":{"type":"string"}},"required":["session_id","lobe"]}`),
+		},
+	}
+}
+
+// --- 4.4 Missions (4) ---
+
+func r1MissionTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.mission.create",
+			Description: "Create a mission (multi-turn, multi-lane unit of work). Returns mission_id.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"session_id":{"type":"string"},
+				"spec":{"type":"object","description":"Mission spec — plan-shaped, see plan/ package."}
+			},"required":["session_id","spec"]}`),
+		},
+		{
+			Name:        "r1.mission.list",
+			Description: "List missions for a session (or all sessions if session_id omitted).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}}}`),
+		},
+		{
+			Name:        "r1.mission.cancel",
+			Description: "Cancel a mission. Idempotent.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"mission_id":{"type":"string"}},"required":["mission_id"]}`),
+		},
+		{
+			Name:        "r1.mission.get",
+			Description: "Get mission state: phase, tasks, attempts, lanes, artifacts, cost.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"mission_id":{"type":"string"}},"required":["mission_id"]}`),
+		},
+	}
+}
+
+// --- 4.5 Worktrees (4) ---
+
+func r1WorktreeTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.worktree.list",
+			Description: "List worktrees for a session: path, base_commit, status, lane_id owner.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.worktree.diff",
+			Description: "Return git diff BaseCommit..HEAD for a worktree. Token-budget caps at 200KiB unless 'full': true.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"},"full":{"type":"boolean","default":false}},"required":["worktree_id"]}`),
+		},
+		{
+			Name:        "r1.worktree.merge",
+			Description: "Merge a worktree to main via 'git merge-tree --write-tree' (zero-side-effect validation) then 'git merge'. Serialized by mergeMu.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"},"strategy":{"type":"string","enum":["ff-only","squash","ours"],"default":"ff-only"}},"required":["worktree_id"]}`),
+		},
+		{
+			Name:        "r1.worktree.clean",
+			Description: "Destroy a worktree (--force + os.RemoveAll fallback + worktree prune). Idempotent.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"}},"required":["worktree_id"]}`),
+		},
+	}
+}
+
+// --- 4.6 Bus (2) ---
+
+func r1BusTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.bus.tail",
+			Description: "Stream bus events from since_seq (SSE/WS framing). Causality-ordered per WAL.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"since_seq":{"type":"integer","default":0}},"required":["session_id"]}`),
+		},
+		{
+			Name:        "r1.bus.replay",
+			Description: "Replay bus events for [from_seq, to_seq] inclusive. Read-only; deterministic.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"session_id":{"type":"string"},"from_seq":{"type":"integer"},"to_seq":{"type":"integer"}},"required":["session_id","from_seq","to_seq"]}`),
+		},
+	}
+}
+
+// --- 4.7 Verify (3) ---
+
+func r1VerifyTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.verify.build",
+			Description: "Run 'go build ./...' (or detected toolchain) in the worktree. Returns exit_code, log tail.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"}},"required":["worktree_id"]}`),
+		},
+		{
+			Name:        "r1.verify.test",
+			Description: "Run scoped tests (testselect package decides scope). Returns pass/fail counts + failing test names.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"},"packages":{"type":"array","items":{"type":"string"}}},"required":["worktree_id"]}`),
+		},
+		{
+			Name:        "r1.verify.lint",
+			Description: "Run 'go vet' + project linters. Includes the lint-view-without-api scanner.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"}},"required":["worktree_id"]}`),
+		},
+	}
+}
+
+// --- 4.8 TUI (4) ---
+
+func r1TUITools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.tui.press_key",
+			Description: "Inject a tea.Msg into a teatest harness. Keys: 'k', 'j', 'enter', 'esc', 'ctrl+c', 'tab'. Char keys: '<x>'.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"tui_session_id":{"type":"string"},"key":{"type":"string"}},"required":["tui_session_id","key"]}`),
+		},
+		{
+			Name:        "r1.tui.snapshot",
+			Description: "Capture {view: string (deterministic ANSI-stripped), tree: {role,name,state}[], focus: stable_id}. No screenshots, no OCR.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"tui_session_id":{"type":"string"}},"required":["tui_session_id"]}`),
+		},
+		{
+			Name:        "r1.tui.get_model",
+			Description: "Introspect the live tea.Model via reflection (Noteleaf pattern). Returns JSON projection at jsonpath.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"tui_session_id":{"type":"string"},"jsonpath":{"type":"string","default":"$"}},"required":["tui_session_id"]}`),
+		},
+		{
+			Name:        "r1.tui.focus_lane",
+			Description: "Focus a specific lane in the TUI (equivalent to pressing 'j'/'k' until lane_id is the spotlight).",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"tui_session_id":{"type":"string"},"lane_id":{"type":"string"}},"required":["tui_session_id","lane_id"]}`),
+		},
+	}
+}
+
+// --- 4.9 Web (4) ---
+
+func r1WebTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.web.navigate",
+			Description: "Navigate the r1d web UI. Thin wrapper over Playwright MCP 'browser_navigate'.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}`),
+		},
+		{
+			Name:        "r1.web.click",
+			Description: "Click by accessibility selector (role + name preferred; data-testid fallback). Wraps Playwright MCP 'browser_click'.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"]}`),
+		},
+		{
+			Name:        "r1.web.fill",
+			Description: "Fill a form field by accessibility selector. Wraps Playwright MCP 'browser_fill'.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"}},"required":["selector","value"]}`),
+		},
+		{
+			Name:        "r1.web.snapshot",
+			Description: "Return the structured a11y tree (NOT a screenshot). Wraps Playwright MCP 'browser_snapshot'.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		},
+	}
+}
+
+// --- 4.10 CLI (1) ---
+
+func r1CLITools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Name:        "r1.cli.invoke",
+			Description: "One-shot wrapper around 'r1 <args>' for headless ops. Returns {exit_code, stdout, stderr, duration_ms}. Process-group isolated.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"args":{"type":"array","items":{"type":"string"}},
+				"workdir":{"type":"string"},
+				"stdin":{"type":"string","default":""},
+				"timeout_sec":{"type":"integer","default":120}
+			},"required":["args","workdir"]}`),
+		},
+	}
+}

@@ -79,11 +79,23 @@ the Rust host asserts it on every open). The version bumps when a
 method's params or result shape changes incompatibly. New methods are
 additive and do not bump the version.
 
+**Lanes overlay header**: clients that consume the lane events added in
+specs/lanes-protocol.md (BUILD_ORDER 3) ALSO assert an orthogonal
+`X-R1-Lanes-Version: 1` header. The two version headers bump on
+independent cadences — bumping the RPC version does NOT bump the lanes
+version, and vice versa. A client that does not consume lane events can
+ignore the header entirely; clients that do MUST refuse to subscribe
+when the server's announced version is incompatible with their pinned
+version.
+
 ---
 
 ## 2. Method table
 
-Thirteen methods across five categories. Each row lists:
+Seventeen methods across seven categories (11 core + 4 lane + 2
+daemon, all spoken to the daemon over JSON-RPC; an additional 6
+Tauri-only verbs in §5 bring the `invoke_handler` surface to 23).
+Each row lists:
 
 - **Method** — the JSON-RPC `method` string (also the Tauri command
   name and the Go `Handler` method name after conversion).
@@ -139,11 +151,45 @@ Cancel + send are covered by R1D-1.4 and live in the Tauri-only layer
 | Memory inspection | 2 |
 | Cost | 2 |
 | Descent state | 2 |
-| **Total** | **11** |
+| Lane control (§2.7) | 4 |
+| Daemon control (§2.8) | 2 |
+| **Total** | **17** |
 
-Tauri-only commands (§5) add 4 more verbs that do not round-trip to the
-Go subprocess: `session.send`, `session.cancel`, `skill.list`, `skill.get`.
-Grand total across the `invoke_handler` surface: **15**.
+Tauri-only commands (§5) add 6 more verbs that do not round-trip to the
+Go subprocess: `session.send`, `session.cancel`, `skill.list`,
+`skill.get`, `app.popout_lane`, `app.open_folder_picker`. Grand total
+across the `invoke_handler` surface: **23**.
+
+### 2.7 Lane control (4)
+
+Added by spec `desktop-cortex-augmentation` §6.1. These verbs control
+the per-session cognition lanes streamed via
+`tauri::ipc::Channel<LaneEvent>` (§4 events `lane.*`). Unlike the
+core 11 round-trip verbs above, `session.lanes.subscribe` is special:
+the WebView passes a `tauri::ipc::Channel<LaneEvent>` whose handle the
+Rust host consumes; the JSON-RPC envelope on the daemon-bound side is
+identical-shape but the `channel` param is a runtime handle, not a
+serialisable value.
+
+| Method | Params | Result | Errors |
+|---|---|---|---|
+| `session.lanes.list` | `{ "session_id": string }` | `{ "lanes": [{ "lane_id": string, "title": string, "status": "pending"\|"running"\|"blocked"\|"done"\|"errored"\|"cancelled", "created_at": iso8601 }] }` | `not_found` |
+| `session.lanes.subscribe` | `{ "session_id": string, "channel": tauri::ipc::Channel<LaneEvent> }` | `{ "subscription_id": string }` | `not_found`, `internal` |
+| `session.lanes.unsubscribe` | `{ "subscription_id": string, "session_id"?: string }` | `{ "ok": true }` | `not_found` |
+| `session.lanes.kill` | `{ "session_id": string, "lane_id": string }` | `{ "killed_at": iso8601 }` | `not_found`, `conflict` |
+
+### 2.8 Daemon control (2)
+
+Added by spec `desktop-cortex-augmentation` §6.1. Reflects the
+desktop's shift to `r1 serve` as the primary transport (vs the
+per-session subprocess of the original R1D-1 model). The host caches
+`mode` + `url` from discovery so `daemon.status` only round-trips for
+live `version` + `uptime_s`.
+
+| Method | Params | Result | Errors |
+|---|---|---|---|
+| `daemon.status` | `{}` | `{ "url": string, "mode": "external"\|"sidecar", "version": string, "uptime_s": integer }` | `not_found` |
+| `daemon.shutdown` | `{ "graceful"?: boolean (default true) }` | `{ "shutdown_at": iso8601 }` | `internal` |
 
 ---
 
@@ -193,20 +239,38 @@ defined; more land with R1D-2+ as the session view demands them.
 | `event` | Fields | Emitted when |
 |---|---|---|
 | `session.started` | `session_id`, `at` | New r1 subprocess live and handshake complete |
-| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess |
+| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess. **Co-emitted with `lane.delta` for the main lane during the lanes-protocol compat window** (see specs/lanes-protocol.md §"Out of scope" item 1). Removal is a follow-up minor release. |
 | `session.ended` | `session_id`, `reason` ("ok"\|"cancelled"\|"error"), `at` | Subprocess exits or is SIGTERM'd |
 | `ledger.appended` | `session_id`, `hash`, `type` | Ledger node committed |
 | `cost.tick` | `session_id`, `usd_delta`, `tokens_delta` | Cost tracker rolls forward |
 | `descent.tier_changed` | `session_id`, `ac_id`, `from`, `to`, `status` | A verification tier changes state |
+| `lane.created` | `session_id`, `lane_id`, `kind` (`main`\|`lobe`\|`tool`\|`mission_task`\|`router`), `parent_id?`, `label?`, `started_at`, `seq` | Cortex Workspace creates a new lane (NewMainLane / NewLobeLane / NewToolLane). Lanes are the cross-surface representation of Cortex activity; see specs/lanes-protocol.md §3. |
+| `lane.status` | `session_id`, `lane_id`, `status` (`pending`\|`running`\|`blocked`\|`done`\|`errored`\|`cancelled`), `reason?`, `reason_code?`, `seq` | Lane FSM transitions. Critical when `status="errored"` (top-level emit per §5.3). |
+| `lane.delta` | `session_id`, `lane_id`, `block` (text/tool-use ContentBlock), `seq` | Streaming content within a lane. For the `main` lane, also co-emitted as `session.delta` during compat window. Per-session `tauri::ipc::Channel<LaneEvent>` is the high-frequency desktop transport (spec 7 §6.2); the global event bus carries the same envelope for non-desktop subscribers. |
+| `lane.cost` | `session_id`, `lane_id`, `tokens_in`, `tokens_out`, `usd`, `seq` | Per-lane cost tick (independent of the global `cost.tick`). |
+| `lane.note` | `session_id`, `lane_id`, `note_id`, `note_severity` (`info`\|`advice`\|`warning`\|`critical`), `seq` | Lobe published a Note that this lane caused. Critical when `note_severity="critical"`. |
+| `lane.killed` | `session_id`, `lane_id`, `reason`, `ended_at`, `seq` | Lane terminated (operator kill, error cascade, or completion). Always critical (top-level emit). |
+| `daemon.up` | `url`, `mode` ("external"\|"sidecar"), `at`, `replayed_from?` (last_event_id served on reconnect; omitted on first connect) | Daemon connected after probe or sidecar spawn (spec 7 §6.2). Desktop-only. |
+| `daemon.down` | `reason`, `at`, `will_retry` | WS closed unexpectedly (spec 7 §6.2). Desktop-only. |
 
 Tier 2 Rust host subscribes, parses, fans out to the WebView via
 `app.emit_to(<session_window>, event, payload)`.
+
+The 6 lane events split across two transports: `lane.delta` arrives
+through the per-session `Channel<LaneEvent>` registered by
+`session.lanes.subscribe` (§2.7); `lane.status_changed`,
+`lane.spawned`, and `lane.killed` arrive on the global event bus
+because they affect sidebar rendering across surfaces. The
+forwarder in `lanes.rs` flushes pending `lane.delta` events for a
+lane before emitting that lane's `lane.status_changed` (R7
+mitigation in spec §12 — prevents "done" rendering before trailing
+deltas land).
 
 ---
 
 ## 5. Tauri-only commands
 
-Four verbs live on the `invoke_handler` surface but do **not** round-trip
+Six verbs live on the `invoke_handler` surface but do **not** round-trip
 to the Go subprocess. They execute inside the Rust host or are
 implemented via direct stdin writes to an existing r1 process.
 
@@ -216,6 +280,8 @@ implemented via direct stdin writes to an existing r1 process.
 | `session.cancel` | SIGTERM → grace period → SIGKILL. Pure process control. |
 | `skill.list` | Cached in Rust host from first call; avoids subprocess round-trip on every UI refresh. |
 | `skill.get` | Same cache as `skill.list`, keyed by name. |
+| `app.popout_lane` | Builds a `WebviewWindow` for one lane (spec desktop-cortex-augmentation §6.1 + item 23). Tauri-only because the daemon has no concept of windows. |
+| `app.open_folder_picker` | Surfaces the OS folder picker (spec §6.1 + item 28). Tauri-only because the daemon has no UI. |
 
 They are still surfaced to the WebView for UI-consistency, and they
 still appear in `src-tauri/src/ipc.rs`; they just bypass the Go

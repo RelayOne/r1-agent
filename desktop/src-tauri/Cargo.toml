@@ -23,6 +23,15 @@ tokio = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 which = "6"
+tauri-plugin-websocket = { workspace = true }
+tauri-plugin-store = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-shell = { workspace = true }
+tauri-plugin-fs = { workspace = true }
+tauri-plugin-autostart = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+async-trait = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -39,6 +39,7 @@ func TestSecurityMD_CrossLinks(t *testing.T) {
 // directory containing a `go.mod` file, returning that directory.
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
+	// LINT-ALLOW chdir-test: test-only repo-root locator under `go test`.
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)

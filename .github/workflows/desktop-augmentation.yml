@@ -1,0 +1,159 @@
+# R1 Desktop — Cortex Augmentation CI gate.
+#
+# Spec desktop-cortex-augmentation §11.5 + checklist item 38. This
+# workflow is dedicated to the spec-7 deliverables (lane sidebar,
+# workdir picker, daemon discovery, pop-out windows, native menu).
+# The pre-existing `desktop.yml` workflow (R1D-* phases) is
+# untouched per spec §12 R6 — adding a separate workflow keeps
+# install scoping deterministic.
+#
+# Three parallel jobs per OS:
+#   * cargo (rust): build + lib unit + bin unit + tests/* integration
+#   * components (vitest): @r1/web-components Lane* tests
+#   * desktop-vitest: desktop/ existing R1D-* tests
+#
+# E2E job runs after the three above succeed, on each of macOS-latest
+# / ubuntu-22.04 / windows-latest. Spec §11.5 says the e2e suite
+# blocks merge on red.
+
+name: desktop-augmentation
+
+on:
+  push:
+    branches:
+      - main
+      - 'build/desktop-*'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'packages/web-components/**'
+      - 'package.json'
+      - '.github/workflows/desktop-augmentation.yml'
+
+# Cancel previous runs on the same branch when a new push lands.
+concurrency:
+  group: desktop-augmentation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTFLAGS: -D warnings
+
+jobs:
+  cargo:
+    name: cargo (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Install Linux deps for tauri 2
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+      - name: Materialise empty externalBin stubs
+        shell: bash
+        run: bash desktop/scripts/copy-r1-binaries.sh
+      - name: cargo build
+        working-directory: desktop
+        run: cargo build --locked
+      - name: cargo test
+        working-directory: desktop
+        run: cargo test --locked
+
+  components:
+    name: components (vitest)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm install (workspace root)
+        run: npm install --workspaces --include-workspace-root
+      - name: npm test (web-components)
+        run: npm test --workspace=@r1/web-components
+
+  desktop-vitest:
+    name: desktop (vitest)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm install (workspace root)
+        run: npm install --workspaces --include-workspace-root
+      - name: npm test (desktop)
+        run: npm test --workspace=desktop
+
+  e2e:
+    name: e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: [cargo, components, desktop-vitest]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.85'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Install Linux deps for tauri 2
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+      - name: Materialise empty externalBin stubs
+        shell: bash
+        run: bash desktop/scripts/copy-r1-binaries.sh
+      - name: npm install (workspace root)
+        run: npm install --workspaces --include-workspace-root
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+        working-directory: desktop
+      - name: cargo tauri build (debug)
+        working-directory: desktop
+        run: cargo build --release
+      - name: Run Playwright e2e
+        working-directory: desktop
+        env:
+          R1_DESKTOP_BINARY: ../target/release/r1-desktop
+          R1_TAURI_DRIVER_PORT: '4444'
+        run: |
+          npx tauri-driver --port=$R1_TAURI_DRIVER_PORT &
+          DRIVER_PID=$!
+          # Give tauri-driver 2 s to bind.
+          sleep 2
+          npx playwright test
+          kill $DRIVER_PID || true
+        shell: bash

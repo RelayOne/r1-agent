@@ -43,12 +43,20 @@ type ServerConfig struct {
 
 // ToolDefinition is a remote MCP server's tool advertisement. The
 // same struct is used internally by Stoke's own MCP servers
-// (CodebaseServer, StokeServer) to describe the tools they expose,
-// since the on-the-wire shape is identical.
+// (CodebaseServer, StokeServer, LanesServer) to describe the tools
+// they expose, since the on-the-wire shape is identical.
+//
+// OutputSchema was added for the lanes-protocol §7 contract
+// (specs/lanes-protocol.md TASK-18) which mandates that each lane
+// tool advertise a JSON Schema draft 2020-12 document for its result
+// envelope so MCP clients can do client-side validation. Existing
+// tools that don't supply OutputSchema serialize it via omitempty
+// so the wire shape is unchanged for them.
 type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 // Tool is the Stoke-facing value for a remote tool returned from

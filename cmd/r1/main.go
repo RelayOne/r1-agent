@@ -71,7 +71,6 @@ import (
 	scanpkg "github.com/RelayOne/r1/internal/scan"
 	"github.com/RelayOne/r1/internal/scheduler"
 	"github.com/RelayOne/r1/internal/selftune"
-	"github.com/RelayOne/r1/internal/server"
 	"github.com/RelayOne/r1/internal/session"
 	"github.com/RelayOne/r1/internal/skill"
 	"github.com/RelayOne/r1/internal/smoketest"
@@ -696,6 +695,8 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "antitrunc":
+		antitruncCmd(os.Args[2:])
 	case "cf":
 		counterfactCmd(os.Args[2:])
 	case "artifact":
@@ -706,6 +707,11 @@ func main() {
 		watchCmd(os.Args[2:])
 	case "status", "approve", "override", "budget", "pause", "resume", "inject", "takeover":
 		os.Exit(runCtlCmd(os.Args[1], os.Args[2:], os.Stdout, os.Stderr))
+	case "ctl":
+		// TASK-36: r1 ctl <verb> — operator control of the per-user
+		// `r1 serve` daemon. Distinct from the legacy session-scoped
+		// ctl verbs above (which target a sessionctl socket).
+		os.Exit(runCtlDaemonCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "events":
 		// OPSUX-events: thin read-only operator surface for .stoke/events.db.
 		os.Exit(runEventsCmd(os.Args[2:], os.Stdout, os.Stderr))
@@ -796,11 +802,15 @@ func main() {
 		// T-R1P-020/021/022: CI/CD integration recipe generator.
 		cicdCmd(os.Args[2:])
 	case "agent-serve":
-		agentServeCmd(os.Args[2:])
+		// TASK-41: deprecated alias of `r1 serve --enable-agent-routes`.
+		// runAgentServeAliasDefault prints a one-line deprecation hint
+		// to stderr then forwards to the legacy agentServeCmd so
+		// existing scripts keep working during the transition.
+		runAgentServeAliasDefault(os.Args[2:])
 	case "daemon":
-		// Long-running R1 process: persistent queue + WAL + HTTP control plane +
-		// worker pool. See cmd/r1/daemon_cmd.go.
-		daemonCmd(os.Args[2:])
+		// TASK-41: deprecated alias of `r1 serve --enable-queue-routes`.
+		// Same alias treatment as agent-serve.
+		runDaemonAliasDefault(os.Args[2:])
 	case "desktop-rpc":
 		// R1D-1.2: long-lived JSON-RPC 2.0 server for the Tauri desktop host.
 		// Reads NDJSON requests on stdin; writes NDJSON responses on stdout.
@@ -820,6 +830,11 @@ func main() {
 		decisionBisectCmd(os.Args[2:])
 	case "self-tune":
 		selfTuneCmd(os.Args[2:])
+	case "cortex":
+		// Cortex subcommand family. Today only `r1 cortex memory audit`
+		// (TASK-31 of cortex-concerns) is wired; future cortex subcommands
+		// extend cortexCmd's dispatch in cortex_memory_audit.go.
+		cortexCmd(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "help", "--help", "-h":
@@ -834,6 +849,7 @@ func main() {
 // --- init/wizard: project configuration wizard ---
 
 func initCmd(args []string) {
+	// LINT-ALLOW chdir-cli-entry: r1 init subcommand; cwd captured once as the project default, overridable via positional arg below.
 	projectDir, _ := os.Getwd()
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		projectDir = args[0]
@@ -7099,67 +7115,9 @@ QUICKSTART:
 `, version)
 }
 
-// serveCmd starts the R1 HTTP API server with optional mission orchestration.
-func serveCmd(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	port := fs.Int("port", 8420, "HTTP server port")
-	token := fs.String("token", r1env.Get("R1_API_TOKEN", "STOKE_API_TOKEN"), "Bearer token for auth (or R1_API_TOKEN / legacy STOKE_API_TOKEN through 2026-07-23)")
-	repo := fs.String("repo", ".", "Repository root")
-	dataDir := fs.String("data-dir", ".stoke", "Data directory for mission/research stores")
-	fs.Parse(args)
-
-	absRepo, err := filepath.Abs(*repo)
-	if err != nil {
-		fatal("resolve repo: %v", err)
-	}
-
-	bus := server.NewEventBus()
-	srv := server.New(*port, *token, bus)
-
-	// Dashboard state: created early so both orchestrator and API can use it.
-	dashState := server.NewDashboardState()
-
-	// Try to create orchestrator for mission API
-	orch, orchErr := createOrchestrator(absRepo, *dataDir)
-	if orchErr != nil {
-		fmt.Fprintf(os.Stderr, "warn: mission API disabled: %v\n", orchErr)
-	} else {
-		server.RegisterMissionAPI(srv, orch)
-		defer orch.Close()
-		fmt.Fprintf(os.Stderr, "mission API enabled\n")
-
-		// Bridge hub events to the server's EventBus for SSE/WebSocket clients
-		// and to the dashboard state for REST API queries.
-		if orch.EventBus() != nil {
-			server.BridgeHubToEventBus(orch.EventBus(), bus)
-			server.BridgeHubToDashboard(orch.EventBus(), dashState)
-		}
-	}
-
-	// Register dashboard API (works even without orchestrator).
-	server.RegisterDashboardAPI(srv, nil, nil, dashState)
-	server.RegisterRulesAPI(srv, absRepo)
-	server.RegisterDashboardUI(srv)
-
-	fmt.Fprintf(os.Stderr, "r1 serve listening on :%d\n", *port)
-	fmt.Fprintf(os.Stderr, "dashboard: http://localhost:%d/\n", *port)
-
-	sigCtx, sigCancel := signalContext(context.Background())
-	defer sigCancel()
-
-	// Run server in goroutine, shut down on signal
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-
-	select {
-	case <-sigCtx.Done():
-		fmt.Fprintf(os.Stderr, "r1 serve: shutting down\n")
-	case err := <-errCh:
-		if err != nil {
-			fatal("serve: %v", err)
-		}
-	}
-}
+// serveCmd is implemented in serve_cmd.go (TASK-40). Kept as a one-line
+// reference here so a future grep for "serveCmd" lands on the canonical
+// location.
 
 // provisionEnv creates and provisions an execution environment from BuildConfig.
 func provisionEnv(ctx context.Context, cfg BuildConfig, repoRoot string) (env.Environment, *env.Handle, error) {

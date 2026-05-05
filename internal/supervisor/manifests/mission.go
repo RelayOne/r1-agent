@@ -7,6 +7,7 @@ package manifests
 
 import (
 	"github.com/RelayOne/r1/internal/supervisor"
+	"github.com/RelayOne/r1/internal/supervisor/rules/antitrunc"
 	"github.com/RelayOne/r1/internal/supervisor/rules/consensus"
 	crossteam "github.com/RelayOne/r1/internal/supervisor/rules/cross_team"
 	"github.com/RelayOne/r1/internal/supervisor/rules/drift"
@@ -20,6 +21,12 @@ import (
 // MissionRules returns all rules loaded by the mission supervisor.
 func MissionRules() []supervisor.Rule {
 	return []supervisor.Rule{
+		// Anti-truncation (non-disableable; runs first so phrase
+		// detection precedes second-opinion routing)
+		antitrunc.NewTruncationPhraseDetected(),
+		antitrunc.NewScopeUnderdelivery(),
+		antitrunc.NewSubagentSummaryTruncation(),
+
 		// Trust (non-disableable)
 		trust.NewCompletionRequiresSecondOpinion(),
 		trust.NewFixRequiresSecondOpinion(),

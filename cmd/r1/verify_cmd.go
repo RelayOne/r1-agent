@@ -134,6 +134,7 @@ type verifyServer struct {
 }
 
 func newVerifyServer() *verifyServer {
+	// LINT-ALLOW chdir-cli-entry: r1 verify HTTP server; cwd captured once at construction and stored in s.repoRoot so concurrent request handlers see a stable value (see struct doc above).
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
