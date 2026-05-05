@@ -1,0 +1,55 @@
+{{- /*
+  cmd/r1-server/ui/web/index.html
+
+  Spec 4 §5.1 — instance list. Loaded at GET / when v2 is on and a
+  DB is wired.
+
+  Context shape (V2BaseContext + Instances slice):
+    .Title        string
+    .HtmxSRI      string
+    .HtmxSseSRI   string
+    .SessionID    string  (unused on the index page)
+    .Instances    []InstanceRow  (Name, Status, SessionCount, LastActivity)
+*/ -}}
+{{- define "index" -}}
+{{ template "base" . }}
+{{- end -}}
+
+{{- define "title" -}}r1 instances{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand">r1</div>
+  <nav class="topbar__nav" aria-label="Primary">
+    <a href="/" aria-current="page" data-testid="nav-instances">Instances</a>
+    <a href="/memories" data-testid="nav-memories">Memories</a>
+    <a href="/settings" data-testid="nav-settings">Settings</a>
+  </nav>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section class="pane pane--primary">
+  <h1>Sessions</h1>
+  <table data-testid="instance-list">
+    <thead>
+      <tr>
+        <th scope="col">Session</th>
+        <th scope="col">Status</th>
+        <th scope="col">Events</th>
+        <th scope="col">Last activity</th>
+      </tr>
+    </thead>
+    <tbody hx-ext="sse"
+           sse-connect="/api/events/instance-stream"
+           sse-swap="instance-row">
+      {{ range .Instances }}{{ template "instance-row" . }}{{ end }}
+      {{ if eq (len .Instances) 0 }}
+        <tr><td colspan="4" class="muted">No sessions yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

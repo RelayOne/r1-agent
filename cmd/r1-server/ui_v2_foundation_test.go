@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,24 +16,35 @@ import (
 )
 
 func TestParseV2Templates_ParsesCleanly(t *testing.T) {
-	tmpl, err := parseV2Templates()
+	tmpls, err := parseV2Templates()
 	if err != nil {
 		t.Fatalf("parseV2Templates: %v", err)
 	}
-	if tmpl == nil {
-		t.Fatal("parseV2Templates returned nil template")
+	if tmpls == nil {
+		t.Fatal("parseV2Templates returned nil map")
+	}
+	if _, ok := tmpls["base"]; !ok {
+		t.Errorf("base template missing (defined: %v)", keysOf(tmpls))
 	}
 	for _, want := range []string{"base", "import-map"} {
-		if got := tmpl.Lookup(want); got == nil {
-			t.Errorf("template %q not registered (defined templates: %v)", want, tmpl.DefinedTemplates())
+		if got := tmpls["base"].Lookup(want); got == nil {
+			t.Errorf("template %q not registered (defined: %v)", want, tmpls["base"].DefinedTemplates())
 		}
 	}
 }
 
+func keysOf(m map[string]*template.Template) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestParseV2Templates_BaseRenderShape(t *testing.T) {
-	tmpl, err := parseV2Templates()
+	tmpl, err := parseV2Template("base")
 	if err != nil {
-		t.Fatalf("parseV2Templates: %v", err)
+		t.Fatalf("parseV2Template(base): %v", err)
 	}
 	ctx := struct {
 		Title       string

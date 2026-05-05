@@ -21,9 +21,10 @@ package main
 import (
 	"embed"
 	"fmt"
+	"html/template"
 	"net/http"
+	"strings"
 	"sync"
-	"text/template"
 )
 
 // webFS embeds the v2 template tree. The vendor blobs live under
@@ -38,33 +39,76 @@ var webFS embed.FS
 
 var (
 	v2TmplOnce sync.Once
-	v2Tmpl     *template.Template
+	v2Tmpls    map[string]*template.Template
 	v2TmplErr  error
 )
 
-// parseV2Templates returns the parsed root template for the v2 UI
-// surface. Parses are cached for the process lifetime via sync.Once;
-// any parse error is surfaced on every subsequent call so handlers
-// can fail fast rather than serve a partially-broken response.
+// parseV2Templates parses each top-level page template separately,
+// pairing it with base.html + every partial. Returning a per-page
+// map (rather than a single shared *template.Template) avoids
+// `{{ define "main" }}` style block-name collisions between page
+// templates — html/template registers blocks globally inside a tree,
+// so two pages each defining a "main" block in one shared tree
+// step on each other's render contexts.
 //
-// Templates parsed: ui/web/*.html (top-level page templates added by
-// Specs 2-4) and ui/web/partials/*.html (the import-map block defined
-// by TASK-6 plus future shared partials).
+// Result keys are the basename without ".html" (e.g. "session-graph").
+// parseV2Template(name) is a convenience that returns one template.
 //
-// Spec 4 will replace the existing serveHTMLIndex with one that calls
-// parseV2Templates and executes "base" against a populated context;
-// this task only ensures the parser survives a clean run.
-func parseV2Templates() (*template.Template, error) {
+// Cached for the process lifetime via sync.Once.
+func parseV2Templates() (map[string]*template.Template, error) {
 	v2TmplOnce.Do(func() {
-		t := template.New("v2").Option("missingkey=error")
-		t, err := t.ParseFS(webFS, "ui/web/*.html", "ui/web/partials/*.html")
+		out, err := buildV2Tmpls()
 		if err != nil {
 			v2TmplErr = fmt.Errorf("parse v2 templates: %w", err)
 			return
 		}
-		v2Tmpl = t
+		v2Tmpls = out
 	})
-	return v2Tmpl, v2TmplErr
+	return v2Tmpls, v2TmplErr
+}
+
+// parseV2Template returns a single page template by name (basename
+// without extension). Returns nil + a not-found error if the page
+// template doesn't exist.
+func parseV2Template(name string) (*template.Template, error) {
+	all, err := parseV2Templates()
+	if err != nil {
+		return nil, err
+	}
+	t, ok := all[name]
+	if !ok {
+		return nil, fmt.Errorf("v2 template not found: %s", name)
+	}
+	return t, nil
+}
+
+func buildV2Tmpls() (map[string]*template.Template, error) {
+	pages, err := webFS.ReadDir("ui/web")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]*template.Template{}
+	for _, p := range pages {
+		if p.IsDir() || !strings.HasSuffix(p.Name(), ".html") {
+			continue
+		}
+		t := template.New(p.Name()).Option("missingkey=error")
+		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/"+p.Name(), "ui/web/partials/*.html")
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", p.Name(), err)
+		}
+		key := strings.TrimSuffix(p.Name(), ".html")
+		out[key] = t
+	}
+	if _, ok := out["base"]; !ok {
+		t := template.New("base.html").Option("missingkey=error")
+		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/partials/*.html")
+		if err != nil {
+			return nil, fmt.Errorf("parse base.html: %w", err)
+		}
+		out["base"] = t
+	}
+	return out, nil
 }
 
 // setV2CSP attaches the Content-Security-Policy header used by every
