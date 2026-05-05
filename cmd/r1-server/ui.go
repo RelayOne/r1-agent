@@ -84,6 +84,10 @@ func mountUI(mux *http.ServeMux, db *DB) {
 	// keep working.
 	mux.HandleFunc("GET /session/{id}/graph", serveSessionGraph)
 
+	// Spec 4 §5.3: raw event stream view. v2-only — falls through
+	// to 404 when the flag is off.
+	mux.HandleFunc("GET /session/{id}/stream", serveStreamView)
+
 	// work-stoke TASK 13: waterfall + tree default trace views. The
 	// concrete /session/{id} + /session/{id}/tree patterns are more
 	// specific than /session/ so Go 1.22's mux prefers them. When the

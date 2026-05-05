@@ -7,15 +7,18 @@
 //     template tree. Kept separate from the legacy `uiFS` so the
 //     vanilla-JS SPA at /ui/* keeps serving its own bundle while the
 //     v2 handlers iterate templates independently.
-//  2. parseV2Templates — single-shot parse via template.ParseFS,
-//     cached behind sync.Once. Panics on parse error (this is build-
-//     time-broken HTML, not runtime state).
+//  2. parseV2Templates — per-page map keyed by basename without
+//     extension. html/template registers blocks globally inside a
+//     tree, so two pages each defining a "main" or "scripts" block
+//     in one shared tree step on each other; the per-page parse keeps
+//     them isolated.
 //  3. setV2CSP — Content-Security-Policy headers for v2 responses.
 //     Strict by default: default-src 'self'; no inline scripts.
-//
-// The v2 handler wiring (calling parseV2Templates() from a real
-// HTTP handler) is left for Spec 4. This task only sets up the
-// helpers + asserts they compile + load successfully.
+//  4. setV2CrossOriginIsolation — COOP + COEP headers required for
+//     `crossOriginIsolated` to enable SharedArrayBuffer (Spec 2).
+//  5. V2BaseContext + newV2BaseContext — shared shell context every
+//     v2 page template embeds via composition.
+//  6. serveSessionGraph — Spec 2's 3D graph entry point.
 package main
 
 import (
@@ -28,12 +31,10 @@ import (
 	"sync"
 )
 
-// webFS embeds the v2 template tree. The vendor blobs live under
+// webFS embeds the v2 template tree. Vendor blobs live under
 // cmd/r1-server/ui/web/vendor/ but are served by the existing /ui/
 // static file handler via uiFS in ui.go — keeping them out of webFS
-// avoids loading 200 KB of JS into the html/template parser by
-// mistake when Spec 4 calls ParseFS(webFS, "*.html"). The embed
-// pattern is therefore template-only.
+// avoids loading 200 KB of JS into the html/template parser.
 //
 //go:embed ui/web/*.html ui/web/partials/*.html
 var webFS embed.FS
@@ -47,10 +48,10 @@ var (
 // parseV2Templates parses each top-level page template separately,
 // pairing it with base.html + every partial. Returning a per-page
 // map (rather than a single shared *template.Template) avoids
-// `{{ define "scripts" }}` style block-name collisions between page
-// templates — html/template registers blocks globally inside a tree,
-// so two pages each defining a "scripts" block in one shared tree
-// step on each other's render contexts.
+// `{{ define "main" }}` and `{{ define "scripts" }}` style block-name
+// collisions between page templates — html/template registers blocks
+// globally inside a tree, so two pages each defining the same block
+// in one shared tree step on each other's render contexts.
 //
 // Result keys are the basename without ".html" (e.g. "session-graph").
 // parseV2Template(name) is a convenience that returns one template.
@@ -116,15 +117,32 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 	return out, nil
 }
 
+// V2BaseContext is the minimum context every base.html-extending
+// template needs. Page-specific contexts embed it via composition.
+type V2BaseContext struct {
+	Title      string
+	HtmxSRI    string
+	HtmxSseSRI string
+	SessionID  string
+}
+
+// newV2BaseContext seeds V2BaseContext with the SRI baked into
+// LoadV2Config + the session id and title.
+func newV2BaseContext(sessionID, title string) V2BaseContext {
+	cfg := LoadV2Config()
+	return V2BaseContext{
+		Title:      title,
+		HtmxSRI:    cfg.HtmxSRI,
+		HtmxSseSRI: cfg.HtmxSseSRI,
+		SessionID:  sessionID,
+	}
+}
+
 // setV2CSP attaches the Content-Security-Policy header used by every
 // v2 response. Spec §4 explicitly forbids inline scripts so any
 // drift toward `unsafe-inline` would break the page rather than
 // silently degrade. img-src 'self' data: allows base64-encoded SVG
 // glyphs (Spec 3's redaction lock) without external image loads.
-//
-// Handlers added by Specs 2-4 call this before WriteHeader. Kept as
-// a tiny standalone helper so the policy stays in one place and any
-// future relaxation is reviewed in isolation.
 func setV2CSP(h http.Header) {
 	h.Set("Content-Security-Policy",
 		"default-src 'self'; "+
@@ -138,35 +156,18 @@ func setV2CSP(h http.Header) {
 			"frame-ancestors 'none'")
 }
 
-// V2BaseContext is the minimum context every base.html-extending
-// template needs. Specs 2-4 embed it via composition.
-type V2BaseContext struct {
-	Title      string
-	HtmxSRI    string
-	HtmxSseSRI string
-	SessionID  string
-}
-
-// SRIs computed from the on-disk vendor blobs landed by Spec 1's
-// scripts/vendor-ui.sh. Hard-coded copies here so the Go handler
-// doesn't have to re-read scripts/vendor-ui.sh at every request.
-// Spec 5's vendor_freshness_test asserts these match the blobs at
-// startup time so a vendor bump that forgets to update this struct
-// is caught in CI.
-const (
-	htmxSRI    = "sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
-	htmxSseSRI = "sha384-QA9wXqexhwzXTuTvuF5QP82pddm3R2hy81UzXi7ioNTqNF2b75hlkkSGjafohhL3"
-)
-
-// newV2BaseContext seeds the SRI and session id from a request. Title
-// can be overridden by the caller.
-func newV2BaseContext(sessionID, title string) V2BaseContext {
-	return V2BaseContext{
-		Title:      title,
-		HtmxSRI:    htmxSRI,
-		HtmxSseSRI: htmxSseSRI,
-		SessionID:  sessionID,
-	}
+// setV2CrossOriginIsolation attaches the COOP + COEP + CORP headers
+// required for `crossOriginIsolated` to evaluate true in the browser,
+// which is the gate the Spec 2 graph-worker uses to decide between
+// SharedArrayBuffer and transferable-ArrayBuffer transports.
+//
+// Spec 2 §3.2; RT-D3-FORCE-WEBWORKER recommendation. The fallback
+// transferable path keeps working when these headers are absent — so
+// this is an opt-in perf flag, not a hard requirement.
+func setV2CrossOriginIsolation(h http.Header) {
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Embedder-Policy", "require-corp")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 }
 
 // SessionGraphContext is the template context for session-graph.html.
@@ -192,7 +193,6 @@ func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := r.PathValue("id")
 	if sid == "" {
-		// Fall back to last segment if PathValue isn't set (older mux).
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 		if len(parts) >= 2 {
 			sid = parts[1]
@@ -217,25 +217,4 @@ func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "render session-graph: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-}
-
-// setV2CrossOriginIsolation attaches the COOP + COEP headers required
-// for `crossOriginIsolated` to evaluate true in the browser, which is
-// the gate the Spec 2 graph-worker uses to decide between
-// SharedArrayBuffer and transferable-ArrayBuffer transports.
-//
-// COOP=same-origin + COEP=require-corp is the minimum that turns SAB
-// on. The handler ALSO sets CORP=same-origin on every response under
-// /ui/web/ so subresources (vendored .js, .css) satisfy the embedder
-// requirement; without that, any imported module under a different
-// CORP value would block the page from being cross-origin-isolated
-// even though same-origin.
-//
-// Spec 2 §3.2; RT-D3-FORCE-WEBWORKER recommendation. The fallback
-// transferable path keeps working when these headers are absent — so
-// this is an opt-in perf flag, not a hard requirement.
-func setV2CrossOriginIsolation(h http.Header) {
-	h.Set("Cross-Origin-Opener-Policy", "same-origin")
-	h.Set("Cross-Origin-Embedder-Policy", "require-corp")
-	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 }

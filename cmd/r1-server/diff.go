@@ -202,6 +202,38 @@ func (d *DB) serveDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Spec 4 §10 T9: render the v2 diff.html template that extends
+	// base.html. Falls back to the legacy inline fmt.Fprintf path
+	// when the v2 surface is off so non-htmx clients keep working.
+	cfg := LoadV2Config()
+	if cfg.Renderable() {
+		tmpl, err := parseV2Template("diff")
+		if err == nil {
+			ctx := struct {
+				V2BaseContext
+				A    string
+				B    string
+				Rows []DiffRow
+			}{
+				V2BaseContext: V2BaseContext{
+					Title:      "Diff",
+					HtmxSRI:    cfg.HtmxSRI,
+					HtmxSseSRI: cfg.HtmxSseSRI,
+				},
+				A:    a,
+				B:    b,
+				Rows: rows,
+			}
+			if err := tmpl.ExecuteTemplate(w, "diff", ctx); err == nil {
+				return
+			}
+			// Render error: fall through to legacy path so an
+			// operator hitting /diff during a template-broken deploy
+			// still gets useful output rather than a 500.
+		}
+	}
+
 	fmt.Fprintf(w, `<!doctype html><meta charset=utf-8>
 <title>Diff %s vs %s</title>
 <style>body{font-family:system-ui,sans-serif;padding:1rem}

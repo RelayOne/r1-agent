@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,13 +24,21 @@ func TestParseV2Templates_ParsesCleanly(t *testing.T) {
 		t.Fatal("parseV2Templates returned nil map")
 	}
 	if _, ok := tmpls["base"]; !ok {
-		t.Errorf("base template missing")
+		t.Errorf("base template missing (defined: %v)", keysOf(tmpls))
 	}
 	for _, want := range []string{"base", "import-map"} {
 		if got := tmpls["base"].Lookup(want); got == nil {
 			t.Errorf("template %q not registered (defined: %v)", want, tmpls["base"].DefinedTemplates())
 		}
 	}
+}
+
+func keysOf(m map[string]*template.Template) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestParseV2Templates_BaseRenderShape(t *testing.T) {

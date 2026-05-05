@@ -74,12 +74,12 @@ type shareView struct {
 }
 
 // shareEnabled reports whether the per-config share toggle is on.
-// Reads R1_SERVER_SHARE_ENABLED on each call so tests + ops can flip
-// without restart. Once r1-server gains a YAML config surface this
-// becomes a struct field read; the env-var fallback stays as the
-// operator escape hatch.
+// Backed by LoadV2Config().ShareEnabled — Spec 4 §10 T2 centralises
+// env reads behind that helper. Once r1-server gains a YAML config
+// surface this becomes a struct field read; the env-var fallback
+// stays as the operator escape hatch.
 func shareEnabled() bool {
-	return os.Getenv("R1_SERVER_SHARE_ENABLED") == "1"
+	return LoadV2Config().ShareEnabled
 }
 
 // serveShare renders the share view when both feature gates are on
@@ -93,8 +93,15 @@ func shareEnabled() bool {
 // We deliberately serve 404 (not 403) for the disabled cases so the
 // route is indistinguishable from "no such route" to unauthenticated
 // scanners. Operators who flipped the toggle know to expect 200.
+//
+// Spec 4 §10 T8 + T14: when both gates are on AND R1_SERVER_SHARE_TEMPLATE_V2=1
+// (rollout flag), the v2 share.html template is rendered instead of the
+// minimal inline shareTmpl. This is opt-in for one release cycle so a
+// rendering regression in the v2 template can't break the public share
+// surface.
 func serveShare(w http.ResponseWriter, r *http.Request) {
-	if !v2Enabled() || !shareEnabled() {
+	cfg := LoadV2Config()
+	if !cfg.CanServeShare() {
 		http.NotFound(w, r)
 		return
 	}
@@ -104,31 +111,93 @@ func serveShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	view := shareView{
-		Hash:         hash,
-		CanonicalURL: "/share/" + hash,
-	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600, immutable")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; script-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; script-src 'none'; style-src 'self'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
+	// v2 template path. Empty Rows is fine — Spec 5 ships the
+	// fixture-session loader; this handler just renders the shell.
+	if shareTemplateV2Enabled() {
+		if err := renderShareV2(w, hash, cfg); err != nil {
+			http.Error(w, "render share: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	view := shareView{
+		Hash:         hash,
+		CanonicalURL: "/share/" + hash,
+	}
 	if err := shareTmpl.Execute(w, view); err != nil {
-		// Headers already flushed at this point in most cases; best
-		// effort log via the http package's default error path.
 		http.Error(w, "render share: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
+// shareTemplateV2Enabled gates the v2-template rollout. Off-by-default
+// matches the conservative posture for a public surface.
+func shareTemplateV2Enabled() bool {
+	return os.Getenv("R1_SERVER_SHARE_TEMPLATE_V2") == "1"
+}
+
+// shareV2Context is the template context for share.html.
+type shareV2Context struct {
+	V2BaseContext
+	Snapshot shareSnapshot
+	Rows     []shareRow
+}
+
+type shareSnapshot struct {
+	ChainRootHash string
+	CreatedAtISO  string
+	SessionName   string
+}
+
+// shareRow mirrors the fields the waterfall-row partial reads;
+// re-declared here so share.go has no Spec 5 fixture dependency.
+type shareRow struct {
+	NodeID        string
+	NodeType      string
+	CreatedAtUnix int64
+	Title         string
+	DurationStr   string
+	CostStr       string
+	TypeIcon      string
+}
+
+func renderShareV2(w http.ResponseWriter, hash string, cfg V2Config) error {
+	tmpl, err := parseV2Template("share")
+	if err != nil {
+		return err
+	}
+	ctx := shareV2Context{
+		V2BaseContext: V2BaseContext{
+			Title:      "share " + hash + " — r1",
+			HtmxSRI:    cfg.HtmxSRI,
+			HtmxSseSRI: cfg.HtmxSseSRI,
+			SessionID:  hash, // share view treats the hash as the session id for routing
+		},
+		Snapshot: shareSnapshot{
+			ChainRootHash: hash,
+			CreatedAtISO:  "",
+			SessionName:   "snapshot " + hash,
+		},
+	}
+	return tmpl.ExecuteTemplate(w, "share", ctx)
+}
+
 // v2Enabled reports whether the spec-27 v2 UI handlers should serve
-// content. Reads R1_SERVER_UI_V2 on each call so tests + ops can flip
-// the flag without restart. Per spec §2.3 the flag stays off-by-default
-// for two release weeks, then defaults on with R1_SERVER_UI_V2=0 as
-// the documented escape hatch.
+// content. Thin pass-through over LoadV2Config().Renderable() — kept
+// as a function so existing callsites compile without the touch-30-
+// callsites-now refactor; future work can inline this once the
+// surrounding code threads V2Config through context.
+//
+// Spec 4 §10 T2: the strict-"1" semantics live in LoadV2Config; this
+// function MUST NOT read os.Getenv directly so the no_direct_env_test
+// grep guard stays clean.
 func v2Enabled() bool {
-	return os.Getenv("R1_SERVER_UI_V2") == "1"
+	return LoadV2Config().Renderable()
 }

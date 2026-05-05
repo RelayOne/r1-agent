@@ -15,17 +15,16 @@ import (
 	"github.com/RelayOne/r1/internal/ledger/nodes"
 )
 
-// renderPartial renders a single named partial against the parse
-// tree from parseV2Templates. Helps the tests pin down a single
-// block's output without running the whole page shell.
+// renderPartial renders a single named partial against the per-page
+// "base" tree from parseV2Templates. Helps the tests pin down a
+// single block's output without running the whole page shell. The
+// "base" key is guaranteed by buildV2Tmpls when no top-level
+// base.html page exists, and otherwise carries every partial.
 func renderPartial(t *testing.T, name string, ctx interface{}) string {
 	t.Helper()
-	tmpl, err := parseV2Templates()
+	tmpl, err := parseV2Template("base")
 	if err != nil {
-		t.Fatalf("parseV2Templates: %v", err)
-	}
-	if tmpl == nil {
-		t.Fatal("parseV2Templates returned nil template")
+		t.Fatalf("parseV2Template(base): %v", err)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, name, ctx); err != nil {

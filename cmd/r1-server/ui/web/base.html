@@ -36,6 +36,9 @@
           integrity="{{ .HtmxSseSRI }}"
           crossorigin="anonymous"
           defer></script>
+  <!-- Spec 4 §8: client shim for the two htmx-ext-sse reconnect
+       gotchas (last_event_id URL fallback + event:resync handler). -->
+  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
 </head>
 <body hx-ext="sse" data-session-id="{{ .SessionID }}">
   {{ block "topbar" . }}{{ end }}
