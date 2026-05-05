@@ -158,14 +158,20 @@ type shareSnapshot struct {
 
 // shareRow mirrors the fields the waterfall-row partial reads;
 // re-declared here so share.go has no Spec 5 fixture dependency.
+// The redaction-aware fields land via the post-merge integration
+// with Spec 3 (which owns the redaction map projection).
 type shareRow struct {
-	NodeID        string
-	NodeType      string
-	CreatedAtUnix int64
-	Title         string
-	DurationStr   string
-	CostStr       string
-	TypeIcon      string
+	NodeID             string
+	NodeType           string
+	CreatedAtUnix      int64
+	Title              string
+	DurationStr        string
+	CostStr            string
+	TypeIcon           string
+	Depth              int
+	Chevron            string
+	IsRedacted         bool
+	IsRedactionAnomaly bool
 }
 
 func renderShareV2(w http.ResponseWriter, hash string, cfg V2Config) error {

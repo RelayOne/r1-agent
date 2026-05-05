@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fixture session — r1</title>
+  <link rel="stylesheet" href="/ui/web/css/base.css">
+
+  <script type="importmap">{
+  "imports": {
+    "three": "/ui/web/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/web/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/web/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/web/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/web/vendor/three-spritetext.js"
+  }
+}</script>
+
+  <script src="/ui/web/vendor/htmx.min.js"
+          integrity="sha384-FAKEHTMX"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/web/vendor/htmx-ext-sse.js"
+          integrity="sha384-FAKESSE"
+          crossorigin="anonymous"
+          defer></script>
+  
+  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="sess-fixture">
+  <header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <nav class="topbar__nav" aria-label="Session views">
+    <a href="/session/sess-fixture" aria-current="page" data-testid="tab-waterfall">Waterfall</a>
+    <a href="/session/sess-fixture/graph" data-testid="tab-graph">3D Graph</a>
+    <a href="/session/sess-fixture/stream" data-testid="tab-stream">Stream</a>
+    <a href="/memories?session=sess-fixture" data-testid="tab-memories">Memories</a>
+  </nav>
+</header>
+  <main id="main">
+    <section class="pane pane--primary waterfall"
+         data-testid="waterfall"
+         hx-ext="sse"
+         sse-connect="/api/session/sess-fixture/events/stream?last_event_id=0"
+         sse-swap="waterfall-node">
+  <table class="waterfall__table">
+    <thead>
+      <tr>
+        <th></th>
+        <th></th>
+        <th scope="col">Event</th>
+        <th scope="col">Duration</th>
+        <th scope="col">Cost</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody data-testid="waterfall-rows">
+      <tr class="row"
+    data-node-id="n-1"
+    data-node-type="agent_io"
+    data-cursor="1735732800"
+    style="content-visibility: auto;">
+  <td class="indent" style="--depth: 0;"></td>
+  <td class="icon" aria-hidden="true">📦</td>
+  <td class="title">first</td>
+  <td class="duration">10ms</td>
+  <td class="cost">$0.001</td>
+  <td class="redacted-slot"></td>
+</tr><tr class="row row--redacted"
+    data-node-id="n-2"
+    data-node-type="agent_io"
+    data-cursor="1735732815" data-state="redacted"
+    style="content-visibility: auto;">
+  <td class="indent" style="--depth: 0;"></td>
+  <td class="icon" aria-hidden="true"><svg class="icon-lock" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+  <path fill="currentColor" d="M6 1.2c-1.5 0-2.7 1.2-2.7 2.7v1.4H2.6c-.4 0-.7.3-.7.7V10c0 .4.3.7.7.7h6.8c.4 0 .7-.3.7-.7V6c0-.4-.3-.7-.7-.7H8.7V3.9C8.7 2.4 7.5 1.2 6 1.2zm0 1.4c.7 0 1.3.6 1.3 1.3v1.4H4.7V3.9c0-.7.6-1.3 1.3-1.3z"/>
+</svg></td>
+  <td class="title">second</td>
+  <td class="duration">15ms</td>
+  <td class="cost">$0.002</td>
+  <td class="redacted-slot"><span aria-hidden="true" data-redacted="true">[content redacted]</span></td>
+</tr>
+      <tr><td colspan="6">
+        <div data-testid="page-sentinel"
+             hx-trigger="revealed"
+             hx-get="/session/sess-fixture/waterfall?after=0"
+             hx-swap="outerHTML"
+             aria-hidden="true"></div>
+      </td></tr>
+    </tbody>
+  </table>
+</section>
+<aside id="side-panel" class="pane pane--side" role="complementary"
+       aria-label="Selected node details">
+  <div class="muted" data-testid="side-panel-empty" style="padding:16px;">
+  <p>Hover or click a row to inspect.</p>
+</div>
+</aside>
+  </main>
+  <footer id="scrubber-bar"
+        style="position:fixed;left:0;right:0;bottom:0;height:56px;
+               border-top:1px solid var(--color-border);
+               background:var(--color-bg);padding:8px 16px;
+               display:flex;align-items:center;gap:12px;z-index:5;">
+  <div class="chips" role="group" aria-label="Filter">
+  
+  <button type="button"
+          class="chip"
+          data-testid="chip-types"
+          data-state="inactive"
+          data-hx-get="/session/sess-fixture/waterfall?types=error.*"
+          data-hx-target="[data-testid='waterfall-rows']"
+          data-hx-trigger="click"
+          name="types"
+          value="error.*">
+    errors
+  </button>
+  
+</div>
+  <input type="search" name="q" placeholder="Search nodes..."
+         data-testid="search-nodes"
+         hx-get="/session/sess-fixture/waterfall"
+         hx-trigger="input changed delay:200ms"
+         hx-target="[data-testid='waterfall-rows']"
+         hx-include="[name='types']" />
+  <label for="timeline-scrubber" class="sr-only">Timeline scrubber</label>
+  <input type="range" id="timeline-scrubber" data-island="scrubber"
+         data-testid="timeline-scrubber"
+         min="1735732800" max="1735819200"
+         style="flex:1;" />
+</footer>
+</body>
+</html>
