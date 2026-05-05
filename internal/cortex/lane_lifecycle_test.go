@@ -441,7 +441,7 @@ func TestLaneIDIsULID(t *testing.T) {
 		l := w.NewMainLane(context.Background())
 		_ = l.Transition(hub.LaneStatusRunning, "started", "started")
 
-		deadline := time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 		for time.Now().Before(deadline) {
 			capturedMu.Lock()
 			n := len(captured)
