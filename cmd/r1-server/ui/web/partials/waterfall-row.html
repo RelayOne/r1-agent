@@ -1,33 +1,63 @@
 {{- /*
   cmd/r1-server/ui/web/partials/waterfall-row.html
 
-  Spec 4 §5.2 — minimal waterfall-row partial. Spec 3's branch ships
-  the full redacted/skill-aware version with lock SVG + 🧬 icons
-  + data-state="redacted" wiring. This branch (Spec 4) carries the
-  data-cursor/data-node-type baseline so the page templates parse +
-  serve, then merges with Spec 3's richer version when both branches
-  land on dev.
+  Spec 3 §6: one row in the trace waterfall. Slots:
 
-  Context shape (subset; Spec 3's version reads more):
-    .NodeID        string
-    .NodeType      string
-    .CreatedAtUnix int64
-    .Title         string
-    .DurationStr   string
-    .CostStr       string
-    .TypeIcon      string
+    .NodeID            string
+    .NodeType          string  (e.g. "agent_io" / "skill_loaded")
+    .CreatedAtUnix     int64   (data-cursor for the scrubber)
+    .Depth             int     (indent depth)
+    .Chevron           string  (▶ / ▼ for expandable sub-trees)
+    .TypeIcon          string  (default emoji per node type)
+    .Title             string
+    .DurationStr       string
+    .CostStr           string
+    .IsRedacted        bool    (RedactionMap.IsRedacted)
+    .IsRedactionAnomaly bool   (RedactionMap.IsAnomaly — redacted but
+                                no event log; renders ⚠ overlay)
+
+  content-visibility: auto on every row defers off-screen layout per
+  RT-WATERFALL-DENSITY Strategy G. Server-side aggregation handles
+  the 5k → 2-3k visible-row reduction; this template only handles
+  per-row chrome.
 */ -}}
 {{- define "waterfall-row" -}}
-<tr class="row" data-testid="waterfall-row"
+<tr class="row{{ if .IsRedacted }} row--redacted{{ end }}{{ if .IsRedactionAnomaly }} row--redaction-anomaly{{ end }}"
     data-node-id="{{ .NodeID }}"
     data-node-type="{{ .NodeType }}"
     data-cursor="{{ .CreatedAtUnix }}"
+    {{- if .IsRedacted }} data-state="redacted"{{ end }}
     style="content-visibility: auto;">
-  <td class="indent" aria-hidden="true"></td>
-  <td class="icon" aria-hidden="true">{{ .TypeIcon }}</td>
+  <td class="indent" style="--depth: {{ .Depth }};">{{ .Chevron }}</td>
+  <td class="icon" aria-hidden="true">
+    {{- if .IsRedacted -}}
+      {{ template "icon-lock" . }}
+    {{- else if eq .NodeType "skill_loaded" -}}
+      🧬
+    {{- else if eq .NodeType "skill_unloaded" -}}
+      🧬❌
+    {{- else -}}
+      {{ .TypeIcon }}
+    {{- end -}}
+  </td>
   <td class="title">{{ .Title }}</td>
   <td class="duration">{{ .DurationStr }}</td>
   <td class="cost">{{ .CostStr }}</td>
-  <td class="redacted-slot"></td>
+  <td class="redacted-slot">
+    {{- if .IsRedactionAnomaly -}}
+      <span aria-label="redacted, no event log" data-state="warning" title="Redacted, but no event log was captured.">⚠</span>
+    {{- else if .IsRedacted -}}
+      <span aria-hidden="true" data-redacted="true">[content redacted]</span>
+    {{- end -}}
+  </td>
 </tr>
+{{- end -}}
+
+{{- /* icon-lock: inline SVG glyph used wherever a redaction needs a
+       visual anchor. aria-hidden because the text label "[content
+       redacted]" carries the meaning for screen readers. */ -}}
+{{- define "icon-lock" -}}
+<svg class="icon-lock" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+  <path fill="currentColor" d="M6 1.2c-1.5 0-2.7 1.2-2.7 2.7v1.4H2.6c-.4 0-.7.3-.7.7V10c0 .4.3.7.7.7h6.8c.4 0 .7-.3.7-.7V6c0-.4-.3-.7-.7-.7H8.7V3.9C8.7 2.4 7.5 1.2 6 1.2zm0 1.4c.7 0 1.3.6 1.3 1.3v1.4H4.7V3.9c0-.7.6-1.3 1.3-1.3z"/>
+</svg>
 {{- end -}}
