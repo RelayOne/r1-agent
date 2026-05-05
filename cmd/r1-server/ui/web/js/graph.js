@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import SpriteText from 'three-spritetext';
 
 const MAX_INSTANCES = 8192;
 const POS_FLOATS_PER_NODE = 3;
@@ -152,6 +153,24 @@ export class GraphRenderer {
     this.worker = null;
     this.recyclableBuf = null;
 
+    // T5: label-sprite pool. Per RT-INSTANCEDMESH-PERF, three-spritetext
+    // breaks instancing's contract (each label has unique text), so we
+    // pool the sprites and only attach the 64 closest-to-camera or
+    // currently-selected. Beyond 64 visible labels the page becomes
+    // unreadable anyway.
+    this.LABEL_POOL_SIZE = 64;
+    this.labelPool = [];
+    this.labelByNodeId = new Map(); // nodeId → label sprite (currently attached)
+    this.nodeLabel = new Map();     // nodeId → display text
+    for (let i = 0; i < this.LABEL_POOL_SIZE; i++) {
+      const s = new SpriteText('', 8, '#e5e7eb');
+      s.material.depthTest = false;
+      s.renderOrder = 1;
+      s.visible = false;
+      this.scene.add(s);
+      this.labelPool.push(s);
+    }
+
     // T4: hover/click picking via THREE.Raycaster. Built-in raycaster
     // is sufficient at 3k nodes per RT-INSTANCEDMESH-PERF. The hover
     // path is rAF-throttled so we never pick more than once per frame.
@@ -196,13 +215,87 @@ export class GraphRenderer {
     this.worker.postMessage({ kind: 'init', nodes, edges, useSAB });
 
     // Drive ticks at requestAnimationFrame cadence.
+    const _frustum = new THREE.Frustum();
+    const _projViewMatrix = new THREE.Matrix4();
+    let _labelTick = 0;
     const loop = () => {
       this.controls.update();
       this._drainPick();
+      // Update the label layer at ~10 Hz (every 6th frame at 60 FPS) —
+      // labels follow the camera, not the instance positions, so they
+      // don't need 60 Hz re-layout.
+      if ((_labelTick++ % 6) === 0) {
+        _projViewMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+        _frustum.setFromProjectionMatrix(_projViewMatrix);
+        this._refreshLabels(_frustum);
+      }
       this.renderer.render(this.scene, this.camera);
       this._raf = requestAnimationFrame(loop);
     };
     this._raf = requestAnimationFrame(loop);
+  }
+
+  // Pick up to LABEL_POOL_SIZE nodes that are (a) currently selected
+  // (this.hoverNodeId or focused subtree) or (b) inside the camera
+  // frustum AND closest to the camera. Releases pool slots for nodes
+  // that fall out of view.
+  _refreshLabels(frustum) {
+    if (this.nodes.size === 0) return;
+    const camPos = this.camera.position;
+    const candidates = [];
+    const tmp = new THREE.Vector3();
+    for (const [nodeId, info] of this.nodes) {
+      const pool = this.pools.get(info.shape);
+      if (!pool || pool.mesh.count === 0) continue;
+      pool.mesh.getMatrixAt(info.poolIdx, pool._tmp);
+      tmp.setFromMatrixPosition(pool._tmp);
+      if (!frustum.containsPoint(tmp)) continue;
+      const dist = tmp.distanceTo(camPos);
+      candidates.push({ nodeId, dist, x: tmp.x, y: tmp.y, z: tmp.z });
+    }
+    candidates.sort((a, b) => a.dist - b.dist);
+    const take = candidates.slice(0, this.LABEL_POOL_SIZE);
+    const wanted = new Set(take.map(c => c.nodeId));
+    // If hoverNodeId is set, force-include it (selection wins over
+    // distance ranking).
+    if (this.hoverNodeId && this.nodes.has(this.hoverNodeId) && !wanted.has(this.hoverNodeId)) {
+      // Drop the farthest entry.
+      const drop = take.pop();
+      if (drop) wanted.delete(drop.nodeId);
+      const info = this.nodes.get(this.hoverNodeId);
+      const pool = this.pools.get(info.shape);
+      pool.mesh.getMatrixAt(info.poolIdx, pool._tmp);
+      tmp.setFromMatrixPosition(pool._tmp);
+      take.push({ nodeId: this.hoverNodeId, dist: 0, x: tmp.x, y: tmp.y, z: tmp.z });
+      wanted.add(this.hoverNodeId);
+    }
+    // Release pool slots for nodes no longer wanted.
+    for (const [nodeId, sprite] of this.labelByNodeId) {
+      if (!wanted.has(nodeId)) {
+        sprite.visible = false;
+        this.labelByNodeId.delete(nodeId);
+      }
+    }
+    // Assign pool slots to newly wanted nodes.
+    let next = 0;
+    for (const c of take) {
+      let sprite = this.labelByNodeId.get(c.nodeId);
+      if (!sprite) {
+        while (next < this.labelPool.length && this.labelPool[next].visible) next++;
+        if (next >= this.labelPool.length) break;
+        sprite = this.labelPool[next++];
+        sprite.text = this.nodeLabel.get(c.nodeId) || c.nodeId.slice(0, 12);
+        sprite.visible = true;
+        this.labelByNodeId.set(c.nodeId, sprite);
+      }
+      sprite.position.set(c.x, c.y + 4, c.z);
+    }
+  }
+
+  setNodeLabel(nodeId, text) {
+    this.nodeLabel.set(nodeId, text);
+    const s = this.labelByNodeId.get(nodeId);
+    if (s) s.text = text;
   }
 
   _queuePick(ev, kind) {
