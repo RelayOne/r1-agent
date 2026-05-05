@@ -49,10 +49,12 @@ func TestLicenseVerifyRejectsShortKey(t *testing.T) {
 }
 
 func TestTelemetryOptInIncrementsSeq(t *testing.T) {
+	tc := &trackingClients{} // empty: all 3 vendor clients are nil-safe via Enabled() checks
+	h := handleTelemetryOptIn(tc)
 	rr1 := httptest.NewRecorder()
-	handleTelemetryOptIn(rr1, httptest.NewRequest(http.MethodPost, "/v1/telemetry/opt-in", nil))
+	h(rr1, httptest.NewRequest(http.MethodPost, "/v1/telemetry/opt-in", nil))
 	rr2 := httptest.NewRecorder()
-	handleTelemetryOptIn(rr2, httptest.NewRequest(http.MethodPost, "/v1/telemetry/opt-in", nil))
+	h(rr2, httptest.NewRequest(http.MethodPost, "/v1/telemetry/opt-in", nil))
 
 	var b1, b2 map[string]any
 	_ = json.Unmarshal(rr1.Body.Bytes(), &b1)

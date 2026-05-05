@@ -28,7 +28,53 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1-coord-api/internal/auth"
+	"github.com/RelayOne/r1-coord-api/internal/tracking"
 )
+
+// trackingClients groups the three vendor clients. Each is a no-op when
+// its env vars are unset, so dev environments don't need any tracking
+// credentials.
+type trackingClients struct {
+	posthog    *tracking.PostHog
+	customerio *tracking.CustomerIO
+	coderadar  *tracking.CodeRadar
+}
+
+func newTrackingClients() *trackingClients {
+	return &trackingClients{
+		posthog: tracking.NewPostHog(
+			os.Getenv("POSTHOG_API_KEY"),
+			os.Getenv("POSTHOG_HOST"),
+		),
+		customerio: tracking.NewCustomerIO(
+			os.Getenv("CUSTOMERIO_SITE_ID"),
+			os.Getenv("CUSTOMERIO_API_KEY"),
+			getenv("CUSTOMERIO_REGION", "us"),
+		),
+		coderadar: tracking.NewCodeRadar(
+			os.Getenv("CODERADAR_DSN"),
+			serviceName,
+			envName,
+			versionStr,
+		),
+	}
+}
+
+// captureFunnel sends a single business event to all three vendors. We
+// fan out (instead of letting one vendor be canonical) because each
+// vendor's strength is different: PostHog for funnels + replay,
+// Customer.io for retention email, CodeRadar for error correlation.
+//
+// Errors from individual vendors are logged but never block the caller.
+func (tc *trackingClients) captureFunnel(ctx context.Context, distinctID, event string, props map[string]any) {
+	if err := tc.posthog.Capture(ctx, distinctID, event, props); err != nil {
+		log.Printf("posthog capture(%s): %v", event, err)
+	}
+	if err := tc.customerio.Track(ctx, distinctID, event, props); err != nil {
+		log.Printf("customerio track(%s): %v", event, err)
+	}
+	tc.coderadar.CaptureMessage(ctx, "info", event, props)
+}
 
 const serviceName = "r1-coord-api"
 
@@ -99,17 +145,25 @@ func handleLicenseVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleTelemetryOptIn(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
-		return
+func handleTelemetryOptIn(tc *trackingClients) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"ok": false, "error": "method not allowed"})
+			return
+		}
+		seq := telSeqCtr.Add(1)
+		// Best-effort fan-out to PostHog/Customer.io/CodeRadar. The
+		// caller doesn't wait on this and it can't fail the response.
+		go tc.captureFunnel(context.Background(), fmt.Sprintf("telemetry-%d", seq), "telemetry_opt_in", map[string]any{
+			"env":     envName,
+			"version": versionStr,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":       true,
+			"accepted": true,
+			"seq":      seq,
+		})
 	}
-	seq := telSeqCtr.Add(1)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"accepted": true,
-		"seq":      seq,
-	})
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +313,9 @@ func main() {
 	port := getenv("PORT", "8080")
 	jwt := authService()
 	sso := ssoClient()
+	tc := newTrackingClients()
+	log.Printf("tracking enabled: posthog=%v customerio=%v coderadar=%v",
+		tc.posthog.Enabled(), tc.customerio.Enabled(), tc.coderadar.Enabled())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", handleHealthz)
@@ -266,7 +323,7 @@ func main() {
 	mux.HandleFunc("/readyz", handleHealthz)
 	mux.HandleFunc("/v1/version", handleVersion)
 	mux.HandleFunc("/v1/license/verify", handleLicenseVerify)
-	mux.HandleFunc("/v1/telemetry/opt-in", handleTelemetryOptIn)
+	mux.HandleFunc("/v1/telemetry/opt-in", handleTelemetryOptIn(tc))
 	mux.HandleFunc("/v1/auth/sso/start", handleSsoStart(sso))
 	mux.HandleFunc("/v1/auth/sso/callback", handleSsoCallback(sso, jwt))
 	mux.HandleFunc("/v1/auth/refresh", handleAuthRefresh(jwt))
