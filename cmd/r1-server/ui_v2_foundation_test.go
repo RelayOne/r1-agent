@@ -97,3 +97,17 @@ func TestSetV2CSP_StrictPolicy(t *testing.T) {
 		t.Errorf("setV2CSP unexpectedly wrote status code %d", rec.Code)
 	}
 }
+
+func TestSetV2CrossOriginIsolation_HeadersForSAB(t *testing.T) {
+	rec := httptest.NewRecorder()
+	setV2CrossOriginIsolation(rec.Header())
+	for h, want := range map[string]string{
+		"Cross-Origin-Opener-Policy":   "same-origin",
+		"Cross-Origin-Embedder-Policy": "require-corp",
+		"Cross-Origin-Resource-Policy": "same-origin",
+	} {
+		if got := rec.Header().Get(h); got != want {
+			t.Errorf("%s: got %q, want %q", h, got, want)
+		}
+	}
+}

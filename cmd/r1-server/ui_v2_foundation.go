@@ -88,3 +88,24 @@ func setV2CSP(h http.Header) {
 			"base-uri 'self'; "+
 			"frame-ancestors 'none'")
 }
+
+// setV2CrossOriginIsolation attaches the COOP + COEP headers required
+// for `crossOriginIsolated` to evaluate true in the browser, which is
+// the gate the Spec 2 graph-worker uses to decide between
+// SharedArrayBuffer and transferable-ArrayBuffer transports.
+//
+// COOP=same-origin + COEP=require-corp is the minimum that turns SAB
+// on. The handler ALSO sets CORP=same-origin on every response under
+// /ui/web/ so subresources (vendored .js, .css) satisfy the embedder
+// requirement; without that, any imported module under a different
+// CORP value would block the page from being cross-origin-isolated
+// even though same-origin.
+//
+// Spec 2 §3.2; RT-D3-FORCE-WEBWORKER recommendation. The fallback
+// transferable path keeps working when these headers are absent — so
+// this is an opt-in perf flag, not a hard requirement.
+func setV2CrossOriginIsolation(h http.Header) {
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Embedder-Policy", "require-corp")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+}
