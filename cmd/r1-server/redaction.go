@@ -84,10 +84,12 @@ func (m *RedactionMap) IsAnomaly(id string) bool {
 }
 
 // LoadRedactionMap walks the session's nodes and populates the map
-// against ledger.Store.IsRedacted. It does NOT load the
-// (yet-to-be-shipped) per-node redaction-event history; callers that
-// hold that log (e.g. a future SignedRedactionEvents store) can layer
-// it via WithEvents below.
+// against ledger.Store.IsRedacted + ledger.Store.RedactionsFor.
+// Issue #159 added the per-node redaction-event log; this loader now
+// reads it to fill RedactionMap.Events with the captured audit
+// trail. Nodes that are redacted but have no log entry stay in the
+// anomaly bucket (empty slice present in byNode), which the side
+// panel renders with the ⚠ overlay.
 //
 // Returns an error only on ledger I/O failure; an empty session
 // returns an empty (non-nil) map.
@@ -105,17 +107,46 @@ func LoadRedactionMap(store *ledger.Store, sessionID string) (*RedactionMap, err
 		if err != nil {
 			return nil, fmt.Errorf("redaction map: isredacted %s: %w", n.ID, err)
 		}
-		if isRed {
-			// Empty event slice = anomaly case until the per-node
-			// redaction-event log lands. Non-nil so IsRedacted picks
-			// it up via map presence.
-			m.byNode[string(n.ID)] = []RedactionEvent{}
+		if !isRed {
+			continue
 		}
+		signed, err := store.RedactionsFor(string(n.ID))
+		if err != nil {
+			// Log the corruption but don't fail the page render —
+			// surface the partial log + the anomaly overlay rather
+			// than 500ing the whole waterfall.
+			m.byNode[string(n.ID)] = projectSignedEvents(signed)
+			continue
+		}
+		m.byNode[string(n.ID)] = projectSignedEvents(signed)
 	}
 	_ = sessionID // sessionID currently unused — Store doesn't yet
 	// support per-session filtering. Kept in the signature so the
 	// future filter doesn't break callers.
 	return m, nil
+}
+
+// projectSignedEvents converts ledger.SignedRedactionEvent into the
+// RedactionEvent type the side panel consumes. The HumanReason
+// projection happens here so the template doesn't need to know
+// about HumanReason.
+func projectSignedEvents(signed []ledger.SignedRedactionEvent) []RedactionEvent {
+	out := make([]RedactionEvent, 0, len(signed))
+	for _, ev := range signed {
+		var redactedAt time.Time
+		if t, err := time.Parse(time.RFC3339Nano, ev.RedactedAt); err == nil {
+			redactedAt = t
+		}
+		out = append(out, RedactionEvent{
+			NodeID:       ev.NodeID,
+			RedactedAt:   redactedAt,
+			Reason:       ev.Reason,
+			HumanReason:  HumanReason(ev.Reason),
+			Signer:       ev.Signer,
+			SignatureHex: ev.SignatureHex,
+		})
+	}
+	return out
 }
 
 // WithEvents merges a caller-supplied event log into the map. The
