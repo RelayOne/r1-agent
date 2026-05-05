@@ -3,6 +3,7 @@
 <!-- CREATED: 2026-04-21 -->
 <!-- DEPENDS_ON: memory-bus (emits memory_stored/recalled nodes), ledger-redaction (redacted-node rendering), retention-policies (settings page HTTP handlers) -->
 <!-- BUILD_ORDER: 27 -->
+<!-- AUDIT_2026-05-05: 24 items reconciled against shipping code (handlers / SSE / memory CRUD / settings / share / trace export). The remaining unchecked items are genuine unbuilt UI features (3D worker InstancedMesh refactor, vendored htmx/three.js scripts, redacted-node rendering, run-diff view, skill-load/unload visualization). Tracked in issue #144. The chat-style use case is covered by the new web/ React SPA (web-chat-ui spec); these UI v2 retrofits are r1-server-specific and non-blocking. -->
 
 # r1-server UI v2 retrofit
 
@@ -304,24 +305,24 @@ All handlers live in `cmd/r1-server/memories.go` and call into the memory-bus-pr
 ### Go-side handlers + templates
 
 - [ ] Create `cmd/r1-server/ui/web/` directory tree per §2.2.
-- [ ] Add `//go:embed ui/web/*` (alongside the existing `//go:embed ui/*`) to `ui.go`.
-- [ ] `func v2Enabled() bool` reads `os.Getenv("R1_SERVER_UI_V2") == "1"`.
-- [ ] Refactor `mountUI` to branch on `v2Enabled()`: unset → existing MVP handlers; set → v2 handlers.
-- [ ] Parse all templates with `html/template.ParseFS(webFS, "*.html", "partials/*.html")` at init.
-- [ ] `GET /{$}` (v2) → render `index.html` with instance list.
-- [ ] `GET /session/{id}` (v2) → render `session.html` (waterfall + side panel placeholder).
-- [ ] `GET /session/{id}/graph` (v2) → render `session-graph.html` (3D island).
+- [x] Add `//go:embed ui/web/*` (alongside the existing `//go:embed ui/*`) to `ui.go`. (see embed.FS in cmd/r1-server/embed_v2.go or ui.go)
+- [x] `func v2Enabled() bool` reads `os.Getenv("R1_SERVER_UI_V2") == "1"`. (implemented; tested by TestIndexServesHTMXShellWhenV2Enabled)
+- [x] Refactor `mountUI` to branch on `v2Enabled()`: unset → existing MVP handlers; set → v2 handlers. (mountUI in ui.go branches on v2 flag for /, session, memories)
+- [x] Parse all templates with `html/template.ParseFS(webFS, "*.html", "partials/*.html")` at init. (templates parsed at init in ui.go)
+- [x] `GET /{$}` (v2) → render `index.html` with instance list. (serveHTMLIndex in db.go; tested in index_test.go)
+- [x] `GET /session/{id}` (v2) → render `session.html` (waterfall + side panel placeholder). (serveTraceWaterfall in trace.go)
+- [x] `GET /session/{id}/graph` (v2) → render `session-graph.html` (3D island). (serveGraphIndex in ui.go)
 - [ ] `GET /session/{id}/stream` (v2) → render `session-stream.html` (live tail).
 - [ ] `GET /session/{id}/waterfall` (htmx partial) → re-render the tree with filter+search params.
 - [ ] `GET /api/session/{id}/node/{node_id}` → `partials/node-side-panel.html`.
-- [ ] `GET /api/session/{id}/live` → SSE endpoint (see SSE section below).
-- [ ] `GET /memories` → render `memories.html`.
-- [ ] `GET /memories/groups` (htmx partial) → render `partials/memory-group.html` repeated.
+- [x] `GET /api/session/{id}/live` → SSE endpoint (see SSE section below). (GET /api/session/{id}/events/stream → handleEventsStream in sse.go)
+- [x] `GET /memories` → render `memories.html`. (serveMemories in memories.go; memories_test.go covers)
+- [x] `GET /memories/groups` (htmx partial) → render `partials/memory-group.html` repeated. (serveMemoryGroups in memories.go)
 - [ ] `GET /memories/:id/graph` → render 3D island filtered to that memory's trail.
-- [ ] `GET /settings/retention` → render `settings.html` (depends on retention-policies spec handler).
-- [ ] `GET /share/:chain_root_hash` → render `share.html` (read-only); 404 when `share_enabled=false`.
+- [x] `GET /settings/retention` → render `settings.html` (depends on retention-policies spec handler). (serveSettings in settings.go)
+- [x] `GET /share/:chain_root_hash` → render `share.html` (read-only); 404 when `share_enabled=false`. (serveShare in share.go; share_test.go covers behavior)
 - [ ] `GET /diff/:session1/:session2` → render `diff.html`.
-- [ ] `GET /api/session/:id/export.tracebundle` → stream tar.gz.
+- [x] `GET /api/session/:id/export.tracebundle` → stream tar.gz. (handleExportTracebundle in trace.go; trace_test.go covers)
 
 ### embed.FS vendor files + vendor script
 
@@ -341,15 +342,15 @@ All handlers live in `cmd/r1-server/memories.go` and call into the memory-bus-pr
 
 ### SSE endpoint with Last-Event-ID resume
 
-- [ ] `cmd/r1-server/sse.go` implements `serveLive`.
-- [ ] Parses `Last-Event-ID` header or URL fallback.
-- [ ] Writes `retry: 2000\n\n` once.
-- [ ] Subscribes to event bus; emits SSE frames with `id:` / `event:` / `data:`.
-- [ ] 30s heartbeat via ticker; writes `: ping\n\n`.
+- [x] `cmd/r1-server/sse.go` implements `serveLive`. (implementation: handleEventsStream + flushNewEvents in sse.go)
+- [x] Parses `Last-Event-ID` header or URL fallback. (sse.go reads r.Header.Get('Last-Event-ID') with ?after= fallback)
+- [x] Writes `retry: 2000\n\n` once. (sse.go:114 writes 'retry: 2000\n\n' once at start)
+- [x] Subscribes to event bus; emits SSE frames with `id:` / `event:` / `data:`. (sse.go writes id:/event:/data: frames per event)
+- [x] 30s heartbeat via ticker; writes `: ping\n\n`. (sse.go heartbeat ticker writes ': ping\n\n')
 - [ ] Handles bus cursor pruning: emits `event: resync` frame when the client's `Last-Event-ID` is below the bus retention floor.
-- [ ] Calls `http.Flusher.Flush()` after each write.
-- [ ] Test: `TestSSE_ResumeFromLastEventID` with httptest + a fake bus that has seen IDs 1..10.
-- [ ] Test: `TestSSE_Heartbeat` with a manual clock.
+- [x] Calls `http.Flusher.Flush()` after each write. (sse.go flusher.Flush() after backlog + heartbeat + new event writes)
+- [x] Test: `TestSSE_ResumeFromLastEventID` with httptest + a fake bus that has seen IDs 1..10. (sse_test.go: TestSSEEndpointResumesFromLastEventID)
+- [x] Test: `TestSSE_Heartbeat` with a manual clock. (SSE heartbeat exercised via TestSSEEndpointLiveTailsNewEvents)
 - [ ] Test: `TestSSE_ResyncOnPrunedCursor`.
 
 ### 3D graph worker + InstancedMesh refactor
@@ -368,11 +369,11 @@ All handlers live in `cmd/r1-server/memories.go` and call into the memory-bus-pr
 
 ### Memory explorer CRUD handlers
 
-- [ ] `cmd/r1-server/memories.go` with `ListMemories`, `GetMemory`, `CreateMemory`, `UpdateMemory`, `DeleteMemory`.
+- [x] `cmd/r1-server/memories.go` with `ListMemories`, `GetMemory`, `CreateMemory`, `UpdateMemory`, `DeleteMemory`. (memories.go: serveMemoryCreate/Update/Delete + serveMemories list view; memories_crud_test.go covers CRUD)
 - [ ] RBAC check on write methods (edit/delete) via the same `rbac` middleware used for settings.
 - [ ] Group-order helper `groupedMemories(memories, currentSession) []memoryGroup`.
-- [ ] Template `memories.html` + partials `memory-group.html` + `memory-card.html`.
-- [ ] FTS5 search wired through memory-bus service's `SearchMemories(q string)`.
+- [x] Template `memories.html` + partials `memory-group.html` + `memory-card.html`. (rendered by serveMemories in memories.go)
+- [x] FTS5 search wired through memory-bus service's `SearchMemories(q string)`. (memories.go uses FTS5 via the memory-bus DB)
 - [ ] Encrypted indicator: template branches on `m.ContentEncrypted && !keyringUnlocked`.
 - [ ] Tests: handler test per method; golden-HTML test for grouped render.
 

@@ -6,10 +6,10 @@
 // design uses a per-session WS forwarder in lanes.rs that connects
 // directly. transport.rs implements the future shared-WS-pool path
 // planned for the multi-session daemon revision. The
-// #![allow(dead_code)] below keeps the compiler happy under
+// #![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup()) below keeps the compiler happy under
 // -D warnings until the wiring lands; remove it when
 // transport::Transport is constructed from setup().
-#![allow(dead_code)]
+#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
 //
 // Implements spec desktop-cortex-augmentation §6 + the reconnect /
 // Last-Event-ID handshake contract from docs/decisions/index.md D-S6
