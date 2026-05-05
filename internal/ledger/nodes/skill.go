@@ -131,6 +131,67 @@ func init() {
 	Register("skill_loaded", func() NodeTyper { return &SkillLoaded{Version: 1} })
 }
 
+// SkillUnloaded records that a previously-loaded skill was dropped from
+// a stance's concern field — typically by the context compactor when
+// the available token budget shrinks below the skill's footprint, or
+// by the lifecycle manager at task-DAG scope exit.
+//
+// Spec r1-server-ui-v2 §"Skill-loaded / skill-unloaded emission":
+// when emitted on the bus, the waterfall renders an "unloaded" marker
+// on the originating stance's swimlane and the 3D graph desaturates
+// the originating skill node.
+//
+// ID prefix: sk-unload-
+type SkillUnloaded struct {
+	SkillRef         string    `json:"skill_ref"`
+	LoadRef          string    `json:"load_ref"`           // the SkillLoaded node this one undoes
+	StanceID         string    `json:"stance_id"`          // which stance dropped it
+	StanceRole       string    `json:"stance_role"`
+	Reason           string    `json:"reason"`             // "compactor_evicted" | "scope_exit" | "explicit_unload"
+	BudgetTokensFreed int      `json:"budget_tokens_freed,omitempty"` // when reason=compactor_evicted
+	CreatedAt        time.Time `json:"created_at"`
+
+	Version int `json:"schema_version"`
+}
+
+var validSkillUnloadReasons = map[string]bool{
+	"compactor_evicted": true,
+	"scope_exit":        true,
+	"explicit_unload":   true,
+}
+
+func (s *SkillUnloaded) NodeType() string   { return "skill_unloaded" }
+func (s *SkillUnloaded) SchemaVersion() int { return s.Version }
+
+func (s *SkillUnloaded) Validate() error {
+	if s.SkillRef == "" {
+		return fmt.Errorf("skill_unloaded: skill_ref is required")
+	}
+	if s.LoadRef == "" {
+		return fmt.Errorf("skill_unloaded: load_ref is required")
+	}
+	if s.StanceID == "" {
+		return fmt.Errorf("skill_unloaded: stance_id is required")
+	}
+	if s.StanceRole == "" {
+		return fmt.Errorf("skill_unloaded: stance_role is required")
+	}
+	if s.Reason == "" {
+		return fmt.Errorf("skill_unloaded: reason is required")
+	}
+	if !validSkillUnloadReasons[s.Reason] {
+		return fmt.Errorf("skill_unloaded: invalid reason %q", s.Reason)
+	}
+	if s.CreatedAt.IsZero() {
+		return fmt.Errorf("skill_unloaded: created_at is required")
+	}
+	return nil
+}
+
+func init() {
+	Register("skill_unloaded", func() NodeTyper { return &SkillUnloaded{Version: 1} })
+}
+
 // SkillApplied records that a stance actually used a loaded skill in producing output.
 // ID prefix: sk-apply-
 type SkillApplied struct {

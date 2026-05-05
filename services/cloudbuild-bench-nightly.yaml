@@ -1,0 +1,73 @@
+# services/cloudbuild-bench-nightly.yaml — nightly benchmark pipeline.
+#
+# Re-homes the benchmark automation that lived in the now-deleted
+# `.github/workflows/bench-nightly.yml`. Triggered by Cloud Scheduler
+# (configured in services/scripts/setup-bench-cron.sh) at 04:00 UTC
+# nightly. Runs `bench/cmd/bench run` over the corpus and uploads
+# results + reports to gs://relayone-488319-r1-bench-reports/<date>/.
+#
+# Resolves issue #99.
+
+substitutions:
+  _CORPUS_DIR: corpus/
+  _HARNESSES: stoke
+  _REPS: '1'
+  _BUCKET: gs://relayone-488319-r1-bench-reports
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_32
+
+steps:
+  # 1. Build the bench binary using vendored deps so the runner needs
+  #    no network for module fetches.
+  - id: build-bench
+    name: 'golang:1.25'
+    waitFor: ['-']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd /workspace
+        go build -mod=vendor -o /workspace/bench-bin ./bench/cmd/bench
+
+  # 2. Run the corpus through the harnesses. Output goes to
+  #    /workspace/bench-out/ which we tar+upload in the next step.
+  - id: run-bench
+    name: 'golang:1.25'
+    waitFor: ['build-bench']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd /workspace
+        mkdir -p /workspace/bench-out
+        /workspace/bench-bin run \
+          --corpus="${_CORPUS_DIR}" \
+          --harnesses="${_HARNESSES}" \
+          --reps="${_REPS}" \
+          > /workspace/bench-out/run.log 2>&1
+        # Optional report stage; ignore errors so a partial run still
+        # uploads its log + raw artifacts.
+        /workspace/bench-bin report \
+          --format=markdown \
+          --output=/workspace/bench-out/report.md || true
+
+  # 3. Upload everything to the public bench bucket. Date-stamp the
+  #    path so historical reports stay queryable.
+  - id: upload-results
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['run-bench']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        DATE=$(date -u +%Y-%m-%d)
+        gcloud storage cp -r /workspace/bench-out/* "${_BUCKET}/$${DATE}/"
+        gcloud storage cp /workspace/bench-out/report.md "${_BUCKET}/latest/report.md" || true
+        echo "report: ${_BUCKET}/$${DATE}/report.md"
+
+timeout: 7200s
