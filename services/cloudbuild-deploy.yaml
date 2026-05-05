@@ -159,6 +159,8 @@ steps:
     args:
       - -c
       - |
+        # $$SUB / $${SUB} avoid Cloud Build substitution preprocessing —
+        # we want this resolved at runtime by bash, not at trigger time.
         SUB=""
         [ "${_ENV}" = "staging" ] && SUB=".staging"
         [ "${_ENV}" = "dev" ]     && SUB=".dev"
@@ -174,7 +176,7 @@ steps:
           --memory=512Mi \
           --port=8080 \
           --no-cpu-throttling \
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api${SUB}.r1.run
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run
 
   # Smoke check /livez on all 4 services.
   - id: smoke
