@@ -17,7 +17,7 @@
 // spec 7. The #[allow(dead_code)] below keeps the compiler happy
 // under -D warnings until the wiring lands; remove the attribute
 // when discover_or_spawn() is wired into Tauri's setup hook.
-#![allow(dead_code)]
+#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
 //
 // Public API (per spec §5):
 //
