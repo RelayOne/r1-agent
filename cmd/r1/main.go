@@ -695,6 +695,8 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "antitrunc":
+		antitruncCmd(os.Args[2:])
 	case "cf":
 		counterfactCmd(os.Args[2:])
 	case "artifact":

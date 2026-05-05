@@ -264,3 +264,30 @@ These five decisions accept the design choices in `specs/agentic-test-harness.md
 **Source:** §6, §10, §11.
 
 Cross-link: `specs/agentic-test-harness.md` (BUILD_ORDER 8). Implementation tracked in `build/agentic-test-harness` per the 43-item §12 checklist.
+
+## 2026-05-04 — Spec 9 Anti-Truncation Enforcement
+
+### D-2026-05-04-01 — Anti-truncation enforcement is machine-mechanical, not prompt-level
+**Context:** The underlying LLM (Claude) self-reduces scope under long-running multi-task work — claims "good enough", "foundation done", "deferring to follow-up", and stops. When told to stop self-reducing it acknowledges the request and continues anyway on the next opportunity.
+**Decision:** Enforcement runs at the host process layer (Go code) via the antitrunc package, NOT through prompt instructions. Seven independently-effective layers: regex catalog, scope-completion gate, cortex Lobe Detector, supervisor rules, agentloop wiring, post-commit git hook, CLI + MCP tool.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Override path:** Operator-only `--no-antitrunc-enforce` flag demotes to advisory; LLM has no override path.
+**Evidence:** specs/anti-truncation.md, docs/ANTI-TRUNCATION.md.
+
+### D-2026-05-04-02 — Anti-truncation gate composes BEFORE all other end-turn hooks
+**Context:** A model that can convince any single hook to mark its self-truncation acceptable bypasses the defense. The gate must run first.
+**Decision:** `internal/agentloop/antitrunc.go` wraps `Config.PreEndTurnCheckFn` so the antitrunc gate evaluates before any user-supplied hook (build verifier, cortex hook, operator hook). When the gate fires, the user hook is NOT called — the gate's refusal is returned immediately.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Implications:** The `agentloop.Config` API gains five new fields: AntiTruncEnforce, AntiTruncPlanPath, AntiTruncSpecPaths, AntiTruncCommitLookbackFn, AntiTruncAdvisory(+Fn). Backward-compatible (zero values disable enforcement).
+
+### D-2026-05-04-03 — Multi-signal corroboration on commit-body false-completion
+**Context:** Commit subjects like "feat: spec 9 done" are sometimes legitimate (when spec 9 actually IS done) and sometimes self-truncation. A single-signal block produced too many false positives in dry-run.
+**Decision:** False-completion phrases in commit bodies require corroboration — at least one OTHER signal (truncation phrase in assistant output, or unchecked plan/spec) must also be present before the gate fires. The `r1 antitrunc verify` CLI cross-checks task-index claims against the actual spec checklist for the same purpose.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Trade-off:** A bare false-completion commit on an otherwise clean repo is allowed (the next layer's git-hook still writes a non-blocking warning to audit/antitrunc/).
+
+### D-2026-05-04-04 — Soak-substitute corpus instead of overnight test
+**Context:** Spec §item 26 calls for an 8+ hour overnight soak with AntiTruncEnforce=true to confirm no false positives block legitimate completion.
+**Decision:** Build-session time budget makes a real overnight soak BLOCKED. The substitute is a 5000-iteration fuzz test (`internal/antitrunc/soak_test.go`) over a 40-entry legitimate-text corpus that exercises every danger keyword in legitimate phrasings. The corpus drove one regex tightening (`false_completion_good_enough` had bare "sufficient" matches; tightened to require a completion-claim shape).
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Follow-up:** When CI runs allow long-duration jobs, promote the fuzz test to a soak job that loops the corpus indefinitely with rotation seeds.

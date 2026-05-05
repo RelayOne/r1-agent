@@ -38,6 +38,11 @@ bound to working directories.
   schema-validated MCP equivalent. The UI is a view over the API; never the
   reverse. External agents (Claude, Codex, Stagehand) drive r1 the same way
   you do.
+- **Refuses to self-truncate.** A layered, machine-mechanical anti-truncation
+  defense (regex + scope-completion gate + Lobe + supervisor rules + agentloop
+  wiring + post-commit hook + CLI/MCP verifier) refuses end-turn while plan
+  items are unchecked or truncation phrases are emitted. See
+  [`docs/ANTI-TRUNCATION.md`](docs/ANTI-TRUNCATION.md).
 
 ## Status — What ships on `main` today
 
