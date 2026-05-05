@@ -12,23 +12,13 @@ Cloud Run reserves `/healthz` on this org's frontend; r1 services additionally a
 
 ## Custom-domain mappings on r1.run (7/12 HTTPS-live; 5 still issuing)
 
-### Cert state at last check (UTC ~07:00, after recreation fix + extra wait)
+### Cert state — 12/12 LIVE on HTTPS (verified 200 on /livez)
 
-LIVE on HTTPS (9/12 — verified 200 on /livez):
-  - platform.r1.run
-  - downloads.r1.run
-  - admin.r1.run
-  - platform.staging.r1.run
-  - api.staging.r1.run
-  - admin.staging.r1.run
-  - platform.dev.r1.run
-  - api.dev.r1.run
-  - admin.dev.r1.run
-
-Still CertificatePending (3/12; same fresh-issuance window):
-  - api.r1.run
-  - downloads.staging.r1.run
-  - downloads.dev.r1.run
+All 12 r1.run mappings serving HTTPS:
+  - platform.r1.run / platform.staging.r1.run / platform.dev.r1.run
+  - api.r1.run      / api.staging.r1.run      / api.dev.r1.run
+  - downloads.r1.run / downloads.staging.r1.run / downloads.dev.r1.run
+  - admin.r1.run    / admin.staging.r1.run    / admin.dev.r1.run
 
 ### Root cause of the original stalled state
 
