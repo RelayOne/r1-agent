@@ -6,7 +6,7 @@ suite. Three classes of tests share this directory:
 | Class | Where it runs | What's stored here |
 |---|---|---|
 | Golden template tests | `go test ./cmd/r1-server/...` (default) | `golden/*.html` — byte-stable snapshots of every page template rendered against a deterministic fixture |
-| Vendor freshness | `go test ./cmd/r1-server/...` (default) | nothing here — guards live in `cmd/r1-server/sri_test.go` + `cmd/r1-server/vendor_freshness_test.go`; the on-disk vendor blobs they check are at `cmd/r1-server/ui/web/vendor/` |
+| Vendor freshness | `go test ./cmd/r1-server/...` (default) | nothing here — guards live in `cmd/r1-server/sri_test.go` + `cmd/r1-server/vendor_freshness_test.go`; the on-disk vendor blobs they check are at `cmd/r1-server/ui/vendor/` |
 | Vitest worker fixture | `cd web && npx vitest run` | nothing here — the 50-node JSON fixture is at `web/src/test/testdata/graph-50.json` |
 | Playwright E2E | `cd cmd/r1-server/e2e && go test -tags=e2e ./...` | nothing here — runner script is at `cmd/r1-server/e2e/e2e-fullflow.mjs` |
 
@@ -55,7 +55,7 @@ go test ./cmd/r1-server/...
 
 # Vitest worker convergence test.
 cd web
-npx vitest run src/test/graph-worker.test.ts ../cmd/r1-server/ui/web/js/graph-worker.test.js
+npx vitest run src/test/graph-worker.test.ts ../cmd/r1-server/ui/js/graph-worker.test.js
 
 # Playwright E2E (requires browser binaries — see prerequisites).
 cd cmd/r1-server/e2e

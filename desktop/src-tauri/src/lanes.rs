@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
+// Tracked: only LanesState::new() is wired into main.rs — the rest of
+// this file (LaneEvent fields, LaneRingBuffer, LaneForwarder, lane_forward
+// command) remains pending menu/IPC wire-up. Same convention as
+// discovery.rs / transport.rs / menu.rs.
+#![allow(dead_code)] // tracked: pending full wire-up
+
+//
 // R1 Desktop lane subscription forwarder.
 //
 // Implements spec desktop-cortex-augmentation §8: one

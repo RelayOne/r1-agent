@@ -11,6 +11,19 @@ Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cl
 
 ## Tech stack
 
+R1 currently has five architectural planes that matter together:
+
+1. Mission execution: planning, execution, verification, review
+2. Governance and evidence: ledger, WAL, receipts, honesty, cost
+3. Deterministic skills: compile, manufacture, register, select, run
+4. Distribution and runtime extension: packs, registries, MCP-backed
+   runtime functions
+5. Anti-truncation enforcement: regex catalog, scope-completion gate,
+   supervisor rules, agentloop wiring, post-commit git hook, and
+   `r1 antitrunc verify` CLI / MCP tool — a layered, machine-
+   mechanical defense against LLM self-reduction. Each layer is
+   independently effective so the model cannot side-step one and
+   pass.
 | Layer | Technology | Pinned version |
 |---|---|---|
 | Core runtime | Go | 1.25.5 (1.26+ for cmd/r1 binaries via cloudbuild) |
@@ -32,7 +45,7 @@ Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cl
 ```
 cmd/r1/                            CLI entrypoint — 30+ subcommands. Anti-truncation, lanes, missions, MCP serve, etc.
 cmd/r1-mcp/                        Standalone MCP-over-stdio server.
-cmd/r1-server/                     Mission API HTTP server. Hosts GET /api/session/{id}/export.tracebundle (v2-flag-gated by R1_SERVER_UI_V2). tracebundle_source.go is the production ledger-backed source; calls Store.ListNodesForSession / ListEdgesForSession / ChainRootHashForSession / CanonicalManifestSignBody.
+cmd/r1-server/                     Mission API HTTP server. Hosts GET /api/session/{id}/export.tracebundle (always-on post-Spec-D; the prior R1_SERVER_UI_V2 envelope was removed). tracebundle_source.go is the production ledger-backed source; calls Store.ListNodesForSession / ListEdgesForSession / ChainRootHashForSession / CanonicalManifestSignBody.
 cmd/r1-acp/                        Agent Client Protocol adapter.
 cmd/r1-a2a/                        Agent-to-Agent transport.
 cmd/r1-gateway/                    Reverse-proxy gateway for distributed pools.
@@ -147,6 +160,28 @@ failure/                           10 failure classes + fingerprint dedup + Shou
 errtaxonomy/                       Structured error taxonomy
 checkpoint/                        Synchronous checkpointing
 
+## Anti-Truncation Plane
+
+The anti-truncation plane addresses a documented LLM behaviour: under
+long-running multi-task work the model self-reduces scope to fit
+imagined token / time / Anthropic load-balance budgets. The plane is
+seven layers, each independently effective:
+
+- regex catalog — `internal/antitrunc/phrases.go`
+- scope-completion gate — `internal/antitrunc/gate.go`
+- cortex Lobe (Detector) — `internal/cortex/lobes/antitrunc/`
+- supervisor rules — `internal/supervisor/rules/antitrunc/`
+- agentloop wiring — `internal/agentloop/antitrunc.go`
+- post-commit git hook — `scripts/git-hooks/post-commit-antitrunc.sh`
+- CLI + MCP tool — `cmd/r1/antitrunc_cmd.go`,
+  `internal/mcp/r1_server.go`
+
+The gate composes BEFORE any other end-turn hook, so a model that
+says "skip the gate this once" is ignored at the host process layer.
+Operator override (`--no-antitrunc-enforce`) is real but has no
+LLM-visible toggle. Full details: [`ANTI-TRUNCATION.md`](ANTI-TRUNCATION.md).
+
+## Runtime Extension Plane
 --- CODE GENERATION ---
 patchapply/                        Unified-diff parsing/application
 extract/                           Structured content parsing
@@ -317,7 +352,7 @@ The `GET /api/session/{id}/export.tracebundle` endpoint produces a portable per-
 2. **Chain-root hash** — `Store.ChainRootHashForSession(sid)` computes `prev_hash = sha256(prev_hash || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)`. Final hex is the root. Empty session → "" + nil. Single node → hash of that node's metadata.
 3. **Canonical manifest signing body** — `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns the deterministic byte-body the manifest signs over, sharing the same canonical layout cmd/r1-server's sign + verify and out-of-tree verifiers use.
 
-`cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` is V2-flag-gated by `R1_SERVER_UI_V2`: returns 404 when v2 is off, and when v2 is on it resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it.
+`cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it. (Spec D — D-UI2-7 — removed the prior `R1_SERVER_UI_V2` envelope gate; the route is always reachable.)
 
 ### Release-rehearsal CI lane (final-sweep PR #170)
 
@@ -328,7 +363,7 @@ Cloud Build trigger pair (`services/cloudbuild-e2e-trigger.yaml`) firing `servic
 | `r1-agent-e2e-rehearsal-main` | push to `^main$` | Post-deploy verification — confirms the just-shipped main is e2e-clean. |
 | `r1-agent-e2e-rehearsal-tag` | push to `^v.*$` tag | Release gate — red blocks tag promotion to staging / main / production rollouts. |
 
-Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1` → publish green/red commit-status to GitHub.
+Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_SHARE_ENABLED=1` (Spec D — D-UI2-7 — removed the prior paired `R1_SERVER_UI_V2=1`) → publish green/red commit-status to GitHub.
 
 Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch from the Actions UI without local `gcloud`. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. Workflow summary links to the Cloud Build console for live logs.
 
@@ -415,8 +450,8 @@ type Finding struct {
 - `cortex.notes`
 - `daemon.info | shutdown | reload_config`
 
-### `cmd/r1-server` HTTP (per-session export, v2-flag-gated)
-- `GET /api/session/{id}/export.tracebundle` — returns the per-session tracebundle (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). 404 unless `R1_SERVER_UI_V2=1`. Backed by `ledgerTracebundleSource` over `ledger.Store`.
+### `cmd/r1-server` HTTP (per-session export)
+- `GET /api/session/{id}/export.tracebundle` — returns the per-session tracebundle (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). Always reachable post-Spec-D — the prior `R1_SERVER_UI_V2` envelope gate was removed (D-UI2-7). Backed by `ledgerTracebundleSource` over `ledger.Store`.
 
 ### Hosted SaaS HTTP
 

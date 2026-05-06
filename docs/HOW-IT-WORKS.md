@@ -146,7 +146,7 @@ Reads the last 20 commits via `git log`. For each, parses any "spec N done" or "
 ### Step 10. Export the session for offline audit (tracebundle v2)
 
 ```bash
-# Daemon must be running with R1_SERVER_UI_V2=1
+# Spec D removed the prior R1_SERVER_UI_V2 gate; the daemon always serves this route.
 curl -fsSL "http://127.0.0.1:7777/api/session/$SID/export.tracebundle" -o $SID.tracebundle
 ```
 
@@ -200,7 +200,7 @@ The 3D ledger viewer renders these distinctly: `compactor` evictions desaturate 
 | Redaction signing | `internal/ledger/redact_sign.go` `SignRecord` — ed25519 over canonical `{node_id, redacted_at, reason, signer}` |
 | Redaction verifying | `internal/ledger/redact_sign.go` `VerifyRecord` — returns `nil` / `ErrUnsigned` / `ErrSignatureMismatch` |
 | Redaction read (verified) | `internal/ledger/redact_sign.go` `Store.RedactionsForVerified` — used by the dashboard side panel |
-| Tracebundle export | `cmd/r1-server/tracebundle_source.go` (`serveTracebundleAdapter`) — V2-flag-gated by `R1_SERVER_UI_V2`; backed by `ledger.Store.{ListNodesForSession, ListEdgesForSession, ChainRootHashForSession, CanonicalManifestSignBody}` |
+| Tracebundle export | `cmd/r1-server/tracebundle_source.go` (`serveTracebundleAdapter`) — always reachable post-Spec-D; backed by `ledger.Store.{ListNodesForSession, ListEdgesForSession, ChainRootHashForSession, CanonicalManifestSignBody}` |
 | Release-rehearsal trigger (push-to-main) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-main`) — fires `services/cloudbuild-e2e.yaml` |
 | Release-rehearsal trigger (tag) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-tag`) — same flow on `^v.*$` tag pushes |
 | Release-rehearsal manual | `.github/workflows/e2e-rehearsal-manual.yml` — `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH` from the Actions UI |

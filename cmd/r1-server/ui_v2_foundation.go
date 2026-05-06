@@ -3,10 +3,9 @@
 // Spec 1 of the r1-server-ui-v2 retrofit: the foundation that Specs 2-5
 // layer on. This file owns:
 //
-//  1. webFS — a dedicated embed.FS rooted at the parallel ui/web/
-//     template tree. Kept separate from the legacy `uiFS` so the
-//     vanilla-JS SPA at /ui/* keeps serving its own bundle while the
-//     v2 handlers iterate templates independently.
+//  1. webFS — a dedicated embed.FS rooted at the ui/ template tree.
+//     Kept separate from `uiFS` so the static-asset handler stays
+//     simple while the v2 handlers iterate templates independently.
 //  2. parseV2Templates — per-page map keyed by basename without
 //     extension. html/template registers blocks globally inside a
 //     tree, so two pages each defining a "main" or "scripts" block
@@ -32,11 +31,11 @@ import (
 )
 
 // webFS embeds the v2 template tree. Vendor blobs live under
-// cmd/r1-server/ui/web/vendor/ but are served by the existing /ui/
+// cmd/r1-server/ui/vendor/ but are served by the existing /ui/
 // static file handler via uiFS in ui.go — keeping them out of webFS
 // avoids loading 200 KB of JS into the html/template parser.
 //
-//go:embed ui/web/*.html ui/web/partials/*.html
+//go:embed ui/*.html ui/partials/*.html
 var webFS embed.FS
 
 var (
@@ -85,7 +84,7 @@ func parseV2Template(name string) (*template.Template, error) {
 }
 
 func buildV2Tmpls() (map[string]*template.Template, error) {
-	pages, err := webFS.ReadDir("ui/web")
+	pages, err := webFS.ReadDir("ui")
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +96,7 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 		// base.html holds the {{ define "base" }} block; every page
 		// is parsed alongside it + every partial.
 		t := template.New(p.Name()).Option("missingkey=error")
-		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/"+p.Name(), "ui/web/partials/*.html")
+		t, err := t.ParseFS(webFS, "ui/base.html", "ui/"+p.Name(), "ui/partials/*.html")
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", p.Name(), err)
 		}
@@ -108,7 +107,7 @@ func buildV2Tmpls() (map[string]*template.Template, error) {
 		// "base" is referenced as a stand-alone template by tests
 		// that exercise the shell only.
 		t := template.New("base.html").Option("missingkey=error")
-		t, err := t.ParseFS(webFS, "ui/web/base.html", "ui/web/partials/*.html")
+		t, err := t.ParseFS(webFS, "ui/base.html", "ui/partials/*.html")
 		if err != nil {
 			return nil, fmt.Errorf("parse base.html: %w", err)
 		}

@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$(cd "$(dirname "$0")/.." && pwd)")
-VENDOR="$ROOT/cmd/r1-server/ui/web/vendor"
+VENDOR="$ROOT/cmd/r1-server/ui/vendor"
 
 # Source URLs are jsdelivr (primary; reliable + IPFS-pinned per
 # RT-VENDOR-SCRIPT-PATTERNS). unpkg de-prioritised after the March 2025
@@ -86,7 +86,7 @@ case "${1:-}" in
     cat <<'USAGE'
 Usage: scripts/vendor-ui.sh [--check]
 
-  (no flag)  Fetch every pinned vendor blob into cmd/r1-server/ui/web/vendor/.
+  (no flag)  Fetch every pinned vendor blob into cmd/r1-server/ui/vendor/.
              Verifies SRI on download; aborts on mismatch. Re-running with
              unchanged versions/SRIs produces no diff.
   --check    Verify each on-disk vendor blob against the SRI table. No network.

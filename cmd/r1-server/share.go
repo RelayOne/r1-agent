@@ -2,17 +2,17 @@
 //
 // Spec 27 §5.3 (r1-server-ui-v2.md) defines a content-addressed share
 // route: GET /share/{hash} returns a read-only HTML snapshot of a
-// session keyed by its chain-tier root hash. The route is dual-gated:
+// session keyed by its chain-tier root hash. Share is gated by the
+// per-config toggle `r1_server.share_enabled` (default false). Until
+// the YAML config surface for r1-server lands, the toggle is read
+// from the R1_SERVER_SHARE_ENABLED env var so operators can opt in
+// without a recompile.
 //
-//  1. The whole spec-27 v2 surface is behind R1_SERVER_UI_V2=1 (per
-//     §2.3 migration plan; off-by-default for two release cycles).
-//  2. Share itself is independently gated by the per-config toggle
-//     `r1_server.share_enabled` (default false). Until the YAML config
-//     surface for r1-server lands, the toggle is read from the
-//     R1_SERVER_SHARE_ENABLED env var so operators can opt in without
-//     a recompile.
+// (Spec D — D-UI2-7 — removed the R1_SERVER_UI_V2 envelope gate
+// once the legacy v1 SPA was deleted; v2 is the only surface and
+// v2Enabled() returns true unconditionally.)
 //
-// Either gate off → 404. Both on → the read-only banner page renders
+// Gate off → 404. Gate on → the read-only banner page renders
 // with the chain root hash, the canonical share URL, and security
 // headers (noindex, no-referrer, strict CSP). The full waterfall view
 // (chain-tier snapshot loader + share.html htmx template) is part of
@@ -196,14 +196,13 @@ func renderShareV2(w http.ResponseWriter, hash string, cfg V2Config) error {
 }
 
 // v2Enabled reports whether the spec-27 v2 UI handlers should serve
-// content. Thin pass-through over LoadV2Config().Renderable() — kept
-// as a function so existing callsites compile without the touch-30-
-// callsites-now refactor; future work can inline this once the
-// surrounding code threads V2Config through context.
+// content. Always true post-Spec-D — R1_SERVER_UI_V2 was removed
+// once the legacy v1 SPA was deleted, so there's no fallback path.
+// Kept as a function so existing callsites compile without a
+// touch-30-callsites refactor; future work can inline this.
 //
-// Spec 4 §10 T2: the strict-"1" semantics live in LoadV2Config; this
-// function MUST NOT read os.Getenv directly so the no_direct_env_test
-// grep guard stays clean.
+// Spec 4 §10 T2: the no_direct_env_test grep guard still applies
+// to the OTHER remaining flags (R1_SERVER_SHARE_ENABLED etc).
 func v2Enabled() bool {
-	return LoadV2Config().Renderable()
+	return true
 }

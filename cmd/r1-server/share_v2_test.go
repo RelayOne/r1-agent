@@ -9,17 +9,11 @@ import (
 	"testing"
 )
 
-func TestShare_404WhenUIv2Off(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	t.Setenv("R1_SERVER_SHARE_ENABLED", "1")
-	req := httptest.NewRequest("GET", "/share/abc12345", nil)
-	req.SetPathValue("hash", "abc12345")
-	rec := httptest.NewRecorder()
-	serveShare(rec, req)
-	if rec.Code != 404 {
-		t.Errorf("UIv2 off: status = %d, want 404", rec.Code)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestShare_404WhenUIv2Off. The
+// R1_SERVER_UI_V2 umbrella toggle was removed; the share gate now
+// collapses to ShareEnabled alone.
+// TestShare_404WhenShareDisabledEvenWithUIv2 still asserts the
+// remaining gate from the other direction.)
 
 func TestShare_404WhenShareDisabledEvenWithUIv2(t *testing.T) {
 	t.Setenv("R1_SERVER_UI_V2", "1")

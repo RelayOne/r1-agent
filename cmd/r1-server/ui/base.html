@@ -1,0 +1,51 @@
+{{- /*
+  cmd/r1-server/ui/base.html
+
+  Per specs/r1-server-ui-v2-foundation.md §4. Every v2 page extends this
+  shell via {{ template "base" . }} so the import map, vendored htmx +
+  SSE extension, and the global font/colour custom properties stay in
+  one place.
+
+  Context shape (filled by parseV2Templates / handlers in TASK-7):
+
+    .Title       string  page title (override via "title" block)
+    .HtmxSRI     string  full "sha384-..." integrity for htmx.min.js
+    .HtmxSseSRI  string  full "sha384-..." integrity for htmx-ext-sse.js
+    .SessionID   string  session id for hx-ext="sse" wiring; "" on landing
+
+  No inline scripts: the CSP header set in TASK-7 will be
+  `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:`
+  so any inline <script> will hard-fail.
+*/ -}}
+{{- define "base" -}}
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ block "title" . }}r1-server{{ end }}</title>
+  <link rel="stylesheet" href="/ui/css/base.css">
+
+  <script type="importmap">{{ template "import-map" . }}</script>
+
+  <script src="/ui/vendor/htmx.min.js"
+          integrity="{{ .HtmxSRI }}"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/vendor/htmx-ext-sse.js"
+          integrity="{{ .HtmxSseSRI }}"
+          crossorigin="anonymous"
+          defer></script>
+  <!-- Spec 4 §8: client shim for the two htmx-ext-sse reconnect
+       gotchas (last_event_id URL fallback + event:resync handler). -->
+  <script type="module" src="/ui/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="{{ .SessionID }}">
+  {{ block "topbar" . }}{{ end }}
+  <main id="main">
+    {{ block "main" . }}{{ end }}
+  </main>
+  {{ block "scripts" . }}{{ end }}
+</body>
+</html>
+{{- end -}}
