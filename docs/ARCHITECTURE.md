@@ -1,6 +1,6 @@
 # Architecture
 
-Trunk architecture view for r1 as of 2026-05-04 — after specs 1-9 merged + 9 Cloud Run SaaS surfaces went live.
+Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cloud Run SaaS surfaces went live, and the final-sweep PRs #168 / #169 / #170 / #171 merged (sync to `main` in commit `242af4a8`) bringing skill-aware compaction, ed25519-signed redaction events, the v2 tracebundle export format, and the release-rehearsal CI lane.
 
 ## Audience
 
@@ -32,7 +32,7 @@ Trunk architecture view for r1 as of 2026-05-04 — after specs 1-9 merged + 9 C
 ```
 cmd/r1/                            CLI entrypoint — 30+ subcommands. Anti-truncation, lanes, missions, MCP serve, etc.
 cmd/r1-mcp/                        Standalone MCP-over-stdio server.
-cmd/r1-server/                     Mission API HTTP server (legacy; superseded by r1 serve).
+cmd/r1-server/                     Mission API HTTP server. Hosts GET /api/session/{id}/export.tracebundle (v2-flag-gated by R1_SERVER_UI_V2). tracebundle_source.go is the production ledger-backed source; calls Store.ListNodesForSession / ListEdgesForSession / ChainRootHashForSession / CanonicalManifestSignBody.
 cmd/r1-acp/                        Agent Client Protocol adapter.
 cmd/r1-a2a/                        Agent-to-Agent transport.
 cmd/r1-gateway/                    Reverse-proxy gateway for distributed pools.
@@ -47,11 +47,16 @@ stokerr/                           Structured error taxonomy (10 error codes)
 ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
 ledger/nodes/                      22 node type structs with NodeTyper interface
 ledger/loops/                      7-state consensus loop tracker
+ledger/redact_log.go               SignedRedactionEvent + RecordRedaction / RedactionsFor / RedactAndLog
+ledger/redact_sign.go              ed25519 signing — LoadOrGenerateSigningKey, SignRecord, VerifyRecord, RedactionsForVerified
+ledger/store_session.go            Per-session filtering (ListNodesForSession / ListEdgesForSession), ChainRootHashForSession, CanonicalManifestSignBody — tracebundle-v2 backbone
 bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
 supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
 supervisor/rules/antitrunc/        Anti-truncation supervisor rules (3 rules)
 concern/                           Per-stance context projection (10 sections, 9 role templates)
+concern/skill_compactor.go         SkillCompactor + EvictionPolicy (default LRUPolicy) — per-stance LRU skill eviction under budget pressure; calls skilltracker.EvictByCompactor
 harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
+skilltracker/                      Per-stance loaded-skill table (Note / Drop / CloseScope / EvictByCompactor); emits SkillLoaded / SkillUnloaded ledger nodes
 snapshot/                          Protected baseline manifest
 wizard/                            First-time config presets
 skillmfr/                          Skill manufacturing pipeline
@@ -95,6 +100,7 @@ hub/                               Typed event hub with subscriber hooks
 hub/builtin/                       Built-in hub subscribers (honesty gate, cost tracker)
 mission/                           Mission lifecycle runner
 workflow/                          Phase machine: plan → execute+verify → review → merge
+workflow/skill_scope_closer.go     SkillScopeCloser.OnPhaseExit — fires skilltracker.CloseScope at phase boundaries; one SkillUnloaded(reason="scope_exit") per dropped skill
 engine/                            Claude/Codex CLI runners
 orchestrate/                       Mission execution pipeline integrator
 scheduler/                         GRPW priority + file-scope conflict + resume + WithSpecExec
@@ -277,6 +283,57 @@ docs/AGENTIC-API.md                External-agent contract
 - Layer order: phrase regex → scope completion → cortex Lobe Note → supervisor rules → agentloop gate → post-commit hook → CLI/MCP verifier.
 - Soak-tested 1M iterations; 0 FP, 0 FN, 499K TP at 16,891 iter/sec.
 
+### Skill lifecycle + compaction (final-sweep PR #168)
+
+The skill lifecycle is the chain `skill_loaded → (use) → skill_unloaded`, where "unloaded" can fire via three distinct paths:
+
+1. **Explicit drop** — `skilltracker.Tracker.Drop(ctx, stanceID, skillRef, reason)` — the model itself unloads a skill it no longer needs. Reason is free-form.
+2. **Phase scope exit** — `workflow.SkillScopeCloser.OnPhaseExit(ctx, stanceID, taskScope)` calls `Tracker.CloseScope`, which iterates every skill loaded into that scope and emits `SkillUnloaded` with `Reason="scope_exit"` per drop. Triggered by `workflow.PhaseRunner` on completion *or* abort.
+3. **Compactor eviction** — `concern.SkillCompactor.EvictForBudget(ctx, stanceID, currentTokens)` — when context-budget pressure rises, the compactor's `EvictionPolicy` (default `LRUPolicy`) picks oldest-loaded skills until the freed token total covers the overrun, then calls `Tracker.EvictByCompactor` which emits `SkillUnloaded` with `Reason="compactor"` per drop.
+
+All three paths land on `EmitSkillUnloaded` — the same builtin hub event — so the ledger gets an unambiguous chain of `(load_at, unload_at, reason)` triples per `(stanceID, skillRef)` pair. The 3D ledger viewer desaturates the chain segment when `unload_reason="compactor"` (skill came back later) and renders it gone-for-good when `unload_reason="scope_exit"` (phase boundary closed it).
+
+The compactor is one-way: it doesn't mutate prompt content directly. A future caller (a skill-aware section shrinker or an explicit budget guard) calls `EvictForBudget` when it needs to free tokens; the prompt rebuild happens on the next round, *after* the load table is current.
+
+### Signed redaction events (final-sweep PR #169)
+
+Every redaction logged to the ledger is signed with an ed25519 keypair persisted under `<store-root>/redactions/`:
+
+- **`sign-priv.pem`** mode 0600 — PEM-encoded ed25519 private key, generated on first call to `LoadOrGenerateSigningKey`.
+- **`sign-pub.pem`** mode 0644 — PEM-encoded public; auto-restored from the private if missing.
+- **Signer fingerprint** — first 6 bytes of `sha256(pub)` rendered as 12-char hex; stamped into `SignedRedactionEvent.Signer`. Multiple keys can co-exist in the same audit trail across rotations.
+
+`SignRecord(rec, priv)` canonicalizes over `{node_id, redacted_at, reason, signer}` (excludes the signature itself but includes the signer so swapping the signer fails verification) and stamps `rec.SignatureHex`. `VerifyRecord(rec, pub)` returns `nil` on match, `ErrUnsigned` for legacy entries pre-this-spec, `ErrSignatureMismatch` for tampered entries. The dashboard side panel uses the distinction to render a gray "legacy unsigned" tooltip vs a red "signature mismatch" warning.
+
+`Store.RedactionsForVerified(nodeID)` returns `[]VerifiedRedactionEvent` with a `Verified` bool + a `VerifyErr` string. The signing key is loaded once per process root via `sync.Once` cached in a per-store-root `sync.Map`.
+
+### Tracebundle v2 export (final-sweep PR #171)
+
+The `GET /api/session/{id}/export.tracebundle` endpoint produces a portable per-session audit artifact. V2 introduces three pieces:
+
+1. **Per-session filtering**:
+   - `Store.ListNodesForSession(sid)` filters by `Node.MissionID`. Empty `sid` falls back to the unfiltered `ListNodes` for backward compat.
+   - `Store.ListEdgesForSession(sid)` filters by `Edge.Metadata["session_id"]`. Edges without the key are conservatively included.
+2. **Chain-root hash** — `Store.ChainRootHashForSession(sid)` computes `prev_hash = sha256(prev_hash || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)`. Final hex is the root. Empty session → "" + nil. Single node → hash of that node's metadata.
+3. **Canonical manifest signing body** — `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns the deterministic byte-body the manifest signs over, sharing the same canonical layout cmd/r1-server's sign + verify and out-of-tree verifiers use.
+
+`cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` is V2-flag-gated by `R1_SERVER_UI_V2`: returns 404 when v2 is off, and when v2 is on it resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it.
+
+### Release-rehearsal CI lane (final-sweep PR #170)
+
+Cloud Build trigger pair (`services/cloudbuild-e2e-trigger.yaml`) firing `services/cloudbuild-e2e.yaml`:
+
+| Trigger | Fires on | Purpose |
+|---|---|---|
+| `r1-agent-e2e-rehearsal-main` | push to `^main$` | Post-deploy verification — confirms the just-shipped main is e2e-clean. |
+| `r1-agent-e2e-rehearsal-tag` | push to `^v.*$` tag | Release gate — red blocks tag promotion to staging / main / production rollouts. |
+
+Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1` → publish green/red commit-status to GitHub.
+
+Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch from the Actions UI without local `gcloud`. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. Workflow summary links to the Cloud Build console for live logs.
+
+One-time setup: `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent (re-running updates triggers in place). Requires `roles/cloudbuild.builds.editor` on `relayone-488319`. Both triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`.
+
 ### Hosted SaaS — 9 Cloud Run services
 - 3 services × 3 envs (dev / staging / prod) on `relayone-488319` GCP project, region `us-central1`.
 - All services: distroless static images, min-instances=1, instance billing (no CPU throttling), `--allow-unauthenticated`, port 8080.
@@ -358,6 +415,9 @@ type Finding struct {
 - `cortex.notes`
 - `daemon.info | shutdown | reload_config`
 
+### `cmd/r1-server` HTTP (per-session export, v2-flag-gated)
+- `GET /api/session/{id}/export.tracebundle` — returns the per-session tracebundle (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). 404 unless `R1_SERVER_UI_V2=1`. Backed by `ledgerTracebundleSource` over `ledger.Store`.
+
 ### Hosted SaaS HTTP
 
 **`api.r1.run` (r1-coord-api)**
@@ -426,6 +486,8 @@ type Finding struct {
 | Web build | `cd web && npm run build` | every PR | required |
 | Web tests | `cd web && npm run test` | every PR | required |
 | Anti-trunc verify | `r1 antitrunc verify -n 20` | every PR + post-commit hook | required |
+| Release-rehearsal E2E (`r1-agent-e2e-rehearsal-main`) | `services/cloudbuild-e2e.yaml` (Cloud Build) | every push to `main` | required for any release gating on it; manual escape via `.github/workflows/e2e-rehearsal-manual.yml` |
+| Release-rehearsal E2E (`r1-agent-e2e-rehearsal-tag`) | `services/cloudbuild-e2e.yaml` (Cloud Build) | every `^v.*$` tag push | required — red blocks tag promotion |
 
 ## Status
 
@@ -435,6 +497,11 @@ type Finding struct {
 - Branch hygiene: 20 archive tags, 3 active branches (main, claude/w521-…, archives).
 - All Go tests + web typecheck + desktop tests green.
 - Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log + HANDOFF state file.
+- **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
+  - Skill lifecycle hooks: `concern.SkillCompactor` (LRU eviction under budget) + `workflow.SkillScopeCloser` (phase-exit drop) wired through `internal/skilltracker.Tracker`.
+  - ed25519-signed redaction events: `internal/ledger/redact_sign.go` + `Store.RedactionsForVerified`.
+  - Tracebundle v2: per-session ledger filtering + chain-root hashing + canonical manifest body; production source at `cmd/r1-server/tracebundle_source.go` v2-flag-gated.
+  - Release-rehearsal CI: Cloud Build trigger pair (push-to-main + tag) + manual GitHub Actions workflow.
 
 ### In Progress
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs).

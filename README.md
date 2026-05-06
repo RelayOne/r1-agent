@@ -4,6 +4,17 @@
 
 r1 is the open agent runtime that refuses to lie about completion. It plans, executes, verifies, and reviews coding work the same way a careful engineer does: one strong implementer, an adversarial cross-model reviewer, content-addressed evidence, and a layered machine-mechanical guard that *refuses to call work "done" while plan items are unchecked*. It thinks in parallel via a Global Workspace–style Cortex. It surfaces every cognitive thread, tool call, and mission task as a cross-platform UI primitive called a Lane — rendered identically in a Bubble Tea TUI, a Cursor-3-Glass React web app, and a Tauri 2 desktop shell. Every UI action has an idempotent, schema-validated MCP equivalent so external agents drive r1 the same way humans do.
 
+## What's new — final-sweep features (2026-05-05)
+
+Four small, load-bearing additions merged via PRs #168 / #169 / #170 / #171 (sync to `main` in commit `242af4a8`). They close out the trust + audit story and harden the release pipeline:
+
+- **Skill-aware compaction** — `internal/concern/SkillCompactor` evicts least-recently-used skills under context-budget pressure and `internal/workflow/SkillScopeCloser` drops every skill loaded into a phase scope on phase exit. A turn never has to inherit unused skill text from a previous task; the audit trail still has every load and every unload as a ledger node. — `internal/concern/skill_compactor.go`, `internal/workflow/skill_scope_closer.go`, `internal/skilltracker/`. **Status: Done.**
+- **Signed redaction events** — every redaction logged to the ledger is signed with an ed25519 keypair persisted under `<store-root>/redactions/sign-{priv,pub}.pem`. The dashboard side panel reads via `Store.RedactionsForVerified` and renders a `Verified` flag (or a `legacy unsigned` / `tampered` warning) on each entry. The signature is over a canonical form that excludes the signature itself but includes the public-key fingerprint, so swapping the signer can't reattribute a record. — `internal/ledger/redact_sign.go`, `internal/ledger/redact_log.go`. **Status: Done.**
+- **Release-rehearsal CI** — a Cloud Build E2E lane runs the full Playwright + axe-core flow against a freshly-built `r1-server` on every push to `main` and on every `v*` tag. A manual GitHub Actions workflow (`.github/workflows/e2e-rehearsal-manual.yml`) calls `gcloud builds triggers run` so an operator can fire a rehearsal from the Actions UI without local `gcloud`. Red blocks the release. — `services/cloudbuild-e2e-trigger.yaml`, `services/cloudbuild-e2e.yaml`, `scripts/setup-cloudbuild-e2e-trigger.sh`. **Status: Done.**
+- **Tracebundle v2 export format** — `GET /api/session/{id}/export.tracebundle` (V2-flag-gated by `R1_SERVER_UI_V2=1`) now ships per-session-filtered chain nodes + edges + a deterministic `chain_root_hash`. Three new ledger surfaces back this: `Store.ListNodesForSession`, `Store.ListEdgesForSession`, `Store.ChainRootHashForSession`, plus `ledger.CanonicalManifestSignBody` for downstream verifiers. The bundle becomes the on-disk audit artifact for offline / compliance review. — `internal/ledger/store_session.go`, `cmd/r1-server/tracebundle_source.go`. **Status: Done.**
+
+Together these mean: less prompt budget burned on stale skills, a cryptographic chain-of-custody on every redaction, an automated release gate that fails *before* a bad tag promotes, and a portable per-session export every auditor can verify without access to the live ledger.
+
 ## Why r1?
 
 Most coding agents *say* they verify. r1 makes verification load-bearing:
@@ -135,6 +146,30 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **Soak**: 1,000,000-iteration soak run shows 0 false positives, 0 false negatives, 499K true positives at 16,891 iter/sec.
 - **Status: Done.** Full guide: [`docs/ANTI-TRUNCATION.md`](docs/ANTI-TRUNCATION.md).
 
+### Skill lifecycle + compaction (final sweep)
+- **`SkillCompactor` with pluggable `EvictionPolicy`** (default `LRUPolicy`): when current-tokens > budget, picks oldest-loaded skills until the freed token count covers the overrun. Calls `skilltracker.Tracker.EvictByCompactor`, which emits one `SkillUnloaded` ledger node per evicted skill with `Reason="compactor"`. — `internal/concern/skill_compactor.go`.
+- **`SkillScopeCloser.OnPhaseExit`** is the workflow phase-machine hook that calls `skilltracker.Tracker.CloseScope` for `(stanceID, taskScope)` when a phase exits — normal completion or abort. Each closed skill emits `SkillUnloaded` with `Reason="scope_exit"`. Idempotent: re-firing on the same scope drops zero. — `internal/workflow/skill_scope_closer.go`.
+- **Status: Done** — `internal/concern/skill_compactor_test.go` + `internal/workflow/skill_scope_closer_test.go` cover budget no-op, LRU ordering, scope no-op, and ledger-emission paths.
+
+### Signed redaction events (final sweep)
+- **ed25519 signing on every `Store.RedactAndLog`**: the keypair lives at `<store-root>/redactions/sign-priv.pem` (mode 0600) + `sign-pub.pem` (0644), generated on first call via `LoadOrGenerateSigningKey`. The signer field is a 12-char hex prefix of `sha256(pub)` so multiple keys can co-exist across rotations. — `internal/ledger/redact_sign.go`.
+- **Canonical form** signs over `{node_id, redacted_at, reason, signer}` — excludes the signature itself, includes the signer fingerprint. Tamper attempts that swap any field or rewrite the signer fail `VerifyRecord` with `ErrSignatureMismatch`. Legacy entries (pre-spec) return `ErrUnsigned` instead, distinguishing "tampered" from "old".
+- **`Store.RedactionsForVerified`** returns a `[]VerifiedRedactionEvent` carrying a `Verified` bool + a `VerifyErr` string for the dashboard side panel.
+- **Status: Done** — `internal/ledger/redact_sign_test.go` covers fresh-key generation, persistence-survives-restart, sign-then-verify roundtrip, tampered-record detection, signer-swap detection, and missing-key fallback.
+
+### Tracebundle v2 export (final sweep)
+- **Per-session filtering** (`internal/ledger/store_session.go`): `Store.ListNodesForSession(sessionID)` filters by `Node.MissionID`; `Store.ListEdgesForSession` filters by `Edge.Metadata["session_id"]` (edges without that key are conservatively kept). Empty `sessionID` falls back to the unfiltered listing for backward-compatible callers.
+- **Chain-root hash** (`Store.ChainRootHashForSession`) computes `sha256(prev || node_id || content_commitment)` over the session's nodes sorted by `(CreatedAt, ID)`. The final hex is the bundle's tamper-evident root; downstream verifiers can recompute without reloading the ledger.
+- **Canonical manifest** (`ledger.CanonicalManifestSignBody`) returns the deterministic byte-body the manifest signs over (everything except `signature_hex`), so cmd/r1-server's sign + verify paths and out-of-tree verifiers produce the same input.
+- **Production source** (`cmd/r1-server/tracebundle_source.go`) now wires the per-session API into `GET /api/session/{id}/export.tracebundle`. V2-flag-gated: returns `404` when `R1_SERVER_UI_V2` is unset; serves the full bundle (chain + edges + content + manifest) otherwise.
+- **Status: Done** — `internal/ledger/store_session_test.go` covers per-session filter, chain-root determinism, empty-session edge cases, and canonical-manifest stability.
+
+### Release-rehearsal E2E lane (final sweep)
+- **Cloud Build trigger pair** (`services/cloudbuild-e2e-trigger.yaml`): `r1-agent-e2e-rehearsal-main` fires on every push to `main` (post-deploy verification); `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tags (release gate — red blocks tag promotion). Both call `services/cloudbuild-e2e.yaml`, which builds `r1-server`, installs Playwright + chromium, runs `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1`, and posts the green/red commit status.
+- **Manual GitHub Actions workflow** (`.github/workflows/e2e-rehearsal-manual.yml`): operator clicks Run-workflow, picks a branch, the runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. The workflow summary links straight to the Cloud Build console.
+- **One-time setup** is `scripts/setup-cloudbuild-e2e-trigger.sh` (idempotent — re-running updates triggers in place).
+- **Status: Done.** Full operations details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §Release-rehearsal lane.
+
 ### Hosted SaaS surfaces on r1.run
 - **`platform.{,staging.,dev.}r1.run`** — docs site rendered from `docs/` via `r1-docs` Cloud Run service.
 - **`api.{,staging.,dev.}r1.run`** — `r1-coord-api` Cloud Run service: `/healthz`, `/v1/version`, `/v1/license/verify`, `/v1/telemetry/opt-in`. Backed by Cloud SQL `r1-{prod,staging,dev}-pg`.
@@ -147,6 +182,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 
 | Area | Status | What it means |
 |---|---|---|
+| Final-sweep PRs #168 / #169 / #170 / #171 | **Done — merged to main (commit `242af4a8`)** | Skill-aware compactor + signed-redaction + release-rehearsal CI + tracebundle v2 export. |
 | Specs 1-9 (cortex / lanes / multi-surface / agentic / anti-trunc) | **Done — merged to main** | Specs 6/7/8/9 + r1.run SaaS shipped via PRs #128 / #143 / #150 / #151. |
 | 12 Cloud Run SaaS surfaces (4 services × 3 envs) | **Live — 12/12 HTTPS-200 on /livez** | dev/staging/prod for r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. All r1.run subdomains resolve. |
 | Cloud SQL (r1-{prod,staging,dev}-pg, POSTGRES_16) | **Live** | All RUNNABLE; DSN secrets in Secret Manager + bound via `--add-cloudsql-instances`. |
