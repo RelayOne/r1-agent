@@ -261,7 +261,7 @@ func (r *Registry) handleTodoUpdate(input json.RawMessage) (string, error) {
 			}
 			snapshot := make([]TodoItem, len(store.items))
 			copy(snapshot, store.items)
-			go r.saveTodos(snapshot)
+			r.saveTodos(snapshot)
 			return fmt.Sprintf("Updated todo %q: status=%s priority=%s",
 				args.ID, store.items[i].Status, store.items[i].Priority), nil
 		}
