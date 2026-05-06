@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/RelayOne/r1/internal/ledger"
+	"github.com/RelayOne/r1/internal/session"
 )
 
 func newRealLedger(t *testing.T) (*ledger.Ledger, *ledger.Store, string) {
@@ -137,15 +138,69 @@ func TestLedgerTracebundleSource_RoundTripWithRealLedger(t *testing.T) {
 	}
 }
 
-func TestServeTracebundleAdapter_404OnFlagOff(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
+// TestServeTracebundleAdapter_AlwaysOn_KnownSession_200 replaces
+// the prior TestServeTracebundleAdapter_404OnFlagOff. Spec D
+// (D-UI2-7) removed the R1_SERVER_UI_V2 flag, so the
+// "404 when flag off" assertion is no longer meaningful — the
+// only 404 path left through the adapter is "unknown session id"
+// (covered by TestServeTracebundleAdapter_404OnUnknownSession).
+//
+// This replacement covers the production path the deletion of
+// the flag-gate now exposes: with R1_SERVER_UI_V2 explicitly
+// set to the historical "off" empty-string, a known session row
+// pointing at a real ledger.Store still produces a 200 with a
+// non-empty bundle. Without this assertion a future regression
+// that re-introduces a flag gate to db.serveTracebundleAdapter
+// would silently pass.
+func TestServeTracebundleAdapter_AlwaysOn_KnownSession_200(t *testing.T) {
+	t.Setenv("R1_SERVER_UI_V2", "") // historical "off" value; must not affect routing post-Spec-D
+
+	// Build a real ledger.Store under a temp path so GetSession
+	// returns a row whose LedgerDir actually opens.
+	led, _, ledgerRoot := newRealLedger(t)
+	ctx := context.Background()
+	if _, err := led.AddNode(ctx, ledger.Node{
+		Type:          "agent_io",
+		SchemaVersion: 1,
+		CreatedAt:     time.Now().UTC(),
+		CreatedBy:     "test",
+		MissionID:     "sess-spec-d",
+		Content:       json.RawMessage(`{"step":"smoke"}`),
+	}); err != nil {
+		t.Fatalf("AddNode: %v", err)
+	}
+
+	// Seed the DB session row pointing at that ledger.
 	db := newTestDB(t)
-	req := httptest.NewRequest("GET", "/api/session/x/export.tracebundle", nil)
-	req.SetPathValue("id", "x")
+	now := time.Now().UTC()
+	sig := session.SignatureFile{
+		Version:    "1",
+		PID:        2002,
+		InstanceID: "sess-spec-d",
+		StartedAt:  now,
+		UpdatedAt:  now,
+		RepoRoot:   "/tmp/spec-d-repo",
+		Mode:       "ship",
+		Status:     "running",
+		LedgerDir:  ledgerRoot,
+	}
+	if err := db.UpsertSession(sig); err != nil {
+		t.Fatalf("UpsertSession: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/session/sess-spec-d/export.tracebundle", nil)
+	req.SetPathValue("id", "sess-spec-d")
 	rec := httptest.NewRecorder()
 	db.serveTracebundleAdapter(rec, req)
-	if rec.Code != 404 {
-		t.Errorf("flag off: status = %d, want 404", rec.Code)
+
+	if rec.Code != 200 {
+		t.Errorf("R1_SERVER_UI_V2=\"\" + known session: status=%d, want 200 (Spec D removed the flag gate)", rec.Code)
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("body should be non-empty")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/gzip" {
+		t.Errorf("Content-Type=%q, want application/gzip", got)
 	}
 }
 

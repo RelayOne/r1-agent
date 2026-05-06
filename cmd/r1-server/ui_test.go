@@ -304,20 +304,21 @@ func TestUIGraphRouteDoesNotShadowSPA(t *testing.T) {
 // Routes covered:
 //   - GET /memories                              — was TestMemories_V2Off_404
 //   - GET /settings                              — was TestSettings_V2Off_404
+//   - GET /session/{id}                          — was TestTraceWaterfallFlagOffServesSPA
 //   - GET /session/{id}/stream                   — was TestStreamView_404OnFlagOff
 //   - GET /memories/{id}/graph                   — was TestServeMemoryGraph_404OnFlagOff
 //
-// /api/session/{id}/export.tracebundle is intentionally NOT in
-// this list: that handler 404s when GetSession(id) misses
-// (unknown-session 404 is correct behavior, distinct from
-// flag-gate 404). Always-on coverage for that route lives in
-// TestServeTracebundle_HeadersAndBody which seeds a real session
-// row before exercising the handler.
+// /api/session/{id}/export.tracebundle is NOT in this list because
+// the handler legitimately 404s on unknown-session lookups
+// (route-level, distinct from flag-gate). Always-on coverage for
+// that route lives in TestServeTracebundleAdapter_AlwaysOn_KnownSession_200
+// (in tracebundle_source_test.go) which seeds a real session row +
+// real ledger.Store and asserts 200 with R1_SERVER_UI_V2="".
 //
 // /share/{hash} is NOT in this list — it's still gated by
 // R1_SERVER_SHARE_ENABLED (the per-route share gate stays).
-// /api/memories CRUD routes also stay always-mounted (covered by
-// TestMemoriesCRUD_* in memories_crud_test.go).
+// /api/memories CRUD routes stay always-mounted; covered by
+// TestMemoriesPOST/PUT/DELETE_* in memories_crud_test.go.
 //
 // Each handler may legitimately return a non-404, non-200 status
 // (e.g. 400 for bad path values, 500 for unmocked dependencies);
@@ -333,6 +334,7 @@ func TestV2Surface_AlwaysOn_NoFlagGate(t *testing.T) {
 	}{
 		{"memories index", "/memories"},
 		{"settings", "/settings"},
+		{"session waterfall", "/session/sess-test"},
 		{"session stream", "/session/sess-test/stream"},
 		{"memory graph", "/memories/m-test/graph"},
 	}
