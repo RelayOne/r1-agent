@@ -16,13 +16,10 @@
 //
 // ## Feature gating
 //
-// The task is part of the spec 27 r1-server-ui-v2 retrofit. Like
-// /memories + /share, the trace views are gated behind R1_SERVER_UI_V2.
-// When the flag is off the handlers delegate to the existing SPA shell
-// (serveIndex) — so /session/{id} keeps serving the vanilla-JS index
-// until operators opt in. That means the AC-verification commands in
-// the task spec (`curl /session/test-id`) need R1_SERVER_UI_V2=1 set
-// on the server, which matches precedent for every other v2 surface.
+// Spec D (D-UI2-7) removed R1_SERVER_UI_V2 once the legacy v1 SPA
+// was deleted. The v2 trace views are now the default; traceV2Enabled
+// returns true unconditionally and the function survives only as a
+// compile-time shim for the 30+ existing callsites.
 //
 // ## Data source + stub fallback
 //
@@ -84,12 +81,14 @@ var (
 )
 
 // traceV2Enabled reports whether the spec-27 trace views should serve
-// content for /session/{id}. Off-by-default matches every other v2
-// surface (memories, share) so MVP clients keep seeing the SPA shell.
+// content for /session/{id}. Always true post-Spec-D — the
+// R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted, so the v2 trace views ARE the only surface.
 //
-// Spec 4 §10 T2: backed by LoadV2Config() to centralise env reads.
+// Spec 4 §10 T2: kept as a function so existing callsites compile
+// without a touch-everywhere refactor.
 func traceV2Enabled() bool {
-	return LoadV2Config().Renderable()
+	return true
 }
 
 // traceStubEnabled reports whether the handler should fabricate demo
