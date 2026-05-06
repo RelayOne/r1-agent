@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
+// Tracked: pending wire-up into the desktop main.rs setup hook
+// alongside discovery + transport (see those modules' allow stanzas).
+// Remove this attribute once `lane_forward` is registered as a Tauri
+// command and the LaneForwarder is constructed at startup.
+#![allow(dead_code)] // tracked: pending wire-up (matches discovery.rs/transport.rs)
+//
 // R1 Desktop lane subscription forwarder.
 //
 // Implements spec desktop-cortex-augmentation §8: one
