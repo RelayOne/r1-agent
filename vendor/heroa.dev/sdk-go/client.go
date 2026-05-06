@@ -95,6 +95,7 @@ type DeployRequest struct {
 	Template      string
 	Region        string
 	AppName       string
+	AppRegionPin  string
 	Size          string
 	TTL           string
 	RestartPolicy string
@@ -147,16 +148,18 @@ type Instance struct {
 // plane's api.CreateMachineRequest exactly.
 
 type createAppRequestWire struct {
-	AppName string `json:"app_name"`
-	OrgSlug string `json:"org_slug"`
+	AppName   string `json:"app_name"`
+	OrgSlug   string `json:"org_slug"`
+	RegionPin string `json:"region_pin,omitempty"`
 }
 
 type appResponseWire struct {
-	ID       string `json:"id"`
-	OrgID    string `json:"org_id"`
-	TenantID string `json:"tenant_id"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
+	ID        string `json:"id"`
+	OrgID     string `json:"org_id"`
+	TenantID  string `json:"tenant_id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	RegionPin string `json:"region_pin,omitempty"`
 }
 
 type guestConfigWire struct {
@@ -174,17 +177,17 @@ type machineConfigWire struct {
 }
 
 type createMachineRequestWire struct {
-	Name                 string            `json:"name"`
-	Region               string            `json:"region"`
-	Config               machineConfigWire `json:"config"`
-	TTL                  string            `json:"ttl,omitempty"`
-	RestartPolicy        string            `json:"restart_policy,omitempty"`
-	Files                []FileOverlay     `json:"files,omitempty"`
-	Metadata             map[string]string `json:"metadata,omitempty"`
-	RegionPolicy         string            `json:"region_policy,omitempty"`
-	EgressPolicy   string        `json:"egress_policy,omitempty"`
-	AllowedDomains []string      `json:"allowed_domains,omitempty"`
-	Ingress        []IngressPort `json:"ingress,omitempty"`
+	Name           string            `json:"name"`
+	Region         string            `json:"region"`
+	Config         machineConfigWire `json:"config"`
+	TTL            string            `json:"ttl,omitempty"`
+	RestartPolicy  string            `json:"restart_policy,omitempty"`
+	Files          []FileOverlay     `json:"files,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	RegionPolicy   string            `json:"region_policy,omitempty"`
+	EgressPolicy   string            `json:"egress_policy,omitempty"`
+	AllowedDomains []string          `json:"allowed_domains,omitempty"`
+	Ingress        []IngressPort     `json:"ingress,omitempty"`
 }
 
 type machineResponseWire struct {
@@ -244,6 +247,7 @@ type InstanceGroupRequest struct {
 	Template     string
 	Regions      []string
 	AppName      string
+	AppRegionPin string
 	Size         string
 	TTL          string
 	RegionPolicy string // "strict" (default) | "best-effort"
@@ -322,7 +326,7 @@ func (c *Client) DeployGroup(ctx context.Context, req InstanceGroupRequest) (*In
 	if appName == "" {
 		appName = c.defaultAppName
 	}
-	app, err := c.ensureApp(ctx, appName)
+	app, err := c.ensureApp(ctx, appName, req.AppRegionPin)
 	if err != nil {
 		return nil, err
 	}
@@ -463,7 +467,7 @@ func (c *Client) Stop(ctx context.Context, appName, instanceID string) error {
 	if instanceID == "" {
 		return fmt.Errorf("heroa: instanceID is required")
 	}
-	app, err := c.ensureApp(ctx, appName)
+	app, err := c.ensureApp(ctx, appName, "")
 	if err != nil {
 		return err
 	}
@@ -483,7 +487,7 @@ func (c *Client) deployInternal(ctx context.Context, appName string, req DeployR
 	// ensureApp returns the app record with its server-assigned ID. Subsequent
 	// calls use app.ID (not appName) because the CP routes /v1/apps/{app}/...
 	// by ID. Using the name returns 404 on a non-smoketest control-plane.
-	app, err := c.ensureApp(ctx, appName)
+	app, err := c.ensureApp(ctx, appName, req.AppRegionPin)
 	if err != nil {
 		return nil, err
 	}
@@ -504,8 +508,8 @@ func (c *Client) deployInternal(ctx context.Context, appName string, req DeployR
 	return &inst, nil
 }
 
-func (c *Client) ensureApp(ctx context.Context, name string) (*appResponseWire, error) {
-	body := createAppRequestWire{AppName: name, OrgSlug: ""}
+func (c *Client) ensureApp(ctx context.Context, name string, regionPin string) (*appResponseWire, error) {
+	body := createAppRequestWire{AppName: name, OrgSlug: "", RegionPin: regionPin}
 	resp, err := c.do(ctx, http.MethodPost, "/v1/apps", body, nil)
 	if err != nil {
 		return nil, err

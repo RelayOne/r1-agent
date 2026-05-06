@@ -33,6 +33,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,11 @@ type StokeServer struct {
 	spawner spawnFunc
 	// now is the clock source. Tests can override.
 	now func() time.Time
+	// lanes optionally exposes the lanes-protocol MCP surface alongside
+	// the stoke_/r1_ build tools/list and tools/call handlers. Wired via
+	// WithLanesServer per spec 3 TASK-24; nil disables lane-tool exposure
+	// (the StokeServer behaves exactly as before).
+	lanes *LanesServer
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -112,6 +118,22 @@ func NewStokeServer(stokeBin string) *StokeServer {
 	}
 }
 
+// WithLanesServer attaches a *LanesServer so this StokeServer's
+// MCP tools/list and tools/call dispatch include the five
+// r1.lanes.* tools alongside the stoke_*/r1_* tools. Spec 3
+// TASK-24 calls for "one-line addition to the MCP registry init";
+// callers achieve that by chaining:
+//
+//	NewStokeServer(bin).WithLanesServer(NewLanesServer(ws, wal))
+//
+// Passing nil clears any previously-attached lanes server.
+func (s *StokeServer) WithLanesServer(ls *LanesServer) *StokeServer {
+	s.mu.Lock()
+	s.lanes = ls
+	s.mu.Unlock()
+	return s
+}
+
 // ToolDefinitions returns the MCP tool definitions for Stoke build
 // operations. S1-4 of work-r1-rename.md mandates that every legacy
 // stoke_* tool is also published under the canonical r1_* name until
@@ -129,6 +151,15 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 			out = append(out, alias)
 		}
 		out = append(out, t)
+	}
+	// Spec 3 TASK-24: when a LanesServer is wired via WithLanesServer,
+	// expose its 5 r1.lanes.* tools alongside the stoke_/r1_ build tools
+	// so a single StokeServer endpoint serves both surfaces.
+	s.mu.Lock()
+	lanes := s.lanes
+	s.mu.Unlock()
+	if lanes != nil {
+		out = append(out, lanes.ToolDefinitions()...)
 	}
 	return out
 }
@@ -279,6 +310,42 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 				"properties": {}
 			}`),
 		},
+		{
+			// Anti-truncation verifier (spec-9 item 24). External
+			// agents call this to query enforcement state — used
+			// by the agentic-test-harness governance principle.
+			Name: "stoke_antitrunc_verify",
+			Description: "Run the R1 anti-truncation verifier against the repo. " +
+				"Cross-checks recent commit completion claims against plan / spec " +
+				"checklist state and classifies each commit as verified, " +
+				"unverified, or lying. Returns a JSON object with results, " +
+				"plan summary, and a lying_count tally. lying_count > 0 means " +
+				"at least one commit claimed completion without backing scope.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"repo_root": {
+						"type": "string",
+						"description": "Absolute path to the repo to verify. Defaults to the server's working directory."
+					},
+					"n": {
+						"type": "integer",
+						"description": "Number of recent commits to inspect (default 20).",
+						"default": 20
+					},
+					"plan_path": {
+						"type": "string",
+						"description": "Plan markdown path relative to repo_root (default plans/build-plan.md).",
+						"default": "plans/build-plan.md"
+					},
+					"spec_glob": {
+						"type": "string",
+						"description": "Glob for spec markdown files (default specs/*.md).",
+						"default": "specs/*.md"
+					}
+				}
+			}`),
+		},
 	}
 }
 
@@ -286,7 +353,21 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 // handler. S1-4 dual-accept: canonical r1_* and legacy stoke_* names
 // both resolve here; legacyStokeServerToolName normalizes the prefix
 // so each case arm handles the pair.
+//
+// Spec 3 TASK-24: tool names with the r1.lanes.* prefix route to the
+// attached LanesServer (when one is wired via WithLanesServer). This
+// is checked BEFORE the stoke switch so a future legacy tool can't
+// accidentally shadow a lane tool.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
+	if strings.HasPrefix(toolName, "r1.lanes.") {
+		s.mu.Lock()
+		lanes := s.lanes
+		s.mu.Unlock()
+		if lanes != nil {
+			return lanes.HandleToolCall(context.Background(), toolName, args)
+		}
+		return "", fmt.Errorf("unknown tool: %s (lanes server not wired)", toolName)
+	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
 		return s.handleBuildFromSOW(args)
@@ -298,6 +379,8 @@ func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{
 		return s.handleCancelMission(args)
 	case "stoke_list_missions":
 		return s.handleListMissions()
+	case "stoke_antitrunc_verify":
+		return s.handleAntiTruncVerify(args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}

@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-05-04 — 40/40 items + 3 post-flight on build/desktop-cortex-augmentation, tip 63678d2d -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: lanes-protocol, r1d-server, web-chat-ui (for shared components) -->
 <!-- BUILD_ORDER: 7 -->

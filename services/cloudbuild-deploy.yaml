@@ -1,0 +1,218 @@
+# services/cloudbuild-deploy.yaml — auto-deploy r1 SaaS surfaces.
+#
+# Triggered on push to main / staging / dev (one trigger per env). Rebuilds
+# + redeploys r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin. _ENV is
+# substituted per trigger.
+#
+# Tag = short SHA. Image path = us-central1-docker.pkg.dev/relayone-488319/r1/<svc>:<sha>.
+#
+# Per the standing rules:
+#   - region us-central1
+#   - min-instances 1
+#   - billing instance-based (no CPU throttling)
+#   - secrets bound via --set-secrets (Secret Manager)
+
+substitutions:
+  _ENV: prod  # override per trigger; dev | staging | prod
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # Four image builds in parallel.
+  - id: build-coord-api
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    dir: services/r1-coord-api
+    args:
+      - build
+      - --build-arg=VERSION=$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api:$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api:${_ENV}-latest
+      - .
+
+  - id: build-docs
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    dir: services/r1-docs
+    args:
+      - build
+      - --build-arg=VERSION=$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs:$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs:${_ENV}-latest
+      - .
+
+  - id: build-downloads-cdn
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    dir: services/r1-downloads-cdn
+    args:
+      - build
+      - --build-arg=VERSION=$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn:$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn:${_ENV}-latest
+      - .
+
+  - id: build-admin
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    dir: services/r1-admin
+    args:
+      - build
+      - --build-arg=VERSION=$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin:$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin:${_ENV}-latest
+      - .
+
+  # Push four images in parallel.
+  - id: push-coord-api
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-coord-api']
+    args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api]
+
+  - id: push-docs
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-docs']
+    args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs]
+
+  - id: push-downloads-cdn
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-downloads-cdn']
+    args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn]
+
+  - id: push-admin
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-admin']
+    args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin]
+
+  # Deploy to Cloud Run after pushes.
+  - id: deploy-coord-api
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['push-coord-api']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy r1-coord-api-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api:$SHORT_SHA \
+          --region=us-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=1 \
+          --max-instances=10 \
+          --concurrency=80 \
+          --cpu=1 \
+          --memory=512Mi \
+          --port=8080 \
+          --no-cpu-throttling \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA \
+          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest \
+          --add-cloudsql-instances=$PROJECT_ID:us-central1:r1-${_ENV}-pg
+
+  - id: deploy-docs
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['push-docs']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy r1-docs-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs:$SHORT_SHA \
+          --region=us-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=1 \
+          --max-instances=10 \
+          --concurrency=80 \
+          --cpu=1 \
+          --memory=512Mi \
+          --port=8080 \
+          --no-cpu-throttling \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA
+
+  - id: deploy-downloads-cdn
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['push-downloads-cdn']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy r1-downloads-cdn-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn:$SHORT_SHA \
+          --region=us-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=1 \
+          --max-instances=10 \
+          --concurrency=80 \
+          --cpu=1 \
+          --memory=512Mi \
+          --port=8080 \
+          --no-cpu-throttling \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases
+
+  - id: deploy-admin
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['push-admin']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # $$SUB / $${SUB} avoid Cloud Build substitution preprocessing —
+        # we want this resolved at runtime by bash, not at trigger time.
+        SUB=""
+        [ "${_ENV}" = "staging" ] && SUB=".staging"
+        [ "${_ENV}" = "dev" ]     && SUB=".dev"
+        gcloud run deploy r1-admin-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin:$SHORT_SHA \
+          --region=us-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --min-instances=1 \
+          --max-instances=10 \
+          --concurrency=80 \
+          --cpu=1 \
+          --memory=512Mi \
+          --port=8080 \
+          --no-cpu-throttling \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run
+
+  # Smoke check /livez on all 4 services.
+  - id: smoke
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['deploy-coord-api', 'deploy-docs', 'deploy-downloads-cdn', 'deploy-admin']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        # All $$… here are escaped Cloud Build substitutions, so the
+        # literal $… reaches bash for runtime expansion. ${_ENV} is a
+        # genuine Cloud Build sub.
+        set -euo pipefail
+        for SVC in r1-coord-api r1-docs r1-downloads-cdn r1-admin; do
+          URL=$(gcloud run services describe $$SVC-${_ENV} --region=us-central1 --format='value(status.url)')
+          echo "smoke: $$SVC-${_ENV} $$URL"
+          CODE=""
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$URL/livez")
+            if [ "$$CODE" = "200" ]; then
+              echo "  livez=200 (attempt $$i)"
+              break
+            fi
+            echo "  livez=$$CODE — retrying"
+            sleep 2
+          done
+          if [ "$$CODE" != "200" ]; then
+            echo "  smoke FAILED"
+            exit 1
+          fi
+        done
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn:$SHORT_SHA
+  - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin:$SHORT_SHA
+
+timeout: 1800s

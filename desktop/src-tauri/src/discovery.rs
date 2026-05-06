@@ -10,6 +10,15 @@
 // `discover_or_spawn` is what `tauri::Builder::setup` calls; the same
 // function backs Settings → "Reconnect daemon".
 //
+// NOTE: this module is built and exported but not yet called from
+// main.rs — current shipping design spawns one r1 subprocess per
+// session via SubprocessManager (in subprocess.rs). The
+// multi-session-daemon path is scoped for a future revision of
+// spec 7. The #[allow(dead_code)] below keeps the compiler happy
+// under -D warnings until the wiring lands; remove the attribute
+// when discover_or_spawn() is wired into Tauri's setup hook.
+#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
+//
 // Public API (per spec §5):
 //
 //   read_daemon_json()        Reads ~/.r1/daemon.json (filesystem only).
@@ -29,7 +38,6 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandChild;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 

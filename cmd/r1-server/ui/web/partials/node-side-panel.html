@@ -1,0 +1,67 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/node-side-panel.html
+
+  Spec 3 §7. Returned by the htmx-aware node detail handler when
+  the request carries `HX-Request: true`; the JSON variant of the
+  same endpoint is unchanged for non-htmx clients.
+
+  Slots (NodeSidePanelContext):
+    .NodeID         string
+    .NodeType       string
+    .ShortHash      string  (first 8 chars of NodeID)
+    .CreatedAt      time.Time
+    .CreatedBy      string
+    .ParentHash     string  (optional)
+    .SessionID      string
+    .IsRedacted     bool
+    .IsAnomaly      bool
+    .Redactions     []RedactionEvent
+    .RawJSONPretty  string  (pre-rendered, escaped)
+    .SkillLoaded    *nodes.SkillLoaded   (nil unless type=skill_loaded)
+    .SkillUnloaded  *nodes.SkillUnloaded (nil unless type=skill_unloaded)
+*/ -}}
+{{- define "node-side-panel" -}}
+<aside id="side-panel" data-node-id="{{ .NodeID }}"
+       {{- if .IsRedacted }} data-state="redacted"{{ end }}>
+  <header>
+    <h2>{{ .NodeType }} <code class="muted">{{ .ShortHash }}</code></h2>
+    <dl class="node-meta">
+      <dt>id</dt><dd><code>{{ .NodeID }}</code></dd>
+      <dt>created_at</dt><dd>{{ .CreatedAt.UTC.Format "2006-01-02 15:04:05" }} UTC</dd>
+      <dt>created_by</dt><dd>{{ .CreatedBy }}</dd>
+      {{- if .ParentHash }}<dt>parent</dt><dd><code>{{ .ParentHash }}</code></dd>{{ end }}
+    </dl>
+  </header>
+
+  {{- if .IsRedacted }}
+    <section class="redacted-placeholder" aria-label="content redacted">
+      <div class="redacted-block">[content redacted]</div>
+      {{- if .IsAnomaly }}
+        <p class="redacted-anomaly" data-state="warning">
+          <span aria-hidden="true">⚠</span>
+          Redacted, but no event log captured. The chain entry exists
+          and the content tier was wiped, but the audit trail of
+          who/when/why was not persisted.
+        </p>
+      {{- else }}
+        {{ template "redaction-events" .Redactions }}
+      {{- end }}
+    </section>
+  {{- else }}
+    <section class="content">
+      {{- if eq .NodeType "skill_loaded" }}
+        {{ template "skill-loaded-detail" .SkillLoaded }}
+      {{- else if eq .NodeType "skill_unloaded" }}
+        {{ template "skill-unloaded-detail" .SkillUnloaded }}
+      {{- else }}
+        <pre class="raw-json mono"><code>{{ .RawJSONPretty }}</code></pre>
+      {{- end }}
+    </section>
+  {{- end }}
+
+  <footer>
+    <a href="/api/session/{{ .SessionID }}/node/{{ .NodeID }}/raw"
+       data-testid="raw-json-link">View raw node JSON →</a>
+  </footer>
+</aside>
+{{- end -}}

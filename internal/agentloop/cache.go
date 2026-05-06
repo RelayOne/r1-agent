@@ -45,8 +45,12 @@ func SortToolsDeterministic(tools []provider.ToolDef) []provider.ToolDef {
 }
 
 // CacheBreakpoint is a cache_control annotation for prompt caching.
+// TTL is optional: omit for the default 5-minute TTL, set "1h" for the
+// extended 1-hour TTL (2x write cost, ~12x cheaper read amortization
+// across long-lived sessions like the cortex Lobes).
 type CacheBreakpoint struct {
-	Type string `json:"type"` // "ephemeral"
+	Type string `json:"type"`          // "ephemeral"
+	TTL  string `json:"ttl,omitempty"` // "" (5m default) or "1h"
 }
 
 // SystemBlock is a system prompt block with optional cache control.
@@ -57,13 +61,38 @@ type SystemBlock struct {
 }
 
 // BuildCachedSystemPrompt splits the system prompt into cached (static)
-// and uncached (dynamic) sections. The static section gets a cache breakpoint.
+// and uncached (dynamic) sections. The static section gets a cache breakpoint
+// with the default (5-minute) TTL.
 func BuildCachedSystemPrompt(static, dynamic string) []SystemBlock {
 	blocks := []SystemBlock{
 		{
 			Type:         "text",
 			Text:         static,
 			CacheControl: &CacheBreakpoint{Type: "ephemeral"},
+		},
+	}
+	if dynamic != "" {
+		blocks = append(blocks, SystemBlock{
+			Type: "text",
+			Text: dynamic,
+		})
+	}
+	return blocks
+}
+
+// BuildCachedSystemPrompt1h is the 1-hour-TTL variant of
+// BuildCachedSystemPrompt. The static block carries
+// cache_control: {type: "ephemeral", ttl: "1h"}, which costs ~2x on
+// write but lasts 12x longer — the right tradeoff for long-lived
+// LLM Lobes that issue many turns over an hour.
+//
+// Used by cortex Lobes via internal/cortex/lobes/llm.LobePromptBuilder.
+func BuildCachedSystemPrompt1h(static, dynamic string) []SystemBlock {
+	blocks := []SystemBlock{
+		{
+			Type:         "text",
+			Text:         static,
+			CacheControl: &CacheBreakpoint{Type: "ephemeral", TTL: "1h"},
 		},
 	}
 	if dynamic != "" {

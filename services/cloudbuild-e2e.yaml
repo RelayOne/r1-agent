@@ -1,0 +1,81 @@
+# services/cloudbuild-e2e.yaml — release-rehearsal E2E lane
+#
+# Spec 5 §10 T3: runs the Playwright + axe-core full flow against a
+# freshly-built r1-server. Triggered manually or by tag push (NOT every
+# PR — Playwright + chromium install adds ~3 minutes per run).
+#
+# Run locally before tagging:
+#   gcloud builds submit --config=services/cloudbuild-e2e.yaml .
+
+steps:
+  - name: 'golang:1.25'
+    id: build
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -q && apt-get install -y -q gcc
+        go build -mod=vendor -o /workspace/r1-server ./cmd/r1-server
+    env:
+      - 'CGO_ENABLED=1'
+
+  - name: 'node:22.13-bookworm-slim'
+    id: playwright-install
+    waitFor: ['build']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd web
+        npm install --workspaces --include-workspace-root --no-audit --no-fund
+        npx playwright install --with-deps chromium
+
+  - name: 'golang:1.25'
+    id: e2e-test
+    waitFor: ['playwright-install']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # Required to find chromium that playwright installed in the
+        # node:22 step. Because Cloud Build doesn't share /home between
+        # named-image steps by default we re-run install here under the
+        # same workspace; the npm cache from the prior step is reused.
+        apt-get update -q && apt-get install -y -q gcc nodejs npm
+        cd cmd/r1-server/e2e
+        R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1 \
+          go test -tags=e2e -timeout=10m -v ./...
+    env:
+      - 'CGO_ENABLED=1'
+
+  # Spec release-rehearsal-ci.md T4: post a green/red commit status
+  # so a tag-trigger build that lands red can block release tooling
+  # gating on the rehearsal check. The Cloud Build BYOSA needs the
+  # GitHub commit-status:write scope — verify by checking that
+  # r1-agent-e2e-rehearsal-* commit-status checks appear in PR
+  # checks tab after the first run. If not, file a follow-up to
+  # add the GITHUB_TOKEN secret.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: publish-rehearsal-result
+    waitFor: ['e2e-test']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "rehearsal completed for $$COMMIT_SHA"
+        # The github status integration is wired by Cloud Build's
+        # native GitHub trigger — this step is a placeholder so the
+        # pipeline shape can later add a manual github API POST if
+        # operators decide they want a more granular status name
+        # than the default "Cloud Build / r1-agent-e2e-rehearsal-*".
+
+substitutions:
+  _RELEASE_TAG: ""
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

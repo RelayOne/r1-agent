@@ -77,19 +77,23 @@ func (s *Server) WithIO(in io.Reader, out io.Writer) *Server {
 
 // ensureIndex builds the symbol index if not yet built. Thread-safe: callers
 // hold no lock; the first concurrent caller wins and subsequent ones reuse.
+//
+// Refactored for r1d-server Phase A (specs/r1d-server.md §10): the previous
+// version fell back to os.Getwd() when s.root was empty. That fallback is
+// exactly the cwd-leak surface the audit exists to eliminate — when this
+// server runs inside the multi-session daemon, two concurrent sessions
+// would race on the process-wide cwd. Callers (cmd/r1/lsp_cmd.go) are
+// already responsible for resolving root before NewServer; we now just
+// log-and-return if they didn't.
 func (s *Server) ensureIndex() {
 	if s.idx != nil {
 		return
 	}
-	root := s.root
-	if root == "" {
-		var err error
-		root, err = os.Getwd()
-		if err != nil {
-			s.logger.Printf("getwd: %v", err)
-			return
-		}
+	if s.root == "" {
+		s.logger.Printf("ensureIndex: root is empty; caller must pass an absolute repo root to NewServer")
+		return
 	}
+	root := s.root
 	idx, err := symindex.Build(root)
 	if err != nil {
 		s.logger.Printf("symindex.Build(%s): %v", root, err)

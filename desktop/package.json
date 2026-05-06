@@ -13,24 +13,26 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@r1/web-components": "workspace:*",
+    "@r1/web-components": "*",
     "@tauri-apps/plugin-websocket": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-autostart": "^2.0.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "@vitest/coverage-v8": "^2.1.9",
-    "jsdom": "^24.1.3",
-    "typescript": "^5.4.0",
-    "vite": "^5.2.0",
-    "vitest": "^2.1.9"
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitest/coverage-v8": "^4.0.0",
+    "jsdom": "^29.0.0",
+    "typescript": "^6.0.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "r1Panels": {
     "sow-tree": "src/panels/sow-tree.ts",

@@ -2,6 +2,15 @@
 //
 // R1 Desktop WS transport — wraps tauri-plugin-websocket.
 //
+// NOTE: built but not yet wired from main.rs. Current shipping
+// design uses a per-session WS forwarder in lanes.rs that connects
+// directly. transport.rs implements the future shared-WS-pool path
+// planned for the multi-session daemon revision. The
+// #![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup()) below keeps the compiler happy under
+// -D warnings until the wiring lands; remove it when
+// transport::Transport is constructed from setup().
+#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
+//
 // Implements spec desktop-cortex-augmentation §6 + the reconnect /
 // Last-Event-ID handshake contract from docs/decisions/index.md D-S6
 // (RT-R1D-DAEMON). Responsibilities:
@@ -42,7 +51,7 @@ use tokio::sync::{mpsc, Mutex};
 /// a doubling sequence capped at `max`. Jitter is applied per-attempt
 /// at the call site (we keep the schedule itself deterministic so
 /// tests can assert exact step values).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackoffPolicy {
     pub initial: Duration,
     pub max: Duration,

@@ -54,4 +54,3 @@ desktop/.DS_Store
 desktop/package-lock.json
 desktop/pnpm-lock.yaml
 desktop/yarn.lock
-desktop/Cargo.lock

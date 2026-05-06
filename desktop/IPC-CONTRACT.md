@@ -79,6 +79,15 @@ the Rust host asserts it on every open). The version bumps when a
 method's params or result shape changes incompatibly. New methods are
 additive and do not bump the version.
 
+**Lanes overlay header**: clients that consume the lane events added in
+specs/lanes-protocol.md (BUILD_ORDER 3) ALSO assert an orthogonal
+`X-R1-Lanes-Version: 1` header. The two version headers bump on
+independent cadences — bumping the RPC version does NOT bump the lanes
+version, and vice versa. A client that does not consume lane events can
+ignore the header entirely; clients that do MUST refuse to subscribe
+when the server's announced version is incompatible with their pinned
+version.
+
 ---
 
 ## 2. Method table
@@ -230,28 +239,30 @@ defined; more land with R1D-2+ as the session view demands them.
 | `event` | Fields | Emitted when |
 |---|---|---|
 | `session.started` | `session_id`, `at` | New r1 subprocess live and handshake complete |
-| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess |
+| `session.delta` | `session_id`, `payload` (assistant text / tool-use block) | Each NDJSON delta from the subprocess. **Co-emitted with `lane.delta` for the main lane during the lanes-protocol compat window** (see specs/lanes-protocol.md §"Out of scope" item 1). Removal is a follow-up minor release. |
 | `session.ended` | `session_id`, `reason` ("ok"\|"cancelled"\|"error"), `at` | Subprocess exits or is SIGTERM'd |
 | `ledger.appended` | `session_id`, `hash`, `type` | Ledger node committed |
 | `cost.tick` | `session_id`, `usd_delta`, `tokens_delta` | Cost tracker rolls forward |
 | `descent.tier_changed` | `session_id`, `ac_id`, `from`, `to`, `status` | A verification tier changes state |
-| `daemon.up` | `url`, `mode` ("external"\|"sidecar"), `at`, `replayed_from?` (last_event_id served on reconnect; omitted on first connect) | Daemon connected after probe or sidecar spawn (spec §6.2) |
-| `daemon.down` | `reason`, `at`, `will_retry` | WS closed unexpectedly (spec §6.2) |
-| `lane.delta` | `session_id`, `lane_id`, `seq`, `payload` | Token / tool-call increment for a lane (spec §6.2). Arrives via per-session `tauri::ipc::Channel<LaneEvent>`, NOT the global event bus. |
-| `lane.status_changed` | `session_id`, `lane_id`, `from`, `to`, `at` | Lane state transition (spec §6.2). Global event bus. |
-| `lane.spawned` | `session_id`, `lane_id`, `title`, `at` | New cognition lane created mid-session (spec §6.2). Global event bus. |
-| `lane.killed` | `session_id`, `lane_id`, `reason`, `at` | Lane terminated — operator kill or natural end (spec §6.2). Global event bus. |
+| `lane.created` | `session_id`, `lane_id`, `kind` (`main`\|`lobe`\|`tool`\|`mission_task`\|`router`), `parent_id?`, `label?`, `started_at`, `seq` | Cortex Workspace creates a new lane (NewMainLane / NewLobeLane / NewToolLane). Lanes are the cross-surface representation of Cortex activity; see specs/lanes-protocol.md §3. |
+| `lane.status` | `session_id`, `lane_id`, `status` (`pending`\|`running`\|`blocked`\|`done`\|`errored`\|`cancelled`), `reason?`, `reason_code?`, `seq` | Lane FSM transitions. Critical when `status="errored"` (top-level emit per §5.3). |
+| `lane.delta` | `session_id`, `lane_id`, `block` (text/tool-use ContentBlock), `seq` | Streaming content within a lane. For the `main` lane, also co-emitted as `session.delta` during compat window. Per-session `tauri::ipc::Channel<LaneEvent>` is the high-frequency desktop transport (spec 7 §6.2); the global event bus carries the same envelope for non-desktop subscribers. |
+| `lane.cost` | `session_id`, `lane_id`, `tokens_in`, `tokens_out`, `usd`, `seq` | Per-lane cost tick (independent of the global `cost.tick`). |
+| `lane.note` | `session_id`, `lane_id`, `note_id`, `note_severity` (`info`\|`advice`\|`warning`\|`critical`), `seq` | Lobe published a Note that this lane caused. Critical when `note_severity="critical"`. |
+| `lane.killed` | `session_id`, `lane_id`, `reason`, `ended_at`, `seq` | Lane terminated (operator kill, error cascade, or completion). Always critical (top-level emit). |
+| `daemon.up` | `url`, `mode` ("external"\|"sidecar"), `at`, `replayed_from?` (last_event_id served on reconnect; omitted on first connect) | Daemon connected after probe or sidecar spawn (spec 7 §6.2). Desktop-only. |
+| `daemon.down` | `reason`, `at`, `will_retry` | WS closed unexpectedly (spec 7 §6.2). Desktop-only. |
 
 Tier 2 Rust host subscribes, parses, fans out to the WebView via
 `app.emit_to(<session_window>, event, payload)`.
 
-The 6 lane events split across two transports: `lane.delta` arrives
+The lane events split across two transports: `lane.delta` arrives
 through the per-session `Channel<LaneEvent>` registered by
-`session.lanes.subscribe` (§2.7); `lane.status_changed`,
-`lane.spawned`, and `lane.killed` arrive on the global event bus
-because they affect sidebar rendering across surfaces. The
+`session.lanes.subscribe` (§2.7); `lane.created`, `lane.status`,
+`lane.cost`, `lane.note`, and `lane.killed` arrive on the global event
+bus because they affect sidebar rendering across surfaces. The
 forwarder in `lanes.rs` flushes pending `lane.delta` events for a
-lane before emitting that lane's `lane.status_changed` (R7
+lane before emitting that lane's `lane.status` transition (R7
 mitigation in spec §12 — prevents "done" rendering before trailing
 deltas land).
 

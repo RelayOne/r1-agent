@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+.eslintcache
+*.log
+.DS_Store
+playwright-report/
+test-results/

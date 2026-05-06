@@ -1,0 +1,16 @@
+{
+  "event": "lane.created",
+  "event_id": "01J0K3M4P5Q6R7S8T9V0W1X2Y3",
+  "session_id": "sess_01J0K3M4",
+  "seq": 142,
+  "at": "2026-05-02T18:33:21.482917Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "kind": "lobe",
+    "lobe_name": "MemoryRecallLobe",
+    "parent_lane_id": "lane_01J0K3M3",
+    "label": "Recalling memories matching: 'cortex workspace'",
+    "started_at": "2026-05-02T18:33:21.482000Z",
+    "labels": {"model": "claude-haiku-4-5", "deterministic": "false"}
+  }
+}

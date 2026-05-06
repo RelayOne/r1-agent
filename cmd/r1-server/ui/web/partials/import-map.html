@@ -1,0 +1,27 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/import-map.html
+
+  Browser <script type="importmap"> body. Bare specifiers used by Spec 2's
+  graph.js + worker resolve to the vendored blobs in /ui/web/vendor/...
+  per specs/r1-server-ui-v2-foundation.md §4.
+
+  Three.js's own internal addons reference `three` as a bare specifier
+  (e.g. OrbitControls.js does `import * as THREE from 'three'`), so the
+  import-map MUST resolve `three` to the same vendored module that
+  application code loads — otherwise the addon and the app run two
+  separate THREE namespaces and InstancedMesh rendering breaks.
+
+  Rendered as a sub-template of base.html via {{ template "import-map" . }}.
+  No template variables — paths are constants.
+*/ -}}
+{{- define "import-map" -}}
+{
+  "imports": {
+    "three": "/ui/web/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/web/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/web/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/web/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/web/vendor/three-spritetext.js"
+  }
+}
+{{- end -}}

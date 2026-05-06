@@ -11,6 +11,7 @@
 // `tests/`.
 
 pub mod discovery;
+pub mod discovery_state;
 pub mod errors;
 pub mod lanes;
 pub mod popout;

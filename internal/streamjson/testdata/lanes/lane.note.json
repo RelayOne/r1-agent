@@ -1,0 +1,14 @@
+{
+  "event": "lane.note",
+  "event_id": "01J0K3M4P9QABCDEFGHJKMNPQR",
+  "session_id": "sess_01J0K3M4",
+  "seq": 161,
+  "at": "2026-05-02T18:33:22.611000Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "note_id": "note_01J0K3M4PX",
+    "severity": "critical",
+    "kind": "memory_recall",
+    "summary": "3 prior decisions referenced this Workspace shape"
+  }
+}

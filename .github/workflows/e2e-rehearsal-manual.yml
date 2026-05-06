@@ -1,0 +1,69 @@
+name: e2e-rehearsal-manual
+
+# Manual trigger for the Cloud Build E2E rehearsal lane. Lets operators
+# kick off a rehearsal from the GitHub Actions UI without needing
+# local gcloud. Spec: release-rehearsal-ci.md.
+#
+# The actual build runs in Cloud Build — this workflow just calls
+# `gcloud builds triggers run` against the existing
+# r1-agent-e2e-rehearsal-main trigger (created by
+# scripts/setup-cloudbuild-e2e-trigger.sh). Workflow output links to
+# the Cloud Build console for live logs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to rehearse (default: main)"
+        required: false
+        default: "main"
+
+jobs:
+  trigger-rehearsal:
+    name: trigger Cloud Build e2e rehearsal
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: auth to gcloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_JSON }}
+
+      - name: set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: relayone-488319
+
+      - name: trigger e2e build
+        id: trigger
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.inputs.branch }}"
+          echo "Triggering r1-agent-e2e-rehearsal-main on branch=$BRANCH"
+          OUT=$(gcloud builds triggers run r1-agent-e2e-rehearsal-main \
+            --branch="$BRANCH" \
+            --project=relayone-488319 \
+            --format='value(metadata.build.id)' \
+            2>&1)
+          echo "Build ID: $OUT"
+          echo "build_id=$OUT" >> "$GITHUB_OUTPUT"
+          echo "Console: https://console.cloud.google.com/cloud-build/builds/$OUT?project=188548470397"
+
+      - name: write summary
+        if: always()
+        run: |
+          {
+            echo "## Release-rehearsal E2E triggered"
+            echo ""
+            echo "**Branch:** ${{ github.event.inputs.branch }}"
+            echo "**Build ID:** \`${{ steps.trigger.outputs.build_id }}\`"
+            echo ""
+            echo "[View build](https://console.cloud.google.com/cloud-build/builds/${{ steps.trigger.outputs.build_id }}?project=188548470397)"
+            echo ""
+            echo "The build runs the full Playwright + axe-core flow."
+            echo "Red = release blocked; investigate before tagging."
+          } >> "$GITHUB_STEP_SUMMARY"

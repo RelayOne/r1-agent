@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Diff alpha vs beta — r1</title>
+  <link rel="stylesheet" href="/ui/web/css/base.css">
+
+  <script type="importmap">{
+  "imports": {
+    "three": "/ui/web/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/web/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/web/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/web/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/web/vendor/three-spritetext.js"
+  }
+}</script>
+
+  <script src="/ui/web/vendor/htmx.min.js"
+          integrity="sha384-FAKEHTMX"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/web/vendor/htmx-ext-sse.js"
+          integrity="sha384-FAKESSE"
+          crossorigin="anonymous"
+          defer></script>
+  
+  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="sess-fixture">
+  <header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <span class="muted">Run diff</span>
+</header>
+  <main id="main">
+    <section class="pane pane--primary" data-testid="diff-view">
+  <h1>Diff <code>alpha</code> vs <code>beta</code></h1>
+  <table class="diff-table" data-testid="diff-table">
+    <thead>
+      <tr>
+        <th scope="col">Kind</th>
+        <th scope="col">Event type</th>
+        <th scope="col">Key</th>
+        <th scope="col">Status A → B</th>
+        <th scope="col">#A</th>
+        <th scope="col">#B</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      
+        <tr data-testid="diff-row" data-state="added" class="diff-row diff-row--added">
+          <td>added</td>
+          <td><code>task.start</code></td>
+          <td><code>t1</code></td>
+          <td> → active</td>
+          <td>0</td>
+          <td>0</td>
+        </tr>
+      
+    </tbody>
+  </table>
+  <footer class="muted" style="margin-top:24px;font-size:13px;">
+    Content-diff (per-event JSON payload comparison) is out of scope here.
+    Tracked in <a href="https://github.com/RelayOne/r1-agent/issues/144">issue #144</a>.
+  </footer>
+</section>
+  </main>
+  
+</body>
+</html>
