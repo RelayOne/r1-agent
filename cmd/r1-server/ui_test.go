@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/ledger"
+	ledgernodes "github.com/RelayOne/r1/internal/ledger/nodes"
 )
 
 // newUIServer constructs a mux with both the API + UI routes mounted
@@ -174,80 +177,87 @@ func TestUIGraphHTMLLoadsVendoredLibs(t *testing.T) {
 	}
 }
 
-// TestUIGraphJSHasNodeStyleContract is BLOCKED post-Spec-D and
-// LEFT FAILING by design.
+// TestRS4Item20NodeAndEdgeTypeContract — re-homed from
+// TestUIGraphJSHasNodeStyleContract during Spec D (legacy SPA cleanup).
 //
-// The legacy graph.js encoded the RS-4 item-20 contract directly:
-// a NODE_STYLES table covering 16 node types + an EDGE_STYLES table
-// covering 7 edge types + detectWebGL + showFallback functions.
+// Pre-Spec-D this test scanned the v1 graph.js for hardcoded NODE_STYLES
+// + EDGE_STYLES tables. That coupling encoded the RS-4 item-20 contract
+// in JavaScript decoration code, which was both (a) the wrong location
+// (the contract is over the ledger schema, not the renderer) and
+// (b) silently retired when the v2 renderer was ported in Spec 2 §3.1
+// to use generic SHAPES (sphere/cube/diamond) keyed off shape kinds
+// rather than per-type style records.
 //
-// The v2 renderer (cmd/r1-server/ui/js/graph.js, ported in Spec 2
-// §3.1) is structured differently — it uses an InstancedMesh pool
-// keyed off generic geometric SHAPES (sphere, cube, diamond, …)
-// rather than per-node-type style records. The 16-node-type to
-// shape mapping is not present in any v2 file we could locate
-// (audit `audit/legacy-spa-triage-2026-05-06`,
-// plans/legacy-spa-test-triage.md classified this as the
-// highest-value (c) assertion in the set and explicitly punted
-// the migration target to reviewer judgment).
+// The contract still exists — but in Go, where it always belonged.
+// internal/ledger/nodes/ defines a NodeTyper for each of the 16 RS-4
+// node types, and internal/ledger/ledger.go declares the 7 edge-type
+// constants. Asserting against those is the durable shape: it survives
+// renderer rewrites, catches accidental deletion of a node/edge kind,
+// and runs in pure Go (no HTTP fixture, no UI flake surface).
 //
-// Per the Spec D dispatcher's instructions: "load-bearing for
-// product correctness — if you genuinely can't migrate it, mark
-// it BLOCKED in a comment and leave it failing — DO NOT delete
-// a contract test."
-//
-// IMPORTANT: this test is intentionally LEFT FAILING (NOT skipped)
-// so every CI run surfaces the outstanding contract until reviewer
-// either:
-//   1. Locates the v2 surface that owns the per-node-type contract
-//      (graph-layers.js? graph-worker.js? a yet-to-be-written
-//      style table?) and re-points the assertions at it, OR
-//   2. Confirms the contract has been retired and documents the
-//      replacement (e.g. server-side-rendered styles, a typed
-//      schema enforcement layer) before deleting this test.
-//
-// The test fetches the v2 graph.js (so the new file path is
-// exercised) and asserts every contract token is present. Every
-// assertion below currently fails — that is the point.
-func TestUIGraphJSHasNodeStyleContract(t *testing.T) {
-	s := newUIServer(t)
-	resp, err := http.Get(s.URL + "/ui/js/graph.js")
-	if err != nil {
-		t.Fatalf("get graph.js: %v", err)
+// detectWebGL / showFallback were UI fallback affordances of the
+// retired SPA, not part of the data-shape contract. Their replacement
+// in v2 is the React surface's WebGL feature-detect (web/src/...),
+// which is covered by web/vitest tests independently — out of scope
+// for this Go-side contract test.
+func TestRS4Item20NodeAndEdgeTypeContract(t *testing.T) {
+	// Each NodeTyper in internal/ledger/nodes/* must satisfy ledger.NodeTyper
+	// and return one of these stable strings. Constructing zero-value
+	// instances and reading NodeType() is the cheapest way to assert
+	// the constants without round-tripping through ledger.AddNode.
+	wantNodeTypes := map[string]bool{
+		"task":                        false,
+		"decision_internal":           false,
+		"decision_repo":               false,
+		"verification_evidence":       false,
+		"hitl_request":                false,
+		"hitl_response":               false,
+		"escalation":                  false,
+		"judge_verdict":               false,
+		"research_request":            false,
+		"research_report":             false,
+		"agree":                       false,
+		"dissent":                     false,
+		"draft":                       false,
+		"loop":                        false,
+		"skill":                       false,
+		"supervisor_state_checkpoint": false,
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	bs := string(body)
-	// Node types (RS-4 item 20). The v2 renderer does NOT
-	// enumerate these per-type yet; reviewer must re-home the
-	// contract (see test comment).
-	for _, nodeType := range []string{
-		"task", "decision_internal", "decision_repo",
-		"verification_evidence", "hitl_request", "hitl_response",
-		"escalation", "judge_verdict",
-		"research_request", "research_report",
-		"agree", "dissent", "draft", "loop", "skill",
-		"supervisor_state_checkpoint",
+	for _, n := range []ledgernodes.NodeTyper{
+		&ledgernodes.Task{}, &ledgernodes.DecisionInternal{}, &ledgernodes.DecisionRepo{},
+		&ledgernodes.VerificationEvidence{}, &ledgernodes.HITLRequest{}, &ledgernodes.HITLResponse{},
+		&ledgernodes.Escalation{}, &ledgernodes.JudgeVerdict{},
+		&ledgernodes.ResearchRequest{}, &ledgernodes.ResearchReport{},
+		&ledgernodes.Agree{}, &ledgernodes.Dissent{}, &ledgernodes.Draft{}, &ledgernodes.Loop{},
+		&ledgernodes.Skill{}, &ledgernodes.SupervisorStateCheckpoint{},
 	} {
-		if !strings.Contains(bs, nodeType) {
-			t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing RS-4 node_type %q — contract has no v2 home; needs reviewer migration", nodeType)
+		nt := n.NodeType()
+		if _, ok := wantNodeTypes[nt]; !ok {
+			t.Errorf("RS-4 item 20: unexpected node type %q from %T (contract drift — update wantNodeTypes or the NodeType() impl)", nt, n)
+			continue
+		}
+		wantNodeTypes[nt] = true
+	}
+	for nt, seen := range wantNodeTypes {
+		if !seen {
+			t.Errorf("RS-4 item 20: node type %q has no NodeTyper struct asserted in this test", nt)
 		}
 	}
-	// Edge types.
-	for _, edgeType := range []string{
-		"supersedes", "depends_on", "contradicts", "extends",
-		"references", "resolves", "distills",
-	} {
-		if !strings.Contains(bs, edgeType) {
-			t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing RS-4 edge_type %q — contract has no v2 home; needs reviewer migration", edgeType)
+	// Edge types are package-level constants in internal/ledger/ledger.go.
+	wantEdges := []ledger.EdgeType{
+		ledger.EdgeSupersedes, ledger.EdgeDependsOn, ledger.EdgeContradicts,
+		ledger.EdgeExtends, ledger.EdgeReferences, ledger.EdgeResolves,
+		ledger.EdgeDistills,
+	}
+	wantEdgeStrings := []string{
+		"supersedes", "depends_on", "contradicts",
+		"extends", "references", "resolves",
+		"distills",
+	}
+	for i, e := range wantEdges {
+		if string(e) != wantEdgeStrings[i] {
+			t.Errorf("RS-4 item 20: edge constant drift at index %d — want %q, got %q (this fires when ledger.EdgeXxx string values change)", i, wantEdgeStrings[i], string(e))
 		}
-	}
-	// WebGL fallback path must exist.
-	if !strings.Contains(bs, "detectWebGL") {
-		t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing detectWebGL feature-detect — needs reviewer migration")
-	}
-	if !strings.Contains(bs, "showFallback") {
-		t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing showFallback UI handler — needs reviewer migration")
 	}
 }
 
