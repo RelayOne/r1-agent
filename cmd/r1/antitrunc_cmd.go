@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -276,7 +277,25 @@ func anyIncompleteSpec(specReps []antitrunc.ScopeReport) bool {
 // findSpecByIndex locates a spec whose filename ends in "<idx>.md"
 // or whose body contains a top-line "spec <idx>" header. Index match
 // is exact (no zero-padding tricks).
+// findSpecByIndex resolves "spec N" / "TASK-N" / "item N" mentions in
+// commit messages to a spec file. The codebase convention is that
+// "Spec N" refers to the spec whose `<!-- BUILD_ORDER: N -->`
+// frontmatter is N. We prefer that match — both because it's the
+// established convention and because filename-suffix matching false-
+// positives badly (PR #178: "Spec 2" matched "deploy-phase2.md"
+// instead of "cortex-concerns.md" which is BUILD_ORDER 2).
+//
+// We fall back to filename-suffix matching only when no spec has the
+// requested BuildOrder — that preserves matching for older specs whose
+// frontmatter predates BUILD_ORDER.
 func findSpecByIndex(specReps []antitrunc.ScopeReport, idx string) (antitrunc.ScopeReport, bool) {
+	if n, err := strconv.Atoi(idx); err == nil && n > 0 {
+		for _, r := range specReps {
+			if r.BuildOrder == n {
+				return r, true
+			}
+		}
+	}
 	for _, r := range specReps {
 		base := filepath.Base(r.Path)
 		if strings.HasSuffix(base, idx+".md") || strings.Contains(base, "-"+idx+".") || strings.Contains(base, "_"+idx+".") {

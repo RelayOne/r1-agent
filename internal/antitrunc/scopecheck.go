@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -38,6 +39,13 @@ var checklistFullRE = regexp.MustCompile(`(?m)^\s*[*-]\s*\[([ xX])\]\s*(.*)$`)
 // statusHeaderRE pulls STATUS from <!-- STATUS: <value> --> or bare
 // `STATUS: <value>` lines. Values are returned lowercase.
 var statusHeaderRE = regexp.MustCompile(`(?im)<!--\s*STATUS:\s*([a-zA-Z_-]+)\s*-->|^STATUS:\s*([a-zA-Z_-]+)`)
+
+// buildOrderHeaderRE pulls BUILD_ORDER from <!-- BUILD_ORDER: N -->.
+// Used by SpecBuildOrder() so the verifier can match commit references
+// like "Spec 2" to the spec whose BUILD_ORDER frontmatter is 2 (the
+// codebase convention) instead of falling back to filename-suffix
+// matching (which catches "deploy-phase2.md" by mistake).
+var buildOrderHeaderRE = regexp.MustCompile(`(?im)<!--\s*BUILD_ORDER:\s*(\d+)\s*-->`)
 
 // ChecklistItem is a single parsed checkbox line. Index is
 // 1-indexed (matching how humans count items in plans).
@@ -89,11 +97,12 @@ func CheckedItems(text string) []ChecklistItem {
 
 // ScopeReport summarises a plan or spec file.
 type ScopeReport struct {
-	Path      string
-	Status    string // lowercase, e.g. "in-progress" or "" if absent.
-	Total     int
-	Done      int
-	Unchecked []ChecklistItem
+	Path       string
+	Status     string // lowercase, e.g. "in-progress" or "" if absent.
+	BuildOrder int    // 0 if no BUILD_ORDER frontmatter; otherwise the integer.
+	Total      int
+	Done       int
+	Unchecked  []ChecklistItem
 }
 
 // IsComplete reports whether the report is fully checked. Files
@@ -115,12 +124,28 @@ func (r ScopeReport) PercentDone() float64 {
 func ScopeReportFromText(path, text string) ScopeReport {
 	done, total := CountChecklist(text)
 	return ScopeReport{
-		Path:      path,
-		Status:    SpecStatus(text),
-		Total:     total,
-		Done:      done,
-		Unchecked: UncheckedItems(text),
+		Path:       path,
+		Status:     SpecStatus(text),
+		BuildOrder: SpecBuildOrder(text),
+		Total:      total,
+		Done:       done,
+		Unchecked:  UncheckedItems(text),
 	}
+}
+
+// SpecBuildOrder returns the integer BUILD_ORDER value from a spec
+// header, or 0 if no BUILD_ORDER marker is present (or if it can't
+// be parsed as an int — there is no convention for non-int values).
+func SpecBuildOrder(text string) int {
+	m := buildOrderHeaderRE.FindStringSubmatch(text)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(m[1]))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // ScopeReportFromFile reads path and parses scope state. Returns
