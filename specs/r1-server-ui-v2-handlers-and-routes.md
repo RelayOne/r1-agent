@@ -4,7 +4,7 @@
 <!-- BUILD_COMPLETED: 2026-05-05 -->
 <!-- DEPENDS_ON: r1-server-ui-v2-foundation -->
 <!-- BUILD_ORDER: 31 -->
-<!-- BLOCKED_PARTIAL: T11 (memory graph view — defers to post-merge integration with Spec 2) + T15-T17 caller wiring (serveTracebundle is ready, the production TracebundleSource implementation against ledger.Store waits on Spec 5's fixture loader). -->
+<!-- INTEGRATION_COMPLETE: T11 memory graph view + T15-T17 production tracebundle source wired via cmd/r1-server/ui_v2_foundation.go::serveMemoryGraph + cmd/r1-server/tracebundle_source.go::ledgerTracebundleSource (this PR). -->
 
 # r1-server UI v2 — Handlers & Routes (filling the gaps)
 

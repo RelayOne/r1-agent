@@ -181,6 +181,10 @@ type SessionGraphContext struct {
 // serveSessionGraph renders the v2 3D graph view at
 // /session/{id}/graph when R1_SERVER_UI_V2=1. Sets COOP/COEP so the
 // worker can use SharedArrayBuffer where supported.
+//
+// Spec 4 §10 T11: when the request carries `?memory_id=<id>`, the
+// payload is annotated with filter=memory + the memory id so graph.js
+// can render only that memory's read/write subgraph.
 func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
 	if !v2Enabled() {
 		serveGraphIndex(w, r)
@@ -198,15 +202,14 @@ func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
 			sid = parts[1]
 		}
 	}
-	// Spec 4 will replace this stub with a real lookup against the
-	// SQLite ledger. For now, emit an empty graph payload — graph.js
-	// + the SSE stream will populate the scene as events arrive.
-	graphJSON, _ := json.Marshal(struct {
-		Nodes []struct{} `json:"nodes"`
-		Edges []struct{} `json:"edges"`
-	}{})
+	memoryID := r.URL.Query().Get("memory_id")
+	title := "Session " + sid + " — Graph"
+	if memoryID != "" {
+		title = "Memory " + memoryID + " — Graph"
+	}
+	graphJSON := buildGraphPayload(sid, memoryID)
 	ctx := SessionGraphContext{
-		V2BaseContext: newV2BaseContext(sid, "Session "+sid+" — Graph"),
+		V2BaseContext: newV2BaseContext(sid, title),
 		GraphData:     template.JS(graphJSON),
 	}
 	setV2CSP(w.Header())
@@ -217,4 +220,51 @@ func serveSessionGraph(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "render session-graph: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+// serveMemoryGraph renders /memories/{id}/graph by delegating to
+// serveSessionGraph with `?memory_id=<id>` synthesised. Spec 4 §6.2.
+// The PathValue("id") is the memory id; the renderer's session-id
+// slot is set to the memory id so the existing breadcrumb/topbar
+// still has a value.
+func serveMemoryGraph(w http.ResponseWriter, r *http.Request) {
+	if !v2Enabled() {
+		http.NotFound(w, r)
+		return
+	}
+	memID := r.PathValue("id")
+	if memID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	q.Set("memory_id", memID)
+	r.URL.RawQuery = q.Encode()
+	r.SetPathValue("id", memID)
+	serveSessionGraph(w, r)
+}
+
+// buildGraphPayload returns the JSON payload graph.js hydrates from.
+// Empty-payload fallback while the per-session ledger lookup isn't
+// wired — graph.js still works, the scene just starts empty + the
+// SSE stream populates it.
+func buildGraphPayload(sessionID, memoryID string) []byte {
+	type emptyGraph struct {
+		Nodes     []struct{} `json:"nodes"`
+		Edges     []struct{} `json:"edges"`
+		Filter    string     `json:"filter,omitempty"`
+		MemoryID  string     `json:"memory_id,omitempty"`
+		SessionID string     `json:"session_id"`
+	}
+	g := emptyGraph{
+		Nodes:     []struct{}{},
+		Edges:     []struct{}{},
+		SessionID: sessionID,
+	}
+	if memoryID != "" {
+		g.Filter = "memory"
+		g.MemoryID = memoryID
+	}
+	out, _ := json.Marshal(g)
+	return out
 }

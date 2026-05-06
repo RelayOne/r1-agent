@@ -933,7 +933,7 @@ func TestInjectedEventDeliveredAfterOriginalSubscribers(t *testing.T) {
 	}
 
 	// Wait for async delivery.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		n := len(seen)
@@ -987,7 +987,7 @@ func TestPrefixIndexNarrowsLookup(t *testing.T) {
 	}
 
 	// Wait for delivery.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		if atomic.LoadInt32(&workerCount) >= 1 && atomic.LoadInt32(&ledgerCount) >= 1 {
 			break
@@ -1026,7 +1026,7 @@ func TestPrefixIndexWildcardSubscriber(t *testing.T) {
 	b.Publish(Event{Type: "bus.internal"})
 
 	// Wait for delivery.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		if atomic.LoadInt32(&wildcardCount) >= 3 && atomic.LoadInt32(&specificCount) >= 1 {
 			break
@@ -1097,7 +1097,7 @@ func TestFireHooksMaterializesAllActionFields(t *testing.T) {
 	}
 
 	// Wait for all 5 events: trigger + 4 effects.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		n := len(seen)

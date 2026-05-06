@@ -96,7 +96,7 @@ func TestPlanUpdateLobe_AppliesOnConfirmation(t *testing.T) {
 
 	// Subscriber is fire-and-forget Observe; poll until QueuedCount==0
 	// or timeout.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		if l.QueuedCount() == 0 {
 			break

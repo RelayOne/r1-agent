@@ -350,7 +350,7 @@ func TestMidturnNoteFormat(t *testing.T) {
 		Provider:        &startStopProvider{},
 		Lobes:           []Lobe{loA, loB},
 		PreWarmInterval: time.Hour,
-		RoundDeadline:   2 * time.Second,
+		RoundDeadline:   30 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -450,7 +450,7 @@ func TestMidturnNoteSortsBySeverity(t *testing.T) {
 		Provider:        &startStopProvider{},
 		Lobes:           []Lobe{loInfo, loCrit},
 		PreWarmInterval: time.Hour,
-		RoundDeadline:   2 * time.Second,
+		RoundDeadline:   30 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

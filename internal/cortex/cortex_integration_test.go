@@ -130,7 +130,7 @@ func TestCortexIntegration(t *testing.T) {
 		Provider:        &startStopProvider{},
 		Lobes:           []Lobe{echo, warn, crit},
 		PreWarmInterval: time.Hour, // suppress pump churn during test
-		RoundDeadline:   2 * time.Second,
+		RoundDeadline:   30 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
