@@ -156,7 +156,13 @@ jobs:
           R1_DESKTOP_BINARY: ../target/release/r1-desktop
           R1_TAURI_DRIVER_PORT: '4444'
         run: |
-          npx tauri-driver --port=$R1_TAURI_DRIVER_PORT &
+          # tauri-driver was unpublished from npm in 2026; it now ships
+          # exclusively as a Rust crate. The earlier "Install tauri-driver"
+          # step `cargo install tauri-driver --locked` puts the binary on
+          # $PATH via $CARGO_HOME/bin (added by dtolnay/rust-toolchain).
+          # Invoke that binary directly — `npx tauri-driver` would hit the
+          # registry and fail with E404.
+          tauri-driver --port=$R1_TAURI_DRIVER_PORT &
           DRIVER_PID=$!
           # Give tauri-driver 2 s to bind.
           sleep 2
