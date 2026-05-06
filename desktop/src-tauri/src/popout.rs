@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT
 //
+// Tracked: PopoutRegistry's session_id/lane_id fields and count()
+// method are read by paths that only fire once the menu refresh hook
+// is wired (menu.rs::refresh_pop_outs_submenu). Until that lands,
+// the registry is constructed and populated but never enumerated,
+// so dead_code fires. Same convention as discovery.rs / transport.rs.
+#![allow(dead_code)] // tracked: pending wire-up
+
+//
 // R1 Desktop lane pop-out — `app.popout_lane` command.
 //
 // Implements spec desktop-cortex-augmentation §6.1 + checklist
