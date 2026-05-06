@@ -261,6 +261,10 @@ func (r *Registry) handleTodoUpdate(input json.RawMessage) (string, error) {
 			}
 			snapshot := make([]TodoItem, len(store.items))
 			copy(snapshot, store.items)
+			// Sync the persist write so test cleanup doesn't race with
+			// the goroutine creating .r1/todos.json. saveTodos is
+			// best-effort + non-blocking on disk; making it sync costs
+			// at most one fsync.
 			r.saveTodos(snapshot)
 			return fmt.Sprintf("Updated todo %q: status=%s priority=%s",
 				args.ID, store.items[i].Status, store.items[i].Priority), nil

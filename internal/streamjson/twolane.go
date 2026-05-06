@@ -85,13 +85,26 @@ func (tl *TwoLane) SessionID() string { return tl.base.SessionID() }
 // Enabled reports whether the underlying emitter is writing output.
 func (tl *TwoLane) Enabled() bool { return tl.base.Enabled() }
 
-// isCritical identifies event names that must NEVER drop, even under
-// pipe back-pressure. Every other subtype routes to the observability
-// lane (which drops-oldest). This keeps the list explicit so accidental
-// critical events don't silently block the process.
+// isCriticalType identifies event names that must NEVER drop, even
+// under pipe back-pressure. Every other subtype routes to the
+// observability lane (which drops-oldest). This keeps the list explicit
+// so accidental critical events don't silently block the process.
+//
+// TASK-10 of specs/lanes-protocol.md §11: lane.killed is unconditionally
+// critical (audit-meaningful, never drop). lane.note and lane.status are
+// CONDITIONALLY critical based on payload (severity / status) and cannot
+// be classified by event type alone — for those, callers must use
+// isCriticalLaneEvent which inspects the LaneEvent payload. This
+// function only sees a string; it returns false for the conditional
+// cases so callers without the payload (e.g. EmitTopLevel) downgrade
+// safely to observability and let the ev-aware path (emitLaneEvent) do
+// the right thing.
 func isCriticalType(eventType, subtype string) bool {
 	switch eventType {
 	case TypeHITLRequired, TypeError, TypeComplete, TypeMissionAborted:
+		return true
+	case "lane.killed":
+		// Per spec §5.3: lane.killed is critical regardless of payload.
 		return true
 	}
 	if subtype == "task.complete" {

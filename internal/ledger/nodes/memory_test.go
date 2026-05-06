@@ -107,12 +107,12 @@ func TestMemoryRecalled_ValidateHappyPath(t *testing.T) {
 // TestRegisteredNodeCount is the invariant requested by the memory-bus spec
 // (work-stoke T11): adding memory_stored + memory_recalled brought the total
 // registered node-type count to 30. Artifact parity adds two more node types,
-// the Beacon protocol adds twelve more, and the trust layer adds five more, so
-// the current invariant is 49. If a future node type is added, bump
-// this number in the same commit that adds it so the guard actually blocks
-// accidental registrations.
+// the Beacon protocol adds twelve more, the trust layer adds five more, and
+// SkillUnloaded (PR #150) adds one more, so the current invariant is 50.
+// If a future node type is added, bump this number in the same commit that
+// adds it so the guard actually blocks accidental registrations.
 func TestRegisteredNodeCount(t *testing.T) {
-	const want = 49
+	const want = 50
 	got := len(All())
 	if got != want {
 		t.Errorf("len(All()) = %d, want %d (update TestRegisteredNodeCount when adding a node type)", got, want)

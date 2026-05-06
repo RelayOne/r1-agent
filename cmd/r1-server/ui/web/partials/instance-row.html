@@ -1,0 +1,20 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/instance-row.html
+
+  Spec 4 §5.1 — one row per session in the index table.
+
+  Context shape:
+    .ID              string
+    .Name            string
+    .Status          string  (active / idle / done / error)
+    .EventCount      int
+    .LastActivityISO string
+*/ -}}
+{{- define "instance-row" -}}
+<tr data-testid="instance-row" data-session-id="{{ .ID }}" data-state="{{ .Status }}">
+  <td><a href="/session/{{ .ID }}">{{ .Name }}</a></td>
+  <td><span data-state="{{ .Status }}">{{ .Status }}</span></td>
+  <td>{{ .EventCount }}</td>
+  <td><time datetime="{{ .LastActivityISO }}">{{ .LastActivityISO }}</time></td>
+</tr>
+{{- end -}}

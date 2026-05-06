@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ipc: https://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost; connect-src 'self' ipc: https://ipc.localhost ws://127.0.0.1:*"
     }
   },
   "bundle": {
@@ -36,7 +36,10 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "R1 Desktop - agentic runtime GUI",
-    "longDescription": "Scaffold only. Full implementation: see desktop/PLAN.md and plans/work-orders/work-r1-desktop-app.md."
+    "longDescription": "Scaffold only. Full implementation: see desktop/PLAN.md and plans/work-orders/work-r1-desktop-app.md.",
+    "externalBin": [
+      "binaries/r1"
+    ]
   },
   "plugins": {}
 }

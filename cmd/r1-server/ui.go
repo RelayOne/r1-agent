@@ -77,7 +77,20 @@ func mountUI(mux *http.ServeMux, db *DB) {
 	// explicitly so ServeMux prefers it over the /session/ SPA
 	// fallback for this one sub-path — Go 1.22's pattern precedence
 	// ranks concrete paths above prefix matches.
-	mux.HandleFunc("GET /session/{id}/graph", serveGraphIndex)
+	// When R1_SERVER_UI_V2=1, /session/{id}/graph serves the
+	// InstancedMesh + Web Worker view from the v2 foundation
+	// (Spec 2). When the flag is off, serveSessionGraph delegates
+	// back to the legacy graph.html shell so pre-opt-in clients
+	// keep working.
+	mux.HandleFunc("GET /session/{id}/graph", serveSessionGraph)
+
+	// Spec 4 §5.3: raw event stream view. v2-only — falls through
+	// to 404 when the flag is off.
+	mux.HandleFunc("GET /session/{id}/stream", serveStreamView)
+
+	// Spec 4 §6.2 + §10 T11: memory-scoped graph view. Reuses the
+	// session-graph render path with memory_id pre-filled. v2-only.
+	mux.HandleFunc("GET /memories/{id}/graph", serveMemoryGraph)
 
 	// work-stoke TASK 13: waterfall + tree default trace views. The
 	// concrete /session/{id} + /session/{id}/tree patterns are more
@@ -118,6 +131,16 @@ func mountUI(mux *http.ServeMux, db *DB) {
 		mux.HandleFunc("POST /api/memories", db.serveMemoryCreate)
 		mux.HandleFunc("PUT /api/memories/{id}", db.serveMemoryUpdate)
 		mux.HandleFunc("DELETE /api/memories/{id}", db.serveMemoryDelete)
+
+		// Spec r1-server-ui-v2 §"Run diff view (minimum viable)".
+		// Compares two sessions' event streams and reports
+		// added/removed/changed-status rows. Content-diff is out of
+		// scope here — see the footer + issue #144.
+		mux.HandleFunc("GET /diff/{a}/{b}", db.serveDiff)
+
+		// Spec 4 §7 + §10 T15-T17: streamed tar.gz export of the
+		// session's ledger contents. v2-only and DB-backed.
+		mux.HandleFunc("GET /api/session/{id}/export.tracebundle", db.serveTracebundleAdapter)
 	}
 
 	// Spec 27 §10 read-only settings viewer. Reads ~/.r1/config.yaml

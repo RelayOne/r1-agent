@@ -165,13 +165,16 @@ func withFixture(t *testing.T, stubs map[string]*stubClient) string {
 	t.Helper()
 	dir := t.TempDir()
 	writePolicyFixture(t, dir)
+	// LINT-ALLOW chdir-test: mcp policy-discovery test must chdir to the fixture dir so config.AutoLoadPolicy walks up from there; runs serially under `go test`, restored on cleanup.
 	origWd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+	// LINT-ALLOW chdir-test: see preceding comment on origWd — fixture chdir is intrinsic to the policy-discovery contract this test exercises.
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
+	// LINT-ALLOW chdir-test: deferred restore of origWd captured above.
 	t.Cleanup(func() { _ = os.Chdir(origWd) })
 	installStubFactory(t, stubs)
 	return dir

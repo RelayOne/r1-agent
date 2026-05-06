@@ -244,6 +244,7 @@ func (s *Server) handleSessionNew(req jsonRPCRequest) {
 		// Default to current working directory of the adapter
 		// process — editors that don't specify a cwd get the
 		// invocation directory, which is typically what they want.
+		// LINT-ALLOW chdir-cli-entry: r1-acp is a per-editor adapter; cwd is captured at request time and resolved to absolute, never reused across goroutines.
 		if wd, err := os.Getwd(); err == nil {
 			cwd = wd
 		}

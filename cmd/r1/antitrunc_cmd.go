@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -235,10 +236,29 @@ func classifyChange(c gitChange, planRep antitrunc.ScopeReport, specReps []antit
 		if idxStr != "" {
 			cls.TaskClaim = "spec/task " + idxStr
 			if found, ok := findSpecByIndex(specReps, idxStr); ok {
-				if found.IsComplete() {
+				switch {
+				case found.Status == "done":
+					// STATUS:done in the frontmatter is the operator's
+					// explicit claim that the work shipped. Honor it as
+					// authoritative — checklist tracking is informational
+					// and historically inconsistent (~25 specs predate
+					// the per-item checkbox convention). Saying "spec X
+					// is done but items unchecked → lying" false-flags
+					// every commit that legitimately references those
+					// older specs.
+					cls.Verdict = "verified"
+					if found.Total > 0 {
+						cls.Detail = fmt.Sprintf("spec %s STATUS=done (checklist tracking %d/%d)", idxStr, found.Done, found.Total)
+					} else {
+						cls.Detail = fmt.Sprintf("spec %s STATUS=done (no checklist)", idxStr)
+					}
+				case found.IsComplete():
 					cls.Verdict = "verified"
 					cls.Detail = fmt.Sprintf("spec %s checklist complete (%d/%d)", idxStr, found.Done, found.Total)
-				} else {
+				case found.Total == 0:
+					cls.Verdict = "unverified"
+					cls.Detail = fmt.Sprintf("spec %s has no checklist and STATUS=%q (no claim either way)", idxStr, found.Status)
+				default:
 					cls.Verdict = "lying"
 					cls.Detail = fmt.Sprintf("spec %s claimed done but %d/%d items unchecked",
 						idxStr, found.Total-found.Done, found.Total)
@@ -276,7 +296,25 @@ func anyIncompleteSpec(specReps []antitrunc.ScopeReport) bool {
 // findSpecByIndex locates a spec whose filename ends in "<idx>.md"
 // or whose body contains a top-line "spec <idx>" header. Index match
 // is exact (no zero-padding tricks).
+// findSpecByIndex resolves "spec N" / "TASK-N" / "item N" mentions in
+// commit messages to a spec file. The codebase convention is that
+// "Spec N" refers to the spec whose `<!-- BUILD_ORDER: N -->`
+// frontmatter is N. We prefer that match — both because it's the
+// established convention and because filename-suffix matching false-
+// positives badly (PR #178: "Spec 2" matched "deploy-phase2.md"
+// instead of "cortex-concerns.md" which is BUILD_ORDER 2).
+//
+// We fall back to filename-suffix matching only when no spec has the
+// requested BuildOrder — that preserves matching for older specs whose
+// frontmatter predates BUILD_ORDER.
 func findSpecByIndex(specReps []antitrunc.ScopeReport, idx string) (antitrunc.ScopeReport, bool) {
+	if n, err := strconv.Atoi(idx); err == nil && n > 0 {
+		for _, r := range specReps {
+			if r.BuildOrder == n {
+				return r, true
+			}
+		}
+	}
 	for _, r := range specReps {
 		base := filepath.Base(r.Path)
 		if strings.HasSuffix(base, idx+".md") || strings.Contains(base, "-"+idx+".") || strings.Contains(base, "_"+idx+".") {

@@ -204,6 +204,7 @@ func RepoHashAt(ctx context.Context, dir string) string {
 	if top, ok := gitToplevel(ctx, dir); ok {
 		return hash16(top)
 	}
+	// LINT-ALLOW chdir-fallback: documented step-3 fallback when neither `dir` nor `git rev-parse` resolves; multi-session callers MUST pass a non-empty dir to bypass this branch (see RepoHashAt doc).
 	if cwd, err := os.Getwd(); err == nil {
 		return hash16(cwd)
 	}

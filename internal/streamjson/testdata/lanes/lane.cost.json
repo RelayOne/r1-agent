@@ -1,0 +1,15 @@
+{
+  "event": "lane.cost",
+  "event_id": "01J0K3M4P8QABCDEFGHJKMNPQR",
+  "session_id": "sess_01J0K3M4",
+  "seq": 158,
+  "at": "2026-05-02T18:33:22.500000Z",
+  "lane_id": "lane_01J0K3M4",
+  "data": {
+    "tokens_in": 12480,
+    "tokens_out": 312,
+    "cached_tokens": 11200,
+    "usd": 0.00184,
+    "cumulative_usd": 0.00521
+  }
+}

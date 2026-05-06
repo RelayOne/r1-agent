@@ -1,0 +1,64 @@
+{{- /*
+  cmd/r1-server/ui/web/diff.html
+
+  Spec 4 §5.6 — run-diff side-by-side. Replaces the inline-fmt-printf
+  HTML in cmd/r1-server/diff.go (PR #151) with a real template that
+  matches base.html theming.
+
+  Context shape:
+    .V2BaseContext
+    .A      string
+    .B      string
+    .Rows   []DiffRow  (Kind, EventType, Key, StatusA, StatusB, IndexA, IndexB)
+*/ -}}
+{{- define "diff" -}}
+{{ template "base" . }}
+{{- end -}}
+
+{{- define "title" -}}Diff {{ .A }} vs {{ .B }} — r1{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <span class="muted">Run diff</span>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section class="pane pane--primary" data-testid="diff-view">
+  <h1>Diff <code>{{ .A }}</code> vs <code>{{ .B }}</code></h1>
+  <table class="diff-table" data-testid="diff-table">
+    <thead>
+      <tr>
+        <th scope="col">Kind</th>
+        <th scope="col">Event type</th>
+        <th scope="col">Key</th>
+        <th scope="col">Status A → B</th>
+        <th scope="col">#A</th>
+        <th scope="col">#B</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ if eq (len .Rows) 0 }}
+        <tr><td colspan="6"><em class="muted">(no differences)</em></td></tr>
+      {{ end }}
+      {{ range .Rows }}
+        <tr data-testid="diff-row" data-state="{{ .Kind }}" class="diff-row diff-row--{{ .Kind }}">
+          <td>{{ .Kind }}</td>
+          <td><code>{{ .EventType }}</code></td>
+          <td><code>{{ .Key }}</code></td>
+          <td>{{ .StatusA }} → {{ .StatusB }}</td>
+          <td>{{ .IndexA }}</td>
+          <td>{{ .IndexB }}</td>
+        </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <footer class="muted" style="margin-top:24px;font-size:13px;">
+    Content-diff (per-event JSON payload comparison) is out of scope here.
+    Tracked in <a href="https://github.com/RelayOne/r1-agent/issues/144">issue #144</a>.
+  </footer>
+</section>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

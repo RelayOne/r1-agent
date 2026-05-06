@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fixture session — stream — r1</title>
+  <link rel="stylesheet" href="/ui/web/css/base.css">
+
+  <script type="importmap">{
+  "imports": {
+    "three": "/ui/web/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/web/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/web/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/web/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/web/vendor/three-spritetext.js"
+  }
+}</script>
+
+  <script src="/ui/web/vendor/htmx.min.js"
+          integrity="sha384-FAKEHTMX"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/web/vendor/htmx-ext-sse.js"
+          integrity="sha384-FAKESSE"
+          crossorigin="anonymous"
+          defer></script>
+  
+  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="sess-fixture">
+  <header class="topbar" role="banner">
+  <div class="topbar__brand"><a href="/">r1</a></div>
+  <nav class="topbar__nav" aria-label="Session views">
+    <a href="/session/sess-fixture" data-testid="tab-waterfall">Waterfall</a>
+    <a href="/session/sess-fixture/graph" data-testid="tab-graph">3D Graph</a>
+    <a href="/session/sess-fixture/stream" aria-current="page" data-testid="tab-stream">Stream</a>
+    <a href="/memories?session=sess-fixture" data-testid="tab-memories">Memories</a>
+  </nav>
+</header>
+  <main id="main">
+    <section class="pane pane--primary" data-testid="raw-stream">
+  <header style="display:flex;justify-content:space-between;align-items:center;">
+    <h1>Raw stream</h1>
+    <span class="muted mono" id="stream-state" aria-live="polite">connecting…</span>
+  </header>
+  <pre class="raw-stream-pre mono"
+       data-testid="stream-pre"
+       hx-ext="sse"
+       sse-connect="/api/session/sess-fixture/events/stream?last_event_id=0"
+       sse-swap="message"
+       hx-swap="beforeend"
+       style="background:var(--color-row-zebra);padding:12px;border-radius:4px;
+              font-size:12px;line-height:1.4;max-height:calc(100vh - 120px);
+              overflow:auto;white-space:pre-wrap;word-break:break-word;"></pre>
+</section>
+  </main>
+  
+</body>
+</html>
