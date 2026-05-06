@@ -537,43 +537,8 @@ func assertRowAbsent(t *testing.T, db *DB, key string) {
 	}
 }
 
-// TestMemoriesCRUD_V2Off_404 — sanity check that the three new routes stay
-// dark when R1_SERVER_UI_V2 is unset. Matches the share.go / settings.go
-// precedent: v2-only paths must 404 in MVP mode.
-func TestMemoriesCRUD_V2Off_404(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	s := newUIServer(t)
-
-	postReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, s.URL+"/api/memories",
-		strings.NewReader(`{"scope":"permanent","content":"x","key":"k"}`))
-	postReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(postReq)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("POST status=%d, want 404 when v2 off", resp.StatusCode)
-	}
-
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPut, s.URL+"/api/memories/1",
-		strings.NewReader(`{"content":"x"}`))
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("PUT: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("PUT status=%d, want 404 when v2 off", resp.StatusCode)
-	}
-
-	req, _ = http.NewRequestWithContext(context.Background(), http.MethodDelete, s.URL+"/api/memories/1", nil)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("DELETE status=%d, want 404 when v2 off", resp.StatusCode)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestMemoriesCRUD_V2Off_404. The
+// R1_SERVER_UI_V2 toggle was removed; the memory CRUD endpoints
+// are now always reachable when registered. RBAC + passphrase
+// gates remain on the write paths and are exercised by the rest
+// of this file.)

@@ -37,7 +37,7 @@ func TestServeDiff_HTMLUsesV2Template(t *testing.T) {
 		`Diff <code>alpha</code> vs <code>beta</code>`,
 		`Content-diff`,
 		// base.html shell signals
-		`/ui/web/vendor/htmx.min.js`,
+		`/ui/vendor/htmx.min.js`,
 		`<script type="importmap">`,
 	} {
 		if !strings.Contains(bs, frag) {

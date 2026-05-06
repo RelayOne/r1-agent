@@ -1,7 +1,7 @@
 // Package main — sri_test.go
 //
 // Guards integrity of the vendored frontend blobs in
-// cmd/r1-server/ui/web/vendor/ against silent corruption or table drift.
+// cmd/r1-server/ui/vendor/ against silent corruption or table drift.
 // For each entry in the SRI[] map declared in scripts/vendor-ui.sh, the
 // test re-derives the sha384 base64 of the on-disk blob and asserts it
 // matches the recorded value. Bumping a vendored library is a four-line
@@ -27,7 +27,7 @@ import (
 
 // vendorRoot is resolved relative to this test file; runs from
 // cmd/r1-server/ when `go test ./cmd/r1-server/...`.
-const vendorRoot = "ui/web/vendor"
+const vendorRoot = "ui/vendor"
 
 // vendorScript is parsed for its SRI[] map at test time so a stale
 // expected-value list in this file can't quietly drift from what

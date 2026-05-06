@@ -10,22 +10,10 @@ import (
 	"time"
 )
 
-// TestMemories_V2Off_404 — the default state. The flag is unset, the
-// /memories route must 404 indistinguishably from "no route" per the
-// share.go precedent + spec §2.3.
-func TestMemories_V2Off_404(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	s := newUIServer(t)
-
-	resp, err := http.Get(s.URL + "/memories")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status=%d, want 404 when v2 is off", resp.StatusCode)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestMemories_V2Off_404. The
+// R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted; /memories is the only surface and always 200s when
+// the route is registered.)
 
 // TestMemories_V2On_EmptyTable — gate on, no memory rows written.
 // The render must succeed with a 200 and an "empty" banner so

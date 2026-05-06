@@ -9,21 +9,9 @@ import (
 	"testing"
 )
 
-// TestSettings_V2Off_404 — the default state. v2 flag unset, the
-// route 404s consistently with share.go + /memories.
-func TestSettings_V2Off_404(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	s := newUIServer(t)
-
-	resp, err := http.Get(s.URL + "/settings")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status=%d, want 404 when v2 is off", resp.StatusCode)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestSettings_V2Off_404. The
+// R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted; /settings is the only surface and always 200s.)
 
 // TestSettings_Defaults_WhenNoConfigFile — point R1_CONFIG_PATH at a
 // non-existent file; the handler must render the built-in defaults
