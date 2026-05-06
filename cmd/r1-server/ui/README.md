@@ -1,17 +1,14 @@
-# r1-server UI v2 — `cmd/r1-server/ui/`
+# r1-server UI — `cmd/r1-server/ui/`
 
-This directory holds the htmx-driven dashboard that ships behind the
-`R1_SERVER_UI_V2=1` flag. It exists in parallel with the legacy vanilla-
-JS SPA at `cmd/r1-server/ui/`; the two trees do not share code at
-runtime. When the flag is on, the v2 handlers in `mountUI` serve from
-this tree; when the flag is off, the v1 SPA serves and the v2 handlers
-are unwired (or 404, as appropriate).
+This directory holds the htmx-driven dashboard that the r1-server
+binary embeds + serves. It is the production UI surface — the legacy
+vanilla-JS SPA that lived alongside it during the two-release-cycle
+parallel-deploy window was deleted in Spec D (D-UI2-7, 2026-05-06)
+and the `R1_SERVER_UI_V2` envelope toggle removed at the same time.
 
-The split-tree migration is intentional. We don't want a single in-place
-rewrite that risks breaking the v1 surface during development. After two
-release cycles with v2 on by default and the legacy SPA off, the v1
-tree is deleted and `web/` is renamed back to `ui/`. That cleanup is a
-follow-up ticket; for now, both trees coexist.
+The tree was previously rooted at `cmd/r1-server/ui/web/`; Spec D
+lifted everything up one level so the embed paths and URL paths
+match (`/ui/...`).
 
 ## Directory layout
 
@@ -139,5 +136,3 @@ denylist is specifically about state tokens.
 - **No tailwind, no CSS-in-JS, no preprocessor.** Plain CSS in `css/`.
 - **No client-side router.** htmx's `hx-push-url` handles deep links.
 - **No inline scripts.** The CSP header set by `setV2CSP` blocks them.
-- **Do not migrate the legacy `cmd/r1-server/ui/index.html` SPA.** It
-  stays untouched until the v3 cleanup follow-up.

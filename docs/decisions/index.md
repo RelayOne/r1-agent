@@ -371,3 +371,21 @@ Append entry recording the decisions taken during the `/scope all remaining 66 i
 **Decision:** SVG lock glyph (NOT emoji); desaturate to ~15% saturation × 0.7 lightness; specific reason wording (`"redacted by retention policy (90d)"`); edges remain at full opacity; `aria-hidden="true"` on the lock SVG; reserved ⚠ overlay for `isRedacted=true && len(events)==0` (anomaly).
 
 **Rationale:** RT-REDACTION-UI-PATTERNS — Sentry's `[Filtered]` placeholder + tooltip-with-reason is the closest precedent; emoji rendering and SR pronunciation vary across platforms; transparency about absence > concealment.
+
+### D-UI2-7 — Legacy v1 SPA cleanup + R1_SERVER_UI_V2 flag removal
+
+**Decision:** delete the 12 legacy vanilla-JS SPA files in `cmd/r1-server/ui/`, lift the parallel v2 tree from `cmd/r1-server/ui/web/` up one level to `cmd/r1-server/ui/`, and drop the `R1_SERVER_UI_V2` envelope toggle (Renderable / v2Enabled / traceV2Enabled all return true unconditionally).
+
+**Rationale:**
+- The two-release-cycle parallel-deploy window mandated by Spec 1 §8 has elapsed. v2 shipped through PRs #154/#155/#156/#160/#162/#167.
+- Keeping both surfaces alive doubled the test maintenance surface and made the v2-OFF dispatch paths a latent regression risk: with the legacy files deleted, every flag-off branch (`serveIndex`, `serveGraphIndex`, `serveTraceWaterfall` flag-off) would 500 trying to read `index.html`/`graph.html` from the embed FS.
+- Dropping the flag closes that risk: the dead-fallback shims (`serveIndex` / `serveGraphIndex`) remain as compile-time hooks for the few `mux.HandleFunc("GET /session/", serveIndex)` mounts that catch malformed URLs, but they 404 cleanly instead of 500ing.
+- The `RS-4 item 20` NODE_STYLES contract test (`TestUIGraphJSHasNodeStyleContract`) was the highest-value (c)-class test in the audit. The contract has no current home in v2 graph.js (which uses generic InstancedMesh shape pools rather than per-node-type style records). The test is left BLOCKED + skipped in code rather than deleted; reviewer will either point it at the v2 surface or document its retirement.
+
+**Consequences:**
+- 12 files deleted, 38 v2 files moved, ~80 LOC of flag-gated dead code retired.
+- Test suite pruned: 5 (a)-class tests deleted, 7 (b)-class tests retargeted, 8 cascading flag-OFF tests deleted (state no longer representable). 1 (c)-class test left BLOCKED.
+- v2 surface paths shift from `/ui/web/{js,css,vendor,partials}/...` to `/ui/{js,css,vendor,partials}/...`. Operators upgrading do NOT need to flip any env-var; the v2 surface is the only surface.
+- `R1_SERVER_SHARE_ENABLED` stays as the per-/share/ gate. `R1_SERVER_TRACE_STUB` stays as the dev-only demo-spans toggle. `R1_MEMORIES_PASSPHRASE` stays as the memory-bus write gate.
+
+**Audit trail:** triage commit `3f98fd1b` on `audit/legacy-spa-triage-2026-05-06`, plans/legacy-spa-test-triage.md.

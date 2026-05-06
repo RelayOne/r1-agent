@@ -9,7 +9,8 @@
 //
 // Behavior:
 //
-//   - Gated behind R1_SERVER_UI_V2=1 (per §2.3). Off → 404.
+//   - Always reachable (Spec D — D-UI2-7 — removed the prior
+//     R1_SERVER_UI_V2 envelope gate; the legacy SPA was deleted).
 //   - No authentication, no writes. RBAC + edit controls are part of
 //     the retention-policies spec, not this skeleton.
 //   - Config path honors R1_CONFIG_PATH (test + ops override); the
