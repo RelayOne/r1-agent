@@ -58,7 +58,7 @@ Skipped:
   — fix: `return c.json({ error: ... }, orRes.status >= 400 && orRes.status < 600 ? orRes.status as StatusCode : 502)`. Import `StatusCode` from `hono/utils/http-status`.
   — effort: trivial
 
-- [ ] [HIGH] [stoke/cmd/stoke/main.go:1469] `secMap, _ = scanpkg.MapSecuritySurface(absRepo, nil)` — The error is silently discarded. `secMap` is then passed to `audit.BuildPrompt` or similar consumers. If `MapSecuritySurface` fails (e.g., directory not found, parse error), `secMap` is `nil` and any downstream code that dereferences it will panic. The `--security` flag path is user-invoked; a silent failure here means the user believes the security surface was mapped when it was not.
+- [ ] [HIGH] [stoke/cmd/r1/main.go:1469] `secMap, _ = scanpkg.MapSecuritySurface(absRepo, nil)` — The error is silently discarded. `secMap` is then passed to `audit.BuildPrompt` or similar consumers. If `MapSecuritySurface` fails (e.g., directory not found, parse error), `secMap` is `nil` and any downstream code that dereferences it will panic. The `--security` flag path is user-invoked; a silent failure here means the user believes the security surface was mapped when it was not.
   — fix: `secMap, err = scanpkg.MapSecuritySurface(absRepo, nil); if err != nil { fmt.Fprintf(os.Stderr, "warning: security surface mapping failed: %v\n", err) }`. This is non-fatal but should be visible.
   — effort: trivial
 
@@ -103,8 +103,8 @@ Skipped:
 - `setCookie(c, ..., cookie.attributes as any)` in auth.ts and middleware.ts — Lucia's cookie attributes type does not exactly match Hono's `CookieOptions`. This is a known library interop gap. The cast is consistent across all callers and causes no runtime issue.
 - `_ = os.MkdirAll(root, 0700)` in stoke/session/store.go:35-36 — Init-time directory creation; any failure surfaces immediately on the first file write.
 - `_ = mgr.Cleanup(ctx, handle)` in stoke integration test — test teardown, fine.
-- `_ = timeout // comment` in stoke/cmd/stoke/main.go:1583 — explicit suppress of unused variable warning, with comment. Legitimate.
-- `rescanResult, _ := scanpkg.ScanFiles(...)` in stoke/cmd/stoke/main.go:1589 — Re-scan in Phase 4 of scan-and-repair; the result is used immediately for the diff count. Error means zero findings, which is a safe default for a display-only re-scan step.
+- `_ = timeout // comment` in stoke/cmd/r1/main.go:1583 — explicit suppress of unused variable warning, with comment. Legitimate.
+- `rescanResult, _ := scanpkg.ScanFiles(...)` in stoke/cmd/r1/main.go:1589 — Re-scan in Phase 4 of scan-and-repair; the result is used immediately for the diff count. Error means zero findings, which is a safe default for a display-only re-scan step.
 - `flare/internal/networking/tap.go:95,133` `strconv.Atoi` discarded error — These are parsing IP octets from strings that the Manager itself constructed, so the format is known-valid. The `_ =` is safe here.
 - `flare/internal/reconcile/reconciler.go` — `RecordEvent` and `DeleteHostnamesByMachine` have `void` return types (not errors). No issue.
 

@@ -20,6 +20,11 @@ import type { ReactElement, ReactNode } from "react";
 import type { DaemonStore } from "@/lib/store/daemonStore";
 import type { SessionId } from "@/lib/api/types";
 
+// Stable empty array reference — required so the `?? []` fallback
+// in the tilePinnedBySession selector doesn't return a fresh array
+// each render and trip Zustand into an infinite useStore loop.
+const EMPTY_PIN_IDS: readonly string[] = Object.freeze([]);
+
 export interface ChatPaneProps {
   store: DaemonStore;
   sessionId: SessionId;
@@ -37,7 +42,7 @@ export function ChatPane({
 }: ChatPaneProps): ReactElement {
   const tileIds = useStore(
     store,
-    (s) => s.ui.tilePinnedBySession[sessionId] ?? [],
+    (s) => s.ui.tilePinnedBySession[sessionId] ?? EMPTY_PIN_IDS,
   );
   const tileMode = tileIds.length > 0;
 

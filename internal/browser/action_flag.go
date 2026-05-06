@@ -3,7 +3,7 @@
 // Implements spec 17 §5/§32: parseActionFlag takes one CLI string
 // like "click:#submit" or "type:#username:alice" and returns a
 // browser.Action. Reserved for `stoke browse` subcommand wiring in
-// cmd/stoke/main.go. Lives in the browser package so the format
+// cmd/r1/main.go. Lives in the browser package so the format
 // rules are colocated with the types they produce.
 
 package browser

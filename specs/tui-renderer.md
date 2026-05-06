@@ -341,7 +341,7 @@ Per spec-2 two-lane design, mirrored at the TUI consumer:
 - [ ] `TestDescentTickerRing`: push 20 `descent.tier` → ring holds 8 most recent.
 - [ ] `TestUnknownSubtype`: emit `system/stoke.experimental.foo` → appended to scroll verbatim; tree unchanged.
 
-### `cmd/stoke/run_cmd_tui_integration_test.go`
+### `cmd/r1/run_cmd_tui_integration_test.go`
 
 - [ ] `TestTUIAutoEnabledInTTY`: fake PTY → TUI initializes; first rendered frame contains header `stoke run`.
 - [ ] `TestTUIAutoDisabledInPipe`: pipe stdout → TUI skipped; first line on stdout is valid NDJSON with `type=system, subtype=session.start`.
@@ -374,13 +374,13 @@ go test ./internal/tui/renderer/... -run TestFallbackSmallTerminal -v
 go test ./internal/tui/renderer/... -run TestFallbackTeaInitError -v
 go test ./internal/tui/renderer/... -run TestHITLModal -v
 go test ./internal/tui/renderer/... -run TestQuitKeepsSessionAlive -v
-go test ./cmd/stoke/... -run TestTUIAutoDisabledInPipe -v
-go test ./cmd/stoke/... -run TestStreamJSONForcesNoTUI -v
+go test ./cmd/r1/... -run TestTUIAutoDisabledInPipe -v
+go test ./cmd/r1/... -run TestStreamJSONForcesNoTUI -v
 STOKE_TUI=0 ./stoke ship --dry-run 2>/dev/null | head -1 | jq -e '.type == "system" and .subtype == "session.start"'
 ./stoke ship --tui --dry-run </dev/null 2>&1 | head -1 | grep -qE '(stoke|warning: not a TTY)'
 ./stoke run --help | grep -q -- '--tui'
 ./stoke run --help | grep -q -- '--no-tui'
-go build ./cmd/stoke && go test ./... && go vet ./...
+go build ./cmd/r1 && go test ./... && go vet ./...
 ```
 
 ## Implementation Checklist
@@ -399,9 +399,9 @@ go build ./cmd/stoke && go test ./... && go vet ./...
 
 7. [ ] **Create `internal/tui/renderer/run.go`**: `Run(ctx context.Context, cfg Config) error`. Creates `tea.NewProgram(model, tea.WithAltScreen())` (skip altscreen when compact). Starts a goroutine that ranges over `cfg.Events` channel and calls `p.Send(eventMsg{ev})`. Handles `ctx.Done()` → `p.Quit()`. Returns after `p.Run()` exits; if returns error → caller degrades to `tui.Runner`.
 
-8. [ ] **Extend `cmd/stoke/run_cmd.go`** (and `ship_cmd.go`, `chat_cmd.go`, `build_cmd.go`): add `--tui`/`--no-tui` flags, TUI resolution logic per §CLI Surface. When TUI enabled: construct `Events` channel, call `streamjson.TwoLane.AddTee(events, true)`, launch `renderer.Run` goroutine. When disabled: existing paths unchanged. Respect `STOKE_TUI` env. Deprecated alias: `--headless` → warn → `--no-tui`.
+8. [ ] **Extend `cmd/r1/run_cmd.go`** (and `ship_cmd.go`, `chat_cmd.go`, `build_cmd.go`): add `--tui`/`--no-tui` flags, TUI resolution logic per §CLI Surface. When TUI enabled: construct `Events` channel, call `streamjson.TwoLane.AddTee(events, true)`, launch `renderer.Run` goroutine. When disabled: existing paths unchanged. Respect `STOKE_TUI` env. Deprecated alias: `--headless` → warn → `--no-tui`.
 
-9. [ ] **Wire sessionctl client**: in `cmd/stoke/run_cmd.go`, if `$XDG_RUNTIME_DIR/stoke/<pid>.sock` exists or will be created by spec-11, pass `sessionctl.NewClient(path)` into `renderer.Config`. If spec-11 not landed yet, pass `nil` and rely on nil-safe no-op path.
+9. [ ] **Wire sessionctl client**: in `cmd/r1/run_cmd.go`, if `$XDG_RUNTIME_DIR/stoke/<pid>.sock` exists or will be created by spec-11, pass `sessionctl.NewClient(path)` into `renderer.Config`. If spec-11 not landed yet, pass `nil` and rely on nil-safe no-op path.
 
 10. [ ] **Refactor `internal/tui/interactive.go`** to be a thin wrapper: keep `NewInteractiveModel`/`Run` public names; under the hood construct `renderer.Model` and delegate. Preserve existing `TaskStart`/`Event`/`TaskComplete` hooks by mapping to synthetic `renderer.Event` structs. Tests in `interactive_test.go` pass unchanged.
 
@@ -413,8 +413,8 @@ go build ./cmd/stoke && go test ./... && go vet ./...
 
 14. [ ] **Status pane**: `renderStatus()` is a viewport showing full `_stoke.dev/*` JSON for focused task + last 20 events. Triggered by `s`. Uses Bubble Tea `viewport` bubble (already imported by `internal/viewport/`).
 
-15. [ ] **Integration test `cmd/stoke/run_cmd_tui_integration_test.go`**: covers §Testing cmd/stoke tests. Uses `creack/pty` for fake TTY OR falls back to env flag forcing (if adding pty dep is vetoed, drop PTY tests and rely on env-forced tests only — decision note required in PR).
+15. [ ] **Integration test `cmd/r1/run_cmd_tui_integration_test.go`**: covers §Testing cmd/r1 tests. Uses `creack/pty` for fake TTY OR falls back to env flag forcing (if adding pty dep is vetoed, drop PTY tests and rely on env-forced tests only — decision note required in PR).
 
-16. [ ] **Update `cmd/stoke/main.go` help text** for `ship`, `chat`, `run`, `build` to list `--tui` and `--no-tui`. One-line summary: `"--tui       enable live TUI renderer (auto on TTY)"`.
+16. [ ] **Update `cmd/r1/main.go` help text** for `ship`, `chat`, `run`, `build` to list `--tui` and `--no-tui`. One-line summary: `"--tui       enable live TUI renderer (auto on TTY)"`.
 
-17. [ ] **`go build ./cmd/stoke && go test ./... && go vet ./...`** all green. No new lint warnings. Verify binary size delta <1 MB (bubbletea/lipgloss already linked).
+17. [ ] **`go build ./cmd/r1 && go test ./... && go vet ./...`** all green. No new lint warnings. Verify binary size delta <1 MB (bubbletea/lipgloss already linked).

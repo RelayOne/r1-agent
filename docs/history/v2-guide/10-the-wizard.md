@@ -371,7 +371,7 @@ The wizard is a self-contained component. It depends on the ledger (to write inh
 ## Validation gate
 
 1. ✅ `go vet ./...` clean, `go test ./internal/wizard/...` passes with >70% coverage on the CLI and >80% on the init flow and config components
-2. ✅ `go build ./cmd/stoke` succeeds and the `stoke` binary supports `init`, `config`, `snapshot`, `skills`, `decisions`, and `status` subcommands
+2. ✅ `go build ./cmd/r1` succeeds and the `stoke` binary supports `init`, `config`, `snapshot`, `skills`, `decisions`, and `status` subcommands
 3. ✅ `stoke init` on a repo with no existing `.stoke/` directory executes all eleven initialization steps and produces a valid `.stoke/config.yaml` plus the initial git commit
 4. ✅ `stoke init` on a repo with an existing `.stoke/` directory either refuses to proceed or offers a migration path (configurable via a `--force` flag that the user must explicitly pass)
 5. ✅ The initialization flow can be completed with all defaults in under ten keystrokes (measured by a scripted test using the `--yes` flag to accept each prompt)

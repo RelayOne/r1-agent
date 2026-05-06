@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useEffect, useState } from "react";
 import { MessageLog } from "./MessageLog";
@@ -53,7 +54,7 @@ function seed(store: DaemonStore, n: number): void {
   }
 }
 
-function renderMessage(m: ChatMessage, isStreaming: boolean): JSX.Element {
+function renderMessage(m: ChatMessage, isStreaming: boolean): React.JSX.Element {
   return (
     <article
       className={`mx-3 my-2 rounded-md border p-3 ${
@@ -71,7 +72,7 @@ function renderMessage(m: ChatMessage, isStreaming: boolean): JSX.Element {
   );
 }
 
-function Demo({ count }: { count: number }): JSX.Element {
+function Demo({ count }: { count: number }): React.JSX.Element {
   const [store] = useState(() => {
     const s = mkStore();
     seed(s, count);
@@ -88,7 +89,7 @@ function Demo({ count }: { count: number }): JSX.Element {
   );
 }
 
-function StreamingDemo(): JSX.Element {
+function StreamingDemo(): React.JSX.Element {
   const [store] = useState(mkStore);
   useEffect(() => {
     seed(store, 3);

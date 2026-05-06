@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { PlanCard } from "./PlanCard";
 import type { MessagePart } from "@/lib/api/types";
@@ -35,7 +36,7 @@ const meta: Meta<typeof PlanCard> = {
 export default meta;
 type Story = StoryObj<typeof PlanCard>;
 
-function Wrap({ part }: { part: PlanPart }): JSX.Element {
+function Wrap({ part }: { part: PlanPart }): React.JSX.Element {
   return (
     <div className="w-[640px]">
       <PlanCard part={part} />

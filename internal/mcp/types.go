@@ -1,7 +1,7 @@
 // Package mcp — types.go — client-facing interface + value types for Stoke
 // as an MCP consumer. Stoke's server-side MCP types (LegacyServerConfig,
 // ToolDefinition as used by CodebaseServer / StokeServer) live in
-// client.go / codebase_server.go / stoke_server.go and are not affected
+// client.go / codebase_server.go / r1_server.go and are not affected
 // by this interface.
 
 package mcp

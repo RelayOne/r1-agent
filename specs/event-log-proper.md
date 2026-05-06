@@ -8,9 +8,9 @@
 
 ## 1. Overview
 
-Stoke today has two partial implementations of the "durable session log" concept. `internal/bus/wal.go` is an append-only NDJSON WAL that lives under `.stoke/bus/events.log`: every event published on the in-memory hub is `json.Marshal`-ed, written, and `fsync`-ed. It works, and `cmd/stoke/resume_cmd.go` reads it to report what a dead session was doing — but the read side is observability only. No code path today can walk the WAL, reconstruct task state, and resume execution. The WAL also has no tamper seal, no indexed query (session scans are O(N) over the whole file), and no mechanism for cross-session joins. `executor-foundation.md` already outlined a successor design but the package was never built, and the resume command still talks to `bus.WAL` directly.
+Stoke today has two partial implementations of the "durable session log" concept. `internal/bus/wal.go` is an append-only NDJSON WAL that lives under `.stoke/bus/events.log`: every event published on the in-memory hub is `json.Marshal`-ed, written, and `fsync`-ed. It works, and `cmd/r1/resume_cmd.go` reads it to report what a dead session was doing — but the read side is observability only. No code path today can walk the WAL, reconstruct task state, and resume execution. The WAL also has no tamper seal, no indexed query (session scans are O(N) over the whole file), and no mechanism for cross-session joins. `executor-foundation.md` already outlined a successor design but the package was never built, and the resume command still talks to `bus.WAL` directly.
 
-This spec promotes that successor into a shipped `internal/eventlog/` package: SQLite + WAL, one `events` table, hash-chain integrity (`parent_hash = sha256(prev.id || prev.payload || prev.parent_hash)`), ULID primary keys, indexes on `session_id` / `task_id` / `mission_id` / `sequence`. Events bridge both ways — a helper `eventlog.EmitBus(bus, log, ev)` publishes to the existing in-memory hub AND appends to the SQLite log in one call. `internal/bus/` stays as the live publisher feeding subscribers (`hub/builtin` honesty gate, cost tracker, etc.); `internal/eventlog/` is the durable audit + replay substrate. `cmd/stoke/resume_cmd.go` swaps its `bus.OpenWAL`+`ReadFrom` pair for `eventlog.Open`+`ReplaySession`, and `cmd/stoke/sow_native.go` gains a `--resume-from=<session-id>` flag that reads the eventlog, reconstructs the last in-progress task, and dispatches the next task from there — closing the Task 18 MVP gap.
+This spec promotes that successor into a shipped `internal/eventlog/` package: SQLite + WAL, one `events` table, hash-chain integrity (`parent_hash = sha256(prev.id || prev.payload || prev.parent_hash)`), ULID primary keys, indexes on `session_id` / `task_id` / `mission_id` / `sequence`. Events bridge both ways — a helper `eventlog.EmitBus(bus, log, ev)` publishes to the existing in-memory hub AND appends to the SQLite log in one call. `internal/bus/` stays as the live publisher feeding subscribers (`hub/builtin` honesty gate, cost tracker, etc.); `internal/eventlog/` is the durable audit + replay substrate. `cmd/r1/resume_cmd.go` swaps its `bus.OpenWAL`+`ReadFrom` pair for `eventlog.Open`+`ReplaySession`, and `cmd/r1/sow_native.go` gains a `--resume-from=<session-id>` flag that reads the eventlog, reconstructs the last in-progress task, and dispatches the next task from there — closing the Task 18 MVP gap.
 
 ## 2. Why not just promote `hub/bus.go`
 
@@ -146,7 +146,7 @@ Contract details:
 
 ## 6. SOW-runner restart hook
 
-CLI flag: `stoke sow --resume-from=<session-id>` on `cmd/stoke/sow_native.go`. Semantics:
+CLI flag: `stoke sow --resume-from=<session-id>` on `cmd/r1/sow_native.go`. Semantics:
 
 1. Open `.stoke/events.db` via `eventlog.Open`.
 2. Call `log.ReplaySession(ctx, sessionID)`; collect events into a slice (bounded — most sessions <10k events; 100k is the hard cap before the runner errors with "session too large, compact first").
@@ -158,7 +158,7 @@ CLI flag: `stoke sow --resume-from=<session-id>` on `cmd/stoke/sow_native.go`. S
    - no events at all — behaves like a fresh start (no `--resume-from`).
 4. Before dispatching, emit a `session.resumed` event with payload `{resumed_from_sequence, last_event_type, next_task_id}` so the audit trail records the decision.
 
-Three required test cases in `cmd/stoke/sow_native_resume_test.go`:
+Three required test cases in `cmd/r1/sow_native_resume_test.go`:
 
 - **Fresh start**: no events in the log → runner behaves exactly like `stoke sow` with no flag. Asserts zero side-effects from resume logic.
 - **Mid-task crash**: seed log with `session.start`, `task.dispatch{task_id:T1}` only → runner re-dispatches T1 exactly once, no duplicate dispatch observed in the post-run log.
@@ -188,25 +188,25 @@ Three required test cases in `cmd/stoke/sow_native_resume_test.go`:
 18. [ ] Add `TestEmitBus_AppendBeforePublish` to `log_test.go`: use a fake bus that records publish calls; assert Append wrote the row BEFORE the bus saw the event (via a hook that inspects SQLite mid-publish).
 19. [ ] Add `TestVerify_OnFreshLog` + `TestVerify_OnCorruptedLog` to `log_test.go` — seed 1000 events, verify clean; flip one byte, verify reports `ErrChainBroken{Sequence: N}`.
 20. [ ] Add `log_bench_test.go` with `BenchmarkAppend` — seed 1000 events, assert p50 ≤ 2 ms and p99 ≤ 10 ms on local hardware (soft gate, fails CI only if p99 > 50 ms).
-21. [ ] In `cmd/stoke/resume_cmd.go`, replace the `bus.OpenWAL` + `w.ReadFrom(0)` pair with `eventlog.Open(filepath.Join(repo, ".stoke", "events.db"))` + `log.ReplaySession(ctx, sessionID)`. Collect the iterator into a slice to preserve the existing `reconstructSession` API.
+21. [ ] In `cmd/r1/resume_cmd.go`, replace the `bus.OpenWAL` + `w.ReadFrom(0)` pair with `eventlog.Open(filepath.Join(repo, ".stoke", "events.db"))` + `log.ReplaySession(ctx, sessionID)`. Collect the iterator into a slice to preserve the existing `reconstructSession` API.
 22. [ ] Preserve resume_cmd.go's `--list` mode by adding `(*Log).ListSessions(ctx) ([]string, error)` that returns distinct non-empty `session_id`, `mission_id`, `loop_id` values.
-23. [ ] Add `cmd/stoke/resume_cmd_test.go` covering the three resume-behavior cases (fresh, mid-task, mid-session) using a tempdir eventlog seeded by Append directly.
-24. [ ] In `cmd/stoke/sow_native.go`, add `--resume-from=<session-id>` flag parsing. When set: open the eventlog, call `log.ReplaySession`, run the backwards-walk decision logic described in §6, emit `session.resumed`, then dispatch the chosen task.
+23. [ ] Add `cmd/r1/resume_cmd_test.go` covering the three resume-behavior cases (fresh, mid-task, mid-session) using a tempdir eventlog seeded by Append directly.
+24. [ ] In `cmd/r1/sow_native.go`, add `--resume-from=<session-id>` flag parsing. When set: open the eventlog, call `log.ReplaySession`, run the backwards-walk decision logic described in §6, emit `session.resumed`, then dispatch the chosen task.
 25. [ ] Implement `internal/eventlog/resume.go` with `DecideResume(events []bus.Event, plan *plan.SOW) (nextTask string, mode ResumeMode, err error)` — pure function, no IO, returns one of `ResumeFreshStart | ResumeRetryTask | ResumeNextTask | ResumeAlreadyDone`. Covered by unit tests over seeded event slices.
 26. [ ] Implement orphan tool-call synthesis: in `DecideResume`, walk events forward tracking `call_id → (tool.call, tool.result)` pairs; for each orphan where `IsIdempotentTool(name)` is false, return a list of synthetic `tool.result` events the caller must `Append` before dispatching. Idempotent orphans are flagged for re-dispatch instead.
-27. [ ] Add `cmd/stoke/sow_native_resume_test.go` covering: fresh-start no-op, mid-task-crash re-dispatches the crashed task exactly once, mid-session-crash dispatches the next task. Each test seeds events directly via Append and asserts on post-run log state.
-28. [ ] Add `cmd/stoke/sow_native_resume_orphan_test.go` covering: seed a `tool.call` for `write_file` with no matching result → DecideResume returns a synthetic `tool.result{error:"orphan"}`; seed a `tool.call` for `read_file` → DecideResume flags for re-dispatch, no synthesis.
-29. [ ] Wire `Verify` into `stoke eventlog verify` subcommand in `cmd/stoke/eventlog_cmd.go` (new file). Flags: `--db <path>` (default `.stoke/events.db`). Exit codes: 0 clean, 1 ErrChainBroken, 2 IO error.
-30. [ ] Add `cmd/stoke/eventlog_cmd_test.go` covering: clean log exits 0; tampered log exits 1 with the broken sequence number in stderr.
-31. [ ] Run `gofmt -w ./internal/eventlog/ ./cmd/stoke/` and `go vet ./...`; fix any reported issues.
+27. [ ] Add `cmd/r1/sow_native_resume_test.go` covering: fresh-start no-op, mid-task-crash re-dispatches the crashed task exactly once, mid-session-crash dispatches the next task. Each test seeds events directly via Append and asserts on post-run log state.
+28. [ ] Add `cmd/r1/sow_native_resume_orphan_test.go` covering: seed a `tool.call` for `write_file` with no matching result → DecideResume returns a synthetic `tool.result{error:"orphan"}`; seed a `tool.call` for `read_file` → DecideResume flags for re-dispatch, no synthesis.
+29. [ ] Wire `Verify` into `stoke eventlog verify` subcommand in `cmd/r1/eventlog_cmd.go` (new file). Flags: `--db <path>` (default `.stoke/events.db`). Exit codes: 0 clean, 1 ErrChainBroken, 2 IO error.
+30. [ ] Add `cmd/r1/eventlog_cmd_test.go` covering: clean log exits 0; tampered log exits 1 with the broken sequence number in stderr.
+31. [ ] Run `gofmt -w ./internal/eventlog/ ./cmd/r1/` and `go vet ./...`; fix any reported issues.
 32. [ ] Migration: if `.stoke/bus/events.log` exists on open and `.stoke/events.db` does not, print a one-line warning pointing at `stoke eventlog import-wal` (a follow-up subcommand — NOT in this spec; just leave the breadcrumb). Existing bus WAL continues working; eventlog is additive.
-33. [ ] Run `go build ./cmd/stoke && go test ./... && go vet ./...` and confirm all three are green.
+33. [ ] Run `go build ./cmd/r1 && go test ./... && go vet ./...` and confirm all three are green.
 34. [ ] Run the seeded 1000-event verification test end-to-end: `stoke eventlog verify --db testdata/seeded.db` exits 0 in <500 ms.
 35. [ ] Run the crash-simulation integration test: kill a `stoke sow` process mid-task (SIGKILL), then `stoke sow --resume-from=<session>` and assert the same task is dispatched exactly once (grep event log for duplicate `task.dispatch{task_id:T1}` entries; count must be exactly 2 — the original and the resumed).
 
 ## 8. Acceptance
 
-- `go build ./cmd/stoke && go test ./... && go vet ./...` all exit 0.
+- `go build ./cmd/r1 && go test ./... && go vet ./...` all exit 0.
 - Hash chain verified on a seeded 1000-event log via `stoke eventlog verify` (exit 0, <500 ms).
 - `stoke sow --resume-from=<session-id>` on a crashed-mid-task session dispatches the crashed task exactly once (asserted by counting `task.dispatch` events with matching `task_id` — original + one resume = exactly 2).
 - `stoke sow --resume-from=<session-id>` on a mid-session-complete session dispatches the next task, not the already-completed one.
@@ -230,10 +230,10 @@ Test coverage is enumerated inline in §7 checklist (items 3, 14, 15, 16, 17, 18
   - Hash chain valid across 100 sequential appends
   - `Verify` on a clean log returns nil
   - `Verify` on a log with one tampered payload byte returns `ErrChainBroken` pointing at the tampered row (item 14)
-  - `TestReplaySession_ScopeMatching` — matches the same rows `cmd/stoke/resume_cmd.go` currently matches (behavior-preserving delta, item 15)
+  - `TestReplaySession_ScopeMatching` — matches the same rows `cmd/r1/resume_cmd.go` currently matches (behavior-preserving delta, item 15)
   - `TestAppend_ConcurrentWriters` — 4 goroutines × 250 appends on distinct session_ids → 1000 rows, all chain hashes valid, all sequences unique + monotonic (item 16)
   - `TestAppend_SQLiteBusyRetry` — simulate BUSY from a blocking tx; assert 3× retry + wrapped `eventlog: busy` error (item 17)
   - `TestEmitBus_AppendBeforePublish` — assert SQLite row written BEFORE bus publish; fake bus records call order (item 18)
 - **`internal/eventlog/log_bench_test.go`** — p50 ≤ 2ms, p99 ≤ 10ms per Append on a 1000-event seed with ~50 KiB avg payload (flagged as a gate, not a hard fail).
-- **`cmd/stoke/sow_native_resume_test.go`** — three resume scenarios (fresh start, mid-task crash = re-dispatch same task, mid-session crash = dispatch next task); orphan tool-call synthesis emits a synthetic `tool.result` with `error="orphan"`.
-- Run command: `go test -race -count=1 ./internal/eventlog/... ./cmd/stoke/...`.
+- **`cmd/r1/sow_native_resume_test.go`** — three resume scenarios (fresh start, mid-task crash = re-dispatch same task, mid-session crash = dispatch next task); orphan tool-call synthesis emits a synthetic `tool.result` with `error="orphan"`.
+- Run command: `go test -race -count=1 ./internal/eventlog/... ./cmd/r1/...`.

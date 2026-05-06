@@ -265,7 +265,7 @@ The CLI commands exposed:
 Before the bench can be trusted as a validation tool, it has to pass its own validation gate:
 
 1. ✅ `go vet ./...` clean, `go test ./internal/bench/...` passes with >70% coverage
-2. ✅ `go build ./cmd/stoke` succeeds and the `stoke bench` subcommands are reachable
+2. ✅ `go build ./cmd/r1` succeeds and the `stoke bench` subcommands are reachable
 3. ✅ The runner can execute a single golden mission end-to-end in a sandboxed working directory without polluting the host filesystem
 4. ✅ The runner correctly collects the ledger and bus event log from the working directory into the results archive
 5. ✅ The runner recovers cleanly from a mission that times out (the mission is recorded as timed-out, the sandbox is cleaned up, subsequent missions in the batch are not affected)

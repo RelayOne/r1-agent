@@ -926,7 +926,7 @@
 
 ### STOKE-023: MapSecuritySurface error silently discarded
 - **Severity**: MEDIUM
-- **File**: stoke/cmd/stoke/main.go:1469
+- **File**: stoke/cmd/r1/main.go:1469
 - **Sources**: lead-compliance
 - **Issue**: `secMap, _ = scanpkg.MapSecuritySurface(...)`. If it fails, secMap is nil and downstream code may panic. User believes security surface was mapped when it wasn't.
 - **Fix**: Log the error: `if err != nil { fmt.Fprintf(os.Stderr, "warning: security surface mapping failed: %v\n", err) }`.

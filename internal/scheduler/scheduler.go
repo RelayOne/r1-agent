@@ -44,7 +44,7 @@ type PriorityFunc func(tasks []plan.Task) []plan.Task
 
 // Algorithms is the registry of named PriorityFunc implementations.
 // Seeded with "grpw" (the legacy default). Callers who bring an
-// alternative (e.g. cmd/stoke at startup) can add entries before the
+// alternative (e.g. cmd/r1 at startup) can add entries before the
 // scheduler runs. Safe for concurrent registration as long as writes
 // happen before any Scheduler.Run call begins.
 var Algorithms = map[string]PriorityFunc{

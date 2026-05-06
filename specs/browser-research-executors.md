@@ -103,7 +103,7 @@ go-rod auto-downloads Chromium on first run to `$HOME/.cache/rod/browser`. To pr
    FROM golang:1.22 AS build
    WORKDIR /src
    COPY . .
-   RUN go build -o /stoke ./cmd/stoke
+   RUN go build -o /stoke ./cmd/r1
 
    FROM chromedp/headless-shell:latest
    COPY --from=build /stoke /usr/local/bin/stoke
@@ -431,7 +431,7 @@ Budget envelope before kickoff; checked against `costtrack.OverBudget()` per sta
 
 ---
 
-## Part 3 — CLI (`cmd/stoke/research_cmd.go`)
+## Part 3 — CLI (`cmd/r1/research_cmd.go`)
 
 New cobra subcommand:
 
@@ -562,7 +562,7 @@ Router integration (spec-3): `router.Classify("research X")` returns `TaskResear
 
 ```
 # Build
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 
 # Browser
@@ -640,7 +640,7 @@ Each item is self-contained: what, where, which patterns to follow, what to test
 
 22. [ ] **Wire research events into `internal/streamjson/`.** New subtypes under `_stoke.dev/research/*`: `plan.ready`, `subagent.started`, `subagent.completed`, `synthesis.ready`, `claim.verified`, `completed`, `budget_exhausted`. No schema break.
 
-23. [ ] **Create `cmd/stoke/research_cmd.go` cobra subcommand.** Flags per Part 3. Handles `--verify` mode (skip Lead+subagents, only run verifier). Resolves `--run-id` to existing directory on resume. Respects `--budget-usd` via `costtrack.OverBudget`.
+23. [ ] **Create `cmd/r1/research_cmd.go` cobra subcommand.** Flags per Part 3. Handles `--verify` mode (skip Lead+subagents, only run verifier). Resolves `--run-id` to existing directory on resume. Respects `--budget-usd` via `costtrack.OverBudget`.
 
 24. [ ] **Register `TaskResearch` → `ResearchExecutor` with spec-3 router.** Single line at router init; do not extend router logic.
 
@@ -650,6 +650,6 @@ Each item is self-contained: what, where, which patterns to follow, what to test
 
 27. [ ] **Add cost estimates table (§2.9) to `docs/research.md`.** Also include the budget-check integration point. NOT a README.
 
-28. [ ] **Update `cmd/stoke/main.go` help output to include `stoke research` in the command list.** One-liner: `research    Run multi-agent research with claim verification`.
+28. [ ] **Update `cmd/r1/main.go` help output to include `stoke research` in the command list.** One-liner: `research    Run multi-agent research with claim verification`.
 
 29. [ ] **Verify the full AC block (§Acceptance Criteria) passes locally.** `go build`, `go vet`, `go test ./internal/browser/...`, `go test ./internal/executor/...`, and the CLI/filesystem/sqlite checks. Fix any reds; do not suppress.

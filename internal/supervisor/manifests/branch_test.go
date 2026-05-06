@@ -10,7 +10,8 @@ func TestBranchRules_Count(t *testing.T) {
 	if got == 0 {
 		t.Fatal("BranchRules() returned zero rules")
 	}
-	const want = 20
+	// 20 baseline + 3 antitrunc rules = 23
+	const want = 23
 	if got != want {
 		t.Errorf("BranchRules() returned %d rules, want %d", got, want)
 	}

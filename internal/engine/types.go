@@ -218,7 +218,7 @@ type RunSpec struct {
 	// The field is typed as a minimal interface rather than the concrete
 	// *mcp.Registry so unit tests can inject a fake without standing up
 	// transports or subprocesses. At runtime callers pass the real
-	// *mcp.Registry from cmd/stoke/main.go.
+	// *mcp.Registry from cmd/r1/main.go.
 	MCPRegistry MCPRegistry
 
 	// WorkerTrust is the trust label forwarded to MCPRegistry.AllToolsForTrust

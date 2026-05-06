@@ -19,7 +19,7 @@
 // Deliberately deferred to later commits (one-commit constraint):
 //   - streamjson.TwoLane.Tee() helper (spec item 1)
 //   - run.go + tea.NewProgram wiring (spec item 7)
-//   - cmd/stoke flag wiring --tui/--no-tui (spec item 8)
+//   - cmd/r1 flag wiring --tui/--no-tui (spec item 8)
 //   - sessionctl client goroutine dispatch (spec item 9)
 //   - interactive.go thin-wrapper refactor (spec item 10)
 //   - integration tests with fake PTY (spec item 15)

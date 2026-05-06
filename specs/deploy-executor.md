@@ -25,7 +25,7 @@ Add a deploy executor that ships the current workspace to Fly.io, verifies the r
 - Event emission: `internal/bus/` (publish) + `internal/streamjson/` (wire out)
 - Executor shape: `internal/executor/code.go` (from spec-3) — Deploy mirrors Code's Execute/BuildCriteria/BuildRepairFunc/BuildEnvFixFunc shape
 - Token redaction: `logging/` helpers already redact `CostUSD`/`APIKey`; extend for `FLY_API_TOKEN`
-- Command factory: `cmd/stoke/run_cmd.go` (from spec-3) for cobra wiring
+- Command factory: `cmd/r1/run_cmd.go` (from spec-3) for cobra wiring
 
 ## Library Preferences
 
@@ -287,7 +287,7 @@ Environment-class failures (per D4; these skip repair and go straight to env fix
 - `DNS not ready` / GET-hits-502-during-warmup-for >60s despite `[[http_service.checks]]` reporting pass → wait 30s, retry once.
 - `region not enabled for org` → surface to operator; abort.
 
-## `stoke deploy` Command (`cmd/stoke/deploy_cmd.go`)
+## `stoke deploy` Command (`cmd/r1/deploy_cmd.go`)
 
 Cobra subcommand; reuses the `Operator` interface from spec-7 for terminal vs NDJSON output.
 
@@ -429,7 +429,7 @@ See Verification Cascade above.
 - [ ] Verify-only mode: skips Deploy, no rollback path engaged even on failure.
 - [ ] AC `DEPLOY-URL-LIVE` calls `VerifyFunc` not Command (exercises D13).
 
-### `cmd/stoke/deploy_cmd_test.go`
+### `cmd/r1/deploy_cmd_test.go`
 
 - [ ] `--help` lists `provider`, `app`, `region`, `verify-only`, `rollback`.
 - [ ] `--dry-run` prints fly.toml to stdout and exits 0; no flyctl invoked.
@@ -445,15 +445,15 @@ Run from repo root; all must exit 0.
 # 1. Package builds and tests pass
 go build ./internal/deploy/...
 go build ./internal/executor/...
-go build ./cmd/stoke
-go vet ./internal/deploy/... ./internal/executor/... ./cmd/stoke
+go build ./cmd/r1
+go vet ./internal/deploy/... ./internal/executor/... ./cmd/r1
 
 # 2. Unit tests
 go test ./internal/deploy/... -run TestFlyDeployer
 go test ./internal/deploy/... -run TestStackDetection
 go test ./internal/deploy/... -run TestVerify
 go test ./internal/executor/... -run TestDeployExecutor
-go test ./cmd/stoke -run TestDeployCmd
+go test ./cmd/r1 -run TestDeployCmd
 
 # 3. CLI surface
 ./stoke deploy --help | grep -q -- '--provider'
@@ -486,9 +486,9 @@ go test ./internal/deploy/... -run TestTokenNeverInEvents
 6. [ ] Create `internal/deploy/verify.go` with the 4-step Verification Cascade; takes a `browser.Pool` injected via constructor so tests pass a mock.
 7. [ ] Create `internal/executor/deploy.go` implementing spec-3's `Executor`. Wire `Deployer`, `browser.Pool`, bus, streamjson emitter. Implement `Execute`, `BuildCriteria`, `BuildRepairFunc`, `BuildEnvFixFunc`. Auto-rollback block uses the exact triple predicate from §Auto-Rollback.
 8. [ ] Emit the 9 event types via `internal/bus/` publisher; mirror to `internal/streamjson/` with `_stoke.dev/deploy.*` subtype. All payloads pass through `logging.RedactEvent`.
-9. [ ] Create `cmd/stoke/deploy_cmd.go` — cobra command with flags from §Flags; mode dispatch: primary / verify-only / rollback / dry-run. Wire `Operator` from spec-7 for prompts. Exit codes per §Modes.
+9. [ ] Create `cmd/r1/deploy_cmd.go` — cobra command with flags from §Flags; mode dispatch: primary / verify-only / rollback / dry-run. Wire `Operator` from spec-7 for prompts. Exit codes per §Modes.
 10. [ ] Integrate with `internal/executor/` registry so `stoke run` routes deploy intents to this executor (router keyword: `deploy`, `ship to fly`, etc. — registered in spec-3's `router.Classify`).
-11. [ ] Add golden tests in `cmd/stoke/testdata/deploy/*.golden.txt` for `--dry-run` output across the three templates.
+11. [ ] Add golden tests in `cmd/r1/testdata/deploy/*.golden.txt` for `--dry-run` output across the three templates.
 12. [ ] Add `internal/deploy/fly_mock_test.go` providing a `MockFlyctl` helper that stamps a fake `flyctl` binary into a `testing.TempDir()` and sets `STOKE_FLYCTL_BIN`. All fly tests use it — no real network.
 13. [ ] Document the package in `internal/deploy/doc.go` with a top-level usage example and a pointer back to this spec.
 14. [ ] Update `CLAUDE.md` package map: add `deploy/` under "DEPLOYMENT" (new section) and `executor/deploy.go` under the existing executor listing. One-line descriptions only.

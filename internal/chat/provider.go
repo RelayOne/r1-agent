@@ -11,7 +11,7 @@ import (
 // ProviderOptions describes the inputs needed to stand up a chat-capable
 // provider. It intentionally mirrors the subset of SmartDefaults that is
 // relevant to conversational use: base URL, API key, and model. This keeps
-// the chat package free of a dependency on cmd/stoke.
+// the chat package free of a dependency on cmd/r1.
 type ProviderOptions struct {
 	// BaseURL is the Anthropic-protocol endpoint. Leave empty to use
 	// the default api.anthropic.com.

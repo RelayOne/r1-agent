@@ -184,7 +184,7 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - `stoke run "free text task"` → routes to chat-intent classifier → dispatches to appropriate executor
 - `stoke run --sow path.md` → routes to existing SOW executor
 **Owners:** spec-2 (CloudSwarm Protocol), spec-3 (Executor Foundation — task router)
-**Implications:** `cmd/stoke/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
+**Implications:** `cmd/r1/run_cmd.go` is new. Internally calls into existing `sow_native.go` for SOW path and chat intent classifier for free-text.
 
 ### D-2026-04-20-02 — `STOKE_DESCENT` stays opt-in through Q2
 **Context:** H-91 verification descent engine just shipped (commit 8611d48); still stabilizing. Spec-1 adds anti-deception + per-file cap + bootstrap-per-cycle hardening.
@@ -228,3 +228,165 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - **D-28**: `Operator` interface with terminal + NDJSON impls (latter uses `hitl_required` for Ask).
 - **D-29**: Intent Gate = verb-scan first, Haiku on ambiguity; DIAGNOSE masks write tools at `harness/tools` auth.
 - **D-31**: Live meta-reasoner gated by `STOKE_META_LIVE=1`.
+
+## 2026-05-04
+## 2026-05-04 — Spec 8 Agentic Test Harness
+
+These five decisions accept the design choices in `specs/agentic-test-harness.md` as binding for the harness, lint, and docs surface.
+
+### D-A1 — Single `r1.*` MCP namespace; legacy `stoke_*` dual-aliased until v2.0.0
+**Decision:** All new tools land under `r1.*`. The 5 legacy `stoke_*` SOW tools are preserved verbatim per `canonicalStokeServerToolName` and dispatch to the same handlers. Removal scheduled for v2.0.0.
+**Owners:** spec 8 (agentic-test-harness).
+**Implications:** The Slack-style envelope's `links.deprecations[]` carries a one-time warning when a session calls a `stoke_*` name. CHANGELOG records the removal at the v2.0.0 cut.
+**Source:** `specs/agentic-test-harness.md` §10a "Stoke alias removal".
+
+### D-A2 — Slack-style envelope at the `r1_server.go` boundary; stokerr/ taxonomy for every error
+**Decision:** Every `r1.*` tool response wraps in `{ok, data?, error_code?, error_message?, links?}`. Every error maps to one of the 10 `internal/stokerr/` codes via `MapErrorToTaxonomy`. Raw Go error strings are forbidden at the wire.
+**Owners:** spec 8.
+**Implications:** Handlers that return `fmt.Errorf("...")` are silently re-mapped (with string heuristics) and a future spec will tighten this so direct `*stokerr.Error` is the only legal form.
+**Source:** §3 "Existing Patterns to Follow", §6.
+
+### D-A3 — Synthetic accessibility tree, NOT pixel snapshots
+**Decision:** Both TUI and web surfaces emit a structured `A11yNode` tree (`role`, `name`, `state`, `children`). Snapshot assertions fire against the tree; the rendered string is debug-only. `lipgloss.SetColorProfile(termenv.Ascii)` is mandatory in `NewShim` for byte-determinism.
+**Owners:** spec 8.
+**Implications:** Computer Use as a primary driver is deferred to Q3 2026; the harness exercises a11y trees, not pixels. The §10a "Snapshot drift" mitigation depends on this.
+**Source:** §5, §10a.
+
+### D-A4 — UI without API is a build break
+**Decision:** Every interactive UI component (React onClick, Bubble Tea KeyMsg consumer, Tauri command) MUST reference an MCP tool from the live r1.* catalog. The `tools/lint-view-without-api/` scanner enforces this in CI and via `r1.verify.lint`.
+**Owners:** spec 8.
+**Implications:** Adding a UI button without a corresponding MCP tool fails the build. Adding a tool without a UI is a WARN (allowlist for `headless_only` cases).
+**Source:** §8.
+
+### D-A5 — Gherkin-flavored markdown DSL (`*.agent.feature.md`); no bespoke language
+**Decision:** Test fixtures use Markdown-shaped Gherkin (Given/When/Then in `- ` list items under `## Scenario:` headers). The runner at `tools/agent-feature-runner/` parses them and dispatches each step via heuristics + per-file `## Tool mapping` blocks. No custom DSL.
+**Owners:** spec 8.
+**Implications:** Authoring fixtures is a 0-cognitive-load task for any human who has read a Cucumber file. The Markdown lint and table-of-contents generators in `docs/` work across the harness corpus without special handling.
+**Source:** §6, §10, §11.
+
+Cross-link: `specs/agentic-test-harness.md` (BUILD_ORDER 8). Implementation tracked in `build/agentic-test-harness` per the 43-item §12 checklist.
+
+## 2026-05-04 — Spec 9 Anti-Truncation Enforcement
+
+### D-2026-05-04-01 — Anti-truncation enforcement is machine-mechanical, not prompt-level
+**Context:** The underlying LLM (Claude) self-reduces scope under long-running multi-task work — claims "good enough", "foundation done", "deferring to follow-up", and stops. When told to stop self-reducing it acknowledges the request and continues anyway on the next opportunity.
+**Decision:** Enforcement runs at the host process layer (Go code) via the antitrunc package, NOT through prompt instructions. Seven independently-effective layers: regex catalog, scope-completion gate, cortex Lobe Detector, supervisor rules, agentloop wiring, post-commit git hook, CLI + MCP tool.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Override path:** Operator-only `--no-antitrunc-enforce` flag demotes to advisory; LLM has no override path.
+**Evidence:** specs/anti-truncation.md, docs/ANTI-TRUNCATION.md.
+
+### D-2026-05-04-02 — Anti-truncation gate composes BEFORE all other end-turn hooks
+**Context:** A model that can convince any single hook to mark its self-truncation acceptable bypasses the defense. The gate must run first.
+**Decision:** `internal/agentloop/antitrunc.go` wraps `Config.PreEndTurnCheckFn` so the antitrunc gate evaluates before any user-supplied hook (build verifier, cortex hook, operator hook). When the gate fires, the user hook is NOT called — the gate's refusal is returned immediately.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Implications:** The `agentloop.Config` API gains five new fields: AntiTruncEnforce, AntiTruncPlanPath, AntiTruncSpecPaths, AntiTruncCommitLookbackFn, AntiTruncAdvisory(+Fn). Backward-compatible (zero values disable enforcement).
+
+### D-2026-05-04-03 — Multi-signal corroboration on commit-body false-completion
+**Context:** Commit subjects like "feat: spec 9 done" are sometimes legitimate (when spec 9 actually IS done) and sometimes self-truncation. A single-signal block produced too many false positives in dry-run.
+**Decision:** False-completion phrases in commit bodies require corroboration — at least one OTHER signal (truncation phrase in assistant output, or unchecked plan/spec) must also be present before the gate fires. The `r1 antitrunc verify` CLI cross-checks task-index claims against the actual spec checklist for the same purpose.
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Trade-off:** A bare false-completion commit on an otherwise clean repo is allowed (the next layer's git-hook still writes a non-blocking warning to audit/antitrunc/).
+
+### D-2026-05-04-04 — Soak-substitute corpus instead of overnight test
+**Context:** Spec §item 26 calls for an 8+ hour overnight soak with AntiTruncEnforce=true to confirm no false positives block legitimate completion.
+**Decision:** Build-session time budget makes a real overnight soak BLOCKED. The substitute is a 5000-iteration fuzz test (`internal/antitrunc/soak_test.go`) over a 40-entry legitimate-text corpus that exercises every danger keyword in legitimate phrasings. The corpus drove one regex tightening (`false_completion_good_enough` had bare "sufficient" matches; tightened to require a completion-claim shape).
+**Owners:** spec-9 (Anti-Truncation Enforcement).
+**Follow-up:** When CI runs allow long-duration jobs, promote the fuzz test to a soak job that loops the corpus indefinitely with rotation seeds.
+
+---
+
+## 2026-05-05 — UI v2 retrofit scope (D-UI2)
+
+Append entry recording the decisions taken during the `/scope all remaining 66 items etc` scoping session for the 61 unchecked items in `specs/r1-server-ui-v2.md`.
+
+### D-UI2-1 — Node 22 LTS precursor bump
+
+**Decision:** bump CI runners from Node 20.18 → Node 22.13 LTS in a small precursor PR before the UI v2 retrofit specs build.
+
+**Rationale:**
+- Node 20 LTS went EOL 2026-04-30 (5 days before this scope was filed).
+- jsdom 27+, vitest 4, vite 7 are all blocked on Node 20.18; bumping unblocks them in a single change.
+- Spec 5's 3D-worker vitest test needs Worker support that is reliable on Node 22 (jsdom 29) but bumpy on Node 20 (jsdom 26 worker shim).
+- Node 22.13 is what jsdom 29 explicitly tests against per RT-JSDOM-VITEST-NODE22.
+
+**Consequences:**
+- One small CI-only PR before any UI v2 retrofit spec can build.
+- Unblocks 4 deferred dependabot bumps (jsdom 29, vitest 4, vite 7, @vitest/coverage-v8 4) — separate follow-up PRs.
+- Cloud Build base image: `node:20` → `node:22.13-bookworm-slim`.
+- GitHub Actions matrix: `ubuntu-22.04` → `ubuntu-24.04`, `node-version: '20'` → `'22'`.
+
+### D-UI2-2 — Three.js ESM cutover
+
+**Decision:** in the UI v2 vendor tree (`cmd/r1-server/ui/web/vendor/`), ship three.js 0.170.0 ESM module form (`three.module.js`) + import map. The legacy global-`THREE` 0.x bundle in `cmd/r1-server/ui/vendor/` is unaffected (different path) and is consumed only by the v1 SPA at `/ui/`.
+
+**Rationale:**
+- Original UI v2 spec §2.1 calls for `three.module.js` + import map; the existing vendor blob disagrees with that plan.
+- ESM is required for the Web Worker pattern (Spec 2's `graph-worker.js` imports `d3-force-3d` through the import map).
+- InstancedMesh + `OrbitControls` are easier to author against the typed module interface.
+
+**Consequences:**
+- ~150 KB ESM bundle vs the existing ~125 KB global bundle — slight vendor budget increase but still inside the 250 KB total.
+- Spec 2's graph.js can `import * as THREE from 'three'` — no namespace pollution.
+
+### D-UI2-3 — Spec splitting
+
+**Decision:** split the 61 unchecked items in `r1-server-ui-v2.md` into 5 sub-specs:
+1. `r1-server-ui-v2-foundation` — vendor scripts + htmx base.html (10 items)
+2. `r1-server-ui-v2-3d-perf` — InstancedMesh + Web Worker (11 items)
+3. `r1-server-ui-v2-event-rendering` — skill load/unload + redaction (12 items)
+4. `r1-server-ui-v2-handlers-and-routes` — feature flag + page templates + memory + share + tracebundle + SSE polish (22 items)
+5. `r1-server-ui-v2-tests` — golden + worker fixture + Playwright E2E + axe (6 items)
+
+**Build order:** `1 → (2, 3, 4 parallel) → 5`.
+
+**Rationale:**
+- Spec 1 is foundation — vendor blobs + base.html that everything else extends.
+- Specs 2-4 are independent slices; can build in parallel without conflict (Spec 2 owns `web/js/`, Spec 3 owns Go helpers + partials, Spec 4 owns page templates + handlers).
+- Spec 5 references all four; gates merge.
+
+**Consequences:**
+- 5 PRs instead of 1. More merge orchestration but cleaner blame.
+- `r1-server-ui-v2.md` (the master spec) gets a `<!-- SPLIT_INTO -->` frontmatter pointer.
+
+### D-UI2-4 — Vendoring strategy
+
+**Decision:** Strategy A from RT-VENDOR-SCRIPT-PATTERNS — curl + per-file SRI shell script + committed blobs. Pinned versions: htmx 2.0.4, htmx-ext-sse 2.2.4, three 0.170.0 (ESM), three-spritetext 1.9.5, 3d-force-graph 1.77.0, d3-force-3d 3.0.5.
+
+**Rationale:**
+- Smallest moving parts. No Node toolchain at build time.
+- Real upstream-author SRI cross-check (htmx publishes SRI in release notes verbatim).
+- Air-gap-friendly: blobs committed; CI runs script in `--check` mode (no network) to verify SRI.
+
+**Consequences:**
+- ~250 KB gzipped chrome (right at spec budget).
+- Per-vendor-update flow: bump version → run `vendor-ui.sh` → commit diff. Idempotent.
+
+### D-UI2-5 — Waterfall density
+
+**Decision:** Strategy G (content-visibility:auto + htmx server-paged chunks + server-side aggregation) primary; Strategy H (Clusterize.js fallback) gated behind a feature flag if FPS telemetry shows <50 on scroll.
+
+**Rationale:** RT-WATERFALL-DENSITY benchmark — pure DOM busts at ~3k rows; Strategy G is htmx-native, zero JS, degrades to plain pagination.
+
+### D-UI2-6 — Redaction UI
+
+**Decision:** SVG lock glyph (NOT emoji); desaturate to ~15% saturation × 0.7 lightness; specific reason wording (`"redacted by retention policy (90d)"`); edges remain at full opacity; `aria-hidden="true"` on the lock SVG; reserved ⚠ overlay for `isRedacted=true && len(events)==0` (anomaly).
+
+**Rationale:** RT-REDACTION-UI-PATTERNS — Sentry's `[Filtered]` placeholder + tooltip-with-reason is the closest precedent; emoji rendering and SR pronunciation vary across platforms; transparency about absence > concealment.
+
+### D-UI2-7 — Legacy v1 SPA cleanup + R1_SERVER_UI_V2 flag removal
+
+**Decision:** delete the 12 legacy vanilla-JS SPA files in `cmd/r1-server/ui/`, lift the parallel v2 tree from `cmd/r1-server/ui/web/` up one level to `cmd/r1-server/ui/`, and drop the `R1_SERVER_UI_V2` envelope toggle (Renderable / v2Enabled / traceV2Enabled all return true unconditionally).
+
+**Rationale:**
+- The two-release-cycle parallel-deploy window mandated by Spec 1 §8 has elapsed. v2 shipped through PRs #154/#155/#156/#160/#162/#167.
+- Keeping both surfaces alive doubled the test maintenance surface and made the v2-OFF dispatch paths a latent regression risk: with the legacy files deleted, every flag-off branch (`serveIndex`, `serveGraphIndex`, `serveTraceWaterfall` flag-off) would 500 trying to read `index.html`/`graph.html` from the embed FS.
+- Dropping the flag closes that risk: the dead-fallback shims (`serveIndex` / `serveGraphIndex`) remain as compile-time hooks for the few `mux.HandleFunc("GET /session/", serveIndex)` mounts that catch malformed URLs, but they 404 cleanly instead of 500ing.
+- The `RS-4 item 20` NODE_STYLES contract test (`TestUIGraphJSHasNodeStyleContract`) was the highest-value (c)-class test in the audit. The contract has no current home in v2 graph.js (which uses generic InstancedMesh shape pools rather than per-node-type style records). The test is left BLOCKED + skipped in code rather than deleted; reviewer will either point it at the v2 surface or document its retirement.
+
+**Consequences:**
+- 12 files deleted, 38 v2 files moved, ~80 LOC of flag-gated dead code retired.
+- Test suite pruned: 5 (a)-class tests deleted, 7 (b)-class tests retargeted, 8 cascading flag-OFF tests deleted (state no longer representable). 1 (c)-class test left BLOCKED.
+- v2 surface paths shift from `/ui/web/{js,css,vendor,partials}/...` to `/ui/{js,css,vendor,partials}/...`. Operators upgrading do NOT need to flip any env-var; the v2 surface is the only surface.
+- `R1_SERVER_SHARE_ENABLED` stays as the per-/share/ gate. `R1_SERVER_TRACE_STUB` stays as the dev-only demo-spans toggle. `R1_MEMORIES_PASSPHRASE` stays as the memory-bus write gate.
+
+**Audit trail:** triage commit `3f98fd1b` on `audit/legacy-spa-triage-2026-05-06`, plans/legacy-spa-test-triage.md.

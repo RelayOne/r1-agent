@@ -7,7 +7,7 @@ set -euo pipefail
 
 echo "[pre-push] Running r1 CI gate..."
 
-go build ./cmd/r1 ./cmd/stoke-acp
+go build ./cmd/r1 ./cmd/r1-acp
 go vet ./...
 go test ./... -count=1 -timeout=120s
 

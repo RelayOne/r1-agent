@@ -193,7 +193,7 @@ The concern field's job is "project the relevant slice of the substrate into the
 ## Validation gate
 
 1. ✅ `go vet ./...` clean, `go test ./internal/concern/...` passes with >70% coverage on the builder and >80% coverage on each template file
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ `BuildConcernField(role, scope, ledger)` returns a deterministic result for a given (role, scope, ledger snapshot) — running it twice on the same inputs produces the same output
 4. ✅ Every stance role used in the team roster (component 1) has a corresponding template file in `internal/concern/templates/` (verified by grep against the roster's stance list)
 5. ✅ Every template file has a unit test that constructs a synthetic ledger and a synthetic task DAG scope, runs the template, and asserts the rendered concern field contains the expected sections in the expected shape

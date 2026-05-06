@@ -213,7 +213,7 @@ The ledger holds the *reasoning, the structure, and the history*. Everything els
 Before any other component depends on the ledger, the ledger has to pass its own validation gate. The gate is:
 
 1. ✅ `go vet ./...` clean, `go test ./internal/ledger/...` passes with >70% coverage
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ AddNode rejects nodes with missing required fields
 4. ✅ AddNode rejects nodes whose declared edges target nonexistent nodes
 5. ✅ AddEdge rejects edges between nodes when the directionality rule is violated (e.g., repo→internal)

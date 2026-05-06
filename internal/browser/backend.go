@@ -125,6 +125,6 @@ func NewRodClient(cfg RodConfig) (*RodClient, error) {
 func stubRodFactory(cfg RodConfig) (*RodClient, error) {
 	return nil, &ChromeLaunchFailedError{
 		Cause: fmt.Errorf("interactive browser actions require the stoke_rod build tag; " +
-			"rebuild with 'go build -tags stoke_rod ./cmd/stoke'"),
+			"rebuild with 'go build -tags stoke_rod ./cmd/r1'"),
 	}
 }

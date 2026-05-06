@@ -58,7 +58,7 @@ The CLI itself does not contain mission logic. All of the work happens in the su
 
 **Components built in this phase.**
 
-- Repo skeleton (`cmd/stoke/`, `internal/`, `internal/bench/golden/`, etc.)
+- Repo skeleton (`cmd/r1/`, `internal/`, `internal/bench/golden/`, etc.)
 - Go module setup with dependencies locked
 - CI pipeline that runs `go vet`, `go test`, `go build`
 - Pre-commit hook infrastructure (the hook itself won't be installed until the ledger is built in Phase 1, but the hook scripts live here)
@@ -67,7 +67,7 @@ The CLI itself does not contain mission logic. All of the work happens in the su
 - An error types package so every component can return errors with consistent structure
 - A small utility package for content-addressed IDs (used by the ledger for node IDs, but factored out so the ID shape is consistent across the codebase)
 
-**Validation gate for Phase 0.** `go vet` clean, `go test ./...` passes, `go build ./cmd/stoke` produces a binary, CI runs these on every commit. No component-specific gates yet — Phase 0 is about the scaffolding being correct.
+**Validation gate for Phase 0.** `go vet` clean, `go test ./...` passes, `go build ./cmd/r1` produces a binary, CI runs these on every commit. No component-specific gates yet — Phase 0 is about the scaffolding being correct.
 
 **Dependencies.** None. This is the foundation.
 
@@ -183,7 +183,7 @@ The CLI itself does not contain mission logic. All of the work happens in the su
 
 - **Component 9: The Snapshot Mechanism.** Package `internal/snapshot`. Snapshot capture at initialization (git commit SHA + list of files + directory structure). The "in the snapshot" query used by the supervisor's snapshot rules. Snapshot annotation CRUD through the ledger. Cold-start handling for brand-new repos. Explicit snapshot updates when the user promotes Stoke-written code to snapshot status via the wizard.
 
-- **Component 10: The Wizard.** Package `internal/wizard` with CLI entry points in `cmd/stoke/` for `init`, `config show/set/edit/preset`, and the global preferences commands. Initialization flow. Configuration file schema. Global user preferences with per-repo override chain. Operating mode configuration (interactive vs full-auto). Supervisor rule strength presets. Decision log import from human-authored ADRs.
+- **Component 10: The Wizard.** Package `internal/wizard` with CLI entry points in `cmd/r1/` for `init`, `config show/set/edit/preset`, and the global preferences commands. Initialization flow. Configuration file schema. Global user preferences with per-repo override chain. Operating mode configuration (interactive vs full-auto). Supervisor rule strength presets. Decision log import from human-authored ADRs.
 
 **Validation gates for Phase 5.**
 

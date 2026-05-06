@@ -1120,3 +1120,16 @@ func (s *LanesServer) serveJSONRPC(in io.Reader, out io.Writer) error {
 	}
 	return scanner.Err()
 }
+
+// LaneToolNames returns the canonical names of the 5 lane tools per spec 8
+// §4.2. Used by the lint at tools/lint-view-without-api/ to verify the web
+// LaneSidebar component references each one.
+func LaneToolNames() []string {
+	return []string{
+		"r1.lanes.list",
+		"r1.lanes.subscribe",
+		"r1.lanes.get",
+		"r1.lanes.kill",
+		"r1.lanes.pin",
+	}
+}

@@ -16,19 +16,19 @@ Stoke must be invokable as an opaque subprocess by CloudSwarm's `ExecuteStokeAct
 - Existing `github.com/google/uuid` (already in `internal/streamjson`)
 - Existing `internal/streamjson/emitter.go` (extend, do NOT replace)
 - Existing `internal/chat/intent.go` classifier (reuse for free-text routing)
-- Existing `cmd/stoke/sow_native.go::runSessionNative` (reuse for `--sow` path)
-- Existing `cmd/stoke/descent_bridge.go` (extend `buildDescentConfig` with `SoftPassApprovalFunc`)
+- Existing `cmd/r1/sow_native.go::runSessionNative` (reuse for `--sow` path)
+- Existing `cmd/r1/descent_bridge.go` (extend `buildDescentConfig` with `SoftPassApprovalFunc`)
 - No new third-party dependencies
 
 ## Existing Patterns to Follow
 
 - Emitter: `internal/streamjson/emitter.go` — keep Claude Code wire format (`type`, `uuid`, `session_id`, `subtype`, `_stoke.dev/*`)
-- SOW runner: `cmd/stoke/sow_native.go` — top-level entry is `runSessionNative`
-- Command wiring: `cmd/stoke/main.go:1476-1480` — flag parsing + emitter construction pattern
+- SOW runner: `cmd/r1/sow_native.go` — top-level entry is `runSessionNative`
+- Command wiring: `cmd/r1/main.go:1476-1480` — flag parsing + emitter construction pattern
 - Descent hooks: `internal/plan/verification_descent.go:232-291` — add new hook field, preserve nil-default semantics
 - Chat intent: `internal/chat/intent.go::ClassifyIntent` — deterministic keyword scan returns `Intent` enum
 - Bus: `internal/bus/bus.go` — publish lifecycle events alongside streamjson (C3 from decisions)
-- Signal trap pattern: `cmd/stoke/main.go` already installs `signal.Notify` for SIGINT/SIGTERM; extend rather than duplicate
+- Signal trap pattern: `cmd/r1/main.go` already installs `signal.Notify` for SIGINT/SIGTERM; extend rather than duplicate
 
 ## Library Preferences
 
@@ -191,7 +191,7 @@ Add new field to `plan.DescentConfig` in `internal/plan/verification_descent.go`
 SoftPassApprovalFunc func(ctx context.Context, ac AcceptanceCriterion, verdict ReasoningVerdict) bool
 ```
 
-Wire in `cmd/stoke/descent_bridge.go::buildDescentConfig`:
+Wire in `cmd/r1/descent_bridge.go::buildDescentConfig`:
 
 - If `cfg.GovernanceTier == "enterprise"`: `dc.SoftPassApprovalFunc = func(ctx, ac, v) bool { d := hitl.RequestApproval(ctx, hitl.Request{Reason: "Soft-pass at T8", ApprovalType:"soft_pass", File: ac.ID, Context: map[string]any{"category": v.Category, "reasoning": v.Reasoning}}); return d.Approved }`
 - Else (standalone): leave nil → auto-grant (current behavior)
@@ -263,7 +263,7 @@ Publishing to bus (`bus.Publish`) uses `Kind: "descent.<tierN>"` for in-process 
 ### `stoke run` Dispatch (Go code sketch)
 
 ```go
-// cmd/stoke/run_cmd.go
+// cmd/r1/run_cmd.go
 func runCommand(args []string) int {
     fs := flag.NewFlagSet("run", flag.ContinueOnError)
     var (
@@ -458,7 +458,7 @@ func (s *Service) startStdinReaderOnce() { /* sync.Once → goroutine scans line
 ## Boundaries — What NOT To Do
 
 - Do NOT create `internal/events/` — extend `internal/streamjson/` (C1)
-- Do NOT modify `cmd/stoke/ship_cmd.go` or other existing commands' emitter calls
+- Do NOT modify `cmd/r1/ship_cmd.go` or other existing commands' emitter calls
 - Do NOT add `bufio.Writer` around `os.Stdout` (breaks SIGSTOP survival, adds Flush calls)
 - Do NOT call `os.Stdin.SetDeadline` (broken for Linux pipes per golang/go#24842)
 - Do NOT invoke CloudSwarm's policy engine — Stoke is opaque to Cedar (RT-CLOUDSWARM-MAP §4)
@@ -487,7 +487,7 @@ func (s *Service) startStdinReaderOnce() { /* sync.Once → goroutine scans line
 - [ ] Context cancel: cancel ctx while waiting → returns `Reason:"context_canceled"`
 - [ ] Governance timeout defaults: enterprise=15m, community=1h, override via `--hitl-timeout` wins
 
-### `cmd/stoke/run_cmd.go`
+### `cmd/r1/run_cmd.go`
 - [ ] Usage: `stoke run` with no args → stderr usage, exit 2
 - [ ] SOW path: `stoke run --sow /tmp/test.md --output stream-json` → first line is `session.start`, last line is `complete`
 - [ ] Free-text path: `stoke run --output stream-json "build a server"` → chat-intent classifier routes, session proceeds
@@ -548,21 +548,21 @@ printf '%s\n' '{"decision":true,"reason":"ok","decided_by":"test"}' | ./stoke ru
 
 4. [ ] **Add `SoftPassApprovalFunc` to `internal/plan/verification_descent.go` `DescentConfig`** (insert near line 289 preserving nil-default semantics): `SoftPassApprovalFunc func(ctx context.Context, ac AcceptanceCriterion, verdict ReasoningVerdict) bool`. In T8 block (lines 736-820), after all 6 gates pass, if `SoftPassApprovalFunc != nil`, call it; if it returns false, return FAIL instead of soft-pass. Emit `descent.resolve` observability event with `approval_required:true, approved:<result>`. Default (nil) behavior unchanged — auto-grant.
 
-5. [ ] **Extend `cmd/stoke/descent_bridge.go::buildDescentConfig`** to accept a `governanceTier string` + `hitlSvc *hitl.Service` parameter. When tier=="enterprise": set `dc.SoftPassApprovalFunc = func(ctx, ac, v) bool { d := hitlSvc.RequestApproval(ctx, hitl.Request{...}); return d.Approved }`. Else: leave nil. Also upgrade existing `dc.OnLog` (lines 282-284) to emit structured `descent.tier` events via the emitter + `bus.Publish` while keeping the existing `fmt.Printf` terminal output for local debugging.
+5. [ ] **Extend `cmd/r1/descent_bridge.go::buildDescentConfig`** to accept a `governanceTier string` + `hitlSvc *hitl.Service` parameter. When tier=="enterprise": set `dc.SoftPassApprovalFunc = func(ctx, ac, v) bool { d := hitlSvc.RequestApproval(ctx, hitl.Request{...}); return d.Approved }`. Else: leave nil. Also upgrade existing `dc.OnLog` (lines 282-284) to emit structured `descent.tier` events via the emitter + `bus.Publish` while keeping the existing `fmt.Printf` terminal output for local debugging.
 
-6. [ ] **Create `cmd/stoke/run_cmd.go`**: new subcommand. Flag parsing (7 flags), dispatch logic (SOW vs free-text), emitter construction, signal handler install, `session.start`/`concurrency.cap`/`session.complete`/`complete` emission, exit code computation (0/1/2/3/130/143). Free-text path calls `chat.ClassifyIntent`; if `IntentQuery`/unknown, synthesize ephemeral SOW via chat and feed to `runSessionNative`. SOW path calls `runSessionNative` directly with emitter + hitlSvc wired in. Register with main.go command dispatcher alongside `ship`, `build`, etc.
+6. [ ] **Create `cmd/r1/run_cmd.go`**: new subcommand. Flag parsing (7 flags), dispatch logic (SOW vs free-text), emitter construction, signal handler install, `session.start`/`concurrency.cap`/`session.complete`/`complete` emission, exit code computation (0/1/2/3/130/143). Free-text path calls `chat.ClassifyIntent`; if `IntentQuery`/unknown, synthesize ephemeral SOW via chat and feed to `runSessionNative`. SOW path calls `runSessionNative` directly with emitter + hitlSvc wired in. Register with main.go command dispatcher alongside `ship`, `build`, etc.
 
-7. [ ] **Extend `cmd/stoke/main.go` command dispatcher** to route `"run"` → `runCommand(args)`. Preserve all existing command registrations. Ensure `stoke run --help` prints descriptive usage.
+7. [ ] **Extend `cmd/r1/main.go` command dispatcher** to route `"run"` → `runCommand(args)`. Preserve all existing command registrations. Ensure `stoke run --help` prints descriptive usage.
 
 8. [ ] **Graceful shutdown in `run_cmd.go`**: `signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)` in a goroutine; on signal → cancel root `context.Context` → emit `mission.aborted` on critical lane → call `emitter.Drain(5 * time.Second)` → `os.Exit(130)` for SIGINT, `143` for SIGTERM. Must NOT exit from the signal handler itself.
 
-9. [ ] **Wire emitter + hitlSvc through `runSessionNative` call path**: thread `*streamjson.TwoLane` and `*hitl.Service` as new optional fields on `sowNativeConfig` (existing struct in `cmd/stoke/sow_native.go`). Emit `plan.ready` after SOW parse, `task.dispatch` per task entry, `ac.result` per AC check, `task.complete` per task exit. Non-breaking: nil emitter/hitlSvc = no-op.
+9. [ ] **Wire emitter + hitlSvc through `runSessionNative` call path**: thread `*streamjson.TwoLane` and `*hitl.Service` as new optional fields on `sowNativeConfig` (existing struct in `cmd/r1/sow_native.go`). Emit `plan.ready` after SOW parse, `task.dispatch` per task entry, `ac.result` per AC check, `task.complete` per task exit. Non-breaking: nil emitter/hitlSvc = no-op.
 
 10. [ ] **Contract test fixtures**: create `internal/streamjson/testdata/cloudswarm_fixtures/*.jsonl` with exact shapes from RT-CLOUDSWARM-MAP §2-3 (`hitl_required.jsonl`, `task_complete.jsonl`, `descent_tier.jsonl`). Contract test `TestCloudSwarmFixtures` emits each event type, captures stdout, and asserts the fixture line matches (modulo uuid/timestamp fields, which are checked for presence and format only).
 
-11. [ ] **Update `cmd/stoke/main.go` help text** to list `run` in the command table alongside `ship`, `build`, etc. One-line description: `"run    Execute a task or SOW with streaming events (CloudSwarm-compatible)"`.
+11. [ ] **Update `cmd/r1/main.go` help text** to list `run` in the command table alongside `ship`, `build`, etc. One-line description: `"run    Execute a task or SOW with streaming events (CloudSwarm-compatible)"`.
 
-12. [ ] **Integration test `cmd/stoke/run_cmd_test.go`**: shells out to built binary with `--output stream-json`, captures stdout, asserts event ordering (first `session.start`, last `complete`), validates every line is valid JSON, validates exit code mapping for each of the 6 conditions (0/1/2/3/130/143). Uses `os/exec.Command` with pipe stdin/stdout.
+12. [ ] **Integration test `cmd/r1/run_cmd_test.go`**: shells out to built binary with `--output stream-json`, captures stdout, asserts event ordering (first `session.start`, last `complete`), validates every line is valid JSON, validates exit code mapping for each of the 6 conditions (0/1/2/3/130/143). Uses `os/exec.Command` with pipe stdin/stdout.
 
 13. [ ] **Document in `docs/cloudswarm.md`**: one-page operator doc — how CloudSwarm invokes `stoke run`, the HITL wire format (plain JSON on stdin), the exit codes, the event namespace. Link from `README.md`. (This is the only new doc; the spec itself is not a doc.)
 

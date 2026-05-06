@@ -5,6 +5,7 @@
 // Real MSW handlers will land in later items (component tests + WS
 // fixtures). This file establishes the lifecycle hooks.
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { setupServer } from "msw/node";
 
@@ -13,5 +14,12 @@ import { setupServer } from "msw/node";
 export const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  // vitest globals are off, so @testing-library/react's auto-cleanup
+  // doesn't register itself. Without this, render() output from the
+  // previous test stays in the document and getByTestId() finds
+  // multiple matches.
+  cleanup();
+  server.resetHandlers();
+});
 afterAll(() => server.close());

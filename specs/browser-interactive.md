@@ -10,7 +10,7 @@
 
 Task 21 part 1 shipped the stdlib `net/http` MVP of `internal/browser/`: fetch a URL, strip HTML, run `VerifyContains` / `VerifyRegex`. That covers "does this URL return 2xx with expected text" but cannot click, type, wait for a selector, wait for network-idle, or take a screenshot. The executor currently short-circuits with `ErrExecutorNotWired{FollowUp: "Task 21 part 2 (go-rod backend)"}` whenever `plan.Extra["interactive"] = true`. Part 2 — this spec — adds a `browser.RodClient` that wraps `github.com/go-rod/rod`, a pool that reuses one headless Chromium across many tasks, and the small set of interactive action types (navigate / click / type / wait-for-selector / wait-for-network-idle / screenshot / extract-text / extract-attribute) needed for real end-to-end verification.
 
-Both backends satisfy a new `browser.Backend` interface; selection happens at construction time. `browser.NewClient()` returns the stdlib fetcher (today's default, no Chromium required). `browser.NewRodClient(cfg)` returns the go-rod-backed client and only compiles under the `stoke_rod` build tag, so single-binary users who never want a Chromium dependency keep a clean `go build ./cmd/stoke`. Vision-model screenshot diffing (when an AC says "screenshot matches baseline") is delegated to the existing reasoning provider — this spec wires in the path that feeds PNG bytes to the diff AC but does NOT design the vision prompt itself (that's operator-ux or a later spec).
+Both backends satisfy a new `browser.Backend` interface; selection happens at construction time. `browser.NewClient()` returns the stdlib fetcher (today's default, no Chromium required). `browser.NewRodClient(cfg)` returns the go-rod-backed client and only compiles under the `stoke_rod` build tag, so single-binary users who never want a Chromium dependency keep a clean `go build ./cmd/r1`. Vision-model screenshot diffing (when an AC says "screenshot matches baseline") is delegated to the existing reasoning provider — this spec wires in the path that feeds PNG bytes to the diff AC but does NOT design the vision prompt itself (that's operator-ux or a later spec).
 
 ## 2. Dependency choice — go-rod
 
@@ -48,7 +48,7 @@ internal/browser/
 
 - `internal/browser/browser.go` — add `Backend` interface; keep existing `Client` struct, add a method set so it satisfies `Backend` for the non-interactive subset. `NewClient()` unchanged (returns stdlib). Add `NewRodClient(cfg)` constructor (build-tag-gated stub + real impl).
 - `internal/executor/browser.go` — extend `Execute`: when `plan.Extra["interactive"]==true`, unwrap `plan.Extra["actions"]` as `[]browser.Action`, require a RodClient, run each action via the backend, accumulate per-action `ActionResult` onto the deliverable. When `interactive==false`, keep the existing stdlib fetch path unchanged.
-- `cmd/stoke/main.go` — `stoke browse` subcommand gains `--action` repeatable flag (see §5).
+- `cmd/r1/main.go` — `stoke browse` subcommand gains `--action` repeatable flag (see §5).
 - `go.mod` / `go.sum` — add `github.com/go-rod/rod` (pinned SHA) + `github.com/ysmood/gson`.
 
 ### 3.3 `Backend` interface (new, in `browser.go`)
@@ -242,15 +242,15 @@ Each item is self-contained. File paths are absolute from repo root. Tests land 
 
 30. [ ] **`BuildRepairFunc` remains nil for the interactive path in this spec.** Repair (re-click after wait, retry with different selector) is out of scope for part 2. Comment in code: `// TODO: selector-repair strategy lands with screenshot-diff spec`. No test change.
 
-31. [ ] **Add `stoke browse` `--action` flag parsing in `cmd/stoke/main.go`.** `--action` is `[]string` (repeatable). Parse each entry via `parseActionFlag(s string) (browser.Action, error)` with format rules in §5. Accumulate into `[]browser.Action`. Pass via `plan.Extra["actions"]` + `plan.Extra["interactive"]=true`. Test: `TestParseActionFlag` table-driven over 8 example inputs (one per Kind).
+31. [ ] **Add `stoke browse` `--action` flag parsing in `cmd/r1/main.go`.** `--action` is `[]string` (repeatable). Parse each entry via `parseActionFlag(s string) (browser.Action, error)` with format rules in §5. Accumulate into `[]browser.Action`. Pass via `plan.Extra["actions"]` + `plan.Extra["interactive"]=true`. Test: `TestParseActionFlag` table-driven over 8 example inputs (one per Kind).
 
 32. [ ] **`parseActionFlag` format.** `navigate:URL`, `click:SEL`, `type:SEL:TEXT` (TEXT may contain `:`; split on first two only), `wait:SEL[:TIMEOUT]` (TIMEOUT as Go duration, default 10s), `wait_idle[:TIMEOUT]`, `screenshot[:OUT.png]` (OUT optional), `extract:SEL`, `extract_attr:SEL:ATTR`. Reject unknown prefixes with a clear error. Test: TestParseActionFlag covers every prefix + malformed input.
 
 33. [ ] **Add `--screenshot-baseline` + `--rod-pool-size` + `--chrome-path` flags to `stoke browse`.** Wire into `RodConfig`. Only consumed when `--action` is present OR `--interactive` is explicitly set. Test: integration-style CLI test via `exec.Command` in a subtest.
 
-34. [ ] **Update `cmd/stoke/main.go` help text** to list the new action syntax. One paragraph; examples: `stoke browse https://example.com --action click:#submit --action wait:.result:5s --action screenshot:out.png`. No test, manual verify.
+34. [ ] **Update `cmd/r1/main.go` help text** to list the new action syntax. One paragraph; examples: `stoke browse https://example.com --action click:#submit --action wait:.result:5s --action screenshot:out.png`. No test, manual verify.
 
-35. [ ] **Ensure `go build ./cmd/stoke` (no tag) passes without rod in the binary.** Achieved by items 5/6: the rod-using files all carry `//go:build stoke_rod`; without the tag, `NewRodClient` hits the stub from item 6 and returns `ErrChromeLaunchFailed`. Test: `TestBuildWithoutRodTag` via `go build -tags=` invocation (CI gate).
+35. [ ] **Ensure `go build ./cmd/r1` (no tag) passes without rod in the binary.** Achieved by items 5/6: the rod-using files all carry `//go:build stoke_rod`; without the tag, `NewRodClient` hits the stub from item 6 and returns `ErrChromeLaunchFailed`. Test: `TestBuildWithoutRodTag` via `go build -tags=` invocation (CI gate).
 
 36. [ ] **Add `//go:build stoke_rod` guard at top of every rod-importing file.** Files touched: `rod.go`, `pool.go`, `rod_test.go`, `pool_test.go`, `rod_integration_test.go`. No rod import outside these files. Manual grep gate.
 
@@ -270,9 +270,9 @@ Each item is self-contained. File paths are absolute from repo root. Tests land 
 
 44. [ ] **Document the `stoke_rod` tag in `STATUS.md`** under a new "Build tags" section (one line). No separate docs file.
 
-45. [ ] **Run the full AC block (§6) locally.** `go build ./cmd/stoke` (untagged) + `go build -tags stoke_rod ./cmd/stoke` + `go vet ./...` + `go test ./...` + `go test -tags stoke_rod ./internal/browser/...` + `go test -tags stoke_rod_integration ./internal/browser/... ./internal/executor/...`. Fix any red; do not suppress.
+45. [ ] **Run the full AC block (§6) locally.** `go build ./cmd/r1` (untagged) + `go build -tags stoke_rod ./cmd/r1` + `go vet ./...` + `go test ./...` + `go test -tags stoke_rod ./internal/browser/...` + `go test -tags stoke_rod_integration ./internal/browser/... ./internal/executor/...`. Fix any red; do not suppress.
 
-46. [ ] **Kill-switch sanity check.** Build untagged binary, invoke `stoke browse https://example.com --action click:#foo` — must fail fast with a clear message: "interactive actions require the stoke_rod build tag; rebuild with `go build -tags stoke_rod ./cmd/stoke`". Wire the message at the executor layer where the stub returns `ErrChromeLaunchFailed`. No test (manual verify).
+46. [ ] **Kill-switch sanity check.** Build untagged binary, invoke `stoke browse https://example.com --action click:#foo` — must fail fast with a clear message: "interactive actions require the stoke_rod build tag; rebuild with `go build -tags stoke_rod ./cmd/r1`". Wire the message at the executor layer where the stub returns `ErrChromeLaunchFailed`. No test (manual verify).
 
 47. [ ] **Ensure `go.sum` is committed.** `go mod tidy` with `-tags stoke_rod` to ensure all rod transitive deps are captured. Without the tag, the sum file still lists the pinned modules (required, not optional) so CI can verify.
 
@@ -312,18 +312,18 @@ stoke browse https://example.com \
   --action extract:.welcome-banner
 ```
 
-Without the `stoke_rod` build tag, any `--action` other than `navigate` fails with: `interactive actions require the stoke_rod build tag; rebuild with 'go build -tags stoke_rod ./cmd/stoke'`.
+Without the `stoke_rod` build tag, any `--action` other than `navigate` fails with: `interactive actions require the stoke_rod build tag; rebuild with 'go build -tags stoke_rod ./cmd/r1'`.
 
 ## 6. Acceptance criteria
 
 ```
 # Untagged build — stdlib-only, no Chromium, no rod linked.
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 go test ./...
 
 # Tagged build — rod linked, Chromium required for integration tests.
-go build -tags stoke_rod ./cmd/stoke
+go build -tags stoke_rod ./cmd/r1
 go vet -tags stoke_rod ./...
 go test -tags stoke_rod ./internal/browser/...
 go test -tags stoke_rod ./internal/executor/...
@@ -347,7 +347,7 @@ file /tmp/stoke-browse.png | grep -q 'PNG image data'
 ```
 
 **Non-negotiables.**
-- `go build ./cmd/stoke` (no tag) MUST continue to work with zero network access and zero Chromium binary — the single-binary distribution story is the whole point of the build-tag split.
+- `go build ./cmd/r1` (no tag) MUST continue to work with zero network access and zero Chromium binary — the single-binary distribution story is the whole point of the build-tag split.
 - `go test ./internal/browser/...` (no tag) MUST still pass the existing MVP tests unchanged. Any regression there is a bug in part 2.
 - The tagged-build integration tests MUST exit gracefully (not fail) when no Chrome is available — detect missing binary and return early with a clear diagnostic; do not fail the test run.
 
@@ -365,9 +365,9 @@ Mirror the existing pattern in `internal/browser/browser_test.go`: table-driven 
 
 ## 8. Rollout — build tag strategy
 
-**Default: `go build ./cmd/stoke` stays stdlib-only.** No Chromium dep, no go-rod linked into the binary. The existing MVP continues to work for all read-only verification use cases. This is the 95% path and it stays trivial.
+**Default: `go build ./cmd/r1` stays stdlib-only.** No Chromium dep, no go-rod linked into the binary. The existing MVP continues to work for all read-only verification use cases. This is the 95% path and it stays trivial.
 
-**Opt-in: `go build -tags stoke_rod ./cmd/stoke`.** Adds go-rod to the link set; `NewRodClient` constructs a real pool + launcher; interactive actions work. First invocation downloads Chromium to `$HOME/.cache/rod/browser` unless `CHROME_PATH` is set. CI that wants the interactive-path tests runs with the tag and pre-installs Chromium (or sets `CHROME_PATH`).
+**Opt-in: `go build -tags stoke_rod ./cmd/r1`.** Adds go-rod to the link set; `NewRodClient` constructs a real pool + launcher; interactive actions work. First invocation downloads Chromium to `$HOME/.cache/rod/browser` unless `CHROME_PATH` is set. CI that wants the interactive-path tests runs with the tag and pre-installs Chromium (or sets `CHROME_PATH`).
 
 **Optional integration: `go build -tags stoke_rod,stoke_rod_integration`.** Unlocks the real-browser tests. Separate tag so unit tests can run under `stoke_rod` without a working Chrome.
 

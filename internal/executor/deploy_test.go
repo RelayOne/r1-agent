@@ -297,7 +297,7 @@ func TestDeployExecutor_SelectsFromRegistry(t *testing.T) {
 // construction time and surfaced through Execute so the descent engine
 // sees it as a task-result error rather than a panic or a silent
 // dispatch. The error text is the registry's "deploy: unknown provider
-// <name>" shape that cmd/stoke/deploy_cmd.go already grep-matches on.
+// <name>" shape that cmd/r1/deploy_cmd.go already grep-matches on.
 func TestDeployExecutor_UnknownProviderError(t *testing.T) {
 	e := NewDeployExecutor(deploy.DeployConfig{
 		Provider: deploy.ProviderUnknown,

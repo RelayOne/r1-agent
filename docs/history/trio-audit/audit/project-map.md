@@ -145,7 +145,7 @@
 - ./flare/sdk/typescript/src/index.ts (168 lines)
 
 ### section-0027 (1 files, 2663 lines)
-- ./stoke/cmd/stoke/main.go (2663 lines)
+- ./stoke/cmd/r1/main.go (2663 lines)
 
 ### section-0028 (1 files, 922 lines)
 - ./stoke/integration_test.go (922 lines)

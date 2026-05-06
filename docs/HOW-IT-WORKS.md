@@ -1,624 +1,291 @@
 # How It Works
 
-This is the operator and developer walkthrough for r1: what happens from
-the moment you double-click the desktop app or run `r1 chat` in a
-terminal, through the agent's parallel cognition, through a mid-turn
-redirect, through a daemon restart, and back to "your prompt converged
-without you babysitting it."
+A vivid walkthrough for someone who wants to understand r1 deeply — both as an operator and as a curious engineer.
 
-## Audience
+Updated 2026-05-06 for the four final-sweep features merged in commit `242af4a8`: skill-aware compaction, ed25519-signed redaction events, the tracebundle v2 export format, and the release-rehearsal CI lane.
 
-- Operators running r1 day-to-day.
-- Engineers onboarding to the runtime.
-- Reviewers validating the cortex / lanes / multi-surface story.
-- Anyone trying to understand "what is r1 actually doing right now."
+## Two narratives
 
-This doc covers two narratives:
+r1 is two products glued together:
 
-1. **Today, on `main`** — the governed mission runtime, the Tauri R1D-1..R1D-12
-   desktop, the plan/execute/verify loop, the deterministic skill substrate.
-2. **The cortex / lanes / multi-surface scope** — a session walkthrough
-   threaded across cortex spawn, six Lobes running concurrently, lanes
-   rendering across surfaces, mid-turn user input handled by the Router,
-   and a daemon restart with seamless replay.
+1. **The local agent runtime** — a CLI + daemon + multi-surface UI you run on your own machine to do real coding work.
+2. **The hosted SaaS** — `*.r1.run` — public docs, license/telemetry coordination, and binary distribution. Operators install r1 from the SaaS; the agent itself runs locally.
 
-## Today, on `main`
+This doc walks you through both, end-to-end, in the order a new user would encounter them.
 
-### Journey 1 — Run a single mission
+---
 
-The core loop has four phases:
+## User journey — from zero to first shipped task
 
-1. **PLAN** — Claude (read-only, MCP disabled, repomap injected) drafts a
-   plan against the codebase. Output: a `plan.json` listing tasks, deps,
-   ROI tags, allowed file scopes, acceptance criteria.
-2. **EXECUTE** — Claude or Codex runs against the repo (sandbox on,
-   verification descent + honeypot gate on each end-of-turn).
-3. **VERIFY** — Build + test + lint + scope check + protected-file check
-   + AST-aware critic (secrets, injection, debug prints).
-4. **REVIEW** — Cross-model gate (Claude implements → Codex reviews, or
-   vice versa). Reviewer dissent blocks merge.
+### Step 1. Discover the project
 
-After REVIEW: `git merge-tree --write-tree` validates the merge with zero
-side effects, `mergeMu sync.Mutex` serializes the merge to main, the
-worktree is cleaned up (`--force` + `os.RemoveAll` fallback + `worktree
-prune`), the attempt + session state + learned patterns + ledger node are
-saved.
+You land on `https://platform.r1.run/`. The site is a static docs renderer — Go service `r1-docs` running on Cloud Run, serving an embedded snapshot of `docs/*.md` rendered to HTML by a small dependency-free markdown engine (headings, code blocks, tables, links, bold, italic, inline code; CSP locked, no JS execution beyond what Cloud Run injects).
 
-### Journey 2 — Multi-task plan with parallel agents
+You see the README's quick-start block. You copy:
 
 ```bash
-r1 build --plan stoke-plan.json --workers 4
+curl -fsSL https://downloads.r1.run/prod/r1-linux-amd64 -o r1
+chmod +x r1 && sudo mv r1 /usr/local/bin/
 ```
 
-For each dispatchable task (parallel, file-scope conflicts respected):
+### Step 2. Install
 
-1. Resolve provider via `model.Resolve()`: Claude → Codex → OpenRouter →
-   direct API → lint-only.
-2. Acquire pool worker (least loaded, circuit breaker, OAuth poller).
-3. Create git worktree + install enforcer hooks (PreToolUse +
-   PostToolUse).
-4. Write `r1.session.json` signature; heartbeat every 30s.
-5. Run PLAN → EXECUTE → VERIFY → REVIEW → MERGE.
-6. On failure: classify (10 classes), extract specifics, discard
-   worktree, create fresh, inject retry brief + diff summary. Max 3
-   attempts. Same error twice → escalate (`failure.Compute()`
-   fingerprint dedup).
+`downloads.r1.run` is `r1-downloads-cdn` on Cloud Run. It's not a real CDN — it's a thin Go reverse-proxy backed by `gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>`. The Cloud Run service account holds `roles/storage.objectViewer` on the bucket; the proxy streams the requested object back to your `curl` with caching headers. The same channel-namespacing model that powers `homebrew tap` or `apt repository` works here without operating either of those.
 
-Throughout: structured events emit to `.stoke/bus/events.log` (NDJSON,
-hash-chained); a `BuildReport` is generated at `.stoke/reports/latest.json`;
-event-driven reminders fire during tool use (context >60%, error 3×,
-test-write, turn-drift, etc.).
-
-### Journey 3 — Build / install a deterministic skill
+You verify the install worked:
 
 ```bash
-r1 skills pack init my-deploy-skill     # scaffold a pack
-r1 skills pack info my-deploy-skill     # inspect
-r1 skills pack publish my-deploy-skill  # publish to local registry
-r1 skills pack sign my-deploy-skill     # signed bundle
-r1 skills pack install my-deploy-skill  # activate
-r1 skills pack update my-deploy-skill   # refresh
+r1 --version    # prints e.g. 0.18.0+bf49ec45
 ```
 
-`r1 skills pack serve` exposes the published pack library as a small
-read-only HTTP registry: `/healthz`, `/v1/packs`, `/v1/packs/<pack>`,
-`/v1/packs/<pack>/archive.tar.gz`. Installed signed packs are verified at
-runtime; runtime registration refuses unsigned or invalid-signature packs.
+### Step 3. Start the daemon
 
-### Journey 4 — The Tauri 2 desktop today
-
-The R1D-1..R1D-12 phases shipped on `main`. The desktop already has:
-session view, SOW tree, descent ladder, descent evidence, skill catalog,
-ledger viewer, memory bus viewer, settings, MCP servers panel,
-observability dashboard, multi-session view, signing + auto-update infra,
-store-submission readiness. It currently spawns a per-session `r1
---one-shot` subprocess.
-
-The cortex / lanes scope flips this default: `r1 serve` becomes the
-primary process, the bundled binary becomes a sidecar fallback.
-
-## The cortex / lanes / multi-surface narrative
-
-A representative session, end-to-end, across all the moving parts. Names
-match the specs in `specs/` and the package map in CLAUDE.md.
-
-### Frame 1 — Eric opens the web UI
-
-Eric opens `http://127.0.0.1:7777/` in Chrome. The page loads from
-`internal/server/static/dist/` (an embedded SPA bundle, picked up
-automatically by `internal/server/embed.go`'s `//go:embed static`).
-
-The web app:
-
-1. Calls `GET /api/daemons` to list known r1d daemons.
-2. Discovers the daemon at `127.0.0.1:7777` via the discovery file
-   (`~/.r1/daemon.json`) mirrored over HTTP.
-3. Calls `POST /auth/ws-ticket` to mint a short-lived (~30s) WS
-   subprotocol token.
-4. Opens `new WebSocket('ws://127.0.0.1:7777/ws', ['r1.bearer', token])`.
-   The daemon validates the subprotocol, the `Origin`, the `Host`, and
-   the token. Handshake completes.
-5. Calls `GET /api/sessions` — empty list.
-
-The user clicks "New Session". A shadcn `Dialog` opens with three fields:
-model (Sonnet 4.6 default), workdir (FSA `showDirectoryPicker()` if
-available; manual path entry with autocomplete from
-`r1d.listAllowedRoots()` otherwise), system-prompt preset.
-
-Eric picks `/home/eric/repos/foo`. The web app:
-
-1. Persists the FSA handle in IndexedDB (FSA handles can't serialize to
-   localStorage).
-2. Calls `POST /api/sessions {workdir, model, systemPromptPreset}`.
-
-The daemon validates the workdir (absolute, exists, writable, not under
-`~/.r1/`), generates `session_id = "sess_" + uuid.New()`, allocates a
-`*Session` struct with `SessionRoot = "/home/eric/repos/foo"`, calls
-`cortex.NewWorkspace(SessionRoot)`, opens
-`/home/eric/repos/foo/.r1/sessions/sess_xxx/journal.ndjson`, spawns
-`go session.run(ctx)`, emits `session.started` to the bus, returns
-`{session_id, started_at}`.
-
-### Frame 2 — The cortex spawns
-
-Inside `session.run(ctx)`, the agentloop loop is constructed with a
-`Cortex *cortex.Cortex` field on `agentloop.Config`. The cortex bundles
-six Lobes:
-
-| Lobe | Kind | Trigger |
-|---|---|---|
-| MemoryRecallLobe | Deterministic | Every turn boundary; reindex on `cortex.workspace.memory_added` |
-| WALKeeperLobe | Deterministic | Every hub event (filter returns true unconditionally) |
-| RuleCheckLobe | Deterministic | Every `supervisor.rule.fired` bus event |
-| PlanUpdateLobe | LLM (Haiku 4.5) | Every 3rd assistant turn or on action-verb input |
-| ClarifyingQLobe | LLM (Haiku 4.5) | After every user turn |
-| MemoryCuratorLobe | LLM (Haiku 4.5) | Every 5 assistant turns or on `task.completed` |
-
-`Cortex.Start(ctx)`:
-
-1. Fires the synchronous initial cache pre-warm (`max_tokens=1`,
-   `system+tools` byte-identical to the main thread, `model =
-   claude-haiku-4-5`).
-2. Launches the pre-warm ticker goroutine (4-min interval; 5-min TTL
-   minus margin).
-3. Launches each `LobeRunner.Start(ctx)`. Emits `cortex.lobe.started` for
-   each. Three deterministic Lobes start unrestricted; three LLM Lobes
-   acquire the `LobeSemaphore` (capacity 5, hard cap 8).
-
-The agentloop is composed with the cortex hooks:
-
-- `MidturnCheckFn`: cortex's `MidturnNote` runs first, operator hook
-  second, joined with `\n\n`.
-- `PreEndTurnCheckFn`: cortex's `PreEndTurnGate` short-circuits on any
-  unresolved `SevCritical` Note.
-- `OnUserInputMidTurn`: the chat REPL / web client wires this. The agent
-  loop itself does not.
-
-The session emits `session.started` to the bus; the journal writes its
-genesis record. The web UI sees the `session.started` envelope, navigates
-to `/sessions/sess_xxx`, and re-subscribes via WS with `since_seq: 0` —
-the daemon emits the synthetic `session.bound` at `seq=0`, then a
-`lane.created` for the main lane.
-
-### Frame 3 — Eric types a message
-
-Eric types: "Add a JWT auth middleware to handlers/auth.go using
-github.com/golang-jwt/jwt/v5."
-
-The web app's `<Composer>` validates with zod, calls
-`{type:"chat", session_id, content}` over the WS. The daemon appends a
-`user.input` record to the journal, emits a `session.delta` event with
-`{role:"user", content}`, and the agentloop kicks off a new turn.
-
-The agentloop sends a Messages-API request to Sonnet 4.6 with the system
-prompt + tools + history + the new user message. Cache breakpoints align
-with the cortex's pre-warm pump, so input tokens hit the cache at 10%
-cost.
-
-In parallel — same instant — the cortex's six Lobes all run their per-turn
-checks:
-
-**MemoryRecallLobe** (deterministic, free):
-
-1. Builds a TF-IDF query from the last 1000 chars of message history.
-2. Calls `mem.Recall(query, 5)` and `tfidf.Index.Search` over the wisdom
-   corpus.
-3. Dedups by `Entry.ID` / `Learning.TaskID`.
-4. Publishes top-3 dedup'd matches as `Note{Severity: SevInfo, Tags:
-   ["memory"]}`.
-
-The Workspace's `Publish`:
-
-1. Acquires `Lock`.
-2. Validates the Note (non-empty `LobeID`, `Title` ≤80 runes, known
-   `Severity`).
-3. Assigns `ID = "note-<seq>"`, `EmittedAt = time.Now().UTC()`, `Round =
-   currentRound`.
-4. Appends to in-memory `notes` slice.
-5. Calls `persist.writeNote(durable, n)` — JSON-marshals the Note, calls
-   `bus.Bus.Publish(bus.Event{Type: "cortex.note.published", Payload:
-   jsonBytes})`. **Durable before lock release.**
-6. Releases `Lock`.
-7. Emits `hub.Event{Type:"cortex.note.published", Custom:{"note": n}}`.
-8. Calls every registered subscriber (sync, contract: <1ms each).
-
-The web UI's lanes sidebar now shows a new lane: "MemoryRecallLobe" with
-status `running`, then `done`, with three pinned Notes summarized as
-"3 prior decisions referenced this Workspace shape." The TUI (if
-attached) shows the same — adaptive layout depending on terminal width.
-
-**RuleCheckLobe** (deterministic, free):
-
-Subscribed to `bus.Pattern{TypePrefix: "supervisor.rule.fired"}`. Nothing
-fires this turn — no Note emitted.
-
-**WALKeeperLobe** (deterministic, free):
-
-Drains every `hub.Event` into the durable WAL with structured framing
-(`bus.Event{Type:"cortex.hub.<original>"}`). The WAL absorbs all of it;
-backpressure stays well under the 1k-event threshold.
-
-**PlanUpdateLobe** (Haiku 4.5):
-
-It's the first turn — no `plan.json` to update, but the action-verb scan
-("Add a JWT auth middleware") triggers it anyway. `LobePromptBuilder`
-constructs a Messages-API request with:
-
-- The verbatim PlanUpdate system prompt (`const planUpdateSystemPrompt =
-  ...`), cached 1h via `cache_control: {"type":"ephemeral", "ttl":"1h"}`.
-- Tools sorted alphabetically (cache stability).
-- Empty plan + the user message in the un-cached block.
-- `MaxTokens: 800`, `Model: claude-haiku-4-5`.
-
-The cache pre-warm pump (fired on cortex Start and every 4 min) means
-this Lobe call hits the cache for the system prompt block. Output is
-structured JSON; PlanUpdateLobe parses it, decides confidence is too low
-(no existing plan to update), publishes nothing.
-
-**ClarifyingQLobe** (Haiku 4.5):
-
-System prompt instructs it to detect "actionable ambiguity." The user
-message is fully specified — file path, library, task type. The model
-emits no `queue_clarifying_question` tool call and replies
-`"no_ambiguity"`. No Note published.
-
-**MemoryCuratorLobe** (Haiku 4.5):
-
-It's only the first turn — no curation candidate exists. No Note
-published.
-
-### Frame 4 — The main thread streams a tool call
-
-Sonnet 4.6 begins streaming. First a thinking block, then a `tool_use`
-for `read_file({path: "handlers/auth.go"})`. The agentloop dispatches the
-tool. Because the read takes <2s, it's NOT promoted to its own lane —
-short tool calls stay inside the main lane's `lane.delta` stream.
-
-The web UI's `<MessageBubble>` renders the thinking block in a dim
-collapsible `ReasoningCard`; the tool call renders as a `ToolCard` with a
-Streamdown-rendered JSON input. The lanes sidebar shows the main lane in
-`running` status with the `▸` glyph.
-
-The 200 Hz `lane.delta` events are coalesced to ≤10 Hz on the wire (per
-D-S2). The web UI applies a `requestAnimationFrame` batch — diff-only
-repaint. The TUI's render cache invalidates only the main lane's row,
-not the whole panel.
-
-### Frame 5 — Mid-turn redirect
-
-Halfway through generating the new file, Eric realizes the project has
-an existing auth library. He types: "actually use lib/auth/jwt.go" and
-hits Enter.
-
-The web `<Composer>` is enabled even during streaming (it sends a chat
-envelope, not a synthetic-user message). The WS receives the new chat:
-the daemon classifies it as mid-turn and calls
-`Cortex.OnUserInputMidTurn(ctx, "actually use lib/auth/jwt.go",
-turnCancel)`.
-
-`OnUserInputMidTurn` invokes the **Router** (`cortex.Router`):
-
-1. Builds a Messages-API request with the verbatim `DefaultRouterSystemPrompt`,
-   the 4 tool defs (`interrupt`, `steer`, `queue_mission`, `just_chat`),
-   the last-10-message snapshot, the new user input, and a one-line
-   summary of `Workspace.Snapshot()`.
-2. `model: "claude-haiku-4-5"`, `max_tokens: 1024`, `temperature: 0`,
-   cached system + tools.
-3. Sends. p99 ≤ 2 s.
-
-The model returns exactly one tool call: `interrupt`, with `reason:
-"user retracts library choice"` and `new_direction: "use lib/auth/jwt.go
-for JWT helpers"`.
-
-The Router emits `hub.Event{Type:"cortex.router.decided",
-Custom:{kind:"interrupt", latency_ms: 1812}}`. The web UI shows a brief
-toast: "Steering — interrupting current turn." The lanes sidebar shows
-the Router's lane `done`.
-
-`OnUserInputMidTurn` enacts the interrupt:
-
-1. Calls `turnCancel()`.
-2. The agentloop's `RunTurnWithInterrupt` helper sees `turnCtx.Done()`,
-   drains both `respCh` and `doneCh` (mandatory — SSE reader leak
-   otherwise).
-3. Drops the partial assistant message entirely (Anthropic gives no
-   recovery handle for incomplete `tool_use` blocks; persisting would
-   400 the next API call).
-4. Appends a synthetic user message to the committed history:
-   `<system-interrupt source="user" severity="info">user retracts
-   library choice</system-interrupt> New direction: use lib/auth/jwt.go
-   for JWT helpers`.
-5. Returns `(messages, StopInterrupted)`.
-
-The agentloop kicks off a fresh turn. The new committed history ends
-with the synthetic user message; the API request is `user`-terminated
-and valid. The new assistant turn knows the previous direction was
-retracted and the new library is `lib/auth/jwt.go`.
-
-### Frame 6 — The new turn, with PlanUpdate firing
-
-Sonnet 4.6 thinks, then emits a `tool_use` for
-`read_file({path: "lib/auth/jwt.go"})`. The cortex's Lobes all run again:
-
-**MemoryRecallLobe** finds nothing new (same query window).
-
-**PlanUpdateLobe** triggers because the user retracted a direction
-(action-verb scan). `LobePromptBuilder` builds the request again — same
-system prompt (cache hit, ~10% input cost), same tools, the new history.
-The model returns:
-
-```json
-{
-  "additions": [],
-  "removals": [],
-  "edits": [
-    {"id": "task-1", "field": "title", "new": "Add JWT middleware using lib/auth/jwt.go"}
-  ],
-  "confidence": 0.85,
-  "rationale": "User explicitly switched library."
-}
+```bash
+r1 serve
 ```
 
-PlanUpdateLobe parses, confidence ≥0.6, auto-applies the edit via
-`plan.Save(...)`, publishes a Note: `LobeID: "PlanUpdateLobe", Severity:
-SevInfo, Tags: ["plan"], Title: "Plan updated", Body: "task-1 retitled to
-'Add JWT middleware using lib/auth/jwt.go'"`.
+What just happened, in technical detail:
 
-The web UI shows a `<PlanCard>` updating live in the chat pane (`@ai-sdk/elements`
-`Plan` element); the lanes sidebar shows a new `done` lane for
-PlanUpdateLobe.
+1. **Single-instance enforcement** — `internal/daemonlock/lock.go` acquires a `gofrs/flock` advisory lock on `~/.r1/daemon.lock`. If a second `r1 serve` is already running, this one exits non-zero with a clear error.
+2. **Discovery file** — `internal/daemondisco/discovery.go` writes `~/.r1/daemon.json` mode 0600, atomically (`writeFile` + `rename`). The file holds the daemon's loopback HTTP+WS port and a 32-byte hex token (`crypto/rand`) regenerated on every start.
+3. **Listeners** — three at once:
+   - **CLI IPC**: unix socket at `$XDG_RUNTIME_DIR/r1/r1.sock` mode 0600 (Linux/macOS) or named pipe with current-SID + LocalSystem SDDL (Windows). Peer-cred check on the socket; the named pipe relies on Windows ACL.
+   - **Loopback HTTP+WS**: bound to `127.0.0.1:0` (port captured at start). Origin pinning + Host pinning + WS subprotocol-token auth. WebSocket subprotocol is `r1.lanes.v1`, with the token offered as a second protocol entry (Sec-WebSocket-Protocol contains both).
+   - **Per-OS service unit** (only if `r1 serve --install` was used): launchd plist on macOS / systemd-user unit on Linux / Windows SCM on Windows, all via `kardianos/service`.
+4. **Session hub** — `internal/server/sessionhub/sessionhub.go` initializes the in-memory + on-disk session catalog. Sessions index lives at `~/.r1/sessions-index.json` (atomic + fsync). Per-session journals live at `<workdir>/.r1/sessions/<id>/journal.ndjson`.
+5. **Replay** — if a previous daemon process exited cleanly or crashed, the new daemon replays each session's journal and emits `daemon.reloaded` to any reconnecting clients. This is what makes daemon restarts invisible to the user — your in-flight chat keeps going.
 
-### Frame 7 — Pin a lane to tile mode
+### Step 4. Open a UI
 
-Eric clicks the pin icon on the PlanUpdateLobe lane in the right
-sidebar. The web UI emits an `r1.lanes.pin` MCP-equivalent over the
-`R1dClient.pinLane()` method. The daemon flips `Lane.Pinned = true`;
-surfaces don't get a separate event (per spec 3, surfaces re-fetch
-cheaply via `lanes.list`).
+Three options; same daemon backs all three.
 
-The PlanCard was already in the chat pane via the `useChat` part stream.
-Pinning the **lane** moves it into the **TileGrid**. Eric pins one more
-lane (the MemoryRecall results). The center pane switches from `<MessageLog>+<Composer>`
-to `<TileGrid>` in 1×2 layout. Each tile is a `<LaneTile>` rendering
-that lane's live activity.
-
-### Frame 8 — A long tool call gets promoted to its own lane
-
-Sonnet 4.6 issues a `bash({cmd: "go test ./..."})` to verify the new
-middleware. The agentloop sees a tool call has been running for >2 s,
-promotes it to its own lane via `Workspace.NewToolLane(ctx, parent,
-"bash")`, emits `lane.created{kind: "tool", parent_lane_id: <main>,
-label: "bash: go test ./..."}`.
-
-The web UI's lanes sidebar shows the new tool lane with status
-`running`. Eric watches its `lane.delta` events stream the test output.
-A test fails. The agentloop calls a critic, which classifies the failure
-(`failure.Compute`), extracts specifics, decides "instructions issue —
-the new file imports `jwt/v5` but the project pins `jwt/v4`."
-
-**RuleCheckLobe** doesn't fire (no supervisor rule matches). **The main
-thread** receives the critic's diagnosis as a tool result, retracts the
-import, regenerates, retests. Pass.
-
-### Frame 9 — End-of-turn gate
-
-Sonnet 4.6 wants to emit `end_turn`. The agentloop's `PreEndTurnCheckFn`
-runs. It calls `cortex.PreEndTurnGate(messages)`:
-
-1. Calls `Workspace.UnresolvedCritical()`.
-2. Filters Notes with `Severity == SevCritical` AND no later Note has
-   `Resolves == n.ID`.
-3. Returns "" (no unresolved critical Notes).
-
-Operator hook (if any) runs after. Both return "". The honeypot gate
-runs: no canary leak, no markdown-image exfil, no chat-template-token
-leak, no destructive shell. End-of-turn is allowed.
-
-The agentloop emits `session.delta{role: "assistant"}` for the final
-content, then `session.ended` is NOT emitted (the session continues —
-only mission completion or kill ends a session).
-
-The MemoryCuratorLobe doesn't fire (it triggers every 5 turns; we're at
-turn 2). When it does fire, it'll see "user retracted jwt/v5 → jwt/v4
-because project pins v4" — that's a `gotcha` category candidate. Per the
-default `auto_curate_categories: [fact]`, it queues this as a
-`memory-confirm` Note rather than auto-writing. Eric sees a notification
-in the chat: "Remember this? 'project pins jwt/v4 — never use v5.'" He
-clicks Confirm; the Lobe calls `mem.Save()` and appends an entry to
-`~/.r1/cortex/curator-audit.jsonl`.
-
-### Frame 10 — Daemon restart mid-session
-
-Three turns later, Eric runs `r1 update`, which downloads a new binary
-to `~/.r1/bin/r1` via atomic rename. He then runs `r1 serve restart`.
-
-The old daemon receives `daemon.shutdown {grace_s: 30}`, broadcasts
-`session.paused` to every active subscriber, fsyncs every journal,
-exits 0. The web UI sees the WS close (code 1000), enters `reconnecting`
-state, and starts exponential backoff.
-
-The new daemon spawns. It scans `~/.r1/sessions-index.json`, finds Eric's
-session at `sess_xxx`, opens
-`/home/eric/repos/foo/.r1/sessions/sess_xxx/journal.ndjson`, replays
-each NDJSON record into a fresh `*Session`:
-
-1. `session.created` → allocate the session struct, set `SessionRoot`,
-   `model`, `budget_usd`.
-2. `user.input` and `session.delta` records → reconstruct message history.
-3. `session.tool_started` / `session.tool_completed` → infer lane state.
-4. `lane.delta` records → reconstruct each lane's last-known state.
-5. The cortex's `Workspace.Replay(ctx)` reads `cortex.note.published`
-   events from the WAL and rebuilds the in-memory Notes slice in publish
-   order. The `drainedUpTo` cursor advances to `len(notes)` so the next
-   turn's Drain returns nothing — resumed sessions don't re-inject stale
-   notes.
-
-The new daemon starts the WS listener, broadcasts `daemon.reloaded {at,
-version: <new-sha>}`. The web UI's `ResilientSocket` reconnects (the
-backoff curve: 250 ms × 2^n, capped 8 s, with jitter). On reconnect, it
-sends `{type: "subscribe", session_id: "sess_xxx", lastEventId: <last
-seq seen>}`. The daemon replays from the journal — assistant deltas,
-lane events, cost ticks — in monotonic seq order. The chat pane fills in
-the messages it missed; the lanes sidebar shows pinned lanes restored to
-their pre-restart state.
-
-Total reconnect time: ~3-5 s. No state lost. No duplicate messages.
-
-### Frame 11 — Eric switches to the desktop app
-
-Eric opens the Tauri 2 desktop app on the same machine. `tauri::Builder::setup`
-calls `discover_or_spawn(app)`:
-
-1. `read_daemon_json()` reads `~/.r1/daemon.json` (mode 0600, owned by
-   Eric).
-2. `probe_external()` tries TCP connect to `ws://127.0.0.1:7777` with 1s
-   timeout. Succeeds (the new daemon).
-3. Returns `DaemonHandle{mode: External, url, token}`.
-
-The desktop's title-bar `<DaemonStatus>` renders a green dot: "Connected
-(external)." The session list shows `sess_xxx`. Eric clicks it. The
-desktop subscribes to lane events via
-`session.lanes.subscribe({session_id, channel: tauri::ipc::Channel<LaneEvent>})`.
-A per-session forwarder task `select!`s the daemon's WS frames into the
-channel; the WebView receives `LaneEvent` enums (Delta / Status / Spawned
-/ Killed) and renders via `<LaneSidebar>` from the shared
-`packages/web-components/` package.
-
-The exact same `LaneCard` and `LaneSidebar` components render in the web
-app — that's why they live in a workspace package. Atomic refactors land
-in one PR, both surfaces update together.
-
-Eric uses `Cmd+\` to pop out the PlanUpdateLobe lane. The desktop
-`app.popout_lane` Tauri command builds a `WebviewWindowBuilder` with
-label `"lane:sess_xxx:planupdate"`, URL
-`index.html?popout=lane&session=sess_xxx&lane=planupdate`, size 480×640.
-The new window mounts `<PoppedLaneApp>` from `packages/web-components/`
-and subscribes to that single lane. Eric closes the primary window; the
-pop-out remains open.
-
-### Frame 12 — Eric drives r1 with another agent
-
-Eric writes a 6-line MCP client that wraps Claude. The client:
-
-1. Connects to the daemon via `r1d.sock` (peer-cred check; no token
-   needed).
-2. Calls `r1.session.start({workdir: "/home/eric/repos/bar"})` → returns
-   `session_id: "sess_yyy"`.
-3. Calls `r1.session.send({session_id: "sess_yyy", message: "Run go test
-   ./..."})`.
-4. Calls `r1.lanes.subscribe({session_id: "sess_yyy"})` to stream lane
-   events.
-5. On any `lane.note{severity: "critical"}`, calls `r1.lanes.kill` on
-   the offending lane and routes the failure to a human.
-6. On `session.ended`, summarizes the result.
-
-Every action this agent takes has a corresponding human action in the
-web UI. The CI lint at `tools/lint-view-without-api/` would fail the
-build if a UI button existed without a matching MCP tool. The web is a
-view over the API; never the reverse.
-
-## Architectural underpinnings, surfaced
-
-A few mechanisms that make all this work:
-
-### Cache pre-warm parity
-
-The pre-warm pump and main thread's `buildRequest` produce byte-identical
-system blocks AND tool ordering. Use `agentloop.SortToolsDeterministic`
-and `agentloop.BuildCachedSystemPrompt`. A 1-byte drift = 0% cache hit +
-zero cost savings. The `internal/cortex/prewarm.go` test diffs the two
-byte slices to assert parity.
-
-### Workspace persistence ordering
-
-`Workspace.Publish` performs:
-
-1. Append to in-memory slice **under** `Lock()`.
-2. Append to durable `bus.Bus` (write-through to WAL) **before**
-   releasing `Lock()`. Failure → return error, no in-memory append.
-3. Emit `hub.Event{Type:"cortex.note.published"}` **after** lock release.
-   Failure → log only; the Note is already durable.
-
-Inverting any of these: emit-without-persist creates ghost events;
-persist-without-lock-hold creates inconsistent state on concurrent
-publish; lock-during-emit deadlocks if a subscriber calls
-`Workspace.Snapshot`.
-
-### Round superstep barrier
-
-`Round.Open(N)` declares N participants. Each Lobe (or its runner) calls
-`Done(roundID, lobeID)` once. `Wait(ctx, deadline)` blocks until all N
-Done **or** deadline **or** ctx cancelled. Late Lobes are NOT cancelled
-(cancelling a partway-LLM-call wastes API spend); their next Note carries
-a later `Round` value. Tests assert that a slow Lobe doesn't lose its
-Note — it just lands on the next round's Drain.
-
-### Drop-partial drain ordering
-
-On interrupt:
-
+**Web (browser)**
+```bash
+open http://127.0.0.1:7777/   # port shown by `r1 serve`
 ```
-cancelTurn()       // (1) tear down stream
-for range respCh{} // (2) drain remaining buffered events
-<-doneCh           // (3) wait for SSE reader to exit cleanly
-<-watchdogDone     // (4) watchdog exits
-// (5) Drop partial entirely — never persist incomplete tool_use blocks
-// (6) Append synthetic user message
+The browser loads `internal/server/static/dist/index.html` (embedded by `//go:embed static`). The bundle is the React 18 + Vite 6 + Tailwind 3 + shadcn web app from `web/`. On first connect:
+- It calls `r1d.mintWsTicket()` to get a short-lived WS auth token.
+- `ResilientSocket` from `web/src/lib/api/ws.ts` opens `ws://127.0.0.1:7777/v1/sessions/<id>/ws` with `Sec-WebSocket-Protocol: r1.lanes.v1, <token>`.
+- `useDaemonSocket` routes incoming envelopes into the per-daemon zustand store (`web/src/lib/store/daemonStore.ts`).
+- The store's `EnvelopeCoalescer` buffers high-frequency `lane.delta` events and flushes them once per animation frame — clamping to ~10 Hz visible rerender even under a 200 Hz event firehose.
+- The Cursor-3-Glass `<ThreeColumnShell>` renders. Left: `<SessionList>`. Center: `<ChatPane>` switching between `<MessageLog>+<Composer>` and `<TileGrid>` based on pinned lane count. Right: `<LanesSidebar>` with `<LaneRow>` per lane.
+
+**TUI (terminal)**
+```bash
+r1 chat --interactive
+```
+Bubble Tea v2 + bubblelayout + lipgloss v2. Three panes (dashboard / focus / detail). Lanes panel is adaptive: columns when terminal width >= n*32, vertical stack otherwise. 250 ms coalesce on `chan laneTickMsg`; per-lane render-string cache; diff-only repaint. Keys `1`–`9` jump-to-lane, `tab` cycles, `enter` focuses, `x` kills, `K` kills-all, `?` opens help.
+
+**Desktop (Tauri 2)**
+```bash
+r1 desktop      # if installed; or open the .dmg / .msi / .deb / .rpm bundle
+```
+Discovery-or-spawn:
+1. Probe `~/.r1/daemon.json`. If a healthy daemon answers `daemon.info` within 500 ms → use it.
+2. Otherwise spawn the bundled `r1` binary as a Tauri sidecar via `ShellExt::sidecar`. Sidecar binaries live under `desktop/src-tauri/binaries/` per-platform.
+3. Webview wraps the same React components from `packages/web-components/`. Lane events arrive via per-session `tauri::ipc::Channel<LaneEvent>` at 10 Hz (sidesteps Tauri's global event bus for high-frequency streams).
+
+### Step 5. Run a task
+
+You type "Add a request ID middleware" and press Cmd+Enter (or Ctrl+Enter, or click Send).
+
+What happens:
+
+1. **Composer disables** — `<Composer>` sets `streaming=true`. Send button swaps to the destructive `<StopButton>`. The textarea + Send disable. The hint flips to "Streaming a response — use the Stop button to interrupt."
+2. **Daemon receives `session.send`** — JSON-RPC call over the WS. The session pushes the user message into its history, schedules a turn.
+3. **Cortex pre-warm** — 4 minutes before the round, `internal/cortex/prewarm.go` fires a `max_tokens=1` cache request to keep the prompt-cache breakpoint warm.
+4. **Round starts** — `internal/cortex/Workspace.Run()` kicks off main thread + 5 Lobes in parallel.
+5. **Main thread plans** — Claude (or your provider chain's first available model) generates a plan. Each step becomes a task in the mission graph.
+6. **Lobes work in parallel**:
+   - `MemoryRecallLobe` searches your memory + wisdom store; surfaces 3 hits as `info` Notes.
+   - `WALKeeperLobe` drains every event into the durable bus WAL.
+   - `RuleCheckLobe` watches for supervisor-rule fires.
+   - `PlanUpdateLobe` watches for plan deltas; auto-applies edits, queues adds and removes for confirmation.
+   - `ClarifyingQLobe` notices ambiguity; drafts up to 3 clarifying questions; surfaces at idle.
+   - `MemoryCuratorLobe` runs every 5 turns; extracts "should-remember" facts.
+7. **Tools fire** — every tool call routes through `internal/hooks/` PreToolUse + PostToolUse guards. Honeypot gate aborts on canary leaks, markdown-image exfil, destructive-without-consent shell. Each tool call becomes its own lane.
+8. **Verification descent** — when the model thinks it's done: `internal/verify/` runs build + test + vet; `internal/critic/` runs the adversarial pre-commit critic; `internal/convergence/` runs adversarial self-audit.
+9. **Cross-model review** — if Claude implemented, Codex reviews; if Codex implemented, Claude reviews. The reviewer reads diff + AC + tool-call log.
+10. **Anti-truncation gate** — `internal/agentloop/antitrunc.go` composes BEFORE every other end-turn hook:
+    - Phrase scan: did the model emit any of 14 cataloged phrases? If yes → refuse `end_turn`, append a forcing-continuation system message, loop.
+    - Scope check: are there unchecked items in the active plan or any in-progress spec? If yes → refuse.
+    - Commit body check: does the most recent commit body claim completion when the corresponding spec/task isn't actually checked off? If yes → refuse.
+11. **Persist** — every event in the WAL, every node in the ledger, every cost tick journaled. Lane events stream to all subscribers (TUI/web/desktop/MCP) with monotonic per-session `seq`.
+12. **UI updates** — `<MessageLog>` renders new bubbles via `react-virtual`. The currently-streaming bubble has `aria-live="polite"`. `<ToolCard>` auto-collapses once a tool reaches `output-available`. `<PlanCard>` updates live as PlanUpdateLobe publishes deltas. `<DiffCard>` shows the consolidated per-lane diff. `<StatusBar>` ticks cost USD + lane counts + WS latency.
+
+### Step 6. Mid-stream interrupt
+
+You type "wait, also use the X-Request-ID header if it's already there" while the model is still streaming.
+
+The Router fires:
+1. Haiku 4.5 call with 4 tools — `interrupt`, `steer`, `queue_mission`, `just_chat`.
+2. Router decides "steer" (your message refines the in-flight task; not a new task).
+3. **Drop-partial protocol**: cancel the turn context, drain SSE, **never persist the partial assistant message**, append a synthetic user message describing the interrupt, restart the turn with the augmented user input.
+4. The 30-second ping watchdog ensures a stuck stream doesn't hold the lane open.
+
+### Step 7. Stop streaming
+
+You click `<StopButton>` (or press Esc — global keybinding).
+
+`onInterrupt(dropPartial=true)` fires `r1d.session.interrupt(sessionId, {drop_partial: true})`. Same drop-partial protocol; partial assistant turn vanishes, composer re-enables.
+
+### Step 8. Pin a lane
+
+`<LaneRow>`'s pin button toggles `aria-pressed`, calls `pinLane(sessionId, laneId)` on the store, and `<ChatPane>` flips `data-tile-mode="true"`. `<TileGrid>` mounts. With one pin, it's a 1×1; pin a second, 1×2; third, 1×3; fourth, 2×2.
+
+You drag-reorder by gripping a tile header. `aria-grabbed`/`aria-dropeffect` flip during the drag. Cmd+Shift+←/→ moves the focused tile keyboard-only (WCAG 2.1.1). Double-click → `onFocusLane(laneId)` → routes to `/d/<daemon>/sessions/<sid>/lanes/<lid>` (deep-linkable).
+
+### Step 9. Verify the work
+
+```bash
+r1 antitrunc verify -n 20
 ```
 
-Reverse the order — drain before cancel — and the SSE reader keeps
-producing events; `respCh` may never close.
+Reads the last 20 commits via `git log`. For each, parses any "spec N done" or "TASK-N done" claim and cross-references the active plan + matching spec checklist. Each commit gets classified Verified / Unverified / Lying. Exit non-zero if any Lying. CI runs this gate; the post-commit git hook also runs it locally.
 
-### `os.Chdir` audit + per-session sentinel
+### Step 10. Export the session for offline audit (tracebundle v2)
 
-The cortex / daemon model works **only because** `cmd.Dir` is the
-established pattern. One stray `os.Chdir` in any of the 132 internal
-packages would silently leak workdir between concurrent sessions. The
-`tools/cmd/chdir-lint/` AST walker scans every Go file for `os.Chdir`,
-`os.Getwd`, and `filepath.Abs("")` calls without a `// LINT-ALLOW chdir-*:
-reason` annotation. CI fails on red. Per-session sentinel runs before
-each tool dispatch:
-
-```go
-expected := s.SessionRoot
-got, err := os.Getwd()
-if err != nil || got != expected {
-    panic(fmt.Sprintf(
-        "FATAL: session %s expected cwd=%s got=%s — process-global chdir leaked.",
-        s.ID, expected, got))
-}
+```bash
+# Spec D removed the prior R1_SERVER_UI_V2 gate; the daemon always serves this route.
+curl -fsSL "http://127.0.0.1:7777/api/session/$SID/export.tracebundle" -o $SID.tracebundle
 ```
 
-If a stray `os.Chdir` slips past CI, the sentinel panics loudly before
-tool dispatch — far better than silent cross-session contamination.
+What the bundle contains:
 
-## Status
+- **Per-session chain nodes** filtered by `MissionID == sessionID` via `ledger.Store.ListNodesForSession`. Each node carries the chain-tier metadata (id, type, schema_version, created_at, created_by, mission_id, parent_hash) plus the `content_commitment` and the redactable content tier.
+- **Per-session edges** filtered by `Edge.Metadata["session_id"]` via `Store.ListEdgesForSession`. Edges that don't carry a `session_id` key are conservatively included — the audit chain stays complete even when an edge predates the v2 metadata convention.
+- **`chain_root_hash`** computed by `Store.ChainRootHashForSession` — `sha256(prev_hash || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)`. Recompute it from the bundle without re-loading the live ledger; equality means the bundle is intact.
+- **Canonical manifest** signed using the body returned by `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)`. Tamper-evident: any field rewrite invalidates the signature.
 
-### Done
-- Core mission loop (PLAN → EXECUTE → VERIFY → REVIEW → MERGE) with
-  cross-model adversarial reviewer.
-- Deterministic pack lifecycle, signed runtime registration, HTTP pack
-  registry.
-- Wave 2 R1-parity surfaces: browser, LSP, IDE plugins, multi-CI, Tauri
-  R1D-1..R1D-12.
-- Verification descent + honeypot gate + protected-file checks.
-- 5-provider model resolver, subscription pool, prompt-injection
-  hardening, red-team corpus.
+Redacted nodes appear in the chain (chain-tier present) but their content tier is empty — `Source.IsRedacted(nodeID)` is true. The accompanying redaction log (`<store-root>/redactions/<nodeID>.ndjson`) carries the ed25519-signed `SignedRedactionEvent` rows; `Store.RedactionsForVerified` returns each entry with a `Verified` bool. The dashboard side panel renders three states distinctly:
 
-### In Progress
-- Hardening of the Manus-style autonomous operator behind a per-mission
-  toggle.
-- LSP feature coverage beyond hover/definition/diagnostics.
+- `Verified=true` — green check, signature matches the configured public key.
+- `Verified=false`, `VerifyErr="ledger redaction sign: record is unsigned"` — gray "legacy unsigned" tooltip (record predates the spec).
+- `Verified=false`, `VerifyErr="ledger redaction sign: signature mismatch"` — red "tampered" warning.
 
-### Scoped
-- The 12-frame narrative above describes the cortex / lanes / multi-surface
-  scope. Eight specs in `specs/` define the slice.
+This means: an auditor who only has the bundle (no daemon access) can still verify both the chain root *and* every redaction event's chain-of-custody, given the public key and the canonical manifest body.
 
-### Scoping
-- More explicit superiority and runtime-proof loops against peer runtimes.
-- Cross-machine session migration.
+### Step 11. Skills load and unload around your task
 
-### Potential — On Horizon
-- Broader network effects from reusable deterministic skills.
-- Cloud daemon beyond loopback singleton.
-- OpenTelemetry export of lane events.
+Behind the scenes, every Claude / Codex Skill the model loads goes through `internal/skilltracker.Tracker.Note`. Two production unload paths fire automatically:
+
+1. **`workflow.SkillScopeCloser.OnPhaseExit`** — when the phase machine exits a phase (normal completion *or* abort), the closer drops every skill loaded into that `(stanceID, taskScope)` and emits `SkillUnloaded(reason="scope_exit")` per drop. The next phase starts with a fresh skill table; nothing leaks across phase boundaries.
+2. **`concern.SkillCompactor.EvictForBudget`** — when context-budget pressure rises (callers pass current-tokens + budget), the default `LRUPolicy` picks oldest-loaded skills until the freed total covers the overrun, then `Tracker.EvictByCompactor` emits `SkillUnloaded(reason="compactor")` per drop. The same skill can reload in a later round if it's needed again — the audit chain just shows the load/unload pairs.
+
+The 3D ledger viewer renders these distinctly: `compactor` evictions desaturate the chain segment (came back later); `scope_exit` drops fade to gone (phase boundary closed it). Both paths converge on the same `EmitSkillUnloaded` builtin hub event so the bus has an unambiguous event ordering.
+
+---
+
+## Technical overview — what each file does
+
+| User action | Code path |
+|---|---|
+| `r1 serve` | `cmd/r1/serve_cmd.go` → `internal/daemonlock/Lock` → `internal/daemondisco/Write` → `internal/server/{ipc,ws,sse}/Listen` → `internal/server/sessionhub/Run` |
+| Web bundle served at `/` | `internal/server/embed.go` reads `static/dist/index.html` directly + falls back to `static/index.html` if dist is absent |
+| Web bundle built | `web/scripts/verify-build-output.mjs` (in `npm run build`) verifies dist landed at `internal/server/static/dist/` |
+| WS connect from browser | `web/src/lib/api/ws.ts` `ResilientSocket` → exponential backoff 250 ms→8 s, jitter ±20% → 10-attempt hard cap → `<ConnectionLostBanner>` |
+| WS auth | `web/src/lib/api/auth.ts` `mintWsTicket` → 90 s skew-based refresh → token offered as 2nd `Sec-WebSocket-Protocol` entry |
+| Mid-stream interrupt | `internal/cortex/interrupt.go` (drop-partial pattern) + agentloop cancel context + 30 s ping watchdog |
+| Cortex pre-warm | `internal/cortex/prewarm.go` — `max_tokens=1` warming request every 4 min |
+| Anti-truncation gate | `internal/antitrunc/{phrases,gate,scopecheck}.go` + `internal/agentloop/antitrunc.go` |
+| Lane FSM | `internal/streamjson/lane.go` — single-writer goroutine allocates monotonic seq |
+| Mission ledger | `internal/ledger/` — content-addressed (`sha256:<hex>`); 22 node types |
+| Cross-model review | `internal/model/CrossModelReviewer` |
+| Anti-truncation CLI | `cmd/r1/antitrunc_cmd.go` (verify, list-patterns, tail) |
+| MCP catalog | `internal/mcp/r1_server.go` + `r1_server_catalog.go` — 38 tools / 10 categories |
+| Skill load (auto) | `internal/skilltracker/tracker.go` `Tracker.Note` — called when a skill is injected into the prompt |
+| Skill unload — explicit | `internal/skilltracker/tracker.go` `Tracker.Drop` — model itself drops the skill |
+| Skill unload — phase exit | `internal/workflow/skill_scope_closer.go` `OnPhaseExit` → `Tracker.CloseScope` (reason="scope_exit") |
+| Skill unload — compactor | `internal/concern/skill_compactor.go` `EvictForBudget` → `Tracker.EvictByCompactor` (reason="compactor") |
+| Redaction signing | `internal/ledger/redact_sign.go` `SignRecord` — ed25519 over canonical `{node_id, redacted_at, reason, signer}` |
+| Redaction verifying | `internal/ledger/redact_sign.go` `VerifyRecord` — returns `nil` / `ErrUnsigned` / `ErrSignatureMismatch` |
+| Redaction read (verified) | `internal/ledger/redact_sign.go` `Store.RedactionsForVerified` — used by the dashboard side panel |
+| Tracebundle export | `cmd/r1-server/tracebundle_source.go` (`serveTracebundleAdapter`) — always reachable post-Spec-D; backed by `ledger.Store.{ListNodesForSession, ListEdgesForSession, ChainRootHashForSession, CanonicalManifestSignBody}` |
+| Release-rehearsal trigger (push-to-main) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-main`) — fires `services/cloudbuild-e2e.yaml` |
+| Release-rehearsal trigger (tag) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-tag`) — same flow on `^v.*$` tag pushes |
+| Release-rehearsal manual | `.github/workflows/e2e-rehearsal-manual.yml` — `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH` from the Actions UI |
+
+---
+
+## Hosted SaaS — how `r1.run` actually works
+
+### `platform.r1.run` (r1-docs)
+
+A 350-line Go service. Three things:
+
+1. **Embeds `docs/*.md` at compile time** via `//go:embed all:docs/*`. Container ships docs frozen at build time; redeploying is the publish step.
+2. **Renders markdown to HTML** with a dependency-free pure-Go renderer covering headings, code fences (with `data-lang`), inline code, lists, tables, links, **bold**, *italic*, horizontal rules. We deliberately avoid heavy markdown libs to keep the binary tiny (~4 MB) and start-up sub-100 ms.
+3. **CSP-lock the response** via `<meta http-equiv="Content-Security-Policy">` in the HTML template.
+
+Routes: `/`, `/<doc>.html`, `/raw/<doc>.md`, `/livez`.
+
+### `api.r1.run` (r1-coord-api)
+
+A 150-line Go service. License-verify and telemetry-opt-in stubs are deliberate — they answer 200 with well-formed JSON so the DNS chain can be smoke-tested before the real auth integration lands.
+
+Routes: `/`, `/livez` `/readyz` `/v1/version`, `POST /v1/license/verify`, `POST /v1/telemetry/opt-in`.
+
+The container binds `r1-{env}-shared-DATABASE_URL` from Secret Manager (placeholder; operator action pending).
+
+### `downloads.r1.run` (r1-downloads-cdn)
+
+A 200-line Go service using the Cloud Storage Go SDK to:
+
+1. List objects under `gs://relayone-488319-r1-releases/{channel}/` for the index.
+2. Stream a single object's bytes back to the caller.
+3. Return content-hash metadata.
+
+Cloud Run service account holds `roles/storage.objectViewer` on the bucket. Channels constrained to `prod`/`staging`/`dev` at the handler layer.
+
+### Auto-deploy
+
+`services/cloudbuild-deploy.yaml` runs on push to `main` (prod), `staging` (staging), or `dev` (dev). Three image builds in parallel → three pushes → three Cloud Run deploys (with env-specific secret bindings) → `/livez` smoke check (5 retries × 2 s).
+
+---
+
+## Key technical decisions
+
+### Why a Watchman-pattern daemon
+Spec 5 D-D1: spawn-on-demand means zero idle resource cost on machines not running r1. Single-instance via `gofrs/flock` ensures two installs don't race over `~/.r1/`. `r1 serve --install` is the explicit opt-in for always-on.
+
+### Why drop-partial interrupt
+Spec 1 D-C4: never persist partial assistant messages on cancellation. A persisted partial-then-resumed conversation is non-deterministic. Drop-partial means each turn is atomic — completes fully or never happened.
+
+### Why pre-warm the cache
+Spec 1 D-C5: Anthropic prompt-cache TTL is 5 minutes. The pre-warm pump fires `max_tokens=1` every 4 min during a session, keeping the cache breakpoint warm at ~$0.001/min. With 5 Lobes per round, this saves ~50% of prompt cost on long missions.
+
+### Why coder/websocket instead of gorilla
+Spec 5 D-D6: gorilla/websocket archived in 2022; coder/websocket actively maintained, supports `context.Context` natively, has `wsjson.Read/Write` helpers, single-allocation per frame. 50-session × 100-message soak: 262 MB/s journal throughput, 852 µs p99 dispatch latency.
+
+### Why streamdown is load-bearing
+Spec 6 §Stack: vercel/streamdown handles partial-Markdown gracefully (unclosed code fences, half-rendered tables) — essential for streaming agent output. Pinned at `~1.2.0`; partial-markdown handling has subtle regressions across minors.
+
+### Why Tauri 2 with sidecar fallback
+Spec 7 §6.2: external `r1 serve` is primary transport; sidecar is the first-run fallback so the desktop app works the moment a user installs it without requiring a separate install step.
+
+### Why every UI action has an MCP equivalent
+Spec 8: humans drive r1 via three UIs; agents drive via MCP. If the surfaces diverge, agents fail in non-obvious ways. `lint-view-without-api` enforces this as a build break.
+
+### Why anti-truncation is machine-mechanical
+Spec 9 D-2026-05-04-01: the model demonstrably ignores prompt-level instructions to defeat self-truncation. Reliable enforcement is at the host process layer in deterministic Go code, in seven independently-effective layers. Operator can override (with a flag); LLM cannot.
+
+### Why no `/healthz` on the SaaS services
+Cloud Run org policy on `relayone-488319` intercepts `/healthz` and returns 404 from the load balancer before the request hits the container. r1 services answer `/livez` + `/readyz` + `/v1/version` instead. Documented in D-2026-05-04-03.
+
+### Why the embed.go fix
+Originally `RegisterDashboardUI` rewrote `r.URL.Path = "/index.html"` and called `http.FileServer`. FileServer auto-canonicalizes back to `/`, creating a 301 loop. The fix (D-2026-05-04-02) reads `static/dist/index.html` directly via `fs.ReadFile`. Legacy `static/index.html` fallback preserved.
+
+### Why Path A (Go reimpl) for auth
+Operator decision: 3 Go SaaS services already; adding a 4th in Node creates an additional toolchain to operate. Drift risk is bounded because `@relayone/auth-core`'s contract is stable; performance win (one fewer hop on every authenticated request) is real even if small.
+
+### Why skill compaction is one-way
+PR #168, `internal/concern/skill_compactor.go`: the compactor inspects the loaded-skill table and emits `SkillUnloaded` events; it does NOT mutate prompt content. The next round's prompt rebuild sees the updated table and rebuilds without the dropped skill. Decoupling eviction (decision) from rebuild (effect) means eviction is testable in isolation, the audit trail captures the decision *before* any prompt mutation, and a future operator-facing "explain why this skill was dropped" tooltip can read the ledger without reverse-engineering the prompt.
+
+### Why ed25519 instead of HMAC for redaction signatures
+PR #169, `internal/ledger/redact_sign.go`: HMAC requires the verifier to hold the same secret, which collapses to "the audit trail is only as trustworthy as the box that wrote it." ed25519 is asymmetric — the operator publishes the public key (or distributes it via the canonical manifest's `signer` fingerprint) and any third-party auditor can verify without read access to the live ledger. The keypair lives at `<store-root>/redactions/sign-{priv,pub}.pem`; the public-key fingerprint (12-char hex of `sha256(pub)`) is stamped into every record so multiple keys can co-exist across rotations.
+
+### Why the tracebundle ships per-session, not whole-ledger
+PR #171, `internal/ledger/store_session.go`: the ledger today shares one chain dir across missions. Pre-v2 callers got the entire ledger when they exported, which leaked unrelated sessions to anyone with bundle access. Per-session filtering (`ListNodesForSession` by `MissionID`, `ListEdgesForSession` by `Edge.Metadata["session_id"]`) makes the export a real privacy boundary. The `ChainRootHashForSession` is computed over the filtered set so the manifest's chain root signs *exactly* what's in the bundle. Future work: actual disk-level partitioning (the comment in `store_session.go` flags this).
+
+### Why two release-rehearsal triggers (push-to-main + tag)
+PR #170, `services/cloudbuild-e2e-trigger.yaml`: a push-to-main trigger catches "we just merged something that breaks the e2e flow but the PR gate didn't run e2e because it's expensive." A tag trigger catches "we're about to promote `v0.19.0` to staging and we want to know it's clean before the deploy fires." The same Cloud Build pipeline (`services/cloudbuild-e2e.yaml`) runs in both cases — only the trigger condition differs — so there's no drift in what "rehearsal" means. The manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`) is the operator escape hatch for ad-hoc rehearsal without local `gcloud`.

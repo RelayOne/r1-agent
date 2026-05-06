@@ -93,7 +93,7 @@ type InteractiveUnsupportedError struct {
 
 func (e *InteractiveUnsupportedError) Error() string {
 	return fmt.Sprintf("browser: action %q requires the stoke_rod build tag; "+
-		"rebuild with 'go build -tags stoke_rod ./cmd/stoke' or construct a RodClient", e.Kind)
+		"rebuild with 'go build -tags stoke_rod ./cmd/r1' or construct a RodClient", e.Kind)
 }
 
 // IsTransient returns true when the error is one the env-fix

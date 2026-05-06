@@ -695,6 +695,8 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "antitrunc":
+		antitruncCmd(os.Args[2:])
 	case "cf":
 		counterfactCmd(os.Args[2:])
 	case "artifact":
@@ -719,6 +721,8 @@ func main() {
 	case "logs":
 		// OPSUX-tail: tail stream.jsonl (or eventlog fallback).
 		os.Exit(runLogsCmd(os.Args[2:], os.Stdout, os.Stderr))
+	case "rules":
+		rulesCmd(os.Args[2:])
 	case "cost":
 		// OPSUX-tail: aggregate cost_usd across eventlog events.
 		os.Exit(runCostCmd(os.Args[2:], os.Stdout, os.Stderr))

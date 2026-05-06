@@ -107,7 +107,7 @@ Each row represents one _ability_ (not one function call). Where a product expos
 
 | # | Ability / Tool | Source | Citation URL + Date | R1 + Stoke Equivalent | Status | Differentiator Note | Gap Task |
 |---|---|---|---|---|---|---|---|
-| 17 | **MCP server hosting** (expose tools over MCP) | Claude Code | https://code.claude.com/docs/en/mcp 2026-04-24 | `cmd/stoke-mcp/` — full MCP server with dual-name registration (stoke_* + r1_*) | PARITY | — | — |
+| 17 | **MCP server hosting** (expose tools over MCP) | Claude Code | https://code.claude.com/docs/en/mcp 2026-04-24 | `cmd/r1-mcp/` — full MCP server with dual-name registration (stoke_* + r1_*) | PARITY | — | — |
 | 18 | **MCP client** (consume external MCP tools) | Claude Code | https://code.claude.com/docs/en/mcp 2026-04-24 | `internal/mcp/` — client.go, registry.go, discovery.go; stdio + SSE + HTTP transports | PARITY | — | — |
 | 19 | **MCP tool search / deferred loading** | Claude Code | https://code.claude.com/docs/en/mcp `scale-with-mcp-tool-search` 2026-04-24 | No tool-search index in R1; all tools loaded at startup | GAP | — | R1P-010 |
 | 20 | **MCP resource listing** (ListMcpResourcesTool) | Claude Code | https://code.claude.com/docs/en/tools 2026-04-24 | No MCP resource listing in R1 MCP client | GAP | — | R1P-011 |
@@ -126,7 +126,7 @@ Each row represents one _ability_ (not one function call). Where a product expos
 | 28 | **Subagent persistent memory** | Claude Code | https://code.claude.com/docs/en/sub-agents `enable-persistent-memory` 2026-04-24 | `internal/memory/` — 5-scope memory bus; each stance writes to Session/Worker scope | PARITY | — | — |
 | 29 | **Intent classification before execution** | R1 only | `internal/intent/` | Verbalization gate classifies intent before any tool call; blocks "phantom completions" | R1-ENHANCED | No reference product has a pre-execution intent gate. | — |
 | 30 | **Speculative parallel execution** (4 strategies) | R1 only | `internal/specexec/` | 4 strategies run in parallel; winner picked by fastest correct result | R1-ENHANCED | Claude Code has no equivalent speculative execution primitive. | — |
-| 31 | **Delegation / A2A agent protocol** | R1 only | `internal/delegation/`, `cmd/stoke-a2a/` | A2A agent-card protocol + delegation handoffs | R1-ENHANCED | Claude Code has no A2A protocol. Hermes has no published A2A surface. | — |
+| 31 | **Delegation / A2A agent protocol** | R1 only | `internal/delegation/`, `cmd/r1-a2a/` | A2A agent-card protocol + delegation handoffs | R1-ENHANCED | Claude Code has no A2A protocol. Hermes has no published A2A surface. | — |
 
 ### Planning Tools
 

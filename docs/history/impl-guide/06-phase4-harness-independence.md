@@ -1031,7 +1031,7 @@ Hard rules:
 }
 ```
 
-**Add a flag to select runner:** in `cmd/stoke/main.go`, accept `--runner native|claude|codex|hybrid` and route accordingly. Default stays `claude` (no behavior change for existing users) until Phase 4 is fully validated.
+**Add a flag to select runner:** in `cmd/r1/main.go`, accept `--runner native|claude|codex|hybrid` and route accordingly. Default stays `claude` (no behavior change for existing users) until Phase 4 is fully validated.
 
 ---
 
@@ -1042,8 +1042,8 @@ Run these in order. Each must pass before moving on.
 ### After 4.1 (tools)
 
 1. `go test ./internal/tools/...` passes with >70% coverage
-2. `go run ./cmd/stoke tool exec Read '{"file_path":"go.mod"}'` returns the file content with line numbers
-3. `go run ./cmd/stoke tool exec Edit '{"file_path":"/tmp/test.txt","old_string":"foo","new_string":"bar"}'` after creating `/tmp/test.txt` with "foo" returns success
+2. `go run ./cmd/r1 tool exec Read '{"file_path":"go.mod"}'` returns the file content with line numbers
+3. `go run ./cmd/r1 tool exec Edit '{"file_path":"/tmp/test.txt","old_string":"foo","new_string":"bar"}'` after creating `/tmp/test.txt` with "foo" returns success
 4. Edit on a file that hasn't been Read returns the read-first error
 5. StrReplace fuzzy match handles a deliberately whitespace-mangled `old_string`
 

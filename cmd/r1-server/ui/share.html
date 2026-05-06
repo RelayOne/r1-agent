@@ -1,0 +1,55 @@
+{{- /*
+  cmd/r1-server/ui/share.html
+
+  Spec 4 §5.5 — read-only snapshot view. The banner is the FIRST
+  rendered child of <main> so screen readers announce read-only
+  context BEFORE any waterfall content. T14 asserts source order.
+
+  Context shape:
+    .V2BaseContext
+    .Snapshot     { ChainRootHash, CreatedAtISO, SessionName }
+    .Rows         []WaterfallRow  (read-only — no SSE, no scrubber)
+*/ -}}
+{{- define "share" -}}
+{{ template "base" . }}
+{{- end -}}
+
+{{- define "title" -}}{{ .Snapshot.SessionName }} (read-only) — r1{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand">r1</div>
+  <span class="muted">Read-only snapshot</span>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<aside class="banner share-banner" data-testid="share-banner" role="note"
+       style="background:var(--color-row-zebra);padding:12px 16px;
+              border-bottom:1px solid var(--color-border);">
+  Read-only snapshot of <code>{{ .Snapshot.ChainRootHash }}</code>
+  as of <time datetime="{{ .Snapshot.CreatedAtISO }}">{{ .Snapshot.CreatedAtISO }}</time>.
+</aside>
+<section class="pane pane--primary waterfall waterfall--readonly"
+         data-testid="share-waterfall">
+  <table class="waterfall__table">
+    <thead>
+      <tr>
+        <th></th><th></th>
+        <th scope="col">Event</th>
+        <th scope="col">Duration</th>
+        <th scope="col">Cost</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}{{ template "waterfall-row" . }}{{ end }}
+      {{ if eq (len .Rows) 0 }}
+        <tr><td colspan="6" class="muted">Empty snapshot.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

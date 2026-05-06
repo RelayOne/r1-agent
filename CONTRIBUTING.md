@@ -19,7 +19,7 @@ on-disk layout.
 These three commands are the CI gate. All must pass before submitting a PR.
 
 ```bash
-go build ./cmd/stoke
+go build ./cmd/r1
 go test ./...
 go vet ./...
 ```
@@ -30,6 +30,22 @@ Or use the Makefile:
 make          # runs build, test, vet
 make lint     # runs golangci-lint (requires golangci-lint installed)
 ```
+
+### Anti-truncation git hooks (recommended)
+
+R1 ships a layered defense against LLM self-truncation. One layer is
+a post-commit git hook that scans commit bodies for false-completion
+phrases (e.g. "spec 9 done", "all items complete"). Install it with:
+
+```bash
+bash scripts/install-hooks.sh           # install
+bash scripts/install-hooks.sh --check   # report current state
+bash scripts/install-hooks.sh --uninstall
+```
+
+The hook is non-blocking — it writes warnings to `audit/antitrunc/`
+but never fails a commit. The full layered defense is documented in
+`docs/ANTI-TRUNCATION.md`.
 
 ## Submitting Changes
 
@@ -43,7 +59,7 @@ make lint     # runs golangci-lint (requires golangci-lint installed)
 ### Pull Request Process
 
 1. Fork the repository and create your branch from `main`.
-2. Ensure `go build ./cmd/stoke`, `go test ./...`, and `go vet ./...` all pass.
+2. Ensure `go build ./cmd/r1`, `go test ./...`, and `go vet ./...` all pass.
 3. Add tests for any new functionality.
 4. Update documentation if your change affects the public API or user-facing behavior.
 5. Write a clear PR description explaining what changed and why.
@@ -61,7 +77,7 @@ How was this tested?
 
 ## Checklist
 
-- [ ] `go build ./cmd/stoke` passes
+- [ ] `go build ./cmd/r1` passes
 - [ ] `go test ./...` passes
 - [ ] `go vet ./...` passes
 - [ ] New tests added for new functionality

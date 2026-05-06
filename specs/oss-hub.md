@@ -238,5 +238,5 @@ curl -fsSL https://raw.githubusercontent.com/ericmacdougall/Stoke/main/install.s
 3. [x] Write `GOVERNANCE.md` with roles, decision process, and code-owner rules (commit f1c578a).
 4. [x] Write `CLA.md` + `.github/workflows/cla.yml` (commit 11519c4).
 5. [x] Update README install section with brew option.
-6. [x] `go build ./cmd/stoke` — green. `go vet ./...` — green. `go test ./...` — one pre-existing failure in `internal/scan/selfscan_test.go` flagging two `//nolint:nilerr` directives at `cmd/r1-server/import.go:254` and `cmd/stoke/export_cmd.go:455`. Both directives predate this branch (added in PR #3 T16 commits 9b8428a + 9802367 on main). Not a regression from OSS-hub work. BLOCKED for separate triage — user decides whether to refactor the nolint call-sites or extend the selfscan false-positive allowlist.
+6. [x] `go build ./cmd/r1` — green. `go vet ./...` — green. `go test ./...` — one pre-existing failure in `internal/scan/selfscan_test.go` flagging two `//nolint:nilerr` directives at `cmd/r1-server/import.go:254` and `cmd/r1/export_cmd.go:455`. Both directives predate this branch (added in PR #3 T16 commits 9b8428a + 9802367 on main). Not a regression from OSS-hub work. BLOCKED for separate triage — user decides whether to refactor the nolint call-sites or extend the selfscan false-positive allowlist.
 7. [x] Mark spec STATUS: done.

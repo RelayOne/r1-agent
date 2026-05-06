@@ -13,7 +13,7 @@
 // v1 and v2 wiring. The event shape relied upon is hub.ModelEvent (Model,
 // InputTokens, OutputTokens, CachedTokens, CostUSD).
 //
-// Wire-up: spec work-stoke.md TASK 3. Composition lives in cmd/stoke/main.go
+// Wire-up: spec work-stoke.md TASK 3. Composition lives in cmd/r1/main.go
 // or cmd/r1-server/main.go — this file only implements the widget and its
 // Start() subscription helper.
 

@@ -1,1 +1,1 @@
-./stoke/cmd/stoke/main.go
+./stoke/cmd/r1/main.go

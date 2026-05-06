@@ -292,7 +292,7 @@ The `shipped/embed.go` file uses Go's `//go:embed skills/**/*.skill.md` directiv
 ## Validation gate
 
 1. ✅ `go vet ./...` clean, `go test ./internal/skillmfg/...` passes with >70% coverage on the manager and >80% coverage on each workflow file
-2. ✅ `go build ./cmd/stoke` succeeds — and the build embeds every `.skill.md` file under `/skills/` via go:embed
+2. ✅ `go build ./cmd/r1` succeeds — and the build embeds every `.skill.md` file under `/skills/` via go:embed
 3. ✅ Every shipped `.skill.md` file parses successfully (YAML frontmatter + markdown body) and validates against the skill node schema from component 6 — a broken shipped file prevents the binary from building
 4. ✅ Every shipped skill has `provenance: shipped_with_stoke`, `confidence: proven` (or a documented lower default), and all required frontmatter fields
 5. ✅ The shipped library contains at least one skill in every declared category (trust, decision-quality, snapshot-defense, cross-team, research, hierarchy, cost, ledger, event-driven, stance-and-team, security, performance, coding-craft)

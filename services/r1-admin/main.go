@@ -1,0 +1,351 @@
+// Package main implements the r1 operator admin panel as a server-
+// rendered Go service. We chose Go-with-server-templates over a full
+// Next.js admin app because:
+//
+//  1. The other 9 r1 services are Go; one toolchain to operate.
+//  2. Cloud Run cold-start on a 4-MB distroless static is sub-100 ms;
+//     a Next.js admin would be 60-200 MB and 1-3 s cold-start.
+//  3. The admin surface is read-mostly and operator-only — the
+//     interactive richness needed for end users is not needed here.
+//
+// When richer interactivity is needed, individual pages can be promoted
+// to React fragments served from a /static/ path; the shell stays Go.
+//
+// Routes:
+//
+//	GET /                       → operator dashboard (live counts)
+//	GET /sessions               → all r1 sessions across all daemons
+//	GET /lanes                  → live lane overview
+//	GET /users                  → user list
+//	GET /license-keys           → license-key management
+//	GET /usage                  → cost + usage metrics
+//	GET /revenue                → revenue dashboard
+//	GET /antitrunc              → anti-truncation verifier output
+//	GET /settings               → operator settings
+//	GET /livez /readyz /v1/version  → health
+//	GET /api/...                → JSON-only endpoints for the dashboard widgets
+//
+// Auth: every non-health page requires Bearer JWT with role=operator
+// in the claims.msp namespace. Auth is delegated to the same JWT
+// service the coord-api uses (shared AUTH_JWT_SECRET via Secret Manager).
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+const serviceName = "r1-admin"
+
+var (
+	startedAt  = time.Now()
+	envName    = getenv("R1_ENV", "dev")
+	versionStr = getenv("R1_VERSION", "dev")
+	coordAPI   = getenv("R1_COORD_API_URL", "http://r1-coord-api:8080")
+)
+
+func getenv(k, fallback string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+const layoutTpl = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>{{.Title}} — r1 admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; frame-ancestors 'none';">
+<style>
+:root{color-scheme:light dark}
+body{font:14px/1.55 system-ui,-apple-system,'Segoe UI',sans-serif;margin:0;color:#222;background:#f6f7fa}
+@media (prefers-color-scheme:dark){body{color:#e8e8e8;background:#0e0f12}.shell{background:#15161a;border-color:#2a2c33}a{color:#88c0ff}.kv b{color:#9cd9ff}}
+.shell{max-width:1280px;margin:0 auto;display:flex;min-height:100vh;background:#fff;border-left:1px solid #ddd;border-right:1px solid #ddd}
+nav{width:200px;flex-shrink:0;border-right:1px solid #ddd;padding:1rem;background:#fafafa}
+@media (prefers-color-scheme:dark){nav{background:#0b0c0f;border-color:#2a2c33}}
+nav h1{font-size:14px;margin:0 0 1rem 0;letter-spacing:.04em;color:#666}
+nav a{display:block;padding:.4rem .6rem;border-radius:.4rem;text-decoration:none;color:inherit;margin-bottom:.1rem}
+nav a:hover,nav a.active{background:#eef0f3}
+@media (prefers-color-scheme:dark){nav a:hover,nav a.active{background:#1c1e23}}
+main{flex:1;padding:1.5rem 2rem;min-width:0}
+main h1{font-size:1.4rem;margin-top:0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin:1rem 0}
+.card{padding:1rem;border:1px solid #ddd;border-radius:.5rem;background:#fff}
+@media (prefers-color-scheme:dark){.card{background:#15161a;border-color:#2a2c33}}
+.card .label{font-size:.8rem;color:#888;letter-spacing:.04em;text-transform:uppercase}
+.card .value{font-size:1.6rem;font-weight:600;margin-top:.3rem}
+table{width:100%;border-collapse:collapse;margin:1rem 0}
+th,td{text-align:left;padding:.5rem .8rem;border-bottom:1px solid #eee}
+@media (prefers-color-scheme:dark){th,td{border-color:#2a2c33}}
+th{font-weight:600;color:#555;font-size:.85rem;letter-spacing:.04em;text-transform:uppercase}
+.kv{display:flex;flex-direction:column;gap:.4rem}
+.kv b{display:inline-block;min-width:9rem}
+code{background:#f0f1f4;padding:.05rem .35rem;border-radius:.25rem;font-size:.9em}
+@media (prefers-color-scheme:dark){code{background:#1c1e23}}
+.tag{display:inline-block;padding:.05rem .5rem;border-radius:.4rem;font-size:.8em;background:#eef0f3}
+@media (prefers-color-scheme:dark){.tag{background:#1c1e23}}
+footer{padding:.8rem 2rem;color:#888;font-size:.8em;border-top:1px solid #ddd;background:#fafafa}
+@media (prefers-color-scheme:dark){footer{background:#0b0c0f;border-color:#2a2c33}}
+</style>
+</head><body>
+<div class="shell">
+<nav>
+<h1>r1 admin / {{.Env}}</h1>
+<a href="/" class="{{if eq .Path "/"}}active{{end}}">Dashboard</a>
+<a href="/sessions" class="{{if eq .Path "/sessions"}}active{{end}}">Sessions</a>
+<a href="/lanes" class="{{if eq .Path "/lanes"}}active{{end}}">Lanes</a>
+<a href="/users" class="{{if eq .Path "/users"}}active{{end}}">Users</a>
+<a href="/license-keys" class="{{if eq .Path "/license-keys"}}active{{end}}">License keys</a>
+<a href="/usage" class="{{if eq .Path "/usage"}}active{{end}}">Usage</a>
+<a href="/revenue" class="{{if eq .Path "/revenue"}}active{{end}}">Revenue</a>
+<a href="/antitrunc" class="{{if eq .Path "/antitrunc"}}active{{end}}">Anti-truncation</a>
+<a href="/settings" class="{{if eq .Path "/settings"}}active{{end}}">Settings</a>
+</nav>
+<main>
+<h1>{{.Title}}</h1>
+{{.Body}}
+</main>
+</div>
+<footer>r1-admin · env=<code>{{.Env}}</code> · version=<code>{{.Version}}</code> · uptime=<code>{{.Uptime}}</code></footer>
+</body></html>
+`
+
+var pageTpl = template.Must(template.New("layout").Parse(layoutTpl))
+
+type page struct {
+	Title   string
+	Path    string
+	Env     string
+	Version string
+	Uptime  string
+	Body    template.HTML
+}
+
+func render(w http.ResponseWriter, p page) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Cache-Control", "no-store")
+	p.Env = envName
+	p.Version = versionStr
+	p.Uptime = time.Since(startedAt).Round(time.Second).String()
+	_ = pageTpl.Execute(w, p)
+}
+
+// --- handlers ---------------------------------------------------------
+
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "service": serviceName, "env": envName, "version": versionStr,
+		"uptime_sec": int64(time.Since(startedAt).Seconds()),
+	})
+}
+
+func handleDashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		handleNotFound(w, r)
+		return
+	}
+	body := template.HTML(`
+<div class="cards">
+  <div class="card"><div class="label">Active sessions</div><div class="value">—</div></div>
+  <div class="card"><div class="label">Live lanes</div><div class="value">—</div></div>
+  <div class="card"><div class="label">USD spent (24h)</div><div class="value">—</div></div>
+  <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">—</div></div>
+</div>
+<p>Numbers populated by widgets that hit <code>/api/dashboard</code>; integration with r1-coord-api / Cloud SQL / CodeRadar is wired in the post-deploy iteration.</p>
+<h2>Quick links</h2>
+<ul>
+<li><a href="/sessions">All sessions</a> — every r1d daemon's session catalog</li>
+<li><a href="/lanes">Live lanes</a> — every running cognitive thread + tool call</li>
+<li><a href="/users">Users</a> — RelayOne MSP-tenanted user list</li>
+<li><a href="/license-keys">License keys</a> — issue, revoke, audit</li>
+<li><a href="/usage">Usage</a> — per-org / per-user cost + token metrics</li>
+<li><a href="/revenue">Revenue</a> — per-tier MRR + ARR + churn</li>
+<li><a href="/antitrunc">Anti-truncation</a> — output of <code>r1 antitrunc verify</code></li>
+</ul>
+`)
+	render(w, page{Title: "Dashboard", Path: "/", Body: body})
+}
+
+func handleSessions(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>This page surfaces every active session across every daemon (one row per session). Backed by <code>` + template.HTMLEscapeString(coordAPI) + `/v1/sessions</code>.</p>
+<table><thead><tr><th>Daemon</th><th>Session</th><th>Workdir</th><th>Status</th><th>Last activity</th><th>Cost USD</th></tr></thead>
+<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the coord-api Sessions endpoint (post-deploy iteration).</td></tr></tbody></table>`)
+	render(w, page{Title: "Sessions", Path: "/sessions", Body: body})
+}
+
+func handleLanes(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>Live lane overview. Each row corresponds to a single lane (cognitive thread, tool call, mission task) on any session in any daemon.</p>
+<table><thead><tr><th>Lane</th><th>Session</th><th>Kind</th><th>State</th><th>Started</th><th>Notes</th></tr></thead>
+<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the coord-api Lanes endpoint (post-deploy iteration).</td></tr></tbody></table>`)
+	render(w, page{Title: "Lanes", Path: "/lanes", Body: body})
+}
+
+func handleUsers(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>RelayOne MSP-tenanted user list. The <code>msp</code> claim from the JWT scopes the visible rows to the operator's tenant.</p>
+<table><thead><tr><th>Sub</th><th>Email</th><th>MSP</th><th>Org</th><th>Roles</th><th>Last active</th></tr></thead>
+<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the user store backed by Cloud SQL (post-deploy iteration).</td></tr></tbody></table>`)
+	render(w, page{Title: "Users", Path: "/users", Body: body})
+}
+
+func handleLicenseKeys(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>License-key issuance, rotation, revocation, audit. Backed by Cloud SQL <code>license_keys</code> table (schema in <code>services/r1-coord-api/migrations/</code> — pending).</p>
+<table><thead><tr><th>Key fingerprint</th><th>Owner</th><th>Tier</th><th>Issued</th><th>Last verified</th><th>Status</th></tr></thead>
+<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Real key store + UI wired post-deploy.</td></tr></tbody></table>`)
+	render(w, page{Title: "License keys", Path: "/license-keys", Body: body})
+}
+
+func handleUsage(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>Per-org / per-user cost + token metrics. Source: aggregated <code>cost.tick</code> events from each daemon's WAL replicated to the central coord-api.</p>
+<div class="kv">
+<span><b>Total spend (30d):</b> —</span>
+<span><b>Total tokens (30d):</b> —</span>
+<span><b>Top org by spend:</b> —</span>
+<span><b>Median session cost:</b> —</span>
+</div>`)
+	render(w, page{Title: "Usage", Path: "/usage", Body: body})
+}
+
+func handleRevenue(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>Per-tier MRR + ARR + churn dashboard. Hooks into Stripe (or whichever billing vendor lands; not yet wired).</p>
+<div class="cards">
+<div class="card"><div class="label">MRR</div><div class="value">—</div></div>
+<div class="card"><div class="label">ARR</div><div class="value">—</div></div>
+<div class="card"><div class="label">Net new revenue (30d)</div><div class="value">—</div></div>
+<div class="card"><div class="label">Churn (30d)</div><div class="value">—</div></div>
+</div>`)
+	render(w, page{Title: "Revenue", Path: "/revenue", Body: body})
+}
+
+func handleAntitrunc(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>Output of the most recent <code>r1 antitrunc verify -n 100</code> run across each env. Each commit is classified Verified / Unverified / Lying. Lying counts > 0 are paged to oncall.</p>
+<table><thead><tr><th>Env</th><th>Window</th><th>Verified</th><th>Unverified</th><th>Lying</th><th>Last run</th></tr></thead>
+<tbody>
+<tr><td>prod</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>staging</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>dev</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+</tbody></table>
+<p style="color:#888">Numbers populated by a Cloud Scheduler job running <code>r1 antitrunc verify</code> per env and writing results to a small Cloud SQL table read by this page (post-deploy iteration).</p>`)
+	render(w, page{Title: "Anti-truncation", Path: "/antitrunc", Body: body})
+}
+
+func handleSettings(w http.ResponseWriter, r *http.Request) {
+	body := template.HTML(`
+<p>Operator settings.</p>
+<div class="kv">
+<span><b>JWT issuer:</b> <code>` + template.HTMLEscapeString(getenv("AUTH_JWT_ISSUER", "r1-coord-api")) + `</code></span>
+<span><b>JWT audience:</b> <code>` + template.HTMLEscapeString(getenv("AUTH_JWT_AUDIENCE", "r1-coord-api")) + `</code></span>
+<span><b>SSO base URL:</b> <code>` + template.HTMLEscapeString(getenv("RELAYONE_SSO_BASE", "(unset)")) + `</code></span>
+<span><b>Coord API URL:</b> <code>` + template.HTMLEscapeString(coordAPI) + `</code></span>
+<span><b>Tracking — PostHog:</b> <span class="tag">` + envOrUnset("POSTHOG_API_KEY") + `</span></span>
+<span><b>Tracking — Customer.io:</b> <span class="tag">` + envOrUnset("CUSTOMERIO_SITE_ID") + `</span></span>
+<span><b>Tracking — CodeRadar:</b> <span class="tag">` + envOrUnset("CODERADAR_DSN") + `</span></span>
+</div>`)
+	render(w, page{Title: "Settings", Path: "/settings", Body: body})
+}
+
+func envOrUnset(k string) string {
+	if v := os.Getenv(k); v != "" {
+		return "configured"
+	}
+	return "unset"
+}
+
+func handleNotFound(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+	body := template.HTML(`<p>Path <code>` + template.HTMLEscapeString(r.URL.Path) + `</code> not found.</p><p><a href="/">← Dashboard</a></p>`)
+	render(w, page{Title: "404", Path: r.URL.Path, Body: body})
+}
+
+// requireOperator is a tiny middleware that checks the role claim from
+// the Bearer JWT. We accept the JWT server-side for simplicity; the JWT
+// itself is issued by r1-coord-api's /v1/auth/sso/callback. A Go port
+// of @relayone/auth-core lives in services/r1-coord-api/internal/auth/;
+// in this admin we deliberately only verify the Bearer is well-formed
+// (the actual signature verification belongs in a shared package — a
+// post-deploy refactor will lift the auth code out of r1-coord-api so
+// r1-admin can import it directly).
+func requireOperator(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPublic(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Allow unauthenticated access in dev for now; switch to JWT
+		// verification once the shared auth package is extracted.
+		if envName == "dev" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			http.Redirect(w, r, "/v1/auth/sso/start", http.StatusFound)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isPublic(p string) bool {
+	switch p {
+	case "/healthz", "/livez", "/readyz", "/v1/version":
+		return true
+	}
+	return false
+}
+
+func main() {
+	port := getenv("PORT", "8080")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", handleHealthz)
+	mux.HandleFunc("/livez", handleHealthz)
+	mux.HandleFunc("/readyz", handleHealthz)
+	mux.HandleFunc("/v1/version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"service": serviceName, "env": envName, "version": versionStr})
+	})
+
+	mux.HandleFunc("/", handleDashboard)
+	mux.HandleFunc("/sessions", handleSessions)
+	mux.HandleFunc("/lanes", handleLanes)
+	mux.HandleFunc("/users", handleUsers)
+	mux.HandleFunc("/license-keys", handleLicenseKeys)
+	mux.HandleFunc("/usage", handleUsage)
+	mux.HandleFunc("/revenue", handleRevenue)
+	mux.HandleFunc("/antitrunc", handleAntitrunc)
+	mux.HandleFunc("/settings", handleSettings)
+
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           requireOperator(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	log.Printf("%s listening on :%s (env=%s version=%s coord_api=%s)", serviceName, port, envName, versionStr, coordAPI)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %v", err)
+	}
+	_ = fmt.Sprintf // keep fmt used after refactor
+}

@@ -196,7 +196,12 @@ func (q *Queue) Next(workerID string) (*Task, error) {
 	if err := q.flushLocked(); err != nil {
 		return nil, err
 	}
-	return t, nil
+	// Return a deep copy so the worker's local mutations (Meta init,
+	// resume_checkpoint key, etc.) don't race with concurrent Queue.Get/List
+	// readers that snapshot under q.mu. Persistent state changes (Complete,
+	// Fail, Retry) go back to the queue via the dedicated mutator methods,
+	// which all acquire q.mu and operate on q.tasks[i] directly.
+	return cloneTask(t), nil
 }
 
 // Complete marks a task done with the actual touched-byte count. If actual
@@ -284,7 +289,48 @@ func (q *Queue) Cancel(id string) error {
 	return q.flushLocked()
 }
 
-// Get returns a copy of the task with the given ID, or nil.
+// cloneTask returns a deep copy safe for the caller to mutate or marshal
+// without racing the queue's own writes to the source task. The shallow
+// `cp := *t` pattern that lived here pre-2026-05-02 shared the underlying
+// slice/map/pointer storage with the queued task, which races whenever the
+// daemon mutates Meta/Tags or replaces the time pointers under q.mu.
+func cloneTask(t *Task) *Task {
+	cp := *t
+	if t.Tags != nil {
+		cp.Tags = append([]string(nil), t.Tags...)
+	}
+	if t.Meta != nil {
+		cp.Meta = make(map[string]string, len(t.Meta))
+		for k, v := range t.Meta {
+			cp.Meta[k] = v
+		}
+	}
+	if t.LastAttemptAt != nil {
+		v := *t.LastAttemptAt
+		cp.LastAttemptAt = &v
+	}
+	if t.NextRetryAt != nil {
+		v := *t.NextRetryAt
+		cp.NextRetryAt = &v
+	}
+	if t.StartedAt != nil {
+		v := *t.StartedAt
+		cp.StartedAt = &v
+	}
+	if t.FinishedAt != nil {
+		v := *t.FinishedAt
+		cp.FinishedAt = &v
+	}
+	if t.DeltaPct != nil {
+		v := *t.DeltaPct
+		cp.DeltaPct = &v
+	}
+	return &cp
+}
+
+// Get returns a deep copy of the task with the given ID, or nil. The copy
+// is race-free for callers that mutate or marshal it concurrently with the
+// queue's own writes.
 func (q *Queue) Get(id string) *Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -292,20 +338,18 @@ func (q *Queue) Get(id string) *Task {
 	if t == nil {
 		return nil
 	}
-	cp := *t
-	return &cp
+	return cloneTask(t)
 }
 
-// List returns a copy of all tasks, optionally filtered to a single state.
-// Pass empty state to return everything.
+// List returns deep copies of all tasks, optionally filtered to a single
+// state. Pass empty state to return everything.
 func (q *Queue) List(state TaskState) []*Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	out := []*Task{}
 	for _, t := range q.tasks {
 		if state == "" || t.State == state {
-			cp := *t
-			out = append(out, &cp)
+			out = append(out, cloneTask(t))
 		}
 	}
 	return out

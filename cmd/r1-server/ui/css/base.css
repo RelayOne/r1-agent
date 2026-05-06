@@ -1,0 +1,218 @@
+/*
+ * cmd/r1-server/ui/css/base.css
+ *
+ * Spec 1 §10 (TASK-9): topbar, main grid, side-panel layout, theme
+ * custom properties. Plain CSS — no tailwind, no preprocessor, no
+ * CSS-in-JS, per the §7 boundaries.
+ *
+ * Theme model:
+ *   :root[data-theme="auto"]  prefers-color-scheme decides
+ *   :root[data-theme="light"] forced light
+ *   :root[data-theme="dark"]  forced dark
+ *   :root[data-theme="hc"]    high-contrast (overrides everything else)
+ *
+ * Specs 2-4 layer their own component stylesheets on top via
+ * css/<feature>.css; this file only defines the chrome + tokens.
+ */
+
+/* -------------------- Tokens -------------------- */
+:root[data-theme="auto"],
+:root[data-theme="light"] {
+  --color-fg: #1a1d22;
+  --color-bg: #fafbfc;
+  --color-muted: #6a7280;
+  --color-accent: #2860c4;
+  --color-border: #d8dde5;
+  --color-redacted-overlay: #b6bcc4;
+  --color-warning: #c08c00;
+  --color-error: #c0282b;
+  --color-ok: #1f7a3a;
+  --color-row-zebra: #f1f3f6;
+  --topbar-height: 44px;
+  --side-panel-width: 320px;
+  --font-base: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --color-fg: #e5e7eb;
+    --color-bg: #14161a;
+    --color-muted: #8b9099;
+    --color-accent: #5b9bff;
+    --color-border: #2a2e36;
+    --color-redacted-overlay: #4a4e58;
+    --color-warning: #e9c25e;
+    --color-error: #ef6e72;
+    --color-ok: #5fbf7e;
+    --color-row-zebra: #1a1d22;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-fg: #e5e7eb;
+  --color-bg: #14161a;
+  --color-muted: #8b9099;
+  --color-accent: #5b9bff;
+  --color-border: #2a2e36;
+  --color-redacted-overlay: #4a4e58;
+  --color-warning: #e9c25e;
+  --color-error: #ef6e72;
+  --color-ok: #5fbf7e;
+  --color-row-zebra: #1a1d22;
+}
+
+/* High-contrast: WCAG AAA contrast on every paired surface. Overrides
+ * any auto/light/dark choice. Foreground stays maximum, accent shifts
+ * to a hue with >7:1 against the background. */
+:root[data-theme="hc"] {
+  --color-fg: #ffffff;
+  --color-bg: #000000;
+  --color-muted: #d0d4dc;
+  --color-accent: #ffd54f;
+  --color-border: #ffffff;
+  --color-redacted-overlay: #888c95;
+  --color-warning: #ffd54f;
+  --color-error: #ff8585;
+  --color-ok: #5fff88;
+  --color-row-zebra: #0d0d0d;
+}
+
+/* -------------------- Reset / base elements -------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-base);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-fg);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+code, pre, kbd, samp { font-family: var(--font-mono); font-size: 13px; }
+a { color: var(--color-accent); text-decoration: none; }
+a:hover, a:focus-visible { text-decoration: underline; }
+button {
+  font: inherit; color: inherit;
+  background: transparent; border: 1px solid var(--color-border);
+  border-radius: 4px; padding: 4px 10px; cursor: pointer;
+}
+button:hover { background: var(--color-row-zebra); }
+button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* -------------------- Topbar -------------------- */
+.topbar {
+  display: flex; align-items: center;
+  height: var(--topbar-height);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  position: sticky; top: 0; z-index: 10;
+}
+.topbar__brand { font-weight: 600; margin-right: 24px; }
+.topbar__nav { display: flex; gap: 16px; flex: 1; }
+.topbar__nav a {
+  color: var(--color-muted);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.topbar__nav a[aria-current="page"] {
+  color: var(--color-fg);
+  background: var(--color-row-zebra);
+}
+
+/* -------------------- Main grid -------------------- */
+#main {
+  display: grid;
+  grid-template-columns: 1fr var(--side-panel-width);
+  grid-template-rows: 1fr;
+  height: calc(100vh - var(--topbar-height));
+  min-height: 0;
+}
+.pane { overflow: auto; padding: 16px; }
+.pane--primary { border-right: 1px solid var(--color-border); }
+.pane--side { background: var(--color-bg); }
+
+/* Single-column collapse on narrow viewports — side panel slides
+ * under the primary, expanded by user toggle. */
+@media (max-width: 720px) {
+  #main { grid-template-columns: 1fr; }
+  .pane--side[data-state="collapsed"] { display: none; }
+}
+
+/* -------------------- State + utility classes -------------------- */
+[data-state="loading"] { opacity: 0.55; pointer-events: none; }
+[data-state="redacted"] { color: var(--color-muted); font-style: italic; }
+[data-state="error"] { color: var(--color-error); }
+[data-state="ok"] { color: var(--color-ok); }
+[data-state="warning"] { color: var(--color-warning); }
+
+.muted { color: var(--color-muted); }
+.mono { font-family: var(--font-mono); font-size: 13px; }
+.row-zebra > :nth-child(odd) { background: var(--color-row-zebra); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0;
+  margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
+
+/* -------------------- Redaction (Spec 3 §8) -------------------- */
+/* Per RT-REDACTION-UI-PATTERNS: desaturate, do NOT use red/yellow
+ * (reserved for failure/warning), do NOT collapse rows — transparency
+ * about absence is the goal. The lock glyph carries no semantic
+ * weight on its own (aria-hidden); the visible "[content redacted]"
+ * text is what screen readers read. */
+.row--redacted .title { opacity: 0.7; }
+.row--redacted .icon, .row--redacted .duration, .row--redacted .cost {
+  filter: grayscale(0.85) brightness(0.85);
+}
+.icon-lock {
+  width: 12px; height: 12px;
+  vertical-align: -2px;
+  color: var(--color-muted);
+}
+.row--redaction-anomaly .redacted-slot { color: var(--color-warning); font-weight: 600; }
+
+.redacted-placeholder {
+  margin: 12px 0;
+}
+.redacted-block {
+  padding: 1em;
+  background: var(--color-redacted-overlay);
+  color: var(--color-fg);
+  font-style: italic;
+  border-radius: 4px;
+  /* WCAG AA: redacted-block content is the literal text "[content
+   * redacted]" — visible to SR users. The overlay background is set
+   * via CSS custom property so theme tokens (auto / dark / hc) all
+   * paint with ≥4.5:1 contrast against --color-fg. */
+}
+.redacted-anomaly {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--color-warning);
+  color: var(--color-fg);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-bg));
+}
+
+.redaction-events__list { padding-left: 16px; margin: 4px 0; }
+.redaction-events__entry { margin: 4px 0; line-height: 1.6; }
+.redaction-events__entry .reason { margin-left: 8px; }
+.redaction-events__entry .signer { margin-left: 8px; color: var(--color-muted); }
+.redaction-events__entry .sig    { margin-left: 8px; color: var(--color-muted); }
+
+/* -------------------- Skill events (Spec 3 §8) -------------------- */
+/* The 🧬 emoji + 🧬❌ are sufficient on their own as visual markers;
+ * no color override here so they stay legible in any theme. The
+ * skill-detail dl picks up the default body font via base. */
+.skill-detail { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.skill-detail dt { color: var(--color-muted); }
+.skill-detail dd { margin: 0; }
+
+/* -------------------- Reduced motion -------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -45,15 +45,15 @@ A separate `r1-server` binary (one per machine, port 3948) that discovers runnin
 1. [ ] **Create `internal/session/signature.go`** with `Signature` type + `WriteSignature(repoRoot, cfg)` + `(*Signature).Close()` + background `heartbeat()` goroutine that updates `updated_at` every 30s.
 2. [ ] **Signature schema** per r1-server-work.md §RS-1: `{version, pid, instance_id, started_at, repo_root, mode, sow_name, model, status, stream_file, ledger_dir, checkpoint_file, bus_wal, updated_at}`. Write atomically to `<repo>/.stoke/r1.session.json` via tmp+rename.
 3. [ ] **Instance ID** generation: `r1-` + 8-hex-char short random ID.
-4. [ ] **Call `WriteSignature` at R1 entry points**: `cmd/stoke/main.go` after `absRepo` is resolved, before SOW parse. `defer sig.Close()`. Covers: `sowCmd`, `chatCmd`, and any future entry points.
+4. [ ] **Call `WriteSignature` at R1 entry points**: `cmd/r1/main.go` after `absRepo` is resolved, before SOW parse. `defer sig.Close()`. Covers: `sowCmd`, `chatCmd`, and any future entry points.
 5. [ ] **On `Close()`**: set `status = "completed"` or `"failed"` (based on exit path), write final `updated_at`.
 6. [ ] **Auto-register with r1-server** (best-effort): `(*Signature).registerWithServer()` POSTs to `http://localhost:3948/api/register` with 1s timeout. Silent failure on refused connection (r1-server not running = OK).
-7. [ ] **Stream file**: modify `internal/streamjson/emitter.go` so events always write to `.stoke/stream.jsonl` (file), AND optionally to stdout when `--output stream-json`. Use `io.MultiWriter` at construction in `cmd/stoke/main.go:1476`. This lets r1-server tail the file regardless of whether CloudSwarm is consuming stdout.
+7. [ ] **Stream file**: modify `internal/streamjson/emitter.go` so events always write to `.stoke/stream.jsonl` (file), AND optionally to stdout when `--output stream-json`. Use `io.MultiWriter` at construction in `cmd/r1/main.go:1476`. This lets r1-server tail the file regardless of whether CloudSwarm is consuming stdout.
 8. [ ] **Tests**: `internal/session/signature_test.go` — WriteSignature creates file with correct fields, Close updates status, registerWithServer times out gracefully if no server.
 
 ### RS-2: `cmd/r1-server/main.go` binary (2-3 days)
 
-1. [ ] **New binary** `cmd/r1-server/main.go` — package `main`, separate from `cmd/stoke/`.
+1. [ ] **New binary** `cmd/r1-server/main.go` — package `main`, separate from `cmd/r1/`.
 2. [ ] **Global data dir**: XDG-aware `globalDataDir()` — `~/Library/Application Support/r1` on macOS, `${XDG_DATA_HOME}/r1` on Linux, `%APPDATA%/r1` on Windows. Override via `R1_DATA_DIR` env.
 3. [ ] **SQLite DB** at `<data_dir>/server.db` with WAL mode. Schema:
    ```sql
@@ -144,7 +144,7 @@ banner pointing back at the 2D live-stream view at
 
 ### RS-5: Auto-launch r1-server from Stoke (1 hour)
 
-22. [ ] **In `cmd/stoke/main.go`, add `ensureServerRunning()`** called before `WriteSignature`. Behavior:
+22. [ ] **In `cmd/r1/main.go`, add `ensureServerRunning()`** called before `WriteSignature`. Behavior:
     - `http.Get("http://localhost:3948/api/health")` with 200ms timeout; if 200 OK, return
     - Otherwise `exec.LookPath("r1-server")`; if not found, return silently (zero dep)
     - If found: spawn detached (`Setsid: true`, `cmd.Start()`), sleep 500ms, return

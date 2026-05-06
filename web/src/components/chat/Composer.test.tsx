@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { useState } from "react";
@@ -14,7 +15,7 @@ function Harness({
   onSend: (v: string) => void;
   streaming?: boolean;
   characterLimit?: number;
-}): JSX.Element {
+}): React.JSX.Element {
   const [v, setV] = useState(initial);
   return (
     <Composer
@@ -38,7 +39,7 @@ describe("<Composer>", () => {
   });
 
   it("disables Send while the input is empty (whitespace counts as empty)", () => {
-    render(<Harness onSend={() => {}} initial="   \n\t  " />);
+    render(<Harness onSend={() => {}} initial={"   \n\t  "} />);
     const send = screen.getByTestId("composer-send");
     expect(send.hasAttribute("disabled")).toEqual(true);
   });

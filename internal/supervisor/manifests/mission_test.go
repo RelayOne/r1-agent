@@ -11,7 +11,8 @@ func TestMissionRules_Count(t *testing.T) {
 		t.Fatal("MissionRules() returned zero rules")
 	}
 	// Snapshot the count so regressions are caught.
-	const want = 24
+	// 24 baseline + 3 antitrunc rules = 27
+	const want = 27
 	if got != want {
 		t.Errorf("MissionRules() returned %d rules, want %d", got, want)
 	}

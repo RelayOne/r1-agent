@@ -41,12 +41,12 @@ builds:
         goarch: arm64
         env:
           - CC=o64-clang
-  - id: stoke-acp
+  - id: r1-acp
     # Agent Client Protocol adapter (S-U-002). Pure-Go JSON-RPC
     # stdio transport; no CGO dependency unlike the main r1
     # binary, so cross-compiles without the gcc overrides.
-    main: ./cmd/stoke-acp
-    binary: stoke-acp
+    main: ./cmd/r1-acp
+    binary: r1-acp
     env:
       - CGO_ENABLED=0
     flags:
@@ -93,8 +93,8 @@ release:
 brews:
   - name: r1
     repository:
-      owner: ericmacdougall
-      name: homebrew-stoke
+      owner: RelayOne
+      name: homebrew-r1
       branch: main
     directory: Formula
     homepage: https://github.com/RelayOne/r1-agent
@@ -102,7 +102,7 @@ brews:
     license: "Apache-2.0"
     install: |
       bin.install "r1"
-      bin.install "stoke-acp" if File.exist?("stoke-acp")
+      bin.install "r1-acp" if File.exist?("r1-acp")
     test: |
       system "#{bin}/r1", "--version"
     commit_author:

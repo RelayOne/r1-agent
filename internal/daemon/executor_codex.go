@@ -177,6 +177,18 @@ func (c CodexExecutor) startJob(ctx context.Context, jobID string, t *Task) erro
 		if _, ok, stateErr := c.readState(jobID); ok && stateErr == nil {
 			return nil
 		}
+		// If the parent context (or our derived startCtx) cancelled
+		// while the wrapper was still running, exec.CommandContext
+		// SIGKILLs the process and Run() returns "signal: killed" —
+		// which obscures the real cause. Surface ctx.Err() directly
+		// so callers can distinguish "context deadline exceeded" /
+		// "context canceled" from a genuine wrapper failure.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if startCtxErr := startCtx.Err(); startCtxErr != nil {
+			return startCtxErr
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())

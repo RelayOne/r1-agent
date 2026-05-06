@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { MemoryRouter, useRoutes } from "react-router-dom";
 import { buildRoutes, type RouteRenderers } from "./index";
@@ -55,7 +56,7 @@ const renderers: RouteRenderers = {
   ),
 };
 
-function App(): JSX.Element | null {
+function App(): React.JSX.Element | null {
   return useRoutes(buildRoutes(renderers));
 }
 
@@ -67,7 +68,7 @@ const meta: Meta<typeof App> = {
 export default meta;
 type Story = StoryObj<typeof App>;
 
-function At({ path }: { path: string }): JSX.Element {
+function At({ path }: { path: string }): React.JSX.Element {
   return (
     <MemoryRouter initialEntries={[path]}>
       <div className="w-[860px] border border-border rounded-md overflow-hidden">

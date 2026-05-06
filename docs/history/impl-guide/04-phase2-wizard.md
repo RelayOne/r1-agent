@@ -1411,7 +1411,7 @@ Do not include explanations outside the JSON.`
 
 ## Step 7: CLI command
 
-**File:** `cmd/stoke/main.go`
+**File:** `cmd/r1/main.go`
 
 Add a new command:
 
@@ -1455,7 +1455,7 @@ func runWizardCmd(args []string) error {
 ## Validation gate for Phase 2
 
 1. `go vet ./...` clean, `go test ./internal/wizard/...` passes
-2. `go build ./cmd/stoke` succeeds
+2. `go build ./cmd/r1` succeeds
 3. Run `stoke wizard --auto` on a sample repo (try the Stoke repo itself) — should produce `.stoke/config.yaml` and `.stoke/wizard-rationale.md` without errors
 4. Run `stoke wizard --interactive` and click through every group — should not crash
 5. Run `stoke wizard --yes` — should produce config without prompts (CI-safe)

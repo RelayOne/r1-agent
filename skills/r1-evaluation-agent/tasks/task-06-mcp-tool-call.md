@@ -22,14 +22,14 @@ the code and confirming the transport implementations exist.
 
 3. Check whether the MCP server binary exposes tools:
    ```bash
-   grep -n "Name:" ./cmd/stoke-mcp/backends.go | head -20
+   grep -n "Name:" ./cmd/r1-mcp/backends.go | head -20
    ```
 
 **Part B — MCP server smoke test:**
 
 4. Check if the MCP server compiles:
    ```bash
-   go build -C . ./cmd/stoke-mcp/ 2>&1
+   go build -C . ./cmd/r1-mcp/ 2>&1
    ```
    Report: PASS (exits 0) or FAIL (compile error).
 

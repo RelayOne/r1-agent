@@ -23,6 +23,7 @@ describe("<GlobalKeybindings>", () => {
     render(
       <GlobalKeybindings
         target={target}
+        isMac
         onSendShortcut={onSendShortcut}
       />,
     );
@@ -58,7 +59,7 @@ describe("<GlobalKeybindings>", () => {
     const target = mkTarget();
     const onToggle = vi.fn();
     render(
-      <GlobalKeybindings target={target} onToggleDaemonRail={onToggle} />,
+      <GlobalKeybindings target={target} isMac onToggleDaemonRail={onToggle} />,
     );
     fireKey(target, { key: "S", metaKey: true, shiftKey: true });
     expect(onToggle).toHaveBeenCalledTimes(1);
@@ -67,7 +68,7 @@ describe("<GlobalKeybindings>", () => {
   it("Mod+1 through Mod+9 trigger onSwitchDaemon with 0-based indices", () => {
     const target = mkTarget();
     const onSwitch = vi.fn();
-    render(<GlobalKeybindings target={target} onSwitchDaemon={onSwitch} />);
+    render(<GlobalKeybindings target={target} isMac onSwitchDaemon={onSwitch} />);
     fireKey(target, { key: "1", metaKey: true });
     fireKey(target, { key: "5", metaKey: true });
     fireKey(target, { key: "9", metaKey: true });

@@ -9,7 +9,7 @@ import (
 )
 
 // CodeExecutor wraps the existing SOW / descent pipeline in
-// cmd/stoke/sow_native.go behind the Executor interface. For
+// cmd/r1/sow_native.go behind the Executor interface. For
 // Track B Task 19 this is an intentional pass-through wrapper:
 //
 //   - `stoke ship ...` and `stoke sow ...` continue to route
@@ -24,7 +24,7 @@ import (
 //
 // Fields are exported so tests can inject fakes, and so the
 // follow-up wiring can populate them from the existing setup in
-// cmd/stoke without a package split.
+// cmd/r1 without a package split.
 type CodeExecutor struct {
 	// RepoRoot is the absolute path to the repository the
 	// executor operates on.
@@ -32,7 +32,7 @@ type CodeExecutor struct {
 
 	// ExecuteHook, if non-nil, overrides the default fall-back
 	// behavior. The follow-up commit will populate this from
-	// cmd/stoke/sow_native.go so TaskCode dispatches through the
+	// cmd/r1/sow_native.go so TaskCode dispatches through the
 	// existing SOW pipeline. Kept as a field (not a constructor
 	// arg) so tests can swap in a fake without rewriting the
 	// router integration.

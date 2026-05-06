@@ -129,7 +129,7 @@ func (s *Skill) ToManifest() (skillmfr.Manifest, error) {
 // rather than just the first one.
 //
 // Intended call sites:
-//   - cmd/stoke-mcp main() at startup — seeds the manifest
+//   - cmd/r1-mcp main() at startup — seeds the manifest
 //     registry with every builtin so stoke_invoke treats
 //     any shipped skill name as registered
 //   - config.LoadSkills caller — batched backfill after

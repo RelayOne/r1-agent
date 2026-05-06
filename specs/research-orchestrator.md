@@ -136,7 +136,7 @@ Each item is self-contained. File paths are absolute. Function signatures and th
 
 ```bash
 # Build & vet
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 
 # Unit tests

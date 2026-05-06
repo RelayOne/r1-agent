@@ -88,8 +88,16 @@ export function buildRoutes(R: RouteRenderers): Parameters<typeof createBrowserR
       ),
       children: [
         {
+          // Wrap SessionViewRoute with <Outlet> so the lanes/:laneId
+          // child route can render nested. Mirrors the DaemonHome
+          // wrapping a few lines up.
           path: "sessions/:sessionId",
-          element: <SessionViewRoute R={R} />,
+          element: (
+            <>
+              <SessionViewRoute R={R} />
+              <Outlet />
+            </>
+          ),
           children: [
             {
               path: "lanes/:laneId",

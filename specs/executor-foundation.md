@@ -22,7 +22,7 @@ The foundation that unblocks Tier-3 executors (browser, research, delegate, depl
 - Acceptance criterion struct: `internal/plan/sow.go:87-96` (extend, do not replace)
 - `runACCommand`: `internal/plan/verification_descent.go:829-832` (extend to honor `VerifyFunc`)
 - Harness tool authorization (used by Intent Gate DIAGNOSE mode): `internal/harness/tools/`
-- Existing SOW entry point wrapped by `CodeExecutor`: `cmd/stoke/sow_native.go` (specifically `execNativeTask` / `NativeRunner.Run`)
+- Existing SOW entry point wrapped by `CodeExecutor`: `cmd/r1/sow_native.go` (specifically `execNativeTask` / `NativeRunner.Run`)
 
 ## Library Preferences
 - SQLite driver: `modernc.org/sqlite` (already used)
@@ -428,7 +428,7 @@ Idempotence table (`eventlog/idempotent.go`):
 - Hash chain correctness under concurrency: the chain is per `(session_id, branch_id)`. Different sessions write independent chains; the `event_heads` PK guarantees serialized head updates per session regardless of global ordering.
 
 ## Boundaries — What NOT To Do
-- Do NOT rewrite SOW execution. `CodeExecutor` calls into existing `cmd/stoke/sow_native.go` via injected `Runner`.
+- Do NOT rewrite SOW execution. `CodeExecutor` calls into existing `cmd/r1/sow_native.go` via injected `Runner`.
 - Do NOT ship browser / research / deploy / delegate executors in this spec. That is spec-4/5/6.
 - Do NOT wire streamjson emission in this spec. That is spec-2.
 - Do NOT integrate memory retrieval. That is spec-7.
@@ -436,7 +436,7 @@ Idempotence table (`eventlog/idempotent.go`):
 - Do NOT change `AcceptanceCriterion.UnmarshalJSON`. The `VerifyFunc` field is tagged `json:"-"` and set only in-process by executors.
 - Do NOT default-on `STOKE_EVENTLOG_JSONL`. Opt-in flag only.
 - Do NOT couple the router to the scheduler's intent/verbalize gate (`internal/intent/`). They are separate concerns; intent-gate may consult intent/verbalize later but not in this spec.
-- Do NOT import `cmd/stoke/*` from `internal/executor/`. Use a `Runner func(...)` injected at wiring time to avoid an import cycle.
+- Do NOT import `cmd/r1/*` from `internal/executor/`. Use a `Runner func(...)` injected at wiring time to avoid an import cycle.
 
 ## Error Handling
 
@@ -546,7 +546,7 @@ All `go test` invocations must exit 0. The final `sqlite3` query must return ≥
 24. [ ] Create `internal/router/intent_gate.go` — `Gate(ctx, task, tools, provider) (Intent, harnessTools.Set, error)` that calls `ClassifyIntent` + clamps tools via `harnessTools.ReadOnly()` for DIAGNOSE/AMBIGUOUS.
 25. [ ] Add `harnessTools.ReadOnly(set) Set` to `internal/harness/tools/` that returns a new set with `Write=true` tools removed. If the method already exists, reuse it.
 26. [ ] Create `internal/router/router_test.go` covering the 8 Classify / ClassifyIntent / IntentGate testing bullets.
-27. [ ] Wire `CodeExecutor` in `cmd/stoke/main.go` at the same construction point as the current SOW runner. Guard behind nothing — CodeExecutor is a pure wrapper and must work day one.
-28. [ ] Verify `go build ./cmd/stoke`, `go vet ./...`, and all new package tests pass.
+27. [ ] Wire `CodeExecutor` in `cmd/r1/main.go` at the same construction point as the current SOW runner. Guard behind nothing — CodeExecutor is a pure wrapper and must work day one.
+28. [ ] Verify `go build ./cmd/r1`, `go vet ./...`, and all new package tests pass.
 29. [ ] Verify the final acceptance sqlite3 query returns ≥ 1 after running a minimal integration test harness that writes one `task.dispatch` event through `CodeExecutor` (test lives in `internal/executor/integration_test.go`, uses tempdir + real SQLite).
 30. [ ] Confirm no existing tests regress: `go test ./...` passes on the feature branch.

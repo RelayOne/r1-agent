@@ -92,7 +92,7 @@ const (
 const acpProtocolVersion = "0.1.0"
 
 // version is the stoke-acp release version. Set via -ldflags
-// "-X main.version=<ver>" at build time (matches cmd/stoke
+// "-X main.version=<ver>" at build time (matches cmd/r1
 // pattern). Defaults to "dev" for go build without ldflags so
 // local development can still identify builds unambiguously.
 var version = "dev"

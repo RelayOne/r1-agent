@@ -1,0 +1,32 @@
+{{- /*
+  cmd/r1-server/ui/partials/filter-chips.html
+
+  Spec 4 §6.3 + §10 T12: chip-style filter selectors. Each chip
+  carries data-hx-get / data-hx-target / data-hx-trigger="click" so
+  htmx fires on click but the markup is HTML5-valid (per RT-HTMX-SSE-
+  DATA-ATTRS data-* migration). Multi-select compose via
+  hx-include="[name='types']".
+
+  Context shape:
+    .Items []ChipItem  (Label, Name, Value, Active, Target)
+
+  Each chip's data-state="active|inactive" matches the §5 attribute
+  convention enforced by ui_attr_lint_test.go.
+*/ -}}
+{{- define "filter-chips" -}}
+<div class="chips" role="group" aria-label="Filter">
+  {{ range .Items }}
+  <button type="button"
+          class="chip"
+          data-testid="chip-{{ .Name }}"
+          data-state="{{ if .Active }}active{{ else }}inactive{{ end }}"
+          data-hx-get="{{ .Target }}?{{ .Name }}={{ .Value }}"
+          data-hx-target="[data-testid='waterfall-rows']"
+          data-hx-trigger="click"
+          name="types"
+          value="{{ .Value }}">
+    {{ .Label }}
+  </button>
+  {{ end }}
+</div>
+{{- end -}}

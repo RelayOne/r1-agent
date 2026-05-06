@@ -326,6 +326,22 @@ type EventRow struct {
 	Timestamp  string          `json:"timestamp"`
 }
 
+// OldestEventID returns the minimum id row currently stored for a
+// session, or 0 if the session has no events. Used by the SSE
+// resync path (Spec 4 §8.2) to detect when a client's cached
+// last_event_id has fallen below the bus retention floor.
+func (d *DB) OldestEventID(instanceID string) (int64, error) {
+	var id int64
+	err := d.sql.QueryRow(
+		`SELECT COALESCE(MIN(id), 0) FROM session_events WHERE instance_id = ?`,
+		instanceID,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
 // ListEvents returns events for one session, with cursor pagination.
 // afterID: return events with id > afterID (0 means from start).
 // limit: cap rows returned (<=0 means no cap — caller passes 1k default).

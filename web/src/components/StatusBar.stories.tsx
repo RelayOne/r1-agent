@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { StatusBar } from "./StatusBar";
@@ -62,7 +63,7 @@ const meta: Meta<typeof StatusBar> = {
 export default meta;
 type Story = StoryObj<typeof StatusBar>;
 
-function Demo({ latencyMs }: { latencyMs?: number | null }): JSX.Element {
+function Demo({ latencyMs }: { latencyMs?: number | null }): React.JSX.Element {
   const [store] = useState(mkStore);
   return (
     <div className="w-[960px] border border-border rounded-md overflow-hidden">

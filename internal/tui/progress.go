@@ -1,8 +1,8 @@
-// Wire-up: see cmd/stoke/main.go
+// Wire-up: see cmd/r1/main.go
 //
 // The integration that constructs a ProgressRenderer, subscribes it to the
 // event bus alongside the existing streamjson.Emitter, and plumbs stderr in
-// `stoke ship` lives in cmd/stoke/main.go and is intentionally deferred to a
+// `stoke ship` lives in cmd/r1/main.go and is intentionally deferred to a
 // follow-up commit (Track B task 13, S-1 pairs with the ship-command wiring
 // task). This file only implements the renderer itself plus the Subscribe
 // helper; it has no side effects until Subscribe is called.

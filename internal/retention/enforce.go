@@ -60,7 +60,7 @@ type SweepResult struct {
 
 // streamsDir and checkpointsDir are the conventional on-disk locations for
 // per-session stream files and checkpoint records, matching the layout used
-// by cmd/stoke and cmd/r1-server. They are overridable in tests via the
+// by cmd/r1 and cmd/r1-server. They are overridable in tests via the
 // package-level variables below (kept as vars, not consts, so the
 // enforce_test.go harness can point them at a t.TempDir without needing a
 // functional-options rewrite of the two public functions).
@@ -176,7 +176,7 @@ func durationFor(d Duration) (time.Duration, bool) {
 // up commits — this slice is the foundational DELETE.
 //
 // Best-effort contract: every error is logged and aggregated into a single
-// returned error so the caller in cmd/stoke/sow_native.go can decide whether
+// returned error so the caller in cmd/r1/sow_native.go can decide whether
 // to surface it. Retention errors MUST NOT fail the session-close path.
 func EnforceOnSessionEnd(ctx context.Context, policy Policy, sessionID string, bus *membus.Bus) error {
 	if bus == nil {

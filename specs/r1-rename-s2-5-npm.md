@@ -19,7 +19,7 @@ inventory of the source tree on 2026-04-23 returned:
   `go build` are the only supported install paths (see README.md §Install).
 - `.goreleaser.yml` publishes only Homebrew formulae and container images;
   no `nfpms` / `npms` / `snapcraft` npm target is configured.
-- No `cmd/stoke/js/`, `cmd/r1/js/`, or any other directory embedding a
+- No `cmd/r1/js/`, `cmd/r1/js/`, or any other directory embedding a
   Node.js shim that would need its own `package.json`.
 
 ## Where the npm-adjacent references do live
@@ -27,7 +27,7 @@ inventory of the source tree on 2026-04-23 returned:
 Grep hits for `package.json` in the tree are all **consumer-side fixtures**,
 not Stoke's own package manifest:
 
-- `integration_test.go` and `cmd/stoke/descent_bridge_bootstrap_test.go`
+- `integration_test.go` and `cmd/r1/descent_bridge_bootstrap_test.go`
   write synthetic `package.json` blobs into ephemeral test repos to exercise
   Stoke's ability to detect downstream JS/TS projects during a mission run.
 - `Dockerfile.pool` runs `npm install -g @anthropic-ai/claude-code` and

@@ -21,10 +21,10 @@ The H-91 verification descent engine shipped in commit `8611d48` (`internal/plan
 ## Existing Patterns to Follow
 
 - Descent engine + DescentConfig: `internal/plan/verification_descent.go:26-1017`
-- Descent bridge wiring: `cmd/stoke/descent_bridge.go:37-400`
-- Worker prompt builder: `cmd/stoke/sow_native.go:3729-3950+`
-- Repair-mode dispatch prompt: `cmd/stoke/sow_native.go:3737-3764`
-- Anti-deception injection point: `cmd/stoke/sow_native.go:3906-3918` (after canonical-names, before skills)
+- Descent bridge wiring: `cmd/r1/descent_bridge.go:37-400`
+- Worker prompt builder: `cmd/r1/sow_native.go:3729-3950+`
+- Repair-mode dispatch prompt: `cmd/r1/sow_native.go:3737-3764`
+- Anti-deception injection point: `cmd/r1/sow_native.go:3906-3918` (after canonical-names, before skills)
 - PreEndTurn hook: `internal/agentloop/loop.go:77` (`PreEndTurnCheckFn`)
 - Bootstrap/install: `internal/plan/acceptance.go:348-404` (`ensureWorkspaceInstalled`)
 - Supervisor extraction hook: `autoExtractTaskSupervisor` (`sow_native.go` callsites 939, 1395, 1431, 2580, 3277, 5104, 5434)
@@ -60,7 +60,7 @@ All payloads route through `bus.Publish` and mirror onto streamjson as `subtype:
 
 ### 1. TRUTHFULNESS_CONTRACT injection
 
-1. Build constant `const truthfulnessContract = "..."` in `cmd/stoke/sow_native.go`.
+1. Build constant `const truthfulnessContract = "..."` in `cmd/r1/sow_native.go`.
 2. In `buildSOWNativePromptsWithOpts`:
    - **Standard path:** inject between canonical-names (line 3909) and skills (line 3918).
    - **Repair path:** inject inside the repair preamble at line 3737-3764 (before COMMON FAILURE CLASSES).
@@ -91,7 +91,7 @@ All payloads route through `bus.Publish` and mirror onto streamjson as `subtype:
 
 ### 4. Bootstrap per descent cycle
 
-1. In `cmd/stoke/descent_bridge.go:74-99` (current RepairFunc), wrap the existing dispatch:
+1. In `cmd/r1/descent_bridge.go:74-99` (current RepairFunc), wrap the existing dispatch:
 
    ```go
    originalRepair := cfg.RepairFunc
@@ -124,7 +124,7 @@ All payloads route through `bus.Publish` and mirror onto streamjson as `subtype:
 
 ### 5. `report_env_issue` worker tool
 
-1. Add tool definition to worker tool registry. Verify location with: `grep -rn "report_environment_issue\|ToolDefinition\|tool_name" internal/harness/tools/ cmd/stoke/sow_native.go`. Register alongside existing tools (edit/read/shell).
+1. Add tool definition to worker tool registry. Verify location with: `grep -rn "report_environment_issue\|ToolDefinition\|tool_name" internal/harness/tools/ cmd/r1/sow_native.go`. Register alongside existing tools (edit/read/shell).
 2. Schema:
 
    ```json
@@ -262,8 +262,8 @@ Rules:
 ## Testing
 
 ### TRUTHFULNESS_CONTRACT injection
-- [ ] `grep -q "TRUTHFULNESS CONTRACT" cmd/stoke/sow_native.go`
-- [ ] `go test ./cmd/stoke/... -run TestBuildSOWPromptsContainsContract` (new)
+- [ ] `grep -q "TRUTHFULNESS CONTRACT" cmd/r1/sow_native.go`
+- [ ] `go test ./cmd/r1/... -run TestBuildSOWPromptsContainsContract` (new)
 - [ ] Repair path also contains the contract (same test, `opts.Repair != nil` branch).
 
 ### PRE_COMPLETION_GATE
@@ -294,8 +294,8 @@ Rules:
 
 ```bash
 # 1. Contract injection sites exist.
-grep -q "TRUTHFULNESS CONTRACT" cmd/stoke/sow_native.go
-grep -q "PRE-COMPLETION GATE" cmd/stoke/sow_native.go
+grep -q "TRUTHFULNESS CONTRACT" cmd/r1/sow_native.go
+grep -q "PRE-COMPLETION GATE" cmd/r1/sow_native.go
 
 # 2. PreEndTurnCheckFn hook wired to descent executor.
 grep -q "PreEndTurnCheckFn" internal/plan/pre_completion_check.go
@@ -307,7 +307,7 @@ grep -q "FileRepairCounts"  internal/plan/verification_descent.go
 go test ./internal/plan/... -run TestPerFileRepairCap
 
 # 4. Bootstrap wrapper + frozen mode.
-grep -q "descent.bootstrap_reinstalled" cmd/stoke/descent_bridge.go
+grep -q "descent.bootstrap_reinstalled" cmd/r1/descent_bridge.go
 go test ./internal/plan/... -run TestBootstrapReinstallOnManifestChange
 
 # 5. Env tool registered + fast-path.
@@ -315,11 +315,11 @@ grep -q "report_env_issue" internal/harness/tools
 go test ./internal/plan/... -run TestEnvBlockerFastPath
 
 # 6. Ghost-write hook.
-grep -q "descent.ghost_write_detected" cmd/stoke/sow_native.go
-go test ./cmd/stoke/... -run TestGhostWriteRetry
+grep -q "descent.ghost_write_detected" cmd/r1/sow_native.go
+go test ./cmd/r1/... -run TestGhostWriteRetry
 
 # 7. Build + vet + full test suite green.
-go build ./cmd/stoke && ./stoke version
+go build ./cmd/r1 && ./stoke version
 go vet ./...
 go test ./...
 ```
@@ -328,15 +328,15 @@ go test ./...
 
 Each item is self-contained. The implementer gets ONLY that item plus this spec.
 
-1. [ ] **Inject TRUTHFULNESS_CONTRACT.** File: `cmd/stoke/sow_native.go`. Add top-level `const truthfulnessContract = ` with the verbatim block (see "Verbatim prompt blocks" above — ~260 words, preserve ASCII hyphens and backticks exactly). In `buildSOWNativePromptsWithOpts`, insert the constant into the system prompt in TWO places:
+1. [ ] **Inject TRUTHFULNESS_CONTRACT.** File: `cmd/r1/sow_native.go`. Add top-level `const truthfulnessContract = ` with the verbatim block (see "Verbatim prompt blocks" above — ~260 words, preserve ASCII hyphens and backticks exactly). In `buildSOWNativePromptsWithOpts`, insert the constant into the system prompt in TWO places:
    - Standard path: after `buildCanonicalNamesBlock` output (line 3909) and before the skill-injection section (line 3918). Use a preceding `\n\n` separator.
    - Repair path: inside the `if opts.Repair != nil` branch at line 3737, placed FIRST before the existing "You are in REPAIR mode" preamble. Preserve `\n\n` separators.
 
-   AC: `grep -q "TRUTHFULNESS CONTRACT" cmd/stoke/sow_native.go`; new unit test `TestBuildSOWPromptsContainsContract` asserts contract substring in both branches' system prompt output.
+   AC: `grep -q "TRUTHFULNESS CONTRACT" cmd/r1/sow_native.go`; new unit test `TestBuildSOWPromptsContainsContract` asserts contract substring in both branches' system prompt output.
 
 2. [ ] **Inject PRE_COMPLETION_GATE.** Same file. Add top-level `const preCompletionGate = ` with the verbatim ~280-word block. Inject immediately after `truthfulnessContract` in both the standard and repair paths. Gate ONLY fires for executor stances — repair IS executor; also allow for the default Dev stance. Do NOT inject on reviewer-only or diagnostic dispatches (check with `opts.Stance` or equivalent; if no stance field today, add one or inject unconditionally since DIAGNOSE mode is spec-7).
 
-   AC: `grep -q "PRE-COMPLETION GATE" cmd/stoke/sow_native.go`; assert both standard + repair system prompt contain the block.
+   AC: `grep -q "PRE-COMPLETION GATE" cmd/r1/sow_native.go`; assert both standard + repair system prompt contain the block.
 
 3. [ ] **Implement `PreEndTurnCheckFn` parser.** New file `internal/plan/pre_completion_check.go`:
    - Exported `func NewPreEndTurnCheck(ctx PreCheckContext) agentloop.PreEndTurnCheckFn`.
@@ -362,9 +362,9 @@ Each item is self-contained. The implementer gets ONLY that item plus this spec.
 
    AC: `grep -q "MaxRepairsPerFile" internal/plan/verification_descent.go`; `go test ./internal/plan/... -run TestPerFileRepairCap` passes — cap-hit fixture never reaches T5.
 
-5. [ ] **Bootstrap-per-cycle wrapper.** File: `cmd/stoke/descent_bridge.go` (lines 74-99 host current RepairFunc):
+5. [ ] **Bootstrap-per-cycle wrapper.** File: `cmd/r1/descent_bridge.go` (lines 74-99 host current RepairFunc):
    - Wrap the existing `cfg.RepairFunc`: capture `preSHA := gitHead(ctx, sess.RepoRoot)` before calling the inner func.
-   - After inner returns (success or error), compute `changed := gitDiffNames(ctx, sess.RepoRoot, preSHA, "HEAD")`. Helpers go in `cmd/stoke/descent_bridge.go` or `internal/worktree/` (reuse if present).
+   - After inner returns (success or error), compute `changed := gitDiffNames(ctx, sess.RepoRoot, preSHA, "HEAD")`. Helpers go in `cmd/r1/descent_bridge.go` or `internal/worktree/` (reuse if present).
    - Manifest list: `["package.json","pnpm-lock.yaml","go.mod","go.sum","Cargo.toml","Cargo.lock","requirements.txt","pyproject.toml","uv.lock","poetry.lock"]`.
    - Intersect; if non-empty, call new `plan.EnsureWorkspaceInstalledOpts(ctx, sess.RepoRoot, plan.InstallOpts{Force:true, Frozen: lockfilePresent(sess.RepoRoot)})` and publish `descent.bootstrap_reinstalled`.
    - Extend `internal/plan/acceptance.go` with `EnsureWorkspaceInstalledOpts(ctx, root, opts InstallOpts)`:
@@ -373,7 +373,7 @@ Each item is self-contained. The implementer gets ONLY that item plus this spec.
      - All other logic (registry validation, 3-min timeout, fallback order) unchanged.
    - `lockfilePresent(root)`: returns true if any of `pnpm-lock.yaml / package-lock.json / yarn.lock / Cargo.lock / uv.lock / poetry.lock / go.sum` is present.
 
-   AC: `grep -q "descent.bootstrap_reinstalled" cmd/stoke/descent_bridge.go`; `go test ./internal/plan/... -run TestBootstrapReinstallOnManifestChange` — stub git diff returns `package.json` → install invoked + event emitted; empty diff → no invoke.
+   AC: `grep -q "descent.bootstrap_reinstalled" cmd/r1/descent_bridge.go`; `go test ./internal/plan/... -run TestBootstrapReinstallOnManifestChange` — stub git diff returns `package.json` → install invoked + event emitted; empty diff → no invoke.
 
 6. [ ] **`report_env_issue` tool.** Locate the worker tool registry — run `grep -rn "tool_name\|ToolDefinition\|registerTool" internal/harness/tools/` before editing. Add the JSON-schema-backed tool (schema in Business Logic §5). Handler:
    - Accept `{issue, workaround_attempted, suggestion}`; require `issue`.
@@ -390,16 +390,16 @@ Each item is self-contained. The implementer gets ONLY that item plus this spec.
    - If the check exits non-zero: publish `descent.ghost_write_detected{path:P, size_bytes:0}`, inject a user-role reminder (see Business Logic §6 text), and DO NOT increment any retry counter beyond `MaxConsecutiveErrs`.
    - Wire via `agentloop.Config.MidturnCheckFn` (loop.go existing hook). The supervisor-rule machinery already funnels through that seam — extend `toEngineSupervisor` to translate this rule into a `MidturnCheckFn` closure.
 
-   AC: `grep -q "descent.ghost_write_detected" cmd/stoke` (either sow_native.go or harness/tools); `go test ./cmd/stoke/... -run TestGhostWriteRetry` — fake edit tool that creates an empty file triggers reminder + event; normal edit is silent.
+   AC: `grep -q "descent.ghost_write_detected" cmd/r1` (either sow_native.go or harness/tools); `go test ./cmd/r1/... -run TestGhostWriteRetry` — fake edit tool that creates an empty file triggers reminder + event; normal edit is silent.
 
 8. [ ] **Bus + streamjson plumbing.** Ensure every new event kind (`descent.file_cap_exceeded`, `worker.env_blocked`, `descent.ghost_write_detected`, `descent.bootstrap_reinstalled`, `descent.pre_completion_gate_failed`) is:
    - Added to the documented event catalog in `internal/bus/bus.go:31-69` comments.
-   - Mirrored onto streamjson emitter by adding a subscriber in `cmd/stoke/descent_bridge.go` (or a small new `cmd/stoke/descent_bus_bridge.go`) that translates bus events to `emitter.EmitSystem(subtype:"stoke.descent.<kind>", data: ...)`. Matches decision C1 (extend streamjson, no new package).
+   - Mirrored onto streamjson emitter by adding a subscriber in `cmd/r1/descent_bridge.go` (or a small new `cmd/r1/descent_bus_bridge.go`) that translates bus events to `emitter.EmitSystem(subtype:"stoke.descent.<kind>", data: ...)`. Matches decision C1 (extend streamjson, no new package).
    - Test: `go test ./internal/bus/... -run TestDescentEventNames` asserts every event kind has a catalog entry.
 
    AC: `go test ./internal/bus/... -run TestDescentEventNames`.
 
-9. [ ] **Run the CI gate.** `go build ./cmd/stoke && go vet ./... && go test ./...`. Any failure → fix; new code must not break existing packages.
+9. [ ] **Run the CI gate.** `go build ./cmd/r1 && go vet ./... && go test ./...`. Any failure → fix; new code must not break existing packages.
 
 ## Rollout
 

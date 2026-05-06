@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fixture title</title>
+  <link rel="stylesheet" href="/ui/css/base.css">
+
+  <script type="importmap">{
+  "imports": {
+    "three": "/ui/vendor/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/ui/vendor/three/addons/controls/OrbitControls.js",
+    "d3-force-3d": "/ui/vendor/d3-force-3d.js",
+    "3d-force-graph": "/ui/vendor/3d-force-graph.js",
+    "three-spritetext": "/ui/vendor/three-spritetext.js"
+  }
+}</script>
+
+  <script src="/ui/vendor/htmx.min.js"
+          integrity="sha384-FAKEHTMX"
+          crossorigin="anonymous"
+          defer></script>
+  <script src="/ui/vendor/htmx-ext-sse.js"
+          integrity="sha384-FAKESSE"
+          crossorigin="anonymous"
+          defer></script>
+  
+  <script type="module" src="/ui/js/htmx-sse-shim.js" defer></script>
+</head>
+<body hx-ext="sse" data-session-id="sess-fixture">
+  <header class="topbar" role="banner">
+  <div class="topbar__brand">r1-server</div>
+  <nav class="topbar__nav" aria-label="Session views">
+    <a href="/session/sess-fixture" data-testid="tab-waterfall">Waterfall</a>
+    <a href="/session/sess-fixture/graph" aria-current="page" data-testid="tab-graph">3D Graph</a>
+    <a href="/session/sess-fixture/stream" data-testid="tab-stream">Stream</a>
+    <a href="/memories" data-testid="tab-memories">Memories</a>
+  </nav>
+  <button id="focus-clear" type="button" data-testid="btn-global-view"
+          onclick="window.__GRAPH_RENDERER__ && window.__GRAPH_RENDERER__.clearFocus()">
+    Global view
+  </button>
+</header>
+  <main id="main">
+    <section id="graph-pane" class="pane pane--primary">
+  <canvas data-island="graph" data-session-id="sess-fixture"
+          aria-label="3D session graph"
+          style="width:100%;height:calc(100vh - var(--topbar-height) - 56px);display:block;">
+  </canvas>
+</section>
+<aside id="side-panel" class="pane pane--side" role="complementary"
+       aria-label="Selected node details">
+  <p class="muted">Hover or click a node to inspect.</p>
+</aside>
+  </main>
+  <footer id="scrubber-bar"
+        style="position:fixed;left:0;right:0;bottom:0;height:56px;
+               border-top:1px solid var(--color-border);
+               background:var(--color-bg);padding:8px 16px;
+               display:flex;align-items:center;gap:12px;z-index:5;">
+  <label for="timeline-scrubber" class="sr-only">Timeline scrubber</label>
+  <input type="range" id="timeline-scrubber" data-testid="timeline-scrubber"
+         style="flex:1;" />
+  <span class="muted mono" id="scrubber-state" aria-live="polite">live</span>
+</footer>
+
+
+<script type="application/json" id="graph-data">{"nodes":[],"edges":[]}</script>
+<script type="module" src="/ui/js/graph.js" defer></script>
+<script type="module" src="/ui/js/scrubber.js" defer></script>
+</body>
+</html>

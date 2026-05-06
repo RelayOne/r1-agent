@@ -54,11 +54,15 @@ func TestDispatchTool_DefaultHookIsAssertCwd(t *testing.T) {
 	hub2, _ := NewHub()
 	wd := t.TempDir()
 	// Chdir into the session's workdir so the default sentinel passes.
+	// LINT-ALLOW chdir-test: test exercises the sentinel which reads the
+	// live cwd; we must mutate the process cwd to verify the sentinel.
 	prev, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+	// LINT-ALLOW chdir-test: deferred restore of the process cwd captured above.
 	defer func() { _ = os.Chdir(prev) }()
+	// LINT-ALLOW chdir-test: see comment above.
 	if err := os.Chdir(wd); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
@@ -67,6 +71,7 @@ func TestDispatchTool_DefaultHookIsAssertCwd(t *testing.T) {
 	// to /private/tmp via symlink; we'd need to chdir into that
 	// resolved form too. Use os.Getwd to capture what the kernel
 	// reports, then create the session against THAT path.
+	// LINT-ALLOW chdir-test: read the resolved cwd for SessionRoot.
 	livePath, _ := os.Getwd()
 	s, err := hub2.Create(CreateOptions{Workdir: livePath, Model: "m"})
 	if err != nil {

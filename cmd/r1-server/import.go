@@ -30,7 +30,7 @@ import (
 	"github.com/RelayOne/r1/internal/session"
 )
 
-// importedManifest mirrors cmd/stoke.TraceBundleManifest — we avoid
+// importedManifest mirrors cmd/r1.TraceBundleManifest — we avoid
 // importing main from main to sidestep the go build graph and because
 // the consumer should tolerate future additive fields without pulling
 // the producer's header file in.

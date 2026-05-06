@@ -22,7 +22,7 @@
 //
 // Spec-deviation: lazy package-level init via sync.Once instead of
 // struct-field injection. Rationale — NewNativeRunner has seven call
-// sites across cmd/stoke/, internal/app/, and internal/engine test
+// sites across cmd/r1/, internal/app/, and internal/engine test
 // files, and RunSpec is already a 200-line struct; threading a
 // policy.Client through every construction / test-double site would
 // balloon the blast radius of this one task well beyond the ONE-commit

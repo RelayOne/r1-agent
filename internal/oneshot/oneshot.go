@@ -124,7 +124,7 @@ func Dispatch(verb string, payload json.RawMessage) (Response, error) {
 }
 
 // Run reads the JSON input from r, dispatches to the named verb,
-// and writes the JSON result to w. Used by cmd/stoke to wire the
+// and writes the JSON result to w. Used by cmd/r1 to wire the
 // CLI flag; also exported for in-process callers (tests).
 //
 // Input is the verb-specific payload. The CLI's `--one-shot <verb>`

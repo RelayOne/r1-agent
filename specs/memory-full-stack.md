@@ -64,7 +64,7 @@ Memory moves out of `internal/wisdom/` into a dedicated package. `wisdom` keeps 
 | `internal/memory/consolidate.go` | Chunked episodic → semantic classification pipeline, 4 outcomes |
 | `internal/memory/hygiene.go` | `ApplyDecay`, `Dedupe`, `ApplyRetentionTiers` |
 | `internal/memory/metareason.go` | Live inter-session meta-reasoner, gated by `STOKE_META_LIVE=1` |
-| `cmd/stoke/memory_cmd.go` | `stoke memory {list,show,put,search,consolidate,gc}` |
+| `cmd/r1/memory_cmd.go` | `stoke memory {list,show,put,search,consolidate,gc}` |
 
 `internal/wisdom/sqlite.go` keeps the existing `wisdom_learnings` table untouched. The `SQLiteStore.StoreMemory / SearchMemories / ListMemories / DeleteMemory` functions become thin wrappers over `internal/memory` so call sites compile as-is during the migration window.
 
@@ -148,8 +148,8 @@ Ordered, self-contained. Each item names the file, the function, the pattern fil
 22. [ ] `internal/memory/retrieve.go:fuseRRF(bm25, vec []Item, alpha float64) []Item` — Reciprocal Rank Fusion: `score = alpha/(k+rank_vec) + (1-alpha)/(k+rank_bm25)`, default `k=60`, `alpha=0.6` when embedder present else `0.0`. Test: `TestRRFFusion`.
 23. [ ] `internal/memory/retrieve.go:formatForPrompt(items) string` — renders `[category] content (tag1, tag2)\n` bullets. Test: `TestFormatForPrompt`.
 24. [ ] `internal/memory/retrieve.go:CapTokens(text string, max int) string` — uses `internal/tokenest/` to truncate lowest-confidence items first. Test: `TestCapTokens1200`.
-25. [ ] **Hook 1 (planner)** — wire into `cmd/stoke/plan_cmd.go` (or equivalent plan builder). Call `CoreAndQuery(ScopeAuto, sow.Title+" "+sow.Description, 8, 10)`, inject under `## Prior Learnings` before `## Task Definition`. Test: `TestPlannerInjection` (plan output contains H2 block when memories exist).
-26. [ ] **Hook 2 (worker dispatch)** — wire into `cmd/stoke/sow_native.go` between canonical-names and skills (see legacy spec lines 3909-3918). Call `CoreAndQuery(ScopeAuto, sessionTitle+" "+fileScope, 5, 8)`. Append under `## Relevant learnings` in system prompt. Cap 1200 tokens. Test: `TestWorkerInjectionCap`.
+25. [ ] **Hook 1 (planner)** — wire into `cmd/r1/plan_cmd.go` (or equivalent plan builder). Call `CoreAndQuery(ScopeAuto, sow.Title+" "+sow.Description, 8, 10)`, inject under `## Prior Learnings` before `## Task Definition`. Test: `TestPlannerInjection` (plan output contains H2 block when memories exist).
+26. [ ] **Hook 2 (worker dispatch)** — wire into `cmd/r1/sow_native.go` between canonical-names and skills (see legacy spec lines 3909-3918). Call `CoreAndQuery(ScopeAuto, sessionTitle+" "+fileScope, 5, 8)`. Append under `## Relevant learnings` in system prompt. Cap 1200 tokens. Test: `TestWorkerInjectionCap`.
 27. [ ] **Hook 3 (delegation)** — new function `ScoreAgent(ctx, role string) float64` in `retrieve.go`. Queries `ScopeGlobal, tag="agent:"+role, top-3`, returns `weightedAvg(confidence * importance/10)`. Called by spec-5 delegation code. Test: `TestScoreAgent`.
 28. [ ] **Hook 4 (verification)** — wire into `internal/verify/` reviewer prompt builder. Query `ScopeRepo, tags={false-positive, verifier-error}, top-3`. Append `## Known false positives near this change` one-liners only when matches exist. Test: `TestVerifierInjectionNoMatch` (absent block), `TestVerifierInjectionPresent`.
 
@@ -180,19 +180,19 @@ Ordered, self-contained. Each item names the file, the function, the pattern fil
 48. [ ] `internal/memory/metareason.go:capMetaRules(repoHash, max=50)` — FIFO evict by `last_used` when over cap. Test: `TestCapMetaRules50`.
 
 ### 8.8 CLI verbs
-49. [ ] `cmd/stoke/memory_cmd.go:cmdMemoryList(flags)` — SELECT with scope + tier filters, tabular output. Pattern: existing `cmd/stoke/` subcommands. Test: `TestCLIList`.
-50. [ ] `cmd/stoke/memory_cmd.go:cmdMemoryShow(id)` — SELECT single row, pretty-print all columns including metadata JSON. Test: `TestCLIShow`.
-51. [ ] `cmd/stoke/memory_cmd.go:cmdMemoryPut(flags)` — inserts with provided scope/tier/content/tags/importance. Validates enums. Test: `TestCLIPutValidation`.
-52. [ ] `cmd/stoke/memory_cmd.go:cmdMemorySearch(query, flags)` — hybrid BM25+vec via `Router.CoreAndQuery`, prints top-K. Test: `TestCLISearch`.
-53. [ ] `cmd/stoke/memory_cmd.go:cmdMemoryConsolidate(flags)` — calls `Consolidate`. `--dry-run` prints counts only. `--chunk N` overrides 50. Test: `TestCLIConsolidateDryRun`.
-54. [ ] `cmd/stoke/memory_cmd.go:cmdMemoryGC(flags)` — calls hygiene passes. Flags `--decay`, `--dedupe`, `--retention` select subsets; no flag runs all. Test: `TestCLIGCAll`.
-55. [ ] `cmd/stoke/main.go` — register `memory` command group and six verbs. Test: `TestMemoryCLIRegistered`.
+49. [ ] `cmd/r1/memory_cmd.go:cmdMemoryList(flags)` — SELECT with scope + tier filters, tabular output. Pattern: existing `cmd/r1/` subcommands. Test: `TestCLIList`.
+50. [ ] `cmd/r1/memory_cmd.go:cmdMemoryShow(id)` — SELECT single row, pretty-print all columns including metadata JSON. Test: `TestCLIShow`.
+51. [ ] `cmd/r1/memory_cmd.go:cmdMemoryPut(flags)` — inserts with provided scope/tier/content/tags/importance. Validates enums. Test: `TestCLIPutValidation`.
+52. [ ] `cmd/r1/memory_cmd.go:cmdMemorySearch(query, flags)` — hybrid BM25+vec via `Router.CoreAndQuery`, prints top-K. Test: `TestCLISearch`.
+53. [ ] `cmd/r1/memory_cmd.go:cmdMemoryConsolidate(flags)` — calls `Consolidate`. `--dry-run` prints counts only. `--chunk N` overrides 50. Test: `TestCLIConsolidateDryRun`.
+54. [ ] `cmd/r1/memory_cmd.go:cmdMemoryGC(flags)` — calls hygiene passes. Flags `--decay`, `--dedupe`, `--retention` select subsets; no flag runs all. Test: `TestCLIGCAll`.
+55. [ ] `cmd/r1/main.go` — register `memory` command group and six verbs. Test: `TestMemoryCLIRegistered`.
 
 ### 8.9 Adapters + wiring
 56. [ ] `internal/wisdom/adapter.go:WisdomAdapter` — implements `memory.Storage` mapping wisdom upvotes to `Vote`. Pattern: existing `Store.Vote`. Test: `TestWisdomAdapterPassthrough`.
 57. [ ] `internal/wisdom/sqlite.go` — rewire `StoreMemory/SearchMemories/ListMemories/DeleteMemory` as thin delegators to `internal/memory`. Keep function signatures so callers compile unchanged. Test: `TestWisdomDelegation`.
 58. [ ] `app/` startup — open `internal/memory.Store`, construct `Router`, inject into orchestrator. Pattern: existing `session.SQLStore` construction. Test: `TestAppBootsMemory`.
-59. [ ] `cmd/stoke/main.go` — add `--memory-backend=sqlite|flat` flag (default `sqlite` when existing `.stoke/memory.db`, else `flat`). Test: `TestMemoryBackendFlag`.
+59. [ ] `cmd/r1/main.go` — add `--memory-backend=sqlite|flat` flag (default `sqlite` when existing `.stoke/memory.db`, else `flat`). Test: `TestMemoryBackendFlag`.
 
 ### 8.10 Tests (cross-cutting)
 60. [ ] `internal/memory/sqlite_integration_test.go` — seed 100 episodes, call `Consolidate`, assert exact counts of NEW/REINFORCE/CONTRADICT/AMBIGUOUS on a known corpus. Stub the LLM with a deterministic response file.
@@ -203,7 +203,7 @@ Ordered, self-contained. Each item names the file, the function, the pattern fil
 
 ## 9. Acceptance criteria
 
-- `go build ./cmd/stoke && go test ./... && go vet ./...` all green.
+- `go build ./cmd/r1 && go test ./... && go vet ./...` all green.
 - `sqlite-vec` extension load is **optional**: when the extension is missing, all queries succeed via BM25+tag-overlap with no user-visible error.
 - Migration from the MVP table is **idempotent**: seeding a DB with MVP-shaped rows, running migration twice, and querying returns the same rows with no data loss and `user_version=2`.
 - Auto-retrieval at each of the 4 hooks injects at most 1200 tokens under the documented H2 block.

@@ -81,7 +81,11 @@ func TestWALKeeperLobe_FramesAndForwards(t *testing.T) {
 	h.Emit(context.Background(), src)
 
 	// Wait briefly for the async observe handler + drainer to publish.
-	deadline := time.Now().Add(2 * time.Second)
+	// Deadline bumped from 2s to 10s because under -race in a constrained
+	// CI container (Cloud Build's E2_HIGHCPU_8) the goroutine scheduler
+	// can spend a full second on instrumentation overhead alone, and a
+	// 2s cap occasionally beats the drainer to the deadline.
+	deadline := time.Now().Add(30 * time.Second)
 	var got []bus.Event
 	for time.Now().Before(deadline) {
 		got = replayDurable(t, durable, defaultTypePrefix)
@@ -133,7 +137,7 @@ func TestWALKeeperLobe_CustomFramingPrefix(t *testing.T) {
 		Type: hub.EventSessionInit,
 	})
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	var got []bus.Event
 	for time.Now().Before(deadline) {
 		got = replayDurable(t, durable, "myapp.hub.")

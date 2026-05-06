@@ -21,7 +21,7 @@ The four bites are: (1) **`stoke attach`**, a CLI client for the Unix-socket con
 
 ## Existing Patterns to Follow
 
-- CLI dispatch: `cmd/stoke/main.go` switch table; one file per subcommand (e.g., `resume_cmd.go`, `ctl_*.go`).
+- CLI dispatch: `cmd/r1/main.go` switch table; one file per subcommand (e.g., `resume_cmd.go`, `ctl_*.go`).
 - Flag parsing: stdlib `flag.NewFlagSet(name, flag.ExitOnError)`, identical shape to `resume_cmd.go`.
 - Socket client: `sessionctl.Client.Call(sockPath, Request)` from `chat-descent-control.md` §Part 3. Reused verbatim — no wrapper changes.
 - Event-log reader: `bus.OpenWAL(dir).ReadFrom(seq)` today (`internal/bus/wal.go`); transparent upgrade to `eventlog.Store.Query(filter)` once `internal/eventlog/` lands (event-log-proper spec).
@@ -128,10 +128,10 @@ These are strict additions; they do not mutate any data and are safe to add inde
 
 ### A.8 File layout
 
-- `cmd/stoke/attach_cmd.go` — new, ~300 LOC.
+- `cmd/r1/attach_cmd.go` — new, ~300 LOC.
 - `internal/sessionctl/stream.go` — new; implements `status_stream` handler on the server side.
 - `internal/sessionctl/handlers.go` — extend with `detach` handler.
-- `cmd/stoke/main.go` — register `attach` in the subcommand dispatcher.
+- `cmd/r1/main.go` — register `attach` in the subcommand dispatcher.
 
 ## Part B — `stoke replay`
 
@@ -239,11 +239,11 @@ Tree construction:
 
 ### B.7 File layout
 
-- `cmd/stoke/replay_cmd.go` — new, ~400 LOC.
+- `cmd/r1/replay_cmd.go` — new, ~400 LOC.
 - `internal/replay/source.go` — new; `eventSource` interface + two impls.
 - `internal/replay/render.go` — new; `renderTable`, `renderJSON`, `renderTree`.
 - `internal/replay/filter.go` — new; `Filter` struct + glob matcher.
-- `cmd/stoke/main.go` — register `replay` in the subcommand dispatcher.
+- `cmd/r1/main.go` — register `replay` in the subcommand dispatcher.
 
 ## Part C — `SECURITY.md` augmentation
 
@@ -306,7 +306,7 @@ Table seeded with a note explaining intent (honor list for researchers; we publi
 
 ### C.4 Cross-link verification
 
-A test in `internal/docs/` (or `cmd/stoke/docs_test.go` — match the repo convention) asserts:
+A test in `internal/docs/` (or `cmd/r1/docs_test.go` — match the repo convention) asserts:
 
 1. `SECURITY.md` exists at `<repo>/SECURITY.md`.
 2. Its contents contain the string `docs/security/prompt-injection.md`.
@@ -473,7 +473,7 @@ Nothing in this spec is tightly coupled across the four parts. The only shared c
 
 ## Acceptance Criteria
 
-- WHEN the repo builds via `go build ./cmd/stoke` THE SYSTEM SHALL succeed with no errors.
+- WHEN the repo builds via `go build ./cmd/r1` THE SYSTEM SHALL succeed with no errors.
 - WHEN `go vet ./...` runs THE SYSTEM SHALL return zero findings.
 - WHEN `go test ./...` runs THE SYSTEM SHALL pass all tests including the four parts' new tests.
 - WHEN `stoke attach <session_id>` is invoked against no running session THE SYSTEM SHALL print the start-with-`--sessionctl` instructions and exit 1.
@@ -490,19 +490,19 @@ Nothing in this spec is tightly coupled across the four parts. The only shared c
 
 ```bash
 # Core CI gate.
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 go test ./...
 
 # Attach targeted tests.
-go test ./cmd/stoke/... -run TestAttachCmd
+go test ./cmd/r1/... -run TestAttachCmd
 
 # Replay targeted tests.
-go test ./cmd/stoke/... -run TestReplayCmd
+go test ./cmd/r1/... -run TestReplayCmd
 go test ./internal/replay/... -run .
 
 # SECURITY.md tests.
-go test ./cmd/stoke/... -run TestSecurityMd
+go test ./cmd/r1/... -run TestSecurityMd
 test -f SECURITY.md
 grep -q 'docs/security/prompt-injection.md' SECURITY.md
 grep -q 'security/advisories/new' SECURITY.md
@@ -522,7 +522,7 @@ test ! -f internal/redteam/corpus/known-misses/ignore-previous-leetspeak.txt
 
 ### Part A — `stoke attach`
 
-1. [ ] **Create `cmd/stoke/attach_cmd.go`.** Flag parsing (`--repo`, `--ctl-url`, `--json-raw`). Signature: `func attachCmd(args []string)`. Register in `cmd/stoke/main.go` dispatch.
+1. [ ] **Create `cmd/r1/attach_cmd.go`.** Flag parsing (`--repo`, `--ctl-url`, `--json-raw`). Signature: `func attachCmd(args []string)`. Register in `cmd/r1/main.go` dispatch.
 2. [ ] **Implement socket discovery.** Order: `<cwd>/.stoke/sessionctl.sock` (if `<cwd>/.stoke/session.json` matches), then `/tmp/stoke-<session_id>.sock`. Helper: `resolveSocket(repo, sessionID string) (string, error)`.
 3. [ ] **Implement `attach` REPL loop.** Stdlib `bufio.Scanner` on `os.Stdin`. Dispatch table mapping command strings to `sessionctl.Request` builders. Unknown commands print help.
 4. [ ] **Add `status_stream` handler in `internal/sessionctl/stream.go`.** Server side: holds the connection, emits `{type:"stream_event", ...}` frames at `cadence_ms`. Client side: decodes each frame and renders a dim line above the prompt.
@@ -534,7 +534,7 @@ test ! -f internal/redteam/corpus/known-misses/ignore-previous-leetspeak.txt
 
 ### Part B — `stoke replay`
 
-10. [ ] **Create `cmd/stoke/replay_cmd.go`.** Flag parsing per §B.2. Register in `cmd/stoke/main.go`.
+10. [ ] **Create `cmd/r1/replay_cmd.go`.** Flag parsing per §B.2. Register in `cmd/r1/main.go`.
 11. [ ] **Create `internal/replay/filter.go`.** `Filter` struct: `{SessionID, Since, Until, Type, Max}`. `Since` accepts RFC3339 / ULID / int; parse in `ParseSince(s string)`.
 12. [ ] **Create `internal/replay/source.go`.** Define `eventSource` interface + `walSource` and `eventlogSource` impls. Selection in `newEventSource(repoPath)` via `os.Stat` precedence.
 13. [ ] **Create `internal/replay/render.go`.** Three renderers: `renderTable`, `renderJSON`, `renderTree`. Color gated by `term.IsTerminal`. Tree uses Unicode box-drawing on TTY, ASCII fallback otherwise.
@@ -544,7 +544,7 @@ test ! -f internal/redteam/corpus/known-misses/ignore-previous-leetspeak.txt
 ### Part C — `SECURITY.md`
 
 16. [ ] **Edit `SECURITY.md` at repo root.** Insert the three new subsections per §C.2 between existing `## Reporting a Vulnerability` and `## Security Model` sections. Keep existing content verbatim.
-17. [ ] **Add `TestSecurityMd_*` suite.** New file `cmd/stoke/security_md_test.go` (or `internal/docs/security_test.go`) implementing the six assertions in §Testing — Part C.
+17. [ ] **Add `TestSecurityMd_*` suite.** New file `cmd/r1/security_md_test.go` (or `internal/docs/security_test.go`) implementing the six assertions in §Testing — Part C.
 
 ### Part D — Redteam corpus known-miss advancement
 
@@ -558,11 +558,11 @@ test ! -f internal/redteam/corpus/known-misses/ignore-previous-leetspeak.txt
 
 ### Cross-cutting
 
-25. [ ] **Register new subcommands.** `cmd/stoke/main.go` dispatch table gains `attach` and `replay` entries with one-line help strings.
+25. [ ] **Register new subcommands.** `cmd/r1/main.go` dispatch table gains `attach` and `replay` entries with one-line help strings.
 26. [ ] **Update `--help` output.** The subcommand list at top of `stoke --help` (and `stoke help`) gains `attach` and `replay` rows.
 27. [ ] **No new env vars.** All four parts ship unflagged. Confirm by grep: no `os.Getenv("STOKE_ATTACH_*")` / `STOKE_REPLAY_*` introduced.
 28. [ ] **README / docs touch-up (optional, skip if noisy).** If `docs/operator-guide.md` enumerates subcommands, add `attach` and `replay` rows. Skip if not present.
-29. [ ] **Run the CI gate.** `go build ./cmd/stoke && go vet ./... && go test ./...` — all green.
+29. [ ] **Run the CI gate.** `go build ./cmd/r1 && go vet ./... && go test ./...` — all green.
 30. [ ] **Manual smoke test.** Start a chat session with `--sessionctl`; from second terminal, `stoke attach`; observe status stream; type `detach`; verify agent continues. Run `stoke replay --session <id> --format tree` against a finished session; verify nesting reads correctly.
 
 ## Rollout

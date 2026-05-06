@@ -42,23 +42,12 @@ func TestShare_OnlyV2On_404(t *testing.T) {
 	}
 }
 
-// TestShare_OnlyShareToggleOn_404 — symmetric: the share toggle is on
-// but the umbrella v2 flag is off. The whole v2 surface stays dark
-// per spec §2.3.
-func TestShare_OnlyShareToggleOn_404(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	t.Setenv("R1_SERVER_SHARE_ENABLED", "1")
-	s := newUIServer(t)
-
-	resp, err := http.Get(s.URL + "/share/deadbeef00")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status=%d, want 404 when only share toggle is on", resp.StatusCode)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestShare_OnlyShareToggleOn_404. The
+// R1_SERVER_UI_V2 umbrella toggle was removed once the legacy v1
+// SPA was deleted; the share gate now collapses to ShareEnabled
+// alone, so "share toggle on, v2 off" is no longer a representable
+// state. TestShare_BothGatesOff_404 + TestShare_OnlyV2On_404 still
+// exercise the ShareEnabled gate from the other direction.)
 
 // TestShare_BadHash_400 — gates on, but the hash isn't lowercase hex.
 // Distinguishing 400 from 404 lets a misconfigured client see why its
@@ -180,23 +169,14 @@ func TestShare_TemplateAutoEscape(t *testing.T) {
 	}
 }
 
-// TestV2Enabled — direct unit test for the env-driven flag helper.
-// Other handlers will gate on this; locking the parse in keeps a
-// future "0" → true regression from quietly enabling everything.
+// TestV2Enabled_AlwaysTrue — Spec D removed the env-driven toggle;
+// v2Enabled() returns true regardless of any R1_SERVER_UI_V2 value
+// because the legacy SPA fallback no longer exists.
 func TestV2Enabled(t *testing.T) {
-	cases := []struct {
-		val  string
-		want bool
-	}{
-		{"", false},
-		{"0", false},
-		{"true", false}, // only "1" enables; explicit and unambiguous
-		{"1", true},
-	}
-	for _, c := range cases {
-		t.Setenv("R1_SERVER_UI_V2", c.val)
-		if got := v2Enabled(); got != c.want {
-			t.Errorf("v2Enabled with %q = %v, want %v", c.val, got, c.want)
+	for _, val := range []string{"", "0", "true", "1"} {
+		t.Setenv("R1_SERVER_UI_V2", val)
+		if !v2Enabled() {
+			t.Errorf("v2Enabled with %q = false, want true (Spec D hardcodes true)", val)
 		}
 	}
 }

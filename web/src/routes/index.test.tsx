@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, useRoutes } from "react-router-dom";
@@ -23,7 +24,7 @@ const renderers: RouteRenderers = {
   NotFound: () => <div data-testid="r-404">not found</div>,
 };
 
-function App(): JSX.Element | null {
+function App(): React.JSX.Element | null {
   const tree = useRoutes(buildRoutes(renderers));
   return tree;
 }

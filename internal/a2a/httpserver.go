@@ -4,7 +4,7 @@
 // generator + Task handlers in a net/http-compatible
 // handler so operators can serve /.well-known/agent.json
 // and /a2a/rpc from a single mux — either via the
-// standalone cmd/stoke-a2a/ binary or by mounting into an
+// standalone cmd/r1-a2a/ binary or by mounting into an
 // existing HTTP server via (*Server).Handler().
 //
 // Routes:

@@ -1,790 +1,559 @@
 # Architecture
 
-This is the trunk architecture view for r1. It covers the existing planes
-that ship today plus the **Cortex layer**, the **r1d daemon**, the
-**lanes-protocol**, and the **three surfaces** (TUI, web, desktop) defined
-by the eight specs in `specs/`.
+Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cloud Run SaaS surfaces went live, and the final-sweep PRs #168 / #169 / #170 / #171 merged (sync to `main` in commit `242af4a8`) bringing skill-aware compaction, ed25519-signed redaction events, the v2 tracebundle export format, and the release-rehearsal CI lane.
 
 ## Audience
 
-- Engineers maintaining the runtime.
-- Reviewers checking whether docs match the current code and the scoped
-  cortex / lanes / multi-surface work.
-- External integrators building MCP clients, IDE plugins, or alternate
-  surfaces against the lanes-protocol.
+- Engineers maintaining the runtime, daemon, web, desktop, or agentic harness.
+- Reviewers checking whether docs match shipped code.
+- Operators standing up the SaaS surfaces or onboarding to ops scripts.
 - Stakeholders who need the system shape without reading every package.
 
-## High-level topology
+## Tech stack
 
-```
-                 ┌─────────────────────────────────────────────────────┐
-                 │  r1d daemon (per-user singleton, on-demand spawn)   │
-                 │                                                     │
-   CLI ─unix-sock┤  +───────────+    +───────────────────────────+     │
-                 │  │ IPC mux   │    │ SessionHub (sync.Map)     │     │
-   TUI ─unix-sock┤  │ • sock    │    │  ┌─────┐ ┌─────┐ ┌─────┐  │     │
-   Web ─WS─loopback│ │ • npipe  │────┤  │Sess │ │Sess │ │Sess │  │     │
-   Desk ─WS─loopback│ │ • WS+HTTP │   │  │  A  │ │  B  │ │  C  │  │     │
-   MCP ─WS/stdio │  │ Bearer   │    │  └──┬──┘ └──┬──┘ └──┬──┘  │     │
-                 │  +───────────+    │     │       │       │     │     │
-                 │                   │  agentloop.Loop per session│     │
-                 │  Discovery ~/.r1/ │  ├───────────────────┐   │     │
-                 │  • daemon.json    │  │ Cortex            │   │     │
-                 │  • daemon.lock    │  │  Workspace        │   │     │
-                 │  Token rotated    │  │  ┌─────┐ ┌─────┐  │   │     │
-                 │  on every start   │  │  │Lobe1│…│LobeN│  │   │     │
-                 │                   │  │  └─────┘ └─────┘  │   │     │
-                 │                   │  │  Round / Spotlight│   │     │
-                 │                   │  │  Router (Haiku 4.5)│  │     │
-                 │                   │  └───────────────────┘   │     │
-                 │                   │  journal.ndjson per sess │     │
-                 │                   └───────────────────────────┘     │
-                 │                                                     │
-                 │            internal/bus/ WAL — shared, scoped       │
-                 │            by Scope{TaskID: sessionID}              │
-                 └─────────────────────────────────────────────────────┘
-                                          │
-                                          ▼
-                              os/exec.Cmd with cmd.Dir = SessionRoot
-                              (worktrees, tools, build, test, lint)
-```
+R1 currently has five architectural planes that matter together:
 
-## Five system planes
-
-r1 has five architectural planes that compose:
-
-1. **Mission execution** — planning, executing, verifying, reviewing,
-   committing.
-2. **Governance and evidence** — ledger, WAL, receipts, honesty, cost.
-3. **Deterministic skills** — compile, manufacture, register, select, run.
-4. **Cortex (parallel cognition)** — Workspace, Lobes, Round, Spotlight,
-   Router, Notes.
-5. **Surfaces (multi-instance UI)** — TUI, web, desktop, MCP, all over the
-   lanes-protocol.
-
-Planes 1–3 are on `main`. Planes 4 and 5 are scoped by the eight specs
-in `specs/`.
-
-## Plane 1 — Execution Core
-
-The execution core remains the orchestrator packages:
-
-- `app/`, `workflow/`, `mission/` — top-level lifecycle.
-- `engine/`, `agentloop/` — Claude Code / Codex CLI runners; native
-  agentic Messages-API loop; streaming; 3-tier timeouts.
-- `verify/`, `critic/`, `convergence/` — build/test/lint pipeline,
-  AST-aware critic, adversarial self-audit.
-- `scheduler/`, `plan/`, `taskstate/` — GRPW priority, file-scope conflict,
-  resume, anti-deception phase transitions.
-- `worktree/` — per-task worktrees with `BaseCommit`, serialized merges.
-- `failure/`, `errtaxonomy/`, `checkpoint/` — 10 failure classes,
-  fingerprint dedup, retry escalation.
-
-The thesis is unchanged: one strong implementer per task, explicit
-verification, adversarial review across model families, never trust a
-self-report.
-
-## Plane 2 — Evidence Core
-
-The evidence plane gives r1 its governance posture:
-
-- **Content-addressed ledger** (`ledger/`) — append-only Merkle-chained
-  graph. 16 node-type prefixes. No updates, no deletes. Filesystem +
-  SQLite backends via one interface.
-- **Durable bus** (`bus/`) — WAL-backed pub/sub with hooks, delayed
-  events, and parent-hash causality chains. ULID-indexed. Every event
-  carries a STOKE protocol envelope.
-- **Supervisor** (`supervisor/`) — deterministic rules engine. 30 rules
-  across 10 categories (consensus, drift, hierarchy, research, skill,
-  snapshot, SDM, cross-team, trust, lifecycle); 3 per-tier manifests
-  (mission, branch, session).
-- **Consensus loops** (`ledger/loops/`) — 7-state machine (PRD → SOW →
-  ticket → PR → landed).
-- **Snapshot** (`snapshot/`) — pre-merge baseline manifest; restore on
-  failure.
-- **Bridge** (`bridge/`) — adapters wire v1 cost/verify/wisdom/audit into
-  the v2 event bus and ledger.
-
-This is why every runtime feature keeps adding audit and metrics hooks
-instead of only new prompts.
-
-## Plane 3 — Deterministic Skills
-
-The skills lane spans more than compilation:
-
-- Manufacturing and manifest enforcement (`skillmfr/`).
-- Registry and selection (`skill/`, `skillselect/`).
-- Seeded repo/user pack libraries.
-- Signed pack authoring and verification.
-- Runtime registration and verification hooks.
-- Pack lifecycle (`init`, `info`, `install`, `list`, `publish`, `search`,
-  `sign`, `verify`, `update`, `serve`).
-
-Pack distribution is a real subsystem now — `r1 skills pack serve` exposes
-`/healthz`, `/v1/packs`, `/v1/packs/<pack>`, `/v1/packs/<pack>/archive.tar.gz`.
-
-## Plane 4 — Cortex Layer (scoped)
-
-The Cortex is r1's parallel-cognition substrate. New `internal/cortex/`
-package, defined by `specs/cortex-core.md` (foundation) and
-`specs/cortex-concerns.md` (six v1 Lobes).
-
-### Component diagram
-
-```
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                    Cortex (one per session)                      │
-  │                                                                  │
-  │   ┌────────────────────────────────────────────────────────┐    │
-  │   │                  Workspace                             │    │
-  │   │  • RWMutex-protected []Note                           │    │
-  │   │  • write-through to internal/bus/ WAL (durable)       │    │
-  │   │  • emits hub.Event{cortex.note.published}             │    │
-  │   │  • Snapshot / UnresolvedCritical / Drain / Replay     │    │
-  │   └─────────────┬──────────────────────────────────────────┘    │
-  │                 │                                                │
-  │   ┌─────────────┴──────────────┐  ┌──────────────────────────┐  │
-  │   │     Spotlight              │  │     Round (barrier)      │  │
-  │   │  Single highest-priority   │  │  Open(N) → Done × N →    │  │
-  │   │  unresolved Note            │  │  Wait(deadline) → Close  │  │
-  │   └────────────────────────────┘  └──────────────────────────┘  │
-  │                                                                  │
-  │   ┌────────────────────────────────────────────────────────┐    │
-  │   │                     Lobes (N concurrent)               │    │
-  │   │  ┌───────────────┐  ┌──────────────┐  ┌─────────────┐ │    │
-  │   │  │MemoryRecall   │  │WALKeeper     │  │RuleCheck    │ │    │
-  │   │  │(deterministic)│  │(deterministic)│ │(deterministic)│   │
-  │   │  └───────────────┘  └──────────────┘  └─────────────┘ │    │
-  │   │  ┌───────────────┐  ┌──────────────┐  ┌─────────────┐ │    │
-  │   │  │PlanUpdate     │  │ClarifyingQ   │  │MemoryCurator│ │    │
-  │   │  │(Haiku 4.5)    │  │(Haiku 4.5)   │  │(Haiku 4.5)  │ │    │
-  │   │  └───────────────┘  └──────────────┘  └─────────────┘ │    │
-  │   │  Each: goroutine + panic-recover + ctx-cancel           │    │
-  │   │  LLM Lobes acquire LobeSemaphore (cap=5; hard cap 8)    │    │
-  │   └────────────────────────────────────────────────────────┘    │
-  │                                                                  │
-  │   ┌────────────────────────────────────────────────────────┐    │
-  │   │                Router (Haiku 4.5)                      │    │
-  │   │  4 tools: interrupt, steer, queue_mission, just_chat   │    │
-  │   │  Called by REPL/web on mid-turn user input             │    │
-  │   │  p99 ≤ 2 s ; temperature=0 ; cached prompt+tools        │    │
-  │   └────────────────────────────────────────────────────────┘    │
-  │                                                                  │
-  │   ┌────────────────────────────────────────────────────────┐    │
-  │   │           Pre-warm pump + Budget controller            │    │
-  │   │  max_tokens=1 warming on Start, every 4 min            │    │
-  │   │  BudgetTracker: Lobe output ≤ 30% main output / round  │    │
-  │   └────────────────────────────────────────────────────────┘    │
-  └───────────────────────┬──────────────────────────────────────────┘
-                          │
-                          ▼
-       agentloop.Loop hooks (composed)
-       ─ MidturnCheckFn → drains workspace into supervisor note
-       ─ PreEndTurnCheckFn → critical Note refuses end_turn
-       ─ NEW: OnUserInputMidTurn → Router decides 1 of 4 tools
-```
-
-### Integration points with `agentloop.Loop`
-
-Three integration points; all backwards-compatible (cortex absent →
-behavior unchanged):
-
-1. **`Cortex` field on `agentloop.Config`** — wires through a
-   `agentloop.CortexHook` interface (avoids import cycle; `*cortex.Cortex`
-   satisfies it structurally).
-2. **`MidturnCheckFn` composition** — Cortex runs first, operator hook
-   second, joined with `\n\n`.
-3. **`PreEndTurnCheckFn` composition** — Cortex critical-Note gate
-   short-circuits before any operator-defined gate.
-
-A fourth integration point lives in the chat REPL / web client (not
-agentloop): on stdin or WS user input mid-turn, the REPL calls
-`Cortex.OnUserInputMidTurn(ctx, userInput, turnCancel)`, which invokes the
-Router and enacts the chosen tool's effect. The Router's choice can cancel
-the per-turn context (`interrupt`), publish a soft Note (`steer`), enqueue
-a mission (`queue_mission`), or no-op the loop (`just_chat`).
-
-### Drop-partial interrupt protocol
-
-On `Interrupt`, the cortex runtime:
-
-1. Calls `cancelTurn()` on the per-turn context.
-2. Drains both the response chan (`for range respCh {}`) and the done chan
-   (`<-doneCh`) — both must complete before return, else the SSE reader
-   leaks.
-3. Discards the partial assistant message accumulator entirely (Anthropic
-   gives no recovery handle for incomplete `tool_use` blocks; persisting
-   would 400 the next API call).
-4. Appends a synthetic user message describing the interrupt to the
-   committed history.
-5. Returns the new history, which is `user`-terminated and valid for the
-   next API call.
-
-A 30s ping-based idle watchdog auto-cancels on connection stalls.
-
-### Six v1 Lobes
-
-Three deterministic, three Haiku 4.5:
-
-- **MemoryRecallLobe** (deterministic) — TF-IDF over `memory.Store` and
-  `wisdom.Store`; rebuilds on `cortex.workspace.memory_added` events;
-  surfaces top-3 dedup'd matches per round as `info` Notes.
-- **WALKeeperLobe** (deterministic) — `hub.Subscriber` whose `Filter`
-  returns true for every event type; forwards each into `bus.Bus.Publish`
-  with structured framing (`cortex.hub.<original>`); backpressure-shed
-  drops `info` events when the WAL backlog exceeds 1k.
-- **RuleCheckLobe** (deterministic) — subscribes to
-  `bus.Pattern{TypePrefix: "supervisor.rule.fired"}`; converts each fire
-  to a Note; `trust.*` and `consensus.dissent.*` map to `critical` and
-  refuse `end_turn` until acknowledged.
-- **PlanUpdateLobe** (Haiku 4.5) — every 3rd assistant turn boundary or on
-  action-verb input; emits structured JSON deltas; auto-applies edits;
-  queues additions and removals as a single `user-confirm` Note.
-- **ClarifyingQLobe** (Haiku 4.5) — runs after every user turn; emits up
-  to 3 `queue_clarifying_question` tool calls; caps outstanding clarify
-  Notes at 3.
-- **MemoryCuratorLobe** (Haiku 4.5) — every 5 turns or on
-  `task.completed`; auto-writes only `Category ∈ {fact}` (operator-
-  configurable); queues other categories as `memory-confirm` Notes;
-  privacy filter drops `private`-tagged source messages; appends every
-  auto-write to `~/.r1/cortex/curator-audit.jsonl`.
-
-Per-Lobe enable + escalation flags live in `~/.r1/config.yaml`. Per-turn
-budget caps Lobe collective output at 30% of main output. Sonnet
-escalation is opt-in per Lobe and only fires on `SevCritical` Note in the
-same round or `escalate_on_failure: true` after a prior error.
-
-## Plane 5 — Surfaces & lanes-protocol
-
-### Lane state machine and event types
-
-A **lane** is the per-surface visible thread of activity inside a session.
-
-```
-                       ┌──── pin ────┐ (orthogonal — does not change state)
-                       │             │
-                       ▼             ▼
-
-  [created]──►( pending )──►( running )──►( done )       (terminal)
-                  │             │  ▲
-                  │             │  │
-                  │             │  └── unblock ──┐
-                  │             │                │
-                  │             ▼                │
-                  │         ( blocked )──────────┘
-                  │             │
-                  ├──cancel─────┤
-                  │             │
-                  ▼             ▼
-              ( cancelled ) ( errored )
-                                ▲
-                                │
-                  any state ────┘  (on unrecoverable error)
-```
-
-Six event types are exhaustive. Adding a seventh is a wire-version bump.
-
-| Event | When | Purpose |
+1. Mission execution: planning, execution, verification, review
+2. Governance and evidence: ledger, WAL, receipts, honesty, cost
+3. Deterministic skills: compile, manufacture, register, select, run
+4. Distribution and runtime extension: packs, registries, MCP-backed
+   runtime functions
+5. Anti-truncation enforcement: regex catalog, scope-completion gate,
+   supervisor rules, agentloop wiring, post-commit git hook, and
+   `r1 antitrunc verify` CLI / MCP tool — a layered, machine-
+   mechanical defense against LLM self-reduction. Each layer is
+   independently effective so the model cannot side-step one and
+   pass.
+| Layer | Technology | Pinned version |
 |---|---|---|
-| `lane.created` | Once per lane, before any other event | `kind` ∈ {main, lobe, tool, mission_task, router}; `parent_lane_id`; `label` |
-| `lane.status` | State transition | `status`, `prev_status`, `reason`, `reason_code` |
-| `lane.delta` | Streaming content | One block per event (text, thinking, tool_use_*, tool_result, note_ref) |
-| `lane.cost` | ≤1 Hz per lane | tokens_in/out, cached_tokens, usd, cumulative_usd |
-| `lane.note` | Mirror of cortex Note publish | Lightweight pointer (note_id, severity, kind, summary) |
-| `lane.killed` | One-shot kill signal | Followed by `lane.status` to terminal |
+| Core runtime | Go | 1.25.5 (1.26+ for cmd/r1 binaries via cloudbuild) |
+| Daemon WS | `github.com/coder/websocket` | v1.8.13 |
+| TUI | `charm.land/{bubbletea,bubbles,lipgloss}` v2 + `winder/bubblelayout` | v2.0.x / v2.1.x |
+| Web UI | React + Vite + Tailwind + shadcn/ui | 18.3 / 6.0 / 3.4 / latest CLI |
+| Web state | zustand | ^5.0.0 |
+| Web router | react-router | ^7.0.0 |
+| Web markdown | `vercel/streamdown` (anchor) | ~1.2.0 |
+| Web AI hook | `@ai-sdk/react` (AI SDK 6) | ^3.0.176 |
+| Web testing | Vitest + Playwright + axe-core/playwright | ^2.1 / ^1.49 / ^4.10 |
+| Desktop | Tauri 2 + tauri-plugin-{websocket,store} | latest |
+| SaaS services | Go (distroless static images) | 1.25 |
+| SaaS DB | Cloud SQL Postgres 16 | db-g1-small (prod) / db-f1-micro (staging+dev) |
+| Auth (planned) | `@relayone/auth-core` (Path A: Go port) | private package |
 
-### Wire envelopes
-
-- **JSON-RPC 2.0 over WS** for browsers + desktop. `$/event`
-  notifications carry `{sub, seq, event, session_id, lane_id, event_id, at,
-  data}`. WS subprotocol token: `r1.lanes.v1` (CSWSH defense).
-- **NDJSON over stdout** for `streamjson` consumers. `lane.killed`,
-  `lane.note(severity=critical)`, `lane.status(errored)` route through
-  the critical lane; everything else goes to observability.
-- **HTTP+SSE fallback** with `Last-Event-ID` per WHATWG Server-sent events
-  spec.
-
-### Per-session monotonic `seq`
-
-Allocated by the per-session goroutine that owns the WAL append (single
-writer, no contention). `seq=0` is reserved for the synthetic
-`session.bound` event emitted on every fresh subscription so clients have
-a known floor. Replay uses `since_seq` (JSON-RPC) or `Last-Event-ID`
-(SSE).
-
-### Five MCP tools
-
-`r1.lanes.list`, `r1.lanes.subscribe` (streaming), `r1.lanes.get`,
-`r1.lanes.kill` (idempotent + cascade), `r1.lanes.pin`. All live in
-`internal/mcp/lanes_server.go`. The cortex tools (`r1.cortex.notes`,
-`r1.cortex.publish`) live in `internal/mcp/cortex_server.go` and are
-spec 1's responsibility.
-
-## Plane 6 — r1d daemon
-
-Single process per user. N concurrent sessions, each a goroutine. Each
-session carries `SessionRoot string` threaded via `cmd.Dir`. The
-goroutine-per-session model works only because `cmd.Dir` is the
-established pattern (CLAUDE.md design decision #1) — one stray
-`os.Chdir` would silently leak workdir between sessions. The
-`os.Chdir` audit + CI lint at `tools/cmd/chdir-lint/` is the gate
-before multi-session is enabled. A per-session sentinel checks
-`os.Getwd() == SessionRoot` before each tool dispatch and panics on
-mismatch.
-
-### `r1 serve` topology (TASK-54)
-
-This is the unified subcommand that replaces `r1 daemon` + `r1
-agent-serve`. The legacy commands print a one-line deprecation hint
-to stderr and forward to `serve` with the appropriate flag prefix.
-Detailed ASCII topology lives in `specs/r1d-server.md` §4 — the
-condensed shape is:
+## Repository map (175 internal packages + 10 cmd binaries + services + web + desktop)
 
 ```
-+-------------+         +-------------+         +-------------+
-| Browser/Tau |         |  CLI/r1 ctl |         |  TUI lanes  |
-+------+------+         +------+------+         +------+------+
-       | ws://127.0.0.1:p     | unix sock /            | unix sock
-       | + Bearer + Origin    | npipe + peer-cred      | + peer-cred
-       v                      v                        v
-+----------------------------------------------------------+
-|             r1 serve  (one process per user)             |
-|                                                          |
-|  +---------+   +-------+      +---------------------+   |
-|  | IPC mux |   | HTTP+WS|     |   SessionHub        |   |
-|  | unix    |   | random |     |  sync.Map<id,*Sess> |   |
-|  | npipe   |   | ephem  |     |  + workdir validate |   |
-|  +----+----+   +---+----+     +----------+----------+   |
-|       |            |                     |              |
-|       +-----+------+--------+------------+              |
-|             v               v            v              |
-|        +---------+    +---------+   +---------+         |
-|        |Session A|    |Session B|   |Session C|         |
-|        |goroutine|    |goroutine|   |goroutine|         |
-|        |SessionR |    |SessionR |   |SessionR |         |
-|        |=/path/A |    |=/path/B |   |=/path/C |         |
-|        |journal  |    |journal  |   |journal  |         |
-|        | .ndjson |    | .ndjson |   | .ndjson |         |
-|        +---------+    +---------+   +---------+         |
-|                                                          |
-|  ~/.r1/daemon.lock (gofrs/flock)                         |
-|  ~/.r1/daemon.json (port + 256-bit token, mode 0600)     |
-|  ~/.r1/sessions-index.json (replay manifest)             |
-+----------------------------------------------------------+
-                          |
-                          v
-                +----------------------+
-                | os/exec.Cmd          |
-                | cmd.Dir = SessionRoot|
-                +----------------------+
+cmd/r1/                            CLI entrypoint — 30+ subcommands. Anti-truncation, lanes, missions, MCP serve, etc.
+cmd/r1-mcp/                        Standalone MCP-over-stdio server.
+cmd/r1-server/                     Mission API HTTP server. Hosts GET /api/session/{id}/export.tracebundle (always-on post-Spec-D; the prior R1_SERVER_UI_V2 envelope was removed). tracebundle_source.go is the production ledger-backed source; calls Store.ListNodesForSession / ListEdgesForSession / ChainRootHashForSession / CanonicalManifestSignBody.
+cmd/r1-acp/                        Agent Client Protocol adapter.
+cmd/r1-a2a/                        Agent-to-Agent transport.
+cmd/r1-gateway/                    Reverse-proxy gateway for distributed pools.
+cmd/r1-skill-compile/              Deterministic skill compiler.
+cmd/chat-probe/                    Chat session probe utility.
+cmd/critique-compare/              Cross-model critique comparison.
+cmd/heroa-e2e/                     Heroa-platform end-to-end harness.
+
+--- V2 GOVERNANCE ---
+contentid/                         Content-addressed ID generation (SHA256, 16 prefixes)
+stokerr/                           Structured error taxonomy (10 error codes)
+ledger/                            Append-only content-addressed graph (nodes, edges, filesystem + SQLite)
+ledger/nodes/                      22 node type structs with NodeTyper interface
+ledger/loops/                      7-state consensus loop tracker
+ledger/redact_log.go               SignedRedactionEvent + RecordRedaction / RedactionsFor / RedactAndLog
+ledger/redact_sign.go              ed25519 signing — LoadOrGenerateSigningKey, SignRecord, VerifyRecord, RedactionsForVerified
+ledger/store_session.go            Per-session filtering (ListNodesForSession / ListEdgesForSession), ChainRootHashForSession, CanonicalManifestSignBody — tracebundle-v2 backbone
+bus/                               Durable WAL-backed event bus (hooks, delayed events, causality)
+supervisor/                        Deterministic rules engine (30 rules, 10 categories, 3 manifests)
+supervisor/rules/antitrunc/        Anti-truncation supervisor rules (3 rules)
+concern/                           Per-stance context projection (10 sections, 9 role templates)
+concern/skill_compactor.go         SkillCompactor + EvictionPolicy (default LRUPolicy) — per-stance LRU skill eviction under budget pressure; calls skilltracker.EvictByCompactor
+harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
+skilltracker/                      Per-stance loaded-skill table (Note / Drop / CloseScope / EvictByCompactor); emits SkillLoaded / SkillUnloaded ledger nodes
+snapshot/                          Protected baseline manifest
+wizard/                            First-time config presets
+skillmfr/                          Skill manufacturing pipeline
+bench/                             Golden mission benchmarking
+bridge/                            V1→V2 bridge adapters
+
+--- CORTEX (specs 1-2) ---
+cortex/                            Workspace, Lobe, Round, Spotlight, Router (parallel cognition substrate)
+cortex/lobes/llm/                  LobePromptBuilder (cache-aligned 1h TTL), Escalator
+cortex/lobes/memoryrecall/         TF-IDF + memory + wisdom indexing
+cortex/lobes/walkeeper/            Drains hub events to durable WAL
+cortex/lobes/rulecheck/            supervisor.rule.fired → severity-mapped Notes
+cortex/lobes/planupdate/           Every-3rd-turn or verb-scan plan delta proposer
+cortex/lobes/clarifyq/             Turn-after-user clarifying-question drafter
+cortex/lobes/memorycurator/        Every-5-turn fact extractor with privacy filter
+cortex/lobes/antitrunc/            AntiTruncLobe (publishes critical Workspace Notes)
+
+--- LANES (spec 3) ---
+streamjson/                        Lane wire-format adapter
+mcp/lanes_server.go                LanesServer (5 r1.lanes.* tools)
+
+--- DAEMON (spec 5) ---
+server/                            HTTP+WS server with sessionhub, ws, sse, jsonrpc
+server/sessionhub/                 Session lifecycle + workdir validation + chdir sentinel
+server/ws/                         WebSocket handler with subprotocol-token auth
+server/ipc/                        unix socket / named pipe transports
+server/jsonrpc/                    JSON-RPC 2.0 envelope + 22 RPC methods
+server/static/                     Embedded //go:embed dist (web UI bundle target)
+daemonlock/                        gofrs/flock single-instance enforcement
+daemondisco/                       ~/.r1/daemon.json discovery + token rotation
+serviceunit/                       kardianos/service per-OS service unit installer
+
+--- ANTI-TRUNCATION (spec 9) ---
+antitrunc/                         Phrase catalog, gate, scopecheck, soak driver
+agentloop/antitrunc.go             Gate composition wiring (composes BEFORE all other end-turn hooks)
+
+--- CORE WORKFLOW ---
+agentloop/                         Native agentic tool-use loop via Anthropic Messages API
+app/                               Orchestrator: config + engines + worktree + verify + OnEvent
+hub/                               Typed event hub with subscriber hooks
+hub/builtin/                       Built-in hub subscribers (honesty gate, cost tracker)
+mission/                           Mission lifecycle runner
+workflow/                          Phase machine: plan → execute+verify → review → merge
+workflow/skill_scope_closer.go     SkillScopeCloser.OnPhaseExit — fires skilltracker.CloseScope at phase boundaries; one SkillUnloaded(reason="scope_exit") per dropped skill
+engine/                            Claude/Codex CLI runners
+orchestrate/                       Mission execution pipeline integrator
+scheduler/                         GRPW priority + file-scope conflict + resume + WithSpecExec
+plan/                              Load/Save/Validate plans
+taskstate/                         Anti-deception task state
+
+--- PLANNING & DECOMPOSITION ---
+interview/                         Socratic clarification phase
+intent/                            Intent classification + verbalization gate
+conversation/                      Multi-turn conversation state management
+skillselect/                       Tech-stack auto-detection + skill mapping
+
+--- CODE ANALYSIS ---
+goast/                             Go AST analysis + extraction
+repomap/                           Repository map with PageRank
+symindex/                          Symbol indexing
+depgraph/                          Import/dependency graph
+chunker/                           Semantic code chunking
+tfidf/                             TF-IDF semantic search
+vecindex/                          Vector/embedding-based search
+semdiff/                           Semantic diff with structural changes
+diffcomp/                          Diff compression
+gitblame/                          Git blame integration
+
+--- FILE & WORKSPACE ---
+atomicfs/                          Multi-file atomic edits
+fileutil/                          Shared filesystem operations
+filewatcher/                       File-system monitoring
+worktree/                          Git worktree create/merge/cleanup
+branch/                            Conversation branching
+hashline/                          Hash-anchored line verification
+
+--- TESTING & VERIFICATION ---
+baseline/                          Build/test/lint state capture
+verify/                            Build/test/lint pipeline + CheckProtectedFiles + CheckScope
+convergence/                       Adversarial self-audit
+testgen/                           Test scaffold generation
+testselect/                        Dependency-aware test selection
+critic/                            Adversarial pre-commit critic
+scan/                              18 deterministic security rules
+
+--- ERROR HANDLING & RECOVERY ---
+failure/                           10 failure classes + fingerprint dedup + ShouldRetry
+errtaxonomy/                       Structured error taxonomy
+checkpoint/                        Synchronous checkpointing
+
+## Anti-Truncation Plane
+
+The anti-truncation plane addresses a documented LLM behaviour: under
+long-running multi-task work the model self-reduces scope to fit
+imagined token / time / Anthropic load-balance budgets. The plane is
+seven layers, each independently effective:
+
+- regex catalog — `internal/antitrunc/phrases.go`
+- scope-completion gate — `internal/antitrunc/gate.go`
+- cortex Lobe (Detector) — `internal/cortex/lobes/antitrunc/`
+- supervisor rules — `internal/supervisor/rules/antitrunc/`
+- agentloop wiring — `internal/agentloop/antitrunc.go`
+- post-commit git hook — `scripts/git-hooks/post-commit-antitrunc.sh`
+- CLI + MCP tool — `cmd/r1/antitrunc_cmd.go`,
+  `internal/mcp/r1_server.go`
+
+The gate composes BEFORE any other end-turn hook, so a model that
+says "skip the gate this once" is ignored at the host process layer.
+Operator override (`--no-antitrunc-enforce`) is real but has no
+LLM-visible toggle. Full details: [`ANTI-TRUNCATION.md`](ANTI-TRUNCATION.md).
+
+## Runtime Extension Plane
+--- CODE GENERATION ---
+patchapply/                        Unified-diff parsing/application
+extract/                           Structured content parsing
+autofix/                           Auto-lint-and-fix loop
+conflictres/                       Smart merge-conflict resolution
+tools/                             Cascading str_replace algorithm
+
+--- AGENT BEHAVIOR ---
+boulder/                           Idle detection + continuation enforcement
+specexec/                          Speculative parallel execution (4 strategies)
+handoff/                           Agent-to-agent context transfer
+
+--- KNOWLEDGE & LEARNING ---
+memory/                            Persistent cross-session knowledge
+wisdom/                            Cross-task learnings + FindByPattern
+research/                          Persistent indexed research with FTS5
+flowtrack/                         Flow-aware intent tracking
+replay/                            Session recording for post-mortem
+
+--- LLM INTEGRATION ---
+apiclient/                         Multi-provider SSE streaming
+provider/                          Direct AI model API clients
+mcp/                               Model Context Protocol — 38-tool catalog
+model/                             9 task types, 5-provider fallback
+prompt/                            Prompt engineering utilities
+prompts/                           BuildPlanPrompt, BuildExecutePrompt, BuildReviewPrompt
+promptcache/                       Cache-aligned prompt construction
+microcompact/                      Cache-aligned context compaction
+ctxpack/                           Adaptive context bin-packing
+tokenest/                          Token count estimation
+costtrack/                         Real-time cost tracking + budget alerts
+
+--- PERMISSIONS & SECURITY ---
+consent/                           Human-in-the-loop approval
+rbac/                              Role-Based Access Control
+hooks/                             Anti-deception PreToolUse/PostToolUse guards
+
+--- CONFIG & SESSION ---
+config/                            YAML policy parser
+session/                           SessionStore interface (JSON + SQLite WAL)
+subscriptions/                     Pool Acquire/Release + circuit breaker + usage poller
+pools/                             Worker pool management
+context/                           Three-tier context budget + progressive compaction
+
+--- INFRASTRUCTURE ---
+agentmsg/                          Inter-agent communication protocol
+dispatch/                          Three-tier message dispatch queue
+logging/                           Structured leveled logging
+metrics/                           Thread-safe counters
+telemetry/                         Structured metrics collection
+notify/                            Event notification
+stream/                            NDJSON parser (6 event types)
+jsonutil/                          JSON parsing from mixed-format LLM outputs
+schemaval/                         Structured-output validation
+validation/                        Input validation at API boundaries
+
+--- UI & INTERFACES ---
+tui/                               Headless runner + Bubble Tea TUI
+tui/lanes/                         Lane panel: Model, Transport, runProducer (250 ms coalesce)
+tui/teatest_shim.go                MCP-driveable TUI shim
+viewport/                          Constrained file viewport
+repl/                              Interactive REPL
+server/                            Mission API HTTP endpoints
+remote/                            Build session progress reporting
+report/                            BuildReport + per-task TaskReport
+progress/                          Plan-aware progress estimation
+audit/                             17 review personas
+
+--- LIFECYCLE ---
+skill/                             Reusable workflow patterns
+plugins/                           Plugin manifest + loading
+preflight/                         Pre-flight workspace assertions
+
+--- HOSTED SAAS (services/) ---
+services/r1-coord-api/             Go service: /healthz, /v1/version, /v1/license/verify, /v1/telemetry/opt-in. Cloud Run.
+services/r1-docs/                  Go service: embeds docs/*.md, renders to HTML. Cloud Run.
+services/r1-downloads-cdn/         Go service: streams gs://relayone-488319-r1-releases/{env}/<asset>. Cloud Run.
+services/cloudbuild-deploy.yaml    Auto-deploy pipeline (3 images, 3 deploys, smoke-check /livez).
+services/deploy.sh                 ./services/deploy.sh {dev|staging|prod|all} — manual deploy.
+services/scripts/setup-cloudbuild-triggers.sh   Operator script: 3 Cloud Build triggers (per env).
+
+--- WEB UI (web/) — spec 6 ---
+web/src/components/                React component tree: layout, session, chat, lanes, settings, workdir
+web/src/lib/api/                   r1d.ts public surface (HTTP + WS), zod schemas, ResilientSocket, AuthClient
+web/src/lib/store/                 zustand factory: one store per daemon connection
+web/src/hooks/                     useDaemonSocket, useChat, useLanes, useSession, useWorkdir, useKeybindings
+web/src/lib/render/markdown.tsx    Streamdown wrapper with shared Shiki + KaTeX config
+web/src/test/                      vitest setup, coverage manifest, stories manifest, e2e (Playwright)
+web/eslint-rules/                  Custom rule: require-data-testid on every interactive JSX element
+web/scripts/verify-build-output.mjs   Verifies dist/ at internal/server/static/dist/
+
+--- DESKTOP (desktop/) — spec 7 ---
+desktop/src-tauri/                 Rust host: discovery, transport, lanes, popout, menu, ipc, sidecar
+desktop/src/                       React webview wrapping the same web/ components
+packages/web-components/           npm workspace: shared React components (LaneCard, LaneSidebar, LaneDetail, PoppedLaneApp)
+
+--- AGENTIC HARNESS (spec 8) ---
+internal/mcp/r1_server.go          Consolidated 38-tool catalog
+internal/mcp/r1_server_catalog.go  Per-category tool definitions
+internal/mcp/lanes_server.go       5 r1.lanes.* tools
+internal/mcp/cortex_server.go      r1.cortex.* tools
+internal/tui/teatest_shim.go       MCP-driveable TUI shim
+tools/agent-feature-runner/        Gherkin-flavored markdown parser + dispatcher
+tools/lint-view-without-api/       UI-without-API CI lint
+tests/agent/                       8 seed feature fixtures across 10 categories
+docs/AGENTIC-API.md                External-agent contract
 ```
 
-Key rules embedded in the topology (cross-linked to spec sections):
+## System components
 
-- **Single-instance**: `~/.r1/daemon.lock` flock acquired before any
-  listener binds; second `r1 serve` exits 1 with `daemon already
-  running, pid=<N>, sock=<path>` (TASK-50, daemonlock package).
-- **Authentication split**: peer-cred on the unix socket / named
-  pipe (no token); 256-bit Bearer on the loopback HTTP/WS surface
-  (Origin + Host pinned to loopback).
-- **Per-session journal**: append-only ndjson at
-  `~/.r1/sessions/<id>/journal.ndjson`; terminal kinds fsync, others
-  flush. Replay reconstructs sessions on daemon restart and fans
-  `daemon.reloaded` to reconnecting clients before any live delta.
-- **`cmd.Dir = SessionRoot`** is the load-bearing isolation
-  primitive. The `chdir-lint` AST-based scanner at
-  `tools/cmd/chdir-lint/` blocks every unannotated `os.Chdir /
-  os.Getwd / filepath.Abs("") / os.Open("./...")` call site; the
-  per-session sentinel panics on `os.Getwd() != SessionRoot`.
+### r1d daemon process (spec 5)
+- Single per-user singleton (Watchman pattern). One process holds N concurrent sessions as goroutines.
+- Bound to working directories via `cmd.Dir` per session — never `os.Chdir`. CI gate `make lint-chdir` prevents regressions.
+- IPC: unix socket (`$XDG_RUNTIME_DIR/r1/r1.sock`) / Windows named pipe with current-SID + LocalSystem SDDL.
+- HTTP+WS: loopback `127.0.0.1:0` (port captured at start).
+- Auth: subprotocol-token on WS upgrade; 256-bit Bearer on HTTP; peer-cred check on unix socket.
+- Discovery: atomic write `~/.r1/daemon.json` mode 0600 with 32-byte hex token rotated on every start.
 
-### Listeners
+### Cortex Workspace (specs 1, 2)
+- 6 v1 Lobes share full context (read-only message history, the same model breakpoint, the same tool ordering — pre-warmed via `max_tokens=1` cache request every 4 minutes).
+- Workspace persists Notes through write-through to durable bus + Replay on session resume.
+- Default 5 concurrent LLM Lobes, hard cap 8. Per-turn budget caps Lobe output at 30% of main-thread tokens.
+- Drop-partial interrupt protocol: cancel turn context, drain SSE, never persist partial assistant message, append synthetic user message describing the interrupt.
 
-| Surface | Endpoint | Auth |
+### Lanes wire format (spec 3)
+- Six event types streamed over JSON-RPC 2.0; monotonic per-session `seq` allocated by single-writer goroutine; `seq=0` reserved for `session.bound`.
+- Replay: `Last-Event-ID` (SSE) or `since_seq` (JSON-RPC).
+- WebSocket subprotocol `r1.lanes.v1` + `<token>` for auth. Origin pinning + Host pinning.
+- Per-lane `kind` enum: `main | lobe | tool | mission_task | router`.
+- Six-state FSM with critical transitions emitted top-level: `lane.killed` is always critical; `lane.note` is critical when `note_severity="critical"`; `lane.status` is critical when `status="errored"`.
+
+### Anti-truncation enforcement (spec 9)
+- Seven independently-effective layers; each can refuse `end_turn` on its own. Operator-only override (`--no-antitrunc-enforce`).
+- Layer order: phrase regex → scope completion → cortex Lobe Note → supervisor rules → agentloop gate → post-commit hook → CLI/MCP verifier.
+- Soak-tested 1M iterations; 0 FP, 0 FN, 499K TP at 16,891 iter/sec.
+
+### Skill lifecycle + compaction (final-sweep PR #168)
+
+The skill lifecycle is the chain `skill_loaded → (use) → skill_unloaded`, where "unloaded" can fire via three distinct paths:
+
+1. **Explicit drop** — `skilltracker.Tracker.Drop(ctx, stanceID, skillRef, reason)` — the model itself unloads a skill it no longer needs. Reason is free-form.
+2. **Phase scope exit** — `workflow.SkillScopeCloser.OnPhaseExit(ctx, stanceID, taskScope)` calls `Tracker.CloseScope`, which iterates every skill loaded into that scope and emits `SkillUnloaded` with `Reason="scope_exit"` per drop. Triggered by `workflow.PhaseRunner` on completion *or* abort.
+3. **Compactor eviction** — `concern.SkillCompactor.EvictForBudget(ctx, stanceID, currentTokens)` — when context-budget pressure rises, the compactor's `EvictionPolicy` (default `LRUPolicy`) picks oldest-loaded skills until the freed token total covers the overrun, then calls `Tracker.EvictByCompactor` which emits `SkillUnloaded` with `Reason="compactor"` per drop.
+
+All three paths land on `EmitSkillUnloaded` — the same builtin hub event — so the ledger gets an unambiguous chain of `(load_at, unload_at, reason)` triples per `(stanceID, skillRef)` pair. The 3D ledger viewer desaturates the chain segment when `unload_reason="compactor"` (skill came back later) and renders it gone-for-good when `unload_reason="scope_exit"` (phase boundary closed it).
+
+The compactor is one-way: it doesn't mutate prompt content directly. A future caller (a skill-aware section shrinker or an explicit budget guard) calls `EvictForBudget` when it needs to free tokens; the prompt rebuild happens on the next round, *after* the load table is current.
+
+### Signed redaction events (final-sweep PR #169)
+
+Every redaction logged to the ledger is signed with an ed25519 keypair persisted under `<store-root>/redactions/`:
+
+- **`sign-priv.pem`** mode 0600 — PEM-encoded ed25519 private key, generated on first call to `LoadOrGenerateSigningKey`.
+- **`sign-pub.pem`** mode 0644 — PEM-encoded public; auto-restored from the private if missing.
+- **Signer fingerprint** — first 6 bytes of `sha256(pub)` rendered as 12-char hex; stamped into `SignedRedactionEvent.Signer`. Multiple keys can co-exist in the same audit trail across rotations.
+
+`SignRecord(rec, priv)` canonicalizes over `{node_id, redacted_at, reason, signer}` (excludes the signature itself but includes the signer so swapping the signer fails verification) and stamps `rec.SignatureHex`. `VerifyRecord(rec, pub)` returns `nil` on match, `ErrUnsigned` for legacy entries pre-this-spec, `ErrSignatureMismatch` for tampered entries. The dashboard side panel uses the distinction to render a gray "legacy unsigned" tooltip vs a red "signature mismatch" warning.
+
+`Store.RedactionsForVerified(nodeID)` returns `[]VerifiedRedactionEvent` with a `Verified` bool + a `VerifyErr` string. The signing key is loaded once per process root via `sync.Once` cached in a per-store-root `sync.Map`.
+
+### Tracebundle v2 export (final-sweep PR #171)
+
+The `GET /api/session/{id}/export.tracebundle` endpoint produces a portable per-session audit artifact. V2 introduces three pieces:
+
+1. **Per-session filtering**:
+   - `Store.ListNodesForSession(sid)` filters by `Node.MissionID`. Empty `sid` falls back to the unfiltered `ListNodes` for backward compat.
+   - `Store.ListEdgesForSession(sid)` filters by `Edge.Metadata["session_id"]`. Edges without the key are conservatively included.
+2. **Chain-root hash** — `Store.ChainRootHashForSession(sid)` computes `prev_hash = sha256(prev_hash || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)`. Final hex is the root. Empty session → "" + nil. Single node → hash of that node's metadata.
+3. **Canonical manifest signing body** — `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns the deterministic byte-body the manifest signs over, sharing the same canonical layout cmd/r1-server's sign + verify and out-of-tree verifiers use.
+
+`cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it. (Spec D — D-UI2-7 — removed the prior `R1_SERVER_UI_V2` envelope gate; the route is always reachable.)
+
+### Release-rehearsal CI lane (final-sweep PR #170)
+
+Cloud Build trigger pair (`services/cloudbuild-e2e-trigger.yaml`) firing `services/cloudbuild-e2e.yaml`:
+
+| Trigger | Fires on | Purpose |
 |---|---|---|
-| CLI (`r1 chat`, `r1 ctl`) | `$XDG_RUNTIME_DIR/r1/r1.sock` (Linux/macOS) / `\\.\pipe\r1-<USER>` (Windows) | Peer-cred check (`SO_PEERCRED` / `LOCAL_PEERCRED`); no token |
-| Web / Desktop / MCP | `ws://127.0.0.1:<port>` + `http://127.0.0.1:<port>` | 256-bit Bearer (HTTP) or `Sec-WebSocket-Protocol: r1.bearer, <token>` (WS); Origin pin + Host pin |
+| `r1-agent-e2e-rehearsal-main` | push to `^main$` | Post-deploy verification — confirms the just-shipped main is e2e-clean. |
+| `r1-agent-e2e-rehearsal-tag` | push to `^v.*$` tag | Release gate — red blocks tag promotion to staging / main / production rollouts. |
 
-Port: random ephemeral on first start, written to `~/.r1/daemon.json`
-(mode 0600, token rotated on every start). Discovery via `r1 ctl
-discover`.
+Pipeline: `go build -mod=vendor` → `npm install + npx playwright install --with-deps chromium` → `go test -tags=e2e ./cmd/r1-server/e2e/...` with `R1_SERVER_SHARE_ENABLED=1` (Spec D — D-UI2-7 — removed the prior paired `R1_SERVER_UI_V2=1`) → publish green/red commit-status to GitHub.
 
-Single-instance enforcement: `gofrs/flock` advisory lock on
-`~/.r1/daemon.lock` plus the bind-is-exclusive property of the socket
-path / port.
+Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch from the Actions UI without local `gcloud`. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`. Workflow summary links to the Cloud Build console for live logs.
 
-### Session lifecycle
+One-time setup: `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent (re-running updates triggers in place). Requires `roles/cloudbuild.builds.editor` on `relayone-488319`. Both triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`.
 
-- **Create**: `POST /v1/sessions {workdir, model, ...}` validates
-  `workdir` (absolute, exists, writable, not under `~/.r1/`). Generates
-  `session_id = "sess_" + uuid.New()`. Calls `cortex.NewWorkspace(SessionRoot)`.
-  Opens `<workdir>/.r1/sessions/<id>/journal.ndjson`. Spawns
-  `go session.run(ctx)`.
-- **Attach**: WS `/v1/sessions/:id/ws`; subscribe with `since_seq?` —
-  server replays from journal, then live deltas.
-- **Detach**: client closes WS; session goroutine continues; events buffer
-  in WAL.
-- **Resume**: client reconnects with `since_seq: <last>` → server replays
-  from journal, then live.
-- **Pause / Resume** (workflow-level): `POST /:id/pause` or `:id/resume`
-  flips state; sub-context honors `ctx.Done()`.
-- **Kill**: `DELETE /:id` cancels session ctx, drains in-flight tool
-  calls (5s grace), fsyncs journal, writes final `session.ended`.
+### Hosted SaaS — 9 Cloud Run services
+- 3 services × 3 envs (dev / staging / prod) on `relayone-488319` GCP project, region `us-central1`.
+- All services: distroless static images, min-instances=1, instance billing (no CPU throttling), `--allow-unauthenticated`, port 8080.
+- Cloud Run org policy intercepts `/healthz`; r1 services use `/livez` + `/readyz` + `/v1/version` + `/`.
+- Auto-deploy on push to `main` / `staging` / `dev` via `services/cloudbuild-deploy.yaml`.
 
-### Hot upgrade
+## Data models
 
-Restart-required, transparent. Operator runs `r1 update` then `r1 serve
-restart`. New daemon scans `~/.r1/sessions-index.json`, re-opens each
-`journal.ndjson`, rebuilds `*Session` (workspace + Lobe state from
-journal events). Broadcasts `daemon.reloaded {at, version}` to
-reconnecting clients. Clients reconnect with `Last-Event-ID` /
-`since_seq` → server replays from journal.
-
-### `--install` mode
-
-`r1 serve --install` writes a platform-appropriate service unit via
-`kardianos/service`:
-
-- macOS: `~/Library/LaunchAgents/dev.relayone.r1.plist`.
-- Linux: `~/.config/systemd/user/r1.service`. `loginctl enable-linger
-  $USER` for headless boxes.
-- Windows: Service Control Manager service `r1.daemon`.
-
-## Surface architectures
-
-### TUI (`internal/tui/lanes/` — Bubble Tea v2)
-
-A new panel inside the existing `internal/tui/`. Coexists with the v1
-`internal/tui/renderer/` and `interactive.go` (different Bubble Tea
-major versions; module paths differ).
-
-**Key shape:**
-
-- Adaptive layout: side-by-side columns when wide
-  (`width >= cols * LANE_MIN_WIDTH (32)`, max 4 columns), vertical stack
-  when narrow, focus mode (65/35 main+peers) when `enter` zoomed.
-- Single fan-in `chan laneTickMsg` + `waitForLaneTick` `tea.Cmd` re-armed
-  on every receive (the canonical realtime example for r1).
-- A producer goroutine coalesces upstream events at 200–300 ms windows so
-  we never push more than ~5 Hz into Bubble Tea even when upstream is
-  firing at 200 Hz.
-- Per-lane `renderCache` invalidated only on dirty-flag flip, width
-  change, status transition, focus change, or spinner tick (one per
-  coalesce window).
-- Status vocabulary glyphs (`pending(·) running(▸) blocked(⏸) done(✓)
-  errored(✗) cancelled(⊘)`) paired with `compat.AdaptiveColor` (Tokyo
-  Night palette). `NO_COLOR` / `TERM=dumb` keep glyphs legible.
-- Two transports: `localIPCTransport` dials `~/.r1/r1d.sock`;
-  `wsTransport` dials `ws://127.0.0.1:<port>`.
-
-### Web (`web/` — React 18 + Vite 6 + Tailwind 3 + shadcn/ui)
-
-Three-column Cursor 3 "Glass" layout:
-
-```
-+──────────+──────────────────────────────────────+──────────────+
-│ Sessions │              Chat / Tile pane         │   Lanes      │
-│  list    │                                        │  sidebar     │
-│ (left)   │  Streamdown markdown                   │  (right)     │
-│          │  + tool / reasoning / plan / diff      │              │
-│ - sess A │    cards (@ai-sdk/elements)            │  ▸ Lobe 1    │
-│ - sess B │  Composer (Cmd/Ctrl+Enter sends)       │  ⏸ Tool 1   │
-│ - sess C │  StopButton during stream → interrupt  │  ✓ Lobe 2   │
-│          │                                        │  · Lobe 3    │
-│ [+ New]  │  Tile mode: 1×2 / 1×3 / 2×2 grid       │  ✗ Lobe 4    │
-│          │  pinning 2-4 lanes into the center     │              │
-+──────────+──────────────────────────────────────+──────────────+
-            ⚡ r1 │ external │ $0.0837 │ 42 turns │ haiku-4.5 │ ?=help
+### `ledger.Node` (content-addressed)
+```go
+type Node struct {
+  ID        string         // sha256:<hex> content ID
+  Type      string         // 22 node types (mission, task, plan, exec, verify, …)
+  Payload   json.RawMessage
+  Refs      []string       // outgoing edges (other node IDs)
+  CreatedAt time.Time
+}
 ```
 
-**Key shape:**
+### `streamjson.LaneEvent`
+```go
+type LaneEvent struct {
+  Type      string          // lane.created | lane.status | lane.delta | lane.cost | lane.note | lane.killed
+  SessionID string
+  LaneID    string
+  Seq       uint64
+  Payload   json.RawMessage // shape per Type
+  Critical  bool
+}
+```
 
-- React 18 + Vite 6 + Tailwind 3 + shadcn/ui (matches `desktop/`).
-- Streaming markdown via `vercel/streamdown` (graceful partial-Markdown,
-  Shiki, KaTeX, Mermaid, rehype-harden).
-- AI cards via `@ai-sdk/elements` (`Tool`, `Reasoning`, `Plan`,
-  `CodeBlock`, `Conversation`, `PromptInput`).
-- Streaming hook: AI SDK 6 `useChat` with `message.parts` model — maps
-  directly to lanes-protocol envelopes.
-- Routing via react-router 7: `/sessions/:id`,
-  `/sessions/:id/lanes/:lane_id`, `/settings`.
-- State: `zustand` 5; one store **instance per daemon connection**.
-- WS: hand-rolled `ResilientSocket` (state machine, exponential backoff
-  + jitter, 30s ping watchdog, `Last-Event-ID` replay, 4401 →
-  re-mint-ticket → reconnect).
-- CSP locked to loopback: `default-src 'self'; connect-src 'self'
-  ws://127.0.0.1:* http://127.0.0.1:*; ...`.
-- Vite `build.outDir = '../internal/server/static/dist'`. Picked up
-  automatically by `internal/server/embed.go` (`//go:embed static`).
+### `cortex.Note`
+```go
+type Note struct {
+  ID         string
+  Severity   Severity   // info | advice | warning | critical
+  Content    string
+  PublishedBy string    // lobe id
+  TTL        time.Duration
+  CausedBy   string    // event/round id
+}
+```
 
-### Desktop (`desktop/` — Tauri 2 augmentation)
+### `antitrunc.Finding`
+```go
+type Finding struct {
+  Source   string   // phrase | scope | commit
+  Phrase   string
+  Position int
+  Reason   string
+  Action   string   // "refuse" | "advise"
+}
+```
 
-Existing 12-phase R1D plan untouched. New files only.
+### `LaneSnapshot` (web/desktop)
+```ts
+{ id, sessionId, label, state: LaneState,
+  createdAt, updatedAt, progress: number|null,
+  lastRender: string|null, lastSeq: number }
+```
 
-**Discovery flow:**
+## API surface
 
-1. `read_daemon_json()` reads `~/.r1/daemon.json`.
-2. `probe_external()` tries TCP connect to `ws://127.0.0.1:<port>` with
-   1s timeout.
-3. On `NotFound | Refused`, `spawn_sidecar()` runs the bundled `r1 serve
-   --port=0 --emit-port-stdout` via `ShellExt::sidecar`. Reads the
-   chosen port from the child's stdout NDJSON `daemon.listening` event.
-4. Wizard offers `r1 serve --install` for always-on operation.
+### MCP catalog — 38 tools across 10 categories
+- **sessions** (5): `r1.session.list`, `.get`, `.create`, `.pause`, `.cancel`
+- **lanes** (5): `r1.lanes.list`, `.subscribe`, `.get`, `.kill`, `.pin`
+- **cortex** (4): `r1.cortex.notes`, `.workspace`, `.lobes`, `.round`
+- **mission** (4): `r1.mission.start`, `.status`, `.abort`, `.report`
+- **worktree** (3): `r1.worktree.create`, `.merge`, `.cleanup`
+- **bus** (1): `r1.bus.tail`
+- **verify** (4): `r1.verify.build`, `.test`, `.vet`, `.lint`
+- **TUI** (5): `r1.tui.snapshot`, `.dispatch`, `.assertA11y`, `.cycle`, `.quit`
+- **anti-truncation** (1): `r1.antitrunc.verify`
+- **plus** legacy `stoke_*` aliases (deprecated; removal scheduled v2.0.0).
 
-**Per-session workdir:** `tauri-plugin-store` writes `sessions.json`
-under the app data dir. Folder picker via `@tauri-apps/plugin-dialog`
-`open({directory: true})`. Push to daemon via
-`session.set_workdir`; the Go side binds it to `cmd.Dir` for any
-subprocess spawned for that session.
+### r1d JSON-RPC (loopback HTTP+WS)
+- `session.start | pause | resume | cancel | send | subscribe | unsubscribe`
+- `lanes.list | kill`
+- `cortex.notes`
+- `daemon.info | shutdown | reload_config`
 
-**Lane streaming:** one `tauri::ipc::Channel<LaneEvent>` per session.
-Per-session forwarder task reads daemon WS, parses lane frames into
-serde enums, and `channel.send()`s them with a 1024-event ring buffer
-(drops `lane.delta` on overflow; status/spawn/kill never drop).
+### `cmd/r1-server` HTTP (per-session export)
+- `GET /api/session/{id}/export.tracebundle` — returns the per-session tracebundle (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). Always reachable post-Spec-D — the prior `R1_SERVER_UI_V2` envelope gate was removed (D-UI2-7). Backed by `ledgerTracebundleSource` over `ledger.Store`.
 
-**Native menu bar** with platform-conditional layout (macOS app menu vs
-Linux/Windows Help menu). Pop-out lane via `Cmd+\` opens a
-`WebviewWindow` with label `lane:<session>:<lane>`.
+### Hosted SaaS HTTP
 
-**Auto-start** via `tauri-plugin-autostart`. UI auto-start (login items
-/ registry / `.desktop` autostart) is independent from daemon
-auto-start (`r1 serve --install` via `kardianos/service`).
+**`api.r1.run` (r1-coord-api)**
+- `GET /` — service metadata
+- `GET /livez` `GET /readyz` `GET /v1/version` — health + version
+- `POST /v1/license/verify` — `{key} → {valid}`
+- `POST /v1/telemetry/opt-in` — accept opt-in record
 
-**Component sharing:** `packages/web-components/` workspace package
-houses `LaneCard`, `LaneSidebar`, `LaneDetail`, `PoppedLaneApp` —
-consumed by both `web/` and `desktop/` via npm workspace protocol.
+**`platform.r1.run` (r1-docs)**
+- `GET /` — docs index
+- `GET /<doc>.html` — rendered markdown
+- `GET /raw/<doc>.md` — raw source
 
-## Cross-cutting: MCP-everything
+**`downloads.r1.run` (r1-downloads-cdn)**
+- `GET /` — channel + asset index (JSON)
+- `GET /<channel>/<asset>` — stream binary
+- `GET /<channel>/<asset>/sha256` — content metadata
 
-The agentic test harness (spec 8) is a cross-cutting concern, not a new
-plane. It consolidates `internal/mcp/r1_server.go` to publish the full
-catalog:
+## Execution flow — single mission end-to-end
 
-- `r1.session.*` — `start`, `send`, `cancel`, `list`, `get`, `resume`.
-- `r1.lanes.*` — `list`, `subscribe`, `get`, `kill`, `pin`.
-- `r1.cortex.*` — `notes`, `publish`, `lobes_list`, `lobe_pause`,
-  `lobe_resume`.
-- `r1.mission.*` — `create`, `list`, `cancel`.
-- `r1.worktree.*` — `list`, `diff`.
-- `r1.bus.tail` — replay events with `since_seq`.
-- `r1.verify.*` — `build`, `test`, `lint`.
-- `r1.tui.*` — `press_key`, `snapshot`, `get_model` (via
-  `internal/tui/teatest_shim.go`).
+1. **Entry**: `r1 run --task "..."` or `r1 build --plan plan.json` (or via web/desktop UI through `r1 serve`).
+2. **Plan**: `internal/plan/` validates the plan (cycle DFS, deps); `internal/scheduler/` orders tasks via GRPW priority.
+3. **Cortex pre-warm**: `internal/cortex/prewarm.go` fires a `max_tokens=1` warming request 4 min before the round.
+4. **Round dispatch**: `internal/cortex/Workspace.Run()` starts main thread + N Lobes in parallel.
+5. **Execute**: main thread runs `internal/agentloop.Loop` against Anthropic Messages API; tool calls dispatched through `internal/hooks/` PreToolUse + PostToolUse guards.
+6. **Verify**: `internal/verify/` runs build + test + vet; `internal/critic/` runs adversarial pre-commit critic; `internal/convergence/` runs adversarial self-audit.
+7. **Anti-trunc gate**: `internal/agentloop/antitrunc.go` composes the gate BEFORE every other end-turn hook. If the model emits a truncation phrase or unchecked plan items remain, the gate refuses `end_turn` and forces continuation.
+8. **Review**: `model.CrossModelReviewer()` runs Codex (or whichever non-implementer model is in the resolver chain).
+9. **Persist**: every event hits `internal/bus/` WAL; every node lands in `internal/ledger/`; every cost tick is journaled.
+10. **Surface**: lanes stream over WS to TUI/web/desktop/MCP subscribers via per-session `seq`.
 
-A CI lint at `tools/lint-view-without-api/` scans React, Bubble Tea, and
-Tauri sources for interactive elements; fails the build when no MCP tool
-exists for the corresponding action. A Go runner at
-`tools/agent-feature-runner/` parses Gherkin-flavored markdown
-(`*.agent.feature.md`) and dispatches each step through MCP. Web is
-covered by Playwright MCP; component contracts by Storybook MCP. The
-contract for external agents lives in `docs/AGENTIC-API.md`.
+## Infrastructure
 
-## Existing surfaces (today, before specs 4 / 6 / 7)
+### GCP project: `relayone-488319`
+- **Cloud Run** services (us-central1): `r1-coord-api-{prod,staging,dev}`, `r1-docs-{prod,staging,dev}`, `r1-downloads-cdn-{prod,staging,dev}`. Min-instances=1, instance billing, distroless static.
+- **Cloud SQL Postgres 16**: `r1-prod-pg` (db-g1-small, $10/mo), `r1-staging-pg` + `r1-dev-pg` (db-f1-micro, $7/mo each). All us-central1-c, ENTERPRISE edition.
+- **Artifact Registry**: `us-central1-docker.pkg.dev/relayone-488319/r1` (3 images: r1-coord-api, r1-docs, r1-downloads-cdn).
+- **Secret Manager**: 6 placeholders: `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY}` (operator must populate real values).
+- **GCS**: `gs://relayone-488319-r1-releases/{prod,staging,dev}/` (binary release channels; r1-downloads-cdn streams from here).
+- **Cloud Build**: `r1-agent-pr` (PR gate) + `r1-agent-ci` (push to main). After PR #128 merges, `services/scripts/setup-cloudbuild-triggers.sh` adds 3 deploy triggers.
+- **Domain mappings** (created, pending DNS): 9 subdomains under `r1.run` zone — `platform.{,staging.,dev.}r1.run`, `api.{,staging.,dev.}r1.run`, `downloads.{,staging.,dev.}r1.run`. Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
 
-`r1` ships nine binaries on `main` today:
+### DNS — Cloudflare zone for `r1.run`
+- 9 CNAME records (operator action; see `plans/HANDOFF-deploy-state.md`).
+- Proxy mode MUST be **off** (gray cloud). Cloud Run provisions its own Google-managed TLS cert.
 
-| Binary | Purpose |
-|---|---|
-| `r1` | Primary orchestrator — 30+ subcommands |
-| `stoke-acp` | Agent Client Protocol adapter for editor integrations |
-| `stoke-a2a` | Agent-to-Agent peering: signed cards, HMAC tokens, x402 micropayments, saga compensators |
-| `stoke-mcp` | MCP codebase tool server (ledger, wisdom, research, skill stores as MCP tools) |
-| `stoke-server` | Mission API HTTP server |
-| `stoke-gateway` | Managed-cloud gateway: hosted session state, centralized pool management |
-| `r1-server` | Per-machine dashboard (port 3948) — discovers running r1 instances, live event stream, 3D ledger visualizer |
-| `chat-probe` | Chat-descent gate + sessionctl socket diagnostic |
-| `critique-compare` | Bench runner for critic/reviewer prompt tuning |
+## Testing architecture
 
-Once `r1d-server` lands, `r1 serve` becomes the canonical entrypoint for
-long-running daemons and consolidates the existing `r1 daemon` and
-`r1 agent-serve` into one process; old commands stay as aliases for one
-minor version.
+- **Go**: `go test ./...` runs all 175 packages; race-clean across the suite.
+- **Web** (vitest + jsdom + MSW): unit tests as sibling `<Component>.test.tsx`. Coverage threshold 80% statements / 70% branches enforced via `vitest.config.ts`. Coverage manifest test (`web/src/test/coverage-manifest.test.ts`) walks the source tree and fails if any component lacks a sibling `.test.tsx`.
+- **Web e2e** (Playwright + axe-core): `web/src/test/e2e/csp-axe.spec.ts` enforces zero CSP errors + zero serious/critical axe findings on every route across chromium + firefox + webkit. 9 `*.agent.feature.md` Gherkin-flavored flows for the spec 8 MCP harness.
+- **Storybook MCP**: every web component has a sibling `.stories.tsx` (CSF 3). Stories manifest test enforces this.
+- **Desktop** (cargo test + vitest): 110 Rust tests + 19 TS tests + 4 Playwright e2e (multi-session, lanes-streaming, popout-lane, daemon-discovery).
+- **Anti-truncation soak**: build-tagged `soak` test runs 1M iterations against a corpus of 40 legitimate phrasings; 0 FP / 0 FN / 499K TP at 16,891 iter/sec.
 
-## Internal package map (132 packages)
+## CI gates
 
-Grouped by plane. The table is canonical with `CLAUDE.md`'s package map.
-
-**Governance v2 (append-only, content-addressed):**
-`contentid`, `stokerr`, `ledger`, `ledger/nodes`, `ledger/loops`, `bus`,
-`supervisor` (+ 9 rule subpackages), `concern`, `harness`, `snapshot`,
-`wizard`, `skillmfr`, `bench`, `bridge`.
-
-**Cortex (scoped — spec 1, 2):**
-`cortex` (Workspace, Lobe interface, Round, Spotlight, Router,
-drop-partial interrupt, pre-warm pump, BudgetTracker, persist),
-`cortex/lobes/llm` (LobePromptBuilder, Escalator, meta_keys),
-`cortex/lobes/memoryrecall`, `cortex/lobes/walkeeper`,
-`cortex/lobes/rulecheck`, `cortex/lobes/planupdate`,
-`cortex/lobes/clarifyq`, `cortex/lobes/memorycurator`.
-
-**Core workflow:**
-`agentloop`, `app`, `hub`, `hub/builtin`, `mission`, `workflow`,
-`engine`, `orchestrate`, `scheduler`, `plan`, `taskstate`.
-
-**Planning + decomposition:**
-`interview`, `intent`, `conversation`, `skillselect`, `chat`, `operator`,
-`hire`.
-
-**Code analysis:**
-`goast`, `repomap`, `symindex`, `depgraph`, `chunker`, `tfidf`, `vecindex`,
-`semdiff`, `diffcomp`, `gitblame`, `depcheck`.
-
-**File + workspace:**
-`atomicfs`, `fileutil`, `filewatcher`, `worktree`, `branch`, `hashline`.
-
-**Testing + verification:**
-`baseline`, `verify`, `convergence`, `testgen`, `testselect`, `critic`,
-`reviewereval`, `smoketest`.
-
-**Error handling:**
-`failure`, `errtaxonomy`, `checkpoint`.
-
-**Code generation:**
-`patchapply`, `extract`, `autofix`, `conflictres`, `tools`.
-
-**Agent behavior:**
-`boulder`, `specexec`, `handoff`, `consolidation`.
-
-**Knowledge + learning:**
-`memory`, `wisdom`, `research`, `flowtrack`, `replay`, `sharedmem`,
-`stancesign`.
-
-**Executors (multi-task agent):**
-`executor`, `router`, `browser`, `deploy`, `websearch`, `delegation`,
-`fanout`, `oneshot`.
-
-**LLM integration:**
-`apiclient`, `provider`, `modelsource`, `mcp`, `model`, `prompt`,
-`prompts`, `promptcache`, `promptguard`, `microcompact`, `ctxpack`,
-`tokenest`, `costtrack`, `litellm`.
-
-**Permissions + security:**
-`consent`, `rbac`, `hooks`, `hitl`, `scan`, `secrets`, `redact`,
-`redteam`, `policy`, `encryption`, `retention`.
-
-**Config + session:**
-`config`, `session`, `sessionctl`, `subscriptions`, `pools`, `context`,
-`env`, `eventlog`, `runtrack`, `correlation`.
-
-**Infrastructure:**
-`agentmsg`, `dispatch`, `logging`, `metrics`, `telemetry`, `notify`,
-`stream`, `streamjson`, `jsonutil`, `schemaval`, `validation`, `perflog`,
-`topology`, `gateway`, `cloud`, `trustplane`, `a2a`, `agentserve`.
-
-**UI + interfaces:**
-`tui`, `tui/lanes` (scoped), `viewport`, `repl`, `server`,
-`server/sessionhub` (scoped), `server/ws` (scoped),
-`server/ipc` (scoped), `journal` (scoped), `daemonlock` (scoped),
-`daemondisco` (scoped), `serviceunit` (scoped), `remote`, `report`,
-`progress`, `audit`, `skill`, `plugins`, `preflight`, `taskstats`.
-
-Package count is verified in CI via `make check-pkg-count`. Adding a new
-package requires bumping the expected value.
-
-## Key design decisions (canonical with CLAUDE.md)
-
-1. `cmd.Dir` for worktree cwd (Claude Code has no `--cd` flag).
-2. `--tools` for hard built-in restriction; `--allowedTools` only
-   auto-approves.
-3. MCP triple isolation: `--strict-mcp-config` + empty config +
-   `--disallowedTools mcp__*`.
-4. Sandbox via settings.json per worktree (no `--sandbox` CLI flag).
-5. `apiKeyHelper: null` (JSON null via `*string`) suppresses repo
-   helpers in Mode 1.
-6. `sandbox.failIfUnavailable: true` — fail-closed.
-7. Process group isolation: `Setpgid: true` + `killProcessGroup` (SIGTERM
-   then SIGKILL).
-8. `git merge-tree --write-tree` for zero-side-effect conflict validation.
-9. `mergeMu sync.Mutex` serializes all merges to main.
-10. GRPW priority: tasks with most downstream work dispatch first.
-11. Cross-model review via `model.CrossModelReviewer()`.
-12. Retry: compare BEFORE overwriting `lastFailure`. Copy phase, don't
-    mutate. Clean worktree per retry.
-13. `BaseCommit` captured at worktree creation for `diff
-    BaseCommit..HEAD`.
-14. Worktree cleanup: `--force` + `os.RemoveAll` fallback + `worktree
-    prune`.
-15. `model.Resolve()` walks Primary → FallbackChain (Claude → Codex →
-    OpenRouter → API → lint-only).
-16. Enforcer hooks installed in every worktree via `hooks.Install()`.
-17. Event-driven reminders fire during tool use (context >60%, error 3×,
-    test write, etc.).
-18. ROI filter removes low-value tasks before execution.
-19. `session.SessionStore` interface: both JSON (`Store`) and SQLite
-    (`SQLStore`) satisfy it.
-20. Budget enforcement: `CostTracker.OverBudget()` checked before each
-    execute attempt.
-21. Failure fingerprint dedup: `failure.Compute()` + `MatchHistory()`
-    escalates repeated failures.
-22. `verificationExplicit` bool distinguishes "all false" from "omitted"
-    in YAML policy parsing.
-23. Dependency-aware test selection via `testselect.BuildGraph()`.
-24. Ranked repomap injected into execute prompts (token-budgeted via
-    `RenderRelevant`).
-25. Pre-merge snapshots (`snapshot.Take`) with restore-on-failure for safe
-    rollback.
-26. Speculative execution (`--specexec`): 4 strategies in parallel, pick
-    the winner.
-27. Codex/Claude parity: both runners populate `CostUSD`, `DurationMs`,
-    `NumTurns`, `Tokens`.
-28. V2 bridge adapters: v1 cost/verify/wisdom/audit emit bus events +
-    write ledger nodes via the bridge package.
-
-## Decisions specific to the cortex / lanes / multi-surface scope
-
-From `docs/decisions/index.md`:
-
-- **D-2026-05-02-01** — Spec split = 8 specs. Build order: 1 → (2,3) →
-  (4,5) → (6,7) → 8.
-- **D-2026-05-02-04** — Merge model = agent-decides. Router LLM (Haiku
-  4.5) with 4 tools. Critical Notes refuse end_turn.
-- **D-C1..C7** — Cortex foundation choices: `internal/cortex/`,
-  GWT-not-Blackboard, write-through to bus WAL, drop-partial interrupt,
-  pre-warm cache, 5-Lobe budget with hard cap 8, Haiku 4.5 floor with
-  Sonnet escalation gated.
-- **D-S1..S7** — Surface choices: shared status vocabulary, render
-  coalescing 5–10 Hz, Bubble Tea v2, Cursor 3 "Glass", Streamdown +
-  AI SDK 6, WS subprotocol auth, Tauri augment-don't-redo.
-- **D-D1..D5** — Daemon choices: per-user singleton on-demand, one process
-  N goroutines via `cmd.Dir`, JSON-RPC 2.0 over WS / unix-sock with
-  monotonic seq, `os.Chdir` audit + lint required, `gofrs/flock` for
-  single-instance.
-- **D-A1..A5** — Agentic choices: MCP-primary single wire protocol,
-  goal-shaped tools, Playwright + teatest + Storybook MCP, Gherkin DSL,
-  view-without-API CI lint.
+| Gate | Command | When | Status |
+|---|---|---|---|
+| Build | `go build ./...` | every PR | required |
+| Vet | `go vet ./...` | every PR | required |
+| Test | `go test ./... -count=1 -timeout=300s` | every PR | required |
+| Race | `go test -race ./... -count=1` | every PR | required (advisory on flake) |
+| Lint-chdir | `make lint-chdir` | every PR | required |
+| Lint-views | `make lint-views` | every PR | required (after spec 8 merge) |
+| Web build | `cd web && npm run build` | every PR | required |
+| Web tests | `cd web && npm run test` | every PR | required |
+| Anti-trunc verify | `r1 antitrunc verify -n 20` | every PR + post-commit hook | required |
+| Release-rehearsal E2E (`r1-agent-e2e-rehearsal-main`) | `services/cloudbuild-e2e.yaml` (Cloud Build) | every push to `main` | required for any release gating on it; manual escape via `.github/workflows/e2e-rehearsal-manual.yml` |
+| Release-rehearsal E2E (`r1-agent-e2e-rehearsal-tag`) | `services/cloudbuild-e2e.yaml` (Cloud Build) | every `^v.*$` tag push | required — red blocks tag promotion |
 
 ## Status
 
 ### Done
-- Mission runtime + verification core.
-- Evidence + governance plane.
-- Deterministic skill + pack-registry foundations.
-- Runtime audit / metrics / cancel / timeout extension surfaces.
-- Wave 2 R1-parity surfaces.
+- Specs 1-9 merged + tested + deployed.
+- 9 Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry.
+- Branch hygiene: 20 archive tags, 3 active branches (main, claude/w521-…, archives).
+- All Go tests + web typecheck + desktop tests green.
+- Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log + HANDOFF state file.
+- **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
+  - Skill lifecycle hooks: `concern.SkillCompactor` (LRU eviction under budget) + `workflow.SkillScopeCloser` (phase-exit drop) wired through `internal/skilltracker.Tracker`.
+  - ed25519-signed redaction events: `internal/ledger/redact_sign.go` + `Store.RedactionsForVerified`.
+  - Tracebundle v2: per-session ledger filtering + chain-root hashing + canonical manifest body; production source at `cmd/r1-server/tracebundle_source.go` v2-flag-gated.
+  - Release-rehearsal CI: Cloud Build trigger pair (push-to-main + tag) + manual GitHub Actions workflow.
 
 ### In Progress
-- Wider product adoption of the deterministic skill lane.
-- Race-clean regression sweep across `internal/`.
+- DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs).
+- Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation.
 
 ### Scoped
-- Cortex layer (specs 1–2): Workspace, Lobes, Round, Spotlight, Router,
-  drop-partial, pre-warm, budget, persist, six v1 Lobes.
-- Lanes wire format (spec 3) + 5 MCP tools.
-- Three surfaces: TUI lanes panel (spec 4), web chat (spec 6), desktop
-  augmentation (spec 7).
-- r1d daemon (spec 5): per-user singleton, multi-session goroutines,
-  `os.Chdir` audit, journal replay.
-- Agentic test harness (spec 8): consolidated MCP catalog, view-without-API
-  lint, Playwright + Storybook MCP, Gherkin DSL.
+- JWT login + RelayOne MSP SSO (Path A — Go reimpl of `@relayone/auth-core`).
+- Admin panel at `admin.r1.run` (clone `*-admin` template, customize).
+- PostHog + Customer.io + CodeRadar event integration.
 
 ### Scoping
 - Cross-machine session migration.
-- Per-tool throttling policy in `.stoke/`.
 - Encryption-at-rest for journals.
-- Broader superiority reporting against peer runtimes.
+- Per-tool throttling policy.
 
 ### Potential — On Horizon
-- Cloud daemon beyond loopback singleton.
-- Multi-tenant per-host (multiple uids on a shared box).
-- OpenTelemetry export of lane events.
-- Cross-product distribution and exchange of governed deterministic
-  skills.
+- Marketing site with affiliate / SEO / CRO / attribution / retention stack.
+- BitBucket Pipelines adapter parity.
+- Browser tool sandboxed under remote browser.
+- Cross-product deterministic skill exchange.

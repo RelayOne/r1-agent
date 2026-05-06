@@ -122,9 +122,9 @@ with:
 
 ## Testing
 
-- [ ] `go build ./cmd/stoke` still passes locally (unchanged).
-- [ ] `go vet ./...` still passes locally (unchanged).
-- [ ] After PR opens, all four CI jobs (`build`, `race`, `lint`,
+- [x] `go build ./cmd/r1` still passes locally (unchanged).
+- [x] `go vet ./...` still passes locally (unchanged).
+- [x] After PR opens, all four CI jobs (`build`, `race`, `lint`,
   `security`) complete with `SUCCESS` conclusion. The only
   acceptable failure is the apt-get Chrome flake (deferred).
 

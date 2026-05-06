@@ -355,7 +355,7 @@ The harness is a larger package than most — it has to cover model providers, t
 ## Validation gate
 
 1. ✅ `go vet ./...` clean, `go test ./internal/harness/...` passes with >70% coverage on the core and >80% on the tool implementations
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ The harness's public API (`New`, `SpawnStance`, `PauseStance`, `ResumeStance`, `TerminateStance`, `InspectStance`, `ListStances`, `Recover`) is callable from external Go code (verified by a test that imports `internal/harness` from a test package and calls each method)
 4. ✅ A valid spawn request produces a running stance with the expected role, scope, model, and tool set
 5. ✅ An invalid spawn request (unknown role, nonexistent task scope, unauthorized tool override) is rejected before any model API call is made

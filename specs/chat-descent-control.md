@@ -29,7 +29,7 @@ Nothing in spec-1, spec-2, spec-3, or spec-7 is modified; this spec wires them t
 
 ## Existing Patterns to Follow
 
-- Chat session entry: `cmd/stoke/chat.go:398` (`buildChatSession`), `:431` (`chatOnceREPL`), `:485` (`chatOnceShell`); `cmd/stoke/main.go:5279` (`launchREPL`), `:5571` (`launchShell`).
+- Chat session entry: `cmd/r1/chat.go:398` (`buildChatSession`), `:431` (`chatOnceREPL`), `:485` (`chatOnceShell`); `cmd/r1/main.go:5279` (`launchREPL`), `:5571` (`launchShell`).
 - Dispatcher interface + intent extraction: `internal/chat/dispatcher.go`, `internal/chat/intent.go`.
 - Descent entry point: `plan.VerificationDescent(ctx, ac, cfg)` — reuse verbatim.
 - `DescentConfig` fields (spec-1): `MaxCodeRepairs`, `MaxRepairsPerFile`, `MultiAnalystEnabled`, `SoftPassPolicy`, `Operator`, `OnLog`.
@@ -252,7 +252,7 @@ if gate != nil {
 
 ## Part 2 — Operator control commands (CLI surface)
 
-New entries under `cmd/stoke/`: `ctl_status.go`, `ctl_approve.go`, `ctl_override.go`, `ctl_budget.go`, `ctl_pause.go`, `ctl_resume.go`, `ctl_inject.go`, `ctl_takeover.go`. Each is a thin CLI wrapper that:
+New entries under `cmd/r1/`: `ctl_status.go`, `ctl_approve.go`, `ctl_override.go`, `ctl_budget.go`, `ctl_pause.go`, `ctl_resume.go`, `ctl_inject.go`, `ctl_takeover.go`. Each is a thin CLI wrapper that:
 
 1. Resolves the target session:
    - `status` with no arg → discover all `/tmp/stoke-*.sock`, query each, aggregate.
@@ -611,7 +611,7 @@ go test ./internal/sessionctl/... -run TestTakeoverLifecycle
 go test ./internal/sessionctl/... -run TestDiscovery
 
 # 3. Build + vet + full suite.
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 go test ./...
 
@@ -642,7 +642,7 @@ sqlite3 .stoke/events.db 'SELECT COUNT(*) FROM events WHERE type LIKE "operator.
 2. [ ] **Build synthetic AC factory.** New file `internal/chat/descent_acs.go`. Skill-aware mapping per §1.3 (Go, TS/JS, Python, Rust, config-manifest). Reuse `skillselect.Detect(root)` to pick which ACs to produce. When `testselect` available, narrow test commands to affected packages. Each AC has `ID:"chat.<phase>"`, `Command:"..."`.
 3. [ ] **Wire trimmed `DescentConfig` builder.** In `descent_gate.go`, construct the config with constants `MaxCodeRepairs=1`, `MaxRepairsPerFile=1`, `MultiAnalystEnabled=false`, `SoftPassPolicy=SoftPassInteractive`. Inject `Operator` (from session) and `OnLog` (chat-reply streamer that buffers lines into the assistant message). Build `RepairFunc` that dispatches a short agentloop turn with a "fix this error" directive derived from the last failing AC stderr.
 4. [ ] **Integrate gate into chat session.** Edit `internal/chat/session.go` (and equivalent in `dispatcher.go`) to call `DescentGate.ShouldFire`/`Run` AFTER the agentloop returns and BEFORE flushing the reply. On `soft-pass:accept-as-is` return from Ask, mark the chat turn metadata `soft_pass:true` and include a one-line summary. On `edit-prompt`, `git checkout --` the touched files and re-enter user-input state (no reply flushed).
-5. [ ] **Capture start commit in `buildChatSession`.** Edit `cmd/stoke/chat.go:398`. Run `git rev-parse HEAD`; store on the session struct. On empty output, set `gate = nil` and log one warning — gate disabled for non-git sessions.
+5. [ ] **Capture start commit in `buildChatSession`.** Edit `cmd/r1/chat.go:398`. Run `git rev-parse HEAD`; store on the session struct. On empty output, set `gate = nil` and log one warning — gate disabled for non-git sessions.
 6. [ ] **Create `internal/sessionctl/` package.** Files: `server.go`, `client.go`, `handlers.go`, `router.go`, `takeover.go`, `types.go`, `signaler_unix.go`, `signaler_other.go`. `types.go` defines `Request`, `Response`, `Opts`, `Signaler`. `server.go` owns socket + HTTP lifecycle, verb dispatch, event emission. `client.go` provides `Call(sock, req) (Response, error)` used by CLI wrappers.
 7. [ ] **Implement verb handlers per table §Data Models.** Each handler validates payload, performs mutation, emits event via `eventlog.EmitBus`, returns `Response`. Use `dec.DisallowUnknownFields()` for strict parsing. HTTP mode verifies `STOKE_CTL_TOKEN` with `subtle.ConstantTimeCompare`.
 8. [ ] **Implement `ApprovalRouter`.** `router.go`: map `ask_id → chan Decision` guarded by mutex. `Register`, `Resolve`, `List` (for "oldest open ask_id" query). Wire into sessionctl so the `approve` handler calls `Resolve`; terminal/NDJSON Operator implementations Register + wait on the channel.
@@ -650,14 +650,14 @@ sqlite3 .stoke/events.db 'SELECT COUNT(*) FROM events WHERE type LIKE "operator.
 10. [ ] **Implement takeover.** `takeover.go`: allocate PTY, spawn `bash` (or `$SHELL`), wire stdin/stdout to PTY, emit `operator.takeover_start`, SIGSTOP session PGID. On release (user exits, ctx cancel, or `max_duration_s` timer), SIGCONT, compute `git diff --stat` vs pre-takeover SHA, inject a user-role reminder into the agent's message queue (`session.injectSystemNote(...)`), trigger a descent re-verify, emit `operator.takeover_end` with `parent_id` linking to start event.
 11. [ ] **Socket discovery.** `client.go` exports `DiscoverSessions(ctlDir) []string`. Uses `filepath.Glob(filepath.Join(ctlDir, "stoke-*.sock"))`. Dead socket handling: `Call` → ECONNREFUSED → `os.Remove(path)` + return typed error.
 12. [ ] **Emit streamjson mirrors.** In `server.go`, register a bus subscriber on all `operator.*` kinds that calls `streamjson.EmitSystem("stoke.operator."+kind, data)`. One subscriber, not per-verb wiring.
-13. [ ] **CLI wrappers.** `cmd/stoke/ctl_*.go` — eight files, one per verb (status, approve, override, budget, pause, resume, inject, takeover). Each parses flags, resolves session_id → socket path (or `--ctl-url`), calls `sessionctl.Client.Call`, renders response. `status` with no arg calls `DiscoverSessions` and aggregates.
-14. [ ] **Render `stoke status` table.** Column formatter in `cmd/stoke/ctl_status.go`. Tab-aligned when TTY; raw JSON when `--json`. Dead-socket pruning warnings go to stderr.
-15. [ ] **Wire sessionctl into `stoke run` / `stoke ship` / `stoke chat`.** In each command's entry point (`cmd/stoke/main.go`, `chat.go`, `ship.go`), call `sessionctl.StartServer(sess.ID, Opts{...})` before entering the main loop. `defer srv.Close()`. Read `--listen` flag (global or per-command) into `Opts.HTTPAddr`.
+13. [ ] **CLI wrappers.** `cmd/r1/ctl_*.go` — eight files, one per verb (status, approve, override, budget, pause, resume, inject, takeover). Each parses flags, resolves session_id → socket path (or `--ctl-url`), calls `sessionctl.Client.Call`, renders response. `status` with no arg calls `DiscoverSessions` and aggregates.
+14. [ ] **Render `stoke status` table.** Column formatter in `cmd/r1/ctl_status.go`. Tab-aligned when TTY; raw JSON when `--json`. Dead-socket pruning warnings go to stderr.
+15. [ ] **Wire sessionctl into `stoke run` / `stoke ship` / `stoke chat`.** In each command's entry point (`cmd/r1/main.go`, `chat.go`, `ship.go`), call `sessionctl.StartServer(sess.ID, Opts{...})` before entering the main loop. `defer srv.Close()`. Read `--listen` flag (global or per-command) into `Opts.HTTPAddr`.
 16. [ ] **Wire Operator.Ask into ApprovalRouter.** In `internal/operator/ndjson.go` and `terminal.go`, on each `Ask` call: generate `ask_id`, call `router.Register(ask_id, timeout)`, emit the prompt, block on returned channel. Terminal impl additionally runs its huh widget and calls `router.Resolve` from the widget callback. NDJSON impl's `hitl.Reader` callback calls `router.Resolve`.
 17. [ ] **Update event-type registry in `internal/eventlog/types.go`.** Add `operator.approve, operator.override, operator.budget_change, operator.pause, operator.resume, operator.inject, operator.takeover_start, operator.takeover_end` to the canonical list + validator warnings.
 18. [ ] **Unit tests.** Per §Testing sections. Use `testing/fstest`-style fake Signaler, fake PTY (io.Pipe pair), fake bus + fake eventlog. Ensure no test leaves sockets behind (`t.Cleanup` removes them).
 19. [ ] **Integration test.** `internal/sessionctl/integration_test.go` — spawn real `./stoke chat --listen :0`, run `stoke status`, `stoke inject`, verify event log rows. Use `t.TempDir` for `.stoke/`.
-20. [ ] **CI gate.** `go build ./cmd/stoke && go vet ./... && go test ./...` all green.
+20. [ ] **CI gate.** `go build ./cmd/r1 && go vet ./... && go test ./...` all green.
 
 ## Rollout
 

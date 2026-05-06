@@ -17,8 +17,8 @@
 //   - Dispatcher that wires JSON-RPC methods to store ops
 //
 // The JSON-RPC transport (framing, socket management, auth)
-// lives elsewhere (cmd/stoke-acp/ for stdio, a future
-// cmd/stoke-a2a-serve/ for HTTP); this file provides the
+// lives elsewhere (cmd/r1-acp/ for stdio, a future
+// cmd/r1-a2a-serve/ for HTTP); this file provides the
 // method handlers those transports call.
 package a2a
 

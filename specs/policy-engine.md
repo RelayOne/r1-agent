@@ -24,7 +24,7 @@ Stoke needs a local authorization gate so enterprise operators can govern tool u
 - Package layout: mirror `internal/trustplane/` (client.go + factory.go + real.go + tests)
 - Factory from env: mirror `internal/trustplane/factory.go::NewFromEnv`
 - Event emission: reuse `streamjson.Emitter.EmitSystem` with `subtype: "policy.check"` and `_stoke.dev/policy.*` extension keys
-- Hook point: `cmd/stoke/sow_native.go` native tool dispatch (spec-3 tool-call hook; wrap ToolUse block before `NativeRunner.Run` invokes the handler)
+- Hook point: `cmd/r1/sow_native.go` native tool dispatch (spec-3 tool-call hook; wrap ToolUse block before `NativeRunner.Run` invokes the handler)
 - Config surface: env-var first; no YAML config section (policy file path is itself the config)
 
 ## Library Preferences
@@ -351,7 +351,7 @@ go test ./internal/policy/... -run TestIntegrationTier2
 STOKE_POLICY_FILE=/tmp/deny.yaml ./stoke run "rm -rf /" 2>&1 | grep -q 'policy denied'
 CLOUDSWARM_POLICY_ENDPOINT=http://127.0.0.1:1 ./stoke run "ls" 2>&1 | grep -q 'policy-engine unavailable'
 go vet ./internal/policy/...
-go build ./cmd/stoke
+go build ./cmd/r1
 ```
 
 ## Implementation Checklist
@@ -368,15 +368,15 @@ go build ./cmd/stoke
 
 6. [ ] Create `internal/policy/factory.go` — `NewFromEnv(ctx context.Context) (Client, error)`. Order: `CLOUDSWARM_POLICY_ENDPOINT` (with optional `CLOUDSWARM_POLICY_TOKEN`) → HTTPClient; else `STOKE_POLICY_FILE` → YAMLClient; else NullClient. Log to stderr: `policy: backend=<http|yaml|null> source=<value>`. YAML file missing or parse error is a hard error.
 
-7. [ ] Wire policy hook in `cmd/stoke/sow_native.go` native tool dispatch — before each tool invocation (bash, file_write, file_read, MCP call), build `policy.Request{Principal:"Stoke::"+sessionID, Action:<toolName>, Resource:<primaryArg>, Context:{command,path,trust_level,budget_remaining_usd,phase,worktree}}`. trust_level defaults to 3 when delegation ctx is absent (spec-5 will replace this default with real trust derivation). Call `client.Check(ctx, req)` with 2s deadline. On err or Deny: emit `policy.denied` event, fail the tool call with `fmt.Errorf("policy denied: %s", strings.Join(reasons, ","))`, DO NOT retry. On Allow: emit `policy.check` event, proceed.
+7. [ ] Wire policy hook in `cmd/r1/sow_native.go` native tool dispatch — before each tool invocation (bash, file_write, file_read, MCP call), build `policy.Request{Principal:"Stoke::"+sessionID, Action:<toolName>, Resource:<primaryArg>, Context:{command,path,trust_level,budget_remaining_usd,phase,worktree}}`. trust_level defaults to 3 when delegation ctx is absent (spec-5 will replace this default with real trust derivation). Call `client.Check(ctx, req)` with 2s deadline. On err or Deny: emit `policy.denied` event, fail the tool call with `fmt.Errorf("policy denied: %s", strings.Join(reasons, ","))`, DO NOT retry. On Allow: emit `policy.check` event, proceed.
 
 8. [ ] Add policy events to `internal/streamjson/emitter.go` — new helpers `EmitPolicyCheck(decision, latencyMs int, reasonsCount int, backend string)` and `EmitPolicyDenied(reasons []string, principal, action, resource string)`. Both emit type=system with subtype=`policy.check` / `policy.denied` and `_stoke.dev/policy.*` keys per existing pattern.
 
-9. [ ] Add CLI subcommand `stoke policy validate <file.yaml>` in `cmd/stoke/main.go` — calls `NewYAMLClient(path)`; on success prints `OK: <N> rules loaded` and exits 0; on failure prints error and exits 2.
+9. [ ] Add CLI subcommand `stoke policy validate <file.yaml>` in `cmd/r1/main.go` — calls `NewYAMLClient(path)`; on success prints `OK: <N> rules loaded` and exits 0; on failure prints error and exits 2.
 
-10. [ ] Add CLI subcommand `stoke policy test <file.yaml> "principal=X action=Y resource=Z [k=v ...]"` in `cmd/stoke/main.go` — parses k=v pairs, builds `policy.Request`, calls `YAMLClient.Check`, prints `decision=<allow|deny> reasons=[...] errors=[...]`, exits 0 on Allow / 1 on Deny.
+10. [ ] Add CLI subcommand `stoke policy test <file.yaml> "principal=X action=Y resource=Z [k=v ...]"` in `cmd/r1/main.go` — parses k=v pairs, builds `policy.Request`, calls `YAMLClient.Check`, prints `decision=<allow|deny> reasons=[...] errors=[...]`, exits 0 on Allow / 1 on Deny.
 
-11. [ ] Add CLI subcommand `stoke policy trace --last-N <int>` in `cmd/stoke/main.go` — reads last N `policy.check` / `policy.denied` events from the session event log (same source streamjson writes to), renders tabular: `ts | decision | action | resource | reasons`. Exits 0.
+11. [ ] Add CLI subcommand `stoke policy trace --last-N <int>` in `cmd/r1/main.go` — reads last N `policy.check` / `policy.denied` events from the session event log (same source streamjson writes to), renders tabular: `ts | decision | action | resource | reasons`. Exits 0.
 
 12. [ ] Create in-memory cedar-agent emulator `internal/policy/testing/emulator.go` — httptest.Server with configurable `DecisionFn func(req Request) Result`. Export `NewEmulator(DecisionFn) *Emulator` with `.URL() string` for test wiring. Used by integration tests.
 
@@ -394,4 +394,4 @@ go build ./cmd/stoke
 
 19. [ ] Add package godoc in `internal/policy/doc.go` — explain three backends, fail-closed invariant, PARC JSON shape with verbatim RT-02 example, YAML grammar summary, performance note (4-11us Cedar eval, no cache v1).
 
-20. [ ] Verify build + tests: `go build ./cmd/stoke && go test ./internal/policy/... && go vet ./internal/policy/...` all pass. Run acceptance bash commands from section above; confirm each exit/grep-filter matches spec.
+20. [ ] Verify build + tests: `go build ./cmd/r1 && go test ./internal/policy/... && go vet ./internal/policy/...` all pass. Run acceptance bash commands from section above; confirm each exit/grep-filter matches spec.

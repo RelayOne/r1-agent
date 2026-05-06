@@ -1,348 +1,279 @@
 # Feature Map
 
-This is the current feature inventory for r1, organized by what each
-capability lets a user **do**. Status sections at the end of each group
-classify items as Done / In Progress / Scoped / Scoping / Potential-On
-Horizon. The eight cortex / lanes / multi-surface specs live in the Scoped
-sections, with a forward-link to the spec file in `specs/`.
-
-## What r1 lets you do
-
-A user-facing readout, before any feature table:
-
-- **Run a coding task end-to-end** — type a free-text task or load a
-  `plan.json`; r1 plans, executes, verifies, and commits without a hand on
-  the wheel.
-- **Watch the agent think in parallel** — a half-dozen specialist Lobes
-  (memory recall, plan update, rule check, clarifying questions, memory
-  curator, WAL keeper) run concurrently with the main thread, sharing full
-  context, surfacing findings as Notes.
-- **Steer mid-turn without losing the partial work** — type something while
-  the agent is streaming; an LLM-driven Router decides whether to interrupt
-  (drop-partial), steer (soft note), queue a separate mission, or just chat.
-- **Switch between workspaces from one UI** — a single `r1d` daemon hosts N
-  concurrent sessions, each bound to its own working directory. Switch
-  projects without spawning processes; sessions persist across reconnects
-  and across daemon restarts via journaled events.
-- **Use the surface that fits the moment** — Bubble Tea TUI, web chat in
-  Cursor 3 "Glass" style, or a Tauri 2 desktop app. Same protocol, same
-  state, same lanes.
-- **Drive r1 from another agent** — every UI action has a documented
-  idempotent schema-validated MCP tool. Your Claude or Codex agent can
-  start a session, send messages, kill a runaway lane, publish a Note to
-  the Workspace, snapshot the TUI, and read back lane events without any
-  human in the loop.
-- **Trust the harness** — verification descent refuses "done" without
-  evidence; honeypot gates abort end-of-turn on canary leaks; protected-file
-  and scope checks block merges; a content-addressed ledger records every
-  decision; signed skill packs verify before runtime registration.
+Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged state of specs 1-9 + the 9 deployed Cloud Run SaaS services + the four final-sweep PRs (#168/#169/#170/#171, sync to `main` in commit `242af4a8`).
 
 ## Mission Runtime
 
-The original thesis: one strong implementer per task, verification descent
-that doesn't believe self-reports, adversarial review across model families,
-content-addressed evidence.
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| Plan / execute / verify / review loop | One strong implementer + adversarial cross-model reviewer is more reliable than loose multi-agent consensus | Done | `internal/app/`, `internal/workflow/`, `internal/mission/`, `internal/verify/`, `internal/critic/`, `internal/convergence/` |
+| Adversarial review posture | Refuses to call work "done" without evidence; gates on AC + git state + tool-call log | Done | `internal/critic/`, `internal/convergence/`, `internal/engine/` |
+| Content-addressed evidence model | Every node has `sha256:<hex>` content ID; survives daemon restart via WAL replay | Done | `internal/ledger/`, `internal/bus/`, `internal/session/` |
+| Five-provider model fallback | Provider-agnostic; degrades from Claude → Codex → OpenRouter → direct API → lint-only | Done | `internal/model/`, `internal/subscriptions/` |
+| Cost-aware resolver + budget enforcement | Blocks turns when over-budget; per-task cost ticks journaled | Done | `internal/costtrack/`, `internal/model/CostAwareResolve` |
+| Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases emitted; layered machine-mechanical defense against LLM self-reduction | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
+
+## Cortex — Parallel Cognition (specs 1, 2)
 
 | Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Plan/execute/verify/review workflow | Keeps every agent output tied to explicit verification gates | Done | `app/`, `workflow/`, `verify/` |
-| Adversarial cross-model reviewer | Reviewer dissent blocks merge; Claude implements → Codex reviews (or vice versa) | Done | `critic/`, `convergence/`, `model.CrossModelReviewer()` |
-| Verification descent ladder | Anti-deception contract + forced self-check + ghost-write detector + per-file repair cap (3) | Done | `verify/`, `taskstate/`, hooks |
-| Honeypot pre-end-turn gate | Canary, markdown-image exfil, chat-template-token leak, destructive-without-consent | Done | `agentloop/`, `hooks/` |
-| Speculative parallel execution | 4 strategies in parallel, pick the winner; gated by `--specexec` | Done | `specexec/` |
-| GRPW priority + file-scope conflict | Tasks with most downstream work dispatch first; conflicts respected | Done | `scheduler/` |
-| Failure fingerprint dedup + retry intelligence | 10 failure classes; same-error-twice escalation; clean-worktree per retry | Done | `failure/`, `errtaxonomy/` |
-| Soft-pass AC after 2× `ac_bug` verdicts | When reviewers keep blaming the AC, escalate rather than spin | Done | `convergence/` |
+| Workspace + Lobe substrate | GWT-style shared mutable view; Lobes share full context with main thread (no subagent isolation) | Done | `internal/cortex/`, spec 1 |
+| MemoryRecallLobe | Surfaces top-3 prior memory + wisdom hits as `info` Notes per round | Done | `internal/cortex/lobes/memoryrecall/` |
+| WALKeeperLobe | Drains every hub event into durable WAL; survives daemon restart | Done | `internal/cortex/lobes/walkeeper/` |
+| RuleCheckLobe | Maps supervisor-rule fires to Notes; `trust.*` and `consensus.dissent.*` are `critical` and refuse `end_turn` | Done | `internal/cortex/lobes/rulecheck/` |
+| PlanUpdateLobe | Proposes `plan.json` deltas every 3rd turn or on action-verb input; auto-applies edits | Done | `internal/cortex/lobes/planupdate/` |
+| ClarifyingQLobe | Drafts up to 3 clarifying questions when ambiguity is detected; surfaces at idle | Done | `internal/cortex/lobes/clarifyq/` |
+| MemoryCuratorLobe | Extracts "should-remember" facts every 5th turn; privacy filter drops `private`-tagged messages | Done | `internal/cortex/lobes/memorycurator/` |
+| AntiTruncLobe | Publishes `critical` Notes when truncation phrases or scope underdelivery detected | Done | `internal/cortex/lobes/antitrunc/`, spec 9 |
+| Drop-partial interrupt | Cancellation atomic; never persist partial assistant messages | Done | `internal/cortex/interrupt.go` |
+| Pre-warm cache pump | `max_tokens=1` warming request every 4 min; keeps Anthropic prompt-cache breakpoint hot (~50% prompt-cost savings) | Done | `internal/cortex/prewarm.go` |
+| Workspace persistence + Replay | Notes written through to durable bus; restored on session resume | Done | `internal/cortex/persist.go` |
+| Router (Haiku 4.5) | On mid-turn user input, picks between `interrupt`, `steer`, `queue_mission`, `just_chat` | Done | `internal/cortex/router.go` |
 
-## Governance & Evidence
+## Lanes — Cross-Surface UI Primitive (spec 3)
 
 | Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Content-addressed ledger | Append-only Merkle-chained graph; 16 node-type prefixes; no updates, no deletes | Done | `ledger/`, `ledger/nodes/`, `ledger/loops/` |
-| Durable event bus | WAL-backed pub/sub with hooks, delayed events, parent-hash causality | Done | `bus/` |
-| STOKE envelope v1.0 | Wire-format common across CLI/TUI/web/MCP — `stoke_version`, `instance_id`, `trace_parent`, optional `ledger_node_id` | Done | `docs/stoke-protocol.md` |
-| Supervisor rules engine | 30 deterministic rules across 10 categories (consensus, drift, hierarchy, research, skill, snapshot, SDM, cross-team, trust, lifecycle); 3 per-tier manifests | Done | `supervisor/`, `supervisor/rules/*` |
-| Consensus loop tracker | 7-state machine (PRD → SOW → ticket → PR → landed) | Done | `ledger/loops/` |
-| Snapshot protection | Pre-merge baseline manifest; restore-on-failure | Done | `snapshot/` |
-| Bridge adapters (v1 → v2) | Cost / verify / wisdom / audit emit bus events + write ledger nodes | Done | `bridge/` |
-| Ledger redaction with two-level Merkle | Content tier wipes preserve chain integrity forever | Scoped | `specs/ledger-redaction.md` |
+| Six lane event types | Universal wire format for every cognitive thread, tool call, mission task | Done | `internal/streamjson/lane.go` |
+| Six-state FSM | `pending → running → blocked → done | errored | cancelled` + orthogonal `pinned` flag | Done | `internal/streamjson/lane.go` |
+| Monotonic per-session `seq` | Single-writer goroutine; `seq=0` reserved for `session.bound` | Done | `internal/streamjson/lane.go` |
+| ULID lane_id / event_id | Time-ordered + globally unique | Done | `oklog/ulid/v2` |
+| 5 MCP tools | `r1.lanes.list/.subscribe/.get/.kill/.pin` make every lane action agent-driveable | Done | `internal/mcp/lanes_server.go` |
+| HTTP+SSE endpoint `/v1/lanes/events` | Server-Sent Events with `Last-Event-ID` replay | Done | `internal/server/sse/` |
+| WS upgrade `/v1/lanes/ws` | `Sec-WebSocket-Protocol: r1.lanes.v1, <token>` + Origin pinning | Done | `internal/server/ws/` |
+| JSON-RPC 2.0 `session.subscribe` | WAL replay; ordered before live events | Done | `internal/server/jsonrpc/` |
+| Backward-compat dual emit | `session.delta` co-emitted with `lane.delta` for the main lane during compat window | Done | spec 3 §Out of scope |
+| Performance | 3 µs/event end-to-end; 2.3 µs/event with 5 subscribers (target 50/100 µs) | Done | `bench/lanes_bench_test.go` |
 
-## Cortex — Parallel Cognition (Scoped)
+## TUI — Bubble Tea v2 (spec 4)
 
-The new capability the v1 cortex / lanes / multi-surface scope adds. The
-substrate (spec 1) and six v1 Lobes (spec 2) are separated so the empty
-stage compiles and ships before any specific Lobe wires up.
-
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| `internal/cortex/` package — Workspace + Lobe + Round + Spotlight + Router | The shared GWT-style stage on which Lobes publish Notes | Scoped | `specs/cortex-core.md` |
-| Drop-partial interrupt protocol | Interrupt cancels per-turn ctx, drains SSE, never persists partial assistant message | Scoped | `specs/cortex-core.md` §"Drop-partial interrupt protocol" |
-| 30s ping-based idle watchdog | Auto-cancel on connection stalls during streaming | Scoped | `specs/cortex-core.md` |
-| Cache pre-warm pump | `max_tokens=1` warming request on Start + every 4 minutes (5-min TTL minus margin) | Scoped | `specs/cortex-core.md` §"Cache pre-warm pump" |
-| LobeSemaphore + per-turn token budget | 5 concurrent LLM Lobes default, hard cap 8, 30%-of-main-output cap | Scoped | `specs/cortex-core.md` §"Budget controller" |
-| Workspace.Replay from durable WAL | Daemon restart preserves Notes; idempotent | Scoped | `specs/cortex-core.md` §"Workspace persistence" |
-| Router (Haiku 4.5) — 4 tools | `interrupt`, `steer`, `queue_mission`, `just_chat` decide mid-turn user-input handling | Scoped | `specs/cortex-core.md` §"The Router" |
-| MidturnCheckFn + PreEndTurnCheckFn composition | Cortex hooks compose with operator hooks; critical-Note short-circuit | Scoped | `specs/cortex-core.md` §"Integration points" |
-| MemoryRecallLobe (deterministic) | TF-IDF over memory + wisdom corpora; surfaces top-3 relevant entries per round | Scoped | `specs/cortex-concerns.md` §1 |
-| WALKeeperLobe (deterministic) | Drains every hub event to durable WAL with backpressure shedding | Scoped | `specs/cortex-concerns.md` §2 |
-| RuleCheckLobe (deterministic) | Converts supervisor-rule fires into Notes; trust/dissent → critical | Scoped | `specs/cortex-concerns.md` §3 |
-| PlanUpdateLobe (Haiku 4.5) | Auto-applies edits; queues adds and removes for user confirm | Scoped | `specs/cortex-concerns.md` §4 |
-| ClarifyingQLobe (Haiku 4.5) | Up to 3 clarifying questions per turn; surfaces at idle | Scoped | `specs/cortex-concerns.md` §5 |
-| MemoryCuratorLobe (Haiku 4.5) | Auto-writes only `fact` category; queues other categories; honors `private` tag; `~/.r1/cortex/curator-audit.jsonl` | Scoped | `specs/cortex-concerns.md` §6 |
-| Per-Lobe enable + escalation flags in `~/.r1/config.yaml` | Operator opt-out per Lobe; Sonnet escalation gated | Scoped | `specs/cortex-concerns.md` §"Privacy & Opt-Out" |
+| Adaptive lane columns | Columns when `width >= n*32`, vertical stack otherwise | Done | `internal/tui/lanes/` |
+| Focus mode 65/35 split | Primary lane + peers visible | Done | `internal/tui/lanes/` |
+| 250 ms coalesce | Single fan-in `chan laneTickMsg`; ≤10 Hz visible rerender | Done | `internal/tui/lanes/runProducer` |
+| Render-string cache | Diff-only repaint per lane | Done | `internal/tui/lanes/Model` |
+| Keybindings | `1`–`9` jump-to-lane, `tab`/`shift-tab` cycle, `j`/`k` move, `enter` focus, `esc` exit, `x`+`y` kill, `K` kill-all, `?` help | Done | `internal/tui/lanes/keymap` |
+| `--lanes` flag | Wired into `r1 chat-interactive` | Done | `cmd/r1/chat_interactive.go` |
+| 72 tests `-race` clean | Catches lane FSM regressions | Done | `internal/tui/lanes/*_test.go` |
 
-## Lanes — Cross-Surface Wire Format (Scoped)
+## Web UI — Cursor 3 Glass (spec 6)
 
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Six event types (`lane.created`/`status`/`delta`/`cost`/`note`/`killed`) | Exhaustive wire surface — adding a seventh is a version bump | Scoped | `specs/lanes-protocol.md` §4 |
-| Lane state machine (`pending → running → blocked → done\|errored\|cancelled`) | Cross-surface vocabulary; illegal transitions rejected `-32099` | Scoped | `specs/lanes-protocol.md` §3 |
-| `pinned` orthogonal flag | Surfaces render pinned lanes above unpinned; persists across reconnect | Scoped | `specs/lanes-protocol.md` §3.2 |
-| JSON-RPC 2.0 over WS / NDJSON over stdout / HTTP+SSE fallback | One protocol; three transports | Scoped | `specs/lanes-protocol.md` §5 |
-| Per-session monotonic `seq` | Replay via `Last-Event-ID` (SSE) or `since_seq` (JSON-RPC) | Scoped | `specs/lanes-protocol.md` §6 |
-| WS subprotocol `r1.lanes.v1` | Version handshake; CSWSH defense | Scoped | `specs/lanes-protocol.md` §5.4 |
-| Five MCP tools (`r1.lanes.list / subscribe / get / kill / pin`) | Every lane action is agent-driveable | Scoped | `specs/lanes-protocol.md` §7 |
-| Backwards-compat with `desktop/IPC-CONTRACT.md` | Existing 11 verbs untouched; `session.delta` co-emits with `lane.delta` for one minor release | Scoped | `specs/lanes-protocol.md` §9 |
+| `<ThreeColumnShell>` | Sessions / Chat / Lanes layout with collapsible per-daemon rails | Done | `web/src/components/layout/ThreeColumnShell.tsx` |
+| `<SessionList>` + `<SessionItem>` | Per-daemon session sidebar; status dots; relative-time | Done | `web/src/components/session/` |
+| `<NewSessionDialog>` | zod-validated form for r1d.session.create | Done | `web/src/components/session/NewSessionDialog.tsx` |
+| `<ChatPane>` | Swaps message column ↔ tile grid by pin state | Done | `web/src/components/chat/ChatPane.tsx` |
+| `<MessageLog>` | `react-virtual`; sticky-bottom scroll; aria-live polite on streaming bubble | Done | `web/src/components/chat/MessageLog.tsx` |
+| `<MessageBubble>` | Routes text/tool/reasoning/plan parts to specific cards | Done | `web/src/components/chat/MessageBubble.tsx` |
+| `<ToolCard>` | Collapsible (default-collapsed once `output-available`); copy button | Done | `web/src/components/chat/ToolCard.tsx` |
+| `<ReasoningCard>` | Dim collapsible; reduced-motion shimmer while streaming | Done | `web/src/components/chat/ReasoningCard.tsx` |
+| `<PlanCard>` | Live-updating from PlanUpdateLobe; per-item testids | Done | `web/src/components/chat/PlanCard.tsx` |
+| `<DiffCard>` | `react-diff-view`; consolidated per-lane diff | Done | `web/src/components/chat/DiffCard.tsx` |
+| `<Composer>` | Cmd/Ctrl+Enter send; streaming-aware disable | Done | `web/src/components/chat/Composer.tsx` |
+| `<StopButton>` | Swap with Send during streaming; sends `interrupt` envelope | Done | `web/src/components/chat/StopButton.tsx` |
+| `<LanesSidebar>` + `<LaneRow>` | Right-rail lane index; Pin / Kill per lane | Done | `web/src/components/lanes/LanesSidebar.tsx` |
+| `<LaneTile>` | Live render-string with sticky-bottom diff-only update | Done | `web/src/components/lanes/LaneTile.tsx` |
+| `<TileGrid>` | 1 / 1×2 / 1×3 / 2×2 auto-layout; HTML5 drag + Cmd+Shift+Arrow keyboard reorder; per-tile collapse | Done | `web/src/components/lanes/TileGrid.tsx` |
+| `<WorkdirBadge>` + `<WorkdirPickerDialog>` | FSA `showDirectoryPicker()` + IndexedDB persistence + manual fallback | Done | `web/src/components/workdir/` |
+| `<StatusBar>` | Live connection / latency / cost / lane counts | Done | `web/src/components/StatusBar.tsx` |
+| `<HighContrastToggle>` + Settings page | Theme + lane filters + keybindings cheat-sheet | Done | `web/src/components/settings/` |
+| `<GlobalKeybindings>` | Cmd+1..9 daemon switch, Cmd+Shift+S toggle rail, `?` help, `/` focus, Esc stop | Done | `web/src/components/GlobalKeybindings.tsx` |
+| `<ConnectionLostBanner>` | Hard-cap reconnect alert (10-attempt cap) | Done | `web/src/components/ConnectionLostBanner.tsx` |
+| react-router v7 nested routes | `daemon → session → lane` deep-linkable URLs | Done | `web/src/routes/index.tsx` |
+| ResilientSocket | 250 ms→8 s exponential backoff, jitter ±20%, 10-attempt cap, Last-Event-ID replay | Done | `web/src/lib/api/ws.ts` |
+| AuthClient mintWsTicket | Cached ticket with skew-based refresh | Done | `web/src/lib/api/auth.ts` |
+| zustand per-daemon store | One store instance per daemon connection; envelope coalescer at rAF | Done | `web/src/lib/store/daemonStore.ts` |
+| Streamdown markdown | Partial-markdown handling; Shiki syntax highlighting; KaTeX math; Mermaid diagrams | Done | `web/src/lib/render/markdown.tsx` |
+| Coverage manifest | Walks src/ at test time; fails if any source lacks sibling `.test.tsx` | Done | `web/src/test/coverage-manifest.test.ts` |
+| Stories manifest | Same for `.stories.tsx` (component-only) | Done | `web/src/test/stories-manifest.test.ts` |
+| Custom eslint rule require-data-testid | Every interactive JSX element must have `data-testid`; build-break otherwise | Done | `web/eslint-rules/require-data-testid.js` |
+| CSP zero-violation enforcement | Playwright + axe-core gate on every route across chromium + firefox + webkit | Done | `web/src/test/e2e/csp-axe.spec.ts` |
+| 9 `*.agent.feature.md` Playwright MCP flows | Spec 8 dependency: happy-path-chat, multi-instance-switch, lane-pin-tile-mode, interrupt-mid-stream, reconnect-replay, workdir-picker-fsa, deep-link-lane, a11y-keyboard-only, csp-no-violations | Done | `web/src/test/e2e/*.agent.feature.md` |
 
-## Surfaces — TUI, Web, Desktop (Scoped)
+## Desktop — Tauri 2 Augmentation (spec 7)
 
-### TUI (`internal/tui/lanes/` — Bubble Tea v2)
-
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Adaptive lane columns vs vertical stack | Wide terminal → up to 4 columns (`width / 32`); narrow → vertical | Scoped | `specs/tui-lanes.md` §"Layout Algorithm" |
-| Focus mode (65/35 main+peers) | `enter` zooms a lane; peers stack on the right | Scoped | `specs/tui-lanes.md` §"Layout" |
-| Per-lane render-string cache + diff-only repaint | 200 Hz upstream → ≤5 Hz model receives | Scoped | `specs/tui-lanes.md` §"Render-Cache Contract" |
-| Single fan-in `chan laneTickMsg` + `waitForLaneTick` | Canonical realtime example; producer goroutine coalesces 200-300 ms | Scoped | `specs/tui-lanes.md` §"waitForLaneTick" |
-| Status vocabulary (D-S1 glyphs + AdaptiveColor) | `pending(·)/running(▸)/blocked(⏸)/done(✓)/errored(✗)/cancelled(⊘)` | Scoped | `specs/tui-lanes.md` §"Styles" |
-| Keybindings — jump, cycle, focus, kill, kill-all, help | `1`–`9`, `tab`, `enter`, `esc`, `x`, `K`, `?` | Scoped | `specs/tui-lanes.md` §"Keybinding Map" |
-| Local IPC + WS transports | Embedded mode dials `~/.r1/r1d.sock`; remote dials WS | Scoped | `specs/tui-lanes.md` §"Subscription Wiring" |
-| `NO_COLOR` / `TERM=dumb` graceful | Glyph alone disambiguates status | Scoped | `specs/tui-lanes.md` §"Testing" |
+| Discovery-or-spawn daemon transport | External `r1 serve` is primary; bundled-binary sidecar fallback on first run | Done | `desktop/src-tauri/src/discovery.rs` |
+| `tauri-plugin-websocket` | Sidesteps Windows mixed-content block | Done | `desktop/src-tauri/Cargo.toml` |
+| `tauri-plugin-store` | Per-session workdir (NOT localStorage) | Done | `desktop/src-tauri/src/sessionstore.rs` |
+| `tauri::ipc::Channel<LaneEvent>` per session | High-frequency lane stream at 10 Hz; sidesteps global event bus | Done | `desktop/src-tauri/src/lanes.rs` |
+| Lane pop-out via `Cmd+\` | Pops a lane into its own `WebviewWindow` | Done | `desktop/src-tauri/src/popout.rs` |
+| Native menu bar | Per-OS native menu structure | Done | `desktop/src-tauri/src/menu.rs` |
+| Auto-start option per OS | `tauri-plugin-autostart` | Done | `desktop/src-tauri/src/autostart.rs` |
+| Component sharing | npm workspace `packages/web-components/` (shared with web) | Done | `packages/web-components/` |
+| 110 cargo tests `-race` clean | Validates Rust host code | Done | `desktop/src-tauri/src/*_test.rs` |
+| 4 Playwright e2e | multi-session, lanes-streaming, popout-lane, daemon-discovery | Done | `desktop/tests/agent/*.spec.ts` |
 
-### Web (`web/` — React 18 + Vite 6 + Tailwind 3 + shadcn/ui)
+## r1d Daemon — One Process, N Sessions (spec 5)
 
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Three-column Cursor 3 "Glass" layout | Session list left, chat center, lanes sidebar right | Scoped | `specs/web-chat-ui.md` §"Component Catalog" |
-| Multi-instance daemon switcher | `Cmd+1..9` switch; one zustand store per daemon | Scoped | `specs/web-chat-ui.md` §"Routing" |
-| Streaming markdown via `vercel/streamdown` | Graceful partial-Markdown; Shiki, KaTeX, Mermaid, rehype-harden | Scoped | `specs/web-chat-ui.md` §"Stack" |
-| `@ai-sdk/elements` cards | Tool, Reasoning, Plan, CodeBlock cards default-collapse on `output-available` | Scoped | `specs/web-chat-ui.md` |
-| AI SDK 6 `useChat` hook | Maps directly to lane envelope; transport custom-wired to WS | Scoped | `specs/web-chat-ui.md` |
-| Tile mode (1×2 / 1×3 / 2×2) | Pin 2-4 lanes into the center pane for parallel watching | Scoped | `specs/web-chat-ui.md` §"TileGrid" |
-| WS subprotocol-token auth + Last-Event-ID replay | Reconnect with backoff + jitter; 4401 auto-mints fresh ticket | Scoped | `specs/web-chat-ui.md` §"WebSocket Reconnect" |
-| `ResilientSocket` with state machine | `idle→connecting→open→reconnecting→closed`; 30s ping/30s pong watchdog | Scoped | `specs/web-chat-ui.md` |
-| Workdir picker (FSA + IndexedDB persistence + manual fallback) | Browsers without FSA fall back to typed path with allowed-roots autocomplete | Scoped | `specs/web-chat-ui.md` §"WorkdirPickerDialog" |
-| CSP locked to loopback | `connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*` | Scoped | `specs/web-chat-ui.md` §"Build Pipeline" |
-| `data-testid` lint + axe-core e2e | Every interactive element accessible to agents and screen readers | Scoped | `specs/web-chat-ui.md` §"Accessibility" |
+| Watchman pattern (singleton on-demand) | Zero idle resource cost; spawn-on-demand from CLI / browser / desktop | Done | `internal/server/`, `cmd/r1/serve_cmd.go` |
+| Single-instance via `gofrs/flock` | `~/.r1/daemon.lock` advisory lock | Done | `internal/daemonlock/` |
+| Discovery file `~/.r1/daemon.json` | Atomic mode-0600 write + 32-byte hex token rotated on every start | Done | `internal/daemondisco/` |
+| Unix socket / Windows named pipe | `$XDG_RUNTIME_DIR/r1/r1.sock` mode 0600 + peer-cred OR Windows SDDL granting current SID + LocalSystem | Done | `internal/server/ipc/` |
+| Loopback HTTP+WS | `127.0.0.1:0` + Origin pin + Host pin + WS subprotocol token + 256-bit Bearer | Done | `internal/server/{http,ws}/` |
+| Per-OS service unit | `kardianos/service` — launchd / systemd-user / Windows SCM | Done | `internal/serviceunit/` |
+| `os.Chdir` audit + CI lint | Mandatory gate before multi-session enabled; one stray `os.Chdir` would silently leak workdir | Done | `tools/cmd/chdir-lint/`, `make lint-chdir` |
+| Per-session journal | `<workdir>/.r1/sessions/<id>/journal.ndjson` (fsync on terminal events) | Done | `internal/journal/` |
+| Sessions index | `~/.r1/sessions-index.json` atomic + fsync | Done | `internal/server/sessionhub/` |
+| Daemon-restart replay | Replays journal → emits `daemon.reloaded` to reconnecting clients | Done | `internal/server/sessionhub/` |
+| 22 JSON-RPC methods | session.start/pause/resume/cancel/send/subscribe/unsubscribe, lanes.list/kill, cortex.notes, daemon.info/shutdown/reload_config | Done | `internal/server/jsonrpc/` |
+| Per-subscription monotonic seq | Replay-before-live ordering | Done | `internal/server/sessionhub/` |
+| 22 tests `-race` clean | Multi-session × multi-workdir validation | Done | `internal/server/sessionhub/*_test.go` |
+| Soak test | 50 sessions × 100 messages; 262 MB/s journal throughput; 852 µs p99 dispatch latency | Done | `bench/r1d_serve_bench_test.go` |
+| `r1 serve --install/--uninstall/--status` | Opts into always-on operation | Done | `cmd/r1/serve_cmd.go` |
 
-### Desktop (`desktop/` — Tauri 2 augmentation)
+## Agentic Test Harness (spec 8)
 
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Daemon discovery + sidecar fallback | Probes `~/.r1/daemon.json`; spawns bundled `r1` via `ShellExt::sidecar` on failure | Scoped | `specs/desktop-cortex-augmentation.md` §5 |
-| `<DaemonStatus>` banner | Green=external, blue=sidecar, yellow=reconnecting, red=offline | Scoped | `specs/desktop-cortex-augmentation.md` §5 |
-| Per-session workdir via `tauri-plugin-store` | Persists across restart; the Go side binds it to `cmd.Dir` | Scoped | `specs/desktop-cortex-augmentation.md` §7 |
-| `tauri::ipc::Channel<LaneEvent>` per session | Multiplexes all lanes; 10 Hz, ring-buffer drops `lane.delta` on overflow | Scoped | `specs/desktop-cortex-augmentation.md` §8 |
-| Pop-out lane via `Cmd+\` | Opens a `WebviewWindow` rendering only that lane; survives primary close | Scoped | `specs/desktop-cortex-augmentation.md` §9 |
-| Native menu bar (File/Edit/View/Session/Tools/Window/Help) | Cmd+N / Cmd+O / Cmd+P / Cmd+1 / Cmd+2 / Cmd+\ | Scoped | `specs/desktop-cortex-augmentation.md` §9 |
-| `tauri-plugin-autostart` (login items / registry / .desktop) | Settings → "Start at login" toggle | Scoped | `specs/desktop-cortex-augmentation.md` §10 |
-| `r1 serve --install` (kardianos/service) | Daemon auto-start independent of UI auto-start | Scoped | `specs/desktop-cortex-augmentation.md` §10 |
-| Shared `packages/web-components/` workspace package | `LaneCard`, `LaneSidebar`, `LaneDetail`, `PoppedLaneApp` consumed by both web and desktop | Scoped | `specs/desktop-cortex-augmentation.md` §4 |
+| 38-tool MCP catalog across 10 categories | Every UI action reachable through MCP | Done | `internal/mcp/r1_server.go`, `r1_server_catalog.go` |
+| Slack-style envelope | Predictable wire shape `{ok, data?, error_code?, error_message?, links?}` | Done | `internal/mcp/envelope.go` |
+| `internal/stokerr/` 10-code taxonomy | No raw Go errors leak at the wire | Done | `internal/mcp/stokerr_map.go` |
+| `r1 mcp serve --print-tools [--markdown]` | Lint + docs generator have a stable input | Done | `cmd/r1/mcp.go` |
+| `internal/tui/teatest_shim.go` | Bubble Tea drivable through MCP without a terminal emulator | Done | `internal/tui/teatest_shim.go` |
+| `A11yEmitter` + JSONPath evaluator | Synthetic a11y trees + structural assertions; `lipgloss.SetColorProfile(termenv.Ascii)` for byte determinism | Done | `internal/tui/a11y.go`, `internal/tui/jsonpath.go` |
+| `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched via heuristics + per-file `## Tool mapping` blocks | Done | `tools/agent-feature-runner/` |
+| 8 seed feature fixtures across 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
+| `lint-view-without-api` scanner | UI without API is a build break | Done | `tools/lint-view-without-api/` |
+| Make targets | `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | Done | `Makefile` |
+| `docs/AGENTIC-API.md` + D-A1..D-A5 | External-agent contract + acceptance decisions | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
+| Auto-snapshot mitigation | Lint-drift mitigation per audit | Done | `tools/lint-view-without-api/snapshot.go` |
 
-## r1d Daemon (Scoped — spec 5)
+## Anti-Truncation Enforcement (spec 9)
 
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Per-user singleton, on-demand | Watchman pattern; `r1 chat` forks `r1 serve` if the IPC endpoint is missing | Scoped | `specs/r1d-server.md` §1 |
-| N concurrent sessions as goroutines | Each session carries `SessionRoot string` threaded via `cmd.Dir` | Scoped | `specs/r1d-server.md` §8 |
-| Single-instance enforcement | `gofrs/flock` on `~/.r1/daemon.lock` plus socket exclusivity | Scoped | `specs/r1d-server.md` §11 |
-| Discovery file `~/.r1/daemon.json` | Mode 0600; pid + sock + port + token; rotate-on-start | Scoped | `specs/r1d-server.md` §7 |
-| Unix socket / Windows named pipe | Peer-cred check (no token needed); 0600 socket; 0700 parent dir | Scoped | `specs/r1d-server.md` §7.3 |
-| Loopback HTTP+WS listener | Random ephemeral port; Origin pin + Host pin + WS subprotocol token | Scoped | `specs/r1d-server.md` §7 |
-| 256-bit Bearer token | `Authorization: Bearer` (HTTP) or `Sec-WebSocket-Protocol: r1.bearer, <t>` (WS) | Scoped | `specs/r1d-server.md` §7.1 |
-| Per-session `journal.ndjson` | Append-only; fsync on terminal events; replay on daemon restart | Scoped | `specs/r1d-server.md` §9 |
-| Hot-upgrade — restart-required, transparent | Replay each session's journal; emit `daemon.reloaded` to reconnecting clients | Scoped | `specs/r1d-server.md` §11 |
-| `r1 serve --install` (`kardianos/service`) | launchd / systemd-user / Windows SCM unit | Scoped | `specs/r1d-server.md` §12 |
-| `os.Chdir` audit + CI lint | Hard gate before multi-session is enabled; per-session sentinel panics on mismatch | Scoped | `specs/r1d-server.md` §10 |
-| Backwards-compat aliases | `r1 daemon ...` and `r1 agent-serve ...` keep working | Scoped | `specs/r1d-server.md` §14 |
+| Layer 1: Phrase regex catalog | 14 truncation + false-completion patterns, hand-tuned against legitimate-text corpus | Done | `internal/antitrunc/phrases.go` |
+| Layer 2: Scope-completion gate | Refuses end_turn while plan or in-progress spec items unchecked | Done | `internal/antitrunc/gate.go`, `internal/antitrunc/scopecheck.go` |
+| Layer 3: AntiTruncLobe | Publishes `critical` Workspace Notes that block end_turn | Done | `internal/cortex/lobes/antitrunc/` |
+| Layer 4: Supervisor rules | `truncation_phrase_detected`, `scope_underdelivery`, `subagent_summary_truncation` | Done | `internal/supervisor/rules/antitrunc/` |
+| Layer 5: agentloop wiring | Gate composes BEFORE all other end-turn hooks | Done | `internal/agentloop/antitrunc.go` |
+| Layer 6: post-commit git hook | Observes false-completion phrases in commit bodies; writes `audit/antitrunc/post-commit-<sha>.md` | Done | `scripts/git-hooks/post-commit-antitrunc.sh` |
+| Layer 7: CLI + MCP tool | `r1 antitrunc verify -n N` + `r1.antitrunc.verify` MCP tool; classifies commits Verified / Unverified / Lying; exits non-zero on lying | Done | `cmd/r1/antitrunc_cmd.go`, `internal/mcp/r1_server.go` |
+| `r1 antitrunc tail` | Streams audit/antitrunc/ in real time | Done | `cmd/r1/antitrunc_cmd.go` |
+| 1M-iteration soak | 0 FP / 0 FN / 499K TP at 16,891 iter/sec | Done | `internal/antitrunc/soak_extended_test.go` (build tag `soak`) |
+| Cortex-mission integration test | `TestMissionIntegration_GateRefusesAndForcesContinuation` end-to-end | Done | `internal/cortex/lobes/antitrunc/integration_test.go` |
+| `docs/ANTI-TRUNCATION.md` | Operator guide; documents override path | Done | `docs/ANTI-TRUNCATION.md` |
 
-## Agentic Test Harness — Every UI Action Is a Tool (Scoped — spec 8)
+## Final Sweep — Skill Lifecycle, Signed Redaction, Tracebundle v2, Release-Rehearsal CI (PRs #168 / #169 / #170 / #171)
 
-| Feature | Benefit | Status | Spec |
+| Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| `r1.session.*` tools (`start / send / cancel / list / get / resume`) | Whole-session control reachable to external agents | Scoped | `specs/agentic-test-harness.md` §4.1 |
-| `r1.lanes.*` tools (`list / subscribe / get / kill / pin`) | Lane lifecycle and streaming | Scoped | `specs/agentic-test-harness.md` §4.2 |
-| `r1.cortex.*` tools (`notes / publish / lobes_list / lobe_pause / lobe_resume`) | Read the Workspace; publish Notes; pause Lobes | Scoped | `specs/agentic-test-harness.md` §4.3 |
-| `r1.mission.*`, `r1.worktree.*`, `r1.bus.tail`, `r1.verify.*` | Whole-runtime agent surface | Scoped | `specs/agentic-test-harness.md` §4.4-4.6 |
-| `r1.tui.*` tools (`press_key / snapshot / get_model`) via `teatest_shim.go` | TUI testable without a real terminal emulator | Scoped | `specs/agentic-test-harness.md` §4.7 |
-| Web tested via Playwright MCP | DOM/a11y-snapshot 12-17pp more reliable than vision-driven Computer Use | Scoped | `specs/agentic-test-harness.md` §3 |
-| Storybook MCP for component contracts | Every component story has role + accessible-name + state metadata | Scoped | `specs/agentic-test-harness.md` §3 |
-| Gherkin-flavored markdown (`*.agent.feature.md`) | Agent-readable scenarios; runner dispatches each step through MCP | Scoped | `specs/agentic-test-harness.md` §3 |
-| `tools/lint-view-without-api/` CI lint | Fails the build when an interactive component lacks an MCP counterpart | Scoped | `specs/agentic-test-harness.md` §5 |
-| `docs/AGENTIC-API.md` | Contract for external agents | Scoped | `specs/agentic-test-harness.md` §3 |
+| `concern.SkillCompactor` with `EvictionPolicy` | A turn never inherits stale skill text from a previous task; LRU drop frees only as much budget as needed; every eviction lands as a `SkillUnloaded` ledger node so the audit chain stays complete | Done | `internal/concern/skill_compactor.go`, `internal/skilltracker/tracker.go` (`EvictByCompactor`) |
+| `concern.LRUPolicy` (default) | Drops oldest-loaded skills first; stops as soon as freed tokens cover the budget overrun; tokens=0 entries are last-resort | Done | `internal/concern/skill_compactor.go` |
+| `workflow.SkillScopeCloser.OnPhaseExit` | Phase boundary — normal completion *or* abort — drops every skill loaded into the (stance, task) scope and emits `SkillUnloaded(reason="scope_exit")` per drop; idempotent | Done | `internal/workflow/skill_scope_closer.go`, `internal/skilltracker/tracker.go` (`CloseScope`) |
+| Signed redaction events (ed25519) | Every redaction logged to the ledger carries a tamper-evident signature; `Store.RedactionsForVerified` returns a `Verified` bool so the dashboard side panel renders "tampered" / "legacy unsigned" overlays distinctly; signer-swap attacks fail because the public-key fingerprint is part of the canonical signing form | Done | `internal/ledger/redact_sign.go`, `internal/ledger/redact_log.go` (`SignedRedactionEvent`) |
+| `LoadOrGenerateSigningKey` | First call generates the keypair under `<store-root>/redactions/sign-{priv,pub}.pem` (modes 0600 / 0644); subsequent calls reuse the persisted private; pub auto-restored from priv if missing | Done | `internal/ledger/redact_sign.go` |
+| `SignRecord` / `VerifyRecord` / `ErrSignatureMismatch` / `ErrUnsigned` | Distinct errors for the dashboard so "signature mismatch" renders red and "legacy unsigned entry" renders gray | Done | `internal/ledger/redact_sign.go` |
+| Tracebundle v2 — per-session filtering | `Store.ListNodesForSession(sid)` filters by `MissionID`; `Store.ListEdgesForSession(sid)` filters by `Edge.Metadata["session_id"]`; bundle exports become single-session-scoped instead of dumping the entire ledger | Done | `internal/ledger/store_session.go` |
+| Tracebundle v2 — chain-root hash | `Store.ChainRootHashForSession(sid)` returns a deterministic SHA256 chain over `(prev_hash || node_id || content_commitment)` sorted by `(CreatedAt, ID)`; downstream verifiers can recompute without reloading the ledger | Done | `internal/ledger/store_session.go` |
+| Tracebundle v2 — canonical manifest signing body | `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns deterministic bytes; cmd/r1-server's sign + verify paths and out-of-tree auditors share the same canonical input | Done | `internal/ledger/store_session.go` |
+| Production tracebundle adapter | `cmd/r1-server/tracebundle_source.go` is the production source for `GET /api/session/{id}/export.tracebundle`. Reads `LedgerDir` from the DB session row, opens the store, returns a `serveTracebundle` writer. (Spec D — D-UI2-7 — removed the prior `R1_SERVER_UI_V2` envelope gate.) | Done | `cmd/r1-server/tracebundle_source.go` |
+| Release-rehearsal Cloud Build trigger (push-to-main) | `r1-agent-e2e-rehearsal-main` fires on every push to `main` and runs the full Playwright + axe-core E2E flow against a freshly-built `r1-server`; red blocks any release that gates on this check | Done | `services/cloudbuild-e2e-trigger.yaml`, `services/cloudbuild-e2e.yaml` |
+| Release-rehearsal Cloud Build trigger (tag) | `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tag pushes; same flow; blocks tag promotion when red | Done | `services/cloudbuild-e2e-trigger.yaml` |
+| Manual GitHub Actions rehearsal | `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch the rehearsal from the Actions UI; calls `gcloud builds triggers run` against the main-branch trigger; workflow summary links to the Cloud Build console | Done | `.github/workflows/e2e-rehearsal-manual.yml` |
+| One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `relayone-488319` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
+
+## Hosted SaaS — `r1.run` (this session)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `services/r1-coord-api/` Go service | License-verify + telemetry-opt-in scaffold; Cloud SQL backed | Done (stubs; real auth pending Path-A Go port) | `services/r1-coord-api/main.go` |
+| `services/r1-docs/` Go service | Embeds docs/*.md; renders to HTML; CSP-locked | Done | `services/r1-docs/main.go` |
+| `services/r1-downloads-cdn/` Go service | Streams gs://relayone-488319-r1-releases/{env}/ via service account | Done | `services/r1-downloads-cdn/main.go` |
+| 9 Cloud Run services | dev/staging/prod for each of the 3 services; min-instances=1; instance billing; distroless static | Live | gcloud run services list |
+| 3 Cloud SQL Postgres 16 instances | r1-{prod,staging,dev}-pg, all RUNNABLE | Live | gcloud sql instances list |
+| Artifact Registry repo | us-central1-docker.pkg.dev/relayone-488319/r1 | Live | gcloud artifacts repositories list |
+| 6 Secret Manager placeholders | r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY} (operator must populate) | Pending real values | gcloud secrets list |
+| 9 domain mappings | platform/api/downloads × dev/staging/prod under r1.run | Created (DNS pending) | gcloud beta run domain-mappings list |
+| `services/cloudbuild-deploy.yaml` auto-deploy | Build + push + deploy + smoke /livez on push to main/staging/dev | Done | services/cloudbuild-deploy.yaml |
+| `services/scripts/setup-cloudbuild-triggers.sh` | Operator script to create the 3 deploy triggers | Done | services/scripts/setup-cloudbuild-triggers.sh |
+| `services/deploy.sh` | Manual deploy: `./services/deploy.sh {dev|staging|prod|all}` | Done | services/deploy.sh |
+| `scripts/setup-branch-protection.sh` | Operator script: dev + staging branch creation + protection rules | Done | scripts/setup-branch-protection.sh |
 
 ## Deterministic Skills
 
 | Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Skill manufacture (4-workflow pipeline + confidence ladder) | Reusable workflows become governed artifacts | Done | `internal/skillmfr/` |
-| Registry and selection | Runtime behavior maps to explicit skill assets | Done | `skill/`, `skillselect/` |
-| Pack lifecycle (`init`, `info`, `install`, `list`, `publish`, `search`, `update`) | Pack inspection, activation, discovery, and refresh operational | Done | `cmd/r1/skills_pack_cmd.go` |
-| `sign` and `verify` | Integrity controls for pack distribution | Done | `cmd/r1/skills_pack_cmd.go` |
-| HTTP registry — `r1 skills pack serve` | Stable read-only endpoints (`/healthz`, `/v1/packs`, archives) | Done | `cmd/r1/skills_pack_server.go` |
-| Runtime signed-pack verification | Refuses registration when signature is missing or invalid | Done | April 30 main-branch commit |
+| Skill manufacturing pipeline | Turns reusable workflows into governed artifacts | Done | `internal/skillmfr/` |
+| Registry + selection | Maps runtime behavior to explicit skill assets | Done | `internal/skill/`, `internal/skillselect/` |
+| `r1 skills pack init/info/install/list/publish/search/sign/verify/update/serve` | Full pack lifecycle | Done | `cmd/r1/skills_pack_cmd.go` |
+| HTTP pack registry | `r1 skills pack serve` exposes published packs | Done | `cmd/r1/skills_pack_server.go` |
+| Signed-pack runtime verification | Prevents runtime registration from ignoring pack integrity | Done | `internal/skill/verify.go` |
 
-## Runtime Helper Surfaces
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Ledger audit runtime | Lets deterministic flows query ledger-backed audit evidence | Done | `cmd/stoke-mcp/backends.go` |
-| Skill execution audit runtime | Runtime execution behavior inspectable | Done | `cmd/stoke-mcp/backends.go` |
-| Metrics collection runtime | Runtime metrics snapshots exposed to deterministic flows | Done | `cmd/stoke-mcp/metrics_runtime.go` |
-| Timeout / cancellation hooks | Bounded, cancellation-aware deterministic runtime calls | Done | `cmd/stoke-mcp/backends.go` |
-| Oneshot runtime cost metadata | Runtime cost visible to callers and operators | Done | April 30 main-branch commit |
-
-## Code Analysis & Generation
+## Agentic Test Harness
 
 | Feature | Benefit | Status | Reference |
 |---|---|---|---|
-| Go AST analysis + extraction | Function/class indexing and structured-content parsing | Done | `goast/`, `extract/` |
-| Repomap with PageRank | Token-budgeted "what's important" injection into prompts | Done | `repomap/` |
-| Symbol index (`symindex/`) | Fast function/class lookup | Done | `symindex/` |
-| Dependency graph (`depgraph/`) | Import-graph-aware test selection | Done | `depgraph/`, `testselect/` |
-| TF-IDF semantic search | BM25 retrieval over codebase | Done | `tfidf/` |
-| Vector / embedding search (`vecindex/`) | sqlite-vec backed similarity | Done | `vecindex/` |
-| Cascading `str_replace` algorithm | Exact → whitespace → ellipsis → fuzzy match | Done | `tools/` |
-| Patch apply (`patchapply/`) | Unified-diff parsing with fuzzy match | Done | `patchapply/` |
-| Auto-fix loop (`autofix/`) | Iterative lint-and-fix until quiet | Done | `autofix/` |
-| Conflict resolution (`conflictres/`) | Semantic merge-conflict resolution | Done | `conflictres/` |
+| `r1.*` MCP catalog (38 tools across 10 categories) | One namespace; every UI action reachable through MCP | Done (catalog only; back-end pending specs 1-7) | `internal/mcp/r1_server_catalog.go` |
+| Slack-style envelope + stokerr/ taxonomy | Predictable wire shape; no raw Go errors leak | Done | `internal/mcp/envelope.go`, `internal/mcp/stokerr_map.go` |
+| `r1 mcp serve --print-tools [--markdown]` | Lint + docs generator have a stable input | Done | `cmd/r1/mcp.go` |
+| `internal/tui/teatest_shim.go` | Bubble Tea drivable through MCP without a terminal emulator | Done (in-process driver; teatest swap pending dep) | `internal/tui/teatest_shim.go` |
+| `A11yEmitter` + JSONPath evaluator | Synthetic a11y trees + structural assertions | Done | `internal/tui/a11y.go`, `internal/tui/jsonpath.go` |
+| `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched to MCP catalog | Done | `tools/agent-feature-runner/` |
+| 8 seed feature fixtures across all 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
+| `lint-view-without-api` + allowlist | UI without API is a build break | Done (Go scanner active; React + Tauri scanners blocked on specs 6/7 merge) | `tools/lint-view-without-api/` |
+| `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | One-line CI/local recipes | Done | `Makefile` |
+| `docs/AGENTIC-API.md` + D-A1..D-A5 acceptance | External-agent contract + decisions log | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
 
-## File / Workspace / Worktree
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Atomic multi-file edits | Transactional semantics across many files | Done | `atomicfs/` |
-| Git worktree per task | `git merge-tree --write-tree` validation; `mergeMu` serializes merges | Done | `worktree/` |
-| BaseCommit captured at worktree creation | `diff BaseCommit..HEAD` for retry summaries | Done | `worktree/` |
-| Conversation branching | Multiple solution paths in parallel | Done | `branch/` |
-| Hash-anchored line verification | Detects concurrent edits | Done | `hashline/` |
-
-## LLM Integration
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| 5-provider model resolver | Claude → Codex → OpenRouter → direct API → lint-only fallback chain | Done | `model/`, `provider/` |
-| Subscription pool with circuit breaker | Per-pool OAuth poller; `closed → open → half-open` with cooldown | Done | `subscriptions/`, `pools/` |
-| MCP server connectivity | GitHub, Linear, Slack, Postgres, custom; stdio / http / sse / streamable-http | Done | `mcp/` |
-| Cache-aligned prompt construction | Stable cache breakpoints across main + Lobe + warming requests | Done | `promptcache/`, `agentloop.BuildCachedSystemPrompt` |
-| Adaptive context bin-packing | Three-tier budget; progressive compaction; reminders | Done | `context/`, `ctxpack/`, `microcompact/` |
-| Real-time cost tracking + budget alerts | `CostTracker.OverBudget()` checked before each execute attempt | Done | `costtrack/` |
-
-## Permissions & Security
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| 11-layer policy engine | `--tools`, MCP isolation, `--disallowedTools`, `--allowedTools`, settings.json, worktree isolation, sandbox, `--max-turns`, enforcer hooks, verify pipeline, git ownership | Done | `policy/`, `hooks/` |
-| Mode-1 auth isolation | API-key env vars stripped; `apiKeyHelper: null`; per-pool `CLAUDE_CONFIG_DIR` | Done | `config/`, `subscriptions/` |
-| MCP triple isolation (plan + verify) | `--strict-mcp-config` + empty config + `--disallowedTools mcp__*` | Done | `mcp/`, `policy/` |
-| Sandbox `failIfUnavailable: true` | Fail-closed | Done | `config/` |
-| Process group isolation | `Setpgid: true` + `killProcessGroup` (SIGTERM → SIGKILL) | Done | `engine/` |
-| Prompt-injection hardening (`promptguard`) | 4 ingest paths scanned: skills, failure analysis, feasibility gate, convergence judge | Done | `promptguard/` |
-| Tool-output sanitization | 200KB cap, head+tail truncation, chat-template-token scrub with ZWSP, `[STOKE NOTE: untrusted DATA]` prefix | Done | `agentloop.executeTools` |
-| 58-sample red-team corpus | OWASP LLM01, CL4R1T4S, Rehberger SpAIware, Willison; 60% per-category detection floor | Done | `redteam/` |
-| Honeypot pre-end-turn gate | Canary, markdown-image exfil, chat-template-token leak, destructive-without-consent | Done | `agentloop/` |
-| 18 deterministic security rules | Secrets, eval, injection, exec — no LLM calls | Done | `scan/` |
-
-## Knowledge & Learning
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Persistent memory (`memory/`) | SQLite + FTS5 + sqlite-vec; episodic/semantic/procedural | Done | `memory/` |
-| Wisdom store (`wisdom/`) | Cross-task gotchas, decisions, `FindByPattern` | Done | `wisdom/` |
-| Persistent indexed research | FTS5-backed research storage | Done | `research/` |
-| Flow tracking | Intent inferred from action sequences | Done | `flowtrack/` |
-| Replay (session recording) | Post-mortem debugging | Done | `replay/` |
-
-## Config, Session, Infrastructure
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| YAML policy parser + auto-detect | `stoke.policy.yaml`; `verificationExplicit` distinguishes "all false" from omitted | Done | `config/` |
-| Session store interface | JSON + SQLite (WAL); attempts, state, learned patterns | Done | `session/` |
-| Three-tier message dispatch queue | Critical / observability / low-priority lanes | Done | `dispatch/` |
-| Structured leveled logging | Task / Attempt / Cost helpers | Done | `logging/` |
-| Thread-safe metrics + telemetry | Per-package counters; performance metrics | Done | `metrics/`, `telemetry/` |
-| NDJSON 6-event-type streamjson | Drain-on-EOF; 3-tier timeouts | Done | `streamjson/` |
-
-## UI & Interfaces (today, before spec 4 / 6 / 7)
-
-| Feature | Benefit | Status | Reference |
-|---|---|---|---|
-| Headless runner + Bubble Tea TUI (Dashboard / Focus / Detail) | Today's interactive surface (pre-lanes panel) | Done | `tui/`, `tui/interactive.go`, `tui/runner.go` |
-| Mission API HTTP endpoints | Programmatic access | Done | `server/` |
-| Per-machine dashboard `r1-server` (port 3948) | Discovers running r1 instances; live event stream; 3D ledger visualizer | Done | `cmd/r1-server/` |
-| Interactive REPL | `internal/repl/` | Done | `repl/` |
-| 17-persona audit | Multi-perspective review (security, performance, a11y, DX, …) | Done | `audit/` |
-
----
-
-## Status Summary
+## Status
 
 ### Done
-- Mission runtime (plan/execute/verify/review) with cross-model reviewer.
-- Verification descent ladder + honeypot gate + protected-file/scope checks.
-- Content-addressed ledger, durable WAL bus, supervisor rules engine.
-- Deterministic skill substrate + signed pack distribution + HTTP registry.
-- 5-provider model resolver, subscription pool with circuit breaker.
-- Wave 2 R1-parity: browser tools, Manus operator, multi-language LSP, VS
-  Code + JetBrains plugins, multi-CI parity, Tauri R1D-1..R1D-12 phases.
-- Prompt-injection hardening, red-team corpus, MCP server connectivity.
-- 132 internal Go packages; race-clean across the whole repo.
+
+- Specs 1-9 — all 171/172 items merged + tested + deployed
+- 9 Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry + domain mappings created
+- Anti-truncation 7-layer defense + 1M-iter soak (0 FP / 0 FN)
+- Branch hygiene: 20 archive tags, repo cleaned to 2 active branches
+- Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log
+- All Go tests + web typecheck + desktop tests green
+- governed mission runtime
+- deterministic skill substrate
+- full pack lifecycle including signing, verification, and HTTP serving
+- runtime metrics/audit/timeout/cancel/cost helper surfaces
+- agentic test harness wire surface (38 r1.* tools, parser/dispatcher,
+  TUI shim, lint scanner, 8 seed fixtures, AGENTIC-API.md, D-A1..D-A5)
+- **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
+  - Skill-aware compactor (`SkillCompactor` + `LRUPolicy`) and `SkillScopeCloser.OnPhaseExit` wire skilltracker's `EvictByCompactor` + `CloseScope` into production callers; `SkillUnloaded` ledger nodes emitted for both reasons (`compactor` and `scope_exit`).
+  - ed25519-signed redaction events; `LoadOrGenerateSigningKey` persists keys under `<root>/redactions/`; `Store.RedactionsForVerified` flags tampered + legacy-unsigned entries distinctly.
+  - Tracebundle v2: per-session filtering (`ListNodesForSession`, `ListEdgesForSession`), chain-root hashing (`ChainRootHashForSession`), canonical manifest signing body (`CanonicalManifestSignBody`); `cmd/r1-server/tracebundle_source.go` wired as the production source for `GET /api/session/{id}/export.tracebundle`. (Spec D — D-UI2-7 — removed the originally-paired `R1_SERVER_UI_V2` envelope gate.)
+  - Release-rehearsal CI: Cloud Build triggers (push-to-`main` + `^v.*$` tag) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`) firing the full Playwright + axe-core E2E lane; idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
+- **r1-server UI v2 retrofit — production default** (Spec D / D-UI2-7, 2026-05-06): the legacy vanilla-JS SPA was deleted, the v2 htmx + Go-templates surface promoted from `cmd/r1-server/ui/web/` to `cmd/r1-server/ui/`, and the `R1_SERVER_UI_V2` envelope toggle removed. `Renderable()` / `v2Enabled()` / `traceV2Enabled()` always return true; v2 is the only surface. Five sub-specs landed during the retrofit:
+  - **Foundation** (`r1-server-ui-v2-foundation.md`): vendored htmx 2.0.4 + htmx-ext-sse 2.2.4 + three.js 0.170.0 ESM + d3-force-3d 3.0.5 + import map; SRI hashes verified at vendor time + at every CI run; `base.html` htmx layout that all v2 pages extend; `data-hx-*` attribute convention pinned. Air-gapped r1-server build with no CDN dependencies; ≤250 KB gzipped chrome.
+  - **3D perf** (`r1-server-ui-v2-3d-perf.md`): InstancedMesh refactor + Web Worker for d3-force-3d + frozen-position time scrubber. The ledger 3D viewer scales from ~500 to ~3000 nodes at ≥30 FPS without freezing the page during simulation.
+  - **Event rendering** (`r1-server-ui-v2-event-rendering.md`): typed `IsRedacted` / `SkillEventMap` Go helpers + waterfall lock + side-panel `[content redacted]` + skill row icons + 3D desaturation/opacity transitions; emission paths for `skill_loaded` (skill_injector) + `skill_unloaded` (compactor + scope-exit).
+  - **Handlers + routes** (`r1-server-ui-v2-handlers-and-routes.md`): centralised `V2Config` flag (replaces ad-hoc `os.Getenv` calls); `index.html` + `session.html` + `session-stream.html` + `memories.html` + `share.html` + `diff.html` page templates; memory-side-panel + memory-graph view; `.tracebundle` export route; SSE `last_event_id` URL-query fallback + `event: resync` frame on cursor pruning.
+  - **Tests** (`r1-server-ui-v2-tests.md`): golden test suite for every page template (auto-update via `-update`); 3D worker fixture test (vitest); Playwright + axe-core E2E in a separate Go submodule; vendor freshness CI guard.
 
 ### In Progress
-- Hardening of Manus-style autonomous operator (per-mission toggle).
-- LSP feature coverage beyond hover/definition/diagnostics.
-- Headless desktop GUI for CI screenshot tests.
-- Race-clean regression sweep across `internal/`.
+
+- broader runtime-wide adoption of deterministic skills
+- agentic test harness back-end wiring (depends on specs 1-7 merging
+  the cortex/lanes/TUI/r1d/web/desktop sources)
+- DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs)
+- Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation
 
 ### Scoped
-- **cortex-core** (`specs/cortex-core.md`) — Workspace, Lobe, Round,
-  Spotlight, Router, drop-partial, pre-warm, budget controller, persistence.
-- **cortex-concerns** (`specs/cortex-concerns.md`) — six v1 Lobes
-  (memory-recall, WAL-keeper, rule-check, plan-update, clarifying-Q,
-  memory-curator) plus per-Lobe enable + escalation flags.
-- **lanes-protocol** (`specs/lanes-protocol.md`) — six event types,
-  JSON-RPC 2.0 envelope, NDJSON / WS / SSE framings, replay semantics, five
-  MCP tools.
-- **tui-lanes** (`specs/tui-lanes.md`) — Bubble Tea v2 lanes panel with
-  adaptive layout, focus mode, render cache, transports.
-- **r1d-server** (`specs/r1d-server.md`) — `r1 serve` per-user singleton
-  daemon; multi-session goroutines; `os.Chdir` audit + lint; journal replay.
-- **web-chat-ui** (`specs/web-chat-ui.md`) — React 18 + Vite 6 + Tailwind 3;
-  Cursor 3 "Glass"; tile mode; ResilientSocket; FSA workdir picker.
-- **desktop-cortex-augmentation** (`specs/desktop-cortex-augmentation.md`) —
-  Tauri 2 augmentation; daemon discovery + sidecar fallback;
-  per-session workdir; `Channel<LaneEvent>`; pop-out windows; native menu;
-  auto-start.
-- **agentic-test-harness** (`specs/agentic-test-harness.md`) — consolidated
-  `r1_server.go` MCP catalog; teatest_shim; Playwright MCP; Storybook MCP;
-  view-without-api lint; Gherkin DSL.
-- IDE plugin marketplace publishing (VS Code Marketplace, JetBrains
-  Marketplace) — code in-tree, publishing pipeline pending.
-- Ledger redaction with two-level Merkle commitment
-  (`specs/ledger-redaction.md`).
+- JWT login + RelayOne MSP SSO (Path A — Go reimpl of @relayone/auth-core JwtService + RelayOneSsoClient)
+- Admin panel at admin.r1.run (clone *-admin template + customize for r1 routes)
+- PostHog product analytics integration
+- Customer.io retention + lifecycle email integration
+- CodeRadar dogfood event streaming (already in-house; just turn on per env)
+- (UI v2 retrofit moved to Done — see "r1-server UI v2 retrofit — production default" above. Spec D / D-UI2-7 closed the parallel-deploy window 2026-05-06.)
+- **Node 22 LTS CI bump** (precursor to UI v2 retrofit): Node 20 went EOL 2026-04-30; bump unblocks jsdom 29, vitest 4, vite 7. Single small CI-only PR (`cloudbuild.yaml` + `desktop-augmentation.yml`).
 
 ### Scoping
-- Cross-machine session migration (current daemon is one-host).
-- Per-tool throttling policy in `.stoke/`.
-- Encryption-at-rest for journals (`specs/encryption-at-rest.md`).
-- Broader outward-facing superiority reporting against peer runtimes.
+- Cross-machine session migration
+- Encryption-at-rest for journals
+- Per-tool throttling policy
 
 ### Potential — On Horizon
-- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions.
-- Native MCP server bundle for popular IDEs without a separate install.
-- Browser tool sandboxed under a remote browser (vs current local browser).
-- Cross-product deterministic skill exchange + marketplace dynamics.
-- Cloud daemon support beyond loopback / per-host singleton.
-- Multi-tenant per-host (multiple uids on a shared box).
-- Tracing / OpenTelemetry export of lane events.
+- Marketing site with affiliate / SEO / CRO / attribution / retention stack
+- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions
+- Browser tool sandboxed under remote browser
+- Cross-product deterministic skill exchange
+- Native MCP server bundle for popular IDEs without separate install

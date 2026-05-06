@@ -1,0 +1,8 @@
+# r1 daemon sidecar binaries are populated by
+# desktop/scripts/copy-r1-binaries.sh ahead of `cargo tauri build`
+# (per spec desktop-cortex-augmentation §2). They MUST NOT be tracked
+# in git: each is a multi-MB build artefact whose canonical source is
+# the per-triple `target/<triple>/release/r1` produced by `go build`
+# for that target.
+*
+!.gitignore

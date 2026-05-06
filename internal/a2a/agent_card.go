@@ -4,7 +4,7 @@
 // URL an A2A-compliant peer consults before submitting a task.
 //
 // Scope of this initial implementation: the card *generator*. A
-// separate HTTP handler in `cmd/stoke-gateway/` or `internal/server/`
+// separate HTTP handler in `cmd/r1-gateway/` or `internal/server/`
 // will eventually mount the card at the well-known path; for now
 // operators can write the generated document to disk and serve it
 // via any static file server.

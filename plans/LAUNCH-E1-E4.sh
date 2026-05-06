@@ -32,7 +32,7 @@ for name in e1-sentinel-simple e2-sentinel-sow e3-relayone-feat e4-actium-scan; 
 done
 
 if [[ ! -x "$STOKE" ]]; then
-  echo "❌ $STOKE missing or not executable — run: (cd /home/eric/repos/stoke && go build -o stoke ./cmd/stoke)"
+  echo "❌ $STOKE missing or not executable — run: (cd /home/eric/repos/stoke && go build -o stoke ./cmd/r1)"
   exit 1
 fi
 

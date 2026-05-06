@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import * as React from "react";
 import type { Meta, StoryObj } from "@/test/storybook-types";
 import { useState } from "react";
 import { GlobalKeybindings } from "./GlobalKeybindings";
@@ -11,7 +12,7 @@ const meta: Meta<typeof GlobalKeybindings> = {
 export default meta;
 type Story = StoryObj<typeof GlobalKeybindings>;
 
-function Demo(): JSX.Element {
+function Demo(): React.JSX.Element {
   const [log, setLog] = useState<string[]>([]);
   const push = (s: string): void => setLog((prev) => [...prev.slice(-9), s]);
   return (

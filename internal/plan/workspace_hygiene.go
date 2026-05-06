@@ -228,7 +228,7 @@ func hasCargoNear(repoRoot string, maxDepth int) bool {
 // ScanOnly runs the deterministic hygiene sweep for every detected
 // ecosystem WITHOUT applying any auto-fixes. Safe to call on any
 // repo; no files are written, no commands are run. Use this for the
-// read-only audit path (see cmd/stoke/inspect.go).
+// read-only audit path (see cmd/r1/inspect.go).
 //
 // The returned HygieneReport has PreFix populated with every
 // finding the per-ecosystem scanners produced, AutoFixed set to nil,

@@ -24,6 +24,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts", "playwright.config.ts", "tailwind.config.ts", "postcss.config.cjs"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "playwright.config.ts", "tailwind.config.ts", "postcss.config.cjs"],
   "exclude": ["node_modules", "dist", "test-results", "playwright-report"]
 }

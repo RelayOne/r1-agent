@@ -124,30 +124,9 @@ func TestNormalizeTier(t *testing.T) {
 	}
 }
 
-// TestTraceWaterfallFlagOffServesSPA ensures the handler delegates to
-// the SPA shell when R1_SERVER_UI_V2 is not set. Operator clients on
-// the old surface must not suddenly see a different page when the
-// binary is upgraded.
-func TestTraceWaterfallFlagOffServesSPA(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	s := newUIServer(t)
-	resp, err := http.Get(s.URL + "/session/r1-flagoff")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	// SPA shell has /ui/app.js; waterfall template has tier-t1 swatches.
-	if !strings.Contains(string(body), "/ui/app.js") {
-		t.Error("flag-off should serve SPA (app.js reference missing)")
-	}
-	if strings.Contains(string(body), "class=\"waterfall\"") {
-		t.Error("flag-off should not render waterfall template")
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestTraceWaterfallFlagOffServesSPA.
+// The R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted; the trace waterfall is the only /session/{id} surface.)
 
 // TestTraceWaterfallRendersWithStub exercises the AC: curl
 // /session/test-id returns an HTML waterfall with tier colors.

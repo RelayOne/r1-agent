@@ -36,7 +36,7 @@ Part D is the largest and drives the 8k word budget — the full-stack memory de
 - Plan/SOW structures: `internal/plan/sow.go` (Session, Task, AcceptanceCriterion)
 - Lead-dev briefing: existing briefing builder in `internal/plan/` reused verbatim for plan.json
 - Pre-flight AC: `PreflightACCommands` already in descent pipeline; reuse for plan pre-flight
-- SOW orchestration: `cmd/stoke/sow_native.go` + `cmd/stoke/descent_bridge.go`
+- SOW orchestration: `cmd/r1/sow_native.go` + `cmd/r1/descent_bridge.go`
 - Worker prompt injection points: `sow_native.go:3853-3950+` (RepoMap, API surface, wisdom, canonical names, skills)
 - Event emitter: `internal/streamjson/emitter.go` (C1 — extend, do not fork)
 - Bus: `internal/bus/bus.go` + `wal.go` (C3 — all parts publish to bus AND streamjson)
@@ -78,7 +78,7 @@ stoke ship --sow path/to/spec.md           # existing combined path, unchanged
 - `--estimate-only` prints cost estimate and the DAG to stderr, skips artifact write.
 - `--interactive` opens a terminal Operator session for approval (blocks on `Operator.Confirm`).
 
-New file: `cmd/stoke/plan_cmd.go`. Roughly mirrors existing SOW command but stops at `plan.ready` emission. The executor path is a thin wrapper that asserts `bus.Event{Kind:"plan.approved"}` is present in the eventlog for `plan_id` before dispatching.
+New file: `cmd/r1/plan_cmd.go`. Roughly mirrors existing SOW command but stops at `plan.ready` emission. The executor path is a thin wrapper that asserts `bus.Event{Kind:"plan.approved"}` is present in the eventlog for `plan_id` before dispatching.
 
 ## A.2 plan.json shape
 
@@ -671,7 +671,7 @@ func (r *Router) CoreAndQuery(ctx, scope Scope, query string, coreLimit, queryLi
 
 ### Injection point 1 — Before session planning
 
-Called from `cmd/stoke/plan_cmd.go` during plan build.
+Called from `cmd/r1/plan_cmd.go` during plan build.
 
 ```go
 core, qs, _ := memRouter.CoreAndQuery(ctx, memory.ScopeAuto, sow.Title+" "+sow.Description, 8, 15)
@@ -754,7 +754,7 @@ Preserves existing V2 bridge adapter (`internal/bridge/` wisdom → bus+ledger) 
 
 ## D.7 `stoke memory` subcommand
 
-New file: `cmd/stoke/memory_cmd.go`.
+New file: `cmd/r1/memory_cmd.go`.
 
 ```
 stoke memory list [--scope global|repo|task] [--tier ...] [--limit N]
@@ -1075,7 +1075,7 @@ go test ./internal/memory/... -run TestScopeHierarchy
 go test ./internal/plan/... -run TestLiveMetaReasoner
 go test ./internal/plan/... -run TestProgressRenderer
 go test ./internal/tui/... -run TestCostPanel
-go build ./cmd/stoke
+go build ./cmd/r1
 go vet ./...
 ```
 
@@ -1087,7 +1087,7 @@ Ordered; each self-contained.
 
 ### Part A — `stoke plan`
 
-1. [ ] Create `cmd/stoke/plan_cmd.go`. Flags: `--sow`, `--output` (default `plan.json`), `--yes`, `--estimate-only`, `--interactive`. Reuse existing plan builder + `PreflightACCommands`. Emit `plan.ready` on success. Library: stdlib `encoding/json` (2-space indent).
+1. [ ] Create `cmd/r1/plan_cmd.go`. Flags: `--sow`, `--output` (default `plan.json`), `--yes`, `--estimate-only`, `--interactive`. Reuse existing plan builder + `PreflightACCommands`. Emit `plan.ready` on success. Library: stdlib `encoding/json` (2-space indent).
 2. [ ] Define `PlanArtifact` struct mirroring §A.2 JSON. Include `ApprovalBlock` (pointer → null when unapproved). Hash SOW with `crypto/sha256`. Compute `plan_id` = `pln_` + first 8 hex of `SHA256(sow_hash + created_at)`.
 3. [ ] Add `stoke execute --plan` subcommand (extend existing ship/execute entry). Before dispatch: load plan.json, recompute sow_hash, assert match, query eventlog for `plan.approved` with matching `plan_id`, exit 1 on mismatch.
 4. [ ] On `--yes`, synthesize approval block: `{actor: "ci:$(whoami)", ts: now, mode: "auto"}`, publish `plan.approved` to bus and eventlog before writing plan.json.
@@ -1115,14 +1115,14 @@ Ordered; each self-contained.
 17. [ ] Create `internal/memory/embed.go`. Implement `Embedder` interface + `OpenAIEmbedder`, `LocalEmbedder`, `NoopEmbedder`. `AutoDetect` per §D.3 decision tree. 30s HTTP timeout, 1s ping timeout.
 18. [ ] Create `internal/memory/consolidate.go`. Implement `Consolidate(ctx, scope, repoHash, taskType)` per §D.4 pseudocode. Model resolved via `model.Resolve("memory-consolidate")` (Sonnet 4.6 default). Apply hygiene pass at end.
 19. [ ] Create `internal/memory/retrieve.go`. Implement `CoreAndQuery(...)` per §D.5. Hybrid BM25+vector fusion via RRF: `score = w_bm25 * rank_bm25 + w_vec * rank_vec`, default `w_bm25=0.4, w_vec=0.6` when embedder available; else `w_vec=0`. Cap by `coreLimit`, `queryLimit`, and 1200 tokens (count via `tokenest`).
-20. [ ] Wire injection point 1 in `cmd/stoke/plan_cmd.go` into `PlanBriefing.RelevantLearnings`.
-21. [ ] Wire injection point 2 in `cmd/stoke/sow_native.go` between canonical-names (line 3909) and skills (line 3918). Emit as `## Relevant learnings` block.
+20. [ ] Wire injection point 1 in `cmd/r1/plan_cmd.go` into `PlanBriefing.RelevantLearnings`.
+21. [ ] Wire injection point 2 in `cmd/r1/sow_native.go` between canonical-names (line 3909) and skills (line 3918). Emit as `## Relevant learnings` block.
 22. [ ] Add injection point 3 export `ScoreAgent(ctx, role) float64` used by spec-5. Scope = Global, query = `"agent:" + role`.
 23. [ ] Wire injection point 4 in `internal/verify/` before running AC commands. Append `## Known false positives near this change` bullets (≤3) to reviewer prompt.
 24. [ ] Create adapters: `internal/wisdom/adapter.go` (WisdomAdapter → semantic), `internal/skill/adapter.go` (SkillAdapter → procedural, read-only). Implement `memory.Storage`.
 25. [ ] Create `internal/memory/router.go` with `Register/Query/Put` fan-out. Content-hash de-dup in Query merge step.
 26. [ ] Wire router construction in `app/` startup per §D.6.
-27. [ ] Create `cmd/stoke/memory_cmd.go` per §D.7. Subcommands: `list, search, consolidate, export, import, info`.
+27. [ ] Create `cmd/r1/memory_cmd.go` per §D.7. Subcommands: `list, search, consolidate, export, import, info`.
 28. [ ] Add `.stoke/memory/` and `plan.json` to default ignore recommendations (README note only — do NOT auto-edit user's `.gitignore`).
 
 ### Part E — Live meta-reasoner
@@ -1148,4 +1148,4 @@ Ordered; each self-contained.
 ### Cross-cutting
 
 40. [ ] Integration test: full `stoke plan` → `--yes` approve → `stoke execute` → session completes → meta-reasoner fires → memory grows → subsequent plan.build picks up new learnings in `## Prior Learnings` block. Assert: 1 new `meta_rule` row in memories for the repo scope.
-41. [ ] `go build ./cmd/stoke && go test ./... && go vet ./...` all green before marking spec done.
+41. [ ] `go build ./cmd/r1 && go test ./... && go vet ./...` all green before marking spec done.

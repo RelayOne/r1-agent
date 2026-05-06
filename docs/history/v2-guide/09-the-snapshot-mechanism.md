@@ -173,7 +173,7 @@ The snapshot component does not spawn stances — the CTO stance is spawned by t
 ## Validation gate
 
 1. ✅ `go vet ./...` clean, `go test ./internal/snapshot/...` passes with >75% coverage
-2. ✅ `go build ./cmd/stoke` succeeds
+2. ✅ `go build ./cmd/r1` succeeds
 3. ✅ The snapshot manifest is written to `.stoke/snapshot/manifest.json` on first initialization and is valid JSON parseable by the manifest reader
 4. ✅ The manifest contains every git-tracked file from the snapshot commit, with correct git blob SHAs (verified against `git ls-tree -r snapshot_commit_sha`)
 5. ✅ The manifest does not contain any untracked files (files in the working directory but not in git) — verified by snapshot-time state vs manifest comparison

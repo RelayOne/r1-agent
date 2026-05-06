@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/RelayOne/r1/internal/rules"
+	rulesenforcer "github.com/RelayOne/r1/internal/rules/enforcer"
 )
 
 type RulesToolChecker struct {
@@ -27,10 +28,11 @@ func WrapExecutorWithRules(base Executor, registry *rules.Registry) Executor {
 }
 
 func (c RulesToolChecker) CheckTool(ctx context.Context, req ToolCheckRequest) (ToolCheckResult, error) {
-	if c.Registry == nil {
-		return ToolCheckResult{Verdict: "PASS"}, nil
+	enforcer := rulesenforcer.NewRepo(req.RepoRoot)
+	if c.Registry != nil {
+		enforcer.Registry = c.Registry
 	}
-	result, err := c.Registry.Check(ctx, req.ToolName, req.ToolArgs, rules.CheckContext{
+	result, err := enforcer.Check(ctx, req.ToolName, req.ToolArgs, rules.CheckContext{
 		RepoRoot: req.RepoRoot,
 		TaskID:   req.TaskID,
 	})

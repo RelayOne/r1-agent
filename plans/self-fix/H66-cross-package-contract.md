@@ -20,7 +20,7 @@ Add ONE new scrubber function `PreflightFixModuleType` in the file
 `internal/plan/sow_devdep_preflight.go` alongside the existing
 `PreflightWorkspaceDevDeps`.
 
-Call it from the same call site in `cmd/stoke/main.go` right after
+Call it from the same call site in `cmd/r1/main.go` right after
 the existing preflight. Output one diagnostic line per fix.
 
 ## What the function does
@@ -43,7 +43,7 @@ the existing preflight. Output one diagnostic line per fix.
 
 1. File `internal/plan/sow_devdep_preflight.go` contains the new function
    `PreflightFixModuleType(repoRoot string) []string`.
-2. File `cmd/stoke/main.go` calls `plan.PreflightFixModuleType(absRepo)`
+2. File `cmd/r1/main.go` calls `plan.PreflightFixModuleType(absRepo)`
    right after the existing `plan.PreflightWorkspaceDevDeps` call, with
    a diagnostic print loop matching the same style.
 3. New test file `internal/plan/sow_devdep_preflight_module_test.go`
@@ -51,7 +51,7 @@ the existing preflight. Output one diagnostic line per fix.
    - Package with ES module source + missing "type": gets "module" added.
    - Package with ES module source + existing "type": "commonjs": is
      upgraded to "module" with a diagnostic mentioning the change.
-4. `go build ./cmd/stoke` succeeds.
+4. `go build ./cmd/r1` succeeds.
 5. `go test ./internal/plan/... -run Module -count 1` passes.
 6. `go vet ./...` passes.
 

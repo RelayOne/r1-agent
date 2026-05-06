@@ -29,7 +29,7 @@ This composition sidesteps the failure modes MAST cataloged:
 
 ## What R1 does NOT do
 
-- R1 does not run "planner + coder + tester" as separate coordinating agents. Planning, execution, and verification ARE separate phase invocations (each starts with a fresh context window — see `docs/harness-architecture.md`), but the transitions are driven by structured verdicts, not agent-to-agent natural-language negotiation. The legacy multi-phase flow lives in `internal/workflow/`; native SOW runs (the `--runner=native` path) drive review / repair / acceptance out of `cmd/stoke/sow_native.go`'s state machine instead — both paths share the same structured-transition posture.
+- R1 does not run "planner + coder + tester" as separate coordinating agents. Planning, execution, and verification ARE separate phase invocations (each starts with a fresh context window — see `docs/harness-architecture.md`), but the transitions are driven by structured verdicts, not agent-to-agent natural-language negotiation. The legacy multi-phase flow lives in `internal/workflow/`; native SOW runs (the `--runner=native` path) drive review / repair / acceptance out of `cmd/r1/sow_native.go`'s state machine instead — both paths share the same structured-transition posture.
 - R1 does not use "multi-agent voting" to resolve ambiguity. Ambiguous acceptance criteria fail the integrity gate and surface to the operator.
 - R1 does not spawn sub-agents to "handle edge cases." Edge cases either fit in the single implementer's context (by design — R1's context packer is relevance-weighted) or are decomposed deterministically by the scheduler into smaller tasks of the same shape.
 

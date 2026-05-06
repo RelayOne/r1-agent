@@ -30,7 +30,7 @@ import (
 
 // bundleFileTest is the test's local mirror of the exporter's
 // bundleFile. Decoupled on purpose so this file compiles without
-// importing cmd/stoke.
+// importing cmd/r1.
 type bundleFileTest struct {
 	Path string
 	Data []byte
