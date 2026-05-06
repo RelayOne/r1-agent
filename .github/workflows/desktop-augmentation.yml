@@ -153,7 +153,14 @@ jobs:
       - name: Run Playwright e2e
         working-directory: desktop
         env:
-          R1_DESKTOP_BINARY: ../target/release/r1-desktop
+          # Cargo's target/ is at desktop/target/ (the workspace root is
+          # `desktop/`, set in desktop/Cargo.toml). Playwright runs from
+          # `desktop/` (working-directory above), so the binary's
+          # path-relative-to-cwd is target/release/r1-desktop, NOT
+          # ../target/release/r1-desktop. The earlier ../ value pointed
+          # at a non-existent repo-root/target/ path and produced
+          # `spawn ENOENT` for every spec.
+          R1_DESKTOP_BINARY: target/release/r1-desktop
           R1_TAURI_DRIVER_PORT: '4444'
         run: |
           # tauri-driver was unpublished from npm in 2026; it now ships
