@@ -1,26 +1,55 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>r1-server</title>
-  <link rel="stylesheet" href="/ui/style.css">
-</head>
-<body>
-  <header>
-    <h1><a href="/" data-route="/">r1-server</a></h1>
-    <nav><span id="conn-status">…</span></nav>
-  </header>
+{{- /*
+  cmd/r1-server/ui/index.html
 
-  <main id="app">
-    <!-- Rendered by app.js based on window.location.pathname -->
-  </main>
+  Spec 4 §5.1 — instance list. Loaded at GET / when v2 is on and a
+  DB is wired.
 
-  <footer>
-    <small>STOKE — Strong Traceable Observable Knowledge Executor.
-    Data is read-only — r1-server never modifies Stoke's ledger or session state.</small>
-  </footer>
+  Context shape (V2BaseContext + Instances slice):
+    .Title        string
+    .HtmxSRI      string
+    .HtmxSseSRI   string
+    .SessionID    string  (unused on the index page)
+    .Instances    []InstanceRow  (Name, Status, SessionCount, LastActivity)
+*/ -}}
+{{- define "index" -}}
+{{ template "base" . }}
+{{- end -}}
 
-  <script src="/ui/app.js"></script>
-</body>
-</html>
+{{- define "title" -}}r1 instances{{- end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand">r1</div>
+  <nav class="topbar__nav" aria-label="Primary">
+    <a href="/" aria-current="page" data-testid="nav-instances">Instances</a>
+    <a href="/memories" data-testid="nav-memories">Memories</a>
+    <a href="/settings" data-testid="nav-settings">Settings</a>
+  </nav>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section class="pane pane--primary">
+  <h1>Sessions</h1>
+  <table data-testid="instance-list">
+    <thead>
+      <tr>
+        <th scope="col">Session</th>
+        <th scope="col">Status</th>
+        <th scope="col">Events</th>
+        <th scope="col">Last activity</th>
+      </tr>
+    </thead>
+    <tbody hx-ext="sse"
+           sse-connect="/api/events/instance-stream"
+           sse-swap="instance-row">
+      {{ range .Instances }}{{ template "instance-row" . }}{{ end }}
+      {{ if eq (len .Instances) 0 }}
+        <tr><td colspan="4" class="muted">No sessions yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{- end -}}
+
+{{- define "scripts" -}}{{ end -}}

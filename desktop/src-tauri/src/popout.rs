@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: MIT
 //
+// Tracked: PopoutRegistry::new() is wired into main.rs but its session_id /
+// lane_id fields and count() method only fire from menu.rs's pending
+// refresh_pop_outs_submenu hook. Same convention as discovery.rs /
+// transport.rs / menu.rs.
+#![allow(dead_code)] // tracked: pending wire-up
+
+//
 // R1 Desktop lane pop-out — `app.popout_lane` command.
 //
 // Implements spec desktop-cortex-augmentation §6.1 + checklist

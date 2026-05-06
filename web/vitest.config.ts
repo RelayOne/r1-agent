@@ -17,9 +17,11 @@ export default defineConfig({
       "src/**/*.test.ts",
       "src/**/*.test.tsx",
       // Spec 2 / Spec 5: the v2 graph worker tests live colocated
-      // with their source under cmd/r1-server/ui/web/js/. Reached
-      // via a relative path from the web/ workspace root.
-      "../cmd/r1-server/ui/web/js/*.test.js",
+      // with their source under cmd/r1-server/ui/js/. Reached via a
+      // relative path from the web/ workspace root. (Pre-Spec-D the
+      // path was cmd/r1-server/ui/web/js/; Spec D lifted ui/web/* up
+      // one level and dropped the legacy v1 SPA tree.)
+      "../cmd/r1-server/ui/js/*.test.js",
     ],
     exclude: ["src/test/e2e/**", "node_modules/**", "dist/**"],
     coverage: {

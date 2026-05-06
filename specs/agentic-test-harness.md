@@ -1,5 +1,5 @@
 <!-- STATUS: done -->
-<!-- BUILD_COMPLETED: 2026-05-04 — 43/40 items on build/agentic-test-harness, tip 7d5e13de -->
+<!-- BUILD_COMPLETED: 2026-05-06 — Spec 8 shipped via PR #180 (build/agentic-test-harness, merged into dev as 5c0c88aa). Checklist tracking pre-dates the per-item convention; STATUS:done is the operator's authoritative claim per the antitrunc verifier rule. -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: cortex-core, cortex-concerns, lanes-protocol, tui-lanes, r1d-server, web-chat-ui, desktop-cortex-augmentation (cross-cutting) -->
 <!-- BUILD_ORDER: 8 -->

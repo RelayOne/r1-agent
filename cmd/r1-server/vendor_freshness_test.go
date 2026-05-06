@@ -47,7 +47,7 @@ func TestVendor_GoConstSRI(t *testing.T) {
 	if len(vendoredSRI) == 0 {
 		t.Fatal("vendoredSRI is empty — ui_v2_flag.go malformed?")
 	}
-	root := "ui/web/vendor"
+	root := "ui/vendor"
 	for rel, want := range vendoredSRI {
 		path := filepath.Join(root, rel)
 		if _, err := os.Stat(path); err != nil {

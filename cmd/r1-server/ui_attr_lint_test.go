@@ -8,8 +8,8 @@
 // CSS or JS will read one and ignore the other and the bug is
 // invisible until QA stumbles on it.
 //
-// This test walks every cmd/r1-server/ui/web/*.html and
-// cmd/r1-server/ui/web/partials/*.html template, slices each opening
+// This test walks every cmd/r1-server/ui/*.html and
+// cmd/r1-server/ui/partials/*.html template, slices each opening
 // tag with a regex tokenizer, and fails if any element carries BOTH
 // a behaviour-denylist class AND the matching `data-state` attribute.
 //
@@ -56,7 +56,7 @@ func classTokens(val string) []string {
 }
 
 func TestV2Templates_NoClassDataStateConflict(t *testing.T) {
-	root := "ui/web"
+	root := "ui"
 	matches, err := filepath.Glob(filepath.Join(root, "*.html"))
 	if err != nil {
 		t.Fatalf("glob top-level templates: %v", err)

@@ -1,0 +1,11 @@
+{{- /*
+  cmd/r1-server/ui/partials/memory-side-panel-empty.html
+
+  Placeholder shown in the memory side panel before any card is
+  clicked (Spec 4 §10 T22).
+*/ -}}
+{{- define "memory-side-panel-empty" -}}
+<div class="muted" data-testid="memory-side-panel-empty" style="padding:16px;">
+  <p>Click a memory to inspect.</p>
+</div>
+{{- end -}}

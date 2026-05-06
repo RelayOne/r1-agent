@@ -59,14 +59,14 @@ func TestParseV2Templates_BaseRenderShape(t *testing.T) {
 	out := buf.String()
 	want := []string{
 		`<script type="importmap">`,
-		`/ui/web/vendor/htmx.min.js`,
+		`/ui/vendor/htmx.min.js`,
 		`integrity="sha384-AAAA"`,
-		`/ui/web/vendor/htmx-ext-sse.js`,
+		`/ui/vendor/htmx-ext-sse.js`,
 		`integrity="sha384-BBBB"`,
 		`hx-ext="sse"`,
 		`data-session-id="sess-xyz"`,
-		`<link rel="stylesheet" href="/ui/web/css/base.css">`,
-		`"three": "/ui/web/vendor/three.module.js"`,
+		`<link rel="stylesheet" href="/ui/css/base.css">`,
+		`"three": "/ui/vendor/three.module.js"`,
 	}
 	for _, w := range want {
 		if !strings.Contains(out, w) {

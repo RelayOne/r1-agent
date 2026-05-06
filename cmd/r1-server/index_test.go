@@ -96,27 +96,10 @@ func TestIndexServesHTMXShellWhenV2Enabled(t *testing.T) {
 	}
 }
 
-// TestIndexFallsBackToSPAWhenV2Disabled confirms the legacy
-// vanilla-JS shell is served when R1_SERVER_UI_V2 is unset -- the
-// migration gate promised by the v2 spec.
-func TestIndexFallsBackToSPAWhenV2Disabled(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	s, _ := newHTMXTestServer(t)
-
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, s.URL+"/", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("get /: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "/ui/app.js") {
-		t.Error("flag-off / should serve vanilla-JS SPA shell")
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestIndexFallsBackToSPAWhenV2Disabled.
+// The R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted; there's no flag-off SPA fallback to test. v2 is the only
+// surface.)
 
 // TestSessionsEndpointReturnsHTMLFragmentForHTMX asserts that htmx's
 // hx-get can poll /api/sessions and receive session_row.tmpl

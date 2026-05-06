@@ -256,13 +256,13 @@ defined; more land with R1D-2+ as the session view demands them.
 Tier 2 Rust host subscribes, parses, fans out to the WebView via
 `app.emit_to(<session_window>, event, payload)`.
 
-The 6 lane events split across two transports: `lane.delta` arrives
+The lane events split across two transports: `lane.delta` arrives
 through the per-session `Channel<LaneEvent>` registered by
-`session.lanes.subscribe` (§2.7); `lane.status_changed`,
-`lane.spawned`, and `lane.killed` arrive on the global event bus
-because they affect sidebar rendering across surfaces. The
+`session.lanes.subscribe` (§2.7); `lane.created`, `lane.status`,
+`lane.cost`, `lane.note`, and `lane.killed` arrive on the global event
+bus because they affect sidebar rendering across surfaces. The
 forwarder in `lanes.rs` flushes pending `lane.delta` events for a
-lane before emitting that lane's `lane.status_changed` (R7
+lane before emitting that lane's `lane.status` transition (R7
 mitigation in spec §12 — prevents "done" rendering before trailing
 deltas land).
 
