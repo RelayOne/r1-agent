@@ -36,6 +36,10 @@ supervisor/rules/trust/            Trust verification rules (second-opinion gate
 concern/                           Per-stance context projection (10 sections, 9 role templates)
 concern/sections/                  Ledger-backed section renderers for concern field projection
 concern/templates/                 Role-specific concern field templates (CTO, Dev, Reviewer)
+cortex/                            Parallel-cognition substrate (Workspace, Lobe, Round, Spotlight, Router) — GWT-style shared workspace; spec 1
+cortex/lobes/                      6 v1 Lobes — memoryrecall, walkeeper, rulecheck, planupdate, clarifyq, memorycurator (spec 2)
+cortex/lobes/antitrunc/            Anti-truncation Lobe — critical Notes on truncation phrases / scope underdelivery (spec 9)
+cortex/lanes/                      Lane lifecycle + 6 event types (created/status/delta/cost/note/killed) (spec 3)
 harness/                           Stance lifecycle: spawn/pause/resume/terminate (11 templates)
 harness/models/                    Model provider interface and mock for stance workers
 harness/prompts/                   System prompt templates per stance role
