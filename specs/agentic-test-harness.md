@@ -1,5 +1,4 @@
-<!-- STATUS: done -->
-<!-- BUILD_COMPLETED: 2026-05-04 — 43/40 items on build/agentic-test-harness, tip 7d5e13de -->
+<!-- STATUS: ready -->
 <!-- CREATED: 2026-05-02 -->
 <!-- DEPENDS_ON: cortex-core, cortex-concerns, lanes-protocol, tui-lanes, r1d-server, web-chat-ui, desktop-cortex-augmentation (cross-cutting) -->
 <!-- BUILD_ORDER: 8 -->

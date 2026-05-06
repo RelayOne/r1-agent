@@ -206,15 +206,37 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | HTTP pack registry | `r1 skills pack serve` exposes published packs | Done | `cmd/r1/skills_pack_server.go` |
 | Signed-pack runtime verification | Prevents runtime registration from ignoring pack integrity | Done | `internal/skill/verify.go` |
 
+## Agentic Test Harness
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `r1.*` MCP catalog (38 tools across 10 categories) | One namespace; every UI action reachable through MCP | Done (catalog only; back-end pending specs 1-7) | `internal/mcp/r1_server_catalog.go` |
+| Slack-style envelope + stokerr/ taxonomy | Predictable wire shape; no raw Go errors leak | Done | `internal/mcp/envelope.go`, `internal/mcp/stokerr_map.go` |
+| `r1 mcp serve --print-tools [--markdown]` | Lint + docs generator have a stable input | Done | `cmd/r1/mcp.go` |
+| `internal/tui/teatest_shim.go` | Bubble Tea drivable through MCP without a terminal emulator | Done (in-process driver; teatest swap pending dep) | `internal/tui/teatest_shim.go` |
+| `A11yEmitter` + JSONPath evaluator | Synthetic a11y trees + structural assertions | Done | `internal/tui/a11y.go`, `internal/tui/jsonpath.go` |
+| `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched to MCP catalog | Done | `tools/agent-feature-runner/` |
+| 8 seed feature fixtures across all 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
+| `lint-view-without-api` + allowlist | UI without API is a build break | Done (Go scanner active; React + Tauri scanners blocked on specs 6/7 merge) | `tools/lint-view-without-api/` |
+| `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | One-line CI/local recipes | Done | `Makefile` |
+| `docs/AGENTIC-API.md` + D-A1..D-A5 acceptance | External-agent contract + decisions log | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
+
 ## Status
 
 ### Done
+
 - Specs 1-9 — all 171/172 items merged + tested + deployed
 - 9 Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry + domain mappings created
 - Anti-truncation 7-layer defense + 1M-iter soak (0 FP / 0 FN)
 - Branch hygiene: 20 archive tags, repo cleaned to 2 active branches
 - Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log
 - All Go tests + web typecheck + desktop tests green
+- governed mission runtime
+- deterministic skill substrate
+- full pack lifecycle including signing, verification, and HTTP serving
+- runtime metrics/audit/timeout/cancel/cost helper surfaces
+- agentic test harness wire surface (38 r1.* tools, parser/dispatcher,
+  TUI shim, lint scanner, 8 seed fixtures, AGENTIC-API.md, D-A1..D-A5)
 - **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
   - Skill-aware compactor (`SkillCompactor` + `LRUPolicy`) and `SkillScopeCloser.OnPhaseExit` wire skilltracker's `EvictByCompactor` + `CloseScope` into production callers; `SkillUnloaded` ledger nodes emitted for both reasons (`compactor` and `scope_exit`).
   - ed25519-signed redaction events; `LoadOrGenerateSigningKey` persists keys under `<root>/redactions/`; `Store.RedactionsForVerified` flags tampered + legacy-unsigned entries distinctly.
@@ -228,6 +250,10 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
   - **Tests** (`r1-server-ui-v2-tests.md`): golden test suite for every page template (auto-update via `-update`); 3D worker fixture test (vitest); Playwright + axe-core E2E in a separate Go submodule; vendor freshness CI guard.
 
 ### In Progress
+
+- broader runtime-wide adoption of deterministic skills
+- agentic test harness back-end wiring (depends on specs 1-7 merging
+  the cortex/lanes/TUI/r1d/web/desktop sources)
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs)
 - Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation
 
