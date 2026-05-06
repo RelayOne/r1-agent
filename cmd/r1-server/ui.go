@@ -88,6 +88,10 @@ func mountUI(mux *http.ServeMux, db *DB) {
 	// to 404 when the flag is off.
 	mux.HandleFunc("GET /session/{id}/stream", serveStreamView)
 
+	// Spec 4 §6.2 + §10 T11: memory-scoped graph view. Reuses the
+	// session-graph render path with memory_id pre-filled. v2-only.
+	mux.HandleFunc("GET /memories/{id}/graph", serveMemoryGraph)
+
 	// work-stoke TASK 13: waterfall + tree default trace views. The
 	// concrete /session/{id} + /session/{id}/tree patterns are more
 	// specific than /session/ so Go 1.22's mux prefers them. When the
@@ -133,6 +137,10 @@ func mountUI(mux *http.ServeMux, db *DB) {
 		// added/removed/changed-status rows. Content-diff is out of
 		// scope here — see the footer + issue #144.
 		mux.HandleFunc("GET /diff/{a}/{b}", db.serveDiff)
+
+		// Spec 4 §7 + §10 T15-T17: streamed tar.gz export of the
+		// session's ledger contents. v2-only and DB-backed.
+		mux.HandleFunc("GET /api/session/{id}/export.tracebundle", db.serveTracebundleAdapter)
 	}
 
 	// Spec 27 §10 read-only settings viewer. Reads ~/.r1/config.yaml

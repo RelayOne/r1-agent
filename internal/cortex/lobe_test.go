@@ -209,7 +209,7 @@ func TestLobeRunnerLifecycle(t *testing.T) {
 	// the Workspace size because EchoLobe's Calls counter is bumped at
 	// function entry (before Publish) — so Calls==1 is necessary but
 	// not sufficient evidence the Note has landed in the Workspace.
-	deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		if len(w.Snapshot()) >= 1 {
 			break
@@ -452,7 +452,7 @@ func TestLobeRunnerSemaphoreDeterministic(t *testing.T) {
 	// Calls is incremented before Publish completes (see EchoLobe.Run).
 	for i := 1; i <= ticks; i++ {
 		r.Tick() <- struct{}{}
-		deadline := time.Now().Add(10 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+		deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
 		for time.Now().Before(deadline) {
 			if len(w.Snapshot()) >= i {
 				break

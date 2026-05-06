@@ -122,7 +122,7 @@ func TestClarifyingQLobe_CapsAtThreeOutstanding(t *testing.T) {
 
 	emitUserMessageForTest(bus,"deploy and ship the thing")
 
-	notes := waitForLobeNotes(t, ws, l.ID(), 3, 10*time.Second)
+	notes := waitForLobeNotes(t, ws, l.ID(), 3, 30*time.Second)
 	if len(notes) != 3 {
 		t.Fatalf("expected exactly 3 clarifying-q Notes (cap), got %d", len(notes))
 	}

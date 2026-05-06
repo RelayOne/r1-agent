@@ -57,7 +57,7 @@ require (
 // `STOKE_DB_ENCRYPTION=1` in internal/wisdom and cmd/r1-server.
 replace github.com/mattn/go-sqlite3 => github.com/jgiannuzzi/go-sqlite3 v1.14.17-0.20240122133042-fb824c8e339e
 
-replace heroa.dev/sdk-go => /home/eric/repos/heroa/sdk/go
+replace heroa.dev/sdk-go => ./third_party/heroa-go-sdk
 
 require (
 	github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4 // indirect
@@ -118,4 +118,4 @@ require (
 	golang.org/x/text v0.36.0 // indirect
 )
 
-replace github.com/RelayOne/coderadar/sdks/go/coderadar => /home/eric/repos/CodeRadar/sdks/go/coderadar
+replace github.com/RelayOne/coderadar/sdks/go/coderadar => ./third_party/coderadar-go-sdk
