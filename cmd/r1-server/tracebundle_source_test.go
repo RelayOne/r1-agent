@@ -50,6 +50,7 @@ func TestLedgerTracebundleSource_RoundTripWithRealLedger(t *testing.T) {
 			SchemaVersion: 1,
 			CreatedAt:     time.Now().UTC(),
 			CreatedBy:     "test",
+			MissionID:     "sess-real",
 			Content:       json.RawMessage(body),
 		})
 		if err != nil {

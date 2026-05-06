@@ -29,15 +29,24 @@ import (
 	"time"
 )
 
-const tracebundleFormatVersion = 1
+// tracebundleFormatVersion bumped from 1 to 2 by spec
+// tracebundle-v2-format.md. v2 manifests carry Signer + SignatureHex
+// over a canonical form excluding SignatureHex itself; v1 readers
+// stay compatible — they just ignore the extra fields.
+const tracebundleFormatVersion = 2
 
-// tracebundleManifest is the manifest.json shape.
+// tracebundleManifest is the manifest.json shape. v2 fields
+// (Signer + SignatureHex) populate when the source supplies a
+// signing key; otherwise omitempty leaves the bundle visibly
+// unsigned.
 type tracebundleManifest struct {
 	Format        string `json:"format"`
 	Version       int    `json:"version"`
 	SessionID     string `json:"session_id"`
 	ChainRootHash string `json:"chain_root_hash,omitempty"`
 	GeneratedAt   string `json:"generated_at"`
+	Signer        string `json:"signer,omitempty"`
+	SignatureHex  string `json:"signature_hex,omitempty"`
 }
 
 // redactedSummary is the content/redacted.json shape: one entry per
