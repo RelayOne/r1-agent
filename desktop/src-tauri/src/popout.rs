@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 //
-// Tracked: PopoutRegistry's session_id/lane_id fields and count()
-// method are read by paths that only fire once the menu refresh hook
-// is wired (menu.rs::refresh_pop_outs_submenu). Until that lands,
-// the registry is constructed and populated but never enumerated,
-// so dead_code fires. Same convention as discovery.rs / transport.rs.
+// Tracked: PopoutRegistry::new() is wired into main.rs but its session_id /
+// lane_id fields and count() method only fire from menu.rs's pending
+// refresh_pop_outs_submenu hook. Same convention as discovery.rs /
+// transport.rs / menu.rs.
 #![allow(dead_code)] // tracked: pending wire-up
 
 //
