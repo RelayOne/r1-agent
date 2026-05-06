@@ -1,0 +1,62 @@
+# Dependabot config — spec desktop-cortex-augmentation §12 R8 mitigation +
+# checklist item 41.
+#
+# Pins the six new Tauri 2 plugins (added in items 10 + 11) under a
+# single grouped PR per ecosystem so plugin minor bumps land for
+# review as one coherent change rather than six interleaved PRs. The
+# group pattern catches the canonical naming convention upstream
+# tauri-apps uses:
+#
+#   Cargo: tauri-plugin-websocket, tauri-plugin-store,
+#          tauri-plugin-dialog, tauri-plugin-shell, tauri-plugin-fs,
+#          tauri-plugin-autostart
+#   npm:   @tauri-apps/plugin-websocket, @tauri-apps/plugin-store,
+#          @tauri-apps/plugin-dialog, @tauri-apps/plugin-autostart
+#
+# `allow.dependency-type: direct` keeps transitive churn off the
+# review surface; weekly cadence + open-PR cap of 5 keeps maintainer
+# load bounded.
+
+version: 2
+
+updates:
+  # ---- Cargo: desktop/src-tauri ---------------------------------
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: direct
+    groups:
+      tauri-plugins:
+        patterns:
+          - "tauri-plugin-*"
+
+  # ---- npm: desktop ---------------------------------------------
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: direct
+    groups:
+      tauri-plugins:
+        patterns:
+          - "tauri-plugin-*"
+          - "@tauri-apps/plugin-*"
+
+  # ---- npm: packages/web-components -----------------------------
+  - package-ecosystem: npm
+    directory: /packages/web-components
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    allow:
+      - dependency-type: direct
+    groups:
+      tauri-plugins:
+        patterns:
+          - "tauri-plugin-*"
+          - "@tauri-apps/plugin-*"

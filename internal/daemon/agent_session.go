@@ -219,7 +219,7 @@ func (s *AgentSessionStore) Create(agentID string, capabilities []string) (*Agen
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sessions[sess.ID] = sess
-	if err := s.publishEventLocked(sess, AgentEvent{
+	if err := s.publishEventLockedNoMu(sess, AgentEvent{
 		Type:         "session.created",
 		Message:      fmt.Sprintf("session created for %s", sess.AgentID),
 		CurrentState: sess.CurrentState,
@@ -601,10 +601,26 @@ func (s *AgentSessionStore) persistSessionLocked(sess *AgentSession) error {
 func (s *AgentSessionStore) persistLifecycleLocked(sess *AgentSession, ev AgentEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.publishEventLocked(sess, ev)
+	return s.publishEventLockedNoMu(sess, ev)
 }
 
+// publishEventLocked is the entry point for callers that hold the
+// session's runtime.mu but NOT s.mu. It takes s.mu, then runs the
+// shared mutation routine. Callers that already hold s.mu should
+// invoke publishEventLockedNoMu directly (e.g. Create at line 222).
+//
+// "Locked" in the name continues to refer to runtime.mu — the
+// per-session lock callers like Chat hold. This method is the safe
+// boundary into store-mutation territory.
 func (s *AgentSessionStore) publishEventLocked(sess *AgentSession, ev AgentEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.publishEventLockedNoMu(sess, ev)
+}
+
+// publishEventLockedNoMu is the inner mutation. Caller MUST hold
+// both runtime.mu (sess) AND s.mu (the store).
+func (s *AgentSessionStore) publishEventLockedNoMu(sess *AgentSession, ev AgentEvent) error {
 	now := time.Now().UTC()
 	if ev.TS.IsZero() {
 		ev.TS = now

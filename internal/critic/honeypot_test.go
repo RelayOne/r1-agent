@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -125,9 +126,9 @@ func TestEvaluate_DispatcherError(t *testing.T) {
 }
 
 func TestPeriodicSnapshotter_FiresWithJitter(t *testing.T) {
-	var fired int
+	var fired atomic.Int64
 	snap := func(_ context.Context) error {
-		fired++
+		fired.Add(1)
 		return nil
 	}
 	s := NewPeriodicSnapshotter(10*time.Millisecond, 5*time.Millisecond, snap)
@@ -142,23 +143,23 @@ func TestPeriodicSnapshotter_FiresWithJitter(t *testing.T) {
 	s.Start(ctx)
 	<-ctx.Done()
 	s.Stop()
-	if fired == 0 {
+	if fired.Load() == 0 {
 		t.Error("expected snapshots to fire within 100ms window at 10ms base interval")
 	}
 }
 
 func TestPeriodicSnapshotter_ZeroBaseNoop(t *testing.T) {
-	var fired int
+	var fired atomic.Int64
 	s := NewPeriodicSnapshotter(0, 0, func(_ context.Context) error {
-		fired++
+		fired.Add(1)
 		return nil
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	s.Start(ctx)
 	<-ctx.Done()
-	if fired != 0 {
-		t.Errorf("base=0 should never fire, got %d", fired)
+	if got := fired.Load(); got != 0 {
+		t.Errorf("base=0 should never fire, got %d", got)
 	}
 }
 

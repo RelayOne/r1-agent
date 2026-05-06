@@ -154,7 +154,9 @@ func TestDaemonHTTPEnqueueStatusWAL(t *testing.T) {
 	}
 	defer resp3.Body.Close()
 	var walResp map[string]any
-	json.NewDecoder(resp3.Body).Decode(&walResp)
+	if err := json.NewDecoder(resp3.Body).Decode(&walResp); err != nil {
+		t.Fatal(err)
+	}
 	if int(walResp["count"].(float64)) < 2 {
 		t.Fatalf("expected wal events, got %+v", walResp)
 	}

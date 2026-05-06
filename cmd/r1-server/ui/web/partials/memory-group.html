@@ -1,0 +1,22 @@
+{{- /*
+  cmd/r1-server/ui/web/partials/memory-group.html
+
+  Spec 4 §5.4 — one scope-grouped section in the memory explorer.
+
+  Context shape (MemoryGroup):
+    .Scope  string  ("session" | "always" | "task" | ...)
+    .Cards  []MemoryCard
+*/ -}}
+{{- define "memory-group" -}}
+<details class="memory-group" data-testid="memory-group" data-scope="{{ .Scope }}" open>
+  <summary>
+    <span class="memory-group__scope">{{ .Scope }}</span>
+    <span class="muted">({{ len .Cards }})</span>
+  </summary>
+  <ul class="memory-group__cards">
+    {{ range .Cards }}
+    <li>{{ template "memory-card" . }}</li>
+    {{ end }}
+  </ul>
+</details>
+{{- end -}}
