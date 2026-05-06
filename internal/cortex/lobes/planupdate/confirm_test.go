@@ -94,11 +94,23 @@ func TestPlanUpdateLobe_AppliesOnConfirmation(t *testing.T) {
 		},
 	})
 
+<<<<<<< Updated upstream
 	// Subscriber is fire-and-forget Observe; poll until QueuedCount==0
 	// or timeout.
 	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
+=======
+	// Subscriber is fire-and-forget Observe. The handler does
+	// `delete(l.queued, queueID)` *before* `applyAddsRemoves`
+	// (the on-disk plan write) finishes — so QueuedCount==0 is
+	// not a tight enough barrier under -race in CI containers.
+	// Poll on the actual post-condition: t3 present in the plan
+	// file. 2s deadline is plenty for a tiny plan file write.
+	deadline := time.Now().Add(2 * time.Second)
+	var post *plan.Plan
+>>>>>>> Stashed changes
 	for time.Now().Before(deadline) {
-		if l.QueuedCount() == 0 {
+		post = loadCurrent(t, planPath)
+		if findTaskIdx(post, "t3") >= 0 && findTaskIdx(post, "t2") < 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -107,7 +119,6 @@ func TestPlanUpdateLobe_AppliesOnConfirmation(t *testing.T) {
 		t.Fatalf("QueuedCount after confirm = %d, want 0", got)
 	}
 
-	post := loadCurrent(t, planPath)
 	if findTaskIdx(post, "t3") < 0 {
 		t.Errorf("t3 not added after confirmation: %+v", post.Tasks)
 	}
