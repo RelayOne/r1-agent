@@ -4,7 +4,7 @@
 <!-- BUILD_COMPLETED: 2026-05-05 -->
 <!-- DEPENDS_ON: r1-server-ui-v2-foundation -->
 <!-- BUILD_ORDER: 30 -->
-<!-- BLOCKED_PARTIAL: T4 (compactor_evicted caller wiring) + T5 (scope_exit caller wiring). EmitSkillUnloaded helper shipped; integration deferred. See feat(TASK-4,TASK-5) commit. -->
+<!-- INTEGRATION_COMPLETE: T4 + T5 caller wiring shipped via internal/skilltracker.Tracker (#166) + SkillInjector.NoteLoadInfo wiring (this PR). -->
 
 # r1-server UI v2 — Event Rendering (skill load/unload + redaction)
 
