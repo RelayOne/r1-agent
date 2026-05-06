@@ -5,7 +5,7 @@ CI infrastructure.
 
 | Script | Purpose | When to run |
 |---|---|---|
-| `vendor-ui.sh` | (Re-)fetch the pinned frontend vendor blobs (htmx, three.js, d3-force-3d, ...) into `cmd/r1-server/ui/web/vendor/` and verify each blob's SRI. | Every time a vendored library is bumped. |
+| `vendor-ui.sh` | (Re-)fetch the pinned frontend vendor blobs (htmx, three.js, d3-force-3d, ...) into `cmd/r1-server/ui/vendor/` and verify each blob's SRI. | Every time a vendored library is bumped. |
 | `setup-branch-protection.sh` | Apply branch-protection rules to main + staging + dev — required status checks, required reviewers, force-push prevention. | Once per repo + when protection policy changes. |
 | `setup-cloudbuild-triggers.sh` | Create / update the main Cloud Build triggers — the per-PR `r1-agent-pr` check + the per-push CI lane. | Once per project + when trigger config changes. |
 | `setup-cloudbuild-e2e-trigger.sh` | Create / update the release-rehearsal E2E triggers — fires `services/cloudbuild-e2e.yaml` on push-to-main + tag-push. | Once per project; rerun when `services/cloudbuild-e2e-trigger.yaml` changes. Spec: `release-rehearsal-ci.md`. |
