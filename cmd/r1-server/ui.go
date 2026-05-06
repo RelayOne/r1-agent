@@ -1,18 +1,15 @@
 // Package main — ui.go
 //
-// Embeds the web dashboard into the r1-server binary. Served at /ui/*
-// for the static assets and / plus /session/{id} for the SPA shell —
-// the SPA's path-based routing is handled client-side in app.js, so
-// every unknown GET under those prefixes is handed the same
-// index.html.
+// Embeds the v2 web dashboard into the r1-server binary. Served at
+// /ui/* for static assets (templates, CSS, vendored JS, partials)
+// and at / + /session/{id} via the v2 htmx + Go-template handlers
+// in ui_v2_foundation.go / index.go / trace.go.
 //
-// The 3D ledger visualizer (RS-4 item 20) lives in a sibling
-// graph.html page. Because Three.js + three-forcegraph are ~300KB of
-// JS, we deliberately serve a dedicated HTML shell instead of
-// inflating the instance-list SPA. graph.js loads those libraries
-// from a pinned-version CDN; when the browser has no WebGL, the page
-// swaps itself for a fallback banner linking back to the 2D stream
-// view.
+// (Spec D — D-UI2-7 — removed the legacy vanilla-JS SPA + the
+// R1_SERVER_UI_V2 envelope gate. The serveIndex / serveGraphIndex
+// shims below survive only as dead-fallback hooks for the handful
+// of flag-off branches that haven't been deleted yet — they
+// 404 since the underlying files no longer exist.)
 package main
 
 import (
@@ -150,38 +147,26 @@ func mountUI(mux *http.ServeMux, db *DB) {
 	mux.HandleFunc("GET /settings", serveSettings)
 }
 
+// serveIndex was the legacy v1 SPA fallback handler. Spec D removed
+// the underlying index.html when the legacy SPA was deleted, and
+// dropping the R1_SERVER_UI_V2 toggle made every flag-off branch
+// dead code (v2Enabled / traceV2Enabled / Renderable now return true
+// unconditionally). The function survives because mountUI still
+// registers it on `GET /session/` for malformed URLs; it 404s
+// because there's nothing legacy to fall back to.
 func serveIndex(w http.ResponseWriter, r *http.Request) {
 	// Guard: the only paths we own here are "/" and "/session/...".
-	// Anything else falls through to 404. /api/* is routed first by
-	// the mux thanks to method+path specificity, so this is mostly
-	// defense-in-depth.
 	if r.URL.Path != "/" && !strings.HasPrefix(r.URL.Path, "/session/") {
 		http.NotFound(w, r)
 		return
 	}
-	raw, err := fs.ReadFile(uiFS, "index.html")
-	if err != nil {
-		http.Error(w, "ui missing: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(raw)
+	http.NotFound(w, r)
 }
 
-// serveGraphIndex returns the dedicated 3D visualizer HTML shell.
-// graph.html references /ui/graph.js + /ui/graph.css + CDN-hosted
-// Three.js + forcegraph bundles; the shell is tiny but the scripts
-// pull in a significant amount of code, which is why this page is
-// only loaded on explicit navigation to /session/{id}/graph rather
-// than lazy-loaded inside the main SPA.
-func serveGraphIndex(w http.ResponseWriter, _ *http.Request) {
-	raw, err := fs.ReadFile(uiFS, "graph.html")
-	if err != nil {
-		http.Error(w, "graph ui missing: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(raw)
+// serveGraphIndex was the legacy 3D-graph fallback. Same story as
+// serveIndex — the graph.html file is gone and v2 is the only
+// surface; the function survives only as a compile-time shim for
+// flag-off branches that no longer execute. Returns 404.
+func serveGraphIndex(w http.ResponseWriter, r *http.Request) {
+	http.NotFound(w, r)
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Spec 5 §5 + §10 T2 — TypeScript-typed sibling to the
-// cmd/r1-server/ui/web/js/graph-worker.test.js suite Spec 2 shipped.
+// cmd/r1-server/ui/js/graph-worker.test.js suite Spec 2 shipped.
 //
 // This test loads the shared graph-worker.js module through the same
 // vitest config but exercises it against a JSON fixture
@@ -25,7 +25,7 @@ import {
   setSimulationFactory,
   _resetState,
   type WorkerLike,
-} from '../../../cmd/r1-server/ui/web/js/graph-worker.js';
+} from '../../../cmd/r1-server/ui/js/graph-worker.js';
 
 interface CapturedMsg {
   kind: string;

@@ -143,18 +143,9 @@ func TestTracebundle_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestServeTracebundle_404OnFlagOff(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	src := makeFixtureSource()
-	h := serveTracebundle(src)
-	req := httptest.NewRequest("GET", "/api/session/sess-fix/export.tracebundle", nil)
-	req.SetPathValue("id", "sess-fix")
-	rec := httptest.NewRecorder()
-	h(rec, req)
-	if rec.Code != 404 {
-		t.Errorf("flag off: status = %d, want 404", rec.Code)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestServeTracebundle_404OnFlagOff.
+// The R1_SERVER_UI_V2 toggle was removed; the tracebundle export
+// is now always reachable when its route is mounted.)
 
 func TestServeTracebundle_HeadersAndBody(t *testing.T) {
 	t.Setenv("R1_SERVER_UI_V2", "1")

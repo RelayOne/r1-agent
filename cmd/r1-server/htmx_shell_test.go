@@ -58,11 +58,11 @@ func TestHtmxShell_IndexRendersFullShellShape(t *testing.T) {
 	// rely on. Drop one and the next four pages stop working.
 	wants := []string{
 		// htmx core load + SRI
-		`<script src="/ui/web/vendor/htmx.min.js"`,
+		`<script src="/ui/vendor/htmx.min.js"`,
 		`integrity="sha384-`,
 		`crossorigin="anonymous"`,
 		// htmx SSE extension load
-		`<script src="/ui/web/vendor/htmx-ext-sse.js"`,
+		`<script src="/ui/vendor/htmx-ext-sse.js"`,
 		// import map
 		`<script type="importmap">`,
 		// SSE body wiring

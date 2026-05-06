@@ -1,0 +1,71 @@
+{{- /*
+  cmd/r1-server/ui/session-graph.html
+
+  Spec 2 §3.4 + checklist T10. Extends base.html. Top toolbar with
+  Waterfall / 3D Graph / Stream / Memories tabs (3D Graph marked
+  current). Single <canvas data-island="graph"> for the InstancedMesh
+  scene. Side panel container #side-panel populated by raycaster
+  picking. Footer hosts the timeline scrubber.
+
+  Context shape (filled by serveSessionGraph):
+    .Title       string  inherits, augmented to "Session <id> — Graph"
+    .HtmxSRI     string  via shared base context
+    .HtmxSseSRI  string  via shared base context
+    .SessionID   string  current session id
+    .GraphData   string  JSON-marshaled {nodes, edges} for the
+                         server-rendered initial state
+*/ -}}
+{{- define "session-graph" -}}
+{{ template "base" . }}
+{{ end -}}
+
+{{- define "title" -}}{{ .Title }}{{ end -}}
+
+{{- define "topbar" -}}
+<header class="topbar" role="banner">
+  <div class="topbar__brand">r1-server</div>
+  <nav class="topbar__nav" aria-label="Session views">
+    <a href="/session/{{ .SessionID }}" data-testid="tab-waterfall">Waterfall</a>
+    <a href="/session/{{ .SessionID }}/graph" aria-current="page" data-testid="tab-graph">3D Graph</a>
+    <a href="/session/{{ .SessionID }}/stream" data-testid="tab-stream">Stream</a>
+    <a href="/memories" data-testid="tab-memories">Memories</a>
+  </nav>
+  <button id="focus-clear" type="button" data-testid="btn-global-view"
+          onclick="window.__GRAPH_RENDERER__ && window.__GRAPH_RENDERER__.clearFocus()">
+    Global view
+  </button>
+</header>
+{{- end -}}
+
+{{- define "main" -}}
+<section id="graph-pane" class="pane pane--primary">
+  <canvas data-island="graph" data-session-id="{{ .SessionID }}"
+          aria-label="3D session graph"
+          style="width:100%;height:calc(100vh - var(--topbar-height) - 56px);display:block;">
+  </canvas>
+</section>
+<aside id="side-panel" class="pane pane--side" role="complementary"
+       aria-label="Selected node details">
+  <p class="muted">Hover or click a node to inspect.</p>
+</aside>
+{{- end -}}
+
+{{- define "scripts" -}}
+<footer id="scrubber-bar"
+        style="position:fixed;left:0;right:0;bottom:0;height:56px;
+               border-top:1px solid var(--color-border);
+               background:var(--color-bg);padding:8px 16px;
+               display:flex;align-items:center;gap:12px;z-index:5;">
+  <label for="timeline-scrubber" class="sr-only">Timeline scrubber</label>
+  <input type="range" id="timeline-scrubber" data-testid="timeline-scrubber"
+         style="flex:1;" />
+  <span class="muted mono" id="scrubber-state" aria-live="polite">live</span>
+</footer>
+
+<!-- Data island: server-marshaled JSON, picked up by graph.js. CSP
+     forbids unsafe-inline scripts, but a <script type="application/json">
+     block is data — the parser leaves it untouched, no execution. -->
+<script type="application/json" id="graph-data">{{ .GraphData }}</script>
+<script type="module" src="/ui/js/graph.js" defer></script>
+<script type="module" src="/ui/js/scrubber.js" defer></script>
+{{- end -}}

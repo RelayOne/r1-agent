@@ -1,75 +1,67 @@
 // Package main — ui_v2_flag_test.go
 //
-// Spec 4 §10 T1 — verifies LoadV2Config reads env vars correctly +
-// strict-equality semantics + ShareEnabled independence.
+// Spec D (D-UI2-7) removed the R1_SERVER_UI_V2 flag once the legacy
+// v1 SPA was deleted. The pre-Spec-D semantics tests
+// (TestLoadV2Config_DefaultDisabled, _EnabledOne, _StrictOneOnly)
+// are gone with the flag — Enabled is now hardcoded true. The
+// remaining tests guard the post-Spec-D contract: Enabled is
+// always true, the SRI table is baked in, and ShareEnabled remains
+// independently flag-driven.
 package main
 
 import "testing"
 
-func TestLoadV2Config_DefaultDisabled(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	t.Setenv("R1_SERVER_SHARE_ENABLED", "")
-	cfg := LoadV2Config()
-	if cfg.Enabled {
-		t.Errorf("Enabled = true, want false (env unset)")
-	}
-	if cfg.ShareEnabled {
-		t.Errorf("ShareEnabled = true, want false (env unset)")
-	}
-	if cfg.Renderable() {
-		t.Errorf("Renderable() should be false when Enabled is false")
-	}
-	if cfg.CanServeShare() {
-		t.Errorf("CanServeShare() should be false when both flags off")
-	}
-}
-
-func TestLoadV2Config_EnabledOne(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "1")
-	t.Setenv("R1_SERVER_SHARE_ENABLED", "")
+// TestLoadV2Config_AlwaysEnabled — post-Spec-D, the v2 surface IS
+// the only surface. Renderable() returns true regardless of any
+// env-var state.
+func TestLoadV2Config_AlwaysEnabled(t *testing.T) {
+	t.Setenv("R1_SERVER_UI_V2", "") // proves the env-var has no effect
 	cfg := LoadV2Config()
 	if !cfg.Enabled {
-		t.Errorf("Enabled = false, want true (env=1)")
+		t.Error("Enabled = false, want true (Spec D hardcodes true)")
 	}
 	if !cfg.Renderable() {
-		t.Errorf("Renderable() should be true when Enabled is true")
+		t.Error("Renderable() = false, want true unconditionally")
+	}
+}
+
+// TestLoadV2Config_ShareEnabledIndependent — R1_SERVER_SHARE_ENABLED
+// stays as the per-/share/{hash} gate. CanServeShare requires
+// (always-true) Enabled AND ShareEnabled.
+func TestLoadV2Config_ShareEnabledIndependent(t *testing.T) {
+	t.Setenv("R1_SERVER_SHARE_ENABLED", "")
+	cfg := LoadV2Config()
+	if cfg.ShareEnabled {
+		t.Errorf("SHARE_ENABLED unset should keep ShareEnabled=false")
 	}
 	if cfg.CanServeShare() {
-		t.Errorf("CanServeShare() should still be false when ShareEnabled is off")
+		t.Errorf("CanServeShare() should be false when ShareEnabled is off")
 	}
-}
 
-func TestLoadV2Config_StrictOneOnly(t *testing.T) {
-	for _, val := range []string{"true", "yes", "TRUE", "on", "1 ", " 1"} {
-		t.Run("env="+val, func(t *testing.T) {
-			t.Setenv("R1_SERVER_UI_V2", val)
-			cfg := LoadV2Config()
-			if cfg.Enabled {
-				t.Errorf("env=%q should NOT enable (strict-1 only); got Enabled=true", val)
-			}
-		})
-	}
-}
-
-func TestLoadV2Config_ShareEnabledIndependent(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
 	t.Setenv("R1_SERVER_SHARE_ENABLED", "1")
-	cfg := LoadV2Config()
-	if cfg.Enabled {
-		t.Errorf("UI_V2 unset should keep Enabled=false")
-	}
+	cfg = LoadV2Config()
 	if !cfg.ShareEnabled {
 		t.Errorf("SHARE_ENABLED=1 should set ShareEnabled=true")
 	}
-	if cfg.CanServeShare() {
-		t.Errorf("CanServeShare() requires BOTH Enabled and ShareEnabled — got true with Enabled=false")
-	}
-
-	// Both on
-	t.Setenv("R1_SERVER_UI_V2", "1")
-	cfg = LoadV2Config()
 	if !cfg.CanServeShare() {
-		t.Errorf("CanServeShare() should be true when both flags on")
+		t.Errorf("CanServeShare() should be true when both flags on (Enabled is now hardcoded true)")
+	}
+}
+
+// TestLoadV2Config_ShareEnabledStrictOne — preserves the strict-"1"
+// equality semantics for the remaining ShareEnabled flag. Anything
+// other than literal "1" reads as off; ops scripts thinking
+// "true"/"yes" is on shouldn't accidentally flip a customer-visible
+// surface.
+func TestLoadV2Config_ShareEnabledStrictOne(t *testing.T) {
+	for _, val := range []string{"true", "yes", "TRUE", "on", "1 ", " 1"} {
+		t.Run("env="+val, func(t *testing.T) {
+			t.Setenv("R1_SERVER_SHARE_ENABLED", val)
+			cfg := LoadV2Config()
+			if cfg.ShareEnabled {
+				t.Errorf("env=%q should NOT enable share (strict-1 only); got ShareEnabled=true", val)
+			}
+		})
 	}
 }
 

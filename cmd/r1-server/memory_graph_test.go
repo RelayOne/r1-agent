@@ -9,16 +9,9 @@ import (
 	"testing"
 )
 
-func TestServeMemoryGraph_404OnFlagOff(t *testing.T) {
-	t.Setenv("R1_SERVER_UI_V2", "")
-	req := httptest.NewRequest("GET", "/memories/m-1/graph", nil)
-	req.SetPathValue("id", "m-1")
-	rec := httptest.NewRecorder()
-	serveMemoryGraph(rec, req)
-	if rec.Code != 404 {
-		t.Errorf("flag off: status = %d, want 404", rec.Code)
-	}
-}
+// (Spec D — D-UI2-7 — deleted TestServeMemoryGraph_404OnFlagOff.
+// The R1_SERVER_UI_V2 toggle was removed once the legacy v1 SPA was
+// deleted; serveMemoryGraph always serves the v2 payload.)
 
 func TestServeMemoryGraph_404OnEmptyID(t *testing.T) {
 	t.Setenv("R1_SERVER_UI_V2", "1")
