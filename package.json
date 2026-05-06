@@ -17,6 +17,6 @@
     "test:components": "npm run test --workspace=@r1/web-components"
   },
   "overrides": {
-    "vite": "^6.4.0"
+    "vite": "^7.0.0"
   }
 }
