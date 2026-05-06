@@ -1,4 +1,4 @@
-// cmd/r1-server/ui/web/js/graph-layers.js
+// cmd/r1-server/ui/js/graph-layers.js
 //
 // Spec 3 §3 + §8 (TASK-9, TASK-10): two cross-cutting layers that
 // graph.js (Spec 2) wires once per state change rather than per

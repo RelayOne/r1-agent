@@ -34,7 +34,7 @@ it with a small ESM shim. If a future version ships a single-file ESM build,
 update the URL in `vendor-ui.sh` to use it.
 
 `three.module.js` is the **minified** ESM build (`three.module.min.js` upstream,
-renamed locally for the import-map declaration in `cmd/r1-server/ui/web/partials/import-map.html`).
+renamed locally for the import-map declaration in `cmd/r1-server/ui/partials/import-map.html`).
 The unminified form is 1.3 MB and pushes the vendor tree past the 250 KB
 gzipped budget; the minified form lands at 167 KB gzipped.
 

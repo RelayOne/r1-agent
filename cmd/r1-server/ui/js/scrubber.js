@@ -1,4 +1,4 @@
-// cmd/r1-server/ui/web/js/scrubber.js
+// cmd/r1-server/ui/js/scrubber.js
 //
 // Spec 2 §3.3: vanilla-JS island bound to <input type="range" id="timeline-scrubber">.
 // Reads `data-cursor` attributes from the waterfall rows (set server-side by
@@ -6,7 +6,7 @@
 // listens for. No worker involvement — the worker is idle during scrub
 // because positions are frozen at simulation cool-down.
 //
-// Loaded by base.html via <script type="module" src="/ui/web/js/scrubber.js">.
+// Loaded by base.html via <script type="module" src="/ui/js/scrubber.js">.
 
 const SCRUBBER_SEL = '#timeline-scrubber';
 const ROW_SEL = '[data-cursor]';

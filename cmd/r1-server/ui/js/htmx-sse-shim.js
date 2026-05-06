@@ -1,4 +1,4 @@
-// cmd/r1-server/ui/web/js/htmx-sse-shim.js
+// cmd/r1-server/ui/js/htmx-sse-shim.js
 //
 // Spec 4 §8 + §10 T20: client-side glue for the two htmx-ext-sse 2.2.4
 // reconnect gotchas surfaced by RT-HTMX-SSE-DATA-ATTRS.
@@ -18,7 +18,7 @@
 //   the new floor; without this, the SSE feed silently drops events.
 //
 // Loaded from base.html via:
-//   <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+//   <script type="module" src="/ui/js/htmx-sse-shim.js" defer></script>
 
 const cursorByURL = new Map(); // base-URL → last-seen-event-id
 

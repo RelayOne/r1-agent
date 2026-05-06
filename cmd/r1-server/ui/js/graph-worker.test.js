@@ -1,4 +1,4 @@
-// cmd/r1-server/ui/web/js/graph-worker.test.js
+// cmd/r1-server/ui/js/graph-worker.test.js
 //
 // Spec 2 §6 + checklist T10. Drives graph-worker.js's pure logic
 // against a 50-node fixture without spawning a real Worker. The
@@ -16,7 +16,7 @@
 //
 // Run via web/ workspace's vitest. The web/vitest.config.ts include
 // pattern is updated in this commit to discover .test.js files
-// under cmd/r1-server/ui/web/js/.
+// under cmd/r1-server/ui/js/.
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {

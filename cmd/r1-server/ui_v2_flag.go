@@ -18,8 +18,8 @@ import "os"
 type V2Config struct {
 	Enabled      bool   // R1_SERVER_UI_V2=1
 	ShareEnabled bool   // R1_SERVER_SHARE_ENABLED=1 — second gate on /share/*
-	HtmxSRI      string // SRI for /ui/web/vendor/htmx.min.js
-	HtmxSseSRI   string // SRI for /ui/web/vendor/htmx-ext-sse.js
+	HtmxSRI      string // SRI for /ui/vendor/htmx.min.js
+	HtmxSseSRI   string // SRI for /ui/vendor/htmx-ext-sse.js
 }
 
 // vendoredSRI is the compile-time SRI manifest for vendor blobs that

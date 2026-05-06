@@ -1,5 +1,5 @@
 {{- /*
-  cmd/r1-server/ui/web/base.html
+  cmd/r1-server/ui/base.html
 
   Per specs/r1-server-ui-v2-foundation.md §4. Every v2 page extends this
   shell via {{ template "base" . }} so the import map, vendored htmx +
@@ -24,21 +24,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ block "title" . }}r1-server{{ end }}</title>
-  <link rel="stylesheet" href="/ui/web/css/base.css">
+  <link rel="stylesheet" href="/ui/css/base.css">
 
   <script type="importmap">{{ template "import-map" . }}</script>
 
-  <script src="/ui/web/vendor/htmx.min.js"
+  <script src="/ui/vendor/htmx.min.js"
           integrity="{{ .HtmxSRI }}"
           crossorigin="anonymous"
           defer></script>
-  <script src="/ui/web/vendor/htmx-ext-sse.js"
+  <script src="/ui/vendor/htmx-ext-sse.js"
           integrity="{{ .HtmxSseSRI }}"
           crossorigin="anonymous"
           defer></script>
   <!-- Spec 4 §8: client shim for the two htmx-ext-sse reconnect
        gotchas (last_event_id URL fallback + event:resync handler). -->
-  <script type="module" src="/ui/web/js/htmx-sse-shim.js" defer></script>
+  <script type="module" src="/ui/js/htmx-sse-shim.js" defer></script>
 </head>
 <body hx-ext="sse" data-session-id="{{ .SessionID }}">
   {{ block "topbar" . }}{{ end }}

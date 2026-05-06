@@ -1,11 +1,11 @@
-// cmd/r1-server/ui/web/js/graph-worker.js
+// cmd/r1-server/ui/js/graph-worker.js
 //
 // Spec 2 §3.2: an ES-module Web Worker that runs d3-force-3d off the main
 // thread and posts position updates back via transferable ArrayBuffer (or a
 // pre-allocated SharedArrayBuffer when crossOriginIsolated is true).
 //
 // Loaded by graph.js as:
-//   new Worker('/ui/web/js/graph-worker.js', { type: 'module' })
+//   new Worker('/ui/js/graph-worker.js', { type: 'module' })
 //
 // The 9-message protocol (synthesized cluster, RT-D3-FORCE-WEBWORKER):
 //

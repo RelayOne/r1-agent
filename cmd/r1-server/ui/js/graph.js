@@ -1,4 +1,4 @@
-// cmd/r1-server/ui/web/js/graph.js
+// cmd/r1-server/ui/js/graph.js
 //
 // Spec 2 §3.1: main-thread renderer that pairs with graph-worker.js.
 // One InstancedMesh per node-shape pool (max 8192 instances each),
@@ -12,7 +12,7 @@
 //   T7: focused-subtree view
 //   T8: streaming insert from SSE
 //
-// Loaded by base.html via <script type="module" src="/ui/web/js/graph.js">.
+// Loaded by base.html via <script type="module" src="/ui/js/graph.js">.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -227,7 +227,7 @@ export class GraphRenderer {
       this.adjacency.get(dst).add(src);
     }
     // Spin up the worker.
-    this.worker = new Worker('/ui/web/js/graph-worker.js', { type: 'module' });
+    this.worker = new Worker('/ui/js/graph-worker.js', { type: 'module' });
     this.worker.onmessage = (ev) => this._onWorkerMessage(ev);
     this.worker.onerror = (ev) => console.error('graph-worker error', ev);
     const useSAB =

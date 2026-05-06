@@ -1,4 +1,4 @@
-# r1-server UI v2 — `cmd/r1-server/ui/web/`
+# r1-server UI v2 — `cmd/r1-server/ui/`
 
 This directory holds the htmx-driven dashboard that ships behind the
 `R1_SERVER_UI_V2=1` flag. It exists in parallel with the legacy vanilla-
@@ -16,7 +16,7 @@ follow-up ticket; for now, both trees coexist.
 ## Directory layout
 
 ```
-cmd/r1-server/ui/web/
+cmd/r1-server/ui/
 ├── README.md                    you are here
 ├── base.html                    htmx + SSE + import-map shell — every page extends it
 ├── partials/                    template fragments included by base.html or page templates
@@ -62,11 +62,11 @@ the application code uses:
 
 | Specifier | Resolves to |
 |---|---|
-| `three` | `/ui/web/vendor/three.module.js` |
-| `three/addons/controls/OrbitControls.js` | `/ui/web/vendor/three/addons/controls/OrbitControls.js` |
-| `d3-force-3d` | `/ui/web/vendor/d3-force-3d.js` |
-| `3d-force-graph` | `/ui/web/vendor/3d-force-graph.js` |
-| `three-spritetext` | `/ui/web/vendor/three-spritetext.js` |
+| `three` | `/ui/vendor/three.module.js` |
+| `three/addons/controls/OrbitControls.js` | `/ui/vendor/three/addons/controls/OrbitControls.js` |
+| `d3-force-3d` | `/ui/vendor/d3-force-3d.js` |
+| `3d-force-graph` | `/ui/vendor/3d-force-graph.js` |
+| `three-spritetext` | `/ui/vendor/three-spritetext.js` |
 
 The `three` mapping is load-bearing: three.js's own addons (e.g.
 `OrbitControls.js`) `import * as THREE from 'three'`, and the import map
@@ -107,7 +107,7 @@ denylist is specifically about state tokens.
 
 ## Adding a new page template
 
-1. Create `cmd/r1-server/ui/web/<name>.html`. Top of file:
+1. Create `cmd/r1-server/ui/<name>.html`. Top of file:
    ```
    {{ define "<name>" }}
    {{ template "base" . }}
@@ -134,7 +134,7 @@ denylist is specifically about state tokens.
 ## Boundaries
 
 - **No build pipeline.** No webpack/esbuild/rollup. Vendored files ship as-is.
-- **No CDN at runtime.** Every script must load from `/ui/web/vendor/`.
+- **No CDN at runtime.** Every script must load from `/ui/vendor/`.
 - **No npm/pnpm install in CI.** The vendor step is dev/release-time only.
 - **No tailwind, no CSS-in-JS, no preprocessor.** Plain CSS in `css/`.
 - **No client-side router.** htmx's `hx-push-url` handles deep links.
