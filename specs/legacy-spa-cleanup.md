@@ -1,5 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: blocked -->
 <!-- CREATED: 2026-05-05 -->
+<!-- BLOCKED_REASON: 2026-05-05 build: deleting the 12 legacy SPA files broke 12 test assertions across ui_test.go / index_test.go / ui_vendor_test.go / trace_test.go (TestUIServesIndex, TestUIGraphHTMLServed, TestHTMXVendoredAssetServed, TestTraceWaterfallFlagOffServesSPA, etc). Tests assert specifically on v1 SPA paths and need per-test triage. Path forward: multi-PR refactor — first delete v1-specific tests (per-file PR with reviewer judgment), then delete source files. Too risky in a single PR. -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 36 -->
 
