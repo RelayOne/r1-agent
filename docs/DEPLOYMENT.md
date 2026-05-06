@@ -52,6 +52,8 @@ Additional gates:
 | antitrunc verify | `r1 antitrunc verify -n 20` | required (post-commit hook + CI) |
 | `golangci-lint` | `make lint` | advisory |
 | `govulncheck` + `gosec` | `make security` | required (stdlib bumps via Go upgrade PR) |
+| Release-rehearsal E2E (push-to-main) | `services/cloudbuild-e2e.yaml` via Cloud Build trigger `r1-agent-e2e-rehearsal-main` | required for any release that gates on it (post-deploy verification — runs *after* merge to main) |
+| Release-rehearsal E2E (tag) | `services/cloudbuild-e2e.yaml` via Cloud Build trigger `r1-agent-e2e-rehearsal-tag` | required — red blocks tag promotion |
 
 CI runs all of these via `cloudbuild.yaml`. The web gate runs first (fail-fast on web breakage); the Go gate waits for it via `waitFor`.
 
@@ -512,51 +514,17 @@ Expected: 9 × OK.
 
 ---
 
-## Status
-
-### Done
-- 9 Cloud Run services deployed + answering `/livez` 200
-- 3 Cloud SQL instances RUNNABLE
-- Artifact Registry repo + 3 images
-- 6 Secret Manager placeholders
-- 9 domain mappings created
-- Auto-deploy yaml + ops scripts shipped
-- `cloudbuild.yaml` CI gate (build + test + vet + race + chdir-lint + view-without-api + antitrunc verify)
-
-### In Progress
-- DNS propagation (operator: add Cloudflare CNAMEs)
-- Real values for 6 secret placeholders (operator)
-- Branch protection (operator runs `./scripts/setup-branch-protection.sh`)
-- Cloud Build deploy triggers (operator runs `./services/scripts/setup-cloudbuild-triggers.sh`)
-
-### Scoped
-- Cloud Monitoring uptime checks on `/livez` endpoints
-- Alerting policies (5xx rate, Cloud SQL CPU, lane-event throughput)
-- Cross-region replication for `relayone-488319-r1-releases` GCS bucket
-- Terraform module for the whole stack (recreate in another project from one command)
-
-### Scoping
-- Disaster-recovery drill cadence (quarterly?)
-- Cost-budget alerting (hard cap on monthly spend)
-
-### Potential — On Horizon
-- Anycast TCP load balancer for hot regions
-- VPC peering for Cloud SQL (no public IP on the prod instance)
-- Multi-region Cloud Run (failover from us-central1 to northamerica-northeast2 on outage)
-
----
-
 ## Release-rehearsal lane
 
-The release-rehearsal lane runs the full **Playwright + axe-core E2E**
-flow against a freshly-built `r1-server`. It runs in **three modes**,
-all firing the same `services/cloudbuild-e2e.yaml` Cloud Build pipeline:
+The release-rehearsal lane runs the full **Playwright + axe-core E2E** flow against a freshly-built `r1-server`. It is the post-deploy + release-gate quality bar for `cmd/r1-server` and the v2 web UI; the Go gate (`go build` + `go test` + `go vet`) covers the agent runtime, but the v2 web UI requires browser execution that the Go gate can't provide.
 
-| Mode | Trigger | Purpose |
-|---|---|---|
-| Push-to-main | Cloud Build trigger `r1-agent-e2e-rehearsal-main` | Post-deploy verification: confirms the just-shipped main is still e2e-clean. |
-| Tag-push | Cloud Build trigger `r1-agent-e2e-rehearsal-tag` (matches `^v.*$`) | Release gate: red blocks tag promotion to staging / main / production rollouts. |
-| Manual | GitHub Actions workflow `e2e-rehearsal-manual` (dispatch via Actions UI) | On-demand rehearsal without local gcloud — `gcloud builds triggers run` against the main trigger from the GitHub runner. |
+The lane runs in **three modes**, all firing the same `services/cloudbuild-e2e.yaml` Cloud Build pipeline:
+
+| Mode | Trigger | When it fires | Purpose |
+|---|---|---|---|
+| Push-to-main | Cloud Build trigger `r1-agent-e2e-rehearsal-main` | every push to `main` | Post-deploy verification: confirms the just-shipped `main` is e2e-clean. |
+| Tag-push | Cloud Build trigger `r1-agent-e2e-rehearsal-tag` | every `^v.*$` tag push | Release gate: red blocks tag promotion to staging / main / production rollouts. |
+| Manual | GitHub Actions workflow `e2e-rehearsal-manual` (dispatch via Actions UI) | operator-initiated | On-demand rehearsal without local gcloud — `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH` from the GitHub runner. |
 
 ### What runs
 
@@ -566,6 +534,8 @@ all firing the same `services/cloudbuild-e2e.yaml` Cloud Build pipeline:
 2. `node:22.13-bookworm-slim` — `npm install` + `npx playwright install --with-deps chromium`.
 3. `golang:1.25` — `go test -tags=e2e ./cmd/r1-server/e2e/...` exercises the full Playwright + axe flow with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1`.
 4. `cloud-sdk:slim` — publishes the rehearsal result back to GitHub via Cloud Build's native commit-status integration.
+
+Both Cloud Build triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`. The `r1-agent-e2e-rehearsal-main` trigger is path-filtered to `cmd/r1-server/**`, `internal/server/**`, `web/**`, and `services/cloudbuild-e2e.yaml` (changes anywhere else don't fire the rehearsal — keeps build minutes proportional to risk).
 
 ### What "red" means
 
@@ -593,3 +563,65 @@ gcloud builds triggers list --project=relayone-488319 --filter='name~e2e-rehears
 ```
 
 Re-running the script updates the existing triggers in-place — does not create duplicates. The trigger descriptor is `services/cloudbuild-e2e-trigger.yaml`.
+
+### Manual rehearsal from GitHub Actions
+
+For operators without local `gcloud` (or when triggering from a non-developer machine):
+
+1. Open `https://github.com/RelayOne/r1-agent/actions/workflows/e2e-rehearsal-manual.yml` in the browser.
+2. Click **Run workflow**, optionally set `branch` (default `main`), submit.
+3. The runner authenticates to GCP via `secrets.GCP_SA_JSON` and calls `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH`.
+4. Workflow summary prints the build ID + a link to the Cloud Build console for live logs.
+
+The `GCP_SA_JSON` repo secret must hold a JSON service-account key with `roles/cloudbuild.builds.editor`. Rotate per the standard secret-rotation cadence.
+
+---
+
+## Tracebundle v2 export — operator notes
+
+`GET /api/session/{id}/export.tracebundle` produces a portable per-session audit artifact (chain nodes + edges + content + canonical-signed manifest with `chain_root_hash`). V2-flag-gated: returns `404` unless `R1_SERVER_UI_V2=1` is set on the `r1-server` process.
+
+Operational considerations:
+
+- **Set `R1_SERVER_UI_V2=1`** as a Cloud Run env var (or local env when running `r1-server` standalone) to enable the export route. The flag also enables the v2 web UI.
+- **Bundle size** scales with session length. Expect a few hundred KB for a typical mission, MB-range for long-running multi-day sessions. Stream with `--output` rather than `-O` so curl doesn't buffer in memory.
+- **Distributing the bundle**: gzip first (`tracebundle` is a JSON-shaped archive; gzip ratios are typically 4-6×), then attach to a ticket / share via cloud storage. Recipients verify with the canonical manifest body (`ledger.CanonicalManifestSignBody`) plus the operator-published public key.
+- **Redacted content**: the bundle preserves the redaction structure — chain-tier metadata is present, content tier is empty, and the per-node `<store-root>/redactions/<nodeID>.ndjson` log is included. `Store.RedactionsForVerified` is the read path the dashboard uses; downstream auditors run the same `VerifyRecord` check against the public key.
+- **Key distribution for verification**: by default, the ed25519 keypair lives under `<r1-server-store-root>/redactions/sign-{priv,pub}.pem`. To let an external auditor verify without daemon access, copy `sign-pub.pem` (mode 0644) to them out-of-band; the manifest's `signer` field carries the 12-char hex fingerprint they cross-check against.
+
+---
+
+## Status
+
+### Done
+- 9 Cloud Run services deployed + answering `/livez` 200
+- 3 Cloud SQL instances RUNNABLE
+- Artifact Registry repo + 3 images
+- 6 Secret Manager placeholders
+- 9 domain mappings created
+- Auto-deploy yaml + ops scripts shipped
+- `cloudbuild.yaml` CI gate (build + test + vet + race + chdir-lint + view-without-api + antitrunc verify)
+- **Release-rehearsal CI** (PR #170): Cloud Build triggers `r1-agent-e2e-rehearsal-main` (push-to-main) + `r1-agent-e2e-rehearsal-tag` (`^v.*$`) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`). Idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
+- **Tracebundle v2 export route** (PR #171): `GET /api/session/{id}/export.tracebundle` v2-flag-gated; per-session filtered chain + edges + canonical-signed manifest with `chain_root_hash`. Production source at `cmd/r1-server/tracebundle_source.go`.
+- **Signed redaction events** (PR #169): ed25519 keypair persisted at `<store-root>/redactions/sign-{priv,pub}.pem`; `Store.RedactionsForVerified` returns per-entry `Verified` flag for the dashboard side panel.
+
+### In Progress
+- DNS propagation (operator: add Cloudflare CNAMEs)
+- Real values for 6 secret placeholders (operator)
+- Branch protection (operator runs `./scripts/setup-branch-protection.sh`)
+- Cloud Build deploy triggers (operator runs `./services/scripts/setup-cloudbuild-triggers.sh`)
+
+### Scoped
+- Cloud Monitoring uptime checks on `/livez` endpoints
+- Alerting policies (5xx rate, Cloud SQL CPU, lane-event throughput)
+- Cross-region replication for `relayone-488319-r1-releases` GCS bucket
+- Terraform module for the whole stack (recreate in another project from one command)
+
+### Scoping
+- Disaster-recovery drill cadence (quarterly?)
+- Cost-budget alerting (hard cap on monthly spend)
+
+### Potential — On Horizon
+- Anycast TCP load balancer for hot regions
+- VPC peering for Cloud SQL (no public IP on the prod instance)
+- Multi-region Cloud Run (failover from us-central1 to northamerica-northeast2 on outage)
