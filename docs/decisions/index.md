@@ -229,6 +229,7 @@ Tunable knobs. Defaults: 5 concurrent LLM Lobes, Haiku floor with Sonnet escalat
 - **D-29**: Intent Gate = verb-scan first, Haiku on ambiguity; DIAGNOSE masks write tools at `harness/tools` auth.
 - **D-31**: Live meta-reasoner gated by `STOKE_META_LIVE=1`.
 
+## 2026-05-04
 ## 2026-05-04 — Spec 8 Agentic Test Harness
 
 These five decisions accept the design choices in `specs/agentic-test-harness.md` as binding for the harness, lint, and docs surface.

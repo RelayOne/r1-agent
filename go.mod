@@ -16,9 +16,12 @@ require (
 	github.com/99designs/keyring v1.2.2
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/coder/websocket v1.8.13
 	github.com/go-rod/rod v0.116.2
 	github.com/go-vgo/robotgo v1.0.2
+	github.com/gofrs/flock v0.12.1
 	github.com/google/uuid v1.6.0
+	github.com/kardianos/service v1.2.4
 	github.com/mark3labs/mcp-go v0.49.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.37
@@ -41,9 +44,6 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/coder/websocket v1.8.13 // indirect
-	github.com/gofrs/flock v0.12.1 // indirect
-	github.com/kardianos/service v1.2.4 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 )
 
@@ -90,7 +90,7 @@ require (
 	github.com/muesli/ansi v0.0.0-20211018074035-2e021307bc4b // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
+	github.com/muesli/termenv v0.16.0
 	github.com/otiai10/gosseract/v2 v2.4.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

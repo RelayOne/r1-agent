@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 //
+// Tracked: connect_url() and backoff_policy() are accessor helpers for
+// the discovered-daemon path; pending wire-up into a Tauri command
+// surface alongside discovery.rs. Remove this attribute when those
+// accessors are exposed via #[tauri::command].
+#![allow(dead_code)] // tracked: pending wire-up (matches discovery.rs/transport.rs)
+//
 // DiscoveryState — Tauri-managed wrapper around the discovered
 // DaemonHandle, tracking issue #145.
 //

@@ -198,7 +198,6 @@ func (c *Config) defaults() {
 	if c.Timeout == 0 {
 		c.Timeout = 5 * time.Minute
 	}
-
 	// Compose Cortex with operator hooks. Cortex fires FIRST per
 	// spec §"Integration points" §2 and §3:
 	//   - MidturnCheckFn: outputs joined with "\n\n" (cortex first, operator second)

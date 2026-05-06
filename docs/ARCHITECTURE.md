@@ -11,6 +11,19 @@ Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cl
 
 ## Tech stack
 
+R1 currently has five architectural planes that matter together:
+
+1. Mission execution: planning, execution, verification, review
+2. Governance and evidence: ledger, WAL, receipts, honesty, cost
+3. Deterministic skills: compile, manufacture, register, select, run
+4. Distribution and runtime extension: packs, registries, MCP-backed
+   runtime functions
+5. Anti-truncation enforcement: regex catalog, scope-completion gate,
+   supervisor rules, agentloop wiring, post-commit git hook, and
+   `r1 antitrunc verify` CLI / MCP tool — a layered, machine-
+   mechanical defense against LLM self-reduction. Each layer is
+   independently effective so the model cannot side-step one and
+   pass.
 | Layer | Technology | Pinned version |
 |---|---|---|
 | Core runtime | Go | 1.25.5 (1.26+ for cmd/r1 binaries via cloudbuild) |
@@ -147,6 +160,28 @@ failure/                           10 failure classes + fingerprint dedup + Shou
 errtaxonomy/                       Structured error taxonomy
 checkpoint/                        Synchronous checkpointing
 
+## Anti-Truncation Plane
+
+The anti-truncation plane addresses a documented LLM behaviour: under
+long-running multi-task work the model self-reduces scope to fit
+imagined token / time / Anthropic load-balance budgets. The plane is
+seven layers, each independently effective:
+
+- regex catalog — `internal/antitrunc/phrases.go`
+- scope-completion gate — `internal/antitrunc/gate.go`
+- cortex Lobe (Detector) — `internal/cortex/lobes/antitrunc/`
+- supervisor rules — `internal/supervisor/rules/antitrunc/`
+- agentloop wiring — `internal/agentloop/antitrunc.go`
+- post-commit git hook — `scripts/git-hooks/post-commit-antitrunc.sh`
+- CLI + MCP tool — `cmd/r1/antitrunc_cmd.go`,
+  `internal/mcp/r1_server.go`
+
+The gate composes BEFORE any other end-turn hook, so a model that
+says "skip the gate this once" is ignored at the host process layer.
+Operator override (`--no-antitrunc-enforce`) is real but has no
+LLM-visible toggle. Full details: [`ANTI-TRUNCATION.md`](ANTI-TRUNCATION.md).
+
+## Runtime Extension Plane
 --- CODE GENERATION ---
 patchapply/                        Unified-diff parsing/application
 extract/                           Structured content parsing

@@ -6,6 +6,21 @@ r1 is the open agent runtime that refuses to lie about completion. It plans, exe
 
 ## What's new — final-sweep features (2026-05-05)
 
+- core mission loop with planning, execution, verification, and review
+- content-addressed ledger and WAL-backed runtime evidence
+- benchmark and parity evidence under `evaluation/`
+- deterministic skill manufacturing, registry, and selection surfaces
+- skill-pack lifecycle commands including `init`, `info`, `install`,
+  `list`, `publish`, `search`, `sign`, `verify`, `update`, and `serve`
+- seeded repo/user skill-pack registries and signed-pack runtime
+  verification
+- new runtime helpers for ledger audit, execution audit, metrics
+  collection, timeout/cancel behavior, oneshot runtime cost metadata,
+  and flagship deterministic runtimes
+- **anti-truncation enforcement** — a layered, machine-mechanical
+  defense against LLM self-truncation. Refuses end-turn while plan
+  items are unchecked or truncation phrases are emitted. See
+  [`docs/ANTI-TRUNCATION.md`](docs/ANTI-TRUNCATION.md).
 Four small, load-bearing additions merged via PRs #168 / #169 / #170 / #171 (sync to `main` in commit `242af4a8`). They close out the trust + audit story and harden the release pipeline:
 
 - **Skill-aware compaction** — `internal/concern/SkillCompactor` evicts least-recently-used skills under context-budget pressure and `internal/workflow/SkillScopeCloser` drops every skill loaded into a phase scope on phase exit. A turn never has to inherit unused skill text from a previous task; the audit trail still has every load and every unload as a ledger node. — `internal/concern/skill_compactor.go`, `internal/workflow/skill_scope_closer.go`, `internal/skilltracker/`. **Status: Done.**
