@@ -1,5 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: blocked -->
 <!-- CREATED: 2026-05-05 -->
+<!-- BLOCKED_REASON: 2026-05-05 build attempt: vitest 4 pulls rolldown which fails to load native bindings on Node 20.18 (local env). vitest 3 + jsdom 29 surfaced unhoisted-dep issues (missing convert-source-map) under npm 9 workspaces on Node 20.18. Both work on CI (Node 22.13) but need local-env validation gate. Path forward: bump engines.node from >=20 to >=22.12 across all workspace package.json first, require local devs to upgrade, then retry this spec. -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 33 -->
 
