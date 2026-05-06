@@ -25,6 +25,17 @@
 // submenu is populated dynamically each time the menu opens —
 // `refresh_pop_outs_submenu(app)` enumerates `PopoutRegistry` and
 // rebuilds the submenu items.
+//
+// Tracked: the menu module is declared in main.rs but its public
+// surface (build_menu + the M_* event-id constants) is not yet wired
+// into Tauri's setup hook. Once `app.set_menu(build_menu(&app)?)` is
+// called from setup() and the on_menu_event handlers are registered,
+// remove this attribute. Same convention as discovery.rs / transport.rs.
+//
+// `unused_mut` is included because cfg(not(target_os = "macos"))-gated
+// reassignments (e.g. menu.rs:166-181) compile out on macOS, leaving
+// the `let mut builder` declaration genuinely non-mut on that target.
+#![allow(dead_code, unused_mut)] // tracked: pending wire-up
 
 use tauri::menu::{
     AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
