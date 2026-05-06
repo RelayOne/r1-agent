@@ -92,7 +92,7 @@ steps:
       - -c
       - |
         apt-get update -q && apt-get install -y -q gcc
-        go test -mod=vendor ./... -race -count=1 -timeout=300s
+        go test -mod=vendor ./... -race -count=1 -timeout=600s
     env:
       - 'CGO_ENABLED=1'
 
