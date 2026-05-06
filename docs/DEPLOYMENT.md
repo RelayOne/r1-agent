@@ -543,3 +543,53 @@ Expected: 9 × OK.
 - Anycast TCP load balancer for hot regions
 - VPC peering for Cloud SQL (no public IP on the prod instance)
 - Multi-region Cloud Run (failover from us-central1 to northamerica-northeast2 on outage)
+
+---
+
+## Release-rehearsal lane
+
+The release-rehearsal lane runs the full **Playwright + axe-core E2E**
+flow against a freshly-built `r1-server`. It runs in **three modes**,
+all firing the same `services/cloudbuild-e2e.yaml` Cloud Build pipeline:
+
+| Mode | Trigger | Purpose |
+|---|---|---|
+| Push-to-main | Cloud Build trigger `r1-agent-e2e-rehearsal-main` | Post-deploy verification: confirms the just-shipped main is still e2e-clean. |
+| Tag-push | Cloud Build trigger `r1-agent-e2e-rehearsal-tag` (matches `^v.*$`) | Release gate: red blocks tag promotion to staging / main / production rollouts. |
+| Manual | GitHub Actions workflow `e2e-rehearsal-manual` (dispatch via Actions UI) | On-demand rehearsal without local gcloud — `gcloud builds triggers run` against the main trigger from the GitHub runner. |
+
+### What runs
+
+`services/cloudbuild-e2e.yaml` orchestrates four steps:
+
+1. `golang:1.25` — `go build -mod=vendor` produces a fresh `r1-server` binary.
+2. `node:22.13-bookworm-slim` — `npm install` + `npx playwright install --with-deps chromium`.
+3. `golang:1.25` — `go test -tags=e2e ./cmd/r1-server/e2e/...` exercises the full Playwright + axe flow with `R1_SERVER_UI_V2=1` + `R1_SERVER_SHARE_ENABLED=1`.
+4. `cloud-sdk:slim` — publishes the rehearsal result back to GitHub via Cloud Build's native commit-status integration.
+
+### What "red" means
+
+A red rehearsal blocks any release that gates on this check. Investigate the failed step in the Cloud Build console (the workflow summary links straight to it) before tagging. Common red causes:
+
+- A real regression — the just-shipped change broke a flow.
+- A flaky test — the deadline-bumps in `cmd/r1-server/cortex/lobes/...` cover the timing-sensitive cases, but new tests can drift. Bump deadline + retry; if the retry passes, file a follow-up to investigate the underlying flake.
+- Playwright/chromium upstream breakage — pin the Playwright version in `web/package.json` if regression confirms upstream.
+
+### Running locally
+
+```bash
+cd cmd/r1-server/e2e
+R1_SERVER_UI_V2=1 R1_SERVER_SHARE_ENABLED=1 go test -tags=e2e ./...
+```
+
+Prerequisite: `cd web && npx playwright install --with-deps chromium` (one-time).
+
+### Setting up the triggers (one-time)
+
+```bash
+# Requires roles/cloudbuild.builds.editor on relayone-488319
+bash scripts/setup-cloudbuild-e2e-trigger.sh
+gcloud builds triggers list --project=relayone-488319 --filter='name~e2e-rehearsal'
+```
+
+Re-running the script updates the existing triggers in-place — does not create duplicates. The trigger descriptor is `services/cloudbuild-e2e-trigger.yaml`.
