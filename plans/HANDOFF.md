@@ -1,9 +1,44 @@
 # HANDOFF — Cortex / Lanes / Multi-Surface Build
 
-**Filed:** 2026-05-04
+**Filed:** 2026-05-04 · **Updated:** 2026-05-06 (final-sweep completion)
 **Last commit on current branch:** `f1e712c1 fix(web): correct dep pins to real packages + add main.tsx entry (post-15)`
 **Current branch:** `build/web-chat-ui`
 **Working branch (target):** `claude/w521-eliminate-stoke-leftovers-2026-05-02`
+
+---
+
+## 2026-05-06 update — final sweep complete (4 PRs merged)
+
+The `/scope everything remaining /build it all` round (option E, all 6 specs) finished. Result: **4 of 6 shipped, 2 blocked**.
+
+**Shipped to dev → staging (PRs #168–#171, all merged with --merge no-squash):**
+- #168 build/skill-aware-compactor — `internal/concern/skill_compactor.go` (LRUPolicy) + `internal/workflow/skill_scope_closer.go` (OnPhaseExit)
+- #169 build/signed-redaction — `internal/ledger/redact_sign.go` (ed25519 LoadOrGenerate / Sign / Verify; canonical form excludes signature)
+- #170 build/release-rehearsal-ci — `services/cloudbuild-e2e-trigger.yaml` + `scripts/setup-cloudbuild-e2e-trigger.sh` + `.github/workflows/e2e-rehearsal-manual.yml`
+- #171 build/tracebundle-v2-format — `internal/ledger/store_session.go` (per-session filtering + `ChainRootHashForSession` + signed manifest); `cmd/r1-server/tracebundle_source.go` adapter
+
+Sync PR `staging → main`: **#172** open, awaiting CI.
+
+**BLOCKED (in-spec frontmatter, awaiting environment):**
+- Spec A `dep-bumps` — vitest 4 + rolldown require Node 20.18; local pinned to lower version. Bump local Node first, then unblock.
+- Spec D `legacy-spa-cleanup` — 12 test assertions are still tied to v1 SPA files; deletion breaks them. Migrate the assertions before removing files.
+
+**Round-2/3/4 -race flake fixes** (rolled into #168/#171 directly during the sweep, root-causes documented in commit messages):
+- `internal/cortex/prewarm_test.go` — 10ms intervals → 50ms + 60-80ms sleeps → 500ms (CI -race scheduler delay swallows tighter ratios)
+- `internal/cortex/cortex_test.go` + `cortex_integration_test.go` + `lobes/rulecheck/integration_test.go` + `lobes/rulecheck/lobe_test.go` — `RoundDeadline` 30s → 60s
+- `internal/cortex/lobes/rulecheck/lobe_test.go:31` — `runLobe` startup yield 20ms → 200ms (the published rule-fired event was racing the bus.Subscribe registration)
+- `internal/cortex/lobes/clarifyq/trigger_test.go` — fixed 50ms sleep → poll on `fp.callCount.Load()`
+- `internal/cortex/lobes/planupdate/confirm_test.go` — poll on plan-file post-condition (the lobe deletes the queue entry *before* `applyAddsRemoves` writes the file, so `QueuedCount()==0` was a stale barrier — real production race in `confirm.go:59` vs `:71`)
+
+The flake-fix branch `fix/ci-race-flakes-round-2` is left in place as the clean source-of-truth for cherry-picks if the same flakes resurface elsewhere.
+
+**Resume one-liner for the blocked specs:**
+```bash
+# Spec A: bump Node to 20.18+, then re-run vitest
+nvm use 20.18 && cd web && npm i && npm test
+# Spec D: migrate the 12 assertions in [v1-spa]_test.* before deleting legacy/
+grep -rln "legacy-spa\|v1Page\|/legacy/" web/tests/
+```
 
 ---
 
