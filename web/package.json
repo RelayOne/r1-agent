@@ -5,7 +5,7 @@
   "description": "Cross-platform web UI for r1 serve (web-chat-ui spec). Cursor 3 Glass layout: session list / chat pane / lanes sidebar.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "dev": "vite",
