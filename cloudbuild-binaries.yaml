@@ -14,20 +14,14 @@ steps:
         fi
         cd "$$ROOT"
 
-        # `cmd/r1` does not import the private Heroa or CodeRadar SDKs,
-        # but the module file can still force Cloud Build to resolve them.
-        # Strip those requirements when the sibling checkout is absent so
-        # trigger builds from the standalone GitHub repo remain reproducible.
+        # go.mod defaults to ./third_party/{coderadar,heroa}-go-sdk (frozen snapshots
+        # that work both in CI and standalone checkouts). Override to sibling repo
+        # checkouts when present so local/monorepo builds pick up live changes.
         if [ -d ../CodeRadar/sdks/go/coderadar ]; then
           go mod edit -replace github.com/RelayOne/coderadar/sdks/go/coderadar=../CodeRadar/sdks/go/coderadar
-        else
-          go mod edit -replace github.com/RelayOne/coderadar/sdks/go/coderadar=./third_party/coderadar-go-sdk
         fi
         if [ -d ../heroa/sdk/go ]; then
           go mod edit -replace heroa.dev/sdk-go=../heroa/sdk/go
-        else
-          go mod edit -dropreplace heroa.dev/sdk-go
-          go mod edit -droprequire heroa.dev/sdk-go
         fi
         mkdir -p dist
         for OS in linux darwin windows; do

@@ -25,7 +25,7 @@ github.com/Microsoft/go-winio/internal/fs
 github.com/Microsoft/go-winio/internal/socket
 github.com/Microsoft/go-winio/internal/stringbuffer
 github.com/Microsoft/go-winio/pkg/guid
-# github.com/RelayOne/coderadar/sdks/go/coderadar v0.0.0-20260430164404-aaefa9e2740a => /home/eric/repos/CodeRadar/sdks/go/coderadar
+# github.com/RelayOne/coderadar/sdks/go/coderadar v0.0.0-20260430164404-aaefa9e2740a => ./third_party/coderadar-go-sdk
 ## explicit; go 1.22
 github.com/RelayOne/coderadar/sdks/go/coderadar
 # github.com/aymanbagabas/go-osc52/v2 v2.0.1
@@ -360,9 +360,9 @@ golang.org/x/tools/internal/versions
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3
-# heroa.dev/sdk-go v0.0.0 => /home/eric/repos/heroa/sdk/go
+# heroa.dev/sdk-go v0.0.0 => ./third_party/heroa-go-sdk
 ## explicit; go 1.23
 heroa.dev/sdk-go
 # github.com/mattn/go-sqlite3 => github.com/jgiannuzzi/go-sqlite3 v1.14.17-0.20240122133042-fb824c8e339e
-# heroa.dev/sdk-go => /home/eric/repos/heroa/sdk/go
-# github.com/RelayOne/coderadar/sdks/go/coderadar => /home/eric/repos/CodeRadar/sdks/go/coderadar
+# heroa.dev/sdk-go => ./third_party/heroa-go-sdk
+# github.com/RelayOne/coderadar/sdks/go/coderadar => ./third_party/coderadar-go-sdk
