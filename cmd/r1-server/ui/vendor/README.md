@@ -1,103 +1,96 @@
-# r1-server UI vendor directory
+# Vendored frontend dependencies
 
-This directory holds offline copies of the third-party ESM libraries the 3D
-ledger visualiser (`cmd/r1-server/ui/graph.html`) depends on. Shipping the
-libraries from disk (rather than fetching them from a CDN at page-load)
-satisfies work-stoke TASK 15 AC #6 — "No CDN dependency — works offline".
+The files in this directory are pinned, content-addressed copies of upstream npm
+packages, fetched at developer/release time by `scripts/vendor-ui.sh` and
+committed to the repo. The r1-server binary embeds them via `//go:embed`, so
+production runtime never needs the npm registry, jsdelivr, or any other CDN.
+Changes to these files are reviewed in the same PR that bumps the SRI table in
+`scripts/vendor-ui.sh` and the equality assertions in `cmd/r1-server/sri_test.go`.
 
-## Why this directory is mostly empty in the repo
+This pattern is **Strategy A** from `specs/research/raw/RT-VENDOR-SCRIPT-PATTERNS.md`
+— curl + per-file SRI shell script + committed blobs. The decision rationale is
+recorded in `docs/decisions/index.md` D-UI2-4.
 
-The library blobs are deliberately NOT committed to the Stoke source tree:
+## Pinned versions
 
-1. Three.js alone ships a ~600 KB minified ESM bundle; the full
-   `3d-force-graph` stack (Three.js + three-spritetext + 3d-force-graph +
-   d3-force-3d + OrbitControls) weighs in at ~1.6 MB minified.
-2. Different operators have different redistribution / licence-audit
-   requirements. Checking pre-built blobs into the source tree bypasses
-   those checks.
-3. The files can be regenerated from pinned versions with a single
-   `npm install` step (see below), so the repo stays reproducible without
-   the blobs.
+| File | Upstream package | Version | Source URL | License |
+|---|---|---|---|---|
+| `htmx.min.js` | [htmx.org](https://github.com/bigskysoftware/htmx) | 2.0.4 | jsdelivr `htmx.org@2.0.4/dist/htmx.min.js` | BSD-2-Clause |
+| `htmx-ext-sse.js` | [htmx-ext-sse](https://github.com/bigskysoftware/htmx-extensions) | 2.2.4 | jsdelivr `htmx-ext-sse@2.2.4/sse.js` | BSD-2-Clause |
+| `three.module.js` | [three](https://github.com/mrdoob/three.js) | 0.170.0 | jsdelivr `three@0.170.0/build/three.module.min.js` | MIT |
+| `three/addons/controls/OrbitControls.js` | [three](https://github.com/mrdoob/three.js) | 0.170.0 | jsdelivr `three@0.170.0/examples/jsm/controls/OrbitControls.js` | MIT |
+| `three-spritetext.js` | [three-spritetext](https://github.com/vasturiano/three-spritetext) | 1.9.5 | jsdelivr `three-spritetext@1.9.5/dist/three-spritetext.mjs` | MIT |
+| `3d-force-graph.js` | [3d-force-graph](https://github.com/vasturiano/3d-force-graph) | 1.77.0 | jsdelivr `3d-force-graph@1.77.0/dist/3d-force-graph.mjs` | MIT |
+| `d3-force-3d.js` | [d3-force-3d](https://github.com/vasturiano/d3-force-3d) | 3.0.5 | jsdelivr `d3-force-3d@3.0.5/dist/d3-force-3d.js` | ISC |
 
-At runtime, `cmd/r1-server/vendor_check.go` logs a WARNING on server
-start-up if the expected files are missing, pointing operators here.
+`htmx-ext-sse` is paired with `htmx` per [htmx#3337](https://github.com/bigskysoftware/htmx/issues/3337);
+when bumping htmx, check the extension's compatibility note before bumping it
+independently.
 
-## Expected files and versions
+`d3-force-3d` does not ship a single-file ESM build at this version (its
+`module` field points at `src/index.js`, which imports the rest of `src/`). We
+vendor the UMD build (`dist/d3-force-3d.js`) and the Spec 2 web worker wraps
+it with a small ESM shim. If a future version ships a single-file ESM build,
+update the URL in `vendor-ui.sh` to use it.
 
-The `graph.html` shell (once it is switched from CDN `<script>` tags to
-`<script type="module">` imports) expects the following paths under this
-directory:
+`three.module.js` is the **minified** ESM build (`three.module.min.js` upstream,
+renamed locally for the import-map declaration in `cmd/r1-server/ui/web/partials/import-map.html`).
+The unminified form is 1.3 MB and pushes the vendor tree past the 250 KB
+gzipped budget; the minified form lands at 167 KB gzipped.
 
-| Path                            | Package                       | Pinned version |
-| ------------------------------- | ----------------------------- | -------------- |
-| `three.module.js`               | `three/build/three.module.js` | `0.160.0`      |
-| `OrbitControls.js`              | `three/examples/jsm/controls/OrbitControls.js` | `0.160.0` |
-| `three-spritetext.module.js`    | `three-spritetext`            | `1.8.2`        |
-| `3d-force-graph.module.js`      | `3d-force-graph`              | `1.73.0`       |
-| `d3-force-3d.module.js`         | `d3-force-3d`                 | `3.0.5`        |
+## Subresource Integrity hashes
 
-The Go self-check only verifies `three.module.js`; it is the sentinel for
-the whole set. If it is present the assumption is that the operator ran
-the vendoring procedure below and the rest of the tree is intact.
+Each blob's `sha384` is recorded in `scripts/vendor-ui.sh` (the `SRI` array)
+and re-derived at test time by `cmd/r1-server/sri_test.go`. Format is the
+openssl base64 form:
 
-## How to populate this directory
+```
+sha384-$(openssl dgst -sha384 -binary FILE | openssl base64 -A)
+```
+
+**Do not** use `sha384sum` — its hex output is wrong for HTML SRI.
+
+## How to regenerate
 
 ```bash
-# In a scratch workspace (NOT inside the repo):
-npm init -y
-npm install three@0.160.0 three-spritetext@1.8.2 \
-            3d-force-graph@1.73.0 d3-force-3d@3.0.5
+# (Re-)fetch every blob, verify SRI on download, atomic-mv into place.
+# A no-op if all versions and SRIs are unchanged.
+bash scripts/vendor-ui.sh
 
-# Copy the ESM entry-points here:
-cp node_modules/three/build/three.module.js                   cmd/r1-server/ui/vendor/
-cp node_modules/three/examples/jsm/controls/OrbitControls.js  cmd/r1-server/ui/vendor/
-cp node_modules/three-spritetext/dist/three-spritetext.module.js \
-   cmd/r1-server/ui/vendor/
-cp node_modules/3d-force-graph/dist/3d-force-graph.module.js  cmd/r1-server/ui/vendor/
-cp node_modules/d3-force-3d/dist/d3-force-3d.esm.js \
-   cmd/r1-server/ui/vendor/d3-force-3d.module.js
+# Verify on-disk blobs against the SRI table without hitting the network.
+# This is what CI runs.
+bash scripts/vendor-ui.sh --check
 ```
 
-After the files are in place, rebuild the server:
+## Bumping a pinned version
 
-```bash
-go build ./cmd/r1-server
-```
+1. Edit `URL[<filename>]` in `scripts/vendor-ui.sh` to the new release URL.
+2. Run `bash scripts/vendor-ui.sh`. The first run will fail on SRI mismatch;
+   read the printed `got: sha384-...` line and copy it into the corresponding
+   `SRI[<filename>]` entry.
+3. Re-run `bash scripts/vendor-ui.sh` — should succeed.
+4. Run `go test ./cmd/r1-server/...` — `sri_test.go` will pass once the table
+   matches the on-disk content.
+5. Update this README's version table.
+6. Commit script + blob + README + sri_test changes together.
 
-The embed directive in `cmd/r1-server/ui.go` picks them up automatically
-because `//go:embed ui/*` walks every file under `ui/`.
+The atomic-`mv`-on-SRI-match flow guarantees the on-disk vendor tree is never
+left in a partial state if the SRI check fails midway.
 
-## Consuming the vendored modules from graph.html
+## Total budget
 
-Once the blobs are present, switch `graph.html`'s `<script src="...cdn...">`
-tags to an `<script type="importmap">` block plus a module entry-point.
-Sketch:
+The vendor tree is gated by `cmd/r1-server/vendor_size_test.go` (added by
+Spec 5) at ≤ 250 KB gzipped total. Current usage:
 
-```html
-<script type="importmap">
-{
-  "imports": {
-    "three":           "/ui/vendor/three.module.js",
-    "three-spritetext":"/ui/vendor/three-spritetext.module.js",
-    "3d-force-graph":  "/ui/vendor/3d-force-graph.module.js",
-    "d3-force-3d":     "/ui/vendor/d3-force-3d.module.js"
-  }
-}
-</script>
-<script type="module" src="/ui/graph.js"></script>
-```
+| File | Raw | Gzipped |
+|---|---|---|
+| `htmx.min.js` | 50K | 16K |
+| `htmx-ext-sse.js` | 9K | 3K |
+| `three.module.js` | 676K | 168K |
+| `three/addons/controls/OrbitControls.js` | 32K | 7K |
+| `three-spritetext.js` | 16K | 4K |
+| `3d-force-graph.js` | 21K | 6K |
+| `d3-force-3d.js` | 24K | 5K |
+| **Total** | **828K** | **210K** |
 
-`graph.js` then swaps its implicit global usage (`window.THREE`,
-`window.ForceGraph3D`) for explicit `import` statements at the top of the
-file. This file-swap is deliberately left as a follow-up commit — mixing a
-CDN → vendor cut-over with library-blob vendoring makes rollback noisy.
-
-## Web-Worker layout
-
-A sibling file `cmd/r1-server/ui/graph-worker.js` implements an off-main-
-thread force-layout loop. It posts `{positions}` deltas back to
-`graph.js` at the end of each simulation tick, freeing the main thread to
-keep rendering at 60 fps on dense graphs (>2 k nodes). The worker
-currently runs with a self-contained gravity + repulsion integrator;
-swapping it for the `d3-force-3d` module is gated on the vendor files
-above being in place.
+(Numbers are approximate; CI test is the source of truth.)
