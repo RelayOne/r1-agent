@@ -2,6 +2,8 @@
 
 A vivid walkthrough for someone who wants to understand r1 deeply — both as an operator and as a curious engineer.
 
+Updated 2026-05-06 for the four final-sweep features merged in commit `242af4a8`: skill-aware compaction, ed25519-signed redaction events, the tracebundle v2 export format, and the release-rehearsal CI lane.
+
 ## Two narratives
 
 r1 is two products glued together:
@@ -141,6 +143,37 @@ r1 antitrunc verify -n 20
 
 Reads the last 20 commits via `git log`. For each, parses any "spec N done" or "TASK-N done" claim and cross-references the active plan + matching spec checklist. Each commit gets classified Verified / Unverified / Lying. Exit non-zero if any Lying. CI runs this gate; the post-commit git hook also runs it locally.
 
+### Step 10. Export the session for offline audit (tracebundle v2)
+
+```bash
+# Daemon must be running with R1_SERVER_UI_V2=1
+curl -fsSL "http://127.0.0.1:7777/api/session/$SID/export.tracebundle" -o $SID.tracebundle
+```
+
+What the bundle contains:
+
+- **Per-session chain nodes** filtered by `MissionID == sessionID` via `ledger.Store.ListNodesForSession`. Each node carries the chain-tier metadata (id, type, schema_version, created_at, created_by, mission_id, parent_hash) plus the `content_commitment` and the redactable content tier.
+- **Per-session edges** filtered by `Edge.Metadata["session_id"]` via `Store.ListEdgesForSession`. Edges that don't carry a `session_id` key are conservatively included — the audit chain stays complete even when an edge predates the v2 metadata convention.
+- **`chain_root_hash`** computed by `Store.ChainRootHashForSession` — `sha256(prev_hash || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)`. Recompute it from the bundle without re-loading the live ledger; equality means the bundle is intact.
+- **Canonical manifest** signed using the body returned by `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)`. Tamper-evident: any field rewrite invalidates the signature.
+
+Redacted nodes appear in the chain (chain-tier present) but their content tier is empty — `Source.IsRedacted(nodeID)` is true. The accompanying redaction log (`<store-root>/redactions/<nodeID>.ndjson`) carries the ed25519-signed `SignedRedactionEvent` rows; `Store.RedactionsForVerified` returns each entry with a `Verified` bool. The dashboard side panel renders three states distinctly:
+
+- `Verified=true` — green check, signature matches the configured public key.
+- `Verified=false`, `VerifyErr="ledger redaction sign: record is unsigned"` — gray "legacy unsigned" tooltip (record predates the spec).
+- `Verified=false`, `VerifyErr="ledger redaction sign: signature mismatch"` — red "tampered" warning.
+
+This means: an auditor who only has the bundle (no daemon access) can still verify both the chain root *and* every redaction event's chain-of-custody, given the public key and the canonical manifest body.
+
+### Step 11. Skills load and unload around your task
+
+Behind the scenes, every Claude / Codex Skill the model loads goes through `internal/skilltracker.Tracker.Note`. Two production unload paths fire automatically:
+
+1. **`workflow.SkillScopeCloser.OnPhaseExit`** — when the phase machine exits a phase (normal completion *or* abort), the closer drops every skill loaded into that `(stanceID, taskScope)` and emits `SkillUnloaded(reason="scope_exit")` per drop. The next phase starts with a fresh skill table; nothing leaks across phase boundaries.
+2. **`concern.SkillCompactor.EvictForBudget`** — when context-budget pressure rises (callers pass current-tokens + budget), the default `LRUPolicy` picks oldest-loaded skills until the freed total covers the overrun, then `Tracker.EvictByCompactor` emits `SkillUnloaded(reason="compactor")` per drop. The same skill can reload in a later round if it's needed again — the audit chain just shows the load/unload pairs.
+
+The 3D ledger viewer renders these distinctly: `compactor` evictions desaturate the chain segment (came back later); `scope_exit` drops fade to gone (phase boundary closed it). Both paths converge on the same `EmitSkillUnloaded` builtin hub event so the bus has an unambiguous event ordering.
+
 ---
 
 ## Technical overview — what each file does
@@ -160,6 +193,17 @@ Reads the last 20 commits via `git log`. For each, parses any "spec N done" or "
 | Cross-model review | `internal/model/CrossModelReviewer` |
 | Anti-truncation CLI | `cmd/r1/antitrunc_cmd.go` (verify, list-patterns, tail) |
 | MCP catalog | `internal/mcp/r1_server.go` + `r1_server_catalog.go` — 38 tools / 10 categories |
+| Skill load (auto) | `internal/skilltracker/tracker.go` `Tracker.Note` — called when a skill is injected into the prompt |
+| Skill unload — explicit | `internal/skilltracker/tracker.go` `Tracker.Drop` — model itself drops the skill |
+| Skill unload — phase exit | `internal/workflow/skill_scope_closer.go` `OnPhaseExit` → `Tracker.CloseScope` (reason="scope_exit") |
+| Skill unload — compactor | `internal/concern/skill_compactor.go` `EvictForBudget` → `Tracker.EvictByCompactor` (reason="compactor") |
+| Redaction signing | `internal/ledger/redact_sign.go` `SignRecord` — ed25519 over canonical `{node_id, redacted_at, reason, signer}` |
+| Redaction verifying | `internal/ledger/redact_sign.go` `VerifyRecord` — returns `nil` / `ErrUnsigned` / `ErrSignatureMismatch` |
+| Redaction read (verified) | `internal/ledger/redact_sign.go` `Store.RedactionsForVerified` — used by the dashboard side panel |
+| Tracebundle export | `cmd/r1-server/tracebundle_source.go` (`serveTracebundleAdapter`) — V2-flag-gated by `R1_SERVER_UI_V2`; backed by `ledger.Store.{ListNodesForSession, ListEdgesForSession, ChainRootHashForSession, CanonicalManifestSignBody}` |
+| Release-rehearsal trigger (push-to-main) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-main`) — fires `services/cloudbuild-e2e.yaml` |
+| Release-rehearsal trigger (tag) | `services/cloudbuild-e2e-trigger.yaml` (`r1-agent-e2e-rehearsal-tag`) — same flow on `^v.*$` tag pushes |
+| Release-rehearsal manual | `.github/workflows/e2e-rehearsal-manual.yml` — `gcloud builds triggers run r1-agent-e2e-rehearsal-main --branch=$BRANCH` from the Actions UI |
 
 ---
 
@@ -233,3 +277,15 @@ Originally `RegisterDashboardUI` rewrote `r.URL.Path = "/index.html"` and called
 
 ### Why Path A (Go reimpl) for auth
 Operator decision: 3 Go SaaS services already; adding a 4th in Node creates an additional toolchain to operate. Drift risk is bounded because `@relayone/auth-core`'s contract is stable; performance win (one fewer hop on every authenticated request) is real even if small.
+
+### Why skill compaction is one-way
+PR #168, `internal/concern/skill_compactor.go`: the compactor inspects the loaded-skill table and emits `SkillUnloaded` events; it does NOT mutate prompt content. The next round's prompt rebuild sees the updated table and rebuilds without the dropped skill. Decoupling eviction (decision) from rebuild (effect) means eviction is testable in isolation, the audit trail captures the decision *before* any prompt mutation, and a future operator-facing "explain why this skill was dropped" tooltip can read the ledger without reverse-engineering the prompt.
+
+### Why ed25519 instead of HMAC for redaction signatures
+PR #169, `internal/ledger/redact_sign.go`: HMAC requires the verifier to hold the same secret, which collapses to "the audit trail is only as trustworthy as the box that wrote it." ed25519 is asymmetric — the operator publishes the public key (or distributes it via the canonical manifest's `signer` fingerprint) and any third-party auditor can verify without read access to the live ledger. The keypair lives at `<store-root>/redactions/sign-{priv,pub}.pem`; the public-key fingerprint (12-char hex of `sha256(pub)`) is stamped into every record so multiple keys can co-exist across rotations.
+
+### Why the tracebundle ships per-session, not whole-ledger
+PR #171, `internal/ledger/store_session.go`: the ledger today shares one chain dir across missions. Pre-v2 callers got the entire ledger when they exported, which leaked unrelated sessions to anyone with bundle access. Per-session filtering (`ListNodesForSession` by `MissionID`, `ListEdgesForSession` by `Edge.Metadata["session_id"]`) makes the export a real privacy boundary. The `ChainRootHashForSession` is computed over the filtered set so the manifest's chain root signs *exactly* what's in the bundle. Future work: actual disk-level partitioning (the comment in `store_session.go` flags this).
+
+### Why two release-rehearsal triggers (push-to-main + tag)
+PR #170, `services/cloudbuild-e2e-trigger.yaml`: a push-to-main trigger catches "we just merged something that breaks the e2e flow but the PR gate didn't run e2e because it's expensive." A tag trigger catches "we're about to promote `v0.19.0` to staging and we want to know it's clean before the deploy fires." The same Cloud Build pipeline (`services/cloudbuild-e2e.yaml`) runs in both cases — only the trigger condition differs — so there's no drift in what "rehearsal" means. The manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`) is the operator escape hatch for ad-hoc rehearsal without local `gcloud`.

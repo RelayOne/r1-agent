@@ -104,6 +104,21 @@ Every node in the mission ledger has a `sha256:<hex>` content ID. Every event hi
 
 **What this means for you**: audit and compliance can replay any past mission deterministically. No "the agent told me it did X" — show me the ledger node.
 
+### Cryptographic chain-of-custody on every redaction
+Redactions land in the ledger with an ed25519 signature stamped over a canonical form that includes the public-key fingerprint. The dashboard's "View redactions" side panel renders three states distinctly: `Verified` (green), `legacy unsigned` (gray — record predates the spec), and `tampered` (red — the canonical body was rewritten or the signer was swapped). The keypair lives at `<store-root>/redactions/sign-{priv,pub}.pem`; the public half is the artifact you hand to a third-party auditor.
+
+**What this means for you**: when a regulator or a security reviewer asks "show me what was redacted from this mission and prove no one rewrote the audit trail," you point to the public key plus the redaction log. They run `VerifyRecord` against each entry and see Verified or not — no chain-of-trust handwaving.
+
+### Portable per-session export an auditor can verify offline
+Every session can be exported as a single `tracebundle` artifact: chain nodes + edges + content + a canonical-signed manifest carrying the `chain_root_hash`. The hash is `sha256(prev || node_id || content_commitment)` over nodes sorted by `(CreatedAt, ID)` — deterministic, recomputable from the bundle alone, no live ledger access needed. Per-session filtering (by `MissionID` for nodes, by `Edge.Metadata["session_id"]` for edges) means the bundle is a real privacy boundary; the auditor sees exactly the session you authorized them to see, nothing else.
+
+**What this means for you**: a tracebundle is one HTTP GET, and the recipient can answer "is this artifact intact?" without phoning home to your daemon. Long-term retention is just a file on a backup tape; cold-restore audit is a `curl` plus a `cosign verify`-shaped step against your published public key.
+
+### Skill lifecycle that respects the budget
+Every Claude / Codex Skill the agent loads becomes a `SkillLoaded` ledger node; every drop becomes a `SkillUnloaded` node with the reason recorded. Two automatic unload paths run alongside the model's own `Drop` calls: phase-exit closure (when a workflow phase ends, every skill loaded into that phase is dropped with `reason="scope_exit"`) and LRU compaction (when context-token pressure rises, oldest-loaded skills are evicted with `reason="compactor"`). The model's prompt rebuild reads the updated skill table on the next round.
+
+**What this means for you**: you stop paying for skill text the agent isn't using anymore, and you stop debugging "why did it suddenly behave differently" — the ledger answers in two clicks.
+
 ### Provider-agnostic with a 5-tier fallback
 Claude → Codex → OpenRouter → direct API → lint-only. Subscription pool, circuit breaker, OAuth poller. When Claude rate-limits, Codex picks up; when OpenRouter is degraded, the direct API kicks in; when everything is down, lint-only mode keeps the missions on the rails.
 
@@ -145,11 +160,12 @@ Core commitment per [STEWARDSHIP.md](../STEWARDSHIP.md): **no functional feature
 ### Engineering scope (this session)
 
 - 4 cortex / multi-surface specs (specs 6/7/8/9) — 171 spec items merged
+- 4 final-sweep PRs (#168 / #169 / #170 / #171) — skill-aware compaction, ed25519-signed redaction events, release-rehearsal CI lane, tracebundle v2 export
 - 9 Cloud Run SaaS services live across dev/staging/prod
 - 175 internal Go packages, 10 cmd binaries
 - 1M-iteration anti-truncation soak: 0 false positives, 0 false negatives, 499K true positives at 16,891 iter/sec
 - Performance: 3 µs/event end-to-end lane streaming (50 µs target); 262 MB/s journal throughput; 852 µs p99 dispatch latency
-- Test surface: 100% Go pass rate, vitest coverage threshold enforced, 9 Playwright e2e flows + axe a11y on every route, 110 cargo tests on the desktop side
+- Test surface: 100% Go pass rate, vitest coverage threshold enforced, 9 Playwright e2e flows + axe a11y on every route, 110 cargo tests on the desktop side, plus the Cloud Build release-rehearsal E2E lane firing on every push to `main` and every `^v.*$` tag push
 
 ### Product surface
 

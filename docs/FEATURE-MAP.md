@@ -1,6 +1,6 @@
 # Feature Map
 
-Complete feature inventory for r1 as of 2026-05-04. Status reflects the merged state of specs 1-9 + the 9 deployed Cloud Run SaaS services.
+Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged state of specs 1-9 + the 9 deployed Cloud Run SaaS services + the four final-sweep PRs (#168/#169/#170/#171, sync to `main` in commit `242af4a8`).
 
 ## Mission Runtime
 
@@ -160,6 +160,25 @@ Complete feature inventory for r1 as of 2026-05-04. Status reflects the merged s
 | Cortex-mission integration test | `TestMissionIntegration_GateRefusesAndForcesContinuation` end-to-end | Done | `internal/cortex/lobes/antitrunc/integration_test.go` |
 | `docs/ANTI-TRUNCATION.md` | Operator guide; documents override path | Done | `docs/ANTI-TRUNCATION.md` |
 
+## Final Sweep — Skill Lifecycle, Signed Redaction, Tracebundle v2, Release-Rehearsal CI (PRs #168 / #169 / #170 / #171)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `concern.SkillCompactor` with `EvictionPolicy` | A turn never inherits stale skill text from a previous task; LRU drop frees only as much budget as needed; every eviction lands as a `SkillUnloaded` ledger node so the audit chain stays complete | Done | `internal/concern/skill_compactor.go`, `internal/skilltracker/tracker.go` (`EvictByCompactor`) |
+| `concern.LRUPolicy` (default) | Drops oldest-loaded skills first; stops as soon as freed tokens cover the budget overrun; tokens=0 entries are last-resort | Done | `internal/concern/skill_compactor.go` |
+| `workflow.SkillScopeCloser.OnPhaseExit` | Phase boundary — normal completion *or* abort — drops every skill loaded into the (stance, task) scope and emits `SkillUnloaded(reason="scope_exit")` per drop; idempotent | Done | `internal/workflow/skill_scope_closer.go`, `internal/skilltracker/tracker.go` (`CloseScope`) |
+| Signed redaction events (ed25519) | Every redaction logged to the ledger carries a tamper-evident signature; `Store.RedactionsForVerified` returns a `Verified` bool so the dashboard side panel renders "tampered" / "legacy unsigned" overlays distinctly; signer-swap attacks fail because the public-key fingerprint is part of the canonical signing form | Done | `internal/ledger/redact_sign.go`, `internal/ledger/redact_log.go` (`SignedRedactionEvent`) |
+| `LoadOrGenerateSigningKey` | First call generates the keypair under `<store-root>/redactions/sign-{priv,pub}.pem` (modes 0600 / 0644); subsequent calls reuse the persisted private; pub auto-restored from priv if missing | Done | `internal/ledger/redact_sign.go` |
+| `SignRecord` / `VerifyRecord` / `ErrSignatureMismatch` / `ErrUnsigned` | Distinct errors for the dashboard so "signature mismatch" renders red and "legacy unsigned entry" renders gray | Done | `internal/ledger/redact_sign.go` |
+| Tracebundle v2 — per-session filtering | `Store.ListNodesForSession(sid)` filters by `MissionID`; `Store.ListEdgesForSession(sid)` filters by `Edge.Metadata["session_id"]`; bundle exports become single-session-scoped instead of dumping the entire ledger | Done | `internal/ledger/store_session.go` |
+| Tracebundle v2 — chain-root hash | `Store.ChainRootHashForSession(sid)` returns a deterministic SHA256 chain over `(prev_hash || node_id || content_commitment)` sorted by `(CreatedAt, ID)`; downstream verifiers can recompute without reloading the ledger | Done | `internal/ledger/store_session.go` |
+| Tracebundle v2 — canonical manifest signing body | `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns deterministic bytes; cmd/r1-server's sign + verify paths and out-of-tree auditors share the same canonical input | Done | `internal/ledger/store_session.go` |
+| Production tracebundle adapter | `cmd/r1-server/tracebundle_source.go` is now the production source for `GET /api/session/{id}/export.tracebundle`. V2-flag-gated by `R1_SERVER_UI_V2`; falls through to 404 when v2 is off; reads `LedgerDir` from the DB session row, opens the store, returns a `serveTracebundle` writer | Done | `cmd/r1-server/tracebundle_source.go` |
+| Release-rehearsal Cloud Build trigger (push-to-main) | `r1-agent-e2e-rehearsal-main` fires on every push to `main` and runs the full Playwright + axe-core E2E flow against a freshly-built `r1-server`; red blocks any release that gates on this check | Done | `services/cloudbuild-e2e-trigger.yaml`, `services/cloudbuild-e2e.yaml` |
+| Release-rehearsal Cloud Build trigger (tag) | `r1-agent-e2e-rehearsal-tag` fires on `^v.*$` tag pushes; same flow; blocks tag promotion when red | Done | `services/cloudbuild-e2e-trigger.yaml` |
+| Manual GitHub Actions rehearsal | `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch the rehearsal from the Actions UI; calls `gcloud builds triggers run` against the main-branch trigger; workflow summary links to the Cloud Build console | Done | `.github/workflows/e2e-rehearsal-manual.yml` |
+| One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `relayone-488319` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
+
 ## Hosted SaaS — `r1.run` (this session)
 
 | Feature | Benefit | Status | Reference |
@@ -196,6 +215,11 @@ Complete feature inventory for r1 as of 2026-05-04. Status reflects the merged s
 - Branch hygiene: 20 archive tags, repo cleaned to 2 active branches
 - Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log
 - All Go tests + web typecheck + desktop tests green
+- **Final-sweep PRs #168 / #169 / #170 / #171** (sync to `main` in commit `242af4a8`):
+  - Skill-aware compactor (`SkillCompactor` + `LRUPolicy`) and `SkillScopeCloser.OnPhaseExit` wire skilltracker's `EvictByCompactor` + `CloseScope` into production callers; `SkillUnloaded` ledger nodes emitted for both reasons (`compactor` and `scope_exit`).
+  - ed25519-signed redaction events; `LoadOrGenerateSigningKey` persists keys under `<root>/redactions/`; `Store.RedactionsForVerified` flags tampered + legacy-unsigned entries distinctly.
+  - Tracebundle v2: per-session filtering (`ListNodesForSession`, `ListEdgesForSession`), chain-root hashing (`ChainRootHashForSession`), canonical manifest signing body (`CanonicalManifestSignBody`); `cmd/r1-server/tracebundle_source.go` wired as the production source for `GET /api/session/{id}/export.tracebundle` behind `R1_SERVER_UI_V2`.
+  - Release-rehearsal CI: Cloud Build triggers (push-to-`main` + `^v.*$` tag) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`) firing the full Playwright + axe-core E2E lane; idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
 
 ### In Progress
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs)
