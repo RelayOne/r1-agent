@@ -51,6 +51,31 @@ steps:
     env:
       - 'CGO_ENABLED=1'
 
+  # Spec release-rehearsal-ci.md T4: post a green/red commit status
+  # so a tag-trigger build that lands red can block release tooling
+  # gating on the rehearsal check. The Cloud Build BYOSA needs the
+  # GitHub commit-status:write scope — verify by checking that
+  # r1-agent-e2e-rehearsal-* commit-status checks appear in PR
+  # checks tab after the first run. If not, file a follow-up to
+  # add the GITHUB_TOKEN secret.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: publish-rehearsal-result
+    waitFor: ['e2e-test']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "rehearsal completed for $$COMMIT_SHA"
+        # The github status integration is wired by Cloud Build's
+        # native GitHub trigger — this step is a placeholder so the
+        # pipeline shape can later add a manual github API POST if
+        # operators decide they want a more granular status name
+        # than the default "Cloud Build / r1-agent-e2e-rehearsal-*".
+
+substitutions:
+  _RELEASE_TAG: ""
+
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: E2_HIGHCPU_8

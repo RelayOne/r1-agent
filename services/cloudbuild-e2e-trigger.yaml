@@ -1,0 +1,55 @@
+# services/cloudbuild-e2e-trigger.yaml
+#
+# Cloud Build trigger descriptors that fire services/cloudbuild-e2e.yaml.
+# Spec: release-rehearsal-ci.md.
+#
+# Two triggers in this file:
+#   1. r1-agent-e2e-rehearsal-main — fires on push to main (post-deploy
+#      verification: ensures the just-shipped main is still e2e-clean).
+#   2. r1-agent-e2e-rehearsal-tag — fires on tag push v*.*.* (release
+#      gate: blocks tag promotion if e2e is red).
+#
+# Apply with scripts/setup-cloudbuild-e2e-trigger.sh; the script imports
+# this file via `gcloud builds triggers import` and is idempotent.
+#
+# A third path — manual rehearsal via the GitHub Actions workflow at
+# .github/workflows/e2e-rehearsal-manual.yml — calls
+# `gcloud builds triggers run` against the main-branch trigger so
+# operators can kick off a rehearsal without local gcloud.
+
+# yaml-language-server: $schema=https://raw.githubusercontent.com/GoogleCloudPlatform/cloud-builders/master/build-trigger.yaml.schema.json
+
+triggers:
+  - name: r1-agent-e2e-rehearsal-main
+    description: |
+      Release-rehearsal E2E lane — Playwright + axe-core full flow against
+      a freshly-built r1-server. Fires on every push to main as a
+      post-deploy verification. Builds the binary, installs Playwright +
+      chromium, runs `go test -tags=e2e ./cmd/r1-server/e2e/...`, posts
+      a green/red commit status. Red blocks any release that gates on
+      this rehearsal.
+    github:
+      owner: RelayOne
+      name: r1-agent
+      push:
+        branch: ^main$
+    filename: services/cloudbuild-e2e.yaml
+    serviceAccount: projects/relayone-488319/serviceAccounts/cloud-build-byosa@relayone-488319.iam.gserviceaccount.com
+    includedFiles:
+      - 'cmd/r1-server/**'
+      - 'internal/server/**'
+      - 'web/**'
+      - 'services/cloudbuild-e2e.yaml'
+
+  - name: r1-agent-e2e-rehearsal-tag
+    description: |
+      Release-gate E2E lane — same flow as the main trigger but fires on
+      tag pushes matching v*.*.* (release versions). Red blocks tag
+      promotion to staging / main / production rollouts.
+    github:
+      owner: RelayOne
+      name: r1-agent
+      push:
+        tag: ^v.*$
+    filename: services/cloudbuild-e2e.yaml
+    serviceAccount: projects/relayone-488319/serviceAccounts/cloud-build-byosa@relayone-488319.iam.gserviceaccount.com
