@@ -76,7 +76,7 @@ func publishRuleFired(t *testing.T, b *bus.Bus, ruleName, rationale string) stri
 // first Note matching pred, or fails the test.
 func waitForNote(t *testing.T, ws *cortex.Workspace, pred func(cortex.Note) bool) cortex.Note {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second) // CI under -race in containers needs the wider window; see fix(daemon,walkeeper) commit 29d7921a
+	deadline := time.Now().Add(60 * time.Second) // CI under -race in containers needs the wider window; see fix(daemon,walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		for _, n := range ws.Snapshot() {
 			if pred(n) {

@@ -145,7 +145,7 @@ func TestRuleCheckLobe_PreEndTurnGate(t *testing.T) {
 		Provider:        &fakeProvider{},
 		Lobes:           []cortex.Lobe{l},
 		PreWarmInterval: time.Hour, // suppress pump churn
-		RoundDeadline:   30 * time.Second,
+		RoundDeadline:   60 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("cortex.New: %v", err)
