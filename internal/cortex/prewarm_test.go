@@ -301,16 +301,18 @@ func TestPreWarmPumpFiresOnInterval(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runPreWarmPump(ctx, 10*time.Millisecond, fire)
+		runPreWarmPump(ctx, 50*time.Millisecond, fire)
 		close(done)
 	}()
 
-	// Allow at least 3 ticks of headroom.
-	time.Sleep(60 * time.Millisecond)
+	// Allow at least 3 ticks of headroom under -race in a CI container.
+	// 50ms × 10 = 500ms gives ~10 ticks budgeted; -race overhead can
+	// halve that and we still meet the ≥3 floor.
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("runPreWarmPump did not exit after ctx cancel")
 	}
 
@@ -334,16 +336,17 @@ func TestPreWarmPumpContinuesOnError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runPreWarmPump(ctx, 10*time.Millisecond, fire)
+		runPreWarmPump(ctx, 50*time.Millisecond, fire)
 		close(done)
 	}()
 
-	// Wait long enough for at least 4 ticks.
-	time.Sleep(80 * time.Millisecond)
+	// 50ms interval × 10 = 500ms gives ~10 ticks with headroom for -race
+	// scheduling overhead in CI containers.
+	time.Sleep(500 * time.Millisecond)
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("runPreWarmPump did not exit after ctx cancel")
 	}
 

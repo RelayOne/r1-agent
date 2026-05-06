@@ -169,8 +169,15 @@ func TestClarifyingQLobe_NoQuestionsWhenNotAmbiguous(t *testing.T) {
 
 	emitUserMessageForTest(bus,"thanks for your help!")
 
-	// Brief wait so the subscriber goroutine settles. We expect zero
-	// notes; we sleep a small amount and then assert.
+	// Poll for the subscriber to dispatch the provider call. Under
+	// -race in CI containers a fixed 50ms sleep is racy; the goroutine
+	// scheduler delay alone exceeds it. Wait up to 5s for the atomic
+	// call counter to reach 1, then a short settling tick before
+	// asserting note-count == 0.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && fp.callCount.Load() < 1 {
+		time.Sleep(10 * time.Millisecond)
+	}
 	time.Sleep(50 * time.Millisecond)
 
 	if notes := filterByLobe(ws.Snapshot(), l.ID()); len(notes) != 0 {
