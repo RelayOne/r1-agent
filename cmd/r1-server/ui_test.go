@@ -174,7 +174,8 @@ func TestUIGraphHTMLLoadsVendoredLibs(t *testing.T) {
 	}
 }
 
-// TestUIGraphJSHasNodeStyleContract is BLOCKED post-Spec-D.
+// TestUIGraphJSHasNodeStyleContract is BLOCKED post-Spec-D and
+// LEFT FAILING by design.
 //
 // The legacy graph.js encoded the RS-4 item-20 contract directly:
 // a NODE_STYLES table covering 16 node types + an EDGE_STYLES table
@@ -185,26 +186,69 @@ func TestUIGraphHTMLLoadsVendoredLibs(t *testing.T) {
 // keyed off generic geometric SHAPES (sphere, cube, diamond, …)
 // rather than per-node-type style records. The 16-node-type to
 // shape mapping is not present in any v2 file we could locate
-// (audit `audit/legacy-spa-triage-2026-05-06`, plans/legacy-spa-test-triage.md
-// classified this as the highest-value (c) assertion in the set
-// and explicitly punted the migration target to reviewer judgment).
+// (audit `audit/legacy-spa-triage-2026-05-06`,
+// plans/legacy-spa-test-triage.md classified this as the
+// highest-value (c) assertion in the set and explicitly punted
+// the migration target to reviewer judgment).
 //
 // Per the Spec D dispatcher's instructions: "load-bearing for
-// product correctness — if you genuinely can't migrate it, mark it
-// BLOCKED in a comment and present that to the user in the PR
-// body. Do NOT delete the test."
+// product correctness — if you genuinely can't migrate it, mark
+// it BLOCKED in a comment and leave it failing — DO NOT delete
+// a contract test."
 //
-// The test is left present + skipped so test runners surface the
-// outstanding contract instead of silently losing the coverage.
-// Reviewer must either:
-//   1. Locate the v2 surface that owns the per-node-type contract
+// IMPORTANT: this test is intentionally LEFT FAILING (NOT skipped)
+// so every CI run surfaces the outstanding contract until reviewer
+// either:
+//   1. Locates the v2 surface that owns the per-node-type contract
 //      (graph-layers.js? graph-worker.js? a yet-to-be-written
-//      style table?) and re-point the assertions at it, OR
-//   2. Confirm the contract has been retired and document the
+//      style table?) and re-points the assertions at it, OR
+//   2. Confirms the contract has been retired and documents the
 //      replacement (e.g. server-side-rendered styles, a typed
 //      schema enforcement layer) before deleting this test.
+//
+// The test fetches the v2 graph.js (so the new file path is
+// exercised) and asserts every contract token is present. Every
+// assertion below currently fails — that is the point.
 func TestUIGraphJSHasNodeStyleContract(t *testing.T) {
-	t.Skip("BLOCKED (Spec D, audit 3f98fd1b): RS-4 item-20 NODE_STYLES contract has no v2 home — needs reviewer to either point to v2 file or document retirement. See test comment.")
+	s := newUIServer(t)
+	resp, err := http.Get(s.URL + "/ui/js/graph.js")
+	if err != nil {
+		t.Fatalf("get graph.js: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	bs := string(body)
+	// Node types (RS-4 item 20). The v2 renderer does NOT
+	// enumerate these per-type yet; reviewer must re-home the
+	// contract (see test comment).
+	for _, nodeType := range []string{
+		"task", "decision_internal", "decision_repo",
+		"verification_evidence", "hitl_request", "hitl_response",
+		"escalation", "judge_verdict",
+		"research_request", "research_report",
+		"agree", "dissent", "draft", "loop", "skill",
+		"supervisor_state_checkpoint",
+	} {
+		if !strings.Contains(bs, nodeType) {
+			t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing RS-4 node_type %q — contract has no v2 home; needs reviewer migration", nodeType)
+		}
+	}
+	// Edge types.
+	for _, edgeType := range []string{
+		"supersedes", "depends_on", "contradicts", "extends",
+		"references", "resolves", "distills",
+	} {
+		if !strings.Contains(bs, edgeType) {
+			t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing RS-4 edge_type %q — contract has no v2 home; needs reviewer migration", edgeType)
+		}
+	}
+	// WebGL fallback path must exist.
+	if !strings.Contains(bs, "detectWebGL") {
+		t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing detectWebGL feature-detect — needs reviewer migration")
+	}
+	if !strings.Contains(bs, "showFallback") {
+		t.Errorf("BLOCKED (Spec D, audit 3f98fd1b): v2 graph.js missing showFallback UI handler — needs reviewer migration")
+	}
 }
 
 // TestUIGraphRouteDoesNotShadowSPA guards the Go 1.22 ServeMux
@@ -244,5 +288,65 @@ func TestUIGraphRouteDoesNotShadowSPA(t *testing.T) {
 	// the bare /session/{id} surface.
 	if strings.Contains(wfBs, "data-island=\"graph\"") {
 		t.Error("plain session path accidentally served graph template")
+	}
+}
+
+// TestV2Surface_AlwaysOn_NoFlagGate locks in the Spec D (D-UI2-7)
+// behavior change: dropping the R1_SERVER_UI_V2 envelope toggle
+// means every v2-only route MUST be reachable regardless of any
+// env-var state. This test sets R1_SERVER_UI_V2 to the EMPTY string
+// (the historical "off" value that used to 404 these routes) and
+// asserts each route returns a non-404 status. Replaces the eight
+// _V2Off_404 / _FlagOff tests that Spec D's flag removal made
+// non-representable; without this assertion a future regression
+// that re-introduces a flag gate would silently pass.
+//
+// Routes covered:
+//   - GET /memories                              — was TestMemories_V2Off_404
+//   - GET /settings                              — was TestSettings_V2Off_404
+//   - GET /session/{id}/stream                   — was TestStreamView_404OnFlagOff
+//   - GET /memories/{id}/graph                   — was TestServeMemoryGraph_404OnFlagOff
+//
+// /api/session/{id}/export.tracebundle is intentionally NOT in
+// this list: that handler 404s when GetSession(id) misses
+// (unknown-session 404 is correct behavior, distinct from
+// flag-gate 404). Always-on coverage for that route lives in
+// TestServeTracebundle_HeadersAndBody which seeds a real session
+// row before exercising the handler.
+//
+// /share/{hash} is NOT in this list — it's still gated by
+// R1_SERVER_SHARE_ENABLED (the per-route share gate stays).
+// /api/memories CRUD routes also stay always-mounted (covered by
+// TestMemoriesCRUD_* in memories_crud_test.go).
+//
+// Each handler may legitimately return a non-404, non-200 status
+// (e.g. 400 for bad path values, 500 for unmocked dependencies);
+// the assertion is specifically that 404 — the historical
+// flag-off response — is NOT what we get.
+func TestV2Surface_AlwaysOn_NoFlagGate(t *testing.T) {
+	t.Setenv("R1_SERVER_UI_V2", "") // historical "off" value; must not affect routing post-Spec-D
+	s := newUIServer(t)
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"memories index", "/memories"},
+		{"settings", "/settings"},
+		{"session stream", "/session/sess-test/stream"},
+		{"memory graph", "/memories/m-test/graph"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp, err := http.Get(s.URL + c.path)
+			if err != nil {
+				t.Fatalf("GET %s: %v", c.path, err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				t.Errorf("GET %s with R1_SERVER_UI_V2=\"\" returned 404 — Spec D (D-UI2-7) removed the flag gate; route must be reachable", c.path)
+			}
+		})
 	}
 }
