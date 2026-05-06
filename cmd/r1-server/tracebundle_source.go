@@ -49,9 +49,20 @@ func newLedgerTracebundleSource(store *ledger.Store, sessionID string) *ledgerTr
 func (s *ledgerTracebundleSource) SessionID() string { return s.sessionID }
 
 // ChainRootHash currently returns "" — the ledger doesn't yet expose
-// a per-session Merkle root accessor. The manifest entry is omitempty
-// (see tracebundle.go), so an empty string just leaves it absent.
-func (s *ledgerTracebundleSource) ChainRootHash() string { return "" }
+// ChainRootHash returns the per-session Merkle-style root hash via
+// Store.ChainRootHashForSession (added by tracebundle-v2-format.md).
+// Empty session — or a session with zero nodes — returns "" + nil
+// internally; the manifest field is omitempty so it stays absent.
+func (s *ledgerTracebundleSource) ChainRootHash() string {
+	if s.store == nil {
+		return ""
+	}
+	root, err := s.store.ChainRootHashForSession(s.sessionID)
+	if err != nil {
+		return ""
+	}
+	return root
+}
 
 // Chain returns every chain-tier node, projected into the export
 // shape. Loads via Store.ListNodes; the result is cached so repeated
@@ -99,7 +110,7 @@ func (s *ledgerTracebundleSource) Edges() []TracebundleEdge {
 	if s.store == nil {
 		return nil
 	}
-	all, err := s.store.ListEdges()
+	all, err := s.store.ListEdgesForSession(s.sessionID)
 	if err != nil {
 		return nil
 	}
@@ -150,7 +161,7 @@ func (s *ledgerTracebundleSource) ensureCache() {
 		return
 	}
 	if s.store != nil {
-		nodes, _ := s.store.ListNodes()
+		nodes, _ := s.store.ListNodesForSession(s.sessionID)
 		s.cache = nodes
 	}
 	s.cached = true

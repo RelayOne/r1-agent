@@ -36,9 +36,13 @@ func runLobe(t *testing.T, l *RuleCheckLobe) (cancel func()) {
 		defer close(done)
 		_ = l.Run(ctx, cortex.LobeInput{})
 	}()
-	// Yield once so the bus.Subscribe call inside Run finishes
-	// registering before the test starts publishing events.
-	time.Sleep(20 * time.Millisecond)
+	// Yield so the bus.Subscribe call inside Run finishes registering
+	// before the test starts publishing events. 20ms was too tight
+	// under -race in CI containers (TestRuleCheckLobe_CriticalNotesAreSticky
+	// would consume its full 60s waitForNote deadline because the
+	// subscriber wasn't ready when publishRuleFired fired). 200ms is
+	// negligible vs the test's real work.
+	time.Sleep(200 * time.Millisecond)
 	return func() {
 		c()
 		<-done
@@ -76,7 +80,7 @@ func publishRuleFired(t *testing.T, b *bus.Bus, ruleName, rationale string) stri
 // first Note matching pred, or fails the test.
 func waitForNote(t *testing.T, ws *cortex.Workspace, pred func(cortex.Note) bool) cortex.Note {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second) // CI under -race in containers needs the wider window; see fix(daemon,walkeeper) commit 29d7921a
+	deadline := time.Now().Add(60 * time.Second) // CI under -race in containers needs the wider window; see fix(daemon,walkeeper) commit 29d7921a
 	for time.Now().Before(deadline) {
 		for _, n := range ws.Snapshot() {
 			if pred(n) {

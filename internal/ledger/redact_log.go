@@ -148,12 +148,11 @@ func (s *Store) RedactionsFor(nodeID string) ([]SignedRedactionEvent, error) {
 }
 
 // RedactAndLog is the convenience wrapper that performs a Redact
-// then immediately RecordRedaction with the returned record. This
-// is the recommended path for callers that don't need to separate
-// the redaction action from the audit-trail write (e.g. a retention-
-// policy sweep). Signed-redaction callers that want to slot a
-// signature in between should call Redact + RecordRedaction
-// directly.
+// then immediately RecordRedaction with the returned record. When
+// a signing key is loadable for the store (per signed-redaction.md),
+// the recorded event is signed before being persisted. Callers that
+// want to slot a different signing flow in between can still call
+// Redact + SignRecord + RecordRedaction directly.
 func (s *Store) RedactAndLog(ctx context.Context, nodeID, reason string) (SignedRedactionEvent, error) {
 	rec, err := s.Redact(ctx, nodeID, reason)
 	if err != nil {
@@ -163,6 +162,12 @@ func (s *Store) RedactAndLog(ctx context.Context, nodeID, reason string) (Signed
 		NodeID:     rec.NodeID,
 		RedactedAt: rec.RedactedAt.UTC().Format(time.RFC3339Nano),
 		Reason:     rec.Reason,
+	}
+	if priv, _, kerr := s.signingKey(); kerr == nil && priv != nil {
+		signed, serr := SignRecord(ev, priv)
+		if serr == nil {
+			ev = signed
+		}
 	}
 	if err := s.RecordRedaction(ev); err != nil {
 		return ev, err
