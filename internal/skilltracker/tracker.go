@@ -32,7 +32,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RelayOne/r1/internal/hub/builtin"
+	hubbuiltin "github.com/RelayOne/r1/internal/hub/builtin"
 	"github.com/RelayOne/r1/internal/ledger"
 	"github.com/RelayOne/r1/internal/ledger/nodes"
 )
@@ -95,6 +95,23 @@ func (t *Tracker) Note(info LoadInfo) error {
 	return nil
 }
 
+// NoteLoadInfo satisfies builtin.SkillLoadNoter so SkillInjector can
+// call into Tracker through that interface without creating an import
+// cycle (skilltracker already imports hub/builtin for
+// EmitSkillUnloaded). Adapts the cycle-breaking LoadInfoNote into the
+// local LoadInfo and delegates to Note.
+func (t *Tracker) NoteLoadInfo(info hubbuiltin.LoadInfoNote) error {
+	return t.Note(LoadInfo{
+		LoadID:     ledger.NodeID(info.LoadID),
+		StanceID:   info.StanceID,
+		StanceRole: info.StanceRole,
+		SkillRef:   info.SkillRef,
+		TaskScope:  info.TaskScope,
+		LoadedAt:   info.LoadedAt,
+		Tokens:     info.Tokens,
+	})
+}
+
 // Drop emits a SkillUnloaded for one (stanceID, skillRef) and
 // removes it from the tracker. Reason MUST be one of the values
 // nodes.SkillUnloaded.Validate accepts. Returns the assigned NodeID
@@ -132,7 +149,7 @@ func (t *Tracker) Drop(ctx context.Context, stanceID, skillRef, reason string) (
 		CreatedAt:         time.Now().UTC(),
 		Version:           1,
 	}
-	id, err := builtin.EmitSkillUnloaded(ctx, t.led, n)
+	id, err := hubbuiltin.EmitSkillUnloaded(ctx, t.led, n)
 	if err != nil {
 		return "", fmt.Errorf("skilltracker drop %s/%s: %w", stanceID, skillRef, err)
 	}
@@ -185,7 +202,7 @@ func (t *Tracker) CloseScope(ctx context.Context, stanceID, taskScope string) (i
 			CreatedAt:  now,
 			Version:    1,
 		}
-		if _, err := builtin.EmitSkillUnloaded(ctx, t.led, n); err != nil && firstErr == nil {
+		if _, err := hubbuiltin.EmitSkillUnloaded(ctx, t.led, n); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("skilltracker close-scope %s/%s: %w", stanceID, info.SkillRef, err)
 		}
 	}
@@ -244,7 +261,7 @@ func (t *Tracker) EvictByCompactor(ctx context.Context, stanceID string, evicted
 			CreatedAt:         now,
 			Version:           1,
 		}
-		if _, err := builtin.EmitSkillUnloaded(ctx, t.led, n); err != nil && firstErr == nil {
+		if _, err := hubbuiltin.EmitSkillUnloaded(ctx, t.led, n); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("skilltracker compactor-evict %s/%s: %w", stanceID, p.info.SkillRef, err)
 		}
 	}
