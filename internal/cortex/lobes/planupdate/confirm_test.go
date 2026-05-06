@@ -94,11 +94,6 @@ func TestPlanUpdateLobe_AppliesOnConfirmation(t *testing.T) {
 		},
 	})
 
-<<<<<<< Updated upstream
-	// Subscriber is fire-and-forget Observe; poll until QueuedCount==0
-	// or timeout.
-	deadline := time.Now().Add(30 * time.Second) // CI under -race needs the wider window — see fix(walkeeper) commit 29d7921a
-=======
 	// Subscriber is fire-and-forget Observe. The handler does
 	// `delete(l.queued, queueID)` *before* `applyAddsRemoves`
 	// (the on-disk plan write) finishes — so QueuedCount==0 is
@@ -107,7 +102,6 @@ func TestPlanUpdateLobe_AppliesOnConfirmation(t *testing.T) {
 	// file. 2s deadline is plenty for a tiny plan file write.
 	deadline := time.Now().Add(2 * time.Second)
 	var post *plan.Plan
->>>>>>> Stashed changes
 	for time.Now().Before(deadline) {
 		post = loadCurrent(t, planPath)
 		if findTaskIdx(post, "t3") >= 0 && findTaskIdx(post, "t2") < 0 {
