@@ -30,7 +30,7 @@ use tauri::menu::{
     AboutMetadataBuilder, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
     Submenu, SubmenuBuilder,
 };
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 // ---------------------------------------------------------------------------
 // Menu event ids (kept stable so the WebView side has a single
