@@ -19,6 +19,34 @@ import (
 // selected skill — this is what the v2 dashboard reads to render the 🧬
 // glyph in the waterfall and the active-state predicate in the time
 // scrubber. Spec r1-server-ui-v2-event-rendering §5.1.
+// SkillLoadNoter is the minimum surface SkillInjector needs from the
+// skill-load tracker (internal/skilltracker.Tracker). Declared here as
+// an interface so this package doesn't import skilltracker — that
+// would create a cycle since skilltracker already imports hub/builtin
+// for EmitSkillUnloaded.
+//
+// Implementer note: the method is named NoteLoadInfo (not Note) so a
+// concrete Tracker can keep an in-package `Note(LoadInfo)` method
+// for tests and offer this distinct entry point for the cross-package
+// interface boundary. See internal/skilltracker.Tracker.NoteLoadInfo.
+type SkillLoadNoter interface {
+	NoteLoadInfo(LoadInfoNote) error
+}
+
+// LoadInfoNote is the structural copy of skilltracker.LoadInfo used at
+// the SkillInjector → Tracker boundary. Defined separately so the two
+// packages don't share a struct type and the dependency arrow stays
+// one-way (skilltracker imports hub/builtin, not the reverse).
+type LoadInfoNote struct {
+	LoadID     string
+	StanceID   string
+	StanceRole string
+	SkillRef   string
+	TaskScope  string
+	LoadedAt   time.Time
+	Tokens     int
+}
+
 type SkillInjector struct {
 	Registry     *skill.Registry
 	StackMatches []string
@@ -27,6 +55,10 @@ type SkillInjector struct {
 	// Spec 3 §5.1. Off by default so existing tests + offline runs
 	// don't suddenly start writing to the chain tier.
 	Ledger *ledger.Ledger
+	// Tracker, when non-nil, gets a Note() call for every successfully
+	// emitted SkillLoaded so the compactor + scope manager can later
+	// emit the matching SkillUnloaded via skilltracker.Tracker.
+	Tracker SkillLoadNoter
 }
 
 // Register adds the skill injector to the bus.
@@ -154,12 +186,27 @@ func (s *SkillInjector) emitSkillLoadedNodes(ctx context.Context, ev *hub.Event,
 		if err != nil {
 			continue
 		}
-		_, _ = s.Ledger.AddNode(ctx, ledger.Node{
+		nodeID, _ := s.Ledger.AddNode(ctx, ledger.Node{
 			Type:          n.NodeType(),
 			SchemaVersion: n.SchemaVersion(),
 			CreatedBy:     "builtin.skill_injector",
 			Content:       payload,
 		})
+		// Note the load in the tracker so the compactor + scope
+		// manager can later emit a matching SkillUnloaded with the
+		// right LoadRef. Best-effort: tracker errors are ignored so
+		// they don't break the prompt mutation path.
+		if s.Tracker != nil && nodeID != "" {
+			_ = s.Tracker.NoteLoadInfo(LoadInfoNote{
+				LoadID:     string(nodeID),
+				StanceID:   stanceID,
+				StanceRole: stanceRole,
+				SkillRef:   sel.Skill.Name,
+				TaskScope:  taskScope,
+				LoadedAt:   now,
+				Tokens:     sel.Skill.EstTokens,
+			})
+		}
 	}
 }
 

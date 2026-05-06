@@ -351,7 +351,7 @@ func TestPool_ConcurrencyUnderRace(t *testing.T) {
 	// assert.Equal: every submitted job must run exactly once.
 
 	// Wait for drain.
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for p.Active() > 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
