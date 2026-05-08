@@ -56,6 +56,20 @@ const cortexStopTimeout = 10 * time.Second
 //     default "claude-haiku-4-5".
 //   - PreWarmInterval -- spacing between cache-prewarm fires;
 //     default 4*time.Minute.
+//   - PreWarmSystemPrompt -- the static system prompt the prewarm pump
+//     should use when building its cache-warming request. Per spec
+//     gotcha #8 ("a 1-byte drift = 0% cache hit"), this MUST match
+//     byte-for-byte what the downstream agentloop will subsequently
+//     send. Empty (the default) means the pump warms a slot that no
+//     real turn shares — useful only when the production caller
+//     genuinely runs with no system prompt; otherwise leave to the
+//     agentloop integration to populate. Surfaced by
+//     audit/scan-governance-gaps.md item #3.
+//   - PreWarmTools -- the tool list the prewarm pump should attach.
+//     Same byte-for-byte parity contract as PreWarmSystemPrompt. Nil
+//     (the default) means no tools — only valid when the production
+//     caller runs without tools; otherwise pass the same []ToolDef
+//     the agentloop will send.
 //   - RoundDeadline   -- soft barrier deadline used by Round.Wait per
 //     round; default 2*time.Second.
 //   - RouterCfg       -- forwarded to NewRouter; Provider/Model/
@@ -63,16 +77,18 @@ const cortexStopTimeout = 10 * time.Second
 //   - SessionID       -- optional, surfaced via Cortex.SessionID for
 //     telemetry/audit correlation; never validated.
 type Config struct {
-	SessionID       string
-	EventBus        *hub.Bus
-	Durable         *bus.Bus
-	Provider        provider.Provider
-	Lobes           []Lobe
-	MaxLLMLobes     int
-	PreWarmModel    string
-	PreWarmInterval time.Duration
-	RoundDeadline   time.Duration
-	RouterCfg       RouterConfig
+	SessionID           string
+	EventBus            *hub.Bus
+	Durable             *bus.Bus
+	Provider            provider.Provider
+	Lobes               []Lobe
+	MaxLLMLobes         int
+	PreWarmModel        string
+	PreWarmInterval     time.Duration
+	PreWarmSystemPrompt string
+	PreWarmTools        []provider.ToolDef
+	RoundDeadline       time.Duration
+	RouterCfg           RouterConfig
 }
 
 // Cortex bundles the parallel-cognition substrate: Workspace + Round +
@@ -322,8 +338,8 @@ func (c *Cortex) Start(parentCtx context.Context) error {
 		c.ctx,
 		c.cfg.Provider,
 		c.cfg.PreWarmModel,
-		"",  // SystemPrompt: not on Config; cache parity handled by callers wiring through agentloop.
-		nil, // Tools: not on Config; same parity contract.
+		c.cfg.PreWarmSystemPrompt,
+		c.cfg.PreWarmTools,
 		c.cfg.EventBus,
 	); err != nil {
 		slog.Warn("cortex/Start: initial pre-warm failed",
@@ -340,8 +356,8 @@ func (c *Cortex) Start(parentCtx context.Context) error {
 			ctx,
 			c.cfg.Provider,
 			c.cfg.PreWarmModel,
-			"",
-			nil,
+			c.cfg.PreWarmSystemPrompt,
+			c.cfg.PreWarmTools,
 			c.cfg.EventBus,
 		)
 	})
