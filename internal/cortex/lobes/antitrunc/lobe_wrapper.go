@@ -1,195 +1,55 @@
-// lobe_wrapper.go — AntiTruncLobe + supporting types that satisfy the
-// cortex.Lobe contract documented in cortex-concerns.
+// lobe_wrapper.go — AntiTruncLobe satisfies the real cortex.Lobe contract.
 //
-// Until cortex-core merges, this file declares LOCAL versions of the
-// Lobe interface, LobeKind, LobeInput, NoteSeverity, Workspace, and
-// Note types. They mirror the cortex-concerns spec's documented
-// shapes verbatim. When cortex-core lands and exports the same
-// names, they will be drop-in compatible because the AntiTruncLobe
-// only depends on the surface contract.
+// Until cortex-core merged this file declared LOCAL versions of the Lobe
+// interface, LobeKind, LobeInput, NoteSeverity, Workspace, and Note types
+// because the cortex package did not yet exist. Cortex-core has since
+// landed (internal/cortex/lobe.go, internal/cortex/workspace.go), and
+// keeping the shadow types around was a known drift hazard documented at
+// audit/scan-governance-gaps.md item #2. This file now imports the real
+// cortex package directly so that:
 //
-// Why this is NOT a stub:
+//   - The AntiTruncLobe satisfies cortex.Lobe and can be registered with
+//     the production cortex.Cortex.
+//   - Notes are published into the production cortex.Workspace and
+//     therefore visible to cortex.PreEndTurnGate via UnresolvedCritical.
+//   - cortex-side renames or type changes break this file at compile
+//     time rather than silently diverging.
 //
-//   - AntiTruncLobe.Run() actually executes the full Detector and
-//     publishes a Note for every finding. The Workspace is a real
-//     local type with a working PublishNote method.
-//   - The constructor NewAntiTruncLobe accepts a Workspace pointer
-//     and returns a *AntiTruncLobe that implements Name(), Kind(),
-//     and Run(ctx, in) — the exact signature called out in the
-//     spec.
-//   - Tests in lobe_wrapper_test.go drive the full Lobe (not just
-//     the Detector) and assert SevCritical Notes are published.
-//
-// The local interface declarations are intentionally small and
-// match the cortex-concerns spec §"AntiTruncLobe" verbatim. When
-// cortex-core lands, the local Workspace type will be replaced by
-// an alias to *cortex.Workspace and the duplicate interface
-// declarations will be removed in a follow-up commit.
+// The Detector itself is unchanged — it consumes []string and a few
+// filesystem paths. AntiTruncLobe.Run extracts the []string from
+// cortex.LobeInput.History (which is []agentloop.Message) by walking
+// each assistant Message's text ContentBlocks.
 
 package antitrunclobe
 
 import (
 	"context"
 	"path/filepath"
-	"sync"
 	"time"
 
+	"github.com/RelayOne/r1/internal/agentloop"
 	"github.com/RelayOne/r1/internal/antitrunc"
+	"github.com/RelayOne/r1/internal/cortex"
 )
-
-// LobeKind enumerates the cortex Lobe categories. KindDeterministic
-// means the Lobe runs without an LLM call.
-type LobeKind int
-
-const (
-	// KindDeterministic — runs purely on regex / file reads / git
-	// log. AntiTruncLobe is this kind.
-	KindDeterministic LobeKind = iota
-	// KindReasoning — would call an LLM. Reserved for future Lobes.
-	KindReasoning
-)
-
-// String returns the spec's name for the kind.
-func (k LobeKind) String() string {
-	switch k {
-	case KindDeterministic:
-		return "deterministic"
-	case KindReasoning:
-		return "reasoning"
-	default:
-		return "unknown"
-	}
-}
-
-// NoteSeverity enumerates the Workspace Note severities. SevCritical
-// is the only one the AntiTruncLobe emits — every truncation finding
-// is critical because it indicates the model is trying to stop work
-// before scope is complete.
-type NoteSeverity int
-
-const (
-	SevInfo NoteSeverity = iota
-	SevWarning
-	SevCritical
-)
-
-// String returns the canonical lowercase name.
-func (s NoteSeverity) String() string {
-	switch s {
-	case SevInfo:
-		return "info"
-	case SevWarning:
-		return "warning"
-	case SevCritical:
-		return "critical"
-	default:
-		return "unknown"
-	}
-}
-
-// Note is a single Workspace Note. Mirror of cortex-concerns §Note.
-type Note struct {
-	ID        string
-	Source    string // the publishing Lobe's Name()
-	Severity  NoteSeverity
-	Text      string
-	Detail    string
-	Timestamp time.Time
-}
-
-// Workspace is the cortex Workspace surface — the in-memory bus
-// Lobes publish Notes to. Mirror of cortex-concerns §Workspace.
-//
-// Concurrent-safe: Notes() is read-locked and PublishNote is
-// write-locked.
-type Workspace struct {
-	mu    sync.RWMutex
-	notes []Note
-}
-
-// NewWorkspace constructs an empty Workspace. cortex-core's real
-// Workspace will provide additional fields (subscribers, persistence,
-// etc.); the AntiTruncLobe only needs PublishNote.
-func NewWorkspace() *Workspace {
-	return &Workspace{}
-}
-
-// PublishNote appends a Note to the Workspace. Returns the appended
-// Note's ID for caller-side tracking.
-func (w *Workspace) PublishNote(n Note) string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if n.Timestamp.IsZero() {
-		n.Timestamp = time.Now()
-	}
-	if n.ID == "" {
-		n.ID = n.Timestamp.Format("20060102T150405.000000000Z07")
-	}
-	w.notes = append(w.notes, n)
-	return n.ID
-}
-
-// Notes returns a snapshot of every published Note. Filter by
-// severity at the call site.
-func (w *Workspace) Notes() []Note {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	out := make([]Note, len(w.notes))
-	copy(out, w.notes)
-	return out
-}
-
-// CriticalNotes returns only Notes with SevCritical. Used by
-// PreEndTurnGate to refuse end_turn while critical Notes are
-// outstanding.
-func (w *Workspace) CriticalNotes() []Note {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var out []Note
-	for _, n := range w.notes {
-		if n.Severity == SevCritical {
-			out = append(out, n)
-		}
-	}
-	return out
-}
-
-// LobeInput is the per-round input to a Lobe's Run() call. Mirror
-// of cortex-concerns §LobeInput.
-type LobeInput struct {
-	History []string // assistant-output text from each round
-}
-
-// Lobe is the cortex Lobe interface. Mirror of cortex-concerns
-// §"Lobe interface" — Name, Kind, Run.
-//
-// AntiTruncLobe satisfies this. cortex-core's eventual Lobe
-// interface MUST match these signatures for the lobe to remain
-// compatible; the interface is intentionally tiny so divergence is
-// detectable at compile time.
-type Lobe interface {
-	Name() string
-	Kind() LobeKind
-	Run(ctx context.Context, in LobeInput) error
-}
 
 // AntiTruncLobe is the cortex Lobe implementation for the
 // anti-truncation defense. It wraps Detector and publishes a
-// SevCritical Note for every finding.
+// SevCritical Note for every finding into a real cortex.Workspace.
 //
 // Construct with NewAntiTruncLobe(ws, planPath, specGlob).
 type AntiTruncLobe struct {
-	ws       *Workspace
+	ws       *cortex.Workspace
 	planPath string
 	specGlob string
 	gitLog   func(n int) ([]string, error)
 }
 
-// NewAntiTruncLobe constructs the Lobe. Signature matches the
-// spec's §item 8 verbatim (modulo the Workspace pointer's local
-// type). gitLog is optional — pass nil to disable commit-body
-// scanning.
-func NewAntiTruncLobe(ws *Workspace, planPath, specGlob string) *AntiTruncLobe {
+// NewAntiTruncLobe constructs the Lobe. ws is the production
+// cortex.Workspace the Lobe will Publish Notes into; nil disables
+// publication (the Lobe still satisfies the interface and Run is a
+// no-op so misconfiguration does not crash the cortex round). gitLog
+// is optional — leave nil to disable commit-body scanning.
+func NewAntiTruncLobe(ws *cortex.Workspace, planPath, specGlob string) *AntiTruncLobe {
 	return &AntiTruncLobe{
 		ws:       ws,
 		planPath: planPath,
@@ -204,65 +64,107 @@ func (l *AntiTruncLobe) WithGitLog(fn func(n int) ([]string, error)) *AntiTruncL
 	return l
 }
 
-// Name returns the canonical Lobe name. Used in published Note
-// Source field.
-func (l *AntiTruncLobe) Name() string { return "antitrunc" }
+// ID satisfies cortex.Lobe. Stable identifier used as LobeID on Notes.
+func (l *AntiTruncLobe) ID() string { return "antitrunc" }
 
-// Kind returns KindDeterministic — the Lobe runs purely on regex /
+// Description satisfies cortex.Lobe.
+func (l *AntiTruncLobe) Description() string {
+	return "publishes critical Notes when the model attempts to truncate or stop work prematurely"
+}
+
+// Kind satisfies cortex.Lobe. Deterministic — runs purely on regex /
 // file reads / git log without an LLM call.
-func (l *AntiTruncLobe) Kind() LobeKind { return KindDeterministic }
+func (l *AntiTruncLobe) Kind() cortex.LobeKind { return cortex.KindDeterministic }
 
-// Run scans the conversation history + plan + specs + recent
-// commits for anti-truncation signals and publishes a SevCritical
-// Note for every finding. Returns nil error in all cases — the Lobe
-// never fails fatally because that would let a model self-truncate
-// past a transient io error.
-func (l *AntiTruncLobe) Run(ctx context.Context, in LobeInput) error {
+// Run scans the conversation history + plan + specs + recent commits
+// for anti-truncation signals and publishes a SevCritical Note for
+// every finding. Returns nil error in all cases — the Lobe never fails
+// fatally because that would let a model self-truncate past a
+// transient io error.
+func (l *AntiTruncLobe) Run(ctx context.Context, in cortex.LobeInput) error {
 	if l.ws == nil {
-		// No workspace, nowhere to publish — quiet no-op so the
-		// cortex round doesn't fail on misconfiguration.
 		return nil
 	}
 	d := &Detector{
-		History:  in.History,
+		History:  assistantTextHistory(in.History),
 		PlanPath: l.planPath,
 		SpecGlob: l.specGlob,
 		GitLog:   l.gitLog,
 	}
 	findings := d.Run(ctx)
 	for _, f := range findings {
-		l.ws.PublishNote(Note{
-			Source:   l.Name(),
-			Severity: SevCritical,
-			Text:     formatNoteText(f),
-			Detail:   f.Detail,
+		_ = l.ws.Publish(cortex.Note{
+			LobeID:    l.ID(),
+			Severity:  cortex.SevCritical,
+			Title:     formatNoteTitle(f),
+			Body:      f.Detail,
+			Tags:      []string{"antitrunc", f.Source},
+			EmittedAt: time.Now(),
+			Round:     in.Round,
 		})
 	}
 	return nil
 }
 
-// formatNoteText renders a Finding as a Note's user-facing text.
-// Distinct from Finding.Detail because the Note text is what the
-// operator sees in the UI.
-func formatNoteText(f antitrunc.Finding) string {
+// assistantTextHistory extracts the assistant-output text from the
+// agentloop messages handed to Run. The Detector consumes []string so
+// this is the bridge between the cortex.LobeInput contract and the
+// existing Detector contract.
+func assistantTextHistory(msgs []agentloop.Message) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, block := range m.Content {
+			if block.Type == "text" && block.Text != "" {
+				out = append(out, block.Text)
+			}
+		}
+	}
+	return out
+}
+
+// formatNoteTitle renders a Finding as a Note's user-facing Title
+// (single-line, <=80 runes per cortex.Note.Validate). Detail goes into
+// Body unchanged.
+func formatNoteTitle(f antitrunc.Finding) string {
+	const prefix = "[ANTI-TRUNCATION] "
 	switch f.Source {
 	case "assistant_output":
-		return "[ANTI-TRUNCATION] phrase '" + f.PhraseID + "' detected in assistant output"
+		return truncateRunes(prefix+"phrase '"+f.PhraseID+"' detected in assistant output", 80)
 	case "plan_unchecked":
-		return "[ANTI-TRUNCATION] " + f.Detail
+		return truncateRunes(prefix+f.Detail, 80)
 	case "spec_unchecked":
-		return "[ANTI-TRUNCATION] " + f.Detail
+		return truncateRunes(prefix+f.Detail, 80)
 	case "commit_body":
-		return "[ANTI-TRUNCATION] recent commit body claims false completion: " + f.Snippet
+		return truncateRunes(prefix+"recent commit body claims false completion", 80)
 	default:
-		return "[ANTI-TRUNCATION] " + f.Detail
+		return truncateRunes(prefix+f.Detail, 80)
 	}
 }
 
+// truncateRunes returns at most n runes from s. cortex.Note.Validate
+// rejects Titles >80 runes; this guard is defensive.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
 // AssertLobeContract is a compile-time check that AntiTruncLobe
-// satisfies the local Lobe interface. If cortex-core changes the
-// interface, this assertion will fail at build time.
-var _ Lobe = (*AntiTruncLobe)(nil)
+// satisfies cortex.Lobe. If the cortex Lobe interface changes, this
+// assertion will fail at build time so the wrapper cannot silently
+// drift out of sync.
+var _ cortex.Lobe = (*AntiTruncLobe)(nil)
 
 // _ = filepath is used in Detector.Run; suppress unused import warning
 // by referencing it here in a no-op.
