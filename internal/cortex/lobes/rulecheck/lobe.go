@@ -220,6 +220,11 @@ func (l *RuleCheckLobe) noteFromRuleFired(evt bus.Event, pl ruleFiredPayload) co
 //
 //   - trust.*               → critical
 //   - consensus.dissent.*   → critical
+//   - antitrunc.*           → critical (Spec 9 — truncation/scope-underdelivery
+//                            rules are the rule-engine counterparts of the
+//                            AntiTruncLobe Notes and must block end_turn the
+//                            same way; landing them at info would silently
+//                            bypass the layered-defense design)
 //   - drift.*               → warning
 //   - cross_team.*          → warning
 //   - everything else       → info
@@ -234,6 +239,8 @@ func severityFor(ruleName string) cortex.Severity {
 	case strings.HasPrefix(ruleName, "trust."):
 		return cortex.SevCritical
 	case strings.HasPrefix(ruleName, "consensus.dissent"):
+		return cortex.SevCritical
+	case strings.HasPrefix(ruleName, "antitrunc."):
 		return cortex.SevCritical
 	case strings.HasPrefix(ruleName, "drift."):
 		return cortex.SevWarning

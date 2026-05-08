@@ -54,6 +54,12 @@ func TestRuleCheckLobe_SeverityMapping(t *testing.T) {
 		// cross_team/* — all warning.
 		{"cross_team.modification_requires_cto", "cross_team.modification_requires_cto", cortex.SevWarning, "cross_team"},
 
+		// antitrunc/* — all critical (Spec 9: rule-engine counterparts of
+		// the AntiTruncLobe Notes; must block end_turn the same way).
+		{"antitrunc.scope_underdelivery", "antitrunc.scope_underdelivery", cortex.SevCritical, "antitrunc"},
+		{"antitrunc.subagent_summary_truncation", "antitrunc.subagent_summary_truncation", cortex.SevCritical, "antitrunc"},
+		{"antitrunc.truncation_phrase_detected", "antitrunc.truncation_phrase_detected", cortex.SevCritical, "antitrunc"},
+
 		// hierarchy/* — none in the elevated buckets, default to info.
 		{"hierarchy.completion_requires_parent_agreement", "hierarchy.completion_requires_parent_agreement", cortex.SevInfo, "hierarchy"},
 		{"hierarchy.escalation_forwards_upward", "hierarchy.escalation_forwards_upward", cortex.SevInfo, "hierarchy"},
