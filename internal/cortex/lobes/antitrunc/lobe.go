@@ -1,42 +1,16 @@
-// Package antitrunclobe provides the cortex-side anti-truncation
-// Lobe.
+// Package antitrunclobe provides the cortex-side anti-truncation Lobe.
 //
-// STATUS: BLOCKED on cortex-core (spec build order < 9). The cortex
-// package (internal/cortex/) has not yet been merged into this
-// worktree. Until it is, this package ships only the
-// cortex-independent core (Detector) so the agentloop wiring + the
-// supervisor rules can call it directly. When cortex-core lands, a
-// thin Lobe wrapper around Detector will satisfy the cortex.Lobe
-// interface (KindDeterministic) and publish SevCritical Workspace
-// Notes for each Detector finding. The wrapper is intentionally
-// trivial — Detector does the actual work.
+// The Lobe satisfies the real cortex.Lobe contract from
+// internal/cortex/lobe.go:27 (ID, Description, Kind, Run) and publishes
+// SevCritical Notes into the production cortex.Workspace whenever the
+// Detector finds an anti-truncation signal. See lobe_wrapper.go for the
+// AntiTruncLobe type and audit/scan-governance-gaps.md item #2 for the
+// background on why the wrapper used to ship shadow types.
 //
-// Why ship the Detector now even though the Lobe is BLOCKED:
-//
-//  1. The supervisor rules (internal/supervisor/rules/antitrunc/)
-//     need a deterministic detection helper that doesn't reach into
-//     cortex.
-//  2. The agentloop wiring (internal/agentloop/antitrunc.go) needs
-//     the same helper at the gate composition site.
-//  3. When cortex finally lands, the only delta needed here is a
-//     ~30-line Lobe constructor that calls Detector and publishes
-//     Notes — the heavy lifting is already tested.
-//
-// Interfaces this Lobe will eventually implement (per cortex-concerns
-// spec §"AntiTruncLobe"):
-//
-//	type Lobe interface {
-//	    Name() string
-//	    Kind() LobeKind        // KindDeterministic
-//	    Run(ctx, in LobeInput) error
-//	}
-//
-// When cortex lands the Lobe constructor signature will be:
-//
-//	func NewAntiTruncLobe(ws *cortex.Workspace, planPath string, specGlob string) cortex.Lobe
-//
-// The constructor is documented here so the operator can grep for it
-// once the cortex import becomes valid.
+// This file (lobe.go) ships the cortex-independent Detector itself so
+// the supervisor rules (internal/supervisor/rules/antitrunc/) and the
+// agentloop wiring (internal/agentloop/antitrunc.go) can call it
+// directly without a cortex import.
 package antitrunclobe
 
 import (
