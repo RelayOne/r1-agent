@@ -58,6 +58,9 @@ export interface SessionsSlice {
   subscribed: Set<SessionId>;
   /** Last-Event-ID seq per session for replay. */
   lastSeq: Record<SessionId, number>;
+  /** Per-session error string, populated by error envelopes / hooks
+   *  and cleared via setSessionError(sid, undefined). */
+  errorBySession: Record<SessionId, string>;
 }
 
 export interface LanesSlice {
@@ -130,6 +133,8 @@ export interface DaemonState {
   toggleTileCollapsed: (sessionId: SessionId, laneId: LaneId) => void;
   markSubscribed: (sessionId: SessionId) => void;
   markUnsubscribed: (sessionId: SessionId) => void;
+  /** Record an error string for a session; pass undefined to clear. */
+  setSessionError: (sessionId: SessionId, error: string | undefined) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +225,7 @@ function emptySessionsSlice(): SessionsSlice {
     order: [],
     subscribed: new Set<SessionId>(),
     lastSeq: {},
+    errorBySession: {},
   };
 }
 function emptyLanesSlice(): LanesSlice {
@@ -260,6 +266,7 @@ export function createDaemonStore(
           order: prev.sessions.order.slice(),
           subscribed: new Set(prev.sessions.subscribed),
           lastSeq: { ...prev.sessions.lastSeq },
+          errorBySession: { ...prev.sessions.errorBySession },
         };
         const lanes: LanesSlice = {
           byKey: { ...prev.lanes.byKey },
@@ -361,9 +368,16 @@ export function createDaemonStore(
               }
               break;
             }
+            case "error": {
+              // Record the error string on the session it targets so
+              // useChat can surface it via .error / .clearError.
+              if (env.sessionId !== undefined) {
+                sessions.errorBySession[env.sessionId] = env.message;
+              }
+              break;
+            }
             case "auth.expiring_soon":
             case "pong":
-            case "error":
               // Handled by ResilientSocket / hook layer; no state mutation.
               break;
           }
@@ -529,6 +543,20 @@ export function createDaemonStore(
           const next = new Set(prev.sessions.subscribed);
           next.delete(sessionId);
           return { ...prev, sessions: { ...prev.sessions, subscribed: next } };
+        }),
+
+      setSessionError: (sessionId, error) =>
+        set((prev) => {
+          const nextErr = { ...prev.sessions.errorBySession };
+          if (error === undefined) {
+            delete nextErr[sessionId];
+          } else {
+            nextErr[sessionId] = error;
+          }
+          return {
+            ...prev,
+            sessions: { ...prev.sessions, errorBySession: nextErr },
+          };
         }),
     };
   });
