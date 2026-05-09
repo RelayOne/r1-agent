@@ -47,12 +47,37 @@ type ProvenanceEntry struct {
 
 	// ReplayValue carries the target value for Rollback writes.
 	// Populated only for rollback entries; other actions leave
-	// it nil.
+	// it nil. Kept for backward-compat with callers that pass an
+	// explicit value to Rollback; SnapshotValue (below) makes
+	// this optional in the common case.
 	ReplayValue any `json:"replay_value,omitempty"`
 
 	// RolledBackTo names the version the rollback targeted.
 	// Zero for non-rollback entries.
 	RolledBackTo int `json:"rolled_back_to,omitempty"`
+
+	// SnapshotValue captures the Block.Value AS IT EXISTED right
+	// after this provenance entry's write was applied. Populated by
+	// Create + Apply at write time; nil for entries authored by
+	// older callers or by Rollback writes (which already record the
+	// target Value via ReplayValue).
+	//
+	// Rollback walks the provenance to find the entry whose
+	// post-write version matches the target and uses that entry's
+	// SnapshotValue to restore Block.Value — eliminating the need
+	// for callers to remember and re-supply the historical value.
+	// Surfaced by audit/scan-go-stubs.md item #7 ("Rollback
+	// semantics is contractually incomplete" — this closes that
+	// gap).
+	//
+	// Caveat: SnapshotValue is stored by reference. Callers MUST
+	// treat Block.Value as immutable across writes — if you mutate
+	// the value after Apply returns, the snapshot is corrupted. The
+	// reducer + Apply contract already requires returning a NEW
+	// value rather than mutating the input (per the package doc
+	// invariants); this field reuses that contract without forcing a
+	// deep clone on every write.
+	SnapshotValue any `json:"snapshot_value,omitempty"`
 }
 
 // validateProvEntry enforces that a write's provenance carries at
