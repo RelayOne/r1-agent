@@ -1,32 +1,16 @@
-// verify_lint_wiring.go — STATUS: PARTIAL — see plans/HANDOFF.md.
+// verify_lint_wiring.go — canonical invocation recipe for the
+// r1.verify.lint MCP tool.
 //
-// Spec 8 §12 item 39 calls for wiring the lint-view-without-api scanner
-// into the r1.verify.lint MCP tool so the same FAILs/WARNs surface in
-// the agentic-driven verify path AND in CI:
+// The handler is implemented in r1_verify.go and dispatched via
+// HandleToolCall (r1.verify.* prefix). This file exposes only the
+// canonical command + description — kept separate so the CI
+// Makefile target (`make lint-views`) and the daemon shell-out
+// agree on the invocation. Drift between the two is the §10a
+// "Tool catalog vs UI drift" failure mode in disguise.
 //
-//   > Wire the lint into r1.verify.lint so the MCP tool reports the
-//   > same failures the CI does.
-//
-// The r1.verify.lint handler lives with the daemon (cmd/r1d / internal/
-// r1d, ships with spec 5 r1d-server). The handler must invoke
-// `tools/lint-view-without-api` (either by spawning the binary or by
-// calling its run() function in-process) and translate the resulting
-// Findings into the Slack-style envelope from envelope.go.
-//
-// The recommended invocation (when spec 5 lands) is:
-//
-//   import lint "github.com/RelayOne/r1/tools/lint-view-without-api"
-//   findings := lint.RunInProcess(repoRoot, catalogPath, allowlistPath)
-//   if hasFails(findings) {
-//       return ErrEnvelope("r1.verify.lint", "validation",
-//           "lint-view-without-api FAIL findings",
-//           "r1.verify.build", "r1.verify.test")
-//   }
-//   return OKEnvelope("r1.verify.lint", findings)
-//
-// The pre-spec-5 surface declared here is a single helper that returns
-// the canonical command line — the daemon shell can shell out to it
-// once item 5 merges, and the next pass refactors to in-process.
+// In-process refactor (importing tools/lint-view-without-api as a
+// library rather than spawning the binary) is a follow-up once the
+// tool is split into a package — currently it's `package main`.
 package mcp
 
 // LintViewWithoutAPICommand returns the canonical command line (argv0
