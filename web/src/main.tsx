@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-// SPA entry point. Mounts a minimal landing shell so the
-// scaffolding-phase build (items 1-15) produces a working bundle.
-// Routes, ThemeProvider, daemon-store wiring are added by items
-// 21-22 and 41 of the build checklist.
+// SPA entry point. Mounts the <App> tree (item 41/55 routing +
+// providers). Closes the audit finding that web/src/main.tsx rendered
+// only a static landing line — every shipped chat / lanes / settings
+// component was dark code with no path from the bundle entry.
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@/styles/globals.css";
+import { App } from "@/App";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -14,13 +15,6 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <StrictMode>
-    <main id="main" className="flex min-h-screen items-center justify-center bg-background text-foreground">
-      <div className="text-center">
-        <h1 className="text-2xl font-semibold">r1</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Web UI scaffolding ready. Components mount in subsequent build phases.
-        </p>
-      </div>
-    </main>
+    <App />
   </StrictMode>,
 );
