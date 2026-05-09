@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// eslint flat-config requires this rule to be exported as default — do not switch to a named export.
 // Custom ESLint rule: require-data-testid. Spec web-chat-ui item 53/55.
 //
 // Flags interactive JSX elements (button, input, textarea, select,
@@ -52,7 +53,7 @@ function getAttrValue(jsx, name) {
   return null;
 }
 
-module.exports = {
+export default {
   meta: {
     type: "problem",
     docs: {

@@ -36,68 +36,79 @@ export interface GlobalKeybindingsProps {
   isMac?: boolean;
 }
 
-export function GlobalKeybindings(
-  props: GlobalKeybindingsProps,
-): ReactElement | null {
+export function GlobalKeybindings({
+  enabled,
+  onSendShortcut,
+  onInterrupt,
+  onFocusComposer,
+  onOpenCheatsheet,
+  onToggleDaemonRail,
+  onSwitchDaemon,
+  target,
+  isMac,
+}: GlobalKeybindingsProps): ReactElement | null {
+  // Destructured so each handler is its own useMemo dep — react-hooks
+  // /exhaustive-deps prefers individual props over a `props` reference
+  // (which would invalidate the memo on every render).
   const bindings = useMemo(() => {
     const out: Record<string, (ev: KeyboardEvent) => void> = {};
 
-    if (props.onSendShortcut) {
+    if (onSendShortcut) {
       out["Mod+Enter"] = (ev): void => {
         ev.preventDefault();
-        props.onSendShortcut?.();
+        onSendShortcut();
       };
     }
-    if (props.onInterrupt) {
+    if (onInterrupt) {
       out["Escape"] = (ev): void => {
         ev.preventDefault();
-        props.onInterrupt?.();
+        onInterrupt();
       };
     }
-    if (props.onFocusComposer) {
+    if (onFocusComposer) {
       out["/"] = (ev): void => {
         ev.preventDefault();
-        props.onFocusComposer?.();
+        onFocusComposer();
       };
     }
-    if (props.onOpenCheatsheet) {
+    if (onOpenCheatsheet) {
       // "?" requires Shift+/; canonicalize emits "Shift+?" via e.key.
       out["Shift+?"] = (ev): void => {
         ev.preventDefault();
-        props.onOpenCheatsheet?.();
+        onOpenCheatsheet();
       };
     }
-    if (props.onToggleDaemonRail) {
+    if (onToggleDaemonRail) {
       out["Mod+Shift+S"] = (ev): void => {
         ev.preventDefault();
-        props.onToggleDaemonRail?.();
+        onToggleDaemonRail();
       };
     }
-    if (props.onSwitchDaemon) {
+    if (onSwitchDaemon) {
       for (let n = 1; n <= 9; n += 1) {
         const combo = `Mod+${n}`;
         const idx = n - 1;
         out[combo] = (ev): void => {
           ev.preventDefault();
-          props.onSwitchDaemon?.(idx);
+          onSwitchDaemon(idx);
         };
       }
     }
     return out;
   }, [
-    props.onSendShortcut,
-    props.onInterrupt,
-    props.onFocusComposer,
-    props.onOpenCheatsheet,
-    props.onToggleDaemonRail,
-    props.onSwitchDaemon,
+    onSendShortcut,
+    onInterrupt,
+    onFocusComposer,
+    onOpenCheatsheet,
+    onToggleDaemonRail,
+    onSwitchDaemon,
   ]);
 
   useKeybindings({
     bindings,
-    enabled: props.enabled,
-    target: props.target,
-    isMac: props.isMac,
+    enabled,
+    target,
+    isMac,
     // Global handlers must NOT fire when typing in inputs — Composer
     // owns its own Cmd+Enter. The "/" + "?" shortcuts also need this
     // behaviour or they'd intercept normal typing.
