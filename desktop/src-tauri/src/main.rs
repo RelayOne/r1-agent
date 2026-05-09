@@ -64,7 +64,17 @@ fn main() {
         // managed state holds the result so the React banner can read
         // it via `app.discovery_status`.
         .manage(DiscoveryState::new())
-        .setup(setup_discovery)
+        .setup(|app| {
+            // Spec desktop-cortex-augmentation §9 — install the native
+            // menu bar so every accelerator (⌘N, ⌘O, ⌘P, ⌘W, ⌘\,
+            // ⌘1, ⌘2, kill-lane, pause/resume/cancel) routes to a
+            // `menu://<id>` Tauri event the WebView listens for. Wired
+            // here per audit/scan-rust-stubs.md item #4.
+            if let Err(err) = menu::apply_menu(app.handle()) {
+                eprintln!("[r1-desktop] menu::apply_menu failed: {err}");
+            }
+            setup_discovery(app)
+        })
         .run(tauri::generate_context!())
         .expect("error while running R1 Desktop application");
 }
