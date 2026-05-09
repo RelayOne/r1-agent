@@ -43,9 +43,19 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/RelayOne/r1/internal/workunit"
 )
+
+// DefaultCompleteThenRevokeTimeout is how long settle() waits for
+// a SettleCompleteThenRevoke unit's StepBoundary hook to fire
+// before falling through to rollback semantics. 30s reflects the
+// expectation that "current atomic step" is bounded and any unit
+// holding the saga longer than that has already lost the
+// race-against-revocation; safer to revoke + run comp txns than
+// to wait indefinitely while a delegation is gone.
+const DefaultCompleteThenRevokeTimeout = 30 * time.Second
 
 // SettlementKind names the three settlement policies.
 type SettlementKind string
@@ -85,6 +95,13 @@ type Saga struct {
 	// under mu for creation; the per-ID mutex is held for
 	// the duration of the settlement.
 	perDelegationMu map[string]*sync.Mutex
+
+	// completeThenRevokeTimeout caps how long settle() waits on
+	// a SettleCompleteThenRevoke unit's StepBoundary hook before
+	// falling through to rollback. Mutable via
+	// SetCompleteThenRevokeTimeout for tests + operators that
+	// want a tighter bound. Read under mu.
+	completeThenRevokeTimeout time.Duration
 }
 
 // sagaEntry is the per-WorkUnit bookkeeping the saga keeps.
@@ -94,16 +111,56 @@ type sagaEntry struct {
 	policy   SettlementKind
 	comps    []CompensatingTxn
 	snapshot func(ctx context.Context) (Checkpoint, error)
+
+	// stepBoundary is the caller-supplied hook that returns
+	// once the unit reaches a safe step boundary (current
+	// atomic step finished — comp txns no longer needed). Used
+	// only by SettleCompleteThenRevoke. nil means the policy
+	// can't honor "complete then revoke" semantics; settle()
+	// falls through to rollback for safety.
+	stepBoundary func(ctx context.Context) error
 }
 
 // NewSaga constructs an orchestrator wired to a delegation
 // Manager.
 func NewSaga(mgr *Manager) *Saga {
 	return &Saga{
-		mgr:             mgr,
-		workUnits:       map[string]*sagaEntry{},
-		byDelegation:    map[string]map[string]struct{}{},
-		perDelegationMu: map[string]*sync.Mutex{},
+		mgr:                       mgr,
+		workUnits:                 map[string]*sagaEntry{},
+		byDelegation:              map[string]map[string]struct{}{},
+		perDelegationMu:           map[string]*sync.Mutex{},
+		completeThenRevokeTimeout: DefaultCompleteThenRevokeTimeout,
+	}
+}
+
+// SetCompleteThenRevokeTimeout overrides the default timeout
+// settle() applies when waiting for a SettleCompleteThenRevoke
+// unit's StepBoundary hook to fire. Pass <= 0 to disable the
+// bound (the saga will block until ctx is canceled or the hook
+// returns) — operators who use this should be confident their
+// step boundary actually fires.
+func (s *Saga) SetCompleteThenRevokeTimeout(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.completeThenRevokeTimeout = d
+}
+
+// SetStepBoundary registers a hook that signals when the named
+// WorkUnit has finished its current atomic step (i.e. it's safe
+// to revoke without compensating transactions). The hook is
+// consulted only by SettleCompleteThenRevoke; other policies
+// ignore it. No-op for unknown unitIDs so callers can wire the
+// hook before or after Register without sequencing concerns.
+//
+// Hook contract: the function blocks until the step boundary is
+// reached (returning nil) OR ctx is canceled (returning the ctx
+// error). settle() calls it with a derived ctx whose deadline is
+// completeThenRevokeTimeout; the hook MUST honor cancellation.
+func (s *Saga) SetStepBoundary(unitID string, hook func(ctx context.Context) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.workUnits[unitID]; ok {
+		e.stepBoundary = hook
 	}
 }
 
@@ -298,6 +355,13 @@ type SettlementOutcome struct {
 	// WorkUnit reached Revoked state but the audit anchor
 	// failed to record it.
 	AuditAnchorError string
+	// StepBoundaryError is the message from
+	// SettleCompleteThenRevoke's wait-for-step hook. Set when
+	// the hook returned a non-nil error (timeout/cancel) or
+	// when no hook was registered (fell through to rollback).
+	// Non-empty indicates the unit was revoked under rollback
+	// semantics rather than waiting for a clean step boundary.
+	StepBoundaryError string
 }
 
 // settle applies the per-entry settlement policy. Called by
@@ -342,15 +406,34 @@ func (s *Saga) settle(ctx context.Context, e *sagaEntry) SettlementOutcome {
 		}
 
 	case SettleCompleteThenRevoke:
-		// v2 shape: the unit is allowed to finish its
-		// current atomic step, then Revoke fires. This
-		// minimal implementation marks intent without
-		// actually waiting — callers who want the full
-		// complete-then-revoke semantics need to wire their
-		// step boundary into a hook this package will
-		// expose in a follow-up. For now the unit reaches
-		// Revoked via the same path as rollback-immediately
-		// but no compensating txns run.
+		// Wait for the unit's StepBoundary hook to signal that
+		// the current atomic step is finished, then Revoke
+		// without running comp txns (the hook returning nil is
+		// the unit's promise that its work landed cleanly).
+		//
+		// Three failure modes — all fall through to rollback
+		// semantics for safety:
+		//   1. No hook registered: caller declared the policy
+		//      but didn't wire a boundary. Treat as if the unit
+		//      never reaches a safe step.
+		//   2. Hook returns error (timeout / ctx canceled /
+		//      explicit failure): step boundary couldn't be
+		//      observed; comp txns must run to undo partial
+		//      work.
+		//   3. Wait timer expires: the saga's
+		//      completeThenRevokeTimeout bounds the wait so a
+		//      stuck unit can't pin a delegation forever.
+		// All three populate StepBoundaryError so operators see
+		// why the unit took the rollback path.
+		ok, stepErr := e.waitForStep(ctx, s.completeThenRevokeTimeoutLocked())
+		if !ok {
+			out.StepBoundaryError = stepErr
+			for i := len(e.comps) - 1; i >= 0; i-- {
+				if err := e.comps[i](ctx); err != nil {
+					out.CompensatingTxnErrors = append(out.CompensatingTxnErrors, fmt.Sprintf("comp[%d]: %v", i, err))
+				}
+			}
+		}
 		if err := e.unit.Revoke(ctx, e.anchor); err != nil {
 			out.AuditAnchorError = err.Error()
 		}
@@ -370,4 +453,47 @@ func (s *Saga) settle(ctx context.Context, e *sagaEntry) SettlementOutcome {
 
 	out.FinalStatus = e.unit.Status
 	return out
+}
+
+// completeThenRevokeTimeoutLocked returns the configured
+// timeout for SettleCompleteThenRevoke wait. Uses its own
+// short-lock so settle() (which is called outside s.mu) can
+// read the value safely without callers having to think about
+// locking.
+func (s *Saga) completeThenRevokeTimeoutLocked() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.completeThenRevokeTimeout
+}
+
+// waitForStep blocks on the entry's StepBoundary hook with a
+// derived context bounded by timeout. Returns (true, "") when
+// the hook returns nil — caller can revoke cleanly without
+// running comp txns. Returns (false, msg) for the three rollback
+// fallthrough cases (no hook, hook error, timeout); caller
+// should run comp txns and revoke.
+//
+// timeout <= 0 disables the bound: the wait blocks until ctx is
+// canceled or the hook returns, matching
+// SetCompleteThenRevokeTimeout's documented semantics.
+func (e *sagaEntry) waitForStep(ctx context.Context, timeout time.Duration) (bool, string) {
+	if e.stepBoundary == nil {
+		return false, "no StepBoundary hook registered for unit; falling back to rollback semantics"
+	}
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if err := e.stepBoundary(waitCtx); err != nil {
+		// Disambiguate timeout from caller-side cancel from
+		// hook-internal failure so operators reading the
+		// outcome can tell why the unit fell through.
+		if waitCtx.Err() == context.DeadlineExceeded {
+			return false, fmt.Sprintf("StepBoundary timed out after %s: %v", timeout, err)
+		}
+		return false, fmt.Sprintf("StepBoundary error: %v", err)
+	}
+	return true, ""
 }
