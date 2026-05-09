@@ -7,6 +7,7 @@
 // individual tools through a generated form.
 
 import { invokeStub } from "../ipc-stub";
+import { toast } from "../lib/toast";
 import type {
   MCPAddRequest,
   MCPInvokeResult,
@@ -164,7 +165,7 @@ function renderRow(s: MCPServer, test?: MCPTestResult): string {
 async function handleAdd(root: HTMLElement, state: PanelState, req: MCPAddRequest): Promise<void> {
   const result = await invokeStub<MCPOkResult>("mcp_add", "R1D-8", { ok: true }, req as unknown as Record<string, unknown>);
   if (!result.ok) {
-    alert(`Add failed for ${req.name}`);
+    toast.error(`Add failed for ${req.name}`);
     return;
   }
   await loadServers(root, state);
@@ -176,7 +177,7 @@ async function handleRemove(root: HTMLElement, state: PanelState, id: string): P
   if (!confirm(`Remove MCP server "${target.name}"?`)) return;
   const result = await invokeStub<MCPOkResult>("mcp_remove", "R1D-8", { ok: true }, { id });
   if (!result.ok) {
-    alert(`Remove failed for ${id}`);
+    toast.error(`Remove failed for ${id}`);
     return;
   }
   state.testResults.delete(id);

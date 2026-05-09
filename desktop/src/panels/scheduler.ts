@@ -9,6 +9,7 @@
 // surfaces the desktop-side schedule registry.
 
 import { invokeStub } from "../ipc-stub";
+import { toast } from "../lib/toast";
 import type {
   ScheduleOkResult,
   ScheduleUpsertRequest,
@@ -221,7 +222,7 @@ async function handleSave(root: HTMLElement, state: PanelState, req: ScheduleUps
     req as unknown as Record<string, unknown>,
   );
   if (!result.ok) {
-    alert(`Save failed for ${req.name}`);
+    toast.error(`Save failed for ${req.name}`);
     return;
   }
   await refresh(root, state);
@@ -233,7 +234,7 @@ async function handleDelete(root: HTMLElement, state: PanelState, id: string): P
   if (!confirm(`Delete schedule "${target.name}"?`)) return;
   const result = await invokeStub<ScheduleOkResult>("schedule_delete", "R1D-10", { ok: true }, { id });
   if (!result.ok) {
-    alert(`Delete failed for ${id}`);
+    toast.error(`Delete failed for ${id}`);
     return;
   }
   await refresh(root, state);
@@ -242,7 +243,7 @@ async function handleDelete(root: HTMLElement, state: PanelState, id: string): P
 async function handleRunNow(root: HTMLElement, state: PanelState, id: string): Promise<void> {
   const result = await invokeStub<ScheduleOkResult>("schedule_run_now", "R1D-10", { ok: true }, { id });
   if (!result.ok) {
-    alert(`Run-now failed for ${id}`);
+    toast.error(`Run-now failed for ${id}`);
     return;
   }
   await refresh(root, state);
