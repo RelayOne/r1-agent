@@ -733,6 +733,7 @@ export type InvokeMethod =
   // First-launch onboarding (R1D-11.6)
   | "onboarding_pick_data_dir"
   | "onboarding_start_demo"
+  | "onboarding_save_api_key"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 
@@ -944,4 +945,24 @@ export interface OnboardingDataDirResult {
 export interface OnboardingDemoResult {
   ok: boolean;
   session_id?: string;
+}
+
+/**
+ * Result of the `onboarding_save_api_key` verb. The host writes the
+ * provider + key to its OS-keyring-backed vault (Tauri tier) and
+ * confirms with `ok: true`. `vault_id` is the stable identifier the
+ * Settings → Vault panel surfaces ("provider:claude" etc.); the raw
+ * key never returns to the WebView. `message` carries a one-line
+ * diagnostic when `ok` is false (e.g. "vault locked", "keyring
+ * unavailable").
+ */
+export interface OnboardingSaveApiKeyParams {
+  provider: string;
+  key: string;
+}
+
+export interface OnboardingSaveApiKeyResult {
+  ok: boolean;
+  vault_id?: string;
+  message?: string;
 }
