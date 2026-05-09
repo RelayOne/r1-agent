@@ -140,7 +140,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched via heuristics + per-file `## Tool mapping` blocks | Done | `tools/agent-feature-runner/` |
 | 8 seed feature fixtures across 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
 | `lint-view-without-api` scanner | UI without API is a build break | Done | `tools/lint-view-without-api/` |
-| Make targets | `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | Done | `Makefile` |
+| Make targets | `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic` | Done | `Makefile` |
 | `docs/AGENTIC-API.md` + D-A1..D-A5 | External-agent contract + acceptance decisions | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
 | Auto-snapshot mitigation | Lint-drift mitigation per audit | Done | `tools/lint-view-without-api/snapshot.go` |
 
@@ -218,7 +218,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `*.agent.feature.md` parser + dispatcher | Gherkin-shaped tests dispatched to MCP catalog | Done | `tools/agent-feature-runner/` |
 | 8 seed feature fixtures across all 10 categories | Coverage gate per spec 8 §10 | Done | `tests/agent/{tui,web,cli,mission,worktree}/` |
 | `lint-view-without-api` + allowlist | UI without API is a build break | Done (Go scanner active; React + Tauri scanners blocked on specs 6/7 merge) | `tools/lint-view-without-api/` |
-| `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate` | One-line CI/local recipes | Done | `Makefile` |
+| `make agent-features[-update,-drift-check]`, `make lint-views`, `make docs-agentic` | One-line CI/local recipes | Done | `Makefile` |
 | `docs/AGENTIC-API.md` + D-A1..D-A5 acceptance | External-agent contract + decisions log | Done | `docs/AGENTIC-API.md`, `docs/decisions/index.md` |
 
 ## Status

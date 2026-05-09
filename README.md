@@ -146,7 +146,7 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **TUI shim** (`internal/tui/teatest_shim.go`) drives Bubble Tea via MCP without a terminal emulator. Synthetic `A11yEmitter` + JSONPath evaluator for structural assertions.
 - **Gherkin-flavored markdown** (`*.agent.feature.md`) parsed + dispatched by `tools/agent-feature-runner/`. 8 seed feature fixtures across all 10 categories.
 - **`lint-view-without-api`** scanner — UI without an MCP equivalent is a build break. — `tools/lint-view-without-api/`.
-- **`make agent-features`, `make lint-views`, `make docs-agentic`, `make storybook-mcp-validate`** — one-line CI/local recipes.
+- **`make agent-features`, `make lint-views`, `make docs-agentic`** — one-line CI/local recipes.
 - See [`docs/AGENTIC-API.md`](docs/AGENTIC-API.md) for the full external-agent contract.
 
 ### Anti-truncation enforcement (spec 9)
