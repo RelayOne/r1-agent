@@ -126,6 +126,124 @@ func TestSupervisorWorker_SupervisorFailureStops(t *testing.T) {
 	}
 }
 
+// TestSupervisorWorker_PlanSelectsWorkers verifies the supervisor's
+// SupervisorPlan filters and reorders the worker dispatch. Closes
+// audit/scan-go-stubs.md "internal/topology SupervisorWorker
+// minimal implementation" item.
+func TestSupervisorWorker_PlanSelectsWorkers(t *testing.T) {
+	var ord runOrder
+	run := func(_ context.Context, task Task) TaskResult {
+		ord.add(task.ID)
+		if task.ID == "a" {
+			// Supervisor selects workers in reverse, drops "b".
+			return TaskResult{
+				TaskID: "a",
+				Output: SupervisorPlan{TaskIDs: []string{"d", "c"}},
+			}
+		}
+		return TaskResult{TaskID: task.ID}
+	}
+	results := SupervisorWorker{}.Run(context.Background(), makeTasks(4), run)
+	// Supervisor + 2 selected workers (b dropped).
+	if len(results) != 3 {
+		t.Errorf("results=%d want 3 (sup + 2 selected workers)", len(results))
+	}
+	// Worker results follow dispatch order — index 1 is "d", index 2 is "c".
+	if results[1].TaskID != "d" || results[2].TaskID != "c" {
+		t.Errorf("worker order=%q,%q want d,c", results[1].TaskID, results[2].TaskID)
+	}
+	// "b" must NOT have run.
+	ord.mu.Lock()
+	defer ord.mu.Unlock()
+	for _, id := range ord.order {
+		if id == "b" {
+			t.Errorf("worker b should be skipped per supervisor plan; order=%v", ord.order)
+		}
+	}
+}
+
+// TestSupervisorWorker_PlanEmptySkipsAllWorkers verifies that a
+// supervisor returning a plan with no TaskIDs runs no workers
+// — distinguishing "no plan" (legacy fallback) from "plan that
+// names no workers".
+func TestSupervisorWorker_PlanEmptySkipsAllWorkers(t *testing.T) {
+	var workerCalls atomic.Int32
+	run := func(_ context.Context, task Task) TaskResult {
+		if task.ID == "a" {
+			return TaskResult{
+				TaskID: "a",
+				Output: SupervisorPlan{TaskIDs: []string{}},
+			}
+		}
+		workerCalls.Add(1)
+		return TaskResult{TaskID: task.ID}
+	}
+	results := SupervisorWorker{}.Run(context.Background(), makeTasks(4), run)
+	if len(results) != 1 {
+		t.Errorf("results=%d want 1 (supervisor only)", len(results))
+	}
+	if got := workerCalls.Load(); got != 0 {
+		t.Errorf("worker calls=%d want 0 (empty plan)", got)
+	}
+}
+
+// TestSupervisorWorker_PlanSequentialUsesSequentialTopology checks
+// that Sequential=true dispatches workers one at a time in plan
+// order rather than concurrently.
+func TestSupervisorWorker_PlanSequentialUsesSequentialTopology(t *testing.T) {
+	var ord runOrder
+	run := func(_ context.Context, task Task) TaskResult {
+		ord.add(task.ID)
+		if task.ID == "a" {
+			return TaskResult{
+				TaskID: "a",
+				Output: SupervisorPlan{TaskIDs: []string{"c", "b", "d"}, Sequential: true},
+			}
+		}
+		return TaskResult{TaskID: task.ID}
+	}
+	results := SupervisorWorker{}.Run(context.Background(), makeTasks(4), run)
+	if len(results) != 4 {
+		t.Errorf("results=%d want 4", len(results))
+	}
+	ord.mu.Lock()
+	defer ord.mu.Unlock()
+	// Sequential topology preserves order — supervisor "a" first,
+	// then plan order c, b, d.
+	want := []string{"a", "c", "b", "d"}
+	if len(ord.order) != len(want) {
+		t.Fatalf("order=%v want %v", ord.order, want)
+	}
+	for i, id := range want {
+		if ord.order[i] != id {
+			t.Errorf("order[%d]=%q want %q", i, ord.order[i], id)
+		}
+	}
+}
+
+// TestSupervisorWorker_LegacyFallback verifies that supervisors
+// returning Output that is NOT a SupervisorPlan still get the
+// legacy "all workers concurrent" behavior — preserving every
+// existing caller's contract.
+func TestSupervisorWorker_LegacyFallback(t *testing.T) {
+	var workerCalls atomic.Int32
+	run := func(_ context.Context, task Task) TaskResult {
+		if task.ID == "a" {
+			// Plain string output — not a plan.
+			return TaskResult{TaskID: "a", Output: "supervisor said: dispatch all"}
+		}
+		workerCalls.Add(1)
+		return TaskResult{TaskID: task.ID}
+	}
+	results := SupervisorWorker{}.Run(context.Background(), makeTasks(4), run)
+	if len(results) != 4 {
+		t.Errorf("results=%d want 4 (legacy fallback runs all)", len(results))
+	}
+	if got := workerCalls.Load(); got != 3 {
+		t.Errorf("worker calls=%d want 3", got)
+	}
+}
+
 func TestRegistry_BuiltInsRegistered(t *testing.T) {
 	r := NewRegistry()
 	for _, n := range []Name{NameSequential, NameConcurrentFanOut, NameSupervisorWorker} {

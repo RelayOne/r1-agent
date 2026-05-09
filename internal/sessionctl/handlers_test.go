@@ -246,12 +246,16 @@ func TestOverride_EmitsEvent(t *testing.T) {
 	if evtID != "evt-operator.override" {
 		t.Fatalf("evtID: %q", evtID)
 	}
-	var out map[string]string
+	var out map[string]any
 	if err := json.Unmarshal(data, &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if out["ac_id"] != "ac-42" {
-		t.Fatalf("ac_id: got %q", out["ac_id"])
+		t.Fatalf("ac_id: got %v", out["ac_id"])
+	}
+	// No OverrideAC callback wired → applied=false (audit-only fallback).
+	if applied, _ := out["applied"].(bool); applied {
+		t.Fatalf("applied=true want false (no OverrideAC callback)")
 	}
 	if len(em.Calls()) != 1 || em.Calls()[0].Kind != "operator.override" {
 		t.Fatalf("emit: %+v", em.Calls())
@@ -278,6 +282,83 @@ func TestOverride_MissingFields_ReturnsError(t *testing.T) {
 	}
 	if len(em.Calls()) != 0 {
 		t.Fatalf("emit on error path: %+v", em.Calls())
+	}
+}
+
+// TestOverride_WithCallback_AppliesAndAudits verifies that wiring
+// OverrideAC actually mutates the AC state machine and the audit
+// event records applied=true. Closes audit/scan-go-stubs.md item
+// "internal/sessionctl/handlers.go overrideHandler".
+func TestOverride_WithCallback_AppliesAndAudits(t *testing.T) {
+	t.Parallel()
+	em := &fakeEmitter{}
+	var gotACID, gotReason, gotSession string
+	deps := Deps{
+		SessionID: "sess-7",
+		Emit:      em.publish,
+		OverrideAC: func(acID, reason, sessionID string) error {
+			gotACID = acID
+			gotReason = reason
+			gotSession = sessionID
+			return nil
+		},
+	}
+	h := overrideHandler(deps)
+
+	payload, _ := json.Marshal(overridePayload{ACID: "ac-9", Reason: "manual"})
+	data, errMsg, evtID := h(Request{Payload: payload})
+	if errMsg != "" {
+		t.Fatalf("errMsg: %q", errMsg)
+	}
+	if evtID == "" {
+		t.Fatalf("evtID empty; expected audit event")
+	}
+	if gotACID != "ac-9" || gotReason != "manual" || gotSession != "sess-7" {
+		t.Fatalf("OverrideAC args: ac=%q reason=%q session=%q", gotACID, gotReason, gotSession)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if applied, _ := out["applied"].(bool); !applied {
+		t.Fatalf("applied=false want true")
+	}
+	// Audit payload also carries applied=true.
+	if got := em.Calls()[0].Payload.(map[string]any)["applied"]; got != true {
+		t.Fatalf("audit payload applied=%v want true", got)
+	}
+}
+
+// TestOverride_CallbackError_RecordsAuditAndReturnsErr verifies
+// that when the AC state machine rejects the override, the audit
+// event still fires (no history loss) but the verb returns the
+// error to the operator.
+func TestOverride_CallbackError_RecordsAuditAndReturnsErr(t *testing.T) {
+	t.Parallel()
+	em := &fakeEmitter{}
+	deps := Deps{
+		SessionID: "sess-7",
+		Emit:      em.publish,
+		OverrideAC: func(acID, reason, sessionID string) error {
+			return errors.New("ac is in terminal state")
+		},
+	}
+	h := overrideHandler(deps)
+
+	payload, _ := json.Marshal(overridePayload{ACID: "ac-9", Reason: "manual"})
+	_, errMsg, evtID := h(Request{Payload: payload})
+	if !strings.Contains(errMsg, "terminal state") {
+		t.Fatalf("errMsg=%q want callback error surfaced", errMsg)
+	}
+	// Audit event must still fire even on state-mutation failure.
+	if evtID == "" {
+		t.Fatal("evtID empty; audit event should fire on callback error")
+	}
+	if len(em.Calls()) != 1 {
+		t.Fatalf("emit calls=%d want 1", len(em.Calls()))
+	}
+	if applied := em.Calls()[0].Payload.(map[string]any)["applied"]; applied != false {
+		t.Fatalf("audit payload applied=%v want false (callback errored)", applied)
 	}
 }
 

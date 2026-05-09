@@ -225,9 +225,21 @@ func (l *RuleCheckLobe) noteFromRuleFired(evt bus.Event, pl ruleFiredPayload) co
 //                            AntiTruncLobe Notes and must block end_turn the
 //                            same way; landing them at info would silently
 //                            bypass the layered-defense design)
+//   - snapshot.*            → critical (snapshot protection violations
+//                            are safety-critical operator events)
+//   - hierarchy.user_escalation, hierarchy.completion_requires_*  → critical
+//                            (operator-facing escalation events)
 //   - drift.*               → warning
 //   - cross_team.*          → warning
+//   - sdm.*                 → warning (SDM advisory — schedule risk,
+//                            duplicate work, drift, collisions, dependency
+//                            crossings all warrant operator attention)
+//   - hierarchy.*           → warning (other hierarchy events)
+//   - skill.*               → warning (skill-lifecycle events)
+//   - research.timeout      → warning (workflow degradation)
 //   - everything else       → info
+//
+// Closes audit/scan-governance-gaps.md cortex-concerns item 14.
 //
 // API adaptation: the spec writes "consensus.dissent.*" with a trailing
 // dot, but the actual supervisor rule names use underscores after the
@@ -242,9 +254,22 @@ func severityFor(ruleName string) cortex.Severity {
 		return cortex.SevCritical
 	case strings.HasPrefix(ruleName, "antitrunc."):
 		return cortex.SevCritical
+	case strings.HasPrefix(ruleName, "snapshot."):
+		return cortex.SevCritical
+	case ruleName == "hierarchy.user_escalation",
+		strings.HasPrefix(ruleName, "hierarchy.completion_requires_"):
+		return cortex.SevCritical
 	case strings.HasPrefix(ruleName, "drift."):
 		return cortex.SevWarning
 	case strings.HasPrefix(ruleName, "cross_team."):
+		return cortex.SevWarning
+	case strings.HasPrefix(ruleName, "sdm."):
+		return cortex.SevWarning
+	case strings.HasPrefix(ruleName, "hierarchy."):
+		return cortex.SevWarning
+	case strings.HasPrefix(ruleName, "skill."):
+		return cortex.SevWarning
+	case ruleName == "research.timeout":
 		return cortex.SevWarning
 	default:
 		return cortex.SevInfo
