@@ -2,12 +2,40 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// writeStateAtomic writes data to path via a sibling .tmp file then
+// rename, so a concurrent reader never observes a half-written file.
+// CodexExecutor.readState polls in a tight loop; without this, the
+// reader regularly hits "unexpected end of JSON input" under -race.
+// Mirrors internal/plan/Save's atomicity pattern.
+func writeStateAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil { // #nosec G302 -- test stub state.
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	return os.Rename(tmpName, path)
+}
 
 func TestBashExecutorExecute(t *testing.T) {
 	exec := NewBashExecutor(BashExecutorConfig{
@@ -183,13 +211,19 @@ case "$command" in
     mkdir -p "$job_dir"
     echo "$id" >> "$JOBS_DIR/calls.log"
     printf '%s' "$prompt" > "$job_dir/prompt.txt"
-    printf '{"id":"%s","status":"running","estimate_bytes":%s,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}' "$id" "$estimate" > "$job_dir/state.json"
+    # state.json writes go through .tmp + mv so a concurrent reader
+    # (CodexExecutor.readState polls in a tight loop) sees either the
+    # previous version or the new version, never a half-written
+    # truncation. Match the same atomicity pattern internal/plan/Save
+    # uses; surfaced by PR #204 r1-agent-pr failure on
+    # TestCodexExecutorExecute/failure ("unexpected end of JSON input").
+    printf '{"id":"%s","status":"running","estimate_bytes":%s,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}' "$id" "$estimate" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
     (
       case "$prompt" in
         *HANG*)
           while [ ! -f "$job_dir/.killed" ]; do sleep 0.05; done
           printf 'cancelled by test\n' > "$job_dir/stderr.log"
-          printf '{"id":"%s","status":"failed","estimate_bytes":%s,"actual_bytes":0,"delta_pct":0,"underdelivered":true,"exit":130}' "$id" "$estimate" > "$job_dir/state.json"
+          printf '{"id":"%s","status":"failed","estimate_bytes":%s,"actual_bytes":0,"delta_pct":0,"underdelivered":true,"exit":130}' "$id" "$estimate" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
           ;;
         *FAIL*)
           sleep 0.1
@@ -197,21 +231,21 @@ case "$command" in
           printf 'stub failure\n' > "$job_dir/last-message.txt"
           printf '# failed proof\n' > "$job_dir/PROOFS.md"
           printf '[{"claim":"failed","evidence_type":"file_line","evidence_value":"%s:1","source":"stub"}]' "$job_dir/PROOFS.md" > "$job_dir/proofs.json"
-          printf '{"id":"%s","status":"failed","estimate_bytes":%s,"actual_bytes":11,"delta_pct":100,"underdelivered":false,"exit":23}' "$id" "$estimate" > "$job_dir/state.json"
+          printf '{"id":"%s","status":"failed","estimate_bytes":%s,"actual_bytes":11,"delta_pct":100,"underdelivered":false,"exit":23}' "$id" "$estimate" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
           ;;
         *SLOW*)
           sleep 2
           printf 'slow success\n' > "$job_dir/last-message.txt"
           printf '# slow proof\n' > "$job_dir/PROOFS.md"
           printf '[{"claim":"slow","evidence_type":"file_line","evidence_value":"%s:1","source":"stub"}]' "$job_dir/PROOFS.md" > "$job_dir/proofs.json"
-          printf '{"id":"%s","status":"done","estimate_bytes":%s,"actual_bytes":41,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" "$estimate" > "$job_dir/state.json"
+          printf '{"id":"%s","status":"done","estimate_bytes":%s,"actual_bytes":41,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" "$estimate" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
           ;;
         *)
           sleep 0.1
           printf 'job complete\n' > "$job_dir/last-message.txt"
           printf '# success proof\n' > "$job_dir/PROOFS.md"
           printf '[{"claim":"success","evidence_type":"file_line","evidence_value":"%s:1","source":"stub"}]' "$job_dir/PROOFS.md" > "$job_dir/proofs.json"
-          printf '{"id":"%s","status":"done","estimate_bytes":%s,"actual_bytes":321,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" "$estimate" > "$job_dir/state.json"
+          printf '{"id":"%s","status":"done","estimate_bytes":%s,"actual_bytes":321,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" "$estimate" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
           ;;
       esac
     ) >/dev/null 2>&1 < /dev/null &
@@ -330,7 +364,10 @@ echo "${2:-}" >> "$JOBS_DIR/calls.log"
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatalf("mkdir job dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(jobDir, "state.json"), []byte(`{"id":"resume-task-attempt-1","status":"running","estimate_bytes":0,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}`), 0o644); err != nil {
+	// state.json writes go via writeAtomic so the production
+	// CodexExecutor.readState polling loop never observes a partially
+	// truncated JSON file. Same pattern as the bash stub above.
+	if err := writeStateAtomic(filepath.Join(jobDir, "state.json"), []byte(`{"id":"resume-task-attempt-1","status":"running","estimate_bytes":0,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}`)); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
 	go func() {
@@ -338,7 +375,7 @@ echo "${2:-}" >> "$JOBS_DIR/calls.log"
 		_ = os.WriteFile(filepath.Join(jobDir, "PROOFS.md"), []byte("# resumed proof\n"), 0o644)
 		_ = os.WriteFile(filepath.Join(jobDir, "proofs.json"), []byte(`[{"claim":"resume","evidence_type":"file_line","evidence_value":"`+filepath.Join(jobDir, "PROOFS.md")+`:1","source":"stub"}]`), 0o644)
 		_ = os.WriteFile(filepath.Join(jobDir, "last-message.txt"), []byte("resumed"), 0o644)
-		_ = os.WriteFile(filepath.Join(jobDir, "state.json"), []byte(`{"id":"resume-task-attempt-1","status":"done","estimate_bytes":0,"actual_bytes":17,"delta_pct":null,"underdelivered":false,"exit":0}`), 0o644)
+		_ = writeStateAtomic(filepath.Join(jobDir, "state.json"), []byte(`{"id":"resume-task-attempt-1","status":"done","estimate_bytes":0,"actual_bytes":17,"delta_pct":null,"underdelivered":false,"exit":0}`))
 	}()
 
 	res := exec.Execute(context.Background(), task)
@@ -374,13 +411,13 @@ case "${1:-}" in
     id="${2:?id}"
     job_dir="$JOBS_DIR/$id"
     mkdir -p "$job_dir"
-    printf '{"id":"%s","status":"running","estimate_bytes":5,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}' "$id" > "$job_dir/state.json"
+    printf '{"id":"%s","status":"running","estimate_bytes":5,"actual_bytes":null,"delta_pct":null,"underdelivered":false,"exit":null}' "$id" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
     (
       sleep 0.1
       printf '# proof\n' > "$job_dir/PROOFS.md"
       printf '[{"claim":"daemon integration","evidence_type":"file_line","evidence_value":"%s:1","source":"stub"}]' "$job_dir/PROOFS.md" > "$job_dir/proofs.json"
       printf 'done\n' > "$job_dir/last-message.txt"
-      printf '{"id":"%s","status":"done","estimate_bytes":5,"actual_bytes":55,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" > "$job_dir/state.json"
+      printf '{"id":"%s","status":"done","estimate_bytes":5,"actual_bytes":55,"delta_pct":100,"underdelivered":false,"exit":0}' "$id" > "$job_dir/state.json.tmp" && mv "$job_dir/state.json.tmp" "$job_dir/state.json"
     ) >/dev/null 2>&1 < /dev/null &
     ;;
   kill)
