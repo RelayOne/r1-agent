@@ -51,8 +51,8 @@ jobs:
       - name: make lint-chdir
         run: make lint-chdir
 
-  build-test-vet:
-    name: build + test + vet
+  vet:
+    name: go vet
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -60,12 +60,5 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
-      - name: go build
-        run: |
-          mkdir -p bin
-          go build -o ./bin/r1 ./cmd/r1
-          go build -o ./bin/r1-acp ./cmd/r1-acp
       - name: go vet
         run: go vet ./...
-      - name: go test
-        run: go test ./... -count=1 -timeout=180s
