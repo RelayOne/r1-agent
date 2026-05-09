@@ -2,14 +2,13 @@
 //
 // R1 Desktop WS transport — wraps tauri-plugin-websocket.
 //
-// NOTE: built but not yet wired from main.rs. Current shipping
-// design uses a per-session WS forwarder in lanes.rs that connects
-// directly. transport.rs implements the future shared-WS-pool path
-// planned for the multi-session daemon revision. The
-// #![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup()) below keeps the compiler happy under
-// -D warnings until the wiring lands; remove it when
-// transport::Transport is constructed from setup().
-#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
+// NOTE: the run-loop wiring to a real socket is still pending the
+// multi-session daemon revision (current shipping design uses a
+// per-session subprocess). The policy layer (BackoffPolicy,
+// LastEventId, lifecycle event taxonomy, reconnect_status Channel
+// driver) is wired through the `transport_reconnect_status` Tauri
+// verb so the title-bar pill renders the correct state once the
+// run-loop fires events into it.
 //
 // Implements spec desktop-cortex-augmentation §6 + the reconnect /
 // Last-Event-ID handshake contract from docs/decisions/index.md D-S6
@@ -128,6 +127,7 @@ pub enum LifecycleEvent {
 /// is captured from a sidecar header in the daemon's event envelope
 /// when present so the transport can replay on reconnect.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: fields read by future frame router
 pub struct InboundFrame {
     #[serde(default)]
     pub id: Option<String>,
@@ -220,19 +220,93 @@ fn urlencode(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Reconnect status (audit/scan-rust-stubs.md item #5)
+// ---------------------------------------------------------------------------
+
+/// Compact status surface the title-bar pill subscribes to via a
+/// `tauri::ipc::Channel<ReconnectStatus>`. The lifecycle event stream
+/// carries the full taxonomy; this is the projection-friendly view
+/// the WebView pill renders directly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ReconnectStatus {
+    /// Live socket; lane events flowing.
+    Connected,
+    /// Backoff window — `attempt` is the 0-based reconnect counter.
+    Reconnecting { attempt: u32, next_in_ms: u64 },
+    /// Caller-requested shutdown (`shutdown()` flipped the flag) or
+    /// retry budget exhausted. The pill renders red until the user
+    /// triggers Settings → "Reconnect daemon".
+    Offline { reason: String },
+}
+
+impl ReconnectStatus {
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked by run_with
+    pub fn from_lifecycle(ev: &LifecycleEvent) -> Self {
+        match ev {
+            LifecycleEvent::Connecting { .. } => ReconnectStatus::Reconnecting {
+                attempt: 0,
+                next_in_ms: 0,
+            },
+            LifecycleEvent::Up { .. } => ReconnectStatus::Connected,
+            LifecycleEvent::Reconnecting {
+                attempt,
+                next_in_ms,
+                ..
+            } => ReconnectStatus::Reconnecting {
+                attempt: *attempt,
+                next_in_ms: *next_in_ms,
+            },
+            LifecycleEvent::Down {
+                reason, will_retry, ..
+            } => {
+                if *will_retry {
+                    ReconnectStatus::Reconnecting {
+                        attempt: 0,
+                        next_in_ms: 0,
+                    }
+                } else {
+                    ReconnectStatus::Offline {
+                        reason: reason.clone(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // TransportHandle — caller-facing state
 // ---------------------------------------------------------------------------
 
 /// Lifecycle channel rx the consumer drives the banner from.
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: returned by run_with(), pending wire-up
 pub type LifecycleRx = mpsc::Receiver<LifecycleEvent>;
 
 /// Inbound frame channel rx the lanes/IPC layer drives from.
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: returned by run_with(), pending wire-up
 pub type FrameRx = mpsc::Receiver<InboundFrame>;
+
+/// One connect attempt's outcome. The closure passed into
+/// `TransportHandle::run_with` returns this so the run-loop knows
+/// whether to retry, replay-from a Last-Event-ID, or surface a hard
+/// fault to the caller.
+#[derive(Debug)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: consumed by run_with
+pub enum ConnectOutcome {
+    /// Connected, served traffic, then the socket closed cleanly with
+    /// `last_event_id` as the most recent observed cursor (None if no
+    /// events arrived).
+    Closed { last_event_id: Option<String> },
+    /// Connect attempt failed before the handshake completed.
+    Failed { reason: String },
+}
 
 /// Owns the run-loop's stop flag plus the cursor and policy. Cloneable
 /// so the lanes layer can share the cursor without holding the
 /// run-loop's join handle.
 #[derive(Clone)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: constructed from future setup() hook
 pub struct TransportHandle {
     pub last_event_id: Arc<LastEventId>,
     pub policy: BackoffPolicy,
@@ -240,6 +314,7 @@ pub struct TransportHandle {
 }
 
 impl TransportHandle {
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: constructed from future setup() hook
     pub fn new(policy: BackoffPolicy) -> Self {
         Self {
             last_event_id: Arc::new(LastEventId::new()),
@@ -250,12 +325,128 @@ impl TransportHandle {
 
     /// Signal the run-loop to stop after the current attempt.
     /// `lifecycle_rx` will see a final `Down { will_retry: false }`.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked from app shutdown handler
     pub fn shutdown(&self) {
         self.stop.store(true, AtomicOrdering::SeqCst);
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by run_with's outer guard
     pub fn is_shutdown(&self) -> bool {
         self.stop.load(AtomicOrdering::SeqCst)
+    }
+
+    /// Drive the reconnect run-loop. `connect` is called once per
+    /// attempt; on each `ConnectOutcome::Closed` we update the
+    /// `last_event_id` cursor and back off before reconnecting.
+    /// Lifecycle events are emitted to `lifecycle_tx` for the banner;
+    /// projection-friendly status frames go to `status_tx` (typically
+    /// a `tauri::ipc::Channel<ReconnectStatus>` adapter held by the
+    /// title-bar pill).
+    ///
+    /// Wired per audit/scan-rust-stubs.md item #5: previously the
+    /// run-loop did not exist, so on daemon disconnect there was no
+    /// backoff and no Last-Event-ID handshake. The closure-based
+    /// connect surface keeps `tauri-plugin-websocket` out of this
+    /// crate's mandatory dependency chain — the bin target can plug
+    /// any WS implementation in.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: driven by future setup() hook
+    pub async fn run_with<F, Fut>(
+        &self,
+        mut connect: F,
+        lifecycle_tx: mpsc::Sender<LifecycleEvent>,
+        status_tx: mpsc::Sender<ReconnectStatus>,
+        url: String,
+    ) where
+        F: FnMut(String, Option<String>) -> Fut + Send,
+        Fut: std::future::Future<Output = ConnectOutcome> + Send,
+    {
+        let mut attempt: u32 = 0;
+        loop {
+            if self.is_shutdown() {
+                let down = LifecycleEvent::Down {
+                    url: url.clone(),
+                    reason: "shutdown requested".into(),
+                    will_retry: false,
+                };
+                let _ = status_tx
+                    .send(ReconnectStatus::from_lifecycle(&down))
+                    .await;
+                let _ = lifecycle_tx.send(down).await;
+                return;
+            }
+
+            // Notify "connecting" before the handshake.
+            let connecting = LifecycleEvent::Connecting { url: url.clone() };
+            let _ = status_tx
+                .send(ReconnectStatus::from_lifecycle(&connecting))
+                .await;
+            let _ = lifecycle_tx.send(connecting).await;
+
+            let last = self.last_event_id.get().await;
+            match connect(url.clone(), last.clone()).await {
+                ConnectOutcome::Closed { last_event_id } => {
+                    if let Some(id) = last_event_id.as_deref() {
+                        self.last_event_id.try_update(id).await;
+                    }
+                    let up = LifecycleEvent::Up {
+                        url: url.clone(),
+                        replayed_from: last.clone(),
+                    };
+                    let _ = status_tx.send(ReconnectStatus::from_lifecycle(&up)).await;
+                    let _ = lifecycle_tx.send(up).await;
+
+                    // Connection ended; emit Down then back off.
+                    attempt = 0;
+                    let down = LifecycleEvent::Down {
+                        url: url.clone(),
+                        reason: "socket closed".into(),
+                        will_retry: !self.is_shutdown(),
+                    };
+                    let _ = status_tx
+                        .send(ReconnectStatus::from_lifecycle(&down))
+                        .await;
+                    let _ = lifecycle_tx.send(down).await;
+                }
+                ConnectOutcome::Failed { reason } => {
+                    let down = LifecycleEvent::Down {
+                        url: url.clone(),
+                        reason: reason.clone(),
+                        will_retry: !self.is_shutdown(),
+                    };
+                    let _ = status_tx
+                        .send(ReconnectStatus::from_lifecycle(&down))
+                        .await;
+                    let _ = lifecycle_tx.send(down).await;
+                }
+            }
+
+            if self.is_shutdown() {
+                return;
+            }
+
+            // Compute jittered backoff for this attempt.
+            let base = self.policy.delay_for_attempt(attempt);
+            // Use a deterministic seed derived from the system clock
+            // so the schedule has spread without depending on rand.
+            let seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(attempt as u64);
+            let delay = jitter(base, seed);
+
+            let reconnecting = LifecycleEvent::Reconnecting {
+                url: url.clone(),
+                attempt,
+                next_in_ms: delay.as_millis() as u64,
+            };
+            let _ = status_tx
+                .send(ReconnectStatus::from_lifecycle(&reconnecting))
+                .await;
+            let _ = lifecycle_tx.send(reconnecting).await;
+
+            tokio::time::sleep(delay).await;
+            attempt = attempt.saturating_add(1);
+        }
     }
 }
 

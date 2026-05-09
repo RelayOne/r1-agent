@@ -126,17 +126,45 @@ func (ConcurrentFanOut) Run(ctx context.Context, tasks []Task, run Runner) []Tas
 	return out
 }
 
+// SupervisorPlan is the shape the SupervisorWorker topology
+// looks for in supervisor TaskResult.Output to choose which
+// workers to run and how. Supervisors that don't return a plan
+// of this shape get the legacy fallback (all workers concurrent
+// in original order).
+//
+// Closes audit/scan-go-stubs.md item "internal/topology
+// SupervisorWorker minimal impl runs all workers regardless of
+// supervisor output".
+type SupervisorPlan struct {
+	// TaskIDs lists the worker task IDs the supervisor selected,
+	// in dispatch order. A worker not listed here is skipped
+	// entirely. An empty slice means "run no workers" (the
+	// supervisor decided no follow-up is needed).
+	TaskIDs []string
+
+	// Sequential, when true, dispatches workers one at a time
+	// in TaskIDs order so each can react to the previous result
+	// via the Runner's own state. Default (false) keeps the
+	// concurrent-fan-out behavior.
+	Sequential bool
+}
+
 // SupervisorWorker runs a supervisor task first, then dispatches
 // the remaining tasks as workers under the supervisor's
-// decisions. The supervisor task is tasks[0]; its output is the
-// dispatch plan which this topology interprets as "run all
-// remaining tasks concurrently" in this minimal implementation.
+// decisions. The supervisor task is tasks[0].
 //
-// A richer implementation would let the supervisor's output
-// select which remaining tasks to run (and in what order), but
-// this level of sophistication belongs in the Runner that
-// interprets the supervisor's output, not in the topology —
-// keep the topology dumb + composable.
+// Worker selection:
+//   - If supRes.Output is a SupervisorPlan (or *SupervisorPlan),
+//     the topology runs only the listed worker IDs in the order
+//     given. Sequential=true uses the Sequential topology;
+//     otherwise ConcurrentFanOut. Worker IDs not present in
+//     tasks[1:] are silently dropped.
+//   - Otherwise, the topology falls back to running all of
+//     tasks[1:] concurrently (the legacy behavior).
+//
+// Either way, supervisor stays first in the returned slice;
+// worker results follow in the dispatch order so callers can
+// correlate by index.
 type SupervisorWorker struct{}
 
 func (SupervisorWorker) Name() Name { return NameSupervisorWorker }
@@ -150,12 +178,71 @@ func (SupervisorWorker) Run(ctx context.Context, tasks []Task, run Runner) []Tas
 	if supRes.Err != nil || len(tasks) == 1 {
 		return []TaskResult{supRes}
 	}
-	// Workers concurrent.
-	workers := ConcurrentFanOut{}.Run(ctx, tasks[1:], run)
+	workerTasks := selectWorkers(tasks[1:], supRes.Output)
+	if len(workerTasks) == 0 {
+		// Supervisor returned a plan that named no workers —
+		// honor "run no workers" rather than falling through.
+		// Distinguished from "no plan" via plan-presence check
+		// in selectWorkers.
+		return []TaskResult{supRes}
+	}
+	sequential := false
+	if plan, ok := extractPlan(supRes.Output); ok {
+		sequential = plan.Sequential
+	}
+	var workers []TaskResult
+	if sequential {
+		workers = Sequential{}.Run(ctx, workerTasks, run)
+	} else {
+		workers = ConcurrentFanOut{}.Run(ctx, workerTasks, run)
+	}
 	out := make([]TaskResult, 0, len(workers)+1)
 	out = append(out, supRes)
 	out = append(out, workers...)
 	return out
+}
+
+// extractPlan asserts a supervisor's Output to a SupervisorPlan,
+// accepting both value and pointer shapes. ok=false when the
+// output isn't a plan (legacy fallback path).
+func extractPlan(out any) (SupervisorPlan, bool) {
+	switch v := out.(type) {
+	case SupervisorPlan:
+		return v, true
+	case *SupervisorPlan:
+		if v == nil {
+			return SupervisorPlan{}, false
+		}
+		return *v, true
+	}
+	return SupervisorPlan{}, false
+}
+
+// selectWorkers reorders + filters the worker task slice
+// according to the supervisor's plan. When the supervisor didn't
+// return a plan, returns the original slice unchanged (legacy
+// fallback). When the plan is present but TaskIDs is empty,
+// returns nil so callers can distinguish "no workers" from "no
+// plan".
+func selectWorkers(workers []Task, supOutput any) []Task {
+	plan, ok := extractPlan(supOutput)
+	if !ok {
+		return workers
+	}
+	if len(plan.TaskIDs) == 0 {
+		return nil
+	}
+	byID := make(map[string]Task, len(workers))
+	for _, w := range workers {
+		byID[w.ID] = w
+	}
+	selected := make([]Task, 0, len(plan.TaskIDs))
+	for _, id := range plan.TaskIDs {
+		if t, ok := byID[id]; ok {
+			selected = append(selected, t)
+		}
+	}
+	return selected
 }
 
 // Metric records per-topology + per-task-class performance. Used

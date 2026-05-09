@@ -78,6 +78,11 @@ type StokeServer struct {
 	// WithLanesServer per spec 3 TASK-24; nil disables lane-tool exposure
 	// (the StokeServer behaves exactly as before).
 	lanes *LanesServer
+	// cortex optionally exposes the cortex Workspace + Lobe lifecycle
+	// to MCP clients via the r1.cortex.* tools. Wired via WithCortex
+	// per spec 8 §4.3; nil makes every r1.cortex.* call return
+	// "cortex backend not wired".
+	cortex CortexBackend
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -130,6 +135,24 @@ func NewStokeServer(stokeBin string) *StokeServer {
 func (s *StokeServer) WithLanesServer(ls *LanesServer) *StokeServer {
 	s.mu.Lock()
 	s.lanes = ls
+	s.mu.Unlock()
+	return s
+}
+
+// WithCortex attaches a CortexBackend so the r1.cortex.* tools route
+// to a real cortex.Cortex (or a fake in tests). Per spec 8 §4.3; until
+// this is called every r1.cortex.* tool call returns "cortex backend
+// not wired". Mirrors WithLanesServer's pattern.
+//
+// Production wiring lives in cmd/r1-server/: once both the StokeServer
+// and the cortex.Cortex are constructed, the daemon calls
+//
+//	mcp.WithCortex(cortexInstance)
+//
+// Passing nil clears any previously-attached backend.
+func (s *StokeServer) WithCortex(c CortexBackend) *StokeServer {
+	s.mu.Lock()
+	s.cortex = c
 	s.mu.Unlock()
 	return s
 }
@@ -367,6 +390,30 @@ func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{
 			return lanes.HandleToolCall(context.Background(), toolName, args)
 		}
 		return "", fmt.Errorf("unknown tool: %s (lanes server not wired)", toolName)
+	}
+	if strings.HasPrefix(toolName, "r1.cortex.") {
+		switch toolName {
+		case "r1.cortex.notes":
+			return s.handleCortexNotes(args)
+		case "r1.cortex.publish":
+			return s.handleCortexPublish(args)
+		case "r1.cortex.lobes_list":
+			return s.handleCortexLobesList(args)
+		case "r1.cortex.lobe_pause":
+			return s.handleCortexLobePause(args)
+		case "r1.cortex.lobe_resume":
+			return s.handleCortexLobeResume(args)
+		default:
+			return "", fmt.Errorf("unknown cortex tool: %s", toolName)
+		}
+	}
+	if strings.HasPrefix(toolName, "r1.verify.") {
+		switch toolName {
+		case "r1.verify.lint":
+			return s.handleVerifyLint(args)
+		default:
+			return "", fmt.Errorf("unknown verify tool: %s", toolName)
+		}
 	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":

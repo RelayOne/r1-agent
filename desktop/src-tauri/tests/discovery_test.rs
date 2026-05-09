@@ -17,6 +17,7 @@
 use std::fs;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use r1_desktop::discovery::{
@@ -25,6 +26,18 @@ use r1_desktop::discovery::{
 };
 use tokio::net::TcpListener;
 use tokio::time::sleep;
+
+// Serializes tests that mutate the process-global HOME env var.
+// std::env::set_var is not thread-safe (deprecated in 1.62 with a
+// SAFETY warning) and Rust's default cargo-test parallelism races on
+// it; without this guard, three tests in this file flap intermittently
+// when one test's HOME-restore lands while another's HOME-set is
+// in flight. Surfaced by audit/scan-test-quality.md item #4
+// (discovery_test.rs:162 HOME-mutation race).
+fn home_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 // -------------------------------------------------------------------
 // Helpers
@@ -76,13 +89,17 @@ fn unique_tmp_dir(label: &str) -> std::path::PathBuf {
 #[tokio::test]
 async fn read_daemon_json_missing_file() {
     let dir = unique_tmp_dir("read-missing");
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = read_daemon_json();
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = read_daemon_json();
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
     assert!(matches!(res, Err(DiscoveryError::NotFound)));
 }
@@ -94,13 +111,17 @@ async fn read_daemon_json_malformed_returns_bad_handshake() {
     let r1 = dir.join(".r1");
     fs::create_dir_all(&r1).expect("mkdir .r1");
     fs::write(r1.join("daemon.json"), b"not-json").expect("write garbage");
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = read_daemon_json();
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = read_daemon_json();
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
     assert!(matches!(res, Err(DiscoveryError::BadHandshake(_))));
 }
@@ -150,13 +171,17 @@ async fn probe_external_succeeds_with_live_listener() {
     };
     write_daemon_json(&dir, &info);
 
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = probe_external().await;
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = probe_external().await;
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
 
     let info = res.expect("connect succeeds");
@@ -187,13 +212,17 @@ async fn probe_external_refused_when_port_closed() {
     };
     write_daemon_json(&dir, &info);
 
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = probe_external().await;
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = probe_external().await;
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
     let _ = port; // referenced for read; the assertion is on res.
     assert!(matches!(res, Err(DiscoveryError::Refused)));
@@ -213,13 +242,17 @@ async fn probe_external_rejects_non_loopback_host() {
     };
     write_daemon_json(&dir, &info);
 
-    let prev = std::env::var_os("HOME");
-    std::env::set_var("HOME", &dir);
-    let res = probe_external().await;
-    match prev {
-        Some(v) => std::env::set_var("HOME", v),
-        None => std::env::remove_var("HOME"),
-    }
+    let res = {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", &dir);
+        let res = probe_external().await;
+        match prev {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        res
+    };
     let _ = fs::remove_dir_all(&dir);
     assert!(matches!(res, Err(DiscoveryError::BadHandshake(_))));
 }

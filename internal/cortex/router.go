@@ -292,12 +292,64 @@ func historyToChat(msgs []agentloop.Message) ([]provider.ChatMessage, error) {
 	return out, nil
 }
 
+// hardStopKeywords is the deterministic shortlist that bypasses the
+// model and forces DecisionInterrupt. Per spec §"The Router" hard
+// rule 3: when the user's first word (case-insensitive) is one of
+// these, the Router MUST interrupt — we don't want to depend on the
+// model's compliance for a safety-critical behavior.
+//
+// Closes audit/scan-governance-gaps.md item "cortex-core 17 — Router
+// enforces stop/cancel/abort/halt → DecisionInterrupt". Previously the
+// Router relied on the system prompt rule alone; the test passed only
+// because the mock provider returned Interrupt.
+var hardStopKeywords = map[string]struct{}{
+	"stop":   {},
+	"cancel": {},
+	"abort":  {},
+	"halt":   {},
+}
+
+// matchHardStop reports whether the user input begins with one of the
+// hardStopKeywords. The match is case-insensitive and uses the first
+// word boundary (whitespace or end-of-input) so "stop." or "STOP that"
+// both trigger; "stopping" (longer word with the same prefix) does
+// not.
+func matchHardStop(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	// Strip leading punctuation (some clients prepend "/" or ":" before
+	// commands like "/stop").
+	trimmed = strings.TrimLeft(trimmed, "/!:.,;-—")
+	if trimmed == "" {
+		return false
+	}
+	// Find the first word boundary — whitespace or punctuation.
+	end := len(trimmed)
+	for i, r := range trimmed {
+		if r == ' ' || r == '\t' || r == '\n' || r == '.' || r == ',' || r == '!' || r == '?' || r == ';' {
+			end = i
+			break
+		}
+	}
+	first := strings.ToLower(trimmed[:end])
+	_, ok := hardStopKeywords[first]
+	return ok
+}
+
 // Route is the synchronous entry point. It builds the Router request
 // (system prompt + 4 tools + last-10-message snapshot + new user msg),
 // calls Provider.ChatStream (no streaming callback — we await the final
 // response), parses the response for exactly one tool_use block,
 // populates the matching RouterDecision payload, emits
 // hub.EventCortexRouterDecided, and returns.
+//
+// Hard-stop short-circuit: when the user input matches the
+// hardStopKeywords prefix (stop/cancel/abort/halt), Route synthesizes
+// a DecisionInterrupt directly without calling the provider. This is
+// faster, cheaper, and removes a model-compliance dependency for a
+// safety-critical path.
 //
 // Errors:
 //   - 0 tool_use blocks → errors.New("cortex/router: model emitted no tool call")
@@ -306,6 +358,28 @@ func historyToChat(msgs []agentloop.Message) ([]provider.ChatMessage, error) {
 //   - malformed tool input → wrapped error
 func (r *Router) Route(ctx context.Context, in RouterInput) (*RouterDecision, error) {
 	start := time.Now()
+
+	if matchHardStop(in.UserInput) {
+		dec := &RouterDecision{
+			Kind:        DecisionInterrupt,
+			RawToolName: "interrupt",
+			Interrupt: &InterruptPayload{
+				Reason:       "user typed a hard-stop keyword (stop/cancel/abort/halt)",
+				NewDirection: in.UserInput,
+			},
+		}
+		if r.bus != nil {
+			r.bus.EmitAsync(&hub.Event{
+				Type: hub.EventCortexRouterDecided,
+				Custom: map[string]any{
+					"kind":       string(dec.Kind),
+					"latency_ms": time.Since(start).Milliseconds(),
+					"hard_stop":  true,
+				},
+			})
+		}
+		return dec, nil
+	}
 
 	hist := historyWindow(in.History, 10)
 	chatHist, err := historyToChat(hist)

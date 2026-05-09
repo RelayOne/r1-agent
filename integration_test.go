@@ -1094,21 +1094,37 @@ func TestDashboardStateBridge(t *testing.T) {
 
 	server.BridgeHubToDashboard(bus, state)
 
-	// Emit task lifecycle events.
-	// Observer hooks run asynchronously, so we need a brief pause after each emit.
+	// Hub Observe-mode subscribers run in their own goroutine
+	// (internal/hub/bus.go:227), so the snapshot write is not
+	// guaranteed to be visible immediately after Emit returns.
+	// waitForStatus polls the dashboard state up to the deadline
+	// and returns the snapshot once it reaches the wanted status.
+	// This replaces three time.Sleep(50ms) barriers that flapped
+	// under -race + slow CI containers (audit/scan-test-quality.md
+	// item #2).
+	waitForStatus := func(taskID, want string) *server.TaskSnapshot {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		var snap *server.TaskSnapshot
+		for time.Now().Before(deadline) {
+			snap = state.Get(taskID)
+			if snap != nil && snap.Status == want {
+				return snap
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		t.Fatalf("dashboard state for %q never reached status=%q within 2s (last=%+v)", taskID, want, snap)
+		return nil
+	}
+
 	bus.Emit(context.Background(), &hub.Event{
 		Type:   hub.EventTaskDispatched,
 		TaskID: "task-1",
 		Phase:  "plan",
 	})
-	time.Sleep(50 * time.Millisecond)
-
-	snap := state.Get("task-1")
-	if snap == nil {
-		t.Fatal("expected snapshot after dispatch")
-	}
-	if snap.Status != "pending" {
-		t.Errorf("status=%q, want pending", snap.Status)
+	snap := waitForStatus("task-1", "pending")
+	if snap.Phase != "plan" {
+		t.Errorf("phase=%q, want plan", snap.Phase)
 	}
 
 	bus.Emit(context.Background(), &hub.Event{
@@ -1116,12 +1132,7 @@ func TestDashboardStateBridge(t *testing.T) {
 		TaskID: "task-1",
 		Phase:  "execute",
 	})
-	time.Sleep(50 * time.Millisecond)
-
-	snap = state.Get("task-1")
-	if snap.Status != "running" {
-		t.Errorf("status=%q, want running", snap.Status)
-	}
+	snap = waitForStatus("task-1", "running")
 	if snap.Phase != "execute" {
 		t.Errorf("phase=%q, want execute", snap.Phase)
 	}
@@ -1130,12 +1141,7 @@ func TestDashboardStateBridge(t *testing.T) {
 		Type:   hub.EventTaskCompleted,
 		TaskID: "task-1",
 	})
-	time.Sleep(50 * time.Millisecond)
-
-	snap = state.Get("task-1")
-	if snap.Status != "completed" {
-		t.Errorf("status=%q, want completed", snap.Status)
-	}
+	waitForStatus("task-1", "completed")
 }
 
 func TestEnvCostTracking(t *testing.T) {

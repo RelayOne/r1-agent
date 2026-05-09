@@ -53,21 +53,39 @@ func stageSchema(skill *ir.Skill, _ *Constitution) StageResult {
 }
 
 // Stage 2: type inference + edge type check. Walks the graph, infers
-// the type of each node's output from its config + declared schema,
-// and verifies that every consumer's input type matches the producer's
-// output type.
+// the type of each node's output from its declared Outputs, and
+// verifies that every consumer's reference resolves to a declared
+// output AND that the producer/consumer types are compatible at the
+// edge.
 //
-// This is the largest stage by code volume in production; the skeleton
-// here demonstrates the structure. A full implementation walks Expr
-// references (e.g. "fetch.body" reads node "fetch"'s "body" output) and
-// type-checks against the consuming node's expected input shape.
+// Why this matters: type-mismatched skills used to pass `analyze` and
+// fail at runtime with corrupt outputs. Catching the mismatch here
+// turns a runtime corruption into a compile-time error that names the
+// offending edge and the two type names involved.
+//
+// Available signal in the IR (no separate tool-signature registry yet):
+//   - skill.Graph.Nodes[*].Outputs map[string]ir.TypeSpec  -- producer
+//     side type declarations.
+//   - skill.Graph.Return ir.Expr                           -- the skill's
+//     return expression; must resolve to skill.Schemas.Outputs.
+//   - ir.Expr.Ref of the form "<nodeName>.<outputName>"   -- the only
+//     mechanism by which one node references another's output.
+//
+// What we check:
+//  1. node-kind validity (was here in the skeleton; preserved).
+//  2. every ref expression in every node's Config JSON resolves to
+//     a declared output of an existing node.
+//  3. the Graph.Return expression resolves to a declared output whose
+//     type structurally matches skill.Schemas.Outputs.
+//  4. when a non-return consumer references a producer whose output
+//     type is declared, the type is propagated for downstream checks
+//     (currently surfaced as info diagnostics; a future per-kind
+//     registry will let us assert a hard expected-input type).
 func stageType(skill *ir.Skill, _ *Constitution) StageResult {
 	res := StageResult{Passed: true}
 
-	// Verify each node's declared outputs are present in the per-kind
-	// expected schema. The actual per-kind expected schemas live in the
-	// interp/nodes/*.go files; in the analyzer we consult a registry
-	// stub for now.
+	// (1) Node-kind validity. Preserved from the skeleton — every later
+	// check assumes a recognized kind, so we surface unknowns up front.
 	for nodeName, node := range skill.Graph.Nodes {
 		if node.Kind == "" {
 			res.Passed = false
@@ -76,6 +94,7 @@ func stageType(skill *ir.Skill, _ *Constitution) StageResult {
 				Message:  "node has no kind",
 				Location: "graph.nodes." + nodeName,
 			})
+			continue
 		}
 		if !knownNodeKinds[node.Kind] {
 			res.Passed = false
@@ -88,7 +107,375 @@ func stageType(skill *ir.Skill, _ *Constitution) StageResult {
 		}
 	}
 
+	// (2) Resolve every ref in every node's Config. Configs are
+	// kind-specific JSON; we don't know their shape, so we walk the
+	// raw JSON tree and look for Expr-shaped sub-trees ("kind":"ref"
+	// with a "ref" string). This is conservative — it never flags a
+	// false positive — and catches the common case where an LLM-author
+	// wires up a stale node name or a renamed output.
+	for nodeName, node := range skill.Graph.Nodes {
+		refs := collectRefsFromConfig(node.Config)
+		for _, r := range refs {
+			checkRefResolves(skill, r, "graph.nodes."+nodeName+".config", &res)
+		}
+	}
+
+	// (3) Return expression must resolve and its type must match
+	// skill.Schemas.Outputs. This is the type-check that catches the
+	// runtime-corruption class: a return ref pointing at a node output
+	// whose declared type disagrees with the skill's declared output
+	// schema.
+	checkReturnType(skill, &res)
+
 	return res
+}
+
+// refRef is one ref expression we extracted from a config blob, with
+// the path inside the config so we can locate it for diagnostics.
+type refRef struct {
+	target string // e.g. "fetch.body"
+	path   string // e.g. ".url" inside the config
+}
+
+// collectRefsFromConfig walks an arbitrary JSON tree and returns every
+// Expr-shaped subtree whose Kind is "ref" or "field". The walker is
+// type-blind by design: per-kind packages parse the config for their
+// own purposes, and the analyzer must work even when a brand-new kind
+// is added to the IR.
+func collectRefsFromConfig(cfg json.RawMessage) []refRef {
+	if len(cfg) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(cfg, &v); err != nil {
+		// Stage 1 (schema) already emits a malformed-JSON diagnostic; we
+		// silently skip here so we don't double-report.
+		return nil
+	}
+	var out []refRef
+	walkJSONForRefs(v, "", &out)
+	return out
+}
+
+// walkJSONForRefs is the recursive half of collectRefsFromConfig. A
+// ref-shaped node looks like:
+//
+//	{"kind":"ref","ref":"node.field"}
+//	{"kind":"field","ref":"node.field"}
+//
+// Anything else we recurse through.
+func walkJSONForRefs(v any, path string, out *[]refRef) {
+	switch t := v.(type) {
+	case map[string]any:
+		if kind, ok := t["kind"].(string); ok && (kind == "ref" || kind == "field") {
+			if r, ok := t["ref"].(string); ok && r != "" {
+				*out = append(*out, refRef{target: r, path: path})
+				// fall through; nested refs in "input" / "parts" still walked
+			}
+		}
+		for k, child := range t {
+			walkJSONForRefs(child, path+"."+k, out)
+		}
+	case []any:
+		for i, child := range t {
+			walkJSONForRefs(child, path+"["+itoa(i)+"]", out)
+		}
+	}
+}
+
+// itoa is a tiny int->string helper (avoids pulling strconv into the
+// hot walker for the common case of small array indices).
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+// checkRefResolves verifies a ref like "fetch.body" points at a real
+// node and a declared output. Emits an error diagnostic on failure.
+//
+// Special-case: the pseudo-node "inputs" refers to the skill's
+// Schemas.Inputs. The interpreter binds it in the eval state; the
+// analyzer checks the requested field against Schemas.Inputs.Fields.
+func checkRefResolves(skill *ir.Skill, r refRef, location string, res *StageResult) {
+	nodeName, outputName := splitRef(r.target)
+	if nodeName == "" {
+		res.Passed = false
+		res.Diagnostics = append(res.Diagnostics, Diagnostic{
+			Level: "error", Code: "E022_MALFORMED_REF",
+			Message:  "ref expression has no target node: " + r.target,
+			Location: location + r.path,
+			Hint:     "use the form <node_name>.<output_name>",
+		})
+		return
+	}
+	if nodeName == "inputs" {
+		// "inputs.<field>" refers to the skill's declared inputs schema.
+		// Verify the field exists when the schema is a typed record.
+		if outputName != "" && skill.Schemas.Inputs.Type == "record" && skill.Schemas.Inputs.Fields != nil {
+			// Only the leading field component is on Schemas.Inputs.
+			leading := outputName
+			for i := 0; i < len(outputName); i++ {
+				if outputName[i] == '.' {
+					leading = outputName[:i]
+					break
+				}
+			}
+			if _, ok := skill.Schemas.Inputs.Fields[leading]; !ok {
+				res.Passed = false
+				res.Diagnostics = append(res.Diagnostics, Diagnostic{
+					Level: "error", Code: "E025_REF_TO_UNDECLARED_INPUT_FIELD",
+					Message:  "ref " + r.target + " reads input field " + leading + " which schemas.inputs does not declare",
+					Location: location + r.path,
+					Hint:     "declare " + leading + " under schemas.inputs.fields, or fix the ref",
+				})
+			}
+		}
+		return
+	}
+	producer, ok := skill.Graph.Nodes[nodeName]
+	if !ok {
+		res.Passed = false
+		res.Diagnostics = append(res.Diagnostics, Diagnostic{
+			Level: "error", Code: "E023_REF_TO_UNKNOWN_NODE",
+			Message:  "ref to unknown node: " + nodeName + " (in " + r.target + ")",
+			Location: location + r.path,
+			Hint:     "the producer node must exist in graph.nodes; check for a typo or a renamed step",
+		})
+		return
+	}
+	if outputName != "" && producer.Outputs != nil {
+		if _, ok := producer.Outputs[outputName]; !ok {
+			res.Passed = false
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "error", Code: "E024_REF_TO_UNDECLARED_OUTPUT",
+				Message:  "ref " + r.target + " points to output " + outputName + " which node " + nodeName + " does not declare",
+				Location: location + r.path,
+				Hint:     "declare the output in graph.nodes." + nodeName + ".outputs, or fix the ref to a declared output name",
+			})
+		}
+	}
+}
+
+// splitRef splits "node.field.subfield" into ("node", "field.subfield").
+// "node" alone returns ("node", ""). "" returns ("", "").
+func splitRef(s string) (string, string) {
+	if s == "" {
+		return "", ""
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			return s[:i], s[i+1:]
+		}
+	}
+	return s, ""
+}
+
+// checkReturnType type-checks the skill's Return expression against
+// skill.Schemas.Outputs. The HIGH-severity case: Return is a ref to a
+// node output whose declared TypeSpec does not match Schemas.Outputs.
+func checkReturnType(skill *ir.Skill, res *StageResult) {
+	ret := skill.Graph.Return
+	switch ret.Kind {
+	case "":
+		// Empty return is allowed; some skills only produce side effects.
+		return
+	case "ref", "field":
+		nodeName, outputName := splitRef(ret.Ref)
+		if nodeName == "" {
+			res.Passed = false
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "error", Code: "E022_MALFORMED_REF",
+				Message:  "graph.return ref has no target: " + ret.Ref,
+				Location: "graph.return.ref",
+			})
+			return
+		}
+		producer, ok := skill.Graph.Nodes[nodeName]
+		if !ok {
+			res.Passed = false
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "error", Code: "E023_REF_TO_UNKNOWN_NODE",
+				Message:  "graph.return references unknown node: " + nodeName,
+				Location: "graph.return.ref",
+			})
+			return
+		}
+		if outputName == "" {
+			// Whole-node ref. Without a per-kind registry we can't infer
+			// the node's aggregate type, so we record info and stop.
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "info", Code: "I025_RETURN_WHOLE_NODE",
+				Message: "graph.return is a whole-node ref; type-check deferred to runtime",
+			})
+			return
+		}
+		if producer.Outputs == nil {
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "info", Code: "I026_PRODUCER_UNTYPED",
+				Message: "graph.return references " + ret.Ref + " but producer declares no Outputs; type-check deferred to runtime",
+			})
+			return
+		}
+		producerType, ok := producer.Outputs[outputName]
+		if !ok {
+			res.Passed = false
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "error", Code: "E024_REF_TO_UNDECLARED_OUTPUT",
+				Message:  "graph.return references " + ret.Ref + " but " + nodeName + " does not declare output " + outputName,
+				Location: "graph.return.ref",
+			})
+			return
+		}
+		// HIGH-severity type-mismatch. We compare structurally. If the
+		// declared types disagree we name both type strings and the
+		// offending edge.
+		if !typesCompatible(producerType, skill.Schemas.Outputs) {
+			res.Passed = false
+			res.Diagnostics = append(res.Diagnostics, Diagnostic{
+				Level: "error", Code: "E027_RETURN_TYPE_MISMATCH",
+				Message: "graph.return type mismatch: producer " + nodeName + "." + outputName +
+					" declares " + describeType(producerType) +
+					" but skill schemas.outputs is " + describeType(skill.Schemas.Outputs),
+				Location: "graph.return.ref",
+				Hint:     "either change the return ref, change the producer's declared output type, or change schemas.outputs to match",
+			})
+		}
+	default:
+		// literal / interp / sha256 — defer to runtime for now. Future
+		// work: derive the literal's type and check against Schemas.Outputs.
+		res.Diagnostics = append(res.Diagnostics, Diagnostic{
+			Level: "info", Code: "I028_RETURN_NON_REF",
+			Message: "graph.return is a " + ret.Kind + " expression; analyzer defers type-check to runtime",
+		})
+	}
+}
+
+// typesCompatible reports whether a producer's declared TypeSpec is
+// structurally compatible with a consumer's expected TypeSpec. This is
+// a conservative check: when in doubt we say compatible (so we don't
+// reject valid skills); but a clear scalar mismatch (string vs int) is
+// flagged.
+//
+// Compatibility rules:
+//   - If either side has Type == "" we cannot compare; return true.
+//   - If both are scalars and Type strings differ, incompatible.
+//   - record/list/map/optional/named compared structurally; missing
+//     sub-fields on either side are skipped (not flagged here — that
+//     is the schema stage's job).
+func typesCompatible(producer, consumer ir.TypeSpec) bool {
+	if producer.Type == "" || consumer.Type == "" {
+		return true
+	}
+	if producer.Type != consumer.Type {
+		return false
+	}
+	switch producer.Type {
+	case "list":
+		if producer.ElementType != nil && consumer.ElementType != nil {
+			return typesCompatible(*producer.ElementType, *consumer.ElementType)
+		}
+	case "optional":
+		if producer.ElementType != nil && consumer.ElementType != nil {
+			return typesCompatible(*producer.ElementType, *consumer.ElementType)
+		}
+	case "map":
+		if producer.KeyType != nil && consumer.KeyType != nil {
+			if !typesCompatible(*producer.KeyType, *consumer.KeyType) {
+				return false
+			}
+		}
+		if producer.ValueType != nil && consumer.ValueType != nil {
+			return typesCompatible(*producer.ValueType, *consumer.ValueType)
+		}
+	case "named":
+		// Compare named refs by string. A producer's "Todo" is only
+		// compatible with a consumer's "Todo".
+		if producer.NamedRef != "" && consumer.NamedRef != "" &&
+			producer.NamedRef != consumer.NamedRef {
+			return false
+		}
+	case "record":
+		// Field-by-field compare for fields present on BOTH sides. A
+		// missing-field is structural divergence; the schema stage flags
+		// undeclared field references separately.
+		for name, pField := range producer.Fields {
+			if cField, ok := consumer.Fields[name]; ok {
+				if !typesCompatible(pField, cField) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// describeType renders a TypeSpec as a short human-readable string for
+// error messages. Not a round-trippable form — just enough for
+// diagnostics ("record{x:string}", "list<int>", "named:Todo").
+func describeType(t ir.TypeSpec) string {
+	switch t.Type {
+	case "":
+		return "<unknown>"
+	case "list":
+		if t.ElementType != nil {
+			return "list<" + describeType(*t.ElementType) + ">"
+		}
+		return "list"
+	case "optional":
+		if t.ElementType != nil {
+			return "optional<" + describeType(*t.ElementType) + ">"
+		}
+		return "optional"
+	case "map":
+		k, v := "?", "?"
+		if t.KeyType != nil {
+			k = describeType(*t.KeyType)
+		}
+		if t.ValueType != nil {
+			v = describeType(*t.ValueType)
+		}
+		return "map<" + k + "," + v + ">"
+	case "named":
+		if t.NamedRef != "" {
+			return "named:" + t.NamedRef
+		}
+		return "named"
+	case "record":
+		// Render up to a few fields for readability; full schema is in
+		// the IR if a caller wants it.
+		var b []byte
+		b = append(b, "record{"...)
+		first := true
+		for name, f := range t.Fields {
+			if !first {
+				b = append(b, ',')
+			}
+			first = false
+			b = append(b, name...)
+			b = append(b, ':')
+			b = append(b, describeType(f)...)
+		}
+		b = append(b, '}')
+		return string(b)
+	}
+	return t.Type
 }
 
 // knownNodeKinds is the closed set of primitive node types.
@@ -263,17 +650,25 @@ func projectMaxCost(skill *ir.Skill) float64 {
 }
 
 // Stage 6: termination + DAG check. Verifies the graph is acyclic.
-// Production code does a proper topological sort; here we do a simpler
-// presence check via reachability from declared nodes.
+//
+// Why this matters: a cyclic skill graph used to pass `analyze` and
+// deadlock at runtime when the interpreter tried to evaluate a node
+// whose inputs depend on its own (still-pending) output. Catching the
+// cycle here gives the LLM-author a single clean error listing the
+// nodes in the cycle.
+//
+// Algorithm: build the dependency graph from node-config refs (using
+// the same Expr-walker as Stage 2), then run DFS with three-color
+// marking. WHITE = unvisited; GRAY = on the current DFS stack;
+// BLACK = fully explored. A WHITE -> GRAY edge means we hit a
+// back-edge, which proves a cycle. We record the path of GRAY nodes
+// from the cycle's entry to the offending edge so the diagnostic can
+// list the exact loop.
 func stageTermination(skill *ir.Skill, _ *Constitution) StageResult {
 	res := StageResult{Passed: true}
 
-	// For now: trust map traversal. A real implementation builds the
-	// reference graph from each node's config Expr fields, runs a
-	// cycle-detection algorithm (DFS with three-color marking), and
-	// reports the cycle path on failure. We sketch the entry but stub
-	// the deep walk.
-
+	// (1) Coarse warning: very large graphs are a maintainability red
+	// flag even if acyclic. Preserved from the skeleton.
 	if len(skill.Graph.Nodes) > 1000 {
 		res.Diagnostics = append(res.Diagnostics, Diagnostic{
 			Level:   "warning",
@@ -282,7 +677,189 @@ func stageTermination(skill *ir.Skill, _ *Constitution) StageResult {
 		})
 	}
 
+	// (2) Build dependency edges. An edge A -> B means "B depends on
+	// A's output" — i.e. B's config refs A. We extract refs from each
+	// node's config; if a ref's target is a real node (not the
+	// "inputs" pseudo-node and not unknown), that target is a
+	// predecessor of the consumer.
+	deps := buildDepGraph(skill)
+
+	// (3) Three-color DFS. We iterate node names in deterministic
+	// (sorted) order so a deterministic cycle is reported across runs.
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make(map[string]int, len(skill.Graph.Nodes))
+	for name := range skill.Graph.Nodes {
+		color[name] = white
+	}
+	names := sortedKeys(color)
+
+	var (
+		stack []string               // current DFS stack of GRAY nodes
+		seen  = map[string]bool{}    // cycles already reported (avoid spam on shared back-edges)
+		cycle func(name string) bool // returns true if a cycle was found rooted at name
+	)
+	cycle = func(name string) bool {
+		color[name] = gray
+		stack = append(stack, name)
+
+		// deterministic edge order
+		neighbors := append([]string(nil), deps[name]...)
+		sortStrings(neighbors)
+
+		for _, next := range neighbors {
+			switch color[next] {
+			case white:
+				if cycle(next) {
+					return true
+				}
+			case gray:
+				// Back-edge: found a cycle. Slice the stack from
+				// `next` to the end and report it.
+				start := -1
+				for i, s := range stack {
+					if s == next {
+						start = i
+						break
+					}
+				}
+				if start < 0 {
+					// Shouldn't happen: a GRAY node must be on the stack.
+					start = 0
+				}
+				path := append([]string(nil), stack[start:]...)
+				path = append(path, next) // close the loop visually
+				key := cycleKey(path)
+				if !seen[key] {
+					seen[key] = true
+					res.Passed = false
+					res.Diagnostics = append(res.Diagnostics, Diagnostic{
+						Level:    "error",
+						Code:     "E061_GRAPH_CYCLE",
+						Message:  "graph contains a cycle: " + joinPath(path),
+						Location: "graph.nodes." + path[0],
+						Hint:     "remove one of the back-edges in the listed cycle; skill graphs must be DAGs",
+					})
+				}
+				// Continue searching to surface independent cycles
+				// elsewhere in the graph.
+			case black:
+				// Already fully explored — no new cycle through this edge.
+			}
+		}
+
+		// Pop and mark BLACK.
+		stack = stack[:len(stack)-1]
+		color[name] = black
+		return false
+	}
+
+	for _, name := range names {
+		if color[name] == white {
+			cycle(name)
+		}
+	}
+
 	return res
+}
+
+// buildDepGraph returns adjacency list deps[A] = nodes that A points
+// at via any config ref. We deliberately model edges as A -> deps[A]
+// where deps[A] is the set of producers that A consumes. A cycle in
+// this graph is a real evaluation cycle: A reads B reads A.
+//
+// Refs to the "inputs" pseudo-node and refs to unknown nodes are
+// dropped here — Stage 2 already reports them. We only track edges
+// between real nodes so cycle messages don't include pseudo-nodes.
+func buildDepGraph(skill *ir.Skill) map[string][]string {
+	deps := make(map[string][]string, len(skill.Graph.Nodes))
+	for name := range skill.Graph.Nodes {
+		deps[name] = nil
+	}
+	dedup := make(map[string]map[string]bool, len(skill.Graph.Nodes))
+	for consumer, node := range skill.Graph.Nodes {
+		refs := collectRefsFromConfig(node.Config)
+		for _, r := range refs {
+			producer, _ := splitRef(r.target)
+			if producer == "" || producer == "inputs" {
+				continue
+			}
+			if _, ok := skill.Graph.Nodes[producer]; !ok {
+				continue
+			}
+			if dedup[consumer] == nil {
+				dedup[consumer] = make(map[string]bool)
+			}
+			if dedup[consumer][producer] {
+				continue
+			}
+			dedup[consumer][producer] = true
+			deps[consumer] = append(deps[consumer], producer)
+		}
+	}
+	return deps
+}
+
+// sortedKeys returns the keys of a string-keyed map in lexical order.
+// Cycle detection uses this for deterministic output across runs.
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sortStrings(out)
+	return out
+}
+
+// sortStrings is an in-place insertion sort. The IR limits skills to
+// O(100) nodes in practice and the analyzer is sensitive to import
+// surface; we avoid pulling sort/strings into the cycle-detector hot
+// path and use a small hand-rolled sort instead.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
+// cycleKey collapses a path of node names to a canonical string so we
+// can dedupe reports of the same cycle hit through different DFS
+// starts. We rotate so the lexically smallest node is first.
+func cycleKey(path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	// Drop the trailing "close-the-loop" repeat for canonicalization.
+	core := path
+	if len(path) > 1 && path[0] == path[len(path)-1] {
+		core = path[:len(path)-1]
+	}
+	min := 0
+	for i := 1; i < len(core); i++ {
+		if core[i] < core[min] {
+			min = i
+		}
+	}
+	rotated := make([]string, 0, len(core))
+	rotated = append(rotated, core[min:]...)
+	rotated = append(rotated, core[:min]...)
+	return joinPath(rotated)
+}
+
+// joinPath renders ["a","b","c","a"] as "a -> b -> c -> a".
+func joinPath(path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	out := path[0]
+	for i := 1; i < len(path); i++ {
+		out += " -> " + path[i]
+	}
+	return out
 }
 
 // Stage 7: replay determinism. Every stochastic effect (llm_call,

@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: MIT
 //
-// Tracked: PopoutRegistry::new() is wired into main.rs but its session_id /
-// lane_id fields and count() method only fire from menu.rs's pending
-// refresh_pop_outs_submenu hook. Same convention as discovery.rs /
-// transport.rs / menu.rs.
-#![allow(dead_code)] // tracked: pending wire-up
-
-//
 // R1 Desktop lane pop-out — `app.popout_lane` command.
 //
 // Implements spec desktop-cortex-augmentation §6.1 + checklist
@@ -45,6 +38,7 @@ use crate::errors::{IpcError, IpcResult};
 
 /// One entry per open pop-out window. The label IS the unique id.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: session_id/lane_id read by menu refresh
 pub struct PopoutEntry {
     pub label: String,
     pub session_id: String,
@@ -76,11 +70,13 @@ impl PopoutRegistry {
         g.contains_key(label)
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by refresh_pop_outs_submenu (pending menu fire)
     pub async fn list(&self) -> Vec<PopoutEntry> {
         let g = self.inner.lock().await;
         g.values().cloned().collect()
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: tests + future menu integration
     pub async fn count(&self) -> usize {
         let g = self.inner.lock().await;
         g.len()
