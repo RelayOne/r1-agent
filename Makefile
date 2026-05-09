@@ -127,9 +127,16 @@ agent-features-drift-check:
 	./tools/agent-feature-runner/snapshot_drift_check.sh
 
 # Storybook MCP contract validator (spec 8 §7 + item 34).
-# Pinned to ^9 per the §10a "Playwright/Storybook MCP version churn"
-# mitigation. STATUS: BLOCKED on spec 6 merge — this target prints a
-# notice and exits 0 until web/src/components/*.tsx exists.
+# Pinned to a published `storybook-mcp` release so this fails only on
+# real validation issues, not npm `notarget`.
+storybook-mcp-validate:
+	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
+	    cd web && npx storybook-mcp@^0.5 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
+	else \
+	    echo "storybook-mcp-validate: SKIP — web/src/components/*.tsx not present (spec 6 web-chat-ui not merged)"; \
+	    echo "  see web/.storybook/STATUS-BLOCKED-item-33.md for resolution path"; \
+	fi
+
 # Run the lint-view-without-api scanner (spec 8 §8 + item 37). Spawns
 # `r1 mcp serve --print-tools` to load the catalog, then walks the
 # React, Bubble Tea, and Tauri source trees per §8.1. Exits non-zero
@@ -149,7 +156,6 @@ lint-views:
 docs-agentic:
 	go run ./cmd/r1 mcp serve --print-tools --markdown > docs/AGENTIC-API-CATALOG.md
 	@echo "wrote docs/AGENTIC-API-CATALOG.md ($$(wc -l < docs/AGENTIC-API-CATALOG.md) lines)"
-
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:
 	@expected=180; \
