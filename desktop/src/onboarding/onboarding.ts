@@ -357,10 +357,10 @@ export function mountOnboarding(target: HTMLElement): void {
     const advance = async (): Promise<void> => {
       errorSlot.hidden = true;
       errorSlot.textContent = "";
-      // Persist the chosen provider + key before advancing. For
-      // providers that don't need a key (Local Ollama) we skip the
-      // save and treat it as a no-op. Spec residual: see
-      // LOCAL_API_KEY_PREFIX above for the localStorage dev fallback.
+      // Persist the chosen provider + key before advancing. Keyless
+      // providers (Local Ollama) return ok without making a save
+      // call. Errors propagate as a `{ok:false, message}` shape so
+      // we can render them inline without a blocking alert.
       const saved = await persistApiKey(
         state.providerId,
         state.apiKey,
@@ -560,7 +560,11 @@ export function mountOnboarding(target: HTMLElement): void {
  * Persist the chosen provider + key. Three paths:
  *
  *   1. `needsKey === false` — provider is Local Ollama or similar
- *      keyless backend. No-op success.
+ *      keyless backend. Returns `{ok:true}` immediately. If a key
+ *      string was nevertheless supplied (e.g. user typed something
+ *      and then changed providers), we log a warning so the
+ *      situation isn't silent — the input does not get persisted
+ *      because keyless providers don't have a vault slot.
  *
  *   2. Tauri runtime present and `onboarding_save_api_key` is wired
  *      on the host: the host writes to its OS-keyring vault and
@@ -574,16 +578,23 @@ export function mountOnboarding(target: HTMLElement): void {
  *      Rust-side vault wiring lands in a sister PR
  *      (audit/scan-ts-stubs.md item #5).
  *
- * Validation: empty keys for keyless providers are skipped; non-empty
- * keys for keyless providers are dropped with a warning (we don't
- * know what to do with them).
+ * Empty keys for required-key providers fail with `ok:false` so the
+ * caller can surface the message inline. The Next button is also
+ * disabled in that state, so this is a defense-in-depth check.
  */
 export async function persistApiKey(
   provider: string,
   key: string,
   needsKey: boolean,
 ): Promise<{ ok: boolean; vault_id?: string; message?: string }> {
-  if (!needsKey) return { ok: true };
+  if (!needsKey) {
+    if (key.trim().length > 0 && typeof console !== "undefined") {
+      console.warn(
+        `[r1-desktop] onboarding: provider "${provider}" is keyless; ignoring supplied API key`,
+      );
+    }
+    return { ok: true };
+  }
 
   const trimmed = key.trim();
   if (trimmed.length === 0) {

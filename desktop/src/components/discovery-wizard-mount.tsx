@@ -105,8 +105,15 @@ export async function mountDiscoveryWizard(
     disposed = true;
     try {
       root.unmount();
-    } catch {
-      // Unmount errors during teardown are non-fatal.
+    } catch (err) {
+      // Unmount errors during teardown are non-fatal but should be
+      // visible so a real React-tree leak doesn't go unnoticed.
+      if (typeof console !== "undefined") {
+        console.warn(
+          "[r1-desktop] discovery-wizard root.unmount() threw during dispose",
+          err,
+        );
+      }
     }
     if (host.parentNode) host.parentNode.removeChild(host);
   }
@@ -115,15 +122,25 @@ export async function mountDiscoveryWizard(
   // populated synchronously after first paint.
   const installCommand = await resolveInstallCommand();
 
-  // Probe sidecar status; safe-default to false when verb missing.
+  // Probe sidecar status so the rendered copy accurately reflects
+  // whether the bundled daemon is currently servicing the desktop.
+  // If the verb is unavailable (sister Rust PR), we log and render
+  // the wizard with `sidecarActive: false` — the user still gets the
+  // correct two options, just with the slightly less specific copy
+  // for the bundled-copy section.
   let sidecarActive = false;
   try {
     if (typeof window !== "undefined" && "__TAURI__" in window) {
       const status = await invoke<{ mode?: string }>("daemon_status", {});
       sidecarActive = status?.mode === "sidecar";
     }
-  } catch {
-    // Verb unavailable; treat as not-active.
+  } catch (err) {
+    if (typeof console !== "undefined") {
+      console.info(
+        "[r1-desktop] daemon_status probe unavailable; wizard will render with sidecarActive=false",
+        err,
+      );
+    }
   }
 
   const handleReconnect = async (): Promise<void> => {
