@@ -136,6 +136,12 @@ type LobeRunner struct {
 	started  atomic.Bool
 	stopOnce sync.Once
 	stopped  chan struct{}
+
+	// paused, when set, makes runOnce skip the underlying lobe.Run while
+	// still signalling Round.Done so Cortex.MidturnNote does not hang on
+	// Round.Wait. Toggled by SetPaused; consumed by runOnce. Used by the
+	// MCP r1.cortex.lobe_pause / lobe_resume handlers via Cortex.PauseLobe.
+	paused atomic.Bool
 }
 
 // NewLobeRunner constructs an unstarted LobeRunner bound to the given
@@ -259,6 +265,14 @@ func (r *LobeRunner) runOnce(ctx context.Context) {
 		}
 	}()
 
+	// Paused: skip the lobe.Run call entirely. signalDone still fires
+	// via the deferred call above, so Round.Wait does not hang. The
+	// pause check happens BEFORE semaphore acquire so a paused LLM
+	// runner does not hold a slot while idle.
+	if r.paused.Load() {
+		return
+	}
+
 	if r.lobe.Kind() == KindLLM && r.sem != nil {
 		if err := r.sem.Acquire(ctx); err != nil {
 			// Context cancelled during Acquire: drop the round
@@ -337,6 +351,24 @@ func (r *LobeRunner) Stop(ctx context.Context) {
 // Stopped exposes the runner's stopped channel for tests that need to
 // assert clean exit. Production callers use Stop(ctx) instead.
 func (r *LobeRunner) Stopped() <-chan struct{} { return r.stopped }
+
+// SetPaused toggles the paused flag. While paused, runOnce returns
+// early without invoking lobe.Run but still signals Round.Done so
+// Round.Wait does not stall. Calling SetPaused on a not-yet-Started
+// runner is a no-op that takes effect once Start fires. Idempotent.
+//
+// Backs the MCP r1.cortex.lobe_pause / lobe_resume tools via
+// Cortex.PauseLobe / Cortex.ResumeLobe.
+func (r *LobeRunner) SetPaused(p bool) { r.paused.Store(p) }
+
+// IsPaused reports whether the runner is currently in the paused
+// state. Race-free.
+func (r *LobeRunner) IsPaused() bool { return r.paused.Load() }
+
+// LobeID returns the underlying Lobe.ID(). Convenience getter so the
+// MCP cortex bridge can find a runner by id without re-walking the
+// Cortex's registered Lobe slice.
+func (r *LobeRunner) LobeID() string { return r.lobe.ID() }
 
 // emitStarted publishes a cortex.lobe.started event. Safe with a nil bus.
 func (r *LobeRunner) emitStarted() {

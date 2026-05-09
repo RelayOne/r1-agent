@@ -42,7 +42,12 @@ import {
   mountSettings,
   mountSettingsTrigger,
 } from "./panels/settings";
+import { mountDaemonStatus } from "./panels/daemon-status";
 import { mountOnboarding } from "./onboarding/onboarding";
+import {
+  mountDiscoveryWizard,
+  shouldShowDiscoveryWizard,
+} from "./components/discovery-wizard-mount";
 
 type PanelEntry = {
   id: string;
@@ -75,6 +80,12 @@ const PANELS: PanelEntry[] = [
   { id: "panel-cost", gridArea: "cost", render: renderCostPanel },
 ];
 
+// Local key the discovery wizard uses to record an explicit user
+// dismissal so we don't loop the wizard on every reload. The Tauri
+// host carries the source-of-truth (`~/.r1/daemon.json` presence);
+// this flag is purely UX bookkeeping.
+const DISCOVERY_DISMISSED_KEY = "r1.discovery.dismissed";
+
 function mount(): void {
   const app = document.querySelector<HTMLElement>("#app");
   if (!app) {
@@ -82,12 +93,56 @@ function mount(): void {
     return;
   }
 
+  // Discovery wizard takes precedence over the generic onboarding
+  // wizard on first launch when `~/.r1/daemon.json` is absent — spec
+  // desktop-cortex-augmentation §5 lifecycle step 4 + checklist item
+  // 28 (audit/scan-ts-stubs.md item #4). The probe is async; while it
+  // resolves we render nothing (an instant in normal Tauri builds).
+  // Non-Tauri / missing-verb returns null so we fall through to the
+  // existing 5-step onboarding wizard.
+  void (async () => {
+    const dismissed =
+      window.localStorage.getItem(DISCOVERY_DISMISSED_KEY) === "1";
+    if (!dismissed) {
+      const show = await shouldShowDiscoveryWizard();
+      if (show === true) {
+        app.innerHTML = "";
+        try {
+          await mountDiscoveryWizard(app, {
+            onResolved: () => {
+              window.localStorage.setItem(DISCOVERY_DISMISSED_KEY, "1");
+              window.location.reload();
+            },
+            onDismiss: () => {
+              window.localStorage.setItem(DISCOVERY_DISMISSED_KEY, "1");
+              window.location.reload();
+            },
+          });
+        } catch (err) {
+          console.error(
+            "[r1-desktop] discovery wizard mount failed; falling through",
+            err,
+          );
+          mountOnboardingFallback(app);
+        }
+        return;
+      }
+    }
+    mountAfterDiscovery(app);
+  })();
+}
+
+function mountOnboardingFallback(app: HTMLElement): void {
+  app.innerHTML = "";
+  const host = document.createElement("div");
+  host.id = "onboarding";
+  app.appendChild(host);
+  mountOnboarding(host);
+}
+
+function mountAfterDiscovery(app: HTMLElement): void {
   if (window.localStorage.getItem("r1.onboarded") !== "1") {
-    app.innerHTML = "";
-    const host = document.createElement("div");
-    host.id = "onboarding";
-    app.appendChild(host);
-    mountOnboarding(host);
+    mountOnboardingFallback(app);
     return;
   }
 
@@ -110,6 +165,30 @@ function mount(): void {
   mountDescentEvidenceDrawer(document.body);
   mountLedgerNodeDrawer(document.body);
   mountSettings(document.body);
+
+  // Daemon status pill — spec desktop-cortex-augmentation §5 +
+  // checklist item 26. Sits in the title-bar region next to the
+  // settings trigger. mountDaemonStatus subscribes to `daemon.up` /
+  // `daemon.down` on the Tauri global event bus; in non-Tauri builds
+  // the listeners never fire and the pill stays in its default
+  // "offline (starting)" state. The four-state pill model also
+  // expects a `reconnect_status` lifecycle stream from the Rust
+  // transport.rs run-loop to drive `attempt` / `nextInMs` for the
+  // reconnecting state — that stream lands in a sister Rust PR; until
+  // then the pill flips to reconnecting/offline based purely on
+  // `daemon.down.will_retry`.
+  const pillHost = document.createElement("div");
+  pillHost.className = "r1-daemon-pill-host";
+  toolbar.appendChild(pillHost);
+  void mountDaemonStatus(pillHost, {
+    onClick: () => {
+      // Open Settings → Daemon. The settings panel hosts the daemon
+      // section; clicking the pill is the spec-mandated shortcut.
+      const trigger = document.getElementById("r1-settings-trigger");
+      trigger?.click();
+    },
+  });
+
   mountSettingsTrigger(toolbar);
 }
 
