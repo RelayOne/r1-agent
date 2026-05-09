@@ -122,7 +122,7 @@ docs-agentic:
 
 storybook-mcp-validate:
 	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
-	    cd web && npx storybook-mcp@^9 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
+	    cd web && npx storybook-mcp@^0.5 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
 	else \
 	    echo "storybook-mcp-validate: SKIP — web/src/components/*.tsx not present (spec 6 web-chat-ui not merged)"; \
 	    echo "  see web/.storybook/STATUS-BLOCKED-item-33.md for resolution path"; \

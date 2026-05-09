@@ -209,5 +209,13 @@ export function useTheme(): ThemeContextValue {
   return ctx;
 }
 
+// Variant for components that may render outside a ThemeProvider (e.g.
+// in isolated tests). Returns null when no provider is mounted instead
+// of throwing, so callers can use it unconditionally without violating
+// react-hooks/rules-of-hooks.
+export function useThemeOptional(): ThemeContextValue | null {
+  return useContext(ThemeContext);
+}
+
 // Re-export the storage key so tests / consumers can clear it.
 export const THEME_STORAGE_KEY = STORAGE_KEY;
