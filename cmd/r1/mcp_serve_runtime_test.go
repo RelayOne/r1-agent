@@ -152,6 +152,49 @@ func TestMCPServeRuntime_AuthGate(t *testing.T) {
 	}
 }
 
+// TestMCPServeRuntime_DeterministicLobes confirms --lobes=deterministic
+// registers the 4 deterministic Lobes so r1.cortex.lobes_list returns
+// them.
+func TestMCPServeRuntime_DeterministicLobes(t *testing.T) {
+	r1Bin := buildR1ForTest(t)
+	var stdin bytes.Buffer
+	stdin.WriteString(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"r1.cortex.lobes_list","arguments":{"session_id":"det-lobes"}}}` + "\n")
+	cmd := exec.Command(r1Bin, "mcp", "serve", "--session-id", "det-lobes", "--lobes", "deterministic")
+	cmd.Stdin = &stdin
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, runErr := cmd.Output()
+	if len(stderr.Bytes()) > 0 {
+		t.Logf("stderr: %s", stderr.String())
+	}
+	if runErr != nil {
+		t.Fatalf("subprocess failed: %v", runErr)
+	}
+	out := strings.TrimSpace(string(stdout))
+	var resp struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	if len(resp.Result.Content) == 0 {
+		t.Fatalf("response missing content")
+	}
+	body := resp.Result.Content[0].Text
+	for _, want := range []string{"memory-recall", "wal-keeper", "rule-check", "antitrunc"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("lobes_list missing %q: %s", want, body)
+		}
+	}
+	if !strings.Contains(body, `"count":4`) {
+		t.Errorf("expected count=4 in lobes_list result; got %s", body)
+	}
+}
+
 // TestMCPServeRuntime_NoCortex confirms --no-cortex disables the
 // cortex backend so r1.cortex.* calls return the documented
 // "cortex backend not wired" error.
