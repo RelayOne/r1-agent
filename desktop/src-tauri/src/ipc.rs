@@ -524,6 +524,29 @@ pub async fn app_discovery_status(
     Ok(state.snapshot())
 }
 
+/// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
+/// the title-bar pill subscribes to. Currently emits a single
+/// `Connected` frame and idles; the real run-loop driver
+/// (`TransportHandle::run_with`) plugs into this channel once the
+/// daemon WS path is wired (audit/scan-rust-stubs.md item #5 / #10).
+///
+/// Backed by `transport::ReconnectStatus`; the Channel handle is
+/// owned by the WebView side via the `subscribe<T>(channel)` Tauri 2
+/// pattern.
+#[tauri::command]
+pub async fn transport_reconnect_status(
+    on_status: tauri::ipc::Channel<crate::transport::ReconnectStatus>,
+) -> IpcResult<()> {
+    // Send the current best-effort status. Until the run-loop is wired
+    // to a real socket, we emit `Connected` because the per-session
+    // SubprocessManager is the live transport — no reconnect storms
+    // possible until that path migrates to the shared WS daemon.
+    on_status
+        .send(crate::transport::ReconnectStatus::Connected)
+        .map_err(|e| IpcError::internal(format!("status channel send: {e}")))?;
+    Ok(())
+}
+
 /// Register all IPC commands with the Tauri builder.
 pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
@@ -555,6 +578,9 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             app_open_folder_picker,
             // Spec §5 (issue #145) — host-side daemon-discovery state.
             app_discovery_status,
+            // Wired per audit/scan-rust-stubs.md item #5 — title-bar
+            // pill subscribes to a typed status Channel.
+            transport_reconnect_status,
         ])
 }
 
