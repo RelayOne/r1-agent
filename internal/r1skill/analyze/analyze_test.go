@@ -362,3 +362,239 @@ func TestAnalyzerError_Render(t *testing.T) {
 		t.Errorf("error should contain message: %q", s)
 	}
 }
+
+// ─── stage 2: type inference + edge type-check ───────────────────
+
+// TestAnalyze_RejectsReturnTypeMismatch covers the HIGH-impact case
+// from audit/scan-go-stubs.md item #3 (Stage 2): a skill whose return
+// expression points at a producer's output of one type while
+// schemas.outputs declares a different type. Before this fix, the
+// analyzer let the skill through and the runtime produced corrupt
+// outputs; after this fix the analyzer flags E027 with both type
+// names and the offending edge.
+func TestAnalyze_RejectsReturnTypeMismatch(t *testing.T) {
+	skill := validBaseSkill()
+	// schemas.outputs is record{y:string} (from validBaseSkill). Wire
+	// up a producer whose declared output type is record{y:int} — a
+	// clear mismatch the analyzer must surface.
+	skill.Graph.Nodes = map[string]ir.Node{
+		"compute": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity"}`),
+			Outputs: map[string]ir.TypeSpec{
+				"value": {
+					Type: "record",
+					Fields: map[string]ir.TypeSpec{
+						"y": {Type: "int"},
+					},
+				},
+			},
+		},
+	}
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "compute.value"}
+
+	_, err := Analyze(&skill, emptyConstitution(), DefaultOptions())
+	if err == nil {
+		t.Fatal("expected analyzer to reject return-type mismatch")
+	}
+	ae, ok := err.(*AnalyzerError)
+	if !ok {
+		t.Fatalf("expected *AnalyzerError, got %T", err)
+	}
+	found := false
+	var msg string
+	for _, d := range ae.Diagnostics {
+		if d.Code == "E027_RETURN_TYPE_MISMATCH" {
+			found = true
+			msg = d.Message
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected E027_RETURN_TYPE_MISMATCH, got: %v", ae.Diagnostics)
+	}
+	// The error message must name both type names so the LLM-author
+	// can fix the skill in one revision.
+	if !strings.Contains(msg, "int") {
+		t.Errorf("E027 message should name producer type (int): %q", msg)
+	}
+	if !strings.Contains(msg, "string") {
+		t.Errorf("E027 message should name consumer type (string): %q", msg)
+	}
+	// And it must name the offending edge.
+	if !strings.Contains(msg, "compute.value") {
+		t.Errorf("E027 message should name the offending edge: %q", msg)
+	}
+}
+
+// TestAnalyze_RejectsRefToUnknownNode covers the adjacent case: a
+// return ref to a node that doesn't exist. Before this fix the
+// analyzer accepted dangling refs.
+func TestAnalyze_RejectsRefToUnknownNode(t *testing.T) {
+	skill := validBaseSkill()
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "ghost.value"}
+
+	_, err := Analyze(&skill, emptyConstitution(), DefaultOptions())
+	if err == nil {
+		t.Fatal("expected analyzer to reject ref to unknown node")
+	}
+	ae := err.(*AnalyzerError)
+	found := false
+	for _, d := range ae.Diagnostics {
+		if d.Code == "E023_REF_TO_UNKNOWN_NODE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected E023, got: %v", ae.Diagnostics)
+	}
+}
+
+// ─── stage 6: DAG / termination cycle detection ──────────────────
+
+// TestAnalyze_RejectsThreeStepCycle covers the HIGH-impact case from
+// audit/scan-go-stubs.md item #3 (Stage 6): a skill whose dependency
+// graph contains a cycle. Before this fix the analyzer accepted the
+// skill and the interpreter deadlocked at runtime; after, the
+// analyzer rejects with E061 and lists the steps in the cycle.
+func TestAnalyze_RejectsThreeStepCycle(t *testing.T) {
+	skill := validBaseSkill()
+	// Wire a -> b -> c -> a by referencing each other's outputs in
+	// configs. The exact config schema isn't important; the analyzer's
+	// ref-walker only looks for {"kind":"ref","ref":"..."} subtrees.
+	skill.Graph.Nodes = map[string]ir.Node{
+		"a": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"c.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+		"b": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"a.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+		"c": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"b.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+	}
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "a.out"}
+
+	_, err := Analyze(&skill, emptyConstitution(), DefaultOptions())
+	if err == nil {
+		t.Fatal("expected analyzer to reject a cyclic skill graph")
+	}
+	ae, ok := err.(*AnalyzerError)
+	if !ok {
+		t.Fatalf("expected *AnalyzerError, got %T", err)
+	}
+
+	var msg string
+	found := false
+	for _, d := range ae.Diagnostics {
+		if d.Code == "E061_GRAPH_CYCLE" {
+			found = true
+			msg = d.Message
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected E061_GRAPH_CYCLE, got: %v", ae.Diagnostics)
+	}
+	// The cycle message must list every node in the loop so the
+	// LLM-author can fix the dependency in one revision.
+	for _, name := range []string{"a", "b", "c"} {
+		if !strings.Contains(msg, name) {
+			t.Errorf("E061 message should name node %q in cycle: %q", name, msg)
+		}
+	}
+}
+
+// TestAnalyze_RejectsSelfLoop is the degenerate cycle case: a single
+// node whose config refs itself. The three-color DFS treats this as
+// a back-edge to a GRAY ancestor and reports it like any other
+// cycle.
+func TestAnalyze_RejectsSelfLoop(t *testing.T) {
+	skill := validBaseSkill()
+	skill.Graph.Nodes = map[string]ir.Node{
+		"loop": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"loop.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+	}
+	skill.Schemas.Outputs = ir.TypeSpec{Type: "string"}
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "loop.out"}
+
+	_, err := Analyze(&skill, emptyConstitution(), DefaultOptions())
+	if err == nil {
+		t.Fatal("expected analyzer to reject self-looping node")
+	}
+	ae := err.(*AnalyzerError)
+	found := false
+	for _, d := range ae.Diagnostics {
+		if d.Code == "E061_GRAPH_CYCLE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected E061 for self-loop, got: %v", ae.Diagnostics)
+	}
+}
+
+// TestAnalyze_AcceptsAcyclicGraph is the negative companion: a
+// linear A -> B -> C dependency must NOT be flagged.
+func TestAnalyze_AcceptsAcyclicGraph(t *testing.T) {
+	skill := validBaseSkill()
+	skill.Graph.Nodes = map[string]ir.Node{
+		"a": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity"}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+		"b": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"a.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+		"c": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"b.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+	}
+	// schemas.outputs is record{y:string}; "c.out" is plain string.
+	// Loosen schemas.outputs to string so this test focuses on the
+	// cycle detector rather than re-tripping E027.
+	skill.Schemas.Outputs = ir.TypeSpec{Type: "string"}
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "c.out"}
+
+	if _, err := Analyze(&skill, emptyConstitution(), DefaultOptions()); err != nil {
+		// Cycle detector must not fire on a DAG. Other stages may emit
+		// info diagnostics but no error from termination.
+		ae, ok := err.(*AnalyzerError)
+		if !ok {
+			t.Fatalf("unexpected error type: %T", err)
+		}
+		for _, d := range ae.Diagnostics {
+			if d.Code == "E061_GRAPH_CYCLE" {
+				t.Errorf("acyclic graph wrongly flagged as cyclic: %v", d)
+			}
+		}
+	}
+}
