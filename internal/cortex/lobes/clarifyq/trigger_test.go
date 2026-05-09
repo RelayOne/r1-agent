@@ -114,7 +114,7 @@ func TestClarifyingQLobe_CapsAtThreeOutstanding(t *testing.T) {
 		},
 	}
 
-	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus)
+	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus, nil)
 	// Run() once to install the subscribers.
 	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -162,7 +162,7 @@ func TestClarifyingQLobe_NoQuestionsWhenNotAmbiguous(t *testing.T) {
 		},
 	}
 
-	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus)
+	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus, nil)
 	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -188,5 +188,87 @@ func TestClarifyingQLobe_NoQuestionsWhenNotAmbiguous(t *testing.T) {
 	}
 	if got := fp.callCount.Load(); got != 1 {
 		t.Errorf("provider call count = %d, want 1", got)
+	}
+}
+
+// countingSemaphore is a counting fake llm.SlotAcquirer used to assert
+// the per-call Acquire/Release contract for ClarifyingQLobe (audit
+// follow-up: scan-governance-gaps cortex-concerns 5).
+//
+// Each Acquire increments acquires; each Release increments releases.
+// All operations are safe for concurrent use so the test can drive the
+// hub-subscriber path without serializing access to the counters.
+type countingSemaphore struct {
+	acquires atomic.Uint64
+	releases atomic.Uint64
+}
+
+func (s *countingSemaphore) Acquire(ctx context.Context) error {
+	s.acquires.Add(1)
+	return nil
+}
+
+func (s *countingSemaphore) Release() {
+	s.releases.Add(1)
+}
+
+// TestClarifyingQLobe_PerCallAcquire asserts that every ChatStream
+// call driven from the EventCortexUserMessage hub subscriber is
+// guarded by exactly one llm.MustAcquire/release pair on the supplied
+// semaphore. The hub-subscriber path bypasses the cortex
+// LobeRunner.runOnce Acquire/Release wrapper, so per-call gating is
+// the only thing that keeps the slot cap honest for this Lobe.
+//
+// Spec: specs/cortex-concerns.md item 5; audit follow-up
+// "scan-governance-gaps.md cortex-concerns 5".
+func TestClarifyingQLobe_PerCallAcquire(t *testing.T) {
+	t.Parallel()
+
+	bus := hub.New()
+	ws := cortex.NewWorkspace(hub.New(), nil)
+	fp := &fakeProvider{
+		content: []provider.ResponseContent{
+			makeToolUse("which env?", "scope", "ambiguous deploy target", true),
+		},
+	}
+	sem := &countingSemaphore{}
+
+	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus, sem)
+	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Drive three independent user-message events. Each one fires
+	// haikuOnce in the bus's goroutine via the EventCortexUserMessage
+	// subscriber — bypassing the runner-level Acquire entirely.
+	const triggers = 3
+	for i := 0; i < triggers; i++ {
+		emitUserMessageForTest(bus, "deploy the thing")
+	}
+
+	// Wait for the provider to record N calls AND the deferred Release
+	// to fire N times. Each haikuOnce defers release() after Acquire,
+	// so Release fires AFTER the provider returns. Polling on
+	// callCount alone races with the deferred Release; poll on both
+	// counters to make the test deterministic under the bus's async
+	// goroutine.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if fp.callCount.Load() >= triggers && sem.releases.Load() >= triggers {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fp.callCount.Load(); got != uint64(triggers) {
+		t.Fatalf("provider call count = %d, want %d", got, triggers)
+	}
+
+	// One Acquire per call, one Release per call. Equality with the
+	// provider call count proves both halves of the per-call pair fired.
+	if got := sem.acquires.Load(); got != uint64(triggers) {
+		t.Errorf("semaphore Acquire count = %d, want %d", got, triggers)
+	}
+	if got := sem.releases.Load(); got != uint64(triggers) {
+		t.Errorf("semaphore Release count = %d, want %d", got, triggers)
 	}
 }
