@@ -1,0 +1,71 @@
+# R1D — multi-session daemon CI gate.
+#
+# Spec r1d-server §10 (Phase A audit gate). This workflow runs the
+# `make lint-chdir` step that flags every unannotated cwd-mutating
+# call (os.Chdir / os.Getwd / filepath.Abs("") / os.Open("./...")).
+# The gate must be green before the multi-session daemon (Phase E)
+# is enabled — chdir leakage between sessions corrupts working
+# directories under concurrent execution.
+#
+# Closes audit/scan-governance-gaps.md r1d-server item 4: the
+# Makefile target existed but no CI workflow invoked it, so a
+# regression would land silently.
+#
+# Scope: triggered on PRs touching Go sources, the Makefile, or
+# the chdir-lint tool itself. Skipping the workflow when only
+# documentation or the desktop/web subtrees change keeps CI fast.
+
+name: r1d-server
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - staging
+  pull_request:
+    paths:
+      - '**.go'
+      - 'Makefile'
+      - 'tools/lint-no-chdir.sh'
+      - 'tools/cmd/chdir-lint/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/r1d-server.yml'
+
+# Cancel previous runs on the same PR/branch when a new push lands.
+concurrency:
+  group: r1d-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-chdir:
+    name: lint-chdir (Phase A audit gate)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: make lint-chdir
+        run: make lint-chdir
+
+  build-test-vet:
+    name: build + test + vet
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: go build
+        run: |
+          mkdir -p bin
+          go build -o ./bin/r1 ./cmd/r1
+          go build -o ./bin/r1-acp ./cmd/r1-acp
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./... -count=1 -timeout=180s
