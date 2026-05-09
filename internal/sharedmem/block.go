@@ -298,6 +298,17 @@ func (s *MemoryStore) Create(_ context.Context, b *Block) error {
 	if b.Namespace == "" {
 		b.Namespace = "default"
 	}
+	// Stamp the initial creation entry's SnapshotValue with the
+	// block's initial Value so a future Rollback to version 1 has
+	// somewhere to restore from. Only mutates entries lacking a
+	// SnapshotValue so callers that pre-populate it (e.g. tests
+	// that craft a block with multiple historical entries) keep
+	// their pre-supplied snapshots.
+	for i := range b.Provenance {
+		if b.Provenance[i].SnapshotValue == nil {
+			b.Provenance[i].SnapshotValue = b.Value
+		}
+	}
 	s.blocks[b.ID] = cloneBlock(b)
 	return nil
 }
@@ -355,7 +366,16 @@ func (s *MemoryStore) Apply(_ context.Context, w Write) (*Block, error) {
 
 	b.Version++
 	b.UpdatedAt = time.Now().UTC()
-	b.Provenance = append(b.Provenance, w.Provenance)
+	// Capture the post-write Value into the appended provenance
+	// entry's SnapshotValue so a future Rollback can find it
+	// without the caller re-supplying ReplayValue. If the caller
+	// has already populated SnapshotValue (rare; tests pinning a
+	// specific replay shape), keep that value.
+	entry := w.Provenance
+	if entry.SnapshotValue == nil {
+		entry.SnapshotValue = b.Value
+	}
+	b.Provenance = append(b.Provenance, entry)
 
 	s.emitUpdate(b)
 	return cloneBlock(b), nil
@@ -374,31 +394,41 @@ func (s *MemoryStore) Rollback(_ context.Context, id BlockID, toVersion int, by 
 	if !ok {
 		return nil, ErrNotFound
 	}
-	// Provenance ordering: the Nth entry corresponds to the
-	// block state right after the Nth write. entry[0] is the
-	// initial create (Version 1). Rolling back to Version V
-	// means reconstructing the value as-of the Vth provenance
-	// entry, which requires callers to have captured the value
-	// in provenance. The minimal implementation walks the
-	// provenance to find the entry whose resulting version
-	// matches V. Since we don't store per-entry values here
-	// (provenance is metadata only), we approximate: rollback
-	// rewrites Value to the caller-supplied one in `by.ReplayValue`.
-	// This keeps the package dependency-light; the wider
-	// STOKE-017 implementation may add a value-tracking history
-	// layer later.
-	if by.ReplayValue == nil {
-		return nil, fmt.Errorf("sharedmem: rollback requires by.ReplayValue (provide the target value)")
-	}
+	// Provenance ordering: entry[i] corresponds to the block state
+	// right after the (i+1)-th version, i.e. entry[0] is the
+	// creation (Version 1), entry[1] is the first Apply (Version
+	// 2), etc. To roll back to Version V we look up entry[V-1]
+	// and restore its SnapshotValue.
+	//
+	// Backward compat: if entry[V-1] lacks a SnapshotValue (older
+	// data, or a caller that pre-populated provenance without
+	// snapshots), fall through to by.ReplayValue. Surfaced by
+	// audit/scan-go-stubs.md item #7.
 	if toVersion <= 0 || toVersion >= b.Version {
 		return nil, fmt.Errorf("sharedmem: rollback target %d out of range (current=%d)", toVersion, b.Version)
 	}
-	b.Value = by.ReplayValue
+	idx := toVersion - 1
+	if idx >= len(b.Provenance) {
+		return nil, fmt.Errorf("sharedmem: rollback target %d has no provenance entry (have %d)", toVersion, len(b.Provenance))
+	}
+	target := b.Provenance[idx].SnapshotValue
+	if target == nil {
+		// Fall back to caller-supplied ReplayValue.
+		if by.ReplayValue == nil {
+			return nil, fmt.Errorf("sharedmem: rollback target %d has no SnapshotValue and by.ReplayValue is nil — supply the target value or upgrade the writer to capture snapshots", toVersion)
+		}
+		target = by.ReplayValue
+	}
+	b.Value = target
 	b.Version++
 	b.UpdatedAt = time.Now().UTC()
 	rollbackEntry := by
 	rollbackEntry.Action = "rollback"
 	rollbackEntry.RolledBackTo = toVersion
+	// Stamp the rollback entry's snapshot too — it's the value the
+	// block has after this rollback, and any subsequent rollback
+	// targeting THIS version (post-rollback) reads it from here.
+	rollbackEntry.SnapshotValue = target
 	b.Provenance = append(b.Provenance, rollbackEntry)
 	s.emitUpdate(b)
 	return cloneBlock(b), nil

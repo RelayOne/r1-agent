@@ -22,6 +22,19 @@ type Deps struct {
 	// Cost cap update -- optional.
 	BudgetAdd func(deltaUSD float64, dryRun bool) (prev, next float64, err error)
 
+	// AC state-machine override -- optional. When wired, the override
+	// handler invokes this callback so the AC actually transitions to
+	// "overridden" instead of staying in its prior state. nil keeps the
+	// audit-only fallback (event-log entry + success response without
+	// mutating AC state) so operators don't lose history when the AC
+	// machinery isn't yet plumbed in. Closes audit/scan-go-stubs.md item
+	// "internal/sessionctl/handlers.go overrideHandler".
+	//
+	// Contract: returns an error to fail the verb (operator sees the
+	// message); a non-error return marks the override applied. The audit
+	// event fires regardless — partial transitions are still recorded.
+	OverrideAC func(acID, reason, sessionID string) error
+
 	// Status snapshot -- optional. When nil returns a minimal default.
 	Status func() StatusSnapshot
 
@@ -186,15 +199,26 @@ func overrideHandler(deps Deps) Handler {
 		if p.Reason == "" {
 			return nil, "reason required", ""
 		}
-		// Spec-1 owns the AC state machine; until it lands this handler is
-		// audit-only: it records the operator's override decision on the
-		// event log so nothing is lost.
+		// Always emit the audit event first so the operator's decision is
+		// recorded even when the state mutation below fails. The applied
+		// flag tracks whether the AC actually transitioned vs. fell back
+		// to audit-only.
+		applied := false
+		var stateErr error
+		if deps.OverrideAC != nil {
+			stateErr = deps.OverrideAC(p.ACID, p.Reason, deps.SessionID)
+			applied = stateErr == nil
+		}
 		evtID := emit(deps, "operator.override", map[string]any{
 			"session_id": deps.SessionID,
 			"ac_id":      p.ACID,
 			"reason":     p.Reason,
+			"applied":    applied,
 		})
-		return marshal(map[string]string{"ac_id": p.ACID}), "", evtID
+		if stateErr != nil {
+			return nil, stateErr.Error(), evtID
+		}
+		return marshal(map[string]any{"ac_id": p.ACID, "applied": applied}), "", evtID
 	}
 }
 
