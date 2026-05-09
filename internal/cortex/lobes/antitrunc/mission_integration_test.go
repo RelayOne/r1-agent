@@ -9,18 +9,18 @@
 //
 // This test exercises the FULL stack:
 //
-//   1. A Workspace is constructed.
+//   1. A real cortex.Workspace is constructed (in-memory, nil events
+//      and durable handles).
 //   2. An AntiTruncLobe is wired to a partial plan.
 //   3. The Lobe runs with a History containing a truncation phrase.
 //   4. The Workspace receives SevCritical Notes for both the
 //      assistant_output finding and the plan_unchecked finding.
 //   5. A PreEndTurnGate function (constructed inline here as a
 //      stand-in for cortex-core's eventual one) reads
-//      ws.CriticalNotes() and refuses end_turn while any are
+//      ws.UnresolvedCritical() and refuses end_turn while any are
 //      outstanding.
 //   6. After the model "fixes" the plan (writes [x] to all items)
 //      and re-runs the Lobe, the new run produces no findings, the
-//      Workspace's prior critical Notes are not duplicated, and the
 //      gate allows end_turn.
 //
 // The test is deterministic, no LLM calls, and runs in <50ms.
@@ -33,20 +33,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/cortex"
 )
 
 // preEndTurnGate models the cortex-core PreEndTurnGate: it inspects
 // Workspace critical Notes and returns "" when end_turn is allowed
 // or a non-empty refusal otherwise.
-func preEndTurnGate(ws *Workspace) string {
-	notes := ws.CriticalNotes()
+func preEndTurnGate(ws *cortex.Workspace) string {
+	notes := ws.UnresolvedCritical()
 	if len(notes) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	for _, n := range notes {
-		b.WriteString(n.Text)
+		b.WriteString(n.Title)
 		b.WriteString("\n")
+		if n.Body != "" {
+			b.WriteString(n.Body)
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }
@@ -58,12 +64,12 @@ func TestMissionIntegration_GateRefusesAndForcesContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	lobe := NewAntiTruncLobe(ws, plan, "")
 
 	// Round 1: model emits a truncation phrase, plan still partial.
-	if err := lobe.Run(context.Background(), LobeInput{
-		History: []string{"i'll stop here"},
+	if err := lobe.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("i'll stop here"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,10 +102,10 @@ func TestMissionIntegration_GateRefusesAndForcesContinuation(t *testing.T) {
 	// Reset Workspace so the gate sees only round 2's state. In real
 	// cortex this is done by a per-round Note rotation; here we just
 	// instantiate a fresh Workspace.
-	ws = NewWorkspace()
+	ws = cortex.NewWorkspace(nil, nil)
 	lobe = NewAntiTruncLobe(ws, plan, "")
-	if err := lobe.Run(context.Background(), LobeInput{
-		History: []string{"all checklist items resolved; tests pass"},
+	if err := lobe.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("all checklist items resolved; tests pass"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -111,17 +117,17 @@ func TestMissionIntegration_GateRefusesAndForcesContinuation(t *testing.T) {
 func TestMissionIntegration_AdvisoryWorkspaceStillTracks(t *testing.T) {
 	// Even when the gate is "advisory" (would not block), the
 	// Workspace still records every finding so an operator can audit.
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	lobe := NewAntiTruncLobe(ws, "", "")
-	err := lobe.Run(context.Background(), LobeInput{
-		History: []string{
+	err := lobe.Run(context.Background(), cortex.LobeInput{
+		History: historyOf(
 			"foundation done — to keep scope tight i'll defer the rest",
-		},
+		),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(ws.CriticalNotes()); got < 2 {
+	if got := len(ws.UnresolvedCritical()); got < 2 {
 		t.Errorf("expected at least 2 critical Notes from compound phrase, got %d", got)
 	}
 }

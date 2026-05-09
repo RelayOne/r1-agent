@@ -3,6 +3,11 @@
 // helpers, powered by our zustand store + R1dClient WS transport.
 // Spec item 18/55.
 //
+// Audit ref: addresses the audit finding that this hook returned a
+// hard-coded `error: undefined` and a no-op `clearError`. The store
+// now carries an `errorBySession` map populated by error envelopes
+// and cleared via `setSessionError(sid, undefined)`.
+//
 // The spec calls for `wrapping @ai-sdk/react useChat with a custom
 // transport`. The official transport interface is HTTP-only (it
 // expects a POST endpoint that streams `data` chunks); our daemon
@@ -61,6 +66,11 @@ export function useChat(opts: UseChatOptions): UseChatHelpers {
   const order = useStore(store, (s) => s.messages.orderBySession[sessionId]);
   const byKey = useStore(store, (s) => s.messages.byKey);
   const sessionStatus = useStore(store, (s) => s.sessions.byId[sessionId]?.status);
+  const sessionErrorMsg = useStore(
+    store,
+    (s) => s.sessions.errorBySession[sessionId],
+  );
+  const setSessionError = useStore(store, (s) => s.setSessionError);
 
   const messages: ChatMessage[] = useMemo(() => {
     if (!order) return [];
@@ -95,16 +105,20 @@ export function useChat(opts: UseChatOptions): UseChatHelpers {
   }, [sendInterrupt, sessionId]);
 
   const clearError = useCallback((): void => {
-    // The store does not currently surface a per-session error string;
-    // when the session.status comes off "error", `status` will follow.
-    // Hook is a no-op stub so consumers can still call clearError().
-    void sessionId;
-  }, [sessionId]);
+    setSessionError(sessionId, undefined);
+  }, [setSessionError, sessionId]);
+
+  const error = useMemo<Error | undefined>(() => {
+    if (typeof sessionErrorMsg === "string" && sessionErrorMsg.length > 0) {
+      return new Error(sessionErrorMsg);
+    }
+    return undefined;
+  }, [sessionErrorMsg]);
 
   return {
     messages,
     status,
-    error: undefined,
+    error,
     sendMessage,
     stop,
     clearError,

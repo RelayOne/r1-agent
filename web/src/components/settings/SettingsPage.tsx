@@ -10,8 +10,14 @@
 //
 // State lives in the per-daemon zustand store under ui.settings and
 // session.settings; we render controlled inputs that call the store
-// actions directly. The page itself is presentational; routing wires
-// it up at /settings (item 41).
+// actions directly. When `client` is supplied, the Save button calls
+// `client.putSettings` after hydrating the local store, so the user's
+// changes persist server-side. Without `client`, the page is purely
+// local — route wiring is responsible for passing R1dClient in.
+//
+// Audit ref: closes the audit finding that the form's submit path was
+// previously local-only — settings never reached the daemon.
+import { useState } from "react";
 import type { ReactElement } from "react";
 import { useStore } from "zustand";
 import { useTheme } from "@/components/layout/ThemeProvider";
@@ -26,6 +32,7 @@ import {
 } from "@/components/ui/select";
 import { HighContrastToggle } from "./HighContrastToggle";
 import type { DaemonStore } from "@/lib/store/daemonStore";
+import type { R1dClient } from "@/lib/api/r1d";
 
 const DEFAULT_KEYBINDINGS: Array<{ keys: string; action: string }> = [
   { keys: "Cmd/Ctrl + Enter", action: "Send message" },
@@ -45,6 +52,9 @@ export interface SettingsPageProps {
   store: DaemonStore;
   /** Available models for the default-model select. */
   availableModels: ReadonlyArray<{ value: string; label: string }>;
+  /** When supplied, the Save button persists settings server-side via
+   *  `client.putSettings`. When omitted, the form stays local-only. */
+  client?: R1dClient;
 }
 
 const ALL_LANE_STATES: ReadonlyArray<{
@@ -62,10 +72,14 @@ const ALL_LANE_STATES: ReadonlyArray<{
 export function SettingsPage({
   store,
   availableModels,
+  client,
 }: SettingsPageProps): ReactElement {
   const { theme, setTheme } = useTheme();
   const settings = useStore(store, (s) => s.settings.current);
   const hydrateSettings = useStore(store, (s) => s.hydrateSettings);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const onModelChange = (next: string): void => {
     if (!settings) return;
@@ -79,6 +93,21 @@ export function SettingsPage({
       ? current.filter((s) => s !== state)
       : [...current, state];
     hydrateSettings({ ...settings, laneFilters: next });
+  };
+
+  const onSave = async (): Promise<void> => {
+    if (!settings || !client) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const persisted = await client.putSettings(settings);
+      hydrateSettings(persisted);
+      setSavedAt(new Date().toLocaleTimeString());
+    } catch (e: unknown) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -212,6 +241,45 @@ export function SettingsPage({
           </tbody>
         </table>
       </section>
+
+      {client ? (
+        <section
+          className="space-y-2 pt-2 border-t border-border"
+          data-testid="settings-save-section"
+        >
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                void onSave();
+              }}
+              disabled={saving || !settings}
+              data-testid="settings-save"
+              aria-label="Save settings"
+            >
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            {savedAt ? (
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid="settings-save-saved-at"
+              >
+                Saved at {savedAt}
+              </span>
+            ) : null}
+            {saveError ? (
+              <span
+                role="alert"
+                data-testid="settings-save-error"
+                className="text-xs text-destructive"
+              >
+                {saveError}
+              </span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }
