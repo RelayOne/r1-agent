@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -10,11 +11,27 @@ import (
 )
 
 // newTestRouter builds a router with every scaffolding executor
-// registered plus a CodeExecutor rooted at /tmp. Mirrors the
-// production buildDefaultTaskRouter but does not touch os.Getwd.
+// registered plus a CodeExecutor rooted at /tmp with a fake
+// ExecuteHook that returns a synthetic deliverable. Mirrors the
+// production buildDefaultTaskRouter shape (CodeExecutor wired via
+// ExecuteHook) but never touches os.Getwd or invokes shipCmd.
 func newTestRouter() *router.Router {
+	return newTestRouterWithCodeHook(func(ctx context.Context, p executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
+		return executor.CodeDeliverable{
+			RepoRoot: "/tmp",
+			Diff:     "diff --git a/test b/test\n+test-stub\n",
+		}, nil
+	})
+}
+
+// newTestRouterWithCodeHook lets a single test inject a custom
+// ExecuteHook for the CodeExecutor without re-wiring every other
+// scaffolding executor.
+func newTestRouterWithCodeHook(hook func(ctx context.Context, p executor.Plan, effort executor.EffortLevel) (executor.Deliverable, error)) *router.Router {
 	r := router.New()
-	r.Register(executor.TaskCode, executor.NewCodeExecutor("/tmp"))
+	codeExec := executor.NewCodeExecutor("/tmp")
+	codeExec.ExecuteHook = hook
+	r.Register(executor.TaskCode, codeExec)
 	r.Register(executor.TaskResearch, &executor.ResearchExecutor{})
 	r.Register(executor.TaskBrowser, &executor.BrowserExecutor{})
 	r.Register(executor.TaskDeploy, &executor.DeployExecutor{})
@@ -48,16 +65,73 @@ func TestRunTaskCmdDispatchNotWired(t *testing.T) {
 	}
 }
 
-func TestRunTaskCmdCodeHint(t *testing.T) {
+// TestRunTaskCmdCodeWiredDispatch asserts that a CodeExecutor with
+// an installed ExecuteHook actually runs Execute and reports the
+// deliverable summary on stdout — this is the regression test for
+// the ExecuteHook wiring landed in this commit.
+func TestRunTaskCmdCodeWiredDispatch(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	code := runTaskCmd([]string{"refactor", "the", "sessions", "package"}, &out, &errBuf, newTestRouter())
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2 (stderr=%q)", code, errBuf.String())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, errBuf.String())
 	}
-	if !strings.Contains(out.String(), "r1 ship") {
-		t.Errorf("code path should hint at `r1 ship`; got %q", out.String())
+	got := out.String()
+	if !strings.Contains(got, "classified as code") {
+		t.Errorf("stdout = %q, want to mention 'classified as code'", got)
+	}
+	if !strings.Contains(got, "SOW/ship pipeline") {
+		t.Errorf("stdout = %q, want to mention 'SOW/ship pipeline'", got)
+	}
+	if !strings.Contains(got, "deliverable:") {
+		t.Errorf("stdout = %q, want to print a 'deliverable:' line", got)
 	}
 }
+
+// TestRunTaskCmdCodeHookCalled asserts the wiring threads the input
+// description into the ExecuteHook's Plan and that an error from
+// the hook surfaces as exit code 1 with the hook's error on stderr.
+func TestRunTaskCmdCodeHookCalled(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	var seenDesc string
+	r := newTestRouterWithCodeHook(func(_ context.Context, p executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
+		seenDesc = p.Task.Description
+		return executor.CodeDeliverable{RepoRoot: "/tmp", Diff: "x"}, nil
+	})
+	code := runTaskCmd([]string{"add", "a", "logging", "helper"}, &out, &errBuf, r)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, errBuf.String())
+	}
+	if seenDesc != "add a logging helper" {
+		t.Errorf("ExecuteHook saw description %q, want %q", seenDesc, "add a logging helper")
+	}
+}
+
+// TestRunTaskCmdCodeHookError asserts that when the ExecuteHook
+// returns an error the runner exits 1 and propagates the error
+// text on stderr.
+func TestRunTaskCmdCodeHookError(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	r := newTestRouterWithCodeHook(func(_ context.Context, _ executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
+		return nil, errExecuteHookSentinel
+	})
+	code := runTaskCmd([]string{"refactor", "x"}, &out, &errBuf, r)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 (stderr=%q)", code, errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "execute-hook-failed") {
+		t.Errorf("stderr = %q, want to contain hook error text", errBuf.String())
+	}
+}
+
+// errExecuteHookSentinel is a stable sentinel for hook-error tests so
+// the assertion can match without coupling to the exact error wrapping.
+var errExecuteHookSentinel = newTestErr("execute-hook-failed")
+
+func newTestErr(msg string) error { return &testErr{msg: msg} }
+
+type testErr struct{ msg string }
+
+func (e *testErr) Error() string { return e.msg }
 
 func TestRunTaskCmdEmptyInput(t *testing.T) {
 	var out, errBuf bytes.Buffer
