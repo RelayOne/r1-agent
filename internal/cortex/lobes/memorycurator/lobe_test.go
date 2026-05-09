@@ -28,7 +28,7 @@ func TestMemoryCuratorLobe_Constructs(t *testing.T) {
 		AuditLogPath:         "/tmp/curator-audit-test.jsonl",
 	}
 
-	l := NewMemoryCuratorLobe(nil, escalate, mem, privacy, ws, bus)
+	l := NewMemoryCuratorLobe(nil, escalate, mem, privacy, ws, bus, nil)
 	if l == nil {
 		t.Fatal("NewMemoryCuratorLobe returned nil")
 	}

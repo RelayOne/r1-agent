@@ -18,7 +18,7 @@ func TestClarifyingQLobe_Constructs(t *testing.T) {
 	ws := cortex.NewWorkspace(hub.New(), nil)
 	bus := hub.New()
 
-	l := NewClarifyingQLobe(nil, escalate, ws, bus)
+	l := NewClarifyingQLobe(nil, escalate, ws, bus, nil)
 	if l == nil {
 		t.Fatal("NewClarifyingQLobe returned nil")
 	}

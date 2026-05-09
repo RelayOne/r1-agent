@@ -4,79 +4,69 @@
 // One **store instance per daemon connection** — daemons cannot share
 // state. The application keeps a `Map<daemonId, DaemonStore>` and
 // switches the active store when the user changes daemons via the
-// left rail or Cmd+1..9. This file provides:
+// left rail or Cmd+1..9.
 //
-//   1. The `DaemonState` shape (sessions / lanes / messages / settings / ui).
-//   2. `createDaemonStore(daemonId, opts)` — a factory returning a
-//      typed `UseBoundStore<StoreApi<DaemonState>>` plus the dispatch
-//      helpers used by `useDaemonSocket` to route envelopes.
-//   3. Re-render coalescing at 5–10 Hz via `flushRafBatch`. The store
-//      buffers high-frequency `lane.delta` and `message.part` events
-//      and flushes them on the next animation frame (D-S2 / spec
-//      §WebSocket Reconnect Strategy anti-patterns).
-//   4. Last-Event-ID per session for replay.
+// This file is the **composition root** for the per-daemon store.
+// State and dispatchers are split across three sibling slice files
+// per spec §Directory Layout (item 16):
 //
-// The store carries no React-specific concerns; hooks consume it via
-// `useStore(selector)` or the project-level `useDaemonStore` hook.
+//   - sessionsSlice.ts  — `sessions` state + session dispatchers
+//   - lanesSlice.ts     — `lanes`    state + lane / tile dispatchers
+//   - messagesSlice.ts  — `messages` state + ChatMessage type
+//
+// Cross-slice concerns that live here at the composition root:
+//   1. `daemonId` + `settings` + `ui` slices (smaller; not split out).
+//   2. `EnvelopeCoalescer`: rAF-coalesced WS envelope dispatch (D-S2 /
+//      spec §WebSocket Reconnect Strategy).  `applyEnvelope` writes
+//      to multiple slices in one transactional `set` and therefore
+//      cannot live inside any single slice.
+//   3. The exported public surface — `createDaemonStore`,
+//      `getDaemonStore`, `dropDaemonStore`, `_resetDaemonRegistryForTests`,
+//      and the `DaemonStore` / `DaemonState` types — is **identical**
+//      to the pre-split version so consumers do not break.
 import { create } from "zustand";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type {
   DaemonId,
   LaneId,
-  LaneSnapshot,
   LaneState,
-  MessagePart,
   SessionId,
-  SessionMetadata,
   Settings,
   WsServerEnvelope,
 } from "@/lib/api/types";
+import {
+  createSessionsSlice,
+  type SessionsSlice,
+} from "@/lib/store/sessionsSlice";
+import {
+  createLanesSlice,
+  laneKey,
+  type LanesSlice,
+} from "@/lib/store/lanesSlice";
+import {
+  appendPart,
+  createMessagesSlice,
+  messageKey,
+  type ChatMessage,
+  type MessagesSlice,
+} from "@/lib/store/messagesSlice";
 
 // ---------------------------------------------------------------------------
-// State shape — five slices per spec §item 16
+// Re-exports — keep the public surface identical to the pre-split file.
+// Existing imports such as
+//     import type { ChatMessage } from "@/lib/store/daemonStore";
+//     import type { SessionsSlice } from "@/lib/store/daemonStore";
+// continue to compile without any consumer change.
 // ---------------------------------------------------------------------------
+export type { ChatMessage } from "@/lib/store/messagesSlice";
+export type { SessionsSlice } from "@/lib/store/sessionsSlice";
+export type { LanesSlice } from "@/lib/store/lanesSlice";
+export type { MessagesSlice } from "@/lib/store/messagesSlice";
 
-export interface ChatMessage {
-  id: string;
-  sessionId: SessionId;
-  role: "assistant" | "user" | "system" | "tool";
-  parts: MessagePart[];
-  /** True until the server emits message.complete. */
-  streaming: boolean;
-  createdAt: string;
-  updatedAt: string;
-  costUsd?: number;
-  durationMs?: number;
-}
-
-export interface SessionsSlice {
-  /** All sessions known to the daemon, keyed by id. */
-  byId: Record<SessionId, SessionMetadata>;
-  /** Stable ordering for the SessionList sidebar. */
-  order: SessionId[];
-  /** Sessions currently subscribed to over WS. */
-  subscribed: Set<SessionId>;
-  /** Last-Event-ID seq per session for replay. */
-  lastSeq: Record<SessionId, number>;
-  /** Per-session error string, populated by error envelopes / hooks
-   *  and cleared via setSessionError(sid, undefined). */
-  errorBySession: Record<SessionId, string>;
-}
-
-export interface LanesSlice {
-  /** Lanes keyed by `${sessionId}:${laneId}`; stored flat to keep
-   *  per-session iteration cheap. */
-  byKey: Record<string, LaneSnapshot>;
-  /** Per-session lane order (stable: creation timestamp + lane_id tiebreak). */
-  orderBySession: Record<SessionId, LaneId[]>;
-}
-
-export interface MessagesSlice {
-  /** Messages keyed by `${sessionId}:${messageId}`. */
-  byKey: Record<string, ChatMessage>;
-  /** Per-session message order. */
-  orderBySession: Record<SessionId, string[]>;
-}
+// ---------------------------------------------------------------------------
+// Settings + UI slices (kept inline — small enough that splitting them
+// out would only add noise; spec only calls out sessions/lanes/messages).
+// ---------------------------------------------------------------------------
 
 export interface SettingsSlice {
   /** Server-persisted user settings, or null until /api/settings loads. */
@@ -106,35 +96,28 @@ export interface UiSlice {
     | "closed";
   /** Surfaces hard-cap reconnect failures to the ConnectionLostBanner. */
   hardCapped: boolean;
-  /** When tileMode is non-empty, ChatPane swaps to TileGrid (item 25). */
-  // (derived from tilePinnedBySession.length > 0 — kept here for tests.)
 }
 
-export interface DaemonState {
+// ---------------------------------------------------------------------------
+// Composed state shape — `DaemonState extends SessionsSlice & LanesSlice & MessagesSlice`
+// plus the local settings/ui slices and the cross-slice dispatchers.
+// ---------------------------------------------------------------------------
+
+export interface DaemonState
+  extends SessionsSlice,
+    LanesSlice,
+    MessagesSlice {
   daemonId: DaemonId;
-  sessions: SessionsSlice;
-  lanes: LanesSlice;
-  messages: MessagesSlice;
   settings: SettingsSlice;
   ui: UiSlice;
-  // Dispatchers (kept on state for ergonomic selector access).
+  // Cross-slice dispatchers (kept on state for ergonomic selector access).
   applyEnvelope: (env: WsServerEnvelope) => void;
-  hydrateSessions: (rows: SessionMetadata[]) => void;
-  hydrateLanes: (sessionId: SessionId, lanes: LaneSnapshot[]) => void;
   hydrateSettings: (s: Settings) => void;
   setLeftRailCollapsed: (v: boolean) => void;
   setRightRailCollapsed: (v: boolean) => void;
   setTheme: (theme: UiSlice["theme"]) => void;
   setConnectionState: (s: UiSlice["connectionState"]) => void;
   setHardCapped: (v: boolean) => void;
-  pinLane: (sessionId: SessionId, laneId: LaneId) => void;
-  unpinLane: (sessionId: SessionId, laneId: LaneId) => void;
-  reorderTiles: (sessionId: SessionId, ids: LaneId[]) => void;
-  toggleTileCollapsed: (sessionId: SessionId, laneId: LaneId) => void;
-  markSubscribed: (sessionId: SessionId) => void;
-  markUnsubscribed: (sessionId: SessionId) => void;
-  /** Record an error string for a session; pass undefined to clear. */
-  setSessionError: (sessionId: SessionId, error: string | undefined) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,24 +199,6 @@ export type DaemonStore = UseBoundStore<StoreApi<DaemonState>> & {
   flushPending: () => void;
 };
 
-const laneKey = (sid: SessionId, lid: LaneId): string => `${sid}:${lid}`;
-const messageKey = (sid: SessionId, mid: string): string => `${sid}:${mid}`;
-
-function emptySessionsSlice(): SessionsSlice {
-  return {
-    byId: {},
-    order: [],
-    subscribed: new Set<SessionId>(),
-    lastSeq: {},
-    errorBySession: {},
-  };
-}
-function emptyLanesSlice(): LanesSlice {
-  return { byKey: {}, orderBySession: {} };
-}
-function emptyMessagesSlice(): MessagesSlice {
-  return { byKey: {}, orderBySession: {} };
-}
 function emptySettingsSlice(): SettingsSlice {
   return { current: null, loadedAt: null, error: null };
 }
@@ -256,23 +221,23 @@ export function createDaemonStore(
   // Coalescer reference is captured below; declared up-front so the
   // store's `applyEnvelope` closure can call it.
   let coalescerRef: EnvelopeCoalescer;
-  const baseStore = create<DaemonState>()((set) => {
+  const baseStore = create<DaemonState>()((set, get, store) => {
     // Drain a coalesced batch into immutable state updates. We apply
     // the deltas to a local working copy then commit once.
     const drain = (batch: WsServerEnvelope[]): void => {
       set((prev) => {
-        const sessions: SessionsSlice = {
+        const sessions = {
           byId: { ...prev.sessions.byId },
           order: prev.sessions.order.slice(),
           subscribed: new Set(prev.sessions.subscribed),
           lastSeq: { ...prev.sessions.lastSeq },
           errorBySession: { ...prev.sessions.errorBySession },
         };
-        const lanes: LanesSlice = {
+        const lanes = {
           byKey: { ...prev.lanes.byKey },
           orderBySession: { ...prev.lanes.orderBySession },
         };
-        const messages: MessagesSlice = {
+        const messages = {
           byKey: { ...prev.messages.byKey },
           orderBySession: { ...prev.messages.orderBySession },
         };
@@ -332,7 +297,7 @@ export function createDaemonStore(
                   updatedAt: env.ts,
                 };
               } else {
-                messages.byKey[k] = {
+                const created: ChatMessage = {
                   id: env.messageId,
                   sessionId: env.sessionId,
                   role: env.role,
@@ -341,6 +306,7 @@ export function createDaemonStore(
                   createdAt: env.ts,
                   updatedAt: env.ts,
                 };
+                messages.byKey[k] = created;
                 const ord = (messages.orderBySession[env.sessionId] ?? []).slice();
                 if (!ord.includes(env.messageId)) ord.push(env.messageId);
                 messages.orderBySession[env.sessionId] = ord;
@@ -391,19 +357,21 @@ export function createDaemonStore(
       ...(opts.cancel !== undefined && { cancel: opts.cancel }),
     });
 
-    const baseState: Pick<DaemonState,
-      "daemonId" | "sessions" | "lanes" | "messages" | "settings" | "ui"
-    > = {
-      daemonId,
-      sessions: emptySessionsSlice(),
-      lanes: emptyLanesSlice(),
-      messages: emptyMessagesSlice(),
-      settings: emptySettingsSlice(),
-      ui: emptyUiSlice(),
-    };
+    // Compose the three spec-mandated slices via the standard Zustand
+    // StateCreator pattern. Each factory returns its own slice of the
+    // total state; we spread them together below into the root.
+    const sessionsSlice = createSessionsSlice(set, get, store);
+    const lanesSlice = createLanesSlice(set, get, store);
+    const messagesSlice = createMessagesSlice(set, get, store);
 
     return {
-      ...baseState,
+      ...sessionsSlice,
+      ...lanesSlice,
+      ...messagesSlice,
+
+      daemonId,
+      settings: emptySettingsSlice(),
+      ui: emptyUiSlice(),
 
       applyEnvelope: (env) => {
         // Terminal-like events flush synchronously so consumers see
@@ -420,34 +388,6 @@ export function createDaemonStore(
           coalescerRef.flush();
         }
       },
-
-      hydrateSessions: (rows) =>
-        set((prev) => {
-          const byId: Record<SessionId, SessionMetadata> = { ...prev.sessions.byId };
-          const order: SessionId[] = prev.sessions.order.slice();
-          for (const r of rows) {
-            byId[r.id] = r;
-            if (!order.includes(r.id)) order.push(r.id);
-          }
-          return { ...prev, sessions: { ...prev.sessions, byId, order } };
-        }),
-
-      hydrateLanes: (sessionId, lanesArr) =>
-        set((prev) => {
-          const byKey = { ...prev.lanes.byKey };
-          const order: LaneId[] = [];
-          for (const l of lanesArr) {
-            byKey[laneKey(sessionId, l.id)] = l;
-            order.push(l.id);
-          }
-          return {
-            ...prev,
-            lanes: {
-              byKey,
-              orderBySession: { ...prev.lanes.orderBySession, [sessionId]: order },
-            },
-          };
-        }),
 
       hydrateSettings: (s) =>
         set((prev) => ({
@@ -467,97 +407,6 @@ export function createDaemonStore(
         set((prev) => ({ ...prev, ui: { ...prev.ui, connectionState: s } })),
 
       setHardCapped: (v) => set((prev) => ({ ...prev, ui: { ...prev.ui, hardCapped: v } })),
-
-      pinLane: (sessionId, laneId) =>
-        set((prev) => {
-          const cur = prev.ui.tilePinnedBySession[sessionId] ?? [];
-          if (cur.includes(laneId)) return prev;
-          return {
-            ...prev,
-            ui: {
-              ...prev.ui,
-              tilePinnedBySession: {
-                ...prev.ui.tilePinnedBySession,
-                [sessionId]: [...cur, laneId],
-              },
-            },
-          };
-        }),
-
-      unpinLane: (sessionId, laneId) =>
-        set((prev) => {
-          const cur = prev.ui.tilePinnedBySession[sessionId] ?? [];
-          const next = cur.filter((x) => x !== laneId);
-          const collapsedCur = prev.ui.tileCollapsedBySession[sessionId] ?? {};
-          const { [laneId]: _drop, ...collapsedNext } = collapsedCur;
-          void _drop;
-          return {
-            ...prev,
-            ui: {
-              ...prev.ui,
-              tilePinnedBySession: {
-                ...prev.ui.tilePinnedBySession,
-                [sessionId]: next,
-              },
-              tileCollapsedBySession: {
-                ...prev.ui.tileCollapsedBySession,
-                [sessionId]: collapsedNext,
-              },
-            },
-          };
-        }),
-
-      reorderTiles: (sessionId, ids) =>
-        set((prev) => ({
-          ...prev,
-          ui: {
-            ...prev.ui,
-            tilePinnedBySession: { ...prev.ui.tilePinnedBySession, [sessionId]: ids },
-          },
-        })),
-
-      toggleTileCollapsed: (sessionId, laneId) =>
-        set((prev) => {
-          const cur = prev.ui.tileCollapsedBySession[sessionId] ?? {};
-          return {
-            ...prev,
-            ui: {
-              ...prev.ui,
-              tileCollapsedBySession: {
-                ...prev.ui.tileCollapsedBySession,
-                [sessionId]: { ...cur, [laneId]: !cur[laneId] },
-              },
-            },
-          };
-        }),
-
-      markSubscribed: (sessionId) =>
-        set((prev) => {
-          const next = new Set(prev.sessions.subscribed);
-          next.add(sessionId);
-          return { ...prev, sessions: { ...prev.sessions, subscribed: next } };
-        }),
-
-      markUnsubscribed: (sessionId) =>
-        set((prev) => {
-          const next = new Set(prev.sessions.subscribed);
-          next.delete(sessionId);
-          return { ...prev, sessions: { ...prev.sessions, subscribed: next } };
-        }),
-
-      setSessionError: (sessionId, error) =>
-        set((prev) => {
-          const nextErr = { ...prev.sessions.errorBySession };
-          if (error === undefined) {
-            delete nextErr[sessionId];
-          } else {
-            nextErr[sessionId] = error;
-          }
-          return {
-            ...prev,
-            sessions: { ...prev.sessions, errorBySession: nextErr },
-          };
-        }),
     };
   });
 
@@ -569,49 +418,21 @@ export function createDaemonStore(
   return store;
 }
 
-// Helper: append/merge a streamed message part. Text parts coalesce
-// (the same part kind streamed multiple times accumulates text);
-// other kinds replace by toolCallId / index.
-function appendPart(existing: MessagePart[], next: MessagePart): MessagePart[] {
-  if (next.kind === "text") {
-    const last = existing[existing.length - 1];
-    if (last && last.kind === "text") {
-      const merged: MessagePart = { kind: "text", text: last.text + next.text };
-      return [...existing.slice(0, -1), merged];
-    }
-    return [...existing, next];
-  }
-  if (next.kind === "tool") {
-    const idx = existing.findIndex(
-      (p) => p.kind === "tool" && p.toolCallId === next.toolCallId,
-    );
-    if (idx >= 0) {
-      const copy = existing.slice();
-      copy[idx] = next;
-      return copy;
-    }
-    return [...existing, next];
-  }
-  if (next.kind === "reasoning") {
-    const idx = existing.findIndex((p) => p.kind === "reasoning");
-    if (idx >= 0) {
-      const copy = existing.slice();
-      copy[idx] = next;
-      return copy;
-    }
-    return [...existing, next];
-  }
-  if (next.kind === "plan") {
-    const idx = existing.findIndex((p) => p.kind === "plan");
-    if (idx >= 0) {
-      const copy = existing.slice();
-      copy[idx] = next;
-      return copy;
-    }
-    return [...existing, next];
-  }
-  return [...existing, next];
-}
+// ---------------------------------------------------------------------------
+// Re-export the empty-state factories so test fixtures and storybooks
+// that previously imported them from this module continue to work.
+// (No production code imports these by name today, but the slice files
+// are the canonical source.)
+// ---------------------------------------------------------------------------
+export {
+  emptySessionsState as emptySessionsSlice,
+} from "@/lib/store/sessionsSlice";
+export {
+  emptyLanesState as emptyLanesSlice,
+} from "@/lib/store/lanesSlice";
+export {
+  emptyMessagesState as emptyMessagesSlice,
+} from "@/lib/store/messagesSlice";
 
 // ---------------------------------------------------------------------------
 // Multi-daemon registry — `Map<daemonId, DaemonStore>`

@@ -272,7 +272,7 @@ func newAllLobesFixture(t *testing.T, opts allLobesOptions) *allLobesFixture {
 		lobeList = append(lobeList, fixture.planUpd)
 	}
 	if opts.EnableFlags["clarifying-q"] {
-		fixture.clarify = clarifyq.NewClarifyingQLobe(prov, llm.NewEscalator(false), ws, hubBus)
+		fixture.clarify = clarifyq.NewClarifyingQLobe(prov, llm.NewEscalator(false), ws, hubBus, nil)
 		lobeList = append(lobeList, fixture.clarify)
 	}
 	if opts.EnableFlags["memory-curator"] {
@@ -282,7 +282,7 @@ func newAllLobesFixture(t *testing.T, opts allLobesOptions) *allLobesFixture {
 			AuditLogPath:         t.TempDir() + "/curator-audit.jsonl",
 		}
 		fixture.curator = memorycurator.NewMemoryCuratorLobe(prov, llm.NewEscalator(false),
-			memStore, privacy, ws, hubBus)
+			memStore, privacy, ws, hubBus, nil)
 		lobeList = append(lobeList, fixture.curator)
 	}
 

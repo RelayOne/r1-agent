@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Markdown } from "@/lib/render/markdown";
-import { useTheme } from "@/components/layout/ThemeProvider";
+import { useThemeOptional } from "@/components/layout/ThemeProvider";
 import type { MessagePart } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -40,14 +40,11 @@ export function ReasoningCard({
 }: ReasoningCardProps): ReactElement {
   const isStreaming = part.state === "streaming";
   // Ask theme for prefers-reduced-motion. ThemeProvider may not be
-  // present in isolated component renders / tests; fall back to "no
-  // preference" in that case.
-  let themedReducedMotion = false;
-  try {
-    themedReducedMotion = useTheme().reducedMotion;
-  } catch {
-    themedReducedMotion = false;
-  }
+  // present in isolated component renders / tests; useThemeOptional
+  // returns null in that case (vs useTheme which throws), so the hook
+  // is called unconditionally and rules-of-hooks stays happy.
+  const theme = useThemeOptional();
+  const themedReducedMotion = theme?.reducedMotion ?? false;
   const reducedMotion = reducedMotionOverride ?? themedReducedMotion;
 
   const [expanded, setExpanded] = useState<boolean>(isStreaming);
