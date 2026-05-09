@@ -407,6 +407,14 @@ func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{
 			return "", fmt.Errorf("unknown cortex tool: %s", toolName)
 		}
 	}
+	if strings.HasPrefix(toolName, "r1.verify.") {
+		switch toolName {
+		case "r1.verify.lint":
+			return s.handleVerifyLint(args)
+		default:
+			return "", fmt.Errorf("unknown verify tool: %s", toolName)
+		}
+	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
 		return s.handleBuildFromSOW(args)
