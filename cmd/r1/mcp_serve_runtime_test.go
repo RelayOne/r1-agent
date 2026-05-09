@@ -219,6 +219,7 @@ func buildR1ForTest(t *testing.T) string {
 	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "r1")
+	// LINT-ALLOW chdir-test: read-only Getwd to anchor the build command at the cmd/r1 package dir under `go test`; never mutates cwd.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
