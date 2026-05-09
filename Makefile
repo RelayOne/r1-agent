@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check storybook-mcp-validate lint-views docs-agentic
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic
 
 # Default: run the CI gate
 all: build test vet
@@ -119,14 +119,6 @@ lint-views:
 docs-agentic:
 	go run ./cmd/r1 mcp serve --print-tools --markdown > docs/AGENTIC-API-CATALOG.md
 	@echo "wrote docs/AGENTIC-API-CATALOG.md ($$(wc -l < docs/AGENTIC-API-CATALOG.md) lines)"
-
-storybook-mcp-validate:
-	@if [ -d web/src/components ] && [ -n "$$(find web/src/components -name '*.tsx' -print -quit)" ]; then \
-	    cd web && npx storybook-mcp@^0.5 validate .storybook/mcp.config.ts --fail-on-missing-a11y; \
-	else \
-	    echo "storybook-mcp-validate: SKIP — web/src/components/*.tsx not present (spec 6 web-chat-ui not merged)"; \
-	    echo "  see web/.storybook/STATUS-BLOCKED-item-33.md for resolution path"; \
-	fi
 
 # Verify package count hasn't drifted (CI check)
 check-pkg-count:

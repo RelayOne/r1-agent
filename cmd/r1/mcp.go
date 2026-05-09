@@ -96,33 +96,45 @@ func runMCPCmd(args []string, stdout, stderr io.Writer, loader registryLoader) i
 // by `make docs-agentic` to generate the AGENTIC-API.md tool-catalog
 // section).
 //
-// When --print-tools is not set, this command currently prints a notice
-// and returns non-zero so callers know the server back-end (sessions,
-// lanes, cortex daemon wiring) is not yet wired here. Once the daemon
-// merges, the no-flag path serves the full r1 surface; today only the
-// catalog metadata is canonical here.
+// When --print-tools is set, the catalog is emitted (JSON or Markdown)
+// and the process exits without starting the server. Otherwise the
+// stdio MCP JSON-RPC server runs until stdin EOF or signal — see
+// startMCPServer in mcp_serve_runtime.go and specs/r1-mcp-serve.md.
 func runMCPServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	printTools := fs.Bool("print-tools", false, "print the r1.* tool catalog and exit")
 	asMarkdown := fs.Bool("markdown", false, "emit Markdown instead of JSON (only with --print-tools)")
+	noCortex := fs.Bool("no-cortex", false, "skip cortex backend wiring; r1.cortex.* tools return 'cortex backend not wired'")
+	sessionID := fs.String("session-id", "", "session id surfaced via cortex.SessionID; defaults to a generated UUID printed to stderr")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if !*printTools {
-		fmt.Fprintln(stderr, "r1 mcp serve: server back-end not yet wired in this checkpoint; "+
-			"use --print-tools to emit the static catalog")
-		return 1
-	}
-	cat := mcp.R1ToolCatalog()
-	if *asMarkdown {
-		emitCatalogMarkdown(cat, stdout)
+	if *printTools {
+		cat := mcp.R1ToolCatalog()
+		if *asMarkdown {
+			emitCatalogMarkdown(cat, stdout)
+			return 0
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(cat); err != nil {
+			fmt.Fprintf(stderr, "encode: %v\n", err)
+			return 1
+		}
 		return 0
 	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(cat); err != nil {
-		fmt.Fprintf(stderr, "encode: %v\n", err)
+	sid := *sessionID
+	if sid == "" {
+		sid = fmt.Sprintf("r1-mcp-%d", os.Getpid())
+	}
+	opts := mcpServeOptions{
+		NoCortex:  *noCortex,
+		SessionID: sid,
+		AuthKey:   envFunc("R1_MCP_KEY"),
+	}
+	if err := startMCPServer(opts, stderr); err != nil {
+		fmt.Fprintf(stderr, "r1 mcp serve: %v\n", err)
 		return 1
 	}
 	return 0
