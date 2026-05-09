@@ -41,7 +41,7 @@ func TestClarifyingQLobe_ResolvesOnUserAnswer(t *testing.T) {
 		},
 	}
 
-	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus)
+	l := NewClarifyingQLobe(fp, llm.NewEscalator(false), ws, bus, nil)
 	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestClarifyingQLobe_ResolveUnknownQuestionID(t *testing.T) {
 	bus := hub.New()
 	ws := cortex.NewWorkspace(hub.New(), nil)
 
-	l := NewClarifyingQLobe(nil, llm.NewEscalator(false), ws, bus)
+	l := NewClarifyingQLobe(nil, llm.NewEscalator(false), ws, bus, nil)
 	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}

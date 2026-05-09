@@ -88,6 +88,12 @@ func (l *ClarifyingQLobe) handleUserMessage(ctx context.Context, ev *hub.Event) 
 // walks the response Content for queue_clarifying_question tool_use
 // blocks, and Publishes one Note per accepted block.
 //
+// Slot acquisition: the call is driven from the
+// EventCortexUserMessage hub subscriber, which runs in the bus's
+// goroutine and bypasses the cortex LobeRunner's outer Acquire. The
+// Lobe therefore takes the slot itself per ChatStream call via
+// llm.MustAcquire. A nil semaphore is a no-op (legacy tests).
+//
 // Cap enforcement: before each Publish the method counts the number of
 // currently-outstanding question Notes (the size of l.outstanding). If
 // the count is already at clarifyOutstandingCap (3) the tool_use is
@@ -105,6 +111,14 @@ func (l *ClarifyingQLobe) haikuOnce(ctx context.Context, userMsg string, history
 		MaxTokens:    clarifyMaxTokens,
 	}
 	req := pb.Build(userMsg, history)
+
+	release, err := llm.MustAcquire(ctx, l.semaphore)
+	if err != nil {
+		// ctx cancelled or deadline before a slot was free; drop the
+		// trigger silently — the next user turn will fire its own.
+		return
+	}
+	defer release()
 
 	resp, err := l.client.ChatStream(req, nil)
 	if err != nil {

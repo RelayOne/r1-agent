@@ -64,7 +64,7 @@ func newCuratorForTest(t *testing.T, fp *fakeProvider) (*MemoryCuratorLobe, *cor
 		SkipPrivateMessages:  true,
 		AuditLogPath:         t.TempDir() + "/curator-audit.jsonl",
 	}
-	l := NewMemoryCuratorLobe(fp, llm.NewEscalator(false), mem, privacy, ws, bus)
+	l := NewMemoryCuratorLobe(fp, llm.NewEscalator(false), mem, privacy, ws, bus, nil)
 	return l, ws, bus
 }
 
@@ -143,6 +143,103 @@ func TestMemoryCuratorLobe_TriggerCadence(t *testing.T) {
 	}
 	if got, want := l.TriggerCount(), uint64(3); got != want {
 		t.Errorf("TriggerCount = %d, want %d", got, want)
+	}
+}
+
+// countingSemaphore is a counting fake llm.SlotAcquirer used to assert
+// the per-call Acquire/Release contract for MemoryCuratorLobe (audit
+// follow-up: scan-governance-gaps cortex-concerns 5).
+//
+// Each Acquire increments acquires; each Release increments releases.
+// All operations are safe for concurrent use so the test can drive the
+// hub-subscriber path without serializing access to the counters.
+type countingSemaphore struct {
+	acquires atomic.Uint64
+	releases atomic.Uint64
+}
+
+func (s *countingSemaphore) Acquire(ctx context.Context) error {
+	s.acquires.Add(1)
+	return nil
+}
+
+func (s *countingSemaphore) Release() {
+	s.releases.Add(1)
+}
+
+// TestMemoryCuratorLobe_PerCallAcquire asserts that every ChatStream
+// call driven from the EventTaskCompleted hub subscriber is guarded
+// by exactly one llm.MustAcquire/release pair on the supplied
+// semaphore. The hub-subscriber path bypasses the cortex
+// LobeRunner.runOnce Acquire/Release wrapper, so per-call gating is
+// the only thing that keeps the slot cap honest for this Lobe.
+//
+// Spec: specs/cortex-concerns.md item 5; audit follow-up
+// "scan-governance-gaps.md cortex-concerns 5".
+func TestMemoryCuratorLobe_PerCallAcquire(t *testing.T) {
+	t.Parallel()
+
+	mem, err := memory.NewStore(memory.Config{Path: ""})
+	if err != nil {
+		t.Fatalf("memory.NewStore: %v", err)
+	}
+	bus := hub.New()
+	ws := cortex.NewWorkspace(hub.New(), nil)
+	privacy := PrivacyConfig{
+		AutoCurateCategories: []memory.Category{memory.CatFact},
+		SkipPrivateMessages:  true,
+		AuditLogPath:         t.TempDir() + "/curator-audit.jsonl",
+	}
+	fp := &fakeProvider{
+		// Empty content keeps defaultOnTrigger in its fast path: the
+		// Lobe still makes the ChatStream call, which is what the
+		// per-call Acquire test cares about.
+		content: nil,
+	}
+	sem := &countingSemaphore{}
+
+	l := NewMemoryCuratorLobe(fp, llm.NewEscalator(false), mem, privacy, ws, bus, sem)
+
+	// Run() once to install the EventTaskCompleted subscriber. The
+	// cadence predicate (turn % 5 == 0) is NOT satisfied at turn 1, so
+	// the cadence path does NOT fire from this Run; only the
+	// task.completed events below drive haikuCall.
+	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Drive three independent task.completed events. Each one fires
+	// haikuCall in the bus's goroutine via the EventTaskCompleted
+	// subscriber — bypassing the runner-level Acquire entirely.
+	const triggers = 3
+	for i := 0; i < triggers; i++ {
+		emitTaskCompletedForTest(bus)
+	}
+
+	// Wait for the provider to record N calls AND the deferred Release
+	// to fire N times. Each haikuCall defers release() after Acquire,
+	// so Release fires AFTER the provider returns. Polling on
+	// callCount alone races with the deferred Release; poll on both
+	// counters to make the test deterministic under the bus's async
+	// goroutine.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if fp.callCount.Load() >= triggers && sem.releases.Load() >= triggers {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := fp.callCount.Load(); got != uint64(triggers) {
+		t.Fatalf("provider call count = %d, want %d", got, triggers)
+	}
+
+	// One Acquire per call, one Release per call. Equality with the
+	// provider call count proves both halves of the per-call pair fired.
+	if got := sem.acquires.Load(); got != uint64(triggers) {
+		t.Errorf("semaphore Acquire count = %d, want %d", got, triggers)
+	}
+	if got := sem.releases.Load(); got != uint64(triggers) {
+		t.Errorf("semaphore Release count = %d, want %d", got, triggers)
 	}
 }
 

@@ -56,6 +56,14 @@ func (l *MemoryCuratorLobe) subscribeImpl() {
 // the publisher attached under ev.Custom["history"]) and calls
 // fireTrigger directly — task.completed is an out-of-cadence trigger
 // not gated by the every-5-turns predicate.
+//
+// Slot acquisition: this path runs in the bus's goroutine and bypasses
+// LobeRunner.runOnce, so the runner-level Acquire never fires. The
+// fireTrigger invocation is wrapped in a per-call MustAcquire/release
+// pair so the slot cap is honored. The cadence path (Run -> fireTrigger)
+// is gated by the runner's outer Acquire instead, so this is the only
+// place per-call gating is needed. A nil semaphore is a no-op (legacy
+// tests). See internal/cortex/lobes/llm/slot.go.
 func (l *MemoryCuratorLobe) handleTaskCompleted(ctx context.Context, ev *hub.Event) {
 	if ev == nil {
 		return
@@ -65,6 +73,16 @@ func (l *MemoryCuratorLobe) handleTaskCompleted(ctx context.Context, ev *hub.Eve
 		History: history,
 		Bus:     l.hubBus,
 	}
+
+	release, err := llm.MustAcquire(ctx, l.semaphore)
+	if err != nil {
+		// ctx cancelled or deadline before a slot was free; drop the
+		// trigger silently — the next cadence tick or event fires
+		// its own.
+		return
+	}
+	defer release()
+
 	l.fireTrigger(ctx, in)
 }
 
@@ -72,6 +90,19 @@ func (l *MemoryCuratorLobe) handleTaskCompleted(ctx context.Context, ev *hub.Eve
 // last curatorRecentN messages from in.History are rendered into the
 // user-message preamble; the rememberTool is sent as the only tool;
 // the verbatim curatorSystemPrompt is the system prompt.
+//
+// Slot acquisition: this method does NOT take the LLM slot itself —
+// the slot is acquired by the caller. Two paths reach haikuCall:
+//
+//  1. The cadence path (Run -> fireTrigger -> onTrigger ->
+//     defaultOnTrigger -> haikuCall) runs inside
+//     LobeRunner.runOnce, which already wraps the call in the
+//     runner-level Acquire/Release for KindLLM Lobes.
+//
+//  2. The task.completed event path (handleTaskCompleted ->
+//     fireTrigger -> ...) runs in the bus's goroutine. That caller
+//     wraps fireTrigger in its own per-call MustAcquire/release so
+//     the slot cap is honored without double-acquiring on path 1.
 //
 // Returns the raw assistant content blocks. defaultOnTrigger (in
 // curate.go) consumes them: parses the tool_use blocks, runs the

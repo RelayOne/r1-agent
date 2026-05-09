@@ -22,11 +22,21 @@
 //
 // The actual constructor used in production is therefore:
 //
-//	NewClarifyingQLobe(client, escalate, ws, hubBus)
+//	NewClarifyingQLobe(client, escalate, ws, hubBus, semaphore)
 //
 // The "watch the latest user message; propose ≤3 clarifying questions
 // via tool calls; cap outstanding at 3; resolve on user answer"
 // contract from the spec is preserved verbatim.
+//
+// Per-call slot acquisition
+// -------------------------
+//
+// ClarifyingQLobe drives its ChatStream call from the
+// EventCortexUserMessage hub subscriber, NOT from the cortex
+// LobeRunner.runOnce path. Hub-subscriber callbacks bypass the
+// runner-level LobeSemaphore Acquire/Release, so the Lobe takes the
+// slot itself with llm.MustAcquire wrapped around the ChatStream call.
+// See internal/cortex/lobes/llm/slot.go for the rationale.
 package clarifyq
 
 import (
@@ -57,6 +67,14 @@ type ClarifyingQLobe struct {
 	// (TASK-25). May be nil in tests that exercise only Run/constructor
 	// shape.
 	hubBus *hub.Bus
+
+	// semaphore gates each individual ChatStream call. The
+	// EventCortexUserMessage subscriber drives haikuOnce from the bus
+	// goroutine, bypassing the cortex LobeRunner's per-Round Acquire,
+	// so the Lobe takes the slot itself in haikuOnce. May be nil; a
+	// nil semaphore is a no-op (legacy tests). See
+	// internal/cortex/lobes/llm/slot.go.
+	semaphore llm.SlotAcquirer
 
 	// mu guards outstanding. Maps question_id -> note_id so the resolve
 	// path can publish a follow-on Note with Resolves=note_id when the
@@ -90,17 +108,25 @@ type ClarifyingQLobe struct {
 //   - hubBus: in-process hub.Bus for the user-message + answered-question
 //     subscribers. May be nil; the Lobe simply skips subscription
 //     registration and the trigger never fires.
+//   - semaphore: per-call LLM slot acquirer (typically the cortex shared
+//     LobeSemaphore via its Acquire/Release methods). Wrapped around
+//     each ChatStream call in haikuOnce because the user-message
+//     subscriber path bypasses the cortex LobeRunner's outer Acquire.
+//     A nil semaphore is permitted and treated as a no-op (legacy
+//     tests). See internal/cortex/lobes/llm/slot.go.
 func NewClarifyingQLobe(
 	client provider.Provider,
 	escalate llm.Escalator,
 	ws *cortex.Workspace,
 	hubBus *hub.Bus,
+	semaphore llm.SlotAcquirer,
 ) *ClarifyingQLobe {
 	return &ClarifyingQLobe{
 		client:      client,
 		escalate:    escalate,
 		ws:          ws,
 		hubBus:      hubBus,
+		semaphore:   semaphore,
 		outstanding: make(map[string]string),
 	}
 }

@@ -3,15 +3,30 @@
 // against baselines, and produces reports.
 package bench
 
-// MissionConfig describes a golden mission used for benchmarking.
+import "errors"
+
+// ErrFixtureBoundary is returned (wrapped) by Runner.Run when execution hit a
+// known-acceptable limitation of running the substrate from a unit-test
+// context — for example, a concern Template not registered in the minimal
+// bench harness. Tests use errors.Is(err, ErrFixtureBoundary) to distinguish
+// these expected boundary cases from real regressions; every other error
+// must fail the test.
+//
+// Surfaced by audit/scan-test-quality.md (the "silently buries per-mission
+// failures" finding) and the post-merge-audit-cleanup spec TASK-2.
+var ErrFixtureBoundary = errors.New("bench: fixture boundary (expected in unit-test context)")
+
+// MissionConfig describes a golden mission used for benchmarking. The JSON
+// tags let testdata/missions/*.json fixtures decode through the same struct
+// the legacy YAML loader uses.
 type MissionConfig struct {
-	ID          string   `yaml:"id"`
-	Title       string   `yaml:"title"`
-	Description string   `yaml:"description"`
-	Category    string   `yaml:"category"`  // greenfield, brownfield, bugfix, multi_branch, impossible, long_horizon, footgun
-	Difficulty  string   `yaml:"difficulty"` // easy, medium, hard
-	Intent      string   `yaml:"intent"`
-	Acceptance  []string `yaml:"acceptance_criteria"`
+	ID          string   `yaml:"id" json:"id"`
+	Title       string   `yaml:"title" json:"title"`
+	Description string   `yaml:"description" json:"description"`
+	Category    string   `yaml:"category" json:"category"`     // greenfield, brownfield, bugfix, multi_branch, impossible, long_horizon, footgun
+	Difficulty  string   `yaml:"difficulty" json:"difficulty"` // easy, medium, hard
+	Intent      string   `yaml:"intent" json:"intent"`
+	Acceptance  []string `yaml:"acceptance_criteria" json:"acceptance_criteria"`
 }
 
 // RunResult captures the outcome of executing a single golden mission.

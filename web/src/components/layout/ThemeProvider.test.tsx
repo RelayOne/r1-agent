@@ -23,6 +23,7 @@ import {
   THEME_STORAGE_KEY,
   ThemeProvider,
   useTheme,
+  useThemeOptional,
 } from "@/components/layout/ThemeProvider";
 
 // In-memory storage shim — avoids polluting jsdom localStorage.
@@ -150,5 +151,37 @@ describe("<ThemeProvider>", () => {
     } finally {
       console.error = err;
     }
+  });
+
+  it("useThemeOptional returns null outside provider (no throw)", () => {
+    let captured: ReturnType<typeof useThemeOptional> | undefined = undefined;
+    function OptionalProbe(): React.ReactElement {
+      captured = useThemeOptional();
+      return <div data-testid="opt-probe" />;
+    }
+    // Must NOT throw even with no provider — that's the contract.
+    render(<OptionalProbe />);
+    expect(captured).toBeNull();
+  });
+
+  it("useThemeOptional returns the same value as useTheme inside provider", () => {
+    const storage = makeStorage();
+    storage.setItem(THEME_STORAGE_KEY, "dark");
+    let throwingApi: ReturnType<typeof useTheme> | null = null;
+    let optionalApi: ReturnType<typeof useThemeOptional> = null;
+    function DualProbe(): React.ReactElement {
+      throwingApi = useTheme();
+      optionalApi = useThemeOptional();
+      return <div data-testid="dual-probe" />;
+    }
+    render(
+      <ThemeProvider storage={storage}>
+        <DualProbe />
+      </ThemeProvider>,
+    );
+    expect(optionalApi).not.toBeNull();
+    // Same context object, same theme value.
+    expect(optionalApi).toBe(throwingApi);
+    expect(optionalApi!.theme).toBe("dark");
   });
 });

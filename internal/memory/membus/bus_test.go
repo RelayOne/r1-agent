@@ -340,6 +340,76 @@ func TestRememberEmitsEvent(t *testing.T) {
 	}
 }
 
+// --- read_count increments (spec §5.4 step 3) ---
+
+// TestRecall_IncrementsReadCount verifies that each successful Recall of a
+// row dispatches a fire-and-forget UPDATE through the writer goroutine,
+// bumping read_count by exactly one per Recall hit. The test uses Close()
+// as the sync barrier — Close drains every queued writeRequest (insert
+// AND increment) and waits for the writer to exit, so once it returns the
+// SQLite row reflects every increment that was successfully enqueued.
+func TestRecall_IncrementsReadCount(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	b, err := NewBus(db, Options{})
+	if err != nil {
+		t.Fatalf("NewBus: %v", err)
+	}
+
+	// Seed exactly one row. Remember blocks on commit, so by the time
+	// this returns the row is durable in SQLite with read_count=0.
+	if err := b.Remember(ctx, RememberRequest{
+		Scope:   ScopeSession,
+		Key:     "rc-target",
+		Content: "read me thrice",
+		Author:  "system",
+	}); err != nil {
+		t.Fatalf("Remember: %v", err)
+	}
+
+	// Recall the row three times. Each Recall enqueues one fire-and-
+	// forget kindIncrement request through the writer channel. Channel
+	// capacity is 2048, so 3 enqueues never trigger the backpressure
+	// drop path under any realistic scheduling.
+	for i := 0; i < 3; i++ {
+		mems, err := b.Recall(ctx, RecallRequest{Scope: ScopeSession, Key: "rc-target"})
+		if err != nil {
+			t.Fatalf("Recall #%d: %v", i+1, err)
+		}
+		if len(mems) != 1 {
+			t.Fatalf("Recall #%d: rows = %d, want 1", i+1, len(mems))
+		}
+	}
+
+	// Close drains every in-flight increment through the writer's stop
+	// path and waits for writerLoop to return. Stronger than time.Sleep:
+	// this is a deterministic sync point on the goroutine's exit.
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Direct SQLite query — read_count is set inside the writer's tx so
+	// going through the public surface would obscure whether the column
+	// itself was updated vs. the in-memory Memory.ReadCount field.
+	var got int64
+	if err := db.QueryRowContext(ctx,
+		`SELECT read_count FROM stoke_memory_bus WHERE scope = ? AND key = ?`,
+		string(ScopeSession), "rc-target",
+	).Scan(&got); err != nil {
+		t.Fatalf("read_count query: %v", err)
+	}
+	if got != 3 {
+		t.Errorf("read_count = %d, want 3", got)
+	}
+
+	// Sanity: under this load the increment-drop counter must be zero.
+	// A non-zero value would mean the channel saturated, which is a real
+	// regression in capacity sizing or writer throughput, not flake.
+	if drops := b.IncrementDropCount(); drops != 0 {
+		t.Errorf("IncrementDropCount = %d, want 0", drops)
+	}
+}
+
 // --- helpers ---
 
 func mustRemember(t *testing.T, b *Bus, req RememberRequest) {

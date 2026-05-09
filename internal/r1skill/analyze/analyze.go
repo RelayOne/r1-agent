@@ -49,9 +49,30 @@ type CompileProof struct {
 
 // StageResult records one stage of the pipeline's outcome.
 type StageResult struct {
-	Stage       string       `json:"stage"`
-	Passed      bool         `json:"passed"`
-	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
+	Stage             string             `json:"stage"`
+	Passed            bool               `json:"passed"`
+	Diagnostics       []Diagnostic       `json:"diagnostics,omitempty"`
+	RuntimeAssertions []RuntimeAssertion `json:"runtime_assertions,omitempty"`
+}
+
+// RuntimeAssertion records a contract clause that the static analyzer
+// cannot decide and therefore must be checked at runtime. Stage 5
+// (stageContract) collects these for non-decidable contract kinds —
+// wall_time_lt, forall, exists — so the runtime can install the
+// matching guard around skill execution.
+//
+// Kind mirrors the originating ir.Contract.Kind ("wall_time_lt",
+// "forall", "exists"). Bound carries the numeric threshold for
+// wall_time_lt (seconds); zero for forall/exists. Predicate carries
+// the JSON-encoded predicate text for forall/exists; empty for
+// wall_time_lt. SourceLocation is a path-style hint pointing back at
+// the skill IR (e.g. "contracts[0]") so the runtime injector and
+// downstream tooling can attribute failures.
+type RuntimeAssertion struct {
+	Kind           string  `json:"kind"`
+	Bound          float64 `json:"bound,omitempty"`
+	Predicate      string  `json:"predicate,omitempty"`
+	SourceLocation string  `json:"source_location,omitempty"`
 }
 
 // Diagnostic is one finding from a stage. Levels: "error" halts

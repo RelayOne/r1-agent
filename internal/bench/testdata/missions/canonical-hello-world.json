@@ -1,0 +1,13 @@
+{
+  "id": "canonical-hello-world",
+  "title": "Canonical Hello World",
+  "description": "Inert canonical mission used by golden_test.go to keep the bench-regression suite from skipping in CI. Echoes 'hello world' — no external systems, no LLM calls, no filesystem mutations beyond the bench's own temp ledger/bus.",
+  "category": "greenfield",
+  "difficulty": "easy",
+  "intent": "echo hello world",
+  "acceptance_criteria": [
+    "Mission loads via Runner.LoadMission without error",
+    "Runner.Run completes without ErrFixtureBoundary",
+    "Resulting RunResult.LedgerCorrupted is false"
+  ]
+}
