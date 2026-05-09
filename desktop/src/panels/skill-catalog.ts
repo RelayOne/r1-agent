@@ -17,6 +17,7 @@
 // `types/ipc.d.ts`.
 
 import { invokeStub } from "../ipc-stub";
+import { toast } from "../lib/toast";
 import type {
   SkillExample,
   SkillInstallResult,
@@ -207,7 +208,7 @@ async function handleInstallPack(
   btn.disabled = false;
   if (!result.ok) {
     btn.textContent = `Install Actium Studio pack (${ACTIUM_SKILL_COUNT} skills)`;
-    alert("Pack install failed");
+    toast.error("Pack install failed");
     return;
   }
   for (const skill of state.skills) {
@@ -386,7 +387,7 @@ async function handleInstall(
     { id },
   );
   if (!result.ok) {
-    alert(`Install failed for ${id}`);
+    toast.error(`Install failed for ${id}`);
     return;
   }
   const skill = state.skills.find((s) => s.id === id);
@@ -409,7 +410,7 @@ async function handleUninstall(
     { id },
   );
   if (!result.ok) {
-    alert(`Uninstall failed for ${id}`);
+    toast.error(`Uninstall failed for ${id}`);
     return;
   }
   const skill = state.skills.find((s) => s.id === id);
