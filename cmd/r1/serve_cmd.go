@@ -266,11 +266,12 @@ func runServeLoop(opts serveOptions) {
 	// session so the WS handler can route session-id-bearing JSON-RPC
 	// frames to the right Session via HubHandler.lookupSession.
 	//
-	// We tolerate hub-construction errors by logging and skipping the
-	// mount — the rest of the daemon (dashboard, mission API, optional
-	// agent/queue routes) keeps working. A missing JSON-RPC endpoint
-	// is a degraded-but-running mode rather than a fatal one because
-	// existing scripts may still rely on the dashboard alone.
+	// We tolerate hub-construction errors by logging the failure and
+	// leaving the JSON-RPC endpoint unmounted — the rest of the daemon
+	// (dashboard, mission API, optional agent/queue routes) keeps
+	// working. A missing JSON-RPC endpoint is a degraded-but-running
+	// mode rather than a fatal one because existing scripts may still
+	// rely on the dashboard alone.
 	if muxAlias != nil {
 		hub, hubErr := sessionhub.NewHub()
 		if hubErr != nil {
