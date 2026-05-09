@@ -35,12 +35,16 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/RelayOne/r1/internal/agentserve"
 	"github.com/RelayOne/r1/internal/daemon"
 	"github.com/RelayOne/r1/internal/daemonlock"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/server"
+	"github.com/RelayOne/r1/internal/server/jsonrpc"
+	"github.com/RelayOne/r1/internal/server/sessionhub"
+	"github.com/RelayOne/r1/internal/server/ws"
 )
 
 // serveOptions captures the parsed CLI flags for `r1 serve`. Returned
@@ -250,6 +254,42 @@ func runServeLoop(opts serveOptions) {
 	setSingleSessionMode(opts.SingleSession)
 	if opts.SingleSession {
 		fmt.Fprintln(os.Stderr, "single-session mode: enabled")
+	}
+
+	// JSON-RPC over WebSocket: construct the SessionHub-backed handler,
+	// wire it onto a fresh Dispatcher, and mount the WS endpoint at
+	// /v1/rpc. This is the surface external clients (r1 ctl, the
+	// desktop app, headless integrations) call when they invoke
+	// session.start / session.cancel / etc.
+	//
+	// The hub is per-daemon: a single SessionHub registers every live
+	// session so the WS handler can route session-id-bearing JSON-RPC
+	// frames to the right Session via HubHandler.lookupSession.
+	//
+	// We tolerate hub-construction errors by logging and skipping the
+	// mount — the rest of the daemon (dashboard, mission API, optional
+	// agent/queue routes) keeps working. A missing JSON-RPC endpoint
+	// is a degraded-but-running mode rather than a fatal one because
+	// existing scripts may still rely on the dashboard alone.
+	if muxAlias != nil {
+		hub, hubErr := sessionhub.NewHub()
+		if hubErr != nil {
+			fmt.Fprintf(os.Stderr, "warn: JSON-RPC endpoint disabled (hub init: %v)\n", hubErr)
+		} else {
+			hub.SetSingleSession(opts.SingleSession)
+			rpcHandler := jsonrpc.NewHubHandler(hub)
+			rpcHandler.PID = os.Getpid()
+			rpcHandler.Version = version
+			rpcHandler.StartedAt = time.Now()
+			rpcHandler.HTTPPort = port
+
+			disp := jsonrpc.NewDispatcher()
+			jsonrpc.RegisterDaemonAPI(disp, rpcHandler)
+
+			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
+			muxAlias.Handle("/v1/rpc", wsHandler)
+			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
