@@ -171,8 +171,28 @@ jobs:
           # registry and fail with E404.
           tauri-driver --port=$R1_TAURI_DRIVER_PORT &
           DRIVER_PID=$!
-          # Give tauri-driver 2 s to bind.
-          sleep 2
+          # Poll /status until tauri-driver is ready instead of a fixed
+          # 2s sleep — flaked under load. Bail after ~10s of attempts so
+          # a misconfigured driver fails fast rather than running tests
+          # against nothing. Closes audit/scan-ci-infra.md
+          # desktop-augmentation hardcoded-sleep finding.
+          DRIVER_URL="http://127.0.0.1:${R1_TAURI_DRIVER_PORT}/status"
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fs --max-time 1 "$DRIVER_URL" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          if ! curl -fs --max-time 1 "$DRIVER_URL" >/dev/null 2>&1; then
+            echo "tauri-driver failed to bind within 10s" >&2
+            kill $DRIVER_PID 2>/dev/null || true
+            exit 1
+          fi
           npx playwright test
-          kill $DRIVER_PID || true
+          PLAYWRIGHT_EXIT=$?
+          kill $DRIVER_PID 2>/dev/null || true
+          # Wait briefly so the driver gets a chance to drain its
+          # connection pool before the runner tears down.
+          wait $DRIVER_PID 2>/dev/null || true
+          exit $PLAYWRIGHT_EXIT
         shell: bash
