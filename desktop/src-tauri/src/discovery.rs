@@ -10,14 +10,11 @@
 // `discover_or_spawn` is what `tauri::Builder::setup` calls; the same
 // function backs Settings → "Reconnect daemon".
 //
-// NOTE: this module is built and exported but not yet called from
-// main.rs — current shipping design spawns one r1 subprocess per
-// session via SubprocessManager (in subprocess.rs). The
-// multi-session-daemon path is scoped for a future revision of
-// spec 7. The #[allow(dead_code)] below keeps the compiler happy
-// under -D warnings until the wiring lands; remove the attribute
-// when discover_or_spawn() is wired into Tauri's setup hook.
-#![allow(dead_code)] // tracked: GH issue #145 (wire into Tauri setup())
+// `discover_or_spawn` and `install_command_for_host_os` are now both
+// reachable from production code paths (main.rs setup() and the
+// `daemon_install_command` Tauri verb respectively); the remaining
+// module-internal helpers are reached transitively via those entry
+// points (audit/scan-rust-stubs.md item #10).
 //
 // Public API (per spec §5):
 //
@@ -92,6 +89,10 @@ pub struct DaemonHandle {
     pub url: String,
     pub token: String,
     pub mode: TransportMode,
+    // `child` is held to keep the sidecar alive for the desktop's
+    // lifetime; explicit reads land in app-shutdown SIGTERM path
+    // (audit/scan-rust-stubs.md item #10).
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by future shutdown handler
     pub child: Option<CommandChild>,
 }
 
