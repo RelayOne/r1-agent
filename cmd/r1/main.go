@@ -671,9 +671,19 @@ func main() {
 		os.Exit(runOneShotCmd(os.Args[2:], os.Stdout, os.Stderr))
 	case "tui", "--tui", "shell":
 		launchShell(os.Args[2:])
-	case "chat-interactive":
+	case "chat-interactive", "chat":
+		// `r1 chat` is the README-promised front-door command: an
+		// interactive chat that, when the daemon is running, talks
+		// to it; otherwise spawns the in-process Claude/Codex CLI
+		// flow (today's behavior). Daemon-side session.start /
+		// session.send handlers are still stubs (see
+		// internal/server/jsonrpc/daemonapi.go DaemonSessionStart —
+		// only a test fake exists), so for now `chat` and
+		// `chat-interactive` resolve to the same in-process loop.
+		// The daemon-backed wiring is tracked as a follow-up to
+		// specs/r1d-server.md.
 		if err := runChatInteractiveCmd(os.Args[2:]); err != nil {
-			fatal("chat-interactive: %v", err)
+			fatal("chat: %v", err)
 		}
 	case "run":
 		runCmdDispatch(os.Args[2:])
@@ -6959,6 +6969,8 @@ COMMANDS:
   (no args)       Launch the line REPL with smart defaults
   tui             Launch the full-screen Bubble Tea shell (command input +
                   live mission monitoring). Falls back to line REPL if no TTY.
+  chat            Open an interactive chat (alias for chat-interactive;
+                  daemon-backed wiring is a follow-up to specs/r1d-server.md)
   chat-interactive Start the interactive chat workflow shell
   run             Execute single task: PLAN -> EXECUTE -> VERIFY -> COMMIT
   build           Execute multi-task plan with parallel agents
