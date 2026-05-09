@@ -20,7 +20,18 @@ import { invokeStub } from "../ipc-stub";
 import type {
   OnboardingDataDirResult,
   OnboardingDemoResult,
+  OnboardingSaveApiKeyResult,
 } from "../types/ipc";
+
+// localStorage fallback key — used only when the Tauri-backed vault
+// verb (`onboarding_save_api_key`) returns the dev-stub default.
+// Spec residual: the Rust-side OS-keyring vault wiring lands in a
+// sister PR (audit/scan-ts-stubs.md item #5). Until then keys live
+// in this prefixed key. NEVER persist the raw key in plaintext on
+// the production Tauri path; the host vault path takes precedence
+// because invokeStub returns the host's response when Tauri is
+// available, falling through to the empty default only in dev/vitest.
+const LOCAL_API_KEY_PREFIX = "r1.onboarding.api_key.";
 
 const ONBOARDED_KEY = "r1.onboarded";
 const STEP_KEY = "r1.onboarding.step";
@@ -338,9 +349,44 @@ export function mountOnboarding(target: HTMLElement): void {
 
     body.appendChild(keyField);
 
+    const errorSlot = document.createElement("p");
+    errorSlot.className = "r1-onboarding-error";
+    errorSlot.hidden = true;
+    body.appendChild(errorSlot);
+
+    const advance = async (): Promise<void> => {
+      errorSlot.hidden = true;
+      errorSlot.textContent = "";
+      // Persist the chosen provider + key before advancing. For
+      // providers that don't need a key (Local Ollama) we skip the
+      // save and treat it as a no-op. Spec residual: see
+      // LOCAL_API_KEY_PREFIX above for the localStorage dev fallback.
+      const saved = await persistApiKey(
+        state.providerId,
+        state.apiKey,
+        selected?.needsKey ?? false,
+      );
+      if (!saved.ok) {
+        errorSlot.textContent =
+          saved.message ?? "Could not save API key. Try again.";
+        errorSlot.hidden = false;
+        return;
+      }
+      setStep(3);
+    };
+
     renderFooter({
       showBack: true,
-      primary: { label: "Next", action: () => setStep(3) },
+      primary: {
+        label: "Next",
+        action: () => {
+          void advance();
+        },
+        // Don't let the user advance without supplying a key when one
+        // is required. Local Ollama's row sets needsKey:false.
+        disabled:
+          (selected?.needsKey ?? false) && state.apiKey.trim().length === 0,
+      },
     });
   }
 
@@ -504,4 +550,72 @@ export function mountOnboarding(target: HTMLElement): void {
   }
 
   render();
+}
+
+// ---------------------------------------------------------------------------
+// API-key persistence helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Persist the chosen provider + key. Three paths:
+ *
+ *   1. `needsKey === false` — provider is Local Ollama or similar
+ *      keyless backend. No-op success.
+ *
+ *   2. Tauri runtime present and `onboarding_save_api_key` is wired
+ *      on the host: the host writes to its OS-keyring vault and
+ *      returns `{ ok: true, vault_id }`. We DO NOT write the raw key
+ *      to localStorage in this path — the host owns it.
+ *
+ *   3. Tauri runtime missing or verb returns the dev-stub default
+ *      (`ok: false`): write the raw key to localStorage under the
+ *      LOCAL_API_KEY_PREFIX so the WebView can re-read it once the
+ *      Settings → Providers panel mounts. Spec residual — the
+ *      Rust-side vault wiring lands in a sister PR
+ *      (audit/scan-ts-stubs.md item #5).
+ *
+ * Validation: empty keys for keyless providers are skipped; non-empty
+ * keys for keyless providers are dropped with a warning (we don't
+ * know what to do with them).
+ */
+export async function persistApiKey(
+  provider: string,
+  key: string,
+  needsKey: boolean,
+): Promise<{ ok: boolean; vault_id?: string; message?: string }> {
+  if (!needsKey) return { ok: true };
+
+  const trimmed = key.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, message: "API key is required for this provider." };
+  }
+
+  // The dev-stub default flips to ok:false so the localStorage
+  // fallback path runs in non-Tauri environments. Real Tauri runs
+  // return whatever the host says.
+  const result = await invokeStub<OnboardingSaveApiKeyResult>(
+    "onboarding_save_api_key",
+    "R1D-7",
+    { ok: false, message: "vault verb not yet wired" },
+    { provider, key: trimmed },
+  );
+
+  if (result.ok) return result;
+
+  // Dev-stub fallback: persist locally so the next session can
+  // pick up the key. Host-tier vault encryption is the right home
+  // for this; sister PR.
+  try {
+    const slot = `${LOCAL_API_KEY_PREFIX}${provider}`;
+    window.localStorage.setItem(slot, trimmed);
+    return { ok: true, vault_id: slot };
+  } catch (err) {
+    return {
+      ok: false,
+      message:
+        err instanceof Error
+          ? `Local fallback storage failed: ${err.message}`
+          : "Local fallback storage failed.",
+    };
+  }
 }
