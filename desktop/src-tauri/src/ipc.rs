@@ -621,16 +621,28 @@ pub struct SessionLanesSubscribeResult {
     pub subscription_id: String,
 }
 
-/// `session.lanes.subscribe` — register a subscription. The full
-/// Channel<LaneEvent>-backed body lands when the lanes::LanesState is
-/// wired into managed state; for now this verb registers the
-/// subscription id round-trip to the daemon so the wire shape is
-/// already exercised.
+/// `session.lanes.subscribe` — register a subscription. Forwards every
+/// `LaneEvent` the daemon emits for this session through the
+/// `tauri::ipc::Channel<LaneEvent>` the WebView passed in (`on_event`
+/// kwarg). The host-side LanesState owns the per-subscription
+/// forwarder so `session_lanes_unsubscribe` and host-side teardown
+/// (window close, daemon disconnect) can drop it deterministically.
+///
+/// Wired per audit/scan-rust-stubs.md item #2: the previous body
+/// dropped the Channel handle, so no LaneEvent ever reached the
+/// WebView even though the verb returned a `subscription_id`.
 #[tauri::command]
 pub async fn session_lanes_subscribe(
     params: SessionLanesSubscribeParams,
+    on_event: tauri::ipc::Channel<crate::lanes::LaneEvent>,
     mgr: State<'_, SubprocessManager>,
+    state: State<'_, crate::lanes::LanesState>,
 ) -> IpcResult<SessionLanesSubscribeResult> {
+    // Step 1: round-trip to the daemon so it starts pushing lane
+    // events for this session over its existing event bus. The result
+    // carries the daemon-side subscription id; we use it as the
+    // host-side registry key so unsubscribe routing works for both
+    // host-fast-path and daemon-side drops.
     let val = mgr
         .rpc_call(
             &params.session_id,
@@ -638,7 +650,25 @@ pub async fn session_lanes_subscribe(
             serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
         )
         .await?;
-    from_val(val)
+    let result: SessionLanesSubscribeResult = from_val(val)?;
+
+    // Step 2: register a host-side LaneSubscription that forwards
+    // every LaneEvent emitted by the daemon's session bus to the
+    // WebView's Channel. Capacity 1024 matches the per-channel ring
+    // budget called out in spec desktop-cortex-augmentation §12 R3.
+    let sink: std::sync::Arc<dyn crate::lanes::LaneSink> = std::sync::Arc::new(
+        crate::lanes::ChannelSink::new(on_event),
+    );
+    let subscription = crate::lanes::LaneSubscription::new(
+        params.session_id.clone(),
+        sink,
+        1024,
+    );
+    state
+        .register(result.subscription_id.clone(), subscription)
+        .await;
+
+    Ok(result)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
