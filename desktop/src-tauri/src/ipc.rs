@@ -880,22 +880,43 @@ pub struct AppOpenFolderPickerResult {
     pub path: Option<String>,
 }
 
-/// `app.open_folder_picker` — open the OS folder picker. Routes
-/// through tauri-plugin-dialog from the WebView side; this Rust
-/// command exists so call-sites have one symmetric surface across
-/// both transport modes.
+/// `app.open_folder_picker` — open the native OS folder picker.
+/// Returns `Some(path)` on selection, `None` on cancel.
+///
+/// Wired per audit/scan-rust-stubs.md item #3: previously returned
+/// `None` unconditionally, so any caller round-tripping folder
+/// selection through Rust got `null` and the daemon never received
+/// a workdir. Delegates to tauri-plugin-dialog's `pick_folder`
+/// callback API; we adapt that to async via a oneshot channel so the
+/// command can stay `async fn`.
 #[tauri::command]
 pub async fn app_open_folder_picker(
-    _params: AppOpenFolderPickerParams,
-    _app: AppHandle,
+    params: AppOpenFolderPickerParams,
+    app: AppHandle,
 ) -> IpcResult<AppOpenFolderPickerResult> {
-    // Folder picking via the dialog plugin happens on the JS side
-    // (tauri-plugin-dialog `open()`); this verb is the host-side
-    // surface for callers that prefer to invoke a Rust command. The
-    // body stays a noop returning `None` until item 28 wires the
-    // wizard's folder picker, after which it'll delegate to the
-    // dialog plugin's Rust API.
-    Ok(AppOpenFolderPickerResult { path: None })
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+
+    let mut builder = app.dialog().file();
+    if let Some(title) = params.title.as_deref() {
+        builder = builder.set_title(title);
+    }
+    builder.pick_folder(move |maybe_path| {
+        // Convert FilePath to a string. FilePath on desktop wraps a
+        // real PathBuf; we surface the absolute path string.
+        let p = maybe_path.and_then(|fp| {
+            fp.into_path()
+                .ok()
+                .and_then(|pb| pb.into_os_string().into_string().ok())
+        });
+        let _ = tx.send(p);
+    });
+
+    let path = rx.await.map_err(|_| {
+        IpcError::internal("folder picker callback dropped before completing")
+    })?;
+    Ok(AppOpenFolderPickerResult { path })
 }
 
 // ---------------------------------------------------------------------------
