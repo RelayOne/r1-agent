@@ -8,6 +8,7 @@
 // 5s interval until the panel is detached.
 
 import { invokeStub } from "../ipc-stub";
+import { toast } from "../lib/toast";
 import type {
   ApprovalDecision,
   ApprovalOkResult,
@@ -116,7 +117,7 @@ async function handleDecide(root: HTMLElement, state: PanelState, decision: Appr
     decision as unknown as Record<string, unknown>,
   );
   if (!result.ok) {
-    alert(`Decision failed for ${decision.id}`);
+    toast.error(`Decision failed for ${decision.id}`);
     return;
   }
   await refresh(root, state);

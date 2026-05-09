@@ -13,6 +13,7 @@
 // memory_delete. Schemas live in `types/ipc.d.ts`.
 
 import { invokeStub } from "../ipc-stub";
+import { toast } from "../lib/toast";
 import { ALL_MEMORY_SCOPES } from "../types/ipc-const";
 import type {
   MemoryDeleteResult,
@@ -371,11 +372,11 @@ async function handleImport(
     const parsed = JSON.parse(text);
     rows = Array.isArray(parsed) ? parsed : (parsed?.rows ?? []);
   } catch {
-    alert("Import failed: invalid JSON");
+    toast.error("Import failed: invalid JSON");
     return;
   }
   if (!Array.isArray(rows) || rows.length === 0) {
-    alert("Import file has no rows");
+    toast.warn("Import file has no rows");
     return;
   }
   const result = await invokeStub<MemoryImportResult>(
@@ -497,7 +498,7 @@ async function handleDelete(
     { scope: state.active, key },
   );
   if (!result.ok) {
-    alert(`Delete failed for ${key}`);
+    toast.error(`Delete failed for ${key}`);
     return;
   }
   const s = state.byScope.get(state.active);
