@@ -32,12 +32,32 @@
 //
 // The actual constructor used in production is therefore:
 //
-//	NewMemoryCuratorLobe(client, escalate, mem, privacy, ws, hubBus)
+//	NewMemoryCuratorLobe(client, escalate, mem, privacy, ws, hubBus, semaphore)
 //
 // The "trigger every 5 turns or on task.completed; ask Haiku; auto-apply
 // fact-category writes; queue everything else for user confirm; append
 // each auto-write to the JSONL audit log; respect the private-message
 // taxonomy" contract from the spec is preserved verbatim.
+//
+// Per-call slot acquisition
+// -------------------------
+//
+// MemoryCuratorLobe drives its ChatStream call from two paths:
+//
+//  1. The per-Run cadence (Run -> fireTrigger -> ... -> haikuCall)
+//     runs inside cortex.LobeRunner.runOnce, which already wraps
+//     KindLLM Run invocations in the runner-level
+//     LobeSemaphore Acquire/Release.
+//
+//  2. The EventTaskCompleted hub subscriber path
+//     (handleTaskCompleted -> fireTrigger -> ...) runs in the bus's
+//     goroutine and bypasses the runner entirely.
+//
+// To keep the slot cap honest WITHOUT double-acquiring on path 1, the
+// per-call MustAcquire/release pair lives in handleTaskCompleted (the
+// bus-path entry point) — not in haikuCall, which would double-gate
+// path 1 and could deadlock with cap=1. A nil semaphore is a no-op
+// (legacy tests). See internal/cortex/lobes/llm/slot.go.
 package memorycurator
 
 import (
@@ -100,6 +120,16 @@ type MemoryCuratorLobe struct {
 	// only Run/constructor shape.
 	hubBus *hub.Bus
 
+	// semaphore gates the EventTaskCompleted bus-subscriber path. The
+	// subscriber callback runs in the bus's goroutine and bypasses
+	// LobeRunner.runOnce, so the Lobe takes the slot itself around
+	// fireTrigger inside handleTaskCompleted. The cadence path
+	// (Run -> fireTrigger) is gated by the runner instead — this
+	// field is NOT consulted there to avoid double-acquiring with
+	// cap=1. May be nil; a nil semaphore is a no-op (legacy tests).
+	// See internal/cortex/lobes/llm/slot.go.
+	semaphore llm.SlotAcquirer
+
 	// turnCount counts the number of Run() ticks observed. It drives
 	// the every-5th-tick cadence in TASK-29. Stored atomically so tests
 	// can inspect it without taking a lock.
@@ -146,6 +176,14 @@ type MemoryCuratorLobe struct {
 //     be nil; the Lobe simply skips subscription registration and the
 //     event-driven trigger never fires (the every-5th-turn cadence
 //     still works via Run).
+//   - semaphore: per-call LLM slot acquirer (typically the cortex shared
+//     LobeSemaphore via its Acquire/Release methods). Wrapped around
+//     fireTrigger inside handleTaskCompleted ONLY — the bus-subscriber
+//     path bypasses the cortex LobeRunner's outer Acquire and needs
+//     its own gate. The cadence path (Run -> fireTrigger) is gated
+//     by the runner instead, so this field is not consulted there.
+//     A nil semaphore is permitted and treated as a no-op (legacy
+//     tests). See internal/cortex/lobes/llm/slot.go.
 func NewMemoryCuratorLobe(
 	client provider.Provider,
 	escalate llm.Escalator,
@@ -153,14 +191,16 @@ func NewMemoryCuratorLobe(
 	privacy PrivacyConfig,
 	ws *cortex.Workspace,
 	hubBus *hub.Bus,
+	semaphore llm.SlotAcquirer,
 ) *MemoryCuratorLobe {
 	l := &MemoryCuratorLobe{
-		client:   client,
-		escalate: escalate,
-		mem:      mem,
-		privacy:  privacy,
-		ws:       ws,
-		hubBus:   hubBus,
+		client:    client,
+		escalate:  escalate,
+		mem:       mem,
+		privacy:   privacy,
+		ws:        ws,
+		hubBus:    hubBus,
+		semaphore: semaphore,
 	}
 	// Default onTrigger is the production curation pipeline:
 	// privacy gate + haikuCall + per-candidate auto-apply /
