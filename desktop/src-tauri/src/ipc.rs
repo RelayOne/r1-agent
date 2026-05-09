@@ -304,12 +304,16 @@ pub async fn cost_get_current(
     params: CostGetCurrentParams,
     mgr: State<'_, SubprocessManager>,
 ) -> IpcResult<CostSnapshot> {
-    let sid = params
-        .session_id
-        .as_deref()
-        .map(|s| s.to_string())
-        .or_else(|| futures_or_sync_any_session_id_sync(&mgr))
-        .ok_or_else(|| IpcError::not_found("no active session for cost query"))?;
+    // Per audit/scan-rust-stubs.md item #6: fall back to the most
+    // recent active session when caller omits `session_id`. The
+    // previous helper returned `None` unconditionally, so an explicit
+    // `not_found` fired even when sessions were live.
+    let sid = match params.session_id.clone() {
+        Some(s) => s,
+        None => any_session_id_maybe(&mgr)
+            .await
+            .ok_or_else(|| IpcError::not_found("no active session for cost query"))?,
+    };
     let val = mgr
         .rpc_call(
             &sid,
@@ -325,12 +329,12 @@ pub async fn cost_get_history(
     params: CostGetHistoryParams,
     mgr: State<'_, SubprocessManager>,
 ) -> IpcResult<CostHistoryResult> {
-    let sid = params
-        .session_id
-        .as_deref()
-        .map(|s| s.to_string())
-        .or_else(|| futures_or_sync_any_session_id_sync(&mgr))
-        .ok_or_else(|| IpcError::not_found("no active session for cost history"))?;
+    let sid = match params.session_id.clone() {
+        Some(s) => s,
+        None => any_session_id_maybe(&mgr)
+            .await
+            .ok_or_else(|| IpcError::not_found("no active session for cost history"))?,
+    };
     let val = mgr
         .rpc_call(
             &sid,
@@ -958,14 +962,6 @@ async fn any_session_id(mgr: &SubprocessManager) -> IpcResult<String> {
 
 async fn any_session_id_maybe(mgr: &SubprocessManager) -> Option<String> {
     mgr.first_session_id().await
-}
-
-/// Sync peek at the session map (used for optional session_id fields).
-/// Returns None when no session active.
-fn futures_or_sync_any_session_id_sync(_mgr: &SubprocessManager) -> Option<String> {
-    // We can't easily call async from a sync context here.
-    // The callers that use this already have the session_id in params if needed.
-    None
 }
 
 // ---------------------------------------------------------------------------
