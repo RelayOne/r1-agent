@@ -2,9 +2,32 @@ package bench
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
+
+// concernTemplateMissingMarker is the prefix of the harness error that
+// indicates the concern Builder has no template for the role/face the
+// bench's spawned stance asks for. This is a known limitation of running
+// the full substrate from a unit test (bench wires its own ledger + bus
+// + concern.Builder but does not register concern templates because the
+// bench package would otherwise import internal/concern/templates,
+// which transitively pulls in heavyweight dependencies that bloat
+// every CI run that touches this package).
+//
+// Tests below treat THIS specific error as a USER-SKIPPED scenario per
+// CLAUDE.md "ALL failures are findings"; every OTHER error fails the
+// test. Surfaced by audit/scan-go-stubs.md item #10.
+const concernTemplateMissingMarker = "concern: no template for"
+
+// missingTemplate reports whether err is the known "no concern template
+// registered" failure that the bench can't recover from on its own. Any
+// other error signals a real regression and must fail the test rather
+// than silently skip.
+func missingTemplate(err error) bool {
+	return err != nil && strings.Contains(err.Error(), concernTemplateMissingMarker)
+}
 
 // TestGoldenBaseline runs all golden missions and asserts no regressions
 // against known baseline metrics. This is the CI gate for bench regressions.
@@ -27,12 +50,14 @@ func TestGoldenBaseline(t *testing.T) {
 		t.Run(missions[i].ID, func(t *testing.T) {
 			res, err := r.Run(ctx, &missions[i])
 			if err != nil {
-				// Some golden missions may fail if concern templates are not
-				// registered (expected in unit test context without full harness).
-				// This is not a regression — it's a known limitation of running
-				// the full substrate in isolation.
-				t.Skipf("Run(%s): %v (expected in unit test context)", missions[i].ID, err)
-				return
+				if missingTemplate(err) {
+					// Known limitation — concern templates are not registered
+					// in this bench unit-test context. Anything else falls
+					// through to t.Fatalf below as a real regression.
+					t.Skipf("Run(%s): %v (known: concern templates not registered for bench unit tests)", missions[i].ID, err)
+					return
+				}
+				t.Fatalf("Run(%s): %v", missions[i].ID, err)
 			}
 			results = append(results, *res)
 
@@ -86,8 +111,11 @@ func TestGoldenNonRegression(t *testing.T) {
 		t.Run(missions[i].ID, func(t *testing.T) {
 			current, err := r.Run(ctx, &missions[i])
 			if err != nil {
-				t.Skipf("Run(%s): %v (expected in unit test context)", missions[i].ID, err)
-				return
+				if missingTemplate(err) {
+					t.Skipf("Run(%s): %v (known: concern templates not registered for bench unit tests)", missions[i].ID, err)
+					return
+				}
+				t.Fatalf("Run(%s): %v", missions[i].ID, err)
 			}
 
 			baseline, ok := baselines[missions[i].ID]

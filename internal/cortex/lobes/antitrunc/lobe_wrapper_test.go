@@ -6,38 +6,66 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/RelayOne/r1/internal/agentloop"
+	"github.com/RelayOne/r1/internal/cortex"
 )
 
+// historyOf wraps a list of plain assistant strings into the
+// cortex.LobeInput shape AntiTruncLobe.Run consumes. Mirrors the
+// agentloop.Message construction the production cortex emits but is
+// scoped to assistant-only text content blocks because that is the
+// subset the Detector consumes.
+func historyOf(turns ...string) []agentloop.Message {
+	out := make([]agentloop.Message, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, agentloop.Message{
+			Role:    "assistant",
+			Content: []agentloop.ContentBlock{{Type: "text", Text: t}},
+		})
+	}
+	return out
+}
+
+// criticalNotes returns the snapshot of every SevCritical Note in the
+// workspace. The cortex.Workspace API exposes UnresolvedCritical which
+// returns the same shape (it filters by Severity == SevCritical AND no
+// resolving Note); for our tests no resolution Notes are ever published
+// so the two are equivalent.
+func criticalNotes(ws *cortex.Workspace) []cortex.Note {
+	return ws.UnresolvedCritical()
+}
+
 func TestLobe_NoFindings_NoNotes(t *testing.T) {
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	l := NewAntiTruncLobe(ws, "", "")
-	if err := l.Run(context.Background(), LobeInput{
-		History: []string{"build green; tests pass"},
+	if err := l.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("build green; tests pass"),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(ws.Notes()); got != 0 {
-		t.Errorf("expected zero Notes, got %d: %+v", got, ws.Notes())
+	if got := len(ws.Snapshot()); got != 0 {
+		t.Errorf("expected zero Notes, got %d: %+v", got, ws.Snapshot())
 	}
 }
 
 func TestLobe_TruncationPhrase_OneCriticalNote(t *testing.T) {
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	l := NewAntiTruncLobe(ws, "", "")
-	if err := l.Run(context.Background(), LobeInput{
-		History: []string{"i'll stop here for now"},
+	if err := l.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("i'll stop here for now"),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	notes := ws.CriticalNotes()
+	notes := criticalNotes(ws)
 	if len(notes) != 1 {
 		t.Fatalf("expected 1 critical Note, got %d: %+v", len(notes), notes)
 	}
-	if notes[0].Source != "antitrunc" {
-		t.Errorf("Source = %q, want antitrunc", notes[0].Source)
+	if notes[0].LobeID != "antitrunc" {
+		t.Errorf("LobeID = %q, want antitrunc", notes[0].LobeID)
 	}
-	if !strings.Contains(notes[0].Text, "premature_stop_let_me") {
-		t.Errorf("Text missing phrase ID: %q", notes[0].Text)
+	if !strings.Contains(notes[0].Title, "premature_stop_let_me") {
+		t.Errorf("Title missing phrase ID: %q", notes[0].Title)
 	}
 }
 
@@ -47,84 +75,58 @@ func TestLobe_UncheckedPlan_OneCriticalNote(t *testing.T) {
 	if err := os.WriteFile(plan, []byte("- [x] one\n- [ ] two\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	l := NewAntiTruncLobe(ws, plan, "")
-	if err := l.Run(context.Background(), LobeInput{}); err != nil {
+	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatal(err)
 	}
-	notes := ws.CriticalNotes()
+	notes := criticalNotes(ws)
 	if len(notes) != 1 {
 		t.Fatalf("expected 1 critical Note on partial plan, got %d", len(notes))
 	}
-	if !strings.Contains(notes[0].Detail, "1/2 unchecked") {
-		t.Errorf("Detail missing count: %q", notes[0].Detail)
+	if !strings.Contains(notes[0].Body, "1/2 unchecked") {
+		t.Errorf("Body missing count: %q", notes[0].Body)
 	}
 }
 
 func TestLobe_FalseCompletionRecentCommit_OneCriticalNote(t *testing.T) {
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	l := NewAntiTruncLobe(ws, "", "").WithGitLog(func(n int) ([]string, error) {
 		return []string{"spec 12 done"}, nil
 	})
-	if err := l.Run(context.Background(), LobeInput{}); err != nil {
+	if err := l.Run(context.Background(), cortex.LobeInput{}); err != nil {
 		t.Fatal(err)
 	}
-	notes := ws.CriticalNotes()
+	notes := criticalNotes(ws)
 	if len(notes) != 1 {
 		t.Fatalf("expected 1 critical Note from commit-body, got %d", len(notes))
 	}
-	if !strings.Contains(notes[0].Text, "false completion") {
-		t.Errorf("Text missing 'false completion': %q", notes[0].Text)
+	if !strings.Contains(notes[0].Title, "false completion") {
+		t.Errorf("Title missing 'false completion': %q", notes[0].Title)
 	}
 }
 
-func TestLobe_NameAndKind(t *testing.T) {
+func TestLobe_IDAndKind(t *testing.T) {
 	l := NewAntiTruncLobe(nil, "", "")
-	if l.Name() != "antitrunc" {
-		t.Errorf("Name = %q, want antitrunc", l.Name())
+	if l.ID() != "antitrunc" {
+		t.Errorf("ID = %q, want antitrunc", l.ID())
 	}
-	if l.Kind() != KindDeterministic {
+	if l.Kind() != cortex.KindDeterministic {
 		t.Errorf("Kind = %v, want KindDeterministic", l.Kind())
 	}
-	if l.Kind().String() != "deterministic" {
-		t.Errorf("Kind.String = %q, want deterministic", l.Kind().String())
+	if l.Description() == "" {
+		t.Errorf("Description() returned empty")
 	}
 }
 
 func TestLobe_NilWorkspace_NoOp(t *testing.T) {
 	l := NewAntiTruncLobe(nil, "", "")
 	// Must not panic, must not error, even with truncation phrase.
-	err := l.Run(context.Background(), LobeInput{
-		History: []string{"i'll defer the rest"},
+	err := l.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("i'll defer the rest"),
 	})
 	if err != nil {
 		t.Errorf("nil-workspace run errored: %v", err)
-	}
-}
-
-func TestNoteSeverity_String(t *testing.T) {
-	cases := map[NoteSeverity]string{
-		SevInfo:     "info",
-		SevWarning:  "warning",
-		SevCritical: "critical",
-	}
-	for sev, want := range cases {
-		if got := sev.String(); got != want {
-			t.Errorf("String(%d) = %q, want %q", sev, got, want)
-		}
-	}
-}
-
-func TestWorkspace_PublishAndCriticalFilter(t *testing.T) {
-	ws := NewWorkspace()
-	ws.PublishNote(Note{Source: "x", Severity: SevInfo, Text: "info"})
-	ws.PublishNote(Note{Source: "x", Severity: SevCritical, Text: "crit-1"})
-	ws.PublishNote(Note{Source: "x", Severity: SevCritical, Text: "crit-2"})
-	if got := len(ws.Notes()); got != 3 {
-		t.Errorf("Notes len = %d, want 3", got)
-	}
-	if got := len(ws.CriticalNotes()); got != 2 {
-		t.Errorf("CriticalNotes len = %d, want 2", got)
 	}
 }
 
@@ -135,17 +137,17 @@ func TestLobe_AllFourSignals_FourNotes(t *testing.T) {
 	sp := filepath.Join(dir, "feat.md")
 	os.WriteFile(sp, []byte("<!-- STATUS: in-progress -->\n- [ ] go\n"), 0o644)
 
-	ws := NewWorkspace()
+	ws := cortex.NewWorkspace(nil, nil)
 	l := NewAntiTruncLobe(ws, plan, filepath.Join(dir, "feat*.md")).
 		WithGitLog(func(n int) ([]string, error) { return []string{"spec 1 done"}, nil })
 
-	err := l.Run(context.Background(), LobeInput{
-		History: []string{"i'll stop here"},
+	err := l.Run(context.Background(), cortex.LobeInput{
+		History: historyOf("i'll stop here"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes := ws.CriticalNotes()
+	notes := criticalNotes(ws)
 	if len(notes) < 4 {
 		t.Errorf("expected at least 4 critical Notes (one per source), got %d", len(notes))
 	}

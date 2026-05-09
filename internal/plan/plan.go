@@ -76,13 +76,50 @@ func LoadFile(path string) (*Plan, error) {
 	return &p, nil
 }
 
-// Save writes a plan to disk as JSON.
+// Save writes a plan to disk as JSON atomically: it writes to a sibling
+// .tmp file, fsyncs, and renames over the destination. This means a
+// concurrent reader (the planupdate Lobe's confirm path triggers one
+// from the user-confirm event handler while the test polls the file)
+// either sees the previous version or the new version — never a
+// half-written truncation. Surfaced by the
+// TestPlanUpdateLobe_AppliesOnConfirmation flake noted in
+// audit/scan-test-quality.md item #2 (race-y polling) and tied to PR #195
+// CI failure on the cortex/lobes/planupdate package.
 func Save(projectRoot string, p *Plan) error {
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(projectRoot, "stoke-plan.json"), data, 0644) // #nosec G306 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
+	dest := filepath.Join(projectRoot, "stoke-plan.json")
+	tmp, err := os.CreateTemp(projectRoot, ".stoke-plan.json.tmp-*")
+	if err != nil {
+		return fmt.Errorf("plan: create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("plan: write temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("plan: fsync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("plan: close temp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil { // #nosec G302 -- plan/SOW artefact consumed by Stoke tooling; 0644 is appropriate.
+		cleanup()
+		return fmt.Errorf("plan: chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		cleanup()
+		return fmt.Errorf("plan: rename temp: %w", err)
+	}
+	return nil
 }
 
 // Validate checks a plan for structural problems.
