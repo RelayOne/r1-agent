@@ -1,5 +1,5 @@
 // integration_test.go — closes the audit gap from
-// audit/scan-governance-gaps.md item #2 (and TASK-7 of
+// audit/scan-governance-gaps.md item #2 (TASK-7 of
 // specs/post-merge-audit-cleanup.md).
 //
 // PR #196 switched AntiTruncLobe from local Workspace shadow types to
@@ -11,22 +11,18 @@
 // Coverage path:
 //
 //  1. Construct a real cortex.Cortex via cortex.New(...) with the
-//     AntiTruncLobe registered as a regular cortex.Lobe.
+//     AntiTruncLobe registered via Config.Lobes — the Cortex truly
+//     contains the Lobe (verified via LobeStatus).
 //  2. Wire the Lobe to write into c.Workspace() — the same Workspace
-//     the Cortex's PreEndTurnGate reads from. (NewAntiTruncLobe captures
-//     a writable *Workspace at construction; the wiring used here is
-//     "construct cortex first, then construct the Lobe pointing at the
-//     cortex's Workspace, then re-emit through MidturnNote" — but we
-//     SHORTCUT the runner because LobeRunner.buildInput does not
-//     propagate History, see internal/cortex/lobe.go:buildInput.
-//     Calling Lobe.Run directly with a populated LobeInput exercises
-//     exactly the Workspace-publish path the runner would use, minus
-//     the History-stripping defect that is out of scope for this test.)
-//  3. Drive Run with a History whose assistant text contains the
-//     "premature_stop_let_me" truncation phrase.
-//  4. Assert the Note appears in Workspace.Snapshot() AND that
-//     PreEndTurnGate returns a non-empty block citing the antitrunc
-//     LobeID + phrase ID.
+//     the Cortex's PreEndTurnGate reads from.
+//  3. Drive Lobe.Run with a History whose assistant text contains the
+//     "premature_stop_let_me" truncation phrase. Run.Publish writes
+//     into c.Workspace() through the Lobe's captured pointer.
+//  4. Assert the Note appears in c.Workspace().Snapshot() AND that
+//     c.PreEndTurnGate(msgs) returns a non-empty block citing the
+//     antitrunc LobeID + phrase ID.
+//  5. Assert that publishing a resolver Note clears the gate, proving
+//     the unresolved-only contract is real in both directions.
 //
 // The test is deterministic, makes no network calls, and runs in
 // well under a second.
@@ -72,52 +68,81 @@ func (p *fakeCortexProvider) ChatStream(req provider.ChatRequest, _ func(stream.
 }
 
 // TestAntiTruncLobe_PublishesIntoCortexWorkspace_GateBlocks is the
-// integration proof that AntiTruncLobe publishes Notes through the
-// production cortex.Workspace and that those Notes are visible to
-// cortex.Cortex.PreEndTurnGate.
+// integration proof that AntiTruncLobe — registered as a real
+// cortex.Lobe — publishes Notes through the production cortex.Workspace
+// and that those Notes are visible to cortex.Cortex.PreEndTurnGate.
 //
 // This verifies the wrapper switch from local shadow types to the real
-// cortex package (PR #196) actually closes the loop end-to-end —
-// assertions on Workspace.Snapshot prove the Note landed in the same
-// store the cortex reads from, and assertions on PreEndTurnGate prove
-// the gate refuses end_turn while the Note is unresolved.
+// cortex package (PR #196) actually closes the loop end-to-end:
+//   - The Lobe satisfies the cortex.Lobe interface (compile-time check
+//     in lobe_wrapper.go and runtime check via Config.Lobes
+//     registration here).
+//   - The Lobe's writable *cortex.Workspace pointer is the same one
+//     PreEndTurnGate reads (both bound to c.Workspace()).
+//   - A SevCritical Note Published by the Lobe appears in
+//     c.Workspace().Snapshot() AND in c.PreEndTurnGate(msgs) output.
+//   - A resolver Note clears the gate.
+//
+// Two-step Lobe wiring: cortex.New constructs the Workspace internally,
+// so we cannot pass the Workspace pointer to NewAntiTruncLobe before
+// New returns. We construct the Lobe with a nil Workspace, register
+// it in Config.Lobes so Cortex.LobeStatus reports the registration,
+// then re-bind the Lobe's ws field to c.Workspace() before exercising
+// Run. This is the same pattern internal/cortex/lobes/rulecheck/
+// integration_test.go uses for RuleCheckLobe (see lines 139-156 of
+// that file).
 func TestAntiTruncLobe_PublishesIntoCortexWorkspace_GateBlocks(t *testing.T) {
 	t.Parallel()
 
-	// Construct a fully-wired Cortex with no Lobes initially. The
-	// Workspace pointer is stable for the cortex's lifetime; we capture
-	// it and hand it to the AntiTruncLobe so Publish lands in the same
-	// store PreEndTurnGate later reads.
-	//
-	// We deliberately do NOT register the Lobe with the cortex via
-	// Config.Lobes because LobeRunner.buildInput does not propagate
-	// History into LobeInput (see internal/cortex/lobe.go:buildInput).
-	// The Run-direct shortcut below exercises the production publish
-	// path — which is what the audit gap is asking us to verify — while
-	// avoiding the unrelated runner-history wiring defect.
+	// Construct the Lobe with a nil Workspace. The wrapper's nil-ws
+	// guard makes Run a no-op until we re-bind it; cortex.LobeStatus
+	// only inspects ID/Description/Kind so the nil ws does not block
+	// registration. We re-bind the writable Workspace pointer below
+	// after cortex.New returns.
+	lobe := NewAntiTruncLobe(nil, "", "")
+
 	c, err := cortex.New(cortex.Config{
 		SessionID:       "antitrunc-integration",
 		EventBus:        hub.New(),
 		Provider:        &fakeCortexProvider{},
-		PreWarmInterval: time.Hour, // suppress pump churn
+		Lobes:           []cortex.Lobe{lobe},
+		PreWarmInterval: time.Hour, // suppress pre-warm pump churn during the test
 		RoundDeadline:   2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("cortex.New: %v", err)
 	}
 
+	// Cortex genuinely contains the Lobe: LobeStatus reports it under
+	// the canonical id "antitrunc". This is the runtime check that the
+	// wrapper satisfies cortex.Lobe (the var _ cortex.Lobe assertion
+	// in lobe_wrapper.go is the compile-time companion).
+	statuses := c.LobeStatus()
+	var registered bool
+	for _, s := range statuses {
+		if s.ID == "antitrunc" {
+			registered = true
+			if s.Kind != cortex.KindDeterministic {
+				t.Errorf("registered antitrunc Lobe Kind = %v, want KindDeterministic", s.Kind)
+			}
+			break
+		}
+	}
+	if !registered {
+		t.Fatalf("Cortex.LobeStatus does not contain antitrunc Lobe; got %+v", statuses)
+	}
+
+	// Re-bind the Lobe's writable Workspace to the cortex's. After this
+	// assignment, every Lobe.Run.Publish writes into c.Workspace() —
+	// the same store c.PreEndTurnGate later reads.
+	lobe.ws = c.Workspace()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := c.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer func() { _ = c.Stop(context.Background()) }()
-
-	// Wire the AntiTruncLobe to the cortex's writable Workspace.
-	// NewAntiTruncLobe stores the *Workspace pointer at construction,
-	// and Run.Publish writes through that pointer — so Notes land in
-	// the same store c.PreEndTurnGate consults.
-	lobe := NewAntiTruncLobe(c.Workspace(), "", "")
+	t.Cleanup(func() { _ = c.Stop(context.Background()) })
 
 	// History containing a known-truncation phrase. The phrase
 	// "i'll stop here for now" matches the "premature_stop_let_me"
@@ -129,8 +154,16 @@ func TestAntiTruncLobe_PublishesIntoCortexWorkspace_GateBlocks(t *testing.T) {
 		{Role: "assistant", Content: []agentloop.ContentBlock{{Type: "text", Text: truncPhrase}}},
 	}
 
-	// Drive the Lobe directly: this publishes one or more SevCritical
-	// Notes into the cortex's Workspace.
+	// Drive the Lobe with a populated History. We invoke Lobe.Run
+	// directly (rather than relying on Cortex.MidturnNote) because
+	// LobeRunner.buildInput in internal/cortex/lobe.go does not yet
+	// propagate History into LobeInput — see the same constraint
+	// documented in internal/cortex/lobes/all_integration_test.go
+	// lines 312-318 for memory-recall. The publish path is identical
+	// either way: the Lobe writes through its captured *Workspace
+	// pointer, which we just re-bound to c.Workspace() above. The
+	// runner-history wiring is tracked separately and is not the
+	// subject of this audit gap.
 	if err := lobe.Run(ctx, cortex.LobeInput{History: msgs}); err != nil {
 		t.Fatalf("AntiTruncLobe.Run: %v", err)
 	}
@@ -184,8 +217,9 @@ func TestAntiTruncLobe_PublishesIntoCortexWorkspace_GateBlocks(t *testing.T) {
 
 	// Assertion 3: explicit resolution clears the gate. This is the
 	// flip side of the above — proving the gate's "while unresolved"
-	// contract is real, not a one-way assertion. Resolving the Note
-	// drops it from UnresolvedCritical, so the gate must allow end_turn.
+	// contract holds in both directions. Publishing a follow-on Note
+	// with Resolves=foundID drops the antitrunc Note from
+	// UnresolvedCritical, so the gate must allow end_turn.
 	if err := c.Workspace().Publish(cortex.Note{
 		LobeID:   "test-resolver",
 		Severity: cortex.SevInfo,
