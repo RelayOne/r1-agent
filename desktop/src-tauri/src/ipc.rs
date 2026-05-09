@@ -528,6 +528,19 @@ pub async fn app_discovery_status(
     Ok(state.snapshot())
 }
 
+/// `daemon_install_command` — return the host-OS-appropriate
+/// `r1 serve --install ...` command string that the discovery wizard
+/// shows in its copy-paste code box (spec
+/// desktop-cortex-augmentation §5 lifecycle step 4).
+///
+/// Wired per audit/scan-rust-stubs.md item #1: the WebView called this
+/// verb but no Rust handler existed, panicking the wizard with a
+/// missing-handler error. Delegates to `discovery::install_command_for_host_os`.
+#[tauri::command]
+pub async fn daemon_install_command() -> IpcResult<String> {
+    Ok(crate::discovery::install_command_for_host_os())
+}
+
 /// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
 /// the title-bar pill subscribes to. Currently emits a single
 /// `Connected` frame and idles; the real run-loop driver
@@ -582,6 +595,10 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             app_open_folder_picker,
             // Spec §5 (issue #145) — host-side daemon-discovery state.
             app_discovery_status,
+            // Wired per audit/scan-rust-stubs.md item #1 — the wizard
+            // panicked on the missing-handler error before this
+            // handler existed.
+            daemon_install_command,
             // Wired per audit/scan-rust-stubs.md item #5 — title-bar
             // pill subscribes to a typed status Channel.
             transport_reconnect_status,
