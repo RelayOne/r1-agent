@@ -1,7 +1,22 @@
-<!-- STATUS: scoping -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-09 -->
+<!-- BUILD_STARTED: 2026-05-09 -->
+<!-- BUILD_COMPLETED: 2026-05-09 -->
 <!-- DEPENDS_ON: cortex-core, agentic-test-harness -->
 <!-- BUILD_ORDER: 100 -->
+
+> **Built.** `r1 mcp serve` (no flags) now runs the stdio MCP JSON-RPC
+> server. Cortex backend is workspace-only by default; `--no-cortex`
+> opt-out and `--session-id` are wired; `R1_MCP_KEY` auth gate is
+> active when set. See `cmd/r1/mcp_serve_runtime.go`,
+> `cmd/r1/mcp_serve_runtime_test.go`, and the `WithAuthKey` /
+> `ToolDefinitions` updates in `internal/mcp/r1_server.go`. The 4 open
+> questions below were answered in implementation: (1) default
+> workspace-only, (2) `--session-id` flag with PID-based default
+> emitted to stderr, (3) `cmd/r1-mcp` kept distinct, (4) multi-client
+> deferred. The 5-task plan below is preserved as historical record;
+> in practice TASK-2 (wire helpers) was unnecessary because
+> `StokeServer.ServeStdio` already existed.
 
 # r1-mcp-serve — Production runtime for `r1 mcp serve`
 
