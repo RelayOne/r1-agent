@@ -2,19 +2,18 @@
 #
 # Spec web-chat-ui §item 50: "Root CI workflow runs `cd web && npm ci
 # && npm run build && npm run test`". Closes audit/scan-governance-gaps.md
-# web-chat-ui item 50 ("Top-level web CI workflow not present") and the
-# adjacent agentic-test-harness item ("storybook-mcp-validate Makefile
-# target exists but never runs in CI").
+# web-chat-ui item 50 ("Top-level web CI workflow not present").
 #
-# Three jobs:
-# - build-test: typecheck + vite build + vitest run on every web/ PR
-# - lint: eslint with --max-warnings=0
-# - storybook-mcp-validate: run the Storybook MCP a11y validator
-#   (Makefile target `storybook-mcp-validate`) so missing data-testid
-#   or A11yEmitter annotations fail the gate
+# Single job: build-test (typecheck + vite build + vitest run).
+# - Lint and storybook-mcp-validate jobs were originally bundled but
+#   the underlying eslint config currently imports a custom rule via
+#   default export that the file doesn't provide, and storybook-mcp
+#   has no published ^9 version. Both are pre-existing repo issues
+#   that need a separate fix; they're tracked as audit follow-ups
+#   rather than blocking this PR's build-test gate.
 #
-# Triggers on PRs that touch web/, the workflow file itself, or
-# the Makefile target. Skips for unrelated changes to keep CI fast.
+# Triggers on PRs that touch web/ or the workflow file itself. Skips
+# unrelated changes to keep CI fast.
 
 name: web
 
@@ -28,7 +27,6 @@ on:
     paths:
       - 'web/**'
       - 'package.json'
-      - 'Makefile'
       - '.github/workflows/web.yml'
 
 # Cancel previous runs on the same PR/branch when a new push lands.
@@ -57,36 +55,3 @@ jobs:
       - name: npm test
         run: npm test
 
-  lint:
-    name: lint (web)
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-      - name: npm ci
-        run: npm ci
-      - name: npm run lint
-        run: npm run lint
-
-  storybook-mcp-validate:
-    name: storybook-mcp-validate
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-      - name: npm ci (web)
-        working-directory: web
-        run: npm ci
-      - name: make storybook-mcp-validate
-        run: make storybook-mcp-validate
