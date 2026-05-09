@@ -38,11 +38,12 @@
 //   - Ledger node type: "audit_report" — content: same as event payload
 //   - Edge: "references" from audit_report node to task node (if task exists)
 //
-// # Additional event types
+// # Future bridges (intentionally not declared yet)
 //
-// The bridge package also defines event types used by other bridge adapters
-// not yet fully implemented:
-//
-//   - "workflow.phase.started", "workflow.phase.completed", "workflow.task.completed"
-//   - "hook.decision", "skill.injected", "profile.detected"
+// Workflow phase / task, hook decision, skill injection, and profile
+// detection bridges are NOT shipped here. The constants for those
+// events live alongside the publisher in whichever package eventually
+// adds them — declaring them here without an emitter creates a "live
+// adapter" appearance with no actual events on the bus. Per
+// audit/scan-governance-gaps.md item #7.
 package bridge
