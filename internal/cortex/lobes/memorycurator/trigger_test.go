@@ -127,8 +127,12 @@ func TestMemoryCuratorLobe_TriggerCadence(t *testing.T) {
 
 	// task.completed event should fire out-of-cadence (no Run tick
 	// in between). hub.ModeObserve is async; emitAndPollFireCount polls
-	// up to 100ms for fired to reach the target.
-	if got := emitAndPollFireCount(bus, &fired, 3, 100*time.Millisecond); got != 3 {
+	// for fired to reach the target. 100ms was too tight under -race
+	// in slow CI containers (PR #211 r1-agent-pr failed on
+	// trigger_test.go:132 with fired=2,want=3); bump to 2s — generous
+	// enough to never flake on healthy CI, fast path still completes
+	// in well under 10ms.
+	if got := emitAndPollFireCount(bus, &fired, 3, 2*time.Second); got != 3 {
 		t.Errorf("after task.completed: fired=%d, want 3", got)
 	}
 
