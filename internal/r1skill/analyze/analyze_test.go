@@ -598,3 +598,77 @@ func TestAnalyze_AcceptsAcyclicGraph(t *testing.T) {
 		}
 	}
 }
+
+// ─── stage 5: runtime-assertion injection ────────────────────────
+
+// TestStageContract_EmitsRuntimeAssertions verifies that contracts
+// the analyzer cannot decide statically — wall_time_lt, forall,
+// exists — are recorded on StageResult.RuntimeAssertions so the
+// runtime layer can install matching guards. Before this fix
+// (audit/scan-go-stubs.md) stageContract emitted only an info
+// diagnostic and dropped the clause on the floor; after this fix
+// each non-decidable clause produces a structured RuntimeAssertion
+// with kind, bound (for wall_time_lt), and predicate text (for
+// forall/exists) preserved.
+func TestStageContract_EmitsRuntimeAssertions(t *testing.T) {
+	skill := validBaseSkill()
+	skill.Contracts = []ir.Contract{
+		{Kind: "wall_time_lt", Seconds: 30},
+		{Kind: "forall", Binder: "r", Iter: "results", Predicate: json.RawMessage(`"all results valid"`)},
+		{Kind: "exists", Binder: "r", Iter: "results", Predicate: json.RawMessage(`"result.ok==true"`)},
+	}
+
+	res := stageContract(&skill, nil)
+
+	if !res.Passed {
+		t.Fatalf("expected stageContract to pass with deferred contracts, got diagnostics: %v", res.Diagnostics)
+	}
+	if len(res.RuntimeAssertions) != 3 {
+		t.Fatalf("expected 3 runtime assertions, got %d: %+v", len(res.RuntimeAssertions), res.RuntimeAssertions)
+	}
+
+	// Index by Kind for assertion clarity.
+	byKind := make(map[string]RuntimeAssertion)
+	for _, ra := range res.RuntimeAssertions {
+		byKind[ra.Kind] = ra
+	}
+	for _, want := range []string{"wall_time_lt", "forall", "exists"} {
+		if _, ok := byKind[want]; !ok {
+			t.Errorf("missing runtime assertion of kind %q; got %+v", want, res.RuntimeAssertions)
+		}
+	}
+
+	if got := byKind["wall_time_lt"].Bound; got != 30 {
+		t.Errorf("wall_time_lt Bound = %v, want 30", got)
+	}
+	if pred := byKind["forall"].Predicate; !strings.Contains(pred, "all results valid") {
+		t.Errorf("forall Predicate = %q, want it to contain %q", pred, "all results valid")
+	}
+	if pred := byKind["exists"].Predicate; !strings.Contains(pred, "result.ok==true") {
+		t.Errorf("exists Predicate = %q, want it to contain %q", pred, "result.ok==true")
+	}
+
+	// SourceLocation should pin the clause back to its IR position so
+	// the runtime injector can attribute failures.
+	for kind, ra := range byKind {
+		if ra.SourceLocation == "" {
+			t.Errorf("runtime assertion %q has empty SourceLocation", kind)
+		}
+	}
+
+	// The legacy info diagnostic must still be emitted (with an
+	// updated message pointing readers at the recorded record) so
+	// existing consumers that key off I051 keep working.
+	infoCount := 0
+	for _, d := range res.Diagnostics {
+		if d.Code == "I051_CONTRACT_DEFERRED_TO_RUNTIME" {
+			infoCount++
+			if !strings.Contains(d.Message, "RuntimeAssertions") {
+				t.Errorf("info diagnostic message %q should reference RuntimeAssertions", d.Message)
+			}
+		}
+	}
+	if infoCount != 3 {
+		t.Errorf("expected 3 I051 info diagnostics, got %d", infoCount)
+	}
+}

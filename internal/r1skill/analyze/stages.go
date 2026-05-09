@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"github.com/RelayOne/r1/internal/r1skill/ir"
 )
@@ -594,11 +595,13 @@ func stageCapability(skill *ir.Skill, _ *Constitution) StageResult {
 }
 
 // Stage 5: contract conformance for decidable subsets. Defers
-// non-decidable contracts to runtime assertion injection.
+// non-decidable contracts to runtime assertion injection by recording
+// a RuntimeAssertion entry on the StageResult so downstream tooling
+// (the runtime, the proof emitter) can install the matching guard.
 func stageContract(skill *ir.Skill, _ *Constitution) StageResult {
 	res := StageResult{Passed: true}
 
-	for _, c := range skill.Contracts {
+	for i, c := range skill.Contracts {
 		switch c.Kind {
 		case "actual_cost_lt":
 			// Decidable check: sum of llm_call.max_cost_usd across the
@@ -616,16 +619,39 @@ func stageContract(skill *ir.Skill, _ *Constitution) StageResult {
 				})
 			}
 		case "wall_time_lt", "forall", "exists":
-			// Defer to runtime. Record this fact in the proof.
+			// Non-decidable at compile time. Record the clause as a
+			// runtime assertion so the runtime layer can install the
+			// matching guard, and surface an info diagnostic that
+			// points readers at the recorded record.
+			ra := RuntimeAssertion{
+				Kind:           c.Kind,
+				SourceLocation: contractLocation(i),
+			}
+			switch c.Kind {
+			case "wall_time_lt":
+				ra.Bound = float64(c.Seconds)
+			case "forall", "exists":
+				ra.Predicate = string(c.Predicate)
+			}
+			res.RuntimeAssertions = append(res.RuntimeAssertions, ra)
 			res.Diagnostics = append(res.Diagnostics, Diagnostic{
-				Level:   "info",
-				Code:    "I051_CONTRACT_DEFERRED_TO_RUNTIME",
-				Message: c.Kind + " contract deferred to runtime assertion",
+				Level:    "info",
+				Code:     "I051_CONTRACT_DEFERRED_TO_RUNTIME",
+				Message:  "deferred to runtime assertion (recorded on StageResult.RuntimeAssertions)",
+				Location: ra.SourceLocation,
 			})
 		}
 	}
 
 	return res
+}
+
+// contractLocation renders a stable path-style location for a contract
+// clause at index i. Used as the SourceLocation field of recorded
+// RuntimeAssertion entries and as the Diagnostic.Location for the
+// matching info diagnostic.
+func contractLocation(i int) string {
+	return "contracts[" + strconv.Itoa(i) + "]"
 }
 
 // projectMaxCost sums the max_cost_usd of every llm_call node in the
