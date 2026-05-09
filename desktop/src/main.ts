@@ -42,6 +42,7 @@ import {
   mountSettings,
   mountSettingsTrigger,
 } from "./panels/settings";
+import { mountDaemonStatus } from "./panels/daemon-status";
 import { mountOnboarding } from "./onboarding/onboarding";
 
 type PanelEntry = {
@@ -110,6 +111,30 @@ function mount(): void {
   mountDescentEvidenceDrawer(document.body);
   mountLedgerNodeDrawer(document.body);
   mountSettings(document.body);
+
+  // Daemon status pill — spec desktop-cortex-augmentation §5 +
+  // checklist item 26. Sits in the title-bar region next to the
+  // settings trigger. mountDaemonStatus subscribes to `daemon.up` /
+  // `daemon.down` on the Tauri global event bus; in non-Tauri builds
+  // the listeners never fire and the pill stays in its default
+  // "offline (starting)" state. The four-state pill model also
+  // expects a `reconnect_status` lifecycle stream from the Rust
+  // transport.rs run-loop to drive `attempt` / `nextInMs` for the
+  // reconnecting state — that stream lands in a sister Rust PR; until
+  // then the pill flips to reconnecting/offline based purely on
+  // `daemon.down.will_retry`.
+  const pillHost = document.createElement("div");
+  pillHost.className = "r1-daemon-pill-host";
+  toolbar.appendChild(pillHost);
+  void mountDaemonStatus(pillHost, {
+    onClick: () => {
+      // Open Settings → Daemon. The settings panel hosts the daemon
+      // section; clicking the pill is the spec-mandated shortcut.
+      const trigger = document.getElementById("r1-settings-trigger");
+      trigger?.click();
+    },
+  });
+
   mountSettingsTrigger(toolbar);
 }
 
