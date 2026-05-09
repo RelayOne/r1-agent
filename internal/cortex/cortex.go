@@ -265,6 +265,65 @@ func (c *Cortex) Round() *Round { return c.round }
 // Surfaces in telemetry and audit events emitted by the cortex.
 func (c *Cortex) SessionID() string { return c.cfg.SessionID }
 
+// LobeInfo describes a registered Lobe's identity and runtime state.
+// Returned by Cortex.LobeStatus and surfaced through the MCP
+// r1.cortex.lobes_list tool.
+type LobeInfo struct {
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	Kind        LobeKind `json:"kind"`
+	Paused      bool     `json:"paused"`
+}
+
+// LobeStatus reports identity + pause state for every registered Lobe,
+// in registration order. Backing call for the MCP r1.cortex.lobes_list
+// tool. Safe to call before Start (returns the configured Lobes with
+// Paused=false since no runner has been instantiated yet).
+func (c *Cortex) LobeStatus() []LobeInfo {
+	out := make([]LobeInfo, 0, len(c.cfg.Lobes))
+	for i, l := range c.cfg.Lobes {
+		info := LobeInfo{
+			ID:          l.ID(),
+			Description: l.Description(),
+			Kind:        l.Kind(),
+		}
+		if i < len(c.runners) && c.runners[i] != nil {
+			info.Paused = c.runners[i].IsPaused()
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+// PauseLobe pauses the LobeRunner for the lobe with the given ID. The
+// pause takes effect for the next round; an in-flight runOnce
+// completes normally before subsequent ticks become no-ops. Returns an
+// error if no Lobe with that id is registered.
+//
+// Idempotent: pausing an already-paused Lobe is a no-op.
+func (c *Cortex) PauseLobe(id string) error {
+	for _, r := range c.runners {
+		if r != nil && r.LobeID() == id {
+			r.SetPaused(true)
+			return nil
+		}
+	}
+	return fmt.Errorf("cortex/PauseLobe: no Lobe with id %q", id)
+}
+
+// ResumeLobe undoes a prior PauseLobe call. Returns an error if no
+// Lobe with that id is registered. Idempotent: resuming a non-paused
+// runner is a no-op.
+func (c *Cortex) ResumeLobe(id string) error {
+	for _, r := range c.runners {
+		if r != nil && r.LobeID() == id {
+			r.SetPaused(false)
+			return nil
+		}
+	}
+	return fmt.Errorf("cortex/ResumeLobe: no Lobe with id %q", id)
+}
+
 // Start launches the cortex lifecycle: it captures a cancellable
 // child of parentCtx, performs a single synchronous initial pre-warm
 // (best-effort — failures are logged but never abort Start), launches
