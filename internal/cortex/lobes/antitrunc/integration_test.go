@@ -146,8 +146,7 @@ func TestAntiTruncLobe_PublishesIntoCortexWorkspace_GateBlocks(t *testing.T) {
 
 	// History containing a known-truncation phrase. The phrase
 	// "i'll stop here for now" matches the "premature_stop_let_me"
-	// pattern in internal/antitrunc/phrases.go (the (?i)(?:i'?ll|let me|
-	// i should)\s+(?:stop|pause|defer|skip|hold off) regex).
+	// pattern catalogued in internal/antitrunc/phrases.go.
 	const truncPhrase = "i'll stop here for now and pick up later"
 	msgs := []agentloop.Message{
 		{Role: "user", Content: []agentloop.ContentBlock{{Type: "text", Text: "do the work"}}},
