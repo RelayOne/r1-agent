@@ -235,6 +235,116 @@ func TestRollback_RestoresValueAndPreservesHistory(t *testing.T) {
 	}
 }
 
+// TestRollback_UsesSnapshotValueWithoutReplayValue exercises the fix
+// for audit/scan-go-stubs.md item #7: rollback now reads
+// ProvenanceEntry.SnapshotValue captured at write time, so callers
+// no longer need to remember and re-supply the historical value via
+// by.ReplayValue. Verifies the snapshot path is taken when ReplayValue
+// is nil.
+func TestRollback_UsesSnapshotValueWithoutReplayValue(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "scalar", Value: "v1",
+		Provenance: []ProvenanceEntry{baseProv("a")},
+	})
+	if _, err := s.Apply(ctx, Write{
+		BlockID: "b1", Semantic: SemanticRethink, Value: "v2",
+		Provenance: ProvenanceEntry{AgentID: "a", Action: "rethink", Timestamp: ts()},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := s.Apply(ctx, Write{
+		BlockID: "b1", Semantic: SemanticRethink, Value: "v3",
+		Provenance: ProvenanceEntry{AgentID: "a", Action: "rethink", Timestamp: ts()},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// Rollback to version 2 ("v2") WITHOUT supplying ReplayValue.
+	out, err := s.Rollback(ctx, "b1", 2, ProvenanceEntry{
+		AgentID:   "a",
+		Timestamp: ts(),
+	})
+	if err != nil {
+		t.Fatalf("Rollback (no ReplayValue): %v", err)
+	}
+	if out.Value != "v2" {
+		t.Errorf("Value=%v want v2 (read from SnapshotValue)", out.Value)
+	}
+	last := out.Provenance[len(out.Provenance)-1]
+	if last.SnapshotValue != "v2" {
+		t.Errorf("rollback entry's SnapshotValue=%v want v2", last.SnapshotValue)
+	}
+
+	// After another Apply (Version 5), rolling back to the previous
+	// rollback (Version 4) reads SnapshotValue from the rollback
+	// entry itself — proving rollback entries also carry snapshots.
+	if _, err := s.Apply(ctx, Write{
+		BlockID: "b1", Semantic: SemanticRethink, Value: "v5",
+		Provenance: ProvenanceEntry{AgentID: "a", Action: "rethink", Timestamp: ts()},
+	}); err != nil {
+		t.Fatalf("Apply v5: %v", err)
+	}
+	out2, err := s.Rollback(ctx, "b1", 4, ProvenanceEntry{
+		AgentID:   "b",
+		Timestamp: ts(),
+	})
+	if err != nil {
+		t.Fatalf("rollback to rollback version: %v", err)
+	}
+	if out2.Value != "v2" {
+		t.Errorf("nested rollback Value=%v want v2 (read from rollback entry's SnapshotValue)", out2.Value)
+	}
+}
+
+// TestRollback_FallsBackToReplayValueWhenSnapshotMissing exercises the
+// backward-compat path: a provenance entry created without
+// SnapshotValue (e.g. by an older writer) still rolls back via the
+// caller-supplied ReplayValue.
+func TestRollback_FallsBackToReplayValueWhenSnapshotMissing(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	_ = s.Create(ctx, &Block{
+		ID: "b1", Type: "scalar", Value: "v1",
+		Provenance: []ProvenanceEntry{baseProv("a")},
+	})
+	// Manually craft a write whose provenance pre-empts the
+	// snapshot capture by zeroing it after the fact via a direct
+	// store-state mutation. We cheat via Apply's normal path then
+	// strip the snapshot to simulate older data.
+	if _, err := s.Apply(ctx, Write{
+		BlockID: "b1", Semantic: SemanticRethink, Value: "v2",
+		Provenance: ProvenanceEntry{AgentID: "a", Action: "rethink", Timestamp: ts()},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	// Strip snapshots — simulate a block read from older storage.
+	s.mu.Lock()
+	for i := range s.blocks["b1"].Provenance {
+		s.blocks["b1"].Provenance[i].SnapshotValue = nil
+	}
+	s.mu.Unlock()
+
+	// Rollback without ReplayValue — should fail with a clear error.
+	if _, err := s.Rollback(ctx, "b1", 1, ProvenanceEntry{AgentID: "a", Timestamp: ts()}); err == nil {
+		t.Fatalf("expected error when SnapshotValue missing AND ReplayValue nil")
+	}
+
+	// Rollback WITH ReplayValue — succeeds via fallback.
+	out, err := s.Rollback(ctx, "b1", 1, ProvenanceEntry{
+		AgentID:     "a",
+		Timestamp:   ts(),
+		ReplayValue: "v1-restored",
+	})
+	if err != nil {
+		t.Fatalf("Rollback (fallback): %v", err)
+	}
+	if out.Value != "v1-restored" {
+		t.Errorf("fallback Value=%v want v1-restored", out.Value)
+	}
+}
+
 func TestAddReducer(t *testing.T) {
 	out, err := AddReducer([]any{"a"}, []any{"b", "c"})
 	if err != nil {
