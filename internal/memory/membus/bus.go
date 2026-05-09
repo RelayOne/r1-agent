@@ -26,8 +26,11 @@
 //     applied; the multi-scope visibility matrix in spec §7 ships later).
 //   - Retention policy wiring (expires_at is stored but not enforced yet).
 //   - Cross-process read-only cursor, UDS wake signal, fsnotify fallback.
-//   - Recall read_count increments routed through the writer (spec §5.4 step
-//     3); the current slice leaves read_count at zero.
+//
+// Recall now dispatches a fire-and-forget read_count increment (spec §5.4
+// step 3) through the same writer goroutine so increments share the
+// serialized SQLite writer with inserts. Drops under backpressure are
+// counted via Bus.IncrementDropCount so operators can observe pressure.
 //
 // Event emission: when an event bus is configured, Remember publishes a
 // `memory.stored` event carrying {scope, scope_target, key, content_hash}.
@@ -45,6 +48,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/RelayOne/r1/internal/bus"
@@ -146,21 +150,50 @@ type Memory struct {
 	ReadCount   int64
 }
 
-// writeRequest is one enqueued Remember flowing through the writer
-// goroutine. Each request carries a private done channel that the writer
-// goroutine signals (exactly once) with the commit outcome, so Remember
-// stays synchronous from the caller's perspective: the caller blocks until
-// its row has either committed or failed to commit.
+// writeKind discriminates the operation a writeRequest carries through the
+// single-writer pipeline. The default zero value is kindInsert so existing
+// Remember call sites (which construct writeRequest as a struct literal
+// without setting kind) continue to behave as INSERT/UPSERT requests.
+type writeKind uint8
+
+const (
+	// kindInsert is the original UPSERT into stoke_memory_bus carried by
+	// Remember. Synchronous: caller blocks on writeRequest.done until the
+	// batch commits.
+	kindInsert writeKind = 0
+
+	// kindIncrement is a fire-and-forget read_count bump emitted by
+	// Recall. The request carries a slice of row IDs which the writer
+	// updates inside the same BEGIN IMMEDIATE transaction that batches
+	// concurrent inserts. No done channel: Recall does not block on this
+	// commit, and dropped requests under channel saturation are counted
+	// on Bus.incrementDrops.
+	kindIncrement writeKind = 1
+)
+
+// writeRequest is one enqueued operation flowing through the writer
+// goroutine. The kind discriminator selects between an UPSERT (kindInsert,
+// the default) and a fire-and-forget read_count bump (kindIncrement) so
+// both share the same channel and BEGIN IMMEDIATE transaction. Insert
+// requests carry a private done channel that the writer signals (exactly
+// once) with the commit outcome, so Remember stays synchronous from the
+// caller's perspective: the caller blocks until its row has either
+// committed or failed to commit.
 type writeRequest struct {
+	// kind selects the operation. Zero value (kindInsert) preserves the
+	// pre-existing call sites that construct writeRequest directly.
+	kind writeKind
+
 	// req is the originating RememberRequest. The writer needs the full
 	// shape to emit the post-commit `memory.stored` event and the
 	// `memory_stored` ledger node with the same attribution the caller
-	// supplied.
+	// supplied. Unused for kindIncrement.
 	req RememberRequest
 
 	// Derived-once fields the writer uses inside the transaction. These
 	// are computed on the caller's goroutine so the writer does no sha256
-	// or JSON marshalling inside the hot BEGIN-COMMIT window.
+	// or JSON marshalling inside the hot BEGIN-COMMIT window. Unused for
+	// kindIncrement.
 	key          string
 	contentHash  string
 	tagsJSON     string
@@ -170,7 +203,12 @@ type writeRequest struct {
 
 	// done is a 1-buffered channel the writer sends a single commit
 	// outcome on. Buffered so the writer never blocks on a slow caller.
+	// Nil for kindIncrement (fire-and-forget; no commit signal).
 	done chan error
+
+	// incrementIDs carries the row IDs whose read_count should be bumped.
+	// Only populated when kind == kindIncrement.
+	incrementIDs []int64
 }
 
 // Bus is the scoped memory bus. Zero value is not usable; call NewBus.
@@ -198,6 +236,14 @@ type Bus struct {
 
 	// wg waits for writerLoop to fully drain and return.
 	wg sync.WaitGroup
+
+	// incrementDrops counts read_count increment requests that were
+	// dropped because b.writes was saturated when Recall tried to enqueue
+	// them. Surfaces via IncrementDropCount so operators can observe
+	// backpressure on the read path. Drops mean read_count under-counts
+	// real reads — never a correctness violation, but a useful signal for
+	// tuning channel capacity in production.
+	incrementDrops atomic.Uint64
 }
 
 // LedgerEmitter is the narrow shape the memory bus uses to publish
@@ -293,6 +339,20 @@ func (b *Bus) DB() *sql.DB {
 		return nil
 	}
 	return b.db
+}
+
+// IncrementDropCount returns the cumulative number of Recall read_count
+// increment requests that were dropped because the writer channel was
+// saturated when Recall tried to enqueue them. This is observability for
+// the fire-and-forget increment path documented in spec §5.4 step 3:
+// dropped increments mean read_count under-counts real reads, but the
+// read path never blocks on writer pressure. A nil *Bus reports zero so
+// the accessor stays safe under the nil-bus short-circuits above.
+func (b *Bus) IncrementDropCount() uint64 {
+	if b == nil {
+		return 0
+	}
+	return b.incrementDrops.Load()
 }
 
 // ---------------------------------------------------------------------------
@@ -486,15 +546,23 @@ func (b *Bus) writerLoop() {
 }
 
 // flushBatch commits a slice of writeRequests in a single transaction and
-// signals each request's done channel with the per-row outcome. The DSN
-// used to open the underlying *sql.DB should carry `_txlock=immediate` so
-// BeginTx returns with a RESERVED lock already held; without it the
-// transaction starts DEFERRED and upgrades on the first write, which can
-// race a concurrent reader and surface `database is locked`.
+// signals each insert request's done channel with the per-row outcome.
+// The DSN used to open the underlying *sql.DB should carry
+// `_txlock=immediate` so BeginTx returns with a RESERVED lock already
+// held; without it the transaction starts DEFERRED and upgrades on the
+// first write, which can race a concurrent reader and surface
+// `database is locked`.
 //
-// On transaction error (Begin / Exec / Commit) every request in the batch
-// gets the same error on its done channel. That mirrors the all-or-nothing
-// semantics of the underlying BEGIN IMMEDIATE commit.
+// kindIncrement requests are interleaved with kindInsert requests in the
+// same BEGIN IMMEDIATE transaction so a Recall-driven read_count bump
+// rides the same fsync as concurrent UPSERTs (zero extra commits, zero
+// extra contention with the single SQLite writer). They carry no done
+// channel — fire-and-forget per spec §5.4 — so the writer signals only
+// the kindInsert subset on commit/error.
+//
+// On transaction error (Begin / Exec / Commit) every kindInsert request
+// in the batch gets the same error on its done channel. That mirrors the
+// all-or-nothing semantics of the underlying BEGIN IMMEDIATE commit.
 func (b *Bus) flushBatch(reqs []writeRequest) {
 	if len(reqs) == 0 {
 		return
@@ -503,7 +571,9 @@ func (b *Bus) flushBatch(reqs []writeRequest) {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		for _, r := range reqs {
-			r.done <- fmt.Errorf("begin tx: %w", err)
+			if r.kind == kindInsert && r.done != nil {
+				r.done <- fmt.Errorf("begin tx: %w", err)
+			}
 		}
 		return
 	}
@@ -520,42 +590,67 @@ ON CONFLICT (scope, scope_target, key) DO UPDATE SET
     metadata     = excluded.metadata,
     expires_at   = excluded.expires_at
 `
+	const incrementSQL = `UPDATE stoke_memory_bus SET read_count = read_count + 1 WHERE id = ?`
 	var execErr error
 	for _, r := range reqs {
-		if _, err := tx.ExecContext(ctx, upsertSQL,
-			r.createdAt.Format(time.RFC3339Nano),
-			r.expiresArg,
-			string(r.req.Scope),
-			r.req.ScopeTarget,
-			r.req.SessionID,
-			r.req.StepID,
-			r.req.TaskID,
-			r.req.Author,
-			r.key,
-			r.req.Content,
-			r.contentHash,
-			r.tagsJSON,
-			r.metadataJSON,
-		); err != nil {
-			execErr = err
+		switch r.kind {
+		case kindInsert:
+			if _, err := tx.ExecContext(ctx, upsertSQL,
+				r.createdAt.Format(time.RFC3339Nano),
+				r.expiresArg,
+				string(r.req.Scope),
+				r.req.ScopeTarget,
+				r.req.SessionID,
+				r.req.StepID,
+				r.req.TaskID,
+				r.req.Author,
+				r.key,
+				r.req.Content,
+				r.contentHash,
+				r.tagsJSON,
+				r.metadataJSON,
+			); err != nil {
+				execErr = err
+			}
+		case kindIncrement:
+			// Per-id UPDATE keeps the SQL trivially correct under the
+			// "increment-by-one-per-Recall-row" semantics: if the same
+			// id appears N times across batched Recalls we want N
+			// increments, which an `IN (...)` batched UPDATE would
+			// collapse to one. Each ExecContext reuses the prepared
+			// statement cache so the per-row cost stays bounded.
+			for _, id := range r.incrementIDs {
+				if _, err := tx.ExecContext(ctx, incrementSQL, id); err != nil {
+					execErr = err
+					break
+				}
+			}
+		}
+		if execErr != nil {
 			break
 		}
 	}
 	if execErr != nil {
 		_ = tx.Rollback()
 		for _, r := range reqs {
-			r.done <- execErr
+			if r.kind == kindInsert && r.done != nil {
+				r.done <- execErr
+			}
 		}
 		return
 	}
 	if err := tx.Commit(); err != nil {
 		for _, r := range reqs {
-			r.done <- fmt.Errorf("commit tx: %w", err)
+			if r.kind == kindInsert && r.done != nil {
+				r.done <- fmt.Errorf("commit tx: %w", err)
+			}
 		}
 		return
 	}
 	for _, r := range reqs {
-		r.done <- nil
+		if r.kind == kindInsert && r.done != nil {
+			r.done <- nil
+		}
 	}
 }
 
@@ -613,15 +708,35 @@ SELECT id, created_at, expires_at, scope, scope_target,
 	defer rows.Close()
 
 	var out []Memory
+	var ids []int64
 	for rows.Next() {
 		m, err := scanMemory(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, m)
+		ids = append(ids, m.ID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("memory: recall iterate: %w", err)
+	}
+	// Fire-and-forget read_count increment for the rows just returned
+	// (spec §5.4 step 3). Routed through the same writer goroutine that
+	// services Remember so SQLite's single-writer invariant is preserved
+	// and the UPDATE rides the next BEGIN IMMEDIATE batch alongside any
+	// concurrent UPSERTs. Backpressure policy: if the writer channel is
+	// saturated we drop this increment rather than block the Recall
+	// caller — read_count is a best-effort counter, not a correctness
+	// invariant. Drops surface via Bus.IncrementDropCount for ops.
+	if len(ids) > 0 {
+		select {
+		case b.writes <- writeRequest{kind: kindIncrement, incrementIDs: ids}:
+		case <-b.stop:
+			// Bus is shutting down; nothing to count, the writer is
+			// draining its in-flight batch and the increment is moot.
+		default:
+			b.incrementDrops.Add(1)
+		}
 	}
 	// Best-effort provenance emit. One memory_recalled node per returned
 	// row so auditors can trace which exact hashes a worker read. Failures
