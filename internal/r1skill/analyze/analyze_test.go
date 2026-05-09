@@ -517,6 +517,40 @@ func TestAnalyze_RejectsThreeStepCycle(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RejectsSelfLoop is the degenerate cycle case: a single
+// node whose config refs itself. The three-color DFS treats this as
+// a back-edge to a GRAY ancestor and reports it like any other
+// cycle.
+func TestAnalyze_RejectsSelfLoop(t *testing.T) {
+	skill := validBaseSkill()
+	skill.Graph.Nodes = map[string]ir.Node{
+		"loop": {
+			Kind:   "pure_fn",
+			Config: json.RawMessage(`{"registry_ref":"stdlib:identity","arg":{"kind":"ref","ref":"loop.out"}}`),
+			Outputs: map[string]ir.TypeSpec{
+				"out": {Type: "string"},
+			},
+		},
+	}
+	skill.Schemas.Outputs = ir.TypeSpec{Type: "string"}
+	skill.Graph.Return = ir.Expr{Kind: "ref", Ref: "loop.out"}
+
+	_, err := Analyze(&skill, emptyConstitution(), DefaultOptions())
+	if err == nil {
+		t.Fatal("expected analyzer to reject self-looping node")
+	}
+	ae := err.(*AnalyzerError)
+	found := false
+	for _, d := range ae.Diagnostics {
+		if d.Code == "E061_GRAPH_CYCLE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected E061 for self-loop, got: %v", ae.Diagnostics)
+	}
+}
+
 // TestAnalyze_AcceptsAcyclicGraph is the negative companion: a
 // linear A -> B -> C dependency must NOT be flagged.
 func TestAnalyze_AcceptsAcyclicGraph(t *testing.T) {
