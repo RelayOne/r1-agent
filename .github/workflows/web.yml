@@ -4,13 +4,9 @@
 # && npm run build && npm run test`". Closes audit/scan-governance-gaps.md
 # web-chat-ui item 50 ("Top-level web CI workflow not present").
 #
-# Single job: build-test (typecheck + vite build + vitest run).
-# - Lint and storybook-mcp-validate jobs were originally bundled but
-#   the underlying eslint config currently imports a custom rule via
-#   default export that the file doesn't provide, and storybook-mcp
-#   has no published ^9 version. Both are pre-existing repo issues
-#   that need a separate fix; they're tracked as audit follow-ups
-#   rather than blocking this PR's build-test gate.
+# Three jobs: build-test (typecheck + vite build + vitest run), lint
+# (npm run lint inside web/), and storybook-mcp-validate (Makefile
+# target run from repo root).
 #
 # Triggers on PRs that touch web/ or the workflow file itself. Skips
 # unrelated changes to keep CI fast.
@@ -54,4 +50,38 @@ jobs:
         run: npm run build
       - name: npm test
         run: npm test
+
+  lint:
+    name: lint (web)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: npm run lint
+        run: npm run lint
+
+  storybook-mcp-validate:
+    name: storybook-mcp-validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci (web)
+        working-directory: web
+        run: npm ci
+      - name: make storybook-mcp-validate
+        run: make storybook-mcp-validate
 
