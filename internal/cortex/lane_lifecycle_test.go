@@ -247,7 +247,13 @@ func TestLaneEmitDelta(t *testing.T) {
 	rec.waitForEvents(t, 5, 2*time.Second)
 	before := len(rec.snapshot())
 	l.EmitDelta(agentloop.ContentBlock{Type: "text_delta", Text: "ignored"})
-	time.Sleep(50 * time.Millisecond)
+	// EmitDelta on a terminal lane is purely synchronous — it
+	// short-circuits at the IsTerminal() check in lane_lifecycle.go
+	// before any hub emission. No async work to wait on, so the
+	// previous time.Sleep(50ms) was cargo-cult; a future bug that
+	// emits at 60ms would have passed the old assertion. The sample
+	// here is taken immediately and proves the no-op without a
+	// wall-clock dependency. See audit/scan-test-quality.md item #7.
 	after := len(rec.snapshot())
 	if after != before {
 		t.Errorf("EmitDelta on terminal lane should be a no-op; events grew %d→%d", before, after)
@@ -362,7 +368,11 @@ func TestLaneKill(t *testing.T) {
 	if err := l.Kill("again"); err != nil {
 		t.Errorf("re-kill returned error: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// Kill on a terminal lane is purely synchronous — it
+	// short-circuits at the IsTerminal() check in lane_lifecycle.go
+	// before any hub emission. No async work to wait on; the previous
+	// time.Sleep(50ms) was cargo-cult. See audit/scan-test-quality.md
+	// item #7.
 	after := len(rec.snapshot())
 	if after != before {
 		t.Errorf("re-kill should be a no-op; events grew %d→%d", before, after)

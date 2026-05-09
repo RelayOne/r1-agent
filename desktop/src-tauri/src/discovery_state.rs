@@ -1,11 +1,5 @@
 // SPDX-License-Identifier: MIT
 //
-// Tracked: connect_url() and backoff_policy() are accessor helpers for
-// the discovered-daemon path; pending wire-up into a Tauri command
-// surface alongside discovery.rs. Remove this attribute when those
-// accessors are exposed via #[tauri::command].
-#![allow(dead_code)] // tracked: pending wire-up (matches discovery.rs/transport.rs)
-//
 // DiscoveryState — Tauri-managed wrapper around the discovered
 // DaemonHandle, tracking issue #145.
 //
@@ -117,6 +111,7 @@ impl DiscoveryState {
     /// session subprocess path. Uses the transport module's
     /// canonical URL builder so the encoding is identical to the one
     /// the runtime path emits.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked by the future transport run-loop
     pub fn connect_url(&self, last_event_id: Option<&str>) -> Option<String> {
         let g = self.inner.lock().expect("DiscoveryState poisoned");
         g.handle
@@ -127,6 +122,7 @@ impl DiscoveryState {
     /// Default reconnect backoff policy. Pulled from the transport
     /// module so the daemon-discovery path uses the same schedule the
     /// per-session forwarder uses (250 ms → 16 s cap).
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by the future transport run-loop
     pub fn backoff_policy() -> BackoffPolicy {
         BackoffPolicy::r1_default()
     }

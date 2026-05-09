@@ -73,10 +73,12 @@ func (l *MemoryCuratorLobe) handleTaskCompleted(ctx context.Context, ev *hub.Eve
 // user-message preamble; the rememberTool is sent as the only tool;
 // the verbatim curatorSystemPrompt is the system prompt.
 //
-// TASK-29 lands the prompt assembly + provider call but stops at
-// returning the raw assistant content blocks; TASK-30 layers the
-// privacy filter + auto-apply + audit-log pipeline on top by parsing
-// the tool_use blocks returned here.
+// Returns the raw assistant content blocks. defaultOnTrigger (in
+// curate.go) consumes them: parses the tool_use blocks, runs the
+// privacy filter on candidate content, dispatches each to either
+// the auto-apply path (memory.Store.Save + audit-log append +
+// memory Note publish) or the confirm-queue path (publish a
+// memory-confirm Note for the main thread to surface).
 //
 // Errors are logged at warn level and otherwise swallowed — the next
 // trigger fires on its own cadence.

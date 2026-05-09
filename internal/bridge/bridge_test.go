@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -283,5 +284,83 @@ func TestAuditBridgeRecordReport(t *testing.T) {
 	}
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 audit_report node, got %d", len(nodes))
+	}
+}
+
+// TestCostBridge_EmitErrorsObservable_OnBusClose verifies that
+// when the bus is closed mid-flight, Record's emit failures show
+// up on EmitErrorCount + LastEmitError + the OnEmitError
+// callback. Closes audit/scan-go-stubs.md item "internal/bridge/
+// cost.go error swallow".
+func TestCostBridge_EmitErrorsObservable_OnBusClose(t *testing.T) {
+	b, l := setup(t)
+	cb := NewCostBridge(b, l, 100.0)
+
+	var (
+		cbMu     sync.Mutex
+		cbStages []string
+	)
+	cb.SetOnEmitError(func(stage string, err error) {
+		cbMu.Lock()
+		defer cbMu.Unlock()
+		cbStages = append(cbStages, stage)
+	})
+
+	// Healthy first call — no errors expected.
+	cb.Record("claude-sonnet-4", "task-1", 100, 50, 0, 0)
+	if got := cb.EmitErrorCount(); got != 0 {
+		t.Fatalf("EmitErrorCount before close = %d, want 0", got)
+	}
+
+	// Close the bus so subsequent Publish calls fail. The ledger is
+	// still healthy so only the publish stage should fail.
+	b.Close()
+
+	cb.Record("claude-sonnet-4", "task-2", 200, 100, 0, 0)
+
+	if got := cb.EmitErrorCount(); got != 1 {
+		t.Fatalf("EmitErrorCount after bus.Close = %d, want 1", got)
+	}
+	stage, err, when, ok := cb.LastEmitError()
+	if !ok {
+		t.Fatal("LastEmitError ok=false; want true")
+	}
+	if stage != "usage.publish" {
+		t.Errorf("stage=%q want usage.publish", stage)
+	}
+	if err == nil {
+		t.Error("LastEmitError err is nil; want non-nil")
+	}
+	if when.IsZero() {
+		t.Error("LastEmitError when is zero; want non-zero timestamp")
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+	if len(cbStages) != 1 || cbStages[0] != "usage.publish" {
+		t.Errorf("OnEmitError stages=%v want [usage.publish]", cbStages)
+	}
+}
+
+// TestCostBridge_SetOnEmitErrorNilClears verifies that SetOnEmitError(nil)
+// detaches a previously registered callback.
+func TestCostBridge_SetOnEmitErrorNilClears(t *testing.T) {
+	b, l := setup(t)
+	cb := NewCostBridge(b, l, 100.0)
+
+	var calls atomic.Int32
+	cb.SetOnEmitError(func(stage string, err error) {
+		calls.Add(1)
+	})
+	cb.SetOnEmitError(nil)
+
+	b.Close()
+	cb.Record("claude-sonnet-4", "task-1", 100, 50, 0, 0)
+
+	if got := cb.EmitErrorCount(); got != 1 {
+		t.Errorf("EmitErrorCount=%d want 1 (counter still records even with nil callback)", got)
+	}
+	if got := calls.Load(); got != 0 {
+		t.Errorf("nil-cleared callback fired %d times; want 0", got)
 	}
 }

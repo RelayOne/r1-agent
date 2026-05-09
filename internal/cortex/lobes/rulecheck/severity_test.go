@@ -13,15 +13,21 @@ import (
 // case the spec singles out and asserts severityFor returns the
 // expected cortex.Severity.
 //
-// The mapping per spec item 14:
+// Mapping (post audit/scan-governance-gaps cortex-concerns 14 fix):
 //
-//   - trust.*               → critical
-//   - consensus.dissent.*   → critical (spec uses ".*" but actual rule
-//     names use "_" separators after the "consensus.dissent" stem;
-//     severityFor matches via HasPrefix on "consensus.dissent")
-//   - drift.*               → warning
-//   - cross_team.*          → warning
-//   - everything else       → info
+//   - trust.*                                  → critical
+//   - consensus.dissent.*                      → critical
+//   - antitrunc.*                              → critical
+//   - snapshot.*                               → critical
+//   - hierarchy.user_escalation                → critical
+//   - hierarchy.completion_requires_*          → critical
+//   - drift.*                                  → warning
+//   - cross_team.*                             → warning
+//   - sdm.*                                    → warning
+//   - hierarchy.* (non-critical)               → warning
+//   - skill.*                                  → warning
+//   - research.timeout                         → warning
+//   - everything else                          → info
 func TestRuleCheckLobe_SeverityMapping(t *testing.T) {
 	t.Parallel()
 
@@ -60,33 +66,35 @@ func TestRuleCheckLobe_SeverityMapping(t *testing.T) {
 		{"antitrunc.subagent_summary_truncation", "antitrunc.subagent_summary_truncation", cortex.SevCritical, "antitrunc"},
 		{"antitrunc.truncation_phrase_detected", "antitrunc.truncation_phrase_detected", cortex.SevCritical, "antitrunc"},
 
-		// hierarchy/* — none in the elevated buckets, default to info.
-		{"hierarchy.completion_requires_parent_agreement", "hierarchy.completion_requires_parent_agreement", cortex.SevInfo, "hierarchy"},
-		{"hierarchy.escalation_forwards_upward", "hierarchy.escalation_forwards_upward", cortex.SevInfo, "hierarchy"},
-		{"hierarchy.user_escalation", "hierarchy.user_escalation", cortex.SevInfo, "hierarchy"},
+		// hierarchy/* — completion_requires_* + user_escalation are
+		// critical; the catch-all is warning.
+		{"hierarchy.completion_requires_parent_agreement", "hierarchy.completion_requires_parent_agreement", cortex.SevCritical, "hierarchy"},
+		{"hierarchy.escalation_forwards_upward", "hierarchy.escalation_forwards_upward", cortex.SevWarning, "hierarchy"},
+		{"hierarchy.user_escalation", "hierarchy.user_escalation", cortex.SevCritical, "hierarchy"},
 
-		// research/* — info.
+		// research/* — only timeout is warning; the rest stay info.
 		{"research.report_unblocks_requester", "research.report_unblocks_requester", cortex.SevInfo, "research"},
 		{"research.request_dispatches_researchers", "research.request_dispatches_researchers", cortex.SevInfo, "research"},
-		{"research.timeout", "research.timeout", cortex.SevInfo, "research"},
+		{"research.timeout", "research.timeout", cortex.SevWarning, "research"},
 
-		// sdm/* — info.
-		{"sdm.collision_file_modification", "sdm.collision_file_modification", cortex.SevInfo, "sdm"},
-		{"sdm.dependency_crossed", "sdm.dependency_crossed", cortex.SevInfo, "sdm"},
-		{"sdm.drift_cross_branch", "sdm.drift_cross_branch", cortex.SevInfo, "sdm"},
-		{"sdm.duplicate_work_detected", "sdm.duplicate_work_detected", cortex.SevInfo, "sdm"},
-		{"sdm.schedule_risk_critical_path", "sdm.schedule_risk_critical_path", cortex.SevInfo, "sdm"},
+		// sdm/* — warning (advisory but operator-visible).
+		{"sdm.collision_file_modification", "sdm.collision_file_modification", cortex.SevWarning, "sdm"},
+		{"sdm.dependency_crossed", "sdm.dependency_crossed", cortex.SevWarning, "sdm"},
+		{"sdm.drift_cross_branch", "sdm.drift_cross_branch", cortex.SevWarning, "sdm"},
+		{"sdm.duplicate_work_detected", "sdm.duplicate_work_detected", cortex.SevWarning, "sdm"},
+		{"sdm.schedule_risk_critical_path", "sdm.schedule_risk_critical_path", cortex.SevWarning, "sdm"},
 
-		// skill/* — info.
-		{"skill.application_requires_review", "skill.application_requires_review", cortex.SevInfo, "skill"},
-		{"skill.contradicts_outcome", "skill.contradicts_outcome", cortex.SevInfo, "skill"},
-		{"skill.extraction_trigger", "skill.extraction_trigger", cortex.SevInfo, "skill"},
-		{"skill.import_consensus", "skill.import_consensus", cortex.SevInfo, "skill"},
-		{"skill.load_audit", "skill.load_audit", cortex.SevInfo, "skill"},
+		// skill/* — warning (skill-lifecycle events).
+		{"skill.application_requires_review", "skill.application_requires_review", cortex.SevWarning, "skill"},
+		{"skill.contradicts_outcome", "skill.contradicts_outcome", cortex.SevWarning, "skill"},
+		{"skill.extraction_trigger", "skill.extraction_trigger", cortex.SevWarning, "skill"},
+		{"skill.import_consensus", "skill.import_consensus", cortex.SevWarning, "skill"},
+		{"skill.load_audit", "skill.load_audit", cortex.SevWarning, "skill"},
 
-		// snapshot/* — info.
-		{"snapshot.formatter_requires_consent", "snapshot.formatter_requires_consent", cortex.SevInfo, "snapshot"},
-		{"snapshot.modification_requires_cto", "snapshot.modification_requires_cto", cortex.SevInfo, "snapshot"},
+		// snapshot/* — critical (safety: snapshot protection violations
+		// are operator-actionable safety events).
+		{"snapshot.formatter_requires_consent", "snapshot.formatter_requires_consent", cortex.SevCritical, "snapshot"},
+		{"snapshot.modification_requires_cto", "snapshot.modification_requires_cto", cortex.SevCritical, "snapshot"},
 
 		// Default-branch sanity: a totally unknown rule name still
 		// returns info rather than panicking or returning an empty

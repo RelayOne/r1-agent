@@ -266,8 +266,13 @@ func r1VerifyTools() []ToolDefinition {
 		},
 		{
 			Name:        "r1.verify.lint",
-			Description: "Run 'go vet' + project linters. Includes the lint-view-without-api scanner.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"worktree_id":{"type":"string"}},"required":["worktree_id"]}`),
+			Description: "Run the lint-view-without-api scanner against the repo. Returns FAIL/WARN findings + counts; envelope OK=true when 0 FAILs.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{
+				"worktree_id":{"type":"string","description":"Optional worktree id; ignored when repo_root is supplied."},
+				"repo_root":{"type":"string","description":"Absolute repo root. Defaults to the server CWD."},
+				"catalog":{"type":"string","description":"Optional path to a JSON catalog override."},
+				"allowlist":{"type":"string","description":"Optional path to allowlist.yaml override."}
+			}}`),
 		},
 	}
 }

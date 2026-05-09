@@ -833,7 +833,13 @@ func TestAllLobes_BootInFakeCortex(t *testing.T) {
 
 	f.driveSyntheticConversation(t, 10)
 
-	notes := waitForLobesPublished(t, f.ws, allLobeIDs, 5*time.Second)
+	// 25s deadline (under the 30s ctx) gives the async bus + Workspace
+	// pipeline plenty of cushion under -race in slow CI containers.
+	// PR #211 hit a flake here at the previous 5s ceiling — wal-keeper
+	// + rule-check Notes hadn't landed yet because their event-driven
+	// subscriptions race the synthetic conversation's emit-after-loop
+	// ordering. Surfaced by audit/scan-test-quality.md item #2.
+	notes := waitForLobesPublished(t, f.ws, allLobeIDs, 25*time.Second)
 
 	seen := make(map[string]bool)
 	for _, n := range notes {

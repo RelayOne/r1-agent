@@ -2304,3 +2304,139 @@ html, body, #app {
 .r1-onboarding-next {
   margin: 0;
 }
+
+/* Daemon status pill — spec desktop-cortex-augmentation §5 + checklist item 26. */
+
+.r1-app-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #272c37;
+  background: #131720;
+}
+
+.r1-daemon-pill-host {
+  margin-right: auto;
+}
+
+.r1-daemon-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  cursor: pointer;
+  user-select: none;
+  border: 1px solid #272c37;
+  background: #1b1f27;
+  color: #e6e8ee;
+}
+
+.r1-daemon-pill:focus { outline: 2px solid #3ea6ff; outline-offset: 1px; }
+
+.r1-daemon-pill__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  display: inline-block;
+  background: #6c7588;
+}
+
+.r1-daemon-pill--external .r1-daemon-pill__dot { background: #2ecc71; }
+.r1-daemon-pill--sidecar  .r1-daemon-pill__dot { background: #3ea6ff; }
+.r1-daemon-pill--reconnecting .r1-daemon-pill__dot {
+  background: #f1c40f;
+  animation: r1-daemon-pulse 1.2s ease-in-out infinite;
+}
+.r1-daemon-pill--offline .r1-daemon-pill__dot { background: #e74c3c; }
+
+@keyframes r1-daemon-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Discovery wizard — spec desktop-cortex-augmentation §5 + checklist item 28. */
+
+.r1-discovery-wizard {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 12, 17, 0.85);
+  z-index: 100;
+  padding: 1rem;
+}
+
+.r1-discovery-wizard__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.r1-discovery-wizard__header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.r1-discovery-wizard__dismiss {
+  background: transparent;
+  color: #8a93a4;
+  border: 0;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.4rem;
+}
+
+.r1-discovery-wizard__dismiss:hover { color: #e6e8ee; }
+
+.r1-discovery-wizard__option {
+  background: #171a21;
+  border: 1px solid #272c37;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  max-width: 36rem;
+}
+
+.r1-discovery-wizard__option h3 {
+  margin: 0 0 0.4rem 0;
+  font-size: 0.95rem;
+}
+
+.r1-discovery-wizard__option p {
+  margin: 0 0 0.7rem 0;
+  font-size: 0.85rem;
+  color: #b9c0cf;
+  line-height: 1.45;
+}
+
+.r1-discovery-wizard__cmdbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #0f1115;
+  border: 1px solid #272c37;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.r1-discovery-wizard__cmdbox code {
+  flex: 1 1 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  color: #e6e8ee;
+  word-break: break-all;
+}
+
+.r1-discovery-wizard__hint {
+  font-size: 0.78rem;
+  color: #8a93a4;
+  margin: 0 0 0.5rem 0 !important;
+}

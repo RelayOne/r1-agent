@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/RelayOne/r1/internal/truecom"
 	"github.com/RelayOne/r1/internal/workunit"
@@ -385,4 +386,156 @@ func TestSaga_CompensatingTxnErrorAsString(t *testing.T) {
 	if report.Outcomes[0].CompensatingTxnErrors[0] == "" {
 		t.Error("error string should not be empty")
 	}
+}
+
+// TestSaga_CompleteThenRevoke_StepBoundaryHonored exercises the
+// happy path: hook returns nil, comp txns DO NOT run, unit is
+// revoked cleanly. Closes audit/scan-go-stubs.md item #11.
+func TestSaga_CompleteThenRevoke_StepBoundaryHonored(t *testing.T) {
+	m := NewManager(truecom.NewStubClient())
+	s := NewSaga(m)
+	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCompleteThenRevoke))
+
+	var compCalls atomic.Int32
+	comp := func(context.Context) error {
+		compCalls.Add(1)
+		return nil
+	}
+	s.Register(u, nil, []CompensatingTxn{comp, comp}, nil)
+
+	stepDone := make(chan struct{})
+	s.SetStepBoundary(u.ID, func(ctx context.Context) error {
+		select {
+		case <-stepDone:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+
+	// Close the step-done channel so the hook returns nil
+	// promptly. Settlement runs to completion.
+	close(stepDone)
+	report := s.OnRevocation(context.Background(), "del-1")
+	o := report.Outcomes[0]
+	if o.FinalStatus != workunit.WorkUnitRevoked {
+		t.Errorf("final status=%q want revoked", o.FinalStatus)
+	}
+	if got := compCalls.Load(); got != 0 {
+		t.Errorf("comp calls=%d want 0 (clean step boundary)", got)
+	}
+	if o.StepBoundaryError != "" {
+		t.Errorf("StepBoundaryError=%q want empty (clean exit)", o.StepBoundaryError)
+	}
+}
+
+// TestSaga_CompleteThenRevoke_NoHookFallback verifies that if a
+// caller declares SettleCompleteThenRevoke but doesn't wire a
+// StepBoundary hook, settle() falls through to rollback (comp
+// txns run) and the outcome captures why.
+func TestSaga_CompleteThenRevoke_NoHookFallback(t *testing.T) {
+	m := NewManager(truecom.NewStubClient())
+	s := NewSaga(m)
+	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCompleteThenRevoke))
+
+	var compCalls atomic.Int32
+	comp := func(context.Context) error {
+		compCalls.Add(1)
+		return nil
+	}
+	s.Register(u, nil, []CompensatingTxn{comp, comp, comp}, nil)
+	// NO SetStepBoundary call — fallback path.
+
+	report := s.OnRevocation(context.Background(), "del-1")
+	o := report.Outcomes[0]
+	if o.FinalStatus != workunit.WorkUnitRevoked {
+		t.Errorf("final status=%q want revoked", o.FinalStatus)
+	}
+	if got := compCalls.Load(); got != 3 {
+		t.Errorf("comp calls=%d want 3 (rollback fallback)", got)
+	}
+	if o.StepBoundaryError == "" {
+		t.Error("StepBoundaryError should explain the fallback")
+	}
+}
+
+// TestSaga_CompleteThenRevoke_HookErrorFallback verifies that a
+// hook returning an explicit error triggers rollback fallback
+// and the error message is surfaced.
+func TestSaga_CompleteThenRevoke_HookErrorFallback(t *testing.T) {
+	m := NewManager(truecom.NewStubClient())
+	s := NewSaga(m)
+	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCompleteThenRevoke))
+
+	var compCalls atomic.Int32
+	comp := func(context.Context) error {
+		compCalls.Add(1)
+		return nil
+	}
+	s.Register(u, nil, []CompensatingTxn{comp, comp}, nil)
+	s.SetStepBoundary(u.ID, func(ctx context.Context) error {
+		return errors.New("step machine deadlocked")
+	})
+
+	report := s.OnRevocation(context.Background(), "del-1")
+	o := report.Outcomes[0]
+	if o.FinalStatus != workunit.WorkUnitRevoked {
+		t.Errorf("final status=%q want revoked", o.FinalStatus)
+	}
+	if got := compCalls.Load(); got != 2 {
+		t.Errorf("comp calls=%d want 2 (hook error → rollback)", got)
+	}
+	if o.StepBoundaryError == "" || !contains(o.StepBoundaryError, "step machine deadlocked") {
+		t.Errorf("StepBoundaryError=%q want it to surface the hook's error", o.StepBoundaryError)
+	}
+}
+
+// TestSaga_CompleteThenRevoke_TimeoutFallback verifies that a
+// hook that never returns triggers the timeout-bounded fallback
+// to rollback. The saga must not pin a delegation forever on a
+// stuck unit.
+func TestSaga_CompleteThenRevoke_TimeoutFallback(t *testing.T) {
+	m := NewManager(truecom.NewStubClient())
+	s := NewSaga(m)
+	// Tight timeout so the test runs fast.
+	s.SetCompleteThenRevokeTimeout(50 * time.Millisecond)
+	u := newAcceptedUnit(t, "task-a", "del-1", string(SettleCompleteThenRevoke))
+
+	var compCalls atomic.Int32
+	comp := func(context.Context) error {
+		compCalls.Add(1)
+		return nil
+	}
+	s.Register(u, nil, []CompensatingTxn{comp}, nil)
+	s.SetStepBoundary(u.ID, func(ctx context.Context) error {
+		// Block until ctx cancels — never reaches a step boundary.
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	report := s.OnRevocation(context.Background(), "del-1")
+	o := report.Outcomes[0]
+	if o.FinalStatus != workunit.WorkUnitRevoked {
+		t.Errorf("final status=%q want revoked", o.FinalStatus)
+	}
+	if got := compCalls.Load(); got != 1 {
+		t.Errorf("comp calls=%d want 1 (timeout → rollback)", got)
+	}
+	if o.StepBoundaryError == "" || !contains(o.StepBoundaryError, "timed out") {
+		t.Errorf("StepBoundaryError=%q want it to mention timeout", o.StepBoundaryError)
+	}
+}
+
+// contains is a tiny strings.Contains alias kept local so this
+// file doesn't pull strings in just for one assertion helper.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
 }

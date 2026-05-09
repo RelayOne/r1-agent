@@ -1,10 +1,8 @@
 // integration_antitrunc_test.go — end-to-end integration test for the
-// anti-truncation enforcement layer. The cortex-driven mission test
-// from spec §item 25 is BLOCKED on cortex-core merging into this
-// worktree. As a substitute, this test drives a full agentloop run
-// with AntiTruncEnforce=true through a mockProvider that emits a
+// anti-truncation enforcement layer. Drives a full agentloop run with
+// AntiTruncEnforce=true through a mockProvider that emits a
 // truncation phrase on its first turn and recovery text on its
-// second. It asserts:
+// second. Asserts:
 //
 //   1. The gate fires on turn 1 (PreEndTurnCheckFn returns non-empty).
 //   2. The agentloop injects a [BUILD VERIFICATION FAILED] message
@@ -15,6 +13,12 @@
 // This proves the load-bearing contract: a model that says "i'll stop
 // here" does NOT successfully end its turn — it gets dragged back to
 // the next turn until the gate is satisfied.
+//
+// Cortex-driven companion: the cortex-core counterpart (a real
+// cortex.Workspace + AntiTruncLobe + PreEndTurnGate end-to-end
+// drive) lives in internal/cortex/lobes/antitrunc/* — this file
+// covers the agentloop side of the same contract via
+// PreEndTurnCheckFn.
 
 package agentloop
 
