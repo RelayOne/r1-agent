@@ -111,10 +111,11 @@ type MemoryCuratorLobe struct {
 	triggerCount atomic.Uint64
 
 	// onTrigger is the per-Run callback invoked when the trigger
-	// predicate evaluates true. TASK-30 wires the default (the actual
-	// Haiku + privacy-filter pipeline); TASK-29 leaves the hook
-	// pluggable so the cadence test can observe trigger fires without
-	// the LLM round trip.
+	// predicate evaluates true. The default is the production
+	// pipeline (privacy gate + haikuCall + per-candidate
+	// auto-apply / confirm-queue / audit log). Tests SetOnTrigger
+	// to inject a counting hook so they can observe trigger fires
+	// without an LLM round trip.
 	onTrigger func(ctx context.Context, in cortex.LobeInput)
 
 	// subscribed guards the once-per-Lobe hub subscription registration.
@@ -161,10 +162,10 @@ func NewMemoryCuratorLobe(
 		ws:       ws,
 		hubBus:   hubBus,
 	}
-	// Default onTrigger is the TASK-30 pipeline: privacy gate +
-	// haikuCall + per-candidate auto-apply / confirm-queue + audit log.
-	// Tests SetOnTrigger to a counting hook to assert TASK-29 cadence
-	// in isolation.
+	// Default onTrigger is the production curation pipeline:
+	// privacy gate + haikuCall + per-candidate auto-apply /
+	// confirm-queue + audit log. Tests override via SetOnTrigger
+	// to assert cadence in isolation.
 	l.onTrigger = l.defaultOnTrigger
 	return l
 }
@@ -183,10 +184,10 @@ func (l *MemoryCuratorLobe) Description() string {
 // Haiku call gated by the shared LLM-Lobe semaphore.
 func (l *MemoryCuratorLobe) Kind() cortex.LobeKind { return cortex.KindLLM }
 
-// SetOnTrigger overrides the per-trigger callback. Production code calls
-// this from TASK-30's wiring to install the haikuCall closure; tests
-// call it to inject a counting hook so they can assert TASK-29's
-// trigger cadence without a real provider.
+// SetOnTrigger overrides the per-trigger callback. The constructor
+// installs the production curation pipeline by default; tests use
+// this hook to inject a counting callback so they can assert
+// trigger cadence without a real provider round-trip.
 func (l *MemoryCuratorLobe) SetOnTrigger(fn func(ctx context.Context, in cortex.LobeInput)) {
 	l.onTrigger = fn
 }
@@ -198,11 +199,12 @@ func (l *MemoryCuratorLobe) TriggerCount() uint64 { return l.triggerCount.Load()
 // TurnCount reports the current per-Run tick counter. Test-facing.
 func (l *MemoryCuratorLobe) TurnCount() uint64 { return l.turnCount.Load() }
 
-// Run is the per-Round entry point. TASK-29 wires the every-5-turns
-// trigger: each Run increments turnCount; turns at indexes 5/10/15/...
-// satisfy the predicate and fire onTrigger (the haikuCall pipeline once
-// TASK-30 lands). The task.completed event additionally fires
-// onTrigger out-of-cadence via the hub subscriber installed in
+// Run is the per-Round entry point. Each Run increments
+// turnCount; turns at indexes 5/10/15/... satisfy the predicate
+// and fire onTrigger (the production pipeline: privacy gate +
+// haikuCall + per-candidate auto-apply / confirm-queue / audit
+// log). The task.completed event additionally fires onTrigger
+// out-of-cadence via the hub subscriber installed in
 // ensureSubscribed.
 //
 // ctx.Done is observed defensively — a cancelled tick returns nil so
