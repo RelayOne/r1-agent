@@ -650,17 +650,25 @@ func projectMaxCost(skill *ir.Skill) float64 {
 }
 
 // Stage 6: termination + DAG check. Verifies the graph is acyclic.
-// Production code does a proper topological sort; here we do a simpler
-// presence check via reachability from declared nodes.
+//
+// Why this matters: a cyclic skill graph used to pass `analyze` and
+// deadlock at runtime when the interpreter tried to evaluate a node
+// whose inputs depend on its own (still-pending) output. Catching the
+// cycle here gives the LLM-author a single clean error listing the
+// nodes in the cycle.
+//
+// Algorithm: build the dependency graph from node-config refs (using
+// the same Expr-walker as Stage 2), then run DFS with three-color
+// marking. WHITE = unvisited; GRAY = on the current DFS stack;
+// BLACK = fully explored. A WHITE -> GRAY edge means we hit a
+// back-edge, which proves a cycle. We record the path of GRAY nodes
+// from the cycle's entry to the offending edge so the diagnostic can
+// list the exact loop.
 func stageTermination(skill *ir.Skill, _ *Constitution) StageResult {
 	res := StageResult{Passed: true}
 
-	// For now: trust map traversal. A real implementation builds the
-	// reference graph from each node's config Expr fields, runs a
-	// cycle-detection algorithm (DFS with three-color marking), and
-	// reports the cycle path on failure. We sketch the entry but stub
-	// the deep walk.
-
+	// (1) Coarse warning: very large graphs are a maintainability red
+	// flag even if acyclic. Preserved from the skeleton.
 	if len(skill.Graph.Nodes) > 1000 {
 		res.Diagnostics = append(res.Diagnostics, Diagnostic{
 			Level:   "warning",
@@ -669,7 +677,189 @@ func stageTermination(skill *ir.Skill, _ *Constitution) StageResult {
 		})
 	}
 
+	// (2) Build dependency edges. An edge A -> B means "B depends on
+	// A's output" — i.e. B's config refs A. We extract refs from each
+	// node's config; if a ref's target is a real node (not the
+	// "inputs" pseudo-node and not unknown), that target is a
+	// predecessor of the consumer.
+	deps := buildDepGraph(skill)
+
+	// (3) Three-color DFS. We iterate node names in deterministic
+	// (sorted) order so a deterministic cycle is reported across runs.
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make(map[string]int, len(skill.Graph.Nodes))
+	for name := range skill.Graph.Nodes {
+		color[name] = white
+	}
+	names := sortedKeys(color)
+
+	var (
+		stack []string               // current DFS stack of GRAY nodes
+		seen  = map[string]bool{}    // cycles already reported (avoid spam on shared back-edges)
+		cycle func(name string) bool // returns true if a cycle was found rooted at name
+	)
+	cycle = func(name string) bool {
+		color[name] = gray
+		stack = append(stack, name)
+
+		// deterministic edge order
+		neighbors := append([]string(nil), deps[name]...)
+		sortStrings(neighbors)
+
+		for _, next := range neighbors {
+			switch color[next] {
+			case white:
+				if cycle(next) {
+					return true
+				}
+			case gray:
+				// Back-edge: found a cycle. Slice the stack from
+				// `next` to the end and report it.
+				start := -1
+				for i, s := range stack {
+					if s == next {
+						start = i
+						break
+					}
+				}
+				if start < 0 {
+					// Shouldn't happen: a GRAY node must be on the stack.
+					start = 0
+				}
+				path := append([]string(nil), stack[start:]...)
+				path = append(path, next) // close the loop visually
+				key := cycleKey(path)
+				if !seen[key] {
+					seen[key] = true
+					res.Passed = false
+					res.Diagnostics = append(res.Diagnostics, Diagnostic{
+						Level:    "error",
+						Code:     "E061_GRAPH_CYCLE",
+						Message:  "graph contains a cycle: " + joinPath(path),
+						Location: "graph.nodes." + path[0],
+						Hint:     "remove one of the back-edges in the listed cycle; skill graphs must be DAGs",
+					})
+				}
+				// Continue searching to surface independent cycles
+				// elsewhere in the graph.
+			case black:
+				// Already fully explored — no new cycle through this edge.
+			}
+		}
+
+		// Pop and mark BLACK.
+		stack = stack[:len(stack)-1]
+		color[name] = black
+		return false
+	}
+
+	for _, name := range names {
+		if color[name] == white {
+			cycle(name)
+		}
+	}
+
 	return res
+}
+
+// buildDepGraph returns adjacency list deps[A] = nodes that A points
+// at via any config ref. We deliberately model edges as A -> deps[A]
+// where deps[A] is the set of producers that A consumes. A cycle in
+// this graph is a real evaluation cycle: A reads B reads A.
+//
+// Refs to the "inputs" pseudo-node and refs to unknown nodes are
+// dropped here — Stage 2 already reports them. We only track edges
+// between real nodes so cycle messages don't include pseudo-nodes.
+func buildDepGraph(skill *ir.Skill) map[string][]string {
+	deps := make(map[string][]string, len(skill.Graph.Nodes))
+	for name := range skill.Graph.Nodes {
+		deps[name] = nil
+	}
+	dedup := make(map[string]map[string]bool, len(skill.Graph.Nodes))
+	for consumer, node := range skill.Graph.Nodes {
+		refs := collectRefsFromConfig(node.Config)
+		for _, r := range refs {
+			producer, _ := splitRef(r.target)
+			if producer == "" || producer == "inputs" {
+				continue
+			}
+			if _, ok := skill.Graph.Nodes[producer]; !ok {
+				continue
+			}
+			if dedup[consumer] == nil {
+				dedup[consumer] = make(map[string]bool)
+			}
+			if dedup[consumer][producer] {
+				continue
+			}
+			dedup[consumer][producer] = true
+			deps[consumer] = append(deps[consumer], producer)
+		}
+	}
+	return deps
+}
+
+// sortedKeys returns the keys of a string-keyed map in lexical order.
+// Cycle detection uses this for deterministic output across runs.
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sortStrings(out)
+	return out
+}
+
+// sortStrings is an in-place insertion sort. The IR limits skills to
+// O(100) nodes in practice and the analyzer is sensitive to import
+// surface; we avoid pulling sort/strings into the cycle-detector hot
+// path and use a small hand-rolled sort instead.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
+
+// cycleKey collapses a path of node names to a canonical string so we
+// can dedupe reports of the same cycle hit through different DFS
+// starts. We rotate so the lexically smallest node is first.
+func cycleKey(path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	// Drop the trailing "close-the-loop" repeat for canonicalization.
+	core := path
+	if len(path) > 1 && path[0] == path[len(path)-1] {
+		core = path[:len(path)-1]
+	}
+	min := 0
+	for i := 1; i < len(core); i++ {
+		if core[i] < core[min] {
+			min = i
+		}
+	}
+	rotated := make([]string, 0, len(core))
+	rotated = append(rotated, core[min:]...)
+	rotated = append(rotated, core[:min]...)
+	return joinPath(rotated)
+}
+
+// joinPath renders ["a","b","c","a"] as "a -> b -> c -> a".
+func joinPath(path []string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	out := path[0]
+	for i := 1; i < len(path); i++ {
+		out += " -> " + path[i]
+	}
+	return out
 }
 
 // Stage 7: replay determinism. Every stochastic effect (llm_call,
