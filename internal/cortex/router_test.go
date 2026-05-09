@@ -447,3 +447,69 @@ func TestHistoryWindowTrimsLastN(t *testing.T) {
 		t.Error("nil history should return nil")
 	}
 }
+
+// TestRouteHardStopBypassesProvider verifies that hard-stop keywords
+// short-circuit Route without calling the provider — covering the
+// audit/scan-governance-gaps cortex-core item 17 fix. A provider set
+// to err ensures we'd see a failure if Route ever reached it.
+func TestRouteHardStopBypassesProvider(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"plain stop", "stop"},
+		{"upper STOP", "STOP"},
+		{"stop with period", "stop."},
+		{"stop with trailing text", "stop! that's wrong"},
+		{"cancel", "cancel"},
+		{"abort", "abort the run"},
+		{"halt", "halt"},
+		{"slash-stop", "/stop"},
+		{"leading whitespace", "  stop  "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fp := &fakeRouterProvider{
+				err: errors.New("provider should never be called for hard-stop inputs"),
+			}
+			r := newRouterForTest(t, fp)
+			dec, err := r.Route(context.Background(), RouterInput{UserInput: tc.input})
+			if err != nil {
+				t.Fatalf("Route(%q): %v", tc.input, err)
+			}
+			if dec.Kind != DecisionInterrupt {
+				t.Errorf("Kind=%q want %q (input=%q)", dec.Kind, DecisionInterrupt, tc.input)
+			}
+			if dec.Interrupt == nil {
+				t.Error("Interrupt payload missing")
+			} else if dec.Interrupt.NewDirection != tc.input {
+				t.Errorf("NewDirection=%q want %q (preserves original input)", dec.Interrupt.NewDirection, tc.input)
+			}
+			if fp.calls != 0 {
+				t.Errorf("provider was called %d times; hard-stop must bypass it", fp.calls)
+			}
+		})
+	}
+}
+
+// TestMatchHardStop_NonMatches verifies the matcher does NOT trip on
+// look-alike words or non-keyword inputs.
+func TestMatchHardStop_NonMatches(t *testing.T) {
+	cases := []string{
+		"stopping mid-stream",   // longer word with same prefix
+		"please stop",           // not the first word
+		"i want to abort later", // not the first word
+		"what does stop do?",    // not the first word
+		"halting",               // longer word
+		"",                      // empty
+		"   ",                   // whitespace only
+		"!!!",                   // punctuation only
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			if matchHardStop(in) {
+				t.Errorf("matchHardStop(%q) = true; want false", in)
+			}
+		})
+	}
+}
