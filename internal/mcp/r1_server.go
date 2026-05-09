@@ -34,6 +34,7 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +84,13 @@ type StokeServer struct {
 	// per spec 8 §4.3; nil makes every r1.cortex.* call return
 	// "cortex backend not wired".
 	cortex CortexBackend
+	// authKey, when non-empty, gates every tools/call request inside
+	// ServeStdio: the request must include params.meta.r1_mcp_key
+	// matching this value via constant-time comparison. tools/list and
+	// initialize stay unauthenticated so MCP clients can negotiate
+	// before checking auth. Wired via WithAuthKey; default empty means
+	// open local-dev mode.
+	authKey string
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -157,6 +165,20 @@ func (s *StokeServer) WithCortex(c CortexBackend) *StokeServer {
 	return s
 }
 
+// WithAuthKey configures a shared-secret gate for ServeStdio's
+// tools/call dispatch. When key is non-empty, every tools/call must
+// carry params.meta.r1_mcp_key matching key (constant-time compare).
+// tools/list and initialize remain unauthenticated so an MCP client
+// can negotiate the surface before authenticating. Empty key
+// disables the gate (local-dev default). Pulled from R1_MCP_KEY by
+// `r1 mcp serve`.
+func (s *StokeServer) WithAuthKey(key string) *StokeServer {
+	s.mu.Lock()
+	s.authKey = key
+	s.mu.Unlock()
+	return s
+}
+
 // ToolDefinitions returns the MCP tool definitions for Stoke build
 // operations. S1-4 of work-r1-rename.md mandates that every legacy
 // stoke_* tool is also published under the canonical r1_* name until
@@ -180,10 +202,23 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 	// so a single StokeServer endpoint serves both surfaces.
 	s.mu.Lock()
 	lanes := s.lanes
+	cortex := s.cortex
 	s.mu.Unlock()
 	if lanes != nil {
 		out = append(out, lanes.ToolDefinitions()...)
 	}
+	// When a CortexBackend is attached, advertise the 5 r1.cortex.*
+	// tools so MCP clients see them in tools/list. Without WithCortex
+	// the handlers still exist but tools/list omits them so a client
+	// does not discover tools that would only return "cortex backend
+	// not wired".
+	if cortex != nil {
+		out = append(out, r1CortexTools()...)
+	}
+	// r1.verify.lint is wired by HandleToolCall unconditionally and
+	// has no backend that needs WithX wiring; advertise it always so
+	// the lint surface is discoverable.
+	out = append(out, r1VerifyTools()...)
 	return out
 }
 
@@ -1001,11 +1036,22 @@ func (s *StokeServer) ServeStdio() error {
 			var params struct {
 				Name      string                 `json:"name"`
 				Arguments map[string]interface{} `json:"arguments"`
+				Meta      map[string]interface{} `json:"meta,omitempty"`
 			}
 			paramsBytes, _ := json.Marshal(req.Params)
 			if err := json.Unmarshal(paramsBytes, &params); err != nil {
 				writeJSONRPC(os.Stdout, req.ID, nil, &jsonRPCError{Code: -32602, Message: "Invalid params"})
 				continue
+			}
+			s.mu.Lock()
+			authKey := s.authKey
+			s.mu.Unlock()
+			if authKey != "" {
+				gotKey, _ := params.Meta["r1_mcp_key"].(string)
+				if subtle.ConstantTimeCompare([]byte(gotKey), []byte(authKey)) != 1 {
+					writeJSONRPC(os.Stdout, req.ID, nil, &jsonRPCError{Code: -32000, Message: "unauthorized"})
+					continue
+				}
 			}
 			result, err := s.HandleToolCall(params.Name, params.Arguments)
 			if err != nil {
