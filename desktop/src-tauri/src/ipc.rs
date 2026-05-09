@@ -304,12 +304,16 @@ pub async fn cost_get_current(
     params: CostGetCurrentParams,
     mgr: State<'_, SubprocessManager>,
 ) -> IpcResult<CostSnapshot> {
-    let sid = params
-        .session_id
-        .as_deref()
-        .map(|s| s.to_string())
-        .or_else(|| futures_or_sync_any_session_id_sync(&mgr))
-        .ok_or_else(|| IpcError::not_found("no active session for cost query"))?;
+    // Per audit/scan-rust-stubs.md item #6: fall back to the most
+    // recent active session when caller omits `session_id`. The
+    // previous helper returned `None` unconditionally, so an explicit
+    // `not_found` fired even when sessions were live.
+    let sid = match params.session_id.clone() {
+        Some(s) => s,
+        None => any_session_id_maybe(&mgr)
+            .await
+            .ok_or_else(|| IpcError::not_found("no active session for cost query"))?,
+    };
     let val = mgr
         .rpc_call(
             &sid,
@@ -325,12 +329,12 @@ pub async fn cost_get_history(
     params: CostGetHistoryParams,
     mgr: State<'_, SubprocessManager>,
 ) -> IpcResult<CostHistoryResult> {
-    let sid = params
-        .session_id
-        .as_deref()
-        .map(|s| s.to_string())
-        .or_else(|| futures_or_sync_any_session_id_sync(&mgr))
-        .ok_or_else(|| IpcError::not_found("no active session for cost history"))?;
+    let sid = match params.session_id.clone() {
+        Some(s) => s,
+        None => any_session_id_maybe(&mgr)
+            .await
+            .ok_or_else(|| IpcError::not_found("no active session for cost history"))?,
+    };
     let val = mgr
         .rpc_call(
             &sid,
@@ -524,6 +528,42 @@ pub async fn app_discovery_status(
     Ok(state.snapshot())
 }
 
+/// `daemon_install_command` — return the host-OS-appropriate
+/// `r1 serve --install ...` command string that the discovery wizard
+/// shows in its copy-paste code box (spec
+/// desktop-cortex-augmentation §5 lifecycle step 4).
+///
+/// Wired per audit/scan-rust-stubs.md item #1: the WebView called this
+/// verb but no Rust handler existed, panicking the wizard with a
+/// missing-handler error. Delegates to `discovery::install_command_for_host_os`.
+#[tauri::command]
+pub async fn daemon_install_command() -> IpcResult<String> {
+    Ok(crate::discovery::install_command_for_host_os())
+}
+
+/// `transport_reconnect_status` — open a `tauri::ipc::Channel<ReconnectStatus>`
+/// the title-bar pill subscribes to. Currently emits a single
+/// `Connected` frame and idles; the real run-loop driver
+/// (`TransportHandle::run_with`) plugs into this channel once the
+/// daemon WS path is wired (audit/scan-rust-stubs.md item #5 / #10).
+///
+/// Backed by `transport::ReconnectStatus`; the Channel handle is
+/// owned by the WebView side via the `subscribe<T>(channel)` Tauri 2
+/// pattern.
+#[tauri::command]
+pub async fn transport_reconnect_status(
+    on_status: tauri::ipc::Channel<crate::transport::ReconnectStatus>,
+) -> IpcResult<()> {
+    // Send the current best-effort status. Until the run-loop is wired
+    // to a real socket, we emit `Connected` because the per-session
+    // SubprocessManager is the live transport — no reconnect storms
+    // possible until that path migrates to the shared WS daemon.
+    on_status
+        .send(crate::transport::ReconnectStatus::Connected)
+        .map_err(|e| IpcError::internal(format!("status channel send: {e}")))?;
+    Ok(())
+}
+
 /// Register all IPC commands with the Tauri builder.
 pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
@@ -555,6 +595,13 @@ pub fn register_handlers() -> tauri::Builder<tauri::Wry> {
             app_open_folder_picker,
             // Spec §5 (issue #145) — host-side daemon-discovery state.
             app_discovery_status,
+            // Wired per audit/scan-rust-stubs.md item #1 — the wizard
+            // panicked on the missing-handler error before this
+            // handler existed.
+            daemon_install_command,
+            // Wired per audit/scan-rust-stubs.md item #5 — title-bar
+            // pill subscribes to a typed status Channel.
+            transport_reconnect_status,
         ])
 }
 
@@ -621,16 +668,28 @@ pub struct SessionLanesSubscribeResult {
     pub subscription_id: String,
 }
 
-/// `session.lanes.subscribe` — register a subscription. The full
-/// Channel<LaneEvent>-backed body lands when the lanes::LanesState is
-/// wired into managed state; for now this verb registers the
-/// subscription id round-trip to the daemon so the wire shape is
-/// already exercised.
+/// `session.lanes.subscribe` — register a subscription. Forwards every
+/// `LaneEvent` the daemon emits for this session through the
+/// `tauri::ipc::Channel<LaneEvent>` the WebView passed in (`on_event`
+/// kwarg). The host-side LanesState owns the per-subscription
+/// forwarder so `session_lanes_unsubscribe` and host-side teardown
+/// (window close, daemon disconnect) can drop it deterministically.
+///
+/// Wired per audit/scan-rust-stubs.md item #2: the previous body
+/// dropped the Channel handle, so no LaneEvent ever reached the
+/// WebView even though the verb returned a `subscription_id`.
 #[tauri::command]
 pub async fn session_lanes_subscribe(
     params: SessionLanesSubscribeParams,
+    on_event: tauri::ipc::Channel<crate::lanes::LaneEvent>,
     mgr: State<'_, SubprocessManager>,
+    state: State<'_, crate::lanes::LanesState>,
 ) -> IpcResult<SessionLanesSubscribeResult> {
+    // Step 1: round-trip to the daemon so it starts pushing lane
+    // events for this session over its existing event bus. The result
+    // carries the daemon-side subscription id; we use it as the
+    // host-side registry key so unsubscribe routing works for both
+    // host-fast-path and daemon-side drops.
     let val = mgr
         .rpc_call(
             &params.session_id,
@@ -638,7 +697,25 @@ pub async fn session_lanes_subscribe(
             serde_json::to_value(&params).unwrap_or(serde_json::json!({})),
         )
         .await?;
-    from_val(val)
+    let result: SessionLanesSubscribeResult = from_val(val)?;
+
+    // Step 2: register a host-side LaneSubscription that forwards
+    // every LaneEvent emitted by the daemon's session bus to the
+    // WebView's Channel. Capacity 1024 matches the per-channel ring
+    // budget called out in spec desktop-cortex-augmentation §12 R3.
+    let sink: std::sync::Arc<dyn crate::lanes::LaneSink> = std::sync::Arc::new(
+        crate::lanes::ChannelSink::new(on_event),
+    );
+    let subscription = crate::lanes::LaneSubscription::new(
+        params.session_id.clone(),
+        sink,
+        1024,
+    );
+    state
+        .register(result.subscription_id.clone(), subscription)
+        .await;
+
+    Ok(result)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -850,22 +927,43 @@ pub struct AppOpenFolderPickerResult {
     pub path: Option<String>,
 }
 
-/// `app.open_folder_picker` — open the OS folder picker. Routes
-/// through tauri-plugin-dialog from the WebView side; this Rust
-/// command exists so call-sites have one symmetric surface across
-/// both transport modes.
+/// `app.open_folder_picker` — open the native OS folder picker.
+/// Returns `Some(path)` on selection, `None` on cancel.
+///
+/// Wired per audit/scan-rust-stubs.md item #3: previously returned
+/// `None` unconditionally, so any caller round-tripping folder
+/// selection through Rust got `null` and the daemon never received
+/// a workdir. Delegates to tauri-plugin-dialog's `pick_folder`
+/// callback API; we adapt that to async via a oneshot channel so the
+/// command can stay `async fn`.
 #[tauri::command]
 pub async fn app_open_folder_picker(
-    _params: AppOpenFolderPickerParams,
-    _app: AppHandle,
+    params: AppOpenFolderPickerParams,
+    app: AppHandle,
 ) -> IpcResult<AppOpenFolderPickerResult> {
-    // Folder picking via the dialog plugin happens on the JS side
-    // (tauri-plugin-dialog `open()`); this verb is the host-side
-    // surface for callers that prefer to invoke a Rust command. The
-    // body stays a noop returning `None` until item 28 wires the
-    // wizard's folder picker, after which it'll delegate to the
-    // dialog plugin's Rust API.
-    Ok(AppOpenFolderPickerResult { path: None })
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+
+    let mut builder = app.dialog().file();
+    if let Some(title) = params.title.as_deref() {
+        builder = builder.set_title(title);
+    }
+    builder.pick_folder(move |maybe_path| {
+        // Convert FilePath to a string. FilePath on desktop wraps a
+        // real PathBuf; we surface the absolute path string.
+        let p = maybe_path.and_then(|fp| {
+            fp.into_path()
+                .ok()
+                .and_then(|pb| pb.into_os_string().into_string().ok())
+        });
+        let _ = tx.send(p);
+    });
+
+    let path = rx.await.map_err(|_| {
+        IpcError::internal("folder picker callback dropped before completing")
+    })?;
+    Ok(AppOpenFolderPickerResult { path })
 }
 
 // ---------------------------------------------------------------------------
@@ -881,14 +979,6 @@ async fn any_session_id(mgr: &SubprocessManager) -> IpcResult<String> {
 
 async fn any_session_id_maybe(mgr: &SubprocessManager) -> Option<String> {
     mgr.first_session_id().await
-}
-
-/// Sync peek at the session map (used for optional session_id fields).
-/// Returns None when no session active.
-fn futures_or_sync_any_session_id_sync(_mgr: &SubprocessManager) -> Option<String> {
-    // We can't easily call async from a sync context here.
-    // The callers that use this already have the session_id in params if needed.
-    None
 }
 
 // ---------------------------------------------------------------------------

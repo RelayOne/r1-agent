@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: MIT
 //
-// Tracked: only LanesState::new() is wired into main.rs — the rest of
-// this file (LaneEvent fields, LaneRingBuffer, LaneForwarder, lane_forward
-// command) remains pending menu/IPC wire-up. Same convention as
-// discovery.rs / transport.rs / menu.rs.
-#![allow(dead_code)] // tracked: pending full wire-up
-
-//
 // R1 Desktop lane subscription forwarder.
 //
 // Implements spec desktop-cortex-augmentation §8: one
@@ -86,6 +79,10 @@ pub enum LaneEvent {
 }
 
 impl LaneEvent {
+    // These accessors are exercised by tests + the future ingestion
+    // path (LaneSubscription::ingest fires from transport.rs once
+    // item 16 wires the WS listener — audit/scan-rust-stubs.md #10).
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
     pub fn session_id(&self) -> &str {
         match self {
             LaneEvent::Delta { session_id, .. }
@@ -96,6 +93,7 @@ impl LaneEvent {
         }
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
     pub fn lane_id(&self) -> &str {
         match self {
             LaneEvent::Delta { lane_id, .. }
@@ -106,6 +104,7 @@ impl LaneEvent {
         }
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
     pub fn is_droppable(&self) -> bool {
         matches!(self, LaneEvent::Delta { .. })
     }
@@ -118,7 +117,13 @@ impl LaneEvent {
 /// Ring of pending events per lane that the forwarder coalesces
 /// before sending. Status / spawn / kill never drop; deltas drop on
 /// overflow and emit a single `DeltaGap` marker per overflow window.
+///
+/// Reachable from the lib's tests + the bin's
+/// `LaneSubscription::ingest`. ingest is exercised in tests but the
+/// production wiring is gated behind transport.rs feeding the
+/// subscription (audit/scan-rust-stubs.md item #10).
 #[derive(Debug)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
 pub struct LaneBuffer {
     pub deltas: VecDeque<LaneEvent>,
     /// Last delta seq we accepted into the ring. Carried into the
@@ -132,6 +137,7 @@ pub struct LaneBuffer {
     pub capacity: usize,
 }
 
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
 impl LaneBuffer {
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -189,6 +195,7 @@ impl LaneBuffer {
     }
 }
 
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: used by ingestion + tests
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -202,10 +209,12 @@ fn now_iso() -> String {
 /// an mpsc-backed mock so no Tauri runtime is required.
 #[async_trait::async_trait]
 pub trait LaneSink: Send + Sync {
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: invoked once transport feeds events
     async fn send(&self, ev: LaneEvent) -> Result<(), LaneSinkError>;
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: variants used by tests + ChannelSink
 pub enum LaneSinkError {
     #[error("sink closed")]
     Closed,
@@ -221,6 +230,7 @@ pub enum LaneSinkError {
 /// and looked up by `subscription_id`. Holds the per-lane ring map
 /// behind a Mutex so the transport-side feeder and the
 /// flush-task can both touch it.
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: fields driven by ingest()
 pub struct LaneSubscription {
     pub session_id: String,
     pub buffers: Arc<Mutex<HashMap<String, LaneBuffer>>>,
@@ -241,6 +251,7 @@ impl LaneSubscription {
     /// Ingest one event from transport.rs. Routes to the per-lane
     /// ring or forwards immediately, returns whether the sink is
     /// still alive so the caller can deregister on hard close.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
     pub async fn ingest(&self, ev: LaneEvent) -> Result<(), LaneSinkError> {
         // Status events flush pending deltas for that lane FIRST so
         // the UI sees ordering: deltas then status (R7 mitigation).
@@ -269,6 +280,7 @@ impl LaneSubscription {
         Ok(())
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending transport ingestion
     async fn flush_lane(&self, lane_id: &str) -> Result<(), LaneSinkError> {
         let drained = {
             let mut bufs = self.buffers.lock().await;
@@ -286,6 +298,7 @@ impl LaneSubscription {
     /// Force-flush every lane in the subscription. Used by a periodic
     /// 100 ms tick (RT-DESKTOP-TAURI §7) so steady-state delta flow
     /// reaches the UI without waiting for a status flip.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending periodic flush task
     pub async fn flush_all(&self) -> Result<(), LaneSinkError> {
         let lane_ids: Vec<String> = {
             let bufs = self.buffers.lock().await;
@@ -320,11 +333,13 @@ impl LanesState {
         g.remove(sub_id).is_some()
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: pending future ingestion lookup path
     pub async fn get(&self, sub_id: &str) -> Option<Arc<LaneSubscription>> {
         let g = self.inner.lock().await;
         g.get(sub_id).cloned()
     }
 
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: tests + future menu integration
     pub async fn count(&self) -> usize {
         let g = self.inner.lock().await;
         g.len()
@@ -336,16 +351,19 @@ impl LanesState {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: lib-side test/contract surface
 pub struct LaneSubscribeResult {
     pub subscription_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: lib-side test/contract surface
 pub struct LaneUnsubscribeParams {
     pub subscription_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: lib-side test/contract surface
 pub struct LaneUnsubscribeResult {
     pub ok: bool,
 }
@@ -353,6 +371,7 @@ pub struct LaneUnsubscribeResult {
 /// Tauri-host-side fast path that maps a missing subscription to the
 /// IPC `not_found` taxonomy code so callers can pattern-match without
 /// a wire round-trip to the daemon.
+#[allow(dead_code)] // audit/scan-rust-stubs.md #10: lib-side helper for integration tests
 pub async fn unsubscribe(
     state: &LanesState,
     params: LaneUnsubscribeParams,
@@ -364,6 +383,45 @@ pub async fn unsubscribe(
             "subscription {}",
             params.subscription_id
         )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ChannelSink — bridges `tauri::ipc::Channel<LaneEvent>` to LaneSink
+// ---------------------------------------------------------------------------
+
+/// Wraps a `tauri::ipc::Channel<LaneEvent>` so the forwarder can push
+/// events through it. The generic `LaneSink` trait stays the test seam
+/// (integration tests use an mpsc-backed mock); production wraps the
+/// real Tauri channel in this sink.
+///
+/// Wired per audit/scan-rust-stubs.md item #2: the subscribe verb
+/// previously dropped the Channel handle, so no LaneEvents flowed to
+/// the WebView. The host now registers a forwarder against this sink
+/// for every successful subscription.
+pub struct ChannelSink {
+    // `inner` is read by `send()` through the trait; the bin
+    // compilation can't see the trait method's caller until the
+    // ingestion path lights up, so we mark it explicitly here too.
+    #[allow(dead_code)] // audit/scan-rust-stubs.md #10: read by send() once ingestion fires
+    inner: tauri::ipc::Channel<LaneEvent>,
+}
+
+impl ChannelSink {
+    pub fn new(channel: tauri::ipc::Channel<LaneEvent>) -> Self {
+        Self { inner: channel }
+    }
+}
+
+#[async_trait::async_trait]
+impl LaneSink for ChannelSink {
+    async fn send(&self, ev: LaneEvent) -> Result<(), LaneSinkError> {
+        // tauri::ipc::Channel::send is sync; tauri serializes the event
+        // and pushes it to the WebView via the IPC bus. Failure means
+        // the WebView dropped its end (window closed, navigation, etc.).
+        self.inner
+            .send(ev)
+            .map_err(|e| LaneSinkError::Other(format!("channel send: {e}")))
     }
 }
 
