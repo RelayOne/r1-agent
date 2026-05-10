@@ -383,6 +383,22 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 		cfg.SessionID = s.ID
 	}
 
+	// Install a PreTurnHook that gates on Session.IsPaused — when
+	// session.pause fires, the next loop iteration blocks here until
+	// session.resume signals (or ctx fires). Operator-supplied
+	// PreTurnHook (rare) chains AFTER the pause gate so a manual
+	// hook still fires once the pause clears.
+	priorPreTurn := cfg.PreTurnHook
+	cfg.PreTurnHook = func(loopCtx context.Context, turn int, messages []agentloop.Message) error {
+		if err := s.WaitWhilePaused(loopCtx); err != nil {
+			return err
+		}
+		if priorPreTurn != nil {
+			return priorPreTurn(loopCtx, turn, messages)
+		}
+		return nil
+	}
+
 	// dispatchTool — the sentinel-guarded handler wrapper. Item 25
 	// installs this; if dispatchHook is nil, we still wrap so that
 	// future installations work uniformly. The wrapper:
