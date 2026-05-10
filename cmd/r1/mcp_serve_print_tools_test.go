@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RelayOne/r1/internal/mcp"
 )
@@ -47,13 +48,30 @@ func TestMCPServe_PrintToolsJSON_AllSchemasValid(t *testing.T) {
 	}
 }
 
-func TestMCPServe_NoFlagsPrintsNoticeAndExitsNonzero(t *testing.T) {
+// TestMCPServe_NoFlagsRunsServer asserts the post-PR-#248 behavior:
+// `r1 mcp serve` with no flags now starts the stdio MCP JSON-RPC
+// server (instead of returning the prior "back-end not yet wired"
+// stub). With empty stdin (test default) the server reads EOF
+// immediately and exits 0. End-to-end behavior with real frames is
+// covered by mcp_serve_runtime_test.go.
+//
+// Note: in-process invocation of runMCPServe attaches stdin = the
+// test process's os.Stdin, so we run it in a goroutine and time out
+// after a short window — under `go test` stdin is /dev/null which
+// scans return immediately, but a TTY-attached run would block
+// forever.
+func TestMCPServe_NoFlagsRunsServer(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := runMCPServe([]string{}, &stdout, &stderr)
-	if code == 0 {
-		t.Fatalf("expected non-zero exit, got 0; stdout=%q", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), "back-end not yet wired") {
-		t.Errorf("expected back-end-not-wired notice on stderr; got %q", stderr.String())
+	done := make(chan int, 1)
+	go func() {
+		done <- runMCPServe([]string{"--no-cortex"}, &stdout, &stderr)
+	}()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("expected exit 0 on EOF stdin, got %d; stderr=%q", code, stderr.String())
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("runMCPServe did not exit within 3s on EOF stdin; stderr=%q", stderr.String())
 	}
 }
