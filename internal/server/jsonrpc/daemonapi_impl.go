@@ -279,36 +279,80 @@ func (h *HubHandler) DaemonSessionUnsubscribe(ctx context.Context, req SessionUn
 		"session.unsubscribe: BLOCKED on WS bridge per-conn subscriber registry (follow-up)")
 }
 
-// DaemonLanesList lists per-session lanes.
-//
-// BLOCKED on cortex.Workspace lane registry: lanes-protocol fanout
-// currently flows through the hub.Bus subscriber path on the WS
-// handler; there is no per-session lane index on Session yet.
-// Returning an empty list is the correct "no lanes" answer for sessions
-// that haven't started a Run; for active sessions a follow-up must
-// thread cortex.Workspace's lane registry through Session. For now we
-// return an empty list (rather than ErrInternal) because empty IS a
-// valid answer pre-Run and the wire surface is otherwise honest.
-func (h *HubHandler) DaemonLanesList(ctx context.Context, req LanesListRequest) (LanesListResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
-		return LanesListResponse{}, err
-	}
-	// BLOCKED: cortex.Workspace lane registry hookup (follow-up). Empty
-	// list is correct for sessions without an active Run.
-	return LanesListResponse{Lanes: nil}, nil
+// laneRegistry is the structural slice of cortex.Workspace that the
+// lanes.* handlers need. Defining it as an interface keeps this
+// package independent of cortex internals and lets tests substitute a
+// fake registry. *cortex.Workspace satisfies it via Lanes() / GetLane().
+type laneRegistry interface {
+	Lanes() []*cortex.Lane
+	GetLane(string) (*cortex.Lane, bool)
 }
 
-// DaemonLanesKill kills one lane.
-//
-// BLOCKED: paired with lanes.list — needs the same cortex.Workspace
-// lane-registry hookup.
+// DaemonLanesList lists per-session lanes by reading the
+// cortex.Workspace lane registry. Sessions whose Workspace is nil
+// (no Run yet, or no cortex configured) return an empty list rather
+// than an error — empty is the honest answer.
+func (h *HubHandler) DaemonLanesList(ctx context.Context, req LanesListRequest) (LanesListResponse, error) {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
+		return LanesListResponse{}, err
+	}
+	if sess.Workspace == nil {
+		return LanesListResponse{Lanes: []LaneSummary{}}, nil
+	}
+	reg, ok := sess.Workspace.(laneRegistry)
+	if !ok {
+		return LanesListResponse{}, stokerr.New(stokerr.ErrInternal,
+			"lanes.list: session.Workspace does not implement Lanes()/GetLane()")
+	}
+	lanes := reg.Lanes()
+	out := make([]LaneSummary, 0, len(lanes))
+	for _, l := range lanes {
+		out = append(out, LaneSummary{
+			LaneID:    l.ID,
+			Kind:      string(l.Kind),
+			ParentID:  l.ParentID,
+			Label:     l.Label,
+			Status:    string(l.Status),
+			StartedAt: l.StartedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return LanesListResponse{Lanes: out}, nil
+}
+
+// DaemonLanesKill kills one lane via cortex.Lane.Kill, which emits
+// lane.killed + terminal lane.status events. Idempotent for already-
+// terminal lanes (Lane.Kill is a no-op in that case).
 func (h *HubHandler) DaemonLanesKill(ctx context.Context, req LanesKillRequest) (LanesKillResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
 		return LanesKillResponse{}, err
 	}
-	// BLOCKED: depends on cortex.Workspace lane registry (follow-up).
-	return LanesKillResponse{}, stokerr.New(stokerr.ErrInternal,
-		"lanes.kill: BLOCKED on cortex.Workspace lane registry (follow-up)")
+	if strings.TrimSpace(req.LaneID) == "" {
+		return LanesKillResponse{}, stokerr.Validationf("lanes.kill: lane_id is required")
+	}
+	if sess.Workspace == nil {
+		return LanesKillResponse{}, stokerr.NotFoundf("lanes.kill: session has no workspace; lane %q not found", req.LaneID)
+	}
+	reg, ok := sess.Workspace.(laneRegistry)
+	if !ok {
+		return LanesKillResponse{}, stokerr.New(stokerr.ErrInternal,
+			"lanes.kill: session.Workspace does not implement Lanes()/GetLane()")
+	}
+	lane, found := reg.GetLane(req.LaneID)
+	if !found {
+		return LanesKillResponse{}, stokerr.NotFoundf("lanes.kill: lane %q not found", req.LaneID)
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "killed via daemon RPC"
+	}
+	if err := lane.Kill(reason); err != nil {
+		return LanesKillResponse{}, stokerr.Wrap(stokerr.ErrInternal, "lanes.kill", err)
+	}
+	return LanesKillResponse{
+		KilledAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 // DaemonCortexNotes returns recent cortex notes for a session.
