@@ -649,14 +649,19 @@ func (s *Session) Send(turn InboundTurn) error {
 		role = "user"
 	}
 	turn.Role = role
+	// Hold inboxMu across the channel operation. closeInbox holds the
+	// same lock while it nil-s and closes s.inbox, so the two paths
+	// strictly serialize: a Send-after-close sees s.inbox == nil and
+	// returns ErrSessionInputClosed instead of panicking on a send to
+	// a closed channel. Holding the lock through the select is safe
+	// because the default branch makes Send non-blocking.
 	s.inboxMu.Lock()
-	inbox := s.inbox
-	s.inboxMu.Unlock()
-	if inbox == nil {
+	defer s.inboxMu.Unlock()
+	if s.inbox == nil {
 		return ErrSessionInputClosed
 	}
 	select {
-	case inbox <- turn:
+	case s.inbox <- turn:
 		return nil
 	default:
 		return ErrSessionInputFull
@@ -686,13 +691,17 @@ func (s *Session) installInbox() {
 
 // closeInbox drains and closes the inbox. Called by Run on exit;
 // after this, Send returns ErrSessionInputClosed.
+//
+// Holds inboxMu across the close so a concurrent Send (which also
+// holds inboxMu through its select) cannot send on a closed channel.
+// The lock-through-close pattern is the standard fix for the
+// classic "send-after-close panic" race.
 func (s *Session) closeInbox() {
 	s.inboxMu.Lock()
-	inbox := s.inbox
-	s.inbox = nil
-	s.inboxMu.Unlock()
-	if inbox != nil {
-		close(inbox)
+	defer s.inboxMu.Unlock()
+	if s.inbox != nil {
+		close(s.inbox)
+		s.inbox = nil
 	}
 }
 
