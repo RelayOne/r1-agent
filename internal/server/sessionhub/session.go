@@ -399,6 +399,29 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 		return nil
 	}
 
+	// Install an EndTurnContinuation that drains one pending inbound
+	// turn (delivered via Session.Send) and feeds it to the loop as
+	// the next user turn. Empty inbox returns "" so end_turn fires
+	// normally. Operator-supplied continuation chains after — if the
+	// inbox is empty, fall through to the operator hook.
+	priorEndTurn := cfg.EndTurnContinuation
+	cfg.EndTurnContinuation = func() string {
+		s.inboxMu.Lock()
+		inbox := s.inbox
+		s.inboxMu.Unlock()
+		if inbox != nil {
+			select {
+			case turn := <-inbox:
+				return turn.Text
+			default:
+			}
+		}
+		if priorEndTurn != nil {
+			return priorEndTurn()
+		}
+		return ""
+	}
+
 	// dispatchTool — the sentinel-guarded handler wrapper. Item 25
 	// installs this; if dispatchHook is nil, we still wrap so that
 	// future installations work uniformly. The wrapper:
