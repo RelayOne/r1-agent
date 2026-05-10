@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/RelayOne/r1/internal/executor"
@@ -16,14 +18,15 @@ import (
 // Track B Task 19. It classifies natural-language input via the
 // router and, when a registered executor exists, hands off to it.
 //
-// For this MVP commit TaskCode routes back to `r1 ship` (see the
-// CodeExecutor default-fallback error), and the remaining types are
-// registered with scaffolding executors that return a not-wired
-// sentinel. Exit codes:
+// TaskCode now dispatches end-to-end through the SOW/ship pipeline
+// via the CodeExecutor.ExecuteHook wired in buildDefaultTaskRouter.
+// Other task types remain scaffolding pending Tasks 20-24.
 //
-//	0 — success (classification-only mode, or future direct dispatch)
-//	1 — usage error (empty input, bad flag)
-//	2 — classified + dispatched but executor not wired yet
+// Exit codes:
+//
+//	0 — success (classification-only mode, or successful Code dispatch)
+//	1 — usage error (empty input, bad flag) or executor-returned error
+//	2 — classified but no executor registered or scaffolding-only type
 func taskCmd(args []string) {
 	code := runTaskCmd(args, os.Stdout, os.Stderr, buildDefaultTaskRouter())
 	os.Exit(code)
@@ -34,16 +37,83 @@ func taskCmd(args []string) {
 // and call runTaskCmd directly.
 func buildDefaultTaskRouter() *router.Router {
 	r := router.New()
-	// TaskCode routes through the CodeExecutor fallback — prints
-	// the operator-friendly "use `r1 ship`" message.
 	// LINT-ALLOW chdir-cli-entry: r1 task subcommand; cwd captured once and embedded in the CodeExecutor as repoRoot, never re-read at dispatch time.
 	repoRoot, _ := os.Getwd()
-	r.Register(executor.TaskCode, executor.NewCodeExecutor(repoRoot))
+	codeExec := executor.NewCodeExecutor(repoRoot)
+	codeExec.ExecuteHook = defaultCodeExecuteHook(repoRoot)
+	r.Register(executor.TaskCode, codeExec)
 	r.Register(executor.TaskResearch, &executor.ResearchExecutor{})
 	r.Register(executor.TaskBrowser, &executor.BrowserExecutor{})
 	r.Register(executor.TaskDeploy, &executor.DeployExecutor{})
 	r.Register(executor.TaskDelegate, &executor.DelegateExecutor{})
 	return r
+}
+
+// defaultCodeExecuteHook is the production wiring between the
+// `r1 task` Executor interface and the existing SOW/ship pipeline
+// (cmd/r1/main.go shipCmd → runBuild → runSessionNative). The hook:
+//
+//  1. captures HEAD as the base commit so we can compute a unified
+//     diff after the pipeline returns,
+//  2. invokes shipCmd with --task <description> --repo <repoRoot>,
+//     which drives plan generation + the convergence loop,
+//  3. captures `git diff <base>..HEAD` as the deliverable diff.
+//
+// The hook intentionally calls shipCmd rather than reaching into
+// app.Orchestrator.Run directly: shipCmd is the single canonical
+// "run a code task end-to-end" entry point, and any improvement to
+// the ship pipeline (auth pools, signatures, ctl socket, signal
+// handling) is automatically inherited by `r1 task`.
+//
+// shipCmd uses fatal() / os.Exit on hard errors. That matches the
+// `r1 task` CLI contract — `r1 task` is itself a CLI process, so a
+// pipeline-level fatal exits the same process the way an `r1 ship`
+// invocation would. Tests inject their own ExecuteHook directly on
+// the CodeExecutor and never exercise this default closure.
+func defaultCodeExecuteHook(repoRoot string) func(ctx context.Context, p executor.Plan, effort executor.EffortLevel) (executor.Deliverable, error) {
+	return func(ctx context.Context, p executor.Plan, _ executor.EffortLevel) (executor.Deliverable, error) {
+		desc := strings.TrimSpace(p.Task.Description)
+		if desc == "" {
+			desc = strings.TrimSpace(p.Query)
+		}
+		if desc == "" {
+			return nil, errors.New("CodeExecutor: empty task description")
+		}
+
+		base := gitHeadSHA(repoRoot)
+
+		// Hand off to the canonical ship pipeline. shipCmd parses its
+		// own flag set, spins up the convergence loop, and (on hard
+		// failure) calls fatal() which os.Exit(1)s the process — same
+		// contract as `r1 ship`.
+		shipCmd([]string{"--task", desc, "--repo", repoRoot})
+
+		diff := gitDiffSince(ctx, repoRoot, base)
+		return executor.CodeDeliverable{
+			RepoRoot: repoRoot,
+			Diff:     diff,
+		}, nil
+	}
+}
+
+// gitDiffSince returns the unified diff from base..HEAD in repoRoot.
+// Empty base falls back to `git diff HEAD` (working tree vs HEAD)
+// so a freshly-initialized repo with no commits still reports the
+// agent's working-tree changes. Best-effort: returns "" on any git
+// error so we never poison the deliverable with a stderr fragment.
+func gitDiffSince(ctx context.Context, repoRoot, base string) string {
+	var cmd *exec.Cmd
+	if base == "" {
+		cmd = exec.CommandContext(ctx, "git", "diff", "HEAD")
+	} else {
+		cmd = exec.CommandContext(ctx, "git", "diff", base+"..HEAD")
+	}
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 // runTaskCmd is the testable core of taskCmd. It takes explicit
@@ -113,13 +183,35 @@ func runTaskCmd(args []string, stdout, stderr io.Writer, r *router.Router) int {
 		return 1
 	}
 
-	// MVP: print the classification + executor binding and exit 2
-	// with a pointer at the real entry points. Track B follow-up
-	// commits replace this with an actual Execute call + descent.
+	// TaskCode is wired end-to-end through the SOW/ship pipeline via
+	// the CodeExecutor.ExecuteHook installed by buildDefaultTaskRouter.
+	// Hand the input to Execute and report the deliverable.
+	if dispatchedType == executor.TaskCode {
+		fmt.Fprintf(stdout, "task classified as %s; routing to %T (SOW/ship pipeline).\n", dispatchedType.String(), e)
+		plan := executor.Plan{
+			Task: executor.Task{
+				Description: input,
+				TaskType:    dispatchedType,
+			},
+			Query: input,
+		}
+		deliverable, execErr := e.Execute(context.Background(), plan, executor.EffortStandard)
+		if execErr != nil {
+			fmt.Fprintf(stderr, "r1 task: %v\n", execErr)
+			return 1
+		}
+		if deliverable != nil {
+			fmt.Fprintf(stdout, "deliverable: %s\n", deliverable.Summary())
+		}
+		return 0
+	}
+
+	// Non-Code task types remain scaffolding until Tasks 20-24 land.
+	// Print the classification + a pointer to the existing CLI entry
+	// point and exit 2 so callers (CI, the chat dispatcher) can tell
+	// "wired but no real executor" apart from "succeeded".
 	fmt.Fprintf(stdout, "task classified as %s; routing to %T — direct dispatch not yet wired.\n", dispatchedType.String(), e)
 	switch dispatchedType {
-	case executor.TaskCode:
-		fmt.Fprintf(stdout, "hint: run `r1 ship --task \"%s\"` to execute the code pipeline today.\n", input)
 	case executor.TaskChat:
 		fmt.Fprintf(stdout, "hint: run `r1 chat` to start a conversation.\n")
 	case executor.TaskDeploy:
