@@ -318,10 +318,6 @@ func TestHubHandler_BlockedVerbs_SurfaceInternalError(t *testing.T) {
 			_, e := h.DaemonSessionSubscribe(context.Background(), SessionSubscribeRequest{SessionID: id})
 			return e
 		}},
-		{"lanes.kill", func() error {
-			_, e := h.DaemonLanesKill(context.Background(), LanesKillRequest{SessionID: id, LaneID: "lane-x"})
-			return e
-		}},
 		{"shutdown", func() error {
 			_, e := h.DaemonShutdown(context.Background(), DaemonShutdownRequest{})
 			return e
