@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/RelayOne/r1/internal/agentloop"
@@ -93,6 +94,44 @@ type Session struct {
 	// runMu serializes Run() against cancelRun() during shutdown,
 	// and Run() against itself (one driver at a time).
 	runMu sync.Mutex
+
+	// pauseFlag is set by Pause and cleared by Resume. The agent
+	// loop's per-turn observer reads this atomically and, when set,
+	// blocks on resumeCh before invoking the provider. Atomic so
+	// reads from the loop side are lock-free.
+	pauseFlag atomic.Bool
+
+	// pauseMu guards resumeCh transitions (close on Resume, recreate
+	// on Pause). The pause flag itself is atomic; this mutex only
+	// covers the channel pointer swap.
+	pauseMu sync.Mutex
+
+	// resumeCh is closed when Resume fires so any waiters wake. A
+	// nil resumeCh means the session is not paused (i.e. no waiters
+	// are listening). Pause re-creates the channel and stores it
+	// before flipping pauseFlag so the agent loop is guaranteed to
+	// see a non-nil receiver if it observes the flag.
+	resumeCh chan struct{}
+
+	// inbox carries inbound turns delivered via Send. Buffered to
+	// sessionInboxCap; the agent loop drains it between provider
+	// calls. nil before the loop's first dequeue so a Send before
+	// Run can return a clear "session not started" error rather
+	// than blocking. Created lazily by Run.
+	inbox chan InboundTurn
+
+	// inboxMu protects inbox creation/close. Send acquires it for
+	// the channel-presence check; Run swaps the pointer in/out.
+	inboxMu sync.Mutex
+}
+
+// InboundTurn is one user-side message delivered to the session via
+// Send. Carries the turn text plus the role override (defaults to
+// "user" when empty). Future fields can include attachments / image
+// paths without breaking the wire shape.
+type InboundTurn struct {
+	Role string // "user" (default) | future: "system"
+	Text string
 }
 
 // Journal is the contract sessionhub depends on for append-only event
@@ -149,10 +188,35 @@ const SessionStateRunning = "running"
 // completed, or errored).
 const SessionStateStopped = "stopped"
 
+// SessionStatePaused indicates a live session whose owner has
+// requested it gate further model calls until Resume. Pause/Resume
+// flip an atomic flag; the agent loop's next turn boundary observes
+// it and blocks on the resume signal before continuing. Distinct
+// from SessionStatePausedReattachable, which is reload-state.
+const SessionStatePaused = "paused"
+
 // ErrSessionAlreadyRunning is returned by Run when the session is
 // already executing. Sessions are single-driver — concurrent Run
 // calls must fail loudly rather than silently corrupt state.
 var ErrSessionAlreadyRunning = errors.New("sessionhub: session already running")
+
+// ErrSessionInputClosed is returned by Send when the session's
+// inbound channel has been closed (typically because Run has
+// returned). Distinguishes a permanent failure from a transient one
+// so callers can map it to a 409/410 vs a 503.
+var ErrSessionInputClosed = errors.New("sessionhub: session input channel closed")
+
+// ErrSessionInputFull is returned by Send when the session's
+// inbound channel is full (the agent loop is back-pressured). The
+// caller can retry or surface a 429.
+var ErrSessionInputFull = errors.New("sessionhub: session input channel full")
+
+// sessionInboxCap is the maximum number of unread inbound turns a
+// session buffers before Send returns ErrSessionInputFull. Keeping
+// it small enforces back-pressure: one or two turns ahead of the
+// agent loop is enough to feel responsive without letting a
+// runaway producer grow memory unboundedly.
+const sessionInboxCap = 8
 
 // newSession builds a Session with all id/path/model fields populated.
 // Used by SessionHub.Create after validation passes; never called
@@ -283,6 +347,11 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 	s.State = SessionStateRunning
 	s.runMu.Unlock()
 
+	// Install the inbox channel so Send can deliver multi-turn input
+	// while Run is active. closeInbox runs on Run exit so a Send
+	// after Run returns gets ErrSessionInputClosed.
+	s.installInbox()
+
 	// Always clear the cancel field on exit so the next Run can fire.
 	defer func() {
 		s.runMu.Lock()
@@ -290,6 +359,7 @@ func (s *Session) Run(parent context.Context, opts RunOptions) (*agentloop.Resul
 		s.ctx = nil
 		s.State = SessionStateStopped
 		s.runMu.Unlock()
+		s.closeInbox()
 	}()
 
 	// WorkspaceFunc bridge: invoke it BEFORE the agent loop so any
@@ -436,6 +506,154 @@ func (s *Session) cancelRun() {
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
+	}
+}
+
+// Pause sets the session's pause flag. Idempotent — calling Pause on
+// an already-paused session is a no-op. Pause does NOT block; it
+// flips the flag and records a state transition. The agent loop's
+// per-turn observer (loop.go's MidturnCheckFn) reads the flag at the
+// next turn boundary and waits on the session's resume channel
+// before invoking the provider.
+//
+// Pause flips State to SessionStatePaused. Resume restores the prior
+// state or, when prior state was SessionStateRunning, leaves it at
+// "running" so observers do not see a spurious paused→active
+// transition.
+func (s *Session) Pause() {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if s.pauseFlag.Load() {
+		return
+	}
+	if s.resumeCh == nil {
+		s.resumeCh = make(chan struct{})
+	}
+	s.pauseFlag.Store(true)
+	// SetState takes runMu separately; release pauseMu first so we
+	// never hold both at once.
+	s.pauseMu.Unlock()
+	s.SetState(SessionStatePaused)
+	s.pauseMu.Lock()
+}
+
+// Resume clears the pause flag and signals waiters. Idempotent — a
+// Resume on a non-paused session is a no-op. Concurrent Resume calls
+// are safe; the resume channel is closed once.
+func (s *Session) Resume() {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	if !s.pauseFlag.Load() {
+		return
+	}
+	if s.resumeCh != nil {
+		close(s.resumeCh)
+		s.resumeCh = nil
+	}
+	s.pauseFlag.Store(false)
+	s.pauseMu.Unlock()
+	s.SetState(SessionStateRunning)
+	s.pauseMu.Lock()
+}
+
+// IsPaused reports whether the session is currently paused. Lock-free
+// read via atomic; safe to call from any goroutine including the
+// agent loop's hot path.
+func (s *Session) IsPaused() bool {
+	return s.pauseFlag.Load()
+}
+
+// WaitWhilePaused blocks until the session is unpaused or ctx is
+// cancelled. Intended to be called by the agent loop's per-turn
+// observer; returns immediately when the session is not paused.
+// Returns ctx.Err() when ctx fires while paused so the loop can
+// distinguish "paused, then cancelled" from "resumed".
+func (s *Session) WaitWhilePaused(ctx context.Context) error {
+	if !s.pauseFlag.Load() {
+		return nil
+	}
+	s.pauseMu.Lock()
+	ch := s.resumeCh
+	s.pauseMu.Unlock()
+	if ch == nil {
+		// Another Resume already fired between our Load and lock
+		// acquire. Treat as resumed.
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-ch:
+		return nil
+	}
+}
+
+// Send delivers an inbound turn to the session. The text is
+// buffered onto the session's inbox channel which the agent loop
+// drains between provider calls. Returns ErrSessionInputClosed when
+// the inbox is closed (Run returned), ErrSessionInputFull when the
+// inbox is full, or nil on success.
+//
+// Send does not block: a full inbox returns immediately with
+// ErrSessionInputFull so callers can map it to a 429 / retry rather
+// than holding the loopback HTTP request open. Up to sessionInboxCap
+// turns can be queued.
+//
+// Pre-Run delivery: if Run has not yet been called for this session,
+// the inbox is nil and Send returns ErrSessionInputClosed with a
+// message that distinguishes the case. Callers (the daemon's
+// session.start handler) should wire Send only after Run is in
+// progress.
+func (s *Session) Send(turn InboundTurn) error {
+	role := turn.Role
+	if role == "" {
+		role = "user"
+	}
+	turn.Role = role
+	s.inboxMu.Lock()
+	inbox := s.inbox
+	s.inboxMu.Unlock()
+	if inbox == nil {
+		return ErrSessionInputClosed
+	}
+	select {
+	case inbox <- turn:
+		return nil
+	default:
+		return ErrSessionInputFull
+	}
+}
+
+// Inbox returns the session's inbound turn channel for the agent
+// loop's drain side. Returns nil before Run has installed the
+// channel; callers MUST guard against the nil case (a nil receive
+// blocks forever, which is the correct behavior for a session that
+// has not started).
+func (s *Session) Inbox() <-chan InboundTurn {
+	s.inboxMu.Lock()
+	defer s.inboxMu.Unlock()
+	return s.inbox
+}
+
+// installInbox creates the inbox channel and stores it under
+// inboxMu. Called by Run; idempotent within a Run cycle.
+func (s *Session) installInbox() {
+	s.inboxMu.Lock()
+	defer s.inboxMu.Unlock()
+	if s.inbox == nil {
+		s.inbox = make(chan InboundTurn, sessionInboxCap)
+	}
+}
+
+// closeInbox drains and closes the inbox. Called by Run on exit;
+// after this, Send returns ErrSessionInputClosed.
+func (s *Session) closeInbox() {
+	s.inboxMu.Lock()
+	inbox := s.inbox
+	s.inbox = nil
+	s.inboxMu.Unlock()
+	if inbox != nil {
+		close(inbox)
 	}
 }
 
