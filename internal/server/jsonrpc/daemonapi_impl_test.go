@@ -297,27 +297,23 @@ func TestHubHandler_BlockedVerbs_SurfaceInternalError(t *testing.T) {
 	defer cleanup()
 
 	wd := t.TempDir()
-	resp, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd})
-	if err != nil {
+	if _, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd}); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	id := resp.SessionID
 
 	type verb struct {
 		name string
 		call func() error
 	}
-	// pause/resume/send are NOT BLOCKED anymore — see
+	// pause/resume/send/subscribe are NOT BLOCKED anymore — see
+	// the dedicated positive tests for each. The remaining BLOCKED
+	// verbs are daemon-process-level (shutdown, reload_config). See
 	// TestHubHandler_PauseResumeRoundTrip and
 	// TestHubHandler_Send_NoActiveRunInbox below for the new positive
 	// coverage. They still return errors here because send hits a
 	// closed inbox (no Run goroutine in the test), but the error code
 	// is ErrValidation, not ErrInternal.
 	verbs := []verb{
-		{"subscribe", func() error {
-			_, e := h.DaemonSessionSubscribe(context.Background(), SessionSubscribeRequest{SessionID: id})
-			return e
-		}},
 		{"shutdown", func() error {
 			_, e := h.DaemonShutdown(context.Background(), DaemonShutdownRequest{})
 			return e

@@ -45,6 +45,8 @@ package jsonrpc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -246,37 +248,94 @@ func (h *HubHandler) DaemonSessionSend(ctx context.Context, req SessionSendReque
 	}, nil
 }
 
-// DaemonSessionSubscribe is the SUBSCRIBE-side acknowledgement. The
-// actual event fanout happens in the WS layer's per-connection bridge
-// (see ws/handler.go's OnConnect hook + jsonrpc/subscribe.go's
-// Subscription.Replay/Publish). When that bridge is mounted, this
-// handler is called solely so the JSON-RPC reply carries the negotiated
-// SubID; when it is NOT mounted, this handler must still return
-// something coherent so a misconfigured daemon doesn't silently swallow
-// the call.
+// SubscriptionRegistry is the per-connection storage interface a
+// HubHandler needs to register / unregister Subscriptions. The WS
+// layer's *ws.Conn satisfies it via RegisterSubscription /
+// UnregisterSubscription (see internal/server/ws/handler.go).
 //
-// BLOCKED: the WS bridge is what actually stamps the SubID, and that
-// bridge runs in a different code path (ServeHTTP, not
-// Dispatcher.Dispatch). Until the daemon's startup glue wires a
-// per-connection subscriber registry that this handler can consult,
-// the dispatcher-level surface is honest about the missing piece.
+// Defining this here as a structural interface keeps the jsonrpc
+// package free of an import cycle into ws.
+type SubscriptionRegistry interface {
+	RegisterSubscription(subID string, closer interface{ Close() })
+	UnregisterSubscription(subID string) interface{ Close() }
+}
+
+// ConnFromContextFunc is the hook the WS layer registers so handlers
+// running inside Dispatcher.Dispatch can pull the live conn out of
+// the dispatch ctx. The daemon's startup glue sets this once before
+// mounting routes; tests can install a fake.
+//
+// Returns a SubscriptionRegistry-shaped value or nil when the ctx
+// did not come from a WS dispatch path (e.g., HTTP-only routes,
+// in-process tests).
+var ConnFromContextFunc func(ctx context.Context) SubscriptionRegistry
+
+// DaemonSessionSubscribe mints a *Subscription, registers it on the
+// caller's conn (so unsubscribe can find it and connection teardown
+// drains it), and returns the SubID.
+//
+// Today the Subscription is constructed but no bus bridge feeds
+// events into it — that's a follow-up that wires hub.Bus.Register
+// against the daemon's session-event stream. The shape of the surface
+// is correct (subscribe returns a sub id, unsubscribe finds it,
+// disconnect drains it); the live-event fanout pipe lights up when
+// the bus bridge lands.
 func (h *HubHandler) DaemonSessionSubscribe(ctx context.Context, req SessionSubscribeRequest) (SessionSubscribeResponse, error) {
 	if _, err := h.lookupSession(req.SessionID); err != nil {
 		return SessionSubscribeResponse{}, err
 	}
-	// BLOCKED: depends on per-conn subscriber registry wired through
-	// the WS handler's OnConnect bridge.
-	return SessionSubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
-		"session.subscribe: BLOCKED on WS bridge per-conn subscriber registry (follow-up)")
+	if ConnFromContextFunc == nil {
+		return SessionSubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
+			"session.subscribe: ConnFromContextFunc not configured; daemon serve loop must register the WS bridge at startup")
+	}
+	reg := ConnFromContextFunc(ctx)
+	if reg == nil {
+		return SessionSubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
+			"session.subscribe: must be invoked over a WS connection (no Conn on ctx)")
+	}
+	subID := mintSubID()
+	// Sink: writing to /dev/null today. The bus-bridge follow-up
+	// replaces this with a sink that writes JSON-RPC `$/event`
+	// notifications back to the conn.
+	sink := func(_ context.Context, _ *SubscriptionEvent) error { return nil }
+	sub := NewSubscription(subID, req.SessionID, sink, req.Filter)
+	reg.RegisterSubscription(subID, sub)
+	return SessionSubscribeResponse{SubID: subID}, nil
 }
 
-// DaemonSessionUnsubscribe — paired with subscribe; same gating.
-//
-// BLOCKED: paired with subscribe.
+// DaemonSessionUnsubscribe finds the prior subscription on the
+// caller's conn and closes it. ErrNotFound when no such SubID is
+// registered.
 func (h *HubHandler) DaemonSessionUnsubscribe(ctx context.Context, req SessionUnsubscribeRequest) (SessionUnsubscribeResponse, error) {
-	// BLOCKED: depends on per-conn subscriber registry (paired with subscribe).
-	return SessionUnsubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
-		"session.unsubscribe: BLOCKED on WS bridge per-conn subscriber registry (follow-up)")
+	if strings.TrimSpace(req.SubID) == "" {
+		return SessionUnsubscribeResponse{}, stokerr.Validationf("session.unsubscribe: sub is required")
+	}
+	if ConnFromContextFunc == nil {
+		return SessionUnsubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
+			"session.unsubscribe: ConnFromContextFunc not configured")
+	}
+	reg := ConnFromContextFunc(ctx)
+	if reg == nil {
+		return SessionUnsubscribeResponse{}, stokerr.New(stokerr.ErrInternal,
+			"session.unsubscribe: must be invoked over a WS connection")
+	}
+	closer := reg.UnregisterSubscription(req.SubID)
+	if closer == nil {
+		return SessionUnsubscribeResponse{}, stokerr.NotFoundf("session.unsubscribe: sub %q not found", req.SubID)
+	}
+	closer.Close()
+	return SessionUnsubscribeResponse{
+		UnsubscribedAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
+}
+
+// mintSubID generates a unique subscription handle. Uses a random
+// 16-byte hex string — enough collision resistance for per-conn
+// subscriptions.
+func mintSubID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "sub-" + hex.EncodeToString(b[:])
 }
 
 // laneRegistry is the structural slice of cortex.Workspace that the
