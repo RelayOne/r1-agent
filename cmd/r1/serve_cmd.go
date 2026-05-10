@@ -287,6 +287,17 @@ func runServeLoop(opts serveOptions) {
 			disp := jsonrpc.NewDispatcher()
 			jsonrpc.RegisterDaemonAPI(disp, rpcHandler)
 
+			// Wire the WS bridge so session.subscribe / unsubscribe
+			// can pull the live conn out of the dispatch ctx.
+			// *ws.Conn satisfies jsonrpc.SubscriptionRegistry
+			// structurally via its Register/Unregister methods.
+			jsonrpc.ConnFromContextFunc = func(ctx context.Context) jsonrpc.SubscriptionRegistry {
+				if c := ws.ConnFromContext(ctx); c != nil {
+					return c
+				}
+				return nil
+			}
+
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
