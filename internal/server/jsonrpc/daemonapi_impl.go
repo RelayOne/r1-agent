@@ -50,6 +50,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/server/sessionhub"
 	"github.com/RelayOne/r1/internal/stokerr"
 )
@@ -311,18 +312,51 @@ func (h *HubHandler) DaemonLanesKill(ctx context.Context, req LanesKillRequest) 
 }
 
 // DaemonCortexNotes returns recent cortex notes for a session.
+// Source-of-truth is the per-session cortex.Workspace, which holds an
+// in-memory Note slice. We project Workspace.Snapshot() into the wire
+// shape and trim to req.Limit (most-recent-first). When the session
+// has no Workspace attached (Workspace is nil), an empty list is the
+// honest answer — no Lobes have published.
 //
-// BLOCKED on journal-reader API: cortex notes are emitted onto hub.Bus
-// and persisted in the journal; surfacing them here requires a journal
-// reader. For sessions without a journal (no SetJournal call) the
-// honest answer is an empty list.
+// The journal-reader path (replay Notes after daemon restart) is a
+// separate follow-up; this handler covers the live in-memory case
+// which is the common path for dashboards / external UIs polling a
+// running session.
 func (h *HubHandler) DaemonCortexNotes(ctx context.Context, req CortexNotesRequest) (CortexNotesResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
 		return CortexNotesResponse{}, err
 	}
-	// BLOCKED: depends on journal-reader / cortex notes query API
-	// (follow-up). Empty list is correct for journal-less sessions.
-	return CortexNotesResponse{Notes: nil}, nil
+	if sess.Workspace == nil {
+		return CortexNotesResponse{Notes: []CortexNote{}}, nil
+	}
+	ws, ok := sess.Workspace.(interface {
+		Snapshot() []cortex.Note
+	})
+	if !ok {
+		return CortexNotesResponse{}, stokerr.New(stokerr.ErrInternal,
+			"cortex.notes: session.Workspace does not implement Snapshot")
+	}
+	notes := ws.Snapshot()
+	limit := req.Limit
+	if limit <= 0 || limit > len(notes) {
+		limit = len(notes)
+	}
+	// Workspace.Snapshot is oldest-first (append order). Take the
+	// last `limit` entries so callers see most recent at the tail.
+	start := len(notes) - limit
+	out := make([]CortexNote, 0, limit)
+	for _, n := range notes[start:] {
+		out = append(out, CortexNote{
+			ID:       n.ID,
+			LaneID:   n.LobeID,
+			Severity: string(n.Severity),
+			Title:    n.Title,
+			Body:     n.Body,
+			At:       n.EmittedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return CortexNotesResponse{Notes: out}, nil
 }
 
 // DaemonInfo reports daemon-level metadata. This handler is fully wired:
