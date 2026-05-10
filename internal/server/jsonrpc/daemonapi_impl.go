@@ -159,34 +159,33 @@ func (h *HubHandler) DaemonSessionStart(ctx context.Context, req DaemonSessionSt
 	}, nil
 }
 
-// DaemonSessionPause suspends a session.
-//
-// BLOCKED: *Session does not yet expose a Pause method. The spec
-// (§11.22) reserves pause/resume as distinct lifecycle states the agent
-// loop must observe; until the Session.Pause primitive lands, this
-// handler returns ErrInternal so the surface is honest about the gap.
-// Tracked as a follow-up alongside Session.Resume + Session.Cancel —
-// they share the same runMu-protected state machine.
+// DaemonSessionPause suspends a session by setting its pause flag.
+// The agent loop's per-turn observer waits on the resume signal
+// before invoking the provider; until Resume fires, no model calls
+// happen and no tools dispatch. Idempotent — pausing an
+// already-paused session is a no-op.
 func (h *HubHandler) DaemonSessionPause(ctx context.Context, req SessionIDRequest) (SessionPauseResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
 		return SessionPauseResponse{}, err
 	}
-	// BLOCKED: depends on Session.Pause primitive (follow-up).
-	return SessionPauseResponse{}, stokerr.New(stokerr.ErrInternal,
-		"session.pause: BLOCKED on Session.Pause primitive (follow-up)")
+	sess.Pause()
+	return SessionPauseResponse{
+		PausedAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
-// DaemonSessionResume resumes a paused session.
-//
-// BLOCKED: *Session does not yet expose a Resume method. See
-// DaemonSessionPause for context.
+// DaemonSessionResume clears the pause flag and signals waiters.
+// Idempotent — resuming a non-paused session is a no-op.
 func (h *HubHandler) DaemonSessionResume(ctx context.Context, req SessionIDRequest) (SessionResumeResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
 		return SessionResumeResponse{}, err
 	}
-	// BLOCKED: depends on Session.Resume primitive (follow-up).
-	return SessionResumeResponse{}, stokerr.New(stokerr.ErrInternal,
-		"session.resume: BLOCKED on Session.Resume primitive (follow-up)")
+	sess.Resume()
+	return SessionResumeResponse{
+		ResumedAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 // DaemonSessionCancel cancels a session.
@@ -214,25 +213,36 @@ func (h *HubHandler) DaemonSessionCancel(ctx context.Context, req SessionIDReque
 	}, nil
 }
 
-// DaemonSessionSend delivers a user turn to the running session.
-//
-// BLOCKED: *Session does not yet expose an inbound message queue /
-// channel separate from Session.Run's UserMessage. The agent loop
-// currently consumes a single bootstrap message; multi-turn delivery
-// requires a Session.Send method that pushes onto an input channel the
-// agent loop drains between provider calls. Until that exists,
-// returning ErrInternal is the honest answer. Tracked as a follow-up
-// alongside the agentloop multi-turn refactor.
+// DaemonSessionSend delivers a user turn onto the session's inbox.
+// Returns ErrValidation when text is empty or the session is not
+// running (inbox closed); ErrUnavailable when the inbox is full.
+// Otherwise returns the assigned delivery time. Multi-turn delivery
+// is enabled by Session.Send pushing onto an inbox channel the
+// agent loop drains between provider calls.
 func (h *HubHandler) DaemonSessionSend(ctx context.Context, req SessionSendRequest) (SessionSendResponse, error) {
-	if _, err := h.lookupSession(req.SessionID); err != nil {
+	sess, err := h.lookupSession(req.SessionID)
+	if err != nil {
 		return SessionSendResponse{}, err
 	}
 	if strings.TrimSpace(req.Text) == "" {
 		return SessionSendResponse{}, stokerr.Validationf("session.send: text is required")
 	}
-	// BLOCKED: depends on Session.Send (input-channel delivery path).
-	return SessionSendResponse{}, stokerr.New(stokerr.ErrInternal,
-		"session.send: BLOCKED on Session.Send input-channel primitive (follow-up)")
+	turn := sessionhub.InboundTurn{Role: req.Role, Text: req.Text}
+	if err := sess.Send(turn); err != nil {
+		// Map the typed errors to taxonomy codes so callers can
+		// distinguish "session ended" (closed) from "back-pressured"
+		// (full).
+		if errors.Is(err, sessionhub.ErrSessionInputClosed) {
+			return SessionSendResponse{}, stokerr.Validationf("session.send: session is not running (inbox closed)")
+		}
+		if errors.Is(err, sessionhub.ErrSessionInputFull) {
+			return SessionSendResponse{}, stokerr.Conflictf("session.send: inbox full; retry shortly")
+		}
+		return SessionSendResponse{}, stokerr.Wrap(stokerr.ErrInternal, "session.send", err)
+	}
+	return SessionSendResponse{
+		DeliveredAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
 // DaemonSessionSubscribe is the SUBSCRIBE-side acknowledgement. The

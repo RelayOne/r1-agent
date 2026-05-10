@@ -307,19 +307,13 @@ func TestHubHandler_BlockedVerbs_SurfaceInternalError(t *testing.T) {
 		name string
 		call func() error
 	}
+	// pause/resume/send are NOT BLOCKED anymore — see
+	// TestHubHandler_PauseResumeRoundTrip and
+	// TestHubHandler_Send_NoActiveRunInbox below for the new positive
+	// coverage. They still return errors here because send hits a
+	// closed inbox (no Run goroutine in the test), but the error code
+	// is ErrValidation, not ErrInternal.
 	verbs := []verb{
-		{"pause", func() error {
-			_, e := h.DaemonSessionPause(context.Background(), SessionIDRequest{SessionID: id})
-			return e
-		}},
-		{"resume", func() error {
-			_, e := h.DaemonSessionResume(context.Background(), SessionIDRequest{SessionID: id})
-			return e
-		}},
-		{"send", func() error {
-			_, e := h.DaemonSessionSend(context.Background(), SessionSendRequest{SessionID: id, Text: "hello"})
-			return e
-		}},
 		{"subscribe", func() error {
 			_, e := h.DaemonSessionSubscribe(context.Background(), SessionSubscribeRequest{SessionID: id})
 			return e
@@ -416,4 +410,122 @@ func TestNewHubHandler_PanicsOnNilHub(t *testing.T) {
 		}
 	}()
 	_ = NewHubHandler(nil)
+}
+
+// TestHubHandler_PauseResumeRoundTrip exercises the new
+// Session.Pause/Resume primitives via the JSON-RPC handlers. Asserts
+// idempotency, observable state transitions, and PausedAt/ResumedAt
+// timestamps land on the response.
+func TestHubHandler_PauseResumeRoundTrip(t *testing.T) {
+	h, _, cleanup := withSandboxedHub(t)
+	defer cleanup()
+
+	wd := t.TempDir()
+	resp, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	id := resp.SessionID
+
+	// Initial: not paused.
+	sess, err := h.Hub.Get(id)
+	if err != nil {
+		t.Fatalf("hub.Get: %v", err)
+	}
+	if sess.IsPaused() {
+		t.Fatalf("freshly-started session should not be paused")
+	}
+
+	// Pause.
+	pauseResp, err := h.DaemonSessionPause(context.Background(), SessionIDRequest{SessionID: id})
+	if err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if pauseResp.PausedAt == "" {
+		t.Errorf("pause response missing PausedAt")
+	}
+	if !sess.IsPaused() {
+		t.Errorf("session should be paused after Pause")
+	}
+
+	// Pause again — idempotent.
+	if _, err := h.DaemonSessionPause(context.Background(), SessionIDRequest{SessionID: id}); err != nil {
+		t.Errorf("second pause should be a no-op, got %v", err)
+	}
+	if !sess.IsPaused() {
+		t.Errorf("session still paused after idempotent Pause")
+	}
+
+	// Resume.
+	resumeResp, err := h.DaemonSessionResume(context.Background(), SessionIDRequest{SessionID: id})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumeResp.ResumedAt == "" {
+		t.Errorf("resume response missing ResumedAt")
+	}
+	if sess.IsPaused() {
+		t.Errorf("session should not be paused after Resume")
+	}
+
+	// Resume again — idempotent.
+	if _, err := h.DaemonSessionResume(context.Background(), SessionIDRequest{SessionID: id}); err != nil {
+		t.Errorf("second resume should be a no-op, got %v", err)
+	}
+}
+
+// TestHubHandler_Send_PreRun confirms session.send returns
+// ErrValidation (NOT ErrInternal) when the session has not started a
+// Run goroutine — the inbox is closed because Run never installed it.
+// This is the documented "session is not running" path.
+func TestHubHandler_Send_PreRun(t *testing.T) {
+	h, _, cleanup := withSandboxedHub(t)
+	defer cleanup()
+
+	wd := t.TempDir()
+	resp, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, err = h.DaemonSessionSend(context.Background(), SessionSendRequest{
+		SessionID: resp.SessionID,
+		Text:      "hello",
+	})
+	if err == nil {
+		t.Fatalf("expected error sending to a session with no Run; got nil")
+	}
+	var se *stokerr.Error
+	if !errors.As(err, &se) || se.Code != stokerr.ErrValidation {
+		t.Errorf("expected ErrValidation, got %v", err)
+	}
+	if !strings.Contains(se.Message, "not running") {
+		t.Errorf("error message must mention 'not running'; got %q", se.Message)
+	}
+}
+
+// TestHubHandler_Send_EmptyTextRejected asserts the validation gate
+// fires before the inbox check.
+func TestHubHandler_Send_EmptyTextRejected(t *testing.T) {
+	h, _, cleanup := withSandboxedHub(t)
+	defer cleanup()
+
+	wd := t.TempDir()
+	resp, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	for _, text := range []string{"", "   ", "\n\t"} {
+		_, err := h.DaemonSessionSend(context.Background(), SessionSendRequest{
+			SessionID: resp.SessionID,
+			Text:      text,
+		})
+		if err == nil {
+			t.Errorf("send(text=%q): expected error, got nil", text)
+			continue
+		}
+		var se *stokerr.Error
+		if !errors.As(err, &se) || se.Code != stokerr.ErrValidation {
+			t.Errorf("send(text=%q): expected ErrValidation, got %v", text, err)
+		}
+	}
 }
