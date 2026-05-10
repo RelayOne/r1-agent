@@ -39,6 +39,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/agentserve"
 	"github.com/RelayOne/r1/internal/daemon"
+	"github.com/RelayOne/r1/internal/daemondisco"
 	"github.com/RelayOne/r1/internal/daemonlock"
 	"github.com/RelayOne/r1/internal/r1env"
 	"github.com/RelayOne/r1/internal/server"
@@ -306,6 +307,18 @@ func runServeLoop(opts serveOptions) {
 
 	fmt.Fprintf(os.Stderr, "r1 serve listening on %s\n", opts.Addr)
 	fmt.Fprintf(os.Stderr, "dashboard: http://%s/\n", opts.Addr)
+
+	// Write the discovery file so external clients (`r1 ctl`, the
+	// desktop app, headless test harnesses) can find this daemon.
+	// `daemondisco.WriteDiscovery` writes ~/.r1/daemon.json atomically
+	// (tmp + rename). Failure here is non-fatal — the dashboard +
+	// JSON-RPC endpoints still work for clients that already know the
+	// port; it just means `r1 ctl` won't be able to auto-discover.
+	if discPath, derr := daemondisco.WriteDiscovery(os.Getpid(), "", port, opts.Token, version); derr != nil {
+		fmt.Fprintf(os.Stderr, "warn: discovery file not written: %v\n", derr)
+	} else {
+		fmt.Fprintf(os.Stderr, "discovery file: %s\n", discPath)
+	}
 
 	sigCtx, sigCancel := signalContext(context.Background())
 	defer sigCancel()

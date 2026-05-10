@@ -1,7 +1,17 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-09 -->
+<!-- BUILD_STARTED: 2026-05-09 -->
+<!-- BUILD_COMPLETED: 2026-05-09 -->
 <!-- DEPENDS_ON: cortex-core, cortex-concerns, agentic-test-harness, web-chat-ui, anti-truncation, r1d-server -->
 <!-- BUILD_ORDER: 100 -->
+
+> **Closed.** All 10 tasks shipped via PRs #233 (TASK-1), #238 (TASK-2),
+> #237 (TASK-3+5), #242 (TASK-4), #240 (TASK-6), #234 (TASK-7), #239
+> (TASK-8), #235 (TASK-9), and the HANDOFF doc updates that closed
+> TASK-10. Storybook-mcp-validate target was subsequently dropped
+> entirely (#247) when investigation showed the npm package's
+> `validate` subcommand doesn't exist. See plans/HANDOFF.md for the
+> per-PR record.
 
 # post-merge-audit-cleanup — Remaining audit-flagged work after PR #211–#229
 
