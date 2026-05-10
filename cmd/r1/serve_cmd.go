@@ -310,7 +310,18 @@ func runServeLoop(opts serveOptions) {
 			// The channel is buffered=1 + non-blocking send so a flood of
 			// concurrent shutdown RPCs coalesces into one signal; the
 			// serve loop reads it and unwinds.
+			//
+			// shutdownAckDelay gives the WS layer a brief window to flush
+			// the daemon.shutdown response back to the caller before the
+			// listener tears down. Without this delay the handler can
+			// return success, the serve loop can fire on shutdownReqCh,
+			// and the listener can close before the dispatcher's
+			// conn.WriteResponse completes — clients then see a closed
+			// connection rather than the success envelope. Found by
+			// codex review of commit 671ed37c (P1).
+			const shutdownAckDelay = 100 * time.Millisecond
 			rpcHandler.SetShutdownFunc(func(graceSeconds int) {
+				time.Sleep(shutdownAckDelay)
 				select {
 				case shutdownReqCh <- graceSeconds:
 				default:
