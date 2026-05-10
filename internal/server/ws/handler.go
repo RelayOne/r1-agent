@@ -117,6 +117,52 @@ type Handler struct {
 type Conn struct {
 	WS      *websocket.Conn
 	writeMu sync.Mutex
+
+	// subs is the per-connection subscription registry. Keyed by
+	// SubID; values are opaque (any) to keep ws independent of the
+	// jsonrpc package's Subscription type. The session.subscribe
+	// handler stashes a *jsonrpc.Subscription here; the
+	// session.unsubscribe handler pulls it back out by SubID and
+	// closes it. When the connection closes, CloseAllSubscriptions
+	// drains the registry so no orphaned subscriptions linger.
+	subs sync.Map // SubID (string) -> closer (interface{ Close() error })
+}
+
+// RegisterSubscription stashes a closer (typically a
+// *jsonrpc.Subscription) under the given SubID. Idempotent on the
+// SubID — a duplicate registration replaces the prior closer (the
+// prior one is NOT closed; callers that mint SubIDs must guarantee
+// uniqueness, which the daemon does via random hex).
+//
+// The closer parameter is typed as a literal anonymous interface so
+// callers in other packages (jsonrpc) can pass a value satisfying
+// the same shape without an import cycle into ws's named type.
+func (c *Conn) RegisterSubscription(subID string, closer interface{ Close() }) {
+	c.subs.Store(subID, closer)
+}
+
+// UnregisterSubscription removes the closer for SubID and returns it
+// for the caller to Close. Returns nil if no such SubID is registered.
+func (c *Conn) UnregisterSubscription(subID string) interface{ Close() } {
+	v, ok := c.subs.LoadAndDelete(subID)
+	if !ok {
+		return nil
+	}
+	closer, _ := v.(interface{ Close() })
+	return closer
+}
+
+// CloseAllSubscriptions drains the registry, closing every entry.
+// Best-effort cleanup on connection teardown. Safe to call multiple
+// times.
+func (c *Conn) CloseAllSubscriptions() {
+	c.subs.Range(func(k, v any) bool {
+		c.subs.Delete(k)
+		if closer, ok := v.(interface{ Close() }); ok {
+			closer.Close()
+		}
+		return true
+	})
 }
 
 // WriteNotification marshals a JSON-RPC notification envelope and
@@ -265,6 +311,10 @@ func (h *Handler) serveLoop(parent context.Context, conn *Conn) {
 	connCtx, cancel := context.WithCancel(parent)
 	defer cancel()
 
+	// On connection teardown, drain every Subscription registered
+	// against this conn so no orphaned bus subscribers leak.
+	defer conn.CloseAllSubscriptions()
+
 	if h.OnConnect != nil {
 		h.OnConnect(connCtx, conn)
 	}
@@ -337,14 +387,18 @@ func (h *Handler) dispatchFrame(ctx context.Context, conn *Conn, data []byte) {
 		_ = conn.WriteResponse(ctx, resp)
 		return
 	}
+	// Stash the live conn on the dispatch ctx so handlers that need
+	// per-connection state (session.subscribe / unsubscribe) can pull
+	// it out via ConnFromContext.
+	dispatchCtx := ContextWithConn(ctx, conn)
 	if single != nil {
-		resp := h.Dispatcher.Dispatch(ctx, single)
+		resp := h.Dispatcher.Dispatch(dispatchCtx, single)
 		if resp != nil {
 			_ = conn.WriteResponse(ctx, resp)
 		}
 		return
 	}
-	resps := h.Dispatcher.DispatchBatch(ctx, batch)
+	resps := h.Dispatcher.DispatchBatch(dispatchCtx, batch)
 	if len(resps) == 0 {
 		// All notifications — no wire response per JSON-RPC 2.0 §6.
 		return
