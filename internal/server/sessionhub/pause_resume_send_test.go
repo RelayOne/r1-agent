@@ -160,3 +160,55 @@ func TestSession_CloseInbox_ThenSend(t *testing.T) {
 		t.Errorf("Send after closeInbox: got %v, want ErrSessionInputClosed", err)
 	}
 }
+
+// TestSession_Send_RaceWithClose hammers Send + closeInbox
+// concurrently. Pre-fix (Send copying the channel under lock and
+// then sending after release), this consistently panicked under
+// -race with "send on closed channel". The fix holds inboxMu through
+// the select; the regression test exercises the race window.
+//
+// Found by codex review of commit 586848d4 (P1).
+func TestSession_Send_RaceWithClose(t *testing.T) {
+	const goroutines = 16
+	const iterations = 200
+	for i := 0; i < iterations; i++ {
+		s := newSession("s-race", t.TempDir(), "model")
+		s.installInbox()
+
+		// Track per-goroutine outcomes. The fix correctness is
+		// proven by: NO panic during the race AND every observed
+		// error is ErrSessionInputClosed or ErrSessionInputFull (or
+		// nil for sends that landed before close).
+		errs := make([]error, goroutines)
+		done := make(chan struct{}, goroutines+1)
+		for g := 0; g < goroutines; g++ {
+			g := g
+			go func() {
+				errs[g] = s.Send(InboundTurn{Text: "x"})
+				done <- struct{}{}
+			}()
+		}
+		go func() {
+			s.closeInbox()
+			done <- struct{}{}
+		}()
+		for k := 0; k < goroutines+1; k++ {
+			<-done
+		}
+
+		// Assertion 1: after close, Send must return
+		// ErrSessionInputClosed (the deterministic post-close path).
+		postErr := s.Send(InboundTurn{Text: "post"})
+		if !errors.Is(postErr, ErrSessionInputClosed) {
+			t.Fatalf("iter %d: post-close Send = %v, want ErrSessionInputClosed", i, postErr)
+		}
+		// Assertion 2: every concurrent Send produced a recognized
+		// outcome (nil success, full, or closed). A panic would have
+		// already crashed the test runner.
+		for g, e := range errs {
+			if e != nil && !errors.Is(e, ErrSessionInputClosed) && !errors.Is(e, ErrSessionInputFull) {
+				t.Fatalf("iter %d goroutine %d: Send returned unexpected err %v", i, g, e)
+			}
+		}
+	}
+}
