@@ -129,6 +129,22 @@ type Config struct {
 	// PreEndTurnCheckFn short-circuits on the first non-empty return.
 	Cortex CortexHook
 
+	// PreTurnHook fires once at the top of every turn iteration —
+	// before compaction, before the API call, before any token
+	// estimation. The hook is passed the loop's ctx; returning an
+	// error aborts Run with that error. Returning nil with a
+	// non-default ctx replacement is intentionally NOT supported —
+	// pause-style gates should block inside the hook on their own
+	// channel and respect ctx.Done() themselves.
+	//
+	// Typical use: pause/resume gating from the daemon's Session
+	// layer. sessionhub installs a hook that calls Session.WaitWhilePaused;
+	// while paused, the hook blocks on the resume channel; when ctx
+	// fires, the hook returns ctx.Err() and the loop exits cleanly.
+	//
+	// Optional. nil = no pre-turn gate.
+	PreTurnHook func(ctx context.Context, turn int, messages []Message) error
+
 	// defaultsApplied guards defaults() against double-wrap when the
 	// method is invoked more than once on the same Config (e.g. test
 	// helpers that re-init or call defaults() before passing to New).
@@ -385,6 +401,18 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 			result.Turns = turn
 			return result, ctx.Err()
 		default:
+		}
+
+		// PreTurnHook gate. Fires before any token-estimating or
+		// API-side work so a paused session pays no model cost while
+		// it waits. The hook is responsible for honouring ctx.Done()
+		// itself; returning an error aborts the loop cleanly.
+		if l.config.PreTurnHook != nil {
+			if err := l.config.PreTurnHook(ctx, turn, messages); err != nil {
+				result.StopReason = "cancelled"
+				result.Turns = turn
+				return result, err
+			}
 		}
 
 		// Progressive compaction: before every API call, estimate the
