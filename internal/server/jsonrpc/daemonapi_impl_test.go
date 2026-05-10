@@ -287,58 +287,38 @@ func TestHubHandler_PerSessionVerbs_RejectMissingSessionID(t *testing.T) {
 	}
 }
 
-// TestHubHandler_BlockedVerbs_SurfaceInternalError asserts the
-// handlers that depend on absent Session primitives return ErrInternal
-// (rather than panicking or silently succeeding) when called with a
-// VALID session id. The dispatcher then surfaces this as a structured
-// RPC error so the caller knows the verb is BLOCKED on a follow-up.
-func TestHubHandler_BlockedVerbs_SurfaceInternalError(t *testing.T) {
+// TestHubHandler_DaemonShutdown_NoCallback asserts that
+// daemon.shutdown returns ErrInternal when no daemon-supplied
+// callback has been installed. The wired-callback path is exercised
+// by TestHubHandler_DaemonShutdown_InvokesCallback below.
+func TestHubHandler_DaemonShutdown_NoCallback(t *testing.T) {
 	h, _, cleanup := withSandboxedHub(t)
 	defer cleanup()
 
-	wd := t.TempDir()
-	if _, err := h.DaemonSessionStart(context.Background(), DaemonSessionStartRequest{Workdir: wd}); err != nil {
-		t.Fatalf("start: %v", err)
+	_, err := h.DaemonShutdown(context.Background(), DaemonShutdownRequest{})
+	if err == nil {
+		t.Fatal("expected error when no shutdown callback wired")
 	}
+	var se *stokerr.Error
+	if !errors.As(err, &se) || se.Code != stokerr.ErrInternal {
+		t.Errorf("expected ErrInternal, got %v", err)
+	}
+}
 
-	type verb struct {
-		name string
-		call func() error
+// TestHubHandler_DaemonReloadConfig_NoCallback asserts that
+// daemon.reload_config returns ErrInternal when no daemon-supplied
+// callback has been installed.
+func TestHubHandler_DaemonReloadConfig_NoCallback(t *testing.T) {
+	h, _, cleanup := withSandboxedHub(t)
+	defer cleanup()
+
+	_, err := h.DaemonReloadConfig(context.Background(), DaemonReloadConfigRequest{})
+	if err == nil {
+		t.Fatal("expected error when no reload callback wired")
 	}
-	// pause/resume/send/subscribe are NOT BLOCKED anymore — see
-	// the dedicated positive tests for each. The remaining BLOCKED
-	// verbs are daemon-process-level (shutdown, reload_config). See
-	// TestHubHandler_PauseResumeRoundTrip and
-	// TestHubHandler_Send_NoActiveRunInbox below for the new positive
-	// coverage. They still return errors here because send hits a
-	// closed inbox (no Run goroutine in the test), but the error code
-	// is ErrValidation, not ErrInternal.
-	verbs := []verb{
-		{"shutdown", func() error {
-			_, e := h.DaemonShutdown(context.Background(), DaemonShutdownRequest{})
-			return e
-		}},
-		{"reload_config", func() error {
-			_, e := h.DaemonReloadConfig(context.Background(), DaemonReloadConfigRequest{})
-			return e
-		}},
-	}
-	for _, v := range verbs {
-		err := v.call()
-		if err == nil {
-			t.Errorf("%s: expected BLOCKED error, got nil", v.name)
-			continue
-		}
-		var se *stokerr.Error
-		if !errors.As(err, &se) || se.Code != stokerr.ErrInternal {
-			t.Errorf("%s: expected ErrInternal, got %v", v.name, err)
-			continue
-		}
-		// The error message MUST name the BLOCKED dependency so a
-		// reviewer can grep it.
-		if !strings.Contains(se.Message, "BLOCKED") {
-			t.Errorf("%s: error message must contain BLOCKED marker; got %q", v.name, se.Message)
-		}
+	var se *stokerr.Error
+	if !errors.As(err, &se) || se.Code != stokerr.ErrInternal {
+		t.Errorf("expected ErrInternal, got %v", err)
 	}
 }
 

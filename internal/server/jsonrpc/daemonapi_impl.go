@@ -50,6 +50,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/RelayOne/r1/internal/cortex"
@@ -89,6 +90,27 @@ type HubHandler struct {
 	// nowFn is an injectable clock for deterministic StartedAt /
 	// CancelledAt / etc. Defaults to time.Now when nil.
 	nowFn func() time.Time
+
+	// mu guards the function pointers below. The handler is
+	// constructed by the daemon's startup glue (single goroutine),
+	// then read concurrently by RPC handlers; mu makes the
+	// install-once-then-read-many pattern explicitly safe.
+	mu sync.Mutex
+
+	// shutdownFn is the daemon-supplied callback that signals the
+	// serve loop to drain in-flight work and exit. Installed via
+	// SetShutdownFunc; nil means daemon.shutdown returns ErrInternal.
+	// Called in a fresh goroutine from DaemonShutdown so the WS
+	// response flushes first.
+	shutdownFn func(graceSeconds int)
+
+	// reloadConfigFn is the daemon-supplied callback for
+	// daemon.reload_config. Receives the operator's override path
+	// (empty means "re-read the daemon's default config"); returns
+	// the absolute path actually applied. Installed via
+	// SetReloadConfigFunc; nil means daemon.reload_config returns
+	// ErrInternal.
+	reloadConfigFn func(path string) (string, error)
 }
 
 // NewHubHandler constructs a production HubHandler. nil hub is a
@@ -480,28 +502,79 @@ func (h *HubHandler) DaemonInfo(ctx context.Context) (DaemonInfoResponse, error)
 	}, nil
 }
 
-// DaemonShutdown signals the daemon to wind down.
+// DaemonShutdown signals the daemon to wind down. The actual
+// signal-the-serve-loop primitive lives in cmd/r1/serve_cmd.go; this
+// handler invokes a callback the daemon's startup glue installed via
+// SetShutdownFunc. When no callback is wired (test scenarios, embedded
+// uses), returns ErrInternal so callers don't think shutdown succeeded.
 //
-// BLOCKED on shutdown-callback wiring: the actual signal-the-serve-loop
-// primitive lives in cmd/r1/serve_cmd.go (the signalContext channel).
-// The handler would need a callback the daemon installs at startup to
-// drive that signal; until that's wired, return ErrInternal so callers
-// don't think shutdown succeeded.
+// GraceSeconds is the in-flight-drain budget. Zero falls through to
+// the daemon's default. The handler returns AcceptedAt immediately;
+// the actual shutdown happens asynchronously so the WS reply gets
+// flushed before the listener closes.
 func (h *HubHandler) DaemonShutdown(ctx context.Context, req DaemonShutdownRequest) (DaemonShutdownResponse, error) {
-	// BLOCKED: depends on a daemon-supplied shutdown callback (follow-up).
-	return DaemonShutdownResponse{}, stokerr.New(stokerr.ErrInternal,
-		"daemon.shutdown: BLOCKED on daemon shutdown callback (follow-up)")
+	h.mu.Lock()
+	cb := h.shutdownFn
+	h.mu.Unlock()
+	if cb == nil {
+		return DaemonShutdownResponse{}, stokerr.New(stokerr.ErrInternal,
+			"daemon.shutdown: shutdown callback not configured")
+	}
+	// Fire the shutdown callback async so the WS response flushes
+	// before the listener tears down. Daemon owns the actual drain
+	// semantics; we just pass through the operator-supplied grace.
+	go cb(req.GraceSeconds)
+	return DaemonShutdownResponse{
+		AcceptedAt: h.now().UTC().Format(time.RFC3339Nano),
+	}, nil
 }
 
-// DaemonReloadConfig re-reads the daemon's config file.
+// DaemonReloadConfig re-reads the daemon's config file by invoking
+// the reload callback the daemon installed via SetReloadConfigFunc.
+// req.Path, when non-empty, overrides the default config path.
 //
-// BLOCKED on reload-callback wiring: config-reload primitive lives in
-// daemon-config.yaml-aware code that hasn't been threaded through the
-// daemon's serve loop yet.
+// Returns the absolute path of the config that was applied (so the
+// operator can confirm which file was read) plus ReloadedAt.
 func (h *HubHandler) DaemonReloadConfig(ctx context.Context, req DaemonReloadConfigRequest) (DaemonReloadConfigResponse, error) {
-	// BLOCKED: depends on a daemon-supplied reload callback (follow-up).
-	return DaemonReloadConfigResponse{}, stokerr.New(stokerr.ErrInternal,
-		"daemon.reload_config: BLOCKED on daemon reload callback (follow-up)")
+	h.mu.Lock()
+	cb := h.reloadConfigFn
+	h.mu.Unlock()
+	if cb == nil {
+		return DaemonReloadConfigResponse{}, stokerr.New(stokerr.ErrInternal,
+			"daemon.reload_config: reload callback not configured")
+	}
+	source, err := cb(req.Path)
+	if err != nil {
+		return DaemonReloadConfigResponse{}, stokerr.Wrap(stokerr.ErrInternal, "daemon.reload_config", err)
+	}
+	return DaemonReloadConfigResponse{
+		ReloadedAt: h.now().UTC().Format(time.RFC3339Nano),
+		Source:     source,
+	}, nil
+}
+
+// SetShutdownFunc installs the daemon-supplied shutdown callback.
+// The callback receives the operator-supplied GraceSeconds (zero
+// means "use daemon default"). The daemon's startup glue calls this
+// once after constructing the HubHandler.
+//
+// fn is called in a fresh goroutine by DaemonShutdown so the WS
+// response flushes before the listener closes; fn itself should be
+// non-blocking (signal the serve loop's shutdown channel and return).
+func (h *HubHandler) SetShutdownFunc(fn func(graceSeconds int)) {
+	h.mu.Lock()
+	h.shutdownFn = fn
+	h.mu.Unlock()
+}
+
+// SetReloadConfigFunc installs the daemon-supplied config-reload
+// callback. fn receives the operator-supplied path (empty means
+// "re-read the default config") and returns the absolute path of
+// the config that was applied, or an error.
+func (h *HubHandler) SetReloadConfigFunc(fn func(path string) (string, error)) {
+	h.mu.Lock()
+	h.reloadConfigFn = fn
+	h.mu.Unlock()
 }
 
 // lookupSession is the shared "get + map errors" helper used by every
