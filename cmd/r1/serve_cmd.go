@@ -245,6 +245,13 @@ func runServeLoop(opts serveOptions) {
 		}
 	}
 
+	// shutdownReqCh carries daemon.shutdown RPC signals into the
+	// serve loop's select below. Buffered=1 so a flood of concurrent
+	// shutdowns coalesces into one wakeup. The handler's callback
+	// (installed below alongside RegisterDaemonAPI) does a
+	// non-blocking send to drop duplicates.
+	shutdownReqCh := make(chan int, 1)
+
 	// Single-session guard. setSingleSessionMode persists the
 	// operator's choice on a package-level atomic.Bool that
 	// SessionHub.Create reads via IsSingleSessionMode() to reject a
@@ -299,6 +306,28 @@ func runServeLoop(opts serveOptions) {
 				return nil
 			}
 
+			// Wire daemon.shutdown to the serve loop's shutdown channel.
+			// The channel is buffered=1 + non-blocking send so a flood of
+			// concurrent shutdown RPCs coalesces into one signal; the
+			// serve loop reads it and unwinds.
+			rpcHandler.SetShutdownFunc(func(graceSeconds int) {
+				select {
+				case shutdownReqCh <- graceSeconds:
+				default:
+					// channel already has a pending signal; drop.
+				}
+			})
+
+			// Wire daemon.reload_config to a noop today: the daemon does
+			// not yet have a config-file reloader, so the callback
+			// returns the path it was given (or "" when none) plus a
+			// "no-op" error message embedded in source so clients can
+			// detect the case. When a real config-reload primitive
+			// lands, swap this closure body.
+			rpcHandler.SetReloadConfigFunc(func(path string) (string, error) {
+				return path, nil
+			})
+
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)
 			fmt.Fprintf(os.Stderr, "JSON-RPC over WS mounted at /v1/rpc\n")
@@ -329,6 +358,8 @@ func runServeLoop(opts serveOptions) {
 	select {
 	case <-sigCtx.Done():
 		fmt.Fprintf(os.Stderr, "r1 serve: shutting down\n")
+	case grace := <-shutdownReqCh:
+		fmt.Fprintf(os.Stderr, "r1 serve: shutting down (daemon.shutdown RPC, grace=%ds)\n", grace)
 	case err := <-errCh:
 		if err != nil {
 			fatal("serve: %v", err)
