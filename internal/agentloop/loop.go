@@ -145,6 +145,26 @@ type Config struct {
 	// Optional. nil = no pre-turn gate.
 	PreTurnHook func(ctx context.Context, turn int, messages []Message) error
 
+	// EndTurnContinuation fires when the model emits end_turn (after
+	// the build-verification gate has accepted the turn) and lets a
+	// caller convert pending inbound user input into another turn
+	// instead of exiting Run. Returns the text of the next user turn
+	// (non-empty) to inject and continue the loop, or "" to allow
+	// end_turn to terminate Run as usual.
+	//
+	// Typical use: the daemon's Session layer drains its inbox
+	// channel here so a session.send RPC delivered while the model
+	// was thinking gets picked up at end_turn rather than dropped.
+	//
+	// The hook MUST be quick + non-blocking. To wait for the next
+	// user message, return "" and let the caller drive the next Run
+	// invocation. To deliver up to one queued message per end_turn
+	// without blocking, do a non-blocking channel receive and return
+	// the text or "".
+	//
+	// Optional. nil = end_turn always terminates Run.
+	EndTurnContinuation func() string
+
 	// defaultsApplied guards defaults() against double-wrap when the
 	// method is invoked more than once on the same Config (e.g. test
 	// helpers that re-init or call defaults() before passing to New).
@@ -541,6 +561,24 @@ func (l *Loop) RunWithHistory(ctx context.Context, messages []Message) (*Result,
 					result.FinalText = extractText(assistantBlocks)
 					result.Messages = messages
 					return result, fmt.Errorf("aborted: honeypot triggered (%s)", hpMsg)
+				}
+			}
+			// EndTurnContinuation: when set, ask the caller whether
+			// there's pending inbound input (e.g. a queued
+			// session.send) that should keep the loop going instead
+			// of returning. Non-empty return becomes the next user
+			// turn; empty return falls through to the normal
+			// end_turn exit. Hook MUST be non-blocking.
+			if l.config.EndTurnContinuation != nil {
+				if next := l.config.EndTurnContinuation(); next != "" {
+					messages = append(messages, Message{
+						Role: "user",
+						Content: []ContentBlock{{
+							Type: blockText,
+							Text: next,
+						}},
+					})
+					continue // run another turn with the new user message
 				}
 			}
 			result.StopReason = resp.StopReason
