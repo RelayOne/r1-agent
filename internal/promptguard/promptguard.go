@@ -61,15 +61,36 @@ type Threat struct {
 	PatternName string
 	Start, End  int    // byte offsets into the scanned content
 	Excerpt     string // up to ~120 chars around the match, for logs
+	// Severity is the per-detection criticality used by the per-session
+	// budget tracker (T5) and the supervisor rules. Defaults to "medium"
+	// when unspecified by the matching Pattern. Function-based detectors
+	// (e.g. scanLeetspeak) populate this directly when they construct the
+	// Threat. See specs/promptguard-hardening.md §T1 + §T6 item 25.
+	Severity string
 }
 
 // Pattern is one injection-shape recognizer.
+//
+// The Name/Regexp/Rationale triple is the legacy public shape and is
+// preserved verbatim — code that constructs a Pattern with only those
+// three fields keeps working and gets Severity="medium" by default
+// (see TestPatternFields_BackcompatPreserved). Source and Severity were
+// added in spec A1 §T6 item 25 to support the CL4R1T4S corpus integration
+// and the per-session budget tracker; both are optional.
 type Pattern struct {
 	Name   string
 	Regexp *regexp.Regexp
 	// Rationale is included in warn/reject logs so operators can judge
 	// whether a match is a true positive.
 	Rationale string
+	// Source is a free-form provenance tag, e.g. "builtin",
+	// "cl4r1t4s-corpus@0.1.0", or an operator-supplied registry name.
+	// Default "" — surfaced verbatim in operator-side audit views.
+	Source string
+	// Severity maps detections to budget weights:
+	// "low" (0, ignored), "medium" (1, default), "high" (2), "critical" (3,
+	// trips budget immediately). See internal/promptguard/budget.go (T5).
+	Severity string
 }
 
 var (
@@ -89,42 +110,83 @@ func defaultPatterns() []Pattern {
 			Name:      "ignore-previous",
 			Regexp:    regexp.MustCompile(`(?i)ignore\s+(all\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|directives?|rules?|messages?)`),
 			Rationale: "Classic instruction-override phrase from published jailbreak corpora.",
+			Source:    "builtin",
+			Severity:  "medium",
 		},
 		{
 			Name:      "disregard-previous",
 			Regexp:    regexp.MustCompile(`(?i)(disregard|forget|discard)\s+(all\s+)?(the\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|directives?|rules?|context)`),
 			Rationale: "Variant of ignore-previous used to evade exact-match filters.",
+			Source:    "builtin",
+			Severity:  "medium",
 		},
 		{
 			Name:      "system-override",
 			Regexp:    regexp.MustCompile(`(?i)(system\s+prompt\s+(override|injection|update)|new\s+system\s+prompt|override\s+the\s+system)`),
 			Rationale: "Attempts to re-scope the model's system-level instructions.",
+			Source:    "builtin",
+			Severity:  "medium",
 		},
 		{
 			Name:      "role-reassignment",
 			Regexp:    regexp.MustCompile(`(?i)(you\s+are\s+now|from\s+now\s+on\s+you\s+are|act\s+as\s+(?:a\s+)?(?:DAN|jailbroken|uncensored|unrestricted))`),
 			Rationale: "Role-reassignment jailbreak ('you are now DAN', 'act as uncensored').",
+			Source:    "builtin",
+			Severity:  "medium",
 		},
 		{
 			Name:      "dev-mode",
 			Regexp:    regexp.MustCompile(`(?i)(developer\s+mode|god\s+mode|unrestricted\s+mode|jailbreak\s+mode)\s+(enabled|activated|on)`),
 			Rationale: "Fictional mode-switch markers used in community jailbreak prompts.",
+			Source:    "builtin",
+			Severity:  "medium",
 		},
 		{
 			Name:      "exfil-system-prompt",
 			Regexp:    regexp.MustCompile(`(?i)(print|reveal|show|echo|output|return)\s+(the\s+)?(entire\s+|full\s+|complete\s+)?(system\s+prompt|initial\s+instructions|hidden\s+instructions|training\s+data)`),
 			Rationale: "Attempt to exfiltrate the system prompt.",
+			Source:    "builtin",
+			Severity:  "high",
 		},
 		{
 			Name:      "bypass-safety",
 			Regexp:    regexp.MustCompile(`(?i)(bypass|disable|turn\s+off|skip)\s+(all\s+)?(safety|content|security|ethical)\s+(checks?|filters?|guardrails?|policies|rules)`),
 			Rationale: "Explicit request to disable safety guardrails.",
+			Source:    "builtin",
+			Severity:  "high",
 		},
 		{
 			Name:      "instruction-hijack-injected-role",
 			Regexp:    regexp.MustCompile(`(?im)^\s*(system|assistant)\s*:\s*`),
 			Rationale: "Injected role marker at line start — attempts to spoof a new turn in the chat transcript.",
+			Source:    "builtin",
+			Severity:  "critical",
 		},
+	}
+}
+
+// effectiveSeverity returns the Severity to surface for a detection
+// against pattern p. Missing values fall through to "medium" so
+// patterns constructed with the legacy 3-field shape stay valid.
+func effectiveSeverity(p Pattern) string {
+	if p.Severity == "" {
+		return "medium"
+	}
+	return p.Severity
+}
+
+// leetspeakRuleMetadata returns a virtual Pattern entry representing the
+// function-based leetspeak detector. Used by AllPatterns() so callers
+// (T4 reviewer system-prompt template, audit views) see every detector
+// uniformly even though leetspeak is implemented as a function rather
+// than a regex.
+func leetspeakRuleMetadata() Pattern {
+	return Pattern{
+		Name:      "leetspeak-instruction-rewrite",
+		Regexp:    nil, // function-based; no compiled regex
+		Rationale: "Leet-encoded variant of a published injection phrase (digit-for-letter substitution).",
+		Source:    "builtin",
+		Severity:  "high",
 	}
 }
 
@@ -148,11 +210,27 @@ func Scan(s string) []Threat {
 				Start:       loc[0],
 				End:         loc[1],
 				Excerpt:     excerpt(s, loc[0], loc[1]),
+				Severity:    effectiveSeverity(p),
 			})
 		}
 	}
 	// Check for leet-encoded injection phrases (digit-for-letter substitution).
 	out = append(out, scanLeetspeak(s)...)
+	return out
+}
+
+// AllPatterns returns a snapshot copy of every registered detector,
+// including the function-based leetspeak rule (rendered as a virtual
+// Pattern with Regexp=nil — see leetspeakRuleMetadata). Callers can
+// safely mutate the returned slice without affecting subsequent
+// Scan/Sanitize behaviour. Added in spec A1 §T4 item 18 + §T6.
+func AllPatterns() []Pattern {
+	patternsMu.RLock()
+	src := patterns
+	patternsMu.RUnlock()
+	out := make([]Pattern, 0, len(src)+1)
+	out = append(out, src...)
+	out = append(out, leetspeakRuleMetadata())
 	return out
 }
 

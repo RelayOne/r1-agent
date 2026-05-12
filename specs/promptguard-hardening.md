@@ -1,5 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: in-progress -->
 <!-- CREATED: 2026-05-11 -->
+<!-- BUILD_STARTED: 2026-05-11 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 34 -->
 

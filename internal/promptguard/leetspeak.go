@@ -115,6 +115,7 @@ func scanLeetspeak(s string) []Threat {
 			Start:       loc[0],
 			End:         loc[1],
 			Excerpt:     excerpt(s, loc[0], loc[1]),
+			Severity:    "high",
 		})
 	}
 	return out
