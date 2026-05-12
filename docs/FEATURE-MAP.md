@@ -205,6 +205,11 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `r1 skills pack init/info/install/list/publish/search/sign/verify/update/serve` | Full pack lifecycle | Done | `cmd/r1/skills_pack_cmd.go` |
 | HTTP pack registry | `r1 skills pack serve` exposes published packs | Done | `cmd/r1/skills_pack_server.go` |
 | Signed-pack runtime verification | Prevents runtime registration from ignoring pack integrity | Done | `internal/skill/verify.go` |
+| Federated v2 pack format (C7) | `manifest.v2.json` with `compat` matrix, runtime_assertions, consumer_hooks. v1 packs auto-upgrade to v2 at load time | Done | `internal/skill/manifest_v2.go` |
+| Cross-product runtime adapters (C7) | Adapt v2 manifest to CloudSwarm/Heroa/Veritize/R1 wrappers | Done | `internal/skill/compat/` |
+| `r1 skills pack adopt --pack <id> --for <product>` (C7) | Writes target-product wrapper + signed `pack.adopted` ledger event | Done | `cmd/r1/pack_adopt_cmd.go` |
+| Federated ed25519 trust root (C7) | Per-publisher kids with not_before/not_after/scopes; signed document via root operator key | Done | `internal/skill/trustroot.go` |
+| `/v2/packs`, `/v2/trust-root`, `X-R1-Registry-Sig` (C7) | HTTPS + per-IP rate limit + response signing | Done | `cmd/r1/skills_pack_server_v2.go` |
 
 ## Agentic Test Harness
 
@@ -284,7 +289,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | MCP IDE bundles (C4) | The customer installs r1 once and every IDE on their machine sees it. Single spec covering Cursor, Windsurf, VS Code, and JetBrains with one `r1 ide install / uninstall / verify` command that writes the right config in the right place for each IDE plus a JetBrains-side plugin shim. No more per-IDE walkthrough in the docs. | Scoped (ready, BUILD_ORDER 43) | `specs/mcp-ide-bundles.md` |
 | BitBucket Pipelines adapter (C5) | Customers on BitBucket stop being a third-class platform. Parity with the existing GitHub Actions + GitLab CI adapters: OIDC-based authentication, PR commenting with diff-aware annotations, and the same `r1 run --ci` flag set across all three providers. | Scoped (ready, BUILD_ORDER 44) | `specs/bitbucket-pipelines-adapter.md` |
 | Browser tool — remote sandbox (C6) | The hosted r1.run finally has a browser the agent can drive without compromising the underlying host. Two interchangeable providers (Browserless managed + an in-house Cloud Run provider), tenant-isolated sandbox model, deny-by-default egress policy. Unlocks every "scrape this site / fill this form" agent workflow on the hosted tier. | Scoped (ready, BUILD_ORDER 45) | `specs/browser-remote-sandbox.md` |
-| Cross-product skill exchange (C7) | Skills become portable assets across the RelayOne portfolio instead of per-product silos. Pack-format v2 with an explicit compatibility matrix, federated trust root so a skill signed by one product is verifiable by another, runtime adapters for CloudSwarm, Heroa, and Veritize. A skill written for r1 runs in Heroa with no manual port; a skill from CloudSwarm runs in r1. | Scoped (ready, BUILD_ORDER 46) | `specs/cross-product-skill-exchange.md` |
+| Cross-product skill exchange (C7) | Skills become portable assets across the RelayOne portfolio instead of per-product silos. Pack-format v2 with an explicit compatibility matrix, federated trust root so a skill signed by one product is verifiable by another, runtime adapters for CloudSwarm, Heroa, and Veritize. A skill written for r1 runs in Heroa with no manual port; a skill from CloudSwarm runs in r1. | Done (R1-side substrate) | `specs/cross-product-skill-exchange.md`, `internal/skill/manifest_v2.go`, `internal/skill/compat/`, `internal/skill/trustroot.go`, `cmd/r1/pack_adopt_cmd.go` |
 
 ### Scoped — legacy (pre-2026-05-11)
 - JWT login + RelayOne MSP SSO (Path A — Go reimpl of @relayone/auth-core JwtService + RelayOneSsoClient) — superseded by A4 above with a fuller scope.

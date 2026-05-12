@@ -73,6 +73,8 @@ skilltracker/                      Per-stance loaded-skill table (Note / Drop / 
 snapshot/                          Protected baseline manifest
 wizard/                            First-time config presets
 skillmfr/                          Skill manufacturing pipeline
+skill/                             v1 + v2 manifest, registry, integrations, federated trust root (C7)
+skill/compat/                      Runtime adapters: r1, cloudswarm, heroa, veritize (C7)
 bench/                             Golden mission benchmarking
 bridge/                            V1→V2 bridge adapters
 
