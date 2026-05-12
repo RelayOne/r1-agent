@@ -208,7 +208,7 @@ The 6-month roadmap, in priority order:
 4. **Marketing site** — affiliate / SEO / CRO / attribution / retention engineering across the public surface.
 5. **Cross-machine session migration** — current daemon is one-host; the next iteration lets you start a session on your laptop and finish it on a cloud sandbox.
 6. **Encryption-at-rest for journals** — separate spec already drafted at `specs/encryption-at-rest.md`.
-7. **BitBucket Pipelines adapter** — parity with GitHub Actions and GitLab CI.
+7. **BitBucket Pipelines adapter** — parity with GitHub Actions and GitLab CI. **Shipped 2026-05-12.**
 8. **Native MCP server bundle for popular IDEs** — VS Code + JetBrains + Zed without a separate install step.
 
 ---
@@ -251,7 +251,7 @@ Tier C is the work that makes "should we switch agent runtimes" a harder questio
 
 **IDE-native install (C4).** One spec covering Cursor, Windsurf, VS Code, and JetBrains with one `r1 ide install / uninstall / verify` command. The customer installs r1 once; every IDE on the machine sees it. Competitors that require a per-IDE walkthrough lose the install funnel; we win it.
 
-**BitBucket parity (C5).** The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround.
+**BitBucket parity (C5).** *Shipped 2026-05-12.* The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround. Implementation lives under `internal/cicd/bitbucket/`; operator runbook in `docs/integrations/bitbucket-pipelines.md`.
 
 **Hosted-SaaS browser sandbox (C6).** Two interchangeable providers (Browserless managed + an in-house Cloud Run provider), tenant-isolated sandbox, deny-by-default egress policy. Every "scrape this site / fill this form / verify this UI" agent workflow becomes usable on the hosted tier without the customer worrying about cross-tenant browser-fingerprint leakage or unrestricted outbound network access.
 

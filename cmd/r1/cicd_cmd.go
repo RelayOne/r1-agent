@@ -5,12 +5,15 @@ package main
 // T-R1P-020: GitHub Actions integration
 // T-R1P-021: GitLab CI integration
 // T-R1P-022: CircleCI integration
+// C5:       BitBucket Pipelines integration
 //
 // Usage:
 //
 //	r1 cicd --provider github --mode review   [--output .github/workflows/r1.yml]
 //	r1 cicd --provider gitlab --mode autofix
 //	r1 cicd --provider circleci --mode mission --plan plans/my-plan.json --workers 4
+//	r1 cicd --provider bitbucket --mode review
+//	r1 cicd init bitbucket [--workspace .]    sugar for --provider bitbucket --mode review
 //	r1 cicd --list                            list all supported providers and modes
 
 import (
@@ -23,8 +26,28 @@ import (
 )
 
 func cicdCmd(args []string) {
+	// `r1 cicd init bitbucket [--workspace .]` is sugar that rewrites args to
+	// `--provider bitbucket --mode review` while leaving any other flags
+	// the caller supplied intact.
+	if len(args) >= 2 && args[0] == "init" && args[1] == "bitbucket" {
+		rest := args[2:]
+		rewritten := []string{"--provider", "bitbucket", "--mode", "review"}
+		// `--workspace .` is accepted as a flag here but is informational
+		// only — the generator detects the project type from the CWD.
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == "--workspace" || rest[i] == "-workspace" {
+				if i+1 < len(rest) {
+					i++ // skip the value
+				}
+				continue
+			}
+			rewritten = append(rewritten, rest[i])
+		}
+		args = rewritten
+	}
+
 	fs := flag.NewFlagSet("cicd", flag.ExitOnError)
-	provider := fs.String("provider", "github", "CI/CD provider: github | gitlab | circleci")
+	provider := fs.String("provider", "github", "CI/CD provider: github | gitlab | circleci | bitbucket")
 	mode := fs.String("mode", "review", "Integration mode: review | autofix | mission")
 	planFile := fs.String("plan", "", "Plan file path (mission mode; default: stoke-plan.json)")
 	workers := fs.Int("workers", 1, "Number of parallel R1 workers (mission mode)")
@@ -38,7 +61,7 @@ func cicdCmd(args []string) {
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: r1 cicd [flags]")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Generate R1 CI/CD integration recipes for GitHub Actions, GitLab CI, or CircleCI.")
+		fmt.Fprintln(os.Stderr, "Generate R1 CI/CD integration recipes for GitHub Actions, GitLab CI, CircleCI, or BitBucket Pipelines.")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -47,6 +70,8 @@ func cicdCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "  r1 cicd --provider github --mode review")
 		fmt.Fprintln(os.Stderr, "  r1 cicd --provider gitlab --mode autofix")
 		fmt.Fprintln(os.Stderr, "  r1 cicd --provider circleci --mode mission --plan plans/sprint.json --workers 4")
+		fmt.Fprintln(os.Stderr, "  r1 cicd --provider bitbucket --mode review")
+		fmt.Fprintln(os.Stderr, "  r1 cicd init bitbucket --workspace .")
 	}
 	_ = fs.Parse(args)
 

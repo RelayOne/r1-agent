@@ -1,0 +1,12 @@
+# go.yaml — language-specific overlay for Go projects (C5, T17).
+# Concatenated into the generated bitbucket-pipelines.yml by detectImage().
+definitions:
+  caches:
+    gomod:
+      key:
+        files:
+          - go.sum
+      path: ${HOME}/go/pkg/mod
+before-script-snippet: |
+  go mod download
+  go vet ./...
