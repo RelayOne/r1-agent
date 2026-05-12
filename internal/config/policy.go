@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,11 +19,59 @@ import (
 // phase carries one Action ("warn"|"strip"|"reject"); missing entries
 // fall through to the spec defaults (plan=strip, execute=warn,
 // verify=strip, convergence=strip).
+//
+// ToolInput is the per-tool input-validation block added in §T2 item 10.
+// Carries an action knob, an optional list of operator-defined custom
+// rules, and an optional path to a sidecar YAML carrying additional
+// rules. Bundled defaults (three rules for deploy.execute, browse.fetch,
+// file.write) ship via //go:embed inside the promptguard package and
+// load unconditionally at startup; operator overrides merge on top.
 type PromptGuardConfig struct {
-	Plan        PromptGuardPhaseConfig `json:"plan,omitempty" yaml:"plan,omitempty"`
-	Execute     PromptGuardPhaseConfig `json:"execute,omitempty" yaml:"execute,omitempty"`
-	Verify      PromptGuardPhaseConfig `json:"verify,omitempty" yaml:"verify,omitempty"`
-	Convergence PromptGuardPhaseConfig `json:"convergence,omitempty" yaml:"convergence,omitempty"`
+	Plan        PromptGuardPhaseConfig     `json:"plan,omitempty" yaml:"plan,omitempty"`
+	Execute     PromptGuardPhaseConfig     `json:"execute,omitempty" yaml:"execute,omitempty"`
+	Verify      PromptGuardPhaseConfig     `json:"verify,omitempty" yaml:"verify,omitempty"`
+	Convergence PromptGuardPhaseConfig     `json:"convergence,omitempty" yaml:"convergence,omitempty"`
+	ToolInput   PromptGuardToolInputConfig `json:"tool_input,omitempty" yaml:"tool_input,omitempty"`
+}
+
+// PromptGuardToolInputConfig is the per-tool input-validation block.
+// See specs/promptguard-hardening.md §T2 item 10. Schema:
+//
+//	tool_input:
+//	  action: warn|strip|reject (default reject)
+//	  rules:
+//	    - tool: <name>
+//	      require_struct: true|false
+//	      struct_fields: [a, b]
+//	      max_length_kb: <int>
+//	      deny_patterns:
+//	        - '<regex>'
+//	  additional_rules_path: /path/to/extra.yaml
+type PromptGuardToolInputConfig struct {
+	// Action is "warn" | "strip" | "reject"; empty means "use the spec
+	// default" (reject). Validated via promptguard.ParseAction at apply
+	// time so an unrecognised string falls back to the default rather
+	// than erroring out the policy load.
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
+	// Rules carries operator-supplied custom rules. Each merges with
+	// the bundled defaults at apply time. An empty slice leaves the
+	// bundled rules untouched.
+	Rules []PromptGuardToolInputRule `json:"rules,omitempty" yaml:"rules,omitempty"`
+	// AdditionalRulesPath is an optional sidecar YAML file with the
+	// same schema as configs/promptguard-toolinput-defaults.yaml. If
+	// set, loaded at apply time and merged after Rules.
+	AdditionalRulesPath string `json:"additional_rules_path,omitempty" yaml:"additional_rules_path,omitempty"`
+}
+
+// PromptGuardToolInputRule is the YAML-on-disk shape of one custom
+// rule. The fields mirror promptguard.ToolInputRule but carry the
+// deny-pattern list as raw strings (compiled at apply time).
+type PromptGuardToolInputRule struct {
+	Tool          string   `json:"tool" yaml:"tool"`
+	RequireStruct bool     `json:"require_struct,omitempty" yaml:"require_struct,omitempty"`
+	StructFields  []string `json:"struct_fields,omitempty" yaml:"struct_fields,omitempty"`
+	MaxLengthKB   int      `json:"max_length_kb,omitempty" yaml:"max_length_kb,omitempty"`
+	DenyPatterns  []string `json:"deny_patterns,omitempty" yaml:"deny_patterns,omitempty"`
 }
 
 // PromptGuardPhaseConfig carries one phase's promptguard knobs.
@@ -63,9 +112,15 @@ func (c *PromptGuardConfig) ResolveAction(phase string) promptguard.Action {
 // process-wide promptguard phase-action map so wire-sites that call
 // promptguard.PhaseAction(...) see the operator's settings without
 // having to thread the policy through every call signature.
+//
+// Also applies the per-tool input-validation overrides from c.ToolInput
+// (specs/promptguard-hardening.md §T2 item 10): the embedded defaults
+// are restored, then operator-supplied rules are merged on top, then
+// any additional_rules_path sidecar YAML is loaded and merged.
 func (c *PromptGuardConfig) Apply() {
 	if c == nil {
 		promptguard.ResetPhaseActions()
+		promptguard.ResetToolInputRules()
 		return
 	}
 	promptguard.ResetPhaseActions()
@@ -77,6 +132,62 @@ func (c *PromptGuardConfig) Apply() {
 	} {
 		if a, ok := promptguard.ParseAction(raw); ok {
 			promptguard.SetPhaseAction(phase, a)
+		}
+	}
+	c.applyToolInput()
+}
+
+// applyToolInput installs the per-tool input-validation overrides on
+// the package-wide promptguard rule registry. Steps:
+//
+//  1. Restore embedded defaults (so a subsequent reload starts clean).
+//  2. If c.ToolInput.Action is a valid action string, override the
+//     default action.
+//  3. For each rule in c.ToolInput.Rules: compile its deny patterns
+//     and register via promptguard.AddToolInputRule. A bad regex is
+//     skipped with a log line so a single malformed entry does not
+//     fail the entire policy load.
+//  4. If c.ToolInput.AdditionalRulesPath is set, read the file and
+//     merge via promptguard.LoadToolInputYAML.
+func (c *PromptGuardConfig) applyToolInput() {
+	promptguard.ResetToolInputRules()
+	if a, ok := promptguard.ParseAction(c.ToolInput.Action); ok {
+		promptguard.SetToolInputAction(a)
+	}
+	for _, r := range c.ToolInput.Rules {
+		if strings.TrimSpace(r.Tool) == "" {
+			continue
+		}
+		compiled := make([]*regexp.Regexp, 0, len(r.DenyPatterns))
+		skip := false
+		for _, p := range r.DenyPatterns {
+			re, err := regexp.Compile(p)
+			if err != nil {
+				skip = true
+				break
+			}
+			compiled = append(compiled, re)
+		}
+		if skip {
+			continue
+		}
+		promptguard.AddToolInputRule(promptguard.ToolInputRule{
+			Tool:          r.Tool,
+			DenyPatterns:  compiled,
+			MaxLengthKB:   r.MaxLengthKB,
+			RequireStruct: r.RequireStruct,
+			StructFields:  append([]string(nil), r.StructFields...),
+			Source:        "policy",
+		})
+	}
+	if path := strings.TrimSpace(c.ToolInput.AdditionalRulesPath); path != "" {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			// best-effort load: a missing or unreadable sidecar file
+			// does not fail the policy load — it just means no extra
+			// rules are merged. The error path is documented in the
+			// spec's error-handling table.
+			_ = promptguard.LoadToolInputYAML(data, "policy:"+path)
 		}
 	}
 }
@@ -304,6 +415,14 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	p.Cortex = cortex
+	// Parse the promptguard.tool_input block (if any) via yaml.v3;
+	// the custom line-scanner above skips its contents. See
+	// specs/promptguard-hardening.md §T2 item 10.
+	toolInput, err := parsePromptGuardToolInputBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.PromptGuard.ToolInput = toolInput
 	return normalizePolicy(p), nil
 }
 
@@ -467,6 +586,14 @@ func parsePolicyYAML(input string) (Policy, error) {
 			p.Files.Protected = parseListValue(val)
 		case section == "promptguard" && indent == 2 && strings.HasSuffix(text, ":"):
 			pgPhase = strings.TrimSuffix(text, ":")
+		case section == "promptguard" && pgPhase == "tool_input":
+			// tool_input is a nested-map block (action + rules + path).
+			// The custom scanner skips every line below `tool_input:`
+			// (any indent >2) and leaves parsing to
+			// parsePromptGuardToolInputBlock (yaml.v3). Mirrors the
+			// mcp_servers and cortex skip patterns above. See
+			// specs/promptguard-hardening.md §T2 item 10.
+			continue
 		case section == "promptguard" && indent == 4:
 			key, val, ok := splitKV(text)
 			if !ok {
