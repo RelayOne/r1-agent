@@ -847,7 +847,11 @@ func (e Engine) Run(ctx context.Context) (result Result, retErr error) {
 				for _, f := range modifiedFiles {
 					absPath := filepath.Join(handle.Path, f)
 					if data, readErr := os.ReadFile(absPath); readErr == nil {
-						changes[f] = string(data)
+						// T1 verify-phase wire (specs/promptguard-hardening.md
+						// §T1 item 4): file body destined for the critic
+						// review pass goes through promptguard.Sanitize
+						// first (default action: strip).
+						changes[f] = readFileForReviewPrompt(f, data)
 					}
 				}
 				if len(changes) > 0 {
@@ -1604,6 +1608,61 @@ func truncStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// readFileForExecutePrompt is the T1 wire site for the execute phase
+// (specs/promptguard-hardening.md §T1 item 3). Project-supplied file
+// content gets routed through promptguard.Sanitize before it lands in
+// an execute-phase prompt. Default disposition is ActionWarn — the
+// content passes through unmodified, but every detection emits a
+// ThreatEvent for the audit trail. Operators can upgrade the action
+// via the PromptGuard block in r1.policy.yaml.
+func readFileForExecutePrompt(filePath string, src []byte) string {
+	action := promptguard.PhaseAction("execute")
+	source := "execute:" + filepath.Base(filePath)
+	sanitized, report, sanErr := promptguard.Sanitize(string(src), action, source)
+	if sanErr != nil {
+		slog.Warn("promptguard rejected execute-phase file read",
+			"source", filePath, "error", sanErr.Error())
+		promptguard.EmitReport(context.Background(), "execute", report)
+		return ""
+	}
+	if len(report.Threats) > 0 {
+		slog.Warn("promptguard threat detected in execute-phase file read",
+			"source", filePath,
+			"threats", len(report.Threats),
+			"action", action.String(),
+			"summary", report.Summary())
+		promptguard.EmitReport(context.Background(), "execute", report)
+	}
+	return sanitized
+}
+
+// readFileForReviewPrompt is the T1 wire site for the verify phase
+// (specs/promptguard-hardening.md §T1 item 4). Bytes destined for the
+// reviewer-side critic.Review pass through promptguard.Sanitize first.
+// Default disposition is ActionStrip per spec — injection-shaped
+// payloads are replaced with the redaction marker before the critic
+// AST analysis runs.
+func readFileForReviewPrompt(filePath string, src []byte) string {
+	action := promptguard.PhaseAction("verify")
+	source := "verify:" + filePath
+	sanitized, report, sanErr := promptguard.Sanitize(string(src), action, source)
+	if sanErr != nil {
+		slog.Warn("promptguard rejected verify-phase file read",
+			"source", filePath, "error", sanErr.Error())
+		promptguard.EmitReport(context.Background(), "verify", report)
+		return ""
+	}
+	if len(report.Threats) > 0 {
+		slog.Warn("promptguard threat detected in verify-phase file read",
+			"source", filePath,
+			"threats", len(report.Threats),
+			"action", action.String(),
+			"summary", report.Summary())
+		promptguard.EmitReport(context.Background(), "verify", report)
+	}
+	return sanitized
+}
+
 // buildSpec creates a RunSpec for a phase and worktree handle.
 func (e Engine) buildSpec(phase engine.PhaseSpec, handle worktree.Handle) engine.RunSpec {
 	return engine.RunSpec{
@@ -1703,17 +1762,7 @@ func buildRetryPrompt(originalPrompt string, attempt int, analysis *failure.Anal
 					filePath = filepath.Join(worktreeDir, filePath)
 				}
 				if src, readErr := os.ReadFile(filePath); readErr == nil {
-					// Scan the source for prompt-injection shapes before
-					// embedding it in the retry prompt. ActionWarn logs +
-					// passes through unmodified, which is the right
-					// disposition while we learn the false-positive rate.
-					sanitized, report, _ := promptguard.Sanitize(string(src), promptguard.ActionWarn, filePath)
-					if len(report.Threats) > 0 {
-						slog.Warn("promptguard threat detected in failure-analysis file read",
-							"source", filePath,
-							"threats", len(report.Threats),
-							"summary", report.Summary())
-					}
+					sanitized := readFileForExecutePrompt(filePath, src)
 					scaffold := testgen.GenerateFile(filepath.Base(filepath.Dir(filePath)), sanitized)
 					if scaffold != "" {
 						sb.WriteString(fmt.Sprintf("\nSUGGESTED TEST SCAFFOLD for %s:\n%s\n", d.File, truncStr(scaffold, 2000)))

@@ -10,7 +10,76 @@ import (
 	"strings"
 
 	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/promptguard"
 )
+
+// PromptGuardConfig is the operator-facing per-phase action knob for
+// the promptguard package. See specs/promptguard-hardening.md §T1. Each
+// phase carries one Action ("warn"|"strip"|"reject"); missing entries
+// fall through to the spec defaults (plan=strip, execute=warn,
+// verify=strip, convergence=strip).
+type PromptGuardConfig struct {
+	Plan        PromptGuardPhaseConfig `json:"plan,omitempty" yaml:"plan,omitempty"`
+	Execute     PromptGuardPhaseConfig `json:"execute,omitempty" yaml:"execute,omitempty"`
+	Verify      PromptGuardPhaseConfig `json:"verify,omitempty" yaml:"verify,omitempty"`
+	Convergence PromptGuardPhaseConfig `json:"convergence,omitempty" yaml:"convergence,omitempty"`
+}
+
+// PromptGuardPhaseConfig carries one phase's promptguard knobs.
+// Action is "warn" | "strip" | "reject"; an empty string means "use the
+// spec default for this phase".
+type PromptGuardPhaseConfig struct {
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
+}
+
+// ResolveAction returns the promptguard.Action to apply at the named
+// phase. Honors the operator's per-phase override when set; falls
+// through to the spec default (plan=strip, execute=warn, verify=strip,
+// convergence=strip) when missing or unrecognized.
+func (c *PromptGuardConfig) ResolveAction(phase string) promptguard.Action {
+	if c == nil {
+		return promptguard.PhaseAction(phase)
+	}
+	var raw string
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "plan":
+		raw = c.Plan.Action
+	case "execute":
+		raw = c.Execute.Action
+	case "verify":
+		raw = c.Verify.Action
+	case "convergence":
+		raw = c.Convergence.Action
+	default:
+		return promptguard.PhaseAction(phase)
+	}
+	if a, ok := promptguard.ParseAction(raw); ok {
+		return a
+	}
+	return promptguard.PhaseAction(phase)
+}
+
+// Apply installs the operator's per-phase overrides on the
+// process-wide promptguard phase-action map so wire-sites that call
+// promptguard.PhaseAction(...) see the operator's settings without
+// having to thread the policy through every call signature.
+func (c *PromptGuardConfig) Apply() {
+	if c == nil {
+		promptguard.ResetPhaseActions()
+		return
+	}
+	promptguard.ResetPhaseActions()
+	for phase, raw := range map[string]string{
+		"plan":        c.Plan.Action,
+		"execute":     c.Execute.Action,
+		"verify":      c.Verify.Action,
+		"convergence": c.Convergence.Action,
+	} {
+		if a, ok := promptguard.ParseAction(raw); ok {
+			promptguard.SetPhaseAction(phase, a)
+		}
+	}
+}
 
 // Policy defines the security and tool restrictions for each workflow phase.
 type Policy struct {
@@ -30,6 +99,12 @@ type Policy struct {
 	// parsePolicyYAML skips the `cortex:` section the same way it skips
 	// `mcp_servers:`. See specs/cortex-concerns.md item 3.
 	Cortex CortexConfig `json:"cortex,omitempty" yaml:"cortex,omitempty"`
+
+	// PromptGuard carries per-phase action knobs for the promptguard
+	// package. See specs/promptguard-hardening.md §T1. Parsed inline by
+	// the custom line-scanner in parsePolicyYAML (section nesting:
+	// promptguard.<phase>.action).
+	PromptGuard PromptGuardConfig `json:"promptguard,omitempty" yaml:"promptguard,omitempty"`
 
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
@@ -303,6 +378,11 @@ func parsePolicyYAML(input string) (Policy, error) {
 	section := ""
 	currentPhase := ""
 	currentListField := ""
+	// promptguard sub-section state — tracks which phase block
+	// (plan|execute|verify|convergence) the scanner is currently
+	// inside so a 4-space-indented `action: <val>` line can be routed
+	// to the right PromptGuardPhaseConfig field.
+	pgPhase := ""
 
 	for scanner.Scan() {
 		raw := scanner.Text()
@@ -318,6 +398,7 @@ func parsePolicyYAML(input string) (Policy, error) {
 			section = strings.TrimSuffix(text, ":")
 			currentPhase = ""
 			currentListField = ""
+			pgPhase = ""
 		case section == "mcp_servers":
 			// mcp_servers is a yaml-sequence block; the custom
 			// scanner skips all its contents (any indent >0) and
@@ -384,6 +465,29 @@ func parsePolicyYAML(input string) (Policy, error) {
 				return Policy{}, fmt.Errorf("unknown files key %q", key)
 			}
 			p.Files.Protected = parseListValue(val)
+		case section == "promptguard" && indent == 2 && strings.HasSuffix(text, ":"):
+			pgPhase = strings.TrimSuffix(text, ":")
+		case section == "promptguard" && indent == 4:
+			key, val, ok := splitKV(text)
+			if !ok {
+				return Policy{}, fmt.Errorf("invalid promptguard line: %q", raw)
+			}
+			if key != "action" {
+				return Policy{}, fmt.Errorf("unknown promptguard key %q (only 'action' is supported)", key)
+			}
+			cfg := PromptGuardPhaseConfig{Action: unquote(val)}
+			switch pgPhase {
+			case "plan":
+				p.PromptGuard.Plan = cfg
+			case "execute":
+				p.PromptGuard.Execute = cfg
+			case "verify":
+				p.PromptGuard.Verify = cfg
+			case "convergence":
+				p.PromptGuard.Convergence = cfg
+			default:
+				return Policy{}, fmt.Errorf("unknown promptguard phase %q (want plan|execute|verify|convergence)", pgPhase)
+			}
 		case section == "verification" && indent == 2:
 			key, val, ok := splitKV(text)
 			if !ok {

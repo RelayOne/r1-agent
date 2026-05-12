@@ -159,3 +159,67 @@ func TestLoadPolicyYAML(t *testing.T) {
 		t.Fatalf("expected verification flags to parse as required=true")
 	}
 }
+
+// TestPolicyParse_PromptGuardBlock covers the operator-facing per-phase
+// promptguard knobs (specs/promptguard-hardening.md §T1 item 1) — both
+// the omitted-block fallthrough and an explicit override.
+func TestPolicyParse_PromptGuardBlock(t *testing.T) {
+	// Case 1: no promptguard block — every phase falls through to its
+	// spec default (plan=strip, execute=warn, verify=strip,
+	// convergence=strip) via ResolveAction.
+	emptyDir := t.TempDir()
+	emptyPath := filepath.Join(emptyDir, "r1.policy.yaml")
+	if err := os.WriteFile(emptyPath, []byte(DefaultPolicyYAML()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadPolicy(emptyPath)
+	if err != nil {
+		t.Fatalf("default policy load: %v", err)
+	}
+	if p.PromptGuard.Plan.Action != "" {
+		t.Errorf("omitted plan action should be empty; got %q", p.PromptGuard.Plan.Action)
+	}
+	// Default fallthrough surfaces as the spec defaults via ResolveAction.
+	gotPlan := p.PromptGuard.ResolveAction("plan").String()
+	if gotPlan != "strip" {
+		t.Errorf("omitted plan -> ResolveAction = %s, want strip", gotPlan)
+	}
+	gotExec := p.PromptGuard.ResolveAction("execute").String()
+	if gotExec != "warn" {
+		t.Errorf("omitted execute -> ResolveAction = %s, want warn", gotExec)
+	}
+
+	// Case 2: explicit override.
+	yaml := DefaultPolicyYAML() + `
+promptguard:
+  plan:
+    action: reject
+  execute:
+    action: strip
+  verify:
+    action: warn
+  convergence:
+    action: reject
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "r1.policy.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := LoadPolicy(path)
+	if err != nil {
+		t.Fatalf("override policy load: %v", err)
+	}
+	if got := p2.PromptGuard.ResolveAction("plan").String(); got != "reject" {
+		t.Errorf("plan override -> %s, want reject", got)
+	}
+	if got := p2.PromptGuard.ResolveAction("execute").String(); got != "strip" {
+		t.Errorf("execute override -> %s, want strip", got)
+	}
+	if got := p2.PromptGuard.ResolveAction("verify").String(); got != "warn" {
+		t.Errorf("verify override -> %s, want warn", got)
+	}
+	if got := p2.PromptGuard.ResolveAction("convergence").String(); got != "reject" {
+		t.Errorf("convergence override -> %s, want reject", got)
+	}
+}
