@@ -206,9 +206,9 @@ func (s EnvSource) Load(_ context.Context) (*KeyMaterial, error) {
 	}, nil
 }
 
-// FileSource reads PEM material from a directory. Falls back to
-// generating a fresh RSA-2048 keypair when Dir exists but contains no
-// material AND GenerateIfMissing is true (default).
+// FileSource reads PEM material from a directory. When Dir exists but
+// contains no material, generates a fresh RSA-2048 keypair as a
+// fallback — the default behavior, set DisableGenerate to opt out.
 //
 // Files:
 //
@@ -216,15 +216,17 @@ func (s EnvSource) Load(_ context.Context) (*KeyMaterial, error) {
 //	jwt-pub.pem     SPKI RSA public  (mode 0644)
 //	jwt-secret      raw bytes for HS256 (mode 0600)
 //
-// HS256 takes precedence over RS256 only if jwt-secret is present and
-// the RSA files are absent. When both shapes are present, RS256 wins.
+// RS256 takes precedence over HS256: if both shapes are present on
+// disk, the RSA pair wins. The HS256 secret-file path is only used
+// when the RSA pair is absent.
 type FileSource struct {
 	Dir string
 
-	// GenerateIfMissing controls first-time RSA-2048 generation when no
-	// material is present. Defaults to true; tests that want a strict
-	// no-side-effect read set it false.
-	GenerateIfMissing bool
+	// DisableGenerate opts out of the "create a fresh RSA-2048 keypair
+	// on first use" fallback. Tests that want a strict no-side-effect
+	// read set it true; production wiring leaves it false so the
+	// daemon boots without operator intervention.
+	DisableGenerate bool
 }
 
 // Name implements KeySource.
@@ -260,20 +262,21 @@ func (s FileSource) Load(_ context.Context) (*KeyMaterial, error) {
 		}, nil
 	}
 
-	// Nothing on disk. Generate iff allowed.
-	generate := s.GenerateIfMissing
-	// Treat the zero-value as "true" so the cascade default works
-	// without callers setting a bool explicitly. The struct literal
-	// FileSource{} therefore means "read or create".
-	if !generate && (errors.Is(errPriv, os.ErrNotExist) && errors.Is(errPub, os.ErrNotExist)) {
-		// Caller explicitly disabled generation.
-		return nil, ErrNoKeyMaterial
-	}
 	// Be defensive about the "partial" case: one file present, one
 	// missing. Refuse to overwrite a partial setup; require operator
-	// triage.
+	// triage. This must be checked BEFORE the "should-generate?"
+	// branch because a partial setup is never safe to clobber.
 	if errors.Is(errPriv, os.ErrNotExist) != errors.Is(errPub, os.ErrNotExist) {
 		return nil, fmt.Errorf("auth keys: partial key material in %s (priv=%v pub=%v); refusing to overwrite", s.Dir, errPriv, errPub)
+	}
+
+	// Nothing on disk. Generate iff allowed. The zero-value of
+	// GenerateIfMissing (false) is treated as "allowed" so the struct
+	// literal FileSource{Dir: dir} means "read or create" — that's
+	// the production cascade default. Callers who want a strict
+	// no-side-effect read set DisableGenerate=true.
+	if s.DisableGenerate {
+		return nil, ErrNoKeyMaterial
 	}
 
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
