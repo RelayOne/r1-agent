@@ -179,6 +179,26 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | Manual GitHub Actions rehearsal | `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch the rehearsal from the Actions UI; calls `gcloud builds triggers run` against the main-branch trigger; workflow summary links to the Cloud Build console | Done | `.github/workflows/e2e-rehearsal-manual.yml` |
 | One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `relayone-488319` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
 
+## Cross-Machine Session Migration (spec C1)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `.r1session` migration bundle format | Move a live session to another host with verified ledger continuity. Gzip-tar archive carrying manifest + ledger chain/edges/content + bus WAL + scoped memory + skill-pack refs + lobe-state snapshots + lane snapshot + pre-export checkpoint + Ed25519 signature | Done | `internal/migration/bundle.go`, `specs/cross-machine-session-migration.md` |
+| Manifest signing reuses `ledger.CanonicalManifestSignBody` | Downstream verifiers wired to check tracebundle signatures verify migration bundles with zero new code; signing key is the same redaction-signer Ed25519 (master-key-derived per encryption-at-rest spec) | Done | `internal/migration/bundle.go` (`SignManifest`/`VerifyManifest`), `internal/ledger/redact_sign.go` |
+| `chain_root_hash` round-trip verification | Destination recomputes the chain root post-replay; mismatch → 422 + `session.migrate.divergent` event + audit row | Done | `internal/migration/importer.go` |
+| Incremental partial-root divergence detection | Source emits checkpoint hashes every 100 events into `bus/wal.index.json`; destination re-checks at the same seq boundaries during replay so corruption is caught early | Done | `internal/migration/replay.go`, `internal/migration/importer.go` |
+| `r1 session export <id>` CLI | Stream a `.r1session` from the local daemon to a file or stdout. `--force` interrupts a mid-turn session at the next quiet point; `--park` leaves the source in `migrated-out` | Done | `cmd/r1/session_export_cmd.go` |
+| `r1 session import <file>` CLI | Stream a bundle into the local daemon. Idempotent re-imports return the existing destination session id with HTTP 200 + `idempotent:true` | Done | `cmd/r1/session_import_cmd.go` |
+| `r1 session migrate <id> --to <dest-url>` CLI | One-step daemon-to-daemon piping; remote bearer loaded from `~/.r1/config.json`'s `remote_daemons[<dest-url>].bearer`. On dest failure the source remains `migrating-out` for retry | Done | `cmd/r1/session_migrate_cmd.go` |
+| `POST /api/session/{id}/migrate-out` HTTP endpoint | Source-side bundle streamer; auth-gated by the daemon's bearer; refuses export on `running` status without `?force=1` and on legacy unsigned redactions (409) | Done | `cmd/r1-server/migrate_out.go` |
+| `POST /api/session/migrate-in` HTTP endpoint | Destination-side ingestor; verifies signature → tenant claim → idempotency → skill packs → hydrates ledger + memory → replays WAL with incremental hash check → final chain-root verify → flips state to idle | Done | `cmd/r1-server/migrate_in.go` |
+| Session migration states (sessionhub) | `Session.State` gains `migrating-out`, `migrated-out`, `migrating-in`, `migrated-failed`; `SessionHub.BeginMigrateOut(id, force)` latches the source; `IsMigrating(id)` is consulted by the agent loop's mid-turn observer (RT-CANCEL-INTERRUPT-safe yield) | Done | `internal/server/sessionhub/migrate.go` |
+| SQLite `migration_imports` idempotency table | `(manifest_sha256 PK, new_session_id, imported_at, source_session_id, source_host)` — re-import of an already-imported bundle returns the existing dest id; survives daemon restart | Done | `internal/migration/idempotency.go` (`SQLiteIdempotencyStore`) |
+| Three new bus events | `session.migrate.exported`, `session.migrate.imported`, `session.migrate.divergent` land in the daemon event log so audit/observability queries can track every migration | Done | `internal/bus/bus.go` (event-type constants), `internal/migration/events.go` (`BusEventEmitter`) |
+| Cross-tenant migration forbidden in v1 | Bearer tenant claim is cross-checked against `manifest.tenant_id`; mismatch returns 403 `cross_tenant_forbidden`. v1 requires both daemons to hold the same master key (encryption-at-rest spec contract) | Done | `internal/migration/importer.go`, `docs/operations/session-migration.md` |
+| Operator runbook | Export / transfer / import workflows, skill-pack pre-staging, verifying chain root, troubleshooting hash mismatches, key-material requirements, audit query examples, worked 1000-turn example | Done | `docs/operations/session-migration.md` |
+| 1000-turn round-trip integration test | `internal/migration/integration_roundtrip_test.go` (`-tags integration_session_migrate`) seeds two stacks, exports/imports, asserts byte-identical destination chain root + ≤100MB bundle + <60s wall-clock | Done | `internal/migration/integration_roundtrip_test.go` |
+
 ## Hosted SaaS — `r1.run` (this session)
 
 | Feature | Benefit | Status | Reference |

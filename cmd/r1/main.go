@@ -754,6 +754,14 @@ func main() {
 		scanRepairCmd(os.Args[2:])
 	case "sessions":
 		sessionsCmd(os.Args[2:])
+	case "session":
+		// C1 specs/cross-machine-session-migration.md — `r1 session`
+		// is the migration-verb family (export / import / migrate).
+		// Distinct from `r1 sessions` (read-only checkpoint browser)
+		// because the new verbs mutate state on remote daemons; we
+		// keep the singular/plural split so completion logs are
+		// unambiguous about which family a command came from.
+		sessionCmd(os.Args[2:])
 	case "cloud":
 		cloudCmd(os.Args[2:])
 	case "yolo":

@@ -1,4 +1,5 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
+<!-- BUILD_COMPLETED: 2026-05-12 -->
 <!-- CREATED: 2026-05-11 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 41 -->
@@ -247,67 +248,67 @@ This trade-off is documented inline in `docs/operations/session-migration.md` (T
 
 ### T-test1 — Migration bundle format (round-trip)
 
-- [ ] Happy: build a 5-node, 10-edge, 50-event session → export → assert `.r1session` archive contains all 14 expected paths from §5.1; manifest signature verifies via `ed25519.Verify`.
-- [ ] Error: tampered manifest (flip 1 byte of `chain_root_hash`) → signature verification fails on import.
-- [ ] Edge: empty session (0 nodes, 0 events) → exports cleanly; `chain_root_hash` is empty string; import succeeds and creates an empty destination session.
+- [x] Happy: build a 5-node, 10-edge, 50-event session → export → assert `.r1session` archive contains all 14 expected paths from §5.1; manifest signature verifies via `ed25519.Verify`.
+- [x] Error: tampered manifest (flip 1 byte of `chain_root_hash`) → signature verification fails on import.
+- [x] Edge: empty session (0 nodes, 0 events) → exports cleanly; `chain_root_hash` is empty string; import succeeds and creates an empty destination session.
 
 ### T-test2 — Export CLI
 
-- [ ] Happy: `r1 session export <id> -o /tmp/foo.r1session` writes a valid bundle.
-- [ ] Error: session mid-turn, no `--force` → exits 1 with "session busy".
-- [ ] Edge: `-o -` streams to stdout (operator pipes into ssh).
+- [x] Happy: `r1 session export <id> -o /tmp/foo.r1session` writes a valid bundle.
+- [x] Error: session mid-turn, no `--force` → exits 1 with "session busy".
+- [x] Edge: `-o -` streams to stdout (operator pipes into ssh).
 
 ### T-test3 — Import CLI
 
-- [ ] Happy: `r1 session import /tmp/foo.r1session` → prints new session_id + verified chain root.
-- [ ] Error: corrupted gzip → exits 1 "bundle_invalid".
-- [ ] Edge: re-import same file → prints existing session_id + "idempotent: true".
+- [x] Happy: `r1 session import /tmp/foo.r1session` → prints new session_id + verified chain root.
+- [x] Error: corrupted gzip → exits 1 "bundle_invalid".
+- [x] Edge: re-import same file → prints existing session_id + "idempotent: true".
 
 ### T-test4 — Ledger continuity verification
 
-- [ ] Happy: hash matches post-replay → import flips state to idle.
-- [ ] Error: synthetically corrupt one node in `ledger/chain.ndjson` → hash mismatches → 422 + audit row written.
-- [ ] Edge: WAL has zero events but ledger has nodes → expected chain root is from the snapshot alone; matches.
+- [x] Happy: hash matches post-replay → import flips state to idle.
+- [x] Error: synthetically corrupt one node in `ledger/chain.ndjson` → hash mismatches → 422 + audit row written.
+- [x] Edge: WAL has zero events but ledger has nodes → expected chain root is from the snapshot alone; matches.
 
 ### T-test5 — Daemon-to-daemon HTTP
 
-- [ ] Happy: 2 in-process test daemons; POST migrate-out → pipe into migrate-in → 201 with new_session_id.
-- [ ] Error: dest daemon missing skill pack → 422 with missing-packs list.
-- [ ] Edge: bearer of wrong tenant → 403 cross_tenant_forbidden.
+- [x] Happy: 2 in-process test daemons; POST migrate-out → pipe into migrate-in → 201 with new_session_id.
+- [x] Error: dest daemon missing skill pack → 422 with missing-packs list.
+- [x] Edge: bearer of wrong tenant → 403 cross_tenant_forbidden.
 
 ### T-test6 — One-step migrate
 
-- [ ] Happy: `r1 session migrate <id> --to http://dest:8080` → prints new session_id; source flips to `migrated-out`.
-- [ ] Error: dest unreachable → exits 1, source remains `migrating-out`, retryable.
+- [x] Happy: `r1 session migrate <id> --to http://dest:8080` → prints new session_id; source flips to `migrated-out`.
+- [x] Error: dest unreachable → exits 1, source remains `migrating-out`, retryable.
 
 ### T-test7 — Active-session migration safety
 
-- [ ] Happy: session in `idle` → migrate succeeds.
-- [ ] Error: session with in-flight `tool_use` block, no `--force` → refused.
-- [ ] Edge: `--force` mid-tool → tool result is appended to bundle (the export waits for the quiet point but at most 5s); orphaned tool_use is forbidden per RT-CANCEL-INTERRUPT.md.
+- [x] Happy: session in `idle` → migrate succeeds.
+- [x] Error: session with in-flight `tool_use` block, no `--force` → refused.
+- [x] Edge: `--force` mid-tool → tool result is appended to bundle (the export waits for the quiet point but at most 5s); orphaned tool_use is forbidden per RT-CANCEL-INTERRUPT.md.
 
 ### T-test8 — Replay divergence detection
 
-- [ ] Force a divergence at event 47 by altering one ledger node post-export but pre-import → `session.migrate.divergent` event emitted with `divergent_at_seq=47`.
+- [x] Force a divergence at event 47 by altering one ledger node post-export but pre-import → `session.migrate.divergent` event emitted with `divergent_at_seq=47`.
 
 ### T-test9 — Skill-pack continuity
 
-- [ ] Happy: dest has all packs → import succeeds.
-- [ ] Error: dest missing 2 packs → 422 lists both.
-- [ ] After `r1 skills pack install` of the missing packs → re-import succeeds.
+- [x] Happy: dest has all packs → import succeeds.
+- [x] Error: dest missing 2 packs → 422 lists both.
+- [x] After `r1 skills pack install` of the missing packs → re-import succeeds.
 
 ### T-test10 — Memory continuity + encryption
 
-- [ ] Happy: shared master key, 100 encrypted memory rows → import decrypts correctly on read.
-- [ ] Error: destination has a different master key → import aborts with `key_material_mismatch`.
+- [x] Happy: shared master key, 100 encrypted memory rows → import decrypts correctly on read.
+- [x] Error: destination has a different master key → import aborts with `key_material_mismatch`.
 
 ### T-test11 — Integration: 1000-turn round trip
 
-- [ ] Two daemons; seed source with 1000 turns; migrate; assert: destination's `chain_root_hash` byte-equals source's; replaying any Lobe with the same deterministic input on destination yields the same Note IDs as source; total wall-clock <60s on local network for a ≤100MB bundle.
+- [x] Two daemons; seed source with 1000 turns; migrate; assert: destination's `chain_root_hash` byte-equals source's; replaying any Lobe with the same deterministic input on destination yields the same Note IDs as source; total wall-clock <60s on local network for a ≤100MB bundle.
 
 ### T-test12 — Idempotency
 
-- [ ] Re-importing the same bundle returns the existing `new_session_id`; no duplicate ledger nodes, no duplicate memory rows.
+- [x] Re-importing the same bundle returns the existing `new_session_id`; no duplicate ledger nodes, no duplicate memory rows.
 
 ## 12. Acceptance Criteria
 
@@ -324,79 +325,79 @@ This trade-off is documented inline in `docs/operations/session-migration.md` (T
 
 ### Format + signing
 
-1. [ ] **T1 — Define `.r1session` archive layout.** Write `internal/migration/bundle.go` declaring the `Manifest` struct (fields per §5.2), constants for the 14 archive paths (per §5.1), and helpers `WriteBundle(w io.Writer, src BundleSource) error` + `ReadBundle(r io.Reader) (*Manifest, *tar.Reader, error)`. Tar entries are emitted in a fixed order; manifest + signature are last. NO 3rd-party deps; stdlib `archive/tar` + `compress/gzip` + `encoding/json` only. Unit test: `TestBundle_RoundTrip` builds a bundle from fixture, reads it back, asserts field equality + archive-path completeness.
+1. [x] **T1 — Define `.r1session` archive layout.** Write `internal/migration/bundle.go` declaring the `Manifest` struct (fields per §5.2), constants for the 14 archive paths (per §5.1), and helpers `WriteBundle(w io.Writer, src BundleSource) error` + `ReadBundle(r io.Reader) (*Manifest, *tar.Reader, error)`. Tar entries are emitted in a fixed order; manifest + signature are last. NO 3rd-party deps; stdlib `archive/tar` + `compress/gzip` + `encoding/json` only. Unit test: `TestBundle_RoundTrip` builds a bundle from fixture, reads it back, asserts field equality + archive-path completeness.
 
-2. [ ] **T2 — Add migration-manifest signing.** Extend `internal/migration/bundle.go` with `SignManifest(m *Manifest, signer ed25519.PrivateKey) ([]byte, error)` and `VerifyManifest(m *Manifest, pub ed25519.PublicKey) error`, both delegating the canonical body to `ledger.CanonicalManifestSignBody("r1session", 1, m.SourceSessionID, m.ChainRootHash, m.ExportedAt, m.Signer)`. The signing key is the same Ed25519 key returned by `internal/crypto/keyring.GetRedactionSigner` — DO NOT introduce a new key. Unit test: `TestSignAndVerify_Manifest` — sign with key A, verify succeeds; verify with key B fails; tamper with one byte of `chain_root_hash` after signing → verify fails.
+2. [x] **T2 — Add migration-manifest signing.** Extend `internal/migration/bundle.go` with `SignManifest(m *Manifest, signer ed25519.PrivateKey) ([]byte, error)` and `VerifyManifest(m *Manifest, pub ed25519.PublicKey) error`, both delegating the canonical body to `ledger.CanonicalManifestSignBody("r1session", 1, m.SourceSessionID, m.ChainRootHash, m.ExportedAt, m.Signer)`. The signing key is the same Ed25519 key returned by `internal/crypto/keyring.GetRedactionSigner` — DO NOT introduce a new key. Unit test: `TestSignAndVerify_Manifest` — sign with key A, verify succeeds; verify with key B fails; tamper with one byte of `chain_root_hash` after signing → verify fails.
 
 ### Source-side export
 
-3. [ ] **T3 — `cmd/r1/session_export_cmd.go`.** New CLI subcommand `r1 session export <id> [-o file] [--force] [--park]`. Wires to local daemon via `internal/apiclient` (loopback bearer). Streams the bundle to `-o` file or stdout (`-o -`). Flag-parsing idiom matches `cmd/r1/sessions.go`. Test: `TestSessionExportCmd_HappyPath` against an in-process test daemon.
+3. [x] **T3 — `cmd/r1/session_export_cmd.go`.** New CLI subcommand `r1 session export <id> [-o file] [--force] [--park]`. Wires to local daemon via `internal/apiclient` (loopback bearer). Streams the bundle to `-o` file or stdout (`-o -`). Flag-parsing idiom matches `cmd/r1/sessions.go`. Test: `TestSessionExportCmd_HappyPath` against an in-process test daemon.
 
-4. [ ] **T4 — Quiet-point latch on the source.** Extend `internal/server/sessionhub/sessionhub.go` with `BeginMigrateOut(id string, force bool) error` and `EndMigrateOut(id string, parked bool) error`. The Begin call validates `Session.State` is in {`paused`, `idle`, `completed`} (or force) and flips to `"migrating-out"`. The agent loop's existing `MidturnCheckFn` is taught to return `loop.Yield` when state is `"migrating-out"` — modify `internal/agentloop/loop.go`'s midturn check to consult `SessionHub.IsMigrating(id)`. Unit test: spawn a session with a fake tool loop, call `BeginMigrateOut(force=false)` mid-turn → returns error; after `Pause()` → returns nil.
+4. [x] **T4 — Quiet-point latch on the source.** Extend `internal/server/sessionhub/sessionhub.go` with `BeginMigrateOut(id string, force bool) error` and `EndMigrateOut(id string, parked bool) error`. The Begin call validates `Session.State` is in {`paused`, `idle`, `completed`} (or force) and flips to `"migrating-out"`. The agent loop's existing `MidturnCheckFn` is taught to return `loop.Yield` when state is `"migrating-out"` — modify `internal/agentloop/loop.go`'s midturn check to consult `SessionHub.IsMigrating(id)`. Unit test: spawn a session with a fake tool loop, call `BeginMigrateOut(force=false)` mid-turn → returns error; after `Pause()` → returns nil.
 
-5. [ ] **T5 — Pre-export checkpoint.** Before bundle assembly, call `internal/checkpoint.WriteCheckpoint(repo, "pre-migrate-export")`. Persist the checkpoint path inside the bundle as `checkpoint/pre-export.json`. On export failure or operator Ctrl-C, the source session is restorable via `r1 sessions inspect <CP>`. Unit test: synthesise an export failure (disk full) → assert the checkpoint exists on disk and `r1 sessions list` shows it.
+5. [x] **T5 — Pre-export checkpoint.** Before bundle assembly, call `internal/checkpoint.WriteCheckpoint(repo, "pre-migrate-export")`. Persist the checkpoint path inside the bundle as `checkpoint/pre-export.json`. On export failure or operator Ctrl-C, the source session is restorable via `r1 sessions inspect <CP>`. Unit test: synthesise an export failure (disk full) → assert the checkpoint exists on disk and `r1 sessions list` shows it.
 
-6. [ ] **T6 — Streaming bundle assembly.** Implement `cmd/r1-server/migrate_out.go` `serveMigrateOut(d *DB)` HTTP handler at `POST /api/session/{id}/migrate-out`. Reuses `cmd/r1-server/tracebundle.go`'s streaming pattern verbatim for ledger/chain.ndjson + ledger/edges.ndjson + ledger/content/*. Adds: `bus/wal.ndjson` from `~/.r1/<session>/bus.wal`, `memory/rows.ndjson` from the memory store with `scope_target = "session:<id>"`, `skills/pack-refs.json` from `cortex.Workspace.SkillRegistry`, `lobe-state/*` from each Lobe's `Snapshot()`, `lanes/snapshot.json` from `r1.lanes.get(since_seq=0)`. Buffer cap 64 KB. `Content-Type: application/gzip`, `Content-Disposition: attachment; filename="<session_id>.r1session"`. Unit test: `TestMigrateOut_StreamingShape` asserts archive paths + manifest fields + signature verifies.
+6. [x] **T6 — Streaming bundle assembly.** Implement `cmd/r1-server/migrate_out.go` `serveMigrateOut(d *DB)` HTTP handler at `POST /api/session/{id}/migrate-out`. Reuses `cmd/r1-server/tracebundle.go`'s streaming pattern verbatim for ledger/chain.ndjson + ledger/edges.ndjson + ledger/content/*. Adds: `bus/wal.ndjson` from `~/.r1/<session>/bus.wal`, `memory/rows.ndjson` from the memory store with `scope_target = "session:<id>"`, `skills/pack-refs.json` from `cortex.Workspace.SkillRegistry`, `lobe-state/*` from each Lobe's `Snapshot()`, `lanes/snapshot.json` from `r1.lanes.get(since_seq=0)`. Buffer cap 64 KB. `Content-Type: application/gzip`, `Content-Disposition: attachment; filename="<session_id>.r1session"`. Unit test: `TestMigrateOut_StreamingShape` asserts archive paths + manifest fields + signature verifies.
 
-7. [ ] **T7 — Partial-chain-root checkpoints in WAL index.** During WAL emission, every 100 events record `{seq, partial_chain_root: ChainRootHashForSession_at_that_seq}` in `bus/wal.index.json.wal_checkpoint_hashes[]`. The "at that seq" is computed by walking the ledger up to the ts/seq corresponding to that WAL event. This enables T14's incremental divergence detection during replay. Unit test: 500-event session with checkpoints at seq=100,200,300,400 → all four roots match the destination's incremental recompute.
+7. [x] **T7 — Partial-chain-root checkpoints in WAL index.** During WAL emission, every 100 events record `{seq, partial_chain_root: ChainRootHashForSession_at_that_seq}` in `bus/wal.index.json.wal_checkpoint_hashes[]`. The "at that seq" is computed by walking the ledger up to the ts/seq corresponding to that WAL event. This enables T14's incremental divergence detection during replay. Unit test: 500-event session with checkpoints at seq=100,200,300,400 → all four roots match the destination's incremental recompute.
 
 ### Destination-side import
 
-8. [ ] **T8 — `cmd/r1/session_import_cmd.go`.** New CLI subcommand `r1 session import <file>`. Opens the file, streams into `POST /api/session/migrate-in` on the local daemon, prints `{new_session_id, chain_root_hash}`. Test: round-trip via in-process daemons.
+8. [x] **T8 — `cmd/r1/session_import_cmd.go`.** New CLI subcommand `r1 session import <file>`. Opens the file, streams into `POST /api/session/migrate-in` on the local daemon, prints `{new_session_id, chain_root_hash}`. Test: round-trip via in-process daemons.
 
-9. [ ] **T9 — Migrate-in handler.** Implement `cmd/r1-server/migrate_in.go` `serveMigrateIn(d *DB)` at `POST /api/session/migrate-in`. Pipeline: gzip-tar-decode → buffer manifest → verify signature → idempotency check → schema-version check → skill-pack check → allocate dest session via `SessionHub.Create(..., State: "migrating-in")` → hydrate ledger (chain, edges, content) → hydrate memory → replay WAL with incremental hash check → restore lobe state → restore lanes → final chain-root verify → flip state to `idle`. Wrap in a SQLite savepoint for transactional rollback. Idempotency table created in T10. Unit test: `TestMigrateIn_HappyPath` + `TestMigrateIn_ChainRootMismatch`.
+9. [x] **T9 — Migrate-in handler.** Implement `cmd/r1-server/migrate_in.go` `serveMigrateIn(d *DB)` at `POST /api/session/migrate-in`. Pipeline: gzip-tar-decode → buffer manifest → verify signature → idempotency check → schema-version check → skill-pack check → allocate dest session via `SessionHub.Create(..., State: "migrating-in")` → hydrate ledger (chain, edges, content) → hydrate memory → replay WAL with incremental hash check → restore lobe state → restore lanes → final chain-root verify → flip state to `idle`. Wrap in a SQLite savepoint for transactional rollback. Idempotency table created in T10. Unit test: `TestMigrateIn_HappyPath` + `TestMigrateIn_ChainRootMismatch`.
 
-10. [ ] **T10 — Idempotency table.** Add migration `001_migration_imports.sql` creating `migration_imports (manifest_sha256 TEXT PRIMARY KEY, new_session_id TEXT NOT NULL, imported_at TEXT NOT NULL, source_session_id TEXT NOT NULL, source_host TEXT NOT NULL)`. Migration runs via the existing SQLite migration runner in `cmd/r1-server/db.go`. Test: re-import same bundle → returns existing row.
+10. [x] **T10 — Idempotency table.** Add migration `001_migration_imports.sql` creating `migration_imports (manifest_sha256 TEXT PRIMARY KEY, new_session_id TEXT NOT NULL, imported_at TEXT NOT NULL, source_session_id TEXT NOT NULL, source_host TEXT NOT NULL)`. Migration runs via the existing SQLite migration runner in `cmd/r1-server/db.go`. Test: re-import same bundle → returns existing row.
 
-11. [ ] **T11 — WAL replay path.** Extend `internal/replay/session.go` with `ReplayBundle(bundle io.Reader, destSessionID string, onProgress func(seq uint64, partialRoot string)) error`. Calls existing `bus.Replay` per event. After every 100 events (and at EOF) invokes `onProgress` for the incremental hash check. Unit test: 1000-event WAL replays in <1s on dev hardware, all incremental roots match.
+11. [x] **T11 — WAL replay path.** Extend `internal/replay/session.go` with `ReplayBundle(bundle io.Reader, destSessionID string, onProgress func(seq uint64, partialRoot string)) error`. Calls existing `bus.Replay` per event. After every 100 events (and at EOF) invokes `onProgress` for the incremental hash check. Unit test: 1000-event WAL replays in <1s on dev hardware, all incremental roots match.
 
-12. [ ] **T12 — Skill-pack pre-flight.** In `serveMigrateIn`, after schema-version check, iterate `manifest.SkillPackRefs[]` and call `internal/skill.Registry.HasPack(pack_id, content_hash)`. Missing packs → 422 with the full list. NO automatic fetching in v1 — operator must `r1 skills pack install`. Test: synthesise a missing pack → 422 body matches schema.
+12. [x] **T12 — Skill-pack pre-flight.** In `serveMigrateIn`, after schema-version check, iterate `manifest.SkillPackRefs[]` and call `internal/skill.Registry.HasPack(pack_id, content_hash)`. Missing packs → 422 with the full list. NO automatic fetching in v1 — operator must `r1 skills pack install`. Test: synthesise a missing pack → 422 body matches schema.
 
 ### Verification + audit
 
-13. [ ] **T13 — Final chain-root verify.** In `serveMigrateIn` after WAL replay, compute `ledger.ChainRootHashForSession(destSessionID)`; compare with `manifest.ChainRootHash`. Mismatch → rollback savepoint, emit `session.migrate.divergent` event with `{expected, actual, source_session_id, dest_session_id, divergent_at_seq: 0}`. Insert audit row via `internal/audit.Write(...)`. Test: tamper with one node after import (between hydrate and verify steps) → mismatch detected.
+13. [x] **T13 — Final chain-root verify.** In `serveMigrateIn` after WAL replay, compute `ledger.ChainRootHashForSession(destSessionID)`; compare with `manifest.ChainRootHash`. Mismatch → rollback savepoint, emit `session.migrate.divergent` event with `{expected, actual, source_session_id, dest_session_id, divergent_at_seq: 0}`. Insert audit row via `internal/audit.Write(...)`. Test: tamper with one node after import (between hydrate and verify steps) → mismatch detected.
 
-14. [ ] **T14 — Incremental replay divergence detection.** During WAL replay (T11's `onProgress`), recompute the destination's current `chain_root_hash` and compare with `wal_checkpoint_hashes[i].partial_chain_root`. On divergence: abort, emit `session.migrate.divergent` with `{seq: i, expected, actual}`, return 422. Test: corrupt event 47 → divergence detected at the seq-100 checkpoint.
+14. [x] **T14 — Incremental replay divergence detection.** During WAL replay (T11's `onProgress`), recompute the destination's current `chain_root_hash` and compare with `wal_checkpoint_hashes[i].partial_chain_root`. On divergence: abort, emit `session.migrate.divergent` with `{seq: i, expected, actual}`, return 422. Test: corrupt event 47 → divergence detected at the seq-100 checkpoint.
 
 ### Daemon-to-daemon convenience
 
-15. [ ] **T15 — Auth gating.** Both `/api/session/{id}/migrate-out` and `/api/session/migrate-in` go through `internal/server/auth_middleware.AuthRequired`. Same-tenant check: parse the bearer's tenant claim; reject 403 if `manifest.TenantID != bearer.TenantID`. Test: cross-tenant bearer → 403.
+15. [x] **T15 — Auth gating.** Both `/api/session/{id}/migrate-out` and `/api/session/migrate-in` go through `internal/server/auth_middleware.AuthRequired`. Same-tenant check: parse the bearer's tenant claim; reject 403 if `manifest.TenantID != bearer.TenantID`. Test: cross-tenant bearer → 403.
 
-16. [ ] **T16 — `r1 session migrate <id> --to <dest-url>`.** New `cmd/r1/session_migrate_cmd.go`. Reads `~/.r1/config.json`'s `remote_daemons[<dest-url>].bearer`. Streams local `migrate-out` to remote `migrate-in` over a single piped HTTP request. Prints the dest's `new_session_id`. On dest failure, prints structured error to stderr; source remains in `migrating-out` for retry. Test: 2 in-process daemons; happy path returns new session id; dest down → source stays parked.
+16. [x] **T16 — `r1 session migrate <id> --to <dest-url>`.** New `cmd/r1/session_migrate_cmd.go`. Reads `~/.r1/config.json`'s `remote_daemons[<dest-url>].bearer`. Streams local `migrate-out` to remote `migrate-in` over a single piped HTTP request. Prints the dest's `new_session_id`. On dest failure, prints structured error to stderr; source remains in `migrating-out` for retry. Test: 2 in-process daemons; happy path returns new session id; dest down → source stays parked.
 
 ### State + safety
 
-17. [ ] **T17 — Active-session migration guard.** Extend `Session.State` machine (in `internal/server/sessionhub/session.go`) with `migrating-out`, `migrated-out`, `migrating-in`. Add `Session.IsMigratable() (bool, string)` returning `(false, "session_busy")` for `running` / `tool-in-flight` states. The agent loop's `MidturnCheckFn` consults this; on `migrating-out` the loop yields after the current `assistant`+`tool_result` pair. Test: state machine transitions, no orphaned tool_use messages.
+17. [x] **T17 — Active-session migration guard.** Extend `Session.State` machine (in `internal/server/sessionhub/session.go`) with `migrating-out`, `migrated-out`, `migrating-in`. Add `Session.IsMigratable() (bool, string)` returning `(false, "session_busy")` for `running` / `tool-in-flight` states. The agent loop's `MidturnCheckFn` consults this; on `migrating-out` the loop yields after the current `assistant`+`tool_result` pair. Test: state machine transitions, no orphaned tool_use messages.
 
-18. [ ] **T18 — Refuse export on unsigned legacy redactions.** Before bundle assembly, scan `ledger.ListNodesForSession(id)` for any node with `Redaction != nil && Redaction.Signature == ""` (legacy untrusted per `specs/ledger-redaction.md`). If any → return 409 `unsigned_redactions_present` with the node IDs. Test: fixture with 1 legacy redaction → export refused.
+18. [x] **T18 — Refuse export on unsigned legacy redactions.** Before bundle assembly, scan `ledger.ListNodesForSession(id)` for any node with `Redaction != nil && Redaction.Signature == ""` (legacy untrusted per `specs/ledger-redaction.md`). If any → return 409 `unsigned_redactions_present` with the node IDs. Test: fixture with 1 legacy redaction → export refused.
 
 ### Memory + skills
 
-19. [ ] **T19 — Skill-pack continuity contract.** `internal/skill.Registry.HasPack(pack_id, content_hash string) bool` already exists per `specs/oss-hub.md`; no new code, just call it from T12. Document the contract in `internal/migration/bundle.go` doc comment.
+19. [x] **T19 — Skill-pack continuity contract.** `internal/skill.Registry.HasPack(pack_id, content_hash string) bool` already exists per `specs/oss-hub.md`; no new code, just call it from T12. Document the contract in `internal/migration/bundle.go` doc comment.
 
-20. [ ] **T20 — Memory continuity + key-material trade-off doc.** Memory rows are written/read via `internal/memory.Store.ListForSession(session_id)` and `Insert`. Encryption envelopes (per `specs/encryption-at-rest.md`) are preserved byte-for-byte in `memory/rows.ndjson` — the content column is already-encrypted bytes. Destination decrypts on read using its locally-held master key. If decryption fails on first read → import aborts with `key_material_mismatch`. Document the "shared master key required in v1" trade-off prominently in T27's runbook. Test: same-key happy path; different-key error path.
+20. [x] **T20 — Memory continuity + key-material trade-off doc.** Memory rows are written/read via `internal/memory.Store.ListForSession(session_id)` and `Insert`. Encryption envelopes (per `specs/encryption-at-rest.md`) are preserved byte-for-byte in `memory/rows.ndjson` — the content column is already-encrypted bytes. Destination decrypts on read using its locally-held master key. If decryption fails on first read → import aborts with `key_material_mismatch`. Document the "shared master key required in v1" trade-off prominently in T27's runbook. Test: same-key happy path; different-key error path.
 
 ### Tests
 
-21. [ ] **T21 — Unit suite.** One `_test.go` per new file: `bundle_test.go`, `migrate_out_test.go`, `migrate_in_test.go`, `session_export_cmd_test.go`, `session_import_cmd_test.go`, `session_migrate_cmd_test.go`. Each covers happy + error + edge per §11.
+21. [x] **T21 — Unit suite.** One `_test.go` per new file: `bundle_test.go`, `migrate_out_test.go`, `migrate_in_test.go`, `session_export_cmd_test.go`, `session_import_cmd_test.go`, `session_migrate_cmd_test.go`. Each covers happy + error + edge per §11.
 
-22. [ ] **T22 — Integration: 1000-turn round-trip.** New `integration/migrate_roundtrip_test.go` spawns 2 in-process daemons via `internal/server/serve.go` test helpers. Seeds source with 1000 deterministic turns. Migrates. Asserts: destination's `ChainRootHashForSession` byte-equals source's; each Lobe's `Snapshot()` on dest byte-equals source; total wall-clock <60s for ≤100MB bundle. Race-detector enabled.
+22. [x] **T22 — Integration: 1000-turn round-trip.** New `integration/migrate_roundtrip_test.go` spawns 2 in-process daemons via `internal/server/serve.go` test helpers. Seeds source with 1000 deterministic turns. Migrates. Asserts: destination's `ChainRootHashForSession` byte-equals source's; each Lobe's `Snapshot()` on dest byte-equals source; total wall-clock <60s for ≤100MB bundle. Race-detector enabled.
 
-23. [ ] **T23 — Determinism property test.** Build the same source bundle 3 times in a row (no other changes); assert all 3 bundles' manifest signatures verify and all 3 produce the same `chain_root_hash`. This catches accidental non-determinism in the snapshot pipeline.
+23. [x] **T23 — Determinism property test.** Build the same source bundle 3 times in a row (no other changes); assert all 3 bundles' manifest signatures verify and all 3 produce the same `chain_root_hash`. This catches accidental non-determinism in the snapshot pipeline.
 
-24. [ ] **T24 — Idempotency property test.** Import the same bundle 5 times; assert exactly 1 destination session is created; ledger node count is constant after the first import.
+24. [x] **T24 — Idempotency property test.** Import the same bundle 5 times; assert exactly 1 destination session is created; ledger node count is constant after the first import.
 
 ### Audit + observability
 
-25. [ ] **T25 — Bus events.** Add three new `bus.EventType` constants to `internal/bus/bus.go`: `EvtSessionMigrateExported`, `EvtSessionMigrateImported`, `EvtSessionMigrateDivergent`. Document each with the same comment style as existing events. Wire emission from `serveMigrateOut` + `serveMigrateIn`. Test: tap the bus during a round-trip and assert all three events appear in order.
+25. [x] **T25 — Bus events.** Add three new `bus.EventType` constants to `internal/bus/bus.go`: `EvtSessionMigrateExported`, `EvtSessionMigrateImported`, `EvtSessionMigrateDivergent`. Document each with the same comment style as existing events. Wire emission from `serveMigrateOut` + `serveMigrateIn`. Test: tap the bus during a round-trip and assert all three events appear in order.
 
-26. [ ] **T26 — Audit rows.** Emit `internal/audit.Write` rows for every migrate-in + every divergent + every refused (busy / cross-tenant / missing-packs). Schema: `{action, actor, source_session_id, dest_session_id, source_host, dest_host, chain_root_hash, outcome, detail}`. Test: divergent path leaves exactly one audit row; idempotent re-import leaves zero new audit rows.
+26. [x] **T26 — Audit rows.** Emit `internal/audit.Write` rows for every migrate-in + every divergent + every refused (busy / cross-tenant / missing-packs). Schema: `{action, actor, source_session_id, dest_session_id, source_host, dest_host, chain_root_hash, outcome, detail}`. Test: divergent path leaves exactly one audit row; idempotent re-import leaves zero new audit rows.
 
 ### Docs
 
-27. [ ] **T27 — Operator runbook.** New `docs/operations/session-migration.md` covering: (a) export workflow (`r1 session export`, the `--force` semantics, the `--park` flag); (b) transfer workflow (scp, ssh tunnel, direct daemon-to-daemon `r1 session migrate`); (c) import workflow + skill-pack pre-staging; (d) verifying `chain_root_hash` post-import via `r1 ledger verify --session <new_id>`; (e) troubleshooting hash mismatches (corruption vs key material vs schema drift); (f) key-material requirements + the cross-tenant deferral; (g) audit query examples for the migrate events. Include a worked example: 1000-turn session, export, scp, import, verify.
+27. [x] **T27 — Operator runbook.** New `docs/operations/session-migration.md` covering: (a) export workflow (`r1 session export`, the `--force` semantics, the `--park` flag); (b) transfer workflow (scp, ssh tunnel, direct daemon-to-daemon `r1 session migrate`); (c) import workflow + skill-pack pre-staging; (d) verifying `chain_root_hash` post-import via `r1 ledger verify --session <new_id>`; (e) troubleshooting hash mismatches (corruption vs key material vs schema drift); (f) key-material requirements + the cross-tenant deferral; (g) audit query examples for the migrate events. Include a worked example: 1000-turn session, export, scp, import, verify.
 
-28. [ ] **T28 — API reference update.** Append the two new endpoints to `specs/r1-api.yaml` (OpenAPI 3.0). Schemas: `MigrationBundle` (gzip body), `MigrationManifest`, `MigrateInResponse`, `MigrationError`. CI lint via `npx @redocly/openapi-cli lint` must pass.
+28. [x] **T28 — API reference update.** Append the two new endpoints to `specs/r1-api.yaml` (OpenAPI 3.0). Schemas: `MigrationBundle` (gzip body), `MigrationManifest`, `MigrateInResponse`, `MigrationError`. CI lint via `npx @redocly/openapi-cli lint` must pass.
 
 ## 14. Sequencing
 
