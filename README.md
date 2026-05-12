@@ -220,6 +220,15 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **One-time setup** is `scripts/setup-cloudbuild-e2e-trigger.sh` (idempotent — re-running updates triggers in place).
 - **Status: Done.** Full operations details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §Release-rehearsal lane.
 
+### MCP IDE bundles — Cursor / Windsurf / VS Code / JetBrains (C4)
+- **`r1 ide install <cursor|windsurf|vscode|jetbrains>`** auto-registers R1's stdio MCP server with the target IDE. Per-IDE installers under `internal/ideinstall/` resolve the right config file on the right platform, then atomically merge the R1 stanza (backup-before-write, restore-on-uninstall).
+- **VS Code** uses root key `servers` (not `mcpServers`); R1 stanza adds `"type": "stdio"` because Copilot Agent requires explicit transport. Reminder line tells operators to switch the Copilot panel to "Agent" mode.
+- **JetBrains** receives a bundled `r1-mcp-bridge.jar` (built from `ide/jetbrains/`) — the plugin spawns `r1 mcp serve` and proxies MCP traffic to the JetBrains AI Assistant. Signing flow + CI keys documented in `docs/integrations/jetbrains-plugin-signing.md`.
+- **`r1 chat` first-run prompt** asks once per user account whether to install R1 into the detected unregistered IDE; respects non-TTY stdin; ack stored in `~/.r1/ide-prompt-acked` so it never re-prompts.
+- **`r1 ide verify`** prints a stable pipe-aligned table covering all four IDEs in cursor / windsurf / vscode / jetbrains order. Exit 0 always — verify is a report.
+- Spec: [`specs/mcp-ide-bundles.md`](specs/mcp-ide-bundles.md). Quickstart: [`docs/integrations/ide-bundles.md`](docs/integrations/ide-bundles.md).
+- **Status: Done.** — `cmd/r1/ide_install_cmd.go`, `internal/ideinstall/`, `ide/jetbrains/`.
+
 ### Hosted SaaS surfaces on r1.run
 - **`platform.{,staging.,dev.}r1.run`** — docs site rendered from `docs/` via `r1-docs` Cloud Run service.
 - **`api.{,staging.,dev.}r1.run`** — `r1-coord-api` Cloud Run service: `/healthz`, `/v1/version`, `/v1/license/verify`, `/v1/telemetry/opt-in`. Backed by Cloud SQL `r1-{prod,staging,dev}-pg`.

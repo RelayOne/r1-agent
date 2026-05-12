@@ -789,6 +789,11 @@ func main() {
 		verifyCmd(os.Args[2:])
 	case "mcp":
 		mcpCmd(os.Args[2:])
+	case "ide":
+		// C4 (specs/mcp-ide-bundles.md) — `r1 ide install <ide>` etc.
+		// Dispatches Cursor / Windsurf / VS Code / JetBrains
+		// installers under the shared internal/ideinstall package.
+		ideCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
 	case "mcp-serve-stoke":

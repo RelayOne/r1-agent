@@ -196,6 +196,25 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `services/deploy.sh` | Manual deploy: `./services/deploy.sh {dev|staging|prod|all}` | Done | services/deploy.sh |
 | `scripts/setup-branch-protection.sh` | Operator script: dev + staging branch creation + protection rules | Done | scripts/setup-branch-protection.sh |
 
+## MCP IDE Bundles (C4 — specs/mcp-ide-bundles.md)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `r1 ide install <cursor\|windsurf\|vscode\|jetbrains>` | Native MCP-server registration per IDE; no hand-edit of config files | Done | `cmd/r1/ide_install_cmd.go`, `internal/ideinstall/` |
+| Shared merge primitive | Read → backup → atomic-write per IDE config; preserves unrelated entries | Done | `internal/ideinstall/config.go` |
+| Per-IDE detectors (Cursor / Windsurf / VS Code / JetBrains) | Platform-aware path resolution; canonical config-dir probe (not PATH) | Done | `internal/ideinstall/detect.go` |
+| Cursor installer | Workspace + global scope; preserves unrelated `mcpServers` entries; backup before write | Done | `internal/ideinstall/cursor.go` |
+| Windsurf installer | Global-only; warns when `~/.codeium/` is absent | Done | `internal/ideinstall/windsurf.go` |
+| VS Code installer | Root key `servers` (not `mcpServers`); adds `type: stdio`; Copilot Agent reminder | Done | `internal/ideinstall/vscode.go` |
+| JetBrains installer | Copies `r1-mcp-bridge.jar` to plugins dir; auto-detects highest installed IDE version | Done | `internal/ideinstall/jetbrains.go` |
+| JetBrains plugin scaffold | Kotlin sources + Gradle build targeting IntelliJ Platform 2026.1+; CI signing | Done (scaffold; downstream Gradle build) | `ide/jetbrains/` |
+| `r1 ide verify` | Pipe-aligned report; three status words; exit 0 always | Done | `internal/ideinstall/verify.go` |
+| `r1 ide uninstall` | Backup-restore or in-place removal; never-installed → exit 1 | Done | `internal/ideinstall/verify.go`, per-IDE files |
+| First-run prompt | `MaybePromptIDEInstall`; ack file at `~/.r1/ide-prompt-acked`; non-TTY skip | Done | `cmd/r1/ide_install_cmd.go` |
+| Per-platform build-tagged tests | Linux + macOS + Windows path resolution | Done | `internal/ideinstall/detect_{linux,darwin,windows}_test.go` |
+| Plugin signing setup doc | Key-gen + storage + Gradle signPlugin task | Done | `docs/integrations/jetbrains-plugin-signing.md` |
+| Per-IDE quickstart + troubleshooting | Operator quickstart + diagnostic flow | Done | `docs/integrations/ide-bundles.md` |
+
 ## Deterministic Skills
 
 | Feature | Benefit | Status | Reference |
