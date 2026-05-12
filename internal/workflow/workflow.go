@@ -1350,7 +1350,7 @@ func (e Engine) runCrossModelReview(
 	for range maxReviewRotations {
 		verifySpec := e.buildSpec(verifyPhase, handle)
 		diffText := worktree.DiffSummary(ctx, handle)
-		verifySpec.Prompt = stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification, preReviewFiles...) +
+		verifySpec.Prompt = stokeprompts.BuildVerifyPromptWithInjectionAwareness(e.Task, e.TaskVerification, preReviewFiles...) +
 			"\n\n## Diff summary\n" + diffText
 		// Enrich review prompt with semantic diff analysis (renames, breaking changes).
 		if semAnalysis := semdiff.AnalyzeMultiFile(buildSemdiffInputs(ctx, handle)); len(semAnalysis.Changes) > 0 {
@@ -1860,7 +1860,7 @@ func buildPhases(e Engine) []engine.PhaseSpec {
 			DeniedRules:  verifyPhase.DeniedRules,
 			MCPEnabled:   verifyPhase.MCPEnabled,
 			MaxTurns:     15,
-			Prompt:       stokeprompts.BuildVerifyPrompt(e.Task, e.TaskVerification),
+			Prompt:       stokeprompts.BuildVerifyPromptWithInjectionAwareness(e.Task, e.TaskVerification),
 			Sandbox:      true,
 			ReadOnly:     true,
 			// Verify phase is an LLM acceptance call — semantic.
