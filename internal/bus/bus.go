@@ -113,6 +113,15 @@ type Event struct {
 	Scope     Scope           `json:"scope"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	CausalRef string          `json:"causal_ref,omitempty"`
+	// TenantID tags the event with its owning tenant for per-tenant
+	// isolation (specs/relayone-sso.md Phase F item 30). Empty string
+	// means "shared/legacy" — visible to all tenants, the default for
+	// existing system subscribers that pre-date multi-tenant.
+	//
+	// Subscribers obtain a tenant-aware filter via WithTenantFilter on
+	// their Pattern. Events with TenantID == "" bypass the filter (so
+	// system events still reach every tenant's subscribers).
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // Scope tags identifying which mission/branch/loop/task/stance an event relates to.
@@ -128,6 +137,12 @@ type Scope struct {
 type Pattern struct {
 	TypePrefix string `json:"type_prefix,omitempty"`
 	Scope      *Scope `json:"scope,omitempty"`
+	// TenantID, when non-empty, restricts the subscription to events
+	// whose evt.TenantID either matches the filter exactly OR is
+	// empty (the "shared/legacy" bucket). Empty filter (the zero
+	// value) means "no tenant filtering" — the historical behavior.
+	// See specs/relayone-sso.md Phase F item 30.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // Matches reports whether evt matches the pattern.
@@ -152,6 +167,12 @@ func (p Pattern) Matches(evt Event) bool {
 		if s.StanceID != "" && s.StanceID != evt.Scope.StanceID {
 			return false
 		}
+	}
+	// TenantID filtering: empty filter is a no-op; non-empty filter
+	// drops events whose TenantID is set AND differs from the filter.
+	// Events with empty TenantID (shared/legacy) ALWAYS pass.
+	if p.TenantID != "" && evt.TenantID != "" && evt.TenantID != p.TenantID {
+		return false
 	}
 	return true
 }
