@@ -1,0 +1,76 @@
+package posthog
+
+import (
+	"time"
+)
+
+var _ Message = (*Identify)(nil)
+
+// This type represents object sent in an identify call
+type Identify struct {
+	// This field is exported for serialization purposes and shouldn't be set by
+	// the application, its value is always overwritten by the library.
+	Type string
+	// Uuid is optional. If not provided, a random UUID will be generated.
+	Uuid string
+
+	DistinctId   string
+	Timestamp    time.Time
+	Properties   Properties
+	DisableGeoIP bool
+}
+
+func (msg Identify) internal() {
+	panic(unimplementedError)
+}
+
+func (msg Identify) Validate() error {
+	if len(msg.DistinctId) == 0 {
+		return FieldError{
+			Type:  "posthog.Identify",
+			Name:  "DistinctId",
+			Value: msg.DistinctId,
+		}
+	}
+
+	return nil
+}
+
+type IdentifyInApi struct {
+	Type           string    `json:"type"`
+	Uuid           string    `json:"uuid"`
+	Library        string    `json:"library"`
+	LibraryVersion string    `json:"library_version"`
+	Timestamp      time.Time `json:"timestamp"`
+
+	Event      string     `json:"event"`
+	DistinctId string     `json:"distinct_id"`
+	Properties Properties `json:"properties"`
+	Set        Properties `json:"$set"`
+}
+
+func (msg Identify) APIfy() APIMessage {
+	myProperties := Properties{}.
+		Set("$lib", SDKName).
+		Set("$lib_version", getVersion()).
+		Merge(getSystemContext().ToProperties())
+
+	if msg.DisableGeoIP {
+		myProperties.Set(propertyGeoipDisable, true)
+	}
+
+	apified := IdentifyInApi{
+		Type:           msg.Type,
+		Uuid:           msg.Uuid,
+		Event:          "$identify",
+		Library:        SDKName,
+		LibraryVersion: getVersion(),
+		Timestamp:      msg.Timestamp,
+		DistinctId:     msg.DistinctId,
+
+		Properties: myProperties,
+		Set:        msg.Properties,
+	}
+
+	return apified
+}

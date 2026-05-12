@@ -27,6 +27,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/oklog/ulid/v2 v2.1.1
+	github.com/posthog/posthog-go v1.12.5
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/winder/bubblelayout v0.0.1
 	golang.org/x/crypto v0.50.0
@@ -44,6 +45,8 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 )
 

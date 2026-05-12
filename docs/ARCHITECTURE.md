@@ -542,10 +542,13 @@ type Finding struct {
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs).
 - Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation.
 
+### Done (post-2026-05-11)
+- PostHog product analytics (B1, BUILD_ORDER 38) — 24-event taxonomy, bus subscriber, per-tenant Group Analytics, funnel + cohort + dashboard JSON checked in. Tenant-id wiring activates automatically once A4 RelayOne SSO merges; until then events emit without the group binding. See `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md`.
+
 ### Scoped
 - JWT login + RelayOne MSP SSO (Path A — Go reimpl of `@relayone/auth-core`).
 - Admin panel at `admin.r1.run` (clone `*-admin` template, customize).
-- PostHog + Customer.io + CodeRadar event integration.
+- Customer.io + CodeRadar event integration.
 
 ### Scoping
 - Encryption-at-rest for journals.
@@ -559,7 +562,7 @@ Fourteen specs scoped on 2026-05-11 introduce a new set of internal packages. Ea
 
 - **`internal/promptguard/` (extended)** — gains three new submodules: `toolinput` (per-tool input validation runs at the MCP wire, rejecting payloads that violate the tool's declared schema or carry known-injection markers), `fingerprint` (ed25519 signs every system-prompt block and verifies it at each plan / execute / verify boundary so a tampered system block fails closed), and `budget` (per-session injection-attempt counter with circuit-break semantics). Adversarial reviewer hooks into the existing audit chain and evaluates against the CL4R1T4S corpus on a CI cadence. Driven by `specs/promptguard-hardening.md` (A1).
 - **`internal/auth/` (new)** — JWT verification + RelayOne SSO client + middleware. Subdivides into `jwt` (HS256 + RS256 verify, JWKs rotation, claims extraction), `sso` (OIDC + PKCE flow against the RelayOne IdP, per-tenant token isolation, refresh-token handling), and `middleware` (gates admin-panel routes and every future enterprise route; pluggable via `http.Handler` chain). Driven by `specs/relayone-sso.md` (A4) and consumed by `specs/admin-panel.md` (A5) and `specs/oneshot-production-hardening.md` (A3).
-- **`internal/analytics/` (new)** — PostHog client. Holds the canonical event catalog (24 events), the per-tenant Group Analytics wiring, the funnel / cohort definitions as code so they survive a redeploy, and a non-blocking emit path (drop-on-overflow) so analytics emission never blocks a mission round. Driven by `specs/posthog-analytics.md` (B1).
+- **`internal/analytics/` (B1, done 2026-05-12)** — PostHog client live. The DSN-aware client at `internal/analytics/analytics.go` mirrors the `internal/coderadar/coderadar.go` shape: `FromEnv()` constructor, no-op when `POSTHOG_API_KEY` is empty, `Enabled()` predicate. The canonical 24-event taxonomy and per-event property adapter table sit at `internal/analytics/taxonomy.go`; the bus subscriber at `internal/hub/builtin/analytics_subscriber.go` registers an `ModeObserve` hook on the bus and forwards captures through a bounded 8192-deep channel so the hot path never blocks. Per-tenant Group Analytics rides through the `correlation.IDs.TenantID` field (populated by A4 RelayOne SSO once merged) via the shim at `internal/analytics/tenant_id.go`. Funnels and cohorts are versioned at `docs/analytics/funnels.md` and `docs/analytics/cohorts.md`; the overview dashboard JSON lives at `docs/analytics/dashboards/r1-overview.json`. Driven by `specs/posthog-analytics.md` (B1).
 - **`internal/lifecycle/` (new)** — Customer.io client plus the flagstore that records per-user consent. Six lifecycle triggers fire from existing hub events (no new emit points needed in the runtime; lifecycle subscribes). DSAR flow lives in a sub-handler that gates on the consent flagstore. Driven by `specs/customerio-lifecycle.md` (B2).
 - **`internal/throttle/` (new)** — token-bucket primitive plus a per-tool policy loader. Two-tier model (session + tenant) is realized as two nested buckets per call; the policy file is YAML, loaded at startup and live-reloadable via `daemon.reload_config`. Bucket state journals through the existing WAL so a restart honors the in-flight throttle window. MCP boundary enforces the call. Driven by `specs/per-tool-throttling.md` (C3).
 - **`internal/ideinstall/` (new)** — IDE config writers plus a JetBrains-side plugin shim. Subdivides into `cursor`, `windsurf`, `vscode`, and `jetbrains` writers, each owning the right config file in the right place per IDE. The `r1 ide` command dispatches to the right writer based on the `--ide` flag (auto-detected from `$PATH` when omitted). Driven by `specs/mcp-ide-bundles.md` (C4).
