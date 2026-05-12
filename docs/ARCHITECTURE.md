@@ -545,7 +545,15 @@ type Finding struct {
 ### Scoped
 - JWT login + RelayOne MSP SSO (Path A — Go reimpl of `@relayone/auth-core`).
 - Admin panel at `admin.r1.run` (clone `*-admin` template, customize).
-- PostHog + Customer.io + CodeRadar event integration.
+- PostHog + Customer.io event integration.
+
+### Done
+- CodeRadar dogfood event integration (B3, 2026-05-12). 18 canonical
+  events with schema versioning emit from all 9 Cloud Run services via
+  the bus subscriber at `internal/hub/builtin/coderadar_subscriber.go`.
+  Per-env sampling, hard allowlist + promptguard scrub, bounded queue +
+  drain goroutine + circuit breaker. Dashboards / alerts under
+  `docs/observability/coderadar-*.md`.
 
 ### Scoping
 - Encryption-at-rest for journals.

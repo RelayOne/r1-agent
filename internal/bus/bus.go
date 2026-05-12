@@ -103,6 +103,15 @@ var DescentEventKinds = []EventType{
 	EvtWorkerEnvBlocked,
 }
 
+// Anti-truncation events (spec coderadar-dogfood.md T11). Published by
+// internal/antitrunc/gate.go on each gate firing and override. The
+// CodeRadar bus subscriber mirrors these as canonical `antitrunc.fired`
+// / `antitrunc.overridden` events on the wire.
+const (
+	EvtAntiTruncFired      EventType = "antitrunc.fired"
+	EvtAntiTruncOverridden EventType = "antitrunc.overridden"
+)
+
 // Event is an immutable record published on the bus.
 type Event struct {
 	ID        string          `json:"id"`
