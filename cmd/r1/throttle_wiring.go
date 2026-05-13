@@ -74,6 +74,7 @@ func newServeThrottler(configPath string) *serveThrottlerHandle {
 // stand in when anything goes wrong, so the daemon never refuses to
 // start because of a typo'd rate string.
 func loadThrottlingConfig(configPath string) (throttle.Config, string) {
+	// LINT-ALLOW chdir-cli-entry: r1 daemon entrypoint; cwd is the policy-auto-load anchor.
 	repoRoot, _ := os.Getwd()
 	policy, err := config.AutoLoadPolicy(repoRoot, configPath)
 	if err != nil {
