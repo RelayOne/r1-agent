@@ -241,5 +241,33 @@ func isKnownFalsePositive(f Finding) bool {
 	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "internal/server/sessionhub/sessionhub.go") {
 		return true
 	}
+	// no-nolint: cmd/r1/oneshot_cmd.go's runOneShotCmd is a flat CLI
+	// dispatch — many small switch branches by design. Splitting it
+	// would obscure the verb/flag matrix. Documented nolint:gocyclo
+	// is the correct escape hatch.
+	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/r1/oneshot_cmd.go") {
+		return true
+	}
+	// no-nolint: cmd/r1-server/migrate_in.go tolerates corrupt
+	// per-row JSON in import bundles — the wider import keeps going
+	// even when one memory row is malformed. Documented nolint:nilerr
+	// matches the cmd/r1-server/import.go pattern above.
+	if f.Rule == "no-nolint" && strings.HasSuffix(f.File, "cmd/r1-server/migrate_in.go") {
+		return true
+	}
+	// no-hardcoded-secret: bitbucket adapter declares the literal
+	// env-var NAME for the Atlassian-supplied OIDC token. The string
+	// "BITBUCKET_STEP_OIDC_TOKEN" is a NAME, not the token itself.
+	// Same class as the existing internal/lifecycle exclusion.
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/cicd/bitbucket/auth.go") {
+		return true
+	}
+	// no-hardcoded-secret: internal/lifecycle/client.go declares the
+	// env-var NAME for the Customer.io API key (the actual key is
+	// never in source). #nosec G101 already annotates the line but
+	// the deterministic scanner doesn't read #nosec.
+	if f.Rule == "no-hardcoded-secret" && strings.HasSuffix(f.File, "internal/lifecycle/client.go") {
+		return true
+	}
 	return false
 }
