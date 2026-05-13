@@ -112,6 +112,11 @@ func TestMemoryRecalled_ValidateHappyPath(t *testing.T) {
 // more, so the current invariant is 51.
 // If a future node type is added, bump this number in the same commit that
 // adds it so the guard actually blocks accidental registrations.
+// SkillUnloaded (PR #150) adds one more, and SystemPromptFingerprint
+// (spec promptguard-hardening §T3 item 12) adds one more, so the
+// current invariant is 51. If a future node type is added, bump this
+// number in the same commit that adds it so the guard actually blocks
+// accidental registrations.
 func TestRegisteredNodeCount(t *testing.T) {
 	const want = 51
 	got := len(All())

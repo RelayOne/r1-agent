@@ -130,9 +130,14 @@ Honest scope limits:
 - **Adaptive attackers with white-box access to R1's prompt
   structure.** The 2025 OpenAI/Anthropic/DeepMind adaptive-attack
   study demonstrated all 12 tested defenses fall to motivated
-  adversaries. R1's posture is cost imposition, not prevention
-  — making attacks expensive enough that they're not worth
-  running at scale.
+  adversaries. Specifically: Nasr et al. *"The Attacker Moves
+  Second"* (arXiv 2025); Debenedetti et al. *"Defeating Prompt
+  Injections by Design"* (arXiv 2025); OpenAI's *Instruction
+  Hierarchy* hardening work; Anthropic's Opus 4.5 RL-trained
+  browser-agent results reducing attack-success rate from the
+  double digits to approximately 1% — not zero. R1's posture is
+  cost imposition, not prevention — making attacks expensive
+  enough that they're not worth running at scale.
 - **Attacks routed through R1's own source-controlled prompts.**
   Those are trusted content; if your threat model includes a
   compromised committer, that is a different problem addressed by
@@ -145,6 +150,100 @@ Honest scope limits:
   markdown-image rule does not fire. The `EventToolPreUse` hub
   gate + domain allowlist + consent workflow is the countermeasure,
   but if all three are disabled the outbound call happens.
+
+## Escalation playbook — budget breach + session kill
+
+R1 enforces a per-session injection-detection budget
+(`internal/promptguard/budget.go`). Severity weights: low=0
+(ignored), medium=1, high=2, critical=3 (any single critical
+detection trips immediately). Default threshold: 5 detections.
+
+When the budget trips, `promptguard.budget.exceeded` is published
+on the event bus. The supervisor rule
+`internal/supervisor/rules/promptguard/budget_exceeded.go` consumes
+the event and emits a `daemon.session.kill` action; the sessionhub
+tears down the session within 100 ms of publication.
+
+**Operator response checklist:**
+
+1. **Confirm the kill.** Tail the session journal at
+   `~/.r1/sessions/<session_id>.jsonl` — look for a
+   `promptguard.budget.exceeded` event followed by the supervisor
+   action and a teardown log.
+2. **Review the threat trail.** Every contributing detection emits
+   a `promptguard.threat_detected` event with `Phase`, `Source`,
+   `PatternName`, `Severity`, and `Excerpt`. Aggregate them: were
+   the detections concentrated on a single tool, a single fetched
+   URL, a single file path? That points at the attack surface.
+3. **Check the system-prompt fingerprint.** Run
+   `r1 promptguard verify-system-prompt` (T3). A `Tampered` status
+   means the on-disk prompt was modified without re-signing —
+   stop and investigate before re-running.
+4. **Inspect the cross-model reviewer log.** The
+   `InjectionAwareCritic` (T4) emits `<promptguard_note>` blocks
+   when it sees injection-aware tool calls in produced work.
+   Those notes name the specific tool call and matched signature.
+5. **Decide whether to widen the deny-list** (per the authoring
+   guide below) or harden the upstream content source.
+6. **Re-run with `--promptguard.budget.max_detections` increased**
+   only after the underlying surface is hardened. Bumping the
+   threshold without addressing the surface preserves the attack.
+
+The budget counter survives daemon restart (WAL-persisted) so a
+session killed by budget breach cannot resume the same counter
+state — restart is a fresh session.
+
+## Per-tool deny-list authoring guide
+
+Operators can extend `internal/promptguard/toolinput.go` validation
+via `r1.policy.yaml`. The bundled defaults
+(`configs/promptguard-toolinput-defaults.yaml`) cover
+`deploy.execute`, `browse.fetch`, `file.write`. To add a rule for
+a custom internal tool, append a stanza to the operator-supplied
+policy file referenced from `r1.policy.yaml`'s
+`promptguard.tool_input.additional_rules_path`.
+
+**Worked example — `internal.deploy.k8s`:** a custom internal tool
+that deploys Kubernetes manifests. Operator goal: require
+structured input, cap manifest size at 32 KiB, and refuse the two
+worst-case commands.
+
+```yaml
+promptguard:
+  tool_input:
+    additional_rules_path: ~/.r1/policy/extra-tool-input.yaml
+```
+
+`~/.r1/policy/extra-tool-input.yaml`:
+
+```yaml
+promptguard:
+  tool_input:
+    action: reject       # required: tool input is structured;
+                         # rejection is the safe disposition
+    rules:
+      - tool: internal.deploy.k8s
+        require_struct: true
+        struct_fields: [cluster, manifest_path]
+        max_length_kb: 32
+        deny_patterns:
+          - '(?i)kubectl\s+delete\s+--all'
+          - '(?i)\b--force\b'
+```
+
+Behaviour after reload (`r1d.reload_config`):
+
+- Any `internal.deploy.k8s` call whose arg blob exceeds 32 KiB is
+  rejected before dispatch with `promptguard:
+  tool_input_rejected: max_length_kb`.
+- An arg blob that is a raw string rather than `{cluster, manifest_path}`
+  is rejected with `top-level arg must be JSON object`.
+- An arg blob containing `kubectl delete --all` matches the regex
+  and is rejected with the rule's pattern name.
+
+Every rejection emits a `promptguard.threat_detected` event with
+`Phase="tool_input"`, `Source="tool_input:internal.deploy.k8s"`,
+counted against the per-session budget.
 
 ## If you find a bypass
 

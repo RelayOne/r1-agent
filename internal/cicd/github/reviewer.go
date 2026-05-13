@@ -19,6 +19,12 @@
 // requiring tool-use or JSON-mode. The default ParseFindings reader
 // accepts a relaxed format (one finding per markdown bullet); callers
 // who want stricter parsing can substitute their own ParserFunc.
+//
+// C5: the Finding / LLMFunc / ParserFunc / ParseFindings / RenderCommentBody /
+// DefaultReviewPrompt primitives now live in `internal/cicd/shared` so that
+// the GitHub Actions, GitLab CI, and BitBucket Pipelines adapters share one
+// implementation. This file re-exports them as type aliases / variable
+// re-bindings so existing callers compile unchanged.
 
 package github
 
@@ -26,36 +32,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/RelayOne/r1/internal/cicd/shared"
 )
 
-// LLMFunc is the model-call abstraction used by the auto-reviewer.
-// Implementations should return a single string response (the model's
-// reply to the prompt). The reviewer wraps the model call in its own
-// retry / timeout policy via ctx — implementations should be
-// stateless and side-effect-free.
-type LLMFunc func(ctx context.Context, prompt string) (string, error)
+// LLMFunc is the model-call abstraction used by the auto-reviewer. Aliased
+// from internal/cicd/shared so all adapters speak the same contract.
+type LLMFunc = shared.LLMFunc
 
-// ParserFunc converts an LLM response into a list of Findings.
-// AutoReview defaults to ParseFindings when nil is passed.
-type ParserFunc func(response string) []Finding
+// ParserFunc converts an LLM response into a list of Findings. Aliased
+// from internal/cicd/shared.
+type ParserFunc = shared.ParserFunc
 
-// Finding is a single code-review observation produced by the LLM.
-// Path + Line are required for inline posting; Severity + Body are
-// surfaced in the rendered comment.
-type Finding struct {
-	Path     string `json:"path"`
-	Line     int    `json:"line"`
-	Severity string `json:"severity"` // "info" | "warning" | "error"
-	Body     string `json:"body"`
-}
+// Finding is a single code-review observation produced by the LLM. Aliased
+// from internal/cicd/shared.
+type Finding = shared.Finding
 
-// IsValid reports whether the Finding has the minimum fields required
-// to be posted as a review comment.
-func (f Finding) IsValid() bool {
-	return f.Path != "" && f.Line > 0 && strings.TrimSpace(f.Body) != ""
-}
+// ParseFindings reads an LLM response in the default format and returns the
+// parsed findings. Re-exported from internal/cicd/shared.
+var ParseFindings = shared.ParseFindings
+
+// RenderCommentBody formats a Finding as a markdown comment body. Re-exported
+// from internal/cicd/shared.
+var RenderCommentBody = shared.RenderCommentBody
+
+// DefaultReviewPrompt is the default code-review prompt template. Re-exported
+// from internal/cicd/shared.
+const DefaultReviewPrompt = shared.DefaultReviewPrompt
 
 // Reviewer wires the GitHub Client to an LLM for auto-review.
 type Reviewer struct {
@@ -115,7 +119,7 @@ func (r *Reviewer) AutoReview(ctx context.Context, owner, repo string, prNumber 
 		return nil, fmt.Errorf("AutoReview: fetch head sha: %w", err)
 	}
 
-	prompt := r.renderPrompt(diff)
+	prompt := shared.RenderPrompt(r.prompt, diff)
 	response, err := llm(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("AutoReview: llm call: %w", err)
@@ -148,118 +152,4 @@ func (r *Reviewer) AutoReview(ctx context.Context, owner, repo string, prNumber 
 			len(postErrs), len(findings), strings.Join(postErrs, "; "))
 	}
 	return findings, nil
-}
-
-// renderPrompt fills the prompt template with the diff. Uses the
-// default template when SetPrompt was not called.
-func (r *Reviewer) renderPrompt(diff string) string {
-	tpl := r.prompt
-	if tpl == "" {
-		tpl = DefaultReviewPrompt
-	}
-	return strings.ReplaceAll(tpl, "{{DIFF}}", diff)
-}
-
-// DefaultReviewPrompt is the default code-review template. Designed
-// to elicit structured output that ParseFindings can read without
-// requiring JSON mode.
-const DefaultReviewPrompt = `You are an expert code reviewer. Review the following pull request diff.
-
-For each issue you find, output ONE markdown bullet on its own line in this exact format:
-
-- **<severity>** <path>:<line> — <message>
-
-Where <severity> is one of: info, warning, error.
-
-Only include real, actionable findings. Do NOT pad with stylistic nitpicks.
-If the diff has no issues worth flagging, respond with the single line:
-
-NO FINDINGS
-
-PR diff:
-
-` + "```diff\n{{DIFF}}\n```\n"
-
-// ParseFindings reads an LLM response in the default format and
-// returns the parsed findings. Lines that don't match the bullet
-// shape are skipped silently. The parser is intentionally lenient —
-// LLMs add prose around the bullets, and that's fine.
-func ParseFindings(response string) []Finding {
-	if strings.Contains(response, "NO FINDINGS") {
-		return nil
-	}
-	var out []Finding
-	for _, line := range strings.Split(response, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "- **") {
-			continue
-		}
-		// Strip "- "
-		rest := strings.TrimPrefix(line, "- ")
-		// Extract severity between "**...**"
-		if !strings.HasPrefix(rest, "**") {
-			continue
-		}
-		closeIdx := strings.Index(rest[2:], "**")
-		if closeIdx < 0 {
-			continue
-		}
-		sev := strings.ToLower(strings.TrimSpace(rest[2 : 2+closeIdx]))
-		after := strings.TrimSpace(rest[2+closeIdx+2:])
-		// after looks like "path:line — message" or "path:line - message"
-		dashIdx := strings.Index(after, "—")
-		if dashIdx < 0 {
-			dashIdx = strings.Index(after, " - ")
-			if dashIdx >= 0 {
-				dashIdx++ // align past the space before "-"
-			}
-		}
-		if dashIdx < 0 {
-			continue
-		}
-		anchor := strings.TrimSpace(after[:dashIdx])
-		message := strings.TrimSpace(strings.TrimLeft(after[dashIdx:], "—-"))
-		// anchor should be path:line
-		colon := strings.LastIndex(anchor, ":")
-		if colon <= 0 {
-			continue
-		}
-		path := strings.TrimSpace(anchor[:colon])
-		lineStr := strings.TrimSpace(anchor[colon+1:])
-		lineNum, err := strconv.Atoi(lineStr)
-		if err != nil || lineNum <= 0 {
-			continue
-		}
-		if !validSeverity(sev) {
-			sev = "info"
-		}
-		out = append(out, Finding{
-			Path:     path,
-			Line:     lineNum,
-			Severity: sev,
-			Body:     message,
-		})
-	}
-	return out
-}
-
-// RenderCommentBody formats a Finding as a markdown comment body
-// suitable for posting to the GitHub PR review API. The format is
-// stable so tests can assert exact content.
-func RenderCommentBody(f Finding) string {
-	sev := strings.ToUpper(f.Severity)
-	if sev == "" {
-		sev = "INFO"
-	}
-	return fmt.Sprintf("**[r1-review · %s]** %s", sev, strings.TrimSpace(f.Body))
-}
-
-// validSeverity gates the severity field so we don't propagate
-// arbitrary strings into the rendered comment.
-func validSeverity(s string) bool {
-	switch s {
-	case "info", "warning", "error":
-		return true
-	}
-	return false
 }
