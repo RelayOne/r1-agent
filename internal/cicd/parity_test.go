@@ -256,6 +256,7 @@ func mustCollectExportedSymbols(t *testing.T, pkg string) map[string]bool {
 
 // docPath returns the absolute path to a doc under docs/integrations/.
 func docPath(name string) string {
+	// LINT-ALLOW chdir-test: read-only Getwd to anchor the repo-root walk-up; never mutates cwd.
 	wd, _ := os.Getwd()
 	// We're in internal/cicd; walk up to the repo root.
 	root := wd

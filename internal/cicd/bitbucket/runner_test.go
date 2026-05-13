@@ -49,8 +49,11 @@ func TestRunR1Step_Review(t *testing.T) {
 	t.Setenv("BITBUCKET_PR_ID", "5")
 	// Run from a tempdir so tracebundles/ lands in a fresh place.
 	dir := t.TempDir()
+	// LINT-ALLOW chdir-test: BitBucket adapter integration test; restores cwd via t.Cleanup.
 	wd, _ := os.Getwd()
+	// LINT-ALLOW chdir-test: matched cleanup for the os.Getwd above.
 	t.Cleanup(func() { _ = os.Chdir(wd) })
+	// LINT-ALLOW chdir-test: switch to per-test tempdir; cleanup above.
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
@@ -113,8 +116,11 @@ func TestRunR1Step_MissionFailureFlagsStatus(t *testing.T) {
 	t.Setenv("BITBUCKET_COMMIT", "abc")
 	t.Setenv("BITBUCKET_BUILD_NUMBER", "7")
 	dir := t.TempDir()
+	// LINT-ALLOW chdir-test: BitBucket adapter integration test; restores cwd via t.Cleanup.
 	wd, _ := os.Getwd()
+	// LINT-ALLOW chdir-test: matched cleanup for the os.Getwd above.
 	t.Cleanup(func() { _ = os.Chdir(wd) })
+	// LINT-ALLOW chdir-test: switch to per-test tempdir; cleanup above.
 	_ = os.Chdir(dir)
 
 	var statusStates []string
