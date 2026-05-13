@@ -33,20 +33,6 @@ func initDecoder() {
 
 func loadDecoderMap() map[uintptr]Decoder {
 	initDecoder()
-)
-
-func initDecoder() {
-	initOnce.Do(func() {
-		typeAddr = runtime.AnalyzeTypeAddr()
-		if typeAddr == nil {
-			typeAddr = &runtime.TypeAddr{}
-		}
-		cachedDecoder = make([]Decoder, typeAddr.AddrRange>>typeAddr.AddrShift+1)
-	})
-}
-
-func loadDecoderMap() map[uintptr]Decoder {
-	initDecoder()
 	p := atomic.LoadPointer(&cachedDecoderMap)
 	return *(*map[uintptr]Decoder)(unsafe.Pointer(&p))
 }

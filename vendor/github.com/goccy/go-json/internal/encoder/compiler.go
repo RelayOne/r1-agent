@@ -36,16 +36,6 @@ func initEncoder() {
 		}
 		cachedOpcodeSets = make([]*OpcodeSet, typeAddr.AddrRange>>typeAddr.AddrShift+1)
 	})
-)
-
-func initEncoder() {
-	initEncoderOnce.Do(func() {
-		typeAddr = runtime.AnalyzeTypeAddr()
-		if typeAddr == nil {
-			typeAddr = &runtime.TypeAddr{}
-		}
-		cachedOpcodeSets = make([]*OpcodeSet, typeAddr.AddrRange>>typeAddr.AddrShift+1)
-	})
 }
 
 func loadOpcodeMap() map[uintptr]*OpcodeSet {
