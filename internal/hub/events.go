@@ -202,6 +202,25 @@ const (
 	// ClarifyingQLobe resolves the matching outstanding Note when this
 	// event fires. Spec: specs/cortex-concerns.md item 25.
 	EventCortexUserAnsweredQuestion EventType = "cortex.user.answered_question"
+
+	// EventCortexRoundCompleted fires at the end of each cortex
+	// Workspace round-tick. Custom["round"] carries the round number,
+	// Custom["notes_published"] the count of notes published during
+	// the round. Mirrored by the CodeRadar subscriber as
+	// `cortex.round_completed`. Spec: specs/coderadar-dogfood.md T13.
+	EventCortexRoundCompleted EventType = "cortex.round.completed"
+)
+
+// --- Anti-truncation (2 events) ---
+//
+// The anti-truncation gate (internal/antitrunc/gate.go) publishes
+// these events so the CodeRadar subscriber can mirror them as
+// `antitrunc.fired` / `antitrunc.overridden`. Custom carries the
+// pattern_matched, phase, evt_id (fired) and override_actor,
+// justification_hash (overridden) keys. Spec: specs/coderadar-dogfood.md T11.
+const (
+	EventAntiTruncFired      EventType = "antitrunc.fired"
+	EventAntiTruncOverridden EventType = "antitrunc.overridden"
 )
 
 // Mode determines how the hook participates.

@@ -1,3 +1,4 @@
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar
 .PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
 
 # Default: run the CI gate
@@ -32,6 +33,21 @@ lint:
 # Must be green before the multi-session daemon (Phase E) is enabled.
 lint-chdir:
 	./tools/lint-no-chdir.sh
+
+# CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
+# Requires ENV=dev|staging|prod and either CODERADAR_DSN already set or
+# `gcloud` available to materialize the env-scoped secret. Builds only
+# the coderadar package and runs the live `service_started` round-trip
+# behind the coderadar_smoke build tag. Cloud Build invokes this step
+# after deploy-coord-api per services/cloudbuild-deploy.yaml.
+smoke-coderadar:
+	@test -n "$(ENV)" || (echo "ENV=dev|staging|prod required"; exit 1)
+	@if [ -z "$$CODERADAR_DSN" ]; then \
+	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
+	  export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret=r1-$(ENV)-shared-CODERADAR_DSN); \
+	fi; \
+	CODERADAR_DSN=$${CODERADAR_DSN} R1_ENV=$(ENV) \
+	  go test -tags=coderadar_smoke -count=1 -timeout=30s ./internal/coderadar/...
 
 # Run the bench corpus
 bench:
