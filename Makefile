@@ -1,4 +1,4 @@
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
 
 # Default: run the CI gate
 all: build test vet
@@ -42,6 +42,20 @@ bench:
 # docs/benchmarks/prompt-cache.md.
 bench-cache:
 	go run ./bench/prompt_cache
+
+# A3 — 1000-concurrent oneshot integration benchmark. Behind the
+# `integration` build tag so it doesn't run on every `go test
+# ./...`. Recipe prints the host's ulimits so capacity problems
+# (nofile / nproc / RLIMIT_AS) are obvious.
+#
+# Override the size on a commodity host:
+#   R1_BENCH_CONCURRENCY=100 R1_BENCH_WALL_BUDGET_S=10 make test-oneshot-concurrent
+#
+# Spec: specs/oneshot-production-hardening.md §T5.4.
+test-oneshot-concurrent:
+	@ulimit -n 65535 2>/dev/null || true; ulimit -u 4096 2>/dev/null || true; \
+	echo "nofile=$$(ulimit -n) nproc=$$(ulimit -u) nproc(host)=$$(nproc)" && \
+	go test -tags integration -timeout 5m -run TestOneShot_1000Concurrent -v ./internal/oneshot/
 
 # Build Docker image
 docker:

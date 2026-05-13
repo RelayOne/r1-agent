@@ -2,6 +2,7 @@ package oneshot
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -21,7 +22,7 @@ func TestDispatch_AllSupportedVerbsReturnScaffold(t *testing.T) {
 	for _, verb := range SupportedVerbs {
 		verb := verb
 		t.Run(verb, func(t *testing.T) {
-			resp, err := Dispatch(verb, nil)
+			resp, err := Dispatch(context.Background(), verb, nil)
 			if err != nil {
 				t.Fatalf("Dispatch(%q): %v", verb, err)
 			}
@@ -56,7 +57,7 @@ func TestDispatch_RealPayloadsExposeRuntimeMetadata(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := Dispatch(tt.verb, json.RawMessage(tt.payload))
+			resp, err := Dispatch(context.Background(), tt.verb, json.RawMessage(tt.payload))
 			if err != nil {
 				t.Fatalf("Dispatch(%q): %v", tt.verb, err)
 			}
@@ -74,7 +75,7 @@ func TestDispatch_RealPayloadsExposeRuntimeMetadata(t *testing.T) {
 }
 
 func TestDispatch_DecomposeShape(t *testing.T) {
-	resp, err := Dispatch("decompose", nil)
+	resp, err := Dispatch(context.Background(), "decompose", nil)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestDispatch_DecomposeShape(t *testing.T) {
 }
 
 func TestDispatch_VerifyShape(t *testing.T) {
-	resp, err := Dispatch("verify", nil)
+	resp, err := Dispatch(context.Background(), "verify", nil)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestDispatch_VerifyShape(t *testing.T) {
 }
 
 func TestDispatch_CritiqueShape(t *testing.T) {
-	resp, err := Dispatch("critique", nil)
+	resp, err := Dispatch(context.Background(), "critique", nil)
 	if err != nil {
 		t.Fatalf("Dispatch: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestDispatch_CritiqueShape(t *testing.T) {
 }
 
 func TestDispatch_UnknownVerb(t *testing.T) {
-	_, err := Dispatch("nonsense", nil)
+	_, err := Dispatch(context.Background(), "nonsense", nil)
 	if err == nil {
 		t.Fatal("expected error for unknown verb")
 	}
@@ -155,7 +156,7 @@ func TestRun_WritesJSONResponseToWriter(t *testing.T) {
 	// Real-payload decompose is exercised by dedicated tests in
 	// decompose_test.go once that file lands.
 	in := strings.NewReader("")
-	if err := Run("decompose", in, &out); err != nil {
+	if _, err := Run(context.Background(), "decompose", in, &out); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	// Must be newline-terminated JSON (Encoder.Encode adds \n)
@@ -174,7 +175,7 @@ func TestRun_WritesJSONResponseToWriter(t *testing.T) {
 
 func TestRun_EmptyInputStillProducesScaffold(t *testing.T) {
 	var out bytes.Buffer
-	if err := Run("verify", strings.NewReader(""), &out); err != nil {
+	if _, err := Run(context.Background(), "verify", strings.NewReader(""), &out); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	var resp Response
@@ -188,7 +189,7 @@ func TestRun_EmptyInputStillProducesScaffold(t *testing.T) {
 
 func TestRun_UnknownVerbReturnsError(t *testing.T) {
 	var out bytes.Buffer
-	err := Run("unknown-verb", strings.NewReader(""), &out)
+	_, err := Run(context.Background(), "unknown-verb", strings.NewReader(""), &out)
 	if !errors.Is(err, ErrUnknownVerb) {
 		t.Errorf("want ErrUnknownVerb, got %v", err)
 	}
@@ -202,7 +203,7 @@ func TestRunFromFile_StdinSentinels(t *testing.T) {
 	// We can't easily feed stdin here, but we can verify the
 	// file-open branch rejects a nonexistent path cleanly.
 	var out bytes.Buffer
-	err := RunFromFile("decompose", "/nonexistent/path/does/not/exist", &out)
+	_, err := RunFromFile(context.Background(), "decompose", "/nonexistent/path/does/not/exist", &out)
 	if err == nil {
 		t.Fatal("expected error for nonexistent input file")
 	}
@@ -216,7 +217,7 @@ func TestSupportedVerbsMatchDispatch(t *testing.T) {
 	// returning ErrUnknownVerb — keeps the exported list and
 	// the switch in Dispatch in lock-step.
 	for _, v := range SupportedVerbs {
-		if _, err := Dispatch(v, nil); errors.Is(err, ErrUnknownVerb) {
+		if _, err := Dispatch(context.Background(), v, nil); errors.Is(err, ErrUnknownVerb) {
 			t.Errorf("advertised verb %q not handled by Dispatch", v)
 		}
 	}
