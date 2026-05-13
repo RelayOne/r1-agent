@@ -139,7 +139,7 @@ github.com/go-rod/rod/lib/utils
 ## explicit; go 1.25.0
 github.com/go-vgo/robotgo
 github.com/go-vgo/robotgo/clipboard
-# github.com/goccy/go-json v0.10.3
+# github.com/goccy/go-json v0.10.5
 ## explicit; go 1.19
 github.com/goccy/go-json
 github.com/goccy/go-json/internal/decoder
@@ -174,6 +174,11 @@ github.com/google/uuid
 # github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c
 ## explicit
 github.com/gsterjov/go-libsecret
+# github.com/hashicorp/golang-lru/v2 v2.0.7
+## explicit; go 1.18
+github.com/hashicorp/golang-lru/v2
+github.com/hashicorp/golang-lru/v2/internal
+github.com/hashicorp/golang-lru/v2/simplelru
 # github.com/jezek/xgb v1.3.0
 ## explicit; go 1.11
 github.com/jezek/xgb
@@ -279,6 +284,9 @@ github.com/oklog/ulid/v2
 # github.com/otiai10/gosseract/v2 v2.4.1
 ## explicit; go 1.18
 github.com/otiai10/gosseract/v2
+# github.com/posthog/posthog-go v1.12.5
+## explicit; go 1.21
+github.com/posthog/posthog-go
 # github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55
 ## explicit; go 1.14
 github.com/power-devops/perfstat

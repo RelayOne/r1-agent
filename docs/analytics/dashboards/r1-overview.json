@@ -1,0 +1,85 @@
+{
+  "name": "R1 — Overview",
+  "description": "Top-level overview for the R1 product. Four tiles: mission completion rate, anti-truncation fire rate per mission, cost-per-mission p50/p90, active mission count per tenant. Imported via PostHog Dashboards → New → Import JSON. Event names track internal/analytics/taxonomy.go — keep in sync when the taxonomy moves.",
+  "tags": ["r1", "overview", "b1"],
+  "tiles": [
+    {
+      "name": "Mission completion rate (7d)",
+      "type": "INSIGHT",
+      "color": "blue",
+      "layout": {"w": 6, "h": 4},
+      "filters": {
+        "insight": "TRENDS",
+        "events": [
+          {"id": "mission_started",   "math": "total", "order": 0, "type": "events"},
+          {"id": "mission_completed", "math": "total", "order": 1, "type": "events"}
+        ],
+        "date_from": "-7d",
+        "formula": "B/A"
+      }
+    },
+    {
+      "name": "Anti-trunc fire rate per mission (7d)",
+      "type": "INSIGHT",
+      "color": "purple",
+      "layout": {"w": 6, "h": 4},
+      "filters": {
+        "insight": "TRENDS",
+        "events": [
+          {"id": "anti_trunc_fired", "math": "total", "order": 0, "type": "events"},
+          {"id": "mission_started",  "math": "total", "order": 1, "type": "events"}
+        ],
+        "date_from": "-7d",
+        "formula": "A/B"
+      }
+    },
+    {
+      "name": "Cost-per-mission p50 / p90 (7d)",
+      "type": "INSIGHT",
+      "color": "green",
+      "layout": {"w": 6, "h": 4},
+      "filters": {
+        "insight": "TRENDS",
+        "events": [
+          {
+            "id": "mission_completed",
+            "math": "p50",
+            "math_property": "total_cost_usd",
+            "order": 0,
+            "type": "events"
+          },
+          {
+            "id": "mission_completed",
+            "math": "p90",
+            "math_property": "total_cost_usd",
+            "order": 1,
+            "type": "events"
+          }
+        ],
+        "date_from": "-7d"
+      }
+    },
+    {
+      "name": "Active missions per tenant (24h)",
+      "type": "INSIGHT",
+      "color": "orange",
+      "layout": {"w": 6, "h": 4},
+      "filters": {
+        "insight": "TRENDS",
+        "events": [
+          {
+            "id": "mission_started",
+            "math": "unique_group",
+            "math_group_type_index": 0,
+            "order": 0,
+            "type": "events"
+          }
+        ],
+        "date_from": "-1d",
+        "breakdown": "$group_0",
+        "breakdown_type": "group",
+        "breakdown_group_type_index": 0
+      }
+    }
+  ]
+}
