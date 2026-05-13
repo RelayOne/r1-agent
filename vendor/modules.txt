@@ -140,7 +140,6 @@ github.com/go-rod/rod/lib/utils
 github.com/go-vgo/robotgo
 github.com/go-vgo/robotgo/clipboard
 # github.com/goccy/go-json v0.10.5
-# github.com/goccy/go-json v0.10.3
 ## explicit; go 1.19
 github.com/goccy/go-json
 github.com/goccy/go-json/internal/decoder
