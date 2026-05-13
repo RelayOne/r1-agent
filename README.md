@@ -32,12 +32,26 @@ The work that widens the gap between r1 and any other agent runtime. Six specs i
 
 - **Cross-machine session migration** ([`specs/cross-machine-session-migration.md`](specs/cross-machine-session-migration.md), C1, BUILD_ORDER 41). A portable `.r1session` bundle format plus `r1 session export`, `r1 session import`, and `r1 session migrate` commands. Chain-root-hash continuity verification means a session that started on a laptop and resumed on a cloud sandbox carries a tamper-evident provenance chain across both machines. The customer's session is not stuck to a host.
 - **Per-tool throttling — DONE 2026-05-12** ([`specs/per-tool-throttling.md`](specs/per-tool-throttling.md), [operator runbook](docs/operations/throttling.md), C3, BUILD_ORDER 42). A two-tier token-bucket throttler — per-session and per-tenant — enforced at the MCP boundary AND the native agentloop boundary so a runaway agent can't burn an entire monthly quota on `Bash`. The policy is declarative (a `throttling:` block in `r1.policy.yaml` the operator edits without a code change), `daemon.reload_config` hot-reloads without dropping in-flight tokens, and a checked-in bundled defaults file covers all 38 r1.* tools. Bench-verified p99 < 100µs per `Allow` call.
+- **Per-tool throttling** ([`specs/per-tool-throttling.md`](specs/per-tool-throttling.md), C3, BUILD_ORDER 42). A two-tier token-bucket throttler — per-session and per-tenant — enforced at the MCP boundary so a runaway agent can't burn an entire monthly quota on `Bash`. The policy is declarative (a YAML manifest the operator edits without a code change) and the bucket state is journaled so a daemon restart honors the in-flight throttle window.
 - **MCP IDE bundles** ([`specs/mcp-ide-bundles.md`](specs/mcp-ide-bundles.md), C4, BUILD_ORDER 43). One spec covering Cursor, Windsurf, VS Code, and JetBrains — a single `r1 ide install / uninstall / verify` command that writes the right config in the right place for each IDE, plus a JetBrains-side plugin shim. The customer installs r1 once and every IDE on their machine sees it.
 - **BitBucket Pipelines adapter** ([`specs/bitbucket-pipelines-adapter.md`](specs/bitbucket-pipelines-adapter.md), C5, BUILD_ORDER 44). Parity with the existing GitHub Actions + GitLab CI adapters: OIDC-based authentication, PR commenting with diff-aware annotations, and the same `r1 run --ci` flag set across all three providers. Customers on BitBucket stop being a third-class platform.
 - **Browser tool — remote sandbox** ([`specs/browser-remote-sandbox.md`](specs/browser-remote-sandbox.md), C6, BUILD_ORDER 45). Two interchangeable providers — Browserless (managed) and an in-house Cloud Run provider — plus a tenant-isolated sandbox model with a deny-by-default egress policy. The hosted r1.run finally has a browser the agent can drive without compromising the underlying host.
 - **Cross-product skill exchange** ([`specs/cross-product-skill-exchange.md`](specs/cross-product-skill-exchange.md), C7, BUILD_ORDER 46). A pack-format v2 with an explicit compatibility matrix, a federated trust root so a skill signed by one RelayOne portfolio product is verifiable by another, and runtime adapters for CloudSwarm, Heroa, and Veritize. Skills become portable assets across the portfolio instead of per-product silos.
 
 The full list, with acceptance criteria, dependencies, and BUILD_ORDER, lives in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points respectively.
+
+## Cross-product skill distribution (preview)
+
+C7 ships the R1-side substrate for federated skill packs. A v2
+manifest schema with an explicit `compat` list, a federated ed25519
+trust root, and runtime adapters for CloudSwarm, Heroa, and Veritize
+let a pack be authored once against R1 and adopted into the sibling
+products via `r1 skills pack adopt --pack <id> --for <product>`. The
+existing v1 pack format remains supported unchanged. See
+[`docs/skills/cross-product-distribution.md`](docs/skills/cross-product-distribution.md)
+for pack-author docs and
+[`docs/skills/federated-trust.md`](docs/skills/federated-trust.md)
+for the operator runbook.
 
 ## What's new — final-sweep features (2026-05-05)
 
