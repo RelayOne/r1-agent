@@ -1,0 +1,38 @@
+{{- define "billing.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="billing-h">
+  <h2 id="billing-h">Billing</h2>
+  {{ if .PersistentNote }}<p class="banner">{{ .PersistentNote }}</p>{{ end }}
+
+  <p>
+    <a href="/admin/billing?format=csv" download class="btn btn-primary" rel="nofollow">Download CSV</a>
+    {{ template "phase2_btn" "Invoice run" }}
+  </p>
+
+  <table class="data-table" aria-describedby="billing-h">
+    <thead>
+      <tr>
+        <th scope="col">Month</th>
+        <th scope="col">Total (USD)</th>
+        <th scope="col">Task count</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Months }}
+      <tr>
+        <td>{{ .Month }}</td>
+        <td>${{ printf "%.4f" .TotalUSD }}</td>
+        <td>{{ .TaskCount }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="3" class="empty">No cost records yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}
+{{- end -}}

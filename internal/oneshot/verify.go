@@ -57,7 +57,13 @@ type verifyResponse struct {
 }
 
 // handleVerify is invoked by Dispatch when verb=="verify".
-func handleVerify(payload json.RawMessage) (Response, error) {
+// Honors ctx cancellation: a cancelled ctx short-circuits with
+// an ErrCanceled-wrapped error so the timeout / signal path in
+// runOneShotCmd can drop the partial response cleanly.
+func handleVerify(ctx context.Context, payload json.RawMessage) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("oneshot: verify: %w", err)
+	}
 	req := verifyRequest{}
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &req); err != nil {
@@ -119,15 +125,18 @@ func handleVerify(payload json.RawMessage) (Response, error) {
 
 	// Run descent per AC and aggregate. Worst outcome wins —
 	// DescentFail > DescentSoftPass > DescentPass. The tier + reason
-	// reported are those of the worst AC.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// reported are those of the worst AC. The parent ctx already
+	// carries the --timeout budget; we add a fail-safe 30 s sub-
+	// timeout so a runaway descent on a degenerate AC can't pin
+	// the verb past the operator's outer budget.
+	descentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var worst *plan.DescentResult
 	for _, ac := range acs {
 		// runACCommand is called INSIDE VerificationDescent at T2.
 		// Supply an empty initialOutput so the descent re-runs it.
-		r := plan.VerificationDescent(ctx, ac, "", cfg)
+		r := plan.VerificationDescent(descentCtx, ac, "", cfg)
 		if worst == nil || outcomeRank(r.Outcome) > outcomeRank(worst.Outcome) {
 			rr := r
 			worst = &rr

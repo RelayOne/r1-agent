@@ -1,0 +1,17 @@
+# python.yaml — language-specific overlay for Python projects (C5, T17).
+definitions:
+  caches:
+    pip:
+      key:
+        files:
+          - pyproject.toml
+          - requirements.txt
+      path: ${HOME}/.cache/pip
+before-script-snippet: |
+  if [ -f requirements.txt ]; then
+    pip install --upgrade pip
+    pip install -r requirements.txt
+  elif [ -f pyproject.toml ]; then
+    pip install --upgrade pip
+    pip install .
+  fi

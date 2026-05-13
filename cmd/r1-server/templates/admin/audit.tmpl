@@ -1,0 +1,46 @@
+{{- define "audit.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="audit-h">
+  <h2 id="audit-h">Audit ledger <small class="muted">({{ .Page.Total }} matching nodes)</small></h2>
+
+  <form method="get" action="/admin/audit" class="filter-row" role="search">
+    <label>Session <input type="text" name="session" value="{{ .Filters.Session }}" autocomplete="off"></label>
+    <label>Since (RFC3339) <input type="text" name="since" value="{{ .Filters.Since }}" autocomplete="off" placeholder="2026-05-01T00:00:00Z"></label>
+    <button type="submit">Apply</button>
+  </form>
+
+  <table class="data-table" aria-describedby="audit-h">
+    <thead>
+      <tr>
+        <th scope="col">CID</th>
+        <th scope="col">Type</th>
+        <th scope="col">Session</th>
+        <th scope="col">Author</th>
+        <th scope="col">Timestamp</th>
+        <th scope="col">Summary</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td><a href="/api/tracebundle?node={{ .CID }}" rel="nofollow">{{ .CID }}</a></td>
+        <td>{{ .Type }}</td>
+        <td>{{ .SessionID }}</td>
+        <td>{{ .Author }}</td>
+        <td>{{ .Timestamp.UTC.Format "2006-01-02 15:04:05Z" }}</td>
+        <td>{{ .Summary }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="6" class="empty">No ledger nodes match.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+
+  {{ template "pagination" .Page }}
+</section>
+{{ end }}
+{{- end -}}

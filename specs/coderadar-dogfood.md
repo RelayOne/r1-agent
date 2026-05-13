@@ -1,7 +1,8 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-11 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 40 -->
+<!-- BUILD_COMPLETED: 2026-05-12 -->
 
 # CodeRadar Dogfood Event Streaming — Implementation Spec (B3)
 

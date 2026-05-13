@@ -6,11 +6,191 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/RelayOne/r1/internal/mcp"
+	"github.com/RelayOne/r1/internal/promptguard"
 )
+
+// PromptGuardConfig is the operator-facing per-phase action knob for
+// the promptguard package. See specs/promptguard-hardening.md §T1. Each
+// phase carries one Action ("warn"|"strip"|"reject"); missing entries
+// fall through to the spec defaults (plan=strip, execute=warn,
+// verify=strip, convergence=strip).
+//
+// ToolInput is the per-tool input-validation block added in §T2 item 10.
+// Carries an action knob, an optional list of operator-defined custom
+// rules, and an optional path to a sidecar YAML carrying additional
+// rules. Bundled defaults (three rules for deploy.execute, browse.fetch,
+// file.write) ship via //go:embed inside the promptguard package and
+// load unconditionally at startup; operator overrides merge on top.
+type PromptGuardConfig struct {
+	Plan        PromptGuardPhaseConfig     `json:"plan,omitempty" yaml:"plan,omitempty"`
+	Execute     PromptGuardPhaseConfig     `json:"execute,omitempty" yaml:"execute,omitempty"`
+	Verify      PromptGuardPhaseConfig     `json:"verify,omitempty" yaml:"verify,omitempty"`
+	Convergence PromptGuardPhaseConfig     `json:"convergence,omitempty" yaml:"convergence,omitempty"`
+	ToolInput   PromptGuardToolInputConfig `json:"tool_input,omitempty" yaml:"tool_input,omitempty"`
+}
+
+// PromptGuardToolInputConfig is the per-tool input-validation block.
+// See specs/promptguard-hardening.md §T2 item 10. Schema:
+//
+//	tool_input:
+//	  action: warn|strip|reject (default reject)
+//	  rules:
+//	    - tool: <name>
+//	      require_struct: true|false
+//	      struct_fields: [a, b]
+//	      max_length_kb: <int>
+//	      deny_patterns:
+//	        - '<regex>'
+//	  additional_rules_path: /path/to/extra.yaml
+type PromptGuardToolInputConfig struct {
+	// Action is "warn" | "strip" | "reject"; empty means "use the spec
+	// default" (reject). Validated via promptguard.ParseAction at apply
+	// time so an unrecognised string falls back to the default rather
+	// than erroring out the policy load.
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
+	// Rules carries operator-supplied custom rules. Each merges with
+	// the bundled defaults at apply time. An empty slice leaves the
+	// bundled rules untouched.
+	Rules []PromptGuardToolInputRule `json:"rules,omitempty" yaml:"rules,omitempty"`
+	// AdditionalRulesPath is an optional sidecar YAML file with the
+	// same schema as configs/promptguard-toolinput-defaults.yaml. If
+	// set, loaded at apply time and merged after Rules.
+	AdditionalRulesPath string `json:"additional_rules_path,omitempty" yaml:"additional_rules_path,omitempty"`
+}
+
+// PromptGuardToolInputRule is the YAML-on-disk shape of one custom
+// rule. The fields mirror promptguard.ToolInputRule but carry the
+// deny-pattern list as raw strings (compiled at apply time).
+type PromptGuardToolInputRule struct {
+	Tool          string   `json:"tool" yaml:"tool"`
+	RequireStruct bool     `json:"require_struct,omitempty" yaml:"require_struct,omitempty"`
+	StructFields  []string `json:"struct_fields,omitempty" yaml:"struct_fields,omitempty"`
+	MaxLengthKB   int      `json:"max_length_kb,omitempty" yaml:"max_length_kb,omitempty"`
+	DenyPatterns  []string `json:"deny_patterns,omitempty" yaml:"deny_patterns,omitempty"`
+}
+
+// PromptGuardPhaseConfig carries one phase's promptguard knobs.
+// Action is "warn" | "strip" | "reject"; an empty string means "use the
+// spec default for this phase".
+type PromptGuardPhaseConfig struct {
+	Action string `json:"action,omitempty" yaml:"action,omitempty"`
+}
+
+// ResolveAction returns the promptguard.Action to apply at the named
+// phase. Honors the operator's per-phase override when set; falls
+// through to the spec default (plan=strip, execute=warn, verify=strip,
+// convergence=strip) when missing or unrecognized.
+func (c *PromptGuardConfig) ResolveAction(phase string) promptguard.Action {
+	if c == nil {
+		return promptguard.PhaseAction(phase)
+	}
+	var raw string
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "plan":
+		raw = c.Plan.Action
+	case "execute":
+		raw = c.Execute.Action
+	case "verify":
+		raw = c.Verify.Action
+	case "convergence":
+		raw = c.Convergence.Action
+	default:
+		return promptguard.PhaseAction(phase)
+	}
+	if a, ok := promptguard.ParseAction(raw); ok {
+		return a
+	}
+	return promptguard.PhaseAction(phase)
+}
+
+// Apply installs the operator's per-phase overrides on the
+// process-wide promptguard phase-action map so wire-sites that call
+// promptguard.PhaseAction(...) see the operator's settings without
+// having to thread the policy through every call signature.
+//
+// Also applies the per-tool input-validation overrides from c.ToolInput
+// (specs/promptguard-hardening.md §T2 item 10): the embedded defaults
+// are restored, then operator-supplied rules are merged on top, then
+// any additional_rules_path sidecar YAML is loaded and merged.
+func (c *PromptGuardConfig) Apply() {
+	if c == nil {
+		promptguard.ResetPhaseActions()
+		promptguard.ResetToolInputRules()
+		return
+	}
+	promptguard.ResetPhaseActions()
+	for phase, raw := range map[string]string{
+		"plan":        c.Plan.Action,
+		"execute":     c.Execute.Action,
+		"verify":      c.Verify.Action,
+		"convergence": c.Convergence.Action,
+	} {
+		if a, ok := promptguard.ParseAction(raw); ok {
+			promptguard.SetPhaseAction(phase, a)
+		}
+	}
+	c.applyToolInput()
+}
+
+// applyToolInput installs the per-tool input-validation overrides on
+// the package-wide promptguard rule registry. Steps:
+//
+//  1. Restore embedded defaults (so a subsequent reload starts clean).
+//  2. If c.ToolInput.Action is a valid action string, override the
+//     default action.
+//  3. For each rule in c.ToolInput.Rules: compile its deny patterns
+//     and register via promptguard.AddToolInputRule. A bad regex is
+//     skipped with a log line so a single malformed entry does not
+//     fail the entire policy load.
+//  4. If c.ToolInput.AdditionalRulesPath is set, read the file and
+//     merge via promptguard.LoadToolInputYAML.
+func (c *PromptGuardConfig) applyToolInput() {
+	promptguard.ResetToolInputRules()
+	if a, ok := promptguard.ParseAction(c.ToolInput.Action); ok {
+		promptguard.SetToolInputAction(a)
+	}
+	for _, r := range c.ToolInput.Rules {
+		if strings.TrimSpace(r.Tool) == "" {
+			continue
+		}
+		compiled := make([]*regexp.Regexp, 0, len(r.DenyPatterns))
+		skip := false
+		for _, p := range r.DenyPatterns {
+			re, err := regexp.Compile(p)
+			if err != nil {
+				skip = true
+				break
+			}
+			compiled = append(compiled, re)
+		}
+		if skip {
+			continue
+		}
+		promptguard.AddToolInputRule(promptguard.ToolInputRule{
+			Tool:          r.Tool,
+			DenyPatterns:  compiled,
+			MaxLengthKB:   r.MaxLengthKB,
+			RequireStruct: r.RequireStruct,
+			StructFields:  append([]string(nil), r.StructFields...),
+			Source:        "policy",
+		})
+	}
+	if path := strings.TrimSpace(c.ToolInput.AdditionalRulesPath); path != "" {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			// best-effort load: a missing or unreadable sidecar file
+			// does not fail the policy load — it just means no extra
+			// rules are merged. The error path is documented in the
+			// spec's error-handling table.
+			_ = promptguard.LoadToolInputYAML(data, "policy:"+path)
+		}
+	}
+}
 
 // Policy defines the security and tool restrictions for each workflow phase.
 type Policy struct {
@@ -30,6 +210,18 @@ type Policy struct {
 	// parsePolicyYAML skips the `cortex:` section the same way it skips
 	// `mcp_servers:`. See specs/cortex-concerns.md item 3.
 	Cortex CortexConfig `json:"cortex,omitempty" yaml:"cortex,omitempty"`
+
+	// Throttling carries per-tool rate-limit policy loaded from the
+	// top-level `throttling:` block in r1.policy.yaml. Parsed by the
+	// yaml.v3-backed loader in throttling.go; the custom line-scanner
+	// skips the section like `mcp_servers:` / `cortex:`. See
+	// specs/per-tool-throttling.md item T1.
+	Throttling ThrottlingConfig `json:"throttling,omitempty" yaml:"throttling,omitempty"`
+	// PromptGuard carries per-phase action knobs for the promptguard
+	// package. See specs/promptguard-hardening.md §T1. Parsed inline by
+	// the custom line-scanner in parsePolicyYAML (section nesting:
+	// promptguard.<phase>.action).
+	PromptGuard PromptGuardConfig `json:"promptguard,omitempty" yaml:"promptguard,omitempty"`
 
 	// verificationExplicit is true when the YAML/JSON had a verification section.
 	// This distinguishes "all gates intentionally disabled" from "section omitted."
@@ -229,6 +421,29 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	p.Cortex = cortex
+	// Parse the throttling top-level block (if any) via yaml.v3 and
+	// validate immediately so malformed rate strings / globs surface
+	// at LoadPolicy time, not at first Allow call. See
+	// specs/per-tool-throttling.md T1.
+	throttling, err := parseThrottlingBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	if !throttling.IsZero() {
+		normalized, verr := ValidateThrottling(throttling)
+		if verr != nil {
+			return Policy{}, verr
+		}
+		p.Throttling = normalized
+	}
+	// Parse the promptguard.tool_input block (if any) via yaml.v3;
+	// the custom line-scanner above skips its contents. See
+	// specs/promptguard-hardening.md §T2 item 10.
+	toolInput, err := parsePromptGuardToolInputBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	p.PromptGuard.ToolInput = toolInput
 	return normalizePolicy(p), nil
 }
 
@@ -303,6 +518,11 @@ func parsePolicyYAML(input string) (Policy, error) {
 	section := ""
 	currentPhase := ""
 	currentListField := ""
+	// promptguard sub-section state — tracks which phase block
+	// (plan|execute|verify|convergence) the scanner is currently
+	// inside so a 4-space-indented `action: <val>` line can be routed
+	// to the right PromptGuardPhaseConfig field.
+	pgPhase := ""
 
 	for scanner.Scan() {
 		raw := scanner.Text()
@@ -318,6 +538,7 @@ func parsePolicyYAML(input string) (Policy, error) {
 			section = strings.TrimSuffix(text, ":")
 			currentPhase = ""
 			currentListField = ""
+			pgPhase = ""
 		case section == "mcp_servers":
 			// mcp_servers is a yaml-sequence block; the custom
 			// scanner skips all its contents (any indent >0) and
@@ -328,6 +549,13 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// the custom scanner skips all its contents (any indent >0)
 			// and leaves parsing to parseCortexBlock (yaml.v3).
 			// See specs/cortex-concerns.md item 3.
+			continue
+		case section == "throttling":
+			// throttling is a nested-map block
+			// (throttling.{defaults,tools,overrides}); the custom scanner
+			// skips its contents and leaves parsing to
+			// parseThrottlingBlock (yaml.v3). See
+			// specs/per-tool-throttling.md T1.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")
@@ -384,6 +612,37 @@ func parsePolicyYAML(input string) (Policy, error) {
 				return Policy{}, fmt.Errorf("unknown files key %q", key)
 			}
 			p.Files.Protected = parseListValue(val)
+		case section == "promptguard" && indent == 2 && strings.HasSuffix(text, ":"):
+			pgPhase = strings.TrimSuffix(text, ":")
+		case section == "promptguard" && pgPhase == "tool_input":
+			// tool_input is a nested-map block (action + rules + path).
+			// The custom scanner skips every line below `tool_input:`
+			// (any indent >2) and leaves parsing to
+			// parsePromptGuardToolInputBlock (yaml.v3). Mirrors the
+			// mcp_servers and cortex skip patterns above. See
+			// specs/promptguard-hardening.md §T2 item 10.
+			continue
+		case section == "promptguard" && indent == 4:
+			key, val, ok := splitKV(text)
+			if !ok {
+				return Policy{}, fmt.Errorf("invalid promptguard line: %q", raw)
+			}
+			if key != "action" {
+				return Policy{}, fmt.Errorf("unknown promptguard key %q (only 'action' is supported)", key)
+			}
+			cfg := PromptGuardPhaseConfig{Action: unquote(val)}
+			switch pgPhase {
+			case "plan":
+				p.PromptGuard.Plan = cfg
+			case "execute":
+				p.PromptGuard.Execute = cfg
+			case "verify":
+				p.PromptGuard.Verify = cfg
+			case "convergence":
+				p.PromptGuard.Convergence = cfg
+			default:
+				return Policy{}, fmt.Errorf("unknown promptguard phase %q (want plan|execute|verify|convergence)", pgPhase)
+			}
 		case section == "verification" && indent == 2:
 			key, val, ok := splitKV(text)
 			if !ok {

@@ -1,5 +1,7 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-11 -->
+<!-- BUILD_STARTED: 2026-05-12 -->
+<!-- BUILD_COMPLETED: 2026-05-12 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 46 -->
 
@@ -371,7 +373,7 @@ client                       /v2 registry                    pack
 
 ## Implementation Checklist
 
-1. [ ] **T1: v2 manifest schema** — create
+1. [x] **T1: v2 manifest schema** — create
    `internal/skill/manifest_v2.go`. Define `ManifestV2` struct,
    `HookSpec`, `LoadManifestV2(packRoot) (*ManifestV2, error)`.
    Honor backwards-compat path: if `manifest.v2.json` missing,
@@ -384,7 +386,7 @@ client                       /v2 registry                    pack
    Files touched: `internal/skill/manifest_v2.go`,
    `internal/skill/manifest_v2_test.go`.
 
-2. [ ] **T2: Federated registry HTTP — `/v2` handlers** — extend
+2. [x] **T2: Federated registry HTTP — `/v2` handlers** — extend
    `cmd/r1/skills_pack_server.go` with a parallel `/v2/` handler
    tree. Reuse `registryPackPaths`, add v2 detail builder
    `buildRegistryPackDetailV2`. Routes: `/v2/packs`,
@@ -395,7 +397,7 @@ client                       /v2 registry                    pack
    `cmd/r1/skills_pack_server.go`,
    `cmd/r1/skills_pack_server_test.go`.
 
-3. [ ] **T3: OCI artifact distribution path (documentation
+3. [x] **T3: OCI artifact distribution path (documentation
    only)** — add `docs/skills/oci-distribution.md` documenting the
    media-type `application/vnd.r1.pack.v2+json` and the
    pack-as-OCI-artifact layout (config blob = manifest v2 JSON;
@@ -405,7 +407,7 @@ client                       /v2 registry                    pack
    host packs on GHCR/Docker Hub/Harbor/AR. File touched:
    `docs/skills/oci-distribution.md`.
 
-4. [ ] **T4a: R1 native adapter** — create
+4. [x] **T4a: R1 native adapter** — create
    `internal/skill/compat/r1.go`.
    `Adapt(pack *ManifestV2) ([]byte, error)` returns a passthrough
    JSON descriptor; arg/return transform is identity. Used by the
@@ -413,7 +415,7 @@ client                       /v2 registry                    pack
    `internal/skill/compat/r1.go`,
    `internal/skill/compat/r1_test.go`.
 
-5. [ ] **T4b: CloudSwarm runtime adapter** — create
+5. [x] **T4b: CloudSwarm runtime adapter** — create
    `internal/skill/compat/cloudswarm.go`. Read CloudSwarm's
    `SkillDefinition` contract from
    `/home/eric/repos/CloudSwarm/platform/skills/core/base.py`
@@ -428,7 +430,7 @@ client                       /v2 registry                    pack
    Files touched: `internal/skill/compat/cloudswarm.go`,
    `internal/skill/compat/cloudswarm_test.go`.
 
-6. [ ] **T4c: Heroa template adapter** — create
+6. [x] **T4c: Heroa template adapter** — create
    `internal/skill/compat/heroa.go`. Reference Heroa's template
    shape from `/home/eric/repos/heroa/cmd/heroa/deploy.go` and
    `TemplatePolicy`. Adapter wraps a v2 pack as a Heroa template
@@ -440,7 +442,7 @@ client                       /v2 registry                    pack
    Files touched: `internal/skill/compat/heroa.go`,
    `internal/skill/compat/heroa_test.go`.
 
-7. [ ] **T4d: Veritize verification-flow adapter** — create
+7. [x] **T4d: Veritize verification-flow adapter** — create
    `internal/skill/compat/veritize.go`. Reference verification
    flow from
    `/home/eric/repos/veritize/relayone/veritize/internal/api/verify_handler.go`
@@ -452,7 +454,7 @@ client                       /v2 registry                    pack
    touched: `internal/skill/compat/veritize.go`,
    `internal/skill/compat/veritize_test.go`.
 
-8. [ ] **T5: `r1 skills pack adopt` command** — create
+8. [x] **T5: `r1 skills pack adopt` command** — create
    `cmd/r1/pack_adopt_cmd.go`. Wire into `skillsPackCmd`
    dispatcher in `skills_pack_cmd.go` as new case `"adopt"`.
    Flags: `--pack <id>` (required), `--for <product>` (required,
@@ -466,7 +468,7 @@ client                       /v2 registry                    pack
    `cmd/r1/skills_pack_cmd.go` (one-line dispatcher addition +
    updated usage banner).
 
-9. [ ] **T6: Federated trust root — keys + scopes** — create
+9. [x] **T6: Federated trust root — keys + scopes** — create
    `internal/skill/trustroot.go`. Types: `TrustRootDocument`,
    `TrustRootEntry`. Functions: `LoadTrustRoot(path) (*Doc,
    error)`, `SignTrustRoot(doc, priv) error`,
@@ -480,7 +482,7 @@ client                       /v2 registry                    pack
    `internal/skill/trustroot.go`,
    `internal/skill/trustroot_test.go`.
 
-10. [ ] **T6b: Wire trust-root into pack load** — extend
+10. [x] **T6b: Wire trust-root into pack load** — extend
     `loadSkillPackWithSignature` in `cmd/r1/skills_pack_cmd.go`
     to, when a trust-root document is present, call
     `trustroot.MatchKey` and refuse load on mismatch. When no
@@ -489,7 +491,7 @@ client                       /v2 registry                    pack
     `cmd/r1/skills_pack_cmd.go` (extend existing helper; keep
     behavior gated on trust-root presence).
 
-11. [ ] **T7: Pack-runtime negotiation** — implement runtime
+11. [x] **T7: Pack-runtime negotiation** — implement runtime
     check in `internal/skill/manifest_v2.go`:
     `(m *ManifestV2) CheckCompat(runtime string) error`. Called
     by each adapter's `Adapt` entry. Also called by R1's existing
@@ -498,7 +500,7 @@ client                       /v2 registry                    pack
     `compat:["r1"]`). Negotiation textual diagram is in the
     Business Logic section above. Files touched: same as T1.
 
-12. [ ] **T8: v1 backwards compatibility regression** — add
+12. [x] **T8: v1 backwards compatibility regression** — add
     regression tests that run the full v1 pack lifecycle (init,
     sign, verify, install, publish, list, info, search) against
     a pack that ships ZERO v2 artifacts, and assert no behavior
@@ -509,7 +511,7 @@ client                       /v2 registry                    pack
     `cmd/r1/skills_pack_server_test.go`,
     `cmd/r1/testdata/v1_compat/` (golden files).
 
-13. [ ] **T9a: HTTPS + cert config** — add `--cert` and `--key`
+13. [x] **T9a: HTTPS + cert config** — add `--cert` and `--key`
     flags to `r1 skills pack serve` for TLS. Behavior: if both
     present, server uses `ListenAndServeTLS`; if neither, HTTP
     (dev only) with a one-line warning to stderr; if one but not
@@ -517,7 +519,7 @@ client                       /v2 registry                    pack
     `cmd/r1/skills_pack_server.go`,
     `cmd/r1/skills_pack_server_test.go`.
 
-14. [ ] **T9b: Per-IP rate limit** — add a
+14. [x] **T9b: Per-IP rate limit** — add a
     `golang.org/x/time/rate` limiter per remote IP (kept in a
     `sync.Map` of `string -> *rate.Limiter`). Configurable via
     `R1_PACK_REGISTRY_RATE_LIMIT` env (req/min; default 60). On
@@ -528,7 +530,7 @@ client                       /v2 registry                    pack
     `go.mod` / `go.sum` if `golang.org/x/time/rate` not already
     vendored.
 
-15. [ ] **T9c: Registry response signing —
+15. [x] **T9c: Registry response signing —
     `X-R1-Registry-Sig`** — wrap the v2 response writer with a
     signature middleware that computes `sig =
     ed25519.Sign(rootPriv, SHA256(method + " " + path + "\n" +
@@ -537,7 +539,7 @@ client                       /v2 registry                    pack
     trust-root signing key. Files touched:
     `cmd/r1/skills_pack_server.go`.
 
-16. [ ] **T10: Audit trail — `pack.adopted` event** — emit a
+16. [x] **T10: Audit trail — `pack.adopted` event** — emit a
     typed event via the existing bus/ledger surface every time
     `pack adopt` succeeds. Payload: `{ pack_id, pack_version,
     target_product, tenant_id, signer_key_id, adopted_at }`.
@@ -548,7 +550,7 @@ client                       /v2 registry                    pack
     canonical form + persistence helper),
     `internal/ledger/pack_adopted_event_test.go`.
 
-17. [ ] **T11: Conformance test suite** — create
+17. [x] **T11: Conformance test suite** — create
     `internal/skill/compat/conformance_test.go`. Build a fixture
     v2 pack with `compat:["r1","cloudswarm","heroa","veritize"]`,
     sign it with a fixture key, install it into a temp trust
@@ -560,7 +562,7 @@ client                       /v2 registry                    pack
     `internal/skill/compat/conformance_test.go`,
     `internal/skill/compat/testdata/` (fixture pack + key).
 
-18. [ ] **T12a: Pack-author docs** — create
+18. [x] **T12a: Pack-author docs** — create
     `docs/skills/cross-product-distribution.md`. Audience: people
     authoring packs. Cover: when to declare `compat`, how
     `runtime_assertions` work, hook kinds with examples, how to
@@ -568,7 +570,7 @@ client                       /v2 registry                    pack
     negotiation sequence diagram from this spec. File touched:
     above.
 
-19. [ ] **T12b: Operator trust-root runbook** — create
+19. [x] **T12b: Operator trust-root runbook** — create
     `docs/skills/federated-trust.md`. Audience: registry
     operators. Cover: how to generate the root operator key, how
     to add a publisher key to the trust root, how to rotate
@@ -579,7 +581,7 @@ client                       /v2 registry                    pack
     response if root key is suspected compromised. File touched:
     above.
 
-20. [ ] **T13: Operator marketplace playbook** — create
+20. [x] **T13: Operator marketplace playbook** — create
     `docs/skills/marketplace-playbook.md`. Audience: portfolio
     operators evaluating the cross-product story end-to-end.
     Cover: pack discovery via
@@ -589,26 +591,26 @@ client                       /v2 registry                    pack
     product adoption is each team's own spec work). File
     touched: above.
 
-21. [ ] **T14: CLI help + usage text** — extend the help string
+21. [x] **T14: CLI help + usage text** — extend the help string
     in `skillsPackCmd` to include `adopt` in the subcommand list,
     and add detailed usage text in `parseSkillPackAdoptArgs`
     (mirror `parseSkillPackPublishArgs` style). Files touched:
     `cmd/r1/skills_pack_cmd.go`, `cmd/r1/pack_adopt_cmd.go`.
 
-22. [ ] **T15: README install-section callout** — add a
+22. [x] **T15: README install-section callout** — add a
     one-paragraph "Cross-product skill distribution (preview)"
     note to `README.md` linking to
     `docs/skills/cross-product-distribution.md`. No behavioral
     change. File touched: `README.md`.
 
-23. [ ] **T16: CI-gate run** — `go build ./cmd/r1` +
+23. [x] **T16: CI-gate run** — `go build ./cmd/r1` +
     `go vet ./...` + `go test ./...` green. Address any new vet
     findings. Pre-existing failures (e.g. selfscan `//nolint`
     cite at `cmd/r1-server/import.go:254` and
     `cmd/r1/export_cmd.go:455` per oss-hub.md item 6) remain out
     of scope. No files touched if green.
 
-24. [ ] **T17: Mark spec STATUS done** — flip frontmatter
+24. [x] **T17: Mark spec STATUS done** — flip frontmatter
     `STATUS: ready` -> `STATUS: done`, add `BUILD_STARTED` /
     `BUILD_COMPLETED` lines, and per-checklist-item commit
     hashes. File touched:

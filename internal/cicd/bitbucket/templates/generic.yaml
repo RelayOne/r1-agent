@@ -1,0 +1,11 @@
+# generic.yaml — language-agnostic overlay (C5, T17).
+# No language toolchain is installed; the step runs r1 verify only.
+definitions:
+  caches:
+    r1:
+      key:
+        files:
+          - r1.policy.yaml
+      path: ${HOME}/.r1/cache
+before-script-snippet: |
+  echo "Generic R1 step — no language setup."

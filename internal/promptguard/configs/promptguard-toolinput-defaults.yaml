@@ -1,0 +1,44 @@
+# promptguard tool-input defaults.
+#
+# Bundled rule set loaded at package init time via //go:embed from
+# internal/promptguard/toolinput.go. Three rules cover the three
+# dangerous tools called out in specs/promptguard-hardening.md §T2:
+#
+#   - deploy.execute: requires {target, command}; rejects rm -rf /,
+#     curl|wget chained command shapes, and shell command substitution.
+#   - browse.fetch:   requires {url}; rejects local-file (file://),
+#     archive (jar:), and inline-payload (data:) URI schemes.
+#   - file.write:     requires {path, contents}; rejects path traversal
+#     sequences and writes to known-sensitive system files.
+#
+# Action defaults to `reject`: tool input is structurally bounded, so a
+# violation is more clearly malicious than a free-text scan match.
+# Operators flip to `warn` or `strip` via the PromptGuard.ToolInput
+# block in r1.policy.yaml (see internal/config/policy.go).
+promptguard:
+  tool_input:
+    action: reject
+    rules:
+      - tool: deploy.execute
+        require_struct: true
+        struct_fields: [target, command]
+        max_length_kb: 16
+        deny_patterns:
+          - '(?i)\brm\s+-rf\s+/'
+          - '(?i);\s*(curl|wget)\s+'
+          - '\$\(.*\)'
+      - tool: browse.fetch
+        require_struct: true
+        struct_fields: [url]
+        max_length_kb: 4
+        deny_patterns:
+          - '(?i)\bfile://'
+          - '(?i)\bjar:'
+          - '(?i)\bdata:'
+      - tool: file.write
+        require_struct: true
+        struct_fields: [path, contents]
+        max_length_kb: 512
+        deny_patterns:
+          - '\.\./\.\./'
+          - '(?i)/etc/(passwd|shadow|sudoers)'
