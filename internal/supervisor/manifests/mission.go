@@ -12,6 +12,7 @@ import (
 	crossteam "github.com/RelayOne/r1/internal/supervisor/rules/cross_team"
 	"github.com/RelayOne/r1/internal/supervisor/rules/drift"
 	"github.com/RelayOne/r1/internal/supervisor/rules/hierarchy"
+	pgrule "github.com/RelayOne/r1/internal/supervisor/rules/promptguard"
 	"github.com/RelayOne/r1/internal/supervisor/rules/research"
 	"github.com/RelayOne/r1/internal/supervisor/rules/skill"
 	"github.com/RelayOne/r1/internal/supervisor/rules/snapshot"
@@ -66,5 +67,9 @@ func MissionRules() []supervisor.Rule {
 		skill.NewApplicationRequiresReview(),
 		skill.NewContradictsOutcome(),
 		skill.NewImportConsensus(),
+
+		// Promptguard (§T5 item 21): trip a session kill when the
+		// per-session injection-detection budget is exceeded.
+		pgrule.NewBudgetExceeded(),
 	}
 }
