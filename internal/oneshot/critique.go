@@ -24,6 +24,7 @@
 package oneshot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -60,7 +61,13 @@ type critiqueResponse struct {
 }
 
 // handleCritique is invoked by Dispatch when verb=="critique".
-func handleCritique(payload json.RawMessage) (Response, error) {
+// Honors ctx cancellation: a cancelled ctx short-circuits with
+// an ErrCanceled-wrapped error so the timeout / signal path in
+// runOneShotCmd can drop the partial response cleanly.
+func handleCritique(ctx context.Context, payload json.RawMessage) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("oneshot: critique: %w", err)
+	}
 	req := critiqueRequest{}
 	if len(payload) > 0 {
 		if err := json.Unmarshal(payload, &req); err != nil {

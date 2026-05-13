@@ -1,4 +1,5 @@
-.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic smoke-coderadar
+.PHONY: all build test vet lint lint-chdir ci bench bench-cache docker release clean check-pkg-count agent-features agent-features-update agent-features-drift-check lint-views docs-agentic test-oneshot-concurrent
 
 # Default: run the CI gate
 all: build test vet
@@ -33,6 +34,21 @@ lint:
 lint-chdir:
 	./tools/lint-no-chdir.sh
 
+# CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
+# Requires ENV=dev|staging|prod and either CODERADAR_DSN already set or
+# `gcloud` available to materialize the env-scoped secret. Builds only
+# the coderadar package and runs the live `service_started` round-trip
+# behind the coderadar_smoke build tag. Cloud Build invokes this step
+# after deploy-coord-api per services/cloudbuild-deploy.yaml.
+smoke-coderadar:
+	@test -n "$(ENV)" || (echo "ENV=dev|staging|prod required"; exit 1)
+	@if [ -z "$$CODERADAR_DSN" ]; then \
+	  echo "Materializing CODERADAR_DSN from Secret Manager..."; \
+	  export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret=r1-$(ENV)-shared-CODERADAR_DSN); \
+	fi; \
+	CODERADAR_DSN=$${CODERADAR_DSN} R1_ENV=$(ENV) \
+	  go test -tags=coderadar_smoke -count=1 -timeout=30s ./internal/coderadar/...
+
 # Run the bench corpus
 bench:
 	go run ./bench/cmd/bench
@@ -42,6 +58,20 @@ bench:
 # docs/benchmarks/prompt-cache.md.
 bench-cache:
 	go run ./bench/prompt_cache
+
+# A3 — 1000-concurrent oneshot integration benchmark. Behind the
+# `integration` build tag so it doesn't run on every `go test
+# ./...`. Recipe prints the host's ulimits so capacity problems
+# (nofile / nproc / RLIMIT_AS) are obvious.
+#
+# Override the size on a commodity host:
+#   R1_BENCH_CONCURRENCY=100 R1_BENCH_WALL_BUDGET_S=10 make test-oneshot-concurrent
+#
+# Spec: specs/oneshot-production-hardening.md §T5.4.
+test-oneshot-concurrent:
+	@ulimit -n 65535 2>/dev/null || true; ulimit -u 4096 2>/dev/null || true; \
+	echo "nofile=$$(ulimit -n) nproc=$$(ulimit -u) nproc(host)=$$(nproc)" && \
+	go test -tags integration -timeout 5m -run TestOneShot_1000Concurrent -v ./internal/oneshot/
 
 # Build Docker image
 docker:

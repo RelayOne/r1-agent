@@ -14,6 +14,11 @@
 
 substitutions:
   _ENV: prod  # override per trigger; dev | staging | prod
+  # CodeRadar dogfood (spec coderadar-dogfood.md T4). Override per trigger:
+  # dev=1.0, staging=1.0, prod=0.1 for high-volume events ONLY (the
+  # per-event override on provider.call_completed and tool.call_completed
+  # is wired in internal/coderadar/sampler.go SamplerForEnv).
+  _CODERADAR_SAMPLE_RATE: "0.1"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -106,8 +111,8 @@ steps:
           --memory=512Mi \
           --port=8080 \
           --no-cpu-throttling \
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA \
-          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE} \
+          --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest,CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest \
           --add-cloudsql-instances=$PROJECT_ID:us-central1:r1-${_ENV}-pg
 
   - id: deploy-docs
@@ -129,7 +134,8 @@ steps:
           --memory=512Mi \
           --port=8080 \
           --no-cpu-throttling \
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE} \
+          --set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest
 
   - id: deploy-downloads-cdn
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -150,7 +156,8 @@ steps:
           --memory=512Mi \
           --port=8080 \
           --no-cpu-throttling \
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE} \
+          --set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest
 
   - id: deploy-admin
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
@@ -176,12 +183,34 @@ steps:
           --memory=512Mi \
           --port=8080 \
           --no-cpu-throttling \
-          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE} \
+          --set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest
+
+  # CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
+  # Runs the live `service_started` round-trip via `make smoke-coderadar
+  # ENV=${_ENV}`. Pulls CODERADAR_DSN from Secret Manager at runtime.
+  # Failure here blocks promotion to traffic-100% but does NOT roll back
+  # the deploy — observability subscriber failures are non-critical to
+  # service availability. Sequenced after deploy-coord-api so the
+  # ingest is alive but before the generic /livez smoke step so failures
+  # surface early.
+  - id: smoke-coderadar
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['deploy-coord-api']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        apt-get update -qq && apt-get install -y -qq golang-go make
+        export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret=r1-${_ENV}-shared-CODERADAR_DSN)
+        export R1_ENV=${_ENV}
+        make smoke-coderadar ENV=${_ENV}
 
   # Smoke check /livez on all 4 services.
   - id: smoke
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    waitFor: ['deploy-coord-api', 'deploy-docs', 'deploy-downloads-cdn', 'deploy-admin']
+    waitFor: ['deploy-coord-api', 'deploy-docs', 'deploy-downloads-cdn', 'deploy-admin', 'smoke-coderadar']
     entrypoint: bash
     args:
       - -c
