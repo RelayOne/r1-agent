@@ -21,6 +21,7 @@
 package convergence
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -34,29 +35,47 @@ import (
 // sanitizeFileSnippets returns a copy of the JudgeContext with every
 // FileSnippets entry routed through promptguard. The contents of a
 // flagged file are project-supplied text that lands inside an LLM
-// prompt — exactly the surface promptguard is designed to cover. We
-// use ActionWarn (log and pass through) so a legitimate file that
-// happens to contain a trigger phrase (e.g. a README documenting
-// prompt-injection defenses) still reaches the judge; the threat gets
-// logged either way.
-func sanitizeFileSnippets(ctx JudgeContext) JudgeContext {
-	if len(ctx.FileSnippets) == 0 {
-		return ctx
+// prompt — exactly the surface promptguard is designed to cover.
+//
+// Default disposition for the convergence phase is ActionStrip per
+// specs/promptguard-hardening.md §T1: injection-shaped payloads are
+// replaced with a redaction marker before the judge sees them, but
+// the rest of the snippet still reaches the prompt. Operators can
+// downgrade to ActionWarn via the r1.policy.yaml PromptGuard block.
+//
+// Every detection also publishes a ThreatEvent via promptguard.Emit
+// so the per-session budget tracker (T5) and supervisor rules can
+// react.
+func sanitizeFileSnippets(c context.Context, jctx JudgeContext) JudgeContext {
+	if len(jctx.FileSnippets) == 0 {
+		return jctx
 	}
-	cleaned := make(map[string]string, len(ctx.FileSnippets))
-	for path, content := range ctx.FileSnippets {
-		sanitized, report, _ := promptguard.Sanitize(content, promptguard.ActionWarn, path)
+	action := promptguard.PhaseAction("convergence")
+	cleaned := make(map[string]string, len(jctx.FileSnippets))
+	for path, content := range jctx.FileSnippets {
+		source := "convergence:" + path
+		sanitized, report, sanErr := promptguard.Sanitize(content, action, source)
+		if sanErr != nil {
+			slog.Warn("promptguard rejected convergence judge file snippet",
+				"mission", jctx.MissionID, "path", path, "error", sanErr.Error())
+			promptguard.EmitReport(c, "convergence", report)
+			// Reject: drop the snippet rather than feeding the
+			// untrusted text to the judge.
+			continue
+		}
 		if len(report.Threats) > 0 {
 			slog.Warn("promptguard threat detected in convergence judge file snippet",
-				"mission", ctx.MissionID,
+				"mission", jctx.MissionID,
 				"path", path,
 				"threats", len(report.Threats),
+				"action", action.String(),
 				"summary", report.Summary())
+			promptguard.EmitReport(c, "convergence", report)
 		}
 		cleaned[path] = sanitized
 	}
-	ctx.FileSnippets = cleaned
-	return ctx
+	jctx.FileSnippets = cleaned
+	return jctx
 }
 
 // JudgeContext is what the override judge needs to make a decision.
@@ -202,7 +221,7 @@ func (j *LLMOverrideJudge) Propose(ctx JudgeContext) (*JudgeProposal, error) {
 		model = "claude-sonnet-4-6"
 	}
 
-	ctx = sanitizeFileSnippets(ctx)
+	ctx = sanitizeFileSnippets(context.Background(), ctx)
 	userText := vpEngPrompt + buildJudgeContextBlob(ctx)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
 
@@ -240,7 +259,7 @@ func (j *LLMOverrideJudge) Approve(ctx JudgeContext, proposal *JudgeProposal) (*
 		model = "claude-sonnet-4-6"
 	}
 
-	ctx = sanitizeFileSnippets(ctx)
+	ctx = sanitizeFileSnippets(context.Background(), ctx)
 	proposalJSON, _ := json.MarshalIndent(proposal, "", "  ")
 	userText := ctoPrompt + string(proposalJSON) + "\n\nCONTEXT:\n" + buildJudgeContextBlob(ctx)
 	userContent, _ := json.Marshal([]map[string]interface{}{{"type": "text", "text": userText}})
