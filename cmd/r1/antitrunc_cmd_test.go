@@ -257,6 +257,237 @@ func TestRunAntiTruncTail_JSON(t *testing.T) {
 	}
 }
 
+// writeHookFixture lays out a minimal repo containing a plan file and
+// optionally an assistant-output input file. Returns (repo, planPath,
+// inputPath). planPath is relative to repo (matches how operators pass
+// --plan). inputPath is absolute (matches how --input is passed).
+func writeHookFixture(t *testing.T, planBody, inputText string) (repo, planRel, inputAbs string) {
+	t.Helper()
+	repo = t.TempDir()
+	plansDir := filepath.Join(repo, "plans")
+	if err := os.MkdirAll(plansDir, 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	planRel = "plans/build-plan.md"
+	if err := os.WriteFile(filepath.Join(repo, planRel), []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	if inputText != "" {
+		inputAbs = filepath.Join(repo, "input.txt")
+		if err := os.WriteFile(inputAbs, []byte(inputText), 0o644); err != nil {
+			t.Fatalf("write input: %v", err)
+		}
+	}
+	return repo, planRel, inputAbs
+}
+
+// parseHookEnvelope decodes one JSON line from stdout and asserts the
+// verb is the canonical "antitrunc.verify" string. Mirrors the
+// envelope shape declared in cmd/r1/antitrunc_cmd.go::hookEnvelope.
+func parseHookEnvelope(t *testing.T, stdoutBytes []byte) map[string]any {
+	t.Helper()
+	trimmed := bytes.TrimRight(stdoutBytes, "\n")
+	if bytes.Count(trimmed, []byte("\n")) != 0 {
+		t.Fatalf("expected single JSON line, got multiple lines:\n%s", stdoutBytes)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(trimmed, &env); err != nil {
+		t.Fatalf("json.Unmarshal: %v\nbody=%s", err, stdoutBytes)
+	}
+	if env["verb"] != "antitrunc.verify" {
+		t.Errorf("verb = %v, want antitrunc.verify", env["verb"])
+	}
+	return env
+}
+
+func TestAntitruncVerify_HookMode_CleanInputExits0(t *testing.T) {
+	// All plan items checked + no truncation phrase in input → ok.
+	repo, planRel, inputAbs := writeHookFixture(t,
+		"<!-- STATUS: done -->\n- [x] one\n- [x] two\n",
+		"normal helpful assistant text with no flagged phrases at all.\n",
+	)
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncVerify(
+		[]string{"-repo", repo, "-hook-mode", "-plan", planRel, "-input", inputAbs},
+		&stdout, &stderr,
+	)
+	if rc != 0 {
+		t.Fatalf("rc = %d, want 0; stderr=%s\nstdout=%s", rc, stderr.String(), stdout.String())
+	}
+	env := parseHookEnvelope(t, stdout.Bytes())
+	if env["status"] != "ok" {
+		t.Errorf("status = %v, want ok", env["status"])
+	}
+	data := env["data"].(map[string]any)
+	if data["findings_count"].(float64) != 0 {
+		t.Errorf("findings_count = %v, want 0", data["findings_count"])
+	}
+	if data["plan_items_done"].(float64) != 2 || data["plan_items_total"].(float64) != 2 {
+		t.Errorf("plan counts wrong: done=%v total=%v", data["plan_items_done"], data["plan_items_total"])
+	}
+}
+
+func TestAntitruncVerify_HookMode_PhraseFindingExits2(t *testing.T) {
+	// Truncation phrase present in input → expect status:findings
+	// with at least one source:"phrase" entry. The phrase
+	// "I'll defer" hits the canonical premature_stop_let_me regex
+	// in internal/antitrunc/phrases.go.
+	const fixtureInput = "Looking at the remaining work, I'll defer the rest to a later turn.\n"
+	repo, planRel, inputAbs := writeHookFixture(t,
+		"<!-- STATUS: done -->\n- [x] one\n",
+		fixtureInput,
+	)
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncVerify(
+		[]string{"-repo", repo, "-hook-mode", "-plan", planRel, "-input", inputAbs},
+		&stdout, &stderr,
+	)
+	if rc != 2 {
+		t.Fatalf("rc = %d, want 2; stderr=%s\nstdout=%s", rc, stderr.String(), stdout.String())
+	}
+	env := parseHookEnvelope(t, stdout.Bytes())
+	if env["status"] != "findings" {
+		t.Errorf("status = %v, want findings", env["status"])
+	}
+	data := env["data"].(map[string]any)
+	if data["findings_count"].(float64) < 1 {
+		t.Errorf("findings_count = %v, want >=1", data["findings_count"])
+	}
+	findings := data["findings"].([]any)
+	sawPhrase := false
+	for _, f := range findings {
+		fm := f.(map[string]any)
+		if fm["source"] == "phrase" {
+			sawPhrase = true
+			if fm["phrase_id"] == "" {
+				t.Errorf("phrase finding missing phrase_id: %v", fm)
+			}
+		}
+	}
+	if !sawPhrase {
+		t.Errorf("no phrase-source finding found: %v", findings)
+	}
+}
+
+func TestAntitruncVerify_HookMode_PlanItemUncheckedExits2(t *testing.T) {
+	// Clean input but plan has an unchecked item → status:findings
+	// with a source:"scope" entry.
+	repo, planRel, inputAbs := writeHookFixture(t,
+		"<!-- STATUS: in-progress -->\n- [x] done item\n- [ ] unchecked\n",
+		"normal helpful assistant text with nothing flagged.\n",
+	)
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncVerify(
+		[]string{"-repo", repo, "-hook-mode", "-plan", planRel, "-input", inputAbs},
+		&stdout, &stderr,
+	)
+	if rc != 2 {
+		t.Fatalf("rc = %d, want 2; stderr=%s\nstdout=%s", rc, stderr.String(), stdout.String())
+	}
+	env := parseHookEnvelope(t, stdout.Bytes())
+	if env["status"] != "findings" {
+		t.Errorf("status = %v, want findings", env["status"])
+	}
+	data := env["data"].(map[string]any)
+	findings := data["findings"].([]any)
+	sawScope := false
+	for _, f := range findings {
+		fm := f.(map[string]any)
+		if fm["source"] == "scope" {
+			sawScope = true
+		}
+	}
+	if !sawScope {
+		t.Errorf("no scope-source finding found: %v", findings)
+	}
+	if data["plan_items_done"].(float64) != 1 || data["plan_items_total"].(float64) != 2 {
+		t.Errorf("plan counts: done=%v total=%v, want 1/2", data["plan_items_done"], data["plan_items_total"])
+	}
+}
+
+func TestAntitruncVerify_HookMode_EmitsExactlyOneJSONLine(t *testing.T) {
+	// Stdout must have exactly one newline (the one fmt.Fprintln
+	// appends) AND parse as exactly one JSON object. No banner, no
+	// debug, no extras.
+	repo, planRel, _ := writeHookFixture(t,
+		"<!-- STATUS: done -->\n- [x] only\n", "",
+	)
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncVerify(
+		[]string{"-repo", repo, "-hook-mode", "-plan", planRel},
+		&stdout, &stderr,
+	)
+	if rc != 0 {
+		t.Fatalf("rc = %d, want 0; stderr=%s\nstdout=%s", rc, stderr.String(), stdout.String())
+	}
+	out := stdout.Bytes()
+	if n := bytes.Count(out, []byte("\n")); n != 1 {
+		t.Errorf("expected exactly 1 newline in stdout, got %d:\n%q", n, out)
+	}
+	// Stripping the trailing newline must yield exactly one JSON object.
+	body := bytes.TrimRight(out, "\n")
+	var env map[string]any
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("not a single JSON object: %v\nbody=%q", err, body)
+	}
+	// Verify no second object follows.
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if _, err := dec.Token(); err != nil {
+		t.Fatalf("decoder error: %v", err)
+	}
+}
+
+func TestAntitruncVerify_HookMode_PlanPathFlagHonored(t *testing.T) {
+	// Place the plan at a non-default path and assert the envelope's
+	// plan_path matches the resolved absolute location AND the
+	// findings reflect that plan's checklist state.
+	repo := t.TempDir()
+	customDir := filepath.Join(repo, "custom-plans")
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	customPlan := filepath.Join(customDir, "alt-plan.md")
+	if err := os.WriteFile(customPlan,
+		[]byte("<!-- STATUS: in-progress -->\n- [ ] a\n- [ ] b\n- [x] c\n"),
+		0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runAntiTruncVerify(
+		[]string{"-repo", repo, "-hook-mode", "-plan", customPlan},
+		&stdout, &stderr,
+	)
+	if rc != 2 {
+		t.Fatalf("rc = %d, want 2 (2 unchecked items); stderr=%s\nstdout=%s",
+			rc, stderr.String(), stdout.String())
+	}
+	env := parseHookEnvelope(t, stdout.Bytes())
+	data := env["data"].(map[string]any)
+	if data["plan_path"] != customPlan {
+		t.Errorf("plan_path = %v, want %v", data["plan_path"], customPlan)
+	}
+	if data["plan_items_done"].(float64) != 1 || data["plan_items_total"].(float64) != 3 {
+		t.Errorf("plan counts: done=%v total=%v, want 1/3",
+			data["plan_items_done"], data["plan_items_total"])
+	}
+	// Finding for scope must mention the custom path.
+	findings := data["findings"].([]any)
+	if len(findings) == 0 {
+		t.Fatalf("expected at least one finding")
+	}
+	sawScopeWithPath := false
+	for _, f := range findings {
+		fm := f.(map[string]any)
+		if fm["source"] == "scope" && strings.Contains(fm["detail"].(string), customPlan) {
+			sawScopeWithPath = true
+		}
+	}
+	if !sawScopeWithPath {
+		t.Errorf("expected scope finding referencing custom plan path; got: %v", findings)
+	}
+}
+
 func TestRunAntiTruncTail_SinceFilter(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "audit", "antitrunc")

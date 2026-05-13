@@ -143,6 +143,44 @@ The MCP tool `r1.antitrunc.verify` exposes the same verifier to
 external agents. (BLOCKED on spec-8 MCP infrastructure if the
 target tree predates the MCP r1_server merge.)
 
+### Claude Code Stop hook integration
+
+`r1 antitrunc verify --hook-mode` runs as the `Stop` hook for
+Claude Code so the agent cannot end its turn while the plan
+checklist is incomplete or its assistant text contains a known
+truncation phrase. The flag emits a single line of JSON to stdout
+and exits 2 when findings are present; exit 0 when clean. The
+Stop hook protocol uses the non-zero exit to block the agent's
+end_turn, and Claude Code shows the JSON envelope's `findings[]`
+array to the model so it can revise rather than guess.
+
+Canonical `.claude/settings.json` template:
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "r1 antitrunc verify --hook-mode --plan plans/build-plan.md",
+        "timeout": 30
+      }]
+    }]
+  }
+}
+```
+
+JSON envelope shape on stdout:
+
+```json
+{"verb":"antitrunc.verify","status":"ok"|"findings","data":{"findings_count":N,"findings":[{"source":"phrase|scope|tool|consistency","phrase_id":"<id-or-empty>","snippet":"<<=120>","detail":"<<=240>"}],"plan_path":"<resolved-path>","plan_items_done":D,"plan_items_total":T}}
+```
+
+The same flag is what the public TruthfulCompletion benchmark's
+Claude-Code-with-R1-Stop-Hook dispatcher uses; see
+[`specs/truthful-completion-benchmark.md`](../specs/truthful-completion-benchmark.md)
+for the leaderboard methodology.
+
 ## Override path
 
 The operator (NOT the LLM) may pass `--no-antitrunc-enforce` (or set
