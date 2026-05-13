@@ -73,6 +73,8 @@ skilltracker/                      Per-stance loaded-skill table (Note / Drop / 
 snapshot/                          Protected baseline manifest
 wizard/                            First-time config presets
 skillmfr/                          Skill manufacturing pipeline
+skill/                             v1 + v2 manifest, registry, integrations, federated trust root (C7)
+skill/compat/                      Runtime adapters: r1, cloudswarm, heroa, veritize (C7)
 bench/                             Golden mission benchmarking
 bridge/                            V1→V2 bridge adapters
 
@@ -573,6 +575,7 @@ Fourteen specs scoped on 2026-05-11 introduce a new set of internal packages. Ea
   - `concurrency_test.go` — the 1000-concurrent benchmark under build tag `integration`; runs via `make test-oneshot-concurrent` on a 16-core / 32-GiB host.
   - `cmd/mockaudit/main.go` — minimal HMAC-verifying audit sink for the operator runbook.
   CLI plumbing lives in `cmd/r1/oneshot_cmd.go` + `oneshot_memlimit{,_linux,_other}.go`. Driven by `specs/oneshot-production-hardening.md` (A3).
+- **`internal/oneshot/` (extended) + `internal/oneshot/audit/` (new)** — the existing `oneshot` runtime gets memory bounds, per-call timeout enforcement, deterministic shutdown ordering, and a new `audit` subpackage that publishes per-call audit events to a remote ledger of record (the operator's chosen sink, not the local SQLite ledger). The 1000-concurrent integration test lives under `internal/oneshot/loadtest_test.go`. Driven by `specs/oneshot-production-hardening.md` (A3).
 - **`internal/sessionhub/` (extended) + migration module** — the existing session hub gains a `migration` submodule that owns `.r1session` bundle serialization, chain-root-hash continuity verification, and the import / export / migrate CLI verbs. The bundle format is the same canonical-manifest layout the tracebundle already uses, extended with replay state so a re-imported session resumes mid-conversation. Driven by `specs/cross-machine-session-migration.md` (C1).
 - **`internal/admin/` (new)** — server-rendered Go admin panel mounted on the existing `r1-server` process. Five read-only routes (sessions, tenants, billing, audit, anti-trunc events), each backed by a query on the existing data stores; no new persistence layer is introduced. Auth gate is the `internal/auth/middleware` wired with the operator role check. Driven by `specs/admin-panel.md` (A5).
 - **`internal/preflight/` (extended) + `internal/recovery/` (new)** — P0 platform hardening adds a `recovery` package that wraps every long-running goroutine with `recover()` + structured-failure emit, a graceful-shutdown coordinator that drains in-flight tool calls on SIGTERM, and per-session resource limits (memory + open-FD + goroutine cap). `preflight` gains host-permission checks that refuse to start the daemon when the runtime dirs are misconfigured. Driven by `specs/p0-hardening-s0-foundation.md` (A2).

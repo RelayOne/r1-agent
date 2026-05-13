@@ -158,10 +158,12 @@ func skillsCmd(args []string) {
 
 func skillsPackCmd(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: info|init|install|list|publish|search|serve|sign|uninstall|update|verify")
+		fmt.Fprintln(os.Stderr, "skills pack: expected subcommand: adopt|info|init|install|list|publish|search|serve|sign|uninstall|update|verify")
 		os.Exit(2)
 	}
 	switch args[0] {
+	case "adopt":
+		runSkillsPackAdoptCmd(args[1:])
 	case "info":
 		runSkillsPackInfoCmd(args[1:])
 	case "init":
@@ -1246,6 +1248,14 @@ func loadSkillPackWithSignature(packPath string) (*skillmfr.LoadedPack, *skillmf
 	}
 	pack, err := skillmfr.LoadPack(packPath)
 	if err != nil {
+		return nil, nil, err
+	}
+	// C7 T6b: trust-root enforcement. Gated on trust-root presence so
+	// v1 behavior is preserved when no document is configured. The
+	// trust-root document is rooted at the pack's containing repo;
+	// we walk upward from the pack path looking for a .r1/skills/
+	// trust-root.json. If absent OR empty, fall back to v1.
+	if err := enforceTrustRootForLoad(packPath, pack.Meta.Name, signature); err != nil {
 		return nil, nil, err
 	}
 	return pack, signature, nil

@@ -6,6 +6,7 @@ import (
 	"github.com/RelayOne/r1/internal/supervisor/rules/consensus"
 	"github.com/RelayOne/r1/internal/supervisor/rules/drift"
 	"github.com/RelayOne/r1/internal/supervisor/rules/hierarchy"
+	pgrule "github.com/RelayOne/r1/internal/supervisor/rules/promptguard"
 	"github.com/RelayOne/r1/internal/supervisor/rules/research"
 	"github.com/RelayOne/r1/internal/supervisor/rules/skill"
 	"github.com/RelayOne/r1/internal/supervisor/rules/snapshot"
@@ -54,5 +55,9 @@ func BranchRules() []supervisor.Rule {
 		skill.NewLoadAudit(),
 		skill.NewApplicationRequiresReview(),
 		skill.NewContradictsOutcome(),
+
+		// Promptguard (§T5 item 21): branch-level session kill on
+		// sustained injection pressure.
+		pgrule.NewBudgetExceeded(),
 	}
 }
