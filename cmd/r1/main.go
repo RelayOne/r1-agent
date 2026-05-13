@@ -705,6 +705,12 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "promptguard":
+		// specs/promptguard-hardening.md §T3 item 14: dispatch
+		// for `r1 promptguard verify-system-prompt`. Future
+		// promptguard verbs (refresh-corpus, list-patterns) extend
+		// the runPromptguardCmd switch.
+		promptguardCmd(os.Args[2:])
 	case "antitrunc":
 		antitruncCmd(os.Args[2:])
 	case "cf":
