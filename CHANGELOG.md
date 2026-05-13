@@ -34,6 +34,37 @@
   apply).
 - Set `R1_DISABLE_THROTTLE=1` for an instant kill switch.
 - `r1 mcp serve --no-throttle` bypasses the gate for local dev.
+## [unreleased] CodeRadar dogfood event streaming (B3)
+
+### Added
+
+- 18 canonical R1 → CodeRadar events with schema versioning
+  (`internal/coderadar/events.go`).
+- Bus subscriber that mirrors hub events to CodeRadar with a bounded
+  buffer + drain goroutine + circuit breaker
+  (`internal/hub/builtin/coderadar_subscriber.go`).
+- Per-env sampling (`internal/coderadar/sampler.go`) — prod pins
+  `provider.call_completed` and `tool.call_completed` to 10%.
+- Redaction layer (`internal/coderadar/redactor.go`) — hard allowlist
+  per event plus promptguard scrub on free-form string fields.
+- `Emit(ctx, ev)` method on the wrapper that POSTs to `/v1/events`.
+- `make smoke-coderadar ENV=dev` target + `coderadar_smoke`-tagged
+  live test.
+- 4 hero dashboards + 4 alerts documented for `coderadar-admin`
+  import: `docs/observability/coderadar-{events,dashboards,alerts,runbook}.md`.
+- Cloud Build wiring: `CODERADAR_DSN` secret + `CODERADAR_SAMPLE_RATE`
+  env across all 4 service-deploy blocks in
+  `services/cloudbuild-deploy.yaml` plus a new `smoke-coderadar`
+  pipeline step.
+
+### Changed
+
+- `internal/hub/events.go` adds `EventCortexRoundCompleted`,
+  `EventAntiTruncFired`, `EventAntiTruncOverridden`.
+- `internal/bus/bus.go` adds `EvtAntiTruncFired`, `EvtAntiTruncOverridden`.
+- Existing `CaptureError` / `CaptureRecovered` wrapper paths untouched.
+
+Spec: `specs/coderadar-dogfood.md`.
 
 ## [2026-05-01] CLI rename: `stoke` -> `r1`
 

@@ -70,6 +70,31 @@ const (
 	EvtMissionAborted   EventType = "mission.aborted"
 )
 
+// Session migration events (spec C1
+// specs/cross-machine-session-migration.md §6.3 + T25). Emitted by
+// the migration handler and the migration package's WAL-replay
+// divergence detector. Each event carries a JSON payload with the
+// source/destination session ids, the chain root hashes, and the
+// per-event divergence seq (for the divergent variant).
+//
+//   - EvtSessionMigrateExported    — fires on a successful source-side
+//     bundle assembly. Payload: {source_session_id, source_host,
+//     dest_url(optional), chain_root_hash, node_count}.
+//   - EvtSessionMigrateImported    — fires on a successful destination-
+//     side import + chain-root verification. Payload: {source_session_id,
+//     dest_session_id, chain_root_hash, node_count, wal_replayed}.
+//   - EvtSessionMigrateDivergent   — fires when the destination's
+//     post-replay (or partial-replay) chain root does not match the
+//     manifest's. Payload: {source_session_id, dest_session_id,
+//     expected, actual, divergent_at_seq}. Treated as data corruption;
+//     the destination session is flipped to migrated-failed and the
+//     import returns 422.
+const (
+	EvtSessionMigrateExported  EventType = "session.migrate.exported"
+	EvtSessionMigrateImported  EventType = "session.migrate.imported"
+	EvtSessionMigrateDivergent EventType = "session.migrate.divergent"
+)
+
 // Bus observability events.
 const (
 	EvtBusHandlerPanic       EventType = "bus.handler.panic"
@@ -102,6 +127,15 @@ var DescentEventKinds = []EventType{
 	EvtDescentPreCompletionGateFailed,
 	EvtWorkerEnvBlocked,
 }
+
+// Anti-truncation events (spec coderadar-dogfood.md T11). Published by
+// internal/antitrunc/gate.go on each gate firing and override. The
+// CodeRadar bus subscriber mirrors these as canonical `antitrunc.fired`
+// / `antitrunc.overridden` events on the wire.
+const (
+	EvtAntiTruncFired      EventType = "antitrunc.fired"
+	EvtAntiTruncOverridden EventType = "antitrunc.overridden"
+)
 
 // Event is an immutable record published on the bus.
 type Event struct {
