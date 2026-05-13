@@ -31,12 +31,14 @@ func TestParseDSNRawKey(t *testing.T) {
 	if apiKey != "cw_test_456" {
 		t.Fatalf("apiKey=%q", apiKey)
 	}
-	// Test asserts the active SDK's DefaultEndpoint, which the replace
-	// in go.mod points at /home/eric/repos/CodeRadar/sdks/go/coderadar.
-	// That SDK's DefaultEndpoint is "https://api.coderadar.app/v1"
-	// (older third_party/coderadar-go-sdk vendor used "ingest.*"; the
-	// SDK was renamed and the test was not updated until now).
-	if baseURL != "https://api.coderadar.app/v1" {
+	// Test asserts the active SDK's DefaultEndpoint. The
+	// `replace github.com/RelayOne/coderadar/sdks/go/coderadar =>
+	// ./third_party/coderadar-go-sdk` line in go.mod pins the SDK
+	// to the vendored copy whose DefaultEndpoint is
+	// "https://ingest.coderadar.app/v1". A later upstream rename to
+	// api.coderadar.app would require updating both the vendored
+	// SDK and this assertion in the same commit.
+	if baseURL != "https://ingest.coderadar.app/v1" {
 		t.Fatalf("baseURL=%q", baseURL)
 	}
 }
