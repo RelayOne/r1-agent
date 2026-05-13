@@ -2,6 +2,8 @@
 // known prompt-injection shapes before it is concatenated into an LLM
 // prompt.
 //
+// Operator runbook: docs/security/prompt-injection.md
+//
 // The security posture is deliberately modest. Published work
 // (OpenAI/Anthropic/DeepMind adaptive-attack study, 2025) shows that
 // all 12 tested prompt-injection defenses can be bypassed with >90%
