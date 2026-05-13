@@ -156,6 +156,7 @@ func (sf *scopeFlags) resolve(ide string) (ideinstall.Scope, string, error) {
 		}
 		ws := sf.workspace
 		if ws == "" || ws == "." {
+			// LINT-ALLOW chdir-cli-entry: r1 ide install CLI; read-only Getwd anchors workspace IDE-config lookup.
 			cwd, err := os.Getwd()
 			if err != nil {
 				return "", "", fmt.Errorf("resolve workspace dir: %w", err)
@@ -175,6 +176,7 @@ func (sf *scopeFlags) resolve(ide string) (ideinstall.Scope, string, error) {
 	default:
 		scope := ideinstall.DefaultScopeFor(ide)
 		if scope == ideinstall.ScopeWorkspace {
+			// LINT-ALLOW chdir-cli-entry: r1 ide install CLI; read-only Getwd anchors workspace IDE-config lookup.
 			cwd, _ := os.Getwd()
 			return ideinstall.ScopeWorkspace, cwd, nil
 		}
@@ -351,6 +353,7 @@ func defaultPromptInstaller(ide string, stdout, stderr io.Writer) (ideinstall.Re
 	case ideinstall.IDECursor:
 		// Cursor defaults to workspace-scope, matching `r1 ide install
 		// cursor` without flags.
+		// LINT-ALLOW chdir-cli-entry: r1 ide install CLI; read-only Getwd anchors workspace IDE-config lookup.
 		cwd, _ := os.Getwd()
 		res, err := ideinstall.InstallCursor(ideinstall.ScopeWorkspace, cwd)
 		if err == nil {
@@ -364,6 +367,7 @@ func defaultPromptInstaller(ide string, stdout, stderr io.Writer) (ideinstall.Re
 		}
 		return res, err
 	case ideinstall.IDEVSCode:
+		// LINT-ALLOW chdir-cli-entry: r1 ide install CLI; read-only Getwd anchors workspace IDE-config lookup.
 		cwd, _ := os.Getwd()
 		res, err := ideinstall.InstallVSCode(ideinstall.ScopeWorkspace, cwd)
 		if err == nil {

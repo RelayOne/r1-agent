@@ -37,6 +37,7 @@ func jarSearchPaths() []string {
 		// share/r1/plugins next to the bin/ that holds `r1`.
 		out = append(out, filepath.Join(filepath.Dir(exe), "..", "share", "r1", "plugins", JarName))
 	}
+	// LINT-ALLOW chdir-cli-entry: r1 ide install jetbrains; read-only Getwd anchors the install dir.
 	if wd, err := os.Getwd(); err == nil {
 		// Developer checkout: built from ide/jetbrains/.
 		out = append(out, filepath.Join(wd, "ide", "jetbrains", "build", "distributions", JarName))

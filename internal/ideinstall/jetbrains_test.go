@@ -61,8 +61,11 @@ func TestInstallJetBrains_SkipDownloadWhenMissing(t *testing.T) {
 	// Run from a sub-directory so the developer-checkout path
 	// search (ide/jetbrains/build/distributions) misses.
 	wd := t.TempDir()
+	// LINT-ALLOW chdir-test: test-only cwd capture; restores via defer.
 	prev, _ := os.Getwd()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	defer func() { _ = os.Chdir(prev) }()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	_ = os.Chdir(wd)
 
 	_, err := InstallJetBrains(InstallJetBrainsOpts{

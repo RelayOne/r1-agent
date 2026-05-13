@@ -97,6 +97,7 @@ func (cursorDetector) SupportsScope(s Scope) bool {
 func (cursorDetector) DetectConfig(scope Scope, workspaceDir string) (string, bool, error) {
 	if scope == ScopeWorkspace {
 		if strings.TrimSpace(workspaceDir) == "" {
+			// LINT-ALLOW chdir-cli-entry: read-only Getwd to anchor workspace IDE-config lookup.
 			wd, err := os.Getwd()
 			if err != nil {
 				return "", false, fmt.Errorf("resolve workspace dir: %w", err)
@@ -158,6 +159,7 @@ func (vscodeDetector) SupportsScope(s Scope) bool {
 func (vscodeDetector) DetectConfig(scope Scope, workspaceDir string) (string, bool, error) {
 	if scope == ScopeWorkspace {
 		if strings.TrimSpace(workspaceDir) == "" {
+			// LINT-ALLOW chdir-cli-entry: read-only Getwd to anchor workspace IDE-config lookup.
 			wd, err := os.Getwd()
 			if err != nil {
 				return "", false, fmt.Errorf("resolve workspace dir: %w", err)

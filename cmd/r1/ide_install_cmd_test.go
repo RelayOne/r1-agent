@@ -155,8 +155,11 @@ func TestScopeFlags_WindsurfRejectsWorkspace(t *testing.T) {
 
 func TestRunInstallCursor_Workspace(t *testing.T) {
 	ws := t.TempDir()
+	// LINT-ALLOW chdir-test: test-only cwd capture; restores via defer.
 	prev, _ := os.Getwd()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	defer func() { _ = os.Chdir(prev) }()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	if err := os.Chdir(ws); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
@@ -179,8 +182,11 @@ func TestRunInstallJetBrains_SkipDownloadExits4(t *testing.T) {
 	// chdir somewhere with no checked-in jar to make the
 	// developer-checkout path search miss.
 	wd := t.TempDir()
+	// LINT-ALLOW chdir-test: test-only cwd capture; restores via defer.
 	prev, _ := os.Getwd()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	defer func() { _ = os.Chdir(prev) }()
+	// LINT-ALLOW chdir-test: scoped cwd switch within a test.
 	_ = os.Chdir(wd)
 	var stdout, stderr bytes.Buffer
 	code := runInstallJetBrains(
