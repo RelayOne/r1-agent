@@ -28,9 +28,12 @@ import (
 	"sort"
 	"strings"
 
+	"context"
+
 	"github.com/RelayOne/r1/internal/depgraph"
 	"github.com/RelayOne/r1/internal/symindex"
 	"github.com/RelayOne/r1/internal/tfidf"
+	"github.com/RelayOne/r1/internal/throttle"
 	"github.com/RelayOne/r1/internal/vecindex"
 )
 
@@ -55,6 +58,32 @@ type CodebaseServer struct {
 	tfidfIdx *tfidf.Index
 	vecIdx   *vecindex.Index
 	repoRoot string
+
+	// preDispatch carries the optional throttle + input-validation
+	// gates that fire BEFORE HandleToolCall. Wired via
+	// WithThrottler / WithPromptGuard so the two policy gates can be
+	// configured independently. Either field may be nil; an entirely
+	// nil PreDispatch is the open-local-dev posture (no gates).
+	preDispatch PreDispatch
+}
+
+// WithThrottler installs the rate-limit gate that runs BEFORE
+// HandleToolCall on every tools/call request. Mirrors the
+// builder-option pattern used by WithAuthKey / WithCortex on
+// StokeServer. Passing nil clears any previously-installed throttler
+// (open local-dev mode). See specs/per-tool-throttling.md task T7.
+func (s *CodebaseServer) WithThrottler(l throttle.Limiter) *CodebaseServer {
+	s.preDispatch.Throttler = l
+	return s
+}
+
+// WithPromptGuard installs the tool-input validation gate (A1-T2,
+// parallel branch). Wiring lives in the parallel branch; the field
+// is declared here so the two branches' edits sit as siblings
+// inside PreDispatch rather than nested in each other's code.
+func (s *CodebaseServer) WithPromptGuard(fn func(tc ToolCallContext) PreDispatchDecision) *CodebaseServer {
+	s.preDispatch.ValidateInput = fn
+	return s
 }
 
 // NewCodebaseServer creates a server with pre-built indexes.
@@ -1007,10 +1036,33 @@ func (s *CodebaseServer) ServeStdio() error {
 			var params struct {
 				Name      string                 `json:"name"`
 				Arguments map[string]interface{} `json:"arguments"`
+				Meta      map[string]interface{} `json:"meta,omitempty"`
 			}
 			paramsBytes, _ := json.Marshal(req.Params)
 			if err := json.Unmarshal(paramsBytes, &params); err != nil {
 				writeJSONRPC(os.Stdout, req.ID, nil, &jsonRPCError{Code: -32602, Message: "Invalid params"})
+				continue
+			}
+
+			// Pre-dispatch gates (throttle + promptguard) run as
+			// SIBLINGS via the shared PreDispatch.Check helper. C3
+			// wires Throttler, A1-T2 wires ValidateInput; both live
+			// next to each other inside this single call so the two
+			// branches' edits do not collide on the dispatch site.
+			sessionID, tenantID, rawMeta := extractAuthMeta(params.Meta)
+			if dec := s.preDispatch.Check(ToolCallContext{
+				Ctx:       context.Background(),
+				SessionID: sessionID,
+				TenantID:  tenantID,
+				ToolName:  params.Name,
+				Args:      params.Arguments,
+				Meta:      rawMeta,
+			}); !dec.Allowed {
+				writeJSONRPC(os.Stdout, req.ID, map[string]interface{}{
+					"content": []map[string]string{{"type": "text", "text": dec.Message}},
+					"isError": true,
+					"_meta":   map[string]any{"r1_error": dec.MetaError},
+				}, nil)
 				continue
 			}
 

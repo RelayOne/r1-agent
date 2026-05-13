@@ -211,6 +211,12 @@ type Policy struct {
 	// `mcp_servers:`. See specs/cortex-concerns.md item 3.
 	Cortex CortexConfig `json:"cortex,omitempty" yaml:"cortex,omitempty"`
 
+	// Throttling carries per-tool rate-limit policy loaded from the
+	// top-level `throttling:` block in r1.policy.yaml. Parsed by the
+	// yaml.v3-backed loader in throttling.go; the custom line-scanner
+	// skips the section like `mcp_servers:` / `cortex:`. See
+	// specs/per-tool-throttling.md item T1.
+	Throttling ThrottlingConfig `json:"throttling,omitempty" yaml:"throttling,omitempty"`
 	// PromptGuard carries per-phase action knobs for the promptguard
 	// package. See specs/promptguard-hardening.md §T1. Parsed inline by
 	// the custom line-scanner in parsePolicyYAML (section nesting:
@@ -415,6 +421,21 @@ func LoadPolicy(path string) (Policy, error) {
 		return Policy{}, err
 	}
 	p.Cortex = cortex
+	// Parse the throttling top-level block (if any) via yaml.v3 and
+	// validate immediately so malformed rate strings / globs surface
+	// at LoadPolicy time, not at first Allow call. See
+	// specs/per-tool-throttling.md T1.
+	throttling, err := parseThrottlingBlock(raw)
+	if err != nil {
+		return Policy{}, err
+	}
+	if !throttling.IsZero() {
+		normalized, verr := ValidateThrottling(throttling)
+		if verr != nil {
+			return Policy{}, verr
+		}
+		p.Throttling = normalized
+	}
 	// Parse the promptguard.tool_input block (if any) via yaml.v3;
 	// the custom line-scanner above skips its contents. See
 	// specs/promptguard-hardening.md §T2 item 10.
@@ -528,6 +549,13 @@ func parsePolicyYAML(input string) (Policy, error) {
 			// the custom scanner skips all its contents (any indent >0)
 			// and leaves parsing to parseCortexBlock (yaml.v3).
 			// See specs/cortex-concerns.md item 3.
+			continue
+		case section == "throttling":
+			// throttling is a nested-map block
+			// (throttling.{defaults,tools,overrides}); the custom scanner
+			// skips its contents and leaves parsing to
+			// parseThrottlingBlock (yaml.v3). See
+			// specs/per-tool-throttling.md T1.
 			continue
 		case section == "phases" && indent == 2 && strings.HasSuffix(text, ":"):
 			currentPhase = strings.TrimSuffix(text, ":")

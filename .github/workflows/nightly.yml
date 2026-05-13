@@ -1,0 +1,42 @@
+name: nightly
+
+# Nightly cron lane. PR CI continues to run `go test ./...`
+# (which skips the integration-tagged 1000-concurrent benchmark);
+# this workflow drives the heavier oneshot-concurrent job from
+# the operator's `large-linux` self-hosted runner. Guarded by
+# `if: github.event.schedule != ''` so it only runs on the
+# scheduled cron — PR CI continues to run `go test ./...`
+# which skips integration-tagged files.
+#
+# Spec: specs/oneshot-production-hardening.md §T5.4.
+on:
+  schedule:
+    - cron: "17 4 * * *" # 04:17 UTC nightly
+  workflow_dispatch: {}
+
+jobs:
+  oneshot-concurrent:
+    if: github.event.schedule != '' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, large-linux]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: ulimits and host info
+        run: |
+          ulimit -n 65535 || true
+          ulimit -u 4096 || true
+          echo "nofile=$(ulimit -n)"
+          echo "nproc=$(ulimit -u)"
+          echo "host_nproc=$(nproc)"
+          uname -a
+      - name: 1000-concurrent benchmark
+        run: make test-oneshot-concurrent | tee oneshot-concurrent-summary.txt
+      - name: upload summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oneshot-concurrent-summary
+          path: oneshot-concurrent-summary.txt

@@ -1,12 +1,14 @@
-// Package oneshot is the CloudSwarm hero-skill bridge for
-// discrete R1 primitives. CloudSwarm's supervisor sidecar
-// spawns `stoke --one-shot <verb>` to invoke a single R1
-// reasoning service (decompose / verify / critique) without
-// paying the cost of spinning up a full interactive session,
-// loading skills, or wiring a ledger.
+// Package oneshot is the CloudSwarm / RelayGate hero-skill
+// bridge for discrete R1 primitives. CloudSwarm's supervisor
+// sidecar and RelayGate's ContextWorker both spawn
+// `stoke --one-shot <verb>` (or `r1 --one-shot <verb>`) to
+// invoke a single R1 reasoning service (decompose / verify /
+// critique) without paying the cost of spinning up a full
+// interactive session, loading skills, or wiring a ledger.
 //
-// Spec: /home/eric/repos/plans/work-orders/scope/CLOUDSWARM-R1-
-// INTEGRATION.md §5.6.1.
+// Spec: specs/oneshot-production-hardening.md (A3 hardening
+// delta) — and the original CLOUDSWARM-R1-INTEGRATION.md
+// §5.6.1 contract.
 //
 // Contract:
 //   - Input:  path to a JSON file (or "-" for stdin) containing
@@ -22,10 +24,23 @@
 // shape that includes an `error` field; the CLI still exits 0
 // in that case because the program itself ran successfully.
 // Hard runtime errors (e.g. failed JSON marshal) bubble up to
-// the caller as Go errors and map to exit code 1.
+// the caller as Go errors and map to exit code ExitRuntime (1).
+//
+// Cancellation semantics: every Run / RunFromFile / Dispatch
+// signature takes a context.Context. Verb handlers check
+// ctx.Err() before any expensive step; on cancel they return
+// `fmt.Errorf("oneshot: %s: %w", verb, ctx.Err())`.
+//
+// Mid-stream cancel of an Anthropic SSE response leaks a
+// goroutine and an orphan `tool_use` block (anthropic-sdk-go
+// issue #3003). Verb handlers that consume SSE MUST select on
+// <-ctx.Done() AND drain the response body before returning.
+// The three current verbs (decompose, verify, critique) do not
+// stream; this guard is for future verbs.
 package oneshot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,21 +117,28 @@ type Response struct {
 	Data json.RawMessage `json:"data,omitempty"`
 
 	// Note is a human-readable hint, surfaced in CloudSwarm
-	// logs when Status != StatusOK.
+	// logs when Status != StatusOK. The A3 hardening layer
+	// also stamps the resolved correlation id here so the
+	// caller can correlate even when the audit POST dropped.
 	Note string `json:"note,omitempty"`
 }
 
 // Dispatch runs the named verb against the provided payload and
 // returns the response. Returns ErrUnknownVerb for an unknown
-// verb (wrapped so callers can errors.Is).
-func Dispatch(verb string, payload json.RawMessage) (Response, error) {
+// verb (wrapped so callers can errors.Is). Checks ctx.Err()
+// before invoking the handler so a pre-cancelled context never
+// kicks off real work.
+func Dispatch(ctx context.Context, verb string, payload json.RawMessage) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("oneshot: %s: %w", verb, err)
+	}
 	switch verb {
 	case "decompose":
-		return handleDecompose(payload)
+		return handleDecompose(ctx, payload)
 	case "verify":
-		return handleVerify(payload)
+		return handleVerify(ctx, payload)
 	case "critique":
-		return handleCritique(payload)
+		return handleCritique(ctx, payload)
 	default:
 		return Response{}, fmt.Errorf("%w: %q (supported: %v)",
 			ErrUnknownVerb, verb, SupportedVerbs)
@@ -129,10 +151,18 @@ func Dispatch(verb string, payload json.RawMessage) (Response, error) {
 //
 // Input is the verb-specific payload. The CLI's `--one-shot <verb>`
 // already pins the verb so we don't require the Request envelope.
-func Run(verb string, r io.Reader, w io.Writer) error {
+//
+// The returned (resp, err) carries the same Response that was
+// encoded to w on success; on err the writer is untouched. This
+// dual return lets the CLI compute the SHA256(response) for the
+// audit envelope without parsing its own stdout.
+func Run(ctx context.Context, verb string, r io.Reader, w io.Writer) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("oneshot: %s: %w", verb, err)
+	}
 	raw, err := io.ReadAll(r)
 	if err != nil {
-		return fmt.Errorf("oneshot: read input: %w", err)
+		return Response{}, fmt.Errorf("oneshot: read input: %w", err)
 	}
 	// Empty input is treated as an empty payload. Verb handlers
 	// validate required fields themselves and emit a StatusError
@@ -141,32 +171,32 @@ func Run(verb string, r io.Reader, w io.Writer) error {
 	if len(raw) == 0 {
 		payload = nil
 	}
-	resp, err := Dispatch(verb, payload)
+	resp, err := Dispatch(ctx, verb, payload)
 	if err != nil {
-		return err
+		return Response{}, err
 	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(resp); err != nil {
-		return fmt.Errorf("oneshot: write response: %w", err)
+		return Response{}, fmt.Errorf("oneshot: write response: %w", err)
 	}
-	return nil
+	return resp, nil
 }
 
 // RunFromFile is a convenience used by the CLI when the operator
 // passes --input /path. Reads the file, runs the verb, writes to
-// stdout. Accepts "-" or "" to mean "read stdin" which matches
-// the convention used by the rest of the stoke CLI.
-func RunFromFile(verb, inputPath string, w io.Writer) error {
+// w. Accepts "-" or "" to mean "read stdin" which matches the
+// convention used by the rest of the stoke CLI.
+func RunFromFile(ctx context.Context, verb, inputPath string, w io.Writer) (Response, error) {
 	if inputPath == "" || inputPath == "-" {
-		return Run(verb, os.Stdin, w)
+		return Run(ctx, verb, os.Stdin, w)
 	}
 	f, err := os.Open(inputPath)
 	if err != nil {
-		return fmt.Errorf("oneshot: open input: %w", err)
+		return Response{}, fmt.Errorf("oneshot: open input: %w", err)
 	}
 	defer f.Close()
-	return Run(verb, f, w)
+	return Run(ctx, verb, f, w)
 }
 
 // errorResponse is a shared helper for verb handlers: build a

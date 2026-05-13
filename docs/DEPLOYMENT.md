@@ -351,9 +351,28 @@ Not yet wired. Recommended (operator follow-up):
 - Alerting policy on 5xx rate > 1% over 5-min window.
 - Alerting on Cloud SQL CPU > 80% for 5 min.
 
-### CodeRadar dogfood (planned)
+### CodeRadar observability (dogfood)
 
-Once Path-A auth + CodeRadar DSN secrets land, every panic + recovered error in the Go services will route to the in-house CodeRadar instance. DSN per env in Secret Manager: `r1-{env}-shared-CODERADAR_DSN`.
+Status: **Done (B3)**.
+
+Eighteen canonical events stream from each of the 9 Cloud Run services
+to the in-house CodeRadar instance. Per-env DSN is materialized from
+Secret Manager (`r1-{env}-shared-CODERADAR_DSN`) and per-env sampling
+(`CODERADAR_SAMPLE_RATE`, plus 10% prod overrides on the two
+high-volume events) keeps prod under its cost ceiling. The on-call
+surface is four hero dashboards + four alerts.
+
+- Event catalog: [`docs/observability/coderadar-events.md`](observability/coderadar-events.md)
+- Dashboards: [`docs/observability/coderadar-dashboards.md`](observability/coderadar-dashboards.md)
+- Alerts: [`docs/observability/coderadar-alerts.md`](observability/coderadar-alerts.md)
+- Runbook (rotate DSN, disable subscriber, query events): [`docs/observability/coderadar-runbook.md`](observability/coderadar-runbook.md)
+- Spec: [`specs/coderadar-dogfood.md`](../specs/coderadar-dogfood.md)
+
+Cloud Build injects `CODERADAR_DSN` + `CODERADAR_SAMPLE_RATE` per env
+across all 4 service deploys in `services/cloudbuild-deploy.yaml`. The
+`smoke-coderadar` step runs the live `service_started` round-trip
+between `deploy-coord-api` and the generic `/livez` smoke step; failure
+blocks promotion to traffic-100% but does not roll back the deploy.
 
 ---
 

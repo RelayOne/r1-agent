@@ -14,7 +14,7 @@ import (
 // Config configures a Client.
 type Config struct {
 	APIKey  string
-	BaseURL string // default https://api.heroa.dev
+	BaseURL string // default https://api.heroa.app
 	// HTTPClient is an optional override. When nil, a client with a 30s
 	// timeout is used.
 	HTTPClient *http.Client
@@ -41,7 +41,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.heroa.dev"
+		baseURL = "https://api.heroa.app"
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	client := cfg.HTTPClient
@@ -91,8 +91,19 @@ type Hooks struct {
 }
 
 // DeployRequest mirrors scope §5.2.
+//
+// Spec 06 introduces Image as an alternative source to Template. Exactly one
+// of Template or Image must be set. Image takes the form
+// "oci://<registry>/<repo>:<tag>" or
+// "oci://<registry>/<repo>@sha256:<digest>" and resolves through the
+// control-plane OCI pipeline to a Heroa-built rootfs.
 type DeployRequest struct {
-	Template      string
+	// Template is a first-party template slug (e.g., "next-ssr"). Mutually
+	// exclusive with Image.
+	Template string
+	// Image is an OCI reference (e.g., "oci://docker.io/library/alpine:3.19").
+	// Mutually exclusive with Template.
+	Image         string
 	Region        string
 	AppName       string
 	AppRegionPin  string
@@ -218,8 +229,11 @@ type errorResponseWire struct {
 // Deploy creates a new instance. Returns *Instance on success, *HeroaError
 // on any control-plane failure.
 func (c *Client) Deploy(ctx context.Context, req DeployRequest) (*Instance, error) {
-	if req.Template == "" {
-		return nil, fmt.Errorf("heroa: DeployRequest.Template is required")
+	if req.Template == "" && req.Image == "" {
+		return nil, fmt.Errorf("heroa: DeployRequest requires Template or Image")
+	}
+	if req.Template != "" && req.Image != "" {
+		return nil, fmt.Errorf("heroa: DeployRequest must set Template or Image, not both")
 	}
 	if req.Region == "" {
 		return nil, fmt.Errorf("heroa: DeployRequest.Region is required")
@@ -658,11 +672,20 @@ func requestToWire(appName string, req DeployRequest) createMachineRequestWire {
 	if isolation == "" {
 		isolation = "firecracker"
 	}
+	// MachineConfig.Image accepts either a first-party template slug (e.g.,
+	// "next-ssr") or a fully-qualified OCI reference (e.g.,
+	// "oci://docker.io/library/alpine:3.19"). The control plane discriminates
+	// on the "oci://" prefix and routes OCI references through the OCI build
+	// pipeline; bare slugs continue to resolve against templates/<slug>/.
+	imageOrTemplate := req.Template
+	if req.Image != "" {
+		imageOrTemplate = req.Image
+	}
 	return createMachineRequestWire{
 		Name:   appName,
 		Region: req.Region,
 		Config: machineConfigWire{
-			Image:         req.Template,
+			Image:         imageOrTemplate,
 			Guest:         guestConfigWire{CPUs: shape.CPUs, MemoryMB: shape.MemoryMB},
 			Env:           env,
 			Metadata:      meta,

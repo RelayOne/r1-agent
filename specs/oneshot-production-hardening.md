@@ -1,5 +1,6 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-11 -->
+<!-- BUILD_COMPLETED: 2026-05-12 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 35 -->
 
@@ -626,3 +627,6 @@ acceptance step:
 
 If any of these fail, the spec is not complete. Open a fresh repair
 spec under `specs/` rather than amending this one.
+
+<!-- BUILD_COMPLETED: 2026-05-12 -->
+
