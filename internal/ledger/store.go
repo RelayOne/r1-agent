@@ -156,6 +156,33 @@ func (s *Store) WriteNode(n Node) error {
 	return nil
 }
 
+// WriteContentBlob persists a raw content-envelope blob for a node
+// whose chain-tier record is already on disk. The blob is the
+// JSON-encoded `{salt, content}` shape contentRecord uses
+// internally; callers (the migration import path) re-marshal the
+// envelope on the source side via the same shape so the bytes
+// round-trip verbatim.
+//
+// This is the migration-package's complement to WriteNode for
+// situations where the chain tier was written separately (e.g.
+// via WriteNode with a header-only node) and only the content tier
+// needs to land. Encrypted DEK envelopes pass through opaquely —
+// the content bytes are written byte-for-byte without inspection.
+//
+// Returns an error if nodeID is empty or if the underlying file
+// write fails. Re-writing an existing content tier is allowed (and
+// idempotent) so a re-import overwrites cleanly.
+func (s *Store) WriteContentBlob(nodeID string, envelope []byte) error {
+	if nodeID == "" {
+		return errors.New("ledger: WriteContentBlob: empty node id")
+	}
+	if len(envelope) == 0 {
+		return nil
+	}
+	path := filepath.Join(s.contentDir, nodeID+".json")
+	return os.WriteFile(path, envelope, 0o600)
+}
+
 // ReadNode loads a node by merging its chain tier + (optional) content
 // tier. A node whose content has been crypto-shredded returns a Node with
 // empty Content (and no error) — callers that require content must check

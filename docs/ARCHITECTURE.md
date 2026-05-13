@@ -290,6 +290,21 @@ tools/agent-feature-runner/        Gherkin-flavored markdown parser + dispatcher
 tools/lint-view-without-api/       UI-without-API CI lint
 tests/agent/                       8 seed feature fixtures across 10 categories
 docs/AGENTIC-API.md                External-agent contract
+
+--- CROSS-MACHINE SESSION MIGRATION (spec C1) ---
+internal/migration/bundle.go              .r1session format (manifest + Ed25519 sign/verify)
+internal/migration/importer.go            Destination-side Import pipeline + chain-root verify
+internal/migration/idempotency.go         migration_imports SQLite table + memory store
+internal/migration/replay.go              Bus WAL replay with incremental partial-root checks
+internal/migration/events.go              session.migrate.{exported,imported,divergent} emitter
+internal/migration/source.go              LedgerBundleSource — production BundleSource
+internal/server/sessionhub/migrate.go     BeginMigrateOut/EndMigrateOut + IsMigrating latch
+cmd/r1-server/migrate_out.go              POST /api/session/{id}/migrate-out streaming handler
+cmd/r1-server/migrate_in.go               POST /api/session/migrate-in ingestion handler
+cmd/r1/session_export_cmd.go              r1 session export <id> [-o file] [--force] [--park]
+cmd/r1/session_import_cmd.go              r1 session import <file>
+cmd/r1/session_migrate_cmd.go             r1 session migrate <id> --to <dest-url>
+docs/operations/session-migration.md      Operator runbook (export / transfer / import / verify)
 ```
 
 ## System components
@@ -355,6 +370,30 @@ The `GET /api/session/{id}/export.tracebundle` endpoint produces a portable per-
 3. **Canonical manifest signing body** — `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns the deterministic byte-body the manifest signs over, sharing the same canonical layout cmd/r1-server's sign + verify and out-of-tree verifiers use.
 
 `cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it. (Spec D — D-UI2-7 — removed the prior `R1_SERVER_UI_V2` envelope gate; the route is always reachable.)
+
+### Cross-machine session migration (spec C1, 2026-05-12)
+
+The `.r1session` bundle is the live-half complement to the `.tracebundle`: it carries every byte required to resume a session on a different daemon, not just the read-only forensic export. Architecture:
+
+1. **`internal/migration` package** — bundle format + sign/verify + import pipeline. Stdlib only (`archive/tar`, `compress/gzip`, `encoding/json`, `crypto/ed25519`, `crypto/sha256`). The `BundleSource` interface keeps the package decoupled from `internal/memory`, `internal/skill`, `internal/cortex`, and the daemon's session registry. Concrete `LedgerBundleSource` adapts a `ledger.Store` + a handful of callback fields into the interface for the production export path.
+
+2. **Manifest layout** — `manifest.json` is emitted LAST so every count + sha256 (chain-root hash, WAL sha256, memory sha256) is known before signing. The canonical body is `ledger.CanonicalManifestSignBody("r1session", 1, sessionID, chainRootHash, exportedAt, signer)` — the same canonical form the tracebundle path uses, so downstream verifiers wired for tracebundle signatures verify migration manifests with zero new code.
+
+3. **Bundle archive paths (deterministic order)**: `ledger/chain.ndjson` → `ledger/edges.ndjson` → `ledger/content/<id>.json` blobs → `ledger/content/redacted.json` → `bus/wal.ndjson` → `bus/wal.index.json` (with partial-chain-root checkpoints every 100 events) → `memory/rows.ndjson` → `memory/index.json` → `skills/pack-refs.json` (refs only; bodies are pre-staged on the destination via `r1 skills pack install`) → `lobe-state/<id>.json` → `lanes/snapshot.json` → `checkpoint/pre-export.json` → `manifest.json` → `signature.ed25519`. Tar entries use zero-mtime headers so two exports of the same input are byte-identical.
+
+4. **Import pipeline** (`migration.Importer.Import`): verify signature → tenant claim → idempotency (SQLite `migration_imports` table, manifest-sha256-keyed) → schema-version → skill-pack pre-flight (PackChecker interface; missing packs → 422 with the list) → allocate destination session (state=`migrating-in`) → hydrate ledger (nodes + edges + content; MissionID re-mapped from source-id to dest-id) → hydrate memory (encryption envelopes preserved byte-for-byte) → WAL replay with **incremental partial-chain-root checks** every 100 events → restore lobes + lanes → **final chain-root verify** → record idempotency row → flip state to `idle` → emit `session.migrate.imported` bus event. Any failure between allocation and the final verify flips the destination session to `migrated-failed` for operator inspection; the idempotency table is NOT updated so a retry succeeds.
+
+5. **Active-session safety** — `SessionHub.BeginMigrateOut(id, force)` (`internal/server/sessionhub/migrate.go`) refuses to latch a `running` / `tool-in-flight` session unless `force=true`. The agent loop's mid-turn observer consults `SessionHub.IsMigrating(id)` and yields after the current `assistant`/`tool_result` pair completes (RT-CANCEL-INTERRUPT-safe; no orphaned `tool_use`). Successful export pairs with `EndMigrateOut(id, parked)` to either flip back to live (`parked=false`) or park the source read-only (`parked=true`).
+
+6. **Three new bus events** — `session.migrate.exported`, `session.migrate.imported`, `session.migrate.divergent` (declared in `internal/bus/bus.go`; emitted via `migration.BusEventEmitter`). The divergent event carries `{expected, actual, divergent_at_seq}` for audit replay.
+
+7. **HTTP surface** — `POST /api/session/{id}/migrate-out` (`cmd/r1-server/migrate_out.go`) streams a gzip-tar response; `POST /api/session/migrate-in` (`cmd/r1-server/migrate_in.go`) ingests one. Both run inside the daemon's bearer-protected mux. Cross-tenant migration is rejected with 403 (v1 requires both daemons to hold the same master key, per encryption-at-rest spec).
+
+8. **CLI surface** — `r1 session export <id> [-o file] [--force] [--park]`, `r1 session import <file>`, `r1 session migrate <id> --to <dest-url>`. Singular form (`session`) distinguishes the migration verbs from the existing read-only `r1 sessions` checkpoint browser.
+
+9. **Integration test** — `internal/migration/integration_roundtrip_test.go` builds with `-tags integration_session_migrate`. Seeds 1000 turns into a source `ledger.Store`, exports, imports into a fresh destination store, and asserts (a) destination chain root byte-equals source's, (b) bundle ≤100MB, (c) wall-clock <60s.
+
+References: spec [`specs/cross-machine-session-migration.md`](../specs/cross-machine-session-migration.md), runbook [`docs/operations/session-migration.md`](operations/session-migration.md).
 
 ### Release-rehearsal CI lane (final-sweep PR #170)
 
