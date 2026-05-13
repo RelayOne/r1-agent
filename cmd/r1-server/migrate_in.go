@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -74,7 +75,7 @@ func (d *DB) serveMigrateIn(w http.ResponseWriter, r *http.Request) {
 		Lobes:          nil, // r1-server is a passive observer; lobe state lands as a verbatim row on the dest's filesystem ledger (handled below)
 		Lanes:          nil,
 		Idempotency:    migration.NewSQLiteIdempotencyStore(d.sql),
-		PackChecker:    skillPackPresenceChecker{},
+		PackChecker:    newSkillPackPresenceChecker(dataDirOrEmpty()),
 		Emitter:        migration.NoopEventEmitter{},
 		WALReplayer:    &dbWALReplayer{db: d},
 	}
@@ -405,17 +406,66 @@ func (r *dbWALReplayer) ReplayWAL(destSessionID string, walBytes []byte, onProgr
 	return count, nil
 }
 
-// skillPackPresenceChecker implements migration.PackChecker. v1 wires
-// a permissive checker: every pack ref is treated as present so the
-// destination doesn't reject imports for packs the dashboard doesn't
-// own. A future hook into internal/skill.Registry tightens this.
-type skillPackPresenceChecker struct{}
+// skillPackPresenceChecker implements migration.PackChecker by
+// looking for an installed pack on the destination's filesystem.
+// The canonical install location is one of:
+//
+//   - <data-dir>/skills/packs/<pack_id>/<content_hash>/pack.yaml
+//   - <data-dir>/skills/packs/<pack_id>/pack.yaml          (no hash suffix)
+//   - $HOME/.r1/skills/packs/<pack_id>/...
+//
+// We check both data-dir and home-dir paths so a destination that
+// stores packs under either layout reports present. The content_hash
+// match — when supplied — is enforced via a directory-name suffix
+// check; if the source's pack ref carries an empty content_hash
+// (a pack-pinning lapse on the source side) we fall back to a
+// pack_id-only check so the import isn't blocked by a missing hash.
+type skillPackPresenceChecker struct {
+	dataDir string
+}
 
-// HasPack implements migration.PackChecker.
-func (skillPackPresenceChecker) HasPack(packID, contentHash string) bool {
-	_ = packID
-	_ = contentHash
-	return true
+// newSkillPackPresenceChecker builds a checker scoped to the daemon's
+// data directory. Wired by serveMigrateIn from ensureDataDir().
+func newSkillPackPresenceChecker(dataDir string) skillPackPresenceChecker {
+	return skillPackPresenceChecker{dataDir: dataDir}
+}
+
+// HasPack implements migration.PackChecker. Returns true when an
+// installed pack matching (pack_id, content_hash) is reachable on
+// the destination's filesystem.
+func (c skillPackPresenceChecker) HasPack(packID, contentHash string) bool {
+	if packID == "" {
+		return false
+	}
+	candidateRoots := []string{}
+	if c.dataDir != "" {
+		candidateRoots = append(candidateRoots,
+			filepath.Join(c.dataDir, "skills", "packs", packID),
+		)
+	}
+	if home, herr := os.UserHomeDir(); herr == nil {
+		candidateRoots = append(candidateRoots,
+			filepath.Join(home, ".r1", "skills", "packs", packID),
+		)
+	}
+	for _, root := range candidateRoots {
+		// Layout A: <root>/<content_hash>/pack.yaml (hash-pinned).
+		if contentHash != "" {
+			if _, err := os.Stat(filepath.Join(root, contentHash, "pack.yaml")); err == nil {
+				return true
+			}
+		}
+		// Layout B: <root>/pack.yaml (single-version installs).
+		if _, err := os.Stat(filepath.Join(root, "pack.yaml")); err == nil {
+			// When the source carried a non-empty content_hash, we
+			// can't prove the hash matches without parsing the
+			// installed pack's manifest. v1 accepts a pack_id match
+			// here — a future spec tightens this via a manifest
+			// content-hash read.
+			return true
+		}
+	}
+	return false
 }
 
 // splitLines is a small helper that splits raw on '\n' without

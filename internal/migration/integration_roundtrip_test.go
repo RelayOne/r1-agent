@@ -42,9 +42,11 @@ import (
 // daemon HTTP round-trip is exercised by separate cmd/r1-server
 // integration tests (out of scope here).
 func TestIntegration_RoundTrip1000Turns(t *testing.T) {
-	if testing.Short() {
-		t.Skip("integration round-trip test skipped in -short mode")
-	}
+	// The -tags integration_session_migrate build tag is the gate;
+	// no need to additionally gate on -short. The test runs only when
+	// the operator opts in via the tag (matches the spec's "author
+	// it but don't run live" instruction — it's wired into CI but
+	// out of the default unit-test gate).
 	start := time.Now()
 	const numTurns = 1000
 	sessionID := "integration-source-sess"
@@ -182,14 +184,21 @@ func TestIntegration_RoundTrip1000Turns(t *testing.T) {
 	}
 
 	// Final assertion: destination chain root byte-equals source's.
-	destRootHash, err := destStore.ChainRootHashForSession("integration-source-sess")
+	// We query via the destination session id the allocator minted
+	// — the importer rewrites MissionID from source-id to dest-id,
+	// and ChainRootHashForSession filters by MissionID. Hash equality
+	// holds because the hash algorithm itself does NOT include
+	// MissionID in its hash input (see ledger/store_session.go).
+	destRootHash, err := destStore.ChainRootHashForSession(out.NewSessionID)
 	if err != nil {
 		t.Fatalf("dest chain root: %v", err)
 	}
-	// Diagnostic: how many nodes did we actually persist?
-	destNodes, _ := destStore.ListNodesForSession("integration-source-sess")
+	destNodes, _ := destStore.ListNodesForSession(out.NewSessionID)
 	if destRootHash != srcRoot1 {
 		t.Errorf("chain root mismatch:\n  source=%s\n  dest  =%s\n  dest_node_count=%d", srcRoot1, destRootHash, len(destNodes))
+	}
+	if len(destNodes) != numTurns {
+		t.Errorf("dest persisted %d nodes; expected %d", len(destNodes), numTurns)
 	}
 
 	// Wall-clock budget.
@@ -202,26 +211,23 @@ func TestIntegration_RoundTrip1000Turns(t *testing.T) {
 
 // liveLedgerHydrator wires a real ledger.Store into the importer's
 // LedgerHydrator interface — used only by this integration test.
-// The chain-root hash on the destination is computed by the same
-// algorithm the source uses (Store.ChainRootHashForSession), so a
-// byte-for-byte ledger round-trip produces a byte-equal hash.
+//
+// Why the byte-equal hash works without restoring MissionID:
+// ChainRootHashForSession's algorithm (see store_session.go) hashes
+// over (prev_hash || node_id || content_commitment) — MissionID is
+// NOT part of the hash input. So the importer's normal MissionID
+// rewrite (source-id → dest-id) is harmless for the hash equality
+// assertion; we let the importer do its real job and query the
+// destination's allocated session id directly.
 type liveLedgerHydrator struct {
 	store *ledger.Store
 }
 
-// HydrateNode implements LedgerHydrator. The importer has already
-// re-mapped MissionID to the destination session id; we use the
-// re-mapped value as the chain-root key on the destination side.
-// To make the destination's chain-root equal the source's, the test
-// arranges the destination session id to match the source's via
-// stubAllocator — see TestIntegration_RoundTrip1000Turns.
+// HydrateNode implements LedgerHydrator. Passes the node through
+// verbatim — including the importer's MissionID rewrite. This is
+// the production hydration path; the integration test exercises it
+// unchanged.
 func (h *liveLedgerHydrator) HydrateNode(n ledger.Node) error {
-	// Restore the original source MissionID so the destination's
-	// chain root hash matches the source's. (The importer rewrites
-	// MissionID to the destination session id by default; the
-	// integration test asserts byte-equal hashes, which requires
-	// the MissionID to stay the source's value.)
-	n.MissionID = "integration-source-sess"
 	return h.store.WriteNode(n)
 }
 
@@ -235,11 +241,10 @@ func (h *liveLedgerHydrator) HydrateContent(nodeID string, blob []byte) error {
 	return h.store.WriteContentBlob(nodeID, blob)
 }
 
-// ChainRootHashForSession implements LedgerHydrator. Note that the
-// integration test queries the source's session id (rather than the
-// allocator's mint) because HydrateNode restores the source-id on
-// every imported node.
+// ChainRootHashForSession implements LedgerHydrator. Delegates to
+// the real store — no override. The test queries via the destination
+// session id the allocator minted, which is what the importer also
+// passes in the final-verify call.
 func (h *liveLedgerHydrator) ChainRootHashForSession(sessionID string) (string, error) {
-	_ = sessionID
-	return h.store.ChainRootHashForSession("integration-source-sess")
+	return h.store.ChainRootHashForSession(sessionID)
 }
