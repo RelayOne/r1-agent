@@ -1,0 +1,83 @@
+diff --git a/internal/logger/logger.go b/internal/logger/logger.go
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/internal/logger/logger.go
+@@ -0,0 +1,20 @@
++package logger
++
++import (
++	"log/slog"
++	"os"
++)
++
++// NewSlogLogger returns a JSON-format slog.Logger pinned to stdout.
++func NewSlogLogger() *slog.Logger {
++	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
++	return slog.New(h)
++}
++
++// WithFields returns a derived logger carrying the supplied attrs.
++func WithFields(l *slog.Logger, fields map[string]any) *slog.Logger {
++	args := make([]any, 0, 2*len(fields))
++	for k, v := range fields {
++		args = append(args, slog.Any(k, v))
++	}
++	return l.With(args...)
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index abc..def 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -1,11 +1,11 @@
+ package server
+
+ import (
+-	"log"
++	"log/slog"
+ 	"net/http"
+ )
+
+-type Server struct{ Addr string }
++type Server struct{ Addr string; Logger *slog.Logger }
+
+ func (s *Server) Run() error {
+-	log.Printf("server listening on %s", s.Addr)
++	s.Logger.Info("server listening", "addr", s.Addr)
+ 	return http.ListenAndServe(s.Addr, nil)
+ }
+diff --git a/internal/worker/worker.go b/internal/worker/worker.go
+index 222..333 100644
+--- a/internal/worker/worker.go
++++ b/internal/worker/worker.go
+@@ -1,9 +1,9 @@
+ package worker
+
+-import "log"
++import "log/slog"
+
+-type Worker struct{ ID string }
++type Worker struct{ ID string; Logger *slog.Logger }
+
+ func (w *Worker) Run() {
+-	log.Printf("worker %s started", w.ID)
++	w.Logger.Info("worker started", "id", w.ID)
+ }
+diff --git a/internal/db/db.go b/internal/db/db.go
+index 444..555 100644
+--- a/internal/db/db.go
++++ b/internal/db/db.go
+@@ -1,9 +1,9 @@
+ package db
+
+-import "log"
++import "log/slog"
+
+-type DB struct{ DSN string }
++type DB struct{ DSN string; Logger *slog.Logger }
+
+ func (d *DB) Connect() error {
+-	log.Printf("connecting to %s", d.DSN)
++	d.Logger.Info("connecting", "dsn", d.DSN)
+ 	return nil
+ }

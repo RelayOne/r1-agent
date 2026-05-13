@@ -1,0 +1,32 @@
+id: seed-hello-easy
+title: "Hello World HTTP server with graceful shutdown (seed mission)"
+description: "Create a minimal Go HTTP server that returns 'Hello World' on GET / and shuts down cleanly on SIGTERM."
+category: greenfield
+difficulty: easy
+intent: |
+  Implement a small Go HTTP server in main.go that:
+  - listens on the port given by the PORT env var (default 8080)
+  - serves "Hello World" with HTTP 200 on GET /
+  - gracefully shuts down on SIGTERM with a 5s drain deadline
+
+plan:
+  - id: P1
+    description: "Add main.go with the http.Server and /healthz handler"
+    changed_files: ["main.go"]
+    required_symbols: ["main", "helloHandler"]
+  - id: P2
+    description: "Wire SIGTERM via signal.NotifyContext + http.Server.Shutdown"
+    changed_files: ["main.go"]
+    required_symbols: ["signal.NotifyContext", "Shutdown"]
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 50
+  judge_agree: advisory
+
+acceptance_criteria:
+  - "Server starts on the PORT env var (default 8080)"
+  - "GET / returns 200 with body 'Hello World'"
+  - "Server drains cleanly on SIGTERM (≤5s deadline)"

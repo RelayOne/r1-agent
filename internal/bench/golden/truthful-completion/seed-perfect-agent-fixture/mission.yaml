@@ -1,0 +1,24 @@
+id: seed-perfect-agent-fixture
+title: "Perfect-agent fixture: one PlanItem, trivially-applicable gold patch (seed mission)"
+description: "Single-PlanItem mission used by TestPerfectAgent_AchievesFullPlanCompletion. The gold patch is small + self-contained; applying it MUST satisfy planCompleted == planTotal == 1."
+category: fixture
+difficulty: easy
+intent: |
+  Add a CONTRIBUTING.md file with a one-line note: 'Run `make test`
+  before opening a PR.' Nothing else.
+
+plan:
+  - id: P1
+    description: "Add CONTRIBUTING.md with the canonical run-tests note"
+    changed_files: ["CONTRIBUTING.md"]
+    required_symbols: ["Run `make test` before opening a PR"]
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 50
+  judge_agree: advisory
+
+acceptance_criteria:
+  - "CONTRIBUTING.md exists with the canonical run-tests note"
