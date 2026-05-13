@@ -1,0 +1,57 @@
+{{- define "sessions_list.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="sessions-h">
+  <h2 id="sessions-h">Sessions <small class="muted">({{ .Page.Total }} total)</small></h2>
+
+  <form method="get" action="/admin/sessions" class="filter-row" role="search">
+    <label>Tenant <input type="text" name="tenant" value="{{ .Filters.Tenant }}" autocomplete="off"></label>
+    <label>Status <input type="text" name="status" value="{{ .Filters.Status }}" autocomplete="off"></label>
+    <label>Age &lt; (sec) <input type="number" name="age_lt" value="{{ .Filters.AgeLT }}" min="0"></label>
+    <button type="submit">Apply</button>
+  </form>
+
+  <table class="data-table" aria-describedby="sessions-h">
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">Tenant</th>
+        <th scope="col">Model</th>
+        <th scope="col">State</th>
+        <th scope="col">Started</th>
+        <th scope="col">Age (sec)</th>
+        <th scope="col">Phase-2</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td>{{ .ID }}</td>
+        <td>{{ .Tenant }}</td>
+        <td>{{ .Model }}</td>
+        <td><span class="state state-{{ .State }}">{{ .State }}</span></td>
+        <td>{{ .StartedAt.UTC.Format "2006-01-02 15:04:05Z" }}</td>
+        <td>{{ .AgeSeconds }}</td>
+        <td>{{ template "phase2_btn" "Force End" }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="7" class="empty">No sessions match the filter.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+
+  {{ template "pagination" .Page }}
+</section>
+{{ end }}
+{{- end -}}
+
+{{- define "pagination" -}}
+<nav class="pagination" aria-label="pagination">
+  <span class="page-info">Page {{ .PageNumber }} of {{ .PageCount }}</span>
+  {{ if .HasPrev }}<a href="?offset={{ .PrevOffset }}&amp;limit={{ .Limit }}" rel="prev">&larr; Prev</a>{{ end }}
+  {{ if .HasNext }}<a href="?offset={{ .NextOffset }}&amp;limit={{ .Limit }}" rel="next">Next &rarr;</a>{{ end }}
+</nav>
+{{- end -}}

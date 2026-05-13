@@ -108,6 +108,10 @@ func TestMemoryRecalled_ValidateHappyPath(t *testing.T) {
 // (work-stoke T11): adding memory_stored + memory_recalled brought the total
 // registered node-type count to 30. Artifact parity adds two more node types,
 // the Beacon protocol adds twelve more, the trust layer adds five more,
+// SkillUnloaded (PR #150) adds one more, and AdminViewed (A5) adds one
+// more, so the current invariant is 51.
+// If a future node type is added, bump this number in the same commit that
+// adds it so the guard actually blocks accidental registrations.
 // SkillUnloaded (PR #150) adds one more, and SystemPromptFingerprint
 // (spec promptguard-hardening §T3 item 12) adds one more, so the
 // current invariant is 51. If a future node type is added, bump this
