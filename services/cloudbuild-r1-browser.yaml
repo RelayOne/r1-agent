@@ -1,0 +1,100 @@
+# services/cloudbuild-r1-browser.yaml — r1-browser Cloud Run deploy
+# (spec C6 §T3b + T10).
+#
+# Separate cloudbuild from services/cloudbuild-deploy.yaml because
+# r1-browser's container image is larger (~300 MiB with Chromium) and
+# it has a different scaling profile (concurrency=1, max-instances=50)
+# than the always-on r1-coord-api / r1-docs / r1-admin trio.
+#
+# Triggered manually by an operator OR by a separate Cloud Build
+# trigger that watches services/r1-browser/** and Dockerfile.r1-browser.
+# The standing rules (us-central1, instance-billing) still apply.
+#
+# NOT pushed by this build commit. Operator owns the trigger + the
+# first prod deploy after a manual smoke test against staging.
+
+substitutions:
+  _ENV: prod
+  _REGION: us-central1
+  _MIN_INSTANCES: '1'
+  _MAX_INSTANCES: '50'
+  _CONCURRENCY: '1'
+  _MEMORY: '2Gi'
+  _CPU: '1'
+  _TIMEOUT: '300s'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  - id: build-r1-browser
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['-']
+    args:
+      - build
+      - --file=Dockerfile.r1-browser
+      - --build-arg=VERSION=$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:${_ENV}-latest
+      - .
+
+  - id: push-r1-browser
+    name: 'gcr.io/cloud-builders/docker'
+    waitFor: ['build-r1-browser']
+    args: [push, --all-tags, us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser]
+
+  - id: deploy-r1-browser
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['push-r1-browser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy r1-browser-${_ENV} \
+          --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --min-instances=${_MIN_INSTANCES} \
+          --max-instances=${_MAX_INSTANCES} \
+          --concurrency=${_CONCURRENCY} \
+          --cpu=${_CPU} \
+          --memory=${_MEMORY} \
+          --timeout=${_TIMEOUT} \
+          --port=8080 \
+          --no-cpu-throttling \
+          --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA \
+          --service-account=r1-browser-runtime@$PROJECT_ID.iam.gserviceaccount.com \
+          --ingress=internal-and-cloud-load-balancing
+
+  # Smoke check /livez on the deployed service. Skips /readyz —
+  # Chromium readiness is verified by the inhouse_live integration
+  # test (T13b) which runs from CI separately.
+  - id: smoke
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    waitFor: ['deploy-r1-browser']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        URL=$(gcloud run services describe r1-browser-${_ENV} --region=${_REGION} --format='value(status.url)')
+        echo "smoke: r1-browser-${_ENV} $$URL"
+        # /livez is unauthenticated (it's outside the WS path).
+        for i in 1 2 3 4 5; do
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$$URL/livez")
+          if [ "$$CODE" = "200" ]; then
+            echo "  livez=200 (attempt $$i)"
+            exit 0
+          fi
+          echo "  livez=$$CODE — retrying"
+          sleep 5
+        done
+        echo "  smoke FAILED"
+        exit 1
+
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-browser:$SHORT_SHA
+
+timeout: 1800s
