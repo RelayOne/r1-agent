@@ -131,6 +131,10 @@ func run() error {
 	// read-only views, so mountUI needs the DB handle.
 	mountUI(mux, db)
 
+	// A5: read-only admin panel at /admin/* gated by A4 SSO; honors
+	// R1_ADMIN_DEV_BYPASS=1 for local dev without a real bearer.
+	mountAdmin(mux, db, logger)
+
 	// work-stoke TASK 15: self-check that the 3D UI vendor bundle is
 	// present. Logs a single WARNING on a fresh checkout where the
 	// operator has not yet populated cmd/r1-server/ui/vendor/; never
