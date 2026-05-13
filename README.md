@@ -16,6 +16,7 @@ The work that takes r1 from a shippable open-source runtime to a defensible host
 - **P0 platform hardening — foundation** ([`specs/p0-hardening-s0-foundation.md`](specs/p0-hardening-s0-foundation.md), A2, DRAFT). Panic-recovery on every goroutine, graceful-shutdown wiring through the daemon and every Cloud Run service, restart safety (replay-or-reject for in-flight tool calls), per-session resource limits (memory + open-FD + goroutine cap), observability hooks at every state transition, and a preflight gate that refuses to start the daemon when the host's filesystem permissions, lock-file directory, or runtime dirs are misconfigured. The spec is flagged DRAFT because the source PORTFOLIO-INDEX entry cites WORK-r1 Tasks 8-10 which describe already-shipped encryption-at-rest work — the surviving scope is the agent-platform P0 list above, not encryption.
 - **One-shot production hardening** ([`specs/oneshot-production-hardening.md`](specs/oneshot-production-hardening.md), A3, BUILD_ORDER 35). Memory bounds on the one-shot runtime, per-call timeout enforcement that fails closed when an upstream model stalls, deterministic shutdown ordering so a SIGTERM doesn't leave half-written ledger nodes, a remote audit-ledger publishing path, and a 1000-concurrent integration test that proves the one-shot path is the supported integration surface for RelayGate Phase K-3. Documentation lands alongside the implementation so the RelayGate team can wire r1 inline without reading r1 source.
 - **RelayOne SSO** ([`specs/relayone-sso.md`](specs/relayone-sso.md), A4, BUILD_ORDER 36, **done 2026-05-12**). Go port of `@relayone/auth-core`'s `JwtService` + `RelayOneSsoClient` lives under `internal/auth/`: OIDC + PKCE-S256 against the RelayOne IdP, per-tenant token isolation (HKDF-SHA256 derivation, per-tenant `kid`), HS256 + RS256 key rotation, and a middleware that gates the admin panel + any future enterprise route. Four HTTP routes ship on the daemon mux when `R1_AUTH_MODE=sso`: `GET /auth/sso/start` (302 to IdP with PKCE state cookie), `GET /auth/sso/callback` (exchanges code for an R1-internal JWT pair, sets `__Host-r1_at` + `__Host-r1_rt` cookies), `POST /auth/refresh` (rotates the access token from the refresh cookie), `POST /auth/logout` (idempotent local clear + optional RP-Initiated Logout). Operator runbook: [`docs/integrations/relayone-sso.md`](docs/integrations/relayone-sso.md).
+- **RelayOne SSO** ([`specs/relayone-sso.md`](specs/relayone-sso.md), A4, BUILD_ORDER 36). A Go reimplementation of `@relayone/auth-core`'s `JwtService` + `RelayOneSsoClient`: OIDC + PKCE with the RelayOne IdP, per-tenant token isolation, JWKs rotation, and a middleware that gates the admin panel + any future enterprise route. The operator no longer hands out long-lived API keys; customers log in with their RelayOne identity and the daemon honors per-tenant scope.
 - **Admin panel** ([`specs/admin-panel.md`](specs/admin-panel.md), A5, BUILD_ORDER 37). A new `admin.r1.run` surface mounted on the existing `r1-server` process — five read-only routes (sessions, tenants, billing, audit, anti-trunc events) auth-gated through the SSO middleware from A4. Internal operators triage incidents, regulators verify chain-of-custody, and the support team answers "what is this customer's session doing" without raw SQL access.
 
 ### Tier B — commercial readiness, analytics + retention
@@ -38,6 +39,19 @@ The work that widens the gap between r1 and any other agent runtime. Six specs i
 - **Cross-product skill exchange** ([`specs/cross-product-skill-exchange.md`](specs/cross-product-skill-exchange.md), C7, BUILD_ORDER 46). A pack-format v2 with an explicit compatibility matrix, a federated trust root so a skill signed by one RelayOne portfolio product is verifiable by another, and runtime adapters for CloudSwarm, Heroa, and Veritize. Skills become portable assets across the portfolio instead of per-product silos.
 
 The full list, with acceptance criteria, dependencies, and BUILD_ORDER, lives in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points respectively.
+
+## Cross-product skill distribution (preview)
+
+C7 ships the R1-side substrate for federated skill packs. A v2
+manifest schema with an explicit `compat` list, a federated ed25519
+trust root, and runtime adapters for CloudSwarm, Heroa, and Veritize
+let a pack be authored once against R1 and adopted into the sibling
+products via `r1 skills pack adopt --pack <id> --for <product>`. The
+existing v1 pack format remains supported unchanged. See
+[`docs/skills/cross-product-distribution.md`](docs/skills/cross-product-distribution.md)
+for pack-author docs and
+[`docs/skills/federated-trust.md`](docs/skills/federated-trust.md)
+for the operator runbook.
 
 ## What's new — final-sweep features (2026-05-05)
 

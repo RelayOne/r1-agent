@@ -736,6 +736,26 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 			}
 		}
 
+		// Per-tool input validation (specs/promptguard-hardening.md
+		// §T2 item 9). Runs AFTER the hub.EventToolPreUse gate (so a
+		// policy hook can still cheaply deny first) but BEFORE the
+		// tool handler executes. On rejection the tool_result fed
+		// back into the model is is_error=true with the structured
+		// rejection text so the model can see and revise. The model
+		// is NEVER given the raw payload — only the rejection reason.
+		if rejErr := validateAgentloopToolInput(ctx, tc.Name, tc.Input); rejErr != nil {
+			mu.Lock()
+			hasError = true
+			results[idx] = ContentBlock{
+				Type:      "tool_result",
+				ToolUseID: tc.ID,
+				Content:   rejErr.Error(),
+				IsError:   true,
+			}
+			mu.Unlock()
+			return
+		}
+
 		start := time.Now()
 		content, err := l.handler(ctx, tc.Name, tc.Input)
 		duration := time.Since(start)
