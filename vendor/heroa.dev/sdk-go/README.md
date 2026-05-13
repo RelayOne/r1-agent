@@ -25,7 +25,7 @@ import (
 func main() {
     c, err := heroa.New(heroa.Config{
         APIKey:  os.Getenv("HEROA_API_KEY"),
-        BaseURL: os.Getenv("HEROA_BASE_URL"), // optional; defaults to https://api.heroa.dev
+        BaseURL: os.Getenv("HEROA_BASE_URL"), // optional; defaults to https://api.heroa.app
     })
     if err != nil {
         panic(err)
@@ -57,7 +57,7 @@ func main() {
     }
 
     fmt.Println(inst.ID)        // m-h3roa-x4n7
-    fmt.Println(inst.URL)       // https://m-h3roa-x4n7.heroa.dev
+    fmt.Println(inst.URL)       // https://m-h3roa-x4n7.heroa.app
     fmt.Println(inst.ExpiresAt) // 2026-04-24T13:00:00Z
 }
 ```

@@ -220,6 +220,8 @@ costtrack/                         Real-time cost tracking + budget alerts
 consent/                           Human-in-the-loop approval
 rbac/                              Role-Based Access Control
 hooks/                             Anti-deception PreToolUse/PostToolUse guards
+throttle/                          C3 per-tool, two-tier (session+tenant) token-bucket rate limiter
+throttle/policy/                   Leaf YAML schema + validator (avoids config<->throttle cycle)
 
 --- CONFIG & SESSION ---
 config/                            YAML policy parser

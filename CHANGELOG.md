@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased] C3: Per-tool throttling
+
+### Added
+
+- `throttling:` top-level block in `r1.policy.yaml` (per-session +
+  per-tenant token-bucket policy with optional per-tool overrides and
+  glob-matched principal multipliers). Schema parser:
+  `internal/throttle/policy/`.
+- `internal/throttle/` two-tier limiter built on
+  `golang.org/x/time/rate`. Hot path is allocation-free; p99 < 100us
+  under 1000-goroutine load (`bench/throttling_bench_test.go`).
+- Pre-dispatch helper `mcp.PreDispatch` wired into the codebase,
+  lanes, and r1 MCP servers' `tools/call` switches. Sibling fields
+  for the C3 throttle and the A1-T2 promptguard input validator so
+  the two branches do not collide.
+- Bus event `tool.throttled` and three metrics counters per tool
+  (`throttle.allowed.<tool>`, `throttle.denied.<tool>.session`,
+  `throttle.denied.<tool>.tenant`).
+- `r1.throttle.status` MCP tool for live bucket introspection.
+- `daemon.reload_config` hot-reloads the throttling block via
+  `cmd/r1/throttle_wiring.go`; bucket token counts are preserved
+  across reload.
+- Bundled defaults file
+  `configs/policies/throttling-defaults.yaml` with conservative
+  starting points for all 38 r1.* tools.
+- Operator runbook `docs/operations/throttling.md`.
+
+### Migration
+
+- The `r1.policy.yaml` schema gains an optional `throttling:` block;
+  operators with existing policies need no change (bundled defaults
+  apply).
+- Set `R1_DISABLE_THROTTLE=1` for an instant kill switch.
+- `r1 mcp serve --no-throttle` bypasses the gate for local dev.
 ## [unreleased] CodeRadar dogfood event streaming (B3)
 
 ### Added
