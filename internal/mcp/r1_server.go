@@ -417,6 +417,15 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 // is checked BEFORE the stoke switch so a future legacy tool can't
 // accidentally shadow a lane tool.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
+	// Per-tool input validation (specs/promptguard-hardening.md §T2
+	// item 8). Runs BEFORE every per-tool handler so an injection-
+	// crafted payload (rm $(ls) in deploy.execute, file:// in
+	// browse.fetch, /etc/passwd in file.write, or any operator-added
+	// rule) cannot dispatch. Observe-only when the configured action
+	// is warn or strip; only ActionReject blocks here.
+	if err := validateMCPToolInput(context.Background(), toolName, args); err != nil {
+		return "", err
+	}
 	if strings.HasPrefix(toolName, "r1.lanes.") {
 		s.mu.Lock()
 		lanes := s.lanes
