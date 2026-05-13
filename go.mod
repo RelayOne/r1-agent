@@ -19,6 +19,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/coder/websocket v1.8.13
 	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/customerio/go-customerio/v3 v3.9.0
 	github.com/go-rod/rod v0.116.2
 	github.com/go-vgo/robotgo v1.0.2
 	github.com/gofrs/flock v0.12.1

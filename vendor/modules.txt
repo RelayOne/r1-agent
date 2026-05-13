@@ -82,6 +82,9 @@ github.com/containerd/console
 # github.com/coreos/go-oidc/v3 v3.18.0
 ## explicit; go 1.25.0
 github.com/coreos/go-oidc/v3/oidc
+# github.com/customerio/go-customerio/v3 v3.9.0
+## explicit; go 1.21
+github.com/customerio/go-customerio/v3
 # github.com/danieljoos/wincred v1.1.2
 ## explicit; go 1.13
 github.com/danieljoos/wincred
