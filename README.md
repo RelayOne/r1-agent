@@ -25,6 +25,7 @@ The work that closes the self-serve adoption loop. Three specs in BUILD_ORDER 38
 - **PostHog analytics** ([`specs/posthog-analytics.md`](specs/posthog-analytics.md), B1, BUILD_ORDER 38). Twenty-four events instrumented end-to-end (signup → first daemon-start → first mission → first verified completion → first anti-trunc fire → first paid event), per-tenant Group Analytics so the dashboard slices by enterprise account, three product funnels (activation, mission-success, anti-trunc-fire-recovered), and four cohorts (free-active, paid-active, churn-risk, regretted-activation). The product team finally answers "what's the activation rate" with one query.
 - **Customer.io lifecycle email** ([`specs/customerio-lifecycle.md`](specs/customerio-lifecycle.md), B2, BUILD_ORDER 39). Six lifecycle triggers — signup, activation, first mission, first completion, anti-trunc fired, budget alert — each backed by a transactional template the marketing team can edit without a deploy. A GDPR DSAR flow lets a customer request export-or-delete; the spec includes the flagstore tables that record consent. Retention email becomes a product surface, not a manual ops task.
 - **CodeRadar dogfood** ([`specs/coderadar-dogfood.md`](specs/coderadar-dogfood.md), B3, BUILD_ORDER 40) — **Done (2026-05-12)**. Eighteen canonical events emitted from the nine Cloud Run services (daemon, coord-api, docs, downloads, admin, plus the three new B-tier services), per-environment wiring with sampling so prod stays cheap, and the CodeRadar dashboard becomes the on-call surface for r1 itself. Bus subscriber at `internal/hub/builtin/coderadar_subscriber.go`, canonical event schema at `internal/coderadar/events.go`, dashboards + alerts under `docs/observability/`. r1 finally eats its own dogfood end-to-end.
+- **CodeRadar dogfood** ([`specs/coderadar-dogfood.md`](specs/coderadar-dogfood.md), B3, BUILD_ORDER 40). Eighteen canonical events emitted from the nine Cloud Run services (daemon, coord-api, docs, downloads, admin, plus the three new B-tier services), per-environment wiring with sampling so prod stays cheap, and the CodeRadar dashboard becomes the on-call surface for r1 itself. r1 finally eats its own dogfood end-to-end.
 
 ### Tier C — frontier extensions, defensible moat
 
@@ -38,6 +39,19 @@ The work that widens the gap between r1 and any other agent runtime. Six specs i
 - **Cross-product skill exchange** ([`specs/cross-product-skill-exchange.md`](specs/cross-product-skill-exchange.md), C7, BUILD_ORDER 46). A pack-format v2 with an explicit compatibility matrix, a federated trust root so a skill signed by one RelayOne portfolio product is verifiable by another, and runtime adapters for CloudSwarm, Heroa, and Veritize. Skills become portable assets across the portfolio instead of per-product silos.
 
 The full list, with acceptance criteria, dependencies, and BUILD_ORDER, lives in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points respectively.
+
+## Cross-product skill distribution (preview)
+
+C7 ships the R1-side substrate for federated skill packs. A v2
+manifest schema with an explicit `compat` list, a federated ed25519
+trust root, and runtime adapters for CloudSwarm, Heroa, and Veritize
+let a pack be authored once against R1 and adopted into the sibling
+products via `r1 skills pack adopt --pack <id> --for <product>`. The
+existing v1 pack format remains supported unchanged. See
+[`docs/skills/cross-product-distribution.md`](docs/skills/cross-product-distribution.md)
+for pack-author docs and
+[`docs/skills/federated-trust.md`](docs/skills/federated-trust.md)
+for the operator runbook.
 
 ## What's new — final-sweep features (2026-05-05)
 

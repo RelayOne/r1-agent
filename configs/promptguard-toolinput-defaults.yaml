@@ -1,0 +1,52 @@
+# promptguard tool-input defaults.
+#
+# Operator-discoverable copy of the bundled rule set embedded into the
+# r1 binary via //go:embed at
+# internal/promptguard/configs/promptguard-toolinput-defaults.yaml.
+#
+# The embedded file is the source of truth; this top-level copy exists
+# so an operator browsing the repo can read the defaults without
+# digging into the package directory. Edits here do NOT change daemon
+# behaviour — to override, add a `promptguard.tool_input` block to
+# r1.policy.yaml or set `additional_rules_path` to a separate YAML
+# file with the same schema.
+#
+# Three rules cover three dangerous tools called out in
+# specs/promptguard-hardening.md §T2:
+#
+#   - deploy.execute: requires {target, command}; rejects rm -rf /,
+#     curl|wget chained command shapes, and shell command substitution.
+#   - browse.fetch:   requires {url}; rejects local-file (file://),
+#     archive (jar:), and inline-payload (data:) URI schemes.
+#   - file.write:     requires {path, contents}; rejects path traversal
+#     sequences and writes to known-sensitive system files.
+#
+# Action defaults to `reject`. Operators flip to `warn` or `strip` via
+# the PromptGuard.ToolInput block in r1.policy.yaml.
+promptguard:
+  tool_input:
+    action: reject
+    rules:
+      - tool: deploy.execute
+        require_struct: true
+        struct_fields: [target, command]
+        max_length_kb: 16
+        deny_patterns:
+          - '(?i)\brm\s+-rf\s+/'
+          - '(?i);\s*(curl|wget)\s+'
+          - '\$\(.*\)'
+      - tool: browse.fetch
+        require_struct: true
+        struct_fields: [url]
+        max_length_kb: 4
+        deny_patterns:
+          - '(?i)\bfile://'
+          - '(?i)\bjar:'
+          - '(?i)\bdata:'
+      - tool: file.write
+        require_struct: true
+        struct_fields: [path, contents]
+        max_length_kb: 512
+        deny_patterns:
+          - '\.\./\.\./'
+          - '(?i)/etc/(passwd|shadow|sudoers)'
