@@ -32,11 +32,13 @@ const (
 	ProviderGitLab Provider = "gitlab"
 	// ProviderCircleCI is CircleCI (.circleci/config.yml).
 	ProviderCircleCI Provider = "circleci"
+	// ProviderBitbucket is BitBucket Pipelines (bitbucket-pipelines.yml).
+	ProviderBitbucket Provider = "bitbucket"
 )
 
 // AllProviders returns the supported providers in stable order.
 func AllProviders() []Provider {
-	return []Provider{ProviderGitHub, ProviderGitLab, ProviderCircleCI}
+	return []Provider{ProviderGitHub, ProviderGitLab, ProviderCircleCI, ProviderBitbucket}
 }
 
 // Mode is the integration pattern to generate.
@@ -106,8 +108,10 @@ func GenerateConfig(provider Provider, opts Options) (yaml string, outputPath st
 		return generateGitLab(opts)
 	case ProviderCircleCI:
 		return generateCircleCI(opts)
+	case ProviderBitbucket:
+		return generateBitbucket(opts)
 	default:
-		return "", "", fmt.Errorf("unsupported provider %q (supported: github, gitlab, circleci)", provider)
+		return "", "", fmt.Errorf("unsupported provider %q (supported: github, gitlab, circleci, bitbucket)", provider)
 	}
 }
 
@@ -132,6 +136,12 @@ func ValidateConfig(provider Provider, yaml string) []string {
 		}
 	case ProviderCircleCI:
 		for _, key := range []string{"version:", "jobs:", "steps:", "ANTHROPIC_API_KEY"} {
+			if !strings.Contains(yaml, key) {
+				warns = append(warns, fmt.Sprintf("missing required key: %q", key))
+			}
+		}
+	case ProviderBitbucket:
+		for _, key := range []string{"pipelines:", "image:", "script:", "ANTHROPIC_API_KEY"} {
 			if !strings.Contains(yaml, key) {
 				warns = append(warns, fmt.Sprintf("missing required key: %q", key))
 			}
@@ -448,6 +458,8 @@ func nodeLabel(opts Options, p Provider) string {
 		return "ubuntu:22.04"
 	case ProviderCircleCI:
 		return "ubuntu-2204:current"
+	case ProviderBitbucket:
+		return "atlassian/default-image:5"
 	default:
 		return "ubuntu-latest"
 	}

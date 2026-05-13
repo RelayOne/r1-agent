@@ -1,0 +1,64 @@
+{{- /*
+  admin-base.html — A5 admin panel layout shell.
+
+  Extends the r1-server-ui-v2-foundation pattern (single base.html + named
+  blocks) but lives in templates/admin/ so the admin template set has its
+  own parse tree. Pages call {{ template "admin-base" . }} from their own
+  define blocks.
+
+  Context shape: server.adminPageContext
+    .Title       string
+    .Path        string  current URL path (for sidebar active state)
+    .Principal   *AdminPrincipal
+    .Data        any     page-specific payload
+    .GeneratedAt string  RFC3339
+*/ -}}
+{{- define "admin-base" -}}
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} — r1 admin</title>
+  <link rel="stylesheet" href="/ui/css/admin.css">
+  <script src="/ui/vendor/htmx.min.js" defer></script>
+  <meta name="htmx-config" content='{"defaultSwapStyle":"outerHTML"}'>
+</head>
+<body class="admin">
+  <header class="admin-topbar" role="banner">
+    <h1><a href="/admin">r1 admin</a></h1>
+    <span class="phase-banner" role="status">Phase 1 — read-only</span>
+    <div class="spacer"></div>
+    {{ if .Principal }}
+      <span class="user-pill" aria-label="signed in user">
+        {{ .Principal.User }}
+        {{ if .Principal.Tenant }}<small>· {{ .Principal.Tenant }}</small>{{ end }}
+      </span>
+    {{ end }}
+  </header>
+  <div class="admin-shell">
+    <nav class="admin-sidebar" aria-label="admin sections">
+      <a href="/admin" {{ if eq .Path "/admin" }}aria-current="page"{{ end }}>Dashboard</a>
+      <a href="/admin/sessions" {{ if eq .Path "/admin/sessions" }}aria-current="page"{{ end }}>Sessions</a>
+      <a href="/admin/tenants" {{ if eq .Path "/admin/tenants" }}aria-current="page"{{ end }}>Tenants</a>
+      <a href="/admin/billing" {{ if eq .Path "/admin/billing" }}aria-current="page"{{ end }}>Billing</a>
+      <a href="/admin/audit" {{ if eq .Path "/admin/audit" }}aria-current="page"{{ end }}>Audit</a>
+      <a href="/admin/anti-trunc-events" {{ if eq .Path "/admin/anti-trunc-events" }}aria-current="page"{{ end }}>Anti-Trunc Events</a>
+    </nav>
+    <main id="main" class="admin-main" tabindex="-1">
+      {{ block "body" . }}{{ end }}
+      <footer class="admin-foot">
+        <small>generated {{ .GeneratedAt }}</small>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
+{{- end -}}
+
+{{- /* Reusable disabled-button template — see spec §10 task 16. */ -}}
+{{- define "phase2_btn" -}}
+<button type="button" disabled aria-disabled="true"
+        title="Phase 2 — Q3 2026"
+        class="btn btn-disabled">{{ . }}</button>
+{{- end -}}

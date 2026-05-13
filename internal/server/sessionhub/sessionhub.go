@@ -156,6 +156,14 @@ type CreateOptions struct {
 	// ID is a caller-supplied session id. When empty, the hub mints one
 	// (preferred). Tests pass an explicit id for deterministic logging.
 	ID string
+
+	// TenantID, Subject, Roles populate the corresponding Session
+	// fields for authenticated sessions. Empty / nil for anonymous
+	// local-CLI sessions (the default before the SSO wiring lands).
+	// See specs/relayone-sso.md Phase F item 27.
+	TenantID string
+	Subject  string
+	Roles    []string
 }
 
 // SetSessionsIndex installs the `~/.r1/sessions-index.json` writer.
@@ -238,6 +246,12 @@ func (h *SessionHub) Create(opts CreateOptions) (*Session, error) {
 	}
 	abs, _ := filepath.Abs(opts.Workdir)
 	s := newSession(id, filepath.Clean(abs), opts.Model)
+	// Authenticated sessions carry tenant + subject + roles. Anonymous
+	// sessions leave these at their zero values (TenantID == "" means
+	// "shared/legacy" in the per-tenant filter rules).
+	s.TenantID = opts.TenantID
+	s.Subject = opts.Subject
+	s.Roles = opts.Roles
 	// LoadOrStore under the lock keeps the count check + insertion
 	// atomic. Concurrent Creates with the same caller-supplied id
 	// still resolve to ErrSessionExists.
@@ -263,6 +277,38 @@ func (h *SessionHub) Create(opts CreateOptions) (*Session, error) {
 		}
 	}
 	return s, nil
+}
+
+// CreateAuthenticated is the SSO-authenticated counterpart to Create.
+// It accepts a tenant id + principal id + roles directly so the
+// sessionhub package stays independent of the auth package (no import
+// cycle). The HTTP handler bridges the two.
+//
+// Per specs/relayone-sso.md Phase F item 27: tenant precedence is
+// caller's responsibility — auth.TenantFromProfile is the canonical
+// helper. Anonymous Create remains the right entry point for callers
+// without a verified principal.
+//
+// The Workdir field of opts still drives the same validation rules as
+// Create; an empty workdir is rejected.
+func (h *SessionHub) CreateAuthenticated(opts CreateOptions, tenantID, subject string, roles []string) (*Session, error) {
+	opts.TenantID = tenantID
+	opts.Subject = subject
+	opts.Roles = roles
+	return h.Create(opts)
+}
+
+// Invalidate marks a session deleted. Tolerates an unknown session id
+// — logout is idempotent.
+func (h *SessionHub) Invalidate(sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	err := h.Delete(sessionID)
+	if err != nil && errors.Is(err, ErrSessionNotFound) {
+		return nil
+	}
+	return err
 }
 
 // journalPathFor returns the per-session journal path. Empty when no

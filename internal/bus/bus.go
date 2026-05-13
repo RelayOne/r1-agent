@@ -70,6 +70,31 @@ const (
 	EvtMissionAborted   EventType = "mission.aborted"
 )
 
+// Session migration events (spec C1
+// specs/cross-machine-session-migration.md §6.3 + T25). Emitted by
+// the migration handler and the migration package's WAL-replay
+// divergence detector. Each event carries a JSON payload with the
+// source/destination session ids, the chain root hashes, and the
+// per-event divergence seq (for the divergent variant).
+//
+//   - EvtSessionMigrateExported    — fires on a successful source-side
+//     bundle assembly. Payload: {source_session_id, source_host,
+//     dest_url(optional), chain_root_hash, node_count}.
+//   - EvtSessionMigrateImported    — fires on a successful destination-
+//     side import + chain-root verification. Payload: {source_session_id,
+//     dest_session_id, chain_root_hash, node_count, wal_replayed}.
+//   - EvtSessionMigrateDivergent   — fires when the destination's
+//     post-replay (or partial-replay) chain root does not match the
+//     manifest's. Payload: {source_session_id, dest_session_id,
+//     expected, actual, divergent_at_seq}. Treated as data corruption;
+//     the destination session is flipped to migrated-failed and the
+//     import returns 422.
+const (
+	EvtSessionMigrateExported  EventType = "session.migrate.exported"
+	EvtSessionMigrateImported  EventType = "session.migrate.imported"
+	EvtSessionMigrateDivergent EventType = "session.migrate.divergent"
+)
+
 // Bus observability events.
 const (
 	EvtBusHandlerPanic       EventType = "bus.handler.panic"
@@ -103,6 +128,15 @@ var DescentEventKinds = []EventType{
 	EvtWorkerEnvBlocked,
 }
 
+// Anti-truncation events (spec coderadar-dogfood.md T11). Published by
+// internal/antitrunc/gate.go on each gate firing and override. The
+// CodeRadar bus subscriber mirrors these as canonical `antitrunc.fired`
+// / `antitrunc.overridden` events on the wire.
+const (
+	EvtAntiTruncFired      EventType = "antitrunc.fired"
+	EvtAntiTruncOverridden EventType = "antitrunc.overridden"
+)
+
 // Event is an immutable record published on the bus.
 type Event struct {
 	ID        string          `json:"id"`
@@ -113,6 +147,15 @@ type Event struct {
 	Scope     Scope           `json:"scope"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	CausalRef string          `json:"causal_ref,omitempty"`
+	// TenantID tags the event with its owning tenant for per-tenant
+	// isolation (specs/relayone-sso.md Phase F item 30). Empty string
+	// means "shared/legacy" — visible to all tenants, the default for
+	// existing system subscribers that pre-date multi-tenant.
+	//
+	// Subscribers obtain a tenant-aware filter via WithTenantFilter on
+	// their Pattern. Events with TenantID == "" bypass the filter (so
+	// system events still reach every tenant's subscribers).
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // Scope tags identifying which mission/branch/loop/task/stance an event relates to.
@@ -128,6 +171,12 @@ type Scope struct {
 type Pattern struct {
 	TypePrefix string `json:"type_prefix,omitempty"`
 	Scope      *Scope `json:"scope,omitempty"`
+	// TenantID, when non-empty, restricts the subscription to events
+	// whose evt.TenantID either matches the filter exactly OR is
+	// empty (the "shared/legacy" bucket). Empty filter (the zero
+	// value) means "no tenant filtering" — the historical behavior.
+	// See specs/relayone-sso.md Phase F item 30.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // Matches reports whether evt matches the pattern.
@@ -152,6 +201,12 @@ func (p Pattern) Matches(evt Event) bool {
 		if s.StanceID != "" && s.StanceID != evt.Scope.StanceID {
 			return false
 		}
+	}
+	// TenantID filtering: empty filter is a no-op; non-empty filter
+	// drops events whose TenantID is set AND differs from the filter.
+	// Events with empty TenantID (shared/legacy) ALWAYS pass.
+	if p.TenantID != "" && evt.TenantID != "" && evt.TenantID != p.TenantID {
+		return false
 	}
 	return true
 }

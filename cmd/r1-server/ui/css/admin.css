@@ -1,0 +1,271 @@
+/* admin.css — A5 admin panel styles.
+ *
+ * Dark theme matching the existing cmd/r1-server/templates/index.tmpl
+ * tokens. Sidebar layout inspired by the *-admin Next.js references,
+ * implemented in pure CSS so the admin panel ships without a Node
+ * toolchain. Single file; no preprocessor.
+ */
+
+:root {
+  --bg: #0b0f14;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --line: #30363d;
+  --card-bg: #161b22;
+  --accent: #58a6ff;
+  --accent-dim: #1f6feb;
+  --running: #3fb950;
+  --ended: #8b949e;
+  --stale: #d29922;
+  --danger: #f85149;
+  --warn: #d29922;
+  --disabled: #484f58;
+}
+
+* { box-sizing: border-box; }
+
+body.admin {
+  margin: 0;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.admin-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card-bg);
+}
+.admin-topbar h1 {
+  font-size: 15px;
+  margin: 0;
+  font-weight: 600;
+}
+.admin-topbar h1 a { color: var(--fg); }
+.admin-topbar .spacer { flex: 1; }
+.phase-banner {
+  background: var(--accent-dim);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.user-pill {
+  background: #21262d;
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  border-radius: 12px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.user-pill small { color: var(--muted); margin-left: 4px; }
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: calc(100vh - 41px);
+}
+
+.admin-sidebar {
+  border-right: 1px solid var(--line);
+  background: var(--card-bg);
+  padding: 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.admin-sidebar a {
+  display: block;
+  padding: 8px 18px;
+  color: var(--muted);
+  border-left: 3px solid transparent;
+}
+.admin-sidebar a:hover {
+  color: var(--fg);
+  background: #21262d;
+  text-decoration: none;
+}
+.admin-sidebar a[aria-current="page"] {
+  color: var(--fg);
+  border-left-color: var(--accent);
+  background: #21262d;
+}
+
+.admin-main {
+  padding: 18px 24px 32px;
+  max-width: 1200px;
+  width: 100%;
+  outline: none;
+}
+.admin-main h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.admin-main h2 small { text-transform: none; letter-spacing: 0; }
+.admin-main section { margin-bottom: 28px; }
+
+.muted { color: var(--muted); }
+
+/* KPI cards on the dashboard */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.kpi-card {
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kpi-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Filters */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.filter-row input {
+  background: #0d1117;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: inherit;
+}
+.filter-row button,
+.btn {
+  background: var(--accent-dim);
+  color: white;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+.btn-primary { background: var(--accent-dim); }
+.btn-disabled,
+button:disabled {
+  background: var(--disabled);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Tables */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.data-table th,
+.data-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.data-table th {
+  background: #0d1117;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.data-table tr:last-child td { border-bottom: 0; }
+.data-table tr:hover td { background: #1c2128; }
+.data-table td.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 18px;
+}
+
+/* Status badges */
+.state {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+.state-running { color: var(--running); }
+.state-ended,
+.state-stopped { color: var(--ended); }
+.state-stale { color: var(--stale); }
+.state-error,
+.state-failed { color: var(--danger); }
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.pagination .page-info { margin-right: auto; }
+
+/* Banners + alerts */
+.banner {
+  background: rgba(210, 153, 34, 0.15);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  padding: 8px 12px;
+  border-radius: 5px;
+  margin: 0 0 14px 0;
+}
+
+.admin-foot {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}

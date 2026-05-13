@@ -41,6 +41,17 @@ const (
 	ErrCodePlacementFailed        ErrorCode = "placement_failed"
 	ErrCodeValidation             ErrorCode = "validation"
 	ErrCodeInternal               ErrorCode = "internal"
+	// Spec 06 — OCI image support.
+	ErrCodeInvalidAppSpec            ErrorCode = "invalid_app_spec"
+	ErrCodeInvalidOCIRef             ErrorCode = "invalid_oci_ref"
+	ErrCodeRegistryNotAllowed        ErrorCode = "registry_not_allowed"
+	ErrCodeImageScanFailed           ErrorCode = "image_scan_failed"
+	ErrCodeMissingCredential         ErrorCode = "missing_credential"
+	ErrCodeRegistryPullFailed        ErrorCode = "registry_pull_failed"
+	ErrCodePullRateLimited           ErrorCode = "pull_rate_limited"
+	ErrCodeSignatureVerificationFail ErrorCode = "signature_verification_failed"
+	ErrCodeDigestMismatch            ErrorCode = "digest_mismatch"
+	ErrCodeRegistryUnreachable       ErrorCode = "registry_unreachable"
 )
 
 // ErrorCodes enumerates every ErrorCode for exhaustive branch-coverage.
@@ -55,6 +66,16 @@ var ErrorCodes = []ErrorCode{
 	ErrCodePlacementFailed,
 	ErrCodeValidation,
 	ErrCodeInternal,
+	ErrCodeInvalidAppSpec,
+	ErrCodeInvalidOCIRef,
+	ErrCodeRegistryNotAllowed,
+	ErrCodeImageScanFailed,
+	ErrCodeMissingCredential,
+	ErrCodeRegistryPullFailed,
+	ErrCodePullRateLimited,
+	ErrCodeSignatureVerificationFail,
+	ErrCodeDigestMismatch,
+	ErrCodeRegistryUnreachable,
 }
 
 // SizeShape is the (cpus, memory_mb) tuple a size label maps to.

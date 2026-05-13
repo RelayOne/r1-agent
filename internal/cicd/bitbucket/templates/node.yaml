@@ -1,0 +1,12 @@
+# node.yaml — language-specific overlay for Node.js projects (C5, T17).
+definitions:
+  caches:
+    nodemod:
+      key:
+        files:
+          - package-lock.json
+          - npm-shrinkwrap.json
+          - yarn.lock
+      path: node_modules
+before-script-snippet: |
+  npm ci
