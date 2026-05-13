@@ -24,6 +24,7 @@
 package oneshot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -60,7 +61,14 @@ type decomposeLegacyPlan struct {
 // handleDecompose is invoked by Dispatch when verb=="decompose".
 // Returns a Response whose Data is a decomposeOKResponse on success
 // or the legacy scaffold shape when the input is insufficient.
-func handleDecompose(payload json.RawMessage) (Response, error) {
+//
+// Honors ctx cancellation: a cancelled ctx short-circuits with
+// an ErrCanceled-wrapped error so the timeout / signal path in
+// runOneShotCmd can drop the partial response cleanly.
+func handleDecompose(ctx context.Context, payload json.RawMessage) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("oneshot: decompose: %w", err)
+	}
 	req := decomposeRequest{}
 	if len(payload) > 0 {
 		// Malformed JSON input deliberately returns a legacy-shape
