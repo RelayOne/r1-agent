@@ -18,11 +18,13 @@ require (
 	github.com/charmbracelet/bubbletea v0.25.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/coder/websocket v1.8.13
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/go-rod/rod v0.116.2
 	github.com/go-vgo/robotgo v1.0.2
 	github.com/gofrs/flock v0.12.1
 	github.com/google/uuid v1.6.0
 	github.com/kardianos/service v1.2.4
+	github.com/lestrrat-go/jwx/v2 v2.1.6
 	github.com/mark3labs/mcp-go v0.49.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.37
@@ -30,6 +32,7 @@ require (
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/winder/bubblelayout v0.0.1
 	golang.org/x/crypto v0.50.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/term v0.42.0
 	golang.org/x/time v0.15.0
@@ -45,6 +48,15 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/goccy/go-json v0.10.3 // indirect
+	github.com/lestrrat-go/blackmagic v1.0.3 // indirect
+	github.com/lestrrat-go/httpcc v1.0.1 // indirect
+	github.com/lestrrat-go/httprc v1.0.6 // indirect
+	github.com/lestrrat-go/iter v1.0.2 // indirect
+	github.com/lestrrat-go/option v1.0.1 // indirect
+	github.com/segmentio/asm v1.2.0 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 )
 

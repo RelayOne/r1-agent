@@ -1,7 +1,8 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done -->
 <!-- CREATED: 2026-05-11 -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 36 -->
+<!-- BUILD_COMPLETED: 2026-05-12 -->
 
 # RelayOne SSO + JWT Auth — Go Port of `@relayone/auth-core`
 
