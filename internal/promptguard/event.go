@@ -97,6 +97,12 @@ func SetBusPublisher(p BusPublisher) {
 
 // Emit publishes a ThreatEvent to the currently registered emitter and
 // (if configured) the bus. Safe to call with a nil context.
+//
+// Spec promptguard-hardening §T5 item 20: after publishing the threat
+// event Emit calls IncrementBudget for the session. When the
+// increment trips the threshold a second event,
+// promptguard.budget.exceeded, is published synchronously so the
+// supervisor rule can dispatch a daemon.session.kill action.
 func Emit(ctx context.Context, evt ThreatEvent) {
 	if evt.Timestamp.IsZero() {
 		evt.Timestamp = time.Now().UTC()
@@ -118,6 +124,33 @@ func Emit(ctx context.Context, evt ThreatEvent) {
 		// of an Emit call on the hot governance path.
 		_ = pub.Publish(evt)
 	}
+
+	// Budget bookkeeping (§T5 item 20). IncrementBudget is a no-op
+	// when SessionID is empty (standalone non-session runs do not
+	// accumulate budget). When the trip threshold is breached we
+	// publish the budget-exceeded event so the supervisor can react.
+	exceeded, snapshot := IncrementBudget(evt.SessionID, evt.Severity)
+	if exceeded && pub != nil {
+		// Cast the payload to ThreatEvent-shape via the publisher's
+		// envelope. The BusPublisher contract is intentionally
+		// narrow (Publish(ThreatEvent)); to send the budget-exceeded
+		// payload we use the dedicated BudgetPublisher seam if the
+		// publisher implements it. Daemons that wire the bus install
+		// a publisher satisfying BOTH interfaces; tests can install
+		// either independently.
+		if bp, ok := pub.(BudgetPublisher); ok {
+			_ = bp.PublishBudgetExceeded(SnapshotToPayload(snapshot))
+		}
+	}
+}
+
+// BudgetPublisher is the bus publisher's surface for the second
+// event in the Emit pipeline. Kept separate from BusPublisher so a
+// publisher implementation can choose whether to expose the
+// budget-exceeded surface (the daemon does; some tests only need
+// threat events).
+type BudgetPublisher interface {
+	PublishBudgetExceeded(p BudgetExceededPayload) error
 }
 
 // ThreatToEvent maps a Threat (from Scan) into a ThreatEvent suitable
