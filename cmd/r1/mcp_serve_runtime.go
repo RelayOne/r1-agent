@@ -28,6 +28,7 @@ import (
 	"github.com/RelayOne/r1/internal/memory"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1/internal/throttle"
 	"github.com/RelayOne/r1/internal/wisdom"
 )
 
@@ -179,6 +180,19 @@ func startMCPServer(opts mcpServeOptions, stderr io.Writer) error {
 	if opts.AuthKey != "" {
 		s.WithAuthKey(opts.AuthKey)
 	}
+	// C3: wire the throttle gate. --no-throttle bypasses (NoOp) for
+	// local dev / debugging — the bundled defaults are conservative
+	// enough that they bite under sustained MCP load. Production
+	// daemons (`r1 serve`) get the real limiter wired in
+	// throttle_wiring.go; this MCP-stdio path reuses the same
+	// constructor so the policy file resolution stays consistent.
+	if opts.NoThrottle {
+		fmt.Fprintln(stderr, "r1 mcp serve: --no-throttle set; per-tool rate limits disabled")
+		s.WithThrottler(throttle.NoOpLimiter())
+	} else {
+		cfg, _ := loadThrottlingConfig("")
+		s.WithThrottler(throttle.New(cfg))
+	}
 	if opts.SessionID != "" {
 		fmt.Fprintf(stderr, "r1 mcp serve: session_id=%s\n", opts.SessionID)
 	}
@@ -194,10 +208,11 @@ func startMCPServer(opts mcpServeOptions, stderr io.Writer) error {
 // mcpServeOptions bundles the runtime knobs derived from CLI flags +
 // env vars.
 type mcpServeOptions struct {
-	NoCortex  bool   // --no-cortex
-	SessionID string // --session-id (or generated UUID surface'd to stderr)
-	AuthKey   string // R1_MCP_KEY env var
-	LobeMode  string // --lobes: "none" | "deterministic" | "all"
+	NoCortex   bool   // --no-cortex
+	NoThrottle bool   // --no-throttle (C3 dev-mode bypass)
+	SessionID  string // --session-id (or generated UUID surface'd to stderr)
+	AuthKey    string // R1_MCP_KEY env var
+	LobeMode   string // --lobes: "none" | "deterministic" | "all"
 }
 
 // envOrEmpty returns os.Getenv(key) for live process; tests override

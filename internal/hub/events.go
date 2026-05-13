@@ -32,11 +32,12 @@ const (
 	EventTaskSkipped         EventType = "task.skipped"
 )
 
-// --- Tool Use (8 events) ---
+// --- Tool Use (9 events) ---
 const (
 	EventToolPreUse    EventType = "tool.pre_use"
 	EventToolPostUse   EventType = "tool.post_use"
 	EventToolBlocked   EventType = "tool.blocked"
+	EventToolThrottled EventType = "tool.throttled"
 	EventToolError     EventType = "tool.error"
 	EventToolFileRead  EventType = "tool.file_read"
 	EventToolFileWrite EventType = "tool.file_write"

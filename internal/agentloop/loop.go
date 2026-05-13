@@ -24,6 +24,7 @@ import (
 	"github.com/RelayOne/r1/internal/hub"
 	"github.com/RelayOne/r1/internal/provider"
 	"github.com/RelayOne/r1/internal/stream"
+	"github.com/RelayOne/r1/internal/throttle"
 )
 
 // Anthropic content-block and stop-reason discriminators. Mirrors the
@@ -61,6 +62,26 @@ type Config struct {
 	SessionID string
 	AgentID   string
 	TaskID    string
+	// TenantID identifies the operator/account that owns this session.
+	// When set, the throttle gate uses it for the per-tenant bucket
+	// (the spec's two-tier policy). Empty disables the per-tenant
+	// check (single-tenant local dev).
+	TenantID string
+
+	// Throttler is the optional C3 per-tool rate-limit gate. When
+	// non-nil, executeTools calls Throttler.AllowAgentloop BEFORE
+	// invoking the registered handler. On denial, a synthetic
+	// tool_result block with isError=true is emitted in place of the
+	// real result so the model can recover or wait. nil disables the
+	// gate (matches --one-shot and the R1_DISABLE_THROTTLE escape
+	// hatch). See specs/per-tool-throttling.md task T8 and T15.
+	Throttler ThrottleGate
+
+	// ValidateToolInput is the parallel A1-T2 promptguard gate that
+	// fires AFTER throttle but BEFORE the handler runs. Declared as a
+	// sibling field of Throttler so the two branches do not collide
+	// on the loop dispatch site.
+	ValidateToolInput ToolInputValidator
 	// CompactThreshold is the estimated input-token count above which
 	// the loop calls CompactFn to rewrite the message history. 0 = no
 	// automatic compaction.
@@ -303,6 +324,32 @@ type Message struct {
 // If the tool fails, return an error and the loop will send is_error: true.
 type ToolHandler func(ctx context.Context, name string, input json.RawMessage) (string, error)
 
+// ThrottleGate is the narrow interface executeTools uses to consult
+// the C3 rate-limit gate before invoking a tool handler. The throttle
+// package's *limiter satisfies it directly; tests can supply a stub.
+//
+// We import internal/throttle here rather than redeclaring the
+// Decision type to keep one source of truth for the wire shape and
+// to let the daemon pass its throttle.Limiter straight into
+// Config.Throttler without an adapter wrapper.
+type ThrottleGate interface {
+	AllowAgentloop(ctx context.Context, sessionID, tenantID, tool string) throttle.Decision
+}
+
+// ToolInputValidator is the A1-T2 promptguard input-validation gate
+// signature. Declared here (rather than in internal/promptguard) for
+// the same import-cycle reason as ThrottleGate. The agentloop only
+// cares about the decision shape; whether it scans patterns or runs
+// an LLM secondary check is the validator's business.
+type ToolInputValidator func(ctx context.Context, sessionID, tenantID, tool string, input json.RawMessage) ToolInputDecision
+
+// ToolInputDecision is the parallel-branch promptguard return.
+// Allowed=false replaces the tool result with Message + IsError.
+type ToolInputDecision struct {
+	Allowed bool
+	Message string
+}
+
 // OnTextFunc is called with incremental text output for streaming display.
 type OnTextFunc func(text string)
 
@@ -398,6 +445,17 @@ func (l *Loop) SetOnToolUse(fn OnToolUseFunc) { l.onToolUse = fn }
 
 // SetEventBus sets the hub event bus for publishing tool use events.
 func (l *Loop) SetEventBus(bus *hub.Bus) { l.eventBus = bus }
+
+// checkThrottle consults the configured ThrottleGate (if any). Nil
+// gate or nil-config means "allow everything" — preserves the
+// existing behavior for call sites that don't wire the C3 throttle.
+// See specs/per-tool-throttling.md task T8 and T15.
+func (l *Loop) checkThrottle(ctx context.Context, tool string) throttle.Decision {
+	if l == nil || l.config.Throttler == nil {
+		return throttle.Decision{Allowed: true, Tool: tool}
+	}
+	return l.config.Throttler.AllowAgentloop(ctx, l.config.SessionID, l.config.TenantID, tool)
+}
 
 // Run executes the agentic loop starting from a user message.
 // It continues until the model stops requesting tools or limits are hit.
@@ -709,6 +767,37 @@ func (l *Loop) executeTools(ctx context.Context, blocks []ContentBlock) ([]Conte
 	execOne := func(idx int, tc ContentBlock) {
 		if l.onToolUse != nil {
 			l.onToolUse(tc.Name, tc.Input)
+		}
+
+		// Pre-dispatch gates (C3 throttle + A1-T2 promptguard input
+		// validation). Both are siblings on Config: nil-disabled by
+		// default so existing call sites are unaffected. Throttle
+		// fires first because it is cheap and deterministic.
+		if dec := l.checkThrottle(ctx, tc.Name); !dec.Allowed {
+			mu.Lock()
+			hasError = true
+			results[idx] = ContentBlock{
+				Type:      "tool_result",
+				ToolUseID: tc.ID,
+				Content:   fmt.Sprintf("Throttled: retry after %.1fs. Use a different tool or wait.", dec.RetryAfter.Seconds()),
+				IsError:   true,
+			}
+			mu.Unlock()
+			return
+		}
+		if l.config.ValidateToolInput != nil {
+			if dec := l.config.ValidateToolInput(ctx, l.config.SessionID, l.config.TenantID, tc.Name, tc.Input); !dec.Allowed {
+				mu.Lock()
+				hasError = true
+				results[idx] = ContentBlock{
+					Type:      "tool_result",
+					ToolUseID: tc.ID,
+					Content:   dec.Message,
+					IsError:   true,
+				}
+				mu.Unlock()
+				return
+			}
 		}
 
 		// Emit pre-use event (gate can block)
