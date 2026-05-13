@@ -39,6 +39,19 @@ The work that widens the gap between r1 and any other agent runtime. Six specs i
 
 The full list, with acceptance criteria, dependencies, and BUILD_ORDER, lives in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points respectively.
 
+## Cross-product skill distribution (preview)
+
+C7 ships the R1-side substrate for federated skill packs. A v2
+manifest schema with an explicit `compat` list, a federated ed25519
+trust root, and runtime adapters for CloudSwarm, Heroa, and Veritize
+let a pack be authored once against R1 and adopted into the sibling
+products via `r1 skills pack adopt --pack <id> --for <product>`. The
+existing v1 pack format remains supported unchanged. See
+[`docs/skills/cross-product-distribution.md`](docs/skills/cross-product-distribution.md)
+for pack-author docs and
+[`docs/skills/federated-trust.md`](docs/skills/federated-trust.md)
+for the operator runbook.
+
 ## What's new — final-sweep features (2026-05-05)
 
 - core mission loop with planning, execution, verification, and review

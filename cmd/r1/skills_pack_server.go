@@ -44,25 +44,65 @@ type registryPackDetail struct {
 }
 
 func runSkillsPackServeCmd(args []string) {
-	addr, sourceRoot, token := parseSkillPackServeArgs(args)
-	server := newSkillPackRegistryServer(sourceRoot, token)
+	cfg := parseSkillPackServeArgs(args)
+	server := newSkillPackRegistryServer(cfg.sourceRoot, cfg.token)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", server.handleHealth)
+	mux.HandleFunc("/v1/packs", server.handleList)
+	mux.HandleFunc("/v1/packs/", server.handlePack)
+
+	v2, err := newV2Handler(server, cfg.rootKeyPath, cfg.rateLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skills pack serve: %v\n", err)
+		os.Exit(1)
+	}
+	v2.register(mux)
+	stop := make(chan struct{})
+	v2.startLimiterEvictor(stop)
+	defer close(stop)
+
 	httpServer := &http.Server{
-		Addr:              addr,
-		Handler:           server.Handler(),
+		Addr:              cfg.addr,
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	fmt.Fprintf(os.Stderr, "skills pack serve listening on %s (source_root=%s auth=%t)\n", addr, sourceRoot, token != "")
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		fmt.Fprintf(os.Stderr, "skills pack serve: %v\n", err)
+	fmt.Fprintf(os.Stderr, "skills pack serve listening on %s (source_root=%s auth=%t tls=%t)\n",
+		cfg.addr, cfg.sourceRoot, cfg.token != "", cfg.tlsCert != "")
+	var serveErr error
+	if cfg.tlsCert != "" && cfg.tlsKey != "" {
+		serveErr = httpServer.ListenAndServeTLS(cfg.tlsCert, cfg.tlsKey)
+	} else {
+		warnNoTLS(cfg.addr)
+		serveErr = httpServer.ListenAndServe()
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		fmt.Fprintf(os.Stderr, "skills pack serve: %v\n", serveErr)
 		os.Exit(1)
 	}
 }
 
-func parseSkillPackServeArgs(args []string) (string, string, string) {
+// skillsPackServeConfig is the resolved invocation config. Carried as
+// a struct so the v2 additions (rate limit, root key, TLS) stay
+// readable next to the v1 fields.
+type skillsPackServeConfig struct {
+	addr        string
+	sourceRoot  string
+	token       string
+	tlsCert     string
+	tlsKey      string
+	rateLimit   int
+	rootKeyPath string
+}
+
+func parseSkillPackServeArgs(args []string) skillsPackServeConfig {
 	fs := flag.NewFlagSet("skills pack serve", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:3949", "listen address")
 	sourceRoot := fs.String("source-root", "", "root that contains .r1/.stoke skill pack libraries (defaults to HOME)")
 	token := fs.String("token", "", "optional bearer token required for every request")
+	tlsCert := fs.String("cert", "", "TLS certificate path; requires --key. When set, server uses ListenAndServeTLS")
+	tlsKey := fs.String("key", "", "TLS key path; requires --cert. When set, server uses ListenAndServeTLS")
+	rootKeyPath := fs.String("root-key", "", "operator root signing key path (defaults to env R1_REGISTRY_ROOT_KEY or <source-root>/.r1/skills/trust-root.priv)")
 	fs.Parse(args)
 	resolvedRoot, err := resolveSkillPackPublishRoot(*sourceRoot)
 	if err != nil {
@@ -73,7 +113,23 @@ func parseSkillPackServeArgs(args []string) (string, string, string) {
 	if resolvedToken == "" {
 		resolvedToken = strings.TrimSpace(r1env.Get("R1_SKILL_PACK_REGISTRY_TOKEN", "STOKE_SKILL_PACK_REGISTRY_TOKEN"))
 	}
-	return *addr, resolvedRoot, resolvedToken
+	if (*tlsCert == "") != (*tlsKey == "") {
+		fmt.Fprintln(os.Stderr, "skills pack serve: --cert and --key must be provided together")
+		os.Exit(2)
+	}
+	resolvedRootKey := strings.TrimSpace(*rootKeyPath)
+	if resolvedRootKey == "" {
+		resolvedRootKey = resolveV2RootKeyPath()
+	}
+	return skillsPackServeConfig{
+		addr:        *addr,
+		sourceRoot:  resolvedRoot,
+		token:       resolvedToken,
+		tlsCert:     strings.TrimSpace(*tlsCert),
+		tlsKey:      strings.TrimSpace(*tlsKey),
+		rateLimit:   resolveV2RateLimit(),
+		rootKeyPath: resolvedRootKey,
+	}
 }
 
 func newSkillPackRegistryServer(sourceRoot, token string) *skillPackRegistryServer {
