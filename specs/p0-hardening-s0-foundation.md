@@ -1,8 +1,10 @@
-<!-- STATUS: draft -->
+<!-- STATUS: superseded -->
 <!-- CREATED: 2026-05-11 -->
+<!-- SUPERSEDED_AT: 2026-05-14 -->
+<!-- SUPERSEDED_BY: specs/encryption-at-rest.md, specs/retention-policies.md -->
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 47 -->
-<!-- NOTE_TO_OPERATOR: PORTFOLIO-EXECUTION-INDEX line 23 cites "WORK-r1 Tasks 8-10" for this item, but those tasks (XChaCha20 / keyring / retention) are already STATUS:done via specs/encryption-at-rest.md + specs/retention-policies.md. This draft is a best-effort general "agent-platform P0 hardening" interpretation. Operator should review the included checklist and confirm scope or replace with the intended task list. -->
+<!-- RESOLUTION: The PORTFOLIO-EXECUTION-INDEX line 23 citation "WORK-r1 Tasks 8-10" resolves to encryption-at-rest + retention-policies, both shipped (STATUS:done). Per this spec's own §1 option (3), A2 is closed as superseded by those two specs. The "P0 hardening" best-effort interpretation in the body below remains an open scoping candidate if the operator wants a separate production-readiness pass on the agent-platform substrate — at which point it should be re-issued as a new spec with a fresh BUILD_ORDER, not revived from draft. -->
 
 # P0 Hardening + S-0 Foundation — Agent-Platform Readiness Spec (DRAFT)
 
