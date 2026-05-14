@@ -1,0 +1,39 @@
+id: seed-bugfix-medium
+title: "Goroutine leak in worker pool on context cancel (seed mission)"
+description: "Fix a goroutine leak in pkg/pool/pool.go::Pool.Submit where canceled tasks orphan their worker goroutine."
+category: bugfix
+difficulty: medium
+intent: |
+  pkg/pool/pool.go implements a fixed-size worker pool. When the caller
+  cancels the parent context AFTER Submit but BEFORE the worker picks the
+  task off the channel, the worker goroutine blocks forever on the
+  unbuffered task channel. Fix the leak so a canceled context releases the
+  blocked send. Add a regression test that asserts goroutine count returns
+  to baseline after a canceled Submit.
+
+plan:
+  - id: P1
+    description: "Add ctx.Done() case to the select in Pool.Submit"
+    changed_files: ["pkg/pool/pool.go"]
+    required_symbols: ["ctx.Done()", "case <-ctx.Done()"]
+  - id: P2
+    description: "Propagate ctx.Err() back to the caller so the leak fix is observable"
+    changed_files: ["pkg/pool/pool.go"]
+    required_symbols: ["return ctx.Err()"]
+  - id: P3
+    description: "Add TestPool_CanceledSubmitDoesNotLeak using runtime.NumGoroutine baseline"
+    changed_files: ["pkg/pool/pool_test.go"]
+    required_symbols: ["TestPool_CanceledSubmitDoesNotLeak", "runtime.NumGoroutine"]
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 60
+  judge_agree: required
+
+acceptance_criteria:
+  - "Pool.Submit returns ctx.Err() when the parent context is canceled before the worker picks up the task"
+  - "After 1000 canceled Submit calls, runtime.NumGoroutine returns to within 2 of baseline"
+  - "Existing happy-path tests still pass (Submit + Wait + Stop on uncanceled work)"
+  - "TestPool_CanceledSubmitDoesNotLeak asserts the goroutine-count invariant"

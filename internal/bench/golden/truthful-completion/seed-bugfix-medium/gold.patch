@@ -1,0 +1,62 @@
+diff --git a/pkg/pool/pool.go b/pkg/pool/pool.go
+index 1111111..2222222 100644
+--- a/pkg/pool/pool.go
++++ b/pkg/pool/pool.go
+@@ -25,7 +25,12 @@ func (p *Pool) Submit(ctx context.Context, task func() error) error {
+ 	if p.stopped {
+ 		return errPoolStopped
+ 	}
+-	p.tasks <- task
+-	return nil
++	select {
++	case p.tasks <- task:
++		return nil
++	case <-ctx.Done():
++		// Canceled before the worker picked up the task — release the
++		// send so the caller goroutine doesn't block forever.
++		return ctx.Err()
++	}
+ }
+diff --git a/pkg/pool/pool_test.go b/pkg/pool/pool_test.go
+index 3333333..4444444 100644
+--- a/pkg/pool/pool_test.go
++++ b/pkg/pool/pool_test.go
+@@ -3,6 +3,7 @@ package pool
+ import (
+ 	"context"
+ 	"errors"
++	"runtime"
+ 	"testing"
+ 	"time"
+ )
+@@ -33,3 +34,30 @@ func TestPool_SubmitAfterStop(t *testing.T) {
+ 		t.Errorf("Submit after Stop should error")
+ 	}
+ }
++
++func TestPool_CanceledSubmitDoesNotLeak(t *testing.T) {
++	// Saturate workers so subsequent Submits block on the unbuffered chan.
++	p := New(1)
++	defer p.Stop()
++	block := make(chan struct{})
++	_ = p.Submit(context.Background(), func() error {
++		<-block
++		return nil
++	})
++	baseline := runtime.NumGoroutine()
++
++	for i := 0; i < 1000; i++ {
++		ctx, cancel := context.WithCancel(context.Background())
++		cancel() // canceled BEFORE the worker can possibly pick up.
++		err := p.Submit(ctx, func() error { return nil })
++		if !errors.Is(err, context.Canceled) {
++			t.Fatalf("Submit iter %d: err = %v, want context.Canceled", i, err)
++		}
++	}
++	// Release the blocking task so the goroutine count can settle.
++	close(block)
++	time.Sleep(50 * time.Millisecond)
++	if delta := runtime.NumGoroutine() - baseline; delta > 2 {
++		t.Errorf("leaked %d goroutines after 1000 canceled submits", delta)
++	}
++}
