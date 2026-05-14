@@ -1,0 +1,70 @@
+# services/cloudbuild-bench-truthful-completion-pr.yaml
+#
+# PR-triggered TruthfulCompletion regression check. Runs the 5 seed
+# missions against the 8 dispatchers and asserts no regression
+# relative to baseline. Triggered by GitHub PR open/sync when files
+# under internal/bench/, cmd/r1-bench/, or internal/antitrunc/ change.
+#
+# Spec: specs/truthful-completion-benchmark.md §T8.2 (item 56).
+
+substitutions:
+  _CORPUS_DIR: internal/bench/golden/truthful-completion
+  _AGENTS: r1,r1-antitrunc,tether+aider,tether+cline
+  _TIMEOUT: 5m
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_STANDARD_8
+
+steps:
+  - id: build
+    name: 'golang:1.25'
+    waitFor: ['-']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd /workspace
+        go build -trimpath -o /workspace/r1-bench-bin ./cmd/r1-bench
+
+  - id: test
+    name: 'golang:1.25'
+    waitFor: ['build']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd /workspace
+        go test ./internal/bench/... ./cmd/r1-bench/...
+
+  - id: seed-runs
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['test']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p /workspace/seed-out
+        # Use --no-judge for PR runs (no API budget for judge calls
+        # on every PR). The full judge runs on the monthly cadence.
+        SEEDS="seed-hello-easy seed-refactor-medium seed-feature-medium seed-migration-hard seed-perfect-agent-fixture"
+        IFS=',' read -ra AGENTS_ARR <<< "${_AGENTS}"
+        for MISSION in $SEEDS; do
+          for AGENT in "${AGENTS_ARR[@]}"; do
+            OUT="/workspace/seed-out/${AGENT//\+/_}--${MISSION}.json"
+            /workspace/r1-bench-bin \
+              --mission "$MISSION" \
+              --agent "$AGENT" \
+              --corpus "${_CORPUS_DIR}" \
+              --no-judge \
+              --timeout "${_TIMEOUT}" \
+              --output "$OUT" \
+              || echo "WARN: ${AGENT}/${MISSION} failed"
+          done
+        done
+        ls -la /workspace/seed-out/
+
+timeout: 1800s  # 30 minutes max
