@@ -62,8 +62,9 @@ func RunOne(ctx context.Context, spec RunSpec) (*bench.RunResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("score: %w", err)
 	}
-	// Override the MissionID + carry wall-clock from the dispatcher.
+	// Override the MissionID + AgentID + wall-clock from the dispatcher.
 	result.MissionID = spec.Mission.ID
+	result.AgentID = spec.Dispatcher.Agent().ID
 	result.WallTimeMs = trace.WallClockMs
 	return &result, nil
 }

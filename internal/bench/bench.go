@@ -75,6 +75,11 @@ type CompletionCriteria struct {
 // RunResult captures the outcome of executing a single golden mission.
 type RunResult struct {
 	MissionID       string
+	// AgentID is the dispatcher ID that produced this result (e.g.
+	// "r1", "r1-antitrunc", "claude-code-default", "tether+aider").
+	// Populated by the runner; empty for legacy RunResult records
+	// that pre-date the truthful-completion benchmark.
+	AgentID         string `json:"agent_id,omitempty"`
 	TerminalState   string // converged, escalated, timed_out
 	AcceptanceMet   int
 	AcceptanceTotal int
