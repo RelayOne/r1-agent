@@ -1,0 +1,91 @@
+diff --git a/internal/http/retry.go b/internal/http/retry.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/internal/http/retry.go
+@@ -0,0 +1,52 @@
++package http
++
++import "time"
++
++// RetryPolicy decides whether a failed attempt should retry and how
++// long to wait before the next one.
++type RetryPolicy interface {
++	ShouldRetry(attempt int, err error) bool
++	Backoff(attempt int) time.Duration
++}
++
++// ExponentialBackoff retries up to MaxAttempts with a base × 2^attempt
++// delay, capped at Max.
++type ExponentialBackoff struct {
++	MaxAttempts int
++	Base        time.Duration
++	Max         time.Duration
++}
++
++func (e *ExponentialBackoff) ShouldRetry(attempt int, err error) bool {
++	return err != nil && attempt < e.MaxAttempts
++}
++
++func (e *ExponentialBackoff) Backoff(attempt int) time.Duration {
++	d := e.Base << attempt
++	if d > e.Max {
++		return e.Max
++	}
++	return d
++}
++
++// NoRetry never retries. Used by callers that want fail-fast.
++type NoRetry struct{}
++
++func (NoRetry) ShouldRetry(attempt int, err error) bool { return false }
++func (NoRetry) Backoff(attempt int) time.Duration       { return 0 }
++
++// ConstantBackoff retries up to MaxAttempts with a fixed Delay.
++type ConstantBackoff struct {
++	MaxAttempts int
++	Delay       time.Duration
++}
++
++func (c *ConstantBackoff) ShouldRetry(attempt int, err error) bool {
++	return err != nil && attempt < c.MaxAttempts
++}
++
++func (c *ConstantBackoff) Backoff(attempt int) time.Duration { return c.Delay }
+diff --git a/internal/http/client.go b/internal/http/client.go
+index abc1234..def5678 100644
+--- a/internal/http/client.go
++++ b/internal/http/client.go
+@@ -1,20 +1,18 @@
+ package http
+
+ import (
+-	"net/http"
+ 	"time"
++	stdhttp "net/http"
+ )
+
+-type Client struct{ HTTP *http.Client }
++type Client struct {
++	HTTP   *stdhttp.Client
++	Retry  RetryPolicy
++}
+
+-func (c *Client) Do(req *http.Request) (*http.Response, error) {
++func (c *Client) Do(req *stdhttp.Request) (*stdhttp.Response, error) {
+ 	var lastErr error
+-	for i := 0; i < 3; i++ {
++	for attempt := 0; ; attempt++ {
+ 		resp, err := c.HTTP.Do(req)
+ 		if err == nil {
+ 			return resp, nil
+ 		}
+ 		lastErr = err
+-		time.Sleep(time.Duration(1<<i) * time.Second)
++		if !c.Retry.ShouldRetry(attempt, err) {
++			return nil, lastErr
++		}
++		time.Sleep(c.Retry.Backoff(attempt))
+ 	}
+-	return nil, lastErr
+ }

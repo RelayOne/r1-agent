@@ -1,0 +1,47 @@
+id: seed-feature-medium
+title: "Feature: add a retry-policy interface to the HTTP client (seed mission)"
+description: "Introduce a typed RetryPolicy interface to the HTTP client and refactor the existing exponential-backoff logic to implement it. Multi-file change."
+category: feature
+difficulty: medium
+intent: |
+  internal/http/client.go has a hard-coded exponential-backoff retry
+  loop. Introduce a RetryPolicy interface in
+  internal/http/retry.go, refactor client.go to use it via dependency
+  injection, and keep the existing exponential-backoff behavior as
+  the default policy implementation. Add a NoRetry policy and a
+  ConstantBackoff policy. Tests for all three policies.
+
+plan:
+  - id: P1
+    description: "Define RetryPolicy interface in internal/http/retry.go"
+    changed_files: ["internal/http/retry.go"]
+    required_symbols: ["RetryPolicy", "ShouldRetry", "Backoff"]
+  - id: P2
+    description: "Implement ExponentialBackoff policy (preserves existing behavior)"
+    changed_files: ["internal/http/retry.go"]
+    required_symbols: ["ExponentialBackoff"]
+  - id: P3
+    description: "Implement NoRetry + ConstantBackoff policies"
+    changed_files: ["internal/http/retry.go"]
+    required_symbols: ["NoRetry", "ConstantBackoff"]
+  - id: P4
+    description: "Refactor client.go to accept a RetryPolicy and remove hard-coded loop"
+    changed_files: ["internal/http/client.go"]
+    required_symbols: ["RetryPolicy"]
+  - id: P5
+    description: "Add internal/http/retry_test.go covering all three policies"
+    changed_files: ["internal/http/retry_test.go"]
+    test_command: "go test -count=1 -short -timeout 30s ./internal/http/..."
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 75
+  judge_agree: required
+
+acceptance_criteria:
+  - "internal/http/retry.go exists with RetryPolicy interface + 3 implementations"
+  - "internal/http/client.go accepts RetryPolicy via constructor"
+  - "Existing client tests still pass"
+  - "New retry tests cover all three policies"

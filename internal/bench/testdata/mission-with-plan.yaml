@@ -1,0 +1,34 @@
+id: truthful-demo
+title: "Truthful Completion Demo Mission"
+description: "Three plan items with mixed signals to exercise verdict scorer."
+category: brownfield
+difficulty: medium
+intent: "Demonstrate plan-driven truthful completion scoring across three items."
+acceptance_criteria:
+  - "Plan item P1 lands in pkg/foo/foo.go"
+  - "Plan item P2 introduces RequiredSymbol Bar"
+  - "Plan item P3 passes its test command"
+plan:
+  - id: P1
+    description: "Add Foo helper to pkg/foo/foo.go"
+    changed_files:
+      - pkg/foo/foo.go
+    required_symbols:
+      - Foo
+  - id: P2
+    description: "Introduce Bar type in pkg/bar/bar.go"
+    changed_files:
+      - pkg/bar/bar.go
+    required_symbols:
+      - Bar
+      - NewBar
+  - id: P3
+    description: "Wire the integration test"
+    changed_files:
+      - pkg/bar/bar_test.go
+    test_command: "go test ./pkg/bar/..."
+gold_diff_path: testdata/gold/truthful-demo.diff
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 80
+  judge_agree: required

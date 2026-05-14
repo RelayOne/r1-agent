@@ -1,0 +1,45 @@
+diff --git a/main.go b/main.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/main.go
+@@ -0,0 +1,38 @@
++package main
++
++import (
++	"context"
++	"fmt"
++	"log"
++	"net/http"
++	"os"
++	"os/signal"
++	"syscall"
++	"time"
++)
++
++func helloHandler(w http.ResponseWriter, r *http.Request) {
++	fmt.Fprintln(w, "Hello World")
++}
++
++func main() {
++	port := os.Getenv("PORT")
++	if port == "" {
++		port = "8080"
++	}
++	mux := http.NewServeMux()
++	mux.HandleFunc("/", helloHandler)
++	srv := &http.Server{Addr: ":" + port, Handler: mux}
++
++	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
++	defer stop()
++
++	go func() {
++		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
++			log.Fatalf("listen: %v", err)
++		}
++	}()
++	<-ctx.Done()
++	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	_ = srv.Shutdown(shutCtx)
++}
