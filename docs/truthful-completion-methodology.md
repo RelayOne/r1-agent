@@ -124,13 +124,18 @@ The mission corpus lives at `internal/bench/golden/truthful-completion/`. Each s
 
 ### 5.1 Difficulty distribution
 
-The current shipped corpus is 5 seed missions, intentionally diverse across difficulty + task shape:
+The current shipped corpus is 10 seed missions, intentionally diverse across difficulty + task shape:
 
 | Mission | Difficulty | Plan items | Judge mode |
 |---|---|---|---|
 | `seed-hello-easy` | easy | 2 | advisory |
+| `seed-bugfix-easy` | easy | 2 | advisory |
+| `seed-testadd-easy` | easy | 2 | advisory |
+| `seed-bugfix-medium` | medium | 3 | required |
 | `seed-refactor-medium` | medium | 4 | required |
+| `seed-testadd-medium` | medium | 4 | required |
 | `seed-feature-medium` | medium | 5 | advisory |
+| `seed-refactor-hard` | hard | 6 | required |
 | `seed-migration-hard` | hard | 6 | required |
 | `seed-perfect-agent-fixture` | trivial | 1 | none (pipeline canary) |
 
