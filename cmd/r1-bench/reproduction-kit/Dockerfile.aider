@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1.7
+#
+# Reproduction-kit Dockerfile for the Aider dispatcher. Bundles
+# `aider-chat` (Python) alongside r1-bench. Pinned via the
+# AIDER_VERSION build-arg.
+
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY . .
+RUN go build -trimpath -o /out/r1-bench ./cmd/r1-bench
+
+FROM python:3.12-alpine AS runtime
+ARG AIDER_VERSION=
+LABEL r1.bench.agent="aider"
+RUN apk add --no-cache git bash gcc musl-dev
+RUN if [ -n "$AIDER_VERSION" ]; then \
+      pip install --no-cache-dir "aider-chat==${AIDER_VERSION}"; \
+    else \
+      pip install --no-cache-dir aider-chat; \
+    fi
+COPY --from=builder /out/r1-bench /usr/local/bin/r1-bench
+COPY internal/bench/golden /opt/r1/golden
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/r1-bench"]

@@ -1,0 +1,58 @@
+# Dockerfile.r1-browser — in-house headless-browser Cloud Run image
+# (spec C6 §T3).
+#
+# Two stages:
+#
+#   1. builder: Go 1.25 compiles services/r1-browser → /out/r1-browser
+#   2. runtime: debian-slim + chromium + the static Go binary
+#
+# Why debian-slim and not distroless: Chromium needs glibc + a bunch
+# of shared libs (fontconfig, libnss3, libxss1, libatk-bridge, …)
+# that distroless does not ship. The spec calls out the trade-off
+# (T8 §) — we explicitly chose the wider runtime so the container is
+# debuggable in production. The static-binary approach (distroless +
+# walked-in chromium libs) is documented as a future optimization in
+# docs/operations/r1-browser-service.md.
+#
+# Concurrency=1 per Cloud Run instance — tenant isolation is
+# enforced by container boundaries plus the per-request
+# --user-data-dir randomization inside supervisor.go.
+
+# syntax=docker/dockerfile:1
+FROM golang:1.25-bookworm AS builder
+ARG VERSION=dev
+WORKDIR /src
+
+# Copy module file + sum + sources for services/r1-browser only —
+# the service has its own go.mod (per the services/ pattern; see
+# services/r1-coord-api/go.mod).
+COPY services/r1-browser/go.mod ./
+RUN go mod download
+COPY services/r1-browser/. ./
+RUN CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags="-s -w -X main.versionStr=${VERSION}" \
+        -o /out/r1-browser .
+
+FROM debian:bookworm-slim AS runtime
+
+# Chromium + the minimum shared-lib set Chromium needs to run
+# headless. fonts-liberation gets us a default font so PDF /
+# screenshot output looks reasonable.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        chromium \
+        fonts-liberation \
+        ca-certificates \
+        dumb-init && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/r1-browser /usr/local/bin/r1-browser
+
+# Cloud Run injects PORT; the Go binary reads it.
+ENV PORT=8080
+EXPOSE 8080
+
+# dumb-init reaps Chromium's zombie processes when --user-data-dir
+# randomization leaves orphans behind.
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/r1-browser"]

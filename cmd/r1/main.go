@@ -705,6 +705,12 @@ func main() {
 		receiptCmd(os.Args[2:])
 	case "honesty":
 		honestyCmd(os.Args[2:])
+	case "promptguard":
+		// specs/promptguard-hardening.md §T3 item 14: dispatch
+		// for `r1 promptguard verify-system-prompt`. Future
+		// promptguard verbs (refresh-corpus, list-patterns) extend
+		// the runPromptguardCmd switch.
+		promptguardCmd(os.Args[2:])
 	case "antitrunc":
 		antitruncCmd(os.Args[2:])
 	case "cf":
@@ -754,6 +760,14 @@ func main() {
 		scanRepairCmd(os.Args[2:])
 	case "sessions":
 		sessionsCmd(os.Args[2:])
+	case "session":
+		// C1 specs/cross-machine-session-migration.md — `r1 session`
+		// is the migration-verb family (export / import / migrate).
+		// Distinct from `r1 sessions` (read-only checkpoint browser)
+		// because the new verbs mutate state on remote daemons; we
+		// keep the singular/plural split so completion logs are
+		// unambiguous about which family a command came from.
+		sessionCmd(os.Args[2:])
 	case "cloud":
 		cloudCmd(os.Args[2:])
 	case "yolo":
@@ -789,6 +803,11 @@ func main() {
 		verifyCmd(os.Args[2:])
 	case "mcp":
 		mcpCmd(os.Args[2:])
+	case "ide":
+		// C4 (specs/mcp-ide-bundles.md) — `r1 ide install <ide>` etc.
+		// Dispatches Cursor / Windsurf / VS Code / JetBrains
+		// installers under the shared internal/ideinstall package.
+		ideCmd(os.Args[2:])
 	case "mcp-serve":
 		mcpServeCmd(os.Args[2:])
 	case "mcp-serve-stoke":

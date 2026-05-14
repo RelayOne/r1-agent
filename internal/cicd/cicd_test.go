@@ -171,7 +171,7 @@ func TestValidateConfig_InvalidYAML(t *testing.T) {
 
 // TestUnsupportedProvider returns an error gracefully.
 func TestUnsupportedProvider(t *testing.T) {
-	_, _, err := GenerateConfig("bitbucket", Options{})
+	_, _, err := GenerateConfig("jenkins", Options{})
 	if err == nil {
 		t.Fatal("expected error for unsupported provider")
 	}

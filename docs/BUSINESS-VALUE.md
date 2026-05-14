@@ -208,5 +208,54 @@ The 6-month roadmap, in priority order:
 4. **Marketing site** — affiliate / SEO / CRO / attribution / retention engineering across the public surface.
 5. **Cross-machine session migration** — current daemon is one-host; the next iteration lets you start a session on your laptop and finish it on a cloud sandbox.
 6. **Encryption-at-rest for journals** — separate spec already drafted at `specs/encryption-at-rest.md`.
-7. **BitBucket Pipelines adapter** — parity with GitHub Actions and GitLab CI.
+7. **BitBucket Pipelines adapter** — parity with GitHub Actions and GitLab CI. **Shipped 2026-05-12.**
 8. **Native MCP server bundle for popular IDEs** — VS Code + JetBrains + Zed without a separate install step.
+
+---
+
+## Completion SOW value props (scoped 2026-05-11)
+
+Fourteen specs scoped this session take r1 from "technically honest agent runtime" — the thesis is right, the open-source code already demonstrates it — to "operationally honest hosted product." Each tier addresses a different audience and a different revenue motion.
+
+### Tier A — turn the honest-agent thesis from technically-true into operationally-true
+
+Tier A is the difference between "r1 is the right architecture" and "you can put your customer's production work on r1 tomorrow." Five specs.
+
+**Prompt-injection hardening (A1).** The honest-agent thesis only holds if a customer's repo can't hijack the agent. Today's promptguard is a foundation; A1 threads it through plan + execute + verify boundaries, stamps every system block with an ed25519 fingerprint that fails verification on tamper, runs an adversarial reviewer over the CL4R1T4S injection corpus, validates per-tool inputs at the MCP wire, and circuit-breaks a session that crosses an injection-attempt budget. The pitch shifts from "we resist prompt injection in the prompt" to "the host process refuses to obey injection attempts and proves it from the ledger." That is the difference between a hand-wave and a security review you can pass.
+
+**P0 platform hardening (A2).** Every agent platform that gets to scale eventually faces the same failure modes: panics on background goroutines that leave the daemon wedged, SIGTERMs that orphan in-flight tool calls, runaway sessions that starve their neighbors, restarts that lose state, observability blind spots that turn an incident into a guessing game. A2 is the boring, load-bearing work that turns r1's runtime from "demoable" into "I can leave it running over a long weekend without paging me." The marketing answer to "is it production-ready" stops being a caveat and starts being a yes.
+
+**One-shot production hardening (A3) — RelayGate inline integration.** RelayGate Phase K-3 wants to call r1 inline on every request, not as a background mission. That requires the `--one-shot` path to be deterministic under SIGTERM, bounded in memory, fail-closed on upstream-model stalls, and prove itself under a 1000-concurrent integration test. A3 ships exactly that, plus a remote audit-ledger publishing path so the operator's ledger of record can live off-host, plus a documented integration contract so the RelayGate team can wire r1 without reading r1 source. The strategic value is unlocking inline-integration as a product motion: the customer's request flows through r1 in the hot path, not through r1 in a side process.
+
+**RelayOne SSO (A4).** Long-lived API keys are a security liability and a usability tax. A4 replaces them with OIDC + PKCE against the RelayOne IdP, per-tenant token isolation, JWKs rotation, and a middleware that gates the admin panel and every future enterprise route. The customer logs in with the identity they already have; the daemon honors per-tenant scope; the operator stops emailing API keys to onboarding contacts. A4 is also the dependency every paid surface eventually needs — Tier B's analytics+retention work and Tier C's session migration both rely on a real auth identity.
+
+**Admin panel (A5).** "What is this customer's session doing right now" without raw SQL access. A5 mounts five read-only routes on the existing `r1-server` process (sessions, tenants, billing, audit, anti-trunc events), gates them through A4's SSO, and gives internal operators, regulators, and support engineers the same view of the system. Support tickets stop escalating to ops. Compliance reviews get answered from a browser. New hires onboard against the panel instead of against `gcloud sql connect`.
+
+### Tier B — close the self-serve adoption loop
+
+Tier B is the difference between "early adopters find us" and "the product compounds." Three specs.
+
+**Product analytics (B1).** Twenty-four events instrumented end-to-end across the activation funnel, three product funnels (activation, mission-success, anti-trunc-fire-recovered), four cohorts (free-active, paid-active, churn-risk, regretted-activation). The product team finally answers "what's the activation rate" with one query, ships A/B tests with confidence intervals, and stops shipping features on vibes. PostHog Group Analytics by tenant means the enterprise tier gets sliced from the self-serve tier without a custom dashboard.
+
+**Lifecycle email (B2).** Six lifecycle triggers — signup, activation, first mission, first completion, anti-trunc fired, budget alert — each backed by a transactional Customer.io template marketing edits without a deploy. The user who signs up on Monday and never returns gets a Tuesday "here's what you missed" email instead of vanishing from the funnel. The GDPR DSAR flow turns export-or-delete from a manual ops task into a self-serve flow. Retention stops being something we'll-figure-out-later and starts being a measurable product surface.
+
+**Self-observability (B3).** r1 already emits structured events on every state transition; B3 just wires eighteen canonical events into CodeRadar with per-environment sampling and makes the CodeRadar dashboard the on-call surface for r1 itself. "We eat our own dogfood" stops being a slogan and starts being a documented practice: every r1 release ships under r1's own observability stack.
+
+### Tier C — widen the competitive moat
+
+Tier C is the work that makes "should we switch agent runtimes" a harder question for the customer to answer in the abstract. Six specs, each addressing a different surface where most competitors don't yet have an answer.
+
+**Cross-machine session portability (C1).** A `.r1session` bundle plus `r1 session export / import / migrate` commands. A customer's session is not stuck to a host — it migrates from a laptop to a cloud sandbox to a desktop with a tamper-evident chain-root-hash continuity proof. The competition's answer to "can I move this session to another machine" is "no, restart it"; ours is "one command, audit chain intact."
+
+**Cost guard-rails by default (C3).** Two-tier token-bucket throttling (per-session + per-tenant) enforced at the MCP boundary; declarative YAML policy the operator edits without a code change; bucket state journaled so a daemon restart honors the in-flight throttle window. Every multi-tenant agent platform eventually meets the customer whose runaway agent ate a month of quota in a weekend; we ship the fix before the customer.
+
+**IDE-native install (C4).** One spec covering Cursor, Windsurf, VS Code, and JetBrains with one `r1 ide install / uninstall / verify` command. The customer installs r1 once; every IDE on the machine sees it. Competitors that require a per-IDE walkthrough lose the install funnel; we win it.
+
+**BitBucket parity (C5).** *Shipped 2026-05-12.* The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround. Implementation lives under `internal/cicd/bitbucket/`; operator runbook in `docs/integrations/bitbucket-pipelines.md`.
+**BitBucket parity (C5).** The CI integration story is GitHub Actions, GitLab CI, *and* BitBucket Pipelines. Customers on BitBucket — a non-trivial slice of enterprise — stop being a third-class platform with a "PR open" workaround.
+
+**Hosted-SaaS browser sandbox (C6).** Two interchangeable providers (Browserless managed + an in-house Cloud Run provider), tenant-isolated sandbox, deny-by-default egress policy. Every "scrape this site / fill this form / verify this UI" agent workflow becomes usable on the hosted tier without the customer worrying about cross-tenant browser-fingerprint leakage or unrestricted outbound network access.
+
+**Cross-product skill federation (C7).** Pack-format v2 with an explicit compatibility matrix, federated trust root, runtime adapters for CloudSwarm, Heroa, and Veritize. A skill written for r1 runs in Heroa; a skill from CloudSwarm runs in r1. The RelayOne portfolio stops being a collection of related products and starts being a federated agent platform — and the moat against any single-product competitor compounds with every new portfolio entrant.
+
+---

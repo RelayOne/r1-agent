@@ -138,6 +138,15 @@ func mountUI(mux *http.ServeMux, db *DB) {
 		// Spec 4 §7 + §10 T15-T17: streamed tar.gz export of the
 		// session's ledger contents. v2-only and DB-backed.
 		mux.HandleFunc("GET /api/session/{id}/export.tracebundle", db.serveTracebundleAdapter)
+
+		// Spec C1 specs/cross-machine-session-migration.md §6.1 + §6.2
+		// — `.r1session` bundle migrate-out / migrate-in handlers. The
+		// migrate-out path is keyed by session id (one route per
+		// session); migrate-in is a sink (any bundle, any source).
+		// Both go through the same bearer middleware as the rest of
+		// the /api/* surface — wired in main.go.
+		mux.HandleFunc("POST /api/session/{id}/migrate-out", db.serveMigrateOut)
+		mux.HandleFunc("POST /api/session/migrate-in", db.serveMigrateIn)
 	}
 
 	// Spec 27 §10 read-only settings viewer. Reads ~/.r1/config.yaml

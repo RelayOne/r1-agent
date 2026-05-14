@@ -106,6 +106,7 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 	printTools := fs.Bool("print-tools", false, "print the r1.* tool catalog and exit")
 	asMarkdown := fs.Bool("markdown", false, "emit Markdown instead of JSON (only with --print-tools)")
 	noCortex := fs.Bool("no-cortex", false, "skip cortex backend wiring; r1.cortex.* tools return 'cortex backend not wired'")
+	noThrottle := fs.Bool("no-throttle", false, "skip C3 per-tool throttle wiring; every tool call is admitted (dev / debugging only)")
 	sessionID := fs.String("session-id", "", "session id surfaced via cortex.SessionID; defaults to a generated UUID printed to stderr")
 	lobeMode := fs.String("lobes", "deterministic", "Lobe registration mode: none | deterministic | all (today 'all' falls back to deterministic until ANTHROPIC_API_KEY plumbing lands)")
 	if err := fs.Parse(args); err != nil {
@@ -130,10 +131,11 @@ func runMCPServe(args []string, stdout, stderr io.Writer) int {
 		sid = fmt.Sprintf("r1-mcp-%d", os.Getpid())
 	}
 	opts := mcpServeOptions{
-		NoCortex:  *noCortex,
-		SessionID: sid,
-		AuthKey:   envFunc("R1_MCP_KEY"),
-		LobeMode:  *lobeMode,
+		NoCortex:   *noCortex,
+		NoThrottle: *noThrottle,
+		SessionID:  sid,
+		AuthKey:    envFunc("R1_MCP_KEY"),
+		LobeMode:   *lobeMode,
 	}
 	if err := startMCPServer(opts, stderr); err != nil {
 		fmt.Fprintf(stderr, "r1 mcp serve: %v\n", err)

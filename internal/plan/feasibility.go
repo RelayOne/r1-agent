@@ -25,6 +25,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/RelayOne/r1/internal/promptguard"
@@ -93,16 +94,30 @@ func EvaluateFeasibility(ctx context.Context, sow *SOW, rawSOW string, searcher 
 		}
 		for _, r := range doc.WebResults {
 			// Third-party web bodies are an attacker-controllable surface:
-			// route them through promptguard so we at least log when an
-			// injection-shaped payload shows up in fetched doc content.
+			// route them through promptguard so injection-shaped payloads
+			// are stripped (default action for the plan phase per
+			// specs/promptguard-hardening.md §T1) and a threat event
+			// fires per detection.
 			body := firstNonEmpty(r.Body, r.Excerpt)
-			sanitized, report, _ := promptguard.Sanitize(body, promptguard.ActionWarn, r.URL)
+			host := hostFromURL(r.URL)
+			source := "plan:feasibility:" + host
+			action := promptguard.PhaseAction("plan")
+			sanitized, report, sanErr := promptguard.Sanitize(body, action, source)
+			if sanErr != nil {
+				// ActionReject + threats: refuse to ingest this doc.
+				slog.Warn("promptguard rejected feasibility web-search body",
+					"url", r.URL, "title", r.Title, "error", sanErr.Error())
+				promptguard.EmitReport(ctx, "plan", report)
+				continue
+			}
 			if len(report.Threats) > 0 {
 				slog.Warn("promptguard threat detected in feasibility web-search body",
 					"url", r.URL,
 					"title", r.Title,
 					"threats", len(report.Threats),
+					"action", action.String(),
 					"summary", report.Summary())
+				promptguard.EmitReport(ctx, "plan", report)
 			}
 			fmt.Fprintf(&b, "\n--- %s (%s) ---\n%s\n", r.Title, r.URL, sanitized)
 		}
@@ -172,4 +187,18 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// hostFromURL returns the host portion of u for use as a promptguard
+// source tag. Returns "unknown" when u is empty or unparseable so the
+// emitted ThreatEvent always has a non-empty source segment.
+func hostFromURL(u string) string {
+	if u == "" {
+		return "unknown"
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Host == "" {
+		return "unknown"
+	}
+	return parsed.Host
 }

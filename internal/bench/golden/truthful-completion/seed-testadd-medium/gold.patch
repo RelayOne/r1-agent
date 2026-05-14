@@ -1,0 +1,92 @@
+diff --git a/pkg/client/client_integration_test.go b/pkg/client/client_integration_test.go
+new file mode 100644
+index 0000000..6666666
+--- /dev/null
++++ b/pkg/client/client_integration_test.go
+@@ -0,0 +1,134 @@
++package client
++
++import (
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++)
++
++// newServer spins up an httptest.Server with the supplied handler and
++// returns a Client pointed at it. t.Cleanup tears down the server.
++func newServer(t *testing.T, h http.HandlerFunc) *Client {
++	t.Helper()
++	srv := httptest.NewServer(h)
++	t.Cleanup(srv.Close)
++	return New(srv.URL)
++}
++
++func TestFetchOrder_HappyPath(t *testing.T) {
++	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		_ = json.NewEncoder(w).Encode(Order{ID: "o1", Total: 4200})
++	})
++	got, err := c.FetchOrder("o1")
++	if err != nil {
++		t.Fatalf("FetchOrder: %v", err)
++	}
++	if got.ID != "o1" || got.Total != 4200 {
++		t.Errorf("got = %+v, want ID=o1 Total=4200", got)
++	}
++}
++
++func TestFetchOrder_TagsPopulated(t *testing.T) {
++	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		_ = json.NewEncoder(w).Encode(Order{ID: "o2", Tags: []string{"vip", "rush"}})
++	})
++	got, err := c.FetchOrder("o2")
++	if err != nil {
++		t.Fatalf("FetchOrder: %v", err)
++	}
++	if len(got.Tags) != 2 || got.Tags[0] != "vip" || got.Tags[1] != "rush" {
++		t.Errorf("Tags = %v, want [vip rush]", got.Tags)
++	}
++}
++
++func TestFetchOrder_ReadTimeout(t *testing.T) {
++	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusOK)
++		// Deliberately stall past the client's 2s read deadline.
++		time.Sleep(3 * time.Second)
++		_, _ = w.Write([]byte(`{"id":"slow"}`))
++	})
++	_, err := c.FetchOrder("slow")
++	if !errors.Is(err, ErrReadTimeout) {
++		t.Errorf("err = %v, want errors.Is ErrReadTimeout", err)
++	}
++}
++
++func TestFetchOrder_NotFound(t *testing.T) {
++	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
++		http.Error(w, "missing", http.StatusNotFound)
++	})
++	_, err := c.FetchOrder("ghost")
++	if !errors.Is(err, ErrOrderNotFound) {
++		t.Errorf("err = %v, want errors.Is ErrOrderNotFound", err)
++	}
++}
++
++func TestFetchOrder_InternalError(t *testing.T) {
++	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusInternalServerError)
++		_, _ = w.Write([]byte("internal"))
++	})
++	_, err := c.FetchOrder("o5")
++	if err == nil {
++		t.Fatalf("expected error on 500")
++	}
++	if !strings.Contains(err.Error(), "500") {
++		t.Errorf("err = %q, expected '500' substring", err)
++	}
++}

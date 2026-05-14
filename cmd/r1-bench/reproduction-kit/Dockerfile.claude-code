@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+#
+# Reproduction-kit Dockerfile for the Claude Code dispatcher. Bundles
+# the `claude` CLI alongside r1-bench. Pinned to a specific
+# claude-code version (CLAUDE_CODE_VERSION build-arg) so reproducible
+# runs don't drift with upstream releases.
+
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY . .
+RUN go build -trimpath -o /out/r1-bench ./cmd/r1-bench
+
+FROM node:22-alpine AS runtime
+ARG CLAUDE_CODE_VERSION=latest
+LABEL r1.bench.agent="claude-code-default"
+RUN apk add --no-cache git bash
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+COPY --from=builder /out/r1-bench /usr/local/bin/r1-bench
+COPY internal/bench/golden /opt/r1/golden
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/r1-bench"]

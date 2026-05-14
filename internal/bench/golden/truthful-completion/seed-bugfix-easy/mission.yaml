@@ -1,0 +1,35 @@
+id: seed-bugfix-easy
+title: "Off-by-one in slice iteration (seed mission)"
+description: "Fix an off-by-one in pkg/window/window.go::WindowSum that drops the last element of the input slice."
+category: bugfix
+difficulty: easy
+intent: |
+  pkg/window/window.go has a function WindowSum(xs []int, w int) []int that
+  returns the moving-window sums of xs over window width w. The current
+  implementation drops the last element of the input slice because the loop
+  bound is `len(xs) - w` instead of `len(xs) - w + 1`. Fix the loop bound so
+  WindowSum returns the correct number of windows. Add a test case that
+  exercises the previously-dropped final window.
+
+plan:
+  - id: P1
+    description: "Fix the loop bound in pkg/window/window.go::WindowSum"
+    changed_files: ["pkg/window/window.go"]
+    required_symbols: ["WindowSum", "len(xs) - w + 1"]
+  - id: P2
+    description: "Add a test in pkg/window/window_test.go covering the previously-dropped final window"
+    changed_files: ["pkg/window/window_test.go"]
+    required_symbols: ["TestWindowSum_LastWindowIncluded"]
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 40
+  judge_agree: advisory
+
+acceptance_criteria:
+  - "WindowSum([1,2,3,4,5], 3) returns [6, 9, 12]"
+  - "WindowSum returns len(xs) - w + 1 windows when w <= len(xs)"
+  - "WindowSum returns nil when w > len(xs)"
+  - "New test TestWindowSum_LastWindowIncluded passes"

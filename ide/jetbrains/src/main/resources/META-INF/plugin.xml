@@ -4,11 +4,16 @@
     <vendor email="dev@relayone.ai" url="https://relayone.ai">RelayOne</vendor>
 
     <description><![CDATA[
-        Invoke the local <b>r1-agent</b> daemon (<code>stoke agent-serve</code>)
+        Invoke the local <b>r1-agent</b> daemon (<code>r1 agent-serve</code>)
         from inside JetBrains IDEs. Provides a tool window chat panel,
-        a quick "Run Task" action, and an "Explain Selection" action.
-        Speaks the same HTTP contract as the VS Code extension —
-        see <code>ide/PROTOCOL.md</code> in the r1-agent repo.
+        a quick "Run Task" action, an "Explain Selection" action, and
+        an <b>MCP bridge</b> that spawns <code>r1 mcp serve</code> and
+        proxies MCP traffic to the JetBrains AI Assistant.
+
+        The MCP bridge half of this plugin is shipped as
+        <code>r1-mcp-bridge.jar</code> by the
+        <code>r1 ide install jetbrains</code> CLI command;
+        operators install once and restart the IDE.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -19,11 +24,20 @@
                     icon="/META-INF/pluginIcon.svg"
                     factoryClass="com.relayone.r1.R1ToolWindowFactory"/>
 
+        <toolWindow id="R1 MCP Bridge"
+                    anchor="right"
+                    icon="/META-INF/pluginIcon.svg"
+                    factoryClass="com.relayone.r1.R1McpBridgeToolWindowFactory"/>
+
         <applicationService serviceImplementation="com.relayone.r1.R1Settings"/>
+        <applicationService serviceImplementation="com.relayone.r1.R1McpBridgePlugin"/>
+
         <applicationConfigurable parentId="tools"
                                  instance="com.relayone.r1.R1SettingsConfigurable"
                                  id="com.relayone.r1.settings"
                                  displayName="R1 Agent"/>
+
+        <postStartupActivity implementation="com.relayone.r1.R1McpBridgeStartupActivity"/>
 
         <notificationGroup id="R1 Agent" displayType="BALLOON" />
     </extensions>

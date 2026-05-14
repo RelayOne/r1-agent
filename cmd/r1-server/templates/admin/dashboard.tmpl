@@ -1,0 +1,36 @@
+{{- define "dashboard.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="kpi-h">
+  <h2 id="kpi-h">Operational KPIs</h2>
+  <div class="kpi-grid">
+    <div class="kpi-card" aria-label="active sessions">
+      <span class="kpi-label">Active sessions</span>
+      <span class="kpi-value">{{ .ActiveSessions }}</span>
+    </div>
+    <div class="kpi-card" aria-label="month-to-date spend">
+      <span class="kpi-label">MTD spend (USD)</span>
+      <span class="kpi-value">${{ printf "%.2f" .MTDSpendUSD }}</span>
+    </div>
+    <div class="kpi-card" aria-label="anti-trunc events last 24h">
+      <span class="kpi-label">Anti-trunc events (24h)</span>
+      <span class="kpi-value">{{ .AntiTrunc24h }}</span>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="actions-h">
+  <h2 id="actions-h">Phase-2 actions (read-only preview)</h2>
+  <p class="muted">These mutation controls ship in Phase 2 (Q3 2026). They render disabled with a tooltip so operators can preview the surface.</p>
+  <div class="btn-row">
+    {{ template "phase2_btn" "Suspend Tenant" }}
+    {{ template "phase2_btn" "Revoke Admin" }}
+    {{ template "phase2_btn" "Edit Quota" }}
+    {{ template "phase2_btn" "Force Session End" }}
+  </div>
+</section>
+{{ end }}
+{{- end -}}

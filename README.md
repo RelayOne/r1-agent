@@ -4,6 +4,46 @@
 
 r1 is the open agent runtime that refuses to lie about completion. It plans, executes, verifies, and reviews coding work the same way a careful engineer does: one strong implementer, an adversarial cross-model reviewer, content-addressed evidence, and a layered machine-mechanical guard that *refuses to call work "done" while plan items are unchecked*. It thinks in parallel via a Global Workspace–style Cortex. It surfaces every cognitive thread, tool call, and mission task as a cross-platform UI primitive called a Lane — rendered identically in a Bubble Tea TUI, a Cursor-3-Glass React web app, and a Tauri 2 desktop shell. Every UI action has an idempotent, schema-validated MCP equivalent so external agents drive r1 the same way humans do.
 
+The "refuses to lie about completion" claim is now measurable. The **TruthfulCompletion benchmark** ([`docs/truthful-completion-methodology.md`](docs/truthful-completion-methodology.md)) scores AI coding agents on a single axis that no other benchmark covers: *when the agent claimed to be done, was the agent actually done?* The shipped runner (`cmd/r1-bench/`) drives an 8-dispatcher matrix — R1, R1 with anti-truncation enforce, Claude Code (with and without R1's Stop-hook template), Cline, Aider, Codex CLI, Cursor, plus a Tether middleware that wraps any of the above in R1's anti-truncation engine — and reports a Wilson 95% CI on each agent's truthful-completion rate. The engineering scope (verdict scorer, dispatcher matrix, cross-vendor LLM judge, leaderboard renderer, monthly + PR Cloud Build cadence) plus 5 seed missions ships in this branch; the 95-mission SWE-bench Pro–derived corpus is deferred to operator curation per [`plans/corpus-100.md`](plans/corpus-100.md).
+
+## Completion SOW — shipped 2026-05-14
+
+Fourteen specs took r1 from "technically honest agent runtime" to "operationally honest hosted product." All fourteen are merged. The original Tier A/B/C/D enumeration with duplicate per-spec descriptions has been collapsed into the canonical list below; full per-spec acceptance criteria, dependencies, and BUILD_ORDER live in [`specs/`](specs/). The companion entries in [`docs/FEATURE-MAP.md`](docs/FEATURE-MAP.md), [`docs/BUSINESS-VALUE.md`](docs/BUSINESS-VALUE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) cover the operator-facing detail, the marketing rationale, the new internal package layout, and the runtime integration points.
+
+| Tier | Spec | What | Reference |
+|---|---|---|---|
+| A1 | Prompt-guard hardening | Threads prompt-guard through plan/execute/verify, per-tool MCP input validation, ed25519 system-prompt fingerprint, adversarial review over the CL4R1T4S corpus, per-session injection budget | [`specs/promptguard-hardening.md`](specs/promptguard-hardening.md) |
+| A2 | P0 hardening + S-0 foundation | Superseded by [`specs/encryption-at-rest.md`](specs/encryption-at-rest.md) + [`specs/retention-policies.md`](specs/retention-policies.md) — the cited "WORK-r1 Tasks 8-10" resolved to that work | [`specs/p0-hardening-s0-foundation.md`](specs/p0-hardening-s0-foundation.md) |
+| A3 | One-shot production hardening | `--max-mem` (RLIMIT_AS + GOMEMLIMIT), `--timeout` with drop-partial, deterministic SIGINT/SIGTERM (exits 130/143), HMAC-signed audit POST, 1000-concurrent integration test | [`specs/oneshot-production-hardening.md`](specs/oneshot-production-hardening.md) · [runbook](docs/integrations/relaygate-r1-stage.md) |
+| A4 | RelayOne SSO | OIDC + PKCE-S256, per-tenant token isolation (HKDF-SHA256, per-tenant `kid`), HS256 + RS256 rotation, `__Host-r1_at` + `__Host-r1_rt` cookies, 4 routes on the daemon mux | [`specs/relayone-sso.md`](specs/relayone-sso.md) · [runbook](docs/integrations/relayone-sso.md) |
+| A5 | Admin panel (Phase 1, read-only) | Sub-path mount at `admin.r1.run`, 8 read-only routes, A4-gated, `AdminViewed` ledger node per page view | [`specs/admin-panel.md`](specs/admin-panel.md) · [runbook](docs/operations/admin-panel.md) |
+| B1 | PostHog analytics | 24 events instrumented, per-tenant Group Analytics, 3 funnels, 4 cohorts | [`specs/posthog-analytics.md`](specs/posthog-analytics.md) · [runbook](docs/integrations/posthog.md) |
+| B2 | Customer.io lifecycle email | 6 lifecycle triggers, SQLite first-time debounce, no-op when env empty, tenant + user suppression, GDPR DSAR flow | [`specs/customerio-lifecycle.md`](specs/customerio-lifecycle.md) · [runbook](docs/integrations/customerio.md) |
+| B3 | CodeRadar dogfood | 18 canonical events from the 9 Cloud Run services, per-env sampling, dashboards become on-call surface | [`specs/coderadar-dogfood.md`](specs/coderadar-dogfood.md) |
+| C1 | Cross-machine session migration | `.r1session` bundle format, `r1 session export/import/migrate`, chain-root-hash continuity | [`specs/cross-machine-session-migration.md`](specs/cross-machine-session-migration.md) · [runbook](docs/operations/session-migration.md) |
+| C3 | Per-tool throttling | Two-tier (per-session + per-tenant) token bucket at MCP + agentloop boundaries, declarative `r1.policy.yaml`, `daemon.reload_config` hot-reloads, p99 < 100µs per `Allow` | [`specs/per-tool-throttling.md`](specs/per-tool-throttling.md) · [runbook](docs/operations/throttling.md) |
+| C4 | MCP IDE bundles | `r1 ide install/uninstall/verify` for Cursor, Windsurf, VS Code, JetBrains | [`specs/mcp-ide-bundles.md`](specs/mcp-ide-bundles.md) |
+| C5 | BitBucket Pipelines adapter | Strict parity with GitHub Actions + GitLab CI: OIDC via `BITBUCKET_STEP_OIDC_TOKEN`, inline PR comments, `R1 Verify` commit-status writer, 4 per-language templates | [`specs/bitbucket-pipelines-adapter.md`](specs/bitbucket-pipelines-adapter.md) · [runbook](docs/integrations/bitbucket-pipelines.md) |
+| C6 | Browser tool — remote sandbox | Browserless + in-house Cloud Run providers, tenant-isolated sandbox, deny-by-default egress | [`specs/browser-remote-sandbox.md`](specs/browser-remote-sandbox.md) · [runbook](docs/integrations/remote-browser.md) · [ops](docs/operations/r1-browser-service.md) |
+| C7 | Cross-product skill exchange | Pack-format v2 with `compat` matrix, federated ed25519 trust root, runtime adapters for CloudSwarm/Heroa/Veritize | [`specs/cross-product-skill-exchange.md`](specs/cross-product-skill-exchange.md) |
+| D1 | Anti-truncation hook-mode flag | `r1 antitrunc verify --hook-mode --plan` emits the JSON envelope Claude Code's Stop hook expects; exit 2 on findings | [`specs/antitrunc-hook-mode-flag.md`](specs/antitrunc-hook-mode-flag.md) |
+| D2 | TruthfulCompletion benchmark | 8-dispatcher matrix, cross-vendor LLM judge, Wilson 95% CI, leaderboard renderer, monthly + PR Cloud Build cadence, 5 seed missions (95-mission corpus deferred per [`plans/corpus-100.md`](plans/corpus-100.md)) | [`specs/truthful-completion-benchmark.md`](specs/truthful-completion-benchmark.md) · [methodology](docs/truthful-completion-methodology.md) |
+
+The only deferred work is the 95-mission SWE-bench Pro–derived corpus for D2 (each mission needs a real upstream gold patch + hand-written plan that a subagent cannot author autonomously — operator-curated per the [corpus-100 roadmap](plans/corpus-100.md)), and operator-action items not in code: DNS records, Cloud Build trigger creation, secret values, and the eventual dev → staging → main promotion. None of those are spec work.
+
+## Cross-product skill distribution (preview)
+
+C7 ships the R1-side substrate for federated skill packs. A v2
+manifest schema with an explicit `compat` list, a federated ed25519
+trust root, and runtime adapters for CloudSwarm, Heroa, and Veritize
+let a pack be authored once against R1 and adopted into the sibling
+products via `r1 skills pack adopt --pack <id> --for <product>`. The
+existing v1 pack format remains supported unchanged. See
+[`docs/skills/cross-product-distribution.md`](docs/skills/cross-product-distribution.md)
+for pack-author docs and
+[`docs/skills/federated-trust.md`](docs/skills/federated-trust.md)
+for the operator runbook.
+
 ## What's new — final-sweep features (2026-05-05)
 
 - core mission loop with planning, execution, verification, and review
@@ -185,11 +225,21 @@ Full narrative: [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md).
 - **One-time setup** is `scripts/setup-cloudbuild-e2e-trigger.sh` (idempotent — re-running updates triggers in place).
 - **Status: Done.** Full operations details: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §Release-rehearsal lane.
 
+### MCP IDE bundles — Cursor / Windsurf / VS Code / JetBrains (C4)
+- **`r1 ide install <cursor|windsurf|vscode|jetbrains>`** auto-registers R1's stdio MCP server with the target IDE. Per-IDE installers under `internal/ideinstall/` resolve the right config file on the right platform, then atomically merge the R1 stanza (backup-before-write, restore-on-uninstall).
+- **VS Code** uses root key `servers` (not `mcpServers`); R1 stanza adds `"type": "stdio"` because Copilot Agent requires explicit transport. Reminder line tells operators to switch the Copilot panel to "Agent" mode.
+- **JetBrains** receives a bundled `r1-mcp-bridge.jar` (built from `ide/jetbrains/`) — the plugin spawns `r1 mcp serve` and proxies MCP traffic to the JetBrains AI Assistant. Signing flow + CI keys documented in `docs/integrations/jetbrains-plugin-signing.md`.
+- **`r1 chat` first-run prompt** asks once per user account whether to install R1 into the detected unregistered IDE; respects non-TTY stdin; ack stored in `~/.r1/ide-prompt-acked` so it never re-prompts.
+- **`r1 ide verify`** prints a stable pipe-aligned table covering all four IDEs in cursor / windsurf / vscode / jetbrains order. Exit 0 always — verify is a report.
+- Spec: [`specs/mcp-ide-bundles.md`](specs/mcp-ide-bundles.md). Quickstart: [`docs/integrations/ide-bundles.md`](docs/integrations/ide-bundles.md).
+- **Status: Done.** — `cmd/r1/ide_install_cmd.go`, `internal/ideinstall/`, `ide/jetbrains/`.
+
 ### Hosted SaaS surfaces on r1.run
 - **`platform.{,staging.,dev.}r1.run`** — docs site rendered from `docs/` via `r1-docs` Cloud Run service.
 - **`api.{,staging.,dev.}r1.run`** — `r1-coord-api` Cloud Run service: `/healthz`, `/v1/version`, `/v1/license/verify`, `/v1/telemetry/opt-in`. Backed by Cloud SQL `r1-{prod,staging,dev}-pg`.
 - **`downloads.{,staging.,dev.}r1.run`** — `r1-downloads-cdn` Cloud Run service streaming binaries from `gs://relayone-488319-r1-releases/{prod,staging,dev}/<asset>`.
 - **All 9 services live on Cloud Run us-central1** with min-instances=1, instance-based billing, distroless static images, /livez + /readyz endpoints.
+- **`r1-browser` (internal-only, Cloud Run, authored 2026-05-12).** Per spec C6 the in-house headless-browser service is now part of the Cloud Run footprint, but it is NOT a customer-facing surface (no public DNS; `ingress=internal-and-cloud-load-balancing`). Image + cloudbuild authored in this commit; deploy is operator-driven via `services/cloudbuild-r1-browser.yaml`.
 - **Auto-deploy** via `services/cloudbuild-deploy.yaml` — push to `main` rebuilds + redeploys prod; `staging` and `dev` branches deploy to their respective envs.
 - **Status: Live (DNS pending Cloudflare CNAME records).** Operations runbook: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 

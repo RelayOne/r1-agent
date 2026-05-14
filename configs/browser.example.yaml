@@ -1,0 +1,124 @@
+# configs/browser.example.yaml — annotated reference for the
+# remote-browser provider (spec C6 §5 / §T14b).
+#
+# Loaded by `r1 doctor` for syntax validation. Copy this file to
+# configs/browser.yaml (or merge into your existing R1 config) and
+# adjust per environment. Three template stanzas at the bottom
+# (prod / staging / dev) show the safe defaults per env.
+
+browser:
+  # Which Provider to use. One of: local | browserless | inhouse.
+  # Default: local (single-binary CLI / developer laptop).
+  provider: browserless
+
+  # --- Browserless provider settings ---
+  browserless:
+    # WS endpoint. Use wss://chrome.browserless.io for the managed
+    # cloud OR wss://browserless.r1.run for the self-hosted container.
+    endpoint: wss://chrome.browserless.io
+
+    # Global token. Resolution chain (highest precedence first):
+    #   1. this field
+    #   2. BROWSERLESS_TOKEN env var
+    #   3. ~/.r1/browser.json:browserless_token
+    token: ""
+
+    # Cap concurrent CDP sessions per Browserless connection.
+    max_concurrent: 5
+
+    # Per-tenant tokens override the global token when the
+    # caller's TenantID matches a key here. Recommended in hosted-SaaS
+    # deployments so each tenant's Browserless usage is metered
+    # independently.
+    tenant_tokens:
+      # acme-corp: ${BROWSERLESS_TOKEN_ACME}
+      # globex:    ${BROWSERLESS_TOKEN_GLOBEX}
+
+  # --- In-house Cloud Run provider settings ---
+  inhouse:
+    # WS endpoint of the r1-browser Cloud Run service. Use the
+    # Cloud Run-assigned URL OR your custom domain (browser.r1.run).
+    endpoint: wss://browser.r1.run
+
+    # Audience claim for the ID token minted by the GCE metadata
+    # server. Must match the audience the service verifies against.
+    audience: https://browser.r1.run
+
+  # --- Network egress policy (applies to every provider) ---
+  network_policy:
+    # mode: deny_by_default (recommended) OR allow_by_default.
+    # deny_by_default with an empty allow list fails to boot — the
+    # operator-footgun guard (spec §T5).
+    mode: deny_by_default
+
+    # Hostname globs. Leading "*." matches any subdomain depth.
+    allow:
+      - "*.r1.run"
+      - "docs.anthropic.com"
+
+    # Deny rules win over allow rules. Always-deny the metadata server.
+    deny:
+      - "169.254.169.254"
+      - "metadata.google.internal"
+
+  # --- Fallback wrapping ---
+  # browser.fallback: none | local.
+  # Prod requires browser.fallback_allow_in_prod: true as a separate
+  # opt-in to enable `local` — the awkward flag name is intentional.
+  fallback: none
+  fallback_allow_in_prod: false
+
+  # --- Session timeouts ---
+  session:
+    # No-activity → close + lazy re-open on next call.
+    idle_timeout: 5m
+    # Absolute lifetime cap → close with reason=hard_timeout.
+    hard_timeout: 30m
+
+  # --- Per-Mission cost budget ---
+  # 60 Browserless units = 30 minutes of session-time = ~$0.50 at
+  # 2026 Scale-tier pricing. Crossing the budget surfaces
+  # ErrBudgetExhausted at Open; the mission planner skips
+  # browser-requiring steps.
+  budget_per_mission_units: 60
+
+# =============================================================
+# Environment templates (spec §T5c) — pick one as the base and
+# customise per-tenant.
+# =============================================================
+
+# --- prod (highest trust boundary) -----------------------------
+# browser:
+#   provider: browserless
+#   network_policy:
+#     mode: deny_by_default
+#     allow:
+#       - "*.r1.run"
+#     deny:
+#       - "169.254.169.254"
+#       - "metadata.google.internal"
+#   fallback: none
+#   fallback_allow_in_prod: false
+
+# --- staging (canary, broader allowlist) -----------------------
+# browser:
+#   provider: browserless
+#   network_policy:
+#     mode: deny_by_default
+#     allow:
+#       - "*.r1.run"
+#       - "*.example.com"
+#     deny:
+#       - "169.254.169.254"
+#       - "metadata.google.internal"
+#   fallback: none
+
+# --- dev (permissive — local laptop) ---------------------------
+# browser:
+#   provider: local
+#   network_policy:
+#     mode: allow_by_default
+#     deny:
+#       - "169.254.169.254"
+#       - "metadata.google.internal"
+#   fallback: none

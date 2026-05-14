@@ -34,6 +34,7 @@ import (
 
 	"github.com/RelayOne/r1/internal/cortex"
 	"github.com/RelayOne/r1/internal/hub"
+	"github.com/RelayOne/r1/internal/throttle"
 )
 
 // LanesBackend is the minimal surface the LanesServer needs from the
@@ -84,6 +85,24 @@ type LanesServer struct {
 	// so callers can tear down without server-side bookkeeping.
 	mu        sync.Mutex
 	nextSubID uint64
+
+	// preDispatch carries the throttle + promptguard gates that fire
+	// BEFORE HandleToolCall. Mirrors CodebaseServer.preDispatch; see
+	// internal/mcp/predispatch.go for the shared shape.
+	preDispatch PreDispatch
+}
+
+// WithThrottler installs the C3 rate-limit gate on the LanesServer.
+func (s *LanesServer) WithThrottler(l throttle.Limiter) *LanesServer {
+	s.preDispatch.Throttler = l
+	return s
+}
+
+// WithPromptGuard installs the A1-T2 tool-input validation gate on
+// the LanesServer; the field is set by the promptguard branch.
+func (s *LanesServer) WithPromptGuard(fn func(tc ToolCallContext) PreDispatchDecision) *LanesServer {
+	s.preDispatch.ValidateInput = fn
+	return s
 }
 
 // NewLanesServer constructs a LanesServer bound to the given backend.
@@ -1097,10 +1116,27 @@ func (s *LanesServer) serveJSONRPC(in io.Reader, out io.Writer) error {
 			var params struct {
 				Name      string                 `json:"name"`
 				Arguments map[string]interface{} `json:"arguments"`
+				Meta      map[string]interface{} `json:"meta,omitempty"`
 			}
 			paramsBytes, _ := json.Marshal(req.Params)
 			if err := json.Unmarshal(paramsBytes, &params); err != nil {
 				writeJSONRPC(out, req.ID, nil, &jsonRPCError{Code: -32602, Message: "Invalid params"})
+				continue
+			}
+			sessionID, tenantID, rawMeta := extractAuthMeta(params.Meta)
+			if dec := s.preDispatch.Check(ToolCallContext{
+				Ctx:       context.Background(),
+				SessionID: sessionID,
+				TenantID:  tenantID,
+				ToolName:  params.Name,
+				Args:      params.Arguments,
+				Meta:      rawMeta,
+			}); !dec.Allowed {
+				writeJSONRPC(out, req.ID, map[string]interface{}{
+					"content": []map[string]string{{"type": "text", "text": dec.Message}},
+					"isError": true,
+					"_meta":   map[string]any{"r1_error": dec.MetaError},
+				}, nil)
 				continue
 			}
 			result, err := s.HandleToolCall(context.Background(), params.Name, params.Arguments)

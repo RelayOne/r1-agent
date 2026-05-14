@@ -1,0 +1,52 @@
+id: seed-migration-hard
+title: "Migration: switch from log.Printf to slog across the package (seed mission)"
+description: "Cross-module migration: replace every log.Printf call with structured slog. Touches 5+ files. Requires environment setup so existing tests pass after the switch."
+category: migration
+difficulty: hard
+intent: |
+  internal/server/, internal/worker/, internal/db/ each use the legacy
+  log package via log.Printf. Migrate the whole tree to log/slog with a
+  structured logger handed in via DI. Add a logger.Logger interface in
+  internal/logger/, wire each package to accept *slog.Logger via
+  constructor (don't pull from a global). Update all existing tests so
+  they still pass. Run vet + tests + lint.
+
+plan:
+  - id: P1
+    description: "Define internal/logger/logger.go exposing the slog wrapper"
+    changed_files: ["internal/logger/logger.go"]
+    required_symbols: ["NewSlogLogger", "WithFields"]
+  - id: P2
+    description: "Migrate internal/server/ from log.Printf to slog"
+    changed_files: ["internal/server/server.go"]
+    required_symbols: ["slog.Logger"]
+  - id: P3
+    description: "Migrate internal/worker/ similarly"
+    changed_files: ["internal/worker/worker.go"]
+    required_symbols: ["slog.Logger"]
+  - id: P4
+    description: "Migrate internal/db/ similarly"
+    changed_files: ["internal/db/db.go"]
+    required_symbols: ["slog.Logger"]
+  - id: P5
+    description: "Update all existing tests to pass a slog.Logger fixture"
+    changed_files:
+      - "internal/server/server_test.go"
+      - "internal/worker/worker_test.go"
+      - "internal/db/db_test.go"
+  - id: P6
+    description: "All tests + vet pass after migration"
+    test_command: "go vet ./... && go test -count=1 -short -timeout 60s ./internal/..."
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 75
+  judge_agree: required
+
+acceptance_criteria:
+  - "internal/logger/logger.go exists with slog wrapper"
+  - "All three internal packages use slog instead of log.Printf"
+  - "All existing tests pass after the migration"
+  - "go vet ./... is clean"

@@ -89,6 +89,8 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 	planPath := fs.String("plan", "plans/build-plan.md", "path to plan markdown")
 	specGlob := fs.String("specs", "specs/*.md", "glob for spec markdown files")
 	jsonOut := fs.Bool("json", false, "emit JSON output instead of human")
+	hookMode := fs.Bool("hook-mode", false, "exit 2 when findings present; emit one-line JSON envelope on stdout")
+	input := fs.String("input", "", "path to assistant-output text to scan for truncation phrases (hook-mode only)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -97,6 +99,20 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "abs(%s): %v\n", *repo, err)
 		return 2
+	}
+
+	// Hook-mode: serialize a single-line JSON envelope to stdout and
+	// exit 2 when any finding is reported. This is the Claude Code
+	// Stop hook protocol: non-zero exit blocks the agent from
+	// stopping; status:"findings" tells the dispatcher why.
+	//
+	// The hook-mode path is deliberately independent from the
+	// commit-walking classifier above. Stop hooks fire mid-conversation
+	// (no fresh commits yet) so the salient signals are: (a) truncation
+	// phrases in the assistant's latest output and (b) unchecked items
+	// in the configured plan. Both are read fresh on every invocation.
+	if *hookMode {
+		return runAntiTruncVerifyHookMode(absRepo, *planPath, *input, stdout, stderr)
 	}
 
 	commits, err := readRecentChanges(absRepo, *n)
@@ -134,6 +150,140 @@ func runAntiTruncVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// hookFinding is the wire shape of a single anti-truncation hit in
+// the --hook-mode JSON envelope. Kept separate from internal/antitrunc.
+// Finding so the on-wire field order is stable independent of internal
+// refactors.
+type hookFinding struct {
+	Source   string `json:"source"`
+	PhraseID string `json:"phrase_id"`
+	Snippet  string `json:"snippet"`
+	Detail   string `json:"detail"`
+}
+
+// hookEnvelopeData is the data sub-object inside the hook-mode envelope.
+type hookEnvelopeData struct {
+	FindingsCount  int           `json:"findings_count"`
+	Findings       []hookFinding `json:"findings"`
+	PlanPath       string        `json:"plan_path"`
+	PlanItemsDone  int           `json:"plan_items_done"`
+	PlanItemsTotal int           `json:"plan_items_total"`
+}
+
+// hookEnvelope is the top-level JSON object emitted on stdout in
+// --hook-mode. Mirrors internal/oneshot/oneshot.go::Response shape so
+// callers consuming both surfaces can share a single parser.
+type hookEnvelope struct {
+	Verb   string           `json:"verb"`
+	Status string           `json:"status"` // "ok" or "findings"
+	Data   hookEnvelopeData `json:"data"`
+}
+
+// truncateForWire caps a wire-format string to n bytes. The envelope
+// snippet/detail caps (120/240) are documented in the spec so callers
+// can size their consumers accordingly.
+func truncateForWire(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// runAntiTruncVerifyHookMode implements the Claude Code Stop hook
+// protocol: emit one JSON line to stdout describing findings, exit 0
+// when clean (status:"ok") or 2 when findings present (status:"findings").
+//
+// inputPath optionally points at a text file containing the assistant's
+// recent output to scan for truncation phrases. "-" reads stdin. Empty
+// inputPath means no phrase scan (plan-only check).
+func runAntiTruncVerifyHookMode(absRepo, planPath, inputPath string, stdout, stderr io.Writer) int {
+	resolvedPlan := planPath
+	if !filepath.IsAbs(resolvedPlan) {
+		resolvedPlan = filepath.Join(absRepo, planPath)
+	}
+
+	planRep, _ := antitrunc.ScopeReportFromFile(resolvedPlan)
+
+	var findings []hookFinding
+
+	// 1. Phrase scan over the optional input text. Hook callers
+	// pipe the agent's final assistant message here; missing input
+	// means "no recent assistant output to scan", which is legitimate
+	// (the plan-state check still runs).
+	if inputPath != "" {
+		text, rerr := readHookInput(inputPath, stderr)
+		if rerr == nil && text != "" {
+			for _, m := range antitrunc.MatchAll(text) {
+				findings = append(findings, hookFinding{
+					Source:   "phrase",
+					PhraseID: m.PhraseID,
+					Snippet:  truncateForWire(m.Snippet, 120),
+					Detail: truncateForWire(
+						fmt.Sprintf("phrase %q matched in input (catalog=%s)", m.PhraseID, m.Catalog),
+						240),
+				})
+			}
+		}
+	}
+
+	// 2. Plan scope check. Unchecked plan items mean the agent hasn't
+	// finished the planned work; that's a "scope" source finding.
+	if planRep.Total > 0 && planRep.Done < planRep.Total {
+		findings = append(findings, hookFinding{
+			Source: "scope",
+			Detail: truncateForWire(
+				fmt.Sprintf("%d/%d plan items unchecked in %s",
+					planRep.Total-planRep.Done, planRep.Total, resolvedPlan),
+				240),
+		})
+	}
+
+	env := hookEnvelope{
+		Verb:   "antitrunc.verify",
+		Status: "ok",
+		Data: hookEnvelopeData{
+			FindingsCount:  len(findings),
+			Findings:       findings,
+			PlanPath:       resolvedPlan,
+			PlanItemsDone:  planRep.Done,
+			PlanItemsTotal: planRep.Total,
+		},
+	}
+	if env.Data.Findings == nil {
+		env.Data.Findings = []hookFinding{}
+	}
+	if len(findings) > 0 {
+		env.Status = "findings"
+	}
+
+	// Compact one-line JSON: no banner, no debug, exactly one trailing
+	// newline. fmt.Fprintln gives us that newline; json.Marshal (not
+	// MarshalIndent) gives us the single-line body.
+	body, err := json.Marshal(env)
+	if err != nil {
+		fmt.Fprintf(stderr, "marshal envelope: %v\n", err)
+		return 2
+	}
+	fmt.Fprintln(stdout, string(body))
+
+	if env.Status == "findings" {
+		return 2
+	}
+	return 0
+}
+
+// readHookInput reads the assistant-output text from path. Claude
+// Code's Stop hook delivers the transcript via a file path argument,
+// so a regular os.ReadFile is the right primitive here.
+func readHookInput(path string, stderr io.Writer) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "antitrunc: read input %s: %v\n", path, err)
+		return "", err
+	}
+	return string(data), nil
 }
 
 // gitChange is the structured shape of one commit we inspect.

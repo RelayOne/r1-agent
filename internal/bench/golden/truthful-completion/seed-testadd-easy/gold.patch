@@ -1,0 +1,38 @@
+diff --git a/pkg/duration/duration_test.go b/pkg/duration/duration_test.go
+new file mode 100644
+index 0000000..5555555
+--- /dev/null
++++ b/pkg/duration/duration_test.go
+@@ -0,0 +1,38 @@
++package duration
++
++import (
++	"testing"
++	"time"
++)
++
++func TestParseDuration(t *testing.T) {
++	cases := []struct {
++		name string
++		in   string
++		want time.Duration
++	}{
++		{"seconds", "30s", 30 * time.Second},
++		{"minutes", "5m", 5 * time.Minute},
++		{"hours", "2h", 2 * time.Hour},
++		{"days_extension", "1d", 24 * time.Hour},
++		{"weeks_extension", "1w", 7 * 24 * time.Hour},
++	}
++	for _, tc := range cases {
++		tc := tc
++		t.Run(tc.name, func(t *testing.T) {
++			got, err := ParseDuration(tc.in)
++			if err != nil {
++				t.Fatalf("ParseDuration(%q): %v", tc.in, err)
++			}
++			if got != tc.want {
++				t.Errorf("ParseDuration(%q) = %v, want %v", tc.in, got, tc.want)
++			}
++		})
++	}
++}

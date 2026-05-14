@@ -143,3 +143,37 @@ func TestApplyHeaders_DualSendR1AndStoke(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyHeaders_TenantID covers the A4-introduced TenantID field. The
+// canonical X-R1-Tenant-ID and legacy X-Stoke-Tenant-ID both fire when
+// the field is set; both are absent when it is empty.
+func TestApplyHeaders_TenantID(t *testing.T) {
+	t.Run("tenant_set_emits_both_families", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "http://x", nil)
+		ctx := WithIDs(context.Background(), IDs{TenantID: "tenant-uuid-1"})
+		ApplyHeaders(ctx, req)
+		if got := req.Header.Get("X-R1-Tenant-ID"); got != "tenant-uuid-1" {
+			t.Errorf("X-R1-Tenant-ID = %q, want tenant-uuid-1", got)
+		}
+		if got := req.Header.Get("X-Stoke-Tenant-ID"); got != "tenant-uuid-1" {
+			t.Errorf("X-Stoke-Tenant-ID = %q, want tenant-uuid-1", got)
+		}
+	})
+	t.Run("tenant_empty_omits_both_families", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "http://x", nil)
+		ctx := WithIDs(context.Background(), IDs{SessionID: "sess"})
+		ApplyHeaders(ctx, req)
+		for _, key := range []string{"X-R1-Tenant-ID", "X-Stoke-Tenant-ID"} {
+			if _, has := req.Header[key]; has {
+				t.Errorf("%s should be absent on empty TenantID", key)
+			}
+		}
+	})
+	t.Run("withids_only_tenant_set_propagates", func(t *testing.T) {
+		base := context.Background()
+		ctx := WithIDs(base, IDs{TenantID: "only-tenant"})
+		if FromContext(ctx).TenantID != "only-tenant" {
+			t.Errorf("tenant-only ctx lost field")
+		}
+	})
+}

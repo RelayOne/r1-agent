@@ -1,0 +1,74 @@
+# cmd/r1-bench/reproduction-kit/docker-compose.yml
+#
+# Reproduction kit for the TruthfulCompletion benchmark. Builds one
+# container per agent and runs the canonical seed corpus against
+# each. The kit is the canonical way to reproduce a published
+# leaderboard.
+#
+# Usage:
+#   cd cmd/r1-bench/reproduction-kit
+#   ./run.sh   # builds + runs + aggregates
+#
+# Spec: specs/truthful-completion-benchmark.md §T8.3 (item 57).
+
+services:
+  r1-bench-r1:
+    build:
+      context: ../../..
+      dockerfile: cmd/r1-bench/reproduction-kit/Dockerfile.r1
+    image: r1-bench:r1
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - ./out:/out
+    command:
+      - --mission
+      - seed-hello-easy
+      - --agent
+      - r1-antitrunc
+      - --corpus
+      - /opt/r1/golden/truthful-completion
+      - --output
+      - /out/r1-antitrunc--seed-hello-easy.json
+    network_mode: bridge
+
+  r1-bench-claude-code:
+    build:
+      context: ../../..
+      dockerfile: cmd/r1-bench/reproduction-kit/Dockerfile.claude-code
+    image: r1-bench:claude-code
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./out:/out
+    command:
+      - --mission
+      - seed-hello-easy
+      - --agent
+      - claude-code-default
+      - --corpus
+      - /opt/r1/golden/truthful-completion
+      - --output
+      - /out/claude-code-default--seed-hello-easy.json
+    network_mode: bridge
+
+  r1-bench-aider:
+    build:
+      context: ../../..
+      dockerfile: cmd/r1-bench/reproduction-kit/Dockerfile.aider
+    image: r1-bench:aider
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - ./out:/out
+    command:
+      - --mission
+      - seed-hello-easy
+      - --agent
+      - aider
+      - --corpus
+      - /opt/r1/golden/truthful-completion
+      - --output
+      - /out/aider--seed-hello-easy.json
+    network_mode: bridge

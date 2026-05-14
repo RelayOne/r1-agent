@@ -25,19 +25,26 @@ type ctxKey int
 
 const idsKey ctxKey = 0
 
-// IDs carries the three R1 correlation IDs. Any field may be empty;
-// the header-setting helper skips empty fields rather than emitting
-// them as empty-string headers.
+// IDs carries the R1 correlation IDs. Any field may be empty; the
+// header-setting helper skips empty fields rather than emitting them
+// as empty-string headers.
+//
+// TenantID is populated by the A4 RelayOne SSO layer (specs/relayone-sso.md,
+// BUILD_ORDER 36). Until A4 lands, TenantID is always empty and downstream
+// consumers (e.g. analytics Group Analytics binding) treat the empty value
+// as "no tenant binding" — see internal/analytics/tenant_id.go for the
+// shim consumers use during the parallel A4/B1 build window.
 type IDs struct {
 	SessionID string
 	AgentID   string
 	TaskID    string
+	TenantID  string
 }
 
-// WithIDs returns ctx annotated with ids. If all three fields are
-// empty, ctx is returned unchanged.
+// WithIDs returns ctx annotated with ids. If every field is empty, ctx
+// is returned unchanged.
 func WithIDs(ctx context.Context, ids IDs) context.Context {
-	if ids.SessionID == "" && ids.AgentID == "" && ids.TaskID == "" {
+	if ids.SessionID == "" && ids.AgentID == "" && ids.TaskID == "" && ids.TenantID == "" {
 		return ctx
 	}
 	return context.WithValue(ctx, idsKey, ids)
@@ -83,5 +90,12 @@ func ApplyHeaders(ctx context.Context, req *http.Request) {
 	if ids.TaskID != "" {
 		req.Header.Set("X-R1-Task-ID", ids.TaskID)
 		req.Header.Set("X-Stoke-Task-ID", ids.TaskID)
+	}
+	if ids.TenantID != "" {
+		// Canonical and (for the dual-send window) legacy tenant headers.
+		// A4 RelayOne SSO populates IDs.TenantID once a tenant-bound
+		// session is established; until then this header is omitted.
+		req.Header.Set("X-R1-Tenant-ID", ids.TenantID)
+		req.Header.Set("X-Stoke-Tenant-ID", ids.TenantID)
 	}
 }

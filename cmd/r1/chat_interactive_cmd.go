@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-isatty"
 
 	"github.com/RelayOne/r1/internal/app"
 	"github.com/RelayOne/r1/internal/conversation"
@@ -139,6 +140,17 @@ func (s *chatInteractiveSession) run(ctx context.Context) error {
 	fmt.Fprintln(s.out, chatDimStyle.Render("Type a task, then approve the generated plan. /quit exits."))
 	if turns := s.conv.TurnCount(); turns > 0 {
 		fmt.Fprintf(s.out, "%s\n", chatDimStyle.Render(fmt.Sprintf("Loaded %d prior conversation messages.", turns)))
+	}
+	// C4 (specs/mcp-ide-bundles.md §T9): first-run IDE-install
+	// prompt. No-op when stdin isn't a TTY or the ack file already
+	// exists. Errors are reported but never block chat startup.
+	if _, err := MaybePromptIDEInstall(PromptIDEOpts{
+		Stdin:       os.Stdin,
+		Stdout:      s.out,
+		Stderr:      os.Stderr,
+		Interactive: isatty.IsTerminal(os.Stdin.Fd()),
+	}); err != nil {
+		fmt.Fprintf(s.out, "%s\n", chatWarnStyle.Render(fmt.Sprintf("ide-install prompt: %v", err)))
 	}
 	fmt.Fprintln(s.out)
 

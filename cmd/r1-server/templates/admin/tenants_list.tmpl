@@ -1,0 +1,45 @@
+{{- define "tenants_list.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="tenants-h">
+  <h2 id="tenants-h">Tenants <small class="muted">({{ .Page.Total }} total)</small></h2>
+
+  <table class="data-table" aria-describedby="tenants-h">
+    <thead>
+      <tr>
+        <th scope="col">Slug</th>
+        <th scope="col">Display name</th>
+        <th scope="col">Created</th>
+        <th scope="col">Admins</th>
+        <th scope="col">Sessions</th>
+        <th scope="col">Monthly USD (est)</th>
+        <th scope="col">Phase-2</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td>{{ .Slug }}</td>
+        <td>{{ .DisplayName }}</td>
+        <td>{{ .CreatedAt.UTC.Format "2006-01-02" }}</td>
+        <td>{{ .AdminCount }}</td>
+        <td>{{ .SessionCount }}</td>
+        <td>${{ printf "%.2f" .MonthlyUSDEst }}</td>
+        <td>
+          {{ template "phase2_btn" "Suspend" }}
+          {{ template "phase2_btn" "Edit Quota" }}
+        </td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="7" class="empty">No tenants configured. Populate ~/.r1/tenants.json or wait for the A4 SSO directory migration.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+
+  {{ template "pagination" .Page }}
+</section>
+{{ end }}
+{{- end -}}

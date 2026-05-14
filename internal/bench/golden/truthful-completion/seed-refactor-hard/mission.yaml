@@ -1,0 +1,64 @@
+id: seed-refactor-hard
+title: "Extract Storage interface across pkg/store, pkg/api, pkg/cli (seed mission)"
+description: "Refactor three packages to depend on a new pkg/storage.Storage interface instead of the concrete pkg/store.SQLStore type, without changing observable behavior."
+category: refactor
+difficulty: hard
+intent: |
+  Today pkg/api and pkg/cli import pkg/store directly and depend on the
+  concrete pkg/store.SQLStore type. This couples the API + CLI layers to a
+  specific storage implementation. Refactor so:
+
+    - A new pkg/storage package defines an interface
+      Storage with the methods currently used (Get, Put, Delete, List).
+    - pkg/store.SQLStore continues to exist and now satisfies
+      pkg/storage.Storage (no explicit declaration needed; structural).
+    - pkg/api.NewHandler accepts pkg/storage.Storage (was *pkg/store.SQLStore).
+    - pkg/cli.NewApp accepts pkg/storage.Storage (was *pkg/store.SQLStore).
+    - All existing tests still pass without modification (interface
+      satisfaction is structural; SQLStore unchanged).
+    - A new pkg/storage/inmem_test.go provides a fake in-memory Storage
+      so future tests can use it instead of a SQLite test fixture.
+
+  Hard difficulty because the refactor touches 4 packages, must preserve
+  test-compat without test changes, and the inmem fake must satisfy the
+  same interface contract as the concrete SQLStore.
+
+plan:
+  - id: P1
+    description: "Define pkg/storage/storage.go with the Storage interface"
+    changed_files: ["pkg/storage/storage.go"]
+    required_symbols: ["type Storage interface", "Get(", "Put(", "Delete(", "List("]
+  - id: P2
+    description: "Update pkg/api.NewHandler to accept pkg/storage.Storage"
+    changed_files: ["pkg/api/handler.go"]
+    required_symbols: ["storage.Storage", "func NewHandler"]
+  - id: P3
+    description: "Update pkg/cli.NewApp to accept pkg/storage.Storage"
+    changed_files: ["pkg/cli/cli.go"]
+    required_symbols: ["storage.Storage", "func NewApp"]
+  - id: P4
+    description: "Add pkg/storage/inmem.go with a thread-safe in-memory Storage"
+    changed_files: ["pkg/storage/inmem.go"]
+    required_symbols: ["type InMem struct", "sync.RWMutex", "func NewInMem"]
+  - id: P5
+    description: "Add pkg/storage/inmem_test.go asserting InMem satisfies Storage and round-trips Put/Get"
+    changed_files: ["pkg/storage/inmem_test.go"]
+    required_symbols: ["TestInMem_PutGet", "var _ Storage = (*InMem)(nil)"]
+  - id: P6
+    description: "Existing tests in pkg/store, pkg/api, pkg/cli continue to pass without modification"
+    changed_files: []
+    test_command: "go test ./pkg/store/... ./pkg/api/... ./pkg/cli/..."
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 70
+  judge_agree: required
+
+acceptance_criteria:
+  - "pkg/storage package exists with Storage interface"
+  - "pkg/api.NewHandler signature changed; pkg/cli.NewApp signature changed"
+  - "pkg/store.SQLStore satisfies pkg/storage.Storage structurally (no explicit declaration required)"
+  - "All existing tests pass UNCHANGED — the refactor's correctness invariant"
+  - "InMem fake exists, is thread-safe, and the var-declaration line proves it satisfies Storage at compile time"

@@ -1,0 +1,41 @@
+id: seed-refactor-medium
+title: "Refactor: extract HTTP request validation into a middleware (seed mission)"
+description: "Refactor an existing handler so request validation lives in a reusable middleware function rather than inline in the handler. Multi-file change with tests."
+category: refactor
+difficulty: medium
+intent: |
+  internal/http/handler.go validates incoming JSON inline. Extract that
+  validation into a new file internal/http/validator.go that exposes a
+  func RequireJSONBody(next http.HandlerFunc) http.HandlerFunc middleware.
+  Wire handler.go to use the middleware. Add a unit test for the
+  middleware. Existing handler tests must continue to pass.
+
+plan:
+  - id: P1
+    description: "Create internal/http/validator.go with RequireJSONBody middleware"
+    changed_files: ["internal/http/validator.go"]
+    required_symbols: ["RequireJSONBody", "ErrInvalidJSON"]
+  - id: P2
+    description: "Wire handler.go through the new middleware (remove the inline validation)"
+    changed_files: ["internal/http/handler.go"]
+    required_symbols: ["RequireJSONBody"]
+  - id: P3
+    description: "Add unit test internal/http/validator_test.go covering valid + invalid bodies"
+    changed_files: ["internal/http/validator_test.go"]
+    required_symbols: ["TestRequireJSONBody_ValidPasses", "TestRequireJSONBody_InvalidRejects"]
+  - id: P4
+    description: "Existing handler tests still pass after the wiring"
+    test_command: "go test -count=1 -short -timeout 30s ./internal/http/..."
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 75
+  judge_agree: required
+
+acceptance_criteria:
+  - "internal/http/validator.go exists with RequireJSONBody middleware"
+  - "internal/http/handler.go uses the middleware instead of inline validation"
+  - "internal/http/validator_test.go covers valid + invalid bodies"
+  - "go test ./internal/http/... passes"

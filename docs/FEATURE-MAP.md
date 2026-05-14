@@ -12,6 +12,10 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | Five-provider model fallback | Provider-agnostic; degrades from Claude → Codex → OpenRouter → direct API → lint-only | Done | `internal/model/`, `internal/subscriptions/` |
 | Cost-aware resolver + budget enforcement | Blocks turns when over-budget; per-task cost ticks journaled | Done | `internal/costtrack/`, `internal/model/CostAwareResolve` |
 | Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases emitted; layered machine-mechanical defense against LLM self-reduction | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
+| Claude Code Stop-hook integration | `r1 antitrunc --hook-mode` emits the JSON envelope Claude Code's Stop hook expects; wires R1's 12-regex truncation catalog + plan-coverage check into any Claude Code workspace via `.claude/settings.json` | Done | `cmd/r1/antitrunc_cmd.go` `--hook-mode`/`--plan`/`--input` flags |
+| TruthfulCompletion benchmark | Measures whether agents' completion claims are honest, not just whether tests pass; 8-dispatcher matrix (R1/Claude Code/Cline/Aider/Codex/Cursor + 4 Tether combos), cross-vendor LLM judge, Wilson 95% CI, monthly + PR Cloud Build cadence | Done (engineering + 5 seed missions; 95-mission corpus deferred) | `internal/bench/`, `internal/bench/agents/`, `cmd/r1-bench/`, `docs/truthful-completion-methodology.md`, `services/cloudbuild-bench-truthful-completion-*.yaml`, `plans/corpus-100.md` |
+| Admin panel (Phase 1, read-only) | Sub-path mount on `r1-server` at `admin.r1.run`; 8 read-only routes (dashboard, sessions, tenants, billing, audit, anti-trunc events) gated by A4 SSO `role=admin`, every page view emits an `AdminViewed` ledger node | Done | `cmd/r1-server/admin_wire.go`, `cmd/r1-server/templates/admin/`, `internal/server/admin_handlers.go`, `internal/server/admin_middleware.go`, `internal/server/admin_pagination.go`, `internal/server/admin_antitrunc_buffer.go`, `internal/ledger/nodes/admin_viewed.go`, `internal/tenants/`, `docs/operations/admin-panel.md` |
+| Customer.io lifecycle email | Six canonical lifecycle moments (`signup`, `activation`, `first_mission`, `first_completion`, `anti_trunc_fired`, `budget_alert`) emitted to Customer.io with first-time SQLite debounce, no-op when env empty, tenant-suppressible via policy, user-suppressible via Customer.io's native unsubscribed flag | Done | `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
 
 ## Cortex — Parallel Cognition (specs 1, 2)
 
@@ -179,6 +183,26 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | Manual GitHub Actions rehearsal | `.github/workflows/e2e-rehearsal-manual.yml` lets an operator dispatch the rehearsal from the Actions UI; calls `gcloud builds triggers run` against the main-branch trigger; workflow summary links to the Cloud Build console | Done | `.github/workflows/e2e-rehearsal-manual.yml` |
 | One-time trigger setup script | `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent — re-running updates triggers in place; requires `roles/cloudbuild.builds.editor` on `relayone-488319` | Done | `scripts/setup-cloudbuild-e2e-trigger.sh` |
 
+## Cross-Machine Session Migration (spec C1)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `.r1session` migration bundle format | Move a live session to another host with verified ledger continuity. Gzip-tar archive carrying manifest + ledger chain/edges/content + bus WAL + scoped memory + skill-pack refs + lobe-state snapshots + lane snapshot + pre-export checkpoint + Ed25519 signature | Done | `internal/migration/bundle.go`, `specs/cross-machine-session-migration.md` |
+| Manifest signing reuses `ledger.CanonicalManifestSignBody` | Downstream verifiers wired to check tracebundle signatures verify migration bundles with zero new code; signing key is the same redaction-signer Ed25519 (master-key-derived per encryption-at-rest spec) | Done | `internal/migration/bundle.go` (`SignManifest`/`VerifyManifest`), `internal/ledger/redact_sign.go` |
+| `chain_root_hash` round-trip verification | Destination recomputes the chain root post-replay; mismatch → 422 + `session.migrate.divergent` event + audit row | Done | `internal/migration/importer.go` |
+| Incremental partial-root divergence detection | Source emits checkpoint hashes every 100 events into `bus/wal.index.json`; destination re-checks at the same seq boundaries during replay so corruption is caught early | Done | `internal/migration/replay.go`, `internal/migration/importer.go` |
+| `r1 session export <id>` CLI | Stream a `.r1session` from the local daemon to a file or stdout. `--force` interrupts a mid-turn session at the next quiet point; `--park` leaves the source in `migrated-out` | Done | `cmd/r1/session_export_cmd.go` |
+| `r1 session import <file>` CLI | Stream a bundle into the local daemon. Idempotent re-imports return the existing destination session id with HTTP 200 + `idempotent:true` | Done | `cmd/r1/session_import_cmd.go` |
+| `r1 session migrate <id> --to <dest-url>` CLI | One-step daemon-to-daemon piping; remote bearer loaded from `~/.r1/config.json`'s `remote_daemons[<dest-url>].bearer`. On dest failure the source remains `migrating-out` for retry | Done | `cmd/r1/session_migrate_cmd.go` |
+| `POST /api/session/{id}/migrate-out` HTTP endpoint | Source-side bundle streamer; auth-gated by the daemon's bearer; refuses export on `running` status without `?force=1` and on legacy unsigned redactions (409) | Done | `cmd/r1-server/migrate_out.go` |
+| `POST /api/session/migrate-in` HTTP endpoint | Destination-side ingestor; verifies signature → tenant claim → idempotency → skill packs → hydrates ledger + memory → replays WAL with incremental hash check → final chain-root verify → flips state to idle | Done | `cmd/r1-server/migrate_in.go` |
+| Session migration states (sessionhub) | `Session.State` gains `migrating-out`, `migrated-out`, `migrating-in`, `migrated-failed`; `SessionHub.BeginMigrateOut(id, force)` latches the source; `IsMigrating(id)` is consulted by the agent loop's mid-turn observer (RT-CANCEL-INTERRUPT-safe yield) | Done | `internal/server/sessionhub/migrate.go` |
+| SQLite `migration_imports` idempotency table | `(manifest_sha256 PK, new_session_id, imported_at, source_session_id, source_host)` — re-import of an already-imported bundle returns the existing dest id; survives daemon restart | Done | `internal/migration/idempotency.go` (`SQLiteIdempotencyStore`) |
+| Three new bus events | `session.migrate.exported`, `session.migrate.imported`, `session.migrate.divergent` land in the daemon event log so audit/observability queries can track every migration | Done | `internal/bus/bus.go` (event-type constants), `internal/migration/events.go` (`BusEventEmitter`) |
+| Cross-tenant migration forbidden in v1 | Bearer tenant claim is cross-checked against `manifest.tenant_id`; mismatch returns 403 `cross_tenant_forbidden`. v1 requires both daemons to hold the same master key (encryption-at-rest spec contract) | Done | `internal/migration/importer.go`, `docs/operations/session-migration.md` |
+| Operator runbook | Export / transfer / import workflows, skill-pack pre-staging, verifying chain root, troubleshooting hash mismatches, key-material requirements, audit query examples, worked 1000-turn example | Done | `docs/operations/session-migration.md` |
+| 1000-turn round-trip integration test | `internal/migration/integration_roundtrip_test.go` (`-tags integration_session_migrate`) seeds two stacks, exports/imports, asserts byte-identical destination chain root + ≤100MB bundle + <60s wall-clock | Done | `internal/migration/integration_roundtrip_test.go` |
+
 ## Hosted SaaS — `r1.run` (this session)
 
 | Feature | Benefit | Status | Reference |
@@ -196,6 +220,25 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `services/deploy.sh` | Manual deploy: `./services/deploy.sh {dev|staging|prod|all}` | Done | services/deploy.sh |
 | `scripts/setup-branch-protection.sh` | Operator script: dev + staging branch creation + protection rules | Done | scripts/setup-branch-protection.sh |
 
+## MCP IDE Bundles (C4 — specs/mcp-ide-bundles.md)
+
+| Feature | Benefit | Status | Reference |
+|---|---|---|---|
+| `r1 ide install <cursor\|windsurf\|vscode\|jetbrains>` | Native MCP-server registration per IDE; no hand-edit of config files | Done | `cmd/r1/ide_install_cmd.go`, `internal/ideinstall/` |
+| Shared merge primitive | Read → backup → atomic-write per IDE config; preserves unrelated entries | Done | `internal/ideinstall/config.go` |
+| Per-IDE detectors (Cursor / Windsurf / VS Code / JetBrains) | Platform-aware path resolution; canonical config-dir probe (not PATH) | Done | `internal/ideinstall/detect.go` |
+| Cursor installer | Workspace + global scope; preserves unrelated `mcpServers` entries; backup before write | Done | `internal/ideinstall/cursor.go` |
+| Windsurf installer | Global-only; warns when `~/.codeium/` is absent | Done | `internal/ideinstall/windsurf.go` |
+| VS Code installer | Root key `servers` (not `mcpServers`); adds `type: stdio`; Copilot Agent reminder | Done | `internal/ideinstall/vscode.go` |
+| JetBrains installer | Copies `r1-mcp-bridge.jar` to plugins dir; auto-detects highest installed IDE version | Done | `internal/ideinstall/jetbrains.go` |
+| JetBrains plugin scaffold | Kotlin sources + Gradle build targeting IntelliJ Platform 2026.1+; CI signing | Done (scaffold; downstream Gradle build) | `ide/jetbrains/` |
+| `r1 ide verify` | Pipe-aligned report; three status words; exit 0 always | Done | `internal/ideinstall/verify.go` |
+| `r1 ide uninstall` | Backup-restore or in-place removal; never-installed → exit 1 | Done | `internal/ideinstall/verify.go`, per-IDE files |
+| First-run prompt | `MaybePromptIDEInstall`; ack file at `~/.r1/ide-prompt-acked`; non-TTY skip | Done | `cmd/r1/ide_install_cmd.go` |
+| Per-platform build-tagged tests | Linux + macOS + Windows path resolution | Done | `internal/ideinstall/detect_{linux,darwin,windows}_test.go` |
+| Plugin signing setup doc | Key-gen + storage + Gradle signPlugin task | Done | `docs/integrations/jetbrains-plugin-signing.md` |
+| Per-IDE quickstart + troubleshooting | Operator quickstart + diagnostic flow | Done | `docs/integrations/ide-bundles.md` |
+
 ## Deterministic Skills
 
 | Feature | Benefit | Status | Reference |
@@ -205,6 +248,11 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `r1 skills pack init/info/install/list/publish/search/sign/verify/update/serve` | Full pack lifecycle | Done | `cmd/r1/skills_pack_cmd.go` |
 | HTTP pack registry | `r1 skills pack serve` exposes published packs | Done | `cmd/r1/skills_pack_server.go` |
 | Signed-pack runtime verification | Prevents runtime registration from ignoring pack integrity | Done | `internal/skill/verify.go` |
+| Federated v2 pack format (C7) | `manifest.v2.json` with `compat` matrix, runtime_assertions, consumer_hooks. v1 packs auto-upgrade to v2 at load time | Done | `internal/skill/manifest_v2.go` |
+| Cross-product runtime adapters (C7) | Adapt v2 manifest to CloudSwarm/Heroa/Veritize/R1 wrappers | Done | `internal/skill/compat/` |
+| `r1 skills pack adopt --pack <id> --for <product>` (C7) | Writes target-product wrapper + signed `pack.adopted` ledger event | Done | `cmd/r1/pack_adopt_cmd.go` |
+| Federated ed25519 trust root (C7) | Per-publisher kids with not_before/not_after/scopes; signed document via root operator key | Done | `internal/skill/trustroot.go` |
+| `/v2/packs`, `/v2/trust-root`, `X-R1-Registry-Sig` (C7) | HTTPS + per-IP rate limit + response signing | Done | `cmd/r1/skills_pack_server_v2.go` |
 
 ## Agentic Test Harness
 
@@ -242,6 +290,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
   - ed25519-signed redaction events; `LoadOrGenerateSigningKey` persists keys under `<root>/redactions/`; `Store.RedactionsForVerified` flags tampered + legacy-unsigned entries distinctly.
   - Tracebundle v2: per-session filtering (`ListNodesForSession`, `ListEdgesForSession`), chain-root hashing (`ChainRootHashForSession`), canonical manifest signing body (`CanonicalManifestSignBody`); `cmd/r1-server/tracebundle_source.go` wired as the production source for `GET /api/session/{id}/export.tracebundle`. (Spec D — D-UI2-7 — removed the originally-paired `R1_SERVER_UI_V2` envelope gate.)
   - Release-rehearsal CI: Cloud Build triggers (push-to-`main` + `^v.*$` tag) + manual GitHub Actions workflow (`e2e-rehearsal-manual.yml`) firing the full Playwright + axe-core E2E lane; idempotent setup via `scripts/setup-cloudbuild-e2e-trigger.sh`.
+- **C6 — Browser tool remote sandbox** (2026-05-12, `specs/browser-remote-sandbox.md`): `internal/browser/Provider` interface + `provider_local.go` refactor (no behavior change to existing CLI / executor); `internal/browser/browserless/` Browserless CDP-over-WS provider with per-tenant incognito contexts + token resolution chain + 30s Unit cost rollup; `internal/browser/inhouse/` in-house Provider client (Bearer ID-token auth + cached metadata-server tokens) wired to `services/r1-browser/` Cloud Run service; `Dockerfile.r1-browser` + `services/cloudbuild-r1-browser.yaml` for the operator-driven deploy; deny-by-default `NetworkPolicy` enforced at the Navigate boundary and via CDP `Network.setRequestInterception`; `FallbackProvider` with permanent-vs-transient error classification; `BoundSession` lifecycle with idle + hard timeouts; cookie-lint test gating the no-cookies rule; conformance suite identical across all three providers; `configs/browser.example.yaml` template; `docs/integrations/remote-browser.md` + `docs/operations/r1-browser-service.md`.
 - **r1-server UI v2 retrofit — production default** (Spec D / D-UI2-7, 2026-05-06): the legacy vanilla-JS SPA was deleted, the v2 htmx + Go-templates surface promoted from `cmd/r1-server/ui/web/` to `cmd/r1-server/ui/`, and the `R1_SERVER_UI_V2` envelope toggle removed. `Renderable()` / `v2Enabled()` / `traceV2Enabled()` always return true; v2 is the only surface. Five sub-specs landed during the retrofit:
   - **Foundation** (`r1-server-ui-v2-foundation.md`): vendored htmx 2.0.4 + htmx-ext-sse 2.2.4 + three.js 0.170.0 ESM + d3-force-3d 3.0.5 + import map; SRI hashes verified at vendor time + at every CI run; `base.html` htmx layout that all v2 pages extend; `data-hx-*` attribute convention pinned. Air-gapped r1-server build with no CDN dependencies; ≤250 KB gzipped chrome.
   - **3D perf** (`r1-server-ui-v2-3d-perf.md`): InstancedMesh refactor + Web Worker for d3-force-3d + frozen-position time scrubber. The ledger 3D viewer scales from ~500 to ~3000 nodes at ≥30 FPS without freezing the page during simulation.
@@ -257,23 +306,53 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs)
 - Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation
 
-### Scoped
-- JWT login + RelayOne MSP SSO (Path A — Go reimpl of @relayone/auth-core JwtService + RelayOneSsoClient)
-- Admin panel at admin.r1.run (clone *-admin template + customize for r1 routes)
-- PostHog product analytics integration
-- Customer.io retention + lifecycle email integration
-- CodeRadar dogfood event streaming (already in-house; just turn on per env)
+### Tier A — release-blocking (scoped 2026-05-11, built 2026-05-12)
+
+| Feature | Outcome | Status | Reference |
+|---|---|---|---|
+| Prompt-guard hardening (A1) | Customers running r1 against untrusted repos cannot have their diff hijacked by a `Ignore previous instructions`-style payload embedded in a README, a tool result, or a sub-agent response. The guard runs at plan + execute + convergence boundaries, per-tool input validation lives on the MCP wire + agentloop dispatch, every turn carries an ed25519 system-prompt fingerprint (`r1 promptguard verify-system-prompt`) so a tampered system block fails verification, the cross-model reviewer evaluates against the CL4R1T4S corpus signature set (`TestCL4R1T4SDetectionRate` ≥85% gate, currently 92%), and a per-session injection budget kills a session within 100 ms when severity-weighted detections cross threshold. | Done (2026-05-12) | `specs/promptguard-hardening.md`, `internal/promptguard/`, `internal/supervisor/rules/promptguard/`, `docs/security/prompt-injection.md` |
+| P0 platform hardening — foundation (A2) | r1's agent platform survives the failure modes that take down agent runtimes in production: panics on background goroutines become structured failures, a SIGTERM lets the daemon drain in-flight tool calls cleanly, in-flight tool calls replay-or-reject on restart, per-session resource limits prevent one runaway session from starving the others, observability hooks fire at every state transition, and a preflight gate refuses to start when host permissions are misconfigured. Spec flagged DRAFT because the source PORTFOLIO-INDEX referenced encryption-at-rest tasks already shipped; the surviving scope is the agent-platform P0 list. | Scoped (DRAFT — source-doc mismatch noted, awaiting operator clarification) | `specs/p0-hardening-s0-foundation.md` |
+| One-shot production hardening (A3) | The `r1 --one-shot` integration surface — the one RelayGate Phase K-3 wires inline — is production-ready: `--max-mem` (default 256 MiB) enforced via `debug.SetMemoryLimit` + Linux `RLIMIT_AS` with the GOMEMLIMIT 13% headroom rule, `--timeout` with drop-partial semantics (exit 4 on timeout), deterministic SIGINT/SIGTERM shutdown (exits 130/143) so a half-written ledger node is impossible, `--audit-endpoint` HMAC-SHA256-signed POST with 3× exponential retry and fire-and-forget worker, a 1000-concurrent integration test (build tag `integration`, run via `make test-oneshot-concurrent`) gated by the nightly self-hosted runner, and `docs/integrations/relaygate-r1-stage.md` operator runbook. | Done (2026-05-12) | `specs/oneshot-production-hardening.md`, `cmd/r1/oneshot_cmd.go`, `internal/oneshot/`, `docs/integrations/relaygate-r1-stage.md` |
+| RelayOne SSO (A4) | Customers stop holding long-lived API keys; they log in with their RelayOne identity. Go port of `@relayone/auth-core`'s `JwtService` (HS256 + RS256, kid rotation, RFC 7519 claims) and `RelayOneSsoClient` (OIDC + PKCE S256 per RFC 6749 / 7636), per-tenant token isolation via HKDF-SHA256, `__Host-` cookies, `/auth/sso/{start,callback}` + `/auth/refresh` + `/auth/logout` handlers mounted when `R1_AUTH_MODE=sso`, full TS↔Go round-trip interop test against `auth-core/test/` fixtures. Middleware gates the admin panel + every future enterprise route. Coverage: `auth` 76%, `sessionhub` 80%, `bus` 84%. | Done (2026-05-12) | `specs/relayone-sso.md`, `internal/auth/`, `docs/integrations/relayone-sso.md` |
+| Admin panel at admin.r1.run (A5) | Internal operators answer "what is this customer's session doing right now" without raw SQL. Mounted on the existing `r1-server` process; five read-only routes — sessions, tenants, billing, audit, anti-trunc events — auth-gated through the A4 SSO middleware with constant-time `HasRole("admin")` check; paired JSON twins under `/api/admin/*`; AdminViewed ledger node per page view with /24 IPv4 + /48 IPv6 truncated remote address for audit-without-PII; `R1_ADMIN_DEV_BYPASS=1` for local validation. Regulators verify chain-of-custody from a browser; support answers tickets without ops escalation. | Done (2026-05-12) | `specs/admin-panel.md`, `internal/server/admin_*.go`, `cmd/r1-server/admin_wire.go`, `cmd/r1-server/templates/admin/` |
+
+### Tier B — commercial readiness (scoped 2026-05-11, built 2026-05-12)
+
+| Feature | Outcome | Status | Reference |
+|---|---|---|---|
+| PostHog analytics (B1) | The product team answers "what's the activation rate" with one query. Twenty-four events instrumented end-to-end (signup → daemon-start → first mission → first verified completion → first anti-trunc fire → first paid event), per-tenant Group Analytics so the dashboard slices by enterprise account, three product funnels (activation, mission-success, anti-trunc-fire-recovered) and four cohorts (free-active, paid-active, churn-risk, regretted-activation). | Done (2026-05-12) | `specs/posthog-analytics.md`, `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md` |
+| Customer.io lifecycle email (B2) | Retention email becomes a product surface, not a manual ops task. Six lifecycle triggers — signup, activation, first mission, first completion, anti-trunc fired, budget alert — each backed by a transactional template marketing edits without a deploy. The SQLite flagstore at `~/.r1/lifecycle.db` gates the four "first-*" milestones so they fire exactly once per (tenant, user) tuple and survive daemon restart. PII allowlist enforced via `traits.Build` reflection test. DSAR CLI binding follows once `cmd/r1/admin_*` dispatch lands. | Done (2026-05-12) | `specs/customerio-lifecycle.md`, `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
+| CodeRadar dogfood (B3) | r1 finally eats its own dogfood. Eighteen canonical events emitted from the nine Cloud Run services (daemon, coord-api, docs, downloads, admin, plus the three new B-tier services), per-environment wiring with sampling so prod stays cheap, and the CodeRadar dashboard becomes the on-call surface for r1 itself. | Done (2026-05-12) | `specs/coderadar-dogfood.md`, `internal/coderadar/events.go`, `internal/hub/builtin/coderadar_subscriber.go`, `docs/observability/coderadar-{events,dashboards,alerts,runbook}.md` |
+
+### Tier C — frontier extensions (scoped 2026-05-11, built 2026-05-12)
+
+| Feature | Outcome | Status | Reference |
+|---|---|---|---|
+| Cross-machine session migration (C1) | A customer's session is not stuck to a host. A portable `.r1session` bundle format plus `r1 session export / import / migrate` commands let a session that started on a laptop resume on a cloud sandbox; chain-root-hash continuity verification carries a tamper-evident provenance chain across both machines. The audit story survives the move. | Done (2026-05-12) | `specs/cross-machine-session-migration.md`, `internal/migration/`, `cmd/r1-server/migrate_in.go`, `docs/operations/session-migration.md` |
+| Per-tool throttling (C3) | A runaway agent cannot burn an entire monthly quota on `Bash`. Two-tier token-bucket — per-session and per-tenant — enforced at the MCP boundary and the native agentloop dispatch via a shared pre-dispatch helper that coexists with A1's promptguard tool-input validation; declarative YAML policy the operator edits without a code change; `daemon.reload_config` hot-reloads without dropping in-flight tokens; bench harness verifies <100 µs p99 overhead per Allow call. Closes the cost-runaway hole every multi-tenant agent platform eventually finds. | Done (2026-05-12) | `specs/per-tool-throttling.md`, `internal/throttle/`, `docs/operations/throttling.md` |
+| MCP IDE bundles (C4) | The customer installs r1 once and every IDE on their machine sees it. Single spec covering Cursor, Windsurf, VS Code, and JetBrains with one `r1 ide install / uninstall / verify` command that writes the right config in the right place for each IDE plus a JetBrains-side plugin shim. No more per-IDE walkthrough in the docs. | Done (2026-05-12) | `specs/mcp-ide-bundles.md`, `internal/ideinstall/`, `cmd/r1/ide_install_cmd.go`, `ide/jetbrains/`, `docs/integrations/ide-bundles.md` |
+| BitBucket Pipelines adapter (C5) | Customers on BitBucket stop being a third-class platform. Parity with the existing GitHub Actions + GitLab CI adapters: OIDC-based authentication, PR commenting with diff-aware annotations, and the same `r1 run --ci` flag set across all three providers. Parity audit test fails the build on capability drift. | Done (2026-05-12) | `specs/bitbucket-pipelines-adapter.md`, `internal/cicd/bitbucket/`, `internal/cicd/shared/`, `docs/integrations/bitbucket-pipelines.md` |
+| Browser tool — remote sandbox (C6) | The hosted r1.run finally has a browser the agent can drive without compromising the underlying host. Two interchangeable providers (Browserless managed + an in-house Cloud Run provider), per-tenant incognito sandbox, deny-by-default egress policy. Unlocks every "scrape this site / fill this form" agent workflow on the hosted tier. | Done (2026-05-12) | `specs/browser-remote-sandbox.md`, `internal/browser/`, `services/r1-browser/`, `docs/integrations/remote-browser.md` |
+| Cross-product skill exchange (C7) | Skills become portable assets across the RelayOne portfolio instead of per-product silos. Pack-format v2 with an explicit compatibility matrix, federated trust root so a skill signed by one product is verifiable by another, runtime adapters for CloudSwarm, Heroa, and Veritize. A skill written for r1 runs in Heroa with no manual port; a skill from CloudSwarm runs in r1. | Done (R1-side substrate, 2026-05-12) | `specs/cross-product-skill-exchange.md`, `internal/skill/manifest_v2.go`, `internal/skill/compat/`, `internal/skill/trustroot.go`, `cmd/r1/pack_adopt_cmd.go`, `docs/skills/cross-product-distribution.md`, `docs/skills/federated-trust.md` |
+
+### Tier D — public, reproducible benchmark (Deep SOW Tier A1, scoped 2026-05-13)
+
+| Feature | Outcome | Status | Reference |
+|---|---|---|---|
+| `r1 antitrunc verify --hook-mode` flag (prereq) | Lets Claude Code's Stop hook ingest R1's anti-truncation findings as a structured JSON envelope. Exit code 2 when findings are present so the Stop hook blocks the agent's premature end_turn; exit 0 when clean. Two-day delta to `cmd/r1/antitrunc_cmd.go`. Unblocks the Claude-Code-with-R1-Stop-Hook leaderboard variant. | Scoped (ready, BUILD_ORDER 47) | `specs/antitrunc-hook-mode-flag.md` |
+| TruthfulCompletion benchmark (A1) | A public, reproducible benchmark that turns the "R1 refuses to lie about completion" claim from rhetoric into a measured percentage. 100 SWE-bench Pro–derived missions, hand-written PlanItem-by-PlanItem ground truth, three independent signals (plan completion, byte-delivery ratio, cross-vendor LLM judge), and seven agent dispatchers (R1, Claude Code default, Claude Code with R1 Stop-hook template, Cline, Aider, Codex CLI, Cursor, plus a Tether middleware variant that wraps Aider/Cline/Codex with R1's anti-truncation gate). Monthly leaderboard refresh + per-PR mini-runs on changes to anti-truncation. The published leaderboard becomes the load-bearing artifact for design-partner conversations: "R1 truthfully claims completion X% of the time; here's the methodology, the corpus, and the reproduction kit — re-run it yourself." | Scoped (ready, BUILD_ORDER 48, 181 checklist items, 8-10 week build) | `specs/truthful-completion-benchmark.md`, planned: `internal/bench/verdict.go`, `internal/bench/agents/`, `cmd/r1-bench/`, `internal/bench/golden/truthful-completion/` (100 missions), `docs/truthful-completion-methodology.md` |
+
+### Scoped — legacy (pre-2026-05-11)
+- JWT login + RelayOne MSP SSO (Path A — Go reimpl of @relayone/auth-core JwtService + RelayOneSsoClient) — superseded by A4 above with a fuller scope.
+- Admin panel at admin.r1.run (clone *-admin template + customize for r1 routes) — superseded by A5 above with explicit route inventory.
+- PostHog product analytics integration — superseded by B1 above with funnel + cohort spec.
+- Customer.io retention + lifecycle email integration — superseded by B2 above with DSAR flow.
+- CodeRadar dogfood event streaming (already in-house; just turn on per env) — superseded by B3 above with explicit 18-event canonical inventory.
 - (UI v2 retrofit moved to Done — see "r1-server UI v2 retrofit — production default" above. Spec D / D-UI2-7 closed the parallel-deploy window 2026-05-06.)
 - **Node 22 LTS CI bump** (precursor to UI v2 retrofit): Node 20 went EOL 2026-04-30; bump unblocks jsdom 29, vitest 4, vite 7. Single small CI-only PR (`cloudbuild.yaml` + `desktop-augmentation.yml`).
 
 ### Scoping
-- Cross-machine session migration
-- Encryption-at-rest for journals
-- Per-tool throttling policy
+- Encryption-at-rest for journals — separate spec drafted at `specs/encryption-at-rest.md`; remains the scoping target for the journals path.
 
 ### Potential — On Horizon
-- Marketing site with affiliate / SEO / CRO / attribution / retention stack
-- BitBucket Pipelines adapter parity with GitLab CI / GitHub Actions
-- Browser tool sandboxed under remote browser
-- Cross-product deterministic skill exchange
-- Native MCP server bundle for popular IDEs without separate install
+- Marketing site with affiliate / SEO / CRO / attribution / retention stack — multi-week marketing-engineering effort; deferred until Tier A+B land.

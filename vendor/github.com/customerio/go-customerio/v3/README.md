@@ -1,0 +1,519 @@
+<p align=center>
+  <a href="https://customer.io">
+    <img src="https://avatars.githubusercontent.com/u/1152079?s=200&v=4" height="60">
+  </a>
+</p>
+
+![Latest release](https://img.shields.io/github/v/release/customerio/go-customerio)
+![Software License](https://img.shields.io/github/license/customerio/go-customerio)
+[![CI status](https://github.com/customerio/go-customerio/actions/workflows/main.yml/badge.svg)](https://github.com/customerio/go-customerio/actions/workflows/main.yml)
+![Go version](https://img.shields.io/github/go-mod/go-version/customerio/go-customerio)
+[![Go Doc](https://img.shields.io/badge/Go_Doc-reference-blue.svg)](https://pkg.go.dev/github.com/customerio/go-customerio/v3)
+
+# Customer.io Journeys Go Client
+
+A Go client library for the [Customer.io Journeys Track API](https://customer.io/docs/api/track). If you're new to Customer.io, we recommend that you integrate with our [Data Pipelines Go client](https://github.com/customerio/cdp-analytics-go) instead.
+
+## Installation
+
+Add this line to your application's imports:
+
+```go
+import (
+    // ...
+    "github.com/customerio/go-customerio/v3"
+)
+```
+
+And then execute:
+
+    go get
+
+Or install it yourself:
+
+    $ go get github.com/customerio/go-customerio/v3
+
+## Before we get started: API client vs. JavaScript snippet
+
+It's helpful to know that everything below can also be accomplished
+through the [Customer.io JavaScript snippet](https://customer.io/docs/basic-integration.html).
+
+In many cases, using the JavaScript snippet will be easier to integrate with
+your app, but there are several reasons why using the API client is useful:
+
+- You're not planning on triggering emails based on how customers interact with
+  your website (e.g. users who haven't visited the site in X days)
+- You're using the JavaScript snippet, but have a few events you'd like to
+  send from your backend system. They will work well together!
+- You'd rather not have another JavaScript snippet slowing down your frontend.
+  Our snippet is asynchronous (doesn't affect initial page load) and very small, but we understand.
+
+In the end, the decision on whether or not to use the API client or
+the JavaScript snippet should be based on what works best for you.
+You'll be able to integrate **fully** with [Customer.io](https://customer.io) with either approach.
+
+Create an instance of the Track API or App API client with your [Customer.io credentials](https://fly.customer.io/settings/api_credentials).
+
+## Usage
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/customerio/go-customerio/v3"
+)
+
+var (
+	// You can find or create new API credentials in your Customer.io
+	// account under "Account Settings" => "API Credentials":
+	// (https://fly.customer.io/settings/api_credentials)
+	siteID      string = "your-site-id"
+	trackAPIKey string = "your-track-api-key"
+	appAPIKey   string = "your-app-api-key"
+)
+
+func main() {
+	// Create an instance of the Customer.io Track API client
+	track := customerio.NewTrackClient(siteID, trackAPIKey, customerio.WithRegion(customerio.RegionUS))
+
+	// Send an Identify TrackAPI call
+	if err := track.Identify("5", map[string]any{
+		"email":      "lucy@example.com",
+		"created_at": time.Now().Unix(),
+		"first_name": "Lucy",
+		"plan":       "basic",
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	// Create an instance of the Customer.io App API Client
+	cio := customerio.NewAPIClient(appAPIKey, customerio.WithRegion(customerio.RegionUS))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	// The request object allows you to specify recipients and message data
+	request := customerio.SendEmailRequest{
+		Identifiers: map[string]string{
+			"id": "customer_1",
+		},
+		To:      "customer@example.com",
+		From:    "business@example.com",
+		Subject: "hello, {{ trigger.name }}",
+		Body:    "hello from the Customer.io {{ trigger.client }} client",
+		MessageData: map[string]any{
+			"client": "Go",
+			"name":   "gopher",
+		},
+	}
+
+	// Send the email with a 10 second timeout
+	resp, err := cio.SendEmail(ctx, &request)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Printf("Resp: %s\n", resp)
+}
+
+```
+
+Your account region (`customerio.RegionUS` or `customerio.RegionEU`) is optional. If you do not specify your region, we assume that your account is based in the US (`customerio.RegionUS`).
+
+If your account is based in the EU and you do not provide the correct region, we'll route requests from the US to `customerio.RegionEU` accordingly, however this may cause data to be logged in the US.
+
+By default, clients use a 30 second HTTP timeout. To use a custom timeout, transport, or proxy policy, pass your own `*http.Client` with `customerio.WithHTTPClient`.
+
+### Identify logged in customers
+
+Tracking data of logged in customers is a key part of [Customer.io](https://customer.io). In order to send triggered messages, we must know the email address of the customer to send email or the phone number for SMS.
+
+You can also specify any number of customer attributes which help tailor [Customer.io](https://customer.io) to your business.
+
+Attributes you specify are useful in several ways:
+
+- As customer variables in your triggered messages. For instance, if you specify the customer's name, you can personalize the triggered message by using it in the subject or body.
+
+- As a way to filter who should receive a triggered message. For instance, if you pass along the current subscription plan (free / basic / premium) for your customers, you can set up triggers which are only sent to customers who have subscribed to a particular plan (e.g. "premium").
+
+You'll want to identify your customers when they sign up for your product and any time their key information changes. This keeps [Customer.io](https://customer.io) up to date with your customer information.
+
+```go
+// Arguments
+// customerID (required) - a unique identifier string for this customers
+// attributes (required) - a ```map[string]any``` of information about the customer. You can pass any
+//                         information that would be useful in your triggers. You
+//                         should at least pass in an email, and created_at timestamp.
+//                         your values should be parseable as JSON by 'encoding/json'.Marshal
+
+if err := track.Identify("5", map[string]any{
+  "email": "bob@example.com",
+  "created_at": time.Now().Unix(),
+  "first_name": "Bob",
+  "plan": "basic",
+}); err != nil {
+  // handle error
+}
+```
+
+### Deleting customers
+
+Deleting a customer will remove them, and all their information from
+Customer.io. Note: if you're still sending data to Customer.io via
+other means (such as the javascript snippet), the customer could be
+recreated.
+
+```go
+// Arguments
+// customerID (required) - a unique identifier for the customer.  This
+//                          should be the same id you'd pass into the
+//                          `identify` command above.
+
+if err := track.Delete("5"); err != nil {
+  // handle error
+}
+```
+
+### Merge Duplicate Customers
+
+When you merge two people, you pick a primary person and merge a secondary, duplicate person into the primary person. The primary person remains after the merge and the secondary person is deleted. This process is permanent: you cannot recover the secondary person.
+
+Use `Identifier` structs to specify the primary and secondary people to merge. Each identifier specifies a type (`id`, `email`, or `cio_id`) and a value.
+
+```go
+if err := track.MergeCustomers(
+    customerio.Identifier{Type: customerio.IdentifierTypeEmail, Value: "cool.person@company.com"},
+    customerio.Identifier{Type: customerio.IdentifierTypeCioID, Value: "C123"},
+); err != nil {
+    // handle error
+}
+```
+
+### Tracking a custom event
+
+Now that you're identifying your customers with [Customer.io](https://customer.io), you can now send events like "purchased" or "watchedIntroVideo".
+
+These allow you to more specifically target your users with automated messages, and track conversions when you're sending automated messages to encourage your customers to perform an action.
+
+```go
+// Arguments
+// customerID (required)  - the id of the customer who you want to associate with the event.
+// name (required)        - the name of the event you want to track.
+// attributes (optional)  - any related information you'd like to attach to this
+//                          event, as a ```map[string]any```.
+//                          These attributes can be used in your triggers to control who should
+//                          receive the triggered message. You can set any number of data values.
+
+if err := track.Track("5", "purchase", map[string]any{
+    "type": "socks",
+    "price": "13.99",
+}); err != nil {
+  // handle error
+}
+```
+
+Use event options when you need to set top-level event fields like `id`, `timestamp`, or `type`.
+
+```go
+if err := track.Track("5", "purchase", map[string]any{
+    "type": "socks",
+    "price": "13.99",
+}, customerio.WithEventTimestamp(time.Now()), customerio.WithEventID("evt_123")); err != nil {
+  // handle error
+}
+```
+
+### Tracking an anonymous event
+
+You can also send anonymous events representing people you haven't identified. An anonymous event requires an `anonymous_id` representing the unknown person and an event `name`. When you identify a person, you can set their `anonymous_id` attribute. If [event merging](https://customer.io/docs/anonymous-events/#turn-on-merging) is turned on in your workspace, and the attribute matches the `anonymous_id` in one or more events that were logged within the last 30 days, we associate those events with the person.
+
+```go
+// Arguments
+// anonymous_id (required)    - nullable, an identifier representing an unknown person.
+// name (required)            - the name of the event you want to track.
+// attributes (optional)      - any related information you'd like to attach to this
+//                              event, as a ```map[string]any```.
+//                              These attributes can be used in your triggers to control who should
+//                              receive the triggered message. You can set any number of data values.
+
+if err := track.TrackAnonymous("anonymous_id", "invite", map[string]any{
+    "first_name": "Alex",
+    "source": "OldApp",
+}); err != nil {
+  // handle error
+}
+```
+#### Anonymous invite events
+
+If you previously sent [invite events](https://customer.io/docs/anonymous-invite-emails/), you can achieve the same functionality by sending an anonymous event an empty string for the anonymous identifier. To send anonymous invites, your event *must* include a `recipient` attribute.
+
+```go
+if err := track.TrackAnonymous("", "invite", map[string]any{
+    "first_name": "Alex",
+    "recipient": "alex.person@example.com",
+}); err != nil {
+  // handle error
+}
+```
+
+### Adding a device to a customer
+
+In order to send push notifications, we need customer device information.
+
+```go
+// Arguments
+// customerID (required) - a unique identifier string for this customer
+// deviceID (required)   - a unique identifier string for this device
+// platform (required)   - the platform of the device, currently only accepts 'ios' and 'android'
+// data (optional)       - a ```map[string]any``` of information about the device.
+//                         You can pass any key/value pairs that would be useful in your triggers.
+//                         Your values should be parseable as Json by 'encoding/json'.Marshal
+
+if err := track.AddDevice("5", "messaging token", "android", map[string]any{
+"last_used": time.Now().Unix(),
+"attribute_name": "attribute_value",
+}); err != nil {
+  // handle error
+}
+```
+
+### Deleting devices
+
+Deleting a device will remove it from the customer's device list in Customer.io.
+
+```go
+// Arguments
+// customerID (required)  - the id of the customer the device you want to delete belongs to
+// deviceToken (required) - a unique identifier for the device.
+//                          This should be the same id you'd pass into the
+//                          `addDevice` command above
+
+if err := track.DeleteDevice("5", "messaging-token"); err != nil {
+  // handle error
+}
+```
+
+### Send Transactional Messages
+
+To use the Customer.io [Transactional API](https://customer.io/docs/transactional-api), create an instance of the API client using an [App API key](https://customer.io/docs/managing-credentials#app-api-keys).
+
+## Email
+Create a `customerio.SendEmailRequest` instance, and then use `(c *customerio.APIClient).SendEmail` to send your message. [Learn more about transactional messages and optional `SendEmailRequest` properties](https://customer.io/docs/transactional-api).
+
+You can also send attachments with your message. Use `customerio.SendEmailRequest.Attach` to encode attachments.
+
+```go
+client := customerio.NewAPIClient("<extapikey>", customerio.WithRegion(customerio.RegionUS));
+
+// TransactionalMessageId — the ID of the transactional message you want to send.
+// To                     — the email address of your recipients.
+// Identifiers            — contains the email and/or id of your recipient.
+//                          If the person does not exist, Customer.io creates them.
+// MessageData            — contains properties that you want reference in your message using liquid.
+// Attach                 — a helper that encodes attachments to your message.
+
+request := customerio.SendEmailRequest{
+  To: "person@example.com",
+  TransactionalMessageID: "3",
+  MessageData: map[string]any{
+    "name": "Person",
+    "items": map[string]any{
+      "name": "shoes",
+      "price": "59.99",
+    },
+    "products": []any{},
+  },
+  Identifiers: map[string]string{
+    "email": "person@example.com",
+  },
+}
+
+// (optional) attach a file to your message.
+f, err := os.Open("receipt.pdf")
+if err != nil {
+  // handle error
+}
+defer f.Close()
+
+request.Attach("receipt.pdf", f)
+
+body, err := client.SendEmail(context.Background(), &request)
+if err != nil {
+  // handle error
+}
+
+fmt.Println(body)
+```
+
+## Push
+Create a `customerio.SendPushRequest` instance, and then use `(c *customerio.APIClient).SendPush` to send your message. [Learn more about transactional messages and optional `SendPush` properties](https://customer.io/docs/transactional-api).
+
+```go
+client := customerio.NewAPIClient("<extapikey>", customerio.WithRegion(customerio.RegionUS));
+
+request := customerio.SendPushRequest{
+  TransactionalMessageID: "3",
+  MessageData: map[string]any{
+    "name": "Person",
+    "items": map[string]any{
+      "name": "shoes",
+      "price": "59.99",
+    },
+    "products": []any{},
+  },
+  Identifiers: map[string]string{
+    "id": "example1",
+  },
+}
+
+// (optional) upsert a particular device for the profile the push is being sent to.
+device, err := customerio.NewDevice("device-id", "android", map[string]any{"optional_attr": "value"})
+if err != nil {
+  // handle error, invalid device params.
+}
+request.Device = device
+
+body, err := client.SendPush(context.Background(), &request)
+if err != nil {
+  // handle error
+}
+
+fmt.Println(body)
+```
+
+## Triggering API Broadcasts
+
+Use `(c *customerio.APIClient).TriggerBroadcast` to trigger a broadcast campaign. [Learn more about triggering a broadcast here](https://docs.customer.io/journeys/api-triggered-broadcasts/) via the App API.
+
+### Segment-based broadcast
+
+Send to everyone who matches a segment:
+
+```go
+client := customerio.NewAPIClient("<extapikey>", customerio.WithRegion(customerio.RegionUS))
+
+resp, err := client.TriggerBroadcast(
+  context.Background(),
+  broadcastID,
+  map[string]any{"name": "gopher"},
+  customerio.BroadcastRecipients{
+    Segment: map[string]any{"id": 1},
+  },
+  customerio.BroadcastOptions{},
+)
+if err != nil {
+  // handle error
+}
+fmt.Println(resp.ID)
+```
+
+### Direct recipient broadcast
+
+Send directly to a list of email addresses or customer IDs:
+
+```go
+ignore := true
+resp, err := client.TriggerBroadcast(
+  context.Background(),
+  broadcastID,
+  map[string]interface{}{"name": "gopher"},
+  customerio.BroadcastRecipients{
+    Emails: []string{"user@example.com"},
+  },
+  customerio.BroadcastOptions{
+    EmailIgnoreMissing: &ignore,
+  },
+)
+if err != nil {
+  // handle error
+}
+fmt.Println(resp.ID)
+```
+
+You can also use `Ids`, `PerUserData`, or `DataFileURL` as the direct recipient field. `BroadcastOptions` carries the per-recipient processing flags (`IDIgnoreMissing`, `EmailIgnoreMissing`, `EmailAddDuplicates`); only the flags that apply to the chosen recipient field are sent — others are dropped to match API expectations.
+
+### Adding people to a manual segment
+
+Add customers to a manual segment by segment ID. Pass `customerio.WithSegmentIDType` to interpret the supplied ids as `email` or `cio_id` instead of the default `id`. [Learn more about adding customers to a segment](https://docs.customer.io/integrations/api/track/#tag/track-segments/add_to_segment).
+
+```go
+// Arguments
+// segmentID (required) - the integer ID of the manual segment.
+// ids (required)       - a []string of customer identifiers.
+// opts (optional)      - SegmentOption values, e.g. WithSegmentIDType to choose
+//                        between "id" (default), "email", or "cio_id".
+
+if err := track.AddPeopleToSegment(7, []string{"5", "6", "7"}); err != nil {
+  // handle error
+}
+```
+
+To interpret the supplied ids as email addresses or `cio_id`s, pass `WithSegmentIDType`:
+
+```go
+if err := track.AddPeopleToSegment(7,
+  []string{"alice@example.com", "bob@example.com"},
+  customerio.WithSegmentIDType(customerio.IdentifierTypeEmail)
+); err != nil {
+  // handle error
+}
+```
+
+### Removing people from a manual segment
+
+Remove customers from a manual segment by segment ID. Pass `customerio.WithSegmentIDType` to interpret the supplied ids as `email` or `cio_id` instead of the default `id`. [Learn more about removing customers from a segment](https://docs.customer.io/integrations/api/track/#tag/track-segments/remove_from_segment).
+
+```go
+// Arguments
+// segmentID (required) - the integer ID of the manual segment.
+// ids (required)       - a []string of customer identifiers to remove.
+// opts (optional)      - SegmentOption values, e.g. WithSegmentIDType to choose
+//                        between "id" (default), "email", or "cio_id".
+
+if err := track.RemovePeopleFromSegment(7, []string{"5", "6"}); err != nil {
+  // handle error
+}
+```
+
+To interpret the supplied ids as email addresses or `cio_id`s, pass `WithSegmentIDType`:
+
+```go
+if err := track.RemovePeopleFromSegment(7,
+  []string{"alice@example.com", "bob@example.com"},
+  customerio.WithSegmentIDType(customerio.IdentifierTypeEmail)
+); err != nil {
+  // handle error
+}
+```
+
+## Context Support
+There are additional API methods that support passing a context that satisfies the `context.Context` interface to allow better control over dispatched requests. For example with sending an event:
+```go
+// Create an instance of the Customer.io Track API client
+track := customerio.NewTrackClient(siteID, trackAPIKey, customerio.WithRegion(customerio.RegionUS))
+
+// Create a context with a 5s deadline
+ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Second))
+defer cancel()
+
+if err := track.TrackCtx(ctx, "5", "purchase", map[string]any{
+    "type": "socks",
+    "price": "13.99",
+}); err != nil {
+  // handle error
+}
+```
+
+## Contributing
+
+1. Fork it
+2. Clone your fork (`git clone git@github.com:MY_USERNAME/go-customerio.git && cd go-customerio`)
+3. Create your feature branch (`git checkout -b my-new-feature`)
+4. Commit your changes (`git commit -am 'feat: Added some feature'`)
+5. Push to the branch (`git push origin my-new-feature`)
+6. Create new Pull Request
