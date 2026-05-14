@@ -66,11 +66,25 @@ serialized as indented JSON. Key fields:
 
 ## Aggregating into a leaderboard
 
-The repo includes `internal/bench/leaderboard.go::BuildLeaderboard` +
-`RenderMarkdown`. A small Go program reading the `./out/*.json`
-files and calling those two functions produces the published Markdown
-table. (The reproduction kit doesn't ship that aggregator yet — for
-now, point your favorite scripting language at the JSON files.)
+`r1-bench` ships an `--aggregate` mode that folds a directory of
+RunResult JSON files into a Markdown leaderboard:
+
+```bash
+# Leaderboard only (default):
+r1-bench --aggregate ./out > leaderboard.md
+
+# Per-mission drill-down:
+r1-bench --aggregate ./out --aggregate-format per-mission > per-mission.md
+
+# Both, concatenated:
+r1-bench --aggregate ./out --aggregate-format both > report.md
+```
+
+Files that aren't valid JSON or don't shape-match `bench.RunResult`
+are skipped; the output prepends an HTML comment with the skipped
+count so the operator can decide whether the skipped files are a real
+concern. The Wilson 95% CI for each agent's rate is computed
+automatically.
 
 ## Overriding the corpus
 

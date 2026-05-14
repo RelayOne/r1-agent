@@ -40,6 +40,8 @@ type cliFlags struct {
 	noJudge     bool
 	listAgents  bool
 	listCorpus  bool
+	aggregate   string // directory of *.json result files to aggregate; empty = run mode
+	aggregateFormat string // "markdown" | "per-mission" | "both"
 }
 
 func parseFlags(args []string) (*cliFlags, error) {
@@ -55,10 +57,12 @@ func parseFlags(args []string) (*cliFlags, error) {
 	fs.BoolVar(&f.noJudge, "no-judge", false, "force-disable the LLM judge even when criteria require it")
 	fs.BoolVar(&f.listAgents, "list-agents", false, "list registered agent IDs and exit")
 	fs.BoolVar(&f.listCorpus, "list-corpus", false, "list available missions in the corpus and exit")
+	fs.StringVar(&f.aggregate, "aggregate", "", "directory of RunResult JSON files to fold into a leaderboard; non-empty switches to aggregate mode")
+	fs.StringVar(&f.aggregateFormat, "aggregate-format", "markdown", "aggregate output format: markdown (leaderboard), per-mission (drill-down), both")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
-	if f.listAgents || f.listCorpus {
+	if f.listAgents || f.listCorpus || f.aggregate != "" {
 		return f, nil
 	}
 	if f.mission == "" {
@@ -91,6 +95,18 @@ func run() error {
 			fmt.Println(id)
 		}
 		return nil
+	}
+
+	if f.aggregate != "" {
+		out, err := AggregateDir(f.aggregate, f.aggregateFormat)
+		if err != nil {
+			return fmt.Errorf("aggregate: %w", err)
+		}
+		if f.output == "" {
+			_, werr := os.Stdout.Write([]byte(out))
+			return werr
+		}
+		return os.WriteFile(f.output, []byte(out), 0o644)
 	}
 
 	dispatcher := agents.Lookup(f.agent)
