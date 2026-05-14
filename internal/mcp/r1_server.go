@@ -50,6 +50,7 @@ import (
 	"github.com/RelayOne/r1/internal/logging"
 	"github.com/RelayOne/r1/internal/procutil"
 	"github.com/RelayOne/r1/internal/r1dir"
+	"github.com/RelayOne/r1/internal/throttle"
 )
 
 // maxLogBytes caps the size of any single mission stdout/stderr log. When the
@@ -91,6 +92,14 @@ type StokeServer struct {
 	// before checking auth. Wired via WithAuthKey; default empty means
 	// open local-dev mode.
 	authKey string
+
+	// preDispatch carries the throttle + promptguard gates that fire
+	// BEFORE HandleToolCall on every tools/call. Per the C3 spec these
+	// run AFTER the authKey gate (auth is cheap and must reject
+	// untrusted clients before we touch their args). Two policy gates
+	// are kept as siblings inside PreDispatch so the C3 and A1-T2
+	// branches do not collide on the dispatch switch case.
+	preDispatch PreDispatch
 }
 
 // spawnFunc starts a subprocess and returns a handle. The handle's Wait()
@@ -179,6 +188,26 @@ func (s *StokeServer) WithAuthKey(key string) *StokeServer {
 	return s
 }
 
+// WithThrottler installs the C3 rate-limit gate on the StokeServer.
+// Mirrors WithLanesServer / WithCortex; nil clears any previously
+// installed throttler. See specs/per-tool-throttling.md task T7.
+func (s *StokeServer) WithThrottler(l throttle.Limiter) *StokeServer {
+	s.mu.Lock()
+	s.preDispatch.Throttler = l
+	s.mu.Unlock()
+	return s
+}
+
+// WithPromptGuard installs the A1-T2 tool-input validation gate on
+// the StokeServer. Set by the parallel promptguard branch; declared
+// here so the two branches' edits sit as siblings.
+func (s *StokeServer) WithPromptGuard(fn func(tc ToolCallContext) PreDispatchDecision) *StokeServer {
+	s.mu.Lock()
+	s.preDispatch.ValidateInput = fn
+	s.mu.Unlock()
+	return s
+}
+
 // ToolDefinitions returns the MCP tool definitions for Stoke build
 // operations. S1-4 of work-r1-rename.md mandates that every legacy
 // stoke_* tool is also published under the canonical r1_* name until
@@ -219,6 +248,10 @@ func (s *StokeServer) ToolDefinitions() []ToolDefinition {
 	// has no backend that needs WithX wiring; advertise it always so
 	// the lint surface is discoverable.
 	out = append(out, r1VerifyTools()...)
+	// r1.throttle.status (C3 T24) is read-only and always safe to
+	// advertise. When no throttler is wired the handler returns an
+	// empty list so the tool stays useful as a probe.
+	out = append(out, r1ThrottleStatusToolDef())
 	return out
 }
 
@@ -417,6 +450,15 @@ func (s *StokeServer) baseToolDefinitions() []ToolDefinition {
 // is checked BEFORE the stoke switch so a future legacy tool can't
 // accidentally shadow a lane tool.
 func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{}) (string, error) {
+	// Per-tool input validation (specs/promptguard-hardening.md §T2
+	// item 8). Runs BEFORE every per-tool handler so an injection-
+	// crafted payload (rm $(ls) in deploy.execute, file:// in
+	// browse.fetch, /etc/passwd in file.write, or any operator-added
+	// rule) cannot dispatch. Observe-only when the configured action
+	// is warn or strip; only ActionReject blocks here.
+	if err := validateMCPToolInput(context.Background(), toolName, args); err != nil {
+		return "", err
+	}
 	if strings.HasPrefix(toolName, "r1.lanes.") {
 		s.mu.Lock()
 		lanes := s.lanes
@@ -449,6 +491,9 @@ func (s *StokeServer) HandleToolCall(toolName string, args map[string]interface{
 		default:
 			return "", fmt.Errorf("unknown verify tool: %s", toolName)
 		}
+	}
+	if toolName == "r1.throttle.status" {
+		return s.handleThrottleStatus(args)
 	}
 	switch legacyStokeServerToolName(toolName) {
 	case "stoke_build_from_sow":
@@ -1045,6 +1090,7 @@ func (s *StokeServer) ServeStdio() error {
 			}
 			s.mu.Lock()
 			authKey := s.authKey
+			pd := s.preDispatch
 			s.mu.Unlock()
 			if authKey != "" {
 				gotKey, _ := params.Meta["r1_mcp_key"].(string)
@@ -1052,6 +1098,26 @@ func (s *StokeServer) ServeStdio() error {
 					writeJSONRPC(os.Stdout, req.ID, nil, &jsonRPCError{Code: -32000, Message: "unauthorized"})
 					continue
 				}
+			}
+			// Pre-dispatch gates (throttle + promptguard) run as
+			// SIBLINGS after auth. C3 wires Throttler, A1-T2 wires
+			// ValidateInput; the two branches edit different fields
+			// on PreDispatch so they merge cleanly.
+			sessionID, tenantID, rawMeta := extractAuthMeta(params.Meta)
+			if dec := pd.Check(ToolCallContext{
+				Ctx:       context.Background(),
+				SessionID: sessionID,
+				TenantID:  tenantID,
+				ToolName:  params.Name,
+				Args:      params.Arguments,
+				Meta:      rawMeta,
+			}); !dec.Allowed {
+				writeJSONRPC(os.Stdout, req.ID, map[string]interface{}{
+					"content": []map[string]string{{"type": "text", "text": dec.Message}},
+					"isError": true,
+					"_meta":   map[string]any{"r1_error": dec.MetaError},
+				}, nil)
+				continue
 			}
 			result, err := s.HandleToolCall(params.Name, params.Arguments)
 			if err != nil {

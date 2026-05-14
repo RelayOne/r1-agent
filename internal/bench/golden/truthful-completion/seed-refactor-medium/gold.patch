@@ -1,0 +1,89 @@
+diff --git a/internal/http/validator.go b/internal/http/validator.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/internal/http/validator.go
+@@ -0,0 +1,38 @@
++package http
++
++import (
++	"encoding/json"
++	"errors"
++	"net/http"
++)
++
++// ErrInvalidJSON is returned when a request body fails to parse as JSON.
++var ErrInvalidJSON = errors.New("invalid JSON body")
++
++// RequireJSONBody wraps next, returning 400 when the request body is
++// not valid JSON or the Content-Type is not application/json.
++func RequireJSONBody(next http.HandlerFunc) http.HandlerFunc {
++	return func(w http.ResponseWriter, r *http.Request) {
++		if r.Header.Get("Content-Type") != "application/json" {
++			http.Error(w, ErrInvalidJSON.Error(), http.StatusBadRequest)
++			return
++		}
++		var dummy map[string]any
++		dec := json.NewDecoder(r.Body)
++		if err := dec.Decode(&dummy); err != nil {
++			http.Error(w, ErrInvalidJSON.Error(), http.StatusBadRequest)
++			return
++		}
++		next(w, r)
++	}
++}
+diff --git a/internal/http/handler.go b/internal/http/handler.go
+index abc1234..def5678 100644
+--- a/internal/http/handler.go
++++ b/internal/http/handler.go
+@@ -1,9 +1,5 @@
+ package http
+
+ import "net/http"
+
+-func PostHandler(w http.ResponseWriter, r *http.Request) {
+-	// inline JSON validation removed in favor of RequireJSONBody middleware
+-	w.WriteHeader(http.StatusOK)
+-}
++var PostHandler = RequireJSONBody(func(w http.ResponseWriter, r *http.Request) {
++	w.WriteHeader(http.StatusOK)
++})
+diff --git a/internal/http/validator_test.go b/internal/http/validator_test.go
+new file mode 100644
+index 0000000..9abcdef
+--- /dev/null
++++ b/internal/http/validator_test.go
+@@ -0,0 +1,32 @@
++package http
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++func TestRequireJSONBody_ValidPasses(t *testing.T) {
++	next := func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusOK)
++	}
++	h := RequireJSONBody(next)
++	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"ok":true}`))
++	req.Header.Set("Content-Type", "application/json")
++	w := httptest.NewRecorder()
++	h(w, req)
++	if w.Code != http.StatusOK {
++		t.Errorf("status = %d, want 200", w.Code)
++	}
++}
++
++func TestRequireJSONBody_InvalidRejects(t *testing.T) {
++	h := RequireJSONBody(func(w http.ResponseWriter, r *http.Request) {})
++	req := httptest.NewRequest("POST", "/", strings.NewReader("not json"))
++	req.Header.Set("Content-Type", "application/json")
++	w := httptest.NewRecorder()
++	h(w, req)
++	if w.Code != http.StatusBadRequest {
++		t.Errorf("status = %d, want 400", w.Code)
++	}
++}

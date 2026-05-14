@@ -1,0 +1,174 @@
+diff --git a/pkg/storage/storage.go b/pkg/storage/storage.go
+new file mode 100644
+index 0000000..7777777
+--- /dev/null
++++ b/pkg/storage/storage.go
+@@ -0,0 +1,18 @@
++// Package storage defines the abstract storage interface used by the
++// api and cli packages. pkg/store.SQLStore satisfies this interface
++// structurally; alternative implementations (in-memory fake, remote
++// gRPC backend, etc.) can plug in without code changes in callers.
++package storage
++
++import "context"
++
++// Storage is the abstract key-value storage contract. All methods
++// take a context and return any error from the underlying backend.
++type Storage interface {
++	Get(ctx context.Context, key string) ([]byte, error)
++	Put(ctx context.Context, key string, value []byte) error
++	Delete(ctx context.Context, key string) error
++	List(ctx context.Context, prefix string) ([]string, error)
++}
+diff --git a/pkg/api/handler.go b/pkg/api/handler.go
+index 8888888..9999999 100644
+--- a/pkg/api/handler.go
++++ b/pkg/api/handler.go
+@@ -3,16 +3,16 @@ package api
+ import (
+ 	"net/http"
+
+-	"example.com/app/pkg/store"
++	"example.com/app/pkg/storage"
+ )
+
+ type Handler struct {
+-	store *store.SQLStore
++	store storage.Storage
+ }
+
+-func NewHandler(s *store.SQLStore) *Handler {
++func NewHandler(s storage.Storage) *Handler {
+ 	return &Handler{store: s}
+ }
+
+ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+diff --git a/pkg/cli/cli.go b/pkg/cli/cli.go
+index aaaaaaa..bbbbbbb 100644
+--- a/pkg/cli/cli.go
++++ b/pkg/cli/cli.go
+@@ -1,16 +1,16 @@
+ package cli
+
+ import (
+ 	"fmt"
+
+-	"example.com/app/pkg/store"
++	"example.com/app/pkg/storage"
+ )
+
+ type App struct {
+-	store *store.SQLStore
++	store storage.Storage
+ }
+
+-func NewApp(s *store.SQLStore) *App {
++func NewApp(s storage.Storage) *App {
+ 	return &App{store: s}
+ }
+
+ func (a *App) Run() error {
+diff --git a/pkg/storage/inmem.go b/pkg/storage/inmem.go
+new file mode 100644
+index 0000000..cccccccc
+--- /dev/null
++++ b/pkg/storage/inmem.go
+@@ -0,0 +1,57 @@
++package storage
++
++import (
++	"context"
++	"errors"
++	"sort"
++	"strings"
++	"sync"
++)
++
++// InMem is a thread-safe in-memory Storage implementation, intended
++// for tests. It uses a sync.RWMutex to serialise mutations.
++type InMem struct {
++	mu   sync.RWMutex
++	data map[string][]byte
++}
++
++// NewInMem constructs an empty InMem.
++func NewInMem() *InMem {
++	return &InMem{data: map[string][]byte{}}
++}
++
++func (m *InMem) Get(_ context.Context, key string) ([]byte, error) {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++	v, ok := m.data[key]
++	if !ok {
++		return nil, errors.New("storage: key not found")
++	}
++	out := make([]byte, len(v))
++	copy(out, v)
++	return out, nil
++}
++
++func (m *InMem) Put(_ context.Context, key string, value []byte) error {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	buf := make([]byte, len(value))
++	copy(buf, value)
++	m.data[key] = buf
++	return nil
++}
++
++func (m *InMem) Delete(_ context.Context, key string) error {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	delete(m.data, key)
++	return nil
++}
++
++func (m *InMem) List(_ context.Context, prefix string) ([]string, error) {
++	m.mu.RLock()
++	defer m.mu.RUnlock()
++	keys := []string{}
++	for k := range m.data {
++		if strings.HasPrefix(k, prefix) {
++			keys = append(keys, k)
++		}
++	}
++	sort.Strings(keys)
++	return keys, nil
++}
+diff --git a/pkg/storage/inmem_test.go b/pkg/storage/inmem_test.go
+new file mode 100644
+index 0000000..dddddddd
+--- /dev/null
++++ b/pkg/storage/inmem_test.go
+@@ -0,0 +1,32 @@
++package storage
++
++import (
++	"context"
++	"testing"
++)
++
++// Compile-time check that InMem satisfies Storage.
++var _ Storage = (*InMem)(nil)
++
++func TestInMem_PutGet(t *testing.T) {
++	m := NewInMem()
++	ctx := context.Background()
++	if err := m.Put(ctx, "k", []byte("v")); err != nil {
++		t.Fatalf("Put: %v", err)
++	}
++	got, err := m.Get(ctx, "k")
++	if err != nil {
++		t.Fatalf("Get: %v", err)
++	}
++	if string(got) != "v" {
++		t.Errorf("Get = %q, want v", got)
++	}
++	// Get returns a defensive copy — mutating doesn't affect the store.
++	got[0] = 'x'
++	got2, _ := m.Get(ctx, "k")
++	if string(got2) != "v" {
++		t.Errorf("store should defensive-copy on Get; got %q", got2)
++	}
++}

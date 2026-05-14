@@ -1,0 +1,39 @@
+{{- define "antitrunc.tmpl" -}}
+{{ template "admin-base" . }}
+{{- end -}}
+
+{{- define "body" -}}
+{{ with .Data }}
+<section aria-labelledby="anti-h">
+  <h2 id="anti-h">Anti-truncation events <small class="muted">({{ .Page.Total }} buffered)</small></h2>
+  <p class="muted">Process-local ring buffer (capacity 1000). Persistent storage arrives with the central bus rollout.</p>
+
+  <table class="data-table" aria-describedby="anti-h">
+    <thead>
+      <tr>
+        <th scope="col">Event ID</th>
+        <th scope="col">Session</th>
+        <th scope="col">Trigger phrase</th>
+        <th scope="col">Outcome CID</th>
+        <th scope="col">Timestamp</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr>
+        <td>{{ .EventID }}</td>
+        <td>{{ .SessionID }}</td>
+        <td><code>{{ .TriggerPhrase }}</code></td>
+        <td>{{ .OutcomeNodeCID }}</td>
+        <td>{{ .Timestamp.UTC.Format "2006-01-02 15:04:05Z" }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="5" class="empty">No anti-trunc events recorded yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+
+  {{ template "pagination" .Page }}
+</section>
+{{ end }}
+{{- end -}}

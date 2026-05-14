@@ -1,0 +1,98 @@
+# services/cloudbuild-bench-truthful-completion-monthly.yaml
+#
+# Monthly TruthfulCompletion benchmark refresh. Runs the full
+# (agent × mission) matrix and uploads the rendered leaderboard +
+# per-mission breakdown to the public bench bucket.
+#
+# Triggered by Cloud Scheduler at 04:00 UTC on the 1st of each month
+# (see scripts/setup-bench-truthful-completion-cron.sh).
+#
+# Spec: specs/truthful-completion-benchmark.md §T8.1 (item 55).
+
+substitutions:
+  _CORPUS_DIR: internal/bench/golden/truthful-completion
+  _AGENTS: r1,r1-antitrunc,claude-code-default,claude-code-stop-hook,cline,aider,codex-cli,cursor,tether+aider,tether+cline,tether+codex-cli,tether+claude-code-default
+  _JUDGE_MODEL: gpt-4o
+  _TIMEOUT: 10m
+  _BUCKET: gs://relayone-488319-r1-bench-reports
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_32
+
+steps:
+  - id: build-r1-bench
+    name: 'golang:1.25'
+    waitFor: ['-']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        cd /workspace
+        go build -trimpath -o /workspace/r1-bench-bin ./cmd/r1-bench
+
+  - id: list-corpus
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['build-r1-bench']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        /workspace/r1-bench-bin --list-corpus --corpus "${_CORPUS_DIR}" > /workspace/mission-ids.txt
+        echo "Corpus contains $(wc -l < /workspace/mission-ids.txt) missions"
+
+  - id: run-matrix
+    name: 'gcr.io/cloud-builders/gcloud'
+    waitFor: ['list-corpus']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p /workspace/bench-out
+        IFS=',' read -ra AGENTS_ARR <<< "${_AGENTS}"
+        while IFS= read -r MISSION; do
+          for AGENT in "${AGENTS_ARR[@]}"; do
+            OUT="/workspace/bench-out/${AGENT//\+/_}--${MISSION}.json"
+            /workspace/r1-bench-bin \
+              --mission "$MISSION" \
+              --agent "$AGENT" \
+              --corpus "${_CORPUS_DIR}" \
+              --judge-model "${_JUDGE_MODEL}" \
+              --timeout "${_TIMEOUT}" \
+              --output "$OUT" \
+              || echo "WARN: ${AGENT}/${MISSION} failed; continuing"
+          done
+        done < /workspace/mission-ids.txt
+
+  - id: aggregate
+    name: 'golang:1.25'
+    waitFor: ['run-matrix']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # The aggregate command is not yet a separate binary —
+        # for now we tar the raw JSON results and let the bucket
+        # consumer render. The aggregate renderer lives in
+        # internal/bench/leaderboard.go and will get its own CLI
+        # entrypoint in a follow-up.
+        DATE=$(date +%Y-%m-%d)
+        tar -czf "/workspace/bench-out/truthful-completion-${DATE}.tar.gz" -C /workspace/bench-out .
+        ls -la /workspace/bench-out/
+
+  - id: upload-results
+    name: 'gcr.io/cloud-builders/gsutil'
+    waitFor: ['aggregate']
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        DATE=$(date +%Y-%m-%d)
+        gsutil -m cp -r /workspace/bench-out/* "${_BUCKET}/truthful-completion/${DATE}/"
+
+timeout: 14400s  # 4 hours max

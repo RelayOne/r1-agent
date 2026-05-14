@@ -44,6 +44,25 @@ type Session struct {
 	// goroutine-bound dispatch against drifting away from this path.
 	SessionRoot string
 
+	// TenantID tags the session with its owning tenant. Empty for
+	// anonymous / local-CLI sessions (default). Per
+	// specs/relayone-sso.md Phase F item 26-27: the field is stable,
+	// never mutated after Create. Per-tenant queries against the
+	// ledger and bus filter on this value; events emitted by this
+	// session propagate the tenant id automatically.
+	TenantID string
+
+	// Subject is the JWT `sub` claim of the principal that owns the
+	// session. Empty for anonymous sessions. Stable across the
+	// session's lifetime.
+	Subject string
+
+	// Roles is the list of role strings extracted from the verified
+	// JWT (or from RelayOneProfile.Raw["roles"] when minted by the
+	// callback handler). Stable across the session's lifetime; an
+	// updated principal yields a new session.
+	Roles []string
+
 	// Workspace is an opaque pointer to the per-session cortex
 	// Workspace. Stored as `any` to keep sessionhub independent of the
 	// cortex package; the daemon's startup glue casts it back to
@@ -221,6 +240,12 @@ const sessionInboxCap = 8
 // newSession builds a Session with all id/path/model fields populated.
 // Used by SessionHub.Create after validation passes; never called
 // directly by external code.
+//
+// Anonymous sessions stop here. Authenticated sessions receive their
+// TenantID / Subject / Roles via the SessionHub.Create-side wiring,
+// which assigns those fields before returning the session to the
+// caller. The fields are stable for the session's lifetime; never
+// mutate them after the hub has handed the session out.
 func newSession(id, sessionRoot, model string) *Session {
 	return &Session{
 		ID:          id,

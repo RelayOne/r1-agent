@@ -73,6 +73,8 @@ skilltracker/                      Per-stance loaded-skill table (Note / Drop / 
 snapshot/                          Protected baseline manifest
 wizard/                            First-time config presets
 skillmfr/                          Skill manufacturing pipeline
+skill/                             v1 + v2 manifest, registry, integrations, federated trust root (C7)
+skill/compat/                      Runtime adapters: r1, cloudswarm, heroa, veritize (C7)
 bench/                             Golden mission benchmarking
 bridge/                            V1→V2 bridge adapters
 
@@ -105,6 +107,23 @@ serviceunit/                       kardianos/service per-OS service unit install
 --- ANTI-TRUNCATION (spec 9) ---
 antitrunc/                         Phrase catalog, gate, scopecheck, soak driver
 agentloop/antitrunc.go             Gate composition wiring (composes BEFORE all other end-turn hooks)
+cmd/r1/antitrunc_cmd.go --hook-mode  Claude Code Stop-hook adapter (writes JSON envelope, exit code 2 on findings)
+
+--- TRUTHFULCOMPLETION BENCHMARK (spec truthful-completion-benchmark) ---
+bench/MissionConfig + RunResult    Schema extensions for plan items + completion verdict bits
+bench/verdict.go                   VerdictScorer combines plan satisfaction + delivery ratio + LLM judge
+bench/judge.go                     apiJudge wraps apiclient.Client; cross-vendor constraint enforced upstream
+bench/stats.go                     WilsonCI 95% confidence interval, no continuity correction
+bench/leaderboard.go               BuildLeaderboard + RenderMarkdown over []RunResult
+bench/permission_render.go         BuildPerMissionTable for drill-down view
+bench/agents/                      Dispatcher interface + 8 implementations (R1, claude-code-{default,stop-hook}, cline, aider, codex-cli, cursor, tether)
+bench/golden/truthful-completion/  5 seed missions (95 SWE-bench Pro missions deferred to operator curation)
+cmd/r1-bench/                      Runner CLI: drives Dispatcher → VerdictScorer → JSON RunResult
+cmd/r1-bench/vendor.go             Agent/model → vendor mapping; refuses same-vendor judge
+cmd/r1-bench/container.go          Hermetic-run Dockerfile template generator
+cmd/r1-bench/reproduction-kit/     docker-compose + per-agent Dockerfiles + run.sh
+services/cloudbuild-bench-truthful-completion-{monthly,pr}.yaml  CI cadence
+docs/truthful-completion-methodology.md  Published methodology (v1, 2026-05-14)
 
 --- CORE WORKFLOW ---
 agentloop/                         Native agentic tool-use loop via Anthropic Messages API
@@ -218,6 +237,8 @@ costtrack/                         Real-time cost tracking + budget alerts
 consent/                           Human-in-the-loop approval
 rbac/                              Role-Based Access Control
 hooks/                             Anti-deception PreToolUse/PostToolUse guards
+throttle/                          C3 per-tool, two-tier (session+tenant) token-bucket rate limiter
+throttle/policy/                   Leaf YAML schema + validator (avoids config<->throttle cycle)
 
 --- CONFIG & SESSION ---
 config/                            YAML policy parser
@@ -288,6 +309,21 @@ tools/agent-feature-runner/        Gherkin-flavored markdown parser + dispatcher
 tools/lint-view-without-api/       UI-without-API CI lint
 tests/agent/                       8 seed feature fixtures across 10 categories
 docs/AGENTIC-API.md                External-agent contract
+
+--- CROSS-MACHINE SESSION MIGRATION (spec C1) ---
+internal/migration/bundle.go              .r1session format (manifest + Ed25519 sign/verify)
+internal/migration/importer.go            Destination-side Import pipeline + chain-root verify
+internal/migration/idempotency.go         migration_imports SQLite table + memory store
+internal/migration/replay.go              Bus WAL replay with incremental partial-root checks
+internal/migration/events.go              session.migrate.{exported,imported,divergent} emitter
+internal/migration/source.go              LedgerBundleSource — production BundleSource
+internal/server/sessionhub/migrate.go     BeginMigrateOut/EndMigrateOut + IsMigrating latch
+cmd/r1-server/migrate_out.go              POST /api/session/{id}/migrate-out streaming handler
+cmd/r1-server/migrate_in.go               POST /api/session/migrate-in ingestion handler
+cmd/r1/session_export_cmd.go              r1 session export <id> [-o file] [--force] [--park]
+cmd/r1/session_import_cmd.go              r1 session import <file>
+cmd/r1/session_migrate_cmd.go             r1 session migrate <id> --to <dest-url>
+docs/operations/session-migration.md      Operator runbook (export / transfer / import / verify)
 ```
 
 ## System components
@@ -353,6 +389,30 @@ The `GET /api/session/{id}/export.tracebundle` endpoint produces a portable per-
 3. **Canonical manifest signing body** — `ledger.CanonicalManifestSignBody(format, version, sessionID, chainRootHash, generatedAt, signer)` returns the deterministic byte-body the manifest signs over, sharing the same canonical layout cmd/r1-server's sign + verify and out-of-tree verifiers use.
 
 `cmd/r1-server/tracebundle_source.go` is the production `TracebundleSource`. The handler `serveTracebundleAdapter` resolves the session's `LedgerDir` from the DB row, opens the store, and delegates to `serveTracebundle(src)`. The `Chain()` projection emits `TracebundleNode` entries with the chain-tier metadata pre-projected into the `Header` field so consumers don't need to re-derive it. (Spec D — D-UI2-7 — removed the prior `R1_SERVER_UI_V2` envelope gate; the route is always reachable.)
+
+### Cross-machine session migration (spec C1, 2026-05-12)
+
+The `.r1session` bundle is the live-half complement to the `.tracebundle`: it carries every byte required to resume a session on a different daemon, not just the read-only forensic export. Architecture:
+
+1. **`internal/migration` package** — bundle format + sign/verify + import pipeline. Stdlib only (`archive/tar`, `compress/gzip`, `encoding/json`, `crypto/ed25519`, `crypto/sha256`). The `BundleSource` interface keeps the package decoupled from `internal/memory`, `internal/skill`, `internal/cortex`, and the daemon's session registry. Concrete `LedgerBundleSource` adapts a `ledger.Store` + a handful of callback fields into the interface for the production export path.
+
+2. **Manifest layout** — `manifest.json` is emitted LAST so every count + sha256 (chain-root hash, WAL sha256, memory sha256) is known before signing. The canonical body is `ledger.CanonicalManifestSignBody("r1session", 1, sessionID, chainRootHash, exportedAt, signer)` — the same canonical form the tracebundle path uses, so downstream verifiers wired for tracebundle signatures verify migration manifests with zero new code.
+
+3. **Bundle archive paths (deterministic order)**: `ledger/chain.ndjson` → `ledger/edges.ndjson` → `ledger/content/<id>.json` blobs → `ledger/content/redacted.json` → `bus/wal.ndjson` → `bus/wal.index.json` (with partial-chain-root checkpoints every 100 events) → `memory/rows.ndjson` → `memory/index.json` → `skills/pack-refs.json` (refs only; bodies are pre-staged on the destination via `r1 skills pack install`) → `lobe-state/<id>.json` → `lanes/snapshot.json` → `checkpoint/pre-export.json` → `manifest.json` → `signature.ed25519`. Tar entries use zero-mtime headers so two exports of the same input are byte-identical.
+
+4. **Import pipeline** (`migration.Importer.Import`): verify signature → tenant claim → idempotency (SQLite `migration_imports` table, manifest-sha256-keyed) → schema-version → skill-pack pre-flight (PackChecker interface; missing packs → 422 with the list) → allocate destination session (state=`migrating-in`) → hydrate ledger (nodes + edges + content; MissionID re-mapped from source-id to dest-id) → hydrate memory (encryption envelopes preserved byte-for-byte) → WAL replay with **incremental partial-chain-root checks** every 100 events → restore lobes + lanes → **final chain-root verify** → record idempotency row → flip state to `idle` → emit `session.migrate.imported` bus event. Any failure between allocation and the final verify flips the destination session to `migrated-failed` for operator inspection; the idempotency table is NOT updated so a retry succeeds.
+
+5. **Active-session safety** — `SessionHub.BeginMigrateOut(id, force)` (`internal/server/sessionhub/migrate.go`) refuses to latch a `running` / `tool-in-flight` session unless `force=true`. The agent loop's mid-turn observer consults `SessionHub.IsMigrating(id)` and yields after the current `assistant`/`tool_result` pair completes (RT-CANCEL-INTERRUPT-safe; no orphaned `tool_use`). Successful export pairs with `EndMigrateOut(id, parked)` to either flip back to live (`parked=false`) or park the source read-only (`parked=true`).
+
+6. **Three new bus events** — `session.migrate.exported`, `session.migrate.imported`, `session.migrate.divergent` (declared in `internal/bus/bus.go`; emitted via `migration.BusEventEmitter`). The divergent event carries `{expected, actual, divergent_at_seq}` for audit replay.
+
+7. **HTTP surface** — `POST /api/session/{id}/migrate-out` (`cmd/r1-server/migrate_out.go`) streams a gzip-tar response; `POST /api/session/migrate-in` (`cmd/r1-server/migrate_in.go`) ingests one. Both run inside the daemon's bearer-protected mux. Cross-tenant migration is rejected with 403 (v1 requires both daemons to hold the same master key, per encryption-at-rest spec).
+
+8. **CLI surface** — `r1 session export <id> [-o file] [--force] [--park]`, `r1 session import <file>`, `r1 session migrate <id> --to <dest-url>`. Singular form (`session`) distinguishes the migration verbs from the existing read-only `r1 sessions` checkpoint browser.
+
+9. **Integration test** — `internal/migration/integration_roundtrip_test.go` builds with `-tags integration_session_migrate`. Seeds 1000 turns into a source `ledger.Store`, exports, imports into a fresh destination store, and asserts (a) destination chain root byte-equals source's, (b) bundle ≤100MB, (c) wall-clock <60s.
+
+References: spec [`specs/cross-machine-session-migration.md`](../specs/cross-machine-session-migration.md), runbook [`docs/operations/session-migration.md`](operations/session-migration.md).
 
 ### Release-rehearsal CI lane (final-sweep PR #170)
 
@@ -542,18 +602,65 @@ type Finding struct {
 - DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs).
 - Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation.
 
+### Done (post-2026-05-11)
+- PostHog product analytics (B1, BUILD_ORDER 38) — 24-event taxonomy, bus subscriber, per-tenant Group Analytics, funnel + cohort + dashboard JSON checked in. Tenant-id wiring activates automatically once A4 RelayOne SSO merges; until then events emit without the group binding. See `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md`.
+
 ### Scoped
 - JWT login + RelayOne MSP SSO (Path A — Go reimpl of `@relayone/auth-core`).
 - Admin panel at `admin.r1.run` (clone `*-admin` template, customize).
-- PostHog + Customer.io + CodeRadar event integration.
+- Customer.io + CodeRadar event integration.
+- PostHog + Customer.io event integration.
+
+### Done
+- CodeRadar dogfood event integration (B3, 2026-05-12). 18 canonical
+  events with schema versioning emit from all 9 Cloud Run services via
+  the bus subscriber at `internal/hub/builtin/coderadar_subscriber.go`.
+  Per-env sampling, hard allowlist + promptguard scrub, bounded queue +
+  drain goroutine + circuit breaker. Dashboards / alerts under
+  `docs/observability/coderadar-*.md`.
 
 ### Scoping
-- Cross-machine session migration.
 - Encryption-at-rest for journals.
-- Per-tool throttling policy.
 
 ### Potential — On Horizon
 - Marketing site with affiliate / SEO / CRO / attribution / retention stack.
-- BitBucket Pipelines adapter parity.
-- Browser tool sandboxed under remote browser.
-- Cross-product deterministic skill exchange.
+
+## Planned components (scoped, not yet built)
+
+Fourteen specs scoped on 2026-05-11 introduce a new set of internal packages. Each entry below names the package, its role, and the spec that drives it. None of these are merged yet; this section is the forward-looking map.
+
+- **`internal/promptguard/` (extended)** — gains three new submodules: `toolinput` (per-tool input validation runs at the MCP wire, rejecting payloads that violate the tool's declared schema or carry known-injection markers), `fingerprint` (ed25519 signs every system-prompt block and verifies it at each plan / execute / verify boundary so a tampered system block fails closed), and `budget` (per-session injection-attempt counter with circuit-break semantics). Adversarial reviewer hooks into the existing audit chain and evaluates against the CL4R1T4S corpus on a CI cadence. Driven by `specs/promptguard-hardening.md` (A1).
+- **`internal/auth/` (new)** — JWT verification + RelayOne SSO client + middleware. Subdivides into `jwt` (HS256 + RS256 verify, JWKs rotation, claims extraction), `sso` (OIDC + PKCE flow against the RelayOne IdP, per-tenant token isolation, refresh-token handling), and `middleware` (gates admin-panel routes and every future enterprise route; pluggable via `http.Handler` chain). Driven by `specs/relayone-sso.md` (A4) and consumed by `specs/admin-panel.md` (A5) and `specs/oneshot-production-hardening.md` (A3).
+- **`internal/analytics/` (B1, done 2026-05-12)** — PostHog client live. The DSN-aware client at `internal/analytics/analytics.go` mirrors the `internal/coderadar/coderadar.go` shape: `FromEnv()` constructor, no-op when `POSTHOG_API_KEY` is empty, `Enabled()` predicate. The canonical 24-event taxonomy and per-event property adapter table sit at `internal/analytics/taxonomy.go`; the bus subscriber at `internal/hub/builtin/analytics_subscriber.go` registers an `ModeObserve` hook on the bus and forwards captures through a bounded 8192-deep channel so the hot path never blocks. Per-tenant Group Analytics rides through the `correlation.IDs.TenantID` field (populated by A4 RelayOne SSO once merged) via the shim at `internal/analytics/tenant_id.go`. Funnels and cohorts are versioned at `docs/analytics/funnels.md` and `docs/analytics/cohorts.md`; the overview dashboard JSON lives at `docs/analytics/dashboards/r1-overview.json`. Driven by `specs/posthog-analytics.md` (B1).
+- **`internal/auth/` (live, A4 done 2026-05-12)** — Go port of `@relayone/auth-core`. `jwt.go` implements `JwtService` (HS256 + RS256 sign/verify/refresh via `lestrrat-go/jwx/v2`; 15-min access / 30-day refresh defaults; reserved-claim collision guard; `JwtServiceFromEnv` mirrors the TS env contract). `sso_client.go` implements the OIDC RP (`coreos/go-oidc/v3` for discovery + JWKS, `golang.org/x/oauth2` for authorization-code-with-PKCE-S256; pinned endpoints with lazy discovery fallback; `NormalizeProfile` lifts MSP claims `msp_org_id` + `msp_managed_orgs`). `sso_handlers.go` exposes four HTTP routes (`/auth/sso/start`, `/auth/sso/callback`, `/auth/refresh`, `/auth/logout`) with `__Host-r1_at` / `__Host-r1_rt` / `__Host-r1_sso_state` cookies (Secure, HttpOnly, SameSite=Lax). `state_store.go` is an in-memory one-shot PKCE state store with TTL sweeper + client IP/UA binding. `middleware.go` is the `RequireBearer` HTTP middleware (header or `__Host-r1_at` cookie). `keys.go` cascades SecretManager → env → file sources, generating an RSA-2048 keypair on first use with 0600/0644 mode discipline mirroring `internal/ledger/redact_sign.go`. `keys_tenant.go` derives per-tenant HMAC secrets via HKDF-SHA256 (info `r1-jwt-tenant-v1:<tenantID>`). `wire.go` is the daemon mount helper gated by `R1_AUTH_MODE=anonymous|sso|both`. Driven by `specs/relayone-sso.md` (A4) and consumed by `specs/admin-panel.md` (A5).
+- **`internal/analytics/` (new)** — PostHog client. Holds the canonical event catalog (24 events), the per-tenant Group Analytics wiring, the funnel / cohort definitions as code so they survive a redeploy, and a non-blocking emit path (drop-on-overflow) so analytics emission never blocks a mission round. Driven by `specs/posthog-analytics.md` (B1).
+- **`internal/lifecycle/` (new)** — Customer.io client plus the flagstore that records per-user consent. Six lifecycle triggers fire from existing hub events (no new emit points needed in the runtime; lifecycle subscribes). DSAR flow lives in a sub-handler that gates on the consent flagstore. Driven by `specs/customerio-lifecycle.md` (B2).
+- **`internal/throttle/` (new)** — token-bucket primitive plus a per-tool policy loader. Two-tier model (session + tenant) is realized as two nested buckets per call; the policy file is YAML, loaded at startup and live-reloadable via `daemon.reload_config`. Bucket state journals through the existing WAL so a restart honors the in-flight throttle window. MCP boundary enforces the call. Driven by `specs/per-tool-throttling.md` (C3).
+- **`internal/ideinstall/` (new)** — IDE config writers plus a JetBrains-side plugin shim. Subdivides into `cursor`, `windsurf`, `vscode`, and `jetbrains` writers, each owning the right config file in the right place per IDE. The `r1 ide` command dispatches to the right writer based on the `--ide` flag (auto-detected from `$PATH` when omitted). Driven by `specs/mcp-ide-bundles.md` (C4).
+- **`internal/cicd/bitbucket/` (new)** — BitBucket Pipelines adapter parallel to the existing `internal/cicd/github/` and `internal/cicd/gitlab/` adapters. OIDC-based authentication, PR commenting with diff-aware annotations, `r1 run --ci` integration. Driven by `specs/bitbucket-pipelines-adapter.md` (C5).
+- **`internal/browser/{browserless,inhouse}/` (new)** — two remote-browser providers behind a common `Provider` interface. `browserless/` wraps the managed Browserless service; `inhouse/` runs a tenant-isolated Cloud Run service with a deny-by-default egress policy and a per-tenant browser pool. The browser tool selects a provider at session start based on tenant config. Driven by `specs/browser-remote-sandbox.md` (C6).
+- **`internal/skill/manifest_v2.go` + `internal/skill/compat/{cloudswarm,heroa,veritize}/` (new)** — pack-format v2 with explicit compatibility matrix and a federated trust root so a skill signed by one RelayOne portfolio product is verifiable by another. Per-product runtime adapters bridge the differences between r1's harness and the consuming product's harness. Driven by `specs/cross-product-skill-exchange.md` (C7).
+- **`internal/auth/` (new)** — JWT verification + RelayOne SSO client + middleware. Subdivides into `jwt` (HS256 + RS256 verify, JWKs rotation, claims extraction), `sso` (OIDC + PKCE flow against the RelayOne IdP, per-tenant token isolation, refresh-token handling), and `middleware` (gates admin-panel routes and every future enterprise route; pluggable via `http.Handler` chain). Driven by `specs/relayone-sso.md` (A4) and consumed by `specs/admin-panel.md` (A5) and `specs/oneshot-production-hardening.md` (A3).
+- **`internal/analytics/` (new)** — PostHog client. Holds the canonical event catalog (24 events), the per-tenant Group Analytics wiring, the funnel / cohort definitions as code so they survive a redeploy, and a non-blocking emit path (drop-on-overflow) so analytics emission never blocks a mission round. Driven by `specs/posthog-analytics.md` (B1).
+- **`internal/lifecycle/` (new)** — Customer.io client plus the flagstore that records per-user consent. Six lifecycle triggers fire from existing hub events (no new emit points needed in the runtime; lifecycle subscribes). DSAR flow lives in a sub-handler that gates on the consent flagstore. Driven by `specs/customerio-lifecycle.md` (B2).
+- **`internal/throttle/` (new)** — token-bucket primitive plus a per-tool policy loader. Two-tier model (session + tenant) is realized as two nested buckets per call; the policy file is YAML, loaded at startup and live-reloadable via `daemon.reload_config`. Bucket state journals through the existing WAL so a restart honors the in-flight throttle window. MCP boundary enforces the call. Driven by `specs/per-tool-throttling.md` (C3).
+- **`internal/ideinstall/` (done — C4)** — IDE config writers plus the bundled-jar copier for JetBrains. Subdivides into `cursor.go`, `windsurf.go`, `vscode.go`, and `jetbrains.go` per-IDE installers atop a shared `config.go` merge primitive (read → backup-to-`.r1-backup` → atomic-write). Detection probes canonical config dirs, not `$PATH`. `cmd/r1/ide_install_cmd.go` exposes `r1 ide install <ide>`, `r1 ide uninstall <ide>`, and `r1 ide verify`. The first-run helper `MaybePromptIDEInstall` lives in the same CLI file and is wired into `r1 chat` startup; ack persists in `~/.r1/ide-prompt-acked`. The JetBrains plugin source lives under `ide/jetbrains/` (Kotlin + Gradle, IntelliJ Platform 2026.1+); CI builds and signs `r1-mcp-bridge.jar`. Spec: `specs/mcp-ide-bundles.md`. Operator quickstart: `docs/integrations/ide-bundles.md`. Signing setup: `docs/integrations/jetbrains-plugin-signing.md`.
+- **`internal/ideinstall/` (new)** — IDE config writers plus a JetBrains-side plugin shim. Subdivides into `cursor`, `windsurf`, `vscode`, and `jetbrains` writers, each owning the right config file in the right place per IDE. The `r1 ide` command dispatches to the right writer based on the `--ide` flag (auto-detected from `$PATH` when omitted). Driven by `specs/mcp-ide-bundles.md` (C4).
+- **`internal/cicd/bitbucket/` (shipped 2026-05-12)** — BitBucket Pipelines adapter parallel to the existing `internal/cicd/github/` and `internal/cicd/gitlab/` adapters. OIDC-based authentication (auth.go), inline PR commenting with diff-aware annotations (reviewer.go + comment.go), commit-status row writer (`PostCommitStatus`, shared name `"R1 Verify"`), in-step runner (runner.go) and template generator (`cicd_bitbucket.go`). Promoted `Finding`/`ParseFindings`/`LLMFunc`/`RenderCommentBody`/`DefaultReviewPrompt` to `internal/cicd/shared/` so all three adapters share the auto-reviewer primitives. A parity-audit test (`internal/cicd/parity_test.go`) reads `docs/integrations/bitbucket-pipelines-parity.md` and fails the build on any required-capability drift. Operator runbook at `docs/integrations/bitbucket-pipelines.md`. Driven by `specs/bitbucket-pipelines-adapter.md` (C5).
+- **`internal/cicd/bitbucket/` (new)** — BitBucket Pipelines adapter parallel to the existing `internal/cicd/github/` and `internal/cicd/gitlab/` adapters. OIDC-based authentication, PR commenting with diff-aware annotations, `r1 run --ci` integration. Driven by `specs/bitbucket-pipelines-adapter.md` (C5).
+- **`internal/browser/{browserless,inhouse}/` (Done — C6, 2026-05-12)** — two remote-browser providers behind a common `Provider` interface in `internal/browser/provider.go`. `browserless/` wraps the managed Browserless service via CDP-over-WebSocket with per-tenant incognito contexts + token-resolution chain + 30-second-Unit cost rollup; `inhouse/` is the in-house Provider client (Bearer ID-token auth + cached metadata-server tokens) wired to the `services/r1-browser/` Cloud Run service (`Dockerfile.r1-browser` + `services/cloudbuild-r1-browser.yaml`, operator-driven deploy). `internal/browser/fallback.go` provides a primary→secondary `FallbackProvider` with permanent-vs-transient error classification; `internal/browser/session_bound.go` enforces idle + hard timeouts; `internal/browser/conformance.go` is the byte-identical contract test every provider passes; `internal/browser/lint_cookies_test.go` enforces the no-cookies rule at CI gate. Driven by `specs/browser-remote-sandbox.md` (C6).
+- **`internal/browser/{browserless,inhouse}/` (new)** — two remote-browser providers behind a common `Provider` interface. `browserless/` wraps the managed Browserless service; `inhouse/` runs a tenant-isolated Cloud Run service with a deny-by-default egress policy and a per-tenant browser pool. The browser tool selects a provider at session start based on tenant config. Driven by `specs/browser-remote-sandbox.md` (C6).
+- **`internal/skill/manifest_v2.go` + `internal/skill/compat/{cloudswarm,heroa,veritize}/` (new)** — pack-format v2 with explicit compatibility matrix and a federated trust root so a skill signed by one RelayOne portfolio product is verifiable by another. Per-product runtime adapters bridge the differences between r1's harness and the consuming product's harness. Driven by `specs/cross-product-skill-exchange.md` (C7).
+- **`internal/oneshot/` (extended, **A3 landed 2026-05-12**)** — the existing `oneshot` runtime now ships memory bounds, per-call timeout enforcement, deterministic shutdown ordering, an in-package audit submitter, and the 1000-concurrent integration benchmark. Added files:
+  - `events.go` / `exit_codes.go` — exported event-name and exit-code constants pinned to the operator runbook via a doctest so the names never drift from the docs.
+  - `memlimit.go` + `memlimit_linux.go` + `memlimit_other.go` — cross-platform helpers that pin `RLIMIT_AS` on Linux (via `prlimit`) and stamp Go's `debug.SetMemoryLimit` at 87% of the hard cap on every platform (13% GC headroom).
+  - `audit.go` — `AuditClient` with 64-slot non-blocking queue, 3-retry exponential backoff (200 ms / 800 ms / 3.2 s), HMAC-SHA256 signing, and a `DrainOrDrop(ctx)` exit path so a wedged endpoint never blocks process exit.
+  - `concurrency_test.go` — the 1000-concurrent benchmark under build tag `integration`; runs via `make test-oneshot-concurrent` on a 16-core / 32-GiB host.
+  - `cmd/mockaudit/main.go` — minimal HMAC-verifying audit sink for the operator runbook.
+  CLI plumbing lives in `cmd/r1/oneshot_cmd.go` + `oneshot_memlimit{,_linux,_other}.go`. Driven by `specs/oneshot-production-hardening.md` (A3).
+- **`internal/oneshot/` (extended) + `internal/oneshot/audit/` (new)** — the existing `oneshot` runtime gets memory bounds, per-call timeout enforcement, deterministic shutdown ordering, and a new `audit` subpackage that publishes per-call audit events to a remote ledger of record (the operator's chosen sink, not the local SQLite ledger). The 1000-concurrent integration test lives under `internal/oneshot/loadtest_test.go`. Driven by `specs/oneshot-production-hardening.md` (A3).
+- **`internal/sessionhub/` (extended) + migration module** — the existing session hub gains a `migration` submodule that owns `.r1session` bundle serialization, chain-root-hash continuity verification, and the import / export / migrate CLI verbs. The bundle format is the same canonical-manifest layout the tracebundle already uses, extended with replay state so a re-imported session resumes mid-conversation. Driven by `specs/cross-machine-session-migration.md` (C1).
+- **`internal/admin/` (new)** — server-rendered Go admin panel mounted on the existing `r1-server` process. Five read-only routes (sessions, tenants, billing, audit, anti-trunc events), each backed by a query on the existing data stores; no new persistence layer is introduced. Auth gate is the `internal/auth/middleware` wired with the operator role check. Driven by `specs/admin-panel.md` (A5).
+- **`internal/preflight/` (extended) + `internal/recovery/` (new)** — P0 platform hardening adds a `recovery` package that wraps every long-running goroutine with `recover()` + structured-failure emit, a graceful-shutdown coordinator that drains in-flight tool calls on SIGTERM, and per-session resource limits (memory + open-FD + goroutine cap). `preflight` gains host-permission checks that refuse to start the daemon when the runtime dirs are misconfigured. Driven by `specs/p0-hardening-s0-foundation.md` (A2).
+
+When these specs are built, the package map in this document and the one in [CLAUDE.md](../CLAUDE.md) get updated as part of each spec's done-criteria. The forward-looking map above is the contract between the scope and the implementation.

@@ -1,0 +1,166 @@
+# Bundled throttling defaults — embedded by internal/throttle.DefaultPolicy
+# via go:embed. Operators who omit the `throttling:` block in their
+# r1.policy.yaml get this baseline. Operators who supply a partial block
+# deep-merge over this file at the `defaults` + `tools` map level.
+#
+# Tier rationale:
+#   - "Write" tools (cancel/send/create/merge/clean/kill) bear cost,
+#     blast radius, or audit weight: tight session, moderate tenant.
+#   - "Read" tools (list/get/snapshot/tail/replay) are observability
+#     and cheap to repeat: loose session, very loose tenant.
+#   - "Compute" tools (cortex.publish, mission.create, verify.*) gate
+#     expensive downstream work: tighter than read, looser than write.
+#   - Browse/web tools (r1.web.*) make network calls and need a tight
+#     per-session cap to keep an over-eager loop from hammering one
+#     external origin.
+#
+# All buckets are conservative starting points; operators are expected
+# to tune from telemetry (metrics counters + tool.throttled bus events).
+# Spec: specs/per-tool-throttling.md item T12.
+
+throttling:
+  defaults:
+    per_session: { rate: "10/s",  burst: 20 }
+    per_tenant:  { rate: "100/s", burst: 200 }
+
+  tools:
+    # --- Session lifecycle ---
+    r1.session.start:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "30/s",  burst: 60 }
+    r1.session.send:
+      per_session: { rate: "20/s",  burst: 40 }
+      per_tenant:  { rate: "200/s", burst: 400 }
+    r1.session.cancel:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.session.list:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.session.get:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.session.resume:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+
+    # --- Lanes (mostly read) ---
+    r1.lanes.list:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.lanes.subscribe:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.lanes.get:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.lanes.kill:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "20/s",  burst: 40 }
+    r1.lanes.pin:
+      per_session: { rate: "10/s",  burst: 20 }
+      per_tenant:  { rate: "100/s", burst: 200 }
+
+    # --- Cortex (parallel cognition substrate) ---
+    r1.cortex.notes:
+      per_session: { rate: "20/s",  burst: 40 }
+      per_tenant:  { rate: "200/s", burst: 400 }
+    r1.cortex.publish:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.cortex.lobes_list:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.cortex.lobe_pause:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "20/s",  burst: 40 }
+    r1.cortex.lobe_resume:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "20/s",  burst: 40 }
+
+    # --- Mission lifecycle ---
+    r1.mission.create:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+    r1.mission.list:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.mission.cancel:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "20/s",  burst: 40 }
+    r1.mission.get:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+
+    # --- Worktree ops (filesystem + git) ---
+    r1.worktree.list:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.worktree.diff:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.worktree.merge:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+    r1.worktree.clean:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+
+    # --- Bus tail / replay ---
+    r1.bus.tail:
+      per_session: { rate: "10/s",  burst: 20 }
+      per_tenant:  { rate: "100/s", burst: 200 }
+    r1.bus.replay:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+
+    # --- Verify pipeline (expensive) ---
+    r1.verify.build:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+    r1.verify.test:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+    r1.verify.lint:
+      per_session: { rate: "1/s",   burst: 3 }
+      per_tenant:  { rate: "10/s",  burst: 20 }
+
+    # --- TUI introspection ---
+    r1.tui.press_key:
+      per_session: { rate: "20/s",  burst: 40 }
+      per_tenant:  { rate: "200/s", burst: 400 }
+    r1.tui.snapshot:
+      per_session: { rate: "10/s",  burst: 20 }
+      per_tenant:  { rate: "100/s", burst: 200 }
+    r1.tui.get_model:
+      per_session: { rate: "30/s",  burst: 60 }
+      per_tenant:  { rate: "300/s", burst: 600 }
+    r1.tui.focus_lane:
+      per_session: { rate: "10/s",  burst: 20 }
+      per_tenant:  { rate: "100/s", burst: 200 }
+
+    # --- Web browse ---
+    r1.web.navigate:
+      per_session: { rate: "1/s",   burst: 5 }
+      per_tenant:  { rate: "30/s",  burst: 60 }
+    r1.web.click:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.web.fill:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+    r1.web.snapshot:
+      per_session: { rate: "5/s",   burst: 10 }
+      per_tenant:  { rate: "50/s",  burst: 100 }
+
+    # --- CLI invocation (high blast radius) ---
+    r1.cli.invoke:
+      per_session: { rate: "2/s",   burst: 5 }
+      per_tenant:  { rate: "20/s",  burst: 40 }
+
+    # --- Diagnostic throttle introspection (read-only, very loose) ---
+    r1.throttle.status:
+      per_session: { rate: "60/s",  burst: 120 }
+      per_tenant:  { rate: "600/s", burst: 1200 }
+
+  overrides: []

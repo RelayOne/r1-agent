@@ -173,6 +173,15 @@ func runServeLoop(opts serveOptions) {
 	}
 	defer func() { _ = dlock.Release() }()
 
+	// C3: build the per-tool throttle gate. The gate is constructed
+	// once at startup; daemon.reload_config swaps its policy via the
+	// reload callback wired below. Failure to parse the operator's
+	// config path is non-fatal at this stage — we install the
+	// bundled defaults and surface the error to the operator at the
+	// first reload attempt.
+	serveThrottler = newServeThrottler(opts.ConfigPath)
+	defer serveThrottler.Stop()
+
 	// Default --addr to a stable port if neither --addr nor --port was
 	// supplied. The legacy serveCmd defaulted to 8420; we preserve that
 	// behavior so existing scripts keep working. The new
@@ -329,15 +338,14 @@ func runServeLoop(opts serveOptions) {
 				}
 			})
 
-			// Wire daemon.reload_config to a noop today: the daemon does
-			// not yet have a config-file reloader, so the callback
-			// returns the path it was given (or "" when none) plus a
-			// "no-op" error message embedded in source so clients can
-			// detect the case. When a real config-reload primitive
-			// lands, swap this closure body.
-			rpcHandler.SetReloadConfigFunc(func(path string) (string, error) {
-				return path, nil
-			})
+			// Wire daemon.reload_config to the throttle policy reloader
+			// (C3 T14). The callback reads the operator-supplied path
+			// (or auto-discovers a default) and applies the new
+			// throttling block to the live limiter. Buckets keep their
+			// current token count across reload; only Limit / Burst are
+			// swapped. Validation errors keep the OLD policy in place
+			// and surface to the caller via the RPC error envelope.
+			rpcHandler.SetReloadConfigFunc(makeThrottleReloader(serveThrottler))
 
 			wsHandler := &ws.Handler{Dispatcher: disp, Token: opts.Token}
 			muxAlias.Handle("/v1/rpc", wsHandler)

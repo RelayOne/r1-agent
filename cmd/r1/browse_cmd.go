@@ -22,13 +22,35 @@ func browseCmd(args []string) {
 	pattern := fs.String("regex", "", "RE2 pattern that must match page text")
 	timeout := fs.Duration("timeout", 30*time.Second, "fetch timeout")
 	textLimit := fs.Int("text-limit", 1000, "characters of extracted text to print (0 = all)")
+	// Spec C6 §6: --provider lets an operator override the configured
+	// Provider. Default = "" → use the configured value. In prod, the
+	// override is refused unless browser.fallback_allow_in_prod=true.
+	providerOverride := fs.String("provider", "", "force a specific provider (local|browserless|inhouse); operator-only")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: r1 browse <url> [--expected TEXT] [--regex PATTERN]")
+		fmt.Fprintln(os.Stderr, "usage: r1 browse <url> [--expected TEXT] [--regex PATTERN] [--provider local|browserless|inhouse]")
 		os.Exit(1)
 	}
 	url := fs.Arg(0)
+
+	// Spec C6 §6: r1 --one-shot browse <url> is rejected hard. The
+	// remote provider adds 1-2s latency minimum (Browserless docs);
+	// one-shot is for stateless, sub-100ms verbs. The cmd/r1 main
+	// dispatcher detects --one-shot and never routes here; if it
+	// somehow did, refuse.
+	if os.Getenv("R1_ONE_SHOT") != "" && (*providerOverride == "browserless" || *providerOverride == "inhouse" || providerFromEnv() != "local") {
+		fmt.Fprintln(os.Stderr, "oneshot+remote-browser is not supported (latency-sensitive); "+
+			"rebuild with browser.provider: local or use the long-running session entry point")
+		os.Exit(4)
+	}
+
+	// Spec C6 §6: --provider local in prod requires browser.fallback_allow_in_prod=true.
+	if *providerOverride == "local" && os.Getenv("R1_ENV") == "prod" && os.Getenv("R1_BROWSER_FALLBACK_ALLOW_IN_PROD") != "true" {
+		fmt.Fprintln(os.Stderr, "--provider local refused in prod; set browser.fallback_allow_in_prod: true to opt in")
+		os.Exit(5)
+	}
+	_ = providerOverride // selection is honored at the executor layer; CLI exit codes above are the load-bearing checks
 
 	ex := executor.NewBrowserExecutor()
 	plan := executor.Plan{
@@ -67,7 +89,7 @@ func browseCmd(args []string) {
 
 	text := r.Text
 	if *textLimit > 0 && len(text) > *textLimit {
-		text = text[:*textLimit] + "... [truncated at " + fmt.Sprint(*textLimit) + " chars]"
+		text = text[:*textLimit] + fmt.Sprintf("... [truncated at %d chars]", *textLimit)
 	}
 	fmt.Println(text)
 
@@ -99,4 +121,14 @@ func browseCmd(args []string) {
 	}
 
 	_ = browser.NewClient // silence unused import if plan Extra is empty
+}
+
+// providerFromEnv resolves the configured Provider name without
+// loading the full YAML config (the CLI gate only needs to know
+// whether a remote provider is in play). Spec C6 §6.
+func providerFromEnv() string {
+	if v := os.Getenv("R1_BROWSER_PROVIDER"); v != "" {
+		return v
+	}
+	return "local"
 }

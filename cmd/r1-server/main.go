@@ -40,6 +40,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/RelayOne/r1/internal/auth"
 	r1coderadar "github.com/RelayOne/r1/internal/coderadar"
 	"github.com/RelayOne/r1/internal/retention"
 	"github.com/RelayOne/r1/internal/session"
@@ -130,14 +131,35 @@ func run() error {
 	// read-only views, so mountUI needs the DB handle.
 	mountUI(mux, db)
 
+	// A5: read-only admin panel at /admin/* gated by A4 SSO; honors
+	// R1_ADMIN_DEV_BYPASS=1 for local dev without a real bearer.
+	mountAdmin(mux, db, logger)
+
 	// work-stoke TASK 15: self-check that the 3D UI vendor bundle is
 	// present. Logs a single WARNING on a fresh checkout where the
 	// operator has not yet populated cmd/r1-server/ui/vendor/; never
 	// fatal — graph.html falls back to its CDN <script> tags.
 	checkVendoredLibs(uiFS, logger)
 
+	// specs/relayone-sso.md Phase H item 37 — mount /auth/* routes
+	// gated by R1_AUTH_MODE. ModeAnonymous (default) is a zero-op
+	// passthrough; ModeSSO / ModeBoth wires the four routes. The
+	// returned wrapper is no-op under anonymous so the existing
+	// loopback bearer auth (RS-2 item 7) is unchanged for local CLIs.
+	authWrap, _, err := auth.MountAuth(context.Background(), auth.WireOptions{
+		Mode:    auth.ParseMode(os.Getenv("R1_AUTH_MODE")),
+		Mux:     mux,
+		Config:  auth.SsoConfig{},
+		Getenv:  os.Getenv,
+		Session: nil, // r1-server is the observation daemon — no live sessionhub here.
+	})
+	if err != nil {
+		logger.Error("mount auth", "err", err)
+		return fmt.Errorf("mount auth: %w", err)
+	}
+
 	srv := &http.Server{
-		Handler:           loggingMiddleware(logger, mux),
+		Handler:           authWrap(loggingMiddleware(logger, mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
