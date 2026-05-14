@@ -1,5 +1,7 @@
-<!-- STATUS: ready -->
+<!-- STATUS: done (engineering + 5 seeds; 95-mission corpus deferred to operator curation, see plans/corpus-100.md) -->
 <!-- CREATED: 2026-05-13 -->
+<!-- BUILD_STARTED: 2026-05-13 -->
+<!-- BUILD_COMPLETED: 2026-05-14 -->
 <!-- DEPENDS_ON: antitrunc-hook-mode-flag -->
 <!-- BUILD_ORDER: 48 -->
 

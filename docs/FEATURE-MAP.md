@@ -12,6 +12,8 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | Five-provider model fallback | Provider-agnostic; degrades from Claude → Codex → OpenRouter → direct API → lint-only | Done | `internal/model/`, `internal/subscriptions/` |
 | Cost-aware resolver + budget enforcement | Blocks turns when over-budget; per-task cost ticks journaled | Done | `internal/costtrack/`, `internal/model/CostAwareResolve` |
 | Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases emitted; layered machine-mechanical defense against LLM self-reduction | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
+| Claude Code Stop-hook integration | `r1 antitrunc --hook-mode` emits the JSON envelope Claude Code's Stop hook expects; wires R1's 12-regex truncation catalog + plan-coverage check into any Claude Code workspace via `.claude/settings.json` | Done | `cmd/r1/antitrunc_cmd.go` `--hook-mode`/`--plan`/`--input` flags |
+| TruthfulCompletion benchmark | Measures whether agents' completion claims are honest, not just whether tests pass; 8-dispatcher matrix (R1/Claude Code/Cline/Aider/Codex/Cursor + 4 Tether combos), cross-vendor LLM judge, Wilson 95% CI, monthly + PR Cloud Build cadence | Done (engineering + 5 seed missions; 95-mission corpus deferred) | `internal/bench/`, `internal/bench/agents/`, `cmd/r1-bench/`, `docs/truthful-completion-methodology.md`, `services/cloudbuild-bench-truthful-completion-*.yaml`, `plans/corpus-100.md` |
 
 ## Cortex — Parallel Cognition (specs 1, 2)
 

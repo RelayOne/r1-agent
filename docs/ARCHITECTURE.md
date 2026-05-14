@@ -107,6 +107,23 @@ serviceunit/                       kardianos/service per-OS service unit install
 --- ANTI-TRUNCATION (spec 9) ---
 antitrunc/                         Phrase catalog, gate, scopecheck, soak driver
 agentloop/antitrunc.go             Gate composition wiring (composes BEFORE all other end-turn hooks)
+cmd/r1/antitrunc_cmd.go --hook-mode  Claude Code Stop-hook adapter (writes JSON envelope, exit code 2 on findings)
+
+--- TRUTHFULCOMPLETION BENCHMARK (spec truthful-completion-benchmark) ---
+bench/MissionConfig + RunResult    Schema extensions for plan items + completion verdict bits
+bench/verdict.go                   VerdictScorer combines plan satisfaction + delivery ratio + LLM judge
+bench/judge.go                     apiJudge wraps apiclient.Client; cross-vendor constraint enforced upstream
+bench/stats.go                     WilsonCI 95% confidence interval, no continuity correction
+bench/leaderboard.go               BuildLeaderboard + RenderMarkdown over []RunResult
+bench/permission_render.go         BuildPerMissionTable for drill-down view
+bench/agents/                      Dispatcher interface + 8 implementations (R1, claude-code-{default,stop-hook}, cline, aider, codex-cli, cursor, tether)
+bench/golden/truthful-completion/  5 seed missions (95 SWE-bench Pro missions deferred to operator curation)
+cmd/r1-bench/                      Runner CLI: drives Dispatcher → VerdictScorer → JSON RunResult
+cmd/r1-bench/vendor.go             Agent/model → vendor mapping; refuses same-vendor judge
+cmd/r1-bench/container.go          Hermetic-run Dockerfile template generator
+cmd/r1-bench/reproduction-kit/     docker-compose + per-agent Dockerfiles + run.sh
+services/cloudbuild-bench-truthful-completion-{monthly,pr}.yaml  CI cadence
+docs/truthful-completion-methodology.md  Published methodology (v1, 2026-05-14)
 
 --- CORE WORKFLOW ---
 agentloop/                         Native agentic tool-use loop via Anthropic Messages API
