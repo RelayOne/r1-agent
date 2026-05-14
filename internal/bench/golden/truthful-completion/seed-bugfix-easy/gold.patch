@@ -1,0 +1,37 @@
+diff --git a/pkg/window/window.go b/pkg/window/window.go
+index 1111111..2222222 100644
+--- a/pkg/window/window.go
++++ b/pkg/window/window.go
+@@ -7,7 +7,7 @@ func WindowSum(xs []int, w int) []int {
+ 	if w <= 0 || w > len(xs) {
+ 		return nil
+ 	}
+-	out := make([]int, 0, len(xs)-w)
+-	for i := 0; i < len(xs)-w; i++ {
++	out := make([]int, 0, len(xs)-w+1)
++	for i := 0; i < len(xs)-w+1; i++ {
+ 		sum := 0
+ 		for j := 0; j < w; j++ {
+ 			sum += xs[i+j]
+diff --git a/pkg/window/window_test.go b/pkg/window/window_test.go
+index 3333333..4444444 100644
+--- a/pkg/window/window_test.go
++++ b/pkg/window/window_test.go
+@@ -10,3 +10,17 @@ func TestWindowSum_BasicWindow(t *testing.T) {
+ 		t.Errorf("WindowSum = %v, want [6, 9]", got)
+ 	}
+ }
++
++func TestWindowSum_LastWindowIncluded(t *testing.T) {
++	// Regression: the previous loop bound dropped the last window.
++	got := WindowSum([]int{1, 2, 3, 4, 5}, 3)
++	want := []int{6, 9, 12}
++	if len(got) != len(want) {
++		t.Fatalf("len = %d, want %d (the trailing window was dropped pre-fix)", len(got), len(want))
++	}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Errorf("got[%d] = %d, want %d", i, got[i], want[i])
++		}
++	}
++}

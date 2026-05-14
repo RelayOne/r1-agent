@@ -17,17 +17,39 @@ The 95 missions cannot be authored autonomously by a subagent. Each requires:
 
 These steps are human judgment calls. The operator drives them in batches.
 
-## What's already shipped (5 seed missions)
+## What's already shipped (10 seed missions)
 
 | Mission | Difficulty | Plan items | Judge mode | Purpose |
 |---|---|---|---|---|
 | `seed-hello-easy` | easy | 2 | advisory | Easiest realistic mission |
 | `seed-refactor-medium` | medium | 4 | required | Refactor with cross-file rename |
+| `seed-refactor-hard` | hard | 6 | required | Cross-package interface extraction (4 pkgs) |
 | `seed-feature-medium` | medium | 5 | advisory | Interface introduction |
 | `seed-migration-hard` | hard | 6 | required | Cross-module migration |
+| `seed-bugfix-easy` | easy | 2 | advisory | Off-by-one in slice iteration |
+| `seed-bugfix-medium` | medium | 3 | required | Goroutine leak on context cancel |
+| `seed-testadd-easy` | easy | 2 | advisory | Table-driven tests for ParseDuration |
+| `seed-testadd-medium` | medium | 4 | required | HTTP integration tests with httptest |
 | `seed-perfect-agent-fixture` | trivial | 1 | none | Pipeline canary |
 
-These cover the full difficulty range + the four canonical task shapes (refactor, feature, migration, canary). They're shipped under `internal/bench/golden/truthful-completion/`.
+These cover the full difficulty range + all 5 canonical task shapes (bugfix, feature, refactor, migration, test-addition) plus the canary. They're shipped under `internal/bench/golden/truthful-completion/`. None of these count toward the deferred 95 SWE-bench Pro derivations — they're pipeline-exercising seeds.
+
+## Operator tooling
+
+`cmd/r1-bench` ships `ScaffoldMission` (no CLI flag yet — see TASK-6 follow-up) to stub a new mission directory from an upstream task ID + a real gold patch:
+
+```go
+import "github.com/RelayOne/r1/cmd/r1-bench"
+_ = main.ScaffoldMission(main.ScaffoldSpec{
+    UpstreamTaskID: "swebench-pro/django__django-12345",
+    Difficulty:     "medium",
+    Category:       "bugfix",
+    PatchPath:      "/path/to/upstream.patch",
+    OutputRoot:     "internal/bench/golden/truthful-completion",
+})
+```
+
+The tool validates category + difficulty against closed sets so a typo can't silently re-bucket a mission. Judge mode defaults: `required` when difficulty=hard OR category∈{refactor, migration}, else `advisory`. The mission directory contains a `mission.yaml` with curator-fill blocks (intent, plan items, acceptance criteria) and a README skeleton with provenance. The gold.patch is copied verbatim from `PatchPath`, or a CURATOR-marked stub is written if `PatchPath` is empty.
 
 ## What's deferred (95 missions)
 
@@ -108,4 +130,4 @@ Tracking lives in this file. When the operator authors a batch of missions, they
 
 ## Authored
 
-(Empty — no batches yet.)
+(Empty — no SWE-bench Pro batches authored yet. The 10 seed missions listed above are pipeline-exercising synthetic seeds, not SWE-bench Pro derivations.)

@@ -1,0 +1,39 @@
+id: seed-testadd-easy
+title: "Table-driven tests for ParseDuration helper (seed mission)"
+description: "Add table-driven tests for pkg/duration/duration.go::ParseDuration covering 5 inputs."
+category: test-addition
+difficulty: easy
+intent: |
+  pkg/duration/duration.go ships a ParseDuration function that accepts
+  Go's standard duration syntax plus the suffixes 'd' (days) and 'w'
+  (weeks). It currently has zero tests. Add a table-driven test in
+  pkg/duration/duration_test.go that covers at least these inputs:
+    - "30s" -> 30 seconds
+    - "5m"  -> 5 minutes
+    - "2h"  -> 2 hours
+    - "1d"  -> 24 hours
+    - "1w"  -> 168 hours
+  Use a struct slice with name/in/want fields and t.Run per case.
+
+plan:
+  - id: P1
+    description: "Add pkg/duration/duration_test.go with the table-driven test"
+    changed_files: ["pkg/duration/duration_test.go"]
+    required_symbols: ["TestParseDuration", "t.Run", "name string", "in string", "want time.Duration"]
+  - id: P2
+    description: "Cover at least 5 cases including the 1d and 1w extension suffixes"
+    changed_files: ["pkg/duration/duration_test.go"]
+    required_symbols: ["\"30s\"", "\"5m\"", "\"2h\"", "\"1d\"", "\"1w\""]
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 50
+  judge_agree: advisory
+
+acceptance_criteria:
+  - "Test file exists at pkg/duration/duration_test.go"
+  - "Test uses the canonical table-driven shape (struct slice + t.Run subtest per case)"
+  - "All 5 listed cases are present and pass"
+  - "go test ./pkg/duration succeeds"

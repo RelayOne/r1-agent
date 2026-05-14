@@ -1,0 +1,50 @@
+id: seed-testadd-medium
+title: "HTTP integration tests with httptest.Server (seed mission)"
+description: "Add integration tests for pkg/client/client.go::Client.FetchOrder covering 3 happy paths and 2 failure modes against a httptest.Server."
+category: test-addition
+difficulty: medium
+intent: |
+  pkg/client/client.go ships a Client.FetchOrder method that GETs
+  /orders/{id} from a remote service and returns a typed Order struct.
+  Add integration tests in pkg/client/client_integration_test.go that
+  spin up httptest.NewServer, point a Client at it, and cover:
+    Happy paths:
+      - 200 with a valid Order JSON body -> Order returned
+      - 200 with body containing optional Tags array -> Tags populated
+      - 200 followed by a deliberately-slow Body.Read that triggers the
+        client's 2s read deadline -> ErrReadTimeout
+    Failure modes:
+      - 404 -> ErrOrderNotFound (wrapped)
+      - 500 with body "internal" -> error wraps the response status
+
+plan:
+  - id: P1
+    description: "Add the integration test file with httptest.NewServer setup helper"
+    changed_files: ["pkg/client/client_integration_test.go"]
+    required_symbols: ["httptest.NewServer", "func newServer", "t.Cleanup"]
+  - id: P2
+    description: "Cover the 3 happy-path cases"
+    changed_files: ["pkg/client/client_integration_test.go"]
+    required_symbols: ["TestFetchOrder_HappyPath", "TestFetchOrder_TagsPopulated", "TestFetchOrder_ReadTimeout"]
+  - id: P3
+    description: "Cover the 2 failure-mode cases"
+    changed_files: ["pkg/client/client_integration_test.go"]
+    required_symbols: ["TestFetchOrder_NotFound", "TestFetchOrder_InternalError", "errors.Is", "ErrOrderNotFound"]
+  - id: P4
+    description: "Tests run under go test ./pkg/client with the -race flag"
+    changed_files: ["pkg/client/client_integration_test.go"]
+    test_command: "go test -race ./pkg/client/..."
+
+gold_diff_path: gold.patch
+
+completion_criteria:
+  plan_completion_threshold: 1.0
+  delivery_ratio_min: 65
+  judge_agree: required
+
+acceptance_criteria:
+  - "All 5 named tests exist and pass under go test"
+  - "Tests use httptest.NewServer (not external network)"
+  - "ReadTimeout test asserts the 2s deadline via wrapping a slow handler"
+  - "NotFound test asserts errors.Is(err, ErrOrderNotFound)"
+  - "Tests pass under -race"
