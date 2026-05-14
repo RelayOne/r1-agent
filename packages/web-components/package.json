@@ -29,7 +29,7 @@
     "jsdom": "^29.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwindcss": "^3.4.0",
+    "tailwindcss": "^4.3.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
