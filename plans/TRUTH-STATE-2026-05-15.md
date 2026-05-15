@@ -25,10 +25,9 @@ This file is the authoritative repo+infra snapshot after a direct code audit, li
   - `/v1/track`, `/v1/identify`, `/v1/group`, `/v1/alias`
   - funnels, cohorts, feature flags, surveys, saved-query dashboards
 - CodeRadar is a plausible replacement for lightweight product analytics in R1.
+- The current `coderadar` integration branch now fixes the concrete person/profile and attribution read-path bugs found in the first audit, but lifecycle messaging/journey automation and revenue/support integrations are still absent.
 - CodeRadar is not yet a full replacement for a PostHog + Customer.io stack:
-  - attribution/reporting is immature
-  - person/profile reads are not fully trustworthy yet
-  - lifecycle messaging/journey automation is not there
+  - broader lifecycle messaging/journey automation is not there
   - revenue/support integrations are not there
 
 ## Actium integration reality
@@ -46,9 +45,11 @@ This file is the authoritative repo+infra snapshot after a direct code audit, li
 ## R1 tracking reality
 
 - `services/r1-coord-api` has a small hosted tracking surface today: `/v1/telemetry/opt-in`.
-- The main Cloud Run deploy file wires `CODERADAR_DSN` only. It does not wire PostHog or Customer.io secrets for the public services.
+- `/v1/telemetry/opt-in` now emits real CodeRadar `/v1/track` events when `CODERADAR_DSN` is present and flattens browser-attribution payloads into queryable properties such as `utm_*`, `referrer`, `landing_path`, and `attribution_ts`.
+- The main Cloud Run deploy file now prefers `r1-<env>-shared-CODERADAR_DSN` and falls back to `relayone-coderadar-dsn`; it still does not wire PostHog or Customer.io secrets for the public services.
 - Secret inventory visible during this audit showed:
   - `r1-{dev,staging,prod}-shared-{DATABASE_URL,AUTH_JWT_SECRET,ANTHROPIC_API_KEY}`
+  - shared fallback `relayone-coderadar-dsn`
   - no visible `r1-*POSTHOG*`
   - no visible `r1-*CUSTOMERIO*`
 - Result: any repo docs claiming shipped PostHog funnels or shipped Customer.io lifecycle for the hosted R1 SaaS are overstated.
@@ -57,18 +58,16 @@ This file is the authoritative repo+infra snapshot after a direct code audit, li
 
 - `internal/hub/builtin/coderadar_subscriber.go`, `analytics_subscriber.go`, and `lifecycle_subscriber.go` existed, but the repo docs overstated how completely they were wired in production.
 - Desktop docs overstated runtime completeness:
-  - the session view still simulates assistant replies
   - several Tauri IPC verbs advertised in TypeScript are not registered in Rust
 - Hosted admin docs overstated completeness:
   - `services/r1-admin` still renders placeholder sections
-  - the prod auth gate is still a bearer-prefix check, not a full operator-role verifier
+  - the hosted surface now verifies operator JWTs locally, but the repo docs still described the older bearer-prefix gate
 
 ## Remaining backlog that is real
 
 - Desktop runtime completion remains largely open in `desktop/PLAN.md`, especially the post-scaffold IPC/runtime work and most of R1D-4 through R1D-12.
-- Marketing / GTM / attribution / retention work remains open. CodeRadar can likely absorb the product-analytics slice, but not lifecycle messaging.
+- Marketing / GTM / attribution / retention work remains open. CodeRadar now covers more of the hosted `coord-api` telemetry slice, but the live `sites/r1` browser rollout and lifecycle messaging remain incomplete.
 - Operator-side infra still remains:
-  - real CodeRadar analytics project-token wiring for R1 if product analytics is to move off third parties
   - Cloud Build trigger creation beyond the basic `r1-agent-pr` / `r1-agent-ci` pair
   - the deferred 95-mission TruthfulCompletion corpus
 
@@ -77,3 +76,6 @@ This file is the authoritative repo+infra snapshot after a direct code audit, li
 - Docs/handoffs were updated to stop claiming DNS was pending.
 - Docs/handoffs were updated to stop claiming the hosted GTM stack was fully shipped.
 - The main `cmd/r1` event bus now actually registers the shipped analytics, lifecycle, and CodeRadar subscribers in the real binary, while remaining env-driven and no-op safe when credentials are absent.
+- Hosted `coord-api` telemetry now emits CodeRadar `/v1/track` events with flattened browser attribution when `CODERADAR_DSN` is present.
+- Public-service deploy wiring now prefers env-specific CodeRadar DSN secrets and falls back to `relayone-coderadar-dsn`.
+- The TruthfulCompletion monthly/PR configs are documented as checked-in but not the current live GCP automation.
