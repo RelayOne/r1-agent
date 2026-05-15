@@ -1,9 +1,11 @@
 # services/cloudbuild-bench-truthful-completion-pr.yaml
 #
-# PR-triggered TruthfulCompletion regression check. Runs the 5 seed
+# Intended PR TruthfulCompletion regression check. Runs the 5 seed
 # missions against the 8 dispatchers and asserts no regression
-# relative to baseline. Triggered by GitHub PR open/sync when files
-# under internal/bench/, cmd/r1-bench/, or internal/antitrunc/ change.
+# relative to baseline. As of 2026-05-15 there is no live Cloud Build
+# trigger in relayone-488319/us-central1 pointing at this file; the
+# only benchmark trigger live in GCP is the legacy `r1-bench-nightly`
+# manual trigger fired by `r1-bench-nightly-cron`.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.2 (item 56).
 
