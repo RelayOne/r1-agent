@@ -715,13 +715,6 @@ export type InvokeMethod =
   | "mcp_remove"
   | "mcp_test"
   | "mcp_invoke_tool"
-  // Observability dashboard (R1D-9)
-  | "obs_kpis"
-  | "obs_latency_histogram"
-  | "obs_skill_counts"
-  | "obs_error_timeline"
-  | "obs_export_csv"
-  | "obs_relaygate_reconcile"
   // Approval queue + scheduler (R1D-10 UI)
   | "approval_list"
   | "approval_decide"
@@ -805,6 +798,10 @@ export interface MCPOkResult {
 // ---------------------------------------------------------------------
 // Observability dashboard (R1D-9)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained here for future host wiring, but this
+// branch does not expose any `obs_*` invoke methods. The panel renders
+// an explicit unavailable state instead of calling missing IPC verbs.
 
 /** Time-range tokens accepted by every obs IPC. */
 export type ObsRange = "1h" | "24h" | "7d" | "30d";
