@@ -31,12 +31,18 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -278,14 +284,17 @@ func handleNotFound(w http.ResponseWriter, r *http.Request) {
 	render(w, page{Title: "404", Path: r.URL.Path, Body: body})
 }
 
-// requireOperator is a tiny middleware that checks the role claim from
-// the Bearer JWT. We accept the JWT server-side for simplicity; the JWT
-// itself is issued by r1-coord-api's /v1/auth/sso/callback. A Go port
-// of @relayone/auth-core lives in services/r1-coord-api/internal/auth/;
-// in this admin we deliberately only verify the Bearer is well-formed
-// (the actual signature verification belongs in a shared package — a
-// post-deploy refactor will lift the auth code out of r1-coord-api so
-// r1-admin can import it directly).
+type adminJWTConfig struct {
+	issuer   string
+	audience string
+	secret   string
+}
+
+var errAdminJWTConfigMissing = errors.New("admin jwt config missing")
+
+// requireOperator keeps dev-mode friction low but verifies production
+// operator tokens locally so the hosted admin cannot be unlocked by a
+// bare Authorization prefix.
 func requireOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublic(r.URL.Path) {
@@ -298,13 +307,169 @@ func requireOperator(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		token, ok := bearerTokenFromHeader(r.Header.Get("Authorization"))
+		if !ok {
 			http.Redirect(w, r, "/v1/auth/sso/start", http.StatusFound)
+			return
+		}
+		cfg, err := loadAdminJWTConfig()
+		if err != nil {
+			http.Error(w, "admin auth unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		claims, err := verifyAdminJWT(token, cfg)
+		if err != nil {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+		if !hasOperatorRole(claims) {
+			http.Error(w, "operator role required", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func bearerTokenFromHeader(authHeader string) (string, bool) {
+	if authHeader == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		return "", true
+	}
+	return token, true
+}
+
+func loadAdminJWTConfig() (adminJWTConfig, error) {
+	cfg := adminJWTConfig{
+		issuer:   os.Getenv("AUTH_JWT_ISSUER"),
+		audience: os.Getenv("AUTH_JWT_AUDIENCE"),
+		secret:   os.Getenv("AUTH_JWT_SECRET"),
+	}
+	if cfg.issuer == "" || cfg.audience == "" || cfg.secret == "" {
+		return adminJWTConfig{}, errAdminJWTConfigMissing
+	}
+	return cfg, nil
+}
+
+func verifyAdminJWT(token string, cfg adminJWTConfig) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, errors.New("jwt must have three parts")
+	}
+
+	encoding := base64.RawURLEncoding
+	headerBytes, err := encoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, err
+	}
+	if header.Alg != "HS256" {
+		return nil, errors.New("unsupported jwt alg")
+	}
+
+	payloadBytes, err := encoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, err
+	}
+
+	signature, err := encoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, err
+	}
+	mac := hmac.New(sha256.New, []byte(cfg.secret))
+	if _, err := mac.Write([]byte(parts[0] + "." + parts[1])); err != nil {
+		return nil, err
+	}
+	expected := mac.Sum(nil)
+	if subtle.ConstantTimeCompare(signature, expected) != 1 {
+		return nil, errors.New("invalid jwt signature")
+	}
+
+	if iss, _ := claims["iss"].(string); iss != cfg.issuer {
+		return nil, errors.New("invalid issuer")
+	}
+	if !audienceMatches(claims["aud"], cfg.audience) {
+		return nil, errors.New("invalid audience")
+	}
+	if !claimTimeValid(claims["exp"], time.Now()) {
+		return nil, errors.New("token expired")
+	}
+	return claims, nil
+}
+
+func audienceMatches(raw any, want string) bool {
+	switch aud := raw.(type) {
+	case string:
+		return aud == want
+	case []any:
+		for _, value := range aud {
+			if audValue, ok := value.(string); ok && audValue == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func claimTimeValid(raw any, now time.Time) bool {
+	if raw == nil {
+		return true
+	}
+	switch value := raw.(type) {
+	case float64:
+		return int64(value) > now.Unix()
+	case json.Number:
+		parsed, err := value.Int64()
+		return err == nil && parsed > now.Unix()
+	case string:
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		return err == nil && parsed > now.Unix()
+	default:
+		return false
+	}
+}
+
+func hasOperatorRole(claims map[string]any) bool {
+	if containsRole(claims["roles"], "operator") {
+		return true
+	}
+	msp, ok := claims["msp"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return containsRole(msp["roles"], "operator")
+}
+
+func containsRole(raw any, want string) bool {
+	switch roles := raw.(type) {
+	case []any:
+		for _, role := range roles {
+			if roleValue, ok := role.(string); ok && roleValue == want {
+				return true
+			}
+		}
+	case []string:
+		for _, role := range roles {
+			if role == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isPublic(p string) bool {
