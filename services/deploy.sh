@@ -12,6 +12,11 @@
 #     ignores --billing on create)
 #   - secret naming: r1-<env>-shared-<KEY> for cross-service,
 #                    r1-<env>-<service>-<KEY> for service-specific
+#   - current shared secret reality for r1 is:
+#       present:   DATABASE_URL, AUTH_JWT_SECRET, ANTHROPIC_API_KEY
+#       missing:   CODERADAR_DSN
+#     so direct deploys must treat CODERADAR_DSN as optional until the
+#     shared secret is actually created in GCP.
 #
 # Each service gets its own Cloud Run service per env:
 #   r1-coord-api-{prod,staging,dev}
@@ -22,6 +27,12 @@ set -euo pipefail
 PROJECT="relayone-488319"
 REGION="us-central1"
 REGISTRY="us-central1-docker.pkg.dev/$PROJECT/r1"
+CODERADAR_SAMPLE_RATE="${CODERADAR_SAMPLE_RATE:-0.1}"
+
+have_secret() {
+  local name="$1"
+  gcloud secrets describe "$name" --project="$PROJECT" >/dev/null 2>&1
+}
 
 # Resolve the image tag per service. Each service is built independently
 # by `gcloud builds submit ... --tag=...:<sha>` at different times, so
@@ -70,7 +81,7 @@ deploy_one() {
     --memory=512Mi
     --port=8080
     --no-cpu-throttling
-    --set-env-vars="R1_ENV=$env,R1_VERSION=$tag"
+    --set-env-vars="R1_ENV=$env,R1_VERSION=$tag,CODERADAR_SAMPLE_RATE=$CODERADAR_SAMPLE_RATE"
   )
 
   # Service-specific env / secret bindings.
@@ -88,6 +99,12 @@ deploy_one() {
       args+=(--set-env-vars="R1_COORD_API_URL=https://api.${env/prod/}r1.run")
       ;;
   esac
+
+  if have_secret "r1-$env-shared-CODERADAR_DSN"; then
+    args+=(--set-secrets="CODERADAR_DSN=r1-$env-shared-CODERADAR_DSN:latest")
+  else
+    echo "  ! r1-$env-shared-CODERADAR_DSN not found; deploying $name without CODERADAR_DSN" >&2
+  fi
 
   echo ">> deploying $name ($image)"
   gcloud "${args[@]}"

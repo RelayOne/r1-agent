@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# services/scripts/setup-cloudbuild-triggers.sh — wire the 3 SaaS deploy triggers.
+# services/scripts/setup-cloudbuild-triggers.sh — wire only the 3 SaaS deploy triggers.
 #
 # Creates one Cloud Build trigger per env. Each fires on push to its
 # matching branch and uses services/cloudbuild-deploy.yaml with
 # substitution _ENV.
 #
 # Idempotent — safe to re-run.
+# Does not manage the separate r1-agent CI / PR triggers.
 set -euo pipefail
 
 PROJECT="${PROJECT:-relayone-488319}"
@@ -41,5 +42,5 @@ create_trigger r1-services-staging-deploy staging staging
 create_trigger r1-services-dev-deploy dev dev
 
 echo
-echo "==> done. r1-services triggers:"
+echo "==> done. r1-services deploy triggers:"
 gcloud builds triggers list --filter="name~r1-services" --region="$REGION" --format="table(name,filename)" --project="$PROJECT"
