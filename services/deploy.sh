@@ -14,9 +14,10 @@
 #                    r1-<env>-<service>-<KEY> for service-specific
 #   - current shared secret reality for r1 is:
 #       present:   DATABASE_URL, AUTH_JWT_SECRET, ANTHROPIC_API_KEY
-#       missing:   CODERADAR_DSN
-#     so direct deploys must treat CODERADAR_DSN as optional until the
-#     shared secret is actually created in GCP.
+#       missing:   r1-<env>-shared-CODERADAR_DSN
+#       fallback:  relayone-coderadar-dsn
+#     so direct deploys prefer the env-specific CodeRadar secret and
+#     fall back to relayone-coderadar-dsn when that is the only real DSN.
 #
 # Each service gets its own Cloud Run service per env:
 #   r1-coord-api-{prod,staging,dev}
@@ -32,6 +33,18 @@ CODERADAR_SAMPLE_RATE="${CODERADAR_SAMPLE_RATE:-0.1}"
 have_secret() {
   local name="$1"
   gcloud secrets describe "$name" --project="$PROJECT" >/dev/null 2>&1
+}
+
+resolve_coderadar_secret() {
+  local env="$1"
+  if have_secret "r1-$env-shared-CODERADAR_DSN"; then
+    echo "r1-$env-shared-CODERADAR_DSN"
+    return
+  fi
+  if have_secret "relayone-coderadar-dsn"; then
+    echo "relayone-coderadar-dsn"
+    return
+  fi
 }
 
 # Resolve the image tag per service. Each service is built independently
@@ -100,10 +113,12 @@ deploy_one() {
       ;;
   esac
 
-  if have_secret "r1-$env-shared-CODERADAR_DSN"; then
-    args+=(--set-secrets="CODERADAR_DSN=r1-$env-shared-CODERADAR_DSN:latest")
+  local coderadar_secret
+  coderadar_secret="$(resolve_coderadar_secret "$env")"
+  if [[ -n "$coderadar_secret" ]]; then
+    args+=(--set-secrets="CODERADAR_DSN=$coderadar_secret:latest")
   else
-    echo "  ! r1-$env-shared-CODERADAR_DSN not found; deploying $name without CODERADAR_DSN" >&2
+    echo "  ! no CodeRadar DSN secret found; deploying $name without CODERADAR_DSN" >&2
   fi
 
   echo ">> deploying $name ($image)"

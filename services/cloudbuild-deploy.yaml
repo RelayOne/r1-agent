@@ -16,8 +16,10 @@
 #   - deploy triggers r1-services-{dev,staging,prod}-deploy exist
 #   - r1-<env>-shared-{DATABASE_URL,AUTH_JWT_SECRET,ANTHROPIC_API_KEY} exist
 #   - r1-<env>-shared-CODERADAR_DSN does NOT currently exist
-# So deploys must treat CODERADAR_DSN as optional until R1-INF-2 wires a
-# real shared secret for each environment.
+#   - relayone-coderadar-dsn exists and is readable by the Cloud Run
+#     runtime service account
+# Deploys therefore prefer an env-specific CODERADAR_DSN if present and
+# otherwise fall back to relayone-coderadar-dsn.
 
 substitutions:
   _ENV: prod  # override per trigger; dev | staging | prod
@@ -107,6 +109,12 @@ steps:
       - -c
       - |
         set -euo pipefail
+        CODERADAR_SECRET="relayone-coderadar-dsn"
+        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
+          CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
+        elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
+          CODERADAR_SECRET=""
+        fi
         DEPLOY_ARGS=(
           gcloud run deploy r1-coord-api-${_ENV}
           --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-coord-api:$SHORT_SHA
@@ -124,10 +132,10 @@ steps:
           --set-secrets=DATABASE_URL=r1-${_ENV}-shared-DATABASE_URL:latest,AUTH_JWT_SECRET=r1-${_ENV}-shared-AUTH_JWT_SECRET:latest
           --add-cloudsql-instances=$PROJECT_ID:us-central1:r1-${_ENV}-pg
         )
-        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
-          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest)
+        if [ -n "$$CODERADAR_SECRET" ]; then
+          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
         else
-          echo "warning: r1-${_ENV}-shared-CODERADAR_DSN not found; deploying r1-coord-api-${_ENV} without CODERADAR_DSN"
+          echo "warning: no CodeRadar DSN secret found; deploying r1-coord-api-${_ENV} without CODERADAR_DSN"
         fi
         "${DEPLOY_ARGS[@]}"
 
@@ -139,6 +147,12 @@ steps:
       - -c
       - |
         set -euo pipefail
+        CODERADAR_SECRET="relayone-coderadar-dsn"
+        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
+          CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
+        elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
+          CODERADAR_SECRET=""
+        fi
         DEPLOY_ARGS=(
           gcloud run deploy r1-docs-${_ENV}
           --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-docs:$SHORT_SHA
@@ -154,10 +168,10 @@ steps:
           --no-cpu-throttling
           --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
         )
-        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
-          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest)
+        if [ -n "$$CODERADAR_SECRET" ]; then
+          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
         else
-          echo "warning: r1-${_ENV}-shared-CODERADAR_DSN not found; deploying r1-docs-${_ENV} without CODERADAR_DSN"
+          echo "warning: no CodeRadar DSN secret found; deploying r1-docs-${_ENV} without CODERADAR_DSN"
         fi
         "${DEPLOY_ARGS[@]}"
 
@@ -169,6 +183,12 @@ steps:
       - -c
       - |
         set -euo pipefail
+        CODERADAR_SECRET="relayone-coderadar-dsn"
+        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
+          CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
+        elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
+          CODERADAR_SECRET=""
+        fi
         DEPLOY_ARGS=(
           gcloud run deploy r1-downloads-cdn-${_ENV}
           --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-downloads-cdn:$SHORT_SHA
@@ -184,10 +204,10 @@ steps:
           --no-cpu-throttling
           --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_BUCKET=relayone-488319-r1-releases,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
         )
-        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
-          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest)
+        if [ -n "$$CODERADAR_SECRET" ]; then
+          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
         else
-          echo "warning: r1-${_ENV}-shared-CODERADAR_DSN not found; deploying r1-downloads-cdn-${_ENV} without CODERADAR_DSN"
+          echo "warning: no CodeRadar DSN secret found; deploying r1-downloads-cdn-${_ENV} without CODERADAR_DSN"
         fi
         "${DEPLOY_ARGS[@]}"
 
@@ -204,6 +224,12 @@ steps:
         SUB=""
         [ "${_ENV}" = "staging" ] && SUB=".staging"
         [ "${_ENV}" = "dev" ]     && SUB=".dev"
+        CODERADAR_SECRET="relayone-coderadar-dsn"
+        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
+          CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
+        elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
+          CODERADAR_SECRET=""
+        fi
         DEPLOY_ARGS=(
           gcloud run deploy r1-admin-${_ENV}
           --image=us-central1-docker.pkg.dev/$PROJECT_ID/r1/r1-admin:$SHORT_SHA
@@ -219,18 +245,18 @@ steps:
           --no-cpu-throttling
           --set-env-vars=R1_ENV=${_ENV},R1_VERSION=$SHORT_SHA,R1_COORD_API_URL=https://api$${SUB}.r1.run,CODERADAR_SAMPLE_RATE=${_CODERADAR_SAMPLE_RATE}
         )
-        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
-          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=r1-${_ENV}-shared-CODERADAR_DSN:latest)
+        if [ -n "$$CODERADAR_SECRET" ]; then
+          DEPLOY_ARGS+=(--set-secrets=CODERADAR_DSN=$$CODERADAR_SECRET:latest)
         else
-          echo "warning: r1-${_ENV}-shared-CODERADAR_DSN not found; deploying r1-admin-${_ENV} without CODERADAR_DSN"
+          echo "warning: no CodeRadar DSN secret found; deploying r1-admin-${_ENV} without CODERADAR_DSN"
         fi
         "${DEPLOY_ARGS[@]}"
 
   # CodeRadar dogfood smoke (spec coderadar-dogfood.md T8).
-  # Runs only when r1-${_ENV}-shared-CODERADAR_DSN exists. The current
-  # shared secret inventory does not include that secret, so the smoke
-  # step must skip cleanly instead of turning every deploy into a false
-  # infra failure.
+  # Prefers r1-${_ENV}-shared-CODERADAR_DSN when present and otherwise
+  # falls back to relayone-coderadar-dsn, which exists today. Skip when
+  # neither secret exists or when the Cloud Build service account cannot
+  # read the resolved secret value.
   - id: smoke-coderadar
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
     waitFor: ['deploy-coord-api']
@@ -239,12 +265,19 @@ steps:
       - -c
       - |
         set -euo pipefail
-        if ! gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
-          echo "skip: r1-${_ENV}-shared-CODERADAR_DSN not found; skipping smoke-coderadar"
+        CODERADAR_SECRET="relayone-coderadar-dsn"
+        if gcloud secrets describe r1-${_ENV}-shared-CODERADAR_DSN >/dev/null 2>&1; then
+          CODERADAR_SECRET="r1-${_ENV}-shared-CODERADAR_DSN"
+        elif ! gcloud secrets describe "$$CODERADAR_SECRET" >/dev/null 2>&1; then
+          echo "skip: no CodeRadar DSN secret found; skipping smoke-coderadar"
           exit 0
         fi
         apt-get update -qq && apt-get install -y -qq golang-go make
-        export CODERADAR_DSN=$$(gcloud secrets versions access latest --secret=r1-${_ENV}-shared-CODERADAR_DSN)
+        if ! CODERADAR_DSN_VALUE=$$(gcloud secrets versions access latest --secret=$$CODERADAR_SECRET 2>/dev/null); then
+          echo "skip: unable to access $$CODERADAR_SECRET from Cloud Build; skipping smoke-coderadar"
+          exit 0
+        fi
+        export CODERADAR_DSN="$$CODERADAR_DSN_VALUE"
         export R1_ENV=${_ENV}
         make smoke-coderadar ENV=${_ENV}
 
