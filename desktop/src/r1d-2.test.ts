@@ -12,6 +12,31 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderPanel, buildTurnElement } from "./panels/session-view";
+import type { ServerEvent } from "./types/ipc";
+
+const tauriEventListeners: Array<(event: { payload: ServerEvent }) => void> = [];
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async <T>(method: string): Promise<T> => {
+    if (method === "session_start") {
+      return {
+        session_id: "session-live-1",
+        started_at: "2026-05-15T00:00:00Z",
+      } as T;
+    }
+    return undefined as T;
+  }),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (_event: string, handler: (event: { payload: ServerEvent }) => void) => {
+    tauriEventListeners.push(handler);
+    return () => {
+      const index = tauriEventListeners.indexOf(handler);
+      if (index >= 0) tauriEventListeners.splice(index, 1);
+    };
+  }),
+}));
 
 // -----------------------------------------------------------------------
 // Helpers
@@ -26,6 +51,100 @@ function makeRoot(): HTMLElement {
 function cleanup(root: HTMLElement): void {
   root.remove();
 }
+
+async function flushUi(): Promise<void> {
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+function click(element: Element | null): void {
+  expect(element).not.toBeNull();
+  (element as HTMLElement).click();
+}
+
+function emitServerEvent(event: ServerEvent): void {
+  for (const listener of tauriEventListeners) {
+    listener({ payload: event });
+  }
+}
+
+describe("session-view — R1D-2 streaming truthfulness", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    tauriEventListeners.splice(0, tauriEventListeners.length);
+    Reflect.deleteProperty(window, "__TAURI__");
+  });
+
+  it("does not synthesize a canned assistant reply in stub mode", async () => {
+    vi.resetModules();
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+    const root = makeRoot();
+    renderStreamingPanel(root);
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Inspect README";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Inspect README");
+    expect(transcript?.textContent).toContain("stub mode does not synthesize assistant output");
+    expect(transcript?.textContent).not.toContain("I received your message.");
+    expect(root.querySelector(".r1-sv-tool-block")).toBeNull();
+
+    cleanup(root);
+  });
+
+  it("renders assistant output from real runtime events when Tauri is present", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Summarize the repo";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    emitServerEvent({
+      event: "session.delta",
+      session_id: "session-live-1",
+      payload: { type: "text", text: "Live streamed reply." },
+    });
+    emitServerEvent({
+      event: "session.ended",
+      session_id: "session-live-1",
+      reason: "ok",
+      at: "2026-05-15T00:00:02Z",
+    });
+    await flushUi();
+
+    const transcript = root.querySelector('[data-role="transcript"]');
+    expect(transcript?.textContent).toContain("Live streamed reply.");
+    expect(transcript?.textContent).not.toContain("stub mode does not synthesize assistant output");
+
+    cleanup(root);
+  });
+});
 
 // -----------------------------------------------------------------------
 // R1D-2.1 — Chat transcript + composer
