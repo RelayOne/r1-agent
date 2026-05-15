@@ -95,7 +95,7 @@ let storePromise: Promise<Store> | null = null;
 
 async function storeHandle(): Promise<Store> {
   if (!storePromise) {
-    storePromise = load(STORE_FILE, { autoSave: true });
+    storePromise = load(STORE_FILE, { autoSave: true, defaults: {} });
   }
   return storePromise;
 }

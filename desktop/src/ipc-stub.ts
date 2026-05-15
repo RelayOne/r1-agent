@@ -17,7 +17,7 @@ import type { InvokeMethod } from "./types/ipc";
 // The type is only used for the conditional import path.
 type TauriInvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
-/** Phase tag each panel attaches when logging a TODO stub call. */
+/** Phase tag each panel attaches when logging a stub call. */
 export type PhaseTag =
   | "R1D-1"
   | "R1D-2"
@@ -30,7 +30,8 @@ export type PhaseTag =
   | "R1D-9" // Cost panel / observability dashboard
   | "R1D-10" // Approval queue + scheduler
   | "R1D-11" // Packaging / first-launch onboarding
-  | "R1D-12";
+  | "R1D-12"
+  | "R1D-augmentation"; // Settings panel daemon-status, autostart, lane-density (desktop-cortex-augmentation spec)
 
 /**
  * Resolve Tauri's invoke function at runtime.
