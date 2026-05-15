@@ -734,6 +734,13 @@ export type InvokeMethod =
   | "onboarding_pick_data_dir"
   | "onboarding_start_demo"
   | "onboarding_save_api_key"
+  // Daemon liveness probe + autostart toggles (R1D settings panel)
+  | "daemon_status"
+  | "autostart_is_enabled"
+  | "autostart_enable"
+  | "autostart_disable"
+  // UI preference setters (R1D settings panel)
+  | "prefs_set_lane_density"
   // WebView convenience (cached in Rust host; not a JSON-RPC verb)
   | "session_list";
 

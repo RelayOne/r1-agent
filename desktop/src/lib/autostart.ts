@@ -46,7 +46,7 @@ let prefsPromise: Promise<Store> | null = null;
 
 async function prefs(): Promise<Store> {
   if (!prefsPromise) {
-    prefsPromise = load(PREFS_FILE, { autoSave: true });
+    prefsPromise = load(PREFS_FILE, { autoSave: true, defaults: {} });
   }
   return prefsPromise;
 }
