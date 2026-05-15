@@ -674,11 +674,6 @@ export type InvokeMethod =
   // Ledger
   | "ledger_get_node"
   | "ledger_list_events"
-  | "ledger_sessions"
-  | "ledger_timeline"
-  | "ledger_verify"
-  | "ledger_shred"
-  | "ledger_export"
   // Memory
   | "memory_list_scopes"
   | "memory_query"
