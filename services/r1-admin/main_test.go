@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHealthzReturns200JSON(t *testing.T) {
@@ -34,6 +36,142 @@ func TestDashboardRendersWithNavLinks(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard body missing %q", want)
 		}
+	}
+}
+
+func TestBuildDashboardSnapshotUsesCoordHealthAndJWTConfig(t *testing.T) {
+	prevEnv := envName
+	prevVersion := versionStr
+	prevCoordAPI := coordAPI
+	prevStartedAt := startedAt
+	t.Cleanup(func() {
+		envName = prevEnv
+		versionStr = prevVersion
+		coordAPI = prevCoordAPI
+		startedAt = prevStartedAt
+	})
+
+	envName = "prod"
+	versionStr = "v2026.05.15"
+	startedAt = time.Unix(1_700_000_000, 0).UTC()
+
+	t.Setenv("AUTH_JWT_ISSUER", "issuer.example")
+	t.Setenv("AUTH_JWT_AUDIENCE", "r1-admin")
+	t.Setenv("AUTH_JWT_SECRET", strings.Repeat("s", 32))
+
+	coordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"service":    "r1-coord-api",
+			"env":        "prod",
+			"version":    "coord-2026.05.15",
+			"uptime_sec": 321,
+		})
+	}))
+	defer coordSrv.Close()
+	coordAPI = coordSrv.URL
+
+	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(95*time.Second), coordSrv.Client())
+	if snapshot.Admin.Version != "v2026.05.15" {
+		t.Fatalf("admin version=%q want v2026.05.15", snapshot.Admin.Version)
+	}
+	if snapshot.Admin.Uptime != "1m35s" {
+		t.Fatalf("admin uptime=%q want 1m35s", snapshot.Admin.Uptime)
+	}
+	if snapshot.Coord.Status != "healthy" {
+		t.Fatalf("coord status=%q want healthy", snapshot.Coord.Status)
+	}
+	if snapshot.Coord.Service != "r1-coord-api" || snapshot.Coord.Version != "coord-2026.05.15" {
+		t.Fatalf("coord snapshot=%+v", snapshot.Coord)
+	}
+	if snapshot.Auth.Mode != "jwt enforced" {
+		t.Fatalf("auth mode=%q want jwt enforced", snapshot.Auth.Mode)
+	}
+	if snapshot.Auth.Issuer != "issuer.example" || snapshot.Auth.Audience != "r1-admin" {
+		t.Fatalf("auth snapshot=%+v", snapshot.Auth)
+	}
+}
+
+func TestBuildDashboardSnapshotDegradesWhenCoordUnavailable(t *testing.T) {
+	prevEnv := envName
+	prevCoordAPI := coordAPI
+	prevStartedAt := startedAt
+	t.Cleanup(func() {
+		envName = prevEnv
+		coordAPI = prevCoordAPI
+		startedAt = prevStartedAt
+	})
+
+	envName = "dev"
+	coordAPI = "http://127.0.0.1:1"
+	startedAt = time.Unix(1_700_000_000, 0).UTC()
+
+	snapshot := buildDashboardSnapshot(context.Background(), startedAt.Add(5*time.Second), &http.Client{Timeout: 50 * time.Millisecond})
+	if snapshot.Coord.Status != "unreachable" {
+		t.Fatalf("coord status=%q want unreachable", snapshot.Coord.Status)
+	}
+	if snapshot.Auth.Mode != "dev bypass" {
+		t.Fatalf("auth mode=%q want dev bypass", snapshot.Auth.Mode)
+	}
+	if snapshot.Coord.Error == "" {
+		t.Fatalf("expected coord error to be populated")
+	}
+}
+
+func TestDashboardRendersRuntimeSummary(t *testing.T) {
+	prevEnv := envName
+	prevVersion := versionStr
+	prevCoordAPI := coordAPI
+	prevStartedAt := startedAt
+	t.Cleanup(func() {
+		envName = prevEnv
+		versionStr = prevVersion
+		coordAPI = prevCoordAPI
+		startedAt = prevStartedAt
+	})
+
+	envName = "prod"
+	versionStr = "v2026.05.15"
+	startedAt = time.Unix(1_700_000_000, 0).UTC()
+	t.Setenv("AUTH_JWT_ISSUER", "issuer.example")
+	t.Setenv("AUTH_JWT_AUDIENCE", "r1-admin")
+	t.Setenv("AUTH_JWT_SECRET", strings.Repeat("s", 32))
+
+	coordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":         true,
+			"service":    "r1-coord-api",
+			"env":        "prod",
+			"version":    "coord-2026.05.15",
+			"uptime_sec": 321,
+		})
+	}))
+	defer coordSrv.Close()
+	coordAPI = coordSrv.URL
+
+	rr := httptest.NewRecorder()
+	handleDashboard(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Admin version",
+		"v2026.05.15",
+		"Coord API",
+		"healthy",
+		"Auth mode",
+		"jwt enforced",
+		"coord-2026.05.15",
+		"issuer.example",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard body missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Numbers populated by widgets") {
+		t.Fatalf("dashboard still contains placeholder widget copy: %q", body)
 	}
 }
 

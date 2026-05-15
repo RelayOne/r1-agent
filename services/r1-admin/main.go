@@ -31,6 +31,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -54,6 +55,7 @@ var (
 	envName    = getenv("R1_ENV", "dev")
 	versionStr = getenv("R1_VERSION", "dev")
 	coordAPI   = getenv("R1_COORD_API_URL", "http://r1-coord-api:8080")
+	coordHTTP  = &http.Client{Timeout: 2 * time.Second}
 )
 
 func getenv(k, fallback string) string {
@@ -165,14 +167,29 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 		handleNotFound(w, r)
 		return
 	}
-	body := template.HTML(`
+	snapshot := buildDashboardSnapshot(r.Context(), time.Now(), coordHTTP)
+	body := template.HTML(fmt.Sprintf(`
 <div class="cards">
-  <div class="card"><div class="label">Active sessions</div><div class="value">—</div></div>
-  <div class="card"><div class="label">Live lanes</div><div class="value">—</div></div>
-  <div class="card"><div class="label">USD spent (24h)</div><div class="value">—</div></div>
-  <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">—</div></div>
+  <div class="card"><div class="label">Admin version</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Admin uptime</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Coord API</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Auth mode</div><div class="value">%s</div></div>
 </div>
-<p>Numbers populated by widgets that hit <code>/api/dashboard</code>; integration with r1-coord-api / Cloud SQL / CodeRadar is wired in the post-deploy iteration.</p>
+<p>This dashboard now reflects live hosted runtime truth for the admin service, operator auth mode, and coord-api reachability. Sessions, lanes, usage, revenue, and user data still require their backing stores/endpoints.</p>
+<h2>Runtime summary</h2>
+<div class="kv">
+<span><b>Admin service:</b> <code>%s</code></span>
+<span><b>Admin env:</b> <code>%s</code></span>
+<span><b>Admin started:</b> <code>%s</code></span>
+<span><b>Coord API URL:</b> <code>%s</code></span>
+<span><b>Coord API service:</b> <code>%s</code></span>
+<span><b>Coord API env:</b> <code>%s</code></span>
+<span><b>Coord API version:</b> <code>%s</code></span>
+<span><b>JWT issuer:</b> <code>%s</code></span>
+<span><b>JWT audience:</b> <code>%s</code></span>
+<span><b>JWT secret:</b> <span class="tag">%s</span></span>
+</div>
+%s
 <h2>Quick links</h2>
 <ul>
 <li><a href="/sessions">All sessions</a> — every r1d daemon's session catalog</li>
@@ -183,7 +200,23 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 <li><a href="/revenue">Revenue</a> — per-tier MRR + ARR + churn</li>
 <li><a href="/antitrunc">Anti-truncation</a> — output of <code>r1 antitrunc verify</code></li>
 </ul>
-`)
+`,
+		template.HTMLEscapeString(snapshot.Admin.Version),
+		template.HTMLEscapeString(snapshot.Admin.Uptime),
+		template.HTMLEscapeString(snapshot.Coord.Status),
+		template.HTMLEscapeString(snapshot.Auth.Mode),
+		template.HTMLEscapeString(snapshot.Admin.Service),
+		template.HTMLEscapeString(snapshot.Admin.Env),
+		template.HTMLEscapeString(snapshot.Admin.StartedAt),
+		template.HTMLEscapeString(snapshot.Coord.URL),
+		template.HTMLEscapeString(snapshot.Coord.Service),
+		template.HTMLEscapeString(snapshot.Coord.Env),
+		template.HTMLEscapeString(snapshot.Coord.Version),
+		template.HTMLEscapeString(snapshot.Auth.Issuer),
+		template.HTMLEscapeString(snapshot.Auth.Audience),
+		template.HTMLEscapeString(snapshot.Auth.Secret),
+		template.HTMLEscapeString(snapshot.Coord.Note),
+	))
 	render(w, page{Title: "Dashboard", Path: "/", Body: body})
 }
 
@@ -276,6 +309,121 @@ func envOrUnset(k string) string {
 		return "configured"
 	}
 	return "unset"
+}
+
+type dashboardSnapshot struct {
+	Admin dashboardServiceStatus
+	Coord dashboardCoordStatus
+	Auth  dashboardAuthStatus
+}
+
+type dashboardServiceStatus struct {
+	Service   string
+	Env       string
+	Version   string
+	Uptime    string
+	StartedAt string
+}
+
+type dashboardCoordStatus struct {
+	URL     string
+	Status  string
+	Service string
+	Env     string
+	Version string
+	Note    string
+	Error   string
+}
+
+type dashboardAuthStatus struct {
+	Mode     string
+	Issuer   string
+	Audience string
+	Secret   string
+}
+
+type healthzPayload struct {
+	OK        bool   `json:"ok"`
+	Service   string `json:"service"`
+	Env       string `json:"env"`
+	Version   string `json:"version"`
+	UptimeSec int64  `json:"uptime_sec"`
+}
+
+func buildDashboardSnapshot(ctx context.Context, now time.Time, client *http.Client) dashboardSnapshot {
+	snapshot := dashboardSnapshot{
+		Admin: dashboardServiceStatus{
+			Service:   serviceName,
+			Env:       envName,
+			Version:   versionStr,
+			Uptime:    now.Sub(startedAt).Round(time.Second).String(),
+			StartedAt: startedAt.UTC().Format(time.RFC3339),
+		},
+		Coord: dashboardCoordStatus{
+			URL:     coordAPI,
+			Status:  "unreachable",
+			Service: "unknown",
+			Env:     "unknown",
+			Version: "unknown",
+			Note:    "coord-api health probe failed",
+		},
+		Auth: dashboardAuthStatus{
+			Mode:     "jwt unavailable",
+			Issuer:   getenv("AUTH_JWT_ISSUER", "(unset)"),
+			Audience: getenv("AUTH_JWT_AUDIENCE", "(unset)"),
+			Secret:   envOrUnset("AUTH_JWT_SECRET"),
+		},
+	}
+
+	if envName == "dev" {
+		snapshot.Auth.Mode = "dev bypass"
+	} else if _, err := loadAdminJWTConfig(); err == nil {
+		snapshot.Auth.Mode = "jwt enforced"
+	}
+
+	health, err := fetchCoordHealth(ctx, client, coordAPI)
+	if err != nil {
+		snapshot.Coord.Error = err.Error()
+		return snapshot
+	}
+	snapshot.Coord.Status = "healthy"
+	snapshot.Coord.Service = health.Service
+	snapshot.Coord.Env = health.Env
+	snapshot.Coord.Version = health.Version
+	snapshot.Coord.Note = fmt.Sprintf("healthz ok · uptime=%ds", health.UptimeSec)
+	return snapshot
+}
+
+func fetchCoordHealth(ctx context.Context, client *http.Client, baseURL string) (healthzPayload, error) {
+	if client == nil {
+		client = coordHTTP
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/healthz", nil)
+	if err != nil {
+		return healthzPayload{}, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return healthzPayload{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return healthzPayload{}, fmt.Errorf("coord-api healthz status %d", resp.StatusCode)
+	}
+	var payload healthzPayload
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return healthzPayload{}, err
+	}
+	if payload.Service == "" {
+		payload.Service = "unknown"
+	}
+	if payload.Env == "" {
+		payload.Env = "unknown"
+	}
+	if payload.Version == "" {
+		payload.Version = "unknown"
+	}
+	return payload, nil
 }
 
 func handleNotFound(w http.ResponseWriter, r *http.Request) {
