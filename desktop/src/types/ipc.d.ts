@@ -699,10 +699,6 @@ export type InvokeMethod =
   | "session_cancel"
   | "skill_list"
   | "skill_get"
-  | "skill_install"
-  | "skill_uninstall"
-  | "skill_install_pack"
-  | "skill_invoke"
   // Settings: providers / vault / governance (R1D-7)
   | "provider_test"
   | "vault_list"
