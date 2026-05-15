@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# services/scripts/setup-bench-cron.sh — wire the nightly benchmark
+# services/scripts/setup-bench-cron.sh — wire the legacy nightly benchmark
 # automation that re-homes the deleted bench-nightly.yml GHA workflow.
 # Resolves issue #99.
+#
+# Live GCP reality (verified 2026-05-15 in relayone-488319/us-central1):
+# this script manages the only benchmark trigger/job currently provisioned:
+#   - Cloud Build trigger: r1-bench-nightly
+#   - Cloud Scheduler job: r1-bench-nightly-cron
+# Both point at services/cloudbuild-bench-nightly.yaml. This script does NOT
+# provision the checked-in TruthfulCompletion monthly/PR configs.
 #
 # Creates two pieces:
 #   1. A Cloud Build trigger (manual, no auto-fire) that runs the

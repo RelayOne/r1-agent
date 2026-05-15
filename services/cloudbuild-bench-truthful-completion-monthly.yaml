@@ -4,8 +4,10 @@
 # (agent × mission) matrix and uploads the rendered leaderboard +
 # per-mission breakdown to the public bench bucket.
 #
-# Triggered by Cloud Scheduler at 04:00 UTC on the 1st of each month
-# (see scripts/setup-bench-truthful-completion-cron.sh).
+# Intended for a future monthly scheduler/trigger. As of 2026-05-15 the
+# live GCP benchmark automation still uses the legacy nightly pair
+# `r1-bench-nightly` / `r1-bench-nightly-cron`, and this file is not what
+# `services/scripts/setup-bench-cron.sh` provisions.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.1 (item 55).
 
