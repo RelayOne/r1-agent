@@ -9,9 +9,11 @@
 //   R1D-2.4 — Multi-session sidebar: create, switch, close sessions.
 //   R1D-2.5 — Cancel, pause, resume controls with keyboard shortcuts.
 //
-// All IPC routes through invokeStub until R1D-1.2 wires the real Tauri
-// invoke + event bus. The streamed-delta path exercises appendDelta()
-// in the same code path that real session.delta events will use.
+// Session control routes through invokeStub, which delegates to real
+// Tauri `invoke` when the desktop runtime is present. The transcript
+// listens for real `r1://events` payloads in Tauri builds; plain-browser
+// stub mode is explicitly non-streaming and does not synthesize assistant
+// output.
 //
 // AC (work-r1-desktop-app.md R1D-2):
 //   End-to-end: create a session, send a prompt, receive a streamed reply
@@ -19,6 +21,7 @@
 
 import { invokeStub } from "../ipc-stub";
 import type {
+  ServerEvent,
   SessionStartParams,
   SessionStartResult,
   SessionPauseResult,
@@ -64,6 +67,8 @@ interface PanelState {
   activeId: string | null;
   nextTurnCounter: number;
   laneRail: LaneRailHandle | null;
+  eventBridgeMode: "unknown" | "live" | "stub";
+  eventBridgePromise: Promise<void> | null;
 }
 
 // -------------------------------------------------------------------
@@ -76,6 +81,8 @@ export function renderPanel(root: HTMLElement): void {
     activeId: null,
     nextTurnCounter: 0,
     laneRail: null,
+    eventBridgeMode: "unknown",
+    eventBridgePromise: null,
   };
 
   root.classList.add("r1-panel", "r1-panel-session-view");
@@ -182,6 +189,7 @@ export function renderPanel(root: HTMLElement): void {
   wireChatControls(root, state);
   wireComposer(root, state);
   wireLaneRail(root, state);
+  void ensureSessionEventBridge(root, state);
 }
 
 // -------------------------------------------------------------------
@@ -305,6 +313,7 @@ async function handleSend(root: HTMLElement, state: PanelState): Promise<void> {
   if (input) input.value = "";
 
   appendUserTurn(root, state, view, text);
+  await ensureSessionEventBridge(root, state);
 
   const sendParams: SessionSendParams = {
     session_id: view.sessionId,
@@ -320,7 +329,17 @@ async function handleSend(root: HTMLElement, state: PanelState): Promise<void> {
   view.status = "running";
   refreshStatusPill(root, state);
   refreshControlButtons(root, state);
-  simulateAssistantReply(root, state, view);
+  if (state.eventBridgeMode !== "live") {
+    view.status = "paused";
+    refreshStatusPill(root, state);
+    refreshControlButtons(root, state);
+    appendSystemMessage(
+      root,
+      state,
+      view,
+      "Prompt sent. Live reply streaming requires the Tauri desktop runtime; stub mode does not synthesize assistant output.",
+    );
+  }
 }
 
 async function handlePause(root: HTMLElement, state: PanelState): Promise<void> {
@@ -385,70 +404,138 @@ async function handleCancel(root: HTMLElement, state: PanelState): Promise<void>
 }
 
 // -------------------------------------------------------------------
-// Simulated streaming reply (exercises delta path before real Tauri)
+// Session event stream
 // -------------------------------------------------------------------
 
-function simulateAssistantReply(
+interface TauriEventEnvelope<T> {
+  payload: T;
+}
+
+type TauriListenFn = <T>(
+  event: string,
+  handler: (event: TauriEventEnvelope<T>) => void,
+) => Promise<() => void>;
+
+async function ensureSessionEventBridge(root: HTMLElement, state: PanelState): Promise<void> {
+  if (state.eventBridgePromise) return state.eventBridgePromise;
+  state.eventBridgePromise = initSessionEventBridge(root, state);
+  return state.eventBridgePromise;
+}
+
+async function initSessionEventBridge(root: HTMLElement, state: PanelState): Promise<void> {
+  if (!hasTauriRuntime()) {
+    state.eventBridgeMode = "stub";
+    return;
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  state.eventBridgeMode = "live";
+  await (listen as TauriListenFn)<ServerEvent>("r1://events", (event) => {
+    applyServerEvent(root, state, event.payload);
+  });
+}
+
+function hasTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI__" in window;
+}
+
+function applyServerEvent(root: HTMLElement, state: PanelState, event: ServerEvent): void {
+  const view = state.sessions.get(event.session_id);
+  if (!view) return;
+
+  switch (event.event) {
+    case "session.started":
+      view.status = "running";
+      refreshStatusPill(root, state);
+      refreshControlButtons(root, state);
+      return;
+    case "session.delta":
+      applySessionDelta(root, state, view, event.payload);
+      return;
+    case "session.ended":
+      finalizeSessionTurn(root, state, view, event.reason);
+      return;
+    default:
+      return;
+  }
+}
+
+function applySessionDelta(
   root: HTMLElement,
   state: PanelState,
   view: SessionView,
+  payload: Record<string, unknown>,
 ): void {
-  const turnId = `turn-${++state.nextTurnCounter}`;
+  const turn = ensureStreamingAssistantTurn(root, state, view);
+  const deltaType = typeof payload.type === "string" ? payload.type : "";
+
+  if (deltaType === "text" && typeof payload.text === "string") {
+    turn.chunks.push(payload.text);
+  } else if (deltaType === "tool_use") {
+    turn.tools.push({
+      name: typeof payload.name === "string" ? payload.name : "",
+      input: isRecord(payload.input) ? payload.input : {},
+      expanded: false,
+    });
+  } else if (deltaType === "tool_result" && typeof payload.content === "string") {
+    const lastTool = turn.tools[turn.tools.length - 1];
+    if (lastTool) lastTool.output = payload.content;
+  }
+
+  refreshTurnElement(root, turn);
+}
+
+function ensureStreamingAssistantTurn(
+  root: HTMLElement,
+  state: PanelState,
+  view: SessionView,
+): Turn {
+  const activeTurn = view.activeTurnId
+    ? view.turns.find((turn) => turn.id === view.activeTurnId)
+    : undefined;
+  if (activeTurn?.role === "assistant" && activeTurn.status === "streaming") {
+    return activeTurn;
+  }
+
   const turn: Turn = {
-    id: turnId,
+    id: `turn-${++state.nextTurnCounter}`,
     role: "assistant",
     chunks: [],
     tools: [],
     status: "streaming",
   };
   view.turns.push(turn);
-  view.activeTurnId = turnId;
+  view.activeTurnId = turn.id;
+  view.status = "running";
+  refreshStatusPill(root, state);
+  refreshControlButtons(root, state);
   appendTurnElement(root, turn);
+  return turn;
+}
 
-  const deltas = [
-    { type: "text", text: "I received your message. " },
-    { type: "text", text: "Let me look at the codebase." },
-    {
-      type: "tool_use",
-      name: "read_file",
-      input: { path: "README.md" },
-    },
-    { type: "tool_result", content: "# R1 Agent..." },
-    { type: "text", text: " Here is a summary based on the README." },
-  ];
+function finalizeSessionTurn(
+  root: HTMLElement,
+  state: PanelState,
+  view: SessionView,
+  reason: "ok" | "cancelled" | "error",
+): void {
+  const activeTurn = view.activeTurnId
+    ? view.turns.find((turn) => turn.id === view.activeTurnId)
+    : undefined;
+  if (activeTurn?.status === "streaming") {
+    activeTurn.status = reason === "ok" ? "done" : "cancelled";
+    refreshTurnElement(root, activeTurn);
+  }
+  view.activeTurnId = null;
+  view.status = reason === "ok" ? "paused" : "ended";
+  refreshStatusPill(root, state);
+  refreshControlButtons(root, state);
+  if (reason === "error") {
+    appendSystemMessage(root, state, view, "Session ended with an error.");
+  }
+}
 
-  let idx = 0;
-  const interval = setInterval(() => {
-    if (view.status === "ended" || view.status === "paused") {
-      clearInterval(interval);
-      return;
-    }
-    if (idx >= deltas.length) {
-      clearInterval(interval);
-      turn.status = "done";
-      view.activeTurnId = null;
-      view.status = "paused"; // Session idle after reply.
-      refreshTurnElement(root, turn);
-      refreshStatusPill(root, state);
-      refreshControlButtons(root, state);
-      return;
-    }
-    const delta = deltas[idx];
-    if (delta.type === "text" && typeof delta.text === "string") {
-      turn.chunks.push(delta.text);
-    } else if (delta.type === "tool_use") {
-      turn.tools.push({
-        name: delta.name ?? "",
-        input: (delta.input as Record<string, unknown>) ?? {},
-        expanded: false,
-      });
-    } else if (delta.type === "tool_result" && typeof delta.content === "string") {
-      const lastTool = turn.tools[turn.tools.length - 1];
-      if (lastTool) lastTool.output = delta.content;
-    }
-    refreshTurnElement(root, turn);
-    idx++;
-  }, 150);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // -------------------------------------------------------------------
@@ -669,7 +756,9 @@ function appendTurnElement(root: HTMLElement, turn: Turn): void {
 }
 
 function refreshTurnElement(root: HTMLElement, turn: Turn): void {
-  const existing = root.querySelector<HTMLLIElement>(`[data-turn-id="${CSS.escape(turn.id)}"]`);
+  const existing = root.querySelector<HTMLLIElement>(
+    `[data-turn-id="${escapeAttributeValue(turn.id)}"]`,
+  );
   if (!existing) {
     appendTurnElement(root, turn);
     return;
@@ -892,6 +981,13 @@ function escapeHtml(raw: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function escapeAttributeValue(raw: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(raw);
+  }
+  return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 // Export the canonical builder (indexed version).
