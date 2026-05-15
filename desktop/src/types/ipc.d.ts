@@ -716,13 +716,6 @@ export type InvokeMethod =
   | "mcp_test"
   | "mcp_invoke_tool"
   // Approval queue + scheduler (R1D-10 UI)
-  | "approval_list"
-  | "approval_decide"
-  | "schedule_list"
-  | "schedule_create"
-  | "schedule_update"
-  | "schedule_delete"
-  | "schedule_run_now"
   // First-launch onboarding (R1D-11.6)
   | "onboarding_pick_data_dir"
   | "onboarding_start_demo"
@@ -867,6 +860,10 @@ export interface RelayGateReconcileResult {
 // ---------------------------------------------------------------------
 // Approval queue + scheduler (R1D-10 UI)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained for future host wiring, but this desktop
+// branch does not expose callable `approval_*` or `schedule_*` invoke
+// methods. The panels render explicit unavailable states instead.
 
 /** Pending operator approval gate from a running autonomous session. */
 export interface ApprovalRequest {
