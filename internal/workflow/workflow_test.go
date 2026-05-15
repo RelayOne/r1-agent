@@ -142,6 +142,55 @@ func TestBuildRetryPromptNoDiff(t *testing.T) {
 	}
 }
 
+func TestVerifyOutcomeEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		outcome    verify.Outcome
+		wantType   hub.EventType
+		wantPassed int
+		wantFailed int
+	}{
+		{
+			name:       "build pass",
+			outcome:    verify.Outcome{Name: "build", Success: true},
+			wantType:   hub.EventVerifyBuildResult,
+			wantPassed: 1,
+		},
+		{
+			name:       "test fail",
+			outcome:    verify.Outcome{Name: "test", Success: false},
+			wantType:   hub.EventVerifyTestResult,
+			wantFailed: 1,
+		},
+		{
+			name:       "lint fail",
+			outcome:    verify.Outcome{Name: "lint", Success: false},
+			wantType:   hub.EventVerifyLintResult,
+			wantFailed: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotType, gotPayload := verifyOutcomeEvent(tc.outcome)
+			if gotType != tc.wantType {
+				t.Fatalf("event type = %q, want %q", gotType, tc.wantType)
+			}
+			if gotPayload == nil {
+				t.Fatal("verifyOutcomeEvent returned nil payload")
+			}
+			if gotPayload.Phase != tc.outcome.Name {
+				t.Fatalf("payload phase = %q, want %q", gotPayload.Phase, tc.outcome.Name)
+			}
+			if gotPayload.Passed != tc.wantPassed {
+				t.Fatalf("payload passed = %d, want %d", gotPayload.Passed, tc.wantPassed)
+			}
+			if gotPayload.Failed != tc.wantFailed {
+				t.Fatalf("payload failed = %d, want %d", gotPayload.Failed, tc.wantFailed)
+			}
+		})
+	}
+}
+
 // TestBuildRetryPromptSanitizesFailureAnalysisFileRead verifies that when
 // buildRetryPrompt reads a flagged .go file for test-scaffold generation,
 // the contents are routed through promptguard.Sanitize (ActionWarn). The
@@ -258,7 +307,7 @@ func (s stubManager) Prepare(_ context.Context, explicitName string) (worktree.H
 }
 
 func (s stubManager) Merge(_ context.Context, _ worktree.Handle, _ string) error { return nil }
-func (s stubManager) Cleanup(_ context.Context, _ worktree.Handle) error        { return nil }
+func (s stubManager) Cleanup(_ context.Context, _ worktree.Handle) error         { return nil }
 
 // trackingManager wraps stubManager to observe whether Prepare was
 // called. Used by TestInPlaceHandleUsesRepoRoot to confirm that

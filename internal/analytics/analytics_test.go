@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/RelayOne/r1/internal/hub"
 )
 
 // mockServer mimics PostHog's /capture, /batch, /e and /i endpoints.
@@ -179,6 +181,40 @@ func TestEventNameHygiene(t *testing.T) {
 		if !known[an] {
 			t.Errorf("BusToAnalytics[%q] = %q is not in AllEvents", bt, an)
 		}
+	}
+}
+
+func TestLookupTaxonomy_VerifyResultRoutesPassAndFail(t *testing.T) {
+	passed, _, ok := LookupTaxonomy(&hub.Event{
+		Type: hub.EventVerifyTestResult,
+		Test: &hub.TestEvent{Phase: "test", Passed: 1},
+	})
+	if !ok {
+		t.Fatal("expected verify pass event to resolve")
+	}
+	if passed != EvtMissionVerifyPassed {
+		t.Fatalf("verify pass event = %q, want %q", passed, EvtMissionVerifyPassed)
+	}
+
+	failed, adapter, ok := LookupTaxonomy(&hub.Event{
+		Type: hub.EventVerifyLintResult,
+		Test: &hub.TestEvent{Phase: "lint", Failed: 1},
+	})
+	if !ok {
+		t.Fatal("expected verify fail event to resolve")
+	}
+	if failed != EvtMissionVerifyFailed {
+		t.Fatalf("verify fail event = %q, want %q", failed, EvtMissionVerifyFailed)
+	}
+	props := adapter(&hub.Event{
+		Type: hub.EventVerifyLintResult,
+		Test: &hub.TestEvent{Phase: "lint", Failed: 1},
+	})
+	if props["failure_class"] != "lint" {
+		t.Fatalf("failure_class = %v, want lint", props["failure_class"])
+	}
+	if props["checks_run"] != 1 {
+		t.Fatalf("checks_run = %v, want 1", props["checks_run"])
 	}
 }
 

@@ -39,8 +39,8 @@ const (
 	EvtAntiTruncOverridden EventName = "anti_trunc_overridden"
 
 	// 6.5 Cost (2)
-	EvtBudgetAlertFired   EventName = "budget_alert_fired"
-	EvtCostEventRecorded  EventName = "cost_event_recorded"
+	EvtBudgetAlertFired  EventName = "budget_alert_fired"
+	EvtCostEventRecorded EventName = "cost_event_recorded"
 
 	// 6.6 Auth / B-track (3) — populated once A4 RelayOne SSO merges.
 	EvtSSOLoginSucceeded     EventName = "sso_login_succeeded"
@@ -81,13 +81,16 @@ var AllEvents = []EventName{
 }
 
 // BusToAnalytics maps hub.EventType (the in-process bus taxonomy) onto
-// the PostHog event names. Entries with no analytics counterpart are
-// omitted on purpose — the analytics subscriber only fires on the
-// 24 mappings registered here, which is what specs/posthog-analytics.md
-// §8 calls the "single canonical mapping".
+// the PostHog event names for the event types whose analytics event
+// name is static.
 //
 // Missing entries (e.g. EventModelPreCall) are deliberate: PostHog gets
 // the post-call cost record, not the pre-call no-op.
+//
+// Verify-result events are routed dynamically in LookupTaxonomy based on
+// the pass/fail outcome carried on hub.Event.Test. They are intentionally
+// omitted from this static map so mission_verify_failed is only emitted
+// for actual failing verification outcomes.
 var BusToAnalytics = map[hub.EventType]EventName{
 	// Session lifecycle.
 	hub.EventSessionInit:       EvtSessionStarted,
@@ -95,15 +98,12 @@ var BusToAnalytics = map[hub.EventType]EventName{
 	hub.EventSessionDispose:    EvtSessionEnded,
 
 	// Mission lifecycle.
-	hub.EventMissionCreated:       EvtMissionStarted,
-	hub.EventMissionPlanDone:      EvtMissionPlanEmitted,
-	hub.EventMissionExecuteStart:  EvtMissionExecuteStarted,
-	hub.EventMissionConverged:     EvtMissionCompleted,
-	hub.EventMissionFailed:        EvtMissionAborted,
-	hub.EventMissionCancelled:     EvtMissionAborted,
-	hub.EventVerifyBuildResult:    EvtMissionVerifyPassed,
-	hub.EventVerifyTestResult:     EvtMissionVerifyPassed,
-	hub.EventVerifyConvergenceResult: EvtMissionVerifyPassed,
+	hub.EventMissionCreated:      EvtMissionStarted,
+	hub.EventMissionPlanDone:     EvtMissionPlanEmitted,
+	hub.EventMissionExecuteStart: EvtMissionExecuteStarted,
+	hub.EventMissionConverged:    EvtMissionCompleted,
+	hub.EventMissionFailed:       EvtMissionAborted,
+	hub.EventMissionCancelled:    EvtMissionAborted,
 
 	// Cortex / Lobes.
 	hub.EventCortexLobeStarted:      EvtLobeInvoked,
@@ -151,9 +151,10 @@ var PropertyAdapters = map[hub.EventType]PropertyAdapter{
 	hub.EventMissionFailed:       lifecycleAdapter,
 	hub.EventMissionCancelled:    lifecycleAdapter,
 
-	hub.EventVerifyBuildResult:        verifyAdapter,
-	hub.EventVerifyTestResult:         verifyAdapter,
-	hub.EventVerifyConvergenceResult:  verifyAdapter,
+	hub.EventVerifyBuildResult:       verifyAdapter,
+	hub.EventVerifyTestResult:        verifyAdapter,
+	hub.EventVerifyLintResult:        verifyAdapter,
+	hub.EventVerifyConvergenceResult: verifyAdapter,
 
 	hub.EventCortexLobeStarted:      cortexAdapter,
 	hub.EventCortexRouterDecided:    cortexAdapter,
@@ -224,12 +225,16 @@ func verifyAdapter(ev *hub.Event) map[string]any {
 	if ev == nil || ev.Test == nil {
 		return props
 	}
+	props["checks_run"] = 1
 	if ev.Test.Phase != "" {
 		props["phase"] = ev.Test.Phase
 	}
 	props["passed"] = ev.Test.Passed
 	props["failed"] = ev.Test.Failed
 	props["skipped"] = ev.Test.Skipped
+	if ev.Test.Failed > 0 && ev.Test.Phase != "" {
+		props["failure_class"] = ev.Test.Phase
+	}
 	if ev.Test.Duration > 0 {
 		props["duration_ms"] = ev.Test.Duration / time.Millisecond
 	}
@@ -319,17 +324,34 @@ func securityAdapter(ev *hub.Event) map[string]any {
 	return props
 }
 
-// LookupTaxonomy returns the analytics event name and adapter for a bus
-// event type. Returns (Empty, nil, false) when the bus event is not on
-// the 24-event allowlist — the subscriber drops these.
-func LookupTaxonomy(t hub.EventType) (EventName, PropertyAdapter, bool) {
-	name, ok := BusToAnalytics[t]
+// LookupTaxonomy returns the analytics event name and adapter for one
+// concrete bus event. Verify-result events are routed dynamically based
+// on the outcome carried in ev.Test so failures emit mission_verify_failed
+// instead of being mislabeled as mission_verify_passed.
+func LookupTaxonomy(ev *hub.Event) (EventName, PropertyAdapter, bool) {
+	if ev == nil {
+		return "", nil, false
+	}
+	name, ok := lookupEventName(ev)
 	if !ok {
 		return "", nil, false
 	}
-	adapter := PropertyAdapters[t]
+	adapter := PropertyAdapters[ev.Type]
 	if adapter == nil {
 		adapter = baseAdapter
 	}
 	return name, adapter, true
+}
+
+func lookupEventName(ev *hub.Event) (EventName, bool) {
+	switch ev.Type {
+	case hub.EventVerifyBuildResult, hub.EventVerifyTestResult, hub.EventVerifyLintResult, hub.EventVerifyConvergenceResult:
+		if ev.Test != nil && ev.Test.Failed > 0 {
+			return EvtMissionVerifyFailed, true
+		}
+		return EvtMissionVerifyPassed, true
+	default:
+		name, ok := BusToAnalytics[ev.Type]
+		return name, ok
+	}
 }
