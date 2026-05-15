@@ -709,12 +709,6 @@ export type InvokeMethod =
   | "vault_set"
   | "vault_delete"
   | "gov_set"
-  // MCP servers (R1D-8)
-  | "mcp_list"
-  | "mcp_add"
-  | "mcp_remove"
-  | "mcp_test"
-  | "mcp_invoke_tool"
   // Approval queue + scheduler (R1D-10 UI)
   | "approval_list"
   | "approval_decide"
@@ -740,6 +734,10 @@ export type InvokeMethod =
 // ---------------------------------------------------------------------
 // MCP servers panel (R1D-8)
 // ---------------------------------------------------------------------
+
+// Data shapes are retained here for future host wiring, but this
+// branch does not expose any `mcp_*` invoke methods. The panel renders
+// an explicit unavailable state instead of calling missing IPC verbs.
 
 /** One configured MCP server entry. */
 export interface MCPServer {
