@@ -195,7 +195,7 @@ r1-dev-shared-ANTHROPIC_API_KEY
 r1-dev-shared-AUTH_JWT_SECRET
 ```
 
-Public service manifests also reference `r1-<env>-shared-CODERADAR_DSN`, but that binding should be treated as an observability path, not proof that product-analytics GTM wiring is live. As of the 2026-05-15 audit, no R1 PostHog or Customer.io secrets were visible in Secret Manager.
+Public service manifests now prefer `r1-<env>-shared-CODERADAR_DSN` when it exists and otherwise fall back to `relayone-coderadar-dsn`; the live `dev` public services are currently using that shared fallback. That binding is still not proof that the full GTM stack is live: as of the 2026-05-15 audit, no R1 PostHog or Customer.io secrets were visible in Secret Manager, and the broader marketing/browser rollout remains partial.
 
 To set a real value:
 ```bash
@@ -365,10 +365,13 @@ Status: **Partial (B3)**.
 
 The CodeRadar observability substrate is real, but the truthful claim
 today is narrower than earlier handoffs suggested: public deploys prove
-DSN-based observability paths more strongly than full GTM replacement.
-The live public Cloud Run footprint is 12 services (4 services × 3
-envs), while product-analytics adoption still needs project-token
-wiring.
+DSN-based observability and a real hosted `coord-api` telemetry path
+more strongly than a full GTM replacement. The live public Cloud Run
+footprint is 12 services (4 services × 3 envs). `coord-api` now emits
+CodeRadar `/v1/track` events for `/v1/telemetry/opt-in` when
+`CODERADAR_DSN` is present, including flattened browser-attribution
+properties, while broader marketing/browser rollout still lives outside
+this repo's live deploy path.
 
 - Event catalog: [`docs/observability/coderadar-events.md`](observability/coderadar-events.md)
 - Dashboards: [`docs/observability/coderadar-dashboards.md`](observability/coderadar-dashboards.md)
@@ -377,10 +380,12 @@ wiring.
 - Spec: [`specs/coderadar-dogfood.md`](../specs/coderadar-dogfood.md)
 
 Cloud Build injects `CODERADAR_DSN` + `CODERADAR_SAMPLE_RATE` per env
-across all 4 service deploys in `services/cloudbuild-deploy.yaml`. The
-`smoke-coderadar` step runs the live `service_started` round-trip
-between `deploy-coord-api` and the generic `/livez` smoke step; failure
-blocks promotion to traffic-100% but does not roll back the deploy.
+across all 4 service deploys in `services/cloudbuild-deploy.yaml`,
+preferring `r1-<env>-shared-CODERADAR_DSN` and falling back to
+`relayone-coderadar-dsn` when that is the only real secret. The
+`smoke-coderadar` step uses the same resolution chain and skips cleanly
+when neither secret exists or the build service account cannot read the
+resolved secret.
 
 ---
 

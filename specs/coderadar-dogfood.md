@@ -3,7 +3,7 @@
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 40 -->
 <!-- BUILD_COMPLETED: 2026-05-12 -->
-<!-- IMPLEMENTATION_NOTE_2026-05-15: Error/observability capture is real, and cmd/r1 now registers the canonical subscriber, but hosted product-analytics adoption still needs project-token wiring. See plans/TRUTH-STATE-2026-05-15.md. -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: Error/observability capture is real, cmd/r1 registers the canonical subscriber, and hosted coord-api telemetry now emits real /v1/track events when CODERADAR_DSN is present. The full 18-event product-analytics/browser rollout described below is still partial. See plans/TRUTH-STATE-2026-05-15.md. -->
 
 # CodeRadar Dogfood Event Streaming — Implementation Spec (B3)
 
@@ -16,7 +16,9 @@ error capture (`CaptureError`, `CaptureRecovered`). This spec is the
 **wiring delta** that turns the existing client into a full canonical
 event stream covering 18 R1 lifecycle events. This spec describes the
 intended rollout scope; the 2026-05-15 truth-state audit found hosted
-product-analytics deployment still partial pending project-token wiring.
+product-analytics deployment still partial, but no longer purely
+theoretical: the hosted `coord-api` telemetry path now emits real
+CodeRadar `/v1/track` events when `CODERADAR_DSN` is present.
 
 The goal is end-to-end self-observability: every mission, every provider
 call, every anti-truncation firing, every tool call is queryable in

@@ -23,11 +23,12 @@ Use [`plans/TRUTH-STATE-2026-05-15.md`](TRUTH-STATE-2026-05-15.md) as the canoni
 
 ## Confirmed partial / overstated areas
 
-- Hosted admin is live but still scaffold-heavy.
+- Hosted admin is live and now has real operator JWT verification plus runtime/coord-api summary, but business/session/user data surfaces remain scaffold-heavy.
 - Desktop is not runtime-complete despite earlier “done” claims.
 - PostHog / Customer.io / CodeRadar GTM claims were overstated:
   - client/subscriber code exists
-  - hosted public deploy wiring is partial
+  - hosted `coord-api` now emits real CodeRadar `/v1/track` telemetry events, including browser-attribution properties on `/v1/telemetry/opt-in`
+  - broader marketing/browser rollout and lifecycle messaging remain partial
   - CodeRadar is the best candidate for R1 product analytics, but it does not yet replace lifecycle messaging
 
 ## Real remaining backlog
@@ -35,7 +36,7 @@ Use [`plans/TRUTH-STATE-2026-05-15.md`](TRUTH-STATE-2026-05-15.md) as the canoni
 - Deferred 95-mission TruthfulCompletion corpus (`plans/corpus-100.md`)
 - Desktop runtime completion (`desktop/PLAN.md`)
 - Marketing / GTM / attribution / retention backlog
-- Real CodeRadar analytics project-token wiring for R1 if GTM reporting is to move off third-party tools
+- Live `sites/r1` browser rollout plus broader GTM/lifecycle cutover if reporting is to move fully onto CodeRadar
 - Cloud Build trigger creation beyond the base `r1-agent-pr` / `r1-agent-ci` pair
 
 ## Historical files kept for reference

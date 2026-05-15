@@ -612,9 +612,10 @@ type Finding struct {
 ### Partial
 - CodeRadar dogfood event integration (B3, 2026-05-12). Canonical event
   schemas and the bus subscriber exist, and `cmd/r1` now registers the
-  subscriber in the main binary. Hosted product-analytics adoption still
-  needs project-token wiring; the current public deploy proves
-  observability paths more strongly than GTM replacement.
+  subscriber in the main binary. Hosted `coord-api` telemetry also emits
+  real `/v1/track` events when `CODERADAR_DSN` is present, but the
+  current public deploy still proves observability paths more strongly
+  than a full GTM/browser rollout.
 
 ### Scoping
 - Encryption-at-rest for journals.
