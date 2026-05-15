@@ -3,6 +3,7 @@
 <!-- DEPENDS_ON: -->
 <!-- BUILD_ORDER: 40 -->
 <!-- BUILD_COMPLETED: 2026-05-12 -->
+<!-- IMPLEMENTATION_NOTE_2026-05-15: Error/observability capture is real, and cmd/r1 now registers the canonical subscriber, but hosted product-analytics adoption still needs project-token wiring. See plans/TRUTH-STATE-2026-05-15.md. -->
 
 # CodeRadar Dogfood Event Streaming — Implementation Spec (B3)
 
@@ -13,8 +14,9 @@ R1 is the dogfood consumer of CodeRadar. The Go wrapper at
 is used by `cmd/r1-server/main.go` and `cmd/r1/main.go` for panic / fatal
 error capture (`CaptureError`, `CaptureRecovered`). This spec is the
 **wiring delta** that turns the existing client into a full canonical
-event stream covering 18 R1 lifecycle events, deployed per environment
-across the 9 Cloud Run services at r1.run.
+event stream covering 18 R1 lifecycle events. This spec describes the
+intended rollout scope; the 2026-05-15 truth-state audit found hosted
+product-analytics deployment still partial pending project-token wiring.
 
 The goal is end-to-end self-observability: every mission, every provider
 call, every anti-truncation firing, every tool call is queryable in
@@ -78,7 +80,7 @@ A complete, dogfood-ready event pipeline:
 - 18 canonical events with schema versioning.
 - A non-blocking, bounded-buffer subscriber that mirrors hub events to CodeRadar.
 - Per-env config (dev/staging/prod/local) with sampling.
-- Secret + Cloud Build wiring for 9 Cloud Run services.
+- Secret + Cloud Build wiring for the hosted service footprint active at deployment time.
 - Privacy/redaction enforcement (allowlist + SHA256 of high-cardinality fields).
 - Correlation propagation end-to-end.
 - A smoke test runnable in CI per env.

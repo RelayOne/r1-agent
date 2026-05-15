@@ -1,20 +1,21 @@
 # Admin Panel — Operator Runbook
 
-`admin.r1.run` is R1's read-only admin surface. Phase 1 ships as a
-sub-path mount on the existing `r1-server` Cloud Run service; the
-`admin.r1.run` hostname is a Cloudflare CNAME aliased to the same
-service. This document covers signing in, granting + revoking the
-admin role, the audit trail, the Cloud Run + Cloudflare wiring, and
-the Phase-2 button reference.
+`admin.r1.run` is R1's hosted admin surface. During the 2026-05-15
+audit, the live public surface was the separate `r1-admin` Cloud Run
+service, not a sub-path on `r1-server`, and much of the page content
+was still placeholder scaffold. Treat this document as the target
+operator runbook plus current wiring notes, not proof that the hosted
+admin surface is fully complete.
 
 Spec: [`specs/admin-panel.md`](../../specs/admin-panel.md).
 
 ## Sign-in flow
 
 1. User navigates to `https://admin.r1.run/admin`.
-2. The admin middleware (`internal/server/admin_middleware.go`) reads
-   the bearer JWT from `Authorization: Bearer <jwt>` OR the
-   `__Host-r1_at` cookie (the A4 SSO session-bound access cookie).
+2. The intended design is bearer JWT or `__Host-r1_at` cookie auth
+   via the A4 SSO flow. The current hosted `r1-admin` service still
+   has partial auth wiring, so verify the live behavior before relying
+   on this section as an exact production contract.
 3. Missing/expired token → HTTP 302 to
    `/auth/sso/start?next=/admin/<path>`. The SSO start handler
    bounces through the IdP and lands the user back on the originally
@@ -64,12 +65,12 @@ trail, sign in as admin and visit `/admin/audit` filtered by
 
 ## Cloud Run domain mapping
 
-`admin.r1.run` is a Cloud Run domain mapping on the existing
-`r1-server` service. One-time provisioning:
+`admin.r1.run` is a Cloud Run domain mapping on the hosted
+`r1-admin` service. Current provisioning shape:
 
 ```bash
 gcloud beta run domain-mappings create \
-  --service=r1-server \
+  --service=r1-admin-prod \
   --domain=admin.r1.run \
   --region=us-central1 \
   --project=relayone-488319
@@ -86,7 +87,8 @@ gcloud beta run domain-mappings describe admin.r1.run \
 ## Cloudflare DNS
 
 The Cloudflare CNAME for `admin.r1.run` must be **DNS-only** (proxy
-OFF — Cloud Run terminates TLS itself):
+OFF — Cloud Run terminates TLS itself). This record was already
+present during the 2026-05-15 audit:
 
 ```
 admin.r1.run.   CNAME   ghs.googlehosted.com.
@@ -97,7 +99,7 @@ cert and the Cloud Run-issued cert is bypassed; clients see a
 certificate-name mismatch.
 
 The `r1.run` zone's ownership is already verified in the Google Site
-Verification console (carried over from the 9-service deploy).
+Verification console.
 
 ## Phase-2 button reference
 
@@ -138,9 +140,10 @@ cookie from the refresh cookie.
 startup and refreshes on `kid` miss (cache TTL 24h). If the IdP is
 unreachable at request time AND the cache doesn't carry the needed
 key, requests return 503. Cache state is process-local; restarting
-`r1-server` clears it.
+`r1-admin` clears it.
 
-**Performance degraded with >10k sessions** — Phase 1 reads
+**Performance degraded with >10k sessions** — the current hosted admin
+surface still reads
 `sessionhub.List()` in-memory; at large session counts, switch the
 list page to pagination-by-cursor via a future Phase-1.5 follow-up.
 Track in `plans/admin-perf-followups.md`.

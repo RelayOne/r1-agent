@@ -1,6 +1,6 @@
 # Feature Map
 
-Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged state of specs 1-9 + the 9 deployed Cloud Run SaaS services + the four final-sweep PRs (#168/#169/#170/#171, sync to `main` in commit `242af4a8`).
+Complete feature inventory for r1 as of 2026-05-15. Status reflects the merged state of specs 1-9, the verified 12-service public Cloud Run footprint, and the four final-sweep PRs (#168/#169/#170/#171, sync to `main` in commit `242af4a8`).
 
 ## Mission Runtime
 
@@ -14,8 +14,8 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | Anti-truncation enforcement | Refuses end-turn while plan items unchecked or truncation phrases emitted; layered machine-mechanical defense against LLM self-reduction | Done | `internal/antitrunc/`, `internal/agentloop/antitrunc.go`, `internal/supervisor/rules/antitrunc/`, `cmd/r1/antitrunc_cmd.go`, `docs/ANTI-TRUNCATION.md` |
 | Claude Code Stop-hook integration | `r1 antitrunc --hook-mode` emits the JSON envelope Claude Code's Stop hook expects; wires R1's 12-regex truncation catalog + plan-coverage check into any Claude Code workspace via `.claude/settings.json` | Done | `cmd/r1/antitrunc_cmd.go` `--hook-mode`/`--plan`/`--input` flags |
 | TruthfulCompletion benchmark | Measures whether agents' completion claims are honest, not just whether tests pass; 8-dispatcher matrix (R1/Claude Code/Cline/Aider/Codex/Cursor + 4 Tether combos), cross-vendor LLM judge, Wilson 95% CI, monthly + PR Cloud Build cadence | Done (engineering + 5 seed missions; 95-mission corpus deferred) | `internal/bench/`, `internal/bench/agents/`, `cmd/r1-bench/`, `docs/truthful-completion-methodology.md`, `services/cloudbuild-bench-truthful-completion-*.yaml`, `plans/corpus-100.md` |
-| Admin panel (Phase 1, read-only) | Sub-path mount on `r1-server` at `admin.r1.run`; 8 read-only routes (dashboard, sessions, tenants, billing, audit, anti-trunc events) gated by A4 SSO `role=admin`, every page view emits an `AdminViewed` ledger node | Done | `cmd/r1-server/admin_wire.go`, `cmd/r1-server/templates/admin/`, `internal/server/admin_handlers.go`, `internal/server/admin_middleware.go`, `internal/server/admin_pagination.go`, `internal/server/admin_antitrunc_buffer.go`, `internal/ledger/nodes/admin_viewed.go`, `internal/tenants/`, `docs/operations/admin-panel.md` |
-| Customer.io lifecycle email | Six canonical lifecycle moments (`signup`, `activation`, `first_mission`, `first_completion`, `anti_trunc_fired`, `budget_alert`) emitted to Customer.io with first-time SQLite debounce, no-op when env empty, tenant-suppressible via policy, user-suppressible via Customer.io's native unsubscribed flag | Done | `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
+| Admin panel (Phase 1, read-only) | Earlier `r1-server` admin work exists, but the live hosted `r1-admin` surface is still partial: placeholder sections remain and auth is not yet a full operator-role verifier | Partial | `services/r1-admin/main.go`, `docs/operations/admin-panel.md`, `specs/admin-panel.md` |
+| Customer.io lifecycle email | Six canonical lifecycle moments are modeled in code, with first-time SQLite debounce and a nil-safe subscriber, but production lifecycle wiring remains partial | Partial | `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
 
 ## Cortex — Parallel Cognition (specs 1, 2)
 
@@ -210,13 +210,14 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | `services/r1-coord-api/` Go service | License-verify + telemetry-opt-in scaffold; Cloud SQL backed | Done (stubs; real auth pending Path-A Go port) | `services/r1-coord-api/main.go` |
 | `services/r1-docs/` Go service | Embeds docs/*.md; renders to HTML; CSP-locked | Done | `services/r1-docs/main.go` |
 | `services/r1-downloads-cdn/` Go service | Streams gs://relayone-488319-r1-releases/{env}/ via service account | Done | `services/r1-downloads-cdn/main.go` |
-| 9 Cloud Run services | dev/staging/prod for each of the 3 services; min-instances=1; instance billing; distroless static | Live | gcloud run services list |
+| `services/r1-admin/` Go service | Hosted admin surface at `admin.{,staging.,dev.}r1.run`; still scaffold-heavy | Partial | `services/r1-admin/main.go` |
+| 12 public Cloud Run services | dev/staging/prod for `r1-coord-api`, `r1-docs`, `r1-downloads-cdn`, `r1-admin`; min-instances=1; instance billing; distroless static | Live | gcloud run services list |
 | 3 Cloud SQL Postgres 16 instances | r1-{prod,staging,dev}-pg, all RUNNABLE | Live | gcloud sql instances list |
 | Artifact Registry repo | us-central1-docker.pkg.dev/relayone-488319/r1 | Live | gcloud artifacts repositories list |
-| 6 Secret Manager placeholders | r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY} (operator must populate) | Pending real values | gcloud secrets list |
-| 9 domain mappings | platform/api/downloads × dev/staging/prod under r1.run | Created (DNS pending) | gcloud beta run domain-mappings list |
+| Core Secret Manager env set | `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY,AUTH_JWT_SECRET}` visible during audit; broader GTM secrets not confirmed for R1 | Partial | gcloud secrets list |
+| 12 domain mappings | platform/api/downloads/admin × dev/staging/prod under r1.run | Live | gcloud beta run domain-mappings list |
 | `services/cloudbuild-deploy.yaml` auto-deploy | Build + push + deploy + smoke /livez on push to main/staging/dev | Done | services/cloudbuild-deploy.yaml |
-| `services/scripts/setup-cloudbuild-triggers.sh` | Operator script to create the 3 deploy triggers | Done | services/scripts/setup-cloudbuild-triggers.sh |
+| `services/scripts/setup-cloudbuild-triggers.sh` | Operator script to create env-specific deploy triggers | Done in repo; live trigger presence must be operator-verified | services/scripts/setup-cloudbuild-triggers.sh |
 | `services/deploy.sh` | Manual deploy: `./services/deploy.sh {dev|staging|prod|all}` | Done | services/deploy.sh |
 | `scripts/setup-branch-protection.sh` | Operator script: dev + staging branch creation + protection rules | Done | scripts/setup-branch-protection.sh |
 
@@ -274,7 +275,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 ### Done
 
 - Specs 1-9 — all 171/172 items merged + tested + deployed
-- 9 Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry + domain mappings created
+- 12 public Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry + domain mappings created
 - Anti-truncation 7-layer defense + 1M-iter soak (0 FP / 0 FN)
 - Branch hygiene: 20 archive tags, repo cleaned to 2 active branches
 - Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log
@@ -303,8 +304,7 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 - broader runtime-wide adoption of deterministic skills
 - agentic test harness back-end wiring (depends on specs 1-7 merging
   the cortex/lanes/TUI/r1d/web/desktop sources)
-- DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs)
-- Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation
+- operator follow-ups: real GTM/analytics secret wiring, Cloud Build trigger creation, and the deferred desktop/runtime backlog
 
 ### Tier A — release-blocking (scoped 2026-05-11, built 2026-05-12)
 
@@ -314,15 +314,15 @@ Complete feature inventory for r1 as of 2026-05-06. Status reflects the merged s
 | P0 platform hardening — foundation (A2) | r1's agent platform survives the failure modes that take down agent runtimes in production: panics on background goroutines become structured failures, a SIGTERM lets the daemon drain in-flight tool calls cleanly, in-flight tool calls replay-or-reject on restart, per-session resource limits prevent one runaway session from starving the others, observability hooks fire at every state transition, and a preflight gate refuses to start when host permissions are misconfigured. Spec flagged DRAFT because the source PORTFOLIO-INDEX referenced encryption-at-rest tasks already shipped; the surviving scope is the agent-platform P0 list. | Scoped (DRAFT — source-doc mismatch noted, awaiting operator clarification) | `specs/p0-hardening-s0-foundation.md` |
 | One-shot production hardening (A3) | The `r1 --one-shot` integration surface — the one RelayGate Phase K-3 wires inline — is production-ready: `--max-mem` (default 256 MiB) enforced via `debug.SetMemoryLimit` + Linux `RLIMIT_AS` with the GOMEMLIMIT 13% headroom rule, `--timeout` with drop-partial semantics (exit 4 on timeout), deterministic SIGINT/SIGTERM shutdown (exits 130/143) so a half-written ledger node is impossible, `--audit-endpoint` HMAC-SHA256-signed POST with 3× exponential retry and fire-and-forget worker, a 1000-concurrent integration test (build tag `integration`, run via `make test-oneshot-concurrent`) gated by the nightly self-hosted runner, and `docs/integrations/relaygate-r1-stage.md` operator runbook. | Done (2026-05-12) | `specs/oneshot-production-hardening.md`, `cmd/r1/oneshot_cmd.go`, `internal/oneshot/`, `docs/integrations/relaygate-r1-stage.md` |
 | RelayOne SSO (A4) | Customers stop holding long-lived API keys; they log in with their RelayOne identity. Go port of `@relayone/auth-core`'s `JwtService` (HS256 + RS256, kid rotation, RFC 7519 claims) and `RelayOneSsoClient` (OIDC + PKCE S256 per RFC 6749 / 7636), per-tenant token isolation via HKDF-SHA256, `__Host-` cookies, `/auth/sso/{start,callback}` + `/auth/refresh` + `/auth/logout` handlers mounted when `R1_AUTH_MODE=sso`, full TS↔Go round-trip interop test against `auth-core/test/` fixtures. Middleware gates the admin panel + every future enterprise route. Coverage: `auth` 76%, `sessionhub` 80%, `bus` 84%. | Done (2026-05-12) | `specs/relayone-sso.md`, `internal/auth/`, `docs/integrations/relayone-sso.md` |
-| Admin panel at admin.r1.run (A5) | Internal operators answer "what is this customer's session doing right now" without raw SQL. Mounted on the existing `r1-server` process; five read-only routes — sessions, tenants, billing, audit, anti-trunc events — auth-gated through the A4 SSO middleware with constant-time `HasRole("admin")` check; paired JSON twins under `/api/admin/*`; AdminViewed ledger node per page view with /24 IPv4 + /48 IPv6 truncated remote address for audit-without-PII; `R1_ADMIN_DEV_BYPASS=1` for local validation. Regulators verify chain-of-custody from a browser; support answers tickets without ops escalation. | Done (2026-05-12) | `specs/admin-panel.md`, `internal/server/admin_*.go`, `cmd/r1-server/admin_wire.go`, `cmd/r1-server/templates/admin/` |
+| Admin panel at admin.r1.run (A5) | The hosted admin URL is live, but the current `r1-admin` service is still a scaffold: placeholder sections remain and prod auth is not yet a full operator-role verifier. The earlier read-only admin work under `r1-server` exists, but the public hosted admin surface should be treated as partial. | Partial | `specs/admin-panel.md`, `services/r1-admin/main.go`, `docs/operations/admin-panel.md` |
 
 ### Tier B — commercial readiness (scoped 2026-05-11, built 2026-05-12)
 
 | Feature | Outcome | Status | Reference |
 |---|---|---|---|
-| PostHog analytics (B1) | The product team answers "what's the activation rate" with one query. Twenty-four events instrumented end-to-end (signup → daemon-start → first mission → first verified completion → first anti-trunc fire → first paid event), per-tenant Group Analytics so the dashboard slices by enterprise account, three product funnels (activation, mission-success, anti-trunc-fire-recovered) and four cohorts (free-active, paid-active, churn-risk, regretted-activation). | Done (2026-05-12) | `specs/posthog-analytics.md`, `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md` |
-| Customer.io lifecycle email (B2) | Retention email becomes a product surface, not a manual ops task. Six lifecycle triggers — signup, activation, first mission, first completion, anti-trunc fired, budget alert — each backed by a transactional template marketing edits without a deploy. The SQLite flagstore at `~/.r1/lifecycle.db` gates the four "first-*" milestones so they fire exactly once per (tenant, user) tuple and survive daemon restart. PII allowlist enforced via `traits.Build` reflection test. DSAR CLI binding follows once `cmd/r1/admin_*` dispatch lands. | Done (2026-05-12) | `specs/customerio-lifecycle.md`, `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
-| CodeRadar dogfood (B3) | r1 finally eats its own dogfood. Eighteen canonical events emitted from the nine Cloud Run services (daemon, coord-api, docs, downloads, admin, plus the three new B-tier services), per-environment wiring with sampling so prod stays cheap, and the CodeRadar dashboard becomes the on-call surface for r1 itself. | Done (2026-05-12) | `specs/coderadar-dogfood.md`, `internal/coderadar/events.go`, `internal/hub/builtin/coderadar_subscriber.go`, `docs/observability/coderadar-{events,dashboards,alerts,runbook}.md` |
+| PostHog analytics (B1) | The client, taxonomy, and bus subscriber are implemented, and `cmd/r1` now wires the subscriber in the real binary. Hosted public-service deployment remains partial: the current public Cloud Run deploys do not prove end-to-end PostHog GTM wiring. | Partial | `specs/posthog-analytics.md`, `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md` |
+| Customer.io lifecycle email (B2) | The client, SQLite first-time guard, and bus subscriber are implemented, but production lifecycle-event wiring remains partial and the hosted public deploy does not prove the full lifecycle stack is live. | Partial | `specs/customerio-lifecycle.md`, `internal/lifecycle/`, `internal/hub/builtin/lifecycle_subscriber.go`, `docs/integrations/customerio.md`, `docs/lifecycle/campaigns.md` |
+| CodeRadar dogfood (B3) | Error/observability plumbing is real, and `cmd/r1` now wires the canonical bus subscriber in the main binary. Hosted product-analytics adoption still needs project-token wiring and should not be described as fully live GTM. | Partial | `specs/coderadar-dogfood.md`, `internal/coderadar/events.go`, `internal/hub/builtin/coderadar_subscriber.go`, `docs/observability/coderadar-{events,dashboards,alerts,runbook}.md` |
 
 ### Tier C — frontier extensions (scoped 2026-05-11, built 2026-05-12)
 

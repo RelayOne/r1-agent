@@ -1,6 +1,6 @@
 # Architecture
 
-Trunk architecture view for r1 as of 2026-05-06 — after specs 1-9 merged, 9 Cloud Run SaaS surfaces went live, and the final-sweep PRs #168 / #169 / #170 / #171 merged (sync to `main` in commit `242af4a8`) bringing skill-aware compaction, ed25519-signed redaction events, the v2 tracebundle export format, and the release-rehearsal CI lane.
+Trunk architecture view for r1 as of 2026-05-15 — after specs 1-9 merged, 12 public Cloud Run SaaS surfaces were verified live, and the final-sweep PRs #168 / #169 / #170 / #171 remained merged (sync to `main` in commit `242af4a8`) bringing skill-aware compaction, ed25519-signed redaction events, the v2 tracebundle export format, and the release-rehearsal CI lane.
 
 ## Audience
 
@@ -280,7 +280,7 @@ preflight/                         Pre-flight workspace assertions
 services/r1-coord-api/             Go service: /healthz, /v1/version, /v1/license/verify, /v1/telemetry/opt-in. Cloud Run.
 services/r1-docs/                  Go service: embeds docs/*.md, renders to HTML. Cloud Run.
 services/r1-downloads-cdn/         Go service: streams gs://relayone-488319-r1-releases/{env}/<asset>. Cloud Run.
-services/cloudbuild-deploy.yaml    Auto-deploy pipeline (3 images, 3 deploys, smoke-check /livez).
+services/cloudbuild-deploy.yaml    Auto-deploy pipeline (4 images, 4 deploys, smoke-check /livez).
 services/deploy.sh                 ./services/deploy.sh {dev|staging|prod|all} — manual deploy.
 services/scripts/setup-cloudbuild-triggers.sh   Operator script: 3 Cloud Build triggers (per env).
 
@@ -429,8 +429,8 @@ Manual escape hatch: `.github/workflows/e2e-rehearsal-manual.yml` lets an operat
 
 One-time setup: `scripts/setup-cloudbuild-e2e-trigger.sh` is idempotent (re-running updates triggers in place). Requires `roles/cloudbuild.builds.editor` on `relayone-488319`. Both triggers run under the BYOSA service account `cloud-build-byosa@relayone-488319.iam.gserviceaccount.com`.
 
-### Hosted SaaS — 9 Cloud Run services
-- 3 services × 3 envs (dev / staging / prod) on `relayone-488319` GCP project, region `us-central1`.
+### Hosted SaaS — 12 public Cloud Run services
+- 4 services × 3 envs (dev / staging / prod) on `relayone-488319` GCP project, region `us-central1`: `r1-coord-api`, `r1-docs`, `r1-downloads-cdn`, `r1-admin`.
 - All services: distroless static images, min-instances=1, instance billing (no CPU throttling), `--allow-unauthenticated`, port 8080.
 - Cloud Run org policy intercepts `/healthz`; r1 services use `/livez` + `/readyz` + `/v1/version` + `/`.
 - Auto-deploy on push to `main` / `staging` / `dev` via `services/cloudbuild-deploy.yaml`.
@@ -547,13 +547,13 @@ type Finding struct {
 ## Infrastructure
 
 ### GCP project: `relayone-488319`
-- **Cloud Run** services (us-central1): `r1-coord-api-{prod,staging,dev}`, `r1-docs-{prod,staging,dev}`, `r1-downloads-cdn-{prod,staging,dev}`. Min-instances=1, instance billing, distroless static.
+- **Cloud Run** public services (us-central1): `r1-coord-api-{prod,staging,dev}`, `r1-docs-{prod,staging,dev}`, `r1-downloads-cdn-{prod,staging,dev}`, `r1-admin-{prod,staging,dev}`. Min-instances=1, instance billing, distroless static.
 - **Cloud SQL Postgres 16**: `r1-prod-pg` (db-g1-small, $10/mo), `r1-staging-pg` + `r1-dev-pg` (db-f1-micro, $7/mo each). All us-central1-c, ENTERPRISE edition.
-- **Artifact Registry**: `us-central1-docker.pkg.dev/relayone-488319/r1` (3 images: r1-coord-api, r1-docs, r1-downloads-cdn).
-- **Secret Manager**: 6 placeholders: `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY}` (operator must populate real values).
+- **Artifact Registry**: `us-central1-docker.pkg.dev/relayone-488319/r1` (4 public-service images: r1-coord-api, r1-docs, r1-downloads-cdn, r1-admin).
+- **Secret Manager**: core visible env set during the 2026-05-15 audit was `r1-{prod,staging,dev}-shared-{DATABASE_URL,ANTHROPIC_API_KEY,AUTH_JWT_SECRET}`. Treat broader GTM/observability secrets as operator-verified state, not assumed from docs.
 - **GCS**: `gs://relayone-488319-r1-releases/{prod,staging,dev}/` (binary release channels; r1-downloads-cdn streams from here).
 - **Cloud Build**: `r1-agent-pr` (PR gate) + `r1-agent-ci` (push to main). After PR #128 merges, `services/scripts/setup-cloudbuild-triggers.sh` adds 3 deploy triggers.
-- **Domain mappings** (created, pending DNS): 9 subdomains under `r1.run` zone — `platform.{,staging.,dev.}r1.run`, `api.{,staging.,dev.}r1.run`, `downloads.{,staging.,dev.}r1.run`. Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
+- **Domain mappings** (live): 12 subdomains under `r1.run` — `platform|api|downloads|admin` across `prod|staging|dev`. Each maps to its Cloud Run service via CNAME → `ghs.googlehosted.com.`.
 
 ### DNS — Cloudflare zone for `r1.run`
 - 9 CNAME records (operator action; see `plans/HANDOFF-deploy-state.md`).
@@ -588,7 +588,7 @@ type Finding struct {
 
 ### Done
 - Specs 1-9 merged + tested + deployed.
-- 9 Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry.
+- 12 public Cloud Run SaaS services live + Cloud SQL + Secret Manager + Artifact Registry.
 - Branch hygiene: 20 archive tags, 3 active branches (main, claude/w521-…, archives).
 - All Go tests + web typecheck + desktop tests green.
 - Documentation: this doc + 6 sibling docs + 9 spec docs + decisions log + HANDOFF state file.
@@ -599,25 +599,22 @@ type Finding struct {
   - Release-rehearsal CI: Cloud Build trigger pair (push-to-main + tag) + manual GitHub Actions workflow.
 
 ### In Progress
-- DNS propagation for the 9 r1.run subdomains (operator action: add Cloudflare CNAMEs).
-- Operator follow-ups: secret values, CLAUDE.md package map line, Cloud Build trigger creation.
+- Operator follow-ups: secret values, CodeRadar analytics-token wiring if GTM moves there, and Cloud Build trigger creation beyond the base PR/CI pair.
 
-### Done (post-2026-05-11)
-- PostHog product analytics (B1, BUILD_ORDER 38) — 24-event taxonomy, bus subscriber, per-tenant Group Analytics, funnel + cohort + dashboard JSON checked in. Tenant-id wiring activates automatically once A4 RelayOne SSO merges; until then events emit without the group binding. See `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md`.
+### Partial (post-2026-05-11)
+- PostHog product analytics (B1, BUILD_ORDER 38) — 24-event taxonomy, bus subscriber, funnel + cohort + dashboard JSON are checked in, and `cmd/r1` now registers the subscriber in the real binary. Hosted public-service deployment remains partial; do not treat this as proven end-to-end GTM wiring. See `internal/analytics/`, `internal/hub/builtin/analytics_subscriber.go`, `docs/integrations/posthog.md`.
 
 ### Scoped
 - JWT login + RelayOne MSP SSO (Path A — Go reimpl of `@relayone/auth-core`).
-- Admin panel at `admin.r1.run` (clone `*-admin` template, customize).
-- Customer.io + CodeRadar event integration.
-- PostHog + Customer.io event integration.
+- Desktop runtime completion.
+- Lifecycle / GTM completion beyond the shipped client/subscriber code.
 
-### Done
-- CodeRadar dogfood event integration (B3, 2026-05-12). 18 canonical
-  events with schema versioning emit from all 9 Cloud Run services via
-  the bus subscriber at `internal/hub/builtin/coderadar_subscriber.go`.
-  Per-env sampling, hard allowlist + promptguard scrub, bounded queue +
-  drain goroutine + circuit breaker. Dashboards / alerts under
-  `docs/observability/coderadar-*.md`.
+### Partial
+- CodeRadar dogfood event integration (B3, 2026-05-12). Canonical event
+  schemas and the bus subscriber exist, and `cmd/r1` now registers the
+  subscriber in the main binary. Hosted product-analytics adoption still
+  needs project-token wiring; the current public deploy proves
+  observability paths more strongly than GTM replacement.
 
 ### Scoping
 - Encryption-at-rest for journals.

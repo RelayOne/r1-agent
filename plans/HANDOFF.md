@@ -1,47 +1,47 @@
-# HANDOFF — completion SOW closed
+# HANDOFF — verified state
 
-**Last updated:** 2026-05-14
-**Branch state:** all completion-SOW specs merged to `dev`. No open `ready` or `draft` specs remain.
+**Last updated:** 2026-05-15
 
-## Final spec status
+Use [`plans/TRUTH-STATE-2026-05-15.md`](TRUTH-STATE-2026-05-15.md) as the canonical source of truth. Older deploy handoffs in this directory are historical snapshots and contain stale claims.
 
-| Status | Count | Notes |
-|---|---|---|
-| `done` | 60+ | All completion-SOW Tier A/B/C/D specs + earlier work |
-| `superseded` | 1 | `p0-hardening-s0-foundation.md` → see `encryption-at-rest.md` + `retention-policies.md` |
-| no STATUS | 5 | Templates / historical reports (TEMPLATE.md, QUICKSTART.md, reconciliation-report.md, r1-rename-s{1,2}-*.md) |
+## Spec queue
 
-Verification: `grep -lE "^<!-- STATUS: (ready\|draft\|in-progress) -->" specs/*.md` returns empty.
+- No active `ready`, `draft`, or `in-progress` specs remain under `specs/`.
+- The formal completion-SOW queue is closed.
+- That does **not** mean the product is fully complete. Significant backlog remains outside the closed spec queue.
 
-## PRs landed this session
+## Confirmed live state
 
-| PR | Commit | Title |
-|---|---|---|
-| #301 | `0fe7e63d` | TruthfulCompletion benchmark (engineering + 5 seeds) |
-| #302 | `41a071c1` | docs+test: close A5 admin-panel + B2 customerio-lifecycle; supersede A2 |
-| (this branch) | — | docs: collapse duplicate spec entries in root README |
+- `r1.run` DNS is already live in Cloudflare.
+- 12 public `r1.run` domain mappings are healthy in GCP and return `200` on `/livez`.
+- The live public SaaS footprint is:
+  - `r1-coord-api`
+  - `r1-docs`
+  - `r1-downloads-cdn`
+  - `r1-admin`
+  - each across `prod`, `staging`, and `dev`
 
-## Known findings (not blockers)
+## Confirmed partial / overstated areas
 
-- **`internal/tui` flake.** Showed up once in a full `go test ./...` run; passes deterministically on isolated runs and under `-race` and `-count=3`. Doesn't touch any of the recently-merged code paths. Investigation tabled — non-reproducible regression fishing violates the "don't add code without evidence" principle.
+- Hosted admin is live but still scaffold-heavy.
+- Desktop is not runtime-complete despite earlier “done” claims.
+- PostHog / Customer.io / CodeRadar GTM claims were overstated:
+  - client/subscriber code exists
+  - hosted public deploy wiring is partial
+  - CodeRadar is the best candidate for R1 product analytics, but it does not yet replace lifecycle messaging
 
-## Operator-only items remaining (NOT subagent work)
+## Real remaining backlog
 
-- 95-mission SWE-bench Pro corpus per `plans/corpus-100.md` (10 missions/week → 10 weeks of curator effort).
-- DNS records for `admin.r1.run` + the 9-service domain mappings (Cloudflare CNAMEs, proxy OFF).
-- Secret values for the 6 secret-manager placeholders (CUSTOMERIO_*, POSTHOG_*, etc.).
-- Cloud Build trigger creation for the monthly + PR TruthfulCompletion runs.
-- dev → staging → main promotion (sync merges, not feature PRs).
+- Deferred 95-mission TruthfulCompletion corpus (`plans/corpus-100.md`)
+- Desktop runtime completion (`desktop/PLAN.md`)
+- Marketing / GTM / attribution / retention backlog
+- Real CodeRadar analytics project-token wiring for R1 if GTM reporting is to move off third-party tools
+- Cloud Build trigger creation beyond the base `r1-agent-pr` / `r1-agent-ci` pair
 
-## What's left in this directory
+## Historical files kept for reference
 
-| File | Status |
-|---|---|
-| `HANDOFF.md` (this file) | current snapshot |
-| `corpus-100.md` | deferred roadmap (operator-curated) |
-| `build-plan.md` | superseded by merged commits; left for history |
-| `C5-bitbucket-pipelines-build-report.md` | historical |
-| `SCOPE-AUDIT-2026-05-04.md` | historical; items either merged or operator-action |
-| `HANDOFF-deploy-state.md` | deployment-state snapshot from 2026-05-05 |
-| `LAUNCH-E1-E4.sh` | operator launch script |
-| subdirs (archive, audits, monitor, self-fix, scope-suite-*) | historical artifacts |
+- `HANDOFF-deploy-state.md`
+- `SCOPE-AUDIT-2026-05-04.md`
+- `build-plan.md`
+- `C5-bitbucket-pipelines-build-report.md`
+- archive / audit subdirectories
