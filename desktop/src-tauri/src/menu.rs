@@ -280,7 +280,7 @@ fn build_help_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> 
     let release = MenuItemBuilder::with_id(M_HELP_RELEASE_NOTES, "Release Notes").build(app)?;
     let issue = MenuItemBuilder::with_id(M_HELP_REPORT_ISSUE, "Report an Issue").build(app)?;
 
-    let mut builder = SubmenuBuilder::new(app, "Help")
+    let builder = SubmenuBuilder::new(app, "Help")
         .item(&docs)
         .item(&release)
         .item(&issue);
