@@ -153,6 +153,20 @@ func render(w http.ResponseWriter, p page) {
 	_ = pageTpl.Execute(w, p)
 }
 
+type operatorClaimsContextKey struct{}
+
+type operatorScopeSnapshot struct {
+	AuthMode string
+	Subject  string
+	Email    string
+	Tenant   string
+	MSP      string
+	Org      string
+	Roles    string
+	Scope    string
+	Source   string
+}
+
 // --- handlers ---------------------------------------------------------
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -237,10 +251,34 @@ func handleLanes(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUsers(w http.ResponseWriter, r *http.Request) {
-	body := template.HTML(`
-<p>RelayOne MSP-tenanted user list. The <code>msp</code> claim from the JWT scopes the visible rows to the operator's tenant.</p>
-<table><thead><tr><th>Sub</th><th>Email</th><th>MSP</th><th>Org</th><th>Roles</th><th>Last active</th></tr></thead>
-<tbody><tr><td colspan=6 style="color:#888;text-align:center;padding:2rem">Wiring depends on the user store backed by Cloud SQL (post-deploy iteration).</td></tr></tbody></table>`)
+	scope := buildOperatorScopeSnapshot(r)
+	body := template.HTML(fmt.Sprintf(`
+<p>Current operator scope. This page reflects the verified bearer claims the admin service is enforcing right now, so operators can confirm tenant boundaries and identity without relying on a future user-store integration.</p>
+<div class="cards">
+  <div class="card"><div class="label">Auth mode</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Tenant scope</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">MSP scope</div><div class="value">%s</div></div>
+  <div class="card"><div class="label">Org scope</div><div class="value">%s</div></div>
+</div>
+<div class="kv">
+<span><b>Claim source:</b> <code>%s</code></span>
+<span><b>Scope summary:</b> %s</span>
+</div>
+<table><thead><tr><th>Sub</th><th>Email</th><th>Tenant</th><th>MSP</th><th>Org</th><th>Roles</th></tr></thead>
+<tbody><tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr></tbody></table>`,
+		template.HTMLEscapeString(scope.AuthMode),
+		template.HTMLEscapeString(scope.Tenant),
+		template.HTMLEscapeString(scope.MSP),
+		template.HTMLEscapeString(scope.Org),
+		template.HTMLEscapeString(scope.Source),
+		template.HTMLEscapeString(scope.Scope),
+		template.HTMLEscapeString(scope.Subject),
+		template.HTMLEscapeString(scope.Email),
+		template.HTMLEscapeString(scope.Tenant),
+		template.HTMLEscapeString(scope.MSP),
+		template.HTMLEscapeString(scope.Org),
+		template.HTMLEscapeString(scope.Roles),
+	))
 	render(w, page{Title: "Users", Path: "/users", Body: body})
 }
 
@@ -309,6 +347,58 @@ func envOrUnset(k string) string {
 		return "configured"
 	}
 	return "unset"
+}
+
+func buildOperatorScopeSnapshot(r *http.Request) operatorScopeSnapshot {
+	scope := operatorScopeSnapshot{
+		AuthMode: "dev bypass",
+		Subject:  "(unverified)",
+		Email:    "(unset)",
+		Tenant:   "(global)",
+		MSP:      "(unset)",
+		Org:      "(unset)",
+		Roles:    "(none)",
+		Scope:    "dev bypass active; no verified bearer claims on this request",
+		Source:   "request context",
+	}
+
+	claims, ok := operatorClaimsFromRequest(r)
+	if !ok {
+		if envName != "dev" {
+			scope.AuthMode = "jwt unavailable"
+			scope.Scope = "request reached the users panel without verified operator claims"
+		}
+		return scope
+	}
+
+	scope.AuthMode = "jwt enforced"
+	scope.Subject = stringClaim(claims, "sub")
+	scope.Email = stringClaim(claims, "email")
+	scope.Tenant = stringClaim(claims, "tenant_id")
+	scope.MSP = nestedStringClaim(claims, "msp", "id")
+	scope.Org = firstNonEmpty(stringClaim(claims, "org_id", "org"), nestedStringClaim(claims, "msp", "org_id", "org"))
+	scope.Roles = strings.Join(claimRoles(claims), ", ")
+
+	if scope.Subject == "" {
+		scope.Subject = "(unset)"
+	}
+	if scope.Email == "" {
+		scope.Email = "(unset)"
+	}
+	if scope.Tenant == "" {
+		scope.Tenant = "(global)"
+	}
+	if scope.MSP == "" {
+		scope.MSP = "(unset)"
+	}
+	if scope.Org == "" {
+		scope.Org = "(unset)"
+	}
+	if scope.Roles == "" {
+		scope.Roles = "(none)"
+	}
+	scope.Scope = fmt.Sprintf("tenant=%s · msp=%s · org=%s", scope.Tenant, scope.MSP, scope.Org)
+	return scope
 }
 
 type dashboardSnapshot struct {
@@ -474,8 +564,16 @@ func requireOperator(next http.Handler) http.Handler {
 			http.Error(w, "operator role required", http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), operatorClaimsContextKey{}, claims)))
 	})
+}
+
+func operatorClaimsFromRequest(r *http.Request) (map[string]any, bool) {
+	if r == nil {
+		return nil, false
+	}
+	claims, ok := r.Context().Value(operatorClaimsContextKey{}).(map[string]any)
+	return claims, ok
 }
 
 func bearerTokenFromHeader(authHeader string) (string, bool) {
@@ -618,6 +716,71 @@ func containsRole(raw any, want string) bool {
 		}
 	}
 	return false
+}
+
+func claimRoles(claims map[string]any) []string {
+	roles := collectRoles(nil, claims["roles"])
+	if msp, ok := claims["msp"].(map[string]any); ok {
+		roles = collectRoles(roles, msp["roles"])
+	}
+	if len(roles) == 0 {
+		return nil
+	}
+	return roles
+}
+
+func collectRoles(dst []string, raw any) []string {
+	switch roles := raw.(type) {
+	case []any:
+		for _, role := range roles {
+			if roleValue, ok := role.(string); ok {
+				dst = appendUnique(dst, roleValue)
+			}
+		}
+	case []string:
+		for _, role := range roles {
+			dst = appendUnique(dst, role)
+		}
+	}
+	return dst
+}
+
+func appendUnique(dst []string, value string) []string {
+	if value == "" {
+		return dst
+	}
+	for _, existing := range dst {
+		if existing == value {
+			return dst
+		}
+	}
+	return append(dst, value)
+}
+
+func stringClaim(claims map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := claims[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func nestedStringClaim(claims map[string]any, parent string, keys ...string) string {
+	nested, ok := claims[parent].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringClaim(nested, keys...)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func isPublic(p string) bool {
