@@ -676,9 +676,6 @@ export type InvokeMethod =
   // Memory
   | "memory_list_scopes"
   | "memory_query"
-  | "memory_history"
-  | "memory_import"
-  | "memory_delete"
   // Cost
   | "cost_get_current"
   | "cost_get_history"
