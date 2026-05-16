@@ -275,6 +275,36 @@ func TestUsersPageRendersVerifiedOperatorScope(t *testing.T) {
 	}
 }
 
+func TestAntitruncShowsExplicitUnavailableState(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handleAntitrunc(rr, httptest.NewRequest(http.MethodGet, "/antitrunc", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Hosted anti-truncation status",
+		"Unavailable in this admin build",
+		"r1 antitrunc verify -n 20",
+		"audit/antitrunc/",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("antitrunc body missing %q: %q", want, body)
+		}
+	}
+	for _, unwanted := range []string{
+		"Numbers populated by a Cloud Scheduler job",
+		"last 100 commits",
+		"<td>prod</td>",
+		"<td>staging</td>",
+		"<td>dev</td>",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("antitrunc body still contains stale placeholder %q: %q", unwanted, body)
+		}
+	}
+}
+
 func TestRequireOperatorBypassesPublicPaths(t *testing.T) {
 	envName = "prod" // simulate prod gating
 	defer func() { envName = "dev" }()
