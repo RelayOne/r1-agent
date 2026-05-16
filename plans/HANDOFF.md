@@ -41,8 +41,14 @@ Use [`plans/TRUTH-STATE-2026-05-15.md`](TRUTH-STATE-2026-05-15.md) as the canoni
 
 ## Historical files kept for reference
 
-- `HANDOFF-deploy-state.md`
-- `SCOPE-AUDIT-2026-05-04.md`
-- `build-plan.md`
-- `C5-bitbucket-pipelines-build-report.md`
-- archive / audit subdirectories
+| File | Status |
+|---|---|
+| `HANDOFF.md` (this file) | current snapshot |
+| `PROGRAM-DAG-2026-05-15.md` | canonical multi-agent execution DAG |
+| `corpus-100.md` | deferred roadmap (operator-curated) |
+| `build-plan.md` | superseded by merged commits; left for history |
+| `C5-bitbucket-pipelines-build-report.md` | historical |
+| `SCOPE-AUDIT-2026-05-04.md` | historical; items either merged or operator-action |
+| `HANDOFF-deploy-state.md` | deployment-state snapshot from 2026-05-05 |
+| `LAUNCH-E1-E4.sh` | operator launch script |
+| subdirs (archive, audits, monitor, self-fix, scope-suite-*) | historical artifacts |
