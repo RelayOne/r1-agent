@@ -64,10 +64,18 @@ create_or_replace_pr_trigger() {
 remove_tmp_trigger_if_present() {
   echo
   echo "==> removing stray tmp trigger if present"
+  local deleted=0
+  if gcloud builds triggers describe tmp --project="$PROJECT" --region=us-central1 >/dev/null 2>&1; then
+    gcloud builds triggers delete tmp --project="$PROJECT" --region=us-central1 --quiet >/dev/null
+    echo "   deleted regional tmp (us-central1)"
+    deleted=1
+  fi
   if gcloud builds triggers describe tmp --project="$PROJECT" >/dev/null 2>&1; then
     gcloud builds triggers delete tmp --project="$PROJECT" --quiet >/dev/null
-    echo "   deleted tmp"
-  else
+    echo "   deleted global tmp"
+    deleted=1
+  fi
+  if [[ "$deleted" -eq 0 ]]; then
     echo "   tmp not present"
   fi
 }
