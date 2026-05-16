@@ -39,6 +39,27 @@ func TestDashboardRendersWithNavLinks(t *testing.T) {
 	}
 }
 
+func TestDashboardExplainsUnavailableTopMetrics(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handleDashboard(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Dashboard truth",
+		"Active sessions",
+		"Requires <code>GET /v1/sessions</code> on the configured coord API.",
+		"Live lanes",
+		"No coord-api lane endpoint is wired in this repo.",
+		"USD spent (24h)",
+		"No central usage aggregation endpoint or table is wired.",
+		"Anti-trunc fires (24h)",
+		"No persisted anti-trunc result store is exposed to this page.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard body missing %q", want)
+		}
+	}
+}
+
 func TestBuildDashboardSnapshotUsesCoordHealthAndJWTConfig(t *testing.T) {
 	prevEnv := envName
 	prevVersion := versionStr

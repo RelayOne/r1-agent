@@ -4,10 +4,11 @@
 # (agent × mission) matrix and uploads the rendered leaderboard +
 # per-mission breakdown to the public bench bucket.
 #
-# Intended for a future monthly scheduler/trigger. As of 2026-05-15 the
-# live GCP benchmark automation still uses the legacy nightly pair
-# `r1-bench-nightly` / `r1-bench-nightly-cron`, and this file is not what
-# `services/scripts/setup-bench-cron.sh` provisions.
+# Intended for the monthly TruthfulCompletion scheduler/trigger pair
+# provisioned by `scripts/setup-bench-truthful-completion-cron.sh`.
+# The live project may still also carry the older `r1-bench-nightly` /
+# `r1-bench-nightly-cron` pair; that legacy path is separate from this
+# checked-in monthly benchmark flow.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.1 (item 55).
 

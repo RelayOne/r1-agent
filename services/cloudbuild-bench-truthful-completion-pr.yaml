@@ -1,11 +1,11 @@
 # services/cloudbuild-bench-truthful-completion-pr.yaml
 #
 # Intended PR TruthfulCompletion regression check. Runs the 5 seed
-# missions against the 8 dispatchers and asserts no regression
-# relative to baseline. As of 2026-05-15 there is no live Cloud Build
-# trigger in relayone-488319/us-central1 pointing at this file; the
-# only benchmark trigger live in GCP is the legacy `r1-bench-nightly`
-# manual trigger fired by `r1-bench-nightly-cron`.
+# missions against the checked-in agent matrix. The operator setup path
+# is `scripts/setup-bench-truthful-completion-cron.sh`, which provisions
+# the `bench-truthful-completion-pr` trigger in relayone-488319/us-central1.
+# This build does NOT yet post the PR delta comment promised in the full
+# spec; it currently performs the mini-run only.
 #
 # Spec: specs/truthful-completion-benchmark.md §T8.2 (item 56).
 

@@ -190,6 +190,13 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
   <div class="card"><div class="label">Auth mode</div><div class="value">%s</div></div>
 </div>
 <p>This dashboard now reflects live hosted runtime truth for the admin service, operator auth mode, and coord-api reachability. Sessions, lanes, usage, revenue, and user data still require their backing stores/endpoints.</p>
+<h2>Dashboard truth</h2>
+<div class="cards">
+  <div class="card"><div class="label">Active sessions</div><div class="value">Unavailable</div><div class="muted">Requires <code>GET /v1/sessions</code> on the configured coord API.</div></div>
+  <div class="card"><div class="label">Live lanes</div><div class="value">Unavailable</div><div class="muted">No coord-api lane endpoint is wired in this repo.</div></div>
+  <div class="card"><div class="label">USD spent (24h)</div><div class="value">Unavailable</div><div class="muted">No central usage aggregation endpoint or table is wired.</div></div>
+  <div class="card"><div class="label">Anti-trunc fires (24h)</div><div class="value">Unavailable</div><div class="muted">No persisted anti-trunc result store is exposed to this page.</div></div>
+</div>
 <h2>Runtime summary</h2>
 <div class="kv">
 <span><b>Admin service:</b> <code>%s</code></span>
