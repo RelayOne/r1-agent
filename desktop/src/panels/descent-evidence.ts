@@ -3,20 +3,16 @@
 // Descent-evidence drawer (R1D-3.4).
 //
 // A single shared overlay panel that slides in from the right when the
-// user clicks a tier's evidence slot in the descent ladder. The drawer
-// reads through the `descent_evidence` stub, which returns an empty
-// result today. Close via the explicit button, the backdrop, or Escape.
+// user clicks a tier's evidence slot in the descent ladder. The current
+// desktop host does not implement a `descent_evidence` IPC verb, so the
+// drawer renders an explicit unavailable state instead of fabricating
+// evidence rows. Close via the explicit button, the backdrop, or Escape.
 //
 // The descent-ladder panel owns the click wiring; this module only
 // renders and controls visibility. The ladder calls `openDrawer(tier)`
 // to show and `closeDrawer()` to hide.
 
-import { invokeStub } from "../ipc-stub";
-import type {
-  DescentEvidence,
-  DescentEvidenceResult,
-  DescentTier,
-} from "../types/ipc";
+import type { DescentTier } from "../types/ipc";
 
 const DRAWER_ID = "r1-descent-evidence-drawer";
 const BACKDROP_ID = "r1-descent-evidence-backdrop";
@@ -89,22 +85,16 @@ export async function openDrawer(
   const body = drawerRoot.querySelector<HTMLDivElement>(
     '[data-role="drawer-body"]',
   );
-  if (body) body.innerHTML = `<p class="r1-empty">Loading evidence&hellip;</p>`;
+  if (body) {
+    body.innerHTML = `<p class="r1-empty">Checking descent evidence availability&hellip;</p>`;
+  }
 
   backdropRoot.hidden = false;
   drawerRoot.hidden = false;
   drawerRoot.classList.add("is-open");
   drawerRoot.focus();
-
-  const result = await invokeStub<DescentEvidenceResult>(
-    "descent_evidence",
-    "R1D-3",
-    { tier, items: [] },
-    { session_id: sessionId, tier, ac_id: acId },
-  );
-
   if (drawerRoot.dataset.tier === tier && body) {
-    renderItems(body, result.items);
+    renderUnavailable(body, tier, sessionId, acId);
   }
 }
 
@@ -126,37 +116,20 @@ function handleKeydown(event: KeyboardEvent): void {
   closeDrawer();
 }
 
-function renderItems(body: HTMLDivElement, items: DescentEvidence[]): void {
-  if (items.length === 0) {
-    body.innerHTML = `
-      <p class="r1-empty">
-        No evidence yet &mdash; R1D-3.4 will wire this.
-      </p>
-    `;
-    return;
-  }
-
+function renderUnavailable(
+  body: HTMLDivElement,
+  tier: DescentTier,
+  sessionId: string,
+  acId?: string,
+): void {
+  const context = sessionId
+    ? `<p class="r1-empty">Selected session <code>${escapeHtml(sessionId)}</code>${acId ? ` · AC <code>${escapeHtml(acId)}</code>` : ""}</p>`
+    : `<p class="r1-empty">Select an active session before checking host-backed descent status.</p>`;
   body.innerHTML = `
-    <ul class="r1-descent-evidence-list">
-      ${items.map(renderItem).join("")}
-    </ul>
-  `;
-}
-
-function renderItem(item: DescentEvidence): string {
-  const ref = item.artifact_ref
-    ? `<code class="r1-descent-evidence-ref">${escapeHtml(item.artifact_ref)}</code>`
-    : "";
-  const at = item.at
-    ? `<time class="r1-descent-evidence-at" datetime="${escapeHtml(item.at)}">${escapeHtml(item.at)}</time>`
-    : "";
-  return `
-    <li class="r1-descent-evidence-item" data-kind="${item.kind}">
-      <span class="r1-descent-evidence-kind">${escapeHtml(item.kind)}</span>
-      <span class="r1-descent-evidence-summary">${escapeHtml(item.summary)}</span>
-      ${ref}
-      ${at}
-    </li>
+    <p class="r1-empty">
+      This desktop host does not implement descent evidence IPC, so evidence for ${escapeHtml(tier)} cannot be queried here.
+    </p>
+    ${context}
   `;
 }
 
