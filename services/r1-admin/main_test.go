@@ -218,6 +218,63 @@ func TestSettingsShowsTrackingStatus(t *testing.T) {
 	}
 }
 
+func TestUsersPageRendersVerifiedOperatorScope(t *testing.T) {
+	issuer := "r1-admin-test"
+	audience := "r1-admin"
+	secret := strings.Repeat("s", 32)
+	t.Setenv("AUTH_JWT_ISSUER", issuer)
+	t.Setenv("AUTH_JWT_AUDIENCE", audience)
+	t.Setenv("AUTH_JWT_SECRET", secret)
+
+	prevEnv := envName
+	envName = "prod"
+	defer func() { envName = prevEnv }()
+
+	operatorToken := mustSignAdminToken(t, issuer, audience, secret, map[string]any{
+		"roles":     []string{"operator"},
+		"sub":       "operator-1",
+		"email":     "ops@example.com",
+		"tenant_id": "tenant-1",
+		"org_id":    "org-7",
+		"msp": map[string]any{
+			"id":    "msp-9",
+			"roles": []string{"operator"},
+		},
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/users", handleUsers)
+	h := requireOperator(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	req.Header.Set("Authorization", "Bearer "+operatorToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200; body=%q", rr.Code, rr.Body.String())
+	}
+
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Current operator scope",
+		"jwt enforced",
+		"operator-1",
+		"ops@example.com",
+		"tenant-1",
+		"msp-9",
+		"org-7",
+		"operator",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("users body missing %q: %q", want, body)
+		}
+	}
+	if strings.Contains(body, "Wiring depends on the user store") {
+		t.Fatalf("users page still contains placeholder copy: %q", body)
+	}
+}
+
 func TestRequireOperatorBypassesPublicPaths(t *testing.T) {
 	envName = "prod" // simulate prod gating
 	defer func() { envName = "dev" }()
