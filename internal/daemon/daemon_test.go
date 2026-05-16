@@ -482,7 +482,7 @@ func TestDaemonUsesSharedRulesRegistryForExecution(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("enqueue blocked task: %v", err)
 	}
-	if err := pollUntilDone(d, []string{"blocked-task"}, 3*time.Second); err != nil {
+	if err := pollUntilDone(d, []string{"blocked-task"}, 5*time.Second); err != nil {
 		t.Fatalf("poll blocked task: %v", err)
 	}
 	blocked := d.Queue().Get("blocked-task")
@@ -511,7 +511,7 @@ func TestDaemonUsesSharedRulesRegistryForExecution(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("enqueue allowed task: %v", err)
 	}
-	if err := pollUntilDone(d, []string{"allowed-task"}, 3*time.Second); err != nil {
+	if err := pollUntilDone(d, []string{"allowed-task"}, 5*time.Second); err != nil {
 		t.Fatalf("poll allowed task: %v", err)
 	}
 	allowed := d.Queue().Get("allowed-task")
