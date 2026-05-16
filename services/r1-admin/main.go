@@ -278,14 +278,18 @@ func handleRevenue(w http.ResponseWriter, r *http.Request) {
 
 func handleAntitrunc(w http.ResponseWriter, r *http.Request) {
 	body := template.HTML(`
-<p>Output of the most recent <code>r1 antitrunc verify -n 100</code> run across each env. Each commit is classified Verified / Unverified / Lying. Lying counts > 0 are paged to oncall.</p>
-<table><thead><tr><th>Env</th><th>Window</th><th>Verified</th><th>Unverified</th><th>Lying</th><th>Last run</th></tr></thead>
-<tbody>
-<tr><td>prod</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>staging</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-<tr><td>dev</td><td>last 100 commits</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-</tbody></table>
-<p style="color:#888">Numbers populated by a Cloud Scheduler job running <code>r1 antitrunc verify</code> per env and writing results to a small Cloud SQL table read by this page (post-deploy iteration).</p>`)
+<p>Hosted anti-truncation status for this admin service. The anti-truncation engine itself is real elsewhere in the repo, but this Cloud Run admin build does not currently ingest verifier output or expose a persisted event feed.</p>
+<div class="cards">
+<div class="card"><div class="label">Admin surface</div><div class="value">Unavailable in this admin build</div></div>
+<div class="card"><div class="label">Verifier CLI</div><div class="value"><code>r1 antitrunc verify</code></div></div>
+<div class="card"><div class="label">File audit trail</div><div class="value"><code>audit/antitrunc/</code></div></div>
+<div class="card"><div class="label">Hosted result reader</div><div class="value">Not wired</div></div>
+</div>
+<div class="kv">
+<span><b>Current limitation:</b> this service does not read antitrunc results from Cloud SQL, GCS, or an event buffer.</span>
+<span><b>What operators can use now:</b> run <code>r1 antitrunc verify -n 20</code> in the repo or inspect <code>audit/antitrunc/</code> produced by the CLI and git hook.</span>
+<span><b>Why this page is explicit:</b> rendering synthetic prod/staging/dev rows here would overstate hosted coverage that the admin service does not have.</span>
+</div>`)
 	render(w, page{Title: "Anti-truncation", Path: "/antitrunc", Body: body})
 }
 
