@@ -14,7 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderPanel, buildTurnElement } from "./panels/session-view";
 import type { ServerEvent } from "./types/ipc";
 
-const tauriEventListeners: Array<(event: { payload: ServerEvent }) => void> = [];
+type TauriEventListener = {
+  event: string;
+  handler: (event: { payload: ServerEvent }) => void;
+};
+
+const tauriEventListeners: TauriEventListener[] = [];
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async <T>(method: string): Promise<T> => {
@@ -29,10 +34,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_event: string, handler: (event: { payload: ServerEvent }) => void) => {
-    tauriEventListeners.push(handler);
+  listen: vi.fn(async (event: string, handler: (event: { payload: ServerEvent }) => void) => {
+    tauriEventListeners.push({ event, handler });
     return () => {
-      const index = tauriEventListeners.indexOf(handler);
+      const index = tauriEventListeners.findIndex(
+        (listener) => listener.event === event && listener.handler === handler,
+      );
       if (index >= 0) tauriEventListeners.splice(index, 1);
     };
   }),
@@ -63,7 +70,17 @@ function click(element: Element | null): void {
 
 function emitServerEvent(event: ServerEvent): void {
   for (const listener of tauriEventListeners) {
-    listener({ payload: event });
+    if (listener.event === "r1://events") {
+      listener.handler({ payload: event });
+    }
+  }
+}
+
+function emitTauriEvent(channel: string, event: ServerEvent): void {
+  for (const listener of tauriEventListeners) {
+    if (listener.event === channel) {
+      listener.handler({ payload: event });
+    }
   }
 }
 
@@ -174,6 +191,46 @@ describe("session-view — R1D-2 streaming truthfulness", () => {
     expect(transcript?.textContent).not.toContain("stub mode does not synthesize assistant output");
     expect(transcript?.textContent).not.toContain("I received your message.");
     expect(root.querySelectorAll(".r1-sv-turn-assistant")).toHaveLength(0);
+
+    cleanup(root);
+  });
+
+  it("marks the session ended when the host emits session://ended without a global stream event", async () => {
+    vi.resetModules();
+    Object.defineProperty(window, "__TAURI__", {
+      value: {},
+      configurable: true,
+    });
+    const { renderPanel: renderStreamingPanel } = await import("./panels/session-view");
+
+    const root = makeRoot();
+    renderStreamingPanel(root);
+    await flushUi();
+
+    click(root.querySelector('[data-role="new-session"]'));
+    await flushUi();
+
+    const input = root.querySelector<HTMLTextAreaElement>('[data-role="composer-input"]');
+    expect(input).not.toBeNull();
+    input!.value = "Run a long task";
+
+    const form = root.querySelector<HTMLFormElement>('[data-role="composer"]');
+    expect(form).not.toBeNull();
+    form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await flushUi();
+
+    emitTauriEvent("session://ended", {
+      event: "session.ended",
+      session_id: "session-live-1",
+      reason: "ok",
+      at: "2026-05-15T00:00:03Z",
+    });
+    await flushUi();
+
+    const status = root.querySelector('[data-role="chat-status-pill"]');
+    expect(status?.textContent).toBe("paused");
+    const sendBtn = root.querySelector<HTMLButtonElement>('[data-role="send-btn"]');
+    expect(sendBtn?.disabled).toBe(false);
 
     cleanup(root);
   });

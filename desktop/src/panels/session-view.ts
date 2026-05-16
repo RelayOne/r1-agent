@@ -11,9 +11,11 @@
 //
 // Session control routes through invokeStub, which delegates to real
 // Tauri `invoke` when the desktop runtime is present. The transcript
-// listens for real `r1://events` payloads in Tauri builds; plain-browser
-// stub mode is explicitly non-streaming and does not synthesize assistant
-// output.
+// listens for real Tauri event payloads in desktop builds. The host
+// emits server-pushed transcript deltas on `r1://events` and local
+// subprocess lifecycle notifications on `session://started` /
+// `session://ended`; plain-browser stub mode is explicitly
+// non-streaming and does not synthesize assistant output.
 //
 // AC (work-r1-desktop-app.md R1D-2):
 //   End-to-end: create a session, send a prompt, receive a streamed reply
@@ -429,9 +431,15 @@ async function initSessionEventBridge(root: HTMLElement, state: PanelState): Pro
   }
   const { listen } = await import("@tauri-apps/api/event");
   state.eventBridgeMode = "live";
-  await (listen as TauriListenFn)<ServerEvent>("r1://events", (event) => {
-    applyServerEvent(root, state, event.payload);
-  });
+  const tauriListen = listen as TauriListenFn;
+  const topics = ["r1://events", "session://started", "session://ended"] as const;
+  await Promise.all(
+    topics.map((topic) =>
+      tauriListen<ServerEvent>(topic, (event) => {
+        applyServerEvent(root, state, event.payload);
+      }),
+    ),
+  );
 }
 
 function hasTauriRuntime(): boolean {
